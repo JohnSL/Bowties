@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "../bowtie"
+		},
+		{
+			"path": "../OpenLCB_Python"
+		},
+		{
+			"path": "."
+		}
+	],
+	"settings": {}
+}
