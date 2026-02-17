@@ -1,7 +1,7 @@
 # LCC-RS API Documentation
 
 **Version:** 0.1.0  
-**Last Updated:** February 16, 2026
+**Last Updated:** February 17, 2026
 
 ## Overview
 
@@ -15,6 +15,7 @@
 - ✅ Message Type Identifier (MTI) handling
 - ✅ Multi-frame datagram reassembly
 - ✅ SNIP (Simple Node Identification Protocol) support
+- ✅ Memory Configuration Protocol (CDI retrieval and configuration memory)
 - ✅ Addressed and global messaging
 - ✅ Concurrency control with semaphores
 
@@ -28,7 +29,8 @@ lcc_rs
 ├── protocol        - Protocol-level structures
 │   ├── frame       - GridConnect frame parsing/encoding
 │   ├── mti         - Message Type Identifiers
-│   └── datagram    - Multi-frame datagram reassembly
+│   ├── datagram    - Multi-frame datagram reassembly
+│   └── memory_config - Memory Configuration Protocol
 ├── transport       - Transport layer implementations
 │   └── tcp         - TCP transport (async)
 ├── discovery       - Node discovery functionality
@@ -579,6 +581,208 @@ SNIP data is encoded as null-terminated strings in this order:
 6. User description (node 1)
 
 Each field is terminated by `0x00`. If a field is empty, it's just `0x00`.
+
+---
+
+## Memory Configuration Protocol (`protocol::memory_config` module)
+
+The Memory Configuration Protocol provides read/write access to node memory spaces, including configuration memory and CDI (Configuration Description Information).
+
+### AddressSpace
+
+Memory address space identifiers for the Memory Configuration Protocol.
+
+```rust
+pub enum AddressSpace {
+    Configuration,  // 0xFD - Configuration space
+    AllMemory,      // 0xFE - All memory space
+    Cdi,            // 0xFF - CDI space
+}
+```
+
+#### Methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `value` | `fn value(&self) -> u8` | Get the space byte value (0xFD, 0xFE, or 0xFF) |
+| `command_flag` | `fn command_flag(&self) -> u8` | Get the command flag for this space |
+
+### MemoryConfigCmd
+
+Command builder for Memory Configuration Protocol operations.
+
+```rust
+pub struct MemoryConfigCmd;
+```
+
+#### build_read
+
+Build a read command datagram to retrieve data from a memory space.
+
+```rust
+pub fn build_read(
+    source_alias: u16,
+    dest_alias: u16,
+    space: AddressSpace,
+    address: u32,
+    count: u8,
+) -> Result<Vec<GridConnectFrame>>
+```
+
+**Parameters:**
+- `source_alias` - Our node alias
+- `dest_alias` - Target node alias
+- `space` - Address space to read from (Configuration, AllMemory, or Cdi)
+- `address` - Starting address (32-bit, big-endian)
+- `count` - Number of bytes to read (1-64)
+
+**Returns:** Vector of GridConnect frames to send (may be single or multi-frame datagram)
+
+**Example:**
+```rust
+use lcc_rs::protocol::memory_config::{MemoryConfigCmd, AddressSpace};
+
+// Read first 64 bytes of CDI
+let frames = MemoryConfigCmd::build_read(
+    0xAAA,              // source alias
+    0xBBB,              // dest alias
+    AddressSpace::Cdi,  // CDI space
+    0,                  // start at address 0
+    64                  // read 64 bytes
+)?;
+
+// Send frames to transport
+for frame in frames {
+    transport.send_frame(&frame).await?;
+}
+```
+
+#### parse_read_reply
+
+Parse a read reply datagram from the target node.
+
+```rust
+pub fn parse_read_reply(data: &[u8]) -> Result<ReadReply>
+```
+
+**Parameters:**
+- `data` - Datagram payload received from target node
+
+**Returns:** `ReadReply` enum indicating success or failure
+
+**Example:**
+```rust
+use lcc_rs::protocol::memory_config::{MemoryConfigCmd, ReadReply};
+
+// Assume we received a datagram response
+let reply = MemoryConfigCmd::parse_read_reply(&datagram_payload)?;
+
+match reply {
+    ReadReply::Success { address, space, data } => {
+        println!("Read {} bytes from address 0x{:08X}", data.len(), address);
+        // Process data...
+    }
+    ReadReply::Failed { address, space, error_code, message } => {
+        eprintln!("Read failed at 0x{:08X}: {} (code: 0x{:04X})", 
+                 address, message, error_code);
+    }
+}
+```
+
+### ReadReply
+
+Result type for memory read operations.
+
+```rust
+pub enum ReadReply {
+    Success {
+        address: u32,
+        space: AddressSpace,
+        data: Vec<u8>,
+    },
+    Failed {
+        address: u32,
+        space: AddressSpace,
+        error_code: u16,
+        message: String,
+    },
+}
+```
+
+#### Variants
+
+**Success:**
+- `address` - Address that was read
+- `space` - Address space that was accessed
+- `data` - Payload data received (0-58 bytes per datagram)
+
+**Failed:**
+- `address` - Address where the error occurred
+- `space` - Address space that was accessed
+- `error_code` - OpenLCB standard error code
+- `message` - Optional error message from the node
+
+### Complete CDI Retrieval Example
+
+```rust
+use lcc_rs::{LccConnection, protocol::memory_config::{MemoryConfigCmd, AddressSpace, ReadReply}};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut connection = LccConnection::connect("localhost", 12021).await?;
+    
+    // Discover and get a node alias
+    let nodes = connection.discover_nodes(250).await?;
+    let target_alias = nodes[0].alias.value();
+    let source_alias = connection.our_alias()?;
+    
+    let mut cdi_data = Vec::new();
+    let mut address = 0u32;
+    let chunk_size = 64u8;
+    
+    loop {
+        // Build read command
+        let frames = MemoryConfigCmd::build_read(
+            source_alias,
+            target_alias,
+            AddressSpace::Cdi,
+            address,
+            chunk_size
+        )?;
+        
+        // Send frames
+        for frame in frames {
+            connection.send_frame(&frame).await?;
+        }
+        
+        // Wait for datagram response (simplified - actual code needs datagram assembly)
+        let datagram_payload = connection.receive_datagram(target_alias).await?;
+        
+        // Parse reply
+        let reply = MemoryConfigCmd::parse_read_reply(&datagram_payload)?;
+        
+        match reply {
+            ReadReply::Success { data, .. } => {
+                if data.is_empty() {
+                    break; // End of CDI
+                }
+                cdi_data.extend_from_slice(&data);
+                address += data.len() as u32;
+            }
+            ReadReply::Failed { error_code, message, .. } => {
+                eprintln!("CDI read failed: {} (code: 0x{:04X})", message, error_code);
+                break;
+            }
+        }
+    }
+    
+    // CDI is typically XML
+    let cdi_xml = String::from_utf8_lossy(&cdi_data);
+    println!("Retrieved CDI ({} bytes):\n{}", cdi_data.len(), cdi_xml);
+    
+    Ok(())
+}
+```
 
 ---
 

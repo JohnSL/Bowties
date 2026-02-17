@@ -25,4 +25,5 @@ serde_json = "1"
 lcc-rs = { path = "../../lcc-rs" }
 tokio = { version = "1.41", features = ["full"] }
 chrono = "0.4"
+thiserror = "1.0"
 

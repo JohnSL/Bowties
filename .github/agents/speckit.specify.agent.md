@@ -50,9 +50,15 @@ Given that feature description, do this:
       - Specs directories: Check for directories matching `specs/[0-9]+-<short-name>`
 
    c. Determine the next available number:
-      - Extract all numbers from all three sources
-      - Find the highest number N
-      - Use N+1 for the new branch number
+      - Extract all numbers from all three sources (remote branches, local branches, specs directories with matching short-name)
+      - Find the highest number N from these sources
+      - **FALLBACK**: If no branches or directories found with this short-name:
+        1. Check for ANY existing feature folders in `specs/` directory (pattern: `specs/[0-9]+-*`)
+        2. Extract all feature numbers from these directories
+        3. Find the global highest number M
+        4. Use M+1 for the new feature number
+      - If no existing features found at all, start with 001
+      - Use N+1 (or M+1 if using fallback) for the new branch number
 
    d. Run the script `.specify/scripts/powershell/create-new-feature.ps1 -Json "$ARGUMENTS"` with the calculated number and short-name:
       - Pass `--number N+1` and `--short-name "your-short-name"` along with the feature description
@@ -60,9 +66,10 @@ Given that feature description, do this:
       - PowerShell example: `.specify/scripts/powershell/create-new-feature.ps1 -Json "$ARGUMENTS" -Json -Number 5 -ShortName "user-auth" "Add user authentication"`
 
    **IMPORTANT**:
-   - Check all three sources (remote branches, local branches, specs directories) to find the highest number
-   - Only match branches/directories with the exact short-name pattern
-   - If no existing branches/directories found with this short-name, start with number 1
+   - First check all three sources (remote branches, local branches, specs directories) for the exact short-name pattern
+   - If no matches found with the short-name (common when using squash-merge workflow), check ALL specs directories to find the global highest number
+   - This ensures sequential numbering even when feature branches are deleted after merge-squash
+   - Only default to 001 if no features exist at all in the specs/ directory
    - You must only ever run this script once per feature
    - The JSON is provided in the terminal as output - always refer to it to get the actual content you're looking for
    - The JSON output will contain BRANCH_NAME and SPEC_FILE paths

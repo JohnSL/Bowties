@@ -125,6 +125,7 @@ impl LccConnection {
                                     connection_status: crate::types::ConnectionStatus::Connected,
                                     last_verified: None,
                                     last_seen: chrono::Utc::now(),
+                                    cdi: None,
                                 },
                             );
                         }
@@ -220,6 +221,126 @@ impl LccConnection {
     /// Close the connection
     pub async fn close(mut self) -> Result<()> {
         self.transport.close().await
+    }
+
+    /// Read CDI (Configuration Description Information) from a node
+    ///
+    /// Reads the CDI XML document from address space 0xFF using the Memory Configuration Protocol.
+    /// CDI is read in 64-byte chunks until a null terminator (0x00) is found.
+    ///
+    /// # Arguments
+    /// * `dest_alias` - Target node's alias
+    /// * `timeout_ms` - Maximum time to wait for each response (recommended: 1000ms)
+    ///
+    /// # Returns
+    /// * `Ok(String)` - Complete CDI XML document
+    /// * `Err(_)` - Protocol error or timeout
+    pub async fn read_cdi(&mut self, dest_alias: u16, timeout_ms: u64) -> Result<String> {
+        use crate::protocol::{MemoryConfigCmd, AddressSpace, DatagramAssembler};
+
+        println!("[LCC] read_cdi starting for alias 0x{:03X}", dest_alias);
+        
+        let mut assembler = DatagramAssembler::new();
+        let mut cdi_data = Vec::new();
+        let mut address = 0u32;
+        const CHUNK_SIZE: u8 = 64;
+
+        loop {
+            println!("[LCC] Reading CDI chunk at address {} (chunk size {})", address, CHUNK_SIZE);
+            
+            // Send read command for next chunk (may be multi-frame)
+            let read_frames = MemoryConfigCmd::build_read(
+                self.our_alias.value(),
+                dest_alias,
+                AddressSpace::Cdi,
+                address,
+                CHUNK_SIZE,
+            )?;
+
+            // Send all frames in sequence
+            println!("[LCC] Sending {} frame(s) for read command", read_frames.len());
+            for (i, frame) in read_frames.iter().enumerate() {
+                println!("[LCC] Sending frame {}/{}: {}", i + 1, read_frames.len(), frame.to_string());
+                self.transport.send(&frame).await?;
+            }
+
+            // Wait for response (may be multi-frame datagram)
+            let start_time = Instant::now();
+            let max_duration = Duration::from_millis(timeout_ms);
+            let mut reply_payload: Option<Vec<u8>> = None;
+
+            while reply_payload.is_none() {
+                if start_time.elapsed() >= max_duration {
+                    return Err(crate::Error::Timeout(format!(
+                        "Timeout waiting for CDI read reply at address {}",
+                        address
+                    )));
+                }
+
+                let remaining = max_duration.saturating_sub(start_time.elapsed());
+                if let Some(frame) = self.transport.receive(remaining.as_millis() as u64).await? {
+                    // Check if this is a datagram frame from our target
+                    // Note: Datagram frames have different header encoding than standard messages
+                    // and must be parsed with from_datagram_header() to extract MTI correctly
+                    if let Ok((mti, source, dest)) = crate::protocol::MTI::from_datagram_header(frame.header) {
+                        if source == dest_alias && dest == self.our_alias.value() && 
+                           matches!(mti, crate::protocol::MTI::DatagramOnly | crate::protocol::MTI::DatagramFirst | crate::protocol::MTI::DatagramMiddle | crate::protocol::MTI::DatagramFinal) {
+                            // Handle datagram assembly
+                            if let Some(complete_payload) = assembler.handle_frame(&frame)? {
+                                // Send acknowledgment immediately
+                                let ack_frame = DatagramAssembler::send_acknowledgment(
+                                    self.our_alias.value(),
+                                    dest_alias,
+                                )?;
+                                println!("[LCC] Sending DatagramReceivedOK: {}", ack_frame.to_string());
+                                self.transport.send(&ack_frame).await?;
+                                
+                                reply_payload = Some(complete_payload);
+                            }
+                        }
+                    }
+                } else {
+                    sleep(Duration::from_millis(10)).await;
+                }
+            }
+
+            // Parse read reply
+            let reply_data = reply_payload.unwrap();
+            let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
+
+            match reply {
+                crate::protocol::ReadReply::Success { data, .. } => {
+                    // Check for null terminator
+                    if let Some(null_pos) = data.iter().position(|&b| b == 0x00) {
+                        // Found null terminator - append up to it and we're done
+                        cdi_data.extend_from_slice(&data[..null_pos]);
+                        break;
+                    } else {
+                        // No null terminator yet - append all data and continue
+                        address += data.len() as u32;
+                        cdi_data.extend_from_slice(&data);
+                    }
+                }
+                crate::protocol::ReadReply::Failed { error_code, message, .. } => {
+                    return Err(crate::Error::Protocol(format!(
+                        "CDI read failed at address {}: error 0x{:04X} - {}",
+                        address, error_code, message
+                    )));
+                }
+            }
+
+            // Safety limit: max 10MB CDI
+            if cdi_data.len() > 10 * 1024 * 1024 {
+                return Err(crate::Error::Protocol(
+                    "CDI exceeds 10MB size limit".to_string()
+                ));
+            }
+        }
+
+        // Convert to UTF-8 string
+        String::from_utf8(cdi_data).map_err(|e| {
+            crate::Error::Protocol(format!("CDI is not valid UTF-8: {}", e))
+        })
     }
 }
 

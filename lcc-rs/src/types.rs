@@ -193,6 +193,15 @@ pub enum ConnectionStatus {
     NotResponding,
 }
 
+/// Configuration Description Information (CDI) data for a node
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CdiData {
+    /// Raw CDI XML content
+    pub xml_content: String,
+    /// Timestamp when CDI was retrieved
+    pub retrieved_at: DateTime<Utc>,
+}
+
 /// A discovered node on the LCC network
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveredNode {
@@ -203,6 +212,8 @@ pub struct DiscoveredNode {
     pub connection_status: ConnectionStatus,
     pub last_verified: Option<DateTime<Utc>>,
     pub last_seen: DateTime<Utc>,
+    /// Configuration Description Information (CDI) XML data
+    pub cdi: Option<CdiData>,
 }
 
 #[cfg(test)]

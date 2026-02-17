@@ -35,8 +35,8 @@ pub mod discovery;
 pub mod snip;
 
 // Re-export commonly used types
-pub use types::{NodeID, EventID, NodeAlias, DiscoveredNode, SNIPData, SNIPStatus, ConnectionStatus};
-pub use protocol::{GridConnectFrame, MTI, DatagramAssembler, DatagramState};
+pub use types::{NodeID, EventID, NodeAlias, DiscoveredNode, SNIPData, SNIPStatus, ConnectionStatus, CdiData};
+pub use protocol::{GridConnectFrame, MTI, DatagramAssembler, DatagramState, MemoryConfigCmd, AddressSpace, ReadReply};
 pub use transport::LccTransport;
 pub use discovery::LccConnection;
 pub use snip::{query_snip, parse_snip_payload};
@@ -56,8 +56,8 @@ pub enum Error {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     
-    #[error("Timeout")]
-    Timeout,
+    #[error("Timeout: {0}")]
+    Timeout(String),
     
     #[error("Connection closed")]
     ConnectionClosed,

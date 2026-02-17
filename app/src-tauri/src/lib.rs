@@ -78,6 +78,8 @@ pub fn run() {
             commands::query_snip_batch,
             commands::verify_node_status,
             commands::refresh_all_nodes,
+            commands::get_cdi_xml,
+            commands::download_cdi,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

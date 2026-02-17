@@ -1,6 +1,10 @@
 <script lang="ts">
   import type { DiscoveredNode } from '$lib/api/tauri';
   import NodeStatus from './NodeStatus.svelte';
+  import CdiXmlViewer from './CdiXmlViewer.svelte';
+  import { getCdiXml, downloadCdi } from '$lib/api/cdi';
+  import { getCdiErrorMessage, isCdiError } from '$lib/types/cdi';
+  import type { ViewerStatus } from '$lib/types/cdi';
 
   interface Props {
     nodes: DiscoveredNode[];
@@ -8,6 +12,164 @@
   }
 
   let { nodes, isRefreshing = false }: Props = $props();
+
+  // Context menu state
+  let contextMenuVisible = $state(false);
+  let contextMenuX = $state(0);
+  let contextMenuY = $state(0);
+  let selectedNode = $state<DiscoveredNode | null>(null);
+
+  // CDI viewer state
+  let viewerVisible = $state(false);
+  let viewerNodeId = $state<string | null>(null);
+  let viewerXmlContent = $state<string | null>(null);
+  let viewerStatus = $state<ViewerStatus>('idle');
+  let viewerErrorMessage = $state<string | null>(null);
+
+  /**
+   * Handle context menu on node row
+   */
+  function handleContextMenu(event: MouseEvent, node: DiscoveredNode) {
+    event.preventDefault();
+    
+    selectedNode = node;
+    contextMenuX = event.clientX;
+    contextMenuY = event.clientY;
+    contextMenuVisible = true;
+  }
+
+  /**
+   * Close context menu
+   */
+  function closeContextMenu() {
+    contextMenuVisible = false;
+    selectedNode = null;
+  }
+
+  /**
+   * Handle click outside context menu
+   */
+  function handleClickOutside(event: MouseEvent) {
+    if (contextMenuVisible) {
+      closeContextMenu();
+    }
+  }
+
+  /**
+   * Download CDI from node (force network retrieval)
+   */
+  async function downloadCdiFromNode() {
+    if (!selectedNode) return;
+
+    // Save the selected node before closing context menu (which clears it)
+    const nodeToView = selectedNode;
+    closeContextMenu();
+    
+    const nodeIdStr = formatNodeId(nodeToView.node_id);
+    
+    // Reset viewer state and show loading
+    viewerVisible = true;
+    viewerNodeId = nodeIdStr;
+    viewerXmlContent = null;
+    viewerStatus = 'loading';
+    viewerErrorMessage = 'Downloading CDI from node...';
+
+    try {
+      console.log('[CDI] Force downloading from node:', nodeIdStr);
+      const response = await downloadCdi(nodeIdStr);
+      console.log('[CDI] Download complete');
+      
+      if (response.xmlContent) {
+        viewerXmlContent = response.xmlContent;
+        viewerStatus = 'success';
+        viewerErrorMessage = null;
+        console.log('[CDI] Display successful, size:', response.sizeBytes, 'bytes');
+      } else {
+        viewerStatus = 'error';
+        viewerErrorMessage = 'No CDI data available for this node.';
+        console.warn('[CDI] No XML content in response');
+      }
+    } catch (error) {
+      console.error('[CDI] Download failed:', error);
+      viewerStatus = 'error';
+      viewerErrorMessage = getCdiErrorMessage(error);
+    }
+  }
+
+  /**
+   * Open CDI XML viewer for selected node
+   */
+  async function viewCdiXml() {
+    if (!selectedNode) return;
+
+    // Save the selected node before closing context menu (which clears it)
+    const nodeToView = selectedNode;
+    closeContextMenu();
+    
+    const nodeIdStr = formatNodeId(nodeToView.node_id);
+    
+    // Reset viewer state
+    viewerVisible = true;
+    viewerNodeId = nodeIdStr;
+    viewerXmlContent = null;
+    viewerStatus = 'loading';
+    viewerErrorMessage = 'Checking cache...';
+
+    try {
+      // Try to get from cache first
+      let response;
+      try {
+        console.log('[CDI] Checking cache for node:', nodeIdStr);
+        response = await getCdiXml(nodeIdStr);
+        console.log('[CDI] Found in cache');
+      } catch (cacheError: any) {
+        console.log('[CDI] Cache error:', cacheError);
+        
+        // If CDI not cached, download it from network
+        if (isCdiError(cacheError, 'CdiNotRetrieved')) {
+          console.log('[CDI] Not in cache, downloading from node...');
+          viewerErrorMessage = 'Downloading CDI from node...';
+          
+          // Force UI update before starting download
+          await new Promise(resolve => setTimeout(resolve, 0));
+          
+          // Download from network
+          response = await downloadCdi(nodeIdStr);
+          console.log('[CDI] Download complete');
+        } else {
+          // Some other error, re-throw it
+          console.error('[CDI] Unexpected error:', cacheError);
+          throw cacheError;
+        }
+      }
+      
+      if (response.xmlContent) {
+        viewerXmlContent = response.xmlContent;
+        viewerStatus = 'success';
+        viewerErrorMessage = null;
+        console.log('[CDI] Display successful, size:', response.sizeBytes, 'bytes');
+      } else {
+        viewerStatus = 'error';
+        viewerErrorMessage = 'No CDI data available for this node.';
+        console.warn('[CDI] No XML content in response');
+      }
+    } catch (error) {
+      console.error('[CDI] Failed:', error);
+      viewerStatus = 'error';
+      viewerErrorMessage = getCdiErrorMessage(error);
+    }
+  }
+
+  /**
+   * Close CDI XML viewer
+   */
+  function closeCdiViewer() {
+    viewerVisible = false;
+    viewerNodeId = null;
+    viewerXmlContent = null;
+    viewerStatus = 'idle';
+    viewerErrorMessage = null;
+  }
 
   /**
    * Format Node ID as hex string with dots
@@ -163,6 +325,8 @@
   }
 </script>
 
+<svelte:window on:click={handleClickOutside} />
+
 <div class="node-list">
   <!-- Refreshing Overlay -->
   {#if isRefreshing}
@@ -198,6 +362,7 @@
               class="node-row"
               title={getTooltip(node)}
               role="row"
+              oncontextmenu={(e) => handleContextMenu(e, node)}
             >
               <td class="status-cell">
                 <NodeStatus 
@@ -230,6 +395,40 @@
     </div>
   {/if}
 </div>
+
+<!-- Context Menu -->
+{#if contextMenuVisible && selectedNode}
+  <div 
+    class="context-menu" 
+    style="left: {contextMenuX}px; top: {contextMenuY}px;"
+    role="menu"
+  >
+    <button 
+      class="menu-item" 
+      onclick={viewCdiXml}
+      role="menuitem"
+    >
+      📄 View CDI XML
+    </button>
+    <button 
+      class="menu-item" 
+      onclick={downloadCdiFromNode}
+      role="menuitem"
+    >
+      🔄 Download CDI from Node
+    </button>
+  </div>
+{/if}
+
+<!-- CDI XML Viewer Modal -->
+<CdiXmlViewer
+  visible={viewerVisible}
+  nodeId={viewerNodeId}
+  xmlContent={viewerXmlContent}
+  status={viewerStatus}
+  errorMessage={viewerErrorMessage}
+  onClose={closeCdiViewer}
+/>
 
 <style>
   .node-list {
@@ -424,5 +623,67 @@
 
   :global(.dark) .refreshing-text {
     color: #38bdf8;
+  }
+
+  /* Context Menu Styles */
+  .context-menu {
+    position: fixed;
+    background-color: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1), 0 2px 4px rgba(0, 0, 0, 0.06);
+    padding: 0.25rem 0;
+    min-width: 160px;
+    z-index: 1000;
+    animation: contextMenuFadeIn 0.1s ease-out;
+  }
+
+  :global(.dark) .context-menu {
+    background-color: #1f2937;
+    border-color: #374151;
+  }
+
+  @keyframes contextMenuFadeIn {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  .menu-item {
+    width: 100%;
+    padding: 0.5rem 1rem;
+    text-align: left;
+    background: none;
+    border: none;
+    font-size: 0.875rem;
+    color: #374151;
+    cursor: pointer;
+    transition: background-color 0.1s ease;
+  }
+
+  :global(.dark) .menu-item {
+    color: #d1d5db;
+  }
+
+  .menu-item:hover {
+    background-color: #f3f4f6;
+  }
+
+  :global(.dark) .menu-item:hover {
+    background-color: #374151;
+  }
+
+  .menu-item:focus {
+    outline: none;
+    background-color: #f3f4f6;
+  }
+
+  :global(.dark) .menu-item:focus {
+    background-color: #374151;
   }
 </style>

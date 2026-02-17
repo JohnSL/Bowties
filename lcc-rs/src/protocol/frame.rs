@@ -190,6 +190,104 @@ impl GridConnectFrame {
         
         Ok((dest_alias, payload))
     }
+
+    /// Create datagram frames (single or multi-frame)
+    ///
+    /// Automatically splits payload across multiple frames if needed.
+    /// - Payloads up to 8 bytes: Single DatagramOnly frame
+    /// - Larger payloads: DatagramFirst + DatagramMiddle* + DatagramFinal
+    ///
+    /// Note: For datagram frames, the destination is encoded ONLY in the header,
+    /// NOT in the data bytes. This differs from addressed messages.
+    ///
+    /// # Arguments
+    /// * `source_alias` - Source node alias
+    /// * `dest_alias` - Destination node alias
+    /// * `payload` - Datagram payload (max 72 bytes per OpenLCB spec)
+    ///
+    /// # Returns
+    /// Vector of frames to send in sequence
+    pub fn create_datagram_frames(
+        source_alias: u16,
+        dest_alias: u16,
+        payload: Vec<u8>,
+    ) -> Result<Vec<Self>> {
+        const MAX_DATAGRAM_SIZE: usize = 72;
+        const BYTES_PER_FRAME: usize = 8; // CAN frame data field max
+
+        if payload.is_empty() {
+            return Err(Error::InvalidFrame("Datagram payload cannot be empty".to_string()));
+        }
+
+        if payload.len() > MAX_DATAGRAM_SIZE {
+            return Err(Error::InvalidFrame(format!(
+                "Datagram payload too large: {} bytes (max {})",
+                payload.len(),
+                MAX_DATAGRAM_SIZE
+            )));
+        }
+
+        // Single frame case (payload fits in 8 bytes)
+        if payload.len() <= BYTES_PER_FRAME {
+            let header = MTI::DatagramOnly.to_header_with_dest(source_alias, dest_alias)?;
+            let frame = Self::new(header, payload)?;
+            return Ok(vec![frame]);
+        }
+
+        // Multi-frame case
+        let mut frames = Vec::new();
+        let mut offset = 0;
+
+        while offset < payload.len() {
+            let remaining = payload.len() - offset;
+            let chunk_size = remaining.min(BYTES_PER_FRAME);
+            let chunk = payload[offset..offset + chunk_size].to_vec();
+
+            let mti = if offset == 0 {
+                MTI::DatagramFirst
+            } else if offset + chunk_size >= payload.len() {
+                MTI::DatagramFinal
+            } else {
+                MTI::DatagramMiddle
+            };
+
+            // Create header with destination encoded
+            let header = mti.to_header_with_dest(source_alias, dest_alias)?;
+            
+            // Data is ONLY the payload chunk - destination is NOT in data for datagrams
+            let frame = Self::new(header, chunk)?;
+            frames.push(frame);
+            offset += chunk_size;
+        }
+
+        Ok(frames)
+    }
+
+    /// Create a datagram frame (single-frame datagram)
+    ///
+    /// For datagrams up to 8 bytes. Larger datagrams should use create_datagram_frames.
+    ///
+    /// # Arguments
+    /// * `source_alias` - Source node alias
+    /// * `dest_alias` - Destination node alias
+    /// * `payload` - Datagram payload (max 8 bytes)
+    pub fn create_datagram(
+        source_alias: u16,
+        dest_alias: u16,
+        payload: Vec<u8>,
+    ) -> Result<Self> {
+        // Use create_datagram_frames and return the single frame
+        let frames = Self::create_datagram_frames(source_alias, dest_alias, payload)?;
+        
+        if frames.len() != 1 {
+            return Err(Error::InvalidFrame(format!(
+                "Payload requires {} frames, use create_datagram_frames instead",
+                frames.len()
+            )));
+        }
+
+        Ok(frames.into_iter().next().unwrap())
+    }
 }
 
 #[cfg(test)]

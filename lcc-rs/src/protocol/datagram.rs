@@ -127,21 +127,13 @@ impl DatagramAssembler {
         }
     }
 
-    /// Extract payload bytes (bytes 2-7) from a frame
+    /// Extract payload bytes from a datagram frame
     /// 
-    /// CAN frames have 8 bytes of data:
-    /// - Bytes 0-1: Addressing/protocol overhead
-    /// - Bytes 2-7: Actual datagram payload (6 bytes per frame)
+    /// For datagram frames, the destination is encoded ONLY in the header,
+    /// not in the data bytes. So we return all data bytes as-is.
     fn get_payload(data: &[u8]) -> Result<Vec<u8>> {
-        if data.len() < 2 {
-            return Err(Error::Protocol(format!(
-                "Frame data too short: {} bytes",
-                data.len()
-            )));
-        }
-        
-        // Extract bytes 2 through end (up to byte 7)
-        Ok(data[2..].to_vec())
+        // Datagram data is pure payload - no destination encoding
+        Ok(data.to_vec())
     }
 
     /// Send acknowledgment for a received datagram
@@ -202,12 +194,12 @@ mod tests {
     fn test_single_frame_datagram() {
         let mut assembler = DatagramAssembler::new();
         
-        // Create a DatagramOnly frame with payload in bytes 2-7
+        // Create a DatagramOnly frame - data contains only the payload
         let frame = create_datagram_frame(
             MTI::DatagramOnly,
             0x123,
             0x456,
-            vec![0x00, 0x00, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46], // "ABCDEF" in bytes 2-7
+            vec![0x41, 0x42, 0x43, 0x44, 0x45, 0x46], // "ABCDEF" payload
         );
         
         let result = assembler.handle_frame(&frame).unwrap();
@@ -218,35 +210,37 @@ mod tests {
     fn test_multi_frame_datagram() {
         let mut assembler = DatagramAssembler::new();
         
-        // First frame
+        // First frame - 8 bytes of payload
         let frame1 = create_datagram_frame(
             MTI::DatagramFirst,
             0x123,
             0x456,
-            vec![0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
+            vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
         );
         assert_eq!(assembler.handle_frame(&frame1).unwrap(), None);
         
-        // Middle frame
+        // Middle frame - 8 bytes of payload
         let frame2 = create_datagram_frame(
             MTI::DatagramMiddle,
             0x123,
             0x456,
-            vec![0x00, 0x00, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C],
+            vec![0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10],
         );
         assert_eq!(assembler.handle_frame(&frame2).unwrap(), None);
         
-        // Final frame
+        // Final frame - 4 bytes of payload  
         let frame3 = create_datagram_frame(
             MTI::DatagramFinal,
             0x123,
             0x456,
-            vec![0x00, 0x00, 0x0D, 0x0E, 0x0F, 0x10],
+            vec![0x11, 0x12, 0x13, 0x14],
         );
         let result = assembler.handle_frame(&frame3).unwrap();
         assert_eq!(
             result,
-            Some(vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10])
+            Some(vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 
+                      0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+                      0x11, 0x12, 0x13, 0x14])
         );
     }
 
@@ -259,7 +253,7 @@ mod tests {
             MTI::DatagramFirst,
             0x111,
             0x456,
-            vec![0x00, 0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            vec![0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x01],
         );
         assert_eq!(assembler.handle_frame(&frame1a).unwrap(), None);
         
@@ -268,7 +262,7 @@ mod tests {
             MTI::DatagramFirst,
             0x222,
             0x456,
-            vec![0x00, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88],
         );
         assert_eq!(assembler.handle_frame(&frame2a).unwrap(), None);
         
@@ -277,20 +271,20 @@ mod tests {
             MTI::DatagramFinal,
             0x111,
             0x456,
-            vec![0x00, 0x00, 0x00, 0x01],
+            vec![0x02, 0x03],
         );
         let result1 = assembler.handle_frame(&frame1b).unwrap();
-        assert_eq!(result1, Some(vec![0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x01]));
+        assert_eq!(result1, Some(vec![0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x01, 0x02, 0x03]));
         
         // Complete second datagram
         let frame2b = create_datagram_frame(
             MTI::DatagramFinal,
             0x222,
             0x456,
-            vec![0x00, 0x00, 0x77, 0x88],
+            vec![0x99, 0xAA],
         );
         let result2 = assembler.handle_frame(&frame2b).unwrap();
-        assert_eq!(result2, Some(vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]));
+        assert_eq!(result2, Some(vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA]));
     }
 
     #[test]
