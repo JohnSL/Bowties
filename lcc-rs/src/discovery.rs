@@ -121,6 +121,10 @@ impl LccConnection {
                                     node_id,
                                     alias: node_alias,
                                     snip_data: None,
+                                    snip_status: crate::types::SNIPStatus::Unknown,
+                                    connection_status: crate::types::ConnectionStatus::Connected,
+                                    last_verified: None,
+                                    last_seen: chrono::Utc::now(),
                                 },
                             );
                         }
@@ -135,6 +139,82 @@ impl LccConnection {
         }
         
         Ok(nodes.into_values().collect())
+    }
+    
+    /// Query SNIP data for a specific node
+    /// 
+    /// # Arguments
+    /// * `dest_alias` - Target node's alias
+    /// * `semaphore` - Optional semaphore for concurrency limiting
+    /// 
+    /// # Returns
+    /// * `Ok((SNIPData, SNIPStatus))` - Retrieved SNIP data and status
+    pub async fn query_snip(
+        &mut self,
+        dest_alias: u16,
+        semaphore: Option<std::sync::Arc<tokio::sync::Semaphore>>,
+    ) -> Result<(Option<crate::types::SNIPData>, crate::types::SNIPStatus)> {
+        let sem = semaphore.unwrap_or_else(|| std::sync::Arc::new(tokio::sync::Semaphore::new(5)));
+        crate::snip::query_snip(
+            self.transport.as_mut(),
+            self.our_alias.value(),
+            dest_alias,
+            sem,
+        ).await
+    }
+    
+    /// Verify a specific node's presence on the network
+    /// 
+    /// Sends an addressed Verify Node ID message to a specific node and waits for its response.
+    /// 
+    /// # Arguments
+    /// * `dest_alias` - Target node's alias
+    /// * `timeout_ms` - Maximum time to wait for response (recommended: 500ms)
+    /// 
+    /// # Returns
+    /// * `Ok(Some(NodeID))` - Node responded with its Node ID
+    /// * `Ok(None)` - Node did not respond within timeout
+    pub async fn verify_node(&mut self, dest_alias: u16, timeout_ms: u64) -> Result<Option<NodeID>> {
+        // Send addressed Verify Node ID message
+        let verify_frame = GridConnectFrame::from_addressed_mti(
+            MTI::VerifyNodeAddressed,
+            self.our_alias.value(),
+            dest_alias,
+            vec![],
+        )?;
+        
+        self.transport.send(&verify_frame).await?;
+        
+        // Wait for response
+        let start_time = Instant::now();
+        let max_duration = Duration::from_millis(timeout_ms);
+        
+        loop {
+            // Check if we've exceeded timeout
+            if start_time.elapsed() >= max_duration {
+                return Ok(None); // Node did not respond
+            }
+            
+            // Try to receive a frame
+            let remaining_time = max_duration.saturating_sub(start_time.elapsed());
+            
+            match self.transport.receive(remaining_time.as_millis() as u64).await? {
+                Some(frame) => {
+                    // Check if this is a Verified Node response from our target
+                    if let Ok((mti, alias)) = frame.get_mti() {
+                        if mti == MTI::VerifiedNode && alias == dest_alias && frame.data.len() == 6 {
+                            let node_id = NodeID::from_slice(&frame.data)?;
+                            return Ok(Some(node_id));
+                        }
+                    }
+                    // Continue waiting for the right response
+                }
+                None => {
+                    // No frame received, continue waiting
+                    sleep(Duration::from_millis(1)).await;
+                }
+            }
+        }
     }
     
     /// Close the connection

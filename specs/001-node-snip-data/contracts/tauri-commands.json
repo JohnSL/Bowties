@@ -1,0 +1,615 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Bowties SNIP Feature API Contract",
+  "description": "Tauri command contracts for Enhanced Node Discovery with SNIP Data feature",
+  "version": "1.0.0",
+  "commands": {
+    "discover_nodes": {
+      "description": "Discover all nodes on the LCC network by sending global Verify Node ID and collecting responses",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "timeout_ms": {
+            "type": "integer",
+            "description": "Maximum time to wait for responses in milliseconds",
+            "default": 250,
+            "minimum": 50,
+            "maximum": 5000
+          }
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "description": "List of discovered nodes (without SNIP data yet)",
+            "items": {
+              "$ref": "#/types/DiscoveredNode"
+            }
+          },
+          "count": {
+            "type": "integer",
+            "description": "Number of nodes discovered"
+          }
+        },
+        "required": ["nodes", "count"]
+      },
+      "errors": [
+        {
+          "code": "NOT_CONNECTED",
+          "description": "Not connected to LCC network"
+        },
+        {
+          "code": "NETWORK_ERROR",
+          "description": "Network communication error during discovery"
+        }
+      ],
+      "example": {
+        "request": {
+          "timeout_ms": 250
+        },
+        "response": {
+          "nodes": [
+            {
+              "node_id": {"bytes": [5, 2, 1, 2, 0, 3]},
+              "alias": 942,
+              "snip_status": "Unknown",
+              "connection_status": "Connected",
+              "last_seen": "2026-02-16T14:30:00Z"
+            }
+          ],
+          "count": 1
+        }
+      },
+      "rust_signature": "async fn discover_nodes(state: State<'_, AppState>, timeout_ms: Option<u64>) -> Result<DiscoverNodesResponse, String>"
+    },
+    
+    "query_snip": {
+      "description": "Query SNIP data for a specific node by alias",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "dest_alias": {
+            "type": "integer",
+            "description": "Destination node alias (12-bit value)",
+            "minimum": 1,
+            "maximum": 4095
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "description": "Timeout for SNIP request in milliseconds",
+            "default": 5000,
+            "minimum": 1000,
+            "maximum": 10000
+          }
+        },
+        "required": ["dest_alias"]
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "snip_data": {
+            "oneOf": [
+              {"$ref": "#/types/SNIPData"},
+              {"type": "null"}
+            ],
+            "description": "SNIP data if retrieval successful, null otherwise"
+          },
+          "status": {
+            "$ref": "#/types/SNIPStatus",
+            "description": "Status of SNIP retrieval operation"
+          }
+        },
+        "required": ["snip_data", "status"]
+      },
+      "errors": [
+        {
+          "code": "NOT_CONNECTED",
+          "description": "Not connected to LCC network"
+        },
+        {
+          "code": "INVALID_ALIAS",
+          "description": "Alias out of valid range (1-4095)"
+        },
+        {
+          "code": "NETWORK_ERROR",
+          "description": "Network communication error"
+        }
+      ],
+      "example": {
+        "request": {
+          "dest_alias": 942,
+          "timeout_ms": 5000
+        },
+        "response": {
+          "snip_data": {
+            "manufacturer": "RR-CirKits",
+            "model": "Tower-LCC",
+            "hardware_version": "1.0",
+            "software_version": "2.3.1",
+            "user_name": "East Panel Controller",
+            "user_description": "Controls east hallway section"
+          },
+          "status": "Complete"
+        }
+      },
+      "rust_signature": "async fn query_snip(state: State<'_, AppState>, dest_alias: u16, timeout_ms: Option<u64>) -> Result<QuerySnipResponse, String>"
+    },
+    
+    "query_snip_batch": {
+      "description": "Query SNIP data for multiple nodes concurrently (max 5 concurrent)",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "dest_aliases": {
+            "type": "array",
+            "description": "List of destination node aliases",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4095
+            },
+            "minItems": 1,
+            "maxItems": 50
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "description": "Timeout per SNIP request in milliseconds",
+            "default": 5000,
+            "minimum": 1000,
+            "maximum": 10000
+          }
+        },
+        "required": ["dest_aliases"]
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "description": "SNIP query results for each alias (preserves order)",
+            "items": {
+              "type": "object",
+              "properties": {
+                "alias": {
+                  "type": "integer",
+                  "description": "Node alias that was queried"
+                },
+                "snip_data": {
+                  "oneOf": [
+                    {"$ref": "#/types/SNIPData"},
+                    {"type": "null"}
+                  ]
+                },
+                "status": {
+                  "$ref": "#/types/SNIPStatus"
+                }
+              },
+              "required": ["alias", "snip_data", "status"]
+            }
+          }
+        },
+        "required": ["results"]
+      },
+      "errors": [
+        {
+          "code": "NOT_CONNECTED",
+          "description": "Not connected to LCC network"
+        },
+        {
+          "code": "NETWORK_ERROR",
+          "description": "Network communication error"
+        }
+      ],
+      "example": {
+        "request": {
+          "dest_aliases": [942, 943, 944],
+          "timeout_ms": 5000
+        },
+        "response": {
+          "results": [
+            {
+              "alias": 942,
+              "snip_data": {
+                "manufacturer": "RR-CirKits",
+                "model": "Tower-LCC",
+                "hardware_version": "1.0",
+                "software_version": "2.3.1",
+                "user_name": "East Panel",
+                "user_description": ""
+              },
+              "status": "Complete"
+            },
+            {
+              "alias": 943,
+              "snip_data": null,
+              "status": "Timeout"
+            },
+            {
+              "alias": 944,
+              "snip_data": null,
+              "status": "NotSupported"
+            }
+          ]
+        }
+      },
+      "rust_signature": "async fn query_snip_batch(state: State<'_, AppState>, dest_aliases: Vec<u16>, timeout_ms: Option<u64>) -> Result<QuerySnipBatchResponse, String>"
+    },
+    
+    "refresh_all_nodes": {
+      "description": "Re-discover all nodes and refresh their SNIP data and connection status",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "discovery_timeout_ms": {
+            "type": "integer",
+            "description": "Timeout for node discovery phase",
+            "default": 250,
+            "minimum": 50,
+            "maximum": 5000
+          },
+          "snip_timeout_ms": {
+            "type": "integer",
+            "description": "Timeout per SNIP request",
+            "default": 5000,
+            "minimum": 1000,
+            "maximum": 10000
+          }
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "description": "Complete list of nodes with refreshed data",
+            "items": {
+              "$ref": "#/types/DiscoveredNode"
+            }
+          },
+          "discovered_count": {
+            "type": "integer",
+            "description": "Number of nodes that responded to discovery"
+          },
+          "snip_success_count": {
+            "type": "integer",
+            "description": "Number of nodes with successful SNIP retrieval"
+          }
+        },
+        "required": ["nodes", "discovered_count", "snip_success_count"]
+      },
+      "errors": [
+        {
+          "code": "NOT_CONNECTED",
+          "description": "Not connected to LCC network"
+        },
+        {
+          "code": "NETWORK_ERROR",
+          "description": "Network communication error"
+        }
+      ],
+      "example": {
+        "request": {
+          "discovery_timeout_ms": 250,
+          "snip_timeout_ms": 5000
+        },
+        "response": {
+          "nodes": [
+            {
+              "node_id": {"bytes": [5, 2, 1, 2, 0, 3]},
+              "alias": 942,
+              "snip_data": {
+                "manufacturer": "RR-CirKits",
+                "model": "Tower-LCC",
+                "hardware_version": "1.0",
+                "software_version": "2.3.1",
+                "user_name": "East Panel",
+                "user_description": ""
+              },
+              "snip_status": "Complete",
+              "connection_status": "Connected",
+              "last_verified": "2026-02-16T14:35:00Z",
+              "last_seen": "2026-02-16T14:35:00Z"
+            }
+          ],
+          "discovered_count": 1,
+          "snip_success_count": 1
+        }
+      },
+      "rust_signature": "async fn refresh_all_nodes(state: State<'_, AppState>, discovery_timeout_ms: Option<u64>, snip_timeout_ms: Option<u64>) -> Result<RefreshNodesResponse, String>"
+    },
+    
+    "verify_node_status": {
+      "description": "Verify the connection status of a specific node (sends Verify Node ID addressed message)",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "dest_alias": {
+            "type": "integer",
+            "description": "Destination node alias",
+            "minimum": 1,
+            "maximum": 4095
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "description": "Timeout for verification",
+            "default": 2000,
+            "minimum": 100,
+            "maximum": 5000
+          }
+        },
+        "required": ["dest_alias"]
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "$ref": "#/types/ConnectionStatus",
+            "description": "Updated connection status"
+          },
+          "responded": {
+            "type": "boolean",
+            "description": "Whether node responded to verification"
+          },
+          "response_time_ms": {
+            "type": "integer",
+            "description": "Response time in milliseconds (if responded)",
+            "minimum": 0
+          }
+        },
+        "required": ["status", "responded"]
+      },
+      "errors": [
+        {
+          "code": "NOT_CONNECTED",
+          "description": "Not connected to LCC network"
+        },
+        {
+          "code": "INVALID_ALIAS",
+          "description": "Alias out of valid range"
+        }
+      ],
+      "example": {
+        "request": {
+          "dest_alias": 942,
+          "timeout_ms": 2000
+        },
+        "response": {
+          "status": "Connected",
+          "responded": true,
+          "response_time_ms": 45
+        }
+      },
+      "rust_signature": "async fn verify_node_status(state: State<'_, AppState>, dest_alias: u16, timeout_ms: Option<u64>) -> Result<VerifyNodeResponse, String>"
+    }
+  },
+  
+  "types": {
+    "NodeID": {
+      "type": "object",
+      "description": "48-bit globally unique node identifier",
+      "properties": {
+        "bytes": {
+          "type": "array",
+          "description": "6-byte array representing the Node ID",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "minItems": 6,
+          "maxItems": 6
+        }
+      },
+      "required": ["bytes"],
+      "example": {"bytes": [5, 2, 1, 2, 0, 3]}
+    },
+    
+    "SNIPData": {
+      "type": "object",
+      "description": "Simple Node Identification Protocol data",
+      "properties": {
+        "manufacturer": {
+          "type": "string",
+          "description": "Manufacturer name",
+          "maxLength": 64
+        },
+        "model": {
+          "type": "string",
+          "description": "Model name",
+          "maxLength": 64
+        },
+        "hardware_version": {
+          "type": "string",
+          "description": "Hardware version string",
+          "maxLength": 32
+        },
+        "software_version": {
+          "type": "string",
+          "description": "Software/firmware version",
+          "maxLength": 32
+        },
+        "user_name": {
+          "type": "string",
+          "description": "User-assigned name",
+          "maxLength": 64
+        },
+        "user_description": {
+          "type": "string",
+          "description": "User-assigned description",
+          "maxLength": 128
+        }
+      },
+      "required": ["manufacturer", "model", "hardware_version", "software_version", "user_name", "user_description"],
+      "example": {
+        "manufacturer": "RR-CirKits",
+        "model": "Tower-LCC",
+        "hardware_version": "1.0",
+        "software_version": "2.3.1",
+        "user_name": "East Panel Controller",
+        "user_description": "Controls east hallway section"
+      }
+    },
+    
+    "SNIPStatus": {
+      "type": "string",
+      "description": "Status of SNIP data retrieval",
+      "enum": [
+        "Unknown",
+        "InProgress",
+        "Complete",
+        "Partial",
+        "NotSupported",
+        "Timeout",
+        "Error"
+      ]
+    },
+    
+    "ConnectionStatus": {
+      "type": "string",
+      "description": "Node connection/reachability status",
+      "enum": [
+        "Unknown",
+        "Verifying",
+        "Connected",
+        "NotResponding"
+      ]
+    },
+    
+    "DiscoveredNode": {
+      "type": "object",
+      "description": "Complete node information including SNIP data and status",
+      "properties": {
+        "node_id": {
+          "$ref": "#/types/NodeID",
+          "description": "48-bit globally unique identifier"
+        },
+        "alias": {
+          "type": "integer",
+          "description": "12-bit short alias (1-4095)",
+          "minimum": 1,
+          "maximum": 4095
+        },
+        "snip_data": {
+          "oneOf": [
+            {"$ref": "#/types/SNIPData"},
+            {"type": "null"}
+          ],
+          "description": "SNIP data if available"
+        },
+        "snip_status": {
+          "$ref": "#/types/SNIPStatus",
+          "description": "Status of SNIP retrieval"
+        },
+        "connection_status": {
+          "$ref": "#/types/ConnectionStatus",
+          "description": "Current connection status"
+        },
+        "last_verified": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of last verification (optional)"
+        },
+        "last_seen": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when node last observed"
+        }
+      },
+      "required": ["node_id", "alias", "snip_status", "connection_status", "last_seen"],
+      "example": {
+        "node_id": {"bytes": [5, 2, 1, 2, 0, 3]},
+        "alias": 942,
+        "snip_data": {
+          "manufacturer": "RR-CirKits",
+          "model": "Tower-LCC",
+          "hardware_version": "1.0",
+          "software_version": "2.3.1",
+          "user_name": "East Panel Controller",
+          "user_description": "Controls east hallway section"
+        },
+        "snip_status": "Complete",
+        "connection_status": "Connected",
+        "last_verified": "2026-02-16T14:30:00Z",
+        "last_seen": "2026-02-16T14:30:00Z"
+      }
+    }
+  },
+  
+  "events": {
+    "node_discovered": {
+      "description": "Emitted when a new node is automatically detected on the network",
+      "payload": {
+        "$ref": "#/types/DiscoveredNode"
+      },
+      "example": {
+        "node_id": {"bytes": [5, 2, 1, 2, 0, 5]},
+        "alias": 950,
+        "snip_status": "Unknown",
+        "connection_status": "Unknown",
+        "last_seen": "2026-02-16T14:35:00Z"
+      }
+    },
+    
+    "snip_updated": {
+      "description": "Emitted when SNIP data for a node is retrieved or updated",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "alias": {
+            "type": "integer",
+            "description": "Node alias"
+          },
+          "snip_data": {
+            "oneOf": [
+              {"$ref": "#/types/SNIPData"},
+              {"type": "null"}
+            ]
+          },
+          "status": {
+            "$ref": "#/types/SNIPStatus"
+          }
+        },
+        "required": ["alias", "snip_data", "status"]
+      },
+      "example": {
+        "alias": 942,
+        "snip_data": {
+          "manufacturer": "RR-CirKits",
+          "model": "Tower-LCC",
+          "hardware_version": "1.0",
+          "software_version": "2.3.1",
+          "user_name": "East Panel",
+          "user_description": ""
+        },
+        "status": "Complete"
+      }
+    },
+    
+    "connection_status_changed": {
+      "description": "Emitted when a node's connection status changes",
+      "payload": {
+        "type": "object",
+        "properties": {
+          "alias": {
+            "type": "integer",
+            "description": "Node alias"
+          },
+          "old_status": {
+            "$ref": "#/types/ConnectionStatus"
+          },
+          "new_status": {
+            "$ref": "#/types/ConnectionStatus"
+          }
+        },
+        "required": ["alias", "old_status", "new_status"]
+      },
+      "example": {
+        "alias": 942,
+        "old_status": "Connected",
+        "new_status": "NotResponding"
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+# Universal patterns
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+.vscode/
+.idea/
+*.log
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Build artifacts (covered by subproject .gitignore but listed for clarity)
+/target/
+/build/
+/dist/
+node_modules/
+
+# Specs and documentation (keep versioned, but ignore temp files)
+*.md~
+*.md.bak

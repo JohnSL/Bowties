@@ -1,5 +1,6 @@
 //! Core LCC/OpenLCB types
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -135,12 +136,73 @@ pub struct SNIPData {
     pub user_description: String,
 }
 
+impl SNIPData {
+    /// Sanitize and validate SNIP string fields
+    /// Replaces invalid UTF-8 and control characters with '?'
+    pub fn sanitize(&mut self) {
+        fn clean_string(s: &mut String) {
+            *s = s.chars()
+                .map(|c| {
+                    if c.is_control() && c != '\n' && c != '\r' && c != '\t' {
+                        '?'
+                    } else {
+                        c
+                    }
+                })
+                .collect();
+        }
+
+        clean_string(&mut self.manufacturer);
+        clean_string(&mut self.model);
+        clean_string(&mut self.hardware_version);
+        clean_string(&mut self.software_version);
+        clean_string(&mut self.user_name);
+        clean_string(&mut self.user_description);
+    }
+}
+
+/// Status of SNIP data retrieval operation
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SNIPStatus {
+    /// SNIP status unknown (not yet queried)
+    Unknown,
+    /// SNIP request in progress
+    InProgress,
+    /// SNIP data completely retrieved
+    Complete,
+    /// SNIP data partially retrieved (some fields missing)
+    Partial,
+    /// Node does not support SNIP protocol
+    NotSupported,
+    /// SNIP request timed out
+    Timeout,
+    /// Error occurred during SNIP retrieval
+    Error,
+}
+
+/// Connection status of a node
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConnectionStatus {
+    /// Connection status unknown
+    Unknown,
+    /// Verifying node connection
+    Verifying,
+    /// Node is connected and responding
+    Connected,
+    /// Node is not responding
+    NotResponding,
+}
+
 /// A discovered node on the LCC network
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveredNode {
     pub node_id: NodeID,
     pub alias: NodeAlias,
     pub snip_data: Option<SNIPData>,
+    pub snip_status: SNIPStatus,
+    pub connection_status: ConnectionStatus,
+    pub last_verified: Option<DateTime<Utc>>,
+    pub last_seen: DateTime<Utc>,
 }
 
 #[cfg(test)]

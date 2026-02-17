@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "app",
+        "title": "Bowties::LCC",
         "width": 800,
         "height": 600
       }

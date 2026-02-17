@@ -1216,4 +1216,64 @@ mod tests {
             }
         }
     }
+    
+    // SNIP Response Frame Tests - Real data from LccPro
+    
+    #[test]
+    fn test_snip_response_frame_parsing() {
+        // Real SNIP response from LccPro logs
+        // First frame: 19a08c41 1A AA 04 4F 70 65 6E 4D
+        let frame_str = ":X19a08c41N1AAA044F70656E4D;";
+        let frame = GridConnectFrame::parse(frame_str).unwrap();
+        
+        // Verify header
+        assert_eq!(frame.header, 0x19a08c41);
+        
+        // Verify data bytes (8 bytes total)
+        assert_eq!(frame.data.len(), 8);
+        assert_eq!(frame.data[0], 0x1A); // Datagram frame indicator
+        assert_eq!(frame.data[1], 0xAA); // Part of destination/control
+        assert_eq!(frame.data[2], 0x04); // SNIP version
+        
+        // Verify beginning of SNIP payload ("OpenM" -> 4F 70 65 6E 4D)
+        assert_eq!(&frame.data[3..8], &[0x4F, 0x70, 0x65, 0x6E, 0x4D]);
+        
+        // Verify MTI extraction
+        let (mti, source) = frame.get_mti().unwrap();
+        assert_eq!(mti, MTI::SNIPResponse);
+        assert_eq!(source, 0xC41);
+    }
+    
+    #[test]
+    fn test_datagram_frame_type_indicators() {
+        // Test that datagram first byte patterns can be identified
+        
+        // DatagramOnly/First typically starts with 0x20 (SNIP uses different encoding)
+        // But SNIP specifically uses 0x1A for first frame in multi-frame datagram
+        
+        let test_cases = vec![
+            (0x20, "Typical first/only datagram frame"),
+            (0x1A, "SNIP first frame (seen in LccPro)"),
+            (0x3A, "Typical middle frame"),
+            (0x2A, "Typical final frame"),
+        ];
+        
+        for (byte_value, description) in test_cases {
+            // Just verify we can parse frames with these patterns
+            let data = vec![byte_value, 0xAA, 0x04, 0x00];
+            let frame = GridConnectFrame::new(0x19A08C41, data.clone()).unwrap();
+            assert_eq!(frame.data[0], byte_value, "Failed for: {}", description);
+        }
+    }
+    
+    #[test]
+    fn test_snip_gridconnect_frame_roundtrip() {
+        // Ensure SNIP frames can round-trip through parse/encode
+        let original = ":X19a08c41N1AAA044F70656E4D;";
+        let frame = GridConnectFrame::parse(original).unwrap();
+        let encoded = frame.to_string();
+        
+        // Case might differ (we normalize to uppercase)
+        assert_eq!(encoded.to_uppercase(), original.to_uppercase());
+    }
 }

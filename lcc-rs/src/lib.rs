@@ -32,12 +32,14 @@ pub mod types;
 pub mod protocol;
 pub mod transport;
 pub mod discovery;
+pub mod snip;
 
 // Re-export commonly used types
-pub use types::{NodeID, EventID, NodeAlias, DiscoveredNode, SNIPData};
-pub use protocol::{GridConnectFrame, MTI};
+pub use types::{NodeID, EventID, NodeAlias, DiscoveredNode, SNIPData, SNIPStatus, ConnectionStatus};
+pub use protocol::{GridConnectFrame, MTI, DatagramAssembler, DatagramState};
 pub use transport::LccTransport;
 pub use discovery::LccConnection;
+pub use snip::{query_snip, parse_snip_payload};
 
 /// LCC-RS error type
 #[derive(Debug, thiserror::Error)]
@@ -62,6 +64,9 @@ pub enum Error {
     
     #[error("Parse error: {0}")]
     Parse(String),
+    
+    #[error("Protocol error: {0}")]
+    Protocol(String),
 }
 
 impl From<String> for Error {

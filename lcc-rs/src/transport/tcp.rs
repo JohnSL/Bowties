@@ -9,7 +9,7 @@ use tokio::time::{timeout, Duration};
 
 /// Transport trait for sending and receiving frames
 #[async_trait::async_trait]
-pub trait LccTransport: Send {
+pub trait LccTransport: Send + Sync {
     /// Send a GridConnect frame
     async fn send(&mut self, frame: &GridConnectFrame) -> Result<()>;
     

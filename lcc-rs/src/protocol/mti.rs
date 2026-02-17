@@ -101,6 +101,12 @@ pub enum MTI {
     /// Datagram Rejected
     DatagramRejected,
     
+    /// Simple Node Identification Protocol (SNIP) Request (0x19DE8)
+    SNIPRequest,
+    
+    /// Simple Node Identification Protocol (SNIP) Response (0x19A08)
+    SNIPResponse,
+    
     /// Unknown/Raw MTI value
     Unknown(u32),
 }
@@ -139,6 +145,8 @@ impl MTI {
             MTI::DatagramFinal => 0x1D000,
             MTI::DatagramReceivedOk => 0x19A28,
             MTI::DatagramRejected => 0x19A48,
+            MTI::SNIPRequest => 0x19DE8,
+            MTI::SNIPResponse => 0x19A08,
             MTI::Unknown(v) => *v,
         }
     }
@@ -176,6 +184,8 @@ impl MTI {
             0x1D000 => MTI::DatagramFinal,
             0x19A28 => MTI::DatagramReceivedOk,
             0x19A48 => MTI::DatagramRejected,
+            0x19DE8 => MTI::SNIPRequest,
+            0x19A08 => MTI::SNIPResponse,
             _ => MTI::Unknown(value),
         }
     }
@@ -518,5 +528,75 @@ mod tests {
         
         // AliasMapReset from 0xAAA: :X10703AAAN;
         assert_eq!(MTI::AliasMapReset.to_header(0xAAA).unwrap(), 0x10703AAA);
+    }
+    
+    #[test]
+    fn test_snip_response_header_parsing() {
+        // Real SNIP response from LccPro logs
+        // Frame: :X19a08c41N1AAA044F70656E4D;
+        // Header: 19a08c41 - MTI 0x19A08 (SNIPResponse)
+        // Note: SNIPResponse is a standard addressed MTI, NOT a datagram MTI
+        // It carries datagram payload but uses normal MTI encoding
+        let header: u32 = 0x19a08c41;
+        
+        // Test standard MTI parsing
+        let (mti, source) = MTI::from_header(header).unwrap();
+        assert_eq!(mti, MTI::SNIPResponse);
+        assert_eq!(source, 0xC41);
+        
+        // Verify MTI value matches spec
+        assert_eq!(MTI::SNIPResponse.value(), 0x19A08);
+    }
+    
+    #[test]
+    fn test_snip_request_header() {
+        // SNIP Request MTI value from spec
+        assert_eq!(MTI::SNIPRequest.value(), 0x19DE8);
+        
+        // Create a SNIP request header using standard addressed MTI encoding
+        // Note: SNIP uses addressed messages, not datagram-specific MTI encoding
+        let header = MTI::SNIPRequest.to_header(0xAAA).unwrap();
+        
+        // Parse it back
+        let (mti, source) = MTI::from_header(header).unwrap();
+        assert_eq!(mti, MTI::SNIPRequest);
+        assert_eq!(source, 0xAAA);
+    }
+    
+    #[test]
+    fn test_snip_vs_datagram_mti_encoding() {
+        // This test clarifies the difference between SNIP MTIs and Datagram MTIs
+        
+        // SNIP MTIs are standard addressed MTIs (17-bit MTI in bits 12-28)
+        let snip_response = MTI::SNIPResponse.to_header(0xC41).unwrap();
+        assert_eq!(snip_response, 0x19A08C41);
+        
+        let snip_request = MTI::SNIPRequest.to_header(0xAAA).unwrap();
+        assert_eq!(snip_request, 0x19DE8AAA);
+        
+        // Datagram MTIs use special encoding (5-bit MTI in bits 24-28, dest in bits 12-23)
+        let datagram_only = MTI::DatagramOnly.to_header_with_dest(0xAAA, 0xC41).unwrap();
+        assert_eq!(datagram_only, 0x1AC41AAA);
+        
+        let datagram_first = MTI::DatagramFirst.to_header_with_dest(0xAAA, 0xC41).unwrap();
+        assert_eq!(datagram_first, 0x1BC41AAA);
+    }
+    
+    #[test]
+    fn test_datagram_ack_headers() {
+        // Test Datagram Received OK
+        // Note: Like SNIP MTIs, these are standard addressed MTIs, not datagram MTIs
+        assert_eq!(MTI::DatagramReceivedOk.value(), 0x19A28);
+        let ack_header = MTI::DatagramReceivedOk.to_header(0xAAA).unwrap();
+        let (mti, source) = MTI::from_header(ack_header).unwrap();
+        assert_eq!(mti, MTI::DatagramReceivedOk);
+        assert_eq!(source, 0xAAA);
+        
+        // Test Datagram Rejected
+        assert_eq!(MTI::DatagramRejected.value(), 0x19A48);
+        let nak_header = MTI::DatagramRejected.to_header(0xAAA).unwrap();
+        let (mti, source) = MTI::from_header(nak_header).unwrap();
+        assert_eq!(mti, MTI::DatagramRejected);
+        assert_eq!(source, 0xAAA);
     }
 }

@@ -1,6 +1,9 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from 'svelte';
+  import NodeList from '$lib/components/NodeList.svelte';
+  import { discoverNodes as discoverNodesApi, querySnipBatch, refreshAllNodes } from '$lib/api/tauri';
+  import type { DiscoveredNode } from '$lib/api/tauri';
 
   // Connection state
   let host = $state("localhost");
@@ -10,9 +13,12 @@
   let errorMessage = $state("");
 
   // Discovery state
-  let nodes = $state<any[]>([]);
+  let nodes = $state<DiscoveredNode[]>([]);
   let discovering = $state(false);
   let discoveryTimeout = $state(250);
+  let queryingSnip = $state(false);
+  let refreshing = $state(false);
+  let showAdvanced = $state(false);
 
   // Check connection status on mount
   onMount(async () => {
@@ -53,18 +59,63 @@
     }
   }
 
-  async function discoverNodes() {
+  async function discover() {
     errorMessage = "";
-    discovering = true;
-    nodes = [];
+    
+    // If we already have nodes, refresh them; otherwise discover new ones
+    if (nodes.length > 0) {
+      refreshing = true;
+      try {
+        const updated = await refreshAllNodes();
+        nodes = updated;
+      } catch (e) {
+        console.error("Refresh failed:", e);
+        errorMessage = `Refresh failed: ${e}`;
+      } finally {
+        refreshing = false;
+      }
+    } else {
+      discovering = true;
+      nodes = [];
 
-    try {
-      const discovered = await invoke("discover_nodes", { timeoutMs: discoveryTimeout });
-      nodes = discovered as any[];
-    } catch (e) {
-      errorMessage = `Discovery failed: ${e}`;
-    } finally {
-      discovering = false;
+      try {
+        // Discover nodes
+        const discovered = await discoverNodesApi(discoveryTimeout);
+        nodes = discovered;
+        
+        // Query SNIP data for all discovered nodes
+        if (discovered.length > 0) {
+          queryingSnip = true;
+          const aliases = discovered.map(n => n.alias);
+          
+          try {
+            const results = await querySnipBatch(aliases);
+            
+            // Update each node with its SNIP data
+            nodes = nodes.map(node => {
+              const result = results.find(r => r.alias === node.alias);
+              if (result) {
+                return {
+                  ...node,
+                  snip_data: result.snip_data,
+                  snip_status: result.status
+                };
+              }
+              return node;
+            });
+          } catch (e) {
+            console.error("Failed to query SNIP data:", e);
+            errorMessage = `Failed to retrieve node information: ${e}`;
+          } finally {
+            queryingSnip = false;
+          }
+        }
+      } catch (e) {
+        console.error("Discovery failed:", e);
+        errorMessage = `Discovery failed: ${e}`;
+      } finally {
+        discovering = false;
+      }
     }
   }
 
@@ -75,16 +126,19 @@
   function formatAlias(alias: number): string {
     return '0x' + alias.toString(16).toUpperCase().padStart(3, '0');
   }
+
+  function toggleAdvanced() {
+    showAdvanced = !showAdvanced;
+  }
 </script>
 
 <main>
   <h1>LCC Configuration Tool</h1>
   <p class="subtitle">Visual configuration tool for Layout Command Control (LCC/OpenLCB) networks</p>
 
-  <div class="card">
-    <h2>Connection</h2>
-    
-    {#if !connected}
+  {#if !connected}
+    <div class="card">
+      <h2>Connection</h2>
       <form onsubmit={connect}>
         <label>
           Host: <input type="text" bind:value={host} disabled={connecting} />
@@ -96,49 +150,54 @@
           {connecting ? "Connecting..." : "Connect"}
         </button>
       </form>
-    {:else}
-      <div  class="connection-info">
-        <p class="connected">✓ Connected to {host}:{port}</p>
-        <button onclick={disconnect}>Disconnect</button>
-      </div>
-    {/if}
-
-    {#if errorMessage}
-      <div class="error">{errorMessage}</div>
-    {/if}
-  </div>
+      {#if errorMessage}
+        <div class="error">{errorMessage}</div>
+      {/if}
+    </div>
+  {:else}
+    <div class="status-bar">
+      <span class="connected">✓ Connected to {host}:{port}</span>
+      <button class="disconnect-btn" onclick={disconnect}>Disconnect</button>
+    </div>
+  {/if}
 
   {#if connected}
-    <div class="card">
-      <h2>Node Discovery</h2>
-      
-      <label>
-        Timeout (ms): <input type="number" bind:value={discoveryTimeout} min="50" max="1000" step="50" disabled={discovering} />
-      </label>
-      <button onclick={discoverNodes} disabled={discovering}>
-        {discovering ? "Discovering..." : "Discover Nodes"}
-      </button>
+    <div class="card discovery-card">
+      <div class="discovery-toolbar">
+        <button class="discover-btn" onclick={discover} disabled={discovering || queryingSnip || refreshing}>
+          {discovering ? "Discovering..." : queryingSnip ? "Loading node info..." : refreshing ? "Refreshing..." : nodes.length > 0 ? "Refresh Nodes" : "Discover Nodes"}
+        </button>
+        {#if nodes.length > 0}
+          <span class="node-count">{nodes.length} node{nodes.length === 1 ? '' : 's'} discovered</span>
+        {/if}
+        <button class="advanced-toggle" onclick={toggleAdvanced} title="Advanced options">
+          ⚙️ {showAdvanced ? 'Hide' : ''} Advanced
+        </button>
+      </div>
+
+      {#if showAdvanced}
+        <div class="advanced-options">
+          <label class="timeout-label">
+            Discovery Timeout (ms): 
+            <input class="timeout-input" type="number" bind:value={discoveryTimeout} min="50" max="1000" step="50" disabled={discovering} />
+          </label>
+        </div>
+      {/if}
+
+      {#if errorMessage}
+        <div class="error">{errorMessage}</div>
+      {/if}
 
       {#if nodes.length > 0}
-        <table>
-          <thead>
-            <tr><th>#</th><th>Node ID</th><th>Alias</th></tr>
-          </thead>
-          <tbody>
-            {#each nodes as node, index}
-              <tr>
-                <td>{index + 1}</td>
-                <td class="mono">{formatNodeId(node.node_id)}</td>
-                <td class="mono">{formatAlias(node.alias)}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-        <p class="count">Found {nodes.length} node{nodes.length !== 1 ? 's' : ''}</p>
+        <div class="nodes-container">
+          <NodeList nodes={nodes} isRefreshing={refreshing} />
+        </div>
       {:else if discovering}
         <p class="status">Scanning network for nodes...</p>
+      {:else if queryingSnip}
+        <p class="status">Loading node information...</p>
       {:else}
-        <p class="hint">No nodes discovered yet. Click "Discover Nodes" to scan the network.</p>
+        <p class="hint">Click "Discover Nodes" to scan the network</p>
       {/if}
     </div>
   {/if}
@@ -154,39 +213,44 @@
   }
 
   main {
-    max-width: 800px;
+    max-width: 1200px;
     margin: 0 auto;
-    padding: 2rem;
+    padding: 1.5rem;
     color: #333;
   }
 
   h1 {
     color: white;
     text-align: center;
-    font-size: 2.5rem;
-    margin-bottom: 0.5rem;
+    font-size: 2rem;
+    margin-bottom: 0.25rem;
     text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
   }
 
   .subtitle {
     color: rgba(255, 255, 255, 0.9);
     text-align: center;
-    margin-bottom: 2rem;
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
   }
 
   .card {
     background: white;
-    border-radius: 12px;
-    padding: 2rem;
-    margin-bottom: 1.5rem;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+
+  .discovery-card {
+    padding: 1rem;
   }
 
   h2 {
     margin-top: 0;
     color: #667eea;
-    font-size: 1.5rem;
-    margin-bottom: 1.5rem;
+    font-size: 1.25rem;
+    margin-bottom: 1rem;
   }
 
   form {
@@ -216,10 +280,10 @@
   }
 
   button {
-    padding: 0.75rem 1.5rem;
+    padding: 0.6rem 1.25rem;
     border: none;
     border-radius: 6px;
-    font-size: 1rem;
+    font-size: 0.95rem;
     font-weight: 500;
     cursor: pointer;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -236,10 +300,20 @@
     cursor: not-allowed;
   }
 
-  .connection-info {
+  .status-bar {
+    background: white;
+    border-radius: 6px;
+    padding: 0.75rem 1.25rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     display: flex;
     justify-content: space-between;
     align-items: center;
+  }
+
+  .disconnect-btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.9rem;
   }
 
   .connected {
@@ -257,51 +331,74 @@
     margin-top: 1rem;
   }
 
-  table {
-    width: 100%;
-    margin-top: 1.5rem;
-    border-collapse: collapse;
+  .nodes-container {
+    margin-top: 0.75rem;
   }
 
-  th {
-    text-align: left;
-    padding: 0.75rem;
-    background: #f9fafb;
-    font-weight: 600;
-    border-bottom: 2px solid #e5e7eb;
+  .discovery-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
   }
 
-  td {
-    padding: 0.75rem;
-    border-bottom: 1px solid #e5e7eb;
+  .discover-btn {
+    flex-shrink: 0;
   }
 
-  tbody tr:hover {
-    background: #f9fafb;
-  }
-
-  .mono {
-    font-family: 'Courier New', monospace;
+  .node-count {
     color: #667eea;
+    font-weight: 500;
+    font-size: 0.95rem;
   }
 
-  .count {
-    margin-top: 1rem;
-    text-align: center;
-    font-weight: 500;
+  .advanced-toggle {
+    margin-left: auto;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+    background: #f3f4f6;
+    color: #374151;
+  }
+
+  .advanced-toggle:hover:not(:disabled) {
+    background: #e5e7eb;
+  }
+
+  .advanced-options {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    background: #f9fafb;
+    border-radius: 6px;
+    border: 1px solid #e5e7eb;
+  }
+
+  .timeout-label {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.9rem;
+    color: #374151;
+  }
+
+  .timeout-input {
+    width: 100px;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.9rem;
   }
 
   .status {
     color: #667eea;
     font-style: italic;
     text-align: center;
-    padding: 1rem;
+    padding: 0.75rem;
+    font-size: 0.9rem;
   }
 
   .hint {
     color: #999;
     font-style: italic;
     text-align: center;
-    padding: 1rem;
+    padding: 0.75rem;
+    font-size: 0.9rem;
   }
 </style>
