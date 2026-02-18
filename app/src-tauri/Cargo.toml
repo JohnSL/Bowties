@@ -26,4 +26,6 @@ lcc-rs = { path = "../../lcc-rs" }
 tokio = { version = "1.41", features = ["full"] }
 chrono = "0.4"
 thiserror = "1.0"
+lazy_static = "1.4"
+uuid = { version = "1.10", features = ["v4"] }
 

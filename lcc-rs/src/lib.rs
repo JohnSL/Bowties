@@ -33,6 +33,7 @@ pub mod protocol;
 pub mod transport;
 pub mod discovery;
 pub mod snip;
+pub mod cdi;
 
 // Re-export commonly used types
 pub use types::{NodeID, EventID, NodeAlias, DiscoveredNode, SNIPData, SNIPStatus, ConnectionStatus, CdiData};
@@ -40,6 +41,7 @@ pub use protocol::{GridConnectFrame, MTI, DatagramAssembler, DatagramState, Memo
 pub use transport::LccTransport;
 pub use discovery::LccConnection;
 pub use snip::{query_snip, parse_snip_payload};
+pub use cdi::{Cdi, Segment, DataElement, Group, IntElement, EventIdElement, StringElement, FloatElement, ActionElement, BlobElement};
 
 /// LCC-RS error type
 #[derive(Debug, thiserror::Error)]

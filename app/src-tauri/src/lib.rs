@@ -80,6 +80,11 @@ pub fn run() {
             commands::refresh_all_nodes,
             commands::get_cdi_xml,
             commands::download_cdi,
+            commands::get_discovered_nodes,
+            commands::get_cdi_structure,
+            commands::get_column_items,
+            commands::get_element_details,
+            commands::expand_replicated_group,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -261,7 +261,7 @@ impl LccConnection {
             println!("[LCC] Sending {} frame(s) for read command", read_frames.len());
             for (i, frame) in read_frames.iter().enumerate() {
                 println!("[LCC] Sending frame {}/{}: {}", i + 1, read_frames.len(), frame.to_string());
-                self.transport.send(&frame).await?;
+                self.transport.send(frame).await?;
             }
 
             // Wait for response (may be multi-frame datagram)

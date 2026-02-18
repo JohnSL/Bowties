@@ -1,7 +1,7 @@
 # LCC-RS API Documentation
 
 **Version:** 0.1.0  
-**Last Updated:** February 17, 2026
+**Last Updated:** February 18, 2026
 
 ## Overview
 
@@ -16,6 +16,9 @@
 - ✅ Multi-frame datagram reassembly
 - ✅ SNIP (Simple Node Identification Protocol) support
 - ✅ Memory Configuration Protocol (CDI retrieval and configuration memory)
+- ✅ CDI XML parsing and navigation
+- ✅ CDI hierarchy analysis (depth calculation, replication expansion)
+- ✅ Index-based pathId navigation system
 - ✅ Addressed and global messaging
 - ✅ Concurrency control with semaphores
 
@@ -31,6 +34,10 @@ lcc_rs
 │   ├── mti         - Message Type Identifiers
 │   ├── datagram    - Multi-frame datagram reassembly
 │   └── memory_config - Memory Configuration Protocol
+├── cdi             - CDI parsing and navigation
+│   ├── mod.rs      - Type definitions (Cdi, Segment, Group, DataElement)
+│   ├── parser.rs   - XML parsing (roxmltree-based)
+│   └── hierarchy.rs - Navigation helpers (expand, navigate_to_path)
 ├── transport       - Transport layer implementations
 │   └── tcp         - TCP transport (async)
 ├── discovery       - Node discovery functionality
@@ -1015,6 +1022,254 @@ fn process_datagram(payload: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
 
 ---
 
+## CDI Module (`cdi` module)
+
+**Status:** ✅ Implemented in Feature 003 (Miller Columns)
+
+The CDI module provides comprehensive support for parsing, navigating, and analyzing Configuration Description Information (CDI) XML documents according to the OpenLCB S-9.7.4.1 standard.
+
+### Module Organization
+
+```
+lcc_rs::cdi
+├── mod.rs          - Type definitions (Cdi, Segment, DataElement, Group, etc.)
+├── parser.rs       - XML parsing with roxmltree
+└── hierarchy.rs    - Navigation and hierarchy helpers
+```
+
+###Type Definitions
+
+#### `Cdi`
+
+Root CDI structure representing the complete configuration description.
+
+```rust
+pub struct Cdi {
+    pub identification: Option<Identification>,
+    pub acdi: Option<Acdi>,
+    pub segments: Vec<Segment>,
+}
+```
+
+#### `Segment`
+
+Configuration segment with an address space and data elements.
+
+```rust
+pub struct Segment {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub space: u8,              // Address space (0-255)
+    pub origin: i32,            // Starting address
+    pub elements: Vec<DataElement>,
+}
+```
+
+#### `DataElement`
+
+Enumeration of all possible CDI elements.
+
+```rust
+pub enum DataElement {
+    Group(Group),
+    Int(IntElement),
+    String(StringElement),
+    EventId(EventIdElement),
+    Float(FloatElement),
+    Action(ActionElement),
+    Blob(BlobElement),
+}
+```
+
+#### `Group`
+
+Grouping element that can contain nested elements and support replication.
+
+```rust
+pub struct Group {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub offset: i32,
+    pub replication: usize,     // Number of instances (1 = non-replicated)
+    pub repname: Vec<String>,   // Replication name templates
+    pub elements: Vec<DataElement>,
+    pub hints: Option<Hints>,
+}
+```
+
+**Key Methods:**
+- `should_render() -> bool` - Returns false if group is empty (per S-9.7.4.1 Footnote 4)
+- `expand_replications() -> Vec<ExpandedGroup>` - Generates N instances with computed names
+
+#### `IntElement`, `StringElement`, `EventIdElement`, etc.
+
+Primitive configuration elements with their specific attributes (size, constraints, defaults).
+
+### Parsing Functions
+
+#### `parse_cdi`
+
+Parse CDI XML into structured data model.
+
+```rust
+pub fn parse_cdi(xml: &str) -> Result<Cdi, String>
+```
+
+**Parameters:**
+- `xml`: CDI XML content as string
+
+**Returns:**
+- `Ok(Cdi)`: Parsed CDI structure
+- `Err(String)`: Parse error with context
+
+**Example:**
+```rust
+use lcc_rs::cdi::parse_cdi;
+
+let cdi_xml = r#"<?xml version="1.0"?>
+<cdi>
+  <segment space="253">
+    <name>Configuration</name>
+    <group replication="16">
+      <name>Input</name>
+      <eventid><name>Producer</name></eventid>
+    </group>
+  </segment>
+</cdi>"#;
+
+let cdi = parse_cdi(cdi_xml)?;
+println!("Parsed {} segments", cdi.segments.len());
+```
+
+**Features:**
+- Recursive element parsing (handles unlimited nesting depth)
+- Error recovery (parses valid portions, reports issues)
+- Schema validation (checks required attributes, data types)
+- Replication support (parse replication count and repname templates)
+
+### Navigation Functions
+
+#### `navigate_to_path`
+
+Navigate CDI hierarchy using index-based pathId system.
+
+```rust
+pub fn navigate_to_path<'a>(
+    cdi: &'a Cdi,
+    path: &[String]
+) -> Result<NavigationResult<'a>, String>
+```
+
+**Parameters:**
+- `cdi`: CDI structure to navigate
+- `path`: Array of pathIds (e.g., `["seg:0", "elem:0#12", "elem:2"]`)
+
+**Returns:**
+- `Ok(NavigationResult::Segment(&Segment))` - Found segment
+- `Ok(NavigationResult::Element(&DataElement))` - Found element
+- `Err(String)` - Path not found or invalid
+
+**pathId Format:**
+- Segment: `seg:N` (N = 0-based segment index)
+- Element: `elem:N` (N = 0-based element index)
+- Replicated instance: `elem:N#I` (N = element index, I = 1-based instance number)
+
+**Example:**
+```rust
+use lcc_rs::cdi::{parse_cdi, navigate_to_path, NavigationResult};
+
+let cdi = parse_cdi(cdi_xml)?;
+
+// Navigate to segment 0
+let result = navigate_to_path(&cdi, &["seg:0".to_string()])?;
+match result {
+    NavigationResult::Segment(seg) => {
+        println!("Found segment: {}", seg.name.as_ref().unwrap());
+    }
+    _ => {}
+}
+
+// Navigate to replicated group instance #12
+let path = vec![
+    "seg:0".to_string(),
+    "elem:0#12".to_string(),  // First element, instance #12
+];
+let result = navigate_to_path(&cdi, &path)?;
+```
+
+**Why Index-Based:**
+- Eliminates ambiguity with element names containing '#' (e.g., "Variable #1")
+- O(1) lookup via array indexing
+- Stable references independent of name changes
+
+#### `calculate_max_depth`
+
+Calculate maximum nesting depth in CDI structure.
+
+```rust
+pub fn calculate_max_depth(cdi: &Cdi) -> usize
+```
+
+**Returns:** Maximum depth (1 = segments only, 2+ = nested groups/elements)
+
+**Example:**
+```rust
+use lcc_rs::cdi::{parse_cdi, calculate_max_depth};
+
+let cdi = parse_cdi(cdi_xml)?;
+let depth = calculate_max_depth(&cdi);
+println!("CDI has {} levels of nesting", depth);
+```
+
+### Helper Types
+
+#### `NavigationResult<'a>`
+
+Result of navigation operation.
+
+```rust
+pub enum NavigationResult<'a> {
+    Segment(&'a Segment),
+    Element(&'a DataElement),
+}
+```
+
+#### `ExpandedGroup`
+
+Expanded instance from replicated group.
+
+```rust
+pub struct ExpandedGroup {
+    pub index: usize,       // 0-based instance index
+    pub name: String,       // Computed instance name (e.g., "Logic 12")
+}
+```
+
+### Testing
+
+The CDI module includes comprehensive test coverage:
+
+- **Unit tests:** Parser validation, element extraction, replication expansion
+- **Integration tests:** Real CDI XML samples from Tower-LCC, I/O nodes
+- **Property-based tests:** Path round-trip validation (using proptest)
+- **Edge case tests:** Malformed XML, empty groups, names with special characters
+
+**Test Example:**
+```rust
+#[test]
+fn test_navigate_to_replicated_instance() {
+    let cdi = parse_cdi(test_cdi_xml).unwrap();
+    
+    // Navigate to Logic group instance #12
+    let path = vec!["seg:0".to_string(), "elem:0#12".to_string()];
+    let result = navigate_to_path(&cdi, &path);
+    
+    assert!(result.is_ok());
+}
+```
+
+---
+
 ## Testing Support
 
 ### Mock Transport
@@ -1131,6 +1386,9 @@ GridConnect is the ASCII representation of CAN frames:
 - **serde**: Serialization/deserialization
 - **chrono**: DateTime handling
 - **thiserror**: Error handling
+- **roxmltree**: CDI XML parsing (zero-copy, fast)
+- **lazy_static**: CDI parsing cache
+- **uuid**: Unique identifier generation for UI elements
 
 ---
 
@@ -1139,7 +1397,9 @@ GridConnect is the ASCII representation of CAN frames:
 Potential future additions to the library:
 
 - [ ] Event production and consumption
-- [ ] Memory configuration protocol
+- [x] CDI XML parsing and structured navigation
+- [ ] Configuration value reading from node memory
+- [ ] Configuration value writing to node memory
 - [ ] Firmware upgrade support
 - [ ] CAN transport (in addition to TCP)
 - [ ] USB transport

@@ -1,0 +1,572 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema",
+  "title": "Miller Columns Tauri Commands API",
+  "description": "Tauri command contracts for Miller Columns navigation feature",
+  "version": "1.0.0",
+  "commands": [
+    {
+      "name": "get_cdi_structure",
+      "description": "Parse and return the CDI structure for a node",
+      "route": "get_cdi_structure",
+      "method": "invoke",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "description": "Node ID in dotted hex format (e.g., '01.02.03.04.05.06')",
+            "pattern": "^([0-9A-Fa-f]{2}\\.){5}[0-9A-Fa-f]{2}$",
+            "example": "01.02.03.04.05.06"
+          }
+        },
+        "required": ["node_id"]
+      },
+      "returns": {
+        "type": "object",
+        "description": "Complete CDI structure with parsed segments and elements",
+        "properties": {
+          "nodeId": {
+            "type": "string",
+            "description": "Node ID that was queried"
+          },
+          "nodeName": {
+            "type": "string",
+            "description": "User-assigned node name or SNIP description"
+          },
+          "segments": {
+            "type": "array",
+            "description": "Array of top-level CDI segments",
+            "items": {
+              "$ref": "#/definitions/Segment"
+            }
+          },
+          "maxDepth": {
+            "type": "number",
+            "description": "Maximum nesting depth in this CDI structure"
+          }
+        },
+        "required": ["nodeId", "nodeName", "segments", "maxDepth"]
+      },
+      "errors": [
+        {
+          "code": "CDI_NOT_AVAILABLE",
+          "message": "CDI data not available for this node"
+        },
+        {
+          "code": "PARSE_ERROR",
+          "message": "Failed to parse CDI XML"
+        },
+        {
+          "code": "NODE_NOT_FOUND",
+          "message": "Node not discovered on network"
+        }
+      ]
+    },
+    {
+      "name": "get_column_items",
+      "description": "Get items for a specific column based on parent selection",
+      "route": "get_column_items",
+      "method": "invoke",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "description": "Node ID being navigated"
+          },
+          "parent_path": {
+            "type": "array",
+            "description": "Path of selected items from root to parent (empty for segments)",
+            "items": {
+              "type": "string"
+            },
+            "example": ["seg-conditionals", "grp-logic-1"]
+          },
+          "depth": {
+            "type": "number",
+            "description": "Column depth (1=segments, 2+=groups/elements)",
+            "minimum": 1
+          }
+        },
+        "required": ["node_id", "parent_path", "depth"]
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "depth": {
+            "type": "number",
+            "description": "Requested depth level"
+          },
+          "columnType": {
+            "type": "string",
+            "enum": ["segments", "groups", "elements"],
+            "description": "Type of items in this column"
+          },
+          "items": {
+            "type": "array",
+            "description": "Selectable items for this column",
+            "items": {
+              "$ref": "#/definitions/ColumnItem"
+            }
+          }
+        },
+        "required": ["depth", "columnType", "items"]
+      },
+      "errors": [
+        {
+          "code": "INVALID_PATH",
+          "message": "Parent path does not exist in CDI structure"
+        },
+        {
+          "code": "CDI_NOT_LOADED",
+          "message": "CDI structure not loaded for this node"
+        }
+      ]
+    },
+    {
+      "name": "get_element_details",
+      "description": "Get detailed information for a selected element",
+      "route": "get_element_details",
+      "method": "invoke",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "description": "Node ID being navigated"
+          },
+          "element_path": {
+            "type": "array",
+            "description": "Full path to element from root",
+            "items": {
+              "type": "string"
+            },
+            "example": ["seg-port-io", "grp-line-7", "elem-command"]
+          }
+        },
+        "required": ["node_id", "element_path"]
+      },
+      "returns": {
+        "type": "object",
+        "description": "Detailed element metadata for Details Panel",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Element name (full, not truncated)"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true,
+            "description": "Element description from CDI"
+          },
+          "dataType": {
+            "type": "string",
+            "description": "Human-readable data type (e.g., 'Event ID (8 bytes)')"
+          },
+          "fullPath": {
+            "type": "string",
+            "description": "Breadcrumb path (e.g., 'Tower-LCC › Port I/O › Line 7 › Command')"
+          },
+          "constraints": {
+            "type": "array",
+            "description": "Validation constraints (min/max, map values, length)",
+            "items": {
+              "$ref": "#/definitions/Constraint"
+            }
+          },
+          "defaultValue": {
+            "type": "string",
+            "nullable": true,
+            "description": "Default value from CDI (if specified)"
+          },
+          "memoryAddress": {
+            "type": "number",
+            "description": "Absolute memory address in configuration space"
+          }
+        },
+        "required": ["name", "dataType", "fullPath", "constraints", "memoryAddress"]
+      },
+      "errors": [
+        {
+          "code": "ELEMENT_NOT_FOUND",
+          "message": "Element path does not exist in CDI structure"
+        }
+      ]
+    },
+    {
+      "name": "expand_replicated_group",
+      "description": "Expand a replicated group into individual instances",
+      "route": "expand_replicated_group",
+      "method": "invoke",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "description": "Node ID being navigated"
+          },
+          "group_path": {
+            "type": "array",
+            "description": "Path to replicated group",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["node_id", "group_path"]
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "groupName": {
+            "type": "string",
+            "description": "Base group name"
+          },
+          "replicationCount": {
+            "type": "number",
+            "description": "Number of instances"
+          },
+          "instances": {
+            "type": "array",
+            "description": "Expanded group instances",
+            "items": {
+              "$ref": "#/definitions/GroupInstance"
+            }
+          }
+        },
+        "required": ["groupName", "replicationCount", "instances"]
+      },
+      "errors": [
+        {
+          "code": "NOT_REPLICATED",
+          "message": "Group does not have replication > 1"
+        }
+      ]
+    },
+    {
+      "name": "get_discovered_nodes",
+      "description": "Get list of discovered nodes for Nodes column (leftmost)",
+      "route": "get_discovered_nodes",
+      "method": "invoke",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "description": "Discovered nodes with CDI availability status",
+            "items": {
+              "$ref": "#/definitions/DiscoveredNode"
+            }
+          }
+        },
+        "required": ["nodes"]
+      },
+      "errors": []
+    }
+  ],
+  "definitions": {
+    "Segment": {
+      "type": "object",
+      "description": "CDI segment (top-level organizational unit)",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for this segment"
+        },
+        "name": {
+          "type": "string",
+          "nullable": true,
+          "description": "Segment name (user-visible)"
+        },
+        "description": {
+          "type": "string",
+          "nullable": true,
+          "description": "Segment description"
+        },
+        "space": {
+          "type": "number",
+          "description": "Memory space number (typically 253 for config)"
+        },
+        "hasGroups": {
+          "type": "boolean",
+          "description": "Whether segment contains groups (affects next column type)"
+        },
+        "hasElements": {
+          "type": "boolean",
+          "description": "Whether segment contains direct elements (depth 3)"
+        }
+      },
+      "required": ["id", "name", "space", "hasGroups", "hasElements"]
+    },
+    "ColumnItem": {
+      "type": "object",
+      "description": "Selectable item in a navigation column",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for selection and caching"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name (may be truncated)"
+        },
+        "fullName": {
+          "type": "string",
+          "description": "Full name for tooltips"
+        },
+        "type": {
+          "type": "string",
+          "nullable": true,
+          "description": "Data type (for elements: 'eventid', 'int', 'string', etc.)"
+        },
+        "hasChildren": {
+          "type": "boolean",
+          "description": "Whether selecting this item will populate a new column"
+        },
+        "metadata": {
+          "type": "object",
+          "nullable": true,
+          "description": "Additional information (instance index, replication count, etc.)",
+          "properties": {
+            "instanceIndex": {
+              "type": "number",
+              "description": "Index for replicated group instance (0-based)"
+            },
+            "replicationCount": {
+              "type": "number",
+              "description": "Total number of instances in replicated group"
+            },
+            "isReplicated": {
+              "type": "boolean",
+              "description": "Whether this is an instance of a replicated group"
+            }
+          }
+        }
+      },
+      "required": ["id", "name", "hasChildren"]
+    },
+    "Constraint": {
+      "type": "object",
+      "description": "Validation constraint for configuration element",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["range", "map", "length"],
+          "description": "Constraint type"
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable constraint description"
+        },
+        "value": {
+          "type": "object",
+          "description": "Structured constraint data",
+          "oneOf": [
+            {
+              "properties": {
+                "min": { "type": "number" },
+                "max": { "type": "number" }
+              },
+              "required": ["min", "max"]
+            },
+            {
+              "properties": {
+                "entries": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": { "type": "number" },
+                      "label": { "type": "string" }
+                    }
+                  }
+                }
+              },
+              "required": ["entries"]
+            },
+            {
+              "properties": {
+                "maxLength": { "type": "number" }
+              },
+              "required": ["maxLength"]
+            }
+          ]
+        }
+      },
+      "required": ["type", "description", "value"]
+    },
+    "GroupInstance": {
+      "type": "object",
+      "description": "Single instance of a replicated group",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for this instance"
+        },
+        "name": {
+          "type": "string",
+          "description": "Instance name (e.g., 'Line 7')"
+        },
+        "index": {
+          "type": "number",
+          "description": "0-based instance index"
+        },
+        "address": {
+          "type": "number",
+          "description": "Computed memory address for this instance"
+        },
+        "hasChildren": {
+          "type": "boolean",
+          "description": "Whether this instance contains nested elements"
+        }
+      },
+      "required": ["id", "name", "index", "address", "hasChildren"]
+    },
+    "DiscoveredNode": {
+      "type": "object",
+      "description": "Node discovered on the network",
+      "properties": {
+        "nodeId": {
+          "type": "string",
+          "description": "Node ID in dotted hex format"
+        },
+        "name": {
+          "type": "string",
+          "description": "User-assigned name or SNIP manufacturer + model"
+        },
+        "hasCdi": {
+          "type": "boolean",
+          "description": "Whether CDI data is available for this node"
+        },
+        "cdiStatus": {
+          "type": "string",
+          "enum": ["available", "loading", "unavailable", "error"],
+          "description": "CDI retrieval status"
+        }
+      },
+      "required": ["nodeId", "name", "hasCdi", "cdiStatus"]
+    }
+  },
+  "notes": [
+    "All Tauri commands use the `invoke` API from @tauri-apps/api/core",
+    "Commands are async and return Promises in TypeScript",
+    "Error handling uses Rust Result<T, E> serialized to Promise reject",
+    "All node IDs use dotted hex format: '01.02.03.04.05.06'",
+    "Column depth: 0=nodes (frontend only), 1=segments, 2+=groups/elements",
+    "Paths are arrays of item IDs: ['seg-io', 'grp-line-3', 'elem-command']",
+    "Replication expansion happens server-side (Rust) to avoid JS perf issues"
+  ],
+  "examples": [
+    {
+      "scenario": "Get CDI structure for Tower-LCC node",
+      "command": "get_cdi_structure",
+      "request": {
+        "node_id": "01.02.03.04.05.06"
+      },
+      "response": {
+        "nodeId": "01.02.03.04.05.06",
+        "nodeName": "Tower-LCC",
+        "segments": [
+          {
+            "id": "seg-node-info",
+            "name": "Node Info",
+            "description": null,
+            "space": 252,
+            "hasGroups": false,
+            "hasElements": true
+          },
+          {
+            "id": "seg-conditionals",
+            "name": "Conditionals",
+            "description": "Conditional logic programming",
+            "space": 253,
+            "hasGroups": true,
+            "hasElements": false
+          }
+        ],
+        "maxDepth": 8
+      }
+    },
+    {
+      "scenario": "Get items for Segments column (depth 1)",
+      "command": "get_column_items",
+      "request": {
+        "node_id": "01.02.03.04.05.06",
+        "parent_path": [],
+        "depth": 1
+      },
+      "response": {
+        "depth": 1,
+        "columnType": "segments",
+        "items": [
+          {
+            "id": "seg-node-info",
+            "name": "Node Info",
+            "fullName": "Node Info",
+            "type": null,
+            "hasChildren": true,
+            "metadata": null
+          },
+          {
+            "id": "seg-conditionals",
+            "name": "Conditionals",
+            "fullName": "Conditionals",
+            "type": null,
+            "hasChildren": true,
+            "metadata": null
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "Expand replicated group 'Logic' (32 instances)",
+      "command": "expand_replicated_group",
+      "request": {
+        "node_id": "01.02.03.04.05.06",
+        "group_path": ["seg-conditionals", "grp-logic"]
+      },
+      "response": {
+        "groupName": "Logic",
+        "replicationCount": 32,
+        "instances": [
+          {
+            "id": "grp-logic-1",
+            "name": "Logic 1",
+            "index": 0,
+            "address": 2048,
+            "hasChildren": true
+          },
+          {
+            "id": "grp-logic-2",
+            "name": "Logic 2",
+            "index": 1,
+            "address": 2176,
+            "hasChildren": true
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "Get element details for Event ID",
+      "command": "get_element_details",
+      "request": {
+        "node_id": "01.02.03.04.05.06",
+        "element_path": ["seg-port-io", "grp-line-7", "elem-command"]
+      },
+      "response": {
+        "name": "Command",
+        "description": "Event to trigger input action",
+        "dataType": "Event ID (8 bytes)",
+        "fullPath": "Tower-LCC › Port I/O › Line 7 › Command",
+        "constraints": [],
+        "defaultValue": null,
+        "memoryAddress": 2048
+      }
+    }
+  ]
+}

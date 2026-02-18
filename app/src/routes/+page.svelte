@@ -2,8 +2,10 @@
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from 'svelte';
   import NodeList from '$lib/components/NodeList.svelte';
+  import MillerColumnsNav from '$lib/components/MillerColumns/MillerColumnsNav.svelte';
   import { discoverNodes as discoverNodesApi, querySnipBatch, refreshAllNodes } from '$lib/api/tauri';
   import type { DiscoveredNode } from '$lib/api/tauri';
+  import { millerColumnsStore } from '$lib/stores/millerColumns';
 
   // Connection state
   let host = $state("localhost");
@@ -19,6 +21,9 @@
   let queryingSnip = $state(false);
   let refreshing = $state(false);
   let showAdvanced = $state(false);
+
+  // Reference to Miller Columns for triggering refresh
+  let millerColumnsNav: MillerColumnsNav;
 
   // Check connection status on mount
   onMount(async () => {
@@ -68,6 +73,10 @@
       try {
         const updated = await refreshAllNodes();
         nodes = updated;
+        // Trigger Miller Columns refresh after node data is updated
+        if (millerColumnsNav) {
+          await millerColumnsNav.refreshNodes();
+        }
       } catch (e) {
         console.error("Refresh failed:", e);
         errorMessage = `Refresh failed: ${e}`;
@@ -110,6 +119,11 @@
             queryingSnip = false;
           }
         }
+        
+        // Trigger Miller Columns refresh after discovery completes
+        if (millerColumnsNav) {
+          await millerColumnsNav.refreshNodes();
+        }
       } catch (e) {
         console.error("Discovery failed:", e);
         errorMessage = `Discovery failed: ${e}`;
@@ -133,9 +147,6 @@
 </script>
 
 <main>
-  <h1>LCC Configuration Tool</h1>
-  <p class="subtitle">Visual configuration tool for Layout Command Control (LCC/OpenLCB) networks</p>
-
   {#if !connected}
     <div class="card">
       <h2>Connection</h2>
@@ -189,8 +200,14 @@
       {/if}
 
       {#if nodes.length > 0}
-        <div class="nodes-container">
-          <NodeList nodes={nodes} isRefreshing={refreshing} />
+        <div class="nodes-section">
+          <NodeList 
+            nodes={nodes} 
+            isRefreshing={refreshing}
+          />
+        </div>
+        <div class="miller-columns-section">
+          <MillerColumnsNav bind:this={millerColumnsNav} />
         </div>
       {:else if discovering}
         <p class="status">Scanning network for nodes...</p>
@@ -208,37 +225,23 @@
     margin: 0;
     padding: 0;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: white;
     min-height: 100vh;
   }
 
   main {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 1.5rem;
+    margin: 0;
+    padding: 0;
     color: #333;
   }
 
-  h1 {
-    color: white;
-    text-align: center;
-    font-size: 2rem;
-    margin-bottom: 0.25rem;
-    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
-  }
 
-  .subtitle {
-    color: rgba(255, 255, 255, 0.9);
-    text-align: center;
-    margin-bottom: 1rem;
-    font-size: 0.95rem;
-  }
 
   .card {
     background: white;
-    border-radius: 8px;
+    border-radius: 0;
     padding: 1.25rem;
-    margin-bottom: 1rem;
+    margin-bottom: 0;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   }
 
@@ -302,9 +305,9 @@
 
   .status-bar {
     background: white;
-    border-radius: 6px;
+    border-radius: 0;
     padding: 0.75rem 1.25rem;
-    margin-bottom: 1rem;
+    margin-bottom: 0;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     display: flex;
     justify-content: space-between;
@@ -329,10 +332,6 @@
     padding: 1rem;
     border-radius: 6px;
     margin-top: 1rem;
-  }
-
-  .nodes-container {
-    margin-top: 0.75rem;
   }
 
   .discovery-toolbar {
@@ -394,11 +393,34 @@
     font-size: 0.9rem;
   }
 
+  .status {
+    color: #667eea;
+    font-style: italic;
+    text-align: center;
+    padding: 0.75rem;
+    font-size: 0.9rem;
+  }
+
   .hint {
     color: #999;
     font-style: italic;
     text-align: center;
     padding: 0.75rem;
     font-size: 0.9rem;
+  }
+
+  .nodes-section {
+    margin-top: 0.75rem;
+  }
+
+  .miller-columns-section {
+    margin-top: 0;
+    background: white;
+    border-radius: 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+    height: 600px;
+    display: flex;
+    flex-direction: column;
   }
 </style>

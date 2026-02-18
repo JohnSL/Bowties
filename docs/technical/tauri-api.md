@@ -652,6 +652,333 @@ export interface GetCdiXmlResponse {
 
 ---
 
+## Miller Columns CDI Navigation Commands
+
+### `get_discovered_nodes`
+
+Retrieve the list of discovered nodes with their CDI availability status.
+
+**Parameters:** None
+
+**Returns:** `Promise<GetDiscoveredNodesResponse>`
+
+```typescript
+interface GetDiscoveredNodesResponse {
+  nodes: DiscoveredNode[];  // With additional hasCdi field
+}
+
+interface DiscoveredNode {
+  nodeId: string;         // Formatted as "01.02.03.04.05.06"
+  alias: number;
+  nodeName: string;       // User name or SNIP display name
+  hasCdi: boolean;        // True if CDI is cached
+  // ... other fields
+}
+```
+
+**Usage Example:**
+```typescript
+import { getDiscoveredNodes } from '$lib/api/cdi';
+
+const response = await getDiscoveredNodes();
+console.log(`Found ${response.nodes.length} nodes`);
+
+// Filter nodes with CDI available
+const nodesWithCdi = response.nodes.filter(n => n.hasCdi);
+console.log(`${nodesWithCdi.length} nodes have CDI available`);
+```
+
+---
+
+### `get_cdi_structure`
+
+Parse CDI XML and return the top-level segment structure.
+
+**Parameters:**
+- `node_id: string` - Node ID in hex format (e.g., "01.02.03.04.05.06")
+
+**Returns:** `Promise<CdiStructureResponse>`
+
+```typescript
+interface CdiStructureResponse {
+  segments: SegmentInfo[];
+  maxDepth: number;         // Maximum nesting depth in CDI
+}
+
+interface SegmentInfo {
+  id: string;               // UUID for UI rendering
+  name: string;             // Segment name from CDI
+  description: string | null;
+  space: number;            // Address space number
+  hasGroups: boolean;       // Contains group elements
+  hasElements: boolean;     // Contains primitive elements
+  metadata: {
+    pathId: string;         // Navigation path (e.g., "seg:0")
+    space: number;
+  };
+}
+```
+
+**pathId Format:** `seg:N` where N is the 0-based segment index
+
+**Usage Example:**
+```typescript
+import { getCdiStructure } from '$lib/api/cdi';
+
+const structure = await getCdiStructure("01.02.03.04.05.06");
+console.log(`CDI has ${structure.segments.length} segments`);
+console.log(`Maximum depth: ${structure.maxDepth} levels`);
+
+// Display segments
+structure.segments.forEach(seg => {
+  console.log(`${seg.name} (space ${seg.space})`);
+  console.log(`  Path: ${seg.metadata.pathId}`);
+});
+```
+
+---
+
+### `get_column_items`
+
+Navigate to a specific path in the CDI hierarchy and return child items.
+
+**Parameters:**
+- `node_id: string` - Node ID in hex format
+- `parent_path: string[]` - Array of pathIds representing the navigation path
+- `depth: number` - Current depth level (for context)
+
+**Returns:** `Promise<GetColumnItemsResponse>`
+
+```typescript
+interface GetColumnItemsResponse {
+  items: ColumnItem[];
+}
+
+interface ColumnItem {
+  id: string;               // UUID for UI rendering
+  name: string;             // Display name
+  fullName: string | null;  // Full description
+  itemType: string;         // "group" | "int" | "string" | "eventid" | etc.
+  hasChildren: boolean;     // True if contains nested elements
+  metadata: {
+    pathId: string;         // Navigation path (e.g., "elem:2" or "elem:0#5")
+    replicated?: boolean;   // True if from replicated group
+    instanceIndex?: number; // 0-based instance index
+    instanceNumber?: number;// 1-based instance number for display
+    replication?: number;   // Total replication count
+    // ... element-specific fields
+  };
+}
+```
+
+**pathId Format:**
+- Non-replicated element: `elem:N` where N is the 0-based element index
+- Replicated group instance: `elem:N#I` where N is element index, I is 1-based instance number
+
+**Usage Example:**
+```typescript
+import { getColumnItems } from '$lib/api/cdi';
+
+// Navigate to segment 0
+const segmentItems = await getColumnItems(
+  "01.02.03.04.05.06",
+  ["seg:0"],
+  1
+);
+
+console.log(`Segment contains ${segmentItems.items.length} items`);
+
+// Navigate deeper to a replicated group instance
+const groupItems = await getColumnItems(
+  "01.02.03.04.05.06",
+  ["seg:0", "elem:0#12"],  // Logic group, instance #12
+  2
+);
+
+groupItems.items.forEach(item => {
+  console.log(`${item.name} (${item.itemType})`);
+  if (item.metadata.replicated) {
+    console.log(`  Instance ${item.metadata.instanceNumber} of ${item.metadata.replication}`);
+  }
+});
+```
+
+**Why pathId System:**
+- Eliminates ambiguity with CDI element names containing special characters (e.g., "Variable #1")
+- Provides stable references independent of name changes
+- Enables efficient O(1) path resolution via array indexing
+- Separates UI identifiers (UUIDs) from navigation paths (pathIds)
+
+---
+
+### `get_element_details`
+
+Retrieve detailed metadata for a specific element.
+
+**Parameters:**
+- `node_id: string` - Node ID in hex format
+- `element_path: string[]` - Array of pathIds to the target element
+
+**Returns:** `Promise<ElementDetailsResponse>`
+
+```typescript
+interface ElementDetailsResponse {
+  name: string;
+  description: string | null;
+  dataType: string;         // "Event ID (8 bytes)", "Integer (2 bytes)", etc.
+  size: number;             // Size in bytes
+  offset: number;           // Memory offset
+  constraints: Constraint[] | null;
+  defaultValue: string | null;
+  memoryAddress: string;    // "Space 253, offset 0x0010"
+}
+
+interface Constraint {
+  constraintType: string;   // "min" | "max" | "map"
+  value: number | string;
+  label?: string;           // For map values
+}
+```
+
+**Usage Example:**
+```typescript
+import { getElementDetails } from '$lib/api/cdi';
+
+// Get details for an Event ID element
+const details = await getElementDetails(
+  "01.02.03.04.05.06",
+  ["seg:0", "elem:0#5", "elem:2", "elem:0"]
+);
+
+console.log(`Element: ${details.name}`);
+console.log(`Type: ${details.dataType}`);
+console.log(`Description: ${details.description}`);
+console.log(`Memory: ${details.memoryAddress}`);
+
+if (details.constraints) {
+  console.log('Constraints:');
+  details.constraints.forEach(c => {
+    console.log(`  ${c.constraintType}: ${c.value} ${c.label || ''}`);
+  });
+}
+
+if (details.defaultValue) {
+  console.log(`Default: ${details.defaultValue}`);
+}
+```
+
+---
+
+### `expand_replicated_group`
+
+Expand a replicated group to return all instances.
+
+**Parameters:**
+- `node_id: string` - Node ID in hex format
+- `group_path: string[]` - Path to the replicated group
+
+**Returns:** `Promise<ExpandReplicatedGroupResponse>`
+
+```typescript
+interface ExpandReplicatedGroupResponse {
+  instances: GroupInstance[];
+}
+
+interface GroupInstance {
+  index: number;            // 0-based instance index
+  name: string;             // Computed instance name (e.g., "Logic 12")
+}
+```
+
+**Usage Example:**
+```typescript
+import { expandReplicatedGroup } from '$lib/api/cdi';
+
+// Expand "Logic" group with replication=32
+const expansion = await expandReplicatedGroup(
+  "01.02.03.04.05.06",
+  ["seg:0", "elem:0"]
+);
+
+console.log(`Group has ${expansion.instances.length} instances`);
+expansion.instances.forEach(inst => {
+  console.log(`[${inst.index}] ${inst.name}`);
+});
+
+// Output:
+// [0] Logic 1
+// [1] Logic 2
+// ...
+// [31] Logic 32
+```
+
+---
+
+## Miller Columns Type Definitions
+
+### `SegmentInfo`
+
+```typescript
+interface SegmentInfo {
+  id: string;               // UUID for UI rendering (React/Svelte key)
+  name: string;             // Segment name from CDI
+  description: string | null;
+  space: number;            // Address space number (0-255)
+  hasGroups: boolean;       // True if contains <group> elements
+  hasElements: boolean;     // True if contains any elements
+  metadata: {
+    pathId: string;         // Navigation identifier (e.g., "seg:0")
+    space: number;
+  };
+}
+```
+
+---
+
+### `ColumnItem`
+
+```typescript
+interface ColumnItem {
+  id: string;               // UUID for UI rendering (unique per render)
+  name: string;             // Display name
+  fullName: string | null;  // Full description from CDI
+  itemType: string;         // "group" | "int" | "string" | "eventid" | "float" | "action" | "blob"
+  hasChildren: boolean;     // True if navigable (groups with children)
+  metadata: {
+    pathId: string;         // Navigation identifier (e.g., "elem:2" or "elem:0#5")
+    replicated?: boolean;   // True if from replicated group
+    instanceIndex?: number; // 0-based instance index
+    instanceNumber?: number;// 1-based instance number (for display)
+    replication?: number;   // Total instance count
+  };
+}
+```
+
+---
+
+### `ElementDetails`
+
+```typescript
+interface ElementDetailsResponse {
+  name: string;             // Element name
+  description: string | null;
+  dataType: string;         // Human-readable type (e.g., "Event ID (8 bytes)")
+  size: number;             // Size in bytes
+  offset: number;           // Memory offset within segment
+  constraints: Constraint[] | null;
+  defaultValue: string | null;
+  memoryAddress: string;    // Formatted address (e.g., "Space 253, offset 0x0010")
+}
+
+interface Constraint {
+  constraintType: string;   // "min" | "max" | "map"
+  value: number | string;
+  label?: string;           // For map values (key-value pairs)
+}
+```
+
+---
+
 ## Error Handling
 
 All Tauri commands return `Result<T, String>` from Rust, which translates to rejected promises in TypeScript.
@@ -773,6 +1100,12 @@ All commands are registered in `app/src-tauri/src/lib.rs`:
     commands::refresh_all_nodes,
     commands::get_cdi_xml,
     commands::download_cdi,
+    // Miller Columns CDI Navigation
+    commands::get_discovered_nodes,
+    commands::get_cdi_structure,
+    commands::get_column_items,
+    commands::get_element_details,
+    commands::expand_replicated_group,
 ])
 ```
 
@@ -862,10 +1195,12 @@ async function initializeLCC() {
 - [ ] Support concurrent SNIP queries with Arc<Mutex> refactoring
 - [x] Add node verification command
 - [x] Add batch SNIP query command
-- [ ] Add configuration memory read/write commands
+- [x] Add CDI structure parsing and navigation commands
+- [x] Add Miller Columns support (get_cdi_structure, get_column_items, get_element_details)
+- [ ] Add configuration memory read/write commands (value retrieval and editing)
 - [ ] Add event producer/consumer commands
 
 ---
 
 *Document generated: February 16, 2026*  
-*Last updated: February 16, 2026*
+*Last updated: February 18, 2026*

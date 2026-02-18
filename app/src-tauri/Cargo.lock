@@ -52,6 +52,7 @@ name = "app"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "lazy_static",
  "lcc-rs",
  "serde",
  "serde_json",
@@ -60,6 +61,7 @@ dependencies = [
  "tauri-plugin-opener",
  "thiserror 1.0.69",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -1852,6 +1854,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "roxmltree",
  "serde",
  "thiserror 2.0.18",
  "tokio",
@@ -2955,6 +2958,12 @@ dependencies = [
  "wasm-streams",
  "web-sys",
 ]
+
+[[package]]
+name = "roxmltree"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
 name = "rustc_version"

@@ -91,7 +91,7 @@ impl GridConnectFrame {
         let data_str = &s[n_pos + 1..s.len() - 1];
         
         // Data must be even number of hex digits
-        if data_str.len() % 2 != 0 {
+        if !data_str.len().is_multiple_of(2) {
             return Err(Error::InvalidFrame(format!(
                 "Data must have even number of hex digits, got {}",
                 data_str.len()

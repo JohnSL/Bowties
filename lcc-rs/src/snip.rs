@@ -243,10 +243,10 @@ pub fn parse_snip_payload(payload: &[u8]) -> Result<SNIPData> {
     }
 
     // Extract 4 strings from Section 1
-    let manufacturer = parse_section(&payload, &mut offset)?;
-    let model = parse_section(&payload, &mut offset)?;
-    let hardware_version = parse_section(&payload, &mut offset)?;
-    let software_version = parse_section(&payload, &mut offset)?;
+    let manufacturer = parse_section(payload, &mut offset)?;
+    let model = parse_section(payload, &mut offset)?;
+    let hardware_version = parse_section(payload, &mut offset)?;
+    let software_version = parse_section(payload, &mut offset)?;
 
     // Parse Section 2 (User ACDI) - may be missing for some nodes
     let (user_name, user_description) = if offset < payload.len() {
@@ -258,8 +258,8 @@ pub fn parse_snip_payload(payload: &[u8]) -> Result<SNIPData> {
             (String::new(), String::new())
         } else {
             // Extract 2 strings from Section 2
-            let name = parse_section(&payload, &mut offset)?;
-            let description = parse_section(&payload, &mut offset)?;
+            let name = parse_section(payload, &mut offset)?;
+            let description = parse_section(payload, &mut offset)?;
             (name, description)
         }
     } else {
