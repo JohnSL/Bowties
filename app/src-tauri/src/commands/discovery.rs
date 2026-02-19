@@ -22,20 +22,19 @@ pub async fn discover_nodes(
 ) -> Result<Vec<DiscoveredNode>, String> {
     let timeout = timeout_ms.unwrap_or(250);
     
-    // Take connection out temporarily
-    let mut connection = {
-        let mut conn_guard = state.connection.write().await;
-        match conn_guard.take() {
-            Some(conn) => conn,
+    // Get connection reference
+    let connection_arc = {
+        let conn_guard = state.connection.read().await;
+        match conn_guard.as_ref() {
+            Some(conn) => conn.clone(),
             None => return Err("Not connected to LCC network".to_string()),
         }
     };
     
-    // Perform discovery
+    // Lock and perform discovery
+    let mut connection = connection_arc.lock().await;
     let result = connection.discover_nodes(timeout).await;
-    
-    // Put connection back
-    *state.connection.write().await = Some(connection);
+    drop(connection); // Release lock
     
     // Process result
     let nodes = result.map_err(|e| format!("Discovery failed: {}", e))?;
@@ -53,23 +52,22 @@ pub async fn query_snip_single(
     // Validate alias
     let _node_alias = NodeAlias::new(alias).map_err(|e| format!("Invalid alias: {}", e))?;
     
-    // Take connection out temporarily
-    let mut connection = {
-        let mut conn_guard = state.connection.write().await;
-        match conn_guard.take() {
-            Some(conn) => conn,
+    // Get connection reference
+    let connection_arc = {
+        let conn_guard = state.connection.read().await;
+        match conn_guard.as_ref() {
+            Some(conn) => conn.clone(),
             None => return Err("Not connected to LCC network".to_string()),
         }
     };
     
-    // Query SNIP
+    // Lock and query SNIP
+    let mut connection = connection_arc.lock().await;
     let (snip_data, status) = connection
         .query_snip(alias, None)
         .await
         .map_err(|e| format!("SNIP query failed: {}", e))?;
-    
-    // Put connection back
-    *state.connection.write().await = Some(connection);
+    drop(connection);
     
     // Update node in cache if it exists
     if let Some(node_id) = state.get_nodes().await.iter()
@@ -104,11 +102,11 @@ pub async fn query_snip_batch(
         NodeAlias::new(alias).map_err(|e| format!("Invalid alias {}: {}", alias, e))?;
     }
     
-    // Take connection out temporarily
-    let mut connection = {
-        let mut conn_guard = state.connection.write().await;
-        match conn_guard.take() {
-            Some(conn) => conn,
+    // Get connection reference
+    let connection_arc = {
+        let conn_guard = state.connection.read().await;
+        match conn_guard.as_ref() {
+            Some(conn) => conn.clone(),
             None => return Err("Not connected to LCC network".to_string()),
         }
     };
@@ -121,10 +119,12 @@ pub async fn query_snip_batch(
     let mut results = Vec::new();
     
     for alias in aliases {
+        let mut connection = connection_arc.lock().await;
         let (snip_data, status) = connection
             .query_snip(alias, Some(semaphore.clone()))
             .await
             .unwrap_or((None, SNIPStatus::Error));
+        drop(connection);
         
         results.push(QuerySnipResponse {
             alias,
@@ -132,9 +132,6 @@ pub async fn query_snip_batch(
             status,
         });
     }
-    
-    // Put connection back
-    *state.connection.write().await = Some(connection);
     
     // Update nodes in cache
     for response in &results {
@@ -164,23 +161,22 @@ pub async fn verify_node_status(
     // Validate alias
     let _node_alias = NodeAlias::new(alias).map_err(|e| format!("Invalid alias: {}", e))?;
     
-    // Take connection out temporarily
-    let mut connection = {
-        let mut conn_guard = state.connection.write().await;
-        match conn_guard.take() {
-            Some(conn) => conn,
+    // Get connection reference
+    let connection_arc = {
+        let conn_guard = state.connection.read().await;
+        match conn_guard.as_ref() {
+            Some(conn) => conn.clone(),
             None => return Err("Not connected to LCC network".to_string()),
         }
     };
     
-    // Verify the node
+    // Lock and verify the node
+    let mut connection = connection_arc.lock().await;
     let node_id_opt = connection
         .verify_node(alias, timeout)
         .await
         .map_err(|e| format!("Verification failed: {}", e))?;
-    
-    // Put connection back
-    *state.connection.write().await = Some(connection);
+    drop(connection);
     
     // Update node status in cache
     let is_online = node_id_opt.is_some();
@@ -221,11 +217,11 @@ pub async fn refresh_all_nodes(
         return Ok(vec![]);
     }
     
-    // Take connection out temporarily
-    let mut connection = {
-        let mut conn_guard = state.connection.write().await;
-        match conn_guard.take() {
-            Some(conn) => conn,
+    // Get connection reference
+    let connection_arc = {
+        let conn_guard = state.connection.read().await;
+        match conn_guard.as_ref() {
+            Some(conn) => conn.clone(),
             None => return Err("Not connected to LCC network".to_string()),
         }
     };
@@ -234,7 +230,11 @@ pub async fn refresh_all_nodes(
     for node in &nodes {
         let alias = node.alias.value();
         
-        match connection.verify_node(alias, timeout).await {
+        let mut connection = connection_arc.lock().await;
+        let result = connection.verify_node(alias, timeout).await;
+        drop(connection);
+        
+        match result {
             Ok(Some(_node_id)) => {
                 // Node responded - update status
                 state.update_node(node.node_id, |n| {
@@ -257,9 +257,6 @@ pub async fn refresh_all_nodes(
             }
         }
     }
-    
-    // Put connection back
-    *state.connection.write().await = Some(connection);
     
     // Return updated nodes
     Ok(state.get_nodes().await)

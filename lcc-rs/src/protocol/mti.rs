@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 /// Reference: OpenLCB Message Network Standard
 /// 
 /// Note: These are "on-wire" MTI values (bits 12-28 of the CAN header).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MTI {
     /// Initialization Complete
     InitializationComplete,

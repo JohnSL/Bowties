@@ -4,6 +4,7 @@
 
 mod commands;
 mod state;
+mod events;
 
 use lcc_rs::LccConnection;
 use state::AppState;
@@ -21,17 +22,18 @@ struct ConnectionInfo {
 async fn connect_lcc(
     host: String,
     port: u16,
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<ConnectionInfo, String> {
-    // Close existing connection if any
-    state.set_connection(None).await;
+    // Disconnect existing connection if any
+    state.disconnect().await;
     
-    // Create new connection
-    match LccConnection::connect(&host, port).await {
+    // Create new connection with dispatcher
+    match LccConnection::connect_with_dispatcher(&host, port).await {
         Ok(connection) => {
             *state.host.write().await = host.clone();
             *state.port.write().await = port;
-            state.set_connection(Some(connection)).await;
+            state.set_connection_with_dispatcher(connection, app).await;
             
             Ok(ConnectionInfo {
                 host,
@@ -48,7 +50,7 @@ async fn connect_lcc(
 async fn disconnect_lcc(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    state.set_connection(None).await;
+    state.disconnect().await;
     Ok(())
 }
 

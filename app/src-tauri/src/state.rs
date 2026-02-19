@@ -1,14 +1,21 @@
 //! Application state management for Bowties Tauri application
 
-use lcc_rs::{LccConnection, DiscoveredNode};
+use lcc_rs::{LccConnection, DiscoveredNode, MessageDispatcher};
+use crate::events::EventRouter;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Mutex};
 
 /// Global application state shared across Tauri commands
 #[derive(Clone)]
 pub struct AppState {
-    /// LCC network connection (optional, None if not connected)
-    pub connection: Arc<RwLock<Option<LccConnection>>>,
+    /// LCC network connection with dispatcher (optional, None if not connected)
+    pub connection: Arc<RwLock<Option<Arc<Mutex<LccConnection>>>>>,
+    
+    /// Message dispatcher for persistent listening
+    pub dispatcher: Arc<RwLock<Option<Arc<Mutex<MessageDispatcher>>>>>,
+    
+    /// Event router for frontend notifications
+    pub event_router: Arc<RwLock<Option<EventRouter>>>,
     
     /// Cache of discovered nodes
     pub nodes: Arc<RwLock<Vec<DiscoveredNode>>>,
@@ -25,6 +32,8 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             connection: Arc::new(RwLock::new(None)),
+            dispatcher: Arc::new(RwLock::new(None)),
+            event_router: Arc::new(RwLock::new(None)),
             nodes: Arc::new(RwLock::new(Vec::new())),
             host: Arc::new(RwLock::new("localhost".to_string())),
             port: Arc::new(RwLock::new(12021)),
@@ -36,20 +45,43 @@ impl AppState {
         self.connection.read().await.is_some()
     }
 
-    /// Get mutable access to the connection
-    /// This is used for operations that need to modify the transport
-    #[allow(dead_code)]
-    pub async fn with_connection<F, R>(&self, f: F) -> Option<R>
-    where
-        F: FnOnce(&mut LccConnection) -> R,
-    {
-        let mut conn_guard = self.connection.write().await;
-        conn_guard.as_mut().map(f)
+    /// Set the LCC connection (dispatcher-based)
+    pub async fn set_connection_with_dispatcher(
+        &self,
+        connection: Arc<Mutex<LccConnection>>,
+        app: tauri::AppHandle,
+    ) {
+        // Set connection
+        *self.connection.write().await = Some(connection.clone());
+        
+        // Get dispatcher from connection
+        let dispatcher = {
+            let conn = connection.lock().await;
+            conn.dispatcher()
+        };
+        
+        if let Some(disp) = dispatcher {
+            *self.dispatcher.write().await = Some(disp.clone());
+            
+            // Start event router
+            let mut router = EventRouter::new(app, disp);
+            router.start();
+            *self.event_router.write().await = Some(router);
+        }
     }
 
-    /// Set the LCC connection
-    pub async fn set_connection(&self, connection: Option<LccConnection>) {
-        *self.connection.write().await = connection;
+    /// Disconnect and cleanup
+    pub async fn disconnect(&self) {
+        // Stop event router
+        if let Some(mut router) = self.event_router.write().await.take() {
+            router.stop().await;
+        }
+        
+        // Clear dispatcher
+        *self.dispatcher.write().await = None;
+        
+        // Clear connection
+        *self.connection.write().await = None;
     }
 
     /// Get all cached nodes

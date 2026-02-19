@@ -83,6 +83,34 @@
 - Index-based path resolution (eliminates name ambiguity)
 - Comprehensive test coverage (unit, integration, property-based)
 
+### ✅ Completed (Phase 4)
+
+**Persistent Message Monitoring & Event-Driven Architecture:**
+- Message dispatcher with background listener task (tokio)
+- Broadcast channels for multi-subscriber message distribution
+- MTI-based message filtering and routing
+- Event router for backend-to-frontend notifications
+- Tauri event emissions (`lcc-node-discovered`, `lcc-message-received`)
+- Arc<Mutex<>> shared connection pattern for concurrent access
+- Channel-based discovery (replaces polling pattern)
+- Automatic node discovery event notifications
+- Foundation for real-time event monitoring
+
+**lcc-rs Message Dispatcher:**
+- `MessageDispatcher` struct with background receive loop
+- `ReceivedMessage` with frame and timestamp
+- `subscribe_all()` for monitoring all messages
+- `subscribe_mti(mti)` for filtered message subscriptions
+- Graceful shutdown handling
+- Connection resilience support
+
+**Tauri Event System:**
+- `EventRouter` for message-to-event translation
+- `NodeDiscoveredEvent` payload type
+- `MessageReceivedEvent` payload type
+- Automatic event emission on node discovery
+- Background routing task lifecycle management
+
 ### 🚧 In Progress
 
 **Protocol Implementation:**
@@ -146,6 +174,9 @@ See [docs/project/roadmap.md](../project/roadmap.md) for detailed feature timeli
   - Node discovery and SNIP protocols
   - Memory Configuration Protocol (CDI, configuration memory)
   - Datagram assembly/disassembly
+  - Message dispatcher with background listening
+  - Broadcast channels for event distribution
+  - Persistent connection management
 
 **Dependencies:**
 - `tokio` (v1.x): Async runtime
@@ -216,13 +247,18 @@ app/src/lib/types/
 
 ### Data Flow
 
-**Connection:**
+**Connection (Event-Driven Architecture):**
 
 ```
-Frontend                    Tauri Backend
--------                     -------------
-connect(host, port)    →    connect_lcc(host, port)
-                       ←    Result<(), Error>
+Frontend                    Tauri Backend               lcc-rs Library
+-------                     -------------               --------------
+connect(host, port)    →    connect_lcc(host, port) →   LccConnection::connect_with_dispatcher()
+                       ←    Result<(), Error>       ←   - Creates MessageDispatcher
+                                                        - Spawns background listener
+                                                        - Starts EventRouter
+                       ←──  lcc-node-discovered event (auto-emitted on network activity)
+                       ←──  lcc-message-received event (all messages)
+
 get_connection_status  →    get_connection_status()
                        ←    { connected, host, port }
 ```
@@ -239,16 +275,21 @@ sequenceDiagram
     T-->>F: { connected, host, port }
 ```
 
-**Discovery:**
+**Discovery (Channel-Based):**
 
 ```
 Frontend                    Tauri Backend               lcc-rs Library
 -------                     -------------               --------------
 discoverNodes(timeout) →    discover_nodes(timeout) →   LccConnection::discover_nodes()
-                       ←    Vec<DiscoveredNode>     ←   (internal protocol)
+                       ←    Vec<DiscoveredNode>     ←   - Subscribe to VerifiedNode MTI
+                                                        - Send VerifyNodeGlobal
+                                                        - Collect from channel (not polling)
+                       ←──  lcc-node-discovered event (emitted per node)
 
 querySnipBatch(aliases) →   query_snip_batch()      →   query_snip_concurrent()
                         ←   Vec<SNIPResult>        ←   (datagram protocol)
+
+[Background EventRouter continuously emits events for all network activity]
 ```
 
 ```mermaid
@@ -618,18 +659,24 @@ See [docs/project/roadmap.md](../project/roadmap.md) for complete timeline.
 ✅ **Keyboard Navigation:** Arrow keys + Enter/Space for accessibility compliance  
 ✅ **Error Boundaries:** Component-level error handling with graceful degradation  
 ✅ **WCAG 2.1 AA:** Screen reader support, proper ARIA labels, focus management  
+✅ **Persistent Connections:** Background dispatcher with continuous message monitoring  
+✅ **Event-Driven Updates:** Tauri events for automatic UI updates on network changes  
+✅ **Broadcast Channels:** tokio::broadcast for multi-subscriber message distribution  
+✅ **Arc<Mutex<>> Pattern:** Shared connection access for concurrent operations  
 
 ## Open Technical Questions
 
 1. **Configuration Value Caching:** Session-only or persistent? Dirty tracking strategy?
-2. **Connection Resilience:** How to handle network interruptions and reconnection?
+2. ~~**Connection Resilience:**~~ ✅ **RESOLVED:** Persistent dispatcher with background monitoring; reconnection logic to be implemented
 3. **Concurrent Operations:** Allow multiple CDI/SNIP queries or enforce serial execution?
 4. **CDI Cache Management:** Implement automatic cleanup? Set size limits? TTL for cache entries?
 5. **Large CDI Files:** Implement chunked rendering or virtual scrolling for parsed structures?
 6. **Large Networks:** Pagination strategy for 100+ nodes? Lazy loading?
-7. **Event Monitoring:** Separate TCP connection or share with command channel?
+7. ~~**Event Monitoring:**~~ ✅ **RESOLVED:** Shared connection with EventRouter broadcasting to frontend via Tauri events
 8. **Configuration Writes:** Transaction-based or immediate? Rollback on error?
 9. **CDI Parsing Cache Eviction:** LRU? Size-based? Time-based? Or unlimited?
+10. **Reconnection Strategy:** Automatic reconnect with exponential backoff? Manual reconnect only?
+11. **Message Queue Size:** Channel capacity limits? Backpressure handling for slow frontend?
 
 ---
 

@@ -167,22 +167,28 @@ pub async fn download_cdi(
     
     println!("[CDI] Found node with alias: 0x{:03X}", alias);
 
-    // Get connection
-    let mut conn_guard = state.connection.write().await;
-    let connection = conn_guard
-        .as_mut()
-        .ok_or_else(|| CdiError::RetrievalFailed("Not connected to LCC network".to_string()))?;
+    // Get connection reference
+    let connection_arc = {
+        let conn_guard = state.connection.read().await;
+        match conn_guard.as_ref() {
+            Some(conn) => conn.clone(),
+            None => return Err(CdiError::RetrievalFailed("Not connected to LCC network".to_string()).into()),
+        }
+    };
 
     println!("[CDI] Starting CDI download from alias 0x{:03X}...", alias);
     
     // Download CDI from node (5 second timeout per chunk to accommodate slower nodes)
-    let xml_content = connection
-        .read_cdi(alias, 5000)
-        .await
-        .map_err(|e| {
-            println!("[CDI] Download failed: {}", e);
-            CdiError::RetrievalFailed(format!("CDI download failed: {}", e))
-        })?;
+    let xml_content = {
+        let mut connection = connection_arc.lock().await;
+        connection
+            .read_cdi(alias, 5000)
+            .await
+            .map_err(|e| {
+                println!("[CDI] Download failed: {}", e);
+                CdiError::RetrievalFailed(format!("CDI download failed: {}", e))
+            })?
+    };
 
     println!("[CDI] Download complete, size: {} bytes", xml_content.len());
     
@@ -195,7 +201,6 @@ pub async fn download_cdi(
     };
 
     // Update node cache with CDI
-    drop(conn_guard); // Release connection lock before updating nodes
     state
         .update_node(parsed_node_id, |node| {
             node.cdi = Some(cdi_data.clone());

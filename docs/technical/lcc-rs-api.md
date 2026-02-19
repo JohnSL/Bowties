@@ -21,6 +21,8 @@
 - ✅ Index-based pathId navigation system
 - ✅ Addressed and global messaging
 - ✅ Concurrency control with semaphores
+- ✅ Background message dispatcher with broadcast channels
+- ✅ Event-driven message monitoring for real-time updates
 
 ---
 
@@ -40,6 +42,7 @@ lcc_rs
 │   └── hierarchy.rs - Navigation helpers (expand, navigate_to_path)
 ├── transport       - Transport layer implementations
 │   └── tcp         - TCP transport (async)
+├── dispatcher      - Background message monitoring and distribution
 ├── discovery       - Node discovery functionality
 └── snip            - Simple Node Identification Protocol
 ```
@@ -446,11 +449,123 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ---
 
+## Message Dispatcher (`dispatcher` module)
+
+The MessageDispatcher provides continuous background monitoring of LCC network messages with multi-subscriber broadcast channels. This enables real-time event-driven updates without polling.
+
+### MessageDispatcher
+
+Background task that continuously receives frames from the transport layer and broadcasts them to multiple subscribers.
+
+```rust
+pub struct MessageDispatcher;
+```
+
+#### Methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `new` | `fn new(transport: Arc<Mutex<Box<dyn LccTransport>>>) -> Self` | Create new dispatcher with shared transport |
+| `start` | `async fn start(self) -> Result<JoinHandle<()>>` | Start background listener task |
+| `subscribe_all` | `fn subscribe_all(&self) -> Receiver<ReceivedMessage>` | Subscribe to all messages |
+| `subscribe_mti` | `fn subscribe_mti(&self, mti: MTI) -> Receiver<ReceivedMessage>` | Subscribe to specific MTI |
+| `shutdown` | `fn shutdown(&self)` | Signal dispatcher to stop |
+
+#### Example: Basic Usage
+
+```rust
+use lcc_rs::{MessageDispatcher, transport::TcpTransport};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create transport
+    let transport = TcpTransport::connect("localhost", 12021).await?;
+    let transport_arc = Arc::new(Mutex::new(Box::new(transport) as Box<dyn LccTransport>));
+    
+    // Create and start dispatcher
+    let dispatcher = MessageDispatcher::new(transport_arc.clone());
+    let mut all_messages = dispatcher.subscribe_all();
+    
+    // Start background task
+    let handle = dispatcher.start().await?;
+    
+    // Receive messages
+    while let Ok(msg) = all_messages.recv().await {
+        println!("Received: {:?}", msg);
+    }
+    
+    Ok(())
+}
+```
+
+#### Example: MTI-Filtered Subscription
+
+```rust
+use lcc_rs::{MessageDispatcher, protocol::MTI};
+
+// Subscribe only to Verified Node responses
+let mut verified_nodes = dispatcher.subscribe_mti(MTI::VerifiedNodeIDNumber);
+
+while let Ok(msg) = verified_nodes.recv().await {
+    println!("Node verified: {:?}", msg);
+}
+```
+
+#### Implementation Details
+
+- **Background Task**: Spawns a tokio task that continuously polls the transport
+- **Timeout**: 100ms receive timeout prevents blocking
+- **Channel Capacity**: 256 messages (configurable)
+- **Broadcast Pattern**: Uses `tokio::broadcast` for multi-subscriber support
+- **Graceful Shutdown**: `shutdown()` signals the background task to stop
+- **Message Filtering**: MTI-specific subscriptions use HashMap for efficient routing
+
+---
+
+### ReceivedMessage
+
+Represents a message received from the LCC network.
+
+```rust
+pub struct ReceivedMessage {
+    pub frame: GridConnectFrame,
+    pub mti: MTI,
+    pub source_alias: NodeAlias,
+    pub timestamp: std::time::Instant,
+}
+```
+
+#### Fields
+
+- `frame` - The raw GridConnect frame
+- `mti` - Parsed Message Type Identifier
+- `source_alias` - Source node's alias
+- `timestamp` - When the message was received (for latency tracking)
+
+---
+
+### MessageFilter
+
+Subscription filter for messages.
+
+```rust
+pub enum MessageFilter {
+    All,
+    MTI(MTI),
+    SourceAlias(NodeAlias),
+    Custom(Box<dyn Fn(&ReceivedMessage) -> bool + Send + Sync>),
+}
+```
+
+---
+
 ## Discovery (`discovery` module)
 
 ### LccConnection
 
-High-level LCC connection for performing network operations.
+High-level LCC connection for performing network operations. Supports both direct mode (legacy) and dispatcher mode (event-driven).
 
 ```rust
 pub struct LccConnection;
@@ -460,14 +575,16 @@ pub struct LccConnection;
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `connect` | `async fn connect(host: &str, port: u16) -> Result<Self>` | Connect to an LCC network via TCP |
+| `connect` | `async fn connect(host: &str, port: u16) -> Result<Self>` | Connect to an LCC network via TCP (legacy mode) |
+| `connect_with_dispatcher` | `async fn connect_with_dispatcher(host: &str, port: u16) -> Result<(Self, MessageDispatcher)>` | Connect with background message monitoring |
 | `with_transport` | `fn with_transport(transport: Box<dyn LccTransport>, our_alias: NodeAlias) -> Self` | Create with custom transport (for testing) |
-| `discover_nodes` | `async fn discover_nodes(&mut self, timeout_ms: u64) -> Result<Vec<DiscoveredNode>>` | Discover all nodes on the network |
+| `discover_nodes` | `async fn discover_nodes(&mut self, timeout_ms: u64) -> Result<Vec<DiscoveredNode>>` | Discover all nodes on the network (direct mode) |
+| `discover_nodes_with_dispatcher` | `async fn discover_nodes_with_dispatcher(dispatcher: &MessageDispatcher, timeout_ms: u64) -> Result<Vec<DiscoveredNode>>` | Discover nodes using dispatcher (event-driven) |
 | `verify_node` | `async fn verify_node(&mut self, dest_alias: u16, timeout_ms: u64) -> Result<Option<NodeID>>` | Verify a specific node's presence |
 | `query_snip` | `async fn query_snip(&mut self, dest_alias: u16, semaphore: Option<Arc<Semaphore>>) -> Result<(Option<SNIPData>, SNIPStatus)>` | Query SNIP data from a node |
 | `close` | `async fn close(self) -> Result<()>` | Close the connection |
 
-#### Example: Basic Discovery
+#### Example: Basic Discovery (Legacy Mode)
 
 ```rust
 use lcc_rs::LccConnection;
@@ -482,6 +599,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     for node in nodes {
         println!("Found node: {} (alias: {})", node.node_id, node.alias);
+    }
+    
+    Ok(())
+}
+```
+
+#### Example: Event-Driven Discovery (Dispatcher Mode)
+
+```rust
+use lcc_rs::LccConnection;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Connect with dispatcher for continuous monitoring
+    let (connection, dispatcher) = LccConnection::connect_with_dispatcher("localhost", 12021).await?;
+    
+    // Subscribe to all messages for monitoring
+    let mut all_messages = dispatcher.subscribe_all();
+    
+    // Start background listener
+    let handle = dispatcher.start().await?;
+    
+    // Discover nodes using dispatcher
+    let nodes = LccConnection::discover_nodes_with_dispatcher(&dispatcher, 250).await?;
+    
+    for node in nodes {
+        println!("Found node: {} (alias: {})", node.node_id, node.alias);
+    }
+    
+    // Connection remains open for continuous monitoring
+    while let Ok(msg) = all_messages.recv().await {
+        println!("Received: {:?}", msg);
     }
     
     Ok(())

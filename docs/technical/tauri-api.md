@@ -7,8 +7,9 @@ This document describes all Tauri commands available to the frontend application
 1. [Connection Commands](#connection-commands)
 2. [Discovery Commands](#discovery-commands)
 3. [CDI Commands](#cdi-commands)
-4. [TypeScript Type Definitions](#typescript-type-definitions)
-5. [Error Handling](#error-handling)
+4. [Events](#events)
+5. [TypeScript Type Definitions](#typescript-type-definitions)
+6. [Error Handling](#error-handling)
 
 ---
 
@@ -476,6 +477,190 @@ async function downloadCdiWithProgress(nodeId: string) {
 - Small CDI (~10-20KB): 1-2 seconds
 - Large CDI (100KB+): 5-10 seconds
 - Network timeout: 5 seconds per chunk
+
+---
+
+## Events
+
+The application emits Tauri events for real-time updates when network changes occur. These events enable the frontend to stay synchronized with the LCC network without polling.
+
+### Event Initialization
+
+Events are emitted automatically when using `connect_lcc` with the event-driven architecture (Phase 4). The EventRouter spawns a background task that monitors all LCC messages and emits relevant events to the frontend.
+
+**Automatic Startup:**
+- EventRouter starts when connection is established via `connect_lcc`
+- Background task continuously monitors messages from MessageDispatcher
+- Events are emitted to all listening frontend components
+- No manual initialization required
+
+---
+
+### `lcc-node-discovered`
+
+Emitted when a new node is discovered on the network or an existing node's status changes.
+
+**Event Payload:**
+```typescript
+interface NodeDiscoveredEvent {
+  nodeId: string;              // Node ID in hex format (e.g., "01.02.03.04.05.06")
+  alias: number;               // Node alias (1-4095)
+  connectionStatus: string;    // "Connected" | "NotResponding"
+  lastSeen: string;           // ISO 8601 timestamp
+}
+```
+
+**Usage Example:**
+```typescript
+import { listen } from '@tauri-apps/api/event';
+
+// Listen for node discovery events
+const unlisten = await listen<NodeDiscoveredEvent>('lcc-node-discovered', (event) => {
+  console.log(`Node discovered: ${event.payload.nodeId}`);
+  console.log(`Alias: ${event.payload.alias}`);
+  console.log(`Status: ${event.payload.connectionStatus}`);
+  
+  // Update UI with new node
+  addNodeToList(event.payload);
+});
+
+// Clean up listener when component unmounts
+onDestroy(() => {
+  unlisten();
+});
+```
+
+**Svelte Store Integration:**
+```typescript
+import { writable } from 'svelte/store';
+import { listen } from '@tauri-apps/api/event';
+
+// Create a store for discovered nodes
+export const discoveredNodes = writable<Map<string, NodeDiscoveredEvent>>(new Map());
+
+// Listen for node discovery events and update store
+listen<NodeDiscoveredEvent>('lcc-node-discovered', (event) => {
+  discoveredNodes.update(nodes => {
+    nodes.set(event.payload.nodeId, event.payload);
+    return nodes;
+  });
+});
+```
+
+**When Emitted:**
+- New node responds to Verify Node ID Global message
+- Existing node's connection status changes
+- Node comes back online after being offline
+
+---
+
+### `lcc-message-received`
+
+Emitted for all LCC messages received from the network (useful for monitoring/debugging).
+
+**Event Payload:**
+```typescript
+interface MessageReceivedEvent {
+  mti: string;                 // Message Type Identifier in hex (e.g., "0x0490")
+  sourceAlias: number;         // Source node alias
+  destinationAlias: number | null;  // Destination alias (null for global messages)
+  payload: number[];           // Message payload bytes
+  timestamp: string;           // ISO 8601 timestamp when received
+}
+```
+
+**Usage Example:**
+```typescript
+import { listen } from '@tauri-apps/api/event';
+
+// Monitor all LCC messages
+const unlisten = await listen<MessageReceivedEvent>('lcc-message-received', (event) => {
+  console.log(`Message received: MTI=${event.payload.mti}, Source=${event.payload.sourceAlias}`);
+  
+  // Filter for specific message types
+  if (event.payload.mti === '0x05B4') {  // CDI retrieval complete
+    console.log('CDI retrieval completed');
+  }
+});
+```
+
+**Message Monitor Component:**
+```svelte
+<script lang="ts">
+  import { listen } from '@tauri-apps/api/event';
+  import { onMount, onDestroy } from 'svelte';
+  
+  let messages: MessageReceivedEvent[] = [];
+  let unlisten: (() => void) | null = null;
+  
+  onMount(async () => {
+    unlisten = await listen<MessageReceivedEvent>('lcc-message-received', (event) => {
+      // Add to message list (keep last 100)
+      messages = [...messages, event.payload].slice(-100);
+    });
+  });
+  
+  onDestroy(() => {
+    if (unlisten) unlisten();
+  });
+</script>
+
+<div class="message-monitor">
+  <h2>LCC Message Monitor</h2>
+  {#each messages as msg}
+    <div class="message">
+      <span class="timestamp">{msg.timestamp}</span>
+      <span class="mti">{msg.mti}</span>
+      <span class="alias">Alias: {msg.sourceAlias}</span>
+    </div>
+  {/each}
+</div>
+```
+
+**Common MTI Values:**
+- `0x0490` - Verify Node ID Global
+- `0x0170` - Verified Node ID Number
+- `0x0DE8` - Simple Node Ident Info Request
+- `0x0A08` - Simple Node Ident Info Reply
+- `0x0A28` - Datagram Received OK
+- `0x0A48` - Datagram Rejected
+- `0x1A28` - Write Stream Reply
+- `0x1C48` - Read Stream Reply
+
+**Performance Considerations:**
+- High-traffic networks may generate many events per second
+- Consider throttling or filtering messages in production
+- Use debouncing for UI updates triggered by events
+- Limit message history size to prevent memory growth
+
+---
+
+### Event Lifecycle
+
+**Connection Established:**
+1. `connect_lcc` command called
+2. MessageDispatcher created and started
+3. EventRouter spawned with message subscribers
+4. Background tasks begin monitoring network
+5. Events start flowing to frontend
+
+**During Operation:**
+- Continuous message monitoring (100ms polling cycle)
+- Events emitted immediately when messages received
+- No frontend polling required
+- Automatic UI updates via event handlers
+
+**Disconnection:**
+1. `disconnect_lcc` command called
+2. EventRouter shutdown signal sent
+3. Background tasks terminate gracefully
+4. No more events emitted
+5. Cleanup complete
+
+**Reconnection:**
+- EventRouter automatically restarted on reconnect
+- Subscribers automatically reconnected
+- No manual re-initialization required
 
 ---
 
