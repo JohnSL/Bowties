@@ -9,6 +9,7 @@ mod events;
 use lcc_rs::LccConnection;
 use state::AppState;
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ConnectionInfo {
@@ -70,6 +71,14 @@ async fn get_connection_status(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .setup(|app| {
+            // Show the window after state restoration to prevent flickering
+            if let Some(window) = app.get_webview_window("main") {
+                window.show().unwrap();
+            }
+            Ok(())
+        })
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             connect_lcc,
