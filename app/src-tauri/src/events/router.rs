@@ -5,6 +5,7 @@ use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tauri::{AppHandle, Emitter};
+use crate::traffic::DecodedMessage;
 
 /// Event payloads sent to the frontend
 
@@ -20,9 +21,23 @@ pub struct NodeDiscoveredEvent {
 #[serde(rename_all = "camelCase")]
 pub struct MessageReceivedEvent {
     pub frame: String,
+    pub header: Option<u32>,
+    pub data_bytes: Option<Vec<u8>>,
     pub mti: Option<String>,
+    /// Human-readable display label (e.g. "Datagram First") — display only, not for protocol logic
+    pub mti_label: Option<String>,
     pub source_alias: Option<u16>,
     pub timestamp: String,
+    /// Direction: "S" for sent, "R" for received
+    pub direction: Option<String>,
+    /// User-friendly summary for non-technical mode
+    pub decoded_payload: Option<String>,
+    /// Protocol-level details for advanced troubleshooting
+    pub technical_details: Option<String>,
+    /// Node ID if this is a VerifiedNode message
+    pub node_id: Option<String>,
+    /// Destination alias for addressed messages
+    pub dest_alias: Option<u16>,
 }
 
 /// Event router that subscribes to dispatcher and emits Tauri events
@@ -31,16 +46,18 @@ pub struct EventRouter {
     dispatcher: Arc<Mutex<MessageDispatcher>>,
     router_task: Option<tokio::task::JoinHandle<()>>,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    our_alias: u16,
 }
 
 impl EventRouter {
     /// Create a new event router
-    pub fn new(app: AppHandle, dispatcher: Arc<Mutex<MessageDispatcher>>) -> Self {
+    pub fn new(app: AppHandle, dispatcher: Arc<Mutex<MessageDispatcher>>, our_alias: u16) -> Self {
         Self {
             app,
             dispatcher,
             router_task: None,
             shutdown_tx: None,
+            our_alias,
         }
     }
 
@@ -50,9 +67,10 @@ impl EventRouter {
         
         let app = self.app.clone();
         let dispatcher = self.dispatcher.clone();
+        let our_alias = self.our_alias;
         
         let handle = tokio::spawn(async move {
-            Self::router_loop(app, dispatcher, shutdown_rx).await;
+            Self::router_loop(app, dispatcher, our_alias, shutdown_rx).await;
         });
         
         self.router_task = Some(handle);
@@ -63,8 +81,11 @@ impl EventRouter {
     async fn router_loop(
         app: AppHandle,
         dispatcher: Arc<Mutex<MessageDispatcher>>,
+        our_alias: u16,
         mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
     ) {
+        eprintln!("[EventRouter] Starting router loop with our_alias=0x{:03X}", our_alias);
+        
         // Subscribe to all messages
         let mut all_rx = {
             let disp = dispatcher.lock().await;
@@ -77,16 +98,19 @@ impl EventRouter {
             disp.subscribe_mti(MTI::VerifiedNode).await
         };
 
+        eprintln!("[EventRouter] Subscribed to message channels");
+
         loop {
             tokio::select! {
                 // Check for shutdown
                 _ = &mut shutdown_rx => {
+                    eprintln!("[EventRouter] Shutdown signal received");
                     break;
                 }
                 
                 // Handle all messages for monitor
                 Ok(msg) = all_rx.recv() => {
-                    Self::handle_all_messages(&app, msg);
+                    Self::handle_all_messages(&app, msg, our_alias);
                 }
                 
                 // Handle node discovery
@@ -98,20 +122,23 @@ impl EventRouter {
     }
 
     /// Handle all message events (for monitor window)
-    fn handle_all_messages(app: &AppHandle, msg: ReceivedMessage) {
-        let mti_str = msg.frame.get_mti()
-            .ok()
-            .map(|(mti, _)| format!("{:?}", mti));
+    fn handle_all_messages(app: &AppHandle, msg: ReceivedMessage, our_alias: u16) {
+        // Decode the message with full parsing
+        let decoded = DecodedMessage::decode(&msg.frame, our_alias);
         
-        let source_alias = msg.frame.get_mti()
-            .ok()
-            .map(|(_, alias)| alias);
-
         let event = MessageReceivedEvent {
             frame: msg.frame.to_string(),
-            mti: mti_str,
-            source_alias,
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            header: Some(msg.frame.header),
+            data_bytes: Some(msg.frame.data.clone()),
+            mti: Some(decoded.mti_name.clone()),
+            mti_label: Some(decoded.mti_label.clone()),
+            source_alias: Some(decoded.source_alias),
+            timestamp: decoded.timestamp,
+            direction: Some(decoded.direction),
+            decoded_payload: Some(decoded.decoded_payload),
+            technical_details: Some(decoded.technical_details),
+            node_id: decoded.node_id,
+            dest_alias: decoded.dest_alias,
         };
 
         // Emit to frontend

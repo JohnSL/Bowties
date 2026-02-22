@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ReadConfigValueRequest",
+  "title": "Read Configuration Value Request",
+  "description": "Request to read a single configuration value from a specific element on a node. The command navigates the CDI to find the element's memory address, then reads from address space 0xFD using the Memory Configuration Protocol.",
+  "type": "object",
+  "properties": {
+    "node_id": {
+      "type": "string",
+      "description": "LCC Node ID in dotted hexadecimal format (e.g., '05.01.01.01.03.01')",
+      "pattern": "^([0-9A-Fa-f]{2}\\.){5}[0-9A-Fa-f]{2}$",
+      "examples": ["05.01.01.01.03.01", "02.01.0D.00.04.00"]
+    },
+    "element_path": {
+      "type": "array",
+      "description": "Path to the element in the CDI tree (e.g., ['Settings', 'Network', 'Node Name'])",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "examples": [
+        ["Settings", "Identification", "User Name"],
+        ["Events", "Producers", "Output 1 Active"]
+      ]
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "description": "Optional timeout in milliseconds for the read operation (default: 2000ms)",
+      "minimum": 100,
+      "maximum": 30000,
+      "default": 2000
+    }
+  },
+  "required": ["node_id", "element_path"],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "node_id": "05.01.01.01.03.01",
+      "element_path": ["Settings", "Identification", "User Name"]
+    },
+    {
+      "node_id": "02.01.0D.00.04.00",
+      "element_path": ["Events", "Producers", "Output 1"],
+      "timeout_ms": 3000
+    }
+  ]
+}

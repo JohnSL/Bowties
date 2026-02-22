@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ReadAllConfigValuesRequest",
+  "title": "Read All Configuration Values Request",
+  "description": "Request to read all configuration values from all elements with memory addresses on a node. This includes segments, groups with name elements, and all leaf configuration elements (int, string, eventid, float). Progress updates are emitted via Tauri events during the operation.",
+  "type": "object",
+  "properties": {
+    "node_id": {
+      "type": "string",
+      "description": "LCC Node ID in dotted hexadecimal format (e.g., '05.01.01.01.03.01')",
+      "pattern": "^([0-9A-Fa-f]{2}\\.){5}[0-9A-Fa-f]{2}$",
+      "examples": ["05.01.01.01.03.01", "02.01.0D.00.04.00"]
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "description": "Optional timeout in milliseconds per element read (default: 2000ms)",
+      "minimum": 100,
+      "maximum": 30000,
+      "default": 2000
+    },
+    "emit_progress": {
+      "type": "boolean",
+      "description": "Whether to emit progress events during reading (default: true)",
+      "default": true
+    }
+  },
+  "required": ["node_id"],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "node_id": "05.01.01.01.03.01"
+    },
+    {
+      "node_id": "02.01.0D.00.04.00",
+      "timeout_ms": 3000,
+      "emit_progress": true
+    }
+  ]
+}

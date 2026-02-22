@@ -152,6 +152,7 @@ export interface ElementDetailsResponse {
     description: string | null;
     dataType: string;
     fullPath: string;
+    elementPath: string[];
     constraints: Constraint[];
     defaultValue: string | null;
     memoryAddress: number;
@@ -278,3 +279,90 @@ export async function expandReplicatedGroup(
     });
 }
 
+// ============================================================================
+// Configuration Value Reading API (Feature 004-read-node-config)
+// ============================================================================
+
+/**
+ * Read a single configuration value from a node (T037)
+ * 
+ * @param nodeId - Node ID in dotted hex format (e.g., '01.02.03.04.05.06')
+ * @param elementPath - Path to the element (e.g., ['Settings', 'Network', 'Node Name'])
+ * @param timeoutMs - Optional timeout in milliseconds (default: 2000)
+ * @returns Configuration value with metadata
+ * @throws Error if read fails
+ * 
+ * @example
+ * ```typescript
+ * try {
+ *   const value = await readConfigValue('01.02.03.04.05.06', ['Settings', 'Node Name']);
+ *   console.log('Current value:', value.value);
+ * } catch (error) {
+ *   console.error('Failed to read value:', error);
+ * }
+ * ```
+ */
+export async function readConfigValue(
+    nodeId: string,
+    elementPath: string[],
+    timeoutMs?: number
+): Promise<import('./types').ConfigValueWithMetadata> {
+    return await invoke('read_config_value', {
+        nodeId,
+        elementPath,
+        timeoutMs,
+    });
+}
+
+/**
+ * Read all configuration values from a node with progress tracking (T057)
+ * 
+ * @param nodeId - Node ID in dotted hex format (e.g., '01.02.03.04.05.06')
+ * @param timeoutMs - Optional timeout per element in milliseconds (default: 2000)
+ * @returns Map of configuration values with metadata and statistics
+ * @throws Error if batch read fails
+ * 
+ * @example
+ * ```typescript
+ * try {
+ *   const response = await readAllConfigValues('01.02.03.04.05.06');
+ *   console.log(`Read ${response.successfulReads} of ${response.totalElements} values`);
+ *   console.log('Values:', response.values);
+ * } catch (error) {
+ *   console.error('Batch read failed:', error);
+ * }
+ * ```
+ */
+export async function readAllConfigValues(
+    nodeId: string,
+    timeoutMs?: number,
+    nodeIndex?: number,
+    totalNodes?: number
+): Promise<import('./types').ReadAllConfigValuesResponse> {
+    return await invoke('read_all_config_values', {
+        nodeId,
+        timeoutMs,
+        nodeIndex,
+        totalNodes,
+    });
+}
+
+/**
+ * Cancel an ongoing configuration reading operation (T058)
+ * 
+ * @returns Promise that resolves when cancellation is signaled
+ * @throws Error if cancellation fails
+ * 
+ * @example
+ * ```typescript
+ * try {
+ *   await cancelConfigReading();
+ *   console.log('Cancellation requested');
+ * } catch (error) {
+ *   console.error('Cancel failed:', error);
+ * }
+ * ```
+ */
+export async function cancelConfigReading(): Promise<void> {
+    return await invoke('cancel_config_reading', {});
+}

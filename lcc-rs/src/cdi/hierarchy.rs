@@ -72,25 +72,35 @@ impl Group {
     
     /// Calculate total size of this group in bytes
     ///
-    /// Recursively calculates size of all child elements
-    fn calculate_size(&self) -> i32 {
+    /// Recursively sums each child element's footprint (offset skip + element size).
+    /// The result is the byte stride between consecutive replicated instances.
+    ///
+    /// Note: does NOT add this group's own `offset` attribute — that is a skip
+    /// the *parent* applies before reaching this group, not part of the group's
+    /// internal size.
+    pub fn calculate_size(&self) -> i32 {
         self.elements.iter().map(calculate_element_size).sum()
     }
 }
 
-/// Calculate size of a data element in bytes
+/// Calculate size of a data element in bytes, including its offset skip.
+///
+/// Per the CDI spec the `offset` attribute is a relative skip applied *before*
+/// the element's bytes, so the total memory footprint of an element is
+/// `element.offset + element_size`.  When `offset == 0` (the default) the
+/// result is identical to just the element size.
 fn calculate_element_size(element: &DataElement) -> i32 {
     match element {
         DataElement::Group(g) => {
-            let size_per_instance = g.calculate_size();
-            size_per_instance * g.replication as i32
+            // The group's own offset skip + all instances packed sequentially.
+            g.offset + g.calculate_size() * g.replication as i32
         }
-        DataElement::Int(i) => i.size as i32,
-        DataElement::String(s) => s.size as i32,
-        DataElement::EventId(_) => 8, // Event IDs are always 8 bytes
-        DataElement::Float(_) => 4, // Assume 32-bit floats
-        DataElement::Action(_) => 1, // Actions are typically 1 byte
-        DataElement::Blob(b) => b.size as i32,
+        DataElement::Int(i) => i.offset + i.size as i32,
+        DataElement::String(s) => s.offset + s.size as i32,
+        DataElement::EventId(e) => e.offset + 8, // Event IDs are always 8 bytes
+        DataElement::Float(e) => e.offset + 4,   // 32-bit float
+        DataElement::Action(e) => e.offset + 1,
+        DataElement::Blob(b) => b.offset + b.size as i32,
     }
 }
 

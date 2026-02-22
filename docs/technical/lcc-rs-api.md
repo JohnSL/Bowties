@@ -788,9 +788,17 @@ pub fn build_read(
 **Parameters:**
 - `source_alias` - Our node alias
 - `dest_alias` - Target node alias
-- `space` - Address space to read from (Configuration, AllMemory, or Cdi)
+- `space` - Address space to read from (any `AddressSpace` variant)
 - `address` - Starting address (32-bit, big-endian)
 - `count` - Number of bytes to read (1-64)
+
+**Request format — embedded vs generic:**
+
+The format of the outgoing datagram depends on the address space:
+- **Embedded** (`Configuration 0xFD`, `AllMemory 0xFE`, `Cdi 0xFF`): the space is encoded in the low 2 bits of the command byte (`0x41`/`0x42`/`0x43`); payload is 7 bytes with no separate space byte. Reply command will be `0x51`/`0x52`/`0x53`.
+- **Generic** (`AcdiUser 0xFB`, `AcdiManufacturer 0xFC`, others): command byte is `0x40`; space byte is included at payload `[6]`; payload is 8 bytes. Reply command will be `0x50`.
+
+This mirrors the behaviour of `OpenLCB_Java MemoryConfigurationService.fillRequest()`.
 
 **Returns:** Vector of GridConnect frames to send (may be single or multi-frame datagram)
 
@@ -825,6 +833,14 @@ pub fn parse_read_reply(data: &[u8]) -> Result<ReadReply>
 - `data` - Datagram payload received from target node
 
 **Returns:** `ReadReply` enum indicating success or failure
+
+**Reply format — deterministic parsing rule:**
+
+The layout of the reply datagram depends on the command byte at `data[1]`:
+- `cmd & 0x03 != 0` (e.g. `0x51`/`0x52`/`0x53`): **embedded reply** — no space byte; data payload starts at `[6..]`
+- `cmd & 0x03 == 0` (e.g. `0x50`): **generic reply** — space byte **always present** at `[6]`; data payload starts at `[7..]`
+
+This rule comes directly from `OpenLCB_Java MemoryConfigurationService.getPayloadOffset(data)` and has been verified against live traffic captures in `specs/004-read-node-config/traffic/`.
 
 **Example:**
 ```rust

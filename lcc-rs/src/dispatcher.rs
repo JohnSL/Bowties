@@ -2,6 +2,10 @@
 //!
 //! The dispatcher runs a background task that continuously reads frames from the transport
 //! and broadcasts them to multiple subscribers via channels.
+//!
+//! Architecture: A `TapTransport` wrapper intercepts EVERY send() and receive() call on the
+//! underlying transport, regardless of which code path made the call (dispatcher, snip module,
+//! memory config, etc.). This ensures all bidirectional traffic appears in the broadcast channel.
 
 use crate::protocol::{GridConnectFrame, MTI};
 use crate::transport::LccTransport;
@@ -9,6 +13,42 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::task::JoinHandle;
 use std::collections::HashMap;
+
+/// A transparent transport wrapper that taps every send/receive and broadcasts to a channel.
+/// This ensures ALL traffic is captured regardless of which code path calls the transport.
+struct TapTransport {
+    inner: Box<dyn LccTransport>,
+    tx: broadcast::Sender<ReceivedMessage>,
+}
+
+#[async_trait::async_trait]
+impl LccTransport for TapTransport {
+    async fn send(&mut self, frame: &GridConnectFrame) -> crate::Result<()> {
+        let result = self.inner.send(frame).await;
+        if result.is_ok() {
+            let _ = self.tx.send(ReceivedMessage {
+                frame: frame.clone(),
+                timestamp: std::time::Instant::now(),
+            });
+        }
+        result
+    }
+
+    async fn receive(&mut self, timeout_ms: u64) -> crate::Result<Option<GridConnectFrame>> {
+        let result = self.inner.receive(timeout_ms).await;
+        if let Ok(Some(ref frame)) = result {
+            let _ = self.tx.send(ReceivedMessage {
+                frame: frame.clone(),
+                timestamp: std::time::Instant::now(),
+            });
+        }
+        result
+    }
+
+    async fn close(&mut self) -> crate::Result<()> {
+        self.inner.close().await
+    }
+}
 
 /// Channel capacity for broadcast channels
 const CHANNEL_CAPACITY: usize = 256;
@@ -57,7 +97,11 @@ impl MessageDispatcher {
     pub fn new(transport: Box<dyn LccTransport>) -> Self {
         let (all_tx, _) = broadcast::channel(CHANNEL_CAPACITY);
         let mti_senders = Arc::new(RwLock::new(HashMap::new()));
-        let transport = Arc::new(Mutex::new(transport));
+        
+        // Wrap transport in TapTransport so ALL sends/receives are broadcast,
+        // regardless of which code path (dispatcher, snip, memory config) makes the call.
+        let tap = TapTransport { inner: transport, tx: all_tx.clone() };
+        let transport = Arc::new(Mutex::new(Box::new(tap) as Box<dyn LccTransport>));
         
         Self {
             all_tx,
@@ -72,13 +116,12 @@ impl MessageDispatcher {
     pub fn start(&mut self) {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
         
-        let all_tx = self.all_tx.clone();
         let mti_senders = self.mti_senders.clone();
         let transport = self.transport.clone();
         
         // Spawn background task
         let handle = tokio::spawn(async move {
-            Self::listener_loop(transport, all_tx, mti_senders, shutdown_rx).await;
+            Self::listener_loop(transport, mti_senders, shutdown_rx).await;
         });
         
         self.listener_handle = Some(handle);
@@ -86,9 +129,12 @@ impl MessageDispatcher {
     }
 
     /// Background listener loop
+    /// 
+    /// Drives transport.receive() so frames are read from the network.
+    /// TapTransport handles broadcasting all frames to all_tx automatically.
+    /// This loop only needs to route frames to MTI-specific subscribers.
     async fn listener_loop(
         transport: Arc<Mutex<Box<dyn LccTransport>>>,
-        all_tx: broadcast::Sender<ReceivedMessage>,
         mti_senders: Arc<RwLock<HashMap<MTI, broadcast::Sender<ReceivedMessage>>>>,
         mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
     ) {
@@ -98,26 +144,26 @@ impl MessageDispatcher {
                 break;
             }
 
-            // Try to receive a frame with a short timeout
+            // Drive receive - TapTransport broadcasts to all_tx automatically.
+            // Keep the poll timeout SHORT (1ms) so the transport mutex is released
+            // frequently enough that send() callers (e.g. read_memory) are not blocked
+            // for the full poll duration.
             let frame_result = {
                 let mut transport = transport.lock().await;
-                transport.receive(100).await // 100ms timeout
+                transport.receive(1).await // 1ms timeout — release lock frequently
             };
 
             match frame_result {
                 Ok(Some(frame)) => {
-                    let msg = ReceivedMessage {
-                        frame: frame.clone(),
-                        timestamp: std::time::Instant::now(),
-                    };
-
-                    // Broadcast to all subscribers
-                    let _ = all_tx.send(msg.clone());
-
-                    // Broadcast to MTI-specific subscribers
+                    // TapTransport already broadcast to all_tx.
+                    // Route to MTI-specific subscribers here.
                     if let Ok((mti, _)) = frame.get_mti() {
                         let senders = mti_senders.read().await;
                         if let Some(tx) = senders.get(&mti) {
+                            let msg = ReceivedMessage {
+                                frame,
+                                timestamp: std::time::Instant::now(),
+                            };
                             let _ = tx.send(msg);
                         }
                     }
@@ -153,6 +199,7 @@ impl MessageDispatcher {
     }
 
     /// Send a frame to the LCC network
+    /// TapTransport automatically broadcasts the frame to all_tx on send.
     pub async fn send(&self, frame: &GridConnectFrame) -> Result<(), crate::Error> {
         let mut transport = self.transport.lock().await;
         transport.send(frame).await

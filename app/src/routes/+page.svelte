@@ -1,11 +1,15 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from '@tauri-apps/api/event';
   import { onMount } from 'svelte';
-  import NodeList from '$lib/components/NodeList.svelte';
+  import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import MillerColumnsNav from '$lib/components/MillerColumns/MillerColumnsNav.svelte';
   import { discoverNodes as discoverNodesApi, querySnipBatch, refreshAllNodes } from '$lib/api/tauri';
+  import { readAllConfigValues, cancelConfigReading, getCdiXml } from '$lib/api/cdi';
   import type { DiscoveredNode } from '$lib/api/tauri';
+  import type { ReadProgressState } from '$lib/api/types';
   import { millerColumnsStore } from '$lib/stores/millerColumns';
+  import { updateNodeInfo } from '$lib/stores/nodeInfo';
 
   // Connection state
   let host = $state("localhost");
@@ -20,10 +24,14 @@
   let discoveryTimeout = $state(250);
   let queryingSnip = $state(false);
   let refreshing = $state(false);
-  let showAdvanced = $state(false);
+  let showDiscoveryOptions = $state(false);
 
+  // Config reading progress state (T063-T067)
+  let readProgress = $state<ReadProgressState | null>(null);
+  let isCancelling = $state(false);
+  
   // Reference to Miller Columns for triggering refresh
-  let millerColumnsNav: MillerColumnsNav;
+  let millerColumnsNav = $state<MillerColumnsNav>();
 
   // Check connection status on mount
   onMount(async () => {
@@ -35,6 +43,37 @@
     } catch (e) {
       console.error("Failed to get connection status:", e);
     }
+
+    const unlistens: Array<() => void> = [];
+
+    // T063: Setup config-read-progress event listener
+    unlistens.push(await listen<ReadProgressState>('config-read-progress', (event) => {
+      readProgress = event.payload;
+      millerColumnsStore.setReadProgress(event.payload);
+      
+      // Clear progress on completion or cancellation
+      if (event.payload.status.type === 'Complete' || event.payload.status.type === 'Cancelled') {
+        setTimeout(() => {
+          readProgress = null;
+          millerColumnsStore.setReadProgress(null);
+          isCancelling = false;
+          millerColumnsStore.setCancelling(false);
+        }, 500); // Brief pause so user sees the final status
+      }
+    }));
+
+    // Native menu event listeners — relay OS menu clicks to handler functions
+    unlistens.push(await listen('menu-disconnect',     () => disconnect()));
+    unlistens.push(await listen('menu-refresh',        () => { if (connected) discover(); }));
+    unlistens.push(await listen('menu-traffic',        () => { if (connected) openTrafficMonitor(); }));
+    unlistens.push(await listen('menu-view-cdi',       () => millerColumnsNav?.viewCdiXmlForSelectedNode()));
+    unlistens.push(await listen('menu-redownload-cdi', () => millerColumnsNav?.downloadCdiForSelectedNode()));
+    unlistens.push(await listen('menu-discovery-opts', () => { showDiscoveryOptions = !showDiscoveryOptions; }));
+
+    // Cleanup all listeners on component unmount
+    return () => {
+      unlistens.forEach(u => u());
+    };
   });
 
   async function connect(event: Event) {
@@ -59,6 +98,7 @@
       await invoke("disconnect_lcc");
       connected = false;
       nodes = [];
+      updateNodeInfo([]);
     } catch (e) {
       errorMessage = `Disconnect failed: ${e}`;
     }
@@ -71,11 +111,83 @@
     if (nodes.length > 0) {
       refreshing = true;
       try {
+        // T068: Clear config cache before refresh
+        millerColumnsStore.clearConfigValues();
+        
         const updated = await refreshAllNodes();
         nodes = updated;
+        updateNodeInfo(nodes);
+        
         // Trigger Miller Columns refresh after node data is updated
         if (millerColumnsNav) {
           await millerColumnsNav.refreshNodes();
+        }
+
+        // T064: Read all config values for nodes with SNIP data (likely to have CDI)
+        // The backend will automatically load CDI from cache if available
+        const cdiCandidatesRefresh = nodes.filter(n => n.snip_data !== null);
+        let totalSuccessfulRefresh = 0;
+        let totalFailedRefresh = 0;
+        for (let nodeIdx = 0; nodeIdx < cdiCandidatesRefresh.length; nodeIdx++) {
+          const node = cdiCandidatesRefresh[nodeIdx];
+          try {
+            // Format node_id from array to dotted hex string
+            const nodeId = formatNodeId(node.node_id);
+            const nodeName = node.snip_data?.user_name || nodeId;
+            
+            let hasCdi = false;
+            try {
+              const cdiCheck = await getCdiXml(nodeId);
+              hasCdi = cdiCheck.xmlContent !== null;
+            } catch {
+              // CdiNotRetrieved or similar — CDI not available yet
+            }
+
+            if (!hasCdi) {
+              console.log(`Skipping config read for ${nodeName} — CDI not yet downloaded`);
+              continue;
+            }
+
+            console.log(`Reading config values from ${nodeName}...`);
+            const response = await readAllConfigValues(nodeId, undefined, nodeIdx, cdiCandidatesRefresh.length);
+            
+            // Update store with batch values
+            millerColumnsStore.setConfigValues(response.values);
+            totalSuccessfulRefresh += response.successfulReads;
+            totalFailedRefresh += response.failedReads;
+            
+            console.log(`✓ Read ${response.successfulReads} of ${response.totalElements} config values from ${nodeName}`);
+            if (response.failedReads > 0) {
+              console.warn(`  ${response.failedReads} values failed to read`);
+            }
+          } catch (e) {
+            const nodeName = node.snip_data?.user_name || 'unknown';
+            console.warn(`Failed to read config values from node ${nodeName}:`, e);
+            totalFailedRefresh++;
+            // Continue with next node - don't fail entire refresh
+          }
+        }
+        // Emit synthetic Complete so the progress strip auto-dismisses
+        if (cdiCandidatesRefresh.length > 0) {
+          const doneState: ReadProgressState = {
+            totalNodes: cdiCandidatesRefresh.length,
+            currentNodeIndex: cdiCandidatesRefresh.length - 1,
+            currentNodeName: '',
+            currentNodeId: '',
+            totalElements: 0,
+            elementsRead: totalSuccessfulRefresh,
+            elementsFailed: totalFailedRefresh,
+            percentage: 100,
+            status: { type: 'Complete', success_count: totalSuccessfulRefresh, fail_count: totalFailedRefresh }
+          };
+          readProgress = doneState;
+          millerColumnsStore.setReadProgress(doneState);
+          setTimeout(() => {
+            readProgress = null;
+            millerColumnsStore.setReadProgress(null);
+            isCancelling = false;
+            millerColumnsStore.setCancelling(false);
+          }, 1500);
         }
       } catch (e) {
         console.error("Refresh failed:", e);
@@ -120,9 +232,79 @@
           }
         }
         
+        // Populate nodeInfo store for tooltips and display names
+        updateNodeInfo(nodes);
+
         // Trigger Miller Columns refresh after discovery completes
         if (millerColumnsNav) {
           await millerColumnsNav.refreshNodes();
+        }
+
+        // T064: Read all config values for nodes with SNIP data (likely to have CDI)
+        // The backend will automatically load CDI from cache if available
+        const cdiCandidates = nodes.filter(n => n.snip_data !== null);
+        let totalSuccessful = 0;
+        let totalFailed = 0;
+        for (let nodeIdx = 0; nodeIdx < cdiCandidates.length; nodeIdx++) {
+          const node = cdiCandidates[nodeIdx];
+          try {
+            // Format node_id from array to dotted hex string
+            const nodeId = formatNodeId(node.node_id);
+            const nodeName = node.snip_data?.user_name || nodeId;
+            
+            let hasCdi = false;
+            try {
+              const cdiCheck = await getCdiXml(nodeId);
+              hasCdi = cdiCheck.xmlContent !== null;
+            } catch {
+              // CdiNotRetrieved or similar — CDI not available yet
+            }
+
+            if (!hasCdi) {
+              console.log(`Skipping config read for ${nodeName} — CDI not yet downloaded`);
+              continue;
+            }
+
+            console.log(`Reading config values from ${nodeName}...`);
+            const response = await readAllConfigValues(nodeId, undefined, nodeIdx, cdiCandidates.length);
+            
+            // Update store with batch values
+            millerColumnsStore.setConfigValues(response.values);
+            totalSuccessful += response.successfulReads;
+            totalFailed += response.failedReads;
+            
+            console.log(`✓ Read ${response.successfulReads} of ${response.totalElements} config values from ${nodeName}`);
+            if (response.failedReads > 0) {
+              console.warn(`  ${response.failedReads} values failed to read`);
+            }
+          } catch (e) {
+            const nodeName = node.snip_data?.user_name || 'unknown';
+            console.warn(`Failed to read config values from node ${nodeName}:`, e);
+            totalFailed++;
+            // Continue with next node - don't fail entire discovery
+          }
+        }
+        // Emit synthetic Complete so the progress strip auto-dismisses
+        if (cdiCandidates.length > 0) {
+          const doneState: ReadProgressState = {
+            totalNodes: cdiCandidates.length,
+            currentNodeIndex: cdiCandidates.length - 1,
+            currentNodeName: '',
+            currentNodeId: '',
+            totalElements: 0,
+            elementsRead: totalSuccessful,
+            elementsFailed: totalFailed,
+            percentage: 100,
+            status: { type: 'Complete', success_count: totalSuccessful, fail_count: totalFailed }
+          };
+          readProgress = doneState;
+          millerColumnsStore.setReadProgress(doneState);
+          setTimeout(() => {
+            readProgress = null;
+            millerColumnsStore.setReadProgress(null);
+            isCancelling = false;
+            millerColumnsStore.setCancelling(false);
+          }, 1500);
         }
       } catch (e) {
         console.error("Discovery failed:", e);
@@ -141,286 +323,511 @@
     return '0x' + alias.toString(16).toUpperCase().padStart(3, '0');
   }
 
-  function toggleAdvanced() {
-    showAdvanced = !showAdvanced;
+  async function openTrafficMonitor() {
+    const win = new WebviewWindow('traffic', {
+      url: '/traffic',
+      title: 'LCC Traffic Monitor',
+      width: 960,
+      height: 640,
+      parent: getCurrentWebviewWindow(),
+    });
+    // If a window with this label already exists Tauri emits tauri://error
+    // instead of creating a duplicate — just focus the existing one.
+    win.once('tauri://error', async () => {
+      const existing = await WebviewWindow.getByLabel('traffic');
+      if (existing) await existing.setFocus();
+    });
   }
+
+  // T066: Cancel button handler for config reading
+  async function handleCancelConfigReading() {
+    if (isCancelling) return; // Already cancelling
+    
+    isCancelling = true;
+    millerColumnsStore.setCancelling(true);
+    
+    try {
+      await cancelConfigReading();
+      console.log('Config reading cancellation requested');
+    } catch (e) {
+      console.error('Failed to cancel config reading:', e);
+      errorMessage = `Cancel failed: ${e}`;
+      isCancelling = false;
+      millerColumnsStore.setCancelling(false);
+    }
+  }
+
+  // Sync native menu item enable/disable state with current app state.
+  // Tauri v2 has no "menu will open" event, so we push state eagerly whenever
+  // any of the tracked reactive values change.
+  async function syncMenuState(conn: boolean, busy: boolean, sel: boolean) {
+    try {
+      await invoke("update_menu_state", { connected: conn, isBusy: busy, hasSelection: sel });
+    } catch (e) {
+      console.warn("Failed to update menu state:", e);
+    }
+  }
+
+  $effect(() => {
+    const conn = connected;
+    const busy = discovering || queryingSnip || refreshing;
+    const sel  = !!$millerColumnsStore.selectedNode;
+    syncMenuState(conn, busy, sel);
+  });
 </script>
 
-<main>
-  {#if !connected}
-    <div class="card">
-      <h2>Connection</h2>
-      <form onsubmit={connect}>
-        <label>
-          Host: <input type="text" bind:value={host} disabled={connecting} />
-        </label>
-        <label>
-          Port: <input type="number" bind:value={port} disabled={connecting} />
-        </label>
-        <button type="submit" disabled={connecting}>
-          {connecting ? "Connecting..." : "Connect"}
-        </button>
-      </form>
-      {#if errorMessage}
-        <div class="error">{errorMessage}</div>
-      {/if}
-    </div>
-  {:else}
-    <div class="status-bar">
-      <span class="connected">✓ Connected to {host}:{port}</span>
-      <button class="disconnect-btn" onclick={disconnect}>Disconnect</button>
-    </div>
-  {/if}
 
+<div class="app-shell">
+
+  <!-- ═══ TOOLBAR (connected only) ═══ -->
   {#if connected}
-    <div class="card discovery-card">
-      <div class="discovery-toolbar">
-        <button class="discover-btn" onclick={discover} disabled={discovering || queryingSnip || refreshing}>
-          {discovering ? "Discovering..." : queryingSnip ? "Loading node info..." : refreshing ? "Refreshing..." : nodes.length > 0 ? "Refresh Nodes" : "Discover Nodes"}
+    <div class="toolbar" role="toolbar" aria-label="Main toolbar">
+      <div class="toolbar-left">
+        <button
+          class="toolbar-btn"
+          onclick={discover}
+          disabled={discovering || queryingSnip || refreshing}
+          title={nodes.length > 0 ? 'Refresh nodes on the network' : 'Discover nodes on the network'}
+        >
+          <span class="tb-icon" class:tb-spin={discovering || refreshing}>⟳</span>
+          <span>{discovering ? 'Discovering…' : queryingSnip ? 'Querying…' : refreshing ? 'Refreshing…' : nodes.length > 0 ? 'Refresh Nodes' : 'Discover Nodes'}</span>
         </button>
-        {#if nodes.length > 0}
-          <span class="node-count">{nodes.length} node{nodes.length === 1 ? '' : 's'} discovered</span>
-        {/if}
-        <button class="advanced-toggle" onclick={toggleAdvanced} title="Advanced options">
-          ⚙️ {showAdvanced ? 'Hide' : ''} Advanced
+        <span class="toolbar-sep" aria-hidden="true"></span>
+        <button
+          class="toolbar-btn"
+          onclick={openTrafficMonitor}
+          title="Open the LCC Traffic Monitor window"
+        >
+          <span class="tb-icon">📡</span>
+          <span>Traffic Monitor</span>
         </button>
       </div>
-
-      {#if showAdvanced}
-        <div class="advanced-options">
-          <label class="timeout-label">
-            Discovery Timeout (ms): 
-            <input class="timeout-input" type="number" bind:value={discoveryTimeout} min="50" max="1000" step="50" disabled={discovering} />
-          </label>
+      <div class="toolbar-right">
+        <div class="toolbar-status" aria-live="polite">
+          <span class="status-dot status-connected" title="Connected to {host}:{port}"></span>
+          <span class="status-text">{host}:{port}</span>
         </div>
-      {/if}
+        <button class="btn-danger tb-disconnect-btn" onclick={disconnect}>Disconnect</button>
+      </div>
+    </div>
+  {/if}
 
-      {#if errorMessage}
-        <div class="error">{errorMessage}</div>
-      {/if}
-
-      {#if nodes.length > 0}
-        <div class="nodes-section">
-          <NodeList 
-            nodes={nodes} 
-            isRefreshing={refreshing}
-          />
-        </div>
-        <div class="miller-columns-section">
-          <MillerColumnsNav bind:this={millerColumnsNav} />
-        </div>
-      {:else if discovering}
-        <p class="status">Scanning network for nodes...</p>
-      {:else if queryingSnip}
-        <p class="status">Loading node information...</p>
-      {:else}
-        <p class="hint">Click "Discover Nodes" to scan the network</p>
+  <!-- ═══ PROGRESS STRIP ═══ -->
+  {#if readProgress}
+    <div class="progress-strip" role="status" aria-live="polite">
+      <div class="ps-bar-track" aria-hidden="true">
+        <div class="ps-bar-fill" style="width: {readProgress.percentage ?? 0}%"></div>
+      </div>
+      <span class="ps-text">
+        {#if readProgress.status.type === 'ReadingNode'}
+          {readProgress.currentNodeIndex + 1}/{readProgress.totalNodes} Reading "{readProgress.status.node_name}" · {readProgress.percentage}%
+        {:else if readProgress.status.type === 'NodeComplete'}
+          ✓ {readProgress.status.node_name}
+        {:else if readProgress.status.type === 'Cancelled'}
+          ⚠ Cancelled
+        {:else if readProgress.status.type === 'Complete'}
+          ✓ All {readProgress.totalNodes} {readProgress.totalNodes === 1 ? 'node' : 'nodes'} read{readProgress.status.fail_count > 0 ? ` — ${readProgress.status.fail_count} failed` : ''}
+        {:else}
+          Starting…
+        {/if}
+      </span>
+      {#if !isCancelling && readProgress.status.type !== 'Complete' && readProgress.status.type !== 'Cancelled'}
+        <button class="ps-cancel" onclick={handleCancelConfigReading} title="Cancel" aria-label="Cancel reading">✕</button>
       {/if}
     </div>
   {/if}
-</main>
+
+  <!-- ═══ ERROR BANNER ═══ -->
+  {#if errorMessage}
+    <div class="error-banner" role="alert">
+      <span class="error-banner-text">⚠ {errorMessage}</span>
+      <button class="error-banner-close" onclick={() => errorMessage = ''} aria-label="Dismiss error">✕</button>
+    </div>
+  {/if}
+
+  <!-- ═══ DISCOVERY OPTIONS BAR ═══ -->
+  {#if showDiscoveryOptions}
+    <div class="discovery-options-bar">
+      <label class="dob-label">
+        Discovery Timeout (ms):
+        <input class="dob-input" type="number" bind:value={discoveryTimeout} min="50" max="1000" step="50" disabled={discovering} />
+      </label>
+      <button class="btn-secondary !text-xs !px-2 !py-1" onclick={() => showDiscoveryOptions = false}>Close</button>
+    </div>
+  {/if}
+
+  <!-- ═══ MAIN CONTENT ═══ -->
+  <div class="main-content">
+    {#if !connected}
+      <div class="connect-area">
+        <div class="connect-card">
+          <h2>Connect to LCC Network</h2>
+          <form onsubmit={connect}>
+            <label>Host: <input type="text" bind:value={host} disabled={connecting} /></label>
+            <label>Port: <input type="number" bind:value={port} disabled={connecting} /></label>
+            <button type="submit" class="btn-primary" disabled={connecting}>
+              {connecting ? "Connecting..." : "Connect"}
+            </button>
+          </form>
+        </div>
+      </div>
+
+    {:else if nodes.length === 0}
+      <div class="empty-area">
+        {#if discovering}
+          <p class="empty-status">Scanning network for nodes…</p>
+        {:else if queryingSnip}
+          <p class="empty-status">Retrieving node information…</p>
+        {:else}
+          <p class="empty-status">No nodes found.</p>
+          <p class="empty-hint">Click <strong>Discover Nodes</strong> in the toolbar or View menu.</p>
+        {/if}
+      </div>
+
+    {:else}
+      <div class="miller-columns-section">
+        <MillerColumnsNav bind:this={millerColumnsNav} />
+      </div>
+    {/if}
+  </div>
+
+</div>
 
 <style>
-  :global(body) {
+  :global(html, body) {
     margin: 0;
     padding: 0;
+    height: 100%;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: white;
-    min-height: 100vh;
+    overflow: hidden;
   }
 
-  main {
-    margin: 0;
-    padding: 0;
-    color: #333;
-  }
+  /* ─── App Shell ─────────────────────────────────────── */
 
-
-
-  .card {
-    background: white;
-    border-radius: 0;
-    padding: 1.25rem;
-    margin-bottom: 0;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  }
-
-  .discovery-card {
-    padding: 1rem;
-  }
-
-  h2 {
-    margin-top: 0;
-    color: #667eea;
-    font-size: 1.25rem;
-    margin-bottom: 1rem;
-  }
-
-  form {
+  .app-shell {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    height: 100vh;
+    overflow: hidden;
   }
 
-  label {
+  /* ─── Status indicator (toolbar) ───────────────────── */
+
+  .toolbar-status {
     display: flex;
     align-items: center;
-    gap: 1rem;
-    font-weight: 500;
+    gap: 6px;
+    padding: 0 8px;
+    font-size: 12px;
+    color: #555;
   }
 
-  input {
-    flex: 1;
-    padding: 0.75rem;
-    border: 2px solid #e0e0e0;
-    border-radius: 6px;
-    font-size: 1rem;
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
   }
 
-  input:focus {
-    outline: none;
-    border-color: #667eea;
+  .status-connected    { background: #10b981; }
+  .status-connecting   { background: #f59e0b; animation: status-pulse 1.2s infinite; }
+  .status-disconnected { background: #9ca3af; }
+
+  @keyframes status-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
   }
 
-  button {
-    padding: 0.6rem 1.25rem;
-    border: none;
-    border-radius: 6px;
-    font-size: 0.95rem;
-    font-weight: 500;
-    cursor: pointer;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    transition: transform 0.2s;
-  }
+  /* ─── Toolbar ───────────────────────────────────────── */
 
-  button:hover:not(:disabled) {
-    transform: translateY(-2px);
-  }
-
-  button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .status-bar {
-    background: white;
-    border-radius: 0;
-    padding: 0.75rem 1.25rem;
-    margin-bottom: 0;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  .toolbar {
     display: flex;
+    align-items: center;
     justify-content: space-between;
-    align-items: center;
-  }
-
-  .disconnect-btn {
-    padding: 0.5rem 1rem;
-    font-size: 0.9rem;
-  }
-
-  .connected {
-    color: #10b981;
-    font-weight: 500;
-    font-size: 1.1rem;
-  }
-
-  .error {
-    background: #fee2e2;
-    border: 1px solid #fecaca;
-    color: #dc2626;
-    padding: 1rem;
-    border-radius: 6px;
-    margin-top: 1rem;
-  }
-
-  .discovery-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
-
-  .discover-btn {
+    background: #fff;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 0 8px;
+    height: 40px;
     flex-shrink: 0;
   }
 
-  .node-count {
-    color: #667eea;
-    font-weight: 500;
-    font-size: 0.95rem;
-  }
-
-  .advanced-toggle {
-    margin-left: auto;
-    padding: 0.5rem 0.75rem;
-    font-size: 0.85rem;
-    background: #f3f4f6;
-    color: #374151;
-  }
-
-  .advanced-toggle:hover:not(:disabled) {
-    background: #e5e7eb;
-  }
-
-  .advanced-options {
-    margin-top: 0.75rem;
-    padding: 0.75rem;
-    background: #f9fafb;
-    border-radius: 6px;
-    border: 1px solid #e5e7eb;
-  }
-
-  .timeout-label {
+  .toolbar-left {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    font-size: 0.9rem;
+    gap: 4px;
+  }
+
+  .toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .toolbar-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #374151;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.12s, border-color 0.12s;
+  }
+
+  .toolbar-btn:hover:not(:disabled) {
+    background: #f0f4ff;
+    border-color: #c7d2fe;
+  }
+
+  .toolbar-btn:disabled {
+    color: #bbb;
+    cursor: default;
+  }
+
+  .tb-icon {
+    font-size: 15px;
+  }
+
+  .tb-spin {
+    display: inline-block;
+    animation: tb-rotate 1s linear infinite;
+  }
+
+  @keyframes tb-rotate {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+
+  .toolbar-sep {
+    width: 1px;
+    height: 20px;
+    background: #e5e7eb;
+    margin: 0 4px;
+  }
+
+  .tb-disconnect-btn {
+    padding: 4px 12px !important;
+    font-size: 12px !important;
+  }
+
+  /* ─── Progress Strip ────────────────────────────────── */
+
+  .progress-strip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 12px;
+    height: 36px;
+    background: #eff6ff;
+    border-bottom: 1px solid #bfdbfe;
+    flex-shrink: 0;
+    animation: strip-in 0.25s ease-out;
+  }
+
+  @keyframes strip-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .ps-bar-track {
+    width: 120px;
+    height: 6px;
+    background: #dbeafe;
+    border-radius: 3px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .ps-bar-fill {
+    height: 100%;
+    background: #2563eb;
+    border-radius: 3px;
+    transition: width 0.3s ease-out;
+  }
+
+  .ps-text {
+    flex: 1;
+    font-size: 12px;
+    color: #1e40af;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ps-cancel {
+    background: none;
+    border: 1px solid #93c5fd;
+    border-radius: 4px;
+    color: #1e40af;
+    font-size: 12px;
+    padding: 2px 8px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .ps-cancel:hover {
+    background: #bfdbfe;
+  }
+
+  /* ─── Error Banner ──────────────────────────────────── */
+
+  .error-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    height: 32px;
+    background: #fee2e2;
+    border-bottom: 1px solid #fecaca;
+    flex-shrink: 0;
+  }
+
+  .error-banner-text {
+    flex: 1;
+    font-size: 12px;
+    color: #dc2626;
+  }
+
+  .error-banner-close {
+    background: none;
+    border: none;
+    color: #dc2626;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 4px;
+    border-radius: 3px;
+  }
+
+  .error-banner-close:hover {
+    background: #fecaca;
+  }
+
+  /* ─── Discovery Options Bar ─────────────────────────── */
+
+  .discovery-options-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 12px;
+    background: #f9fafb;
+    border-bottom: 1px solid #e5e7eb;
+    flex-shrink: 0;
+    font-size: 13px;
+  }
+
+  .dob-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     color: #374151;
   }
 
-  .timeout-input {
-    width: 100px;
-    padding: 0.4rem 0.6rem;
-    font-size: 0.9rem;
+  .dob-input {
+    width: 90px;
+    padding: 4px 8px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    font-size: 13px;
   }
 
-  .status {
-    color: #667eea;
-    font-style: italic;
-    text-align: center;
-    padding: 0.75rem;
-    font-size: 0.9rem;
-  }
+  /* ─── Main Content ──────────────────────────────────── */
 
-  .status {
-    color: #667eea;
-    font-style: italic;
-    text-align: center;
-    padding: 0.75rem;
-    font-size: 0.9rem;
-  }
-
-  .hint {
-    color: #999;
-    font-style: italic;
-    text-align: center;
-    padding: 0.75rem;
-    font-size: 0.9rem;
-  }
-
-  .nodes-section {
-    margin-top: 0.75rem;
-  }
-
-  .miller-columns-section {
-    margin-top: 0;
-    background: white;
-    border-radius: 0;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    overflow: hidden;
-    height: 600px;
+  .main-content {
+    flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ─── Connect form ──────────────────────────────────── */
+
+  .connect-area {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+  }
+
+  .connect-card {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 2rem;
+    width: 340px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+  }
+
+  .connect-card h2 {
+    margin-top: 0;
+    margin-bottom: 1.5rem;
+    color: #2563eb;
+    font-size: 1.1rem;
+  }
+
+  .connect-card form {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .connect-card label {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    font-size: 14px;
+    font-weight: 500;
+    color: #374151;
+  }
+
+  .connect-card input {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+  }
+
+  .connect-card input:focus {
+    outline: none;
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
+  }
+
+  /* ─── Empty / loading state ─────────────────────────── */
+
+  .empty-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #6b7280;
+    gap: 4px;
+  }
+
+  .empty-status {
+    margin: 0;
+    font-size: 14px;
+  }
+
+  .empty-hint {
+    margin: 4px 0 0 0;
+    font-size: 13px;
+  }
+
+  /* ─── Miller Columns (fills remaining height) ────────── */
+
+  .miller-columns-section {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
 </style>

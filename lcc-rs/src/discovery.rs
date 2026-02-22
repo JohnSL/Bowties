@@ -95,6 +95,11 @@ impl LccConnection {
         self.dispatcher.clone()
     }
     
+    /// Get our node alias
+    pub fn our_alias(&self) -> &NodeAlias {
+        &self.our_alias
+    }
+    
     /// Discover all nodes on the network
     /// 
     /// Sends a global Verify Node ID message and collects Verified Node responses.
@@ -150,16 +155,22 @@ impl LccConnection {
         let mut nodes = HashMap::new();
         let start_time = Instant::now();
         let max_duration = Duration::from_millis(timeout_ms);
-        let silence_threshold = Duration::from_millis(25);
-        let mut last_receive_time = Instant::now();
+        // 100ms silence after the FIRST response ends collection.
+        // Before any response arrives we wait the full timeout so slow/high-latency
+        // networks are not prematurely abandoned.
+        let silence_threshold = Duration::from_millis(100);
+        let mut last_receive_time: Option<Instant> = None;
         
         loop {
             if start_time.elapsed() >= max_duration {
                 break;
             }
             
-            if last_receive_time.elapsed() >= silence_threshold {
-                break;
+            // Only apply silence guard after seeing at least one response.
+            if let Some(t) = last_receive_time {
+                if t.elapsed() >= silence_threshold {
+                    break;
+                }
             }
             
             let remaining = max_duration.saturating_sub(start_time.elapsed());
@@ -167,7 +178,7 @@ impl LccConnection {
             
             match tokio::time::timeout(poll_timeout, rx.recv()).await {
                 Ok(Ok(msg)) => {
-                    last_receive_time = Instant::now();
+                    last_receive_time = Some(Instant::now());
                     
                     if let Ok((_, alias)) = msg.frame.get_mti() {
                         if msg.frame.data.len() == 6 {
@@ -223,8 +234,11 @@ impl LccConnection {
         let mut nodes = HashMap::new();
         let start_time = Instant::now();
         let max_duration = Duration::from_millis(timeout_ms);
-        let silence_threshold = Duration::from_millis(25); // 25ms silence = done
-        let mut last_receive_time = Instant::now();
+        // 100ms silence after the FIRST response ends collection.
+        // Before any response arrives we wait the full timeout so slow/high-latency
+        // networks are not prematurely abandoned.
+        let silence_threshold = Duration::from_millis(100);
+        let mut last_receive_time: Option<Instant> = None;
         
         loop {
             // Check if we've exceeded max timeout
@@ -232,9 +246,11 @@ impl LccConnection {
                 break;
             }
             
-            // Check if we've had 25ms of silence
-            if last_receive_time.elapsed() >= silence_threshold {
-                break;
+            // Only apply silence guard after seeing at least one response.
+            if let Some(t) = last_receive_time {
+                if t.elapsed() >= silence_threshold {
+                    break;
+                }
             }
             
             // Try to receive a frame with a short timeout
@@ -243,7 +259,7 @@ impl LccConnection {
             
             match transport.receive(poll_timeout.as_millis() as u64).await? {
                 Some(frame) => {
-                    last_receive_time = Instant::now();
+                    last_receive_time = Some(Instant::now());
                     
                     // Check if this is a Verified Node response
                     if let Ok((mti, alias)) = frame.get_mti() {
@@ -573,7 +589,7 @@ impl LccConnection {
 
             // Parse read reply
             let reply_data = reply_payload.unwrap();
-            let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
+let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
 
             match reply {
                 crate::protocol::ReadReply::Success { data, .. } => {
@@ -608,6 +624,284 @@ impl LccConnection {
         String::from_utf8(cdi_data).map_err(|e| {
             crate::Error::Protocol(format!("CDI is not valid UTF-8: {}", e))
         })
+    }
+    
+    /// Read memory from a node's address space
+    /// 
+    /// # Arguments
+    /// * `dest_alias` - Target node alias
+    /// * `address_space` - Memory address space (0xFD = Configuration, 0xFE = All, 0xFF = CDI)
+    /// * `address` - Starting memory address
+    /// * `count` - Number of bytes to read (1-64)
+    /// * `timeout_ms` - Timeout in milliseconds
+    /// 
+    /// # Returns
+    /// * `Ok(Vec<u8>)` - Raw bytes read from memory
+    /// * `Err(_)` - Protocol error or timeout
+    pub async fn read_memory(
+        &mut self,
+        dest_alias: u16,
+        address_space: u8,
+        address: u32,
+        count: u8,
+        timeout_ms: u64,
+    ) -> Result<Vec<u8>> {
+        if let Some(ref dispatcher) = self.dispatcher {
+            // Dispatcher mode: subscribe to broadcast channel, send request, wait for reply.
+            // This avoids holding the transport mutex for the entire receive loop — the
+            // dispatcher background task is the designated reader; we only need the mutex
+            // briefly for each outgoing send.
+            let our_alias = self.our_alias.value();
+            Self::read_memory_with_dispatcher(
+                dispatcher,
+                our_alias,
+                dest_alias,
+                address_space,
+                address,
+                count,
+                timeout_ms,
+            ).await
+        } else if self.transport.is_some() {
+            self.read_memory_direct(dest_alias, address_space, address, count, timeout_ms).await
+        } else {
+            Err(crate::Error::Protocol("No transport or dispatcher available".to_string()))
+        }
+    }
+
+    /// Read memory in dispatcher mode.
+    ///
+    /// The dispatcher background task is the sole owner of the transport receive path.
+    /// This method:
+    ///   1. Subscribes to the all-frames broadcast channel BEFORE sending (no frames missed).
+    ///   2. Locks the transport briefly to send the request frames only.
+    ///   3. Waits on the broadcast channel for reply datagram frames — no transport lock held.
+    ///   4. Sends the DatagramReceivedOK acknowledgment via a brief transport lock.
+    ///
+    /// Round-trip latency is therefore pure network latency (~4ms), not 100ms poll cycles.
+    async fn read_memory_with_dispatcher(
+        dispatcher: &Arc<Mutex<MessageDispatcher>>,
+        our_alias: u16,
+        dest_alias: u16,
+        address_space: u8,
+        address: u32,
+        count: u8,
+        timeout_ms: u64,
+    ) -> Result<Vec<u8>> {
+        use crate::protocol::{MemoryConfigCmd, AddressSpace, DatagramAssembler};
+
+        let space = match address_space {
+            0xFB => AddressSpace::AcdiUser,
+            0xFC => AddressSpace::AcdiManufacturer,
+            0xFD => AddressSpace::Configuration,
+            0xFE => AddressSpace::AllMemory,
+            0xFF => AddressSpace::Cdi,
+            _ => return Err(crate::Error::Protocol(format!(
+                "Invalid address space: 0x{:02X}", address_space
+            ))),
+        };
+
+        let read_frames = MemoryConfigCmd::build_read(our_alias, dest_alias, space, address, count)?;
+
+        // Step 1: Subscribe BEFORE sending so we cannot miss the reply.
+        let mut rx = {
+            let disp = dispatcher.lock().await;
+            disp.subscribe_all()
+        };
+
+        // Step 2: Send the request (brief lock — just for the write operation).
+        {
+            let disp = dispatcher.lock().await;
+            for frame in read_frames.iter() {
+                disp.send(frame).await?;
+            }
+        }
+
+        // Step 3: Wait for reply on the broadcast channel (no transport lock held).
+        let start_time = Instant::now();
+        let max_duration = Duration::from_millis(timeout_ms);
+        let mut assembler = DatagramAssembler::new();
+
+        loop {
+            let remaining = max_duration.saturating_sub(start_time.elapsed());
+            if remaining.is_zero() {
+                return Err(crate::Error::Timeout(
+                    "Timeout waiting for memory read response".to_string(),
+                ));
+            }
+
+            match tokio::time::timeout(remaining, rx.recv()).await {
+                Ok(Ok(msg)) => {
+                    // Only process datagram frames from dest_alias addressed to us.
+                    let is_our_datagram = MTI::from_datagram_header(msg.frame.header)
+                        .map(|(mti, src, dst)| {
+                            let is_dg = matches!(
+                                mti,
+                                MTI::DatagramOnly
+                                    | MTI::DatagramFirst
+                                    | MTI::DatagramMiddle
+                                    | MTI::DatagramFinal
+                            );
+                            is_dg && src == dest_alias && dst == our_alias
+                        })
+                        .unwrap_or(false);
+
+                    if !is_our_datagram {
+                        continue;
+                    }
+
+                    if let Ok(Some(datagram_data)) = assembler.handle_frame(&msg.frame) {
+                        // Step 4: Send ACK (brief lock).
+                        let ack_frame = DatagramAssembler::send_acknowledgment(our_alias, dest_alias)?;
+                        {
+                            let disp = dispatcher.lock().await;
+                            disp.send(&ack_frame).await?;
+                        }
+
+                        let reply = MemoryConfigCmd::parse_read_reply(&datagram_data)?;
+                        return match reply {
+                            crate::protocol::ReadReply::Success { data, .. } => Ok(data),
+                            crate::protocol::ReadReply::Failed { error_code, message, .. } => {
+                                Err(crate::Error::Protocol(format!(
+                                    "Memory read failed: error 0x{:04X} - {}",
+                                    error_code, message
+                                )))
+                            }
+                        };
+                    }
+                }
+                Ok(Err(_)) => {
+                    // Broadcast channel lagged (buffer full) — frames may have been dropped.
+                    // The reply might have been lost; surface a timeout rather than hanging.
+                    return Err(crate::Error::Timeout(
+                        "Broadcast channel lagged during memory read".to_string(),
+                    ));
+                }
+                Err(_) => {
+                    return Err(crate::Error::Timeout(
+                        "Timeout waiting for memory read response".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Read memory using direct transport reference
+    async fn read_memory_direct(
+        &mut self,
+        dest_alias: u16,
+        address_space: u8,
+        address: u32,
+        count: u8,
+        timeout_ms: u64,
+    ) -> Result<Vec<u8>> {
+        let our_alias = self.our_alias.value();
+        if let Some(ref mut transport) = self.transport {
+            Self::read_memory_impl(
+                transport.as_mut(),
+                our_alias,
+                dest_alias,
+                address_space,
+                address,
+                count,
+                timeout_ms,
+            ).await
+        } else {
+            Err(crate::Error::Protocol("No transport available".to_string()))
+        }
+    }
+    
+    /// Read memory implementation - static method
+    async fn read_memory_impl(
+        transport: &mut dyn LccTransport,
+        our_alias: u16,
+        dest_alias: u16,
+        address_space: u8,
+        address: u32,
+        count: u8,
+        timeout_ms: u64,
+    ) -> Result<Vec<u8>> {
+        use crate::protocol::{MemoryConfigCmd, AddressSpace, DatagramAssembler};
+        use std::time::Instant;
+        
+        // Convert address space byte to enum
+        let space = match address_space {
+            0xFB => AddressSpace::AcdiUser,
+            0xFC => AddressSpace::AcdiManufacturer,
+            0xFD => AddressSpace::Configuration,
+            0xFE => AddressSpace::AllMemory,
+            0xFF => AddressSpace::Cdi,
+            _ => return Err(crate::Error::Protocol(format!("Invalid address space: 0x{:02X}", address_space))),
+        };
+        
+        // Build read command
+        let read_frames = MemoryConfigCmd::build_read(
+            our_alias,
+            dest_alias,
+            space,
+            address,
+            count,
+        )?;
+        
+        // Send all frames
+        for frame in read_frames.iter() {
+            transport.send(frame).await?;
+        }
+        
+        // Wait for response
+        let start_time = Instant::now();
+        let max_duration = Duration::from_millis(timeout_ms);
+        let mut assembler = DatagramAssembler::new();
+        
+        while start_time.elapsed() < max_duration {
+            let remaining = max_duration.saturating_sub(start_time.elapsed());
+            if let Some(frame) = transport.receive(remaining.as_millis() as u64).await? {
+                // Filter: only accept datagram frames addressed to us from the expected node.
+                // On a multi-node network, datagrams from unrelated nodes must be ignored
+                // so they don't corrupt the assembler state or return wrong data.
+                let is_our_datagram = MTI::from_datagram_header(frame.header)
+                    .map(|(mti, src, dst)| {
+                        let is_datagram = matches!(
+                            mti,
+                            MTI::DatagramOnly
+                                | MTI::DatagramFirst
+                                | MTI::DatagramMiddle
+                                | MTI::DatagramFinal
+                        );
+                        is_datagram && src == dest_alias && dst == our_alias
+                    })
+                    .unwrap_or(false);
+
+                if !is_our_datagram {
+                    continue;
+                }
+
+                // Check if datagram frame and assemble
+                if let Ok(Some(datagram_data)) = assembler.handle_frame(&frame) {
+                    // Send DatagramReceivedOK acknowledgment to the node
+                    let ack_frame = DatagramAssembler::send_acknowledgment(our_alias, dest_alias)?;
+                    transport.send(&ack_frame).await?;
+                    
+                    // Parse response
+                    let reply = MemoryConfigCmd::parse_read_reply(&datagram_data)?;
+                    
+                    match reply {
+                        crate::protocol::ReadReply::Success { data, .. } => {
+                            return Ok(data);
+                        }
+                        crate::protocol::ReadReply::Failed { error_code, message, .. } => {
+                            return Err(crate::Error::Protocol(format!(
+                                "Memory read failed: error 0x{:04X} - {}",
+                                error_code, message
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+        
+        Err(crate::Error::Timeout(format!(
+            "Timeout waiting for memory read response"
+        )))
     }
 }
 

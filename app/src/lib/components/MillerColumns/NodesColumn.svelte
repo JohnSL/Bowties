@@ -1,26 +1,42 @@
 <script lang="ts">
-  import { getDiscoveredNodes, type DiscoveredNode } from '$lib/api/cdi';
+  import { getDiscoveredNodes, getCdiXml, downloadCdi, type DiscoveredNode } from '$lib/api/cdi';
   import { millerColumnsStore } from '$lib/stores/millerColumns';
   import { getCdiStructure } from '$lib/api/cdi';
+  import { nodeInfoStore } from '$lib/stores/nodeInfo';
+  import CdiXmlViewer from '$lib/components/CdiXmlViewer.svelte';
+  import { getCdiErrorMessage, isCdiError } from '$lib/types/cdi';
+  import type { ViewerStatus } from '$lib/types/cdi';
 
   let nodes: DiscoveredNode[] = [];
   let loading = false;
   let error: string | null = null;
   let selectedNodeId: string | null = null;
 
-  // Subscribe to store to track selected node
   $: if ($millerColumnsStore.selectedNode) {
     selectedNodeId = $millerColumnsStore.selectedNode.nodeId;
   }
 
-  /**
-   * Refresh nodes from backend state
-   * Called by parent component when node data has been updated
-   */
+  // --- Context menu state ---
+  let contextMenuVisible = false;
+  let contextMenuX = 0;
+  let contextMenuY = 0;
+  let contextMenuNode: DiscoveredNode | null = null;
+
+  // --- CDI Viewer state ---
+  let viewerVisible = false;
+  let viewerNodeId: string | null = null;
+  let viewerXmlContent: string | null = null;
+  let viewerStatus: ViewerStatus = 'idle';
+  let viewerErrorMessage: string | null = null;
+
+  // ----------------------------------------------------------------
+  // Exported public methods (called by MillerColumnsNav → +page.svelte)
+  // ----------------------------------------------------------------
+
+  /** Refresh nodes from backend state. */
   export async function refresh() {
     loading = true;
     error = null;
-    
     try {
       const response = await getDiscoveredNodes();
       nodes = response.nodes;
@@ -32,22 +48,31 @@
     }
   }
 
+  /** Open CDI XML viewer for the currently selected node (called from menu bar). */
+  export async function viewCdiXmlForSelectedNode() {
+    if (!selectedNodeId) return;
+    await openCdiViewer(selectedNodeId, false);
+  }
+
+  /** Force-download CDI for the currently selected node (called from menu bar). */
+  export async function downloadCdiForSelectedNode() {
+    if (!selectedNodeId) return;
+    await openCdiViewer(selectedNodeId, true);
+  }
+
+  // ----------------------------------------------------------------
+  // Node selection
+  // ----------------------------------------------------------------
+
   async function handleNodeSelect(node: DiscoveredNode) {
     if (!node.hasCdi) {
-      alert(`Node "${node.nodeName}" does not have CDI data available. Please download CDI first.`);
+      alert(`Node "${getNodeDisplayName(node)}" does not have CDI data available. Please download CDI first.`);
       return;
     }
-
     try {
       millerColumnsStore.setLoading(true);
-      
-      // Select the node in store (resets columns and breadcrumb)
-      millerColumnsStore.selectNode(node.nodeId, node.nodeName);
-      
-      // Load CDI structure to populate segments column
+      millerColumnsStore.selectNode(node.nodeId, getNodeDisplayName(node));
       const cdiStructure = await getCdiStructure(node.nodeId);
-      
-      // Add segments column
       millerColumnsStore.addColumn({
         depth: 1,
         type: 'segments',
@@ -66,7 +91,6 @@
         })),
         parentPath: [],
       });
-      
       millerColumnsStore.setLoading(false);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -75,15 +99,134 @@
     }
   }
 
+  // ----------------------------------------------------------------
+  // Display name & tooltip
+  // ----------------------------------------------------------------
+
   /**
-   * Get display name for a node
-   * Priority: user name > SNIP (manufacturer + model) > fallback to Node ID
+   * Display name priority: user_name > user_description > manufacturer+model > nodeId
    */
   function getNodeDisplayName(node: DiscoveredNode): string {
-    // For now, use nodeName from backend (already implements the priority logic)
-    return node.nodeName;
+    const full = $nodeInfoStore.get(node.nodeId);
+    if (full?.snip_data) {
+      const s = full.snip_data;
+      if (s.user_name?.trim()) return s.user_name.trim();
+      if (s.user_description?.trim()) return s.user_description.trim();
+      const parts = [s.manufacturer?.trim(), s.model?.trim()].filter(Boolean);
+      if (parts.length) return parts.join(' ');
+    }
+    return node.nodeName || node.nodeId;
+  }
+
+  /** Build multi-line tooltip string from full SNIP data. */
+  function getNodeTooltip(node: DiscoveredNode): string {
+    const lines: string[] = [`Node ID: ${node.nodeId}`];
+    const full = $nodeInfoStore.get(node.nodeId);
+    if (full) {
+      lines.push(`Alias: 0x${full.alias.toString(16).toUpperCase().padStart(3, '0')}`);
+      const s = full.snip_data;
+      if (s) {
+        if (s.manufacturer)     lines.push(`Manufacturer: ${s.manufacturer}`);
+        if (s.model)            lines.push(`Model: ${s.model}`);
+        if (s.hardware_version) lines.push(`Hardware: ${s.hardware_version}`);
+        if (s.software_version) lines.push(`Software: ${s.software_version}`);
+        if (s.user_name)        lines.push(`User Name: ${s.user_name}`);
+        if (s.user_description) lines.push(`Description: ${s.user_description}`);
+      }
+    }
+    return lines.join('\n');
+  }
+
+  // ----------------------------------------------------------------
+  // Context menu
+  // ----------------------------------------------------------------
+
+  function handleContextMenu(event: MouseEvent, node: DiscoveredNode) {
+    event.preventDefault();
+    contextMenuNode = node;
+    contextMenuX = event.clientX;
+    contextMenuY = event.clientY;
+    contextMenuVisible = true;
+  }
+
+  function closeContextMenu() {
+    contextMenuVisible = false;
+    contextMenuNode = null;
+  }
+
+  function handleWindowClick(event: MouseEvent) {
+    if (contextMenuVisible && !(event.target as Element)?.closest('.nodes-context-menu')) {
+      closeContextMenu();
+    }
+  }
+
+  function handleViewCdiXml() {
+    if (!contextMenuNode) return;
+    const nodeId = contextMenuNode.nodeId;
+    closeContextMenu();
+    openCdiViewer(nodeId, false);
+  }
+
+  function handleDownloadCdi() {
+    if (!contextMenuNode) return;
+    const nodeId = contextMenuNode.nodeId;
+    closeContextMenu();
+    openCdiViewer(nodeId, true);
+  }
+
+  // ----------------------------------------------------------------
+  // CDI Viewer
+  // ----------------------------------------------------------------
+
+  async function openCdiViewer(nodeId: string, forceDownload: boolean) {
+    viewerVisible = true;
+    viewerNodeId = nodeId;
+    viewerXmlContent = null;
+    viewerStatus = 'loading';
+    viewerErrorMessage = forceDownload ? 'Downloading CDI from node...' : 'Checking cache...';
+
+    try {
+      let response;
+      if (forceDownload) {
+        response = await downloadCdi(nodeId);
+      } else {
+        try {
+          response = await getCdiXml(nodeId);
+        } catch (cacheError: any) {
+          if (isCdiError(cacheError, 'CdiNotRetrieved')) {
+            viewerErrorMessage = 'Downloading CDI from node...';
+            await new Promise(resolve => setTimeout(resolve, 0));
+            response = await downloadCdi(nodeId);
+          } else {
+            throw cacheError;
+          }
+        }
+      }
+
+      if (response.xmlContent) {
+        viewerXmlContent = response.xmlContent;
+        viewerStatus = 'success';
+        viewerErrorMessage = null;
+      } else {
+        viewerStatus = 'error';
+        viewerErrorMessage = 'No CDI data available for this node.';
+      }
+    } catch (err) {
+      viewerStatus = 'error';
+      viewerErrorMessage = getCdiErrorMessage(err);
+    }
+  }
+
+  function closeCdiViewer() {
+    viewerVisible = false;
+    viewerNodeId = null;
+    viewerXmlContent = null;
+    viewerStatus = 'idle';
+    viewerErrorMessage = null;
   }
 </script>
+
+<svelte:window onclick={handleWindowClick} />
 
 <div class="nodes-column">
   <div class="column-header">
@@ -99,12 +242,12 @@
     {:else if error}
       <div class="error">
         <p>⚠️ {error}</p>
-        <button on:click={refresh}>Retry</button>
+        <button onclick={refresh}>Retry</button>
       </div>
     {:else if nodes.length === 0}
       <div class="empty">
         <p>No nodes discovered</p>
-        <p class="hint">Start network discovery to find nodes</p>
+        <p class="hint">Use Discover Nodes to scan the network</p>
       </div>
     {:else}
       <ul class="items-list">
@@ -113,9 +256,10 @@
             class="item"
             class:selected={selectedNodeId === node.nodeId}
             class:unavailable={!node.hasCdi}
-            on:click={() => handleNodeSelect(node)}
+            onclick={() => handleNodeSelect(node)}
+            oncontextmenu={(e) => handleContextMenu(e, node)}
             type="button"
-            title={node.hasCdi ? node.nodeName : `${node.nodeName} (CDI unavailable)`}
+            title={getNodeTooltip(node)}
           >
             <span class="item-name">
               {getNodeDisplayName(node)}
@@ -129,6 +273,32 @@
     {/if}
   </div>
 </div>
+
+<!-- Context Menu -->
+{#if contextMenuVisible && contextMenuNode}
+  <div
+    class="nodes-context-menu"
+    style="left: {contextMenuX}px; top: {contextMenuY}px;"
+    role="menu"
+  >
+    <button class="ctx-item" onclick={handleViewCdiXml} role="menuitem">
+      📄 View CDI XML
+    </button>
+    <button class="ctx-item" onclick={handleDownloadCdi} role="menuitem">
+      🔄 Download CDI from Node
+    </button>
+  </div>
+{/if}
+
+<!-- CDI XML Viewer Modal -->
+<CdiXmlViewer
+  visible={viewerVisible}
+  nodeId={viewerNodeId}
+  xmlContent={viewerXmlContent}
+  status={viewerStatus}
+  errorMessage={viewerErrorMessage}
+  onClose={closeCdiViewer}
+/>
 
 <style>
   .nodes-column {
@@ -251,5 +421,33 @@
   .warning-icon {
     margin-left: 8px;
     font-size: 16px;
+  }
+
+  /* Context menu */
+  .nodes-context-menu {
+    position: fixed;
+    z-index: 1000;
+    background: #fff;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    min-width: 200px;
+    padding: 4px 0;
+  }
+
+  .ctx-item {
+    display: block;
+    width: 100%;
+    padding: 8px 16px;
+    background: none;
+    border: none;
+    text-align: left;
+    font-size: 13px;
+    cursor: pointer;
+    color: #333;
+  }
+
+  .ctx-item:hover {
+    background-color: #f0f4ff;
   }
 </style>

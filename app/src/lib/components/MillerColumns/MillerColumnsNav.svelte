@@ -3,7 +3,6 @@
   import NodesColumn from './NodesColumn.svelte';
   import NavigationColumn from './NavigationColumn.svelte';
   import DetailsPanel from './DetailsPanel.svelte';
-  import Breadcrumb from './Breadcrumb.svelte';
   import { onMount } from 'svelte';
 
   // Subscribe to store
@@ -96,6 +95,22 @@
       await nodesColumn.refresh();
     }
   }
+
+  /**
+   * Open CDI XML viewer for the currently selected node.
+   * Called from the app menu bar "Tools" item.
+   */
+  export async function viewCdiXmlForSelectedNode() {
+    if (nodesColumn) await nodesColumn.viewCdiXmlForSelectedNode();
+  }
+
+  /**
+   * Force-download CDI for the currently selected node.
+   * Called from the app menu bar "Tools" item.
+   */
+  export async function downloadCdiForSelectedNode() {
+    if (nodesColumn) await nodesColumn.downloadCdiForSelectedNode();
+  }
 </script>
 
 <div class="miller-columns-nav" role="main" aria-label="Miller Columns CDI Navigator">
@@ -129,9 +144,6 @@
         </button>
       </div>
     {/if}
-
-    <!-- T092: Breadcrumb positioned above columns -->
-    <Breadcrumb />
 
     <div 
       class="columns-container" 

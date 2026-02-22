@@ -6,6 +6,7 @@
  */
 
 import { writable } from 'svelte/store';
+import type { ConfigValueMap, ReadProgressState } from '$lib/api/types';
 
 // T101: Debounce timeout for navigation clicks
 let debounceTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -92,6 +93,15 @@ export interface MillerColumnsState {
     
     /** Error message (null if no error) */
     error: string | null;
+    
+    /** Config values cache (T020) - Map<cacheKey, value> where cacheKey = nodeId:elementPath */
+    configValues: ConfigValueMap;
+    
+    /** Read progress state (T020) - null when not reading */
+    readProgress: ReadProgressState | null;
+    
+    /** Cancelling state (T020) - true when cancellation requested */
+    isCancelling: boolean;
 }
 
 /**
@@ -102,6 +112,7 @@ export interface ElementDetails {
     description: string | null;
     dataType: string;
     fullPath: string;
+    elementPath: string[];
     constraints: Constraint[];
     defaultValue: string | null;
     memoryAddress: number;
@@ -131,6 +142,9 @@ const initialState: MillerColumnsState = {
     selectedElementDetails: null,
     isLoading: false,
     error: null,
+    configValues: new Map(),  // T021: Initialize empty cache
+    readProgress: null,       // T022: No progress initially
+    isCancelling: false,      // T023: Not cancelling initially
 };
 
 /**
@@ -243,7 +257,8 @@ function createMillerColumnsStore() {
             }));
         },
         
-        /**Set selected element details
+        /**
+         * Set selected element details
          * 
          * @param details - Element details (null to clear)
          */
@@ -255,7 +270,93 @@ function createMillerColumnsStore() {
         },
         
         /**
+         * Set a single config value in cache (T040)
          * 
+         * @param nodeId - Node ID
+         * @param elementPath - Element path array
+         * @param value - Config value with metadata
+         */
+        setConfigValue: (nodeId: string, elementPath: string[], value: any) => {
+            update(state => {
+                const cacheKey = `${nodeId}:${elementPath.join('/')}`;
+                const newCache = new Map(state.configValues);
+                newCache.set(cacheKey, value);
+                return {
+                    ...state,
+                    configValues: newCache,
+                };
+            });
+        },
+        
+        /**
+         * Get a config value from cache (T041)
+         * 
+         * @param nodeId - Node ID
+         * @param elementPath - Element path array
+         * @returns Config value or null if not cached
+         */
+        getConfigValue: (nodeId: string, elementPath: string[]) => {
+            const cacheKey = `${nodeId}:${elementPath.join('/')}`;
+            const state = writable<MillerColumnsState>(initialState);
+            let currentState: MillerColumnsState;
+            const unsubscribe = state.subscribe(s => currentState = s);
+            unsubscribe();
+            return currentState!.configValues.get(cacheKey) ?? null;
+        },
+        
+        /**
+         * Set multiple config values in batch (T059)
+         * 
+         * @param values - Record of cache keys to values
+         */
+        setConfigValues: (values: Record<string, any>) => {
+            update(state => {
+                const newCache = new Map(state.configValues);
+                Object.entries(values).forEach(([key, value]) => {
+                    newCache.set(key, value);
+                });
+                return {
+                    ...state,
+                    configValues: newCache,
+                };
+            });
+        },
+        
+        /**
+         * Set read progress state (T060)
+         * 
+         * @param progress - Progress state (null to clear)
+         */
+        setReadProgress: (progress: ReadProgressState | null) => {
+            update(state => ({
+                ...state,
+                readProgress: progress,
+            }));
+        },
+        
+        /**
+         * Clear all config values from cache (T061)
+         */
+        clearConfigValues: () => {
+            update(state => ({
+                ...state,
+                configValues: new Map(),
+            }));
+        },
+        
+        /**
+         * Set cancelling state (T062)
+         * 
+         * @param isCancelling - Whether cancellation is in progress
+         */
+        setCancelling: (isCancelling: boolean) => {
+            update(state => ({
+                ...state,
+                isCancelling,
+            }));
+        },
+        
+        /**
          * Reset the store to initial state
          */
         reset: () => {

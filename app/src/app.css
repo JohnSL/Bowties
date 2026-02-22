@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+@layer components {
+  .btn-primary {
+    @apply px-4 py-2 text-sm font-medium rounded border-0 cursor-pointer
+           transition-colors bg-blue-600 text-white hover:bg-blue-700
+           disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2 text-sm font-medium rounded border-0 cursor-pointer
+           transition-colors bg-slate-100 text-slate-700 hover:bg-slate-200
+           dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600
+           disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  .btn-danger {
+    @apply px-4 py-2 text-sm font-medium rounded border-0 cursor-pointer
+           transition-colors bg-red-600 text-white hover:bg-red-700
+           disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+}

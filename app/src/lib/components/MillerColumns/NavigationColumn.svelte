@@ -154,6 +154,7 @@
           description: details.description,
           dataType: details.dataType,
           fullPath: details.fullPath,
+          elementPath: details.elementPath,
           constraints: details.constraints,
           defaultValue: details.defaultValue,
           memoryAddress: details.memoryAddress,

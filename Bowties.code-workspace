@@ -1,14 +1,31 @@
 {
 	"folders": [
 		{
-			"path": "../bowtie"
+			"path": "."
+		},
+		{
+			"path": "../markdown"
 		},
 		{
 			"path": "../OpenLCB_Python"
 		},
 		{
-			"path": "."
+			"path": "../bowtie/webapp"
+		},
+		{
+			"path": "../bowtie"
+		},
+		{
+			"path": "../../JMRI"
+		},
+		{
+			"path": "../../OpenLCB_Java"
 		}
 	],
-	"settings": {}
+	"settings": {
+		"chat.tools.terminal.autoApprove": {
+			".specify/scripts/bash/": true,
+			".specify/scripts/powershell/": true
+		}
+	}
 }

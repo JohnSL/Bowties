@@ -1,0 +1,142 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ReadConfigValueResponse",
+  "title": "Read Configuration Value Response",
+  "description": "Response containing a single configuration value with metadata. The value is typed based on the element's CDI definition.",
+  "type": "object",
+  "properties": {
+    "value": {
+      "description": "The typed configuration value (discriminated union)",
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "Integer value (1, 2, 4, or 8 bytes)",
+          "properties": {
+            "type": { "const": "Int" },
+            "value": { 
+              "type": "integer",
+              "description": "Signed integer value"
+            },
+            "size_bytes": { 
+              "type": "integer",
+              "enum": [1, 2, 4, 8],
+              "description": "Size of the integer in memory"
+            }
+          },
+          "required": ["type", "value", "size_bytes"]
+        },
+        {
+          "type": "object",
+          "description": "String value (variable length UTF-8)",
+          "properties": {
+            "type": { "const": "String" },
+            "value": { 
+              "type": "string",
+              "description": "UTF-8 encoded string"
+            },
+            "size_bytes": { 
+              "type": "integer",
+              "minimum": 1,
+              "description": "Maximum size of the string in memory"
+            }
+          },
+          "required": ["type", "value", "size_bytes"]
+        },
+        {
+          "type": "object",
+          "description": "Event ID value (8 bytes)",
+          "properties": {
+            "type": { "const": "EventId" },
+            "value": { 
+              "type": "array",
+              "items": { 
+                "type": "integer", 
+                "minimum": 0, 
+                "maximum": 255 
+              },
+              "minItems": 8,
+              "maxItems": 8,
+              "description": "8-byte event identifier"
+            }
+          },
+          "required": ["type", "value"]
+        },
+        {
+          "type": "object",
+          "description": "Floating point value (4 bytes IEEE 754)",
+          "properties": {
+            "type": { "const": "Float" },
+            "value": { 
+              "type": "number",
+              "description": "32-bit floating point value"
+            }
+          },
+          "required": ["type", "value"]
+        },
+        {
+          "type": "object",
+          "description": "Invalid value (read succeeded but parsing failed)",
+          "properties": {
+            "type": { "const": "Invalid" },
+            "error": { 
+              "type": "string",
+              "description": "Error message explaining why parsing failed"
+            }
+          },
+          "required": ["type", "error"]
+        }
+      ]
+    },
+    "memory_address": {
+      "type": "integer",
+      "description": "Absolute memory address (segment.origin + element.offset)",
+      "minimum": 0,
+      "examples": [16, 256, 4096]
+    },
+    "address_space": {
+      "type": "integer",
+      "description": "LCC address space identifier (0xFD = Configuration)",
+      "const": 253,
+      "examples": [253]
+    },
+    "element_path": {
+      "type": "array",
+      "description": "Path to the element in the CDI tree",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the value was read",
+      "examples": ["2026-02-19T14:32:00Z"]
+    }
+  },
+  "required": ["value", "memory_address", "address_space", "element_path", "timestamp"],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "value": {
+        "type": "String",
+        "value": "Tower LCC",
+        "size_bytes": 32
+      },
+      "memory_address": 16,
+      "address_space": 253,
+      "element_path": ["Settings", "Identification", "User Name"],
+      "timestamp": "2026-02-19T14:32:00Z"
+    },
+    {
+      "value": {
+        "type": "EventId",
+        "value": [5, 1, 1, 1, 3, 1, 0, 0]
+      },
+      "memory_address": 256,
+      "address_space": 253,
+      "element_path": ["Events", "Producers", "Output 1 Active"],
+      "timestamp": "2026-02-19T14:32:05Z"
+    }
+  ]
+}

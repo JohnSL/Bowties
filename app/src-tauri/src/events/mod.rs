@@ -2,4 +2,4 @@
 
 pub mod router;
 
-pub use router::{EventRouter, NodeDiscoveredEvent, MessageReceivedEvent};
+pub use router::EventRouter;

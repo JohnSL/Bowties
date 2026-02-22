@@ -3,6 +3,7 @@
 use lcc_rs::{LccConnection, DiscoveredNode, MessageDispatcher};
 use crate::events::EventRouter;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use tokio::sync::{RwLock, Mutex};
 
 /// Global application state shared across Tauri commands
@@ -25,6 +26,9 @@ pub struct AppState {
     
     /// Connection port
     pub port: Arc<RwLock<u16>>,
+    
+    /// Cancellation token for config reading operations (T012)
+    pub config_read_cancel: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -37,6 +41,7 @@ impl AppState {
             nodes: Arc::new(RwLock::new(Vec::new())),
             host: Arc::new(RwLock::new("localhost".to_string())),
             port: Arc::new(RwLock::new(12021)),
+            config_read_cancel: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -60,11 +65,17 @@ impl AppState {
             conn.dispatcher()
         };
         
+        // Get our alias from connection for event routing
+        let our_alias = {
+            let conn = connection.lock().await;
+            conn.our_alias().value()
+        };
+        
         if let Some(disp) = dispatcher {
             *self.dispatcher.write().await = Some(disp.clone());
             
-            // Start event router
-            let mut router = EventRouter::new(app, disp);
+            // Start event router with our alias for direction detection
+            let mut router = EventRouter::new(app, disp, our_alias);
             router.start();
             *self.event_router.write().await = Some(router);
         }

@@ -33,15 +33,15 @@
 
 <button
 	type="button"
-	class="refresh-button"
-	class:refreshing={isRefreshing}
+	class="btn-secondary flex items-center gap-2 !rounded"
+	class:opacity-75={isRefreshing}
 	onclick={handleRefresh}
 	{disabled}
 	aria-label="Refresh node status"
 	title="Refresh node status"
 >
-	<span class="icon" class:spinning={isRefreshing}>⟳</span>
-	<span class="text">
+	<span class="{isRefreshing ? 'animate-spin inline-block' : ''}">⟳</span>
+	<span>
 		{#if isRefreshing}
 			Refreshing...
 		{:else}
@@ -57,53 +57,6 @@
 {/if}
 
 <style>
-	.refresh-button {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 0.5rem 1rem;
-		border: 1px solid #ccc;
-		border-radius: 4px;
-		background: white;
-		font-size: 0.875rem;
-		cursor: pointer;
-		transition: all 0.2s ease;
-	}
-
-	.refresh-button:hover:not(:disabled) {
-		background: #f5f5f5;
-		border-color: #999;
-	}
-
-	.refresh-button:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-
-	.refresh-button.refreshing {
-		background: #f0f9ff;
-		border-color: #0284c7;
-	}
-
-	.icon {
-		font-size: 1.25rem;
-		line-height: 1;
-		transition: transform 0.3s ease;
-	}
-
-	.icon.spinning {
-		animation: spin 1s linear infinite;
-	}
-
-	@keyframes spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
 	.error-message {
 		margin-top: 0.5rem;
 		padding: 0.5rem;

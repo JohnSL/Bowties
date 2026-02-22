@@ -39,6 +39,14 @@ export type ConnectionStatus =
   | 'NotResponding';
 
 /**
+ * CDI (Configuration Description Information) data
+ */
+export interface CdiData {
+  xml_content: string;
+  retrieved_at: string;  // ISO 8601 timestamp
+}
+
+/**
  * Discovered LCC node with SNIP data
  */
 export interface DiscoveredNode {
@@ -49,6 +57,7 @@ export interface DiscoveredNode {
   connection_status: ConnectionStatus;
   last_verified: string | null;  // ISO 8601 timestamp
   last_seen: string;              // ISO 8601 timestamp
+  cdi: CdiData | null;            // CDI XML data if available
 }
 
 /**

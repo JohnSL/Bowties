@@ -1,0 +1,137 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ReadProgressEvent",
+  "title": "Read Progress Event",
+  "description": "Progress event emitted during batch configuration reading. Frontend can listen to 'config-read-progress' Tauri events to update progress UI in real-time.",
+  "type": "object",
+  "properties": {
+    "total_nodes": {
+      "type": "integer",
+      "description": "Total number of nodes being read from",
+      "minimum": 1
+    },
+    "current_node_index": {
+      "type": "integer",
+      "description": "Zero-based index of current node (add 1 for display)",
+      "minimum": 0
+    },
+    "current_node_name": {
+      "type": "string",
+      "description": "Human-readable node identifier from SNIP data priority cascade (user_name > user_description > model_name > node_id)"
+    },
+    "current_node_id": {
+      "type": "string",
+      "description": "LCC Node ID in dotted hexadecimal format",
+      "pattern": "^([0-9A-Fa-f]{2}\\.){5}[0-9A-Fa-f]{2}$"
+    },
+    "total_elements": {
+      "type": "integer",
+      "description": "Total configuration elements across all nodes",
+      "minimum": 0
+    },
+    "elements_read": {
+      "type": "integer",
+      "description": "Successfully read elements so far",
+      "minimum": 0
+    },
+    "elements_failed": {
+      "type": "integer",
+      "description": "Failed element reads so far",
+      "minimum": 0
+    },
+    "percentage": {
+      "type": "integer",
+      "description": "Overall completion percentage (0-100)",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "status": {
+      "description": "Current operation status (discriminated union)",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "Starting" }
+          },
+          "required": ["type"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "ReadingNode" },
+            "node_name": { "type": "string" }
+          },
+          "required": ["type", "node_name"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "NodeComplete" },
+            "node_name": { "type": "string" },
+            "success": { "type": "boolean" }
+          },
+          "required": ["type", "node_name", "success"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "Cancelled" }
+          },
+          "required": ["type"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "Complete" },
+            "success_count": { "type": "integer", "minimum": 0 },
+            "fail_count": { "type": "integer", "minimum": 0 }
+          },
+          "required": ["type", "success_count", "fail_count"]
+        }
+      ]
+    }
+  },
+  "required": [
+    "total_nodes",
+    "current_node_index",
+    "current_node_name",
+    "current_node_id",
+    "total_elements",
+    "elements_read",
+    "elements_failed",
+    "percentage",
+    "status"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "total_nodes": 3,
+      "current_node_index": 1,
+      "current_node_name": "Tower LCC",
+      "current_node_id": "05.01.01.01.03.01",
+      "total_elements": 127,
+      "elements_read": 48,
+      "elements_failed": 2,
+      "percentage": 38,
+      "status": {
+        "type": "ReadingNode",
+        "node_name": "Tower LCC"
+      }
+    },
+    {
+      "total_nodes": 3,
+      "current_node_index": 2,
+      "current_node_name": "Signal Controller",
+      "current_node_id": "02.01.0D.00.04.00",
+      "total_elements": 127,
+      "elements_read": 127,
+      "elements_failed": 0,
+      "percentage": 100,
+      "status": {
+        "type": "Complete",
+        "success_count": 127,
+        "fail_count": 0
+      }
+    }
+  ]
+}
