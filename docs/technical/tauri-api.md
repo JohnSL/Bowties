@@ -7,9 +7,10 @@ This document describes all Tauri commands available to the frontend application
 1. [Connection Commands](#connection-commands)
 2. [Discovery Commands](#discovery-commands)
 3. [CDI Commands](#cdi-commands)
-4. [Events](#events)
-5. [TypeScript Type Definitions](#typescript-type-definitions)
-6. [Error Handling](#error-handling)
+4. [Bowties Commands](#bowties-commands)
+5. [Events](#events)
+6. [TypeScript Type Definitions](#typescript-type-definitions)
+7. [Error Handling](#error-handling)
 
 ---
 
@@ -480,6 +481,62 @@ async function downloadCdiWithProgress(nodeId: string) {
 
 ---
 
+## Bowties Commands
+
+### `get_bowties`
+
+Return the most recently built bowtie catalog from `AppState`. The catalog is built automatically at the end of a full CDI read cycle and also emitted via the `cdi-read-complete` event. Call this command if you need the catalog on-demand (e.g., on component mount).
+
+**Parameters:** None
+
+**Returns:** `Promise<BowtieCatalog | null>`
+
+Returns `null` if no CDI read has been completed yet. Returns the `BowtieCatalog` once the Identify Events exchange and catalog build have finished.
+
+**Rust Implementation:**
+```rust
+#[tauri::command]
+pub async fn get_bowties(
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<BowtieCatalog>, String>
+```
+
+**TypeScript Wrapper:**
+```typescript
+export async function getBowties(): Promise<BowtieCatalog | null> {
+  return invoke<BowtieCatalog | null>('get_bowties');
+}
+```
+
+**Usage Example:**
+```typescript
+import { getBowties } from '$lib/api/tauri';
+import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
+
+// On component mount — repopulate store from backend if page reloaded
+const catalog = await getBowties();
+if (catalog) {
+  bowtieCatalogStore.setCatalog(catalog);
+}
+```
+
+**When the catalog is built:**
+1. `read_all_config_values` completes for the last discovered node
+2. `query_event_roles` sends `IdentifyEventsAddressed` to every node (125 ms apart)
+3. `ProducerIdentified` / `ConsumerIdentified` replies collected for 500 ms after last send
+4. `build_bowtie_catalog` groups results into `BowtieCard` entries
+5. Catalog stored in `AppState.bowties_catalog`
+6. `cdi-read-complete` event emitted with full catalog payload
+
+**Performance Goals:**
+- SC-001: catalog built within 5 s of last CDI read completing on a typical network
+- SC-004: empty-state visible within 1 s of tab enable
+
+**Error Conditions:**
+- `Not connected to LCC network` - No active connection when building catalog
+
+---
+
 ## Events
 
 The application emits Tauri events for real-time updates when network changes occur. These events enable the frontend to stay synchronized with the LCC network without polling.
@@ -551,6 +608,69 @@ listen<NodeDiscoveredEvent>('lcc-node-discovered', (event) => {
 - New node responds to Verify Node ID Global message
 - Existing node's connection status changes
 - Node comes back online after being offline
+
+---
+
+### `cdi-read-complete`
+
+Emitted when the CDI read cycle for all discovered nodes has finished **and** the bowtie catalog has been built. This is the primary trigger for enabling the Bowties tab and populating `bowtieCatalogStore`.
+
+**Event Payload:**
+```typescript
+interface CdiReadCompletePayload {
+  catalog: BowtieCatalog;   // Fully built bowtie catalog
+  node_count: number;       // Number of nodes included in the catalog build
+}
+```
+
+**Usage Example:**
+```typescript
+import { listen } from '@tauri-apps/api/event';
+import type { CdiReadCompletePayload } from '$lib/api/tauri';
+import { bowtieCatalogStore, cdiReadCompleteStore } from '$lib/stores/bowties.svelte';
+
+const unlisten = await listen<CdiReadCompletePayload>('cdi-read-complete', (event) => {
+  bowtieCatalogStore.setCatalog(event.payload.catalog);
+  cdiReadCompleteStore.set(true);
+});
+```
+
+**When Emitted:**
+- At the end of `read_all_config_values` when `node_index + 1 === total_nodes`
+- After `query_event_roles` and `build_bowtie_catalog` have completed
+- Not emitted if no nodes are discovered
+
+---
+
+### `config-read-progress`
+
+Emitted during `read_all_config_values` to report incremental progress for each node's config memory read.
+
+**Event Payload:**
+```typescript
+interface ReadProgressUpdate {
+  node_id: string;          // Node ID in hex format
+  node_name: string;        // SNIP user name or fallback
+  node_index: number;       // 0-based index of current node
+  total_nodes: number;      // Total nodes to read
+  bytes_read: number;       // Bytes read so far for this node
+  total_bytes: number | null; // Total expected bytes (null if unknown)
+}
+```
+
+**Usage Example:**
+```typescript
+import { listen } from '@tauri-apps/api/event';
+import type { ReadProgressUpdate } from '$lib/api/tauri';
+
+const unlisten = await listen<ReadProgressUpdate>('config-read-progress', (event) => {
+  const p = event.payload;
+  console.log(`Reading ${p.node_name}: node ${p.node_index + 1}/${p.total_nodes}`);
+});
+```
+
+**When Emitted:**
+- Once per node during the bulk config read cycle
 
 ---
 
@@ -667,6 +787,102 @@ const unlisten = await listen<MessageReceivedEvent>('lcc-message-received', (eve
 ## TypeScript Type Definitions
 
 All types are defined in `app/src/lib/api/tauri.ts`.
+
+---
+
+### `ElementEntry`
+
+```typescript
+/**
+ * One producer or consumer slot entry inside a BowtieCard.
+ * Role is always Producer or Consumer — Ambiguous entries are in
+ * BowtieCard.ambiguous_entries instead.
+ */
+export interface EventSlotEntry {
+  node_id: string;            // "02.01.57.00.00.01"
+  node_name: string;          // SNIP user_name, or "{mfg} — {model}", or node_id fallback
+  element_path: string[];     // ["seg:0", "elem:3", "elem:2"]
+  element_label: string;      // CDI <name>, or first sentence of <description>, or path
+  event_id: number[];         // 8-byte event ID array
+  role: EventRole;            // "Producer" | "Consumer"
+}
+```
+
+---
+
+### `BowtieCard`
+
+```typescript
+/**
+ * One bowtie — a shared event ID with confirmed producers and consumers.
+ * Emitted only when producers.length ≥ 1 AND consumers.length ≥ 1.
+ */
+export interface BowtieCard {
+  event_id_hex: string;         // Dotted hex, e.g. "02.01.57.00.00.01.00.1E"
+  event_id_bytes: number[];     // Raw 8-byte event ID
+  producers: EventSlotEntry[];  // Confirmed producer slots
+  consumers: EventSlotEntry[];  // Confirmed consumer slots
+  ambiguous_entries: EventSlotEntry[]; // Same-node, heuristic unresolved
+  name: string | null;          // User-assigned name (future feature, null now)
+}
+```
+
+---
+
+### `BowtieCatalog`
+
+```typescript
+/**
+ * Complete set of discovered bowties from the most recent CDI + Identify Events cycle.
+ */
+export interface BowtieCatalog {
+  bowties: BowtieCard[];        // Sorted by event_id_bytes
+  built_at: string;             // ISO 8601 timestamp
+  source_node_count: number;    // Nodes included in the build
+  total_slots_scanned: number;  // Total event ID slots walked across all nodes
+}
+```
+
+---
+
+### `EventRole`
+
+```typescript
+/**
+ * Role of an event slot, as determined by protocol reply and/or CDI heuristic.
+ * "Ambiguous" means the node replied with both ProducerIdentified and ConsumerIdentified
+ * for the same event ID and the CDI heuristic could not resolve which role applies.
+ */
+export type EventRole = 'Producer' | 'Consumer' | 'Ambiguous';
+```
+
+---
+
+### `CdiReadCompletePayload`
+
+```typescript
+export interface CdiReadCompletePayload {
+  catalog: BowtieCatalog;
+  node_count: number;
+}
+```
+
+---
+
+### `ReadProgressUpdate`
+
+```typescript
+export interface ReadProgressUpdate {
+  node_id: string;
+  node_name: string;
+  node_index: number;
+  total_nodes: number;
+  bytes_read: number;
+  total_bytes: number | null;
+}
+```
+
+---
 
 ### `NodeID`
 
@@ -1291,6 +1507,8 @@ All commands are registered in `app/src-tauri/src/lib.rs`:
     commands::get_column_items,
     commands::get_element_details,
     commands::expand_replicated_group,
+    // Bowties
+    commands::get_bowties,
 ])
 ```
 
@@ -1382,10 +1600,11 @@ async function initializeLCC() {
 - [x] Add batch SNIP query command
 - [x] Add CDI structure parsing and navigation commands
 - [x] Add Miller Columns support (get_cdi_structure, get_column_items, get_element_details)
+- [x] Add bowtie catalog command (get_bowties) and cdi-read-complete event (Feature 006)
 - [ ] Add configuration memory read/write commands (value retrieval and editing)
 - [ ] Add event producer/consumer commands
 
 ---
 
 *Document generated: February 16, 2026*  
-*Last updated: February 18, 2026*
+*Last updated: February 22, 2026*

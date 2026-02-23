@@ -2,7 +2,7 @@
 
 *This document describes the current implementation of Bowties, including what's built, what's in progress, and what remains to be implemented. For the aspirational vision, see [docs/design/vision.md](../design/vision.md).*
 
-**Last Updated:** 2026-02-18
+**Last Updated:** 2026-02-22
 
 ## Implementation Status
 
@@ -111,27 +111,50 @@
 - Automatic event emission on node discovery
 - Background routing task lifecycle management
 
+**Protocol Monitor (Traffic Monitor View):**
+- Real-time event log displaying all LCC messages flowing on the network
+- PCER (`0x095B4`) event capture and display
+- MTI-based filtering and live traffic inspection
+
+### ✅ Completed (Phase 5)
+
+**Event Discovery & Bowties Tab (Feature 006):**
+- `IdentifyEventsAddressed` exchange per discovered node (125 ms between sends, 500 ms collection window)
+- `ProducerIdentified` / `ConsumerIdentified` reply collection from all nodes
+- `EventRole` enum (`Producer` / `Consumer` / `Ambiguous`) in `lcc-rs/src/cdi/role.rs`
+- Two-tier heuristic classifier: Tier 1 parent group name keywords, Tier 2 CDI `<description>` phrase patterns
+- Ancestor group name propagation during CDI event-slot traversal (`hierarchy.rs`)
+- `BowtieCatalog` / `BowtieCard` / `EventSlotEntry` types in `app/src-tauri/src/commands/bowties.rs`
+- `build_bowtie_catalog` function: cross-node protocol-definitive classification; same-node fallback heuristic; one card per unique event ID with ≥1 confirmed producer AND ≥1 consumer
+- `query_event_roles` function: sends `IdentifyEventsAddressed`; collects role replies
+- `get_bowties` Tauri command returning `Option<BowtieCatalog>` from `AppState`
+- `cdi-read-complete` Tauri event emitted with full `BowtieCatalog` when CDI reads finish
+- `bowtieCatalogStore` + `usedInMap` derived store (Svelte; O(1) event → bowtie lookup)
+- `BowtieCard.svelte` three-column layout (producers | arrow | consumers)
+- `ElementEntry.svelte` (node name + element label per slot)
+- `ConnectorArrow.svelte` (rightward arrow + event ID label)
+- `EmptyState.svelte` (illustration + guidance text + disabled CTA)
+- Bowties tab as in-page panel inside `+page.svelte` (no SvelteKit route navigation)
+- "Used in" cross-reference on `EventSlotRow.svelte` linking to matching bowtie card
+- Highlight-on-navigate support via `?highlight=` query parameter
+- Tab disabled until `cdi-read-complete` fires; enables automatically after first build
+- Full Vitest test coverage for all new Svelte components; cargo unit tests for `build_bowtie_catalog` and `classify_event_slot`
+
 ### 🚧 In Progress
 
 **Protocol Implementation:**
-- Event discovery (Identify Events protocol)
 - Configuration memory read/write (value retrieval and editing)
 
 **UI Enhancements:**
-- Dark mode support (partially implemented in components)
+- Dark mode / theme consistency across Bowtie components (inherits app theme; dark-mode CSS variables need alignment with global custom properties)
 - Configuration value editing in Miller Columns
 
 ### ⏳ Not Yet Implemented
 
-**Three Main Views:**
-- Event Bowties View (canvas with diagrams)
-- Event Monitor View (real-time event log)
-
 **Core Features:**
-- Event link visualization
-- Drag-and-drop event linking
+- Event link visualization (canvas drag-and-drop)
+- Drag-and-drop event linking (create new producer ↔ consumer pairs)
 - Configuration value editing (UI complete, backend pending)
-- Real-time event monitoring
 
 See [docs/project/roadmap.md](../project/roadmap.md) for detailed feature timeline.
 
@@ -213,7 +236,7 @@ See [docs/technical/lcc-rs-api.md](lcc-rs-api.md) for complete API documentation
 
 **Component Structure:**
 ```
-app/src/routes/+page.svelte         # Main page (connection + discovery + Miller Columns)
+app/src/routes/+page.svelte         # Main page (connection + discovery + Miller Columns + Bowties tab)
 app/src/lib/components/
   NodeList.svelte                   # Table of discovered nodes with context menu
   CdiXmlViewer.svelte               # Modal XML viewer with syntax highlighting
@@ -226,8 +249,16 @@ app/src/lib/components/
     DetailsPanel.svelte             # Right panel - element metadata
     Breadcrumb.svelte               # Navigation breadcrumb
     README.md                       # Component documentation
+  ElementCardDeck/
+    EventSlotRow.svelte             # Event ID field row; shows "Used in" cross-ref when in a bowtie
+  Bowtie/
+    BowtieCard.svelte               # Three-column layout (producers | arrow | consumers)
+    ElementEntry.svelte             # One EventSlotEntry row (node_name + element_label)
+    ConnectorArrow.svelte           # Rightward arrow with event ID label
+    EmptyState.svelte               # Shown when no bowties found
 app/src/lib/stores/
   millerColumns.ts                  # Miller Columns state management
+  bowties.svelte.ts                 # BowtieCatalogStore + usedInMap derived store
 app/src/lib/utils/
   xmlFormatter.ts                   # XML indentation utility
 app/src/lib/api/
@@ -364,7 +395,27 @@ sequenceDiagram
 - Frontend caches nodes in local/store state
 - CDI data cached on disk in platform-specific app data directory
 - Cache key format: `cdi_{manufacturer}_{model}_{software_version}.xml`
-- Tauri events notify frontend of connection changes (planned)
+- Tauri events notify frontend: `lcc-node-discovered`, `cdi-read-complete`
+
+**Bowties Event Discovery (Feature 006):**
+
+```
+Frontend                    Tauri Backend               lcc-rs Library
+-------                     -------------               --------------
+[CDI reads complete]    →   read_all_config_values()   →   (last node read)
+                            ↓ triggers
+                            query_event_roles()        →   IdentifyEventsAddressed × n nodes
+                       ←──                             ←   ProducerIdentified / ConsumerIdentified
+                            ↓
+                            build_bowtie_catalog()
+                            ↓
+                            AppState.bowties_catalog = Some(catalog)
+                       ←──  cdi-read-complete event { catalog, node_count }
+                            ↓ bowtieCatalogStore.set(catalog)
+                            ↓ Bowties tab enables
+getBowties()           →    get_bowties()
+                       ←    Option<BowtieCatalog>
+```
 
 See [docs/technical/tauri-api.md](tauri-api.md) for complete command reference.
 
@@ -447,11 +498,13 @@ Bowties/
     src-tauri/
       src/
         lib.rs                        # Tauri setup
+        state.rs                      # AppState (nodes, bowties_catalog, event_roles)
         commands/
           connection.rs               # Connection management
           discovery.rs                # Node discovery commands
           snip.rs                     # SNIP query commands
-          cdi.rs                      # CDI retrieval and caching commands
+          cdi.rs                      # CDI retrieval, caching, triggers bowtie build
+          bowties.rs                  # get_bowties, build_bowtie_catalog, query_event_roles
           mod.rs                      # Command module exports
   lcc-rs/
     src/
@@ -464,9 +517,10 @@ Bowties/
         memory_config.rs            # Memory Configuration Protocol
         mod.rs                      # Protocol module exports
       cdi/
-        mod.rs                      # CDI type definitions (Cdi, Segment, Group, DataElement)
+        mod.rs                      # CDI type definitions + EventRole re-export
         parser.rs                   # XML parsing (roxmltree-based)
-        hierarchy.rs                # Navigation helpers (expand, navigate_to_path)
+        hierarchy.rs                # Navigation helpers (expand, navigate_to_path, ancestor group names)
+        role.rs                     # EventRole enum + classify_event_slot() two-tier heuristic
       transport.rs                  # LccTransport trait, TcpTransport
       connection.rs                 # LccConnection
       discovery.rs                  # Node discovery
@@ -543,7 +597,6 @@ Bowties/
 **Current MVP intentionally omits:**
 - Miller Columns navigation (CDI parsing not yet implemented)
 - Event Bowties canvas
-- Event Monitor view
 - View switching tabs
 
 **Debugging Tools Implemented:**
@@ -570,6 +623,8 @@ Bowties/
 | CDI parsing (cached) | <50ms | ✅ ~10-30ms (lazy_static cache) |
 | Column navigation | <100ms | ✅ ~20-80ms (path resolution + expansion) |
 | Replicated group expansion | <200ms | ✅ ~50-150ms for 32 instances |
+| Bowtie catalog build (post CDI read) | <5s | ✅ Within SC-001 target on typical networks |
+| Empty-state render | <1s | ✅ Within SC-004 target |
 
 **Not yet measured:**
 - Configuration value read from node memory (not implemented)
@@ -599,11 +654,11 @@ Bowties/
 - CDI parsing cache (lazy_static HashMap) has no eviction policy
 
 **Protocol:**
-- Event discovery not implemented
 - Configuration memory read/write operations not implemented (values from nodes)
 - Datagram retries not fully tested
 - Memory Configuration read assumes data fits in expected size
 - No support for configuration write operations
+- `config_value_cache` not yet added to `AppState`: bowtie element identification currently uses CDI keyword heuristic rather than matching by actual configured event ID bytes (identified in session-handoff-2026-02-22.md as the next precision improvement)
 
 **Testing:**
 - No end-to-end tests for Miller Columns navigation
@@ -615,25 +670,23 @@ Bowties/
 ## Next Implementation Steps
 
 **Immediate (Current Sprint):**
-1. Implement configuration value reading from node memory
-2. Add configuration value editing and write operations
-3. Remove main page gradient background (match Miller Columns minimal style)
-4. Add cache management (size limits, expiration, cleanup)
-5. Integrate node store for state management across all views
+1. Add `config_value_cache` to `AppState` and populate it in `read_all_config_values` so bowtie element identification matches by actual configured event ID bytes (not just CDI keyword heuristic)
+2. Implement configuration value reading from node memory
+3. Add configuration value editing and write operations
+4. Align Bowtie component CSS custom properties with global app theme (remove dark-mode overrides)
+5. Add cache management (size limits, expiration, cleanup)
 
 **Short-Term (Next 2-4 weeks):**
-1. Begin Event discovery implementation
-2. Add end-to-end tests for Miller Columns workflow
+1. Add end-to-end tests for Miller Columns + Bowties workflow
+2. Integrate node store for state management (query backend on mount instead of component-local `$state`)
 3. Implement CDI cache eviction policy
 4. Add virtual scrolling for large CDI files in XML viewer
 5. Improve error handling and user feedback for connection issues
 
 **Medium-Term (Next 1-3 months):**
-1. Build Event Bowties View with canvas and drag-and-drop
-2. Implement event link visualization
-3. Add real-time event monitoring view
-4. Create comprehensive performance benchmarks
-5. Implement configuration value caching strategy
+1. Implement event link visualization (canvas drag-and-drop for creating new producer ↔ consumer pairs)
+2. Create comprehensive performance benchmarks
+3. Implement configuration value caching strategy
 
 See [docs/project/roadmap.md](../project/roadmap.md) for complete timeline.
 
@@ -663,6 +716,11 @@ See [docs/project/roadmap.md](../project/roadmap.md) for complete timeline.
 ✅ **Event-Driven Updates:** Tauri events for automatic UI updates on network changes  
 ✅ **Broadcast Channels:** tokio::broadcast for multi-subscriber message distribution  
 ✅ **Arc<Mutex<>> Pattern:** Shared connection access for concurrent operations  
+✅ **IdentifyEventsAddressed Protocol:** 125 ms inter-send delay (per JMRI reference); 500 ms collection window after last send  
+✅ **EventRole Heuristic:** Two-tier: parent group name keywords first; `<description>` phrase patterns second; Ambiguous fallback  
+✅ **snake_case Serde Alignment:** Bowtie structs use `#[serde(rename_all = "snake_case")]`; TypeScript types match field names exactly  
+✅ **Bowties as In-Page Tab:** No SvelteKit route navigation; all tab panels live inside `+page.svelte` to preserve discovery state  
+✅ **cdi-read-complete Event:** Backend emits full `BowtieCatalog` payload when CDI read cycle ends; frontend stores drive tab enable and card render  
 
 ## Open Technical Questions
 

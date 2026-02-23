@@ -1837,7 +1837,63 @@ pub async fn read_all_config_values(
     });
     
     let duration = start_time.elapsed().as_millis() as u64;
-    
+
+    // Bug 2 fix: populate config_value_cache with EventId values from this node's read.
+    // Outer key = node_id_hex; inner key = element_path.join("/"); value = raw 8-byte event ID.
+    {
+        let mut cache = state.config_value_cache.write().await;
+        let node_slot_map = cache.entry(node_id.clone()).or_insert_with(HashMap::new);
+        for (cache_key, value_with_meta) in &values {
+            if let ConfigValue::EventId { value: event_bytes } = value_with_meta.value {
+                // cache_key is "node_id:element_path/..." — extract just the path portion.
+                let path_key = cache_key
+                    .strip_prefix(&format!("{}:", node_id))
+                    .unwrap_or(cache_key.as_str())
+                    .to_string();
+                node_slot_map.insert(path_key, event_bytes);
+            }
+        }
+        let event_count = node_slot_map.len();
+        eprintln!("[bowties][cache] node {} — {} EventId slots cached", node_id, event_count);
+    }
+
+    // T011: When this is the last node, run the Identify Events exchange and build the catalog.
+    if node_idx + 1 == total_node_count {
+        eprintln!("[bowties] Last node complete — starting Identify Events exchange");
+        let build_start = std::time::Instant::now();
+
+        // Borrow AppState as a plain reference for the async helpers.
+        let state_ref: &AppState = &*state;
+
+        let event_roles = crate::commands::bowties::query_event_roles(
+            state_ref,
+            125,  // ms between addressed sends
+            500,  // ms collection window
+        ).await;
+
+        let nodes_snap = state.nodes.read().await.clone();
+        let node_count = nodes_snap.len();
+
+        let config_cache_snap = state.config_value_cache.read().await.clone();
+        let catalog = crate::commands::bowties::build_bowtie_catalog(&nodes_snap, &event_roles, &config_cache_snap);
+
+        eprintln!(
+            "[bowties] Catalog built in {} ms: {} bowties from {} nodes",
+            build_start.elapsed().as_millis(),
+            catalog.bowties.len(),
+            node_count,
+        );
+
+        // Store catalog in AppState.
+        *state.bowties_catalog.write().await = Some(catalog.clone());
+
+        // Emit `cdi-read-complete` event to the frontend.
+        let _ = app_handle.emit(
+            "cdi-read-complete",
+            crate::commands::bowties::CdiReadCompletePayload { catalog, node_count },
+        );
+    }
+
     Ok(ReadAllConfigValuesResponse {
         node_id,
         values,

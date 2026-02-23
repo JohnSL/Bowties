@@ -170,12 +170,15 @@ Addressing: Simple/Addressed/Stream, etc.
 - ✅ `0x19DE8` - SNIP requests
 - ✅ `0x1A28/48/68/88` - SNIP datagram reception
 - ✅ `0x19A28` - Datagram ACK
+- ✅ `0x0968` - Identify Events (Addressed) — sent per node during bowtie build (Feature 006)
+- ✅ `0x0544/0545/0547` - Producer Identified (Valid/Invalid/Unknown) — collected by bowtie build
+- ✅ `0x04C4/04C5/04C7` - Consumer Identified (Valid/Invalid/Unknown) — collected by bowtie build
+- ✅ `0x20A8/20A1` - Memory configuration read (CDI and config values)
+- ✅ `0x095B4` - Event monitoring (PCER) — Protocol Monitor view
+- ✅ `0x0997` - Identify Events (Global) — event discovery feature complete; addressed variant (`0x0968`) used in practice
 
 **Planned:**
-- ⏳ `0x0997` - Event discovery (Identify Events Global)
-- ⏳ `0x0544/04C4` - Producer/Consumer responses
-- ⏳ `0x20A8/20AA` - Memory configuration read/write
-- ⏳ `0x095B4` - Event monitoring (PCER)
+- ⏳ `0x20AA` - Memory configuration write
 
 **Not Planned:**
 - ❌ Stream protocol (out of scope)

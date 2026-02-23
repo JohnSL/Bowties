@@ -1,5 +1,8 @@
 <script lang="ts">
   import type { CardField } from '$lib/stores/configSidebar';
+  import type { BowtieCard } from '$lib/api/tauri';
+  import { bowtieName } from '$lib/api/tauri';
+  import { goto } from '$app/navigation';
   import { createEventDispatcher } from 'svelte';
 
   export let field: CardField;
@@ -9,6 +12,11 @@
   export let isRefreshing: boolean = false;
   /** Error from last refresh attempt */
   export let refreshError: string | null = null;
+  /**
+   * Cross-reference: the BowtieCard this event ID slot participates in.
+   * When present, renders a "Used in: …" navigable link (FR-008, FR-009).
+   */
+  export let usedIn: BowtieCard | undefined = undefined;
 
   const dispatch = createEventDispatcher<{ refresh: { field: CardField } }>();
 
@@ -21,6 +29,12 @@
 
   function handleRefresh() {
     dispatch('refresh', { field });
+  }
+
+  function handleNavigateToBowties() {
+    if (usedIn) {
+      goto('/bowties?highlight=' + usedIn.event_id_hex);
+    }
   }
 </script>
 
@@ -49,6 +63,18 @@
 
   {#if refreshError}
     <div class="refresh-error">{refreshError}</div>
+  {/if}
+
+  {#if usedIn}
+    <div class="used-in">
+      Used in:
+      <button
+        class="used-in-link"
+        on:click={handleNavigateToBowties}
+        title="View bowtie for event {usedIn.event_id_hex}"
+        aria-label="View bowtie connection for {bowtieName(usedIn)}"
+      >{bowtieName(usedIn)}</button>
+    </div>
   {/if}
 </div>
 
@@ -114,5 +140,25 @@
     margin-top: 2px;
     font-size: 11px;
     color: var(--error-color, #c62828);
+  }
+
+  .used-in {
+    margin-top: 3px;
+    font-size: 11px;
+    color: var(--text-tertiary, #888);
+  }
+
+  .used-in-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 11px;
+    color: var(--link-color, #1565c0);
+    cursor: pointer;
+    text-decoration: underline;
+  }
+
+  .used-in-link:hover {
+    color: var(--link-hover-color, #0d47a1);
   }
 </style>

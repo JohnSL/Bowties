@@ -5,6 +5,10 @@
 
 pub mod parser;
 pub mod hierarchy;
+pub mod role;
+
+pub use role::{EventRole, classify_event_slot};
+pub use hierarchy::walk_event_slots;
 
 use serde::{Deserialize, Serialize};
 

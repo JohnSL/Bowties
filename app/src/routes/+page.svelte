@@ -16,6 +16,11 @@
   import type { ReadProgressState } from '$lib/api/types';
   import { millerColumnsStore } from '$lib/stores/millerColumns';
   import { updateNodeInfo } from '$lib/stores/nodeInfo';
+  import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
+  import BowtieCatalogPanel from '$lib/components/Bowtie/BowtieCatalogPanel.svelte';
+
+  // Active tab state — 'config' (default) or 'bowties'
+  let activeTab = $state<'config' | 'bowties'>('config');
 
   // Connection state
   let host = $state("localhost");
@@ -53,6 +58,10 @@
     } catch (e) {
       console.error("Failed to get connection status:", e);
     }
+
+    // Feature 006: Start bowties store listener so cdi-read-complete is captured
+    // regardless of whether the user has visited the Bowties page.
+    bowtieCatalogStore.startListening();
 
     const unlistens: Array<() => void> = [];
 
@@ -457,6 +466,22 @@
           <span class="tb-icon">📡</span>
           <span>Traffic Monitor</span>
         </button>
+        <span class="toolbar-sep" aria-hidden="true"></span>
+        <!-- FR-013: Bowties tab — disabled until cdi-read-complete fires -->
+        <button
+          class="toolbar-btn toolbar-btn-bowties"
+          class:toolbar-btn-active={activeTab === 'bowties'}
+          onclick={() => { activeTab = activeTab === 'bowties' ? 'config' : 'bowties'; }}
+          disabled={!bowtieCatalogStore.readComplete}
+          aria-disabled={!bowtieCatalogStore.readComplete}
+          aria-pressed={activeTab === 'bowties'}
+          title={bowtieCatalogStore.readComplete
+            ? 'View discovered bowtie connections'
+            : 'Bowties available after reading all node configurations'}
+        >
+          <span class="tb-icon">🎀</span>
+          <span>Bowties</span>
+        </button>
       </div>
       <div class="toolbar-right">
         <div class="toolbar-status" aria-live="polite">
@@ -539,6 +564,10 @@
           <p class="empty-hint">Click <strong>Discover Nodes</strong> in the toolbar or View menu.</p>
         {/if}
       </div>
+
+    {:else if activeTab === 'bowties'}
+      <!-- Feature 006: Bowties catalog in-page tab (no navigation) -->
+      <BowtieCatalogPanel />
 
     {:else}
       <!-- FR-001: two-panel layout — fixed sidebar + scrollable main area -->
@@ -655,7 +684,8 @@
 
   .toolbar-btn:disabled {
     color: #bbb;
-    cursor: default;
+    cursor: not-allowed;
+    pointer-events: none;
   }
 
   .tb-icon {
@@ -682,6 +712,13 @@
   .tb-disconnect-btn {
     padding: 4px 12px !important;
     font-size: 12px !important;
+  }
+
+  /* Active (pressed) state for toggle toolbar buttons */
+  .toolbar-btn-active {
+    background: #eff6ff;
+    border-color: #6366f1 !important;
+    color: #4338ca !important;
   }
 
   /* ─── Progress Strip ────────────────────────────────── */

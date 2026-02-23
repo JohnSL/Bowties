@@ -13,6 +13,8 @@ Auto-generated from all feature plans. Last updated: 2026-02-14
 - In-memory cache (Map<NodeId, Map<ElementPath, TypedValue>>), no persistence (004-read-node-config)
 - Rust 2021 (backend, `app/src-tauri/src/`), TypeScript 5.x strict mode (frontend, `app/src/`) + SvelteKit 2.x, Tauri 2.x, lcc-rs (internal library), tokio, serde, uuid (005-config-sidebar-view)
 - In-memory config value cache (`millerColumns.ts` Svelte store, `ConfigValueMap`); backend CDI parse cache (`CDI_PARSE_CACHE` lazy_static `Arc<RwLock<HashMap<String, lcc_rs::cdi::Cdi>>>`) (005-config-sidebar-view)
+- Rust 2021 (stable ≥1.70) + TypeScript strict / SvelteKit 2.x + `lcc-rs` (workspace crate), `tokio`, `serde`, `tauri 2.x`; SvelteKit 2.x + Tauri JS API (006-bowties-event-discovery)
+- In-memory only — `AppState.nodes` cache (already exists); no new persistence in this phase (006-bowties-event-discovery)
 
 - Python 3.12 (latest stable as of 2026), managed via UV + PySerial (serial port communication), IntelHex (firmware loading), UV (Python version management) (001-python3-migration)
 
@@ -32,9 +34,9 @@ cd src; pytest; ruff check .
 Python 3.12 (latest stable as of 2026), managed via UV: Follow standard conventions
 
 ## Recent Changes
+- 006-bowties-event-discovery: Added Rust 2021 (stable ≥1.70) + TypeScript strict / SvelteKit 2.x + `lcc-rs` (workspace crate), `tokio`, `serde`, `tauri 2.x`; SvelteKit 2.x + Tauri JS API
 - 005-config-sidebar-view: Added Rust 2021 (backend, `app/src-tauri/src/`), TypeScript 5.x strict mode (frontend, `app/src/`) + SvelteKit 2.x, Tauri 2.x, lcc-rs (internal library), tokio, serde, uuid
 - 004-read-node-config: Added Rust 2021 (backend via lcc-rs), TypeScript 5.x (frontend) + lcc-rs (LCC protocol), Tauri 2 (desktop framework), SvelteKit (reactive UI)
-- 003-miller-columns: Added TypeScript 5.x (frontend), Rust 2021+ edition (backend via Tauri 2) + SvelteKit 2.x, Tauri 2.x, lcc-rs (existing LCC protocol library), Tauri events
 
 
 <!-- MANUAL ADDITIONS START -->

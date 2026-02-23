@@ -213,6 +213,90 @@ fn navigate_elements<'a>(elements: &'a [DataElement], path: &[String]) -> Result
     }
 }
 
+// ============================================================================
+// T003: walk_event_slots — CDI traversal with ancestor group name context
+// ============================================================================
+
+/// Walk every `EventId` element in a CDI structure, calling `visitor` for each one.
+///
+/// The visitor receives:
+/// * `element`             — reference to the `EventIdElement`
+/// * `parent_group_names`  — slice of ancestor `<group><name>` strings, outermost-first.
+///                           A group with no `<name>` contributes an empty-string slot.
+/// * `element_path`        — index-based path from segment root to this element
+///                           (same format used throughout the rest of the codebase,
+///                           e.g. `["seg:0", "elem:2", "elem:1#3", "elem:0"]`).
+///
+/// This function is used by the bowtie builder to gather every event slot together
+/// with the CDI context needed to run `classify_event_slot` (Tier 1/2 heuristic).
+pub fn walk_event_slots<F>(cdi: &super::Cdi, mut visitor: F)
+where
+    F: FnMut(&super::EventIdElement, &[&str], &[String]),
+{
+    for (seg_idx, segment) in cdi.segments.iter().enumerate() {
+        let seg_path = format!("seg:{}", seg_idx);
+        let mut path: Vec<String> = vec![seg_path];
+        let mut ancestor_names: Vec<&str> = Vec::new();
+
+        walk_elements_for_events(
+            &segment.elements,
+            &mut path,
+            &mut ancestor_names,
+            &mut visitor,
+        );
+    }
+}
+
+/// Recursive helper for `walk_event_slots`.
+fn walk_elements_for_events<'a, F>(
+    elements: &'a [DataElement],
+    path: &mut Vec<String>,
+    ancestor_names: &mut Vec<&'a str>,
+    visitor: &mut F,
+)
+where
+    F: FnMut(&'a super::EventIdElement, &[&str], &[String]),
+{
+    for (i, element) in elements.iter().enumerate() {
+        match element {
+            DataElement::Group(g) => {
+                // Push this group's name (or empty string) onto the ancestor stack.
+                let g_name: &str = g
+                    .name
+                    .as_deref()
+                    .unwrap_or("");
+                ancestor_names.push(g_name);
+
+                let stride = g.calculate_size();
+                let effective_replication = if stride == 0 && g.replication > 1 {
+                    1u32
+                } else {
+                    g.replication
+                };
+
+                for inst in 0..effective_replication {
+                    if g.replication > 1 {
+                        path.push(format!("elem:{}#{}", i, inst + 1));
+                    } else {
+                        path.push(format!("elem:{}", i));
+                    }
+                    walk_elements_for_events(&g.elements, path, ancestor_names, visitor);
+                    path.pop();
+                }
+
+                ancestor_names.pop();
+            }
+            DataElement::EventId(e) => {
+                path.push(format!("elem:{}", i));
+                visitor(e, ancestor_names.as_slice(), path.as_slice());
+                path.pop();
+            }
+            // Other primitive elements are not event slots — skip.
+            _ => {}
+        }
+    }
+}
+
 /// Find element by index-based ID helper
 /// 
 /// Parses index-based element IDs in format:

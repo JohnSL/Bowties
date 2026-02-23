@@ -4,7 +4,9 @@
 
 pub mod discovery;
 pub mod cdi;
+pub mod bowties;
 
 // Re-export all commands for easy registration
 pub use discovery::*;
 pub use cdi::*;
+pub use bowties::*;

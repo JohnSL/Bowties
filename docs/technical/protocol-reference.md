@@ -352,6 +352,8 @@ CDI is an XML document that describes a node's configuration structure. It defin
 
 ## Event Discovery
 
+**Status:** ✅ Implemented in Feature 006 (Bowties Event Discovery) — addressed variant used
+
 ### Identify Events Protocol
 
 **Purpose:** Discover which events a node produces or consumes
@@ -361,6 +363,14 @@ CDI is an XML document that describes a node's configuration structure. It defin
 MTI: 0x0997 (Identify Events Global)
 Data: None
 ```
+
+**Addressed Query (used in Bowties feature):**
+```
+MTI: 0x0968 (Identify Events Addressed)
+Data: Destination node alias (2 bytes)
+```
+
+Bowties uses the addressed form — one message per known node, 125 ms apart — to limit network traffic and ensure replies are attributable to a specific node.
 
 **Responses:**
 ```
@@ -376,9 +386,11 @@ Data: 8-byte Event ID
 - **Invalid:** Event slot exists but not configured
 - **Unknown:** Event state cannot be determined
 
+**Note:** The `EventState` field in replies (Valid/Invalid/Unknown) is currently ignored by `query_event_roles`; only the MTI itself (Producer vs Consumer) is used to assign roles.
+
 **Use Case:**
 - Map all event relationships on network
-- Build event link diagrams
+- Build event link (bowtie) diagrams
 - Detect orphaned events (producer with no consumer)
 
 **Source:** TN-9.7.3.1 §5 (Event Transport)

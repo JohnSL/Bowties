@@ -1,7 +1,7 @@
 # LCC-RS API Documentation
 
 **Version:** 0.1.0  
-**Last Updated:** February 18, 2026
+**Last Updated:** February 22, 2026
 
 ## Overview
 
@@ -19,6 +19,8 @@
 - ✅ CDI XML parsing and navigation
 - ✅ CDI hierarchy analysis (depth calculation, replication expansion)
 - ✅ Index-based pathId navigation system
+- ✅ `EventRole` classification with two-tier CDI heuristic (`role.rs`)
+- ✅ Event slot traversal with ancestor group names (`hierarchy.rs`)
 - ✅ Addressed and global messaging
 - ✅ Concurrency control with semaphores
 - ✅ Background message dispatcher with broadcast channels
@@ -1197,9 +1199,10 @@ The CDI module provides comprehensive support for parsing, navigating, and analy
 
 ```
 lcc_rs::cdi
-├── mod.rs          - Type definitions (Cdi, Segment, DataElement, Group, etc.)
+├── mod.rs          - Type definitions (Cdi, Segment, DataElement, Group, etc.) + EventRole re-export
 ├── parser.rs       - XML parsing with roxmltree
-└── hierarchy.rs    - Navigation and hierarchy helpers
+├── hierarchy.rs    - Navigation and hierarchy helpers; propagates ancestor group names during event-slot walk
+└── role.rs         - EventRole enum + classify_event_slot() two-tier heuristic
 ```
 
 ###Type Definitions
@@ -1435,7 +1438,101 @@ fn test_navigate_to_replicated_instance() {
 
 ---
 
-## Testing Support
+### Event Role Classification (`role.rs`)
+
+**Status:** ✅ Implemented in Feature 006 (Event Discovery & Bowties)
+
+The `role` module provides heuristic classification of CDI event slots to determine whether a given slot is more likely to be a **Producer** or **Consumer** of an event. This is needed because the LCC/OpenLCB CDI standard (S-9.7.4.1) has no XML attribute indicating a slot's role; role must be inferred from context.
+
+#### `EventRole`
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EventRole {
+    Producer,
+    Consumer,
+    Ambiguous, // heuristic inconclusive
+}
+```
+
+#### `classify_event_slot`
+
+Classify a single CDI event ID slot using a two-tier heuristic.
+
+```rust
+pub fn classify_event_slot(
+    element: &EventIdElement,
+    parent_group_names: &[&str],
+) -> EventRole
+```
+
+**Parameters:**
+- `element`: The `EventIdElement` from the CDI AST
+- `parent_group_names`: Ancestor `<group><name>` strings from the CDI hierarchy (outermost first)
+
+**Returns:** `EventRole::Producer`, `EventRole::Consumer`, or `EventRole::Ambiguous`
+
+**Two-Tier Heuristic:**
+
+| Tier | Source | Producer keyword examples | Consumer keyword examples |
+|------|--------|--------------------------|---------------------------|
+| 1 | Ancestor `<group><name>` | "Producers", "Producer Events", "Outputs" | "Consumers", "Consumer Events", "Inputs" |
+| 2 | Element `<description>` text | "Generated when…", "Sent when…" | "When this event…", "Activated when…" |
+
+Tier 1 takes precedence over Tier 2. If neither tier matches, returns `Ambiguous`.
+
+**Example:**
+```rust
+use lcc_rs::cdi::{parse_cdi, walk_event_slots};
+use lcc_rs::EventRole;
+
+let cdi = parse_cdi(cdi_xml)?;
+for slot_info in walk_event_slots(&cdi) {
+    match slot_info.role {
+        EventRole::Producer => println!("Producer: {}", slot_info.element_label),
+        EventRole::Consumer => println!("Consumer: {}", slot_info.element_label),
+        EventRole::Ambiguous => println!("Ambiguous: {}", slot_info.element_label),
+    }
+}
+```
+
+**Guarantees:**
+- Deterministic: same inputs always produce the same output
+- No network I/O: purely structural CDI analysis
+- Cross-node events resolved by protocol (Identify Events exchange) take priority over this heuristic; heuristic is a fallback for same-node events
+
+#### Ancestor Names via `walk_event_slots`
+
+The `hierarchy.rs` module exposes a `walk_event_slots` function that traverses all `EventId` elements in a CDI tree and returns `SlotInfo` structs, each bundling the element, its computed ancestor group names, and the pre-classified `EventRole`:
+
+```rust
+pub struct SlotInfo {
+    pub element: EventIdElement,
+    pub element_path: Vec<String>,   // index-based pathId segments
+    pub element_label: String,       // CDI <name> → <description> first sentence → path
+    pub ancestor_names: Vec<String>, // <group><name> values, outermost first
+    pub role: EventRole,             // classify_event_slot() result
+}
+
+pub fn walk_event_slots(cdi: &Cdi) -> Vec<SlotInfo>
+```
+
+**Example:**
+```rust
+use lcc_rs::cdi::{parse_cdi, walk_event_slots};
+
+let cdi = parse_cdi(cdi_xml)?;
+let slots = walk_event_slots(&cdi);
+println!("Found {} event ID slots", slots.len());
+for slot in &slots {
+    println!("{} ({:?}) path: {}", slot.element_label, slot.role, slot.element_path.join("/"));
+}
+```
+
+#### Testing
+
+- Unit tests in `lcc-rs/src/cdi/role.rs` cover each keyword tier, multi-ancestor scenarios, empty inputs, and boundary strings
+- Property-based tests verify no panic on arbitrary string inputs
 
 ### Mock Transport
 

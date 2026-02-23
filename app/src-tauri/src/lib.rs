@@ -143,6 +143,7 @@ pub fn run() {
             commands::cancel_config_reading,
             commands::get_card_elements,
             commands::get_segment_elements,
+            commands::get_bowties,  // T011: Feature 006 bowtie catalog
             update_menu_state,
         ])
         .run(tauri::generate_context!())

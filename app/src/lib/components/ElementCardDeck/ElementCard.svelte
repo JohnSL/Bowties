@@ -3,6 +3,7 @@
   import FieldRow from './FieldRow.svelte';
   import EventSlotRow from './EventSlotRow.svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
 
   export let card: CardData;
   export let nodeId: string;
@@ -20,6 +21,9 @@
   $: localError = card.loadError;
   // Auto-expand when loading or error is present (only happens after a prior toggle)
   $: if (localLoading || localError) localExpanded = true;
+
+  // Cross-reference lookup: nodeId + CDI path → BowtieCard (FR-008, SC-005)
+  $: nodeSlotMap = bowtieCatalogStore.nodeSlotMap;
 
   async function handleToggle() {
     localExpanded = !localExpanded;
@@ -89,7 +93,10 @@
           <div class="fields-list" role="list">
             {#each allFields as field (field.elementPath.join('/'))}
               {#if field.dataType === 'eventid'}
-                <EventSlotRow {field} />
+                <EventSlotRow
+                  {field}
+                  usedIn={nodeSlotMap.get(`${nodeId}:${field.elementPath.join('/')}`)}
+                />
               {:else}
                 <FieldRow {field} />
               {/if}
