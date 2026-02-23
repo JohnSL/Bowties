@@ -141,6 +141,8 @@ pub fn run() {
             commands::read_config_value,  // T034: Register read_config_value command
             commands::read_all_config_values,  // T055: Register read_all_config_values command
             commands::cancel_config_reading,
+            commands::get_card_elements,
+            commands::get_segment_elements,
             update_menu_state,
         ])
         .run(tauri::generate_context!())

@@ -1855,3 +1855,689 @@ pub async fn cancel_config_reading(state: tauri::State<'_, AppState>) -> Result<
     state.config_read_cancel.store(true, Ordering::Relaxed);
     Ok(())
 }
+
+// ============================================================================
+// get_card_elements Command (Feature 005-config-sidebar-view)
+// ============================================================================
+
+/// Leaf configuration field within a card (part of CardElementTree).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardField {
+    pub element_path: Vec<String>,
+    pub name: String,
+    pub description: Option<String>,
+    pub data_type: String,
+    pub memory_address: u32,
+    pub size_bytes: u32,
+    pub default_value: Option<String>,
+    pub address_space: u8,
+}
+
+/// Sub-group within a card, rendered inline and fully expanded per FR-011.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardSubGroup {
+    pub name: String,
+    pub description: Option<String>,
+    pub group_path: Vec<String>,
+    pub fields: Vec<CardField>,
+    pub sub_groups: Vec<CardSubGroup>,
+    /// Original CDI replication count. > 1 means this is one instance of a
+    /// replicated group and should be rendered as a collapsible accordion.
+    /// == 1 means a non-replicated group — render inline (always visible).
+    pub replication: u32,
+}
+
+/// Full recursive element tree returned by get_card_elements.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardElementTree {
+    pub group_name: Option<String>,
+    pub group_description: Option<String>,
+    pub fields: Vec<CardField>,
+    pub sub_groups: Vec<CardSubGroup>,
+}
+
+/// Parse an "elem:N" or "elem:N#I" path step.
+/// Returns (element_index, optional_instance_1based).
+fn parse_elem_path_step(step: &str) -> Result<(usize, Option<u32>), String> {
+    let index_part = step
+        .strip_prefix("elem:")
+        .ok_or_else(|| format!("InvalidPath: expected 'elem:N' or 'elem:N#I', got '{}'", step))?;
+    if let Some(hash_pos) = index_part.find('#') {
+        let idx_str = &index_part[..hash_pos];
+        let instance_str = &index_part[hash_pos + 1..];
+        let idx = idx_str
+            .parse::<usize>()
+            .map_err(|_| format!("InvalidPath: bad element index in '{}'", step))?;
+        let instance = instance_str
+            .parse::<u32>()
+            .map_err(|_| format!("InvalidPath: bad instance number in '{}'", step))?;
+        Ok((idx, Some(instance)))
+    } else {
+        let idx = index_part
+            .parse::<usize>()
+            .map_err(|_| format!("InvalidPath: bad element index in '{}'", step))?;
+        Ok((idx, None))
+    }
+}
+
+/// Total byte footprint of a DataElement (offset skip + its content size).
+/// This is the number of cursor bytes the element occupies in its parent context.
+fn card_element_footprint(element: &lcc_rs::cdi::DataElement) -> i32 {
+    use lcc_rs::cdi::DataElement;
+    match element {
+        DataElement::Group(g) => g.offset + g.calculate_size() * g.replication as i32,
+        DataElement::Int(e) => e.offset + e.size as i32,
+        DataElement::String(s) => s.offset + s.size as i32,
+        DataElement::EventId(e) => e.offset + 8,
+        DataElement::Float(e) => e.offset + 4,
+        DataElement::Action(e) => e.offset + 1,
+        DataElement::Blob(b) => b.offset + b.size as i32,
+    }
+}
+
+/// Navigate element slice following `path`, tracking absolute address.
+/// `base_offset`: absolute address of the beginning of this elements slice.
+/// Returns (&Group, absolute_base_address_of_that_group_instance).
+fn navigate_elements_to_group<'a>(
+    elements: &'a [lcc_rs::cdi::DataElement],
+    path: &[String],
+    base_offset: i32,
+) -> Result<(&'a lcc_rs::cdi::Group, i32), String> {
+    use lcc_rs::cdi::DataElement;
+
+    if path.is_empty() {
+        return Err("InvalidPath: unexpected end of path".to_string());
+    }
+
+    let (elem_idx, opt_instance) = parse_elem_path_step(&path[0])?;
+
+    if elem_idx >= elements.len() {
+        return Err(format!(
+            "InvalidPath: element index {} out of range (len={})",
+            elem_idx,
+            elements.len()
+        ));
+    }
+
+    // Accumulate cursor to element elem_idx by summing footprints of preceding elements
+    let cursor_before: i32 = elements[..elem_idx]
+        .iter()
+        .map(card_element_footprint)
+        .sum();
+
+    let element = &elements[elem_idx];
+    let group = match element {
+        DataElement::Group(g) => g,
+        _ => {
+            return Err(format!(
+                "InvalidPath: element at index {} is not a group",
+                elem_idx
+            ))
+        }
+    };
+
+    // Group content start: base_offset + cursor_before + group.offset (skip before group)
+    let group_content_start = base_offset + cursor_before + group.offset;
+
+    // Apply replication instance offset (1-based input → 0-based math)
+    let stride = group.calculate_size();
+    let instance_0based = opt_instance.map(|i| (i as i32) - 1).unwrap_or(0);
+    let instance_base = group_content_start + instance_0based * stride;
+
+    // If this is the last step in the path, we found the target group
+    if path.len() == 1 {
+        return Ok((group, instance_base));
+    }
+
+    // Otherwise recurse into this group's elements
+    navigate_elements_to_group(&group.elements, &path[1..], instance_base)
+}
+
+/// Recursively collect CardField and CardSubGroup entries from an element slice.
+/// `base_address`: absolute address at which the first element of this slice starts.
+fn collect_fields_and_subgroups(
+    elements: &[lcc_rs::cdi::DataElement],
+    base_address: i32,
+    address_space: u8,
+    parent_path: &[String],
+) -> (Vec<CardField>, Vec<CardSubGroup>) {
+    use lcc_rs::cdi::DataElement;
+
+    let mut fields = Vec::new();
+    let mut sub_groups = Vec::new();
+    let mut cursor: i32 = 0;
+
+    for (i, element) in elements.iter().enumerate() {
+        match element {
+            DataElement::Group(g) => {
+                cursor += g.offset;
+                let sub_base = base_address + cursor;
+                let stride = g.calculate_size();
+
+                // FR-011: sub-groups within a card are rendered inline, fully expanded.
+                // Each replication instance becomes a separate CardSubGroup.
+                for inst in 0..g.replication {
+                    let inst_base = sub_base + inst as i32 * stride;
+                    let inst_path: Vec<String> = if g.replication > 1 {
+                        let mut p = parent_path.to_vec();
+                        p.push(format!("elem:{}#{}", i, inst + 1));
+                        p
+                    } else {
+                        let mut p = parent_path.to_vec();
+                        p.push(format!("elem:{}", i));
+                        p
+                    };
+                    let (sub_fields, deeper_sub_groups) =
+                        collect_fields_and_subgroups(&g.elements, inst_base, address_space, &inst_path);
+                    sub_groups.push(CardSubGroup {
+                        name: g.name.clone().unwrap_or_else(|| format!("Group {}", i)),
+                        description: g.description.clone(),
+                        group_path: inst_path,
+                        fields: sub_fields,
+                        sub_groups: deeper_sub_groups,
+                        replication: g.replication,
+                    });
+                }
+                cursor += g.calculate_size() * g.replication as i32;
+            }
+            DataElement::Int(e) => {
+                cursor += e.offset;
+                let addr = (base_address + cursor) as u32;
+                cursor += e.size as i32;
+                let mut elem_path = parent_path.to_vec();
+                elem_path.push(format!("elem:{}", i));
+                fields.push(CardField {
+                    element_path: elem_path,
+                    name: e.name.clone().unwrap_or_else(|| format!("Int {}", i)),
+                    description: e.description.clone(),
+                    data_type: "int".to_string(),
+                    memory_address: addr,
+                    size_bytes: e.size as u32,
+                    default_value: e.default.map(|v| v.to_string()),
+                    address_space,
+                });
+            }
+            DataElement::String(s) => {
+                cursor += s.offset;
+                let addr = (base_address + cursor) as u32;
+                cursor += s.size as i32;
+                let mut elem_path = parent_path.to_vec();
+                elem_path.push(format!("elem:{}", i));
+                fields.push(CardField {
+                    element_path: elem_path,
+                    name: s.name.clone().unwrap_or_else(|| format!("String {}", i)),
+                    description: s.description.clone(),
+                    data_type: "string".to_string(),
+                    memory_address: addr,
+                    size_bytes: s.size as u32,
+                    default_value: None,
+                    address_space,
+                });
+            }
+            DataElement::EventId(e) => {
+                cursor += e.offset;
+                let addr = (base_address + cursor) as u32;
+                cursor += 8;
+                let mut elem_path = parent_path.to_vec();
+                elem_path.push(format!("elem:{}", i));
+                fields.push(CardField {
+                    element_path: elem_path,
+                    name: e.name.clone().unwrap_or_else(|| format!("EventId {}", i)),
+                    description: e.description.clone(),
+                    data_type: "eventid".to_string(),
+                    memory_address: addr,
+                    size_bytes: 8,
+                    default_value: None,
+                    address_space,
+                });
+            }
+            DataElement::Float(e) => {
+                cursor += e.offset;
+                let addr = (base_address + cursor) as u32;
+                cursor += 4;
+                let mut elem_path = parent_path.to_vec();
+                elem_path.push(format!("elem:{}", i));
+                fields.push(CardField {
+                    element_path: elem_path,
+                    name: e.name.clone().unwrap_or_else(|| format!("Float {}", i)),
+                    description: e.description.clone(),
+                    data_type: "float".to_string(),
+                    memory_address: addr,
+                    size_bytes: 4,
+                    default_value: None,
+                    address_space,
+                });
+            }
+            DataElement::Action(e) => {
+                cursor += e.offset;
+                let addr = (base_address + cursor) as u32;
+                cursor += 1;
+                let mut elem_path = parent_path.to_vec();
+                elem_path.push(format!("elem:{}", i));
+                fields.push(CardField {
+                    element_path: elem_path,
+                    name: e.name.clone().unwrap_or_else(|| format!("Action {}", i)),
+                    description: e.description.clone(),
+                    data_type: "action".to_string(),
+                    memory_address: addr,
+                    size_bytes: 1,
+                    default_value: None,
+                    address_space,
+                });
+            }
+            DataElement::Blob(b) => {
+                cursor += b.offset;
+                let addr = (base_address + cursor) as u32;
+                cursor += b.size as i32;
+                let mut elem_path = parent_path.to_vec();
+                elem_path.push(format!("elem:{}", i));
+                fields.push(CardField {
+                    element_path: elem_path,
+                    name: b.name.clone().unwrap_or_else(|| format!("Blob {}", i)),
+                    description: b.description.clone(),
+                    data_type: "blob".to_string(),
+                    memory_address: addr,
+                    size_bytes: b.size as u32,
+                    default_value: None,
+                    address_space,
+                });
+            }
+        }
+    }
+
+    (fields, sub_groups)
+}
+
+/// Navigate CDI to the group at `group_path` and build a CardElementTree.
+/// This is the pure, testable core of get_card_elements.
+fn navigate_and_build_card_tree(
+    cdi: &lcc_rs::cdi::Cdi,
+    group_path: &[String],
+) -> Result<CardElementTree, String> {
+    if group_path.len() < 2 {
+        return Err(
+            "InvalidPath: group_path must have at least a segment step and one element step"
+                .to_string(),
+        );
+    }
+
+    // Parse segment index from "seg:N"
+    let seg_id = &group_path[0];
+    let seg_idx = seg_id
+        .strip_prefix("seg:")
+        .and_then(|s| s.parse::<usize>().ok())
+        .ok_or_else(|| format!("InvalidPath: segment id must be 'seg:N', got '{}'", seg_id))?;
+
+    let segment = cdi
+        .segments
+        .get(seg_idx)
+        .ok_or_else(|| format!("InvalidPath: segment index {} out of range", seg_idx))?;
+
+    let base_offset = segment.origin as i32;
+    let address_space = segment.space;
+
+    let (group, group_base) =
+        navigate_elements_to_group(&segment.elements, &group_path[1..], base_offset)?;
+
+    let (fields, sub_groups) =
+        collect_fields_and_subgroups(&group.elements, group_base, address_space, group_path);
+
+    Ok(CardElementTree {
+        group_name: group.name.clone(),
+        group_description: group.description.clone(),
+        fields,
+        sub_groups,
+    })
+}
+
+/// Return the full recursive element tree for a top-level CDI group.
+///
+/// Used by ElementCard to render the card body with all leaf fields and sub-groups
+/// inline (FR-011). Replaces multiple sequential get_column_items calls (SC-002).
+///
+/// # Errors
+/// - `NodeNotFound: ...` — node not in discovered list
+/// - `CdiNotRetrieved: ...` — CDI not yet fetched for node
+/// - `InvalidPath: ...` — group_path does not resolve to a group in the CDI
+/// - `ParseError: ...` — CDI XML could not be parsed
+#[tauri::command]
+pub async fn get_card_elements(
+    node_id: String,
+    group_path: Vec<String>,
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<CardElementTree, String> {
+    let cdi = get_cdi_from_cache(&node_id, &app_handle, &state).await?;
+    navigate_and_build_card_tree(&cdi, &group_path)
+}
+
+// ============================================================================
+// get_segment_elements Command (Config Tab — SegmentView)
+// ============================================================================
+
+/// Full segment content tree returned by get_segment_elements.
+///
+/// Contains top-level groups (rendered as flat section headers in the UI) plus
+/// any leaf fields that sit directly inside the segment (e.g. User Info which
+/// has `<string>` elements at the segment root rather than inside a group).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SegmentTree {
+    pub segment_name: String,
+    /// Direct leaf fields — present in leaf-only segments such as User Info.
+    pub fields: Vec<CardField>,
+    /// Top-level groups — present in most segments (Settings, Port I/O, etc.).
+    /// Reuses `CardSubGroup` because the shape is identical.
+    pub groups: Vec<CardSubGroup>,
+}
+
+/// Build a `SegmentTree` from CDI using a "seg:N" segment path.
+fn build_segment_tree(
+    cdi: &lcc_rs::cdi::Cdi,
+    segment_path: &str,
+) -> Result<SegmentTree, String> {
+    let seg_idx = segment_path
+        .strip_prefix("seg:")
+        .and_then(|s| s.parse::<usize>().ok())
+        .ok_or_else(|| format!("InvalidPath: expected 'seg:N', got '{}'", segment_path))?;
+
+    let segment = cdi
+        .segments
+        .get(seg_idx)
+        .ok_or_else(|| format!("InvalidPath: segment index {} out of range", seg_idx))?;
+
+    let base_offset = segment.origin as i32;
+    let address_space = segment.space;
+    let parent_path = vec![segment_path.to_string()];
+
+    // collect_fields_and_subgroups on the segment's element list gives us:
+    //   fields     — leaf elements sitting directly in the segment
+    //   sub_groups — top-level group elements (which we surface as `groups`)
+    let (fields, groups) = collect_fields_and_subgroups(
+        &segment.elements,
+        base_offset,
+        address_space,
+        &parent_path,
+    );
+
+    Ok(SegmentTree {
+        segment_name: segment
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("Segment {}", seg_idx)),
+        fields,
+        groups,
+    })
+}
+
+/// Return the full content tree for a CDI segment in a single call.
+///
+/// Handles both group-based segments (e.g. Settings, Port I/O) and leaf-only
+/// segments (e.g. User Info).  Replaces the two-step get_column_items +
+/// get_card_elements flow used by the old ElementCardDeck component.
+#[tauri::command]
+pub async fn get_segment_elements(
+    node_id: String,
+    segment_path: String,
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<SegmentTree, String> {
+    let cdi = get_cdi_from_cache(&node_id, &app_handle, &state).await?;
+    build_segment_tree(&cdi, &segment_path)
+}
+
+// ============================================================================
+// T009: Unit tests for get_card_elements (navigate_and_build_card_tree)
+// ============================================================================
+
+#[cfg(test)]
+mod get_card_elements_tests {
+    use super::*;
+
+    /// CDI with a replicated "Line" group (3 instances):
+    ///   Segment "Port I/O" (space=253, origin=0)
+    ///     Group "Line" offset=0, replication=3, stride=24
+    ///       String "User Name" size=16, offset=0
+    ///       EventId "Set Event" offset=0  (always 8 bytes)
+    fn make_replicated_line_cdi() -> lcc_rs::cdi::Cdi {
+        lcc_rs::cdi::Cdi {
+            identification: None,
+            acdi: None,
+            segments: vec![lcc_rs::cdi::Segment {
+                name: Some("Port I/O".to_string()),
+                description: None,
+                space: 253,
+                origin: 0,
+                elements: vec![lcc_rs::cdi::DataElement::Group(lcc_rs::cdi::Group {
+                    name: Some("Line".to_string()),
+                    description: Some("Config for one line".to_string()),
+                    offset: 0,
+                    replication: 3,
+                    repname: vec!["Line".to_string()],
+                    elements: vec![
+                        lcc_rs::cdi::DataElement::String(lcc_rs::cdi::StringElement {
+                            name: Some("User Name".to_string()),
+                            description: Some("User-assigned label".to_string()),
+                            size: 16,
+                            offset: 0,
+                        }),
+                        lcc_rs::cdi::DataElement::EventId(lcc_rs::cdi::EventIdElement {
+                            name: Some("Set Event".to_string()),
+                            description: Some("Event that activates this line".to_string()),
+                            offset: 0,
+                        }),
+                    ],
+                    hints: None,
+                })],
+            }],
+        }
+    }
+
+    #[test]
+    fn test_card_tree_basic_build() {
+        let cdi = make_replicated_line_cdi();
+        let path = vec!["seg:0".to_string(), "elem:0#1".to_string()];
+        let result = navigate_and_build_card_tree(&cdi, &path);
+        assert!(result.is_ok(), "Should build tree for instance 1: {:?}", result);
+        let tree = result.unwrap();
+
+        assert_eq!(tree.group_name.as_deref(), Some("Line"));
+        assert_eq!(tree.group_description.as_deref(), Some("Config for one line"));
+        assert_eq!(tree.fields.len(), 2, "Expected 2 fields");
+        assert!(tree.sub_groups.is_empty(), "Expected no sub-groups");
+
+        // Instance 1 (1-based = index 0): base_address = 0 + 0*24 = 0
+        assert_eq!(tree.fields[0].name, "User Name");
+        assert_eq!(tree.fields[0].data_type, "string");
+        assert_eq!(tree.fields[0].memory_address, 0);
+        assert_eq!(tree.fields[0].size_bytes, 16);
+
+        assert_eq!(tree.fields[1].name, "Set Event");
+        assert_eq!(tree.fields[1].data_type, "eventid");
+        assert_eq!(tree.fields[1].memory_address, 16); // After 16-byte string
+        assert_eq!(tree.fields[1].size_bytes, 8);
+    }
+
+    #[test]
+    fn test_replicated_group_instance_address() {
+        let cdi = make_replicated_line_cdi();
+        // Instance 3 (1-based, stride=24): base = 0 + (3-1)*24 = 48
+        let path = vec!["seg:0".to_string(), "elem:0#3".to_string()];
+        let result = navigate_and_build_card_tree(&cdi, &path);
+        assert!(result.is_ok(), "Should build tree for instance 3: {:?}", result);
+        let tree = result.unwrap();
+
+        assert_eq!(tree.fields[0].name, "User Name");
+        assert_eq!(tree.fields[0].memory_address, 48);
+        assert_eq!(tree.fields[1].name, "Set Event");
+        assert_eq!(tree.fields[1].memory_address, 64); // 48 + 16
+    }
+
+    #[test]
+    fn test_invalid_segment_returns_invalidpath_error() {
+        let cdi = make_replicated_line_cdi();
+        let path = vec!["seg:5".to_string(), "elem:0".to_string()];
+        let result = navigate_and_build_card_tree(&cdi, &path);
+        assert!(result.is_err(), "Should error for out-of-range segment");
+        assert!(
+            result.unwrap_err().contains("InvalidPath"),
+            "Error should contain InvalidPath"
+        );
+    }
+
+    #[test]
+    fn test_invalid_element_index_returns_error() {
+        let cdi = make_replicated_line_cdi();
+        let path = vec!["seg:0".to_string(), "elem:99".to_string()];
+        let result = navigate_and_build_card_tree(&cdi, &path);
+        assert!(result.is_err(), "Should error for out-of-range element index");
+        assert!(result.unwrap_err().contains("InvalidPath"));
+    }
+
+    #[test]
+    fn test_path_to_non_group_returns_error() {
+        // elem:0#1 is the Group "Line"; elem:0 inside it is String "User Name" (not a group)
+        let cdi = make_replicated_line_cdi();
+        let path = vec![
+            "seg:0".to_string(),
+            "elem:0#1".to_string(),
+            "elem:0".to_string(),
+        ];
+        let result = navigate_and_build_card_tree(&cdi, &path);
+        assert!(result.is_err(), "Path pointing to a leaf element should be an error");
+        assert!(result.unwrap_err().contains("InvalidPath"));
+    }
+
+    #[test]
+    fn test_empty_group_returns_empty_fields() {
+        let cdi = lcc_rs::cdi::Cdi {
+            identification: None,
+            acdi: None,
+            segments: vec![lcc_rs::cdi::Segment {
+                name: Some("Empty".to_string()),
+                description: None,
+                space: 253,
+                origin: 0,
+                elements: vec![lcc_rs::cdi::DataElement::Group(lcc_rs::cdi::Group {
+                    name: Some("EmptyGroup".to_string()),
+                    description: None,
+                    offset: 0,
+                    replication: 1,
+                    repname: vec![],
+                    elements: vec![],
+                    hints: None,
+                })],
+            }],
+        };
+        let path = vec!["seg:0".to_string(), "elem:0".to_string()];
+        let result = navigate_and_build_card_tree(&cdi, &path);
+        assert!(result.is_ok(), "Should succeed for empty group");
+        let tree = result.unwrap();
+        assert!(tree.fields.is_empty(), "Empty group should have no fields");
+        assert!(tree.sub_groups.is_empty(), "Empty group should have no sub-groups");
+    }
+
+    #[test]
+    fn test_nested_subgroup_addresses() {
+        // Segment origin=0, space=253
+        //   Group "Advanced" offset=0, replication=1
+        //     Int "Mode" size=1, offset=0  → address=0
+        //     Group "Timing" offset=0, replication=1
+        //       Int "Delay" size=2, offset=0  → address = 0+1+0 = 1
+        let cdi = lcc_rs::cdi::Cdi {
+            identification: None,
+            acdi: None,
+            segments: vec![lcc_rs::cdi::Segment {
+                name: Some("Settings".to_string()),
+                description: None,
+                space: 253,
+                origin: 0,
+                elements: vec![lcc_rs::cdi::DataElement::Group(lcc_rs::cdi::Group {
+                    name: Some("Advanced".to_string()),
+                    description: None,
+                    offset: 0,
+                    replication: 1,
+                    repname: vec![],
+                    elements: vec![
+                        lcc_rs::cdi::DataElement::Int(lcc_rs::cdi::IntElement {
+                            name: Some("Mode".to_string()),
+                            description: None,
+                            size: 1,
+                            offset: 0,
+                            min: None,
+                            max: None,
+                            default: Some(0),
+                            map: None,
+                        }),
+                        lcc_rs::cdi::DataElement::Group(lcc_rs::cdi::Group {
+                            name: Some("Timing".to_string()),
+                            description: Some("Timing parameters".to_string()),
+                            offset: 0,
+                            replication: 1,
+                            repname: vec![],
+                            elements: vec![lcc_rs::cdi::DataElement::Int(
+                                lcc_rs::cdi::IntElement {
+                                    name: Some("Delay".to_string()),
+                                    description: None,
+                                    size: 2,
+                                    offset: 0,
+                                    min: Some(0),
+                                    max: Some(1000),
+                                    default: None,
+                                    map: None,
+                                },
+                            )],
+                            hints: None,
+                        }),
+                    ],
+                    hints: None,
+                })],
+            }],
+        };
+        let path = vec!["seg:0".to_string(), "elem:0".to_string()];
+        let result = navigate_and_build_card_tree(&cdi, &path);
+        assert!(result.is_ok(), "Should succeed for nested group: {:?}", result);
+        let tree = result.unwrap();
+
+        assert_eq!(tree.fields.len(), 1, "Should have 1 direct field (Mode)");
+        assert_eq!(tree.fields[0].name, "Mode");
+        assert_eq!(tree.fields[0].memory_address, 0);
+
+        assert_eq!(tree.sub_groups.len(), 1, "Should have 1 sub-group (Timing)");
+        assert_eq!(tree.sub_groups[0].name, "Timing");
+        assert_eq!(tree.sub_groups[0].fields.len(), 1);
+        assert_eq!(tree.sub_groups[0].fields[0].name, "Delay");
+        assert_eq!(tree.sub_groups[0].fields[0].memory_address, 1); // Mode(0+1) + Timing.offset(0)
+    }
+
+    #[test]
+    fn test_element_paths_include_full_group_path() {
+        let cdi = make_replicated_line_cdi();
+        let path = vec!["seg:0".to_string(), "elem:0#1".to_string()];
+        let tree = navigate_and_build_card_tree(&cdi, &path).unwrap();
+
+        // Field paths should have the group_path as prefix
+        assert_eq!(
+            tree.fields[0].element_path,
+            vec!["seg:0", "elem:0#1", "elem:0"]
+        );
+        assert_eq!(
+            tree.fields[1].element_path,
+            vec!["seg:0", "elem:0#1", "elem:1"]
+        );
+    }
+
+    #[test]
+    fn test_address_space_propagated_to_all_fields() {
+        let cdi = make_replicated_line_cdi();
+        let path = vec!["seg:0".to_string(), "elem:0#1".to_string()];
+        let tree = navigate_and_build_card_tree(&cdi, &path).unwrap();
+
+        for field in &tree.fields {
+            assert_eq!(field.address_space, 253, "All fields should carry address_space=253");
+        }
+    }
+}

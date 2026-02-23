@@ -2,10 +2,16 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from '@tauri-apps/api/event';
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-  import MillerColumnsNav from '$lib/components/MillerColumns/MillerColumnsNav.svelte';
+  import ConfigSidebar from '$lib/components/ConfigSidebar/ConfigSidebar.svelte';
+  import SegmentView from '$lib/components/ElementCardDeck/SegmentView.svelte';
+  import CdiXmlViewer from '$lib/components/CdiXmlViewer.svelte';
+  import { configSidebarStore } from '$lib/stores/configSidebar';
   import { discoverNodes as discoverNodesApi, querySnipBatch, refreshAllNodes } from '$lib/api/tauri';
-  import { readAllConfigValues, cancelConfigReading, getCdiXml } from '$lib/api/cdi';
+  import { readAllConfigValues, cancelConfigReading, getCdiXml, downloadCdi } from '$lib/api/cdi';
+  import { getCdiErrorMessage, isCdiError } from '$lib/types/cdi';
+  import type { ViewerStatus } from '$lib/types/cdi';
   import type { DiscoveredNode } from '$lib/api/tauri';
   import type { ReadProgressState } from '$lib/api/types';
   import { millerColumnsStore } from '$lib/stores/millerColumns';
@@ -29,9 +35,13 @@
   // Config reading progress state (T063-T067)
   let readProgress = $state<ReadProgressState | null>(null);
   let isCancelling = $state(false);
-  
-  // Reference to Miller Columns for triggering refresh
-  let millerColumnsNav = $state<MillerColumnsNav>();
+
+  // CDI XML viewer state
+  let viewerVisible = $state(false);
+  let viewerNodeId = $state<string | null>(null);
+  let viewerXmlContent = $state<string | null>(null);
+  let viewerStatus = $state<ViewerStatus>('idle');
+  let viewerErrorMessage = $state<string | null>(null);
 
   // Check connection status on mount
   onMount(async () => {
@@ -66,8 +76,14 @@
     unlistens.push(await listen('menu-disconnect',     () => disconnect()));
     unlistens.push(await listen('menu-refresh',        () => { if (connected) discover(); }));
     unlistens.push(await listen('menu-traffic',        () => { if (connected) openTrafficMonitor(); }));
-    unlistens.push(await listen('menu-view-cdi',       () => millerColumnsNav?.viewCdiXmlForSelectedNode()));
-    unlistens.push(await listen('menu-redownload-cdi', () => millerColumnsNav?.downloadCdiForSelectedNode()));
+    unlistens.push(await listen('menu-view-cdi',       () => {
+      const nodeId = get(configSidebarStore).selectedSegment?.nodeId;
+      if (nodeId) openCdiViewer(nodeId, false);
+    }));
+    unlistens.push(await listen('menu-redownload-cdi', () => {
+      const nodeId = get(configSidebarStore).selectedSegment?.nodeId;
+      if (nodeId) openCdiViewer(nodeId, true);
+    }));
     unlistens.push(await listen('menu-discovery-opts', () => { showDiscoveryOptions = !showDiscoveryOptions; }));
 
     // Cleanup all listeners on component unmount
@@ -113,15 +129,12 @@
       try {
         // T068: Clear config cache before refresh
         millerColumnsStore.clearConfigValues();
+        // FR-018: reset sidebar state on node refresh
+        configSidebarStore.reset();
         
         const updated = await refreshAllNodes();
         nodes = updated;
         updateNodeInfo(nodes);
-        
-        // Trigger Miller Columns refresh after node data is updated
-        if (millerColumnsNav) {
-          await millerColumnsNav.refreshNodes();
-        }
 
         // T064: Read all config values for nodes with SNIP data (likely to have CDI)
         // The backend will automatically load CDI from cache if available
@@ -234,11 +247,6 @@
         
         // Populate nodeInfo store for tooltips and display names
         updateNodeInfo(nodes);
-
-        // Trigger Miller Columns refresh after discovery completes
-        if (millerColumnsNav) {
-          await millerColumnsNav.refreshNodes();
-        }
 
         // T064: Read all config values for nodes with SNIP data (likely to have CDI)
         // The backend will automatically load CDI from cache if available
@@ -357,6 +365,54 @@
     }
   }
 
+  // ─── CDI XML Viewer ───────────────────────────────────────────────────────
+
+  async function openCdiViewer(nodeId: string, forceDownload: boolean) {
+    viewerVisible = true;
+    viewerNodeId = nodeId;
+    viewerXmlContent = null;
+    viewerStatus = 'loading';
+    viewerErrorMessage = forceDownload ? 'Downloading CDI from node…' : 'Checking cache…';
+
+    try {
+      let response;
+      if (forceDownload) {
+        response = await downloadCdi(nodeId);
+      } else {
+        try {
+          response = await getCdiXml(nodeId);
+        } catch (cacheError: any) {
+          if (isCdiError(cacheError, 'CdiNotRetrieved')) {
+            viewerErrorMessage = 'Downloading CDI from node…';
+            response = await downloadCdi(nodeId);
+          } else {
+            throw cacheError;
+          }
+        }
+      }
+
+      if (response.xmlContent) {
+        viewerXmlContent = response.xmlContent;
+        viewerStatus = 'success';
+        viewerErrorMessage = null;
+      } else {
+        viewerStatus = 'error';
+        viewerErrorMessage = 'No CDI data available for this node.';
+      }
+    } catch (err) {
+      viewerStatus = 'error';
+      viewerErrorMessage = getCdiErrorMessage(err);
+    }
+  }
+
+  function closeCdiViewer() {
+    viewerVisible = false;
+    viewerNodeId = null;
+    viewerXmlContent = null;
+    viewerStatus = 'idle';
+    viewerErrorMessage = null;
+  }
+
   // Sync native menu item enable/disable state with current app state.
   // Tauri v2 has no "menu will open" event, so we push state eagerly whenever
   // any of the tracked reactive values change.
@@ -371,7 +427,7 @@
   $effect(() => {
     const conn = connected;
     const busy = discovering || queryingSnip || refreshing;
-    const sel  = !!$millerColumnsStore.selectedNode;
+    const sel  = !!$configSidebarStore.selectedSegment;
     syncMenuState(conn, busy, sel);
   });
 </script>
@@ -485,13 +541,27 @@
       </div>
 
     {:else}
-      <div class="miller-columns-section">
-        <MillerColumnsNav bind:this={millerColumnsNav} />
+      <!-- FR-001: two-panel layout — fixed sidebar + scrollable main area -->
+      <div class="config-layout">
+        <ConfigSidebar />
+        <div class="config-main">
+          <SegmentView />
+        </div>
       </div>
     {/if}
   </div>
 
 </div>
+
+<!-- CDI XML Viewer Modal -->
+<CdiXmlViewer
+  visible={viewerVisible}
+  nodeId={viewerNodeId}
+  xmlContent={viewerXmlContent}
+  status={viewerStatus}
+  errorMessage={viewerErrorMessage}
+  onClose={closeCdiViewer}
+/>
 
 <style>
   :global(html, body) {
@@ -821,13 +891,30 @@
     font-size: 13px;
   }
 
-  /* ─── Miller Columns (fills remaining height) ────────── */
+  /* ─── Config Layout (two-panel: sidebar + main) ─────── */
 
-  .miller-columns-section {
+  .config-layout {
     flex: 1;
     min-height: 0;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     overflow: hidden;
+  }
+
+  .config-main {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .main-empty {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary, #999);
+    font-size: 14px;
   }
 </style>

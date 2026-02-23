@@ -1,0 +1,195 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "get_card_elements Tauri Command",
+  "description": "Returns the full recursive element tree for a top-level CDI group in a single call. Used by ElementCard to render the card body with all leaf fields and sub-groups inline (FR-011). Replaces multiple sequential get_column_items calls to meet SC-002 (<500ms).",
+  "command": "get_card_elements",
+
+  "input": {
+    "type": "object",
+    "required": ["nodeId", "groupPath"],
+    "properties": {
+      "nodeId": {
+        "type": "string",
+        "description": "Node ID in dotted-hex format (e.g., '02.01.57.00.00.01'). Must match a key in the backend node cache.",
+        "example": "02.01.57.00.00.01"
+      },
+      "groupPath": {
+        "type": "array",
+        "items": { "type": "string" },
+        "minItems": 1,
+        "description": "Full CDI navigation path from segment root to this group. Uses the same path encoding as get_column_items parentPath. For a replicated group instance, includes the instance selector (e.g., ['Port I/O', 'elem:2#3']).",
+        "example": ["Port I/O", "elem:2#3"]
+      }
+    },
+    "additionalProperties": false
+  },
+
+  "output": {
+    "$ref": "#/definitions/CardElementTree"
+  },
+
+  "errors": [
+    "NodeNotFound: Node {nodeId} not found in cache",
+    "CdiNotRetrieved: CDI not yet retrieved for node {nodeId}",
+    "InvalidPath: Group path not found in CDI — {detail}",
+    "ParseError: CDI XML parsing failed — {detail}"
+  ],
+
+  "definitions": {
+    "CardElementTree": {
+      "type": "object",
+      "required": ["groupName", "groupDescription", "fields", "subGroups"],
+      "properties": {
+        "groupName": {
+          "type": ["string", "null"],
+          "description": "CDI group name; null if the group has no name attribute"
+        },
+        "groupDescription": {
+          "type": ["string", "null"],
+          "description": "CDI group description text; null if absent"
+        },
+        "fields": {
+          "type": "array",
+          "description": "Leaf elements directly inside this group, in CDI document order",
+          "items": { "$ref": "#/definitions/CardField" }
+        },
+        "subGroups": {
+          "type": "array",
+          "description": "Child sub-groups, in CDI document order, rendered inline and fully expanded (FR-011)",
+          "items": { "$ref": "#/definitions/CardSubGroup" }
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "CardField": {
+      "type": "object",
+      "required": ["elementPath", "name", "dataType", "memoryAddress", "sizeBytes"],
+      "properties": {
+        "elementPath": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Full CDI path from root to this element; used as key for readConfigValue and cache lookup"
+        },
+        "name": {
+          "type": "string",
+          "description": "CDI element name attribute; display label in FieldRow"
+        },
+        "description": {
+          "type": ["string", "null"],
+          "description": "CDI element description text; hidden by default behind [?] expander (FR-012)"
+        },
+        "dataType": {
+          "type": "string",
+          "enum": ["int", "string", "eventid", "float", "action", "blob"],
+          "description": "CDI element type; determines FieldRow vs EventSlotRow rendering and value formatting"
+        },
+        "memoryAddress": {
+          "type": "integer",
+          "description": "Absolute memory address within the node's memory space; passed to readConfigValue for [R] action"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Size of this element's value in bytes"
+        },
+        "defaultValue": {
+          "type": ["string", "null"],
+          "description": "CDI default value as a string representation; null if not specified"
+        },
+        "addressSpace": {
+          "type": "integer",
+          "description": "LCC memory space number (e.g., 253); matches parent segment's space field"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "CardSubGroup": {
+      "type": "object",
+      "required": ["name", "groupPath", "fields", "subGroups"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "CDI sub-group name"
+        },
+        "description": {
+          "type": ["string", "null"],
+          "description": "CDI sub-group description"
+        },
+        "groupPath": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Full path to this sub-group from CDI root"
+        },
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/CardField" },
+          "description": "Leaf elements directly in this sub-group"
+        },
+        "subGroups": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/CardSubGroup" },
+          "description": "Nested sub-groups (recursive — supports arbitrary CDI depth)"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+
+  "examples": [
+    {
+      "description": "Fetch card elements for 'Line 3' instance of a replicated 'Line' group under 'Port I/O' segment",
+      "input": {
+        "nodeId": "02.01.57.00.00.01",
+        "groupPath": ["Port I/O", "elem:2#3"]
+      },
+      "output": {
+        "groupName": "Line",
+        "groupDescription": "Configuration for one output line",
+        "fields": [
+          {
+            "elementPath": ["Port I/O", "elem:2#3", "elem:0"],
+            "name": "User Name",
+            "description": "User-assigned label for this output",
+            "dataType": "string",
+            "memoryAddress": 268,
+            "sizeBytes": 16,
+            "defaultValue": null,
+            "addressSpace": 253
+          },
+          {
+            "elementPath": ["Port I/O", "elem:2#3", "elem:1"],
+            "name": "Function Type",
+            "description": "How this output behaves when triggered",
+            "dataType": "int",
+            "memoryAddress": 284,
+            "sizeBytes": 1,
+            "defaultValue": "0",
+            "addressSpace": 253
+          }
+        ],
+        "subGroups": [
+          {
+            "name": "Events",
+            "description": "Event IDs that control this output",
+            "groupPath": ["Port I/O", "elem:2#3", "elem:2"],
+            "fields": [
+              {
+                "elementPath": ["Port I/O", "elem:2#3", "elem:2", "elem:0"],
+                "name": "Set Event",
+                "description": "Event that activates this output",
+                "dataType": "eventid",
+                "memoryAddress": 285,
+                "sizeBytes": 8,
+                "defaultValue": null,
+                "addressSpace": 253
+              }
+            ],
+            "subGroups": []
+          }
+        ]
+      }
+    }
+  ]
+}
