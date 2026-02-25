@@ -1,20 +1,23 @@
 /**
- * Spec 007: Tests for TreeGroupAccordion.svelte
+ * Tests for TreeGroupAccordion.svelte
  *
  * Covers:
- * - Replicated groups render as collapsible accordions (collapsed by default)
- * - Non-replicated groups render inline (always visible)
- * - Expand/collapse toggles child visibility
- * - Displays instanceLabel correctly
+ * - All groups render children always-visible (no accordion/collapse)
+ * - Non-replicated groups render inline with section label
+ * - Replicated groups render with PillSelector (label + pill on left)
+ * - Pill navigates between instances
  * - Description displays when present
  * - Nested groups and leaves render recursively
- * - Wrapper groups (instance=0) display group description
+ * - groupReplicatedChildren helper groups consecutive siblings
+ *
+ * Updated: accordion controls removed — labels and pills only.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import TreeGroupAccordion from './TreeGroupAccordion.svelte';
 import type { GroupConfigNode, LeafConfigNode, ConfigNode } from '$lib/types/nodeTree';
+import { groupReplicatedChildren, getInstanceDisplayName } from '$lib/types/nodeTree';
 
 // Mock stores
 vi.mock('$lib/stores/bowties.svelte', () => ({
@@ -64,169 +67,238 @@ function makeGroup(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
 });
 
 describe('TreeGroupAccordion.svelte', () => {
-  describe('collapsible (replicated) groups', () => {
-    it('renders as collapsed by default', () => {
-      const group = makeGroup([makeLeaf()], { instanceLabel: 'Channel 1' });
-      render(TreeGroupAccordion, { props: { group, nodeId: '02.01.00.00.00.01' } });
-
-      // Header should be visible
-      expect(screen.getByRole('button', { name: /channel 1/i })).toBeInTheDocument();
-      // Body should not be visible
-      expect(screen.queryByText('Test Field')).not.toBeInTheDocument();
-    });
-
-    it('displays instanceLabel in the header', () => {
-      const group = makeGroup([], { instanceLabel: 'Event 3' });
-      render(TreeGroupAccordion, { props: { group, nodeId: '02.01.00.00.00.01' } });
-
-      expect(screen.getByText('Event 3')).toBeInTheDocument();
-    });
-
-    it('expands and shows children when clicked', async () => {
-      const group = makeGroup([makeLeaf({ name: 'Speed Value' })], { instanceLabel: 'Port 1' });
-      render(TreeGroupAccordion, { props: { group, nodeId: '02.01.00.00.00.01' } });
-
-      const header = screen.getByRole('button', { name: /port 1/i });
-      await fireEvent.click(header);
-
-      expect(screen.getByText('Speed Value')).toBeInTheDocument();
-    });
-
-    it('collapses when clicked twice', async () => {
-      const group = makeGroup([makeLeaf({ name: 'Hidden Field' })], { instanceLabel: 'Line 2' });
-      render(TreeGroupAccordion, { props: { group, nodeId: '02.01.00.00.00.01' } });
-
-      const header = screen.getByRole('button', { name: /line 2/i });
-      await fireEvent.click(header);
-      expect(screen.getByText('Hidden Field')).toBeInTheDocument();
-
-      await fireEvent.click(header);
-      expect(screen.queryByText('Hidden Field')).not.toBeInTheDocument();
-    });
-
-    it('displays description when expanded', async () => {
-      const group = makeGroup([], {
-        instanceLabel: 'Event 1',
-        description: 'Consumer events for this line',
-      });
-      render(TreeGroupAccordion, { props: { group, nodeId: '02.01.00.00.00.01' } });
-
-      await fireEvent.click(screen.getByRole('button', { name: /event 1/i }));
-      expect(screen.getByText('Consumer events for this line')).toBeInTheDocument();
-    });
-
-    it('sets aria-expanded attribute correctly', async () => {
-      const group = makeGroup([], { instanceLabel: 'Ch 1' });
-      render(TreeGroupAccordion, { props: { group, nodeId: '02.01.00.00.00.01' } });
-
-      const header = screen.getByRole('button', { name: /ch 1/i });
-      expect(header).toHaveAttribute('aria-expanded', 'false');
-
-      await fireEvent.click(header);
-      expect(header).toHaveAttribute('aria-expanded', 'true');
-    });
-  });
-
-  describe('inline (non-replicated) groups', () => {
+  describe('inline (non-replicated) groups — always visible', () => {
     it('renders children immediately visible (no accordion)', () => {
       const group = makeGroup([makeLeaf({ name: 'Inline Field' })], {
         instanceLabel: 'Settings',
         replicationCount: 1,
       });
       render(TreeGroupAccordion, {
-        props: { group, nodeId: '02.01.00.00.00.01', collapsible: false },
+        props: { group, nodeId: '02.01.00.00.00.01' },
       });
 
       // Children should be visible without clicking
       expect(screen.getByText('Inline Field')).toBeInTheDocument();
-      // No expand button
-      expect(screen.queryByRole('button')).not.toBeInTheDocument();
     });
 
-    it('displays instanceLabel as section header', () => {
+    it('displays instanceLabel as section label', () => {
       const group = makeGroup([], {
         instanceLabel: 'Advanced',
         replicationCount: 1,
       });
       render(TreeGroupAccordion, {
-        props: { group, nodeId: '02.01.00.00.00.01', collapsible: false },
+        props: { group, nodeId: '02.01.00.00.00.01' },
       });
 
       expect(screen.getByText('Advanced')).toBeInTheDocument();
     });
-  });
 
-  describe('wrapper groups (instance=0)', () => {
-    it('wrapper group displays its description', async () => {
-      const wrapper = makeGroup([], {
-        instance: 0,
+    it('displays description when present', () => {
+      const group = makeGroup([], {
         instanceLabel: 'Event',
-        description: 'Producer events',
-        replicationCount: 6,
+        description: 'Producer events for this node',
+        replicationCount: 1,
       });
-      render(TreeGroupAccordion, { props: { group: wrapper, nodeId: '02.01.00.00.00.01' } });
+      render(TreeGroupAccordion, {
+        props: { group, nodeId: '02.01.00.00.00.01' },
+      });
 
-      await fireEvent.click(screen.getByRole('button', { name: /event/i }));
-      expect(screen.getByText('Producer events')).toBeInTheDocument();
+      expect(screen.getByText('Producer events for this node')).toBeInTheDocument();
     });
 
-    it('wrapper group contains nested instance groups', async () => {
-      const instance1 = makeGroup([makeLeaf({ name: 'Event ID', path: ['seg:0', 'elem:0', 'inst:1', 'elem:0'] })], {
+    it('has no expand/collapse buttons', () => {
+      const group = makeGroup([makeLeaf()], {
+        instanceLabel: 'Channel 1',
+      });
+      render(TreeGroupAccordion, {
+        props: { group, nodeId: '02.01.00.00.00.01' },
+      });
+
+      // No accordion button should exist
+      expect(screen.queryByRole('button', { name: /channel 1/i })).not.toBeInTheDocument();
+      // But label is visible
+      expect(screen.getByText('Channel 1')).toBeInTheDocument();
+      // Children always visible
+      expect(screen.getByText('Test Field')).toBeInTheDocument();
+    });
+  });
+
+  describe('pill selector mode', () => {
+    function makeSiblings() {
+      const instance1 = makeGroup([makeLeaf({ name: 'Field A' })], {
         instance: 1,
-        instanceLabel: 'Event 1',
-        replicationCount: 6,
-        path: ['seg:0', 'elem:0', 'inst:1'],
+        instanceLabel: 'Line 1',
+        replicationOf: 'Line',
+        replicationCount: 3,
+        path: ['seg:0', 'elem:0#1'],
       });
-      const instance2 = makeGroup([makeLeaf({ name: 'Event ID', path: ['seg:0', 'elem:0', 'inst:2', 'elem:0'] })], {
+      const instance2 = makeGroup([makeLeaf({ name: 'Field B' })], {
         instance: 2,
-        instanceLabel: 'Event 2',
-        replicationCount: 6,
-        path: ['seg:0', 'elem:0', 'inst:2'],
+        instanceLabel: 'Line 2',
+        replicationOf: 'Line',
+        replicationCount: 3,
+        path: ['seg:0', 'elem:0#2'],
       });
-      const wrapper = makeGroup([instance1, instance2], {
-        instance: 0,
-        instanceLabel: 'Event',
-        description: 'Consumer events',
-        replicationCount: 6,
+      const instance3 = makeGroup([makeLeaf({ name: 'Field C' })], {
+        instance: 3,
+        instanceLabel: 'Line 3',
+        replicationOf: 'Line',
+        replicationCount: 3,
+        path: ['seg:0', 'elem:0#3'],
+      });
+      return [instance1, instance2, instance3];
+    }
+
+    it('renders pill selector when siblings provided', () => {
+      const [instance1, instance2, instance3] = makeSiblings();
+
+      render(TreeGroupAccordion, {
+        props: {
+          group: instance1,
+          nodeId: '02.01.00.00.00.01',
+          siblings: [instance1, instance2, instance3],
+        },
       });
 
-      render(TreeGroupAccordion, { props: { group: wrapper, nodeId: '02.01.00.00.00.01' } });
+      // Should show the template name "Line" as section label
+      expect(screen.getByText('Line')).toBeInTheDocument();
+      // Should have a pill button with aria-haspopup="listbox"
+      const pillBtn = screen.getByRole('button', { name: /line 1/i });
+      expect(pillBtn).toHaveAttribute('aria-haspopup', 'listbox');
+    });
 
-      // Expand wrapper
-      await fireEvent.click(screen.getByRole('button', { name: /^event$/i }));
+    it('shows children of selected instance always visible (no accordion)', () => {
+      const [instance1, instance2, instance3] = makeSiblings();
 
-      // Instance groups should be visible as nested accordions
-      expect(screen.getByRole('button', { name: /event 1/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /event 2/i })).toBeInTheDocument();
+      render(TreeGroupAccordion, {
+        props: {
+          group: instance1,
+          nodeId: '02.01.00.00.00.01',
+          siblings: [instance1, instance2, instance3],
+        },
+      });
+
+      // First instance children visible immediately — no expand needed
+      expect(screen.getByText('Field A')).toBeInTheDocument();
+    });
+
+    it('has no accordion toggle — only the pill button exists', () => {
+      const [instance1, instance2, instance3] = makeSiblings();
+
+      render(TreeGroupAccordion, {
+        props: {
+          group: instance1,
+          nodeId: '02.01.00.00.00.01',
+          siblings: [instance1, instance2, instance3],
+        },
+      });
+
+      // Only button should be the pill selector, not an expand/collapse toggle
+      const buttons = screen.getAllByRole('button');
+      expect(buttons).toHaveLength(1);
+      expect(buttons[0]).toHaveAttribute('aria-haspopup', 'listbox');
     });
   });
 
-  describe('nested groups', () => {
-    it('renders nested group as accordion inside parent', async () => {
+  describe('nested groups — always visible', () => {
+    it('renders nested groups and leaves without collapse', () => {
       const innerGroup = makeGroup([makeLeaf({ name: 'Nested Value' })], {
         instanceLabel: 'Channel 1',
-        replicationCount: 3,
+        replicationCount: 1,
         path: ['seg:0', 'elem:0', 'elem:0'],
       });
       const outerGroup = makeGroup([innerGroup], {
         instanceLabel: 'Port 1',
-        replicationCount: 2,
+        replicationCount: 1,
       });
 
       render(TreeGroupAccordion, { props: { group: outerGroup, nodeId: '02.01.00.00.00.01' } });
 
-      // Expand outer
-      await fireEvent.click(screen.getByRole('button', { name: /port 1/i }));
-      // Inner should be visible but collapsed
-      expect(screen.getByRole('button', { name: /channel 1/i })).toBeInTheDocument();
-      expect(screen.queryByText('Nested Value')).not.toBeInTheDocument();
-
-      // Expand inner
-      await fireEvent.click(screen.getByRole('button', { name: /channel 1/i }));
+      // Both labels visible
+      expect(screen.getByText('Port 1')).toBeInTheDocument();
+      expect(screen.getByText('Channel 1')).toBeInTheDocument();
+      // Nested leaf visible without any clicks
       expect(screen.getByText('Nested Value')).toBeInTheDocument();
     });
+  });
+});
+
+describe('groupReplicatedChildren', () => {
+  it('passes through leaves unchanged', () => {
+    const leaf = makeLeaf();
+    const result = groupReplicatedChildren([leaf]);
+    expect(result).toEqual([{ type: 'leaf', node: leaf }]);
+  });
+
+  it('passes through non-replicated groups unchanged', () => {
+    const group = makeGroup([], { replicationCount: 1 });
+    const result = groupReplicatedChildren([group]);
+    expect(result).toEqual([{ type: 'group', node: group }]);
+  });
+
+  it('groups consecutive replicated siblings into replicatedSet', () => {
+    const inst1 = makeGroup([], { instance: 1, replicationOf: 'Line', replicationCount: 3, path: ['seg:0', 'elem:0#1'] });
+    const inst2 = makeGroup([], { instance: 2, replicationOf: 'Line', replicationCount: 3, path: ['seg:0', 'elem:0#2'] });
+    const inst3 = makeGroup([], { instance: 3, replicationOf: 'Line', replicationCount: 3, path: ['seg:0', 'elem:0#3'] });
+
+    const result = groupReplicatedChildren([inst1, inst2, inst3]);
+    expect(result).toHaveLength(1);
+    expect(result[0].type).toBe('replicatedSet');
+    if (result[0].type === 'replicatedSet') {
+      expect(result[0].instances).toHaveLength(3);
+      expect(result[0].templateName).toBe('Line');
+    }
+  });
+
+  it('does not group non-consecutive replicated groups', () => {
+    const inst1 = makeGroup([], { instance: 1, replicationOf: 'Line', replicationCount: 2, path: ['seg:0', 'elem:0#1'] });
+    const other = makeGroup([], { replicationCount: 1, replicationOf: 'Other', path: ['seg:0', 'elem:1'] });
+    const inst2 = makeGroup([], { instance: 2, replicationOf: 'Line', replicationCount: 2, path: ['seg:0', 'elem:0#2'] });
+
+    const result = groupReplicatedChildren([inst1, other, inst2]);
+    expect(result).toHaveLength(3);
+  });
+
+  it('preserves ordering of mixed children', () => {
+    const leaf1 = makeLeaf({ name: 'First', path: ['seg:0', 'elem:0'] });
+    const inst1 = makeGroup([], { instance: 1, replicationOf: 'Ev', replicationCount: 2, path: ['seg:0', 'elem:1#1'] });
+    const inst2 = makeGroup([], { instance: 2, replicationOf: 'Ev', replicationCount: 2, path: ['seg:0', 'elem:1#2'] });
+    const leaf2 = makeLeaf({ name: 'Last', path: ['seg:0', 'elem:2'] });
+
+    const result = groupReplicatedChildren([leaf1, inst1, inst2, leaf2]);
+    expect(result).toHaveLength(3);
+    expect(result[0].type).toBe('leaf');
+    expect(result[1].type).toBe('replicatedSet');
+    expect(result[2].type).toBe('leaf');
+  });
+});
+
+describe('getInstanceDisplayName', () => {
+  it('uses first string leaf value when available', () => {
+    const group = makeGroup(
+      [makeLeaf({ name: 'Description', elementType: 'string', value: { type: 'string', value: 'CTC Push' } })],
+      { instance: 16, instanceLabel: 'Line 16' },
+    );
+    expect(getInstanceDisplayName(group)).toBe('CTC Push (16)');
+  });
+
+  it('falls back to instanceLabel when no string value', () => {
+    const group = makeGroup(
+      [makeLeaf({ name: 'Count', elementType: 'int', value: { type: 'int', value: 5 } })],
+      { instance: 3, instanceLabel: 'Event 3' },
+    );
+    expect(getInstanceDisplayName(group)).toBe('Event 3');
+  });
+
+  it('falls back to instanceLabel when string is empty', () => {
+    const group = makeGroup(
+      [makeLeaf({ name: 'Description', elementType: 'string', value: { type: 'string', value: '' } })],
+      { instance: 1, instanceLabel: 'Line 1' },
+    );
+    expect(getInstanceDisplayName(group)).toBe('Line 1');
   });
 });

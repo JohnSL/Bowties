@@ -5,11 +5,14 @@
    * Phase 4 migration (Spec 007): reads from the unified nodeTreeStore
    * instead of calling `get_segment_elements`. Values are embedded in
    * leaf nodes, so no separate configValues lookup is needed.
+   *
+   * Updated for plan-cdiConfigNavigator: uses groupReplicatedChildren
+   * to collapse sibling replicated groups into pill-selectable sections.
    */
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import type { SegmentNode, ConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
-  import { isGroup, isLeaf } from '$lib/types/nodeTree';
+  import { isGroup, isLeaf, groupReplicatedChildren } from '$lib/types/nodeTree';
   import TreeGroupAccordion from './TreeGroupAccordion.svelte';
   import TreeLeafRow from './TreeLeafRow.svelte';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
@@ -85,6 +88,7 @@
 
   {:else if segment}
     {@const nodeId = selectedSegment.nodeId}
+    {@const groupedChildren = groupReplicatedChildren(segment.children)}
     <div class="segment-content">
 
       <h2 class="segment-heading">{segment.name}</h2>
@@ -93,35 +97,50 @@
         <p class="segment-description">{segment.description}</p>
       {/if}
 
-      {#each segment.children as child (child.kind === 'group' ? child.path.join('/') : child.path.join('/'))}
-        {#if isLeaf(child)}
+      {#each groupedChildren as item, idx (idx)}
+        {#if item.type === 'leaf'}
           <!-- Direct leaf field at segment level (e.g. User Info fields) -->
           <div class="segment-leaf">
-            <TreeLeafRow leaf={child} usedIn={getUsedIn(nodeId, child)} />
+            <TreeLeafRow leaf={item.node} usedIn={getUsedIn(nodeId, item.node)} depth={0} />
           </div>
-        {:else if isGroup(child)}
-          {#if child.replicationCount > 1}
-            <!-- Replicated group instance → collapsible accordion -->
-            <TreeGroupAccordion group={child} {nodeId} depth={0} collapsible={true} />
+        {:else if item.type === 'replicatedSet'}
+          <!-- Replicated group → pill-selectable section -->
+          <TreeGroupAccordion
+            group={item.instances[0]}
+            {nodeId}
+            depth={0}
+            siblings={item.instances}
+          />
+        {:else if item.type === 'group'}
+          {#if item.node.replicationCount > 1}
+            <!-- Single replicated instance (shouldn't normally happen after grouping) -->
+            <TreeGroupAccordion group={item.node} {nodeId} depth={0} />
           {:else}
             <!-- Non-replicated group → section header with children -->
+            {@const innerGrouped = groupReplicatedChildren(item.node.children)}
             <section class="group-section">
               <div class="group-header">
-                <span class="group-name">{child.instanceLabel}</span>
-                {#if child.description}
-                  <p class="group-description">{child.description}</p>
+                <span class="group-name">{item.node.instanceLabel}</span>
+                {#if item.node.description}
+                  <p class="group-description">{item.node.description}</p>
                 {/if}
               </div>
 
-              {#each child.children as grandchild (grandchild.kind === 'group' ? grandchild.path.join('/') : grandchild.path.join('/'))}
-                {#if isLeaf(grandchild)}
-                  <TreeLeafRow leaf={grandchild} usedIn={getUsedIn(nodeId, grandchild)} />
-                {:else if isGroup(grandchild)}
+              {#each innerGrouped as inner, innerIdx (innerIdx)}
+                {#if inner.type === 'leaf'}
+                  <TreeLeafRow leaf={inner.node} usedIn={getUsedIn(nodeId, inner.node)} depth={1} />
+                {:else if inner.type === 'replicatedSet'}
                   <TreeGroupAccordion
-                    group={grandchild}
+                    group={inner.instances[0]}
                     {nodeId}
                     depth={1}
-                    collapsible={grandchild.replicationCount > 1}
+                    siblings={inner.instances}
+                  />
+                {:else if inner.type === 'group'}
+                  <TreeGroupAccordion
+                    group={inner.node}
+                    {nodeId}
+                    depth={1}
                   />
                 {/if}
               {/each}
@@ -141,12 +160,17 @@
 </div>
 
 <style>
+  /* ══════════════════════════════════════════
+     Fluent UI Design — SegmentView
+     ══════════════════════════════════════════ */
+
   .segment-view {
     flex: 1;
     overflow-y: auto;
     padding: 16px 20px;
-    background-color: var(--main-bg, #f8f9fa);
+    background-color: #faf9f8;                     /* colorNeutralBackground2 */
     min-height: 0;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
   }
 
   /* ── Empty / loading / error states ── */
@@ -155,7 +179,7 @@
     align-items: center;
     justify-content: center;
     height: 200px;
-    color: var(--text-secondary, #999);
+    color: #a19f9d;                                /* colorNeutralForeground4 */
     font-size: 14px;
     text-align: center;
   }
@@ -168,7 +192,7 @@
 
   .loading {
     padding: 32px;
-    color: var(--text-secondary, #666);
+    color: #605e5c;                                /* colorNeutralForeground2 */
     font-size: 13px;
     text-align: center;
   }
@@ -176,28 +200,28 @@
   .load-error {
     margin: 12px 0;
     padding: 10px 14px;
-    background-color: var(--error-bg, #fdf2f2);
-    border: 1px solid var(--error-border, #f5c6c6);
-    border-radius: 6px;
-    color: var(--error-color, #c62828);
+    background-color: #fdf3f4;                     /* colorPaletteRedBackground1 */
+    border: 1px solid #eeacb2;                     /* colorPaletteRedBorder1 */
+    border-radius: 4px;                            /* borderRadiusMedium */
+    color: #a4262c;                                /* colorPaletteRedForeground1 */
     font-size: 13px;
   }
 
   /* ── Segment heading ── */
   .segment-heading {
     margin: 0 0 16px;
-    font-size: 15px;
+    font-size: 16px;
     font-weight: 600;
-    color: var(--text-primary, #333);
+    color: #242424;                                /* colorNeutralForeground1 */
     padding-bottom: 8px;
-    border-bottom: 1px solid var(--border-color, #ddd);
+    border-bottom: 1px solid #e1dfdd;              /* colorNeutralStroke2 */
   }
 
   .segment-description {
     margin: 0 0 12px;
     font-size: 12px;
-    color: var(--text-secondary, #666);
-    line-height: 1.4;
+    color: #605e5c;                                /* colorNeutralForeground2 */
+    line-height: 1.5;
   }
 
   .segment-leaf {
@@ -215,15 +239,15 @@
 
   .group-name {
     display: block;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
-    color: var(--text-primary, #222);
+    color: #323130;                                /* colorNeutralForeground1 */
   }
 
   .group-description {
     margin: 3px 0 0;
     font-size: 12px;
-    color: var(--text-secondary, #666);
-    line-height: 1.4;
+    color: #605e5c;                                /* colorNeutralForeground2 */
+    line-height: 1.5;
   }
 </style>

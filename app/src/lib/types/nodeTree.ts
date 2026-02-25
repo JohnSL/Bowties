@@ -267,6 +267,97 @@ function collectEventIdLeavesInChildren(
   }
 }
 
+// ─── Display helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Derive a human-friendly display name for a replicated group instance.
+ *
+ * Searches the group's immediate children for the first string-type leaf
+ * with a non-empty value (e.g. "Line Description"). Returns:
+ *   - `"${description} (${instance})"` if a description is found
+ *   - `instanceLabel` otherwise (e.g. "Line 3")
+ */
+export function getInstanceDisplayName(group: GroupConfigNode): string {
+  for (const child of group.children) {
+    if (
+      isLeaf(child) &&
+      child.elementType === 'string' &&
+      child.value !== null &&
+      child.value.type === 'string' &&
+      child.value.value.trim() !== ''
+    ) {
+      return `${child.value.value.trim()} (${group.instance})`;
+    }
+  }
+  return group.instanceLabel;
+}
+
+// ─── Child grouping ──────────────────────────────────────────────────────────
+
+/**
+ * A child item after grouping replicated siblings together.
+ *
+ * - `leaf`: a single LeafConfigNode (unchanged)
+ * - `group`: a single non-replicated GroupConfigNode (unchanged)
+ * - `replicatedSet`: consecutive replicated siblings collapsed into one entry
+ */
+export type GroupedChild =
+  | { type: 'leaf'; node: LeafConfigNode }
+  | { type: 'group'; node: GroupConfigNode }
+  | { type: 'replicatedSet'; templateName: string; instances: GroupConfigNode[] };
+
+/**
+ * Group consecutive replicated siblings in a children array.
+ *
+ * Scans `children` in order:
+ * - Leaf nodes pass through as `{ type: 'leaf' }`
+ * - Non-replicated groups pass through as `{ type: 'group' }`
+ * - Consecutive groups sharing the same `replicationOf` value (and replicationCount > 1)
+ *   are merged into `{ type: 'replicatedSet', instances: [...] }`
+ */
+export function groupReplicatedChildren(children: ConfigNode[]): GroupedChild[] {
+  const result: GroupedChild[] = [];
+  let i = 0;
+
+  while (i < children.length) {
+    const child = children[i];
+
+    if (isLeaf(child)) {
+      result.push({ type: 'leaf', node: child });
+      i++;
+    } else if (isGroup(child) && child.replicationCount > 1) {
+      // Collect all consecutive siblings with same replicationOf
+      const instances: GroupConfigNode[] = [child];
+      let j = i + 1;
+      while (j < children.length) {
+        const next = children[j];
+        if (isGroup(next) && next.replicationOf === child.replicationOf) {
+          instances.push(next);
+          j++;
+        } else {
+          break;
+        }
+      }
+      if (instances.length > 1) {
+        result.push({
+          type: 'replicatedSet',
+          templateName: child.replicationOf,
+          instances,
+        });
+      } else {
+        // Single instance with replicationCount > 1 — treat as normal group
+        result.push({ type: 'group', node: child });
+      }
+      i = j;
+    } else {
+      result.push({ type: 'group', node: child as GroupConfigNode });
+      i++;
+    }
+  }
+
+  return result;
+}
+
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
 /** Parse "seg:N" into N, or null on failure. */

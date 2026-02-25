@@ -2,13 +2,22 @@
   /**
    * TreeGroupAccordion — renders a GroupConfigNode from the unified tree.
    *
-   * Uses instanceLabel for display (fixes the 12 flat "Event" accordions bug).
-   * Recursively renders child groups and leaf nodes.
+   * Two modes (no accordion / collapse controls):
+   * 1. **Replicated set with PillSelector** — when `siblings` provided with 2+ instances,
+   *    renders a section label + pill on the left to navigate instances.
+   *    Children of the selected instance are always visible.
+   * 2. **Inline section** — non-replicated groups show a subtle label header,
+   *    children always visible.
    *
-   * Spec: 007-unified-node-tree, Phase 4.
+   * Recursively renders children using `<svelte:self>` for nested groups and
+   * TreeLeafRow for leaves. Groups replicated children via `groupReplicatedChildren`.
+   *
+   * Spec: plan-cdiConfigNavigator.
    */
-  import type { GroupConfigNode, ConfigNode } from '$lib/types/nodeTree';
-  import { isGroup, isLeaf } from '$lib/types/nodeTree';
+  import type { GroupConfigNode, ConfigNode, GroupedChild } from '$lib/types/nodeTree';
+  import { isGroup, isLeaf, groupReplicatedChildren, getInstanceDisplayName } from '$lib/types/nodeTree';
+  import type { PillItem } from '$lib/components/PillSelector/PillSelector.svelte';
+  import PillSelector from '$lib/components/PillSelector/PillSelector.svelte';
   import TreeLeafRow from './TreeLeafRow.svelte';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
 
@@ -19,13 +28,26 @@
   /** Current nesting depth — used to indent deeper levels */
   export let depth: number = 0;
   /**
-   * Whether this group is collapsible (accordion).
-   * True for replicated groups (replicationCount > 1).
-   * False for non-replicated groups — rendered inline, always visible.
+   * Sibling replicated instances for pill-selector mode.
+   * When provided with 2+ items, PillSelector replaces per-instance accordions.
    */
-  export let collapsible: boolean = group.replicationCount > 1;
+  export let siblings: GroupConfigNode[] = [];
 
-  let expanded = false;
+  // ── Pill-selector state ──
+  let selectedInstanceIndex = 0;
+
+  $: pillMode = siblings.length > 1;
+  $: activeGroup = pillMode ? (siblings[selectedInstanceIndex] ?? siblings[0]) : group;
+
+  // Build pill items from siblings
+  $: pillItems = siblings.map((s, idx): PillItem => ({
+    value: idx,
+    label: getInstanceDisplayName(s),
+    description: s.instanceLabel,
+  }));
+
+  // Group children for the active group to handle nested replications
+  $: groupedChildren = groupReplicatedChildren(activeGroup.children);
 
   // Cross-reference lookup: nodeId + CDI path → BowtieCard
   $: nodeSlotMap = bowtieCatalogStore.nodeSlotMap;
@@ -34,61 +56,75 @@
   function getUsedIn(leaf: { path: string[] }) {
     return nodeSlotMap.get(`${nodeId}:${leaf.path.join('/')}`);
   }
+
+  function handlePillSelect(value: number) {
+    selectedInstanceIndex = value;
+  }
 </script>
 
-{#if collapsible}
-  <!-- Replicated group — collapsible accordion (collapsed by default) -->
-  <div class="subgroup-accordion" style="--depth: {depth}">
-    <button
-      class="subgroup-header"
-      class:expanded
-      on:click={() => (expanded = !expanded)}
-      aria-expanded={expanded}
-    >
-      <span class="expand-icon" aria-hidden="true">{expanded ? '▾' : '▸'}</span>
-      <span class="subgroup-name">{group.instanceLabel}</span>
-    </button>
+{#if pillMode}
+  <!-- Replicated group with pill selector — label + pill on left, always expanded -->
+  <div class="pill-section" style="--depth: {depth}; --field-label-width: {depth >= 3 ? '100px' : '120px'}">
+    <div class="pill-section-header">
+      <span class="pill-section-name">{group.replicationOf}</span>
+      <PillSelector
+        items={pillItems}
+        selected={selectedInstanceIndex}
+        onSelect={handlePillSelect}
+      />
+    </div>
 
-    {#if expanded}
-      <div class="subgroup-body">
-        {#if group.description}
-          <p class="subgroup-description">{group.description}</p>
+    <div class="pill-section-body" style="--gap: {depth >= 3 ? '4px' : '8px'}">
+      {#if activeGroup.description}
+        <p class="section-description">{activeGroup.description}</p>
+      {/if}
+
+      {#each groupedChildren as item}
+        {#if item.type === 'leaf'}
+          <TreeLeafRow leaf={item.node} usedIn={getUsedIn(item.node)} {depth} />
+        {:else if item.type === 'group'}
+          <svelte:self
+            group={item.node}
+            {nodeId}
+            depth={depth + 1}
+          />
+        {:else if item.type === 'replicatedSet'}
+          <svelte:self
+            group={item.instances[0]}
+            {nodeId}
+            depth={depth + 1}
+            siblings={item.instances}
+          />
         {/if}
-
-        {#each group.children as child (child.kind === 'group' ? child.path.join('/') : child.path.join('/'))}
-          {#if isLeaf(child)}
-            <TreeLeafRow leaf={child} usedIn={getUsedIn(child)} />
-          {:else if isGroup(child)}
-            <svelte:self
-              group={child}
-              {nodeId}
-              depth={depth + 1}
-              collapsible={child.replicationCount > 1}
-            />
-          {/if}
-        {/each}
-      </div>
-    {/if}
+      {/each}
+    </div>
   </div>
+
 {:else}
-  <!-- Non-replicated group — inline section, always visible -->
-  <div class="inline-section" style="--depth: {depth}">
+  <!-- Non-replicated group — subtle label header, always visible -->
+  <div class="inline-section" style="--depth: {depth}; --field-label-width: {depth >= 3 ? '100px' : '120px'}">
     <div class="inline-header">
       <span class="inline-name">{group.instanceLabel}</span>
       {#if group.description}
-        <p class="subgroup-description">{group.description}</p>
+        <p class="section-description">{group.description}</p>
       {/if}
     </div>
 
-    {#each group.children as child (child.kind === 'group' ? child.path.join('/') : child.path.join('/'))}
-      {#if isLeaf(child)}
-        <TreeLeafRow leaf={child} usedIn={getUsedIn(child)} />
-      {:else if isGroup(child)}
+    {#each groupedChildren as item}
+      {#if item.type === 'leaf'}
+        <TreeLeafRow leaf={item.node} usedIn={getUsedIn(item.node)} {depth} />
+      {:else if item.type === 'group'}
         <svelte:self
-          group={child}
+          group={item.node}
           {nodeId}
           depth={depth + 1}
-          collapsible={child.replicationCount > 1}
+        />
+      {:else if item.type === 'replicatedSet'}
+        <svelte:self
+          group={item.instances[0]}
+          {nodeId}
+          depth={depth + 1}
+          siblings={item.instances}
         />
       {/if}
     {/each}
@@ -96,83 +132,68 @@
 {/if}
 
 <style>
-  /* ── Accordion (collapsible / replicated groups) ── */
-  .subgroup-accordion {
-    margin-top: 4px;
-    border: 1px solid var(--border-color, #e0e0e0);
-    border-radius: 4px;
-    overflow: hidden;
+  /* ══════════════════════════════════════════
+     Fluent UI Design — TreeGroupAccordion
+     ══════════════════════════════════════════ */
+
+  /* ── Pill-section (replicated group with pill selector) ── */
+  .pill-section {
+    margin-top: 8px;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
   }
 
-  .subgroup-header {
+  .pill-section-header {
     display: flex;
     align-items: center;
-    width: 100%;
-    padding: 7px 12px;
-    background: var(--subgroup-header-bg, #f5f5f5);
-    border: none;
-    cursor: pointer;
-    text-align: left;
-    gap: 6px;
+    gap: 10px;
+    padding: 6px 0 4px;
+    border-bottom: 1px solid #e1dfdd;              /* colorNeutralStroke2 */
+  }
+
+  .pill-section-name {
     font-size: 12px;
-    font-weight: 500;
-    color: var(--text-primary, #333);
-    transition: background-color 0.1s;
-  }
-
-  .subgroup-header:hover {
-    background-color: var(--hover-bg, #ebebeb);
-  }
-
-  .subgroup-header.expanded {
-    border-bottom: 1px solid var(--border-color, #e0e0e0);
-  }
-
-  .expand-icon {
-    flex-shrink: 0;
-    font-size: 22px;
-    color: var(--text-secondary, #666);
-    width: 18px;
-    line-height: 1;
-  }
-
-  .subgroup-name {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    font-weight: 600;
+    color: #605e5c;                                /* colorNeutralForeground2 */
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
     white-space: nowrap;
   }
 
-  .subgroup-body {
-    padding: 0 12px 8px;
-    background: var(--card-bg, #fff);
+  .pill-section-body {
+    padding: 4px 0 6px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap, 6px);
   }
 
   /* ── Inline section (non-replicated groups) ── */
   .inline-section {
     margin-top: 8px;
-    padding-left: calc(var(--depth, 0) * 8px);
+    padding-left: calc(var(--depth, 0) * 12px);
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
   }
 
   .inline-header {
     margin-bottom: 4px;
+    border-bottom: 1px solid #e1dfdd;              /* colorNeutralStroke2 */
+    padding: 6px 0 4px;
   }
 
   .inline-name {
     display: block;
     font-size: 12px;
     font-weight: 600;
-    color: var(--text-secondary, #555);
+    color: #605e5c;                                /* colorNeutralForeground2 */
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
 
   /* ── Shared ── */
-  .subgroup-description {
+  .section-description {
     margin: 3px 0 4px;
-    font-size: 11px;
-    color: var(--text-secondary, #666);
-    line-height: 1.4;
+    font-size: 12px;
+    color: #605e5c;                                /* colorNeutralForeground2 */
+    line-height: 1.5;
+    font-weight: 400;
   }
 </style>

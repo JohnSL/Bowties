@@ -2,10 +2,14 @@
  * Spec 007: Tests for TreeLeafRow.svelte
  *
  * Covers:
- * - Displays leaf name and formatted value
- * - Description toggle shows/hides description
+ * - Displays leaf name and formatted value (horizontal layout)
+ * - Inline descriptions visible by default, truncation toggle for long text
+ * - Enum values mapped to labels via mapEntries
+ * - Event IDs: monospace dotted hex, "(not set)" for all-zeros
  * - Event role badge displays correctly
  * - "Used in" bowtie cross-reference link
+ *
+ * Updated for plan-cdiConfigNavigator Steps 4-6.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -95,48 +99,90 @@ describe('TreeLeafRow.svelte', () => {
     });
 
     it('displays event ID bytes in hex format', () => {
-      const value: TreeConfigValue = { type: 'eventId', bytes: [5, 2, 1, 2, 3, 0, 0, 1] };
+      const value: TreeConfigValue = { type: 'eventId', bytes: [5, 2, 1, 2, 3, 0, 0, 1], hex: '05.02.01.02.03.00.00.01' };
       render(TreeLeafRow, { props: { leaf: makeLeaf({ elementType: 'eventId', value }) } });
       expect(screen.getByText('05.02.01.02.03.00.00.01')).toBeInTheDocument();
     });
 
-    it('displays "(free)" for all-zero event ID', () => {
-      const value: TreeConfigValue = { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0] };
+    it('displays "(not set)" for all-zero event ID', () => {
+      const value: TreeConfigValue = { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0], hex: '00.00.00.00.00.00.00.00' };
       render(TreeLeafRow, { props: { leaf: makeLeaf({ elementType: 'eventId', value }) } });
-      expect(screen.getByText('(free)')).toBeInTheDocument();
+      expect(screen.getByText('(not set)')).toBeInTheDocument();
     });
   });
 
-  describe('description toggle', () => {
-    it('shows toggle button when description is present', () => {
-      render(TreeLeafRow, {
-        props: { leaf: makeLeaf({ description: 'This is a test description' }) },
+  describe('enum value mapping', () => {
+    it('maps int value to enum label when mapEntries exist', () => {
+      const value: TreeConfigValue = { type: 'int', value: 2 };
+      const leaf = makeLeaf({
+        value,
+        constraints: {
+          min: 0,
+          max: 3,
+          defaultValue: null,
+          mapEntries: [
+            { value: 0, label: 'Off' },
+            { value: 1, label: 'On' },
+            { value: 2, label: 'Toggle' },
+            { value: 3, label: 'Hold' },
+          ],
+        },
       });
-      expect(screen.getByRole('button', { name: /toggle/i })).toBeInTheDocument();
+      render(TreeLeafRow, { props: { leaf } });
+      expect(screen.getByText('Toggle')).toBeInTheDocument();
     });
 
-    it('does not show toggle button when no description', () => {
+    it('falls back to raw number when no matching mapEntry', () => {
+      const value: TreeConfigValue = { type: 'int', value: 99 };
+      const leaf = makeLeaf({
+        value,
+        constraints: {
+          min: 0,
+          max: 3,
+          defaultValue: null,
+          mapEntries: [
+            { value: 0, label: 'Off' },
+            { value: 1, label: 'On' },
+          ],
+        },
+      });
+      render(TreeLeafRow, { props: { leaf } });
+      expect(screen.getByText('99')).toBeInTheDocument();
+    });
+  });
+
+  describe('inline descriptions', () => {
+    it('shows short description inline by default (no toggle needed)', () => {
+      render(TreeLeafRow, {
+        props: { leaf: makeLeaf({ description: 'Short description' }) },
+      });
+      expect(screen.getByText('Short description')).toBeInTheDocument();
+    });
+
+    it('truncates long descriptions with expand button', () => {
+      const longDesc = 'A'.repeat(130); // > 120 char threshold
+      render(TreeLeafRow, {
+        props: { leaf: makeLeaf({ description: longDesc }) },
+      });
+      // Should show truncated text (100 chars + "…")
+      expect(screen.getByText(/^A{100}…$/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /expand/i })).toBeInTheDocument();
+    });
+
+    it('expands truncated description when [+] clicked', async () => {
+      const longDesc = 'B'.repeat(130);
+      render(TreeLeafRow, {
+        props: { leaf: makeLeaf({ description: longDesc }) },
+      });
+      const expandBtn = screen.getByRole('button', { name: /expand/i });
+      await fireEvent.click(expandBtn);
+      expect(screen.getByText(longDesc)).toBeInTheDocument();
+    });
+
+    it('does not show description when null', () => {
       render(TreeLeafRow, { props: { leaf: makeLeaf({ description: null }) } });
-      expect(screen.queryByRole('button', { name: /toggle/i })).not.toBeInTheDocument();
-    });
-
-    it('shows description after clicking toggle', async () => {
-      render(TreeLeafRow, {
-        props: { leaf: makeLeaf({ description: 'My detailed description' }) },
-      });
-      const toggle = screen.getByRole('button', { name: /toggle/i });
-      await fireEvent.click(toggle);
-      expect(screen.getByText('My detailed description')).toBeInTheDocument();
-    });
-
-    it('hides description after clicking toggle twice', async () => {
-      render(TreeLeafRow, {
-        props: { leaf: makeLeaf({ description: 'Hidden description' }) },
-      });
-      const toggle = screen.getByRole('button', { name: /toggle/i });
-      await fireEvent.click(toggle);
-      await fireEvent.click(toggle);
-      expect(screen.queryByText('Hidden description')).not.toBeInTheDocument();
+      // Only name + value, nothing else
+      expect(screen.queryByText(/…/)).not.toBeInTheDocument();
     });
   });
 
@@ -146,7 +192,6 @@ describe('TreeLeafRow.svelte', () => {
         props: { leaf: makeLeaf({ eventRole: 'Producer' }) },
       });
       expect(screen.getByText('Producer')).toBeInTheDocument();
-      expect(screen.getByText(/Role:/)).toBeInTheDocument();
     });
 
     it('displays Consumer role badge', () => {
@@ -158,17 +203,17 @@ describe('TreeLeafRow.svelte', () => {
 
     it('does not show role section when eventRole is null', () => {
       render(TreeLeafRow, { props: { leaf: makeLeaf({ eventRole: null }) } });
-      expect(screen.queryByText(/Role:/)).not.toBeInTheDocument();
+      expect(screen.queryByText('Producer')).not.toBeInTheDocument();
+      expect(screen.queryByText('Consumer')).not.toBeInTheDocument();
     });
   });
 
   describe('usedIn cross-reference', () => {
-    it('shows "Used in" link when usedIn is provided', () => {
+    it('shows navigable link when usedIn is provided', () => {
       const bowtie = makeBowtie({ user_names: ['Yard Entry'] });
       render(TreeLeafRow, {
         props: { leaf: makeLeaf(), usedIn: bowtie },
       });
-      expect(screen.getByText('Used in:')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /bowtie/i })).toBeInTheDocument();
     });
 
@@ -183,9 +228,9 @@ describe('TreeLeafRow.svelte', () => {
       expect(goto).toHaveBeenCalledWith('/bowties?highlight=05.02.01.02.03.00.00.01');
     });
 
-    it('does not show "Used in" when usedIn is undefined', () => {
+    it('does not show link when usedIn is undefined', () => {
       render(TreeLeafRow, { props: { leaf: makeLeaf() } });
-      expect(screen.queryByText('Used in:')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /bowtie/i })).not.toBeInTheDocument();
     });
   });
 });
