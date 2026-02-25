@@ -2,6 +2,7 @@
 
 use lcc_rs::{LccConnection, DiscoveredNode, MessageDispatcher};
 use crate::events::EventRouter;
+use crate::node_tree::NodeConfigTree;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::collections::{HashMap, HashSet};
@@ -123,6 +124,14 @@ pub struct AppState {
     /// Consulted by `build_bowtie_catalog` to identify the correct CDI slot
     /// for each event ID (precise match, fallback to heuristic if missing).
     pub config_value_cache: Arc<RwLock<HashMap<String, HashMap<String, [u8; 8]>>>>,
+
+    // ── Spec 007: Unified node configuration trees ────────────────────────
+
+    /// Canonical per-node tree merging CDI structure, absolute addresses,
+    /// config values, and event roles.  Built once after CDI parse, then
+    /// progressively enriched by `merge_config_values` / `merge_event_roles`.
+    /// Key = node_id_hex.
+    pub node_trees: Arc<RwLock<HashMap<String, NodeConfigTree>>>,
 }
 
 impl AppState {
@@ -139,6 +148,7 @@ impl AppState {
             bowties_catalog: Arc::new(RwLock::new(None)),
             event_roles: Arc::new(RwLock::new(HashMap::new())),
             config_value_cache: Arc::new(RwLock::new(HashMap::new())),
+            node_trees: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 

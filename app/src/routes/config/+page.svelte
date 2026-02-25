@@ -3,6 +3,7 @@
   import SegmentView from '$lib/components/ElementCardDeck/SegmentView.svelte';
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import { nodeInfoStore, updateNodeInfo } from '$lib/stores/nodeInfo';
+  import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { listen } from '@tauri-apps/api/event';
   import { invoke } from '@tauri-apps/api/core';
   import { onMount, onDestroy } from 'svelte';
@@ -14,6 +15,7 @@
   /** Refresh node list and reset sidebar state (FR-018) */
   async function handleRefreshNodes() {
     configSidebarStore.reset();
+    nodeTreeStore.reset();
     nodeInfoStore.set(new Map());
     try {
       const nodes = await invoke<any[]>('refresh_all_nodes', { timeout_ms: 3000 });
@@ -24,6 +26,9 @@
   }
 
   onMount(async () => {
+    // Spec 007: start listening for incremental tree updates
+    await nodeTreeStore.startListening();
+
     // Populate nodeInfoStore from current backend state
     try {
       const nodes = await invoke<any[]>('discover_nodes', { timeout_ms: 100 });
@@ -40,6 +45,7 @@
 
   onDestroy(() => {
     unlisten?.();
+    nodeTreeStore.stopListening();
   });
 
 </script>

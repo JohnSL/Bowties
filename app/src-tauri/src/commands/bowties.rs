@@ -950,7 +950,8 @@ mod build_bowtie_catalog_tests {
 
 #[cfg(test)]
 mod get_bowties_integration_tests {
-    use super::*;
+    // Note: this test module doesn't use super::* as the actual command
+    // requires `tauri::State` and can't be tested here. See tests/ folder.
 
     /// Verifies the command contract: returns Ok(None) before any catalog is built.
     ///

@@ -1,92 +1,71 @@
 <script lang="ts">
+  /**
+   * SegmentView — renders the configuration tree for a selected segment.
+   *
+   * Phase 4 migration (Spec 007): reads from the unified nodeTreeStore
+   * instead of calling `get_segment_elements`. Values are embedded in
+   * leaf nodes, so no separate configValues lookup is needed.
+   */
   import { configSidebarStore } from '$lib/stores/configSidebar';
-  import { millerColumnsStore } from '$lib/stores/millerColumns';
-  import { invoke } from '@tauri-apps/api/core';
-  import type { CardField, CardSubGroup } from '$lib/stores/configSidebar';
-  import type { ConfigValueWithMetadata, ConfigValue } from '$lib/api/types';
-  import SubGroupAccordion from './SubGroupAccordion.svelte';
-
-  // Shape returned by the get_segment_elements Tauri command.
-  // Mirrors the Rust SegmentTree struct (camelCase via serde).
-  interface SegmentTree {
-    segmentName: string;
-    /** Direct leaf fields — for leaf-only segments like User Info */
-    fields: CardField[];
-    /** Top-level CDI groups — rendered as flat section headers */
-    groups: CardSubGroup[];
-  }
-
-  let segmentTree: SegmentTree | null = null;
-  let isLoading = false;
-  let loadError: string | null = null;
-
-  // Track the last loaded segment key so we reload only when the selection changes.
-  let lastLoadedKey: string | null = null;
+  import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
+  import type { SegmentNode, ConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
+  import { isGroup, isLeaf } from '$lib/types/nodeTree';
+  import TreeGroupAccordion from './TreeGroupAccordion.svelte';
+  import TreeLeafRow from './TreeLeafRow.svelte';
+  import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
 
   $: selectedSegment = $configSidebarStore.selectedSegment;
-  $: configValues = $millerColumnsStore.configValues;
 
-  $: {
-    const sel = selectedSegment;
-    const key = sel ? `${sel.nodeId}:${sel.segmentId}` : null;
-    if (key !== lastLoadedKey) {
-      lastLoadedKey = key;
-      if (sel) {
-        loadSegment(sel.nodeId, sel.segmentPath);
-      } else {
-        segmentTree = null;
-        isLoading = false;
-        loadError = null;
-      }
-    }
+  // Cross-reference lookup for event ID → bowtie card
+  $: nodeSlotMap = bowtieCatalogStore.nodeSlotMap;
+
+  // Access trees reactively so segment derivation re-runs when tree data changes
+  // (e.g. after node-tree-updated event merges config values)
+  $: trees = nodeTreeStore.trees;
+
+  /**
+   * Derive the SegmentNode from the tree store whenever the selection or tree changes.
+   * The segment index is encoded in segmentPath as "seg:N".
+   */
+  $: segment = deriveSegment(selectedSegment, trees);
+
+  /** Whether the tree for the selected node is still loading */
+  $: isLoading = selectedSegment ? nodeTreeStore.isNodeLoading(selectedSegment.nodeId) : false;
+
+  /** Error from tree loading */
+  $: loadError = selectedSegment ? nodeTreeStore.getError(selectedSegment.nodeId) ?? null : null;
+
+  function deriveSegment(
+    sel: { nodeId: string; segmentId: string; segmentPath: string } | null,
+    _trees: Map<string, any>,  // reactive dependency; value used via nodeTreeStore
+  ): SegmentNode | null {
+    if (!sel) return null;
+    const tree = nodeTreeStore.getTree(sel.nodeId);
+    if (!tree) return null;
+
+    // Parse "seg:N" from segmentPath
+    const match = sel.segmentPath.match(/^seg:(\d+)$/);
+    if (!match) return null;
+    const idx = parseInt(match[1], 10);
+    return tree.segments[idx] ?? null;
   }
 
-  async function loadSegment(nodeId: string, segmentPath: string) {
-    isLoading = true;
-    loadError = null;
-    segmentTree = null;
-    try {
-      console.log('[SegmentView] invoking get_segment_elements', { nodeId, segmentPath });
-      const result = await invoke<SegmentTree>('get_segment_elements', {
-        nodeId,
-        segmentPath,
-      });
-      console.log('[SegmentView] got segment tree:', result);
-      console.log('[SegmentView] configValues size:', configValues.size,
-        'sample keys:', [...configValues.keys()].slice(0, 3));
-      segmentTree = result;
-    } catch (err) {
-      console.error('[SegmentView] get_segment_elements error:', err);
-      loadError = String(err);
-    } finally {
-      isLoading = false;
-    }
-  }
-
-  function getValue(
-    nodeId: string,
-    field: CardField,
-    values: Map<string, ConfigValueWithMetadata>,
-  ): ConfigValueWithMetadata | null {
-    const key = `${nodeId}:${field.elementPath.join('/')}`;
-    const hit = values.get(key) ?? null;
-    if (!hit) {
-      console.warn('[SegmentView] cache miss for key:', key);
-    }
-    return hit;
-  }
-
-  function formatValue(meta: ConfigValueWithMetadata | null): string {
-    if (!meta) return '—';
-    const v: ConfigValue = meta.value;
+  /** Format a TreeConfigValue for inline display */
+  function formatTreeValue(v: TreeConfigValue | null): string {
+    if (v === null) return '—';
     switch (v.type) {
-      case 'Int':     return String(v.value);
-      case 'String':  return v.value || '(empty)';
-      case 'Float':   return v.value.toFixed(4);
-      case 'EventId': return v.value.map((b: number) => b.toString(16).padStart(2, '0')).join('.');
-      case 'Invalid': return `(error: ${v.error})`;
-      default:        return '—';
+      case 'int':     return String(v.value);
+      case 'string':  return v.value || '(empty)';
+      case 'float':   return v.value.toFixed(4);
+      case 'eventId': return v.bytes.every((b: number) => b === 0)
+        ? '(free)'
+        : v.bytes.map((b: number) => b.toString(16).padStart(2, '0')).join('.');
     }
+  }
+
+  /** Get the BowtieCard cross-reference for a leaf's path */
+  function getUsedIn(nodeId: string, leaf: { path: string[] }) {
+    return nodeSlotMap.get(`${nodeId}:${leaf.path.join('/')}`);
   }
 </script>
 
@@ -104,64 +83,59 @@
   {:else if loadError}
     <div class="load-error" role="alert">{loadError}</div>
 
-  {:else if segmentTree}
+  {:else if segment}
     {@const nodeId = selectedSegment.nodeId}
     <div class="segment-content">
 
-      <h2 class="segment-heading">{segmentTree.segmentName}</h2>
+      <h2 class="segment-heading">{segment.name}</h2>
 
-      <!-- Direct leaf fields (leaf-only segments, e.g. User Info) -->
-      {#if segmentTree.fields.length > 0}
-        <div class="fields-list" role="list">
-          {#each segmentTree.fields as field (field.elementPath.join('/'))}
-            <div class="field-row" role="listitem">
-              <span class="field-name">{field.name}</span>
-              {#if field.description}
-                <p class="field-description">{field.description}</p>
-              {/if}
-              <span class="field-value">{formatValue(getValue(nodeId, field, configValues))}</span>
-            </div>
-          {/each}
-        </div>
+      {#if segment.description}
+        <p class="segment-description">{segment.description}</p>
       {/if}
 
-      <!-- Top-level groups as non-collapsible section headers -->
-      {#each segmentTree.groups as group (group.groupPath.join('/'))}
-        <section class="group-section">
-          <div class="group-header">
-            <span class="group-name">{group.name}</span>
-            {#if group.description}
-              <p class="group-description">{group.description}</p>
-            {/if}
+      {#each segment.children as child (child.kind === 'group' ? child.path.join('/') : child.path.join('/'))}
+        {#if isLeaf(child)}
+          <!-- Direct leaf field at segment level (e.g. User Info fields) -->
+          <div class="segment-leaf">
+            <TreeLeafRow leaf={child} usedIn={getUsedIn(nodeId, child)} />
           </div>
+        {:else if isGroup(child)}
+          {#if child.replicationCount > 1}
+            <!-- Replicated group instance → collapsible accordion -->
+            <TreeGroupAccordion group={child} {nodeId} depth={0} collapsible={true} />
+          {:else}
+            <!-- Non-replicated group → section header with children -->
+            <section class="group-section">
+              <div class="group-header">
+                <span class="group-name">{child.instanceLabel}</span>
+                {#if child.description}
+                  <p class="group-description">{child.description}</p>
+                {/if}
+              </div>
 
-          <!-- Fields directly in this group -->
-          {#if group.fields.length > 0}
-            <div class="fields-list" role="list">
-              {#each group.fields as field (field.elementPath.join('/'))}
-                <div class="field-row" role="listitem">
-                  <span class="field-name">{field.name}</span>
-                  {#if field.description}
-                    <p class="field-description">{field.description}</p>
-                  {/if}
-                  <span class="field-value">{formatValue(getValue(nodeId, field, configValues))}</span>
-                </div>
+              {#each child.children as grandchild (grandchild.kind === 'group' ? grandchild.path.join('/') : grandchild.path.join('/'))}
+                {#if isLeaf(grandchild)}
+                  <TreeLeafRow leaf={grandchild} usedIn={getUsedIn(nodeId, grandchild)} />
+                {:else if isGroup(grandchild)}
+                  <TreeGroupAccordion
+                    group={grandchild}
+                    {nodeId}
+                    depth={1}
+                    collapsible={grandchild.replicationCount > 1}
+                  />
+                {/if}
               {/each}
-            </div>
+            </section>
           {/if}
-
-          <!-- Nested sub-groups: accordion only for replicated groups -->
-          {#each group.subGroups as subGroup (subGroup.groupPath.join('/'))}
-            <SubGroupAccordion
-              {subGroup}
-              {nodeId}
-              {configValues}
-              collapsible={subGroup.replication > 1}
-            />
-          {/each}
-        </section>
+        {/if}
       {/each}
 
+    </div>
+
+  {:else}
+    <!-- Tree loaded but segment not found — unusual edge case -->
+    <div class="empty-prompt">
+      <p>Segment data not available</p>
     </div>
   {/if}
 </div>
@@ -219,6 +193,17 @@
     border-bottom: 1px solid var(--border-color, #ddd);
   }
 
+  .segment-description {
+    margin: 0 0 12px;
+    font-size: 12px;
+    color: var(--text-secondary, #666);
+    line-height: 1.4;
+  }
+
+  .segment-leaf {
+    margin-bottom: 2px;
+  }
+
   /* ── Top-level group section ── */
   .group-section {
     margin-bottom: 20px;
@@ -240,45 +225,5 @@
     font-size: 12px;
     color: var(--text-secondary, #666);
     line-height: 1.4;
-  }
-
-  /* ── Field rows (used at both segment-root and group level) ── */
-  .fields-list {
-    border: 1px solid var(--border-color, #e0e0e0);
-    border-radius: 4px;
-    background: var(--card-bg, #fff);
-    overflow: hidden;
-    margin-bottom: 6px;
-  }
-
-  .field-row {
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--border-light, #f0f0f0);
-  }
-
-  .field-row:last-child {
-    border-bottom: none;
-  }
-
-  .field-name {
-    display: block;
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--text-primary, #333);
-  }
-
-  .field-description {
-    margin: 2px 0 4px;
-    font-size: 11px;
-    color: var(--text-secondary, #666);
-    line-height: 1.4;
-  }
-
-  .field-value {
-    display: block;
-    font-size: 12px;
-    font-family: monospace;
-    color: var(--text-secondary, #555);
-    margin-top: 2px;
   }
 </style>

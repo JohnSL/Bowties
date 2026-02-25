@@ -17,6 +17,7 @@
   import { millerColumnsStore } from '$lib/stores/millerColumns';
   import { updateNodeInfo } from '$lib/stores/nodeInfo';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
+  import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import BowtieCatalogPanel from '$lib/components/Bowtie/BowtieCatalogPanel.svelte';
 
   // Active tab state — 'config' (default) or 'bowties'
@@ -62,6 +63,10 @@
     // Feature 006: Start bowties store listener so cdi-read-complete is captured
     // regardless of whether the user has visited the Bowties page.
     bowtieCatalogStore.startListening();
+
+    // Spec 007: Start node-tree-updated listener so trees are refreshed
+    // automatically as config values and event roles are merged server-side.
+    nodeTreeStore.startListening();
 
     const unlistens: Array<() => void> = [];
 
@@ -124,6 +129,7 @@
       connected = false;
       nodes = [];
       updateNodeInfo([]);
+      nodeTreeStore.reset();
     } catch (e) {
       errorMessage = `Disconnect failed: ${e}`;
     }

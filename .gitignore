@@ -21,3 +21,4 @@ node_modules/
 # Specs and documentation (keep versioned, but ignore temp files)
 *.md~
 *.md.bak
+/temp

@@ -3,7 +3,7 @@
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import NodeEntry from './NodeEntry.svelte';
   import SegmentEntry from './SegmentEntry.svelte';
-  import { invoke } from '@tauri-apps/api/core';
+  import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import type { SegmentInfo } from '$lib/stores/configSidebar';
 
   /** Cached segments per nodeId — loaded on first expansion */
@@ -58,21 +58,27 @@
   async function handleNodeToggle(nodeId: string, node: any, isCurrentlyExpanded: boolean) {
     configSidebarStore.toggleNodeExpanded(nodeId);
 
-    // Load segments on first expansion
+    // Load segments on first expansion via unified tree (Spec 007, Phase 4)
     if (!isCurrentlyExpanded && !nodeSegments.has(nodeId)) {
       nodeLoadingMap = new Map(nodeLoadingMap.set(nodeId, true));
       configSidebarStore.setNodeLoading(nodeId, 'loading');
+
       try {
-        const response: any = await invoke('get_cdi_structure', { nodeId });
-        const segments: SegmentInfo[] = (response.segments ?? []).map((seg: any, idx: number) => ({
-          segmentId: seg.id,
-          segmentPath: (seg.metadata?.pathId as string | undefined) ?? `seg:${idx}`,
-          segmentName: seg.name ?? 'Unnamed Segment',
-          description: seg.description ?? null,
-          space: seg.space,
-        }));
-        nodeSegments = new Map(nodeSegments.set(nodeId, segments));
-        configSidebarStore.setNodeSegments(nodeId, segments);
+        const tree = await nodeTreeStore.loadTree(nodeId);
+        if (tree) {
+          const segments: SegmentInfo[] = tree.segments.map((seg, idx) => ({
+            segmentId: `seg:${idx}`,
+            segmentPath: `seg:${idx}`,
+            segmentName: seg.name ?? 'Unnamed Segment',
+            description: seg.description ?? null,
+            space: seg.space,
+          }));
+          nodeSegments = new Map(nodeSegments.set(nodeId, segments));
+          configSidebarStore.setNodeSegments(nodeId, segments);
+        } else {
+          const err = nodeTreeStore.getError(nodeId);
+          configSidebarStore.setNodeLoading(nodeId, 'error', err ?? 'Failed to load tree');
+        }
       } catch (err) {
         configSidebarStore.setNodeLoading(nodeId, 'error', String(err));
       } finally {

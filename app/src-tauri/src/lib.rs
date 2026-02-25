@@ -7,6 +7,7 @@ mod menu;
 mod state;
 mod events;
 mod traffic;
+pub mod node_tree;
 
 use menu::MenuHandles;
 
@@ -142,8 +143,8 @@ pub fn run() {
             commands::read_all_config_values,  // T055: Register read_all_config_values command
             commands::cancel_config_reading,
             commands::get_card_elements,
-            commands::get_segment_elements,
             commands::get_bowties,  // T011: Feature 006 bowtie catalog
+            commands::get_node_tree,  // Spec 007: unified node tree
             update_menu_state,
         ])
         .run(tauri::generate_context!())
