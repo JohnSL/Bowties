@@ -30,7 +30,7 @@
     display: flex;
     flex-direction: column;
     width: 100%;
-    padding: 6px 12px 6px 28px;
+    padding: 6px 12px 6px 40px;
     background: none;
     border: none;
     cursor: pointer;
@@ -49,8 +49,18 @@
     background-color: var(--selected-bg, #e3f2fd);
     color: var(--primary-color, #1976d2);
     font-weight: 500;
-    border-left: 3px solid var(--primary-color, #1976d2);
-    padding-left: 25px;
+    position: relative;
+  }
+
+  .segment-entry.selected::before {
+    content: '';
+    position: absolute;
+    left: 32px;
+    top: 4px;
+    bottom: 4px;
+    width: 3px;
+    border-radius: 1.5px;
+    background-color: var(--primary-color, #1976d2);
   }
 
   .segment-name {

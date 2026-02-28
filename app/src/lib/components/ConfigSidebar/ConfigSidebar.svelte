@@ -103,14 +103,15 @@
     </div>
   {:else}
     <nav class="node-list" aria-label="Discovered nodes">
-      {#each [...nodes.entries()] as [nodeId, node]}
+      {#each [...nodes.entries()].sort((a, b) => getNodeDisplayName(a[1]).localeCompare(getNodeDisplayName(b[1]))) as [nodeId, node]}
         {@const isExpanded = sidebarState.expandedNodeIds.includes(nodeId)}
         {@const isOffline = isNodeOffline(node)}
         {@const isLoading = nodeLoadingMap.get(nodeId) ?? false}
         {@const segments = nodeSegments.get(nodeId) ?? []}
         {@const nodeError = sidebarState.nodeErrors[nodeId] ?? null}
+        {@const hasSelectedSegment = sidebarState.selectedSegment?.nodeId === nodeId}
 
-        <div class="node-group">
+        <div class="node-group" class:child-selected={hasSelectedSegment}>
           <NodeEntry
             {nodeId}
             nodeName={getNodeDisplayName(node)}
@@ -188,25 +189,30 @@
     flex-direction: column;
   }
 
+  .node-group.child-selected > :global(.node-entry) {
+    border-left: 3px solid var(--primary-color, #1976d2);
+    padding-left: 9px;
+  }
+
   .segment-list {
     background-color: var(--segment-list-bg, #f5f5f5);
     border-bottom: 1px solid var(--border-color, #eee);
   }
 
   .segment-error {
-    padding: 8px 12px 8px 28px;
+    padding: 8px 12px 8px 40px;
     font-size: 12px;
     color: var(--error-color, #c62828);
   }
 
   .segment-loading {
-    padding: 8px 12px 8px 28px;
+    padding: 8px 12px 8px 40px;
     font-size: 12px;
     color: var(--text-secondary, #666);
   }
 
   .segment-empty {
-    padding: 8px 12px 8px 28px;
+    padding: 8px 12px 8px 40px;
     font-size: 12px;
     color: var(--text-secondary, #999);
     margin: 0;

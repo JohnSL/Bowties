@@ -116,8 +116,13 @@ pub fn run() {
                 }
             });
 
-            // Show the window after state restoration to prevent flickering
+            // Set window icon and show the window after state restoration
             if let Some(window) = app.get_webview_window("main") {
+                // Load the icon from the bundled PNG
+                let icon_bytes = include_bytes!("../icons/icon.png");
+                if let Ok(icon) = tauri::image::Image::from_bytes(icon_bytes) {
+                    let _ = window.set_icon(icon);
+                }
                 window.show().unwrap();
             }
             Ok(())
