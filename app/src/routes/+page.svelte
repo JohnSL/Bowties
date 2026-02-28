@@ -18,7 +18,9 @@
   import { updateNodeInfo } from '$lib/stores/nodeInfo';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
+  import { configReadNodesStore, markNodeConfigRead, clearConfigReadStatus } from '$lib/stores/configReadStatus';
   import BowtieCatalogPanel from '$lib/components/Bowtie/BowtieCatalogPanel.svelte';
+  import DiscoveryProgressModal from '$lib/components/DiscoveryProgressModal.svelte';
 
   // Active tab state — 'config' (default) or 'bowties'
   let activeTab = $state<'config' | 'bowties'>('config');
@@ -41,6 +43,13 @@
   // Config reading progress state (T063-T067)
   let readProgress = $state<ReadProgressState | null>(null);
   let isCancelling = $state(false);
+
+  // Discovery progress modal state
+  let discoveryModalVisible = $state(false);
+  let discoveryPhase = $state<'discovering' | 'querying' | 'refreshing' | 'reading' | 'complete' | 'cancelled'>('discovering');
+
+  // Track whether a single-node or batch "read remaining" is in progress
+  let readingRemaining = $state(false);
 
   // CDI XML viewer state
   let viewerVisible = $state(false);
@@ -74,14 +83,17 @@
     unlistens.push(await listen<ReadProgressState>('config-read-progress', (event) => {
       readProgress = event.payload;
       millerColumnsStore.setReadProgress(event.payload);
+      discoveryPhase = 'reading';
       
       // Clear progress on completion or cancellation
       if (event.payload.status.type === 'Complete' || event.payload.status.type === 'Cancelled') {
+        discoveryPhase = event.payload.status.type === 'Cancelled' ? 'cancelled' : 'complete';
         setTimeout(() => {
           readProgress = null;
           millerColumnsStore.setReadProgress(null);
           isCancelling = false;
           millerColumnsStore.setCancelling(false);
+          discoveryModalVisible = false;
         }, 500); // Brief pause so user sees the final status
       }
     }));
@@ -130,6 +142,7 @@
       nodes = [];
       updateNodeInfo([]);
       nodeTreeStore.reset();
+      clearConfigReadStatus();
     } catch (e) {
       errorMessage = `Disconnect failed: ${e}`;
     }
@@ -137,15 +150,18 @@
 
   async function discover() {
     errorMessage = "";
+    discoveryModalVisible = true;
     
     // If we already have nodes, refresh them; otherwise discover new ones
     if (nodes.length > 0) {
       refreshing = true;
+      discoveryPhase = 'refreshing';
       try {
         // T068: Clear config cache before refresh
         millerColumnsStore.clearConfigValues();
         // FR-018: reset sidebar state on node refresh
         configSidebarStore.reset();
+        clearConfigReadStatus();
         
         const updated = await refreshAllNodes();
         nodes = updated;
@@ -181,6 +197,7 @@
             
             // Update store with batch values
             millerColumnsStore.setConfigValues(response.values);
+            markNodeConfigRead(nodeId);
             totalSuccessfulRefresh += response.successfulReads;
             totalFailedRefresh += response.failedReads;
             
@@ -210,21 +227,27 @@
           };
           readProgress = doneState;
           millerColumnsStore.setReadProgress(doneState);
+          discoveryPhase = 'complete';
           setTimeout(() => {
             readProgress = null;
             millerColumnsStore.setReadProgress(null);
             isCancelling = false;
             millerColumnsStore.setCancelling(false);
+            discoveryModalVisible = false;
           }, 1500);
+        } else {
+          discoveryModalVisible = false;
         }
       } catch (e) {
         console.error("Refresh failed:", e);
         errorMessage = `Refresh failed: ${e}`;
+        discoveryModalVisible = false;
       } finally {
         refreshing = false;
       }
     } else {
       discovering = true;
+      discoveryPhase = 'discovering';
       nodes = [];
 
       try {
@@ -235,6 +258,7 @@
         // Query SNIP data for all discovered nodes
         if (discovered.length > 0) {
           queryingSnip = true;
+          discoveryPhase = 'querying';
           const aliases = discovered.map(n => n.alias);
           
           try {
@@ -293,6 +317,7 @@
             
             // Update store with batch values
             millerColumnsStore.setConfigValues(response.values);
+            markNodeConfigRead(nodeId);
             totalSuccessful += response.successfulReads;
             totalFailed += response.failedReads;
             
@@ -322,16 +347,21 @@
           };
           readProgress = doneState;
           millerColumnsStore.setReadProgress(doneState);
+          discoveryPhase = 'complete';
           setTimeout(() => {
             readProgress = null;
             millerColumnsStore.setReadProgress(null);
             isCancelling = false;
             millerColumnsStore.setCancelling(false);
+            discoveryModalVisible = false;
           }, 1500);
+        } else {
+          discoveryModalVisible = false;
         }
       } catch (e) {
         console.error("Discovery failed:", e);
         errorMessage = `Discovery failed: ${e}`;
+        discoveryModalVisible = false;
       } finally {
         discovering = false;
       }
@@ -381,6 +411,139 @@
   }
 
   // ─── CDI XML Viewer ───────────────────────────────────────────────────────
+
+  /** Read config values for all unread nodes (batch) */
+  async function readRemainingNodes() {
+    const readNodes = get(configReadNodesStore);
+    const unread = nodes.filter(n => {
+      if (!n.snip_data) return false;
+      const nodeId = formatNodeId(n.node_id);
+      return !readNodes.has(nodeId);
+    });
+    if (unread.length === 0) return;
+
+    readingRemaining = true;
+    discoveryModalVisible = true;
+    discoveryPhase = 'reading';
+    errorMessage = '';
+
+    let totalSuccessful = 0;
+    let totalFailed = 0;
+    try {
+      for (let nodeIdx = 0; nodeIdx < unread.length; nodeIdx++) {
+        const node = unread[nodeIdx];
+        const nodeId = formatNodeId(node.node_id);
+        const nodeName = node.snip_data?.user_name || nodeId;
+        try {
+          let hasCdi = false;
+          try {
+            const cdiCheck = await getCdiXml(nodeId);
+            hasCdi = cdiCheck.xmlContent !== null;
+          } catch { /* CDI not available */ }
+          if (!hasCdi) {
+            console.log(`Skipping config read for ${nodeName} — CDI not yet downloaded`);
+            continue;
+          }
+          console.log(`Reading config values from ${nodeName}...`);
+          const response = await readAllConfigValues(nodeId, undefined, nodeIdx, unread.length);
+          millerColumnsStore.setConfigValues(response.values);
+          markNodeConfigRead(nodeId);
+          // Force tree refresh so any visible SegmentView updates
+          await nodeTreeStore.refreshTree(nodeId);
+          totalSuccessful += response.successfulReads;
+          totalFailed += response.failedReads;
+        } catch (e) {
+          console.warn(`Failed to read config values from ${nodeName}:`, e);
+          totalFailed++;
+        }
+      }
+      // Synthetic completion
+      const doneState: ReadProgressState = {
+        totalNodes: unread.length,
+        currentNodeIndex: unread.length - 1,
+        currentNodeName: '',
+        currentNodeId: '',
+        totalElements: 0,
+        elementsRead: totalSuccessful,
+        elementsFailed: totalFailed,
+        percentage: 100,
+        status: { type: 'Complete', success_count: totalSuccessful, fail_count: totalFailed }
+      };
+      readProgress = doneState;
+      millerColumnsStore.setReadProgress(doneState);
+      discoveryPhase = 'complete';
+      setTimeout(() => {
+        readProgress = null;
+        millerColumnsStore.setReadProgress(null);
+        isCancelling = false;
+        millerColumnsStore.setCancelling(false);
+        discoveryModalVisible = false;
+      }, 1500);
+    } catch (e) {
+      errorMessage = `Read remaining failed: ${e}`;
+      discoveryModalVisible = false;
+    } finally {
+      readingRemaining = false;
+    }
+  }
+
+  /** Read config values for a single node (triggered from sidebar indicator) */
+  async function readSingleNodeConfig(nodeId: string) {
+    const node = nodes.find(n => formatNodeId(n.node_id) === nodeId);
+    if (!node?.snip_data) return;
+
+    readingRemaining = true;
+    discoveryModalVisible = true;
+    discoveryPhase = 'reading';
+    errorMessage = '';
+
+    const nodeName = node.snip_data.user_name || nodeId;
+    try {
+      let hasCdi = false;
+      try {
+        const cdiCheck = await getCdiXml(nodeId);
+        hasCdi = cdiCheck.xmlContent !== null;
+      } catch { /* CDI not available */ }
+      if (!hasCdi) {
+        errorMessage = `CDI not available for ${nodeName}`;
+        discoveryModalVisible = false;
+        readingRemaining = false;
+        return;
+      }
+      const response = await readAllConfigValues(nodeId, undefined, 0, 1);
+      millerColumnsStore.setConfigValues(response.values);
+      markNodeConfigRead(nodeId);
+      // Force tree refresh so the currently visible SegmentView updates
+      await nodeTreeStore.refreshTree(nodeId);
+      // Synthetic completion
+      const doneState: ReadProgressState = {
+        totalNodes: 1,
+        currentNodeIndex: 0,
+        currentNodeName: nodeName,
+        currentNodeId: nodeId,
+        totalElements: response.totalElements,
+        elementsRead: response.successfulReads,
+        elementsFailed: response.failedReads,
+        percentage: 100,
+        status: { type: 'Complete', success_count: response.successfulReads, fail_count: response.failedReads }
+      };
+      readProgress = doneState;
+      millerColumnsStore.setReadProgress(doneState);
+      discoveryPhase = 'complete';
+      setTimeout(() => {
+        readProgress = null;
+        millerColumnsStore.setReadProgress(null);
+        isCancelling = false;
+        millerColumnsStore.setCancelling(false);
+        discoveryModalVisible = false;
+      }, 1500);
+    } catch (e) {
+      errorMessage = `Failed to read config for ${nodeName}: ${e}`;
+      discoveryModalVisible = false;
+    } finally {
+      readingRemaining = false;
+    }
+  }
 
   async function openCdiViewer(nodeId: string, forceDownload: boolean) {
     viewerVisible = true;
@@ -441,7 +604,7 @@
 
   $effect(() => {
     const conn = connected;
-    const busy = discovering || queryingSnip || refreshing;
+    const busy = discovering || queryingSnip || refreshing || readingRemaining;
     const sel  = !!$configSidebarStore.selectedSegment;
     syncMenuState(conn, busy, sel);
   });
@@ -457,7 +620,7 @@
         <button
           class="toolbar-btn"
           onclick={discover}
-          disabled={discovering || queryingSnip || refreshing}
+          disabled={discovering || queryingSnip || refreshing || readingRemaining}
           title={nodes.length > 0 ? 'Refresh nodes on the network' : 'Discover nodes on the network'}
         >
           <span class="tb-icon" class:tb-spin={discovering || refreshing}>⟳</span>
@@ -466,11 +629,12 @@
         <span class="toolbar-sep" aria-hidden="true"></span>
         <button
           class="toolbar-btn"
-          onclick={openTrafficMonitor}
-          title="Open the LCC Traffic Monitor window"
+          onclick={readRemainingNodes}
+          disabled={discovering || queryingSnip || refreshing || readingRemaining || nodes.length === 0}
+          title="Read configuration values for nodes not yet read"
         >
-          <span class="tb-icon">📡</span>
-          <span>Traffic Monitor</span>
+          <span class="tb-icon" class:tb-spin={readingRemaining}>⟳</span>
+          <span>{readingRemaining ? 'Reading…' : 'Read Remaining'}</span>
         </button>
         <span class="toolbar-sep" aria-hidden="true"></span>
         <!-- FR-013: Bowties tab — disabled until cdi-read-complete fires -->
@@ -499,30 +663,14 @@
     </div>
   {/if}
 
-  <!-- ═══ PROGRESS STRIP ═══ -->
-  {#if readProgress}
-    <div class="progress-strip" role="status" aria-live="polite">
-      <div class="ps-bar-track" aria-hidden="true">
-        <div class="ps-bar-fill" style="width: {readProgress.percentage ?? 0}%"></div>
-      </div>
-      <span class="ps-text">
-        {#if readProgress.status.type === 'ReadingNode'}
-          {readProgress.currentNodeIndex + 1}/{readProgress.totalNodes} Reading "{readProgress.status.node_name}" · {readProgress.percentage}%
-        {:else if readProgress.status.type === 'NodeComplete'}
-          ✓ {readProgress.status.node_name}
-        {:else if readProgress.status.type === 'Cancelled'}
-          ⚠ Cancelled
-        {:else if readProgress.status.type === 'Complete'}
-          ✓ All {readProgress.totalNodes} {readProgress.totalNodes === 1 ? 'node' : 'nodes'} read{readProgress.status.fail_count > 0 ? ` — ${readProgress.status.fail_count} failed` : ''}
-        {:else}
-          Starting…
-        {/if}
-      </span>
-      {#if !isCancelling && readProgress.status.type !== 'Complete' && readProgress.status.type !== 'Cancelled'}
-        <button class="ps-cancel" onclick={handleCancelConfigReading} title="Cancel" aria-label="Cancel reading">✕</button>
-      {/if}
-    </div>
-  {/if}
+  <!-- ═══ DISCOVERY PROGRESS MODAL ═══ -->
+  <DiscoveryProgressModal
+    visible={discoveryModalVisible}
+    phase={discoveryPhase}
+    {readProgress}
+    {isCancelling}
+    onCancel={handleCancelConfigReading}
+  />
 
   <!-- ═══ ERROR BANNER ═══ -->
   {#if errorMessage}
@@ -578,7 +726,7 @@
     {:else}
       <!-- FR-001: two-panel layout — fixed sidebar + scrollable main area -->
       <div class="config-layout">
-        <ConfigSidebar />
+        <ConfigSidebar on:readNodeConfig={(e) => readSingleNodeConfig(e.detail.nodeId)} />
         <div class="config-main">
           <SegmentView />
         </div>
@@ -727,64 +875,7 @@
     color: #4338ca !important;
   }
 
-  /* ─── Progress Strip ────────────────────────────────── */
 
-  .progress-strip {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 0 12px;
-    height: 36px;
-    background: #eff6ff;
-    border-bottom: 1px solid #bfdbfe;
-    flex-shrink: 0;
-    animation: strip-in 0.25s ease-out;
-  }
-
-  @keyframes strip-in {
-    from { opacity: 0; transform: translateY(-4px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-
-  .ps-bar-track {
-    width: 120px;
-    height: 6px;
-    background: #dbeafe;
-    border-radius: 3px;
-    overflow: hidden;
-    flex-shrink: 0;
-  }
-
-  .ps-bar-fill {
-    height: 100%;
-    background: #2563eb;
-    border-radius: 3px;
-    transition: width 0.3s ease-out;
-  }
-
-  .ps-text {
-    flex: 1;
-    font-size: 12px;
-    color: #1e40af;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .ps-cancel {
-    background: none;
-    border: 1px solid #93c5fd;
-    border-radius: 4px;
-    color: #1e40af;
-    font-size: 12px;
-    padding: 2px 8px;
-    cursor: pointer;
-    flex-shrink: 0;
-  }
-
-  .ps-cancel:hover {
-    background: #bfdbfe;
-  }
 
   /* ─── Error Banner ──────────────────────────────────── */
 

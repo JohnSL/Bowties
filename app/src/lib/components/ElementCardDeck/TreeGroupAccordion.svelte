@@ -138,59 +138,71 @@
 
   /* ── Pill-section (replicated group with pill selector) ── */
   .pill-section {
-    margin-top: 8px;
+    margin-top: 6px;
+    padding-top: 10px;
+    border-top: 1px solid #e1dfdd;                 /* subtle section divider */
     font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  /* No divider above the very first section in its parent */
+  .pill-section:first-child {
+    border-top: none;
+    padding-top: 0;
   }
 
   .pill-section-header {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 6px 0 4px;
-    border-bottom: 1px solid #e1dfdd;              /* colorNeutralStroke2 */
+    padding: 4px 0 4px;
   }
 
   .pill-section-name {
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
-    color: #605e5c;                                /* colorNeutralForeground2 */
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    color: #323130;                                /* colorNeutralForeground1 — warmer */
     white-space: nowrap;
   }
 
   .pill-section-body {
-    padding: 4px 0 6px;
+    padding: 6px 12px 8px;
     display: flex;
     flex-direction: column;
-    gap: var(--gap, 6px);
+    gap: var(--gap, 4px);
+    background: #f8f8f7;                           /* soft grouping background */
+    border-radius: 6px;
+    margin-top: 2px;
   }
 
   /* ── Inline section (non-replicated groups) ── */
   .inline-section {
-    margin-top: 8px;
+    margin-top: 6px;
+    padding-top: 10px;
+    border-top: 1px solid #e1dfdd;                 /* subtle section divider */
     padding-left: calc(var(--depth, 0) * 12px);
     font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
   }
 
+  .inline-section:first-child {
+    border-top: none;
+    padding-top: 0;
+  }
+
   .inline-header {
     margin-bottom: 4px;
-    border-bottom: 1px solid #e1dfdd;              /* colorNeutralStroke2 */
-    padding: 6px 0 4px;
+    padding: 4px 0 2px;
   }
 
   .inline-name {
     display: block;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
-    color: #605e5c;                                /* colorNeutralForeground2 */
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    color: #323130;                                /* colorNeutralForeground1 */
   }
 
   /* ── Shared ── */
   .section-description {
-    margin: 3px 0 4px;
+    margin: 2px 0 2px;
     font-size: 12px;
     color: #605e5c;                                /* colorNeutralForeground2 */
     line-height: 1.5;

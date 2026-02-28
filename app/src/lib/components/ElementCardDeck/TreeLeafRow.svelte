@@ -120,22 +120,27 @@
     display: flex;
     align-items: baseline;
     gap: var(--field-gap, 8px);
-    min-height: 28px;
-    padding: 3px 0;
-    border-bottom: 1px solid #f3f2f1;              /* colorNeutralStroke2 */
+    min-height: 26px;
+    padding: 2px 4px;
     font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+    transition: background-color 0.1s ease;
+    border-radius: 3px;
+  }
+
+  .field-row:hover {
+    background-color: rgba(0,0,0,0.02);            /* very subtle hover for scannability */
   }
 
   .field-row.compact {
     --field-gap: 4px;
-    min-height: 24px;
-    padding: 2px 0;
+    min-height: 22px;
+    padding: 1px 4px;
   }
 
   .field-label {
     flex: 0 0 var(--field-label-width, 120px);
     text-align: right;
-    color: #605e5c;                                /* colorNeutralForeground2 */
+    color: #605e5c;                                /* colorNeutralForeground2 — subdued so values stand out */
     font-size: 12px;
     font-weight: 400;
     line-height: 1.45;
@@ -167,8 +172,9 @@
   }
 
   .field-desc {
-    color: #a19f9d;                                /* colorNeutralForeground4 */
+    color: #8a8886;                                /* warmer hint gray */
     font-size: 12px;
+    font-style: italic;                            /* hint-like feel */
     line-height: 1.35;
   }
 
@@ -177,6 +183,7 @@
     border: none;
     padding: 0 2px;
     font-size: 12px;
+    font-style: normal;
     color: #0078d4;                                /* colorBrandForeground1 */
     cursor: pointer;
     font-weight: 600;
@@ -223,7 +230,7 @@
 
   .used-in {
     font-size: 11px;
-    color: #a19f9d;                                /* colorNeutralForeground4 */
+    color: #8a8886;                                /* warmer gray */
   }
 
   .used-in-link {

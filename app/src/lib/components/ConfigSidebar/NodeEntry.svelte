@@ -10,11 +10,21 @@
   export let isExpanded: boolean = false;
   export let isOffline: boolean = false;
   export let isLoading: boolean = false;
+  /** Whether this node's config values have NOT been read yet */
+  export let configNotRead: boolean = false;
 
-  const dispatch = createEventDispatcher<{ toggle: { nodeId: string } }>();
+  const dispatch = createEventDispatcher<{
+    toggle: { nodeId: string };
+    readConfig: { nodeId: string };
+  }>();
 
   function handleClick() {
     dispatch('toggle', { nodeId });
+  }
+
+  function handleReadConfig(event: Event) {
+    event.stopPropagation();
+    dispatch('readConfig', { nodeId });
   }
 </script>
 
@@ -42,6 +52,20 @@
   {#if isLoading}
     <span role="status" class="loading" aria-label="Loading segments…">
       <span class="spinner" aria-hidden="true">⋯</span>
+    </span>
+  {/if}
+
+  {#if configNotRead && !isOffline}
+    <span
+      class="config-not-read"
+      role="button"
+      tabindex="-1"
+      on:click={handleReadConfig}
+      on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleReadConfig(e); }}
+      title="Configuration not yet read — click to read"
+      aria-label="Read configuration for {nodeName}"
+    >
+      <span class="not-read-dot" aria-hidden="true"></span>
     </span>
   {/if}
 </button>
@@ -122,5 +146,34 @@
   @keyframes pulse {
     0%, 100% { opacity: 0.4; }
     50% { opacity: 1; }
+  }
+
+  .config-not-read {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    margin: 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    border-radius: 50%;
+    transition: background-color 0.15s;
+  }
+
+  .config-not-read:hover {
+    background-color: rgba(0, 0, 0, 0.08);
+  }
+
+  .not-read-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: var(--warning-color, #f59e0b);
+    border: 1.5px solid #fff;
+    box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.3);
   }
 </style>

@@ -138,9 +138,16 @@ class NodeTreeStore {
   /**
    * Refresh an existing tree by re-fetching from the backend.
    * This picks up any config values or event roles that were merged server-side.
+   *
+   * Unlike `loadTree`, this bypasses the loading guard so a fresh fetch
+   * is always issued — even if another load is already in progress.
    */
   async refreshTree(nodeId: string): Promise<NodeConfigTree | null> {
-    // Force re-fetch even if already cached
+    // Clear any in-progress guard so the fetch isn't skipped
+    if (this._loading.has(nodeId)) {
+      this._loading = new Set(this._loading);
+      this._loading.delete(nodeId);
+    }
     return this.loadTree(nodeId);
   }
 

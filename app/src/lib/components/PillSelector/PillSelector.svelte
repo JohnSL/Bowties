@@ -235,39 +235,40 @@
     font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
   }
 
-  /* ── Pill Button (Fluent ComboBox trigger) ── */
+  /* ── Pill Button (Fluent ComboBox trigger — blue branded) ── */
   .pill-button {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 2px 8px 2px 10px;
+    padding: 3px 10px 3px 12px;
     font-size: 12px;
-    font-weight: 400;
-    color: #242424;                               /* colorNeutralForeground1 */
-    background: #f5f5f5;                           /* colorNeutralBackground1 */
-    border: 1px solid #d1d1d1;                     /* colorNeutralStroke1 */
+    font-weight: 500;
+    color: #fff;                                   /* white on brand */
+    background: #0078d4;                           /* colorBrandBackground */
+    border: 1px solid transparent;
     border-radius: 4px;                            /* borderRadiusMedium */
     cursor: pointer;
     white-space: nowrap;
     max-width: 220px;
     line-height: 20px;
-    transition: background-color 0.1s ease, border-color 0.1s ease;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.12);        /* shadow4 — subtle lift */
+    transition: background-color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
   }
 
   .pill-button:hover {
-    background: #ebebeb;                           /* colorNeutralBackground1Hover */
-    border-color: #c7c7c7;
+    background: #106ebe;                           /* colorBrandBackgroundHover */
+    box-shadow: 0 2px 4px rgba(0,0,0,0.16);        /* slightly deeper on hover */
   }
 
   .pill-button:active,
   .pill-button.active {
-    background: #e0e0e0;                           /* colorNeutralBackground1Pressed */
-    border-color: #b3b3b3;
+    background: #005a9e;                           /* colorBrandBackgroundPressed */
+    box-shadow: 0 1px 2px rgba(0,0,0,0.10);
   }
 
   .pill-button:focus-visible {
     outline: 2px solid #0078d4;                    /* colorBrandStroke1 */
-    outline-offset: 1px;
+    outline-offset: 2px;
     border-color: transparent;
   }
 
@@ -278,7 +279,7 @@
 
   .pill-chevron {
     flex-shrink: 0;
-    color: #616161;                                /* colorNeutralForeground3 */
+    color: rgba(255,255,255,0.85);                 /* white chevron on blue bg */
   }
 
   /* ── Dropdown (Fluent Listbox) ── */

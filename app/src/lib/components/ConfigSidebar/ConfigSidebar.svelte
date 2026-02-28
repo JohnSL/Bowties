@@ -1,10 +1,14 @@
 <script lang="ts">
+  import { createEventDispatcher } from 'svelte';
   import { nodeInfoStore } from '$lib/stores/nodeInfo';
   import { configSidebarStore } from '$lib/stores/configSidebar';
+  import { configReadNodesStore } from '$lib/stores/configReadStatus';
   import NodeEntry from './NodeEntry.svelte';
   import SegmentEntry from './SegmentEntry.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import type { SegmentInfo } from '$lib/stores/configSidebar';
+
+  const dispatch = createEventDispatcher<{ readNodeConfig: { nodeId: string } }>();
 
   /** Cached segments per nodeId — loaded on first expansion */
   let nodeSegments = new Map<string, SegmentInfo[]>();
@@ -94,6 +98,7 @@
 
   $: nodes = $nodeInfoStore;
   $: sidebarState = $configSidebarStore;
+  $: configReadNodes = $configReadNodesStore;
 </script>
 
 <aside class="config-sidebar">
@@ -110,6 +115,7 @@
         {@const segments = nodeSegments.get(nodeId) ?? []}
         {@const nodeError = sidebarState.nodeErrors[nodeId] ?? null}
         {@const hasSelectedSegment = sidebarState.selectedSegment?.nodeId === nodeId}
+        {@const isConfigNotRead = node.snip_data !== null && !configReadNodes.has(nodeId)}
 
         <div class="node-group" class:child-selected={hasSelectedSegment}>
           <NodeEntry
@@ -120,7 +126,9 @@
             {isExpanded}
             {isOffline}
             {isLoading}
+            configNotRead={isConfigNotRead}
             on:toggle={() => handleNodeToggle(nodeId, node, isExpanded)}
+            on:readConfig={() => dispatch('readNodeConfig', { nodeId })}
           />
 
           {#if isExpanded}

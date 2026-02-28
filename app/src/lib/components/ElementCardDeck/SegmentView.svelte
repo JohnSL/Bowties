@@ -17,26 +17,26 @@
   import TreeLeafRow from './TreeLeafRow.svelte';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
 
-  $: selectedSegment = $configSidebarStore.selectedSegment;
+  let selectedSegment = $derived($configSidebarStore.selectedSegment);
 
   // Cross-reference lookup for event ID → bowtie card
-  $: nodeSlotMap = bowtieCatalogStore.nodeSlotMap;
+  let nodeSlotMap = $derived(bowtieCatalogStore.nodeSlotMap);
 
   // Access trees reactively so segment derivation re-runs when tree data changes
   // (e.g. after node-tree-updated event merges config values)
-  $: trees = nodeTreeStore.trees;
+  let trees = $derived(nodeTreeStore.trees);
 
   /**
    * Derive the SegmentNode from the tree store whenever the selection or tree changes.
    * The segment index is encoded in segmentPath as "seg:N".
    */
-  $: segment = deriveSegment(selectedSegment, trees);
+  let segment = $derived(deriveSegment(selectedSegment, trees));
 
   /** Whether the tree for the selected node is still loading */
-  $: isLoading = selectedSegment ? nodeTreeStore.isNodeLoading(selectedSegment.nodeId) : false;
+  let isLoading = $derived(selectedSegment ? nodeTreeStore.isNodeLoading(selectedSegment.nodeId) : false);
 
   /** Error from tree loading */
-  $: loadError = selectedSegment ? nodeTreeStore.getError(selectedSegment.nodeId) ?? null : null;
+  let loadError = $derived(selectedSegment ? nodeTreeStore.getError(selectedSegment.nodeId) ?? null : null);
 
   function deriveSegment(
     sel: { nodeId: string; segmentId: string; segmentPath: string } | null,
@@ -209,17 +209,17 @@
 
   /* ── Segment heading ── */
   .segment-heading {
-    margin: 0 0 16px;
-    font-size: 16px;
+    margin: 0 0 10px;
+    font-size: 18px;
     font-weight: 600;
     color: #242424;                                /* colorNeutralForeground1 */
     padding-bottom: 8px;
-    border-bottom: 1px solid #e1dfdd;              /* colorNeutralStroke2 */
+    border-bottom: 2px solid #0078d4;              /* branded accent */
   }
 
   .segment-description {
-    margin: 0 0 12px;
-    font-size: 12px;
+    margin: 0 0 8px;
+    font-size: 13px;
     color: #605e5c;                                /* colorNeutralForeground2 */
     line-height: 1.5;
   }
@@ -230,7 +230,17 @@
 
   /* ── Top-level group section ── */
   .group-section {
-    margin-bottom: 20px;
+    margin-bottom: 14px;
+    padding: 8px 14px 10px;
+    background: #f5f5f4;                           /* subtle card-like grouping */
+    border-radius: 6px;
+  }
+
+  /* Subtle divider line above non-first top-level groups */
+  .group-section + .group-section {
+    border-top: 1px solid #e1dfdd;                 /* colorNeutralStroke2 */
+    padding-top: 14px;
+    margin-top: 0;
   }
 
   .group-header {
@@ -245,9 +255,17 @@
   }
 
   .group-description {
-    margin: 3px 0 0;
+    margin: 4px 0 0;
     font-size: 12px;
     color: #605e5c;                                /* colorNeutralForeground2 */
     line-height: 1.5;
+  }
+
+  /* Remove the top border on the very first group after the heading —
+     it sits right below the blue accent line and looks redundant */
+  .segment-content > :global(.pill-section:first-of-type),
+  .segment-content > :global(.inline-section:first-of-type) {
+    border-top: none;
+    padding-top: 0;
   }
 </style>
