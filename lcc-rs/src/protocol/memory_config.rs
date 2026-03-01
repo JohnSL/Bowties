@@ -33,6 +33,18 @@ impl AddressSpace {
         }
     }
 
+    /// Convert a raw u8 space byte to an AddressSpace enum variant.
+    pub fn from_u8(byte: u8) -> std::result::Result<Self, String> {
+        match byte {
+            0xFB => Ok(AddressSpace::AcdiUser),
+            0xFC => Ok(AddressSpace::AcdiManufacturer),
+            0xFD => Ok(AddressSpace::Configuration),
+            0xFE => Ok(AddressSpace::AllMemory),
+            0xFF => Ok(AddressSpace::Cdi),
+            _ => Err(format!("Unknown address space: 0x{:02X}", byte)),
+        }
+    }
+
     /// Get the command flag for this space (without space byte).
     /// AcdiUser and AcdiManufacturer use the generic format (0x40 + space byte).
     pub fn command_flag(&self) -> u8 {
@@ -207,6 +219,77 @@ impl MemoryConfigCmd {
                 Ok(ReadReply::Success { address, space, data: data[7..].to_vec() })
             }
         }
+    }
+
+    /// Build a write command datagram.
+    ///
+    /// Mirrors `build_read()` but uses write command bytes (0x00-0x03 instead of 0x40-0x43)
+    /// and includes data payload instead of read count.
+    ///
+    /// Per OpenLCB_Java `MemoryConfigurationService.McsWriteMemo.fillRequest()`.
+    ///
+    /// # Arguments
+    /// * `source_alias` - Our node alias
+    /// * `dest_alias` - Target node alias
+    /// * `space` - Address space to write to
+    /// * `address` - Starting address (32-bit)
+    /// * `payload` - Data bytes to write (1-64 bytes)
+    ///
+    /// # Returns
+    /// Vector of GridConnect frames to send
+    pub fn build_write(
+        source_alias: u16,
+        dest_alias: u16,
+        space: AddressSpace,
+        address: u32,
+        payload: &[u8],
+    ) -> Result<Vec<GridConnectFrame>> {
+        if payload.is_empty() || payload.len() > 64 {
+            return Err(Error::Protocol(format!(
+                "Invalid write payload size: {} (must be 1-64)",
+                payload.len()
+            )));
+        }
+
+        let mut data = Vec::new();
+        data.push(0x20); // Memory Configuration command byte
+
+        // Write command byte: read_cmd - 0x40
+        // Embedded format for spaces >= 0xFD; generic format for lower spaces.
+        let cmd = space.command_flag() - 0x40;
+        data.push(cmd);
+
+        // Address (big-endian, 32-bit)
+        data.extend_from_slice(&address.to_be_bytes());
+
+        // Generic format only: include the separate address-space byte
+        if cmd == 0x00 {
+            data.push(space.value());
+        }
+
+        // Data payload
+        data.extend_from_slice(payload);
+
+        GridConnectFrame::create_datagram_frames(source_alias, dest_alias, data)
+    }
+
+    /// Build an Update Complete command datagram.
+    ///
+    /// Sends `[0x20, 0xA8]` to signal the node to persist configuration changes.
+    /// Per S-9.7.4.2 §4.23.
+    ///
+    /// # Arguments
+    /// * `source_alias` - Our node alias
+    /// * `dest_alias` - Target node alias
+    ///
+    /// # Returns
+    /// Vector of GridConnect frames to send
+    pub fn build_update_complete(
+        source_alias: u16,
+        dest_alias: u16,
+    ) -> Result<Vec<GridConnectFrame>> {
+        let data = vec![0x20, 0xA8];
+        GridConnectFrame::create_datagram_frames(source_alias, dest_alias, data)
     }
 }
 
@@ -388,6 +471,171 @@ mod tests {
                 assert_eq!(message, "Err");
             }
             _ => panic!("Expected failed reply"),
+        }
+    }
+
+    // --- build_write tests (T004) ---
+
+    #[test]
+    fn test_build_write_configuration_embedded() {
+        // Configuration (0xFD) → embedded format: write cmd 0x01 (0x41 - 0x40), no space byte
+        let payload = vec![0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x00]; // "Hello\0"
+        let frames = MemoryConfigCmd::build_write(0xAAA, 0xBBB, AddressSpace::Configuration, 0x100, &payload).unwrap();
+        // Total datagram: 6 header + 6 data = 12 bytes → 2 CAN frames (8 + 4)
+        assert!(frames.len() >= 1);
+        // Reassemble all frame data to verify the full datagram content
+        let full_data: Vec<u8> = frames.iter().flat_map(|f| f.data.iter().cloned()).collect();
+        assert_eq!(full_data[0], 0x20); // datagram type
+        assert_eq!(full_data[1], 0x01); // embedded Configuration write command
+        assert_eq!(&full_data[2..6], &[0x00, 0x00, 0x01, 0x00]); // address 0x100
+        assert_eq!(&full_data[6..], &payload); // data immediately after address (no space byte)
+    }
+
+    #[test]
+    fn test_build_write_cdi_embedded() {
+        // CDI (0xFF) → embedded format: write cmd 0x03
+        let payload = vec![0x42];
+        let frames = MemoryConfigCmd::build_write(0x111, 0x222, AddressSpace::Cdi, 0, &payload).unwrap();
+        assert_eq!(frames.len(), 1);
+        let f = &frames[0];
+        assert_eq!(f.data[1], 0x03); // embedded CDI write command
+        assert_eq!(&f.data[2..6], &[0, 0, 0, 0]); // address 0
+        assert_eq!(&f.data[6..], &[0x42]); // data
+    }
+
+    #[test]
+    fn test_build_write_acdi_user_generic() {
+        // AcdiUser (0xFB) → generic format: write cmd 0x00, space byte 0xFB at [6]
+        let payload = vec![0x4E, 0x61, 0x6D, 0x65, 0x00]; // "Name\0"
+        let frames = MemoryConfigCmd::build_write(0x333, 0x444, AddressSpace::AcdiUser, 0x01, &payload).unwrap();
+        assert!(frames.len() >= 1);
+        let full_data: Vec<u8> = frames.iter().flat_map(|f| f.data.iter().cloned()).collect();
+        assert_eq!(full_data[0], 0x20);
+        assert_eq!(full_data[1], 0x00); // generic write command
+        assert_eq!(&full_data[2..6], &[0x00, 0x00, 0x00, 0x01]); // address 1
+        assert_eq!(full_data[6], 0xFB); // space byte: AcdiUser
+        assert_eq!(&full_data[7..], &payload); // data after space byte
+    }
+
+    #[test]
+    fn test_build_write_all_memory_embedded() {
+        // AllMemory (0xFE) → embedded format: write cmd 0x02
+        let payload = vec![0xFF];
+        let frames = MemoryConfigCmd::build_write(0x555, 0x666, AddressSpace::AllMemory, 0, &payload).unwrap();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].data[1], 0x02); // embedded AllMemory write command
+    }
+
+    #[test]
+    fn test_build_write_1_byte_payload() {
+        // Boundary: minimum payload (1 byte)
+        let frames = MemoryConfigCmd::build_write(0xAAA, 0xBBB, AddressSpace::Configuration, 0, &[0x42]).unwrap();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].data.len(), 7); // 0x20 + cmd + 4 addr + 1 data
+    }
+
+    #[test]
+    fn test_build_write_64_byte_payload() {
+        // Boundary: maximum payload (64 bytes)
+        let payload = vec![0xAB; 64];
+        let frames = MemoryConfigCmd::build_write(0xAAA, 0xBBB, AddressSpace::Configuration, 0, &payload).unwrap();
+        assert!(!frames.is_empty());
+        // Total datagram data: 6 header bytes + 64 payload = 70 bytes
+    }
+
+    #[test]
+    fn test_build_write_0_byte_payload_error() {
+        // Invalid: 0 bytes
+        let result = MemoryConfigCmd::build_write(0xAAA, 0xBBB, AddressSpace::Configuration, 0, &[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_build_write_65_byte_payload_error() {
+        // Invalid: 65 bytes
+        let payload = vec![0x00; 65];
+        let result = MemoryConfigCmd::build_write(0xAAA, 0xBBB, AddressSpace::Configuration, 0, &payload);
+        assert!(result.is_err());
+    }
+
+    // --- build_update_complete tests (T005) ---
+
+    #[test]
+    fn test_build_update_complete_payload() {
+        let frames = MemoryConfigCmd::build_update_complete(0xAAA, 0xBBB).unwrap();
+        assert_eq!(frames.len(), 1);
+        let f = &frames[0];
+        assert_eq!(f.data.len(), 2);
+        assert_eq!(f.data[0], 0x20);
+        assert_eq!(f.data[1], 0xA8);
+    }
+
+    #[test]
+    fn test_build_update_complete_frame_construction() {
+        let frames = MemoryConfigCmd::build_update_complete(0x123, 0x456).unwrap();
+        assert_eq!(frames.len(), 1);
+        // Verify it's a datagram addressed correctly
+        let f = &frames[0];
+        assert_eq!(f.data, vec![0x20, 0xA8]);
+    }
+
+    // --- AddressSpace::from_u8 tests (T052) ---
+
+    #[test]
+    fn test_address_space_from_u8() {
+        assert_eq!(AddressSpace::from_u8(0xFB).unwrap(), AddressSpace::AcdiUser);
+        assert_eq!(AddressSpace::from_u8(0xFC).unwrap(), AddressSpace::AcdiManufacturer);
+        assert_eq!(AddressSpace::from_u8(0xFD).unwrap(), AddressSpace::Configuration);
+        assert_eq!(AddressSpace::from_u8(0xFE).unwrap(), AddressSpace::AllMemory);
+        assert_eq!(AddressSpace::from_u8(0xFF).unwrap(), AddressSpace::Cdi);
+        assert!(AddressSpace::from_u8(0x00).is_err());
+        assert!(AddressSpace::from_u8(0xFA).is_err());
+    }
+
+    // --- T051: Proptest write encoding roundtrip ---
+
+    use proptest::prelude::*;
+
+    /// Strategy producing any valid AddressSpace variant.
+    fn any_address_space() -> impl Strategy<Value = AddressSpace> {
+        prop_oneof![
+            Just(AddressSpace::AcdiUser),
+            Just(AddressSpace::AcdiManufacturer),
+            Just(AddressSpace::Configuration),
+            Just(AddressSpace::AllMemory),
+            Just(AddressSpace::Cdi),
+        ]
+    }
+
+    proptest! {
+        /// T051: For any (space, address, payload 1–4 bytes), build_write() encodes the
+        /// address as big-endian bytes at offset 2–5 of the assembled datagram, and
+        /// the payload follows immediately after the optional space byte.
+        #[test]
+        fn prop_build_write_address_roundtrip(
+            address: u32,
+            space in any_address_space(),
+            payload in proptest::collection::vec(any::<u8>(), 1usize..=4usize),
+        ) {
+            let frames = MemoryConfigCmd::build_write(0x100, 0x200, space, address, &payload).unwrap();
+            prop_assert!(!frames.is_empty());
+
+            // Reassemble the full datagram by concatenating all frame data bytes
+            let data: Vec<u8> = frames.iter().flat_map(|f| f.data.iter().copied()).collect();
+            prop_assert!(data.len() >= 6, "Datagram too short: {}", data.len());
+
+            // Address is always at bytes 2..6 (big-endian)
+            let recovered_addr = u32::from_be_bytes([data[2], data[3], data[4], data[5]]);
+            prop_assert_eq!(recovered_addr, address, "Address mismatch for space {:?}", space);
+
+            // Payload offset: generic format (cmd==0x00) has an extra space byte at [6]
+            let payload_start = if data[1] == 0x00 { 7 } else { 6 };
+            prop_assert!(
+                data.len() >= payload_start + payload.len(),
+                "Datagram too short to contain payload: len={} payload_start={} payload_len={}",
+                data.len(), payload_start, payload.len()
+            );
+            prop_assert_eq!(&data[payload_start..payload_start + payload.len()], payload.as_slice());
         }
     }
 }

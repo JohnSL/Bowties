@@ -28,6 +28,11 @@
   export let selected: number = 0;
   /** Callback when selection changes */
   export let onSelect: (value: number) => void = () => {};
+  /**
+   * Set of item values that have unsaved pending edits.
+   * When non-empty an amber dot is shown beside those items in the dropdown.
+   */
+  export let dirtyValues: Set<number> = new Set();
 
   // ── Unique instance ID for mutual-exclusion ──
   let instanceId = `pill-${Math.random().toString(36).slice(2, 9)}`;
@@ -209,6 +214,9 @@
             {#if item.description}
               <span class="option-desc">{item.description}</span>
             {/if}
+            {#if dirtyValues.has(item.value)}
+              <span class="option-dirty-dot" title="Unsaved changes" aria-label="Unsaved changes"></span>
+            {/if}
             {#if item.value === selected}
               <svg class="option-check" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
                 <path d="M2.5 6.5 5 9l4.5-6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -381,6 +389,25 @@
     top: 50%;
     transform: translateY(-50%);
     color: #0078d4;                                /* colorBrandForeground1 */
+  }
+
+  /* Amber dot — indicates unsaved changes for this item */
+  .option-dirty-dot {
+    position: absolute;
+    right: 8px;
+    top: 6px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #ca8500;
+    border: 1.5px solid #fff;
+    box-shadow: 0 0 0 1px rgba(202, 133, 0, 0.35);
+    flex-shrink: 0;
+  }
+
+  /* When both checkmark and dirty dot would show (selected + dirty), shift dot left */
+  .pill-option.selected .option-dirty-dot {
+    right: 28px;
   }
 
   .pill-empty {

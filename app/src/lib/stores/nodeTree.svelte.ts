@@ -159,6 +159,31 @@ class NodeTreeStore {
     this._trees.set(nodeId, tree);
   }
 
+  /**
+   * Update the cached value for a single leaf after a successful write (FR-021).
+   *
+   * Locates the leaf by `fieldPath` and sets its `value` to `newValue`,
+   * causing any reactive derivations from the tree to reflect the written data
+   * without requiring a full re-read from the node.
+   *
+   * @param nodeId    The node owning the tree.
+   * @param fieldPath The leaf's path array (e.g. ["seg:0", "elem:1"]).
+   * @param newValue  The value just written to the node.
+   */
+  updateLeafValue(nodeId: string, fieldPath: string[], newValue: import('$lib/types/nodeTree').TreeConfigValue): void {
+    const tree = this._trees.get(nodeId);
+    if (!tree) return;
+
+    // Deep-clone the tree so Svelte 5 reactivity detects the change
+    const updatedTree = deepCloneTree(tree);
+    const leaf = findLeafByPath(updatedTree, fieldPath);
+    if (leaf) {
+      leaf.value = newValue;
+      this._trees = new Map(this._trees);
+      this._trees.set(nodeId, updatedTree);
+    }
+  }
+
   // ── Listener lifecycle ────────────────────────────────────────────────────
 
   /**
@@ -247,3 +272,54 @@ function findLeafInChildren(
  * ```
  */
 export const nodeTreeStore = new NodeTreeStore();
+
+// ─── Helpers for updateLeafValue ──────────────────────────────────────────────
+
+/** Deep-clone a NodeConfigTree (used for immutable update in updateLeafValue). */
+function deepCloneTree(tree: NodeConfigTree): NodeConfigTree {
+  return JSON.parse(JSON.stringify(tree)) as NodeConfigTree;
+}
+
+/**
+ * Find a LeafConfigNode in a tree by its path array.
+ *
+ * Path follows the format: `["seg:N", "elem:M", ...]`. The first segment
+ * `seg:N` identifies the segment by index; subsequent segments navigate groups.
+ */
+function findLeafByPath(tree: NodeConfigTree, path: string[]): LeafConfigNode | null {
+  if (path.length === 0) return null;
+
+  // Parse "seg:N"
+  const segMatch = path[0].match(/^seg:(\d+)$/);
+  if (!segMatch) return null;
+  const segIdx = parseInt(segMatch[1], 10);
+  const segment = tree.segments[segIdx];
+  if (!segment) return null;
+
+  return findLeafByPathInChildren(segment.children, path.slice(1));
+}
+
+function findLeafByPathInChildren(children: ConfigNode[], path: string[]): LeafConfigNode | null {
+  if (path.length === 0) return null;
+
+  const segment = path[0];
+  // Could be "elem:N" or "elem:N#M"
+  const elemMatch = segment.match(/^elem:(\d+)(?:#(\d+))?$/);
+  if (!elemMatch) return null;
+
+  const elemIdx = parseInt(elemMatch[1], 10);
+  const node = children[elemIdx];
+  if (!node) return null;
+
+  if (path.length === 1) {
+    // Should be a leaf at this point
+    return isLeaf(node) ? node : null;
+  }
+
+  if (isGroup(node)) {
+    return findLeafByPathInChildren(node.children, path.slice(1));
+  }
+
+  return null;
+}
+

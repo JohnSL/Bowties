@@ -12,6 +12,8 @@
   export let isLoading: boolean = false;
   /** Whether this node's config values have NOT been read yet */
   export let configNotRead: boolean = false;
+  /** Whether this node has unsaved pending edits (FR-012a) */
+  export let hasPendingEdits: boolean = false;
 
   const dispatch = createEventDispatcher<{
     toggle: { nodeId: string };
@@ -47,6 +49,14 @@
 
   {#if isOffline}
     <span class="offline-indicator" title="Offline" aria-label="offline">⚠</span>
+  {/if}
+
+  {#if hasPendingEdits}
+    <span
+      class="pending-edits-dot"
+      title="Unsaved changes pending"
+      aria-label="Unsaved changes pending"
+    ></span>
   {/if}
 
   {#if isLoading}
@@ -175,5 +185,16 @@
     background-color: var(--warning-color, #f59e0b);
     border: 1.5px solid #fff;
     box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.3);
+  }
+
+  .pending-edits-dot {
+    flex-shrink: 0;
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: #ca8500;                     /* amber — unsaved changes (distinct from selection blue) */
+    border: 1.5px solid #fff;
+    box-shadow: 0 0 0 1px rgba(202, 133, 0, 0.35);
   }
 </style>

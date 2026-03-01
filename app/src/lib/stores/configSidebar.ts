@@ -64,6 +64,8 @@ export interface SegmentInfo {
   segmentName: string;
   description: string | null;
   space: number;
+  /** Segment origin address in memory space (for pending edit queries) */
+  origin: number;
 }
 
 // ---------------------------------------------------------------------------

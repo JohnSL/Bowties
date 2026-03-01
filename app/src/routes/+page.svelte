@@ -21,6 +21,7 @@
   import { configReadNodesStore, markNodeConfigRead, clearConfigReadStatus } from '$lib/stores/configReadStatus';
   import BowtieCatalogPanel from '$lib/components/Bowtie/BowtieCatalogPanel.svelte';
   import DiscoveryProgressModal from '$lib/components/DiscoveryProgressModal.svelte';
+  import SaveControls from '$lib/components/ElementCardDeck/SaveControls.svelte';
 
   // Active tab state — 'config' (default) or 'bowties'
   let activeTab = $state<'config' | 'bowties'>('config');
@@ -50,6 +51,14 @@
 
   // Track whether a single-node or batch "read remaining" is in progress
   let readingRemaining = $state(false);
+
+  // Reactive count of nodes with SNIP data not yet config-read — drives "Read Remaining" visibility
+  let unreadCount = $derived(
+    nodes.filter(n => {
+      if (!n.snip_data) return false;
+      return !$configReadNodesStore.has(formatNodeId(n.node_id));
+    }).length
+  );
 
   // CDI XML viewer state
   let viewerVisible = $state(false);
@@ -626,16 +635,18 @@
           <span class="tb-icon" class:tb-spin={discovering || refreshing}>⟳</span>
           <span>{discovering ? 'Discovering…' : queryingSnip ? 'Querying…' : refreshing ? 'Refreshing…' : nodes.length > 0 ? 'Refresh Nodes' : 'Discover Nodes'}</span>
         </button>
-        <span class="toolbar-sep" aria-hidden="true"></span>
-        <button
-          class="toolbar-btn"
-          onclick={readRemainingNodes}
-          disabled={discovering || queryingSnip || refreshing || readingRemaining || nodes.length === 0}
-          title="Read configuration values for nodes not yet read"
-        >
-          <span class="tb-icon" class:tb-spin={readingRemaining}>⟳</span>
-          <span>{readingRemaining ? 'Reading…' : 'Read Remaining'}</span>
-        </button>
+        {#if readingRemaining || unreadCount > 0}
+          <span class="toolbar-sep" aria-hidden="true"></span>
+          <button
+            class="toolbar-btn"
+            onclick={readRemainingNodes}
+            disabled={discovering || queryingSnip || refreshing || readingRemaining}
+            title="Read configuration values for nodes not yet read"
+          >
+            <span class="tb-icon" class:tb-spin={readingRemaining}>⟳</span>
+            <span>{readingRemaining ? 'Reading…' : `Read Remaining (${unreadCount})`}</span>
+          </button>
+        {/if}
         <span class="toolbar-sep" aria-hidden="true"></span>
         <!-- FR-013: Bowties tab — disabled until cdi-read-complete fires -->
         <button
@@ -652,13 +663,19 @@
           <span class="tb-icon">🎀</span>
           <span>Bowties</span>
         </button>
+        <SaveControls toolbar={true} />
       </div>
       <div class="toolbar-right">
-        <div class="toolbar-status" aria-live="polite">
-          <span class="status-dot status-connected" title="Connected to {host}:{port}"></span>
+        <button
+          class="toolbar-status-btn"
+          onclick={disconnect}
+          title="Disconnect from {host}:{port}"
+          aria-label="Disconnect from {host}:{port}"
+        >
+          <span class="status-dot status-connected" aria-hidden="true"></span>
           <span class="status-text">{host}:{port}</span>
-        </div>
-        <button class="btn-danger tb-disconnect-btn" onclick={disconnect}>Disconnect</button>
+          <span class="status-disconnect-hint" aria-hidden="true">Disconnect</span>
+        </button>
       </div>
     </div>
   {/if}
@@ -767,13 +784,38 @@
 
   /* ─── Status indicator (toolbar) ───────────────────── */
 
-  .toolbar-status {
+  .toolbar-status-btn {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 0 8px;
+    padding: 3px 8px;
+    background: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
     font-size: 12px;
     color: #555;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
+  }
+
+  .toolbar-status-btn:hover {
+    background: #fee2e2;
+    border-color: #fca5a5;
+    color: #b91c1c;
+  }
+
+  .toolbar-status-btn:hover .status-text {
+    display: none;
+  }
+
+  .status-disconnect-hint {
+    display: none;
+  }
+
+  .toolbar-status-btn:hover .status-disconnect-hint {
+    display: inline;
   }
 
   .status-dot {
@@ -797,8 +839,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    background: #fff;
-    border-bottom: 1px solid #e5e7eb;
+    background: #f3f4f6;
+    border-bottom: 1px solid #d1d5db;
     padding: 0 8px;
     height: 40px;
     flex-shrink: 0;
@@ -808,6 +850,7 @@
     display: flex;
     align-items: center;
     gap: 4px;
+    flex: 1;
   }
 
   .toolbar-right {
@@ -821,22 +864,27 @@
     align-items: center;
     gap: 5px;
     padding: 4px 10px;
-    background: none;
-    border: 1px solid transparent;
+    background: #ffffff;
+    border: 1px solid #e0e0e0;
     border-radius: 4px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
     font-size: 13px;
     color: #374151;
     cursor: pointer;
     white-space: nowrap;
-    transition: background 0.12s, border-color 0.12s;
+    transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
   }
 
   .toolbar-btn:hover:not(:disabled) {
     background: #f0f4ff;
     border-color: #c7d2fe;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   }
 
   .toolbar-btn:disabled {
+    background: #fafafa;
+    border-color: #ebebeb;
+    box-shadow: none;
     color: #bbb;
     cursor: not-allowed;
     pointer-events: none;
@@ -859,13 +907,8 @@
   .toolbar-sep {
     width: 1px;
     height: 20px;
-    background: #e5e7eb;
+    background: #d1d5db;
     margin: 0 4px;
-  }
-
-  .tb-disconnect-btn {
-    padding: 4px 12px !important;
-    font-size: 12px !important;
   }
 
   /* Active (pressed) state for toggle toolbar buttons */

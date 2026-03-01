@@ -5,6 +5,8 @@
   export let segmentName: string;
   export let description: string | null = null;
   export let isSelected: boolean = false;
+  /** Whether this segment has unsaved pending edits (FR-012b) */
+  export let hasPendingEdits: boolean = false;
 
   const dispatch = createEventDispatcher<{ select: { segmentId: string; segmentName: string } }>();
 
@@ -19,7 +21,16 @@
   on:click={handleClick}
   aria-pressed={isSelected}
 >
-  <span class="segment-name">{segmentName}</span>
+  <span class="segment-name-row">
+    <span class="segment-name">{segmentName}</span>
+    {#if hasPendingEdits}
+      <span
+        class="pending-edits-dot"
+        title="Unsaved changes pending"
+        aria-label="Unsaved changes pending"
+      ></span>
+    {/if}
+  </span>
   {#if description}
     <span class="segment-description">{description}</span>
   {/if}
@@ -67,6 +78,24 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .segment-name-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .pending-edits-dot {
+    flex-shrink: 0;
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background-color: #ca8500;                     /* amber — unsaved changes (distinct from selection blue) */
+    border: 1.5px solid #fff;
+    box-shadow: 0 0 0 1px rgba(202, 133, 0, 0.35);
   }
 
   .segment-description {

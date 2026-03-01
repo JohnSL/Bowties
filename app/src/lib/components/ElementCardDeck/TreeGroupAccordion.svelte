@@ -20,6 +20,7 @@
   import PillSelector from '$lib/components/PillSelector/PillSelector.svelte';
   import TreeLeafRow from './TreeLeafRow.svelte';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
+  import { pendingEditsStore, pendingEditsVersion } from '$lib/stores/pendingEdits.svelte';
 
   /** The group node from the unified tree */
   export let group: GroupConfigNode;
@@ -32,6 +33,12 @@
    * When provided with 2+ items, PillSelector replaces per-instance accordions.
    */
   export let siblings: GroupConfigNode[] = [];
+  /** Whether the parent node is offline — disables all inputs (FR-007, T050) */
+  export let isNodeOffline: boolean = false;
+  /** Segment origin address — forwarded to TreeLeafRow for PendingEdit keying */
+  export let segmentOrigin: number = 0;
+  /** Segment display name — forwarded to TreeLeafRow for progress labels */
+  export let segmentName: string = '';
 
   // ── Pill-selector state ──
   let selectedInstanceIndex = 0;
@@ -45,6 +52,37 @@
     label: getInstanceDisplayName(s),
     description: s.instanceLabel,
   }));
+
+  // ── Dirty-instance tracking ──
+  // Subscribe to the version counter so the derived set re-computes on every edit.
+  $: _version = $pendingEditsVersion;
+
+  /**
+   * Returns the set of sibling indices that have at least one pending edit,
+   * determined by checking whether any edit's fieldPath starts with the
+   * sibling's own path (i.e. the edit is a descendant of that instance).
+   */
+  function computeDirtyInstances(sibs: GroupConfigNode[], nid: string, _v: number): Set<number> {
+    const result = new Set<number>();
+    if (sibs.length < 2) return result;
+    const edits = pendingEditsStore.allEdits.filter(
+      (e) => e.nodeId === nid && (e.writeState === 'dirty' || e.writeState === 'error'),
+    );
+    if (edits.length === 0) return result;
+    for (let i = 0; i < sibs.length; i++) {
+      const sibPath = sibs[i].path;
+      const hasDirty = edits.some(
+        (edit) =>
+          edit.fieldPath.length >= sibPath.length &&
+          sibPath.every((seg, j) => edit.fieldPath[j] === seg),
+      );
+      if (hasDirty) result.add(i);
+    }
+    return result;
+  }
+
+  $: dirtyInstances = computeDirtyInstances(siblings, nodeId, _version);
+  $: hasDirtyInstances = dirtyInstances.size > 0;
 
   // Group children for the active group to handle nested replications
   $: groupedChildren = groupReplicatedChildren(activeGroup.children);
@@ -66,11 +104,12 @@
   <!-- Replicated group with pill selector — label + pill on left, always expanded -->
   <div class="pill-section" style="--depth: {depth}; --field-label-width: {depth >= 3 ? '100px' : '120px'}">
     <div class="pill-section-header">
-      <span class="pill-section-name">{group.replicationOf}</span>
+      <span class="pill-section-name" class:pill-section-name--dirty={hasDirtyInstances}>{group.replicationOf}</span>
       <PillSelector
         items={pillItems}
         selected={selectedInstanceIndex}
         onSelect={handlePillSelect}
+        dirtyValues={dirtyInstances}
       />
     </div>
 
@@ -81,12 +120,15 @@
 
       {#each groupedChildren as item}
         {#if item.type === 'leaf'}
-          <TreeLeafRow leaf={item.node} usedIn={getUsedIn(item.node)} {depth} />
+          <TreeLeafRow leaf={item.node} usedIn={getUsedIn(item.node)} {depth} {nodeId} {segmentOrigin} {segmentName} {isNodeOffline} />
         {:else if item.type === 'group'}
           <svelte:self
             group={item.node}
             {nodeId}
             depth={depth + 1}
+            {segmentOrigin}
+            {segmentName}
+            {isNodeOffline}
           />
         {:else if item.type === 'replicatedSet'}
           <svelte:self
@@ -94,6 +136,9 @@
             {nodeId}
             depth={depth + 1}
             siblings={item.instances}
+            {segmentOrigin}
+            {segmentName}
+            {isNodeOffline}
           />
         {/if}
       {/each}
@@ -112,12 +157,15 @@
 
     {#each groupedChildren as item}
       {#if item.type === 'leaf'}
-        <TreeLeafRow leaf={item.node} usedIn={getUsedIn(item.node)} {depth} />
+        <TreeLeafRow leaf={item.node} usedIn={getUsedIn(item.node)} {depth} {nodeId} {segmentOrigin} {segmentName} {isNodeOffline} />
       {:else if item.type === 'group'}
         <svelte:self
           group={item.node}
           {nodeId}
           depth={depth + 1}
+          {segmentOrigin}
+          {segmentName}
+          {isNodeOffline}
         />
       {:else if item.type === 'replicatedSet'}
         <svelte:self
@@ -125,6 +173,9 @@
           {nodeId}
           depth={depth + 1}
           siblings={item.instances}
+          {segmentOrigin}
+          {segmentName}
+          {isNodeOffline}
         />
       {/if}
     {/each}
@@ -162,10 +213,29 @@
     font-weight: 600;
     color: #323130;                                /* colorNeutralForeground1 — warmer */
     white-space: nowrap;
+    position: relative;
+    padding-left: 0;
+    transition: padding-left 0.1s ease;
+  }
+
+  /* Amber vertical bar — indicates unsaved changes exist in this replicated group */
+  .pill-section-name--dirty {
+    padding-left: 9px;
+  }
+
+  .pill-section-name--dirty::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 1px;
+    bottom: 1px;
+    width: 3px;
+    border-radius: 1.5px;
+    background: #ca8500;                           /* amber — matches sidebar pending-edits dot */
   }
 
   .pill-section-body {
-    padding: 6px 12px 8px;
+    padding: 4px 4px 6px;
     display: flex;
     flex-direction: column;
     gap: var(--gap, 4px);
@@ -179,7 +249,7 @@
     margin-top: 6px;
     padding-top: 10px;
     border-top: 1px solid #e1dfdd;                 /* subtle section divider */
-    padding-left: calc(var(--depth, 0) * 12px);
+    padding-left: calc(var(--depth, 0) * 8px);
     font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
   }
 

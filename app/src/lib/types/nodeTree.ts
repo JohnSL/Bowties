@@ -365,3 +365,91 @@ function parseSegIndex(key: string): number | null {
   const match = key.match(/^seg:(\d+)$/);
   return match ? parseInt(match[1], 10) : null;
 }
+
+// ─── Spec 007: Edit & Write Types ─────────────────────────────────────────────
+
+/** Validation state for a pending edit. */
+export type ValidationState = 'valid' | 'invalid';
+
+/** Write lifecycle state for a pending edit. */
+export type WriteState = 'dirty' | 'writing' | 'error' | 'clean';
+
+/** State of an overall save operation. */
+export type SaveState = 'idle' | 'saving' | 'completed' | 'partial-failure';
+
+/**
+ * Represents a single field that has been modified but not yet persisted to
+ * the node. Keyed by `"${nodeId}:${space}:${address}"` in `PendingEditsStore`.
+ */
+export interface PendingEdit {
+  /** Unique compound key: `"${nodeId}:${space}:${address}"` */
+  key: string;
+  /** Node ID in dotted-hex (e.g., `"05.01.01.01.03.00"`) */
+  nodeId: string;
+  /** Segment origin address (for per-segment save queries) */
+  segmentOrigin: number;
+  /** Segment name (for progress display) */
+  segmentName: string;
+  /** Memory address of the field */
+  address: number;
+  /** Address space byte (e.g. 0xFD for Configuration) */
+  space: number;
+  /** Field size in bytes (from CDI) */
+  size: number;
+  /** Leaf element type */
+  elementType: LeafType;
+  /** Path in the config tree (for display in errors) */
+  fieldPath: string[];
+  /** Human-readable field name */
+  fieldLabel: string;
+  /** Value last confirmed read from the node */
+  originalValue: TreeConfigValue;
+  /** Current user-entered value */
+  pendingValue: TreeConfigValue;
+  /** Whether the pending value passes CDI constraint validation */
+  validationState: ValidationState;
+  /** Validation error message, or null when valid */
+  validationMessage: string | null;
+  /** Current write lifecycle state */
+  writeState: WriteState;
+  /** Error message from the last failed write attempt */
+  writeError: string | null;
+  /** CDI-defined constraints for this field */
+  constraints: LeafConstraints | null;
+}
+
+/**
+ * Outcome of a write operation for a single field.
+ * Mirrors the Rust `WriteResponse` struct (camelCase via serde).
+ */
+export interface WriteResult {
+  /** Memory address that was written */
+  address: number;
+  /** Address space byte that was written */
+  space: number;
+  /** Whether the write succeeded */
+  success: boolean;
+  /** Protocol-level error code if the write failed */
+  errorCode: number | null;
+  /** Human-readable error message if the write failed */
+  errorMessage: string | null;
+  /** Number of attempts made (1–3) */
+  retryCount: number;
+}
+
+/**
+ * Tracks the overall progress of a save operation in the UI.
+ */
+export interface SaveProgress {
+  /** Current save lifecycle state */
+  state: SaveState;
+  /** Total number of fields to write in this save batch */
+  total: number;
+  /** Number of fields written successfully so far */
+  completed: number;
+  /** Number of fields that failed during this save */
+  failed: number;
+  /** Label of the field currently being written, or null when idle */
+  currentFieldLabel: string | null;
+}
+

@@ -2231,6 +2231,117 @@ pub async fn get_card_elements(
 }
 
 // ============================================================================
+// Spec 007: Write Configuration Value Commands
+// ============================================================================
+
+/// Response returned by `write_config_value`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteResponse {
+    pub address: u32,
+    pub space: u8,
+    pub success: bool,
+    pub error_code: Option<u16>,
+    pub error_message: Option<String>,
+    pub retry_count: u32,
+}
+
+/// Write a raw byte array to a node's configuration memory.
+///
+/// # Arguments
+/// * `node_id`  — dotted-hex node identifier (e.g. `"02.01.57.00.00.01"`)
+/// * `address`  — absolute memory address within the address space
+/// * `space`    — address space byte (e.g. `0xFD` for Configuration)
+/// * `data`     — raw bytes to write (1–64 bytes per call)
+#[tauri::command]
+pub async fn write_config_value(
+    state: tauri::State<'_, AppState>,
+    node_id: String,
+    address: u32,
+    space: u8,
+    data: Vec<u8>,
+) -> Result<WriteResponse, String> {
+    // Parse node ID
+    let parsed_node_id = lcc_rs::NodeID::from_hex_string(&node_id)
+        .map_err(|e| format!("Invalid node ID: {}", e))?;
+
+    // Get connection arc
+    let conn_lock = state.connection.read().await;
+    let connection = conn_lock
+        .as_ref()
+        .ok_or("Not connected to network")?
+        .clone();
+    drop(conn_lock);
+
+    // Get node alias
+    let nodes = state.nodes.read().await;
+    let node = nodes
+        .iter()
+        .find(|n| n.node_id == parsed_node_id)
+        .ok_or_else(|| format!("Node not found: {}", node_id))?;
+    let alias = node.alias.value();
+    drop(nodes);
+
+    // Perform write
+    let mut conn = connection.lock().await;
+    match conn.write_memory(alias, space, address, &data).await {
+        Ok(()) => Ok(WriteResponse {
+            address,
+            space,
+            success: true,
+            error_code: None,
+            error_message: None,
+            retry_count: 0,
+        }),
+        Err(e) => Ok(WriteResponse {
+            address,
+            space,
+            success: false,
+            error_code: None,
+            error_message: Some(e.to_string()),
+            retry_count: 0,
+        }),
+    }
+}
+
+/// Send an Update Complete datagram to a node after writing configuration.
+///
+/// Per OpenLCB S-9.7.4.2 §4.23 — nodes use this as a signal to reload
+/// their configuration from memory and apply changes.
+#[tauri::command]
+pub async fn send_update_complete(
+    state: tauri::State<'_, AppState>,
+    node_id: String,
+) -> Result<(), String> {
+    // Parse node ID
+    let parsed_node_id = lcc_rs::NodeID::from_hex_string(&node_id)
+        .map_err(|e| format!("Invalid node ID: {}", e))?;
+
+    // Get connection arc
+    let conn_lock = state.connection.read().await;
+    let connection = conn_lock
+        .as_ref()
+        .ok_or("Not connected to network")?
+        .clone();
+    drop(conn_lock);
+
+    // Get node alias
+    let nodes = state.nodes.read().await;
+    let node = nodes
+        .iter()
+        .find(|n| n.node_id == parsed_node_id)
+        .ok_or_else(|| format!("Node not found: {}", node_id))?;
+    let alias = node.alias.value();
+    drop(nodes);
+
+    // Send update complete
+    let mut conn = connection.lock().await;
+    conn.send_update_complete(alias)
+        .await
+        .map_err(|e| format!("Failed to send update complete: {}", e))
+}
+
+// ============================================================================
 // T009: Unit tests for get_card_elements (navigate_and_build_card_tree)
 // ============================================================================
 

@@ -11,6 +11,7 @@
    */
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
+  import { nodeInfoStore } from '$lib/stores/nodeInfo';
   import type { SegmentNode, ConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
   import { isGroup, isLeaf, groupReplicatedChildren } from '$lib/types/nodeTree';
   import TreeGroupAccordion from './TreeGroupAccordion.svelte';
@@ -37,6 +38,13 @@
 
   /** Error from tree loading */
   let loadError = $derived(selectedSegment ? nodeTreeStore.getError(selectedSegment.nodeId) ?? null : null);
+
+  /** Whether the selected node is offline — disables all inputs (FR-007) */
+  let isNodeOffline = $derived(
+    selectedSegment
+      ? ($nodeInfoStore.get(selectedSegment.nodeId)?.connection_status === 'NotResponding')
+      : false
+  );
 
   function deriveSegment(
     sel: { nodeId: string; segmentId: string; segmentPath: string } | null,
@@ -92,16 +100,11 @@
     <div class="segment-content">
 
       <h2 class="segment-heading">{segment.name}</h2>
-
-      {#if segment.description}
-        <p class="segment-description">{segment.description}</p>
-      {/if}
-
       {#each groupedChildren as item, idx (idx)}
         {#if item.type === 'leaf'}
           <!-- Direct leaf field at segment level (e.g. User Info fields) -->
           <div class="segment-leaf">
-            <TreeLeafRow leaf={item.node} usedIn={getUsedIn(nodeId, item.node)} depth={0} />
+            <TreeLeafRow leaf={item.node} usedIn={getUsedIn(nodeId, item.node)} depth={0} {nodeId} segmentOrigin={segment.origin} segmentName={segment.name} {isNodeOffline} />
           </div>
         {:else if item.type === 'replicatedSet'}
           <!-- Replicated group → pill-selectable section -->
@@ -110,11 +113,14 @@
             {nodeId}
             depth={0}
             siblings={item.instances}
+            segmentOrigin={segment.origin}
+            segmentName={segment.name}
+            {isNodeOffline}
           />
         {:else if item.type === 'group'}
           {#if item.node.replicationCount > 1}
             <!-- Single replicated instance (shouldn't normally happen after grouping) -->
-            <TreeGroupAccordion group={item.node} {nodeId} depth={0} />
+            <TreeGroupAccordion group={item.node} {nodeId} depth={0} segmentOrigin={segment.origin} segmentName={segment.name} {isNodeOffline} />
           {:else}
             <!-- Non-replicated group → section header with children -->
             {@const innerGrouped = groupReplicatedChildren(item.node.children)}
@@ -128,19 +134,25 @@
 
               {#each innerGrouped as inner, innerIdx (innerIdx)}
                 {#if inner.type === 'leaf'}
-                  <TreeLeafRow leaf={inner.node} usedIn={getUsedIn(nodeId, inner.node)} depth={1} />
+                  <TreeLeafRow leaf={inner.node} usedIn={getUsedIn(nodeId, inner.node)} depth={1} {nodeId} segmentOrigin={segment.origin} segmentName={segment.name} {isNodeOffline} />
                 {:else if inner.type === 'replicatedSet'}
                   <TreeGroupAccordion
                     group={inner.instances[0]}
                     {nodeId}
                     depth={1}
                     siblings={inner.instances}
+                    segmentOrigin={segment.origin}
+                    segmentName={segment.name}
+                    {isNodeOffline}
                   />
                 {:else if inner.type === 'group'}
                   <TreeGroupAccordion
                     group={inner.node}
                     {nodeId}
                     depth={1}
+                    segmentOrigin={segment.origin}
+                    segmentName={segment.name}
+                    {isNodeOffline}
                   />
                 {/if}
               {/each}

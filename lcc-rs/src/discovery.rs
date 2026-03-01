@@ -155,10 +155,10 @@ impl LccConnection {
         let mut nodes = HashMap::new();
         let start_time = Instant::now();
         let max_duration = Duration::from_millis(timeout_ms);
-        // 100ms silence after the FIRST response ends collection.
-        // Before any response arrives we wait the full timeout so slow/high-latency
-        // networks are not prematurely abandoned.
-        let silence_threshold = Duration::from_millis(100);
+        // After the first response, end collection once DISCOVERY_SILENCE_THRESHOLD_MS
+        // elapses with no further replies. Before any response we wait the full timeout
+        // so slow/high-latency networks are not prematurely abandoned.
+        let silence_threshold = Duration::from_millis(crate::constants::DISCOVERY_SILENCE_THRESHOLD_MS);
         let mut last_receive_time: Option<Instant> = None;
         
         loop {
@@ -174,7 +174,7 @@ impl LccConnection {
             }
             
             let remaining = max_duration.saturating_sub(start_time.elapsed());
-            let poll_timeout = std::cmp::min(remaining, Duration::from_millis(10));
+            let poll_timeout = std::cmp::min(remaining, Duration::from_millis(crate::constants::DISCOVERY_POLL_INTERVAL_MS));
             
             match tokio::time::timeout(poll_timeout, rx.recv()).await {
                 Ok(Ok(msg)) => {
@@ -234,10 +234,10 @@ impl LccConnection {
         let mut nodes = HashMap::new();
         let start_time = Instant::now();
         let max_duration = Duration::from_millis(timeout_ms);
-        // 100ms silence after the FIRST response ends collection.
-        // Before any response arrives we wait the full timeout so slow/high-latency
-        // networks are not prematurely abandoned.
-        let silence_threshold = Duration::from_millis(100);
+        // After the first response, end collection once DISCOVERY_SILENCE_THRESHOLD_MS
+        // elapses with no further replies. Before any response we wait the full timeout
+        // so slow/high-latency networks are not prematurely abandoned.
+        let silence_threshold = Duration::from_millis(crate::constants::DISCOVERY_SILENCE_THRESHOLD_MS);
         let mut last_receive_time: Option<Instant> = None;
         
         loop {
@@ -255,7 +255,7 @@ impl LccConnection {
             
             // Try to receive a frame with a short timeout
             let remaining_time = max_duration.saturating_sub(start_time.elapsed());
-            let poll_timeout = std::cmp::min(remaining_time, Duration::from_millis(10));
+            let poll_timeout = std::cmp::min(remaining_time, Duration::from_millis(crate::constants::DISCOVERY_POLL_INTERVAL_MS));
             
             match transport.receive(poll_timeout.as_millis() as u64).await? {
                 Some(frame) => {
@@ -903,6 +903,386 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
             "Timeout waiting for memory read response"
         )))
     }
+
+    // ========================================================================
+    // Memory Write Operations (Spec 007: Editable Node Configuration)
+    // ========================================================================
+
+    /// Write data to a node's memory at the specified address and space.
+    ///
+    /// Handles: datagram framing, send, wait for Datagram Received OK,
+    /// retry up to 3 times with 3-second timeout per attempt.
+    ///
+    /// For data > 64 bytes, automatically chunks into sequential ≤64-byte writes
+    /// with address advancing.
+    ///
+    /// Uses `RequestWithNoReply` pattern: Datagram Received OK = success.
+    pub async fn write_memory(
+        &mut self,
+        dest_alias: u16,
+        address_space: u8,
+        address: u32,
+        data: &[u8],
+    ) -> Result<()> {
+        if data.is_empty() {
+            return Err(crate::Error::Protocol("Write data cannot be empty".to_string()));
+        }
+
+        // Chunk data into ≤64-byte segments
+        let mut offset: usize = 0;
+        while offset < data.len() {
+            let chunk_size = (data.len() - offset).min(64);
+            let chunk = &data[offset..offset + chunk_size];
+            let chunk_address = address + offset as u32;
+
+            self.write_memory_chunk(dest_alias, address_space, chunk_address, chunk).await?;
+            offset += chunk_size;
+        }
+
+        Ok(())
+    }
+
+    /// Write a single chunk (≤64 bytes) with retry logic.
+    async fn write_memory_chunk(
+        &mut self,
+        dest_alias: u16,
+        address_space: u8,
+        address: u32,
+        data: &[u8],
+    ) -> Result<()> {
+        const MAX_RETRIES: u32 = crate::constants::WRITE_MEMORY_MAX_RETRIES;
+        const TIMEOUT_MS: u64 = crate::constants::WRITE_MEMORY_TIMEOUT_MS;
+
+        let mut last_error = None;
+
+        for attempt in 0..MAX_RETRIES {
+            match self.write_memory_once(dest_alias, address_space, address, data, TIMEOUT_MS).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    eprintln!(
+                        "Write attempt {}/{} failed for addr 0x{:08X}: {}",
+                        attempt + 1, MAX_RETRIES, address, e
+                    );
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| {
+            crate::Error::Protocol("Write failed after retries".to_string())
+        }))
+    }
+
+    /// Single write attempt — send write datagram, await Datagram Received OK.
+    async fn write_memory_once(
+        &mut self,
+        dest_alias: u16,
+        address_space: u8,
+        address: u32,
+        data: &[u8],
+        timeout_ms: u64,
+    ) -> Result<()> {
+        if let Some(ref dispatcher) = self.dispatcher {
+            let our_alias = self.our_alias.value();
+            Self::write_memory_with_dispatcher(
+                dispatcher,
+                our_alias,
+                dest_alias,
+                address_space,
+                address,
+                data,
+                timeout_ms,
+            ).await
+        } else if self.transport.is_some() {
+            self.write_memory_direct(dest_alias, address_space, address, data, timeout_ms).await
+        } else {
+            Err(crate::Error::Protocol("No transport or dispatcher available".to_string()))
+        }
+    }
+
+    /// Write memory in dispatcher mode.
+    async fn write_memory_with_dispatcher(
+        dispatcher: &Arc<Mutex<MessageDispatcher>>,
+        our_alias: u16,
+        dest_alias: u16,
+        address_space: u8,
+        address: u32,
+        data: &[u8],
+        timeout_ms: u64,
+    ) -> Result<()> {
+        use crate::protocol::{MemoryConfigCmd, AddressSpace};
+
+        let space = AddressSpace::from_u8(address_space)
+            .map_err(|e| crate::Error::Protocol(e))?;
+
+        let write_frames = MemoryConfigCmd::build_write(our_alias, dest_alias, space, address, data)?;
+
+        // Step 1: Subscribe BEFORE sending so we cannot miss the reply.
+        let mut rx = {
+            let disp = dispatcher.lock().await;
+            disp.subscribe_all()
+        };
+
+        // Step 2: Send the request (brief lock).
+        {
+            let disp = dispatcher.lock().await;
+            for frame in write_frames.iter() {
+                disp.send(frame).await?;
+            }
+        }
+
+        // Step 3: Wait for Datagram Received OK from dest_alias addressed to us.
+        let start_time = Instant::now();
+        let max_duration = Duration::from_millis(timeout_ms);
+
+        loop {
+            let remaining = max_duration.saturating_sub(start_time.elapsed());
+            if remaining.is_zero() {
+                return Err(crate::Error::Timeout(
+                    "Timeout waiting for write acknowledgment".to_string(),
+                ));
+            }
+
+            match tokio::time::timeout(remaining, rx.recv()).await {
+                Ok(Ok(msg)) => {
+                    // DatagramReceivedOk uses standard MTI format (not datagram)
+                    // Source alias in header, destination alias in data payload
+                    if let Ok((mti, src)) = MTI::from_header(msg.frame.header) {
+                        if mti == MTI::DatagramReceivedOk && src == dest_alias {
+                            // Check data payload for our alias
+                            if msg.frame.data.len() >= 2 {
+                                let dst = ((msg.frame.data[0] as u16) << 8) | (msg.frame.data[1] as u16);
+                                if dst == our_alias {
+                                    return Ok(());
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(Err(_)) => {
+                    return Err(crate::Error::Timeout(
+                        "Broadcast channel lagged during memory write".to_string(),
+                    ));
+                }
+                Err(_) => {
+                    return Err(crate::Error::Timeout(
+                        "Timeout waiting for write acknowledgment".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Write memory using direct transport reference.
+    async fn write_memory_direct(
+        &mut self,
+        dest_alias: u16,
+        address_space: u8,
+        address: u32,
+        data: &[u8],
+        timeout_ms: u64,
+    ) -> Result<()> {
+        let our_alias = self.our_alias.value();
+        if let Some(ref mut transport) = self.transport {
+            Self::write_memory_impl(
+                transport.as_mut(),
+                our_alias,
+                dest_alias,
+                address_space,
+                address,
+                data,
+                timeout_ms,
+            ).await
+        } else {
+            Err(crate::Error::Protocol("No transport available".to_string()))
+        }
+    }
+
+    /// Write memory implementation — static method using direct transport.
+    async fn write_memory_impl(
+        transport: &mut dyn LccTransport,
+        our_alias: u16,
+        dest_alias: u16,
+        address_space: u8,
+        address: u32,
+        data: &[u8],
+        timeout_ms: u64,
+    ) -> Result<()> {
+        use crate::protocol::{MemoryConfigCmd, AddressSpace};
+
+        let space = AddressSpace::from_u8(address_space)
+            .map_err(|e| crate::Error::Protocol(e))?;
+
+        let write_frames = MemoryConfigCmd::build_write(our_alias, dest_alias, space, address, data)?;
+
+        // Send all frames
+        for frame in write_frames.iter() {
+            transport.send(frame).await?;
+        }
+
+        // Wait for Datagram Received OK
+        let start_time = Instant::now();
+        let max_duration = Duration::from_millis(timeout_ms);
+
+        while start_time.elapsed() < max_duration {
+            let remaining = max_duration.saturating_sub(start_time.elapsed());
+            if let Some(frame) = transport.receive(remaining.as_millis() as u64).await? {
+                if let Ok((mti, src)) = MTI::from_header(frame.header) {
+                    if mti == MTI::DatagramReceivedOk && src == dest_alias {
+                        if frame.data.len() >= 2 {
+                            let dst = ((frame.data[0] as u16) << 8) | (frame.data[1] as u16);
+                            if dst == our_alias {
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(crate::Error::Timeout(
+            "Timeout waiting for write acknowledgment".to_string(),
+        ))
+    }
+
+    /// Send Update Complete command to a node.
+    ///
+    /// Sends `[0x20, 0xA8]` datagram, awaits Datagram Received OK.
+    /// Fire-and-forget per OpenLCB_Java `CdiPanel.runUpdateComplete()`.
+    pub async fn send_update_complete(
+        &mut self,
+        dest_alias: u16,
+    ) -> Result<()> {
+        if let Some(ref dispatcher) = self.dispatcher {
+            let our_alias = self.our_alias.value();
+            Self::send_update_complete_with_dispatcher(
+                dispatcher,
+                our_alias,
+                dest_alias,
+            ).await
+        } else if self.transport.is_some() {
+            self.send_update_complete_direct(dest_alias).await
+        } else {
+            Err(crate::Error::Protocol("No transport or dispatcher available".to_string()))
+        }
+    }
+
+    /// Send update complete in dispatcher mode.
+    async fn send_update_complete_with_dispatcher(
+        dispatcher: &Arc<Mutex<MessageDispatcher>>,
+        our_alias: u16,
+        dest_alias: u16,
+    ) -> Result<()> {
+        use crate::protocol::MemoryConfigCmd;
+
+        let frames = MemoryConfigCmd::build_update_complete(our_alias, dest_alias)?;
+
+        let mut rx = {
+            let disp = dispatcher.lock().await;
+            disp.subscribe_all()
+        };
+
+        {
+            let disp = dispatcher.lock().await;
+            for frame in frames.iter() {
+                disp.send(frame).await?;
+            }
+        }
+
+        // Wait for Datagram Received OK — node may spend several seconds writing to non-volatile storage.
+        let start_time = Instant::now();
+        let max_duration = Duration::from_millis(crate::constants::UPDATE_COMPLETE_TIMEOUT_MS);
+
+        loop {
+            let remaining = max_duration.saturating_sub(start_time.elapsed());
+            if remaining.is_zero() {
+                return Err(crate::Error::Timeout(
+                    "Timeout waiting for update complete acknowledgment".to_string(),
+                ));
+            }
+
+            match tokio::time::timeout(remaining, rx.recv()).await {
+                Ok(Ok(msg)) => {
+                    if let Ok((mti, src)) = MTI::from_header(msg.frame.header) {
+                        if mti == MTI::DatagramReceivedOk && src == dest_alias {
+                            if msg.frame.data.len() >= 2 {
+                                let dst = ((msg.frame.data[0] as u16) << 8) | (msg.frame.data[1] as u16);
+                                if dst == our_alias {
+                                    return Ok(());
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(Err(_)) => {
+                    return Err(crate::Error::Timeout(
+                        "Broadcast channel lagged during update complete".to_string(),
+                    ));
+                }
+                Err(_) => {
+                    return Err(crate::Error::Timeout(
+                        "Timeout waiting for update complete acknowledgment".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Send update complete using direct transport.
+    async fn send_update_complete_direct(
+        &mut self,
+        dest_alias: u16,
+    ) -> Result<()> {
+        let our_alias = self.our_alias.value();
+        if let Some(ref mut transport) = self.transport {
+            Self::send_update_complete_impl(
+                transport.as_mut(),
+                our_alias,
+                dest_alias,
+            ).await
+        } else {
+            Err(crate::Error::Protocol("No transport available".to_string()))
+        }
+    }
+
+    /// Send update complete implementation — static method.
+    async fn send_update_complete_impl(
+        transport: &mut dyn LccTransport,
+        our_alias: u16,
+        dest_alias: u16,
+    ) -> Result<()> {
+        use crate::protocol::MemoryConfigCmd;
+
+        let frames = MemoryConfigCmd::build_update_complete(our_alias, dest_alias)?;
+
+        for frame in frames.iter() {
+            transport.send(frame).await?;
+        }
+
+        // Wait for Datagram Received OK — node may spend several seconds writing to non-volatile storage.
+        let start_time = Instant::now();
+        let max_duration = Duration::from_millis(crate::constants::UPDATE_COMPLETE_TIMEOUT_MS);
+
+        while start_time.elapsed() < max_duration {
+            let remaining = max_duration.saturating_sub(start_time.elapsed());
+            if let Some(frame) = transport.receive(remaining.as_millis() as u64).await? {
+                if let Ok((mti, src)) = MTI::from_header(frame.header) {
+                    if mti == MTI::DatagramReceivedOk && src == dest_alias {
+                        if frame.data.len() >= 2 {
+                            let dst = ((frame.data[0] as u16) << 8) | (frame.data[1] as u16);
+                            if dst == our_alias {
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(crate::Error::Timeout(
+            "Timeout waiting for update complete acknowledgment".to_string(),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -1073,5 +1453,120 @@ mod tests {
         
         let nodes = connection.discover_nodes(100).await.unwrap();
         assert_eq!(nodes.len(), 1);
+    }
+
+    // --- write_memory tests (T008) ---
+
+    /// Create a Datagram Received OK frame from dest to source
+    fn make_datagram_ack(from_alias: u16, to_alias: u16) -> GridConnectFrame {
+        // DatagramReceivedOk uses to_header (source in header) + dest alias in data payload
+        let header = MTI::DatagramReceivedOk.to_header(from_alias).unwrap();
+        let data = vec![
+            ((to_alias >> 8) & 0xFF) as u8,
+            (to_alias & 0xFF) as u8,
+        ];
+        GridConnectFrame { header, data }
+    }
+
+    #[tokio::test]
+    async fn test_write_memory_single_chunk() {
+        // A small write (< 64 bytes) should send one write datagram and expect one ACK
+        let ack = make_datagram_ack(0xBBB, 0xAAA);
+        let mock = MockTransport::new(vec![ack]);
+        let mut connection = LccConnection::with_transport(
+            Box::new(mock),
+            NodeAlias::new(0xAAA).unwrap(),
+        );
+
+        let data = vec![0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x00]; // "Hello\0"
+        let result = connection.write_memory(0xBBB, 0xFD, 0x100, &data).await;
+        assert!(result.is_ok(), "Single-chunk write should succeed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_write_memory_multi_chunk() {
+        // A write > 64 bytes should chunk into multiple write datagrams
+        // 100 bytes → 64 + 36 = 2 chunks, 2 ACKs needed
+        let ack1 = make_datagram_ack(0xBBB, 0xAAA);
+        let ack2 = make_datagram_ack(0xBBB, 0xAAA);
+        let mock = MockTransport::new(vec![ack1, ack2]);
+        let mut connection = LccConnection::with_transport(
+            Box::new(mock),
+            NodeAlias::new(0xAAA).unwrap(),
+        );
+
+        let data = vec![0xAB; 100];
+        let result = connection.write_memory(0xBBB, 0xFD, 0x200, &data).await;
+        assert!(result.is_ok(), "Multi-chunk write should succeed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_write_memory_timeout_retry() {
+        // No ACK responses → should timeout and retry, then fail
+        let mock = MockTransport::new(vec![]); // no responses
+        let mut connection = LccConnection::with_transport(
+            Box::new(mock),
+            NodeAlias::new(0xAAA).unwrap(),
+        );
+
+        let data = vec![0x42];
+        let result = connection.write_memory(0xBBB, 0xFD, 0, &data).await;
+        assert!(result.is_err(), "Write with no ACK should fail after retries");
+    }
+
+    #[tokio::test]
+    async fn test_write_memory_empty_data_error() {
+        let mock = MockTransport::new(vec![]);
+        let mut connection = LccConnection::with_transport(
+            Box::new(mock),
+            NodeAlias::new(0xAAA).unwrap(),
+        );
+
+        let result = connection.write_memory(0xBBB, 0xFD, 0, &[]).await;
+        assert!(result.is_err(), "Empty write data should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_write_memory_address_advancement() {
+        // 128 bytes → 2 chunks at 64 bytes each
+        // First chunk at address 0, second at address 64
+        let ack1 = make_datagram_ack(0xBBB, 0xAAA);
+        let ack2 = make_datagram_ack(0xBBB, 0xAAA);
+        let mock = MockTransport::new(vec![ack1, ack2]);
+        let mut connection = LccConnection::with_transport(
+            Box::new(mock),
+            NodeAlias::new(0xAAA).unwrap(),
+        );
+
+        let data = vec![0xCC; 128];
+        let result = connection.write_memory(0xBBB, 0xFD, 0x1000, &data).await;
+        assert!(result.is_ok(), "Multi-chunk write with address advancement should succeed");
+    }
+
+    // --- send_update_complete tests (T009) ---
+
+    #[tokio::test]
+    async fn test_send_update_complete_success() {
+        let ack = make_datagram_ack(0xBBB, 0xAAA);
+        let mock = MockTransport::new(vec![ack]);
+        let mut connection = LccConnection::with_transport(
+            Box::new(mock),
+            NodeAlias::new(0xAAA).unwrap(),
+        );
+
+        let result = connection.send_update_complete(0xBBB).await;
+        assert!(result.is_ok(), "Update complete should succeed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_send_update_complete_timeout() {
+        let mock = MockTransport::new(vec![]); // no responses
+        let mut connection = LccConnection::with_transport(
+            Box::new(mock),
+            NodeAlias::new(0xAAA).unwrap(),
+        );
+
+        let result = connection.send_update_complete(0xBBB).await;
+        assert!(result.is_err(), "Update complete with no ACK should fail");
     }
 }

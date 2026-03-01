@@ -150,6 +150,8 @@ pub fn run() {
             commands::get_card_elements,
             commands::get_bowties,  // T011: Feature 006 bowtie catalog
             commands::get_node_tree,  // Spec 007: unified node tree
+            commands::write_config_value,  // Spec 007: write config value
+            commands::send_update_complete,  // Spec 007: send update complete
             update_menu_state,
         ])
         .run(tauri::generate_context!())

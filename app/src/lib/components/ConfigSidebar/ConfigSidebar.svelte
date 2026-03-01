@@ -6,6 +6,7 @@
   import NodeEntry from './NodeEntry.svelte';
   import SegmentEntry from './SegmentEntry.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
+  import { pendingEditsStore, pendingEditsVersion } from '$lib/stores/pendingEdits.svelte';
   import type { SegmentInfo } from '$lib/stores/configSidebar';
 
   const dispatch = createEventDispatcher<{ readNodeConfig: { nodeId: string } }>();
@@ -76,6 +77,7 @@
             segmentName: seg.name ?? 'Unnamed Segment',
             description: seg.description ?? null,
             space: seg.space,
+            origin: seg.origin,
           }));
           nodeSegments = new Map(nodeSegments.set(nodeId, segments));
           configSidebarStore.setNodeSegments(nodeId, segments);
@@ -99,6 +101,9 @@
   $: nodes = $nodeInfoStore;
   $: sidebarState = $configSidebarStore;
   $: configReadNodes = $configReadNodesStore;
+  $: _editsVersion = $pendingEditsVersion;
+  // Recompute all pending edits whenever _editsVersion ticks so template badges update
+  $: allPendingEdits = _editsVersion >= 0 ? pendingEditsStore.allEdits : [];
 </script>
 
 <aside class="config-sidebar">
@@ -127,6 +132,7 @@
             {isOffline}
             {isLoading}
             configNotRead={isConfigNotRead}
+            hasPendingEdits={allPendingEdits.some(e => e.nodeId === nodeId && (e.writeState === 'dirty' || e.writeState === 'error'))}
             on:toggle={() => handleNodeToggle(nodeId, node, isExpanded)}
             on:readConfig={() => dispatch('readNodeConfig', { nodeId })}
           />
@@ -151,6 +157,7 @@
                     segmentName={seg.segmentName}
                     description={seg.description}
                     {isSelected}
+                    hasPendingEdits={allPendingEdits.some(e => e.nodeId === nodeId && e.segmentOrigin === seg.origin && (e.writeState === 'dirty' || e.writeState === 'error'))}
                     on:select={() => handleSegmentSelect(nodeId, seg)}
                   />
                 {/each}
