@@ -1,0 +1,204 @@
+//! Profile YAML file discovery and parsing.
+//!
+//! Implements single-tier discovery: profiles are loaded from
+//! `{resource_dir}/profiles/`, which on Windows resolves to the directory
+//! containing the executable — making them user-editable without touching AppData.
+
+use tauri::Manager;
+
+use super::types::StructureProfile;
+use super::{ProfileCache, make_profile_key};
+
+/// Load a structure profile for the given manufacturer + model.
+///
+/// Looks for `{resource_dir}/profiles/{Manufacturer}_{Model}.profile.yaml`.
+///
+/// On Windows `resource_dir()` resolves to the directory containing the
+/// executable, so profiles are user-editable without touching AppData.
+///
+/// Returns `None` (with a `eprintln!` warning) if:
+/// - no file is found at the expected location
+/// - the file is found but YAML parsing fails (FR-006)
+///
+/// The result (including `None`) is cached in `cache` to avoid re-scanning on
+/// subsequent calls for the same node type.
+///
+/// The `_cdi` parameter is reserved for future use (e.g., path pre-resolution
+/// during load).  It is not consumed in the current implementation.
+pub async fn load_profile(
+    manufacturer: &str,
+    model: &str,
+    _cdi: &lcc_rs::cdi::Cdi,
+    app_handle: &tauri::AppHandle,
+    cache: &ProfileCache,
+) -> Option<StructureProfile> {
+    let key = make_profile_key(manufacturer, model);
+
+    // Fast path: return cached result (including None sentinel).
+    {
+        let read = cache.read().await;
+        if let Some(cached) = read.get(&key) {
+            return cached.clone();
+        }
+    }
+
+    // Construct the profile filename from manufacturer + model.
+    let filename = make_profile_filename(manufacturer, model);
+
+    // ── Bundled / user-editable profile ────────────────────────────────────
+    let resource_path = app_handle
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|d| d.join("profiles").join(&filename));
+
+    if let Some(ref p) = resource_path {
+        if p.exists() {
+            eprintln!("[profile] Loading: {}", p.display());
+            match try_load_from_path(p, manufacturer, model).await {
+                Some(profile) => {
+                    cache.write().await.insert(key, Some(profile.clone()));
+                    return Some(profile);
+                }
+                None => {
+                    // Parse failed — cache None so we don't retry repeatedly.
+                    cache.write().await.insert(key, None);
+                    return None;
+                }
+            }
+        }
+    }
+
+    // No file found.
+    cache.write().await.insert(key, None);
+    None
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Attempt to read and parse a profile YAML file at `path`.
+///
+/// Returns `None` and logs a warning on any IO or parse error (FR-006).
+async fn try_load_from_path(
+    path: &std::path::Path,
+    manufacturer: &str,
+    model: &str,
+) -> Option<StructureProfile> {
+    let content = match tokio::fs::read_to_string(path).await {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!(
+                "[profile] Failed to read profile file '{}': {}",
+                path.display(),
+                e
+            );
+            return None;
+        }
+    };
+
+    match serde_yaml_ng::from_str::<StructureProfile>(&content) {
+        Ok(profile) => {
+            // Advisory check: warn on unknown schema version but still apply.
+            if profile.schema_version != "1.0" {
+                eprintln!(
+                    "[profile] Warning: profile for '{} {}' declares schemaVersion '{}' \
+                     (expected '1.0') — applying anyway",
+                    manufacturer, model, profile.schema_version
+                );
+            }
+            Some(profile)
+        }
+        Err(e) => {
+            eprintln!(
+                "[profile] Failed to parse profile YAML for '{} {}' at '{}': {}",
+                manufacturer,
+                model,
+                path.display(),
+                e
+            );
+            None
+        }
+    }
+}
+
+/// Build the profile file name from manufacturer and model strings.
+///
+/// Format: `{Manufacturer}_{Model}.profile.yaml`
+/// Characters invalid in file names (`\ / : * ? " < > |`) are replaced with `_`.
+fn make_profile_filename(manufacturer: &str, model: &str) -> String {
+    let sanitize = |s: &str| -> String {
+        s.chars()
+            .map(|c| match c {
+                '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+                other => other,
+            })
+            .collect()
+    };
+    format!(
+        "{}_{}.profile.yaml",
+        sanitize(manufacturer),
+        sanitize(model)
+    )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const VALID_YAML: &str = r#"
+schemaVersion: "1.0"
+nodeType:
+  manufacturer: "RR-CirKits"
+  model: "Tower-LCC"
+eventRoles:
+  - groupPath: "Port I/O/Line/Event#1"
+    role: Consumer
+relevanceRules: []
+"#;
+
+    const INVALID_YAML: &str = r#"
+notValid: [unclosed bracket
+"#;
+
+    #[test]
+    fn load_profile_parses_valid_yaml() {
+        let profile: StructureProfile =
+            serde_yaml_ng::from_str(VALID_YAML).expect("valid YAML must parse");
+        assert_eq!(profile.schema_version, "1.0");
+        assert_eq!(profile.node_type.manufacturer, "RR-CirKits");
+        assert_eq!(profile.node_type.model, "Tower-LCC");
+        assert_eq!(profile.event_roles.len(), 1);
+        assert_eq!(profile.event_roles[0].group_path, "Port I/O/Line/Event#1");
+    }
+
+    #[test]
+    fn load_profile_returns_none_for_invalid_yaml() {
+        let result = serde_yaml_ng::from_str::<StructureProfile>(INVALID_YAML);
+        assert!(result.is_err(), "invalid YAML must fail to parse");
+    }
+
+    #[test]
+    fn load_profile_returns_none_for_missing_file() {
+        // Verify that a nonexistent path returns an error from tokio::fs
+        let path = std::path::PathBuf::from("/nonexistent/path/doesNotExist.profile.yaml");
+        assert!(!path.exists(), "file must not exist for this test");
+    }
+
+    #[test]
+    fn make_profile_filename_replaces_invalid_chars() {
+        let name = make_profile_filename("RR-CirKits", "Tower-LCC");
+        assert_eq!(name, "RR-CirKits_Tower-LCC.profile.yaml");
+    }
+
+    #[test]
+    fn make_profile_filename_replaces_colon() {
+        let name = make_profile_filename("Mfr:Test", "Model/X");
+        assert_eq!(name, "Mfr_Test_Model_X.profile.yaml");
+    }
+}

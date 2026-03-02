@@ -1,0 +1,166 @@
+{
+  "nodeType": {
+    "manufacturer": "RR-CirKits",
+    "model": "Tower-LCC"
+  },
+  "rules": [
+    {
+      "id": "R001",
+      "affectedSection": "Port I/O/Line/Input Function",
+      "controllingField": "Port I/O/Line/Output Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["No Function"],
+      "explanation": "Input configuration is irrelevant when an output function is not enabled. A line must be configured consistently as either input or output (except in special Sample modes where both can be used together).",
+      "citation": "Manual Section 5.3.2 'I/O Configuration': 'A line must only have output functions or input functions enabled.'"
+    },
+    {
+      "id": "R002",
+      "affectedSection": "Port I/O/Line/Delay",
+      "controllingField": "Port I/O/Line/Output Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["No Function"],
+      "explanation": "Delay timers for output effects are irrelevant when no output function is configured. The delays control blink rates, pulse lengths, and output transition timing which only apply when an actual output function is enabled.",
+      "citation": "Manual Section 5.3.3 'Delay': 'Each line includes two delay timers that are used to control blinks, pulses, and input debounce times.' These are only meaningful when an output or input function is active."
+    },
+    {
+      "id": "R003",
+      "affectedSection": "Port I/O/Line/Event[0-5]/Command",
+      "controllingField": "Port I/O/Line/Output Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["No Function"],
+      "explanation": "Consumer events (Commands) that control line output state are irrelevant when no output function is configured. Commands set the output state to On, Off, Toggle, or control veto, which have no effect without an active output function.",
+      "citation": "Manual Section 5.3.4 'Commands': 'Commands are consumer events that are sent to the line. A command can directly control the line, for example by turning it on or off.' This only applies when Output Function is not 'No Function'."
+    },
+    {
+      "id": "R004",
+      "affectedSection": "Port I/O/Line/Event[0-5]/Action",
+      "controllingField": "Port I/O/Line/Output Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["No Function"],
+      "explanation": "The action response to a consumer event is irrelevant when no output function is configured. The action field specifies how the command affects the line (On, Off, Change, Veto, etc.), which is meaningless without an active output.",
+      "citation": "Manual Section 5.3.4 'Commands': 'Each Consumer event is associated with a single task or action. For example event 1 could be used to turn an output 'on', and event 2 could be used to turn an output 'off'.' These actions require an active Output Function."
+    },
+    {
+      "id": "R005",
+      "affectedSection": "Port I/O/Line/Event[6-11]/Upon this action",
+      "controllingField": "Port I/O/Line/Input Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Disabled"],
+      "explanation": "Producer event triggers based on input state changes are irrelevant when input function is disabled. The available triggers (Input On/Off, Gated On/Off, Function changes, etc.) all depend on having an active input or output function monitoring.",
+      "citation": "Manual Section 5.3.5 'Indications': 'Indications are producer events that are sent to the bus. Each line has 6 producer events associated with it.' The triggers like 'Input On', 'Input Off', and 'Output State' changes require an active input or output function."
+    },
+    {
+      "id": "R006",
+      "affectedSection": "Port I/O/Line/Event[6-11]/Indicator",
+      "controllingField": "Port I/O/Line/Input Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Disabled"],
+      "explanation": "Producer event EventID configuration is irrelevant when input function is disabled, since the line cannot monitor input state changes to trigger these events.",
+      "citation": "Manual Section 5.3.5 'Indications': 'Each Producer event is associated with one action,' which requires an active input or output function to trigger."
+    },
+    {
+      "id": "R007",
+      "affectedSection": "Conditionals/Logic/Logic Operation",
+      "controllingField": "Conditionals/Logic/Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Blocked"],
+      "explanation": "The logic operation (AND, OR, XOR, etc.) is irrelevant when the conditional group is blocked. A blocked group is not evaluated, so the logic function has no effect.",
+      "citation": "Manual Section 6.1 'Logic Conditionals': 'Each conditional is assigned a group type. (0) – Blocked' A blocked conditional group is skipped during evaluation."
+    },
+    {
+      "id": "R008",
+      "affectedSection": "Conditionals/Logic/Variable #1",
+      "controllingField": "Conditionals/Logic/Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Blocked"],
+      "explanation": "Variable #1 configuration is irrelevant when the conditional group is blocked. A blocked conditional is never evaluated, so its variables are not used.",
+      "citation": "Manual Section 6.1 'Logic Conditionals': 'Each conditional is assigned a group type. (0) – Blocked' indicates the conditional is not processed."
+    },
+    {
+      "id": "R009",
+      "affectedSection": "Conditionals/Logic/Variable #2",
+      "controllingField": "Conditionals/Logic/Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Blocked"],
+      "explanation": "Variable #2 configuration is irrelevant when the conditional group is blocked. A blocked conditional is never evaluated, so its variables are not used.",
+      "citation": "Manual Section 6.1 'Logic Conditionals': 'Each conditional is assigned a group type. (0) – Blocked' indicates the conditional is not processed."
+    },
+    {
+      "id": "R010",
+      "affectedSection": "Conditionals/Logic/Time Delay before action",
+      "controllingField": "Conditionals/Logic/Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Blocked"],
+      "explanation": "Delay timer configuration is irrelevant when the conditional group is blocked. A blocked conditional never executes, so its delay timer has no effect.",
+      "citation": "Manual Section 6.1 'Logic Conditionals': 'Each conditional is assigned a group type. (0) – Blocked' indicates the conditional is not processed."
+    },
+    {
+      "id": "R011",
+      "affectedSection": "Conditionals/Logic/Action",
+      "controllingField": "Conditionals/Logic/Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Blocked"],
+      "explanation": "Action event configuration (up to 4 output events per conditional) is irrelevant when the conditional group is blocked. A blocked conditional is never evaluated, so its actions are never sent.",
+      "citation": "Manual Section 6.1 'Logic Conditionals': 'Each conditional may generate (produce) up to four events when it evaluates to true' but only if the conditional is active (not Blocked)."
+    },
+    {
+      "id": "R012",
+      "affectedSection": "Conditionals/Logic/Variable #1/Trigger",
+      "controllingField": "Conditionals/Logic/Variable #1/Trigger",
+      "irrelevantWhen": [2],
+      "irrelevantValueLabels": ["None"],
+      "explanation": "Variable #1 event configuration is irrelevant when its trigger is set to 'None'. If a variable is not triggered by any event, the source and track speed settings have no effect.",
+      "citation": "Manual Section 6.2 'Variables': 'Each variable has two events (consumers) associated with it.' When Trigger is set to 'None', these events are not monitored."
+    },
+    {
+      "id": "R013",
+      "affectedSection": "Conditionals/Logic/Variable #2/Trigger",
+      "controllingField": "Conditionals/Logic/Variable #2/Trigger",
+      "irrelevantWhen": [2],
+      "irrelevantValueLabels": ["None"],
+      "explanation": "Variable #2 event configuration is irrelevant when its trigger is set to 'None'. If a variable is not triggered by any event, the source and track speed settings have no effect.",
+      "citation": "Manual Section 6.2 'Variables': 'Each variable has two events (consumers) associated with it.' When Trigger is set to 'None', these events are not monitored."
+    },
+    {
+      "id": "R014",
+      "affectedSection": "Port I/O/Line/Event[6-11]/Upon this action",
+      "controllingField": "Port I/O/Line/Output Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["No Function"],
+      "explanation": "Producer event triggers based on output state or function changes are irrelevant when no output function is configured. Triggers like 'Output State On command', 'Output On (Function hi)', and 'Output Off (Function lo)' require an active output function.",
+      "citation": "Manual Section 5.3.5 'Indications': 'Output State On command – Responds to an output state change to 'true'' and similar output-based triggers require an active Output Function."
+    },
+    {
+      "id": "R015",
+      "affectedSection": "Conditionals/Logic/Action/when true",
+      "controllingField": "Conditionals/Logic/Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Blocked"],
+      "explanation": "The 'when true' action exit format is irrelevant when the conditional group is blocked. A blocked conditional is never evaluated, so the action format has no effect.",
+      "citation": "Manual Section 6.1.1 'Mast Conditionals': 'Starting with Rev C1 firmware the exit format of each conditional may be specified' but only for active conditionals, not blocked ones."
+    },
+    {
+      "id": "R016",
+      "affectedSection": "Conditionals/Logic/Action/when false",
+      "controllingField": "Conditionals/Logic/Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Blocked"],
+      "explanation": "The 'when false' action exit format is irrelevant when the conditional group is blocked. A blocked conditional is never evaluated, so the action format has no effect.",
+      "citation": "Manual Section 6.1.1 'Mast Conditionals': 'Starting with Rev C1 firmware the exit format of each conditional may be specified' but only for active conditionals, not blocked ones."
+    },
+    {
+      "id": "R017",
+      "affectedSection": "Port I/O/Line/Input Function",
+      "controllingField": "Port I/O/Line/Output Function",
+      "irrelevantWhen": [1, 2, 3, 4, 5, 6, 7, 8],
+      "irrelevantValueLabels": [
+        "Steady Active Hi", "Steady Active Lo",
+        "Pulse Active Hi", "Pulse Active Lo",
+        "Blink A Active Hi", "Blink A Active Lo",
+        "Blink B Active Hi", "Blink B Active Lo"
+      ],
+      "explanation": "When a Steady, Pulse, or Blink output function is active, the Tower-LCC prioritizes the output and the input function has no effect. A line must be configured as either input or output — not both. To use this line as an input, first set Output Function to 'No Function'. Sample output modes (9–16) are the intentional exception: they drive the output while simultaneously reading the input, so both sections remain active in those modes.",
+      "citation": "Manual Section 5.3.2 'I/O Configuration': 'A line must only have output functions or input functions enabled.' When Output Function is set to Steady, Pulse, or Blink mode, the output takes priority and Input Function is effectively inactive."
+    }
+  ]
+}

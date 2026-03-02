@@ -1,0 +1,603 @@
+nodeType:
+  manufacturer: "RR-CirKits"
+  model: "Tower-LCC"
+
+recipes:
+  - name: "Push Button Input"
+    scope: "Port I/O/Line"
+    description: |
+      Configure a physical push-button switch to send an event when pressed. 
+      This is the simplest and most common input configuration — perfect for 
+      manual control of turnouts, signals, or layout functions.
+    prerequisites: |
+      * Wire a normally-open push button to a digital input pin (lines 0–15)
+      * Ground the other side of the button (or wire to +5V for inverted logic)
+      * Tower LCC provides internal pull-up resistors on all input lines
+    steps:
+      - order: 1
+        field: "Port I/O/Line/Input Function"
+        value: "Active Hi"
+        rawValue: 1
+        rationale: |
+          Enables the input to monitor the button. **Active Hi** means the line reads high (1) when 
+          pressed, and low (0) when released. Choose **Active Lo** (value 2) if your button wiring is 
+          inverted (grounds the line when pressed).
+      - order: 2
+        field: "Port I/O/Line/Output Function"
+        value: "No Function"
+        rawValue: 0
+        rationale: |
+          Ensures this line is only used as input. If you previously configured this line as an output, 
+          set this to **No Function** to avoid conflicts. Input monitoring will override any output setting.
+      - order: 3
+        field: "Port I/O/Line/Event[0]/Action"
+        value: "On (Line Active)"
+        rawValue: 1
+        rationale: |
+          Sets what happens when the button is pressed. **On (Line Active)** activates the output state, 
+          which typically triggers producer events configured in Indications (below). This is the standard 
+          configuration for push-button inputs.
+      - order: 4
+        field: "Port I/O/Line/Event[0]/Command"
+        value: "<read to generate a new EventID>"
+        rawValue: null
+        rationale: |
+          Each input can respond to multiple consumer events (Event 0, 1, 2, 3, 4, 5). For a simple button 
+          press, you usually only need Event 0 set. Click **Read** in your CDI tool to auto-generate a new 
+          unique EventID for this button, then use that event ID in other nodes' consumer event configuration.
+      - order: 5
+        field: "Port I/O/Line/Event[6]/Upon this action"
+        value: "Input On"
+        rawValue: 5
+        rationale: |
+          Configures a producer event. When the input line reads high (button pressed), this event fires. 
+          This is how other parts of your layout learn that the button was pressed.
+      - order: 6
+        field: "Port I/O/Line/Event[6]/Indicator"
+        value: "<read to generate a new EventID>"
+        rawValue: null
+        rationale: |
+          The producer event that fires when the button is pressed. Click **Read** to generate a new unique 
+          EventID, then link this event to control turnouts, signals, or other devices on your layout.
+    citation: "Section 5.3 'Line (I/O Ports)' and Section 5.3.4 'Commands', pages 16-19"
+
+  - name: "Blinking LED Output"
+    scope: "Port I/O/Line"
+    description: |
+      Configure an output line to blink an LED with adjustable on/off timing. 
+      Use for status indicators, attention-getting effects, or to show the current state of layout devices.
+    prerequisites: |
+      * Wire an **LED with current-limiting resistor** (typically 330–1kΩ) to an output pin
+      * Ensure the pin can source the required current (Port 1 pins 2, 4, 8, 10 are rated 25mA each; pins 1, 3, 7, 9 are only 2mA)
+      * For higher current LEDs (>25mA), use an external driver board (e.g., RB-4 Relay Board)
+    steps:
+      - order: 1
+        field: "Port I/O/Line/Output Function"
+        value: "Blink A Active Hi"
+        rawValue: 5
+        rationale: |
+          Enables continuous blinking at the timing rates you configure below. **Blink A Active Hi** means 
+          the LED pulses high at timing pattern A (controlled by Interval 1 on-time and Interval 2 off-time). 
+          Use **Blink A Active Lo** (value 6) if your LED is wired with opposite polarity (active low).
+      - order: 2
+        field: "Port I/O/Line/Input Function"
+        value: "Disabled"
+        rawValue: 0
+        rationale: |
+          Ensures this line is used only for output. Setting input to **Disabled** prevents any input 
+          monitoring from interfering with the blinking action.
+      - order: 3
+        field: "Port I/O/Line/Delay/Delay Time (Interval 1)"
+        value: 500
+        rawValue: 500
+        rationale: |
+          Controls the on-time duration. Set to 500 milliseconds for a clearly visible blink cycle. 
+          Adjust up or down depending on how fast you want the LED to blink (lower = faster).
+      - order: 4
+        field: "Port I/O/Line/Delay/Units (Interval 1)"
+        value: "Milliseconds"
+        rawValue: 0
+        rationale: |
+          Specifies the time unit for Interval 1. Milliseconds provide the finest control for typical 
+          LED blinking. Use **Seconds** (value 1) for very slow blinks (simulated running times).
+      - order: 5
+        field: "Port I/O/Line/Delay/Delay Time (Interval 2)"
+        value: 500
+        rawValue: 500
+        rationale: |
+          Controls the off-time duration. Setting equal to Interval 1 creates a balanced blink. 
+          Use a smaller value (e.g., 250ms) for a LED that spends more time on than off.
+      - order: 6
+        field: "Port I/O/Line/Delay/Units (Interval 2)"
+        value: "Milliseconds"
+        rawValue: 0
+        rationale: |
+          Specifies the time unit for the off-time. Use the same unit as Interval 1 for consistency.
+      - order: 7
+        field: "Port I/O/Line/Event[0]/Action"
+        value: "On (Line Active)"
+        rawValue: 1
+        rationale: |
+          Sets the output state to active (on), which starts the blinking sequence. Assign an EventID 
+          to Event[0]/Command from other nodes that want to turn on the LED (e.g., a fault indicator).
+      - order: 8
+        field: "Port I/O/Line/Event[1]/Action"
+        value: "Off (Line Inactive)"
+        rawValue: 2
+        rationale: |
+          Sets the output state to inactive (off), which stops the blinking. Assign an EventID to 
+          Event[1]/Command from other nodes that want to turn off the LED.
+    citation: "Section 5.3 'Line (I/O Ports)' and Section 5.3.3 'Delay', pages 16-18"
+
+  - name: "Steady Output for Relay or Driver"
+    scope: "Port I/O/Line"
+    description: |
+      Configure an output line to maintain a constant on or off state. 
+      Use for controlling relays, driver boards, solenoid hold circuits, or any device 
+      that needs sustained (non-pulsing) control.
+    prerequisites: |
+      * Wire output to an external driver board or relay module (e.g., RB-4, SCSD-8, SMD-8)
+      * Ensure proper polarity and current handling per the driver board's specifications
+      * For RB-4 relay board: configure as **Steady Active Lo** because RB-4 inputs are active-low
+    steps:
+      - order: 1
+        field: "Port I/O/Line/Output Function"
+        value: "Steady Active Hi"
+        rawValue: 1
+        rationale: |
+          Enables steady output. **Steady Active Hi** means the output line stays high (on) whenever 
+          the output state is active. Use **Steady Active Lo** (value 2) if your driver board requires 
+          an inverted signal (active low).
+      - order: 2
+        field: "Port I/O/Line/Input Function"
+        value: "Disabled"
+        rawValue: 0
+        rationale: |
+          Disables input monitoring. This line is for output only, so set input to **Disabled**.
+      - order: 3
+        field: "Port I/O/Line/Delay/Delay Time (Interval 1)"
+        value: 1
+        rawValue: 1
+        rationale: |
+          Delay is not used in steady output mode. Set to 1 millisecond (minimum). 
+          The output responds immediately to state changes.
+      - order: 4
+        field: "Port I/O/Line/Event[0]/Action"
+        value: "On (Line Active)"
+        rawValue: 1
+        rationale: |
+          When Event[0]/Command fires, sets the output state to active (on). Wire this event ID 
+          to your control source (button, logic conditional, occupancy detector, etc.).
+      - order: 5
+        field: "Port I/O/Line/Event[0]/Command"
+        value: "<read to generate a new EventID>"
+        rawValue: null
+        rationale: |
+          The consumer event that turns the output on. Click **Read** to generate a new unique EventID.
+      - order: 6
+        field: "Port I/O/Line/Event[1]/Action"
+        value: "Off (Line Inactive)"
+        rawValue: 2
+        rationale: |
+          When Event[1]/Command fires, sets the output state to inactive (off). This allows two-event 
+          control (separate on/off commands) from other nodes.
+      - order: 7
+        field: "Port I/O/Line/Event[1]/Command"
+        value: "<read to generate a new EventID>"
+        rawValue: null
+        rationale: |
+          The consumer event that turns the output off. Click **Read** to generate a new unique EventID.
+    citation: "Section 5.3 'Line (I/O Ports)' and Section 8 'Tower LCC compatible Input/Output Cards', pages 16-29"
+
+  - name: "Pulse Output for Momentary Action"
+    scope: "Port I/O/Line"
+    description: |
+      Configure an output line to send a brief pulse. 
+      Use for momentary actions like solenoid-coil switch machines, bell circuits, or horn triggers. 
+      The pulse duration is controlled by the delay timer.
+    prerequisites: |
+      * Wire to a momentary-action device (solenoid coil, capacitor-discharge switch machine, etc.)
+      * Ensure the device can handle brief pulses at 5V logic level (or use an isolated driver board)
+      * For dual-coil switch machines: pair two lines with opposite EventIDs and 0.1 second pulses
+    steps:
+      - order: 1
+        field: "Port I/O/Line/Output Function"
+        value: "Pulse Active Hi"
+        rawValue: 3
+        rationale: |
+          Enables pulse mode. **Pulse Active Hi** sends a brief high pulse when the output state 
+          becomes active. The pulse width is controlled by Interval 1 (on-time). Use **Pulse Active Lo** 
+          (value 4) for pull-down logic.
+      - order: 2
+        field: "Port I/O/Line/Input Function"
+        value: "Disabled"
+        rawValue: 0
+        rationale: |
+          Disables input; this line is output-only.
+      - order: 3
+        field: "Port I/O/Line/Delay/Delay Time (Interval 1)"
+        value: 100
+        rawValue: 100
+        rationale: |
+          Controls the pulse width. 100 milliseconds is typical for solenoid coils and switch machines. 
+          Reduce to 50ms for faster action, increase to 200ms if the device needs longer pulses.
+      - order: 4
+        field: "Port I/O/Line/Delay/Units (Interval 1)"
+        value: "Milliseconds"
+        rawValue: 0
+        rationale: |
+          Pulse widths are typically specified in milliseconds for best precision.
+      - order: 5
+        field: "Port I/O/Line/Delay/Retrigger (Interval 1)"
+        value: "No"
+        rawValue: 0
+        rationale: |
+          **No** retrigger prevents rapid-fire pulses if the command event repeats before the pulse 
+          completes. Set to **Yes** (value 1) if you need new pulses to restart the timer.
+      - order: 6
+        field: "Port I/O/Line/Event[0]/Action"
+        value: "On (Line Active)"
+        rawValue: 1
+        rationale: |
+          When this event fires, triggers the pulse output. Each pulse sender typically has its own EventID.
+      - order: 7
+        field: "Port I/O/Line/Event[0]/Command"
+        value: "<read to generate a new EventID>"
+        rawValue: null
+        rationale: |
+          The consumer event that triggers the pulse. Click **Read** to generate a unique EventID 
+          (e.g., "Throw Turnout N" or "Sound Bell").
+    citation: "Section 5.3 'Line (I/O Ports)' and Section 8.5 'SCSD-8', pages 16-28"
+
+  - name: "Occupancy Detector Input (BOD-8)"
+    scope: "Port I/O/Line"
+    description: |
+      Configure an input line to read occupancy or detection state from a BOD-8 occupancy detector 
+      (or similar detector card). Use to sense trains in blocks, allowing your logic to respond to 
+      occupancy events.
+    prerequisites: |
+      * Wire BOD-8 output to a Tower LCC input pin via ribbon cable
+      * BOD-8 outputs are **low during detection** (active-low). Read the BOD-8 manual for your specific board
+      * Typical wiring: BOD-8 block 1 output → Tower LCC Line N
+    steps:
+      - order: 1
+        field: "Port I/O/Line/Output Function"
+        value: "No Function"
+        rawValue: 0
+        rationale: |
+          This line is input-only (reads the detector state). Set output to **No Function**.
+      - order: 2
+        field: "Port I/O/Line/Input Function"
+        value: "Active Lo"
+        rawValue: 2
+        rationale: |
+          **Active Lo** matches the BOD-8's active-low output. The line reads true (1) when the 
+          detector output is **low** (train detected). This is the correct setting for BOD-8 boards.
+      - order: 3
+        field: "Port I/O/Line/Event[5]/Upon this action"
+        value: "Input Off"
+        rawValue: 6
+        rationale: |
+          Sends a producer event when the input goes **low** (block becomes occupied). 
+          This event fires when a train enters the block.
+      - order: 4
+        field: "Port I/O/Line/Event[5]/Indicator"
+        value: "<read to generate a new EventID>"
+        rawValue: null
+        rationale: |
+          The producer event fired when the block becomes occupied. Click **Read** to generate 
+          a unique EventID (e.g., "Block 1 Occupied"). Use this event in logic conditionals.
+      - order: 5
+        field: "Port I/O/Line/Event[6]/Upon this action"
+        value: "Input On"
+        rawValue: 5
+        rationale: |
+          Sends a producer event when the input goes **high** (block becomes unoccupied). 
+          This event fires when a train leaves the block.
+      - order: 6
+        field: "Port I/O/Line/Event[6]/Indicator"
+        value: "<read to generate a new EventID>"
+        rawValue: null
+        rationale: |
+          The producer event fired when the block becomes unoccupied. Click **Read** to generate 
+          a unique EventID (e.g., "Block 1 Unoccupied").
+      - order: 7
+        field: "Port I/O/Line/Line Description"
+        value: "Block Occupancy — [block number]"
+        rawValue: null
+        rationale: |
+          Add a descriptive label to help you remember which block this input monitors. 
+          Example: "Block 1 Occupancy" or "Mainline Track 3".
+    citation: "Section 8.3 'BOD-8 (DCC Block Occupancy Detector — 8 block)', page 27"
+
+  - name: "Turnout Control with Local/CTC Override"
+    scope: "Port I/O/Line"
+    description: |
+      Configure an output line for turnout control with **veto** logic, allowing a CTC operator 
+      to temporarily lock out local (fascia) buttons. The local operator can control the turnout 
+      normally, but a "Veto On" event from a system operator disables local pushbutton control.
+    prerequisites: |
+      * Wire output to a stall-motor turnout driver (e.g., SMD-8) or solenoid-coil switch machine (e.g., SCSD-8)
+      * Typically pulse the line with ~100ms width for solenoid machines
+      * Requires two separate node IDs: one for local button control, one for CTC control
+    steps:
+      - order: 1
+        field: "Port I/O/Line/Output Function"
+        value: "Pulse Active Hi"
+        rawValue: 3
+        rationale: |
+          **Pulse Active Hi** sends a brief pulse to the turnout driver. Use 100-150ms pulse width 
+          for typical solenoid coil machines. This is the standard activation method.
+      - order: 2
+        field: "Port I/O/Line/Input Function"
+        value: "Disabled"
+        rawValue: 0
+        rationale: |
+          No input monitoring needed for this recipe. Set to **Disabled**.
+      - order: 3
+        field: "Port I/O/Line/Delay/Delay Time (Interval 1)"
+        value: 100
+        rawValue: 100
+        rationale: |
+          Pulse width of 100ms is standard for solenoid coil machines. Some machines may need 
+          50ms (fast) or 150ms (sluggish); adjust based on your device.
+      - order: 4
+        field: "Port I/O/Line/Delay/Units (Interval 1)"
+        value: "Milliseconds"
+        rawValue: 0
+        rationale: |
+          Use milliseconds for precise pulse control.
+      - order: 5
+        field: "Port I/O/Line/Event[0]/Action"
+        value: "Gated On (Non Veto Output)"
+        rawValue: 6
+        rationale: |
+          **Gated On** means: set output on ONLY if veto is off. When a CTC "Veto On" event fires, 
+          this event is ignored, blocking the local operator. The CTC operator sends "On" events 
+          (ungated) from a separate node.
+      - order: 6
+        field: "Port I/O/Line/Event[0]/Command"
+        value: "<local button — Normal command>"
+        rawValue: null
+        rationale: |
+          The consumer event from the local push button (Normal/Thrown). Click **Read** to 
+          generate this EventID, then wire it to your local button event in the local node.
+      - order: 7
+        field: "Port I/O/Line/Event[2]/Action"
+        value: "Veto On (Active)"
+        rawValue: 4
+        rationale: |
+          When this event fires, the veto is activated, preventing gated events from executing. 
+          This is how the CTC operator locks out the local button.
+      - order: 8
+        field: "Port I/O/Line/Event[2]/Command"
+        value: "<CTC operator lock event>"
+        rawValue: null
+        rationale: |
+          The consumer event from the CTC operator's control system. Click **Read** to generate 
+          a unique EventID (e.g., "Turnout 5 CTC Lock").
+      - order: 9
+        field: "Port I/O/Line/Event[3]/Action"
+        value: "Veto Off (Inactive)"
+        rawValue: 5
+        rationale: |
+          When this event fires, the veto is cleared, re-enabling local button control.
+      - order: 10
+        field: "Port I/O/Line/Event[3]/Command"
+        value: "<CTC operator unlock event>"
+        rawValue: null
+        rationale: |
+          The consumer event from the CTC operator to release the lock. Click **Read** to generate 
+          a unique EventID (e.g., "Turnout 5 CTC Unlock").
+    citation: "Section 5.3.4 'Commands' and Section 1.1.4 'Consumer', pages 8-9, 19"
+
+  - name: "Simple Signal Logic (Two-Aspect)"
+    scope: "Conditionals/Logic"
+    description: |
+      Set up a basic signal conditional that shows Stop (Red) when the next block is occupied, 
+      and Clear (Green) when the next block is clear. This is the foundation for prototypical 
+      signal logic. Extend it to multi-aspect by adding more conditionals.
+    prerequisites: |
+      * Have occupancy events from the next block's detector available (e.g., "Block 2 Occupied" and "Block 2 Unoccupied")
+      * Have signal lamp indicators (LEDs) wired to output lines, or logic to control signal lamps
+      * Understand the difference between **producer events** (signals sent by nodes) and **consumer events** (signals received)
+    steps:
+      - order: 1
+        field: "Conditionals/Logic/Description"
+        value: "Signal 5 Main Home"
+        rawValue: null
+        rationale: |
+          A descriptive label for this logic group. Use something meaningful like "East Main Signal" 
+          or "Crossover Signal Logic".
+      - order: 2
+        field: "Conditionals/Logic/Function"
+        value: "Group"
+        rawValue: 1
+        rationale: |
+          **Group** marks the start of a mast conditional group. All signal aspects are evaluated 
+          in order from most restrictive (Stop) to least restrictive (Clear).
+      - order: 3
+        field: "Conditionals/Logic/Variable #1/Trigger"
+        value: "On Variable Change"
+        rawValue: 0
+        rationale: |
+          Re-evaluate this conditional whenever Variable #1 changes. Variable #1 will track the 
+          occupancy of the next block.
+      - order: 4
+        field: "Conditionals/Logic/Variable #1/Source"
+        value: "Use Variable #1's (C) Events"
+        rawValue: 0
+        rationale: |
+          Variable #1 is driven by two consumer events: one to set it true (next block occupied) 
+          and one to set it false (next block clear).
+      - order: 5
+        field: "Conditionals/Logic/Variable #1/set true"
+        value: "<Block 2 Occupied event>"
+        rawValue: null
+        rationale: |
+          The producer event from the occupancy detector (Block 2 Occupied) that sets Variable #1 
+          to true. Click **Read** and copy the "Block 2 Occupied" event ID from your detector node.
+      - order: 6
+        field: "Conditionals/Logic/Variable #1/set false"
+        value: "<Block 2 Unoccupied event>"
+        rawValue: null
+        rationale: |
+          The producer event from the occupancy detector (Block 2 Unoccupied) that clears Variable #1. 
+          Click **Read** and copy the "Block 2 Unoccupied" event ID.
+      - order: 7
+        field: "Conditionals/Logic/Logic Operation"
+        value: "V1 Only"
+        rawValue: 7
+        rationale: |
+          Simplest logic: fire when Variable #1 is true (next block is occupied). This triggers 
+          the **Stop** aspect of the signal.
+      - order: 8
+        field: "Conditionals/Logic/Action/when true"
+        value: "Send then Exit Group"
+        rawValue: 0
+        rationale: |
+          When Variable #1 is true (block occupied, show Stop):send the action events and skip 
+          the rest of the mast group (do not evaluate Green conditional). This prevents multiple 
+          aspects from firing.
+      - order: 9
+        field: "Conditionals/Logic/Action[0]/Condition"
+        value: "Immediately"
+        rawValue: 1
+        rationale: |
+          Send the Stop event **immediately** when the block becomes occupied. No delay.
+      - order: 10
+        field: "Conditionals/Logic/Action[0]/Destination"
+        value: "Use Action (P) Event"
+        rawValue: 0
+        rationale: |
+          Use a custom producer event (not a track circuit signal).
+      - order: 11
+        field: "Conditionals/Logic/Action[0]/Action Event"
+        value: "<read to generate>"
+        rawValue: null
+        rationale: |
+          The producer event sent when this action fires (Signal shows Stop/Red). Click **Read** 
+          to generate a new unique EventID (e.g., "Signal 5 Stop"). Link this event to turn on a 
+          red LED or trigger other logic.
+      - order: 12
+        field: "Conditionals/Logic/Function"
+        value: "Group"
+        rawValue: 1
+        rationale: |
+          This is the second conditional in the mast group. It evaluates the Clear (Green) aspect.
+      - order: 13
+        field: "Conditionals/Logic/Variable #1/Trigger"
+        value: "On Variable Change"
+        rawValue: 0
+        rationale: |
+          Reuse Variable #1 from the Stop conditional above. This second conditional checks if 
+          Variable #1 is **false** (next block is clear).
+      - order: 14
+        field: "Conditionals/Logic/Logic Operation"
+        value: "V1 Only"
+        rawValue: 7
+        rationale: |
+          For this "Clear" conditional, configure a second V1 Only conditional that... wait, 
+          we need to **invert** the logic. Instead, set up Variable #2 and use "V1 AND V2" with 
+          a "NOT V1" logic. See the section 6.2.1 Variables and 'Not' note in the manual: reverse 
+          Variable #1's set true/false events to get its inverse. OR use a simpler approach: 
+          set this conditional's **Logic Operation** to evaluate "null => true" (next recipe step).
+      - order: 15
+        field: "Conditionals/Logic/Logic Operation"
+        value: "null => true"
+        rawValue: 6
+        rationale: |
+          **null => true** is the easiest approach for the Clear aspect: this conditional always 
+          fires if reached (i.e., if the Stop conditional above did NOT fire). When variable #1 is 
+          false, we skip past the Stop conditional and reach this one.
+      - order: 16
+        field: "Conditionals/Logic/Action[0]/Condition"
+        value: "Immediately"
+        rawValue: 1
+        rationale: |
+          Send the Clear event immediately when this conditional is reached.
+      - order: 17
+        field: "Conditionals/Logic/Action[0]/Action Event"
+        value: "<read to generate>"
+        rawValue: null
+        rationale: |
+          The producer event sent when the signal shows Clear/Green. Click **Read** to generate 
+          a unique EventID (e.g., "Signal 5 Clear").
+      - order: 18
+        field: "Conditionals/Logic/Function"
+        value: "Last (Single)"
+        rawValue: 3
+        rationale: |
+          **Last (Single)** marks the end of this mast group. All signal conditionals are now complete.
+    citation: "Section 6.0 'Tower LCC Logic' and Section 6.1 'Logic Conditionals', pages 21-22"
+
+  - name: "Linking Virtual Code Lines at Modular Meets"
+    scope: "Track Receiver/Circuit, Track Transmitter/Circuit"
+    description: |
+      Set up virtual code lines to link signal nodes across module boundaries at a modular meet. 
+      One node transmits speed indications (e.g., Block 2's speed code), and a neighboring node 
+      receives them to calculate a neighboring signal's aspect. This is how prototype signals 
+      communicate across the layout.
+    prerequisites: |
+      * Have two Tower-LCC nodes: one **transmitting** signal logic (near signal A), one **receiving**
+        signal logic from downstream (near signal B).
+      * Both nodes must be networked on the same LCC CAN bus.
+      * You'll exchange one EventID between the two nodes (Track Transmitter → Track Receiver).
+    steps:
+      - order: 1
+        field: "Track Transmitter/Circuit/Remote Mast Description"
+        value: "Signal 5 downstream to Signal 6"
+        rawValue: null
+        rationale: |
+          A label describing the far-end signal that will receive this track circuit data. 
+          Example: "To Signal 6 East" or "Block 3 indication to Node 25".
+      - order: 2
+        field: "Track Transmitter/Circuit/Link Address"
+        value: "<read to get the EventID>"
+        rawValue: null
+        rationale: |
+          The producer event that carries virtual track circuit speed signals from this node. 
+          Click **Read** to reveal the auto-generated EventID. **Copy this value exactly** — 
+          you'll paste it into the receiving node's Track Receiver/Circuit/Link Address field.
+      - order: 3
+        field: "Conditionals/Logic/Action[0]/Destination"
+        value: "Track Circuit 1"
+        rawValue: 1
+        rationale: |
+          (Optional advanced step) In your signal conditionals on this transmitting node, 
+          set one of the Action Destinations to **Track Circuit 1** (or whichever circuit 1-8 you 
+          choose). When the conditional fires, it sends a speed code signal (Stop, Clear, etc.) 
+          to that Track Circuit, which is then emitted via the Track Transmitter/Circuit/Link Address.
+      - order: 4
+        field: "Track Receiver/Circuit/Remote Mast Description"
+        value: "Signal 6 upstream from Signal 5"
+        rawValue: null
+        rationale: |
+          On the **receiving node**, label this circuit to identify the upstream signal sending data. 
+          Example: "From Signal 5 West".
+      - order: 5
+        field: "Track Receiver/Circuit/Link Address"
+        value: "<paste the Track Transmitter/Circuit/Link Address from the transmitting node>"
+        rawValue: null
+        rationale: |
+          **Paste exactly the EventID you copied** from the transmitting node's Track Transmitter. 
+          This creates the connection: the transmitting node's Track Circuit 1 speed codes are 
+          received here and can be used in logic conditionals on the receiving node.
+      - order: 6
+        field: "Conditionals/Logic/Variable #1/Source"
+        value: "Track Circuit 1"
+        rawValue: 1
+        rationale: |
+          (Optional advanced step) On the receiving node's signal conditionals, configure 
+          Variable #1's Source to **Track Circuit 1** (matching the one the transmitter uses). 
+          When the transmitter sends a speed code, Variable #1 automatically updates, triggering 
+          your signal logic.
+      - order: 7
+        field: "Conditionals/Logic/Variable #1/Track Speed"
+        value: "Stop"
+        rawValue: 0
+        rationale: |
+          (Optional advanced step) Choose the specific speed code that triggers this conditional. 
+          For example, if the upstream signal is in Stop, receive the "Stop" code and set Variable #1 
+          to true, which can restrict this signal to Approach or below.
+    citation: "Section 7.0 'Track Circuits' and Section 7.2 'Linking Virtual Code Lines', pages 25"

@@ -194,9 +194,10 @@ fn slot_for_event_id<'a>(
 ///    a. Pure producers (only in producer set) → `EventSlotEntry { role: Producer }`.
 ///    b. Pure consumers (only in consumer set) → `EventSlotEntry { role: Consumer }`.
 ///    c. Same-node entries (node replied both ProducerIdentified and ConsumerIdentified):
-///       - If `config_value_cache` has slots for this node that match this event ID, emit one
-///         `EventSlotEntry` per matching slot, each classified by its own `heuristic_role`
-///         (Producer → producers, Consumer → consumers, Ambiguous → ambiguous_entries).
+///       - If `profile_group_roles` contains an entry for a matching slot, route that slot
+///         directly to `producers` or `consumers` (Producer/Consumer role) without ambiguity.
+///       - Otherwise, if `config_value_cache` has slots for this node that match this event ID,
+///         emit one `EventSlotEntry` per matching slot as Ambiguous.
 ///       - Otherwise (cache empty or no hits), fall back to a CDI vote-tally across all slots
 ///         and emit one entry for the node.
 /// 3. Emit a `BowtieCard` when `producers + consumers + ambiguous_entries ≥ 2` total entries.
@@ -204,10 +205,15 @@ fn slot_for_event_id<'a>(
 ///    Cards with only ambiguous entries are valid — the protocol confirmed the node is on both
 ///    sides; the user can clarify roles in a future flow.
 /// 4. Sort bowties by `event_id_bytes`.
+///
+/// `profile_group_roles` — optional map keyed by `"{node_id}:{element_path.join("/")}"` →
+/// `EventRole`.  Built from the annotated `NodeConfigTree`s after `annotate_tree` runs.
+/// Pass `None` when no profiles are loaded or in unit-test contexts.
 pub fn build_bowtie_catalog(
     nodes: &[lcc_rs::DiscoveredNode],
     event_roles: &HashMap<[u8; 8], NodeRoles>,
     config_value_cache: &HashMap<String, HashMap<String, [u8; 8]>>,
+    profile_group_roles: Option<&HashMap<String, lcc_rs::EventRole>>,
 ) -> BowtieCatalog {
     let build_start = std::time::Instant::now();
     let built_at = chrono::Utc::now().to_rfc3339();
@@ -338,22 +344,53 @@ pub fn build_bowtie_catalog(
             }
 
             if !cache_hits.is_empty() {
-                // Emit one Ambiguous entry per matching slot.
-                // The CDI heuristic is intentionally not used to route same-node entries
-                // into producers/consumers — it is too fragile relative to real firmware
-                // description wording.  All same-node slots surface in ambiguous_entries
-                // so the user can classify them manually.  The raw description is forwarded
-                // so the frontend can display it as context.
+                // Emit one entry per matching slot.
+                // If profile_group_roles provides a definitive role for a slot, route it into
+                // producers / consumers.  Otherwise fall back to Ambiguous so the user can
+                // classify it manually.
                 for slot in cache_hits {
-                    ambiguous_entries.push(EventSlotEntry {
-                        node_id: (*node_id).clone(),
-                        node_name: node_name.clone(),
-                        element_path: slot.element_path.clone(),
-                        element_label: slot.element_label.clone(),
-                        element_description: slot.element_description.clone(),
-                        event_id: *event_id_bytes,
-                        role: lcc_rs::EventRole::Ambiguous,
-                    });
+                    let profile_key = format!("{}:{}", *node_id, slot.element_path.join("/"));
+                    let resolved_role = profile_group_roles
+                        .and_then(|map| map.get(&profile_key))
+                        .copied();
+
+                    match resolved_role {
+                        Some(lcc_rs::EventRole::Producer) => {
+                            producers.push(EventSlotEntry {
+                                node_id: (*node_id).clone(),
+                                node_name: node_name.clone(),
+                                element_path: slot.element_path.clone(),
+                                element_label: slot.element_label.clone(),
+                                element_description: slot.element_description.clone(),
+                                event_id: *event_id_bytes,
+                                role: lcc_rs::EventRole::Producer,
+                            });
+                        }
+                        Some(lcc_rs::EventRole::Consumer) => {
+                            consumers.push(EventSlotEntry {
+                                node_id: (*node_id).clone(),
+                                node_name: node_name.clone(),
+                                element_path: slot.element_path.clone(),
+                                element_label: slot.element_label.clone(),
+                                element_description: slot.element_description.clone(),
+                                event_id: *event_id_bytes,
+                                role: lcc_rs::EventRole::Consumer,
+                            });
+                        }
+                        _ => {
+                            // No profile entry (or Ambiguous) — surface in ambiguous_entries so
+                            // the user can clarify roles manually.
+                            ambiguous_entries.push(EventSlotEntry {
+                                node_id: (*node_id).clone(),
+                                node_name: node_name.clone(),
+                                element_path: slot.element_path.clone(),
+                                element_label: slot.element_label.clone(),
+                                element_description: slot.element_description.clone(),
+                                event_id: *event_id_bytes,
+                                role: lcc_rs::EventRole::Ambiguous,
+                            });
+                        }
+                    }
                 }
             } else {
                 // Fallback (no cache data for this node): emit one Ambiguous entry using
@@ -648,7 +685,7 @@ mod build_bowtie_catalog_tests {
         let mut event_roles = HashMap::new();
         event_roles.insert(EVENT_A, roles(&[0], &[1]));
 
-        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new());
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new(), None);
 
         assert_eq!(catalog.source_node_count, 2);
         assert_eq!(catalog.bowties.len(), 1, "Should have exactly 1 BowtieCard");
@@ -668,7 +705,7 @@ mod build_bowtie_catalog_tests {
         let mut event_roles = HashMap::new();
         event_roles.insert(EVENT_A, roles(&[0, 1], &[2]));
 
-        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new());
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new(), None);
 
         assert_eq!(catalog.bowties.len(), 1);
         let card = &catalog.bowties[0];
@@ -686,7 +723,7 @@ mod build_bowtie_catalog_tests {
         // node 0 appears in both, node 1 is pure consumer
         event_roles.insert(EVENT_A, roles(&[0], &[0, 1]));
 
-        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new());
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new(), None);
 
         // node0: no CDI → 0 P-votes, 0 C-votes → tie → Ambiguous → ambiguous_entries.
         // node1: pure consumer → consumers.
@@ -756,7 +793,7 @@ mod build_bowtie_catalog_tests {
             consumers: [node_id(0), node_id(1)].iter().cloned().collect(),
         });
 
-        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new());
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new(), None);
 
         // Heuristic no longer routes same-node entries: node0 → ambiguous_entries.
         // node1 is a pure consumer (protocol-confirmed) → consumers.
@@ -822,7 +859,7 @@ mod build_bowtie_catalog_tests {
             consumers: [node_id(0), node_id(1)].iter().cloned().collect(),
         });
 
-        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new());
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new(), None);
 
         // Tie → node0 goes to ambiguous_entries.
         // node1 is pure consumer → consumers vec.
@@ -842,7 +879,7 @@ mod build_bowtie_catalog_tests {
         let mut event_roles = HashMap::new();
         event_roles.insert(EVENT_A, roles(&[0, 1], &[]));
 
-        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new());
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new(), None);
 
         assert_eq!(
             catalog.bowties.len(), 0,
@@ -856,7 +893,7 @@ mod build_bowtie_catalog_tests {
         let nodes: Vec<lcc_rs::DiscoveredNode> = Vec::new();
         let event_roles: HashMap<[u8; 8], NodeRoles> = HashMap::new();
 
-        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new());
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new(), None);
 
         assert_eq!(catalog.source_node_count, 0);
         assert_eq!(catalog.bowties.len(), 0);
@@ -871,7 +908,7 @@ mod build_bowtie_catalog_tests {
         // Inserting the same key twice is impossible with HashMap; just verify len.
         event_roles.insert(EVENT_A, roles(&[0], &[1]));
 
-        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new());
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new(), None);
 
         // SC-002: unique event IDs → unique cards
         let unique_event_ids: HashSet<[u8; 8]> =
@@ -892,7 +929,7 @@ mod build_bowtie_catalog_tests {
         event_roles.insert(EVENT_B, roles(&[0], &[1]));
         event_roles.insert(EVENT_A, roles(&[0], &[1]));
 
-        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new());
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new(), None);
 
         assert_eq!(catalog.bowties.len(), 2);
         assert!(
@@ -908,7 +945,7 @@ mod build_bowtie_catalog_tests {
         let mut event_roles = HashMap::new();
         event_roles.insert(EVENT_A, roles(&[0], &[1]));
 
-        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new());
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new(), None);
         for card in &catalog.bowties {
             for entry in &card.producers {
                 assert_ne!(
@@ -937,12 +974,87 @@ mod build_bowtie_catalog_tests {
             consumers: [node_id(0)].iter().cloned().collect(),
         });
 
-        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new());
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new(), None);
 
         assert_eq!(
             catalog.bowties.len(), 0,
             "Single ambiguous entry (total = 1) must be silently excluded"
         );
+    }
+
+    /// T027: Same-node slot with a profile-declared Producer role is routed to
+    /// `producers`, not `ambiguous_entries` (FR-016, FR-017).
+    #[test]
+    fn build_bowtie_catalog_uses_profile_roles() {
+        use lcc_rs::types::{SNIPStatus, ConnectionStatus};
+
+        // node 0 has a single Producer-intended EventId slot; node 1 is a pure consumer.
+        let cdi_xml = r#"<?xml version="1.0"?>
+<cdi xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+     xsi:noNamespaceSchemaLocation="http://openlcb.org/schema/cdi/1/1/cdi.xsd">
+  <segment space="253" origin="0">
+    <group>
+      <name>Output</name>
+      <eventid><name>Trigger Event</name></eventid>
+    </group>
+  </segment>
+</cdi>"#;
+
+        let node0 = lcc_rs::DiscoveredNode {
+            node_id: lcc_rs::NodeID::new([0x05, 0x02, 0x01, 0x00, 0x00, 0x00]),
+            alias: lcc_rs::NodeAlias::new(0x100).unwrap(),
+            snip_data: None,
+            snip_status: SNIPStatus::Unknown,
+            connection_status: ConnectionStatus::Unknown,
+            last_verified: None,
+            last_seen: chrono::Utc::now(),
+            cdi: Some(lcc_rs::types::CdiData {
+                xml_content: cdi_xml.to_string(),
+                retrieved_at: chrono::Utc::now(),
+            }),
+        };
+        let node1 = lcc_rs::DiscoveredNode {
+            node_id: lcc_rs::NodeID::new([0x05, 0x02, 0x01, 0x00, 0x00, 0x01]),
+            alias: lcc_rs::NodeAlias::new(0x101).unwrap(),
+            snip_data: None,
+            snip_status: SNIPStatus::Unknown,
+            connection_status: ConnectionStatus::Unknown,
+            last_verified: None,
+            last_seen: chrono::Utc::now(),
+            cdi: None,
+        };
+
+        let nodes = vec![node0, node1];
+
+        // node 0 appears in both producer + consumer sets (same-node); node 1 is pure consumer.
+        let mut event_roles_map = HashMap::new();
+        event_roles_map.insert(EVENT_A, NodeRoles {
+            producers: [node_id(0)].iter().cloned().collect(),
+            consumers: [node_id(0), node_id(1)].iter().cloned().collect(),
+        });
+
+        // Config cache: node 0's CDI slot at path "seg:0/elem:0/elem:0" holds EVENT_A.
+        // (seg:0 = first segment, elem:0 = first group, elem:0 = first eventid inside group)
+        let slot_path = "seg:0/elem:0/elem:0".to_string();
+        let mut node_cache = HashMap::new();
+        node_cache.insert(slot_path.clone(), EVENT_A);
+        let mut config_cache = HashMap::new();
+        config_cache.insert(node_id(0), node_cache);
+
+        // Profile declares that slot as Producer.
+        let profile_key = format!("{}:{}", node_id(0), slot_path);
+        let mut profile_roles: HashMap<String, lcc_rs::EventRole> = HashMap::new();
+        profile_roles.insert(profile_key, lcc_rs::EventRole::Producer);
+
+        let catalog = build_bowtie_catalog(&nodes, &event_roles_map, &config_cache, Some(&profile_roles));
+
+        assert_eq!(catalog.bowties.len(), 1);
+        let card = &catalog.bowties[0];
+        assert_eq!(card.producers.len(), 1, "Profile role should route node0 slot to producers");
+        assert_eq!(card.consumers.len(), 1, "node1 is a pure consumer");
+        assert!(card.ambiguous_entries.is_empty(), "No ambiguous entries when profile resolves the role");
+        assert_eq!(card.producers[0].role, lcc_rs::EventRole::Producer);
+        assert_eq!(card.producers[0].node_id, node_id(0));
     }
 }
 

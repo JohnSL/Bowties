@@ -8,6 +8,7 @@ mod state;
 mod events;
 mod traffic;
 pub mod node_tree;
+pub mod profile;
 
 use menu::MenuHandles;
 

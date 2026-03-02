@@ -17,6 +17,10 @@ Auto-generated from all feature plans. Last updated: 2026-02-14
 - In-memory only — `AppState.nodes` cache (already exists); no new persistence in this phase (006-bowties-event-discovery)
 - Rust 2021 edition (stable 1.70+), TypeScript (strict), SvelteKit 2.x + lcc-rs (path dep), Tauri 2, tokio 1.41, serde 1.0, roxmltree 0.20, thiserror (2.0 in lcc-rs, 1.0 in app) (007-edit-node-config)
 - N/A (values written directly to LCC node memory via protocol) (007-edit-node-config)
+- N/A — this phase is prompt engineering and document production, not code + Copilot Chat (or any capable LLM), `pdf-utilities` MCP extension for PDF text extraction (008-guided-configuration)
+- Output files in `specs/008-guided-configuration/` as structured markdown/JSON (008-guided-configuration)
+- Rust 2021 (stable 1.75+) — backend; TypeScript 5.x / SvelteKit 2.x / Svelte 5 — frontend (008-guided-configuration)
+- YAML files on disk (`.profile.yaml`). Two discovery paths: (008-guided-configuration)
 
 - Python 3.12 (latest stable as of 2026), managed via UV + PySerial (serial port communication), IntelHex (firmware loading), UV (Python version management) (001-python3-migration)
 
@@ -36,9 +40,9 @@ cd src; pytest; ruff check .
 Python 3.12 (latest stable as of 2026), managed via UV: Follow standard conventions
 
 ## Recent Changes
+- 008-guided-configuration: Added Rust 2021 (stable 1.75+) — backend; TypeScript 5.x / SvelteKit 2.x / Svelte 5 — frontend
 - 007-edit-node-config: Added Rust 2021 edition (stable 1.70+), TypeScript (strict), SvelteKit 2.x + lcc-rs (path dep), Tauri 2, tokio 1.41, serde 1.0, roxmltree 0.20, thiserror (2.0 in lcc-rs, 1.0 in app)
-- 006-bowties-event-discovery: Added Rust 2021 (stable ≥1.70) + TypeScript strict / SvelteKit 2.x + `lcc-rs` (workspace crate), `tokio`, `serde`, `tauri 2.x`; SvelteKit 2.x + Tauri JS API
-- 005-config-sidebar-view: Added Rust 2021 (backend, `app/src-tauri/src/`), TypeScript 5.x strict mode (frontend, `app/src/`) + SvelteKit 2.x, Tauri 2.x, lcc-rs (internal library), tokio, serde, uuid
+- 008-guided-configuration: Added N/A — this phase is prompt engineering and document production, not code + Copilot Chat (or any capable LLM), `pdf-utilities` MCP extension for PDF text extraction
 
 
 <!-- MANUAL ADDITIONS START -->

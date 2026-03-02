@@ -83,6 +83,13 @@ pub struct GroupNode {
     pub path: Vec<String>,
     /// Child nodes
     pub children: Vec<ConfigNode>,
+    /// Profile-supplied display-name override.
+    ///
+    /// When `Some`, the frontend renders this instead of `name`.  Set by
+    /// `annotate_tree` from the `label` field of an `EventRoleDecl` (or a
+    /// future `RelevanceRule` with a label).  `None` means "use `name`".
+    #[serde(default)]
+    pub display_name: Option<String>,
 }
 
 /// A leaf configuration element (int, string, eventid, float, action, blob).
@@ -267,6 +274,7 @@ fn build_children(
                             replication_count: effective_replication,
                             path: child_path,
                             children: child_nodes,
+                            display_name: None,
                         }));
                     }
 
@@ -280,6 +288,7 @@ fn build_children(
                         replication_count: effective_replication,
                         path: group_path,
                         children: replicated_children,
+                        display_name: None,
                     }));
                 } else {
                     // Non-replicated group (replication=1): no wrapper needed.
@@ -296,6 +305,7 @@ fn build_children(
                         replication_count: 1,
                         path: group_path,
                         children: child_nodes,
+                        display_name: None,
                     }));
                 }
 

@@ -1,0 +1,182 @@
+nodeType:
+  manufacturer: "RR-CirKits"
+  model: "Tower-LCC"
+
+sections:
+  - cdiPath: "NODE ID"
+    level: "segment"
+    name: "NODE ID"
+    description: |
+      Stores the human-readable name and description for this node on the LCC network.
+      Use the Node Name field to identify this Tower-LCC in configuration tools like JMRI;
+      the name appears in node selection lists to help you find and manage the correct board.
+    citation: "Manual Section 5.2: Node Identification, pages 16"
+
+  - cdiPath: "NODE ID/Your name and description for this node"
+    level: "group"
+    name: "Your name and description for this node"
+    description: |
+      Contains the name and description strings you assign to uniquely identify this Tower-LCC.
+      Enter a meaningful name (up to 63 characters) so you can quickly recognize which board
+      you're configuring in a multi-node system.
+    citation: "Manual Section 5.2: Node Identification, page 16"
+
+  - cdiPath: "Node Power Monitor"
+    level: "segment"
+    name: "Node Power Monitor"
+    description: |
+      Monitors the Tower-LCC's internal power supply and sends producer events to report power status
+      (Power OK or Power Not OK). Use these events to trigger logic or alert other nodes of power failures,
+      allowing coordinated responses during power loss.
+    citation: "Manual Section 2: Features, page 9; Electrical Specifications, page 10"
+
+  - cdiPath: "Port I/O"
+    level: "segment"
+    name: "Port I/O"
+    description: |
+      Configures the Tower-LCC's 16 physical I/O lines across two 8-line ports.
+      Each line can be independently set as an input (reading external sensors) or output (controlling relays, LEDs, solenoids),
+      with sophisticated event-driven control, delay timing, and veto logic for complex automation scenarios.
+    citation: "Manual Section 5.3: Line (I/O Ports), pages 16–20"
+
+  - cdiPath: "Port I/O/Line"
+    level: "group"
+    name: "Line"
+    description: |
+      Represents one of the 16 physical I/O lines on the board.
+      Each line can be configured with an output function (steady, pulse, or blink modes with delays),
+      an input function (sensing external signals with debounce), and up to 12 events
+      (6 consumer commands to control the line, 6 producer indicators to report its state).
+    citation: "Manual Section 5.3: Line (I/O Ports), pages 16–20; Section 1.1.3: Line definition, page 8"
+
+  - cdiPath: "Port I/O/Line/Delay"
+    level: "group"
+    name: "Delay"
+    description: |
+      Provides two independent delay timers (Interval 1 for on-delays, Interval 2 for off-delays) to control
+      blink rates, pulse widths, and input debounce times. Each delay can be set from 1 to 60,000 units
+      (milliseconds, seconds, or minutes), with optional retrigger to reset the timer if the line state changes again.
+    citation: "Manual Section 5.3.3: Delay, page 18"
+
+  - cdiPath: "Port I/O/Line/Event[0-5]"
+    level: "group"
+    name: "Event"
+    description: |
+      A consumer event that triggers an action on this line when received from the LCC network.
+      Configure the event ID to listen for, then choose an action: None, On (set line active), Off (set line inactive),
+      Change (toggle), Veto On/Off (control line veto state), or Gated On/Off/Change (conditional actions based on veto).
+    citation: "Manual Section 5.3.4: Commands, pages 19"
+
+  - cdiPath: "Port I/O/Line/Event[6-11]"
+    level: "group"
+    name: "Event"
+    description: |
+      A producer event that sends an event to the LCC network when a specified condition occurs on this line.
+      Configure the event ID and the trigger condition: Output State On/Off, Output Function Hi/Lo, Input On/Off,
+      or Gated Input On/Off (conditional based on veto). Allows this line to report its state to other nodes.
+    citation: "Manual Section 5.3.5: Indications, page 20"
+
+  - cdiPath: "Conditionals"
+    level: "segment"
+    name: "Conditionals"
+    description: |
+      Contains 32 logic conditionals for event-driven signal interlocking, route creation, and complex
+      automation. Each conditional evaluates two variables with a logic function (AND, OR, XOR, etc.),
+      optionally applies a delay, and produces up to 4 events when true or false, enabling realistic
+      signal aspects and coordinated layout control.
+    citation: "Manual Section 6.0: Tower LCC Logic, pages 21–24"
+
+  - cdiPath: "Conditionals/Logic"
+    level: "group"
+    name: "Logic"
+    description: |
+      One conditional statement combining two variables, a logic function, optional delay, and outputs.
+      Used in mast groups (evaluate most to least restrictive) for signal logic, or in ladder groups for
+      route logic. Each conditional specifies how to handle on-true and on-false results, allowing complex
+      event-driven behavior without polling or centralized control.
+    citation: "Manual Section 6.1: Logic Conditionals, pages 21–23; Section 6.1.1: Mast Conditionals, page 21"
+
+  - cdiPath: "Conditionals/Logic/Variable #1"
+    level: "group"
+    name: "Variable #1"
+    description: |
+      The first of two boolean variables in this conditional. Holds true/false state across power cycles
+      and responds to configured consumer events. Can source its state from the variable's own events,
+      any of 8 virtual track circuits, or track speed information, enabling multi-faceted decision logic.
+    citation: "Manual Section 6.2: Variables, page 23; Section 6.2.1: Variables and 'Not', page 23"
+
+  - cdiPath: "Conditionals/Logic/Variable #2"
+    level: "group"
+    name: "Variable #2"
+    description: |
+      The second boolean variable in this conditional, maintaining state across power cycles.
+      Like Variable #1, it responds to configured events and can source state from its own events,
+      track circuits, or track speed, allowing logic decisions based on multiple independent conditions.
+    citation: "Manual Section 6.2: Variables, page 23; Section 6.2.1: Variables and 'Not', page 23"
+
+  - cdiPath: "Conditionals/Logic/Action"
+    level: "group"
+    name: "Action"
+    description: |
+      Defines whether the conditional's producer events should be sent when the logic evaluates true
+      or false, and whether to exit the group or continue evaluating. Supports four exit strategies
+      (Send then Exit, Send then Evaluate Next, Exit, Evaluate Next) for flexible mast and ladder logic.
+    citation: "Manual Section 6.1: Logic Conditionals, pages 21–23; Logic function reference, page 24"
+
+  - cdiPath: "Conditionals/Logic/Time Delay before action"
+    level: "group"
+    name: "Time Delay before action"
+    description: |
+      Optional delay applied before this conditional's producer events are sent.
+      Set duration in milliseconds, seconds, or minutes (1–60,000 units) with optional retriggering
+      to reset the timer on repeated true conditions, enabling time-based effects like delayed signal changes.
+    citation: "Manual Section 6.4: Delay, page 24"
+
+  - cdiPath: "Conditionals/Logic/Action[0-3]"
+    level: "group"
+    name: "Action"
+    description: |
+      One of up to four producer events sent when this conditional is true (subject to the Condition setting).
+      Choose a destination (the conditional's own event or one of 8 virtual track circuits) and an action
+      condition (None, Immediately, After Delay, or conditional on True/False logic state).
+    citation: "Manual Section 6.5: Producers, page 24; Section 6.0: Tower LCC Logic, page 21"
+
+  - cdiPath: "Track Receiver"
+    level: "segment"
+    name: "Track Receiver"
+    description: |
+      Configures up to 8 virtual code line receivers, allowing this Tower-LCC to listen for
+      speed indication events from other nodes (e.g., downstream signal nodes). Each circuit
+      is linked via a remote mast's EventID to automatically receive simulated code line data
+      for use in local signal logic evaluation.
+    citation: "Manual Section 7.2: Linking Virtual Code Lines, page 25; Section 7.1: Simulating a Code Line with Events, page 25"
+
+  - cdiPath: "Track Receiver/Circuit"
+    level: "group"
+    name: "Circuit"
+    description: |
+      Represents one receiver channel for a virtual code line.
+      Stores the Link Address (EventID) of a remote transmit node, allowing this Tower-LCC
+      to receive up to 16 speed indication events from that node for use in conditional logic
+      to determine signal aspects based on downstream occupancy and speed.
+    citation: "Manual Section 7.2: Linking Virtual Code Lines, page 25"
+
+  - cdiPath: "Track Transmitter"
+    level: "segment"
+    name: "Track Transmitter"
+    description: |
+      Configures up to 8 virtual code line transmitters, allowing this Tower-LCC to broadcast
+      speed indication information to other nodes (e.g., upstream signal nodes). Each circuit
+      generates a unique Link Address that remote nodes copy to their receiver configurations,
+      enabling distributed signal logic across the layout.
+    citation: "Manual Section 7.2: Linking Virtual Code Lines, page 25; Section 7.3: Prototype Code Line, page 26"
+
+  - cdiPath: "Track Transmitter/Circuit"
+    level: "group"
+    name: "Circuit"
+    description: |
+      Represents one transmitter channel for a virtual code line.
+      Generates a read-only Link Address (EventID) that upstream nodes copy into their
+      Track Receiver configuration. This Tower-LCC can transmit up to 16 speed indication
+      events through this circuit based on conditional logic, simulating prototype coded track circuits.
+    citation: "Manual Section 7.2: Linking Virtual Code Lines, page 25"

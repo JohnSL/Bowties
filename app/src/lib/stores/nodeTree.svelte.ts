@@ -303,6 +303,19 @@ function findLeafByPathInChildren(children: ConfigNode[], path: string[]): LeafC
   if (path.length === 0) return null;
 
   const segment = path[0];
+
+  // Handle "inst:N" — 1-based instance index within a replicated group's children.
+  // Rust emits these for every replicated group instance (e.g. "inst:3" → children[2]).
+  const instMatch = segment.match(/^inst:(\d+)$/);
+  if (instMatch) {
+    const instNum = parseInt(instMatch[1], 10);
+    const node = children[instNum - 1]; // convert 1-based → 0-based
+    if (!node) return null;
+    if (path.length === 1) return isLeaf(node) ? node : null;
+    if (isGroup(node)) return findLeafByPathInChildren(node.children, path.slice(1));
+    return null;
+  }
+
   // Could be "elem:N" or "elem:N#M"
   const elemMatch = segment.match(/^elem:(\d+)(?:#(\d+))?$/);
   if (!elemMatch) return null;

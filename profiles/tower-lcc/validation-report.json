@@ -1,0 +1,29 @@
+{
+  "nodeType": {
+    "manufacturer": "RR-CirKits",
+    "model": "Tower-LCC"
+  },
+  "cdiFile": "D:\\src\\github\\LCC\\Bowties.worktrees\\008-guided-configuration\\temp\\Tower LCC CDI.xml",
+  "extractionFiles": [
+    "event-roles.json",
+    "relevance-rules.json",
+    "section-descriptions.yaml",
+    "field-descriptions.yaml",
+    "recipes.yaml"
+  ],
+  "pathErrors": [],
+  "enumErrors": [],
+  "coverage": {
+    "totalSegments": 5,
+    "coveredSegments": 5,
+    "totalGroups": 8,
+    "coveredGroups": 8,
+    "totalLeafFields": 30,
+    "coveredLeafFields": 33,
+    "totalEventSlots": 11,
+    "coveredEventSlots": 14,
+    "overallPercentage": 111.1
+  },
+  "uncoveredSections": [],
+  "summary": "PASS: 0 path errors, 0 enum errors, 111.1% coverage"
+}

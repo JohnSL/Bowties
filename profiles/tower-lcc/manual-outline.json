@@ -1,0 +1,165 @@
+{
+  "nodeType": {
+    "manufacturer": "RR-CirKits",
+    "model": "Tower-LCC"
+  },
+  "cdiFile": "D:\\src\\github\\LCC\\Bowties.worktrees\\008-guided-configuration\\temp\\Tower LCC CDI.xml",
+  "pdfFile": "D:\\src\\github\\LCC\\Bowties.worktrees\\008-guided-configuration\\temp\\TowerLCC-manual-f.pdf",
+  "totalPages": 33,
+  "generatedDate": "2026-02-28",
+  "sections": [
+    {
+      "order": 1,
+      "name": "Front Matter and Overview",
+      "pages": "1-6",
+      "topics": [
+        "cover page",
+        "copyright and license",
+        "contact information",
+        "table of contents",
+        "product overview"
+      ],
+      "relevantTo": [],
+      "notes": "Pages 1-2 are cover; page 3 is copyright/contact; pages 4-5 are table of contents; page 6 is Overview. No configuration content."
+    },
+    {
+      "order": 2,
+      "name": "About LCC — Concepts and Definitions",
+      "pages": "7-9",
+      "topics": [
+        "LCC network overview",
+        "Node definition",
+        "Segment definition",
+        "Line definition",
+        "Consumer events",
+        "Producer events"
+      ],
+      "relevantTo": ["profile-1", "profile-3"],
+      "notes": "Defines Consumer/Producer event model (section 1.1.4–1.1.5) and Line state/veto concepts. Key background for event role classification in profile-1."
+    },
+    {
+      "order": 3,
+      "name": "Hardware — Features, Specs, and Physical Connections",
+      "pages": "9-14",
+      "topics": [
+        "Tower-LCC electrical specifications",
+        "CAN LCC RJ-45 connector pinout",
+        "Power connections (7.5–27 VDC)",
+        "Status indicators (green ON, red ACT)",
+        "Blue/Gold buttons and LEDs",
+        "I/O connector wiring (16 lines across 2 ports)",
+        "Getting started with CDI tools (JMRI, DecoderPro)"
+      ],
+      "relevantTo": ["profile-3", "profile-5"],
+      "notes": "Section 2 (features/specs) on pages 9-10; Section 3 (connections) on pages 10-13; Section 4 (getting started / CDI intro) on pages 13-14. Relevant to recipes for initial setup."
+    },
+    {
+      "order": 4,
+      "name": "Input/Output Configuration",
+      "pages": "15-20",
+      "topics": [
+        "Node Identification (Name, Description)",
+        "Output Function options (No Function, Steady, Pulse, Blink, Sample variants)",
+        "Input Function options (Disabled, Active Hi/Lo, Alt Action, Sample)",
+        "Delay timers (Interval 1 on-delay, Interval 2 off-delay, Retrigger)",
+        "Commands — consumer events and actions (On, Off, Change, Veto, Gated)",
+        "Indications — producer events and triggers (Output State, Function, Input, Gated)"
+      ],
+      "relevantTo": ["profile-1", "profile-2", "profile-3", "profile-4", "profile-5"],
+      "notes": "Core CDI segment 'Port I/O' (space 253, origin 128) with 16 replicated Line groups. Consumer events are section 5.3.4 Commands (p.19); Producer events are section 5.3.5 Indications (p.20). Relevance rules exist: input functions are irrelevant when Output Function is not 'No Function' (and vice versa); Delay fields are conditionally used based on output type."
+    },
+    {
+      "order": 5,
+      "name": "Tower LCC Logic — Conditionals, Variables, and Producers",
+      "pages": "21-24",
+      "topics": [
+        "Logic conditional structure (Group, Last/Single, Ladder Group)",
+        "Mast conditional evaluation order (most to least restrictive)",
+        "Action/exit format table (Send then Exit, Send then Evaluate Next, Exit, Evaluate Next)",
+        "Action conditions (None, Immediately, After Delay, Immediate/Delayed if True/False)",
+        "Variables (V1, V2) — true/false event pairs, state retention",
+        "Logic functions (AND, OR, XOR, AND/OR change, AND Then, V1 Only, V2 Only, null)",
+        "Delay timer (0–60,000 ms/s/min, Retrigger option)",
+        "Producers — up to 4 output events per conditional (None, Immediately, After Delay)"
+      ],
+      "relevantTo": ["profile-1", "profile-2", "profile-3", "profile-4", "profile-5"],
+      "notes": "CDI segment for Logic Conditionals (32 conditionals). Variable events are consumers; conditional output events are producers. Relevance rules: many fields become irrelevant when Group Type is 'Blocked (0)'; Action fields depend on exit format selection. Key for profile-2."
+    },
+    {
+      "order": 6,
+      "name": "Track Circuits — Virtual Code Lines",
+      "pages": "25-26",
+      "topics": [
+        "Prototype coded track circuit background",
+        "Simulating code lines with LCC events",
+        "Linking virtual code lines via CDI (TX key from transmitting node)",
+        "Block numbering (1–8 per node, up to 8 virtual code lines)",
+        "Prototype code packet structure (Start, Speed/Indication 2/3/4/6/7/8/9, code 5, M)",
+        "ABS and APB signal examples"
+      ],
+      "relevantTo": ["profile-1", "profile-3", "profile-4", "profile-5"],
+      "notes": "CDI segment for Track/Virtual Code Lines. Each track circuit has TX and RX event groups — TX events are producers, RX events are consumers. Profile-5 recipes for linking virtual code lines at modular meets."
+    },
+    {
+      "order": 7,
+      "name": "Compatible Input/Output Cards",
+      "pages": "26-29",
+      "topics": [
+        "BOD-4 DCC block occupancy detector (4 block + 4 I/O)",
+        "BOD4-CP DCC BOD (4 block, 4 inputs, 2 turnout drivers)",
+        "BOD-8 DCC block occupancy detector (8 block, CT coils)",
+        "OIB-8 opto-isolator board (8 input)",
+        "SCSD-8 single coil solenoid driver",
+        "SMD-8 stall motor driver (8 line, H-bridge)",
+        "RB-4 relay board (4x SPDT)",
+        "FOB-A fan-out board (ribbon to compression terminals)",
+        "BOB-S break-out board (ribbon to screw terminals)"
+      ],
+      "relevantTo": ["profile-3", "profile-5"],
+      "notes": "No direct CDI fields here, but relevant for recipes: describes wiring conventions (e.g., RB-4 active-low inputs require 'Active Lo' output config, BOD-8 outputs are low during detection). Useful background for profile-5 configuration recipes."
+    },
+    {
+      "order": 8,
+      "name": "Troubleshooting, Boot Loader, and Maintenance",
+      "pages": "29-33",
+      "topics": [
+        "Sanity test procedure (power LED, alias establishment)",
+        "Activity test using JMRI LCC Monitor",
+        "Boot loader upgrade (nodes #02.01.57.00.00.76 or earlier)",
+        "Firmware upgrade procedure (JMRI Firmware Update, .hex file selection)",
+        "Grounding and isolation considerations",
+        "Warranty information (1 year, no user serviceable parts)",
+        "FCC compliance information"
+      ],
+      "relevantTo": ["profile-5"],
+      "notes": "Section 9 troubleshooting (p.29-30), Section 10 boot loader (p.30-31), Section 11 grounding (p.32), Section 12 warranty (p.32), Section 13 FCC (p.32-33). Only firmware upgrade steps are recipe-relevant for profile-5."
+    }
+  ],
+  "appendices": [
+    {
+      "name": "Electrical Specifications",
+      "pages": "10",
+      "purpose": "I/O port pin-level current ratings for Port 1 (pins 1,3,7,9 limited to 2mA; others 25mA) and Port 2 (all 25mA); 200mA combined maximum across all lines."
+    },
+    {
+      "name": "CAN LCC RJ-45 Pinout",
+      "pages": "11",
+      "purpose": "Pin-by-pin wiring table for the LCC CAN RJ-45 connector (CAN H, CAN L, GND, Alt L/H DCC, GND, +Power)."
+    },
+    {
+      "name": "I/O Connector Wiring Table",
+      "pages": "13",
+      "purpose": "Maps 10-pin IDC connector pin numbers to Tower LCC line numbers (lines run opposite to pin numbers)."
+    },
+    {
+      "name": "Logic Function Reference Table",
+      "pages": "24",
+      "purpose": "Complete list of logic operators: V1 AND V2, V1 OR V2, V1 XOR V2, change variants, V1 AND Then V2, V1 Only, V2 Only, null."
+    },
+    {
+      "name": "Prototype Code Line Packet Structure",
+      "pages": "26",
+      "purpose": "Describes prototype Genrakode/Electrocode packet: Start bit, Speed/Indication codes (2,3,4,6,7,8,9), code 5, and M code; explains how Tower LCC maps these to 16 EventID pairs."
+    }
+  ]
+}

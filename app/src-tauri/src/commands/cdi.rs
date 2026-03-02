@@ -1455,7 +1455,33 @@ pub async fn get_node_tree(
 
     // Build from CDI
     let cdi = get_cdi_from_cache(&node_id, &app_handle, &state).await?;
-    let tree = crate::node_tree::build_node_config_tree(&node_id, &cdi);
+    let mut tree = crate::node_tree::build_node_config_tree(&node_id, &cdi);
+
+    // Apply structure profile if available (must be AFTER merge_event_roles so
+    // profile-declared roles take precedence over protocol-exchange heuristics).
+    // Use CDI identification fields as the manufacturer/model key source.
+    if let Some(identity) = &cdi.identification {
+        let manufacturer = identity.manufacturer.as_deref().unwrap_or("");
+        let model = identity.model.as_deref().unwrap_or("");
+        if !manufacturer.is_empty() || !model.is_empty() {
+            if let Some(profile) = crate::profile::load_profile(
+                manufacturer,
+                model,
+                &cdi,
+                &app_handle,
+                &state.profiles,
+            ).await {
+                let report = crate::profile::annotate_tree(&mut tree, &profile, &cdi);
+                eprintln!(
+                    "[profile] {} — {} event roles, {} rules applied, {} warnings",
+                    node_id,
+                    report.event_roles_applied,
+                    report.rules_applied,
+                    report.warnings.len()
+                );
+            }
+        }
+    }
 
     // Cache and return
     let mut trees = state.node_trees.write().await;
@@ -1820,14 +1846,6 @@ pub async fn read_all_config_values(
         let node_count = nodes_snap.len();
 
         let config_cache_snap = state.config_value_cache.read().await.clone();
-        let catalog = crate::commands::bowties::build_bowtie_catalog(&nodes_snap, &event_roles, &config_cache_snap);
-
-        eprintln!(
-            "[bowties] Catalog built in {} ms: {} bowties from {} nodes",
-            build_start.elapsed().as_millis(),
-            catalog.bowties.len(),
-            node_count,
-        );
 
         // Spec 007: merge protocol-level event roles into every node tree.
         {
@@ -1843,6 +1861,81 @@ pub async fn read_all_config_values(
                 }
             }
         }
+
+        // Apply structure profiles to every node tree (must be AFTER merge_event_roles
+        // so profile-declared roles take precedence over protocol-exchange heuristics).
+        {
+            let node_ids: Vec<String> = {
+                let trees = state.node_trees.read().await;
+                trees.keys().cloned().collect()
+            };
+            for nid in &node_ids {
+                let cdi = match get_cdi_from_cache(nid, &app_handle, &state).await {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                if let Some(identity) = &cdi.identification {
+                    let manufacturer = identity.manufacturer.as_deref().unwrap_or("");
+                    let model = identity.model.as_deref().unwrap_or("");
+                    if !manufacturer.is_empty() || !model.is_empty() {
+                        if let Some(profile) = crate::profile::load_profile(
+                            manufacturer,
+                            model,
+                            &cdi,
+                            &app_handle,
+                            &state.profiles,
+                        ).await {
+                            let mut trees = state.node_trees.write().await;
+                            if let Some(tree) = trees.get_mut(nid) {
+                                let report = crate::profile::annotate_tree(tree, &profile, &cdi);
+                                eprintln!(
+                                    "[profile] {} — {} event roles, {} rules applied, {} warnings",
+                                    nid,
+                                    report.event_roles_applied,
+                                    report.rules_applied,
+                                    report.warnings.len()
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Build the bowtie catalog AFTER profile annotation so profile-declared event roles
+        // feed the same-node classification step (FR-016, FR-017).
+        //
+        // Collect profile_group_roles: all EventId leaves with a non-Ambiguous role from the
+        // now-annotated trees, keyed by "{node_id}:{element_path.join("/")}".
+        let profile_group_roles: std::collections::HashMap<String, lcc_rs::EventRole> = {
+            let trees = state.node_trees.read().await;
+            let mut map = std::collections::HashMap::new();
+            for (nid, tree) in trees.iter() {
+                for leaf in crate::node_tree::collect_event_id_leaves(tree) {
+                    if let Some(role) = leaf.event_role {
+                        if role != lcc_rs::EventRole::Ambiguous {
+                            let key = format!("{}:{}", nid, leaf.path.join("/"));
+                            map.insert(key, role);
+                        }
+                    }
+                }
+            }
+            map
+        };
+
+        let catalog = crate::commands::bowties::build_bowtie_catalog(
+            &nodes_snap,
+            &event_roles,
+            &config_cache_snap,
+            Some(&profile_group_roles),
+        );
+
+        eprintln!(
+            "[bowties] Catalog built in {} ms: {} bowties from {} nodes",
+            build_start.elapsed().as_millis(),
+            catalog.bowties.len(),
+            node_count,
+        );
 
         // Store catalog in AppState.
         *state.bowties_catalog.write().await = Some(catalog.clone());

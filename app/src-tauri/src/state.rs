@@ -132,6 +132,12 @@ pub struct AppState {
     /// progressively enriched by `merge_config_values` / `merge_event_roles`.
     /// Key = node_id_hex.
     pub node_trees: Arc<RwLock<HashMap<String, NodeConfigTree>>>,
+
+    // ── Spec 008: Structure profile cache ─────────────────────────────────
+
+    /// Loaded structure profiles keyed by `ProfileKey` (manufacturer::model).
+    /// `None` entry means "looked up but not found" (avoids re-scanning).
+    pub profiles: crate::profile::ProfileCache,
 }
 
 impl AppState {
@@ -149,6 +155,7 @@ impl AppState {
             event_roles: Arc::new(RwLock::new(HashMap::new())),
             config_value_cache: Arc::new(RwLock::new(HashMap::new())),
             node_trees: Arc::new(RwLock::new(HashMap::new())),
+            profiles: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 

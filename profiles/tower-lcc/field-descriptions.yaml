@@ -1,0 +1,900 @@
+nodeType:
+  manufacturer: "RR-CirKits"
+  model: "Tower-LCC"
+
+fields:
+  # NODE ID segment
+  - cdiPath: "NODE ID/Node Name"
+    name: "Node Name"
+    elementType: "string"
+    maxLength: 63
+    description: |
+      A user-friendly name for this Tower-LCC node that will appear in the node 
+      selection window of configuration tools. Choose a name that helps you identify 
+      this specific board (e.g., "Staging Yard Controller" or "Signal Logic East"). 
+      This name is stored in the node's memory and persists through power cycles.
+    
+  - cdiPath: "NODE ID/Node Description"
+    name: "Node Description"
+    elementType: "string"
+    maxLength: 64
+    description: |
+      An optional longer description that provides additional context about how this 
+      node is used on your layout. You might note its location, the devices it controls, 
+      or interconnections with other nodes. Limited to 64 characters.
+
+  # Node Power Monitor segment
+  - cdiPath: "Node Power Monitor/Message Options"
+    name: "Message Options"
+    elementType: "int"
+    description: |
+      Controls when the Tower-LCC sends out power status events. **Producer events** 
+      allow other nodes and control systems to monitor the power health of this board. 
+      Choose "None" if you don't need power monitoring, "Send Power OK only" for 
+      normal operation, or "Send both" for detailed power state awareness.
+    options:
+      - value: 0
+        label: "None"
+        description: "No power status events are sent."
+      - value: 1
+        label: "Send Power OK only"
+        description: "Node sends 'Power OK' event when power is within acceptable range; no notification when power fails."
+      - value: 2
+        label: "Send both Power OK and Power Not OK"
+        description: "Node sends 'Power OK' when power is good and 'Power Not OK' when power drops below acceptable range."
+
+  - cdiPath: "Node Power Monitor/Power OK"
+    name: "Power OK"
+    elementType: "eventid"
+    description: |
+      A **producer event** sent by this node when its power supply is within the 
+      acceptable range. Assign this event an ID to allow other nodes to monitor power 
+      health and react if this board loses power. The node automatically generates a 
+      new unique ID when you "Read" this field.
+
+  - cdiPath: "Node Power Monitor/Power Not OK"
+    name: "Power Not OK"
+    elementType: "eventid"
+    description: |
+      A **producer event** sent by this node when power drops below 7.5V. Useful for 
+      triggering alerts or shutdown sequences in control logic. Note: this event may 
+      be lost during a catastrophic power failure. The node automatically generates a 
+      new unique ID when you "Read" this field.
+
+  # Port I/O segment - common fields
+  - cdiPath: "Port I/O/Line/Line Description"
+    name: "Line Description"
+    elementType: "string"
+    maxLength: 32
+    description: |
+      A short label for this I/O line describing what it controls or monitors 
+      (e.g., "Main Yard Signal", "Occupancy Detector 3", "Turnout Motor A"). 
+      Limited to 32 characters. Use mnemonic names to keep your configuration 
+      organized and self-documenting. Applies to all 16 replicated line instances.
+
+  - cdiPath: "Port I/O/Line/Output Function"
+    name: "Output Function"
+    elementType: "int"
+    description: |
+      Controls how this line's output hardware behaves when driven by the node. 
+      **Steady** modes maintain a constant output level. **Pulse** modes briefly 
+      activate the output (useful for momentary actions like solenoids). **Blink** modes 
+      create repeating on/off cycles (useful for indicator LEDs). **Sample** modes read 
+      the external input while driving the output (for two-way devices like Touch Toggles). 
+      Choose **No Function** to disable this line as an output. Applies to all 16 line instances.
+    options:
+      - value: 0
+        label: "No Function"
+        description: "Output is disabled; line produces no output effect."
+        category: "Disabled"
+      - value: 1
+        label: "Steady Active Hi"
+        description: "Output level stays high (on) whenever output state is active."
+        category: "Steady"
+      - value: 2
+        label: "Steady Active Lo"
+        description: "Output level stays low (off) whenever output state is active."
+        category: "Steady"
+      - value: 3
+        label: "Pulse Active Hi"
+        description: "Output briefly pulses high when activated; pulse duration controlled by Delay Interval 1."
+        category: "Pulse"
+      - value: 4
+        label: "Pulse Active Lo"
+        description: "Output briefly pulses low when activated; pulse duration controlled by Delay Interval 1."
+        category: "Pulse"
+      - value: 5
+        label: "Blink A Active Hi"
+        description: "Output blinks high continuously with A timing: on-time from Interval 1, off-time from Interval 2."
+        category: "Blink"
+      - value: 6
+        label: "Blink A Active Lo"
+        description: "Output blinks low continuously with A timing: on-time from Interval 1, off-time from Interval 2."
+        category: "Blink"
+      - value: 7
+        label: "Blink B Active Hi"
+        description: "Output blinks high continuously with B timing (alternate blink pattern)."
+        category: "Blink"
+      - value: 8
+        label: "Blink B Active Lo"
+        description: "Output blinks low continuously with B timing (alternate blink pattern)."
+        category: "Blink"
+      - value: 9
+        label: "Sample Steady Active Hi"
+        description: "Output stays high; input is sampled while output is being driven. For dual-mode lines like Touch Toggles."
+        category: "Sample"
+      - value: 10
+        label: "Sample Steady Active Lo"
+        description: "Output stays low; input is sampled while output is being driven. For dual-mode lines."
+        category: "Sample"
+      - value: 11
+        label: "Alt. Sample Steady Active Hi"
+        description: "Output stays high with alternate input sampling; provides different timing behavior than Sample Steady."
+        category: "Sample"
+      - value: 12
+        label: "Alt. Sample Steady Active Lo"
+        description: "Output stays low with alternate input sampling."
+        category: "Sample"
+      - value: 13
+        label: "Sample Pulse Active Hi"
+        description: "Output pulses high; input is sampled during the pulse window. For special control scenarios."
+        category: "Sample"
+      - value: 14
+        label: "Sample Pulse Active Lo"
+        description: "Output pulses low; input is sampled during the pulse window."
+        category: "Sample"
+      - value: 15
+        label: "Alt. Sample Pulse Active Hi"
+        description: "Output pulses high with alternate input sampling pattern."
+        category: "Sample"
+      - value: 16
+        label: "Alt. Sample Pulse Active Lo"
+        description: "Output pulses low with alternate input sampling pattern."
+        category: "Sample"
+    citation: "Section 5.3.2 'I/O Configuration', pages 17-18"
+
+  - cdiPath: "Port I/O/Line/Input Function"
+    name: "Input Function"
+    elementType: "int"
+    description: |
+      Controls how this line's input hardware is monitored and reported. Choose 
+      **Disabled** to use this line as a pure output. **Active Hi/Lo** modes respond 
+      immediately to input level changes (debounced). **Alt Action Hi/Lo** modes 
+      toggle internal state and send alternating events (useful for push-buttons). 
+      **Sample** modes read the input briefly while also driving output (advanced, 
+      for dual-mode devices). Applies to all 16 line instances.
+    options:
+      - value: 0
+        label: "Disabled"
+        description: "Input is not monitored; line is used only as output."
+      - value: 1
+        label: "Active Hi"
+        description: "Input is considered true when it goes high; sends events on transitions (normal input mode)."
+      - value: 2
+        label: "Active Lo"
+        description: "Input is considered true when it goes low; sends events on transitions (inverted input mode)."
+      - value: 3
+        label: "Alt Action Hi"
+        description: "Input toggles state when it goes high; each transition sends alternating events (e.g., Normal/Reverse)."
+      - value: 4
+        label: "Alt Action Lo"
+        description: "Input toggles state when it goes low; each transition sends alternating events."
+      - value: 5
+        label: "Sample Hi"
+        description: "Input is briefly sampled while output is being driven, and state is set to true if sampled high."
+      - value: 6
+        label: "Sample Lo"
+        description: "Input is briefly sampled while output is being driven, and state is set to true if sampled low."
+      - value: 7
+        label: "Alt Sample Hi"
+        description: "Input is sampled with alternate timing, toggling state if sample is high."
+      - value: 8
+        label: "Alt Sample Lo"
+        description: "Input is sampled with alternate timing, toggling state if sample is low."
+    citation: "Section 5.3.2 'I/O Configuration', page 18"
+
+  - cdiPath: "Port I/O/Line/Delay/Delay Time (Interval 1)"
+    name: "Delay Time (Interval 1)"
+    elementType: "int"
+    validRange:
+      min: 1
+      max: 60000
+    description: |
+      The timing value (on-delay) for output effects. Combined with the Units field 
+      below, this specifies how long the output stays on in Pulse mode, or the on-time 
+      in Blink modes. Range is 1 to 60,000. For example: 500 milliseconds for a brief 
+      pulse, 250 milliseconds for a blink on-time, or 1 second for a delayed output action.
+    citation: "Section 5.3.3 'Delay', page 18"
+
+  - cdiPath: "Port I/O/Line/Delay/Units (Interval 1)"
+    name: "Units (Interval 1)"
+    elementType: "int"
+    description: "The time unit for the Delay Time value above (Milliseconds, Seconds, or Minutes)."
+    options:
+      - value: 0
+        label: "Milliseconds"
+        description: "Delay time is in milliseconds (1/1000 second). Use for output pulses and short blinks."
+      - value: 1
+        label: "Seconds"
+        description: "Delay time is in seconds. Use for visible blinks or output delays."
+      - value: 2
+        label: "Minutes"
+        description: "Delay time is in minutes. Use for very long delays (e.g., simulated running times)."
+
+  - cdiPath: "Port I/O/Line/Delay/Retrigger (Interval 1)"
+    name: "Retrigger (Interval 1)"
+    elementType: "int"
+    description: |
+      Controls whether a new triggering event resets the delay timer. When set to 
+      **Yes**, the timer restarts if the line state is set to true again before the 
+      delay finishes. When set to **No**, repeated triggers are ignored and the timer 
+      continues to completion.
+    options:
+      - value: 0
+        label: "No"
+        description: "Timer runs to completion regardless of further input; re-trigger events are ignored."
+      - value: 1
+        label: "Yes"
+        description: "Timer resets to its starting value if re-triggered before completion."
+
+  - cdiPath: "Port I/O/Line/Delay/Delay Time (Interval 2)"
+    name: "Delay Time (Interval 2)"
+    elementType: "int"
+    validRange:
+      min: 1
+      max: 60000
+    description: |
+      The timing value (off-delay) for output effects. Combined with the Units field 
+      below, this specifies the off-time in Blink modes, or the delay before the output 
+      goes inactive in Pulse mode. Range is 1 to 60,000. Example: 500 milliseconds for 
+      the off-time in a symmetric blink.
+    citation: "Section 5.3.3 'Delay', page 18"
+
+  - cdiPath: "Port I/O/Line/Delay/Units (Interval 2)"
+    name: "Units (Interval 2)"
+    elementType: "int"
+    description: "The time unit for Delay Time Interval 2 (Milliseconds, Seconds, or Minutes)."
+    options:
+      - value: 0
+        label: "Milliseconds"
+        description: "Delay time is in milliseconds. Use for short output off-times."
+      - value: 1
+        label: "Seconds"
+        description: "Delay time is in seconds. Use for longer off-times."
+      - value: 2
+        label: "Minutes"
+        description: "Delay time is in minutes. Use for very long delays."
+
+  - cdiPath: "Port I/O/Line/Delay/Retrigger (Interval 2)"
+    name: "Retrigger (Interval 2)"
+    elementType: "int"
+    description: |
+      Controls whether a new triggering event resets the off-delay timer. Same 
+      behavior as Retrigger (Interval 1) but applied to the off-delay.
+    options:
+      - value: 0
+        label: "No"
+        description: "Timer runs to completion regardless of further input."
+      - value: 1
+        label: "Yes"
+        description: "Timer resets if the line state changes before delay completion."
+
+  - cdiPath: "Port I/O/Line/Event[0-5]/Command"
+    name: "Command"
+    elementType: "eventid"
+    description: |
+      A **consumer event** that when received causes the line to change state, change 
+      the veto flag, or perform another action. Each line has 6 consumer events available 
+      (indices 0-5). Typical example: Event 0 turns on, Event 1 turns off. The Action 
+      field determines what happens when this event is received. Auto-generated on "Read".
+    citation: "Section 5.3.4 'Commands', page 19"
+
+  - cdiPath: "Port I/O/Line/Event[0-5]/Action"
+    name: "Action"
+    elementType: "int"
+    description: |
+      Specifies what happens when the corresponding Command event is received. 
+      This determines how the event affects the line's output state and veto state. 
+      Choose **None** to ignore the event, **On/Off** to set state directly, **Change** 
+      to toggle, **Veto On/Off** to control veto, or **Gated On/Off/Change** to only 
+      act when veto is off.
+    options:
+      - value: 0
+        label: "None"
+        description: "Event is received but causes no action."
+      - value: 1
+        label: "On (Line Active)"
+        description: "Event sets the output state to active (on). Works even if veto is set."
+      - value: 2
+        label: "Off (Line Inactive)"
+        description: "Event sets the output state to inactive (off). Works even if veto is set."
+      - value: 3
+        label: "Change (Toggle)"
+        description: "Event toggles the output state between on and off."
+      - value: 4
+        label: "Veto On (Active)"
+        description: "Event sets the veto state to active, which blocks certain output changes."
+      - value: 5
+        label: "Veto Off (Inactive)"
+        description: "Event clears the veto state, allowing all output changes to take effect."
+      - value: 6
+        label: "Gated On (Non Veto Output)"
+        description: "Event sets output on only if veto is off; ignored if veto is on."
+      - value: 7
+        label: "Gated Off (Non Veto Output)"
+        description: "Event sets output off only if veto is off; ignored if veto is on."
+      - value: 8
+        label: "Gated Change (Non Veto Toggle)"
+        description: "Event toggles output only if veto is off; ignored if veto is on."
+    citation: "Section 5.3.4 'Commands', page 19"
+
+  - cdiPath: "Port I/O/Line/Event[6-11]/Upon this action"
+    name: "Upon this action"
+    elementType: "int"
+    description: |
+      Specifies the **producer event** trigger condition for this line. Each line has 
+      6 producer events available (indices 6-11). Choose the action that should trigger 
+      the event (e.g., output state change, function output change, input change). 
+      Choose **None** to disable the producer event.
+    options:
+      - value: 0
+        label: "None"
+        description: "Producer event is disabled; no event is sent on any action."
+      - value: 1
+        label: "Output State On command"
+        description: "Producer event fires when a command event sets the line's output state to on."
+      - value: 2
+        label: "Output State Off command"
+        description: "Producer event fires when a command event sets the line's output state to off."
+      - value: 3
+        label: "Output On (Function hi)"
+        description: "Producer event fires when the function's actual output goes high (used for steady/pulse/blink modes)."
+      - value: 4
+        label: "Output Off (Function lo)"
+        description: "Producer event fires when the function's actual output goes low."
+      - value: 5
+        label: "Input On"
+        description: "Producer event fires when the input line reads high (normal input mode)."
+      - value: 6
+        label: "Input Off"
+        description: "Producer event fires when the input line reads low (normal input mode)."
+      - value: 7
+        label: "Gated On (Non Veto Input)"
+        description: "Producer event fires when input goes high, but only if veto is off."
+      - value: 8
+        label: "Gated Off (Non Veto Input)"
+        description: "Producer event fires when input goes low, but only if veto is off."
+    citation: "Section 5.3.5 'Indications', page 20"
+
+  - cdiPath: "Port I/O/Line/Event[6-11]/Indicator"
+    name: "Indicator"
+    elementType: "eventid"
+    description: |
+      A **producer event** that fires based on the trigger condition defined in 
+      "Upon this action" above. Each line has 6 producer events (indices 6-11). 
+      Typical example: Event 0 sends when input goes high, Event 1 sends when input 
+      goes low. Auto-generated on "Read".
+    citation: "Section 5.3.5 'Indications', page 20"
+
+  # Conditionals segment
+  - cdiPath: "Conditionals/Logic/Description"
+    name: "Description"
+    elementType: "string"
+    maxLength: 32
+    description: |
+      A user-friendly label for this logic conditional (e.g., "Signal Aspect" or 
+      "Track Occupancy Logic"). Used to document the purpose of the conditional in 
+      your layout's interlocking logic. Limited to 32 characters. Applies to all 32 
+      replicated conditional instances.
+
+  - cdiPath: "Conditionals/Logic/Function"
+    name: "Function"
+    elementType: "int"
+    description: |
+      Controls the group structure and whether this conditional is active. **Blocked** 
+      disables the conditional completely (all its output is ignored). **Group** begins 
+      or continues a mast or ladder group. **Last (Single)** marks the end of a group. 
+      The manual recommends structuring conditionals in groups with one "Last" item per group.
+    options:
+      - value: 0
+        label: "Blocked"
+        description: "Conditional is disabled; its logic is not evaluated and no events are sent."
+      - value: 1
+        label: "Group"
+        description: "Conditional is the start or middle of a logic group; continues group evaluation."
+      - value: 3
+        label: "Last (Single)"
+        description: "Conditional marks the end of a logic group; after Group items."
+    citation: "Section 6.1 'Logic Conditionals', page 21"
+
+  - cdiPath: "Conditionals/Logic/Variable #1/Trigger"
+    name: "Variable #1 Trigger"
+    elementType: "int"
+    description: |
+      Determines when Variable #1 is monitored for changes. **On Variable Change** 
+      evaluates this conditional whenever V1 state changes (triggered by consumer events). 
+      **On Matching Event** evaluates only when the event in the Source field matches. 
+      **None** disables Variable #1 monitoring for this conditional.
+    options:
+      - value: 0
+        label: "On Variable Change"
+        description: "Conditional re-evaluates whenever Variable #1 changes state."
+      - value: 1
+        label: "On Matching Event"
+        description: "Conditional evaluates when the Source generates a matching track speed signal."
+      - value: 2
+        label: "None"
+        description: "Variable #1 is not used; trigger monitoring is disabled."
+    citation: "Section 6.2 'Variables', page 23"
+
+  - cdiPath: "Conditionals/Logic/Variable #1/Source"
+    name: "Variable #1 Source"
+    elementType: "int"
+    description: |
+      Specifies where Variable #1 input comes from. Choose **Use Variable #1's (C) Events** 
+      to use the pair of consumer events below. Choose **Track Circuit 1-8** to filter 
+      variable triggers by a specific track circuit's speed signals (useful for prototypical 
+      signal logic).
+    options:
+      - value: 0
+        label: "Use Variable #1's (C) Events"
+        description: "Variable #1 is driven by the 'set true' and 'set false' consumer events below."
+      - value: 1
+        label: "Track Circuit 1"
+        description: "Variable #1 triggers based on Track Circuit 1 speed signals only."
+      - value: 2
+        label: "Track Circuit 2"
+        description: "Variable #1 triggers based on Track Circuit 2 speed signals."
+      - value: 3
+        label: "Track Circuit 3"
+        description: "Variable #1 triggers based on Track Circuit 3 speed signals."
+      - value: 4
+        label: "Track Circuit 4"
+        description: "Variable #1 triggers based on Track Circuit 4 speed signals."
+      - value: 5
+        label: "Track Circuit 5"
+        description: "Variable #1 triggers based on Track Circuit 5 speed signals."
+      - value: 6
+        label: "Track Circuit 6"
+        description: "Variable #1 triggers based on Track Circuit 6 speed signals."
+      - value: 7
+        label: "Track Circuit 7"
+        description: "Variable #1 triggers based on Track Circuit 7 speed signals."
+      - value: 8
+        label: "Track Circuit 8"
+        description: "Variable #1 triggers based on Track Circuit 8 speed signals."
+    citation: "Section 6.2 'Variables', page 23"
+
+  - cdiPath: "Conditionals/Logic/Variable #1/Track Speed"
+    name: "Variable #1 Track Speed"
+    elementType: "int"
+    description: |
+      When Variable #1's Source is set to a Track Circuit, this field specifies which 
+      speed code signal triggers Variable #1. For example, choose "Stop" to trigger when 
+      the track circuit reports a stop indication. Ignored if Source is set to "Use Variable #1's (C) Events".
+    options:
+      - value: 0
+        label: "Stop"
+        description: "Trigger when track circuit indicates train must stop or is blocked."
+      - value: 1
+        label: "Restricting/Tumble Down"
+        description: "Trigger on restricting speed or prototype tumble-down signal."
+      - value: 2
+        label: "Slow"
+        description: "Trigger on slow speed indication."
+      - value: 3
+        label: "Medium"
+        description: "Trigger on medium speed indication."
+      - value: 4
+        label: "Limited"
+        description: "Trigger on limited speed indication."
+      - value: 5
+        label: "Approach"
+        description: "Trigger on approach speed indication."
+      - value: 6
+        label: "Approach-Medium"
+        description: "Trigger on approach-medium speed indication."
+      - value: 7
+        label: "Clear/Proceed"
+        description: "Trigger on clear speed (train may proceed at normal speed)."
+    citation: "Section 7 'Track Circuits', page 25"
+
+  - cdiPath: "Conditionals/Logic/Variable #1/set true"
+    name: "Variable #1 set true"
+    elementType: "eventid"
+    description: |
+      A **consumer event** that sets Variable #1 to true when received. Used when 
+      Variable #1's Source is set to "Use Variable #1's (C) Events". Typically linked 
+      to a sensor or condition that indicates the true state (e.g., occupancy, turnout 
+      position). Auto-generated on "Read".
+    citation: "Section 6.2 'Variables', page 23"
+
+  - cdiPath: "Conditionals/Logic/Variable #1/set false"
+    name: "Variable #1 set false"
+    elementType: "eventid"
+    description: |
+      A **consumer event** that sets Variable #1 to false when received. Used when 
+      Variable #1's Source is "Use Variable #1's (C) Events". Typically linked to the 
+      event indicating the false state (e.g., no occupancy, turnout reversed). 
+      Auto-generated on "Read".
+    citation: "Section 6.2 'Variables', page 23"
+
+  - cdiPath: "Conditionals/Logic/Logic Operation"
+    name: "Logic Operation"
+    elementType: "int"
+    description: |
+      Specifies the logical operation performed on Variable #1 and Variable #2 to 
+      determine if this conditional evaluates to true. Choose simple AND/OR/XOR for 
+      basic logic, "change" variants to trigger only on state transitions, "AND Then" 
+      for sequence detection (train direction), or "V1/V2 Only" to use a single variable. 
+      Choose "null => true" as a fallback when no other conditionals in the group fire.
+    options:
+      - value: 0
+        label: "V1 AND V2"
+        description: "Conditional is true when both Variable #1 AND Variable #2 are true."
+      - value: 1
+        label: "V1 OR V2"
+        description: "Conditional is true when either Variable #1 OR Variable #2 (or both) are true."
+      - value: 2
+        label: "V1 XOR V2"
+        description: "Conditional is true when Variable #1 and Variable #2 differ (exclusive or)."
+      - value: 3
+        label: "V1 AND V2 => change"
+        description: "Conditional triggers only when the AND result changes (useful for edge detection)."
+      - value: 4
+        label: "V1 OR V2 => change"
+        description: "Conditional triggers only when the OR result changes (edge detection version)."
+      - value: 5
+        label: "V1 AND Then V2 => true"
+        description: "Conditional becomes true when V1 is true AND THEN V2 becomes true (sequence detector for train direction)."
+      - value: 6
+        label: "null => true"
+        description: "Conditional always evaluates true if triggered; use as default action at end of a mast group."
+      - value: 7
+        label: "V1 Only"
+        description: "Conditional is true when Variable #1 is true (ignores Variable #2)."
+      - value: 8
+        label: "V2 Only"
+        description: "Conditional is true when Variable #2 is true (ignores Variable #1)."
+    citation: "Section 6.3 'Logic function', page 24"
+
+  - cdiPath: "Conditionals/Logic/Variable #2/Trigger"
+    name: "Variable #2 Trigger"
+    elementType: "int"
+    description: |
+      Determines when Variable #2 is monitored for changes. Same options as Variable #1 
+      Trigger: **On Variable Change**, **On Matching Event**, or **None**.
+    options:
+      - value: 0
+        label: "On Variable Change"
+        description: "Conditional re-evaluates whenever Variable #2 changes state."
+      - value: 1
+        label: "On Matching Event"
+        description: "Conditional evaluates when the Source generates a matching track speed signal."
+      - value: 2
+        label: "None"
+        description: "Variable #2 is not used; trigger monitoring is disabled."
+
+  - cdiPath: "Conditionals/Logic/Variable #2/Source"
+    name: "Variable #2 Source"
+    elementType: "int"
+    description: |
+      Specifies where Variable #2 input comes from. Same options as Variable #1 Source: 
+      **Use Variable #2's (C) Events** or **Track Circuit 1-8**.
+    options:
+      - value: 0
+        label: "Use Variable #2's (C) Events"
+        description: "Variable #2 is driven by the 'set true' and 'set false' consumer events."
+      - value: 1
+        label: "Track Circuit 1"
+        description: "Variable #2 triggers based on Track Circuit 1."
+      - value: 2
+        label: "Track Circuit 2"
+        description: "Variable #2 triggers based on Track Circuit 2."
+      - value: 3
+        label: "Track Circuit 3"
+        description: "Variable #2 triggers based on Track Circuit 3."
+      - value: 4
+        label: "Track Circuit 4"
+        description: "Variable #2 triggers based on Track Circuit 4."
+      - value: 5
+        label: "Track Circuit 5"
+        description: "Variable #2 triggers based on Track Circuit 5."
+      - value: 6
+        label: "Track Circuit 6"
+        description: "Variable #2 triggers based on Track Circuit 6."
+      - value: 7
+        label: "Track Circuit 7"
+        description: "Variable #2 triggers based on Track Circuit 7."
+      - value: 8
+        label: "Track Circuit 8"
+        description: "Variable #2 triggers based on Track Circuit 8."
+
+  - cdiPath: "Conditionals/Logic/Variable #2/Track Speed"
+    name: "Variable #2 Track Speed"
+    elementType: "int"
+    description: |
+      When Variable #2's Source is a Track Circuit, this specifies which speed code 
+      triggers Variable #2. Same options as Variable #1 Track Speed.
+    options:
+      - value: 0
+        label: "Stop"
+        description: "Trigger on stop indication."
+      - value: 1
+        label: "Restricting/Tumble Down"
+        description: "Trigger on restricting speed."
+      - value: 2
+        label: "Slow"
+        description: "Trigger on slow speed."
+      - value: 3
+        label: "Medium"
+        description: "Trigger on medium speed."
+      - value: 4
+        label: "Limited"
+        description: "Trigger on limited speed."
+      - value: 5
+        label: "Approach"
+        description: "Trigger on approach speed."
+      - value: 6
+        label: "Approach-Medium"
+        description: "Trigger on approach-medium speed."
+      - value: 7
+        label: "Clear/Proceed"
+        description: "Trigger on clear/proceed indication."
+
+  - cdiPath: "Conditionals/Logic/Variable #2/set true"
+    name: "Variable #2 set true"
+    elementType: "eventid"
+    description: |
+      A **consumer event** that sets Variable #2 to true. Used when Variable #2's 
+      Source is "Use Variable #2's (C) Events". Auto-generated on "Read".
+
+  - cdiPath: "Conditionals/Logic/Variable #2/set false"
+    name: "Variable #2 set false"
+    elementType: "eventid"
+    description: |
+      A **consumer event** that sets Variable #2 to false. Used when Variable #2's 
+      Source is "Use Variable #2's (C) Events". Auto-generated on "Read".
+
+  - cdiPath: "Conditionals/Logic/Action/when true"
+    name: "Exit Format When True"
+    elementType: "int"
+    description: |
+      Controls the control flow behavior when this conditional evaluates to **true**. 
+      In mast conditionals, **Send then Exit** sends the action events and stops evaluating 
+      the rest of the group (default). **Send then Evaluate Next** continues to the next 
+      conditional. **Exit Group** skips to the next group without sending events. 
+      **Evaluate Next** continues without sending.
+    options:
+      - value: 0
+        label: "Send then Exit Group"
+        description: "Send action events and skip to the end of the group (default for mast logic)."
+      - value: 2
+        label: "Send then Evaluate Next"
+        description: "Send action events and continue evaluating the next conditional."
+      - value: 3
+        label: "Exit Group"
+        description: "Skip to the end of the group without sending events (hold previous aspect)."
+      - value: 4
+        label: "Evaluate Next"
+        description: "Continue to the next conditional without sending events or exiting."
+    citation: "Section 6.1.1 'Mast Conditionals', page 21"
+
+  - cdiPath: "Conditionals/Logic/Action/when false"
+    name: "Exit Format When False"
+    elementType: "int"
+    description: |
+      Controls the control flow behavior when this conditional evaluates to **false**. 
+      Same options as "when true" but applied when the conditional is false.
+    options:
+      - value: 0
+        label: "Send then Exit Group"
+        description: "Send action events and skip to the end of the group."
+      - value: 2
+        label: "Send then Evaluate Next"
+        description: "Send action events and continue to the next conditional."
+      - value: 3
+        label: "Exit Group"
+        description: "Skip to the end of the group without sending events."
+      - value: 4
+        label: "Evaluate Next"
+        description: "Continue to the next conditional."
+
+  - cdiPath: "Conditionals/Logic/Time Delay before action/Delay Time"
+    name: "Delay Time"
+    elementType: "int"
+    validRange:
+      min: 1
+      max: 60000
+    description: |
+      The delay value (combined with Units below) specifying how long to wait before 
+      sending the action events. Range is 1 to 60,000. Used to simulate running times, 
+      signal approach sequences, or debounce logic triggers. If no delay is needed, 
+      set to 1 and choose "Milliseconds".
+    citation: "Section 6.4 'Delay', page 24"
+
+  - cdiPath: "Conditionals/Logic/Time Delay before action/Units"
+    name: "Delay Units"
+    elementType: "int"
+    description: "The time unit for the Delay Time (Milliseconds, Seconds, or Minutes)."
+    options:
+      - value: 0
+        label: "Milliseconds"
+        description: "Delay is in milliseconds. Use for short delays (1-60,000 ms = 1-60 seconds max)."
+      - value: 1
+        label: "Seconds"
+        description: "Delay is in seconds. Use for medium delays (1-60,000 seconds max)."
+      - value: 2
+        label: "Minutes"
+        description: "Delay is in minutes. Use for long delays like simulation of running times."
+
+  - cdiPath: "Conditionals/Logic/Time Delay before action/Retriggerable"
+    name: "Retriggerable"
+    elementType: "int"
+    description: |
+      Controls whether re-triggering the conditional restarts its delay timer. When 
+      **Yes**, a new trigger resets the timer. When **No**, repeated triggers are ignored 
+      until the timer completes.
+    options:
+      - value: 0
+        label: "No"
+        description: "Delay timer runs to completion; re-trigger events are ignored."
+      - value: 1
+        label: "Yes"
+        description: "Delay timer restarts if the conditional evaluates true again before completion."
+    citation: "Section 6.4 'Delay', page 24"
+
+  - cdiPath: "Conditionals/Logic/Action[0-3]/Condition"
+    name: "Condition"
+    elementType: "int"
+    description: |
+      Determines when this action event is sent. **none** disables the action. 
+      **Immediately** sends when evaluated. **After delay** sends after the delay timer 
+      finishes. **Immediate if True/False** sends only if conditional is true/false. 
+      **Delayed if True/False** sends after delay only if conditional is true/false. 
+      You can send different events based on whether the conditional was true or false.
+    options:
+      - value: 0
+        label: "none"
+        description: "Action is disabled; no event is sent."
+      - value: 1
+        label: "Immediately"
+        description: "Event is sent immediately when the conditional is evaluated."
+      - value: 2
+        label: "After delay"
+        description: "Event is sent after the delay timer completes."
+      - value: 3
+        label: "Immediate if True"
+        description: "Event is sent immediately, but only when the conditional evaluates true."
+      - value: 4
+        label: "Immediate if False"
+        description: "Event is sent immediately, but only when the conditional evaluates false."
+      - value: 5
+        label: "Delayed if True"
+        description: "Event is sent after delay, but only when the conditional evaluates true."
+      - value: 6
+        label: "Delayed if False"
+        description: "Event is sent after delay, but only when the conditional evaluates false."
+    citation: "Section 6.1.1 'Mast Conditionals', page 22"
+
+  - cdiPath: "Conditionals/Logic/Action[0-3]/Destination"
+    name: "Destination"
+    elementType: "int"
+    description: |
+      Specifies where the action event goes. **Use Action (P) Event** sends the custom 
+      event ID configured below. **Track Circuit 1-8** sends internal track circuit speed 
+      signals directly (used in prototypical signal logic without custom event IDs).
+    options:
+      - value: 0
+        label: "Use Action (P) Event"
+        description: "Send the custom producer event ID configured in 'Action Event' field."
+      - value: 1
+        label: "Track Circuit 1"
+        description: "Send as an internal Track Circuit 1 signal (used in prototypical logic)."
+      - value: 2
+        label: "Track Circuit 2"
+        description: "Send as a Track Circuit 2 signal."
+      - value: 3
+        label: "Track Circuit 3"
+        description: "Send as a Track Circuit 3 signal."
+      - value: 4
+        label: "Track Circuit 4"
+        description: "Send as a Track Circuit 4 signal."
+      - value: 5
+        label: "Track Circuit 5"
+        description: "Send as a Track Circuit 5 signal."
+      - value: 6
+        label: "Track Circuit 6"
+        description: "Send as a Track Circuit 6 signal."
+      - value: 7
+        label: "Track Circuit 7"
+        description: "Send as a Track Circuit 7 signal."
+      - value: 8
+        label: "Track Circuit 8"
+        description: "Send as a Track Circuit 8 signal."
+    citation: "Section 6.5 'Producers', page 24"
+
+  - cdiPath: "Conditionals/Logic/Action[0-3]/Track Speed"
+    name: "Track Speed"
+    elementType: "int"
+    description: |
+      When Destination is set to a Track Circuit (1-8), this specifies which speed 
+      code signal is sent. For example, "Stop" sends a stop indication to the track circuit. 
+      Ignored if Destination is "Use Action (P) Event".
+    options:
+      - value: 0
+        label: "Stop"
+        description: "Send stop/blocked indication to the track circuit."
+      - value: 1
+        label: "Restricting/Tumble Down"
+        description: "Send restricting speed or tumble-down signal."
+      - value: 2
+        label: "Slow"
+        description: "Send slow speed indication."
+      - value: 3
+        label: "Medium"
+        description: "Send medium speed indication."
+      - value: 4
+        label: "Limited"
+        description: "Send limited speed indication."
+      - value: 5
+        label: "Approach"
+        description: "Send approach speed indication."
+      - value: 6
+        label: "Approach-Medium"
+        description: "Send approach-medium speed indication."
+      - value: 7
+        label: "Clear/Proceed"
+        description: "Send clear/proceed (normal speed) indication."
+
+  - cdiPath: "Conditionals/Logic/Action[0-3]/Action Event"
+    name: "Action Event"
+    elementType: "eventid"
+    description: |
+      A **producer event** sent when this action triggers (based on Condition, Destination, 
+      and Delay settings). Each conditional can send up to 4 different action events 
+      (Action 0, 1, 2, 3). Use different event IDs to control different parts of your 
+      layout's logic. Auto-generated on "Read". Ignored if Destination is set to a Track Circuit.
+    citation: "Section 6.5 'Producers', page 24"
+
+  # Track Receiver segment
+  - cdiPath: "Track Receiver/Circuit/Remote Mast Description"
+    name: "Remote Mast Description"
+    elementType: "string"
+    maxLength: 32
+    description: |
+      A label for the remote signal that this track receiver listens to 
+      (e.g., "Signal 42 East", "Block 7"). Used for documentation. Limited to 32 characters. 
+      Applies to all 8 Track Receiver circuits.
+
+  - cdiPath: "Track Receiver/Circuit/Link Address"
+    name: "Link Address"
+    elementType: "eventid"
+    description: |
+      A **consumer event** that receives virtual track circuit speed information from 
+      a remote transmitting node. Copy the "Link Address" from the corresponding Track 
+      Transmitter node's Track Circuit and paste it here. This establishes the one-way 
+      data connection for prototypical signal logic via virtual code lines. Applies to 
+      all 8 Track Receiver circuits (1-8).
+    citation: "Section 7.2 'Linking Virtual Code Lines', page 25"
+
+  # Track Transmitter segment
+  - cdiPath: "Track Transmitter/Circuit/Remote Mast Description"
+    name: "Remote Mast Description"
+    elementType: "string"
+    maxLength: 32
+    description: |
+      A label for the remote signal receiving this transmitter's track circuit data 
+      (e.g., "Signal 42 West", "Block 7 Receiver"). Used for documentation. Limited to 
+      32 characters. Applies to all 8 Track Transmitter circuits.
+
+  - cdiPath: "Track Transmitter/Circuit/Link Address"
+    name: "Link Address"
+    elementType: "eventid"
+    description: |
+      A **producer event** that transmits virtual track circuit speed information to a 
+      remote receiving node's Track Receiver. This event is automatically generated and 
+      **read-only** — copy it from here and paste into the remote node's Track Receiver 
+      "Link Address" field. This establishes the one-way data connection for prototypical 
+      signal logic via virtual code lines. Applies to all 8 Track Transmitter circuits (1-8).
+    citation: "Section 7.2 'Linking Virtual Code Lines', page 25"

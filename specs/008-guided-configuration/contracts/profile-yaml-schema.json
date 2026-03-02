@@ -1,0 +1,123 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://bowties.app/schemas/structure-profile.schema.json",
+  "title": "Structure Profile",
+  "description": "Phase 2 structure profile for an LCC node type (.profile.yaml). Contains event role declarations and conditional relevance rules.",
+  "type": "object",
+  "required": ["schemaVersion", "nodeType"],
+  "additionalProperties": true,
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Schema version. Currently must be '1.0'. The app ignores unrecognized fields for forward compatibility (additional properties are allowed)."
+    },
+    "nodeType": {
+      "type": "object",
+      "description": "Node type identification used for profile matching by the app.",
+      "required": ["manufacturer", "model"],
+      "additionalProperties": true,
+      "properties": {
+        "manufacturer": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Manufacturer name exactly as reported in the node's SNIP data (e.g., 'RR-CirKits')."
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Model name exactly as reported in the node's SNIP data (e.g., 'Tower-LCC')."
+        },
+        "firmwareVersionRange": {
+          "type": "object",
+          "description": "Optional firmware version range. Advisory only — does not gate profile application. A mismatch is logged but the profile is still applied.",
+          "additionalProperties": true,
+          "properties": {
+            "min": {
+              "type": ["string", "null"],
+              "description": "Minimum firmware version this profile is known to be accurate for (inclusive). Null means no lower bound."
+            },
+            "max": {
+              "type": ["string", "null"],
+              "description": "Maximum firmware version this profile is known to be accurate for (inclusive). Null means no upper bound."
+            }
+          }
+        }
+      }
+    },
+    "eventRoles": {
+      "type": "array",
+      "description": "Event role declarations. Each entry declares all eventid leaves in a named CDI group as either Producer or Consumer. Profile-declared roles override any heuristic or protocol-exchange-derived role.",
+      "default": [],
+      "items": {
+        "type": "object",
+        "required": ["groupPath", "role"],
+        "additionalProperties": true,
+        "properties": {
+          "groupPath": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Name-based CDI group path using '/' to join hierarchy levels. Use '#N' ordinal suffix (1-based) to distinguish same-named sibling groups within the same parent. Example: 'Port I/O/Line/Event#1' selects the first <group name=\"Event\"> child of Line."
+          },
+          "role": {
+            "type": "string",
+            "enum": ["Producer", "Consumer"],
+            "description": "The role assigned to all eventid leaves within this group and all its replicated instances."
+          }
+        }
+      }
+    },
+    "relevanceRules": {
+      "type": "array",
+      "description": "Conditional relevance rules. Each rule declares that a CDI section becomes irrelevant when a controlling sibling field has one of the listed values.",
+      "default": [],
+      "items": {
+        "type": "object",
+        "required": ["id", "affectedGroupPath", "allOf", "explanation"],
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Unique rule identifier within this profile file (e.g., 'R001'). Used in log warnings when a rule is skipped."
+          },
+          "affectedGroupPath": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Name-based CDI path of the group rendered irrelevant when the rule fires. Same '#N' ordinal notation as groupPath in eventRoles."
+          },
+          "allOf": {
+            "type": "array",
+            "minItems": 1,
+            "description": "List of conditions that must ALL be true for the section to be irrelevant. V1: only single-entry lists are evaluated. Rules with 2+ conditions are silently skipped with a log warning.",
+            "items": {
+              "type": "object",
+              "required": ["field", "irrelevantWhen"],
+              "additionalProperties": true,
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "CDI display name of the controlling field — a sibling within the same replicated group instance as the affected group (e.g., 'Output Function')."
+                },
+                "irrelevantWhen": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "integer"
+                  },
+                  "description": "Integer enum values of the controlling field that render the affected section irrelevant. These are the raw <property> values from the CDI <map>."
+                }
+              }
+            }
+          },
+          "explanation": {
+            "type": "string",
+            "minLength": 1,
+            "description": "User-facing explanation shown VERBATIM in the UI banner when the rule fires. The app must not paraphrase or substitute this text. Write it as a complete sentence that a model railroader can understand without knowing CDI terminology."
+          }
+        }
+      }
+    }
+  }
+}

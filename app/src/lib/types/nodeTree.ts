@@ -79,6 +79,12 @@ export interface GroupConfigNode extends ConfigNodeBase {
   path: string[];
   /** Child nodes */
   children: ConfigNode[];
+  /**
+   * Profile-supplied display-name override.
+   * When non-null, the UI renders this instead of `name`.
+   * Use `displayName ?? name` everywhere a group title is shown.
+   */
+  displayName: string | null;
 }
 
 /** Leaf element types — matches Rust `LeafType`. */

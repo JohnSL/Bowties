@@ -1,0 +1,16 @@
+schemaVersion: "1.0"
+
+nodeType:
+  manufacturer: "OpenMRN"
+  model: "async_blink"
+
+eventRoles:
+  # Button 1 (GPIO 18) — physical input, produces events on state change
+  - groupPath: "Settings/Button 1"
+    role: Producer
+
+  # LED 1 (GPIO 19) — output, consumes events to turn on/off
+  - groupPath: "Settings/LED 1"
+    role: Consumer
+
+relevanceRules: []

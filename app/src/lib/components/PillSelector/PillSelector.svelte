@@ -93,11 +93,8 @@
       0,
       filteredItems.findIndex((i) => i.value === selected),
     );
-    // Compute fixed position from button rect
-    if (buttonEl) {
-      const rect = buttonEl.getBoundingClientRect();
-      dropdownStyle = `position: fixed; top: ${rect.bottom + 2}px; left: ${rect.left}px; min-width: ${Math.max(180, rect.width)}px;`;
-    }
+    // Compute fixed position from button rect (with flip-upward logic)
+    dropdownStyle = computeDropdownStyle();
     // Focus search input after Svelte renders the dropdown
     requestAnimationFrame(() => searchInputEl?.focus());
   }
@@ -154,11 +151,36 @@
     }
   }
 
+  /**
+   * Compute fixed-position style for the dropdown, flipping upward when there
+   * is more space above the button than below.  Also caps max-height to the
+   * available space so the list never extends past the viewport edge.
+   */
+  function computeDropdownStyle(): string {
+    if (!buttonEl) return '';
+    const rect = buttonEl.getBoundingClientRect();
+    const GAP = 4;          // px gap between button edge and dropdown
+    const PADDING = 8;      // min clearance from viewport edge
+    const MIN_HEIGHT = 120; // never shrink below this
+    const spaceBelow = window.innerHeight - rect.bottom - GAP - PADDING;
+    const spaceAbove = rect.top - GAP - PADDING;
+    const base = `position: fixed; left: ${rect.left}px; min-width: ${Math.max(180, rect.width)}px;`;
+
+    if (spaceAbove > spaceBelow && spaceBelow < 200) {
+      // Flip upward — anchor to button top
+      const maxHeight = Math.max(MIN_HEIGHT, spaceAbove);
+      return `${base} bottom: ${window.innerHeight - rect.top + GAP}px; max-height: ${maxHeight}px;`;
+    } else {
+      // Default: open downward
+      const maxHeight = Math.max(MIN_HEIGHT, spaceBelow);
+      return `${base} top: ${rect.bottom + GAP}px; max-height: ${maxHeight}px;`;
+    }
+  }
+
   /** Reposition on scroll/resize */
   function handleWindowScroll() {
     if (open && buttonEl) {
-      const rect = buttonEl.getBoundingClientRect();
-      dropdownStyle = `position: fixed; top: ${rect.bottom + 2}px; left: ${rect.left}px; min-width: ${Math.max(180, rect.width)}px;`;
+      dropdownStyle = computeDropdownStyle();
     }
   }
 </script>

@@ -1,0 +1,63 @@
+schemaVersion: "1.0"
+
+nodeType:
+  manufacturer: "RR-CirKits"
+  model: "Tower-LCC"
+
+# Event role declarations for all CDI groups containing eventid leaves.
+#
+# Each entry maps a name-based CDI group path (using '/' separators and '#N'
+# ordinal suffix for same-named sibling groups, 1-based) to a declared role.
+# All eventid leaves inside the matching group — across all replicated instances
+# — will receive this role, overriding the protocol-heuristic assignment.
+#
+# Paths that cannot be resolved in the connected node's CDI are silently skipped
+# with a log warning (FR-006).
+#
+# Node Power Monitor events ('Power OK' and 'Power Not OK') are direct children
+# of their segment and are not contained in any group; they cannot be declared
+# via groupPath notation and retain their heuristic assignment.
+
+eventRoles:
+  # ── Port I/O segment ──────────────────────────────────────────────────────
+  # Each Line (16 replications) contains two Event groups (each replicated 6×).
+  # Event#1 holds Consumer command events (CDI description: "(C) When this event occurs").
+  - groupPath: "Port I/O/Line/Event#1"
+    role: Consumer
+    label: "Consumer Events"
+
+  # Event#2 holds Producer indication events (CDI description: "(P) this event will be sent").
+  - groupPath: "Port I/O/Line/Event#2"
+    role: Producer
+    label: "Producer Events"
+
+  # ── Conditionals segment ──────────────────────────────────────────────────
+  # Each Logic group (32 replications) contains two variable groups and
+  # one replicated action group.
+
+  # Variable #1 — two consumer events: "set true" and "set false"
+  - groupPath: "Conditionals/Logic/Variable #1"
+    role: Consumer
+
+  # Variable #2 — two consumer events: "set true" and "set false"
+  - groupPath: "Conditionals/Logic/Variable #2"
+    role: Consumer
+
+  # Action#2 — the second group named "Action" within Logic (replication=4).
+  # Contains one producer event: "Action Event".
+  # (Action#1 is a non-replicated group with no eventid leaves.)
+  - groupPath: "Conditionals/Logic/Action#2"
+    role: Producer
+
+  # ── Track Receiver segment ────────────────────────────────────────────────
+  # Each Circuit (8 replications) contains one consumer event: "Link Address".
+  - groupPath: "Track Receiver/Circuit"
+    role: Consumer
+
+  # ── Track Transmitter segment ─────────────────────────────────────────────
+  # Each Circuit (8 replications) contains one producer event: "Link Address".
+  - groupPath: "Track Transmitter/Circuit"
+    role: Producer
+
+# Relevance rules are populated in T024 (Phase 4 / US2).
+relevanceRules: []

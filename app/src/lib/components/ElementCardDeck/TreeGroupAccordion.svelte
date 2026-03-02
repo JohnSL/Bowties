@@ -49,7 +49,7 @@
   // Build pill items from siblings
   $: pillItems = siblings.map((s, idx): PillItem => ({
     value: idx,
-    label: getInstanceDisplayName(s),
+    label: s.displayName ?? getInstanceDisplayName(s),
     description: s.instanceLabel,
   }));
 
@@ -149,7 +149,7 @@
   <!-- Non-replicated group — subtle label header, always visible -->
   <div class="inline-section" style="--depth: {depth}; --field-label-width: {depth >= 3 ? '100px' : '120px'}">
     <div class="inline-header">
-      <span class="inline-name">{group.instanceLabel}</span>
+      <span class="inline-name">{group.displayName ?? group.instanceLabel}</span>
       {#if group.description}
         <p class="section-description">{group.description}</p>
       {/if}

@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<cdi xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://openlcb.org/schema/cdi/1/1/cdi.xsd">
+<identification>
+<manufacturer>OpenMRN</manufacturer>
+<model>async_blink</model>
+<hardwareVersion>ESP32</hardwareVersion>
+<softwareVersion>1.00</softwareVersion>
+</identification>
+<acdi/>
+<segment space='251' origin='1'>
+<name>User Info</name>
+<string size='63'>
+<name>User Name</name>
+<description>This name will appear in network browsers for this device.</description>
+</string>
+<string size='64'>
+<name>User Description</name>
+<description>This description will appear in network browsers for this device.</description>
+</string>
+</segment>
+<segment space='253' origin='128'>
+<name>Settings</name>
+<group>
+<name>Internal data</name>
+<description>Do not change these settings.</description>
+<int size='2'>
+<name>Version</name>
+</int>
+<int size='2'>
+<name>Next event ID</name>
+</int>
+</group>
+<int size='1'>
+<name>Blink Enabled</name>
+<description>Enable or disable event production</description>
+<min>0</min>
+<max>1</max>
+<default>1</default>
+<map><relation><property>0</property><value>Disabled</value></relation><relation><property>1</property><value>Enabled</value></relation></map>
+</int>
+<int size='2'>
+<name>Blink Interval</name>
+<description>Milliseconds between alternating events (100-30000)</description>
+<min>100</min>
+<max>30000</max>
+<default>1000</default>
+</int>
+<group>
+<name>Button 1</name>
+<description>Physical button input on GPIO 18</description>
+<string size='15'>
+<name>Description</name>
+<description>User name of this input.</description>
+</string>
+<int size='1'>
+<name>Debounce parameter</name>
+<description>Amount of time to wait for the input to stabilize before producing the event. Unit is 30 msec of time. Usually a value of 2-3 works well in a non-noisy environment. In high noise (train wheels for example) a setting between 8 -- 15 makes for a slower response time but a more stable signal.
+Formally, the parameter tells how many times of tries, each 30 msec apart, the input must have the same value in order for that value to be accepted and the event transition produced.</description>
+<default>3</default>
+</int>
+<eventid>
+<name>Event On</name>
+<description>This event will be produced when the input goes to HIGH.</description>
+</eventid>
+<eventid>
+<name>Event Off</name>
+<description>This event will be produced when the input goes to LOW.</description>
+</eventid>
+</group>
+<group>
+<name>LED 1</name>
+<description>LED output on GPIO 19</description>
+<string size='8'>
+<name>Description</name>
+<description>User name of this output.</description>
+</string>
+<eventid>
+<name>Event On</name>
+<description>Receiving this event ID will turn the output on.</description>
+</eventid>
+<eventid>
+<name>Event Off</name>
+<description>Receiving this event ID will turn the output off.</description>
+</eventid>
+</group>
+</segment>
+</cdi>

@@ -1,0 +1,96 @@
+{
+  "nodeType": {
+    "manufacturer": "RR-CirKits",
+    "model": "Tower-LCC"
+  },
+  "roles": [
+    {
+      "cdiPath": "Node Power Monitor/Power OK",
+      "role": "Producer",
+      "childFields": [],
+      "citation": "Manual Section 1.1.5: 'Events are created by event Producers.' The Power OK event is sent by the node when it detects its power status is within acceptable range.",
+      "confidence": "High",
+      "notes": "Direct eventid under Node Power Monitor segment; node sends this event to indicate power is good"
+    },
+    {
+      "cdiPath": "Node Power Monitor/Power Not OK",
+      "role": "Producer",
+      "childFields": [],
+      "citation": "Manual Section 1.1.5: 'Events are created by event Producers.' The Power Not OK event is sent by the node when its power status is outside acceptable range.",
+      "confidence": "High",
+      "notes": "Direct eventid under Node Power Monitor segment; node sends this event to indicate power failure"
+    },
+    {
+      "cdiPath": "Port I/O/Line/Event[0-5]",
+      "role": "Consumer",
+      "childFields": ["Command", "Action"],
+      "citation": "Manual Section 5.3.4 'Commands': 'Commands are consumer events that are sent to the line. A command can directly control the line, for example by turning it on or off.' CDI description: '(C) When this event occurs'",
+      "confidence": "High",
+      "notes": "First Event group under each replicated Line (6 replications per line, 16 lines total = 96 consumer event slots)"
+    },
+    {
+      "cdiPath": "Port I/O/Line/Event[6-11]",
+      "role": "Producer",
+      "childFields": ["Upon this action", "Indicator"],
+      "citation": "Manual Section 5.3.5 'Indications': 'Indications are producer events that are sent to the bus. Each line has 6 producer events associated with it.' CDI description: '(P) this event will be sent'",
+      "confidence": "High",
+      "notes": "Second Event group under each replicated Line (6 replications per line, 16 lines total = 96 producer event slots)"
+    },
+    {
+      "cdiPath": "Conditionals/Logic/Variable #1/set true",
+      "role": "Consumer",
+      "childFields": [],
+      "citation": "Manual Section 6.2 'Variables': 'Each variable has two events (consumers) associated with it. The first event enables the variable, (true)' CDI description: '(C) Event to set variable #1 true.'",
+      "confidence": "High",
+      "notes": "Consumer event to set Variable #1 to true state (32 replications of Logic group)"
+    },
+    {
+      "cdiPath": "Conditionals/Logic/Variable #1/set false",
+      "role": "Consumer",
+      "childFields": [],
+      "citation": "Manual Section 6.2 'Variables': 'Each variable has two events (consumers) associated with it. The first event enables the variable, (true) and the second disables it. (false)' CDI description: '(C) Event to set variable #1 false.'",
+      "confidence": "High",
+      "notes": "Consumer event to set Variable #1 to false state (32 replications of Logic group)"
+    },
+    {
+      "cdiPath": "Conditionals/Logic/Variable #2/set true",
+      "role": "Consumer",
+      "childFields": [],
+      "citation": "Manual Section 6.2 'Variables': 'Each variable has two events (consumers) associated with it. The first event enables the variable, (true) and the second disables it. (false)' CDI description: '(C) Event to set variable #2 true.'",
+      "confidence": "High",
+      "notes": "Consumer event to set Variable #2 to true state (32 replications of Logic group)"
+    },
+    {
+      "cdiPath": "Conditionals/Logic/Variable #2/set false",
+      "role": "Consumer",
+      "childFields": [],
+      "citation": "Manual Section 6.2 'Variables': 'Each variable has two events (consumers) associated with it. The first event enables the variable, (true) and the second disables it. (false)' CDI description: '(C) Event to set variable #2 false.'",
+      "confidence": "High",
+      "notes": "Consumer event to set Variable #2 to false state (32 replications of Logic group)"
+    },
+    {
+      "cdiPath": "Conditionals/Logic/Action[0-3]",
+      "role": "Producer",
+      "childFields": ["Condition", "Destination", "Track Speed", "Action Event"],
+      "citation": "Manual Section 6.5 'Producers': 'Any logic conditional may generate up to four events when it is true. Each of these four events may be; ignored with none, sent Immediately, or sent After delay.' CDI description: '(P) this event will be sent'",
+      "confidence": "High",
+      "notes": "Action Event eventid under each Action group (4 replications per Logic, 32 Logic groups = 128 producer event slots)"
+    },
+    {
+      "cdiPath": "Track Receiver/Circuit/Link Address",
+      "role": "Consumer",
+      "childFields": [],
+      "citation": "Manual Section 7.2 'Linking Virtual Code Lines': 'The EventID for the TX code set will always come from the transmitting node and be entered into the receiving node' This is a consumer link address for receiving track circuit data. CDI description: '(C) Remote Mast Link Address.'",
+      "confidence": "High",
+      "notes": "Link Address eventid under each Circuit in Track Receiver (8 replications for Track Circuits 1-8)"
+    },
+    {
+      "cdiPath": "Track Transmitter/Circuit/Link Address",
+      "role": "Producer",
+      "childFields": [],
+      "citation": "Manual Section 7.2 'Linking Virtual Code Lines': 'The EventID for the TX code set will always come from the transmitting node and be entered into the receiving node' This is a producer link address for transmitting track circuit data. CDI description: '(P) Track Circuit Link Address. Copy and Paste into linked Track Circuit. (Read Only)'",
+      "confidence": "High",
+      "notes": "Link Address eventid under each Circuit in Track Transmitter (8 replications for Track Circuits 1-8); read-only from node user's perspective"
+    }
+  ]
+}
