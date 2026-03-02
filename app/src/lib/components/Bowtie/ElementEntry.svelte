@@ -39,8 +39,8 @@
     gap: 2px;
     padding: 6px 8px;
     border-radius: 4px;
-    background: var(--entry-bg, rgba(255, 255, 255, 0.04));
-    border: 1px solid var(--entry-border, rgba(255, 255, 255, 0.08));
+    background: #f5f5f4;
+    border: 1px solid #d1d5db;
   }
 
   .element-entry.has-description {
@@ -60,7 +60,7 @@
   .node-name {
     font-weight: 600;
     font-size: 0.85rem;
-    color: var(--text-primary, #e2e8f0);
+    color: #242424;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -68,7 +68,7 @@
 
   .element-label {
     font-size: 0.78rem;
-    color: var(--text-secondary, #94a3b8);
+    color: #605e5c;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -78,7 +78,7 @@
     flex: 1;
     margin: 0;
     font-size: 0.78rem;
-    color: var(--text-secondary, #94a3b8);
+    color: #605e5c;
     line-height: 1.4;
     white-space: normal;
     overflow-wrap: break-word;

@@ -56,7 +56,7 @@
     </section>
 
     <!-- Centre connector arrow (FR-005) -->
-    <ConnectorArrow eventIdHex={card.event_id_hex} />
+    <ConnectorArrow />
 
     <!-- Consumers column -->
     <section class="column consumers-column" aria-label="Consumers">
@@ -82,28 +82,29 @@
 
 <style>
   .bowtie-card {
-    background: var(--card-bg, #1e293b);
-    border: 1px solid var(--card-border, rgba(255, 255, 255, 0.08));
+    background: #ffffff;
+    border: 1px solid #d1d5db;
     border-radius: 8px;
     overflow: hidden;
     transition: box-shadow 0.15s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   }
 
   .bowtie-card.highlighted {
-    box-shadow: 0 0 0 2px var(--highlight-color, #3b82f6);
+    box-shadow: 0 0 0 2px #0078d4;
   }
 
   .card-header {
     padding: 10px 14px 8px;
-    border-bottom: 1px solid var(--card-border, rgba(255, 255, 255, 0.08));
-    background: var(--card-header-bg, rgba(255, 255, 255, 0.03));
+    border-bottom: 1px solid #d1d5db;
+    background: #ffffff;
   }
 
   .card-title {
     margin: 0;
     font-size: 0.9rem;
     font-weight: 600;
-    color: var(--text-primary, #e2e8f0);
+    color: #242424;
     font-family: 'ui-monospace', monospace;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -112,7 +113,7 @@
 
   .card-body {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 0;
     padding: 12px;
   }
@@ -129,22 +130,32 @@
     margin: 0 0 6px;
     font-size: 0.72rem;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-muted, #64748b);
+    padding: 4px 8px;
+    border-radius: 4px;
+    display: inline-block;
+  }
+
+  .producers-column .column-label {
+    color: #0b6a0b;
+    background: #dff6dd;
+  }
+
+  .consumers-column .column-label {
+    color: #0078d4;
+    background: #deecf9;
   }
 
   .ambiguous-section {
-    border-top: 1px solid var(--card-border, rgba(255, 255, 255, 0.08));
+    border-top: 1px solid #d1d5db;
     padding: 10px 12px;
-    background: var(--ambiguous-bg, rgba(251, 191, 36, 0.05));
+    background: #fdf8f4;
   }
 
   .ambiguous-label {
     margin: 0 0 8px;
     font-size: 0.78rem;
     font-weight: 600;
-    color: var(--warning-color, #f59e0b);
+    color: #ca5010;
   }
 
   .ambiguous-entries {

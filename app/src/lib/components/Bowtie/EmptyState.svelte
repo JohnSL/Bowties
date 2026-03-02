@@ -66,7 +66,7 @@
   }
 
   .illustration-placeholder {
-    color: var(--text-muted, #475569);
+    color: #605e5c;
     margin-bottom: 8px;
   }
 
@@ -78,13 +78,13 @@
     margin: 0;
     font-size: 1.1rem;
     font-weight: 600;
-    color: var(--text-primary, #e2e8f0);
+    color: #242424;
   }
 
   .empty-body {
     margin: 0;
     font-size: 0.9rem;
-    color: var(--text-secondary, #94a3b8);
+    color: #605e5c;
     max-width: 360px;
     line-height: 1.5;
   }
@@ -93,9 +93,9 @@
     margin-top: 8px;
     padding: 8px 20px;
     border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--text-secondary, #94a3b8);
+    border: 1px solid #d1d5db;
+    background: #ffffff;
+    color: #605e5c;
     font-size: 0.9rem;
     font-weight: 500;
     cursor: not-allowed;

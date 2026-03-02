@@ -1,23 +1,15 @@
 <!--
   T017: ConnectorArrow.svelte
-  Renders the centre column of a bowtie card: a right-pointing arrow (→)
-  with the event ID displayed beneath it (FR-005).
-
-  Props:
-    eventIdHex: string — dotted-hex event ID shown below the arrow
+  Renders the centre column of a bowtie card: a large right-pointing arrow (→)
+  indicating the event connection between producers and consumers (FR-005).
 -->
 
 <script lang="ts">
-  interface Props {
-    eventIdHex: string;
-  }
-
-  let { eventIdHex }: Props = $props();
+  // No props - arrow is now standalone with no event ID display
 </script>
 
 <div class="connector-arrow" aria-label="event connector arrow">
   <span class="arrow-symbol" aria-hidden="true">→</span>
-  <span class="event-id">{eventIdHex}</span>
 </div>
 
 <style>
@@ -32,18 +24,9 @@
   }
 
   .arrow-symbol {
-    font-size: 1.5rem;
-    color: var(--arrow-color, #64748b);
+    font-size: 3rem;
+    color: #0078d4;
     line-height: 1;
     user-select: none;
-  }
-
-  .event-id {
-    font-size: 0.65rem;
-    font-family: 'ui-monospace', 'SFMono-Regular', monospace;
-    color: var(--text-muted, #64748b);
-    text-align: center;
-    word-break: break-all;
-    max-width: 96px;
   }
 </style>
