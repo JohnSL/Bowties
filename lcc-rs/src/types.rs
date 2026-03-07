@@ -51,6 +51,38 @@ impl NodeID {
         }
         Ok(Self(bytes))
     }
+
+    /// Hash the Node ID to derive a 12-bit alias using the OpenLCB algorithm
+    /// 
+    /// The hash function mixes the 6-byte Node ID into a single 32-bit value,
+    /// then masks to 12 bits for the alias.
+    /// 
+    /// OpenLCB spec algorithm:
+    /// ```text
+    /// reg = id[0] ^ (id[1]<<5) ^ (id[2]<<10) ^ (id[3]<<15) ^ (id[4]<<20) ^ (id[5]<<24) 
+    ///     ^ ((id[3]^id[4]^id[5])<<8)
+    /// alias = reg & 0x0FFF  // 12-bit mask
+    /// ```
+    pub fn hash_to_alias(&self) -> Result<NodeAlias, String> {
+        let id = &self.0;
+        
+        // Compute hash: mix bytes with bit shifts
+        let mut reg: u32 = id[0] as u32;
+        reg ^= (id[1] as u32) << 5;
+        reg ^= (id[2] as u32) << 10;
+        reg ^= (id[3] as u32) << 15;
+        reg ^= (id[4] as u32) << 20;
+        reg ^= (id[5] as u32) << 24;
+        
+        // Add extra mixing term: (id[3] ^ id[4] ^ id[5]) << 8
+        let extra = ((id[3] ^ id[4] ^ id[5]) as u32) << 8;
+        reg ^= extra;
+        
+        // Extract 12-bit alias
+        let alias_value = (reg & 0x0FFF) as u16;
+        
+        NodeAlias::new(alias_value)
+    }
 }
 
 impl fmt::Display for NodeID {

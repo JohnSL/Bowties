@@ -224,6 +224,49 @@ async fn query_snip_internal(
 ///   - Byte N: Version (0x02 = 2 fields)
 ///   - String 5: User name (null-terminated)
 ///   - String 6: User description (null-terminated)
+
+/// Encode SNIP data into a payload for transmission
+///
+/// Encodes a SNIPData struct into the binary format expected by SNIP requesters:
+/// - Section 1 (version 0x04): manufacturer, model, hw_version, sw_version
+/// - Section 2 (version 0x02, optional): user_name, user_description
+///
+/// # Arguments
+/// * `snip` - The SNIP data to encode
+/// * `include_user_section` - If true, include Section 2 with user name/description
+///
+/// # Returns
+/// The encoded payload as bytes
+pub fn encode_snip_payload(snip: &SNIPData, include_user_section: bool) -> Vec<u8> {
+    let mut payload = Vec::new();
+
+    // Section 1: Manufacturer ACDI (version 0x04)
+    payload.push(0x04);
+    payload.extend_from_slice(snip.manufacturer.as_bytes());
+    payload.push(0x00);
+
+    payload.extend_from_slice(snip.model.as_bytes());
+    payload.push(0x00);
+
+    payload.extend_from_slice(snip.hardware_version.as_bytes());
+    payload.push(0x00);
+
+    payload.extend_from_slice(snip.software_version.as_bytes());
+    payload.push(0x00);
+
+    // Section 2: User ACDI (optional, version 0x02)
+    if include_user_section {
+        payload.push(0x02);
+        payload.extend_from_slice(snip.user_name.as_bytes());
+        payload.push(0x00);
+
+        payload.extend_from_slice(snip.user_description.as_bytes());
+        payload.push(0x00);
+    }
+
+    payload
+}
+
 pub fn parse_snip_payload(payload: &[u8]) -> Result<SNIPData> {
     let mut offset = 0;
 

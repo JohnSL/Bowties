@@ -5,10 +5,11 @@
 
 use crate::{
     Result,
-    types::{NodeID, NodeAlias, DiscoveredNode},
+    types::{NodeID, NodeAlias, DiscoveredNode, SNIPData},
     protocol::{GridConnectFrame, MTI},
     transport::{LccTransport, TcpTransport},
     dispatcher::MessageDispatcher,
+    alias_allocation::AliasAllocator,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,42 +22,55 @@ pub struct LccConnection {
     dispatcher: Option<Arc<Mutex<MessageDispatcher>>>,
     /// Direct transport access (used when no dispatcher)
     transport: Option<Box<dyn LccTransport>>,
-    /// Our node alias
+    /// Our node ID
+    our_node_id: NodeID,
+    /// Our node alias (negotiated via alias allocation protocol)
     our_alias: NodeAlias,
+    /// Optional SNIP data to provide when queried
+    our_snip: Option<SNIPData>,
 }
 
 impl LccConnection {
     /// Connect to an LCC network via TCP with a persistent message dispatcher
     /// 
     /// This creates a connection with background message monitoring, enabling
-    /// real-time event detection and concurrent operations.
+    /// real-time event detection and concurrent operations. Performs the full
+    /// alias allocation protocol to negotiate a unique alias.
     /// 
     /// # Arguments
     /// * `host` - Hostname or IP address
     /// * `port` - Port number (typically 12021)
+    /// * `node_id` - Our Node ID (6 bytes)
     /// 
     /// # Example
     /// ```no_run
-    /// use lcc_rs::LccConnection;
+    /// use lcc_rs::{LccConnection, NodeID};
     /// 
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ///     let connection = LccConnection::connect_with_dispatcher("localhost", 12021).await?;
+    ///     let node_id = NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]);
+    ///     let connection = LccConnection::connect_with_dispatcher("localhost", 12021, node_id).await?;
     ///     // Dispatcher runs in background, listening for all messages
     ///     Ok(())
     /// }
     /// ```
-    pub async fn connect_with_dispatcher(host: &str, port: u16) -> Result<Arc<Mutex<Self>>> {
+    pub async fn connect_with_dispatcher(host: &str, port: u16, node_id: NodeID) -> Result<Arc<Mutex<Self>>> {
+        // Create transport and allocate alias
         let transport = TcpTransport::connect(host, port).await?;
-        let our_alias = NodeAlias::new(0xAAA).unwrap();
+        let mut boxed_transport: Box<dyn LccTransport> = Box::new(transport);
+        let our_alias = AliasAllocator::allocate(&node_id, &mut boxed_transport).await?;
         
+        // Reconnect for the dispatcher (fresh connection)
+        let transport = TcpTransport::connect(host, port).await?;
         let mut dispatcher = MessageDispatcher::new(Box::new(transport));
         dispatcher.start();
         
         let connection = Self {
             dispatcher: Some(Arc::new(Mutex::new(dispatcher))),
             transport: None,
+            our_node_id: node_id,
             our_alias,
+            our_snip: None,
         };
         
         Ok(Arc::new(Mutex::new(connection)))
@@ -70,24 +84,37 @@ impl LccConnection {
     /// # Arguments
     /// * `host` - Hostname or IP address
     /// * `port` - Port number (typically 12021)
-    pub async fn connect(host: &str, port: u16) -> Result<Self> {
+    /// * `node_id` - Our Node ID (6 bytes)
+    pub async fn connect(host: &str, port: u16, node_id: NodeID) -> Result<Self> {
+        let mut transport: Box<dyn LccTransport> = Box::new(TcpTransport::connect(host, port).await?);
+        let our_alias = AliasAllocator::allocate(&node_id, &mut transport).await?;
+        
+        // Reconnect for fresh channel
         let transport = TcpTransport::connect(host, port).await?;
-        let our_alias = NodeAlias::new(0xAAA).unwrap();
         
         Ok(Self {
             dispatcher: None,
             transport: Some(Box::new(transport)),
+            our_node_id: node_id,
             our_alias,
+            our_snip: None,
         })
     }
     
     /// Create an LCC connection with a custom transport (for testing)
-    pub fn with_transport(transport: Box<dyn LccTransport>, our_alias: NodeAlias) -> Self {
+    pub fn with_transport(transport: Box<dyn LccTransport>, node_id: NodeID, our_alias: NodeAlias) -> Self {
         Self {
             dispatcher: None,
             transport: Some(transport),
+            our_node_id: node_id,
             our_alias,
+            our_snip: None,
         }
+    }
+    
+    /// Get our node ID
+    pub fn our_node_id(&self) -> &NodeID {
+        &self.our_node_id
     }
     
     /// Get a reference to the message dispatcher (if using dispatcher mode)
@@ -459,6 +486,184 @@ impl LccConnection {
         }
     }
     
+    /// Start responding to Verify Node ID queries from the network
+    /// 
+    /// This spawns a background task that:
+    /// - Listens for VerifyNodeGlobal queries (MTI 0x19490)
+    /// - Responds with VerifiedNode frames containing our Node ID
+    /// 
+    /// Only works when using dispatcher mode (connect_with_dispatcher).
+    /// This method returns immediately; the response task runs in the background.
+    /// 
+    /// # Errors
+    /// Returns an error if the connection is not using dispatcher mode.
+    pub fn start_responding_to_queries(&self) -> Result<()> {
+        let dispatcher = self.dispatcher.clone()
+            .ok_or_else(|| crate::Error::Protocol(
+                "start_responding_to_queries requires dispatcher mode (use connect_with_dispatcher)".to_string()
+            ))?;
+        
+        let our_alias = self.our_alias;
+        let our_node_id = self.our_node_id;
+        
+        // Spawn background task to handle queries
+        tokio::spawn(async move {
+            // Subscribe to VerifyNodeGlobal messages
+            let mut rx = {
+                let disp = dispatcher.lock().await;
+                disp.subscribe_mti(MTI::VerifyNodeGlobal).await
+            };
+            
+            // Listen for queries and respond
+            loop {
+                match rx.recv().await {
+                    Ok(_msg) => {
+                        // We received a VerifyNodeGlobal query - respond with our Node ID
+                        if let Ok(response_frame) = GridConnectFrame::from_mti(
+                            MTI::VerifiedNode,
+                            our_alias.value(),
+                            our_node_id.as_bytes().to_vec(),
+                        ) {
+                            let disp = dispatcher.lock().await;
+                            let _ = disp.send(&response_frame).await;
+                        }
+                    }
+                    Err(_) => {
+                        // Receiver closed, exit background task
+                        break;
+                    }
+                }
+            }
+        });
+        
+        Ok(())
+    }
+    
+    /// Set the SNIP data for this node
+    /// 
+    /// This data will be provided to other nodes when they query us with SNIP requests.
+    pub fn set_snip_data(&mut self, snip: SNIPData) {
+        self.our_snip = Some(snip);
+    }
+    
+    /// Get the SNIP data for this node
+    pub fn snip_data(&self) -> Option<&SNIPData> {
+        self.our_snip.as_ref()
+    }
+    
+    /// Start responding to SNIP (Simple Node Identification Protocol) requests from the network
+    /// 
+    /// This spawns a background task that:
+    /// - Listens for SNIPRequest messages (MTI 0x19DE8)
+    /// - Responds with SNIPResponse datagrams containing our node's identification data
+    /// 
+    /// Only works when using dispatcher mode (connect_with_dispatcher).
+    /// This method returns immediately; the response task runs in the background.
+    /// 
+    /// # Errors
+    /// Returns an error if the connection is not using dispatcher mode.
+    pub fn start_responding_to_snip_requests(&self) -> Result<()> {
+        let dispatcher = self.dispatcher.clone()
+            .ok_or_else(|| crate::Error::Protocol(
+                "start_responding_to_snip_requests requires dispatcher mode (use connect_with_dispatcher)".to_string()
+            ))?;
+        
+        let our_alias = self.our_alias;
+        let snip_data = self.our_snip.clone();
+        
+        // Spawn background task to handle SNIP requests
+        tokio::spawn(async move {
+            // Subscribe to SNIP request messages
+            let mut rx = {
+                let disp = dispatcher.lock().await;
+                disp.subscribe_mti(MTI::SNIPRequest).await
+            };
+            
+            // Listen for SNIP requests and respond
+            loop {
+                match rx.recv().await {
+                    Ok(msg) => {
+                        // We received a SNIPRequest
+                        // Extract requester's alias from the frame's source field
+                        if let Ok((_, requester_alias)) = msg.frame.get_mti() {
+                            // Only respond if we have SNIP data to provide
+                            if let Some(ref snip) = snip_data {
+                                // Encode SNIP data as payload (include Section 2 even if empty)
+                                let snip_payload = crate::snip::encode_snip_payload(snip, true);
+
+                                // Send SNIP response as a datagram
+                                // The frame type byte is encoded in the upper nibble of data[0]
+                                // Formula: data[0] = (frame_type & 0xF0) | (dest_alias >> 8)
+                                // Followed by: data[1] = dest_alias & 0xFF
+                                
+                                if snip_payload.len() <= 6 {
+                                    // Single frame response (0x0A frame type)
+                                    let frame_type = 0x0Au8;
+                                    let mut data = vec![
+                                        (frame_type & 0xF0) | ((requester_alias >> 8) as u8 & 0x0F),
+                                        (requester_alias & 0xFF) as u8,
+                                    ];
+                                    data.extend_from_slice(&snip_payload);
+                                    
+                                    if let Ok(response) = GridConnectFrame::from_mti(
+                                        MTI::SNIPResponse,
+                                        our_alias.value(),
+                                        data,
+                                    ) {
+                                        let disp = dispatcher.lock().await;
+                                        let _ = disp.send(&response).await;
+                                    }
+                                } else {
+                                    // Multi-frame response - send first, middle, and final frames
+                                    let mut offset = 0;
+                                    let chunk_size = 6;
+                                    let mut frame_num = 0;
+                                    
+                                    while offset < snip_payload.len() {
+                                        let end = std::cmp::min(offset + chunk_size, snip_payload.len());
+                                        let chunk = &snip_payload[offset..end];
+                                        
+                                        let frame_type = if frame_num == 0 {
+                                            0x1Au8 // First frame
+                                        } else if end == snip_payload.len() {
+                                            0x2Au8 // Final frame
+                                        } else {
+                                            0x3Au8 // Middle frame
+                                        };
+                                        
+                                        let mut data = vec![
+                                            (frame_type & 0xF0) | ((requester_alias >> 8) as u8 & 0x0F),
+                                            (requester_alias & 0xFF) as u8,
+                                        ];
+                                        data.extend_from_slice(chunk);
+                                        
+                                        if let Ok(response) = GridConnectFrame::from_mti(
+                                            MTI::SNIPResponse,
+                                            our_alias.value(),
+                                            data,
+                                        ) {
+                                            let disp = dispatcher.lock().await;
+                                            let _ = disp.send(&response).await;
+                                        }
+                                        
+                                        offset = end;
+                                        frame_num += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // Receiver closed, exit background task
+                        break;
+                    }
+                }
+            }
+        });
+        
+        Ok(())
+    }
+
     /// Close the connection
     pub async fn close(self) -> Result<()> {
         if let Some(dispatcher) = self.dispatcher {
@@ -1337,6 +1542,7 @@ mod tests {
         let mock = MockTransport::new(vec![]);
         let mut connection = LccConnection::with_transport(
             Box::new(mock),
+            NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]),
             NodeAlias::new(0xAAA).unwrap(),
         );
         
@@ -1356,6 +1562,7 @@ mod tests {
         let mock = MockTransport::new(vec![response]);
         let mut connection = LccConnection::with_transport(
             Box::new(mock),
+            NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]),
             NodeAlias::new(0xAAA).unwrap(),
         );
         
@@ -1388,6 +1595,7 @@ mod tests {
         let mock = MockTransport::new(responses);
         let mut connection = LccConnection::with_transport(
             Box::new(mock),
+            NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]),
             NodeAlias::new(0xAAA).unwrap(),
         );
         
@@ -1421,6 +1629,7 @@ mod tests {
         let mock = MockTransport::new(responses);
         let mut connection = LccConnection::with_transport(
             Box::new(mock),
+            NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]),
             NodeAlias::new(0xAAA).unwrap(),
         );
         
@@ -1448,6 +1657,7 @@ mod tests {
         let mock = MockTransport::new(responses);
         let mut connection = LccConnection::with_transport(
             Box::new(mock),
+            NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]),
             NodeAlias::new(0xAAA).unwrap(),
         );
         
@@ -1475,6 +1685,7 @@ mod tests {
         let mock = MockTransport::new(vec![ack]);
         let mut connection = LccConnection::with_transport(
             Box::new(mock),
+            NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]),
             NodeAlias::new(0xAAA).unwrap(),
         );
 
@@ -1492,6 +1703,7 @@ mod tests {
         let mock = MockTransport::new(vec![ack1, ack2]);
         let mut connection = LccConnection::with_transport(
             Box::new(mock),
+            NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]),
             NodeAlias::new(0xAAA).unwrap(),
         );
 
@@ -1506,6 +1718,7 @@ mod tests {
         let mock = MockTransport::new(vec![]); // no responses
         let mut connection = LccConnection::with_transport(
             Box::new(mock),
+            NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]),
             NodeAlias::new(0xAAA).unwrap(),
         );
 
@@ -1519,6 +1732,7 @@ mod tests {
         let mock = MockTransport::new(vec![]);
         let mut connection = LccConnection::with_transport(
             Box::new(mock),
+            NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]),
             NodeAlias::new(0xAAA).unwrap(),
         );
 
@@ -1535,6 +1749,7 @@ mod tests {
         let mock = MockTransport::new(vec![ack1, ack2]);
         let mut connection = LccConnection::with_transport(
             Box::new(mock),
+            NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]),
             NodeAlias::new(0xAAA).unwrap(),
         );
 
@@ -1551,6 +1766,7 @@ mod tests {
         let mock = MockTransport::new(vec![ack]);
         let mut connection = LccConnection::with_transport(
             Box::new(mock),
+            NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]),
             NodeAlias::new(0xAAA).unwrap(),
         );
 
@@ -1563,6 +1779,7 @@ mod tests {
         let mock = MockTransport::new(vec![]); // no responses
         let mut connection = LccConnection::with_transport(
             Box::new(mock),
+            NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]),
             NodeAlias::new(0xAAA).unwrap(),
         );
 

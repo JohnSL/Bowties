@@ -1,6 +1,6 @@
 //! Application state management for Bowties Tauri application
 
-use lcc_rs::{LccConnection, DiscoveredNode, MessageDispatcher};
+use lcc_rs::{LccConnection, DiscoveredNode, MessageDispatcher, SNIPData};
 use crate::events::EventRouter;
 use crate::node_tree::NodeConfigTree;
 use std::sync::Arc;
@@ -192,6 +192,28 @@ impl AppState {
             let mut router = EventRouter::new(app, disp, our_alias);
             router.start();
             *self.event_router.write().await = Some(router);
+        }
+        
+        // Configure SNIP data and start responding to discovery queries
+        {
+            let mut conn = connection.lock().await;
+            
+            // Set SNIP data (Manufacturer blank, Model "Bowties::LCC", Software version from app)
+            let snip_data = SNIPData {
+                manufacturer: "JohnSL".to_string(),
+                model: "Bowties::LCC".to_string(),
+                hardware_version: String::new(),
+                software_version: env!("CARGO_PKG_VERSION").to_string(),
+                user_name: String::new(),
+                user_description: String::new(),
+            };
+            conn.set_snip_data(snip_data);
+            
+            // Start responding to discovery queries (Verify Node ID Global)
+            let _ = conn.start_responding_to_queries();
+            
+            // Start responding to SNIP requests
+            let _ = conn.start_responding_to_snip_requests();
         }
     }
 

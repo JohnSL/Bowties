@@ -12,10 +12,13 @@ pub mod profile;
 
 use menu::MenuHandles;
 
-use lcc_rs::LccConnection;
+use lcc_rs::{LccConnection, NodeID};
 use state::AppState;
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
+
+// Our Node ID (6 bytes)
+const OUR_NODE_ID: [u8; 6] = [0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF];
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ConnectionInfo {
@@ -36,7 +39,8 @@ async fn connect_lcc(
     state.disconnect().await;
     
     // Create new connection with dispatcher
-    match LccConnection::connect_with_dispatcher(&host, port).await {
+    let node_id = NodeID::new(OUR_NODE_ID);
+    match LccConnection::connect_with_dispatcher(&host, port, node_id).await {
         Ok(connection) => {
             *state.host.write().await = host.clone();
             *state.port.write().await = port;

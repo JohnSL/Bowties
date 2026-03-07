@@ -17,7 +17,8 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let mut connection = LccConnection::connect("localhost", 12021).await?;
+//!     let node_id = NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]);
+//!     let mut connection = LccConnection::connect("localhost", 12021, node_id).await?;
 //!     let nodes = connection.discover_nodes(250).await?;
 //!     
 //!     for node in nodes {
@@ -36,15 +37,17 @@ pub mod discovery;
 pub mod snip;
 pub mod cdi;
 pub mod dispatcher;
+pub mod alias_allocation;
 
 // Re-export commonly used types
 pub use types::{NodeID, EventID, NodeAlias, DiscoveredNode, SNIPData, SNIPStatus, ConnectionStatus, CdiData};
 pub use protocol::{GridConnectFrame, MTI, DatagramAssembler, DatagramState, MemoryConfigCmd, AddressSpace, ReadReply};
 pub use transport::LccTransport;
 pub use discovery::LccConnection;
-pub use snip::{query_snip, parse_snip_payload};
+pub use snip::{query_snip, parse_snip_payload, encode_snip_payload};
 pub use cdi::{Cdi, Segment, DataElement, Group, IntElement, EventIdElement, StringElement, FloatElement, ActionElement, BlobElement, EventRole, classify_event_slot, walk_event_slots};
 pub use dispatcher::{MessageDispatcher, ReceivedMessage, MessageFilter};
+pub use alias_allocation::AliasAllocator;
 
 /// LCC-RS error type
 #[derive(Debug, thiserror::Error)]
@@ -72,6 +75,9 @@ pub enum Error {
     
     #[error("Protocol error: {0}")]
     Protocol(String),
+    
+    #[error("Alias allocation failed: {0}")]
+    AliasAllocation(String),
 }
 
 impl From<String> for Error {
