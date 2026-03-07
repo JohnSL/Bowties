@@ -21,6 +21,8 @@
     gap: 4px;
     padding: 0 12px;
     flex-shrink: 0;
+    align-self: center;
+    margin-top: -10px;
   }
 
   .arrow-symbol {

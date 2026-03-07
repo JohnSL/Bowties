@@ -46,10 +46,21 @@
   </header>
 
   <!-- Three-column layout: Producers | Arrow | Consumers (FR-004) -->
+  <!-- Labels row -->
+  <div class="labels-row">
+    <div class="label-column">
+      <span class="column-label producers-label">Producers</span>
+    </div>
+    <div class="label-spacer"></div>
+    <div class="label-column">
+      <span class="column-label consumers-label">Consumers</span>
+    </div>
+  </div>
+
+  <!-- Entries and arrow row -->
   <div class="card-body">
-    <!-- Producers column -->
+    <!-- Producers entries -->
     <section class="column producers-column" aria-label="Producers">
-      <h4 class="column-label">Producers</h4>
       {#each card.producers as entry (entry.node_id + entry.element_path.join('/'))}
         <ElementEntry {entry} />
       {/each}
@@ -58,9 +69,8 @@
     <!-- Centre connector arrow (FR-005) -->
     <ConnectorArrow />
 
-    <!-- Consumers column -->
+    <!-- Consumers entries -->
     <section class="column consumers-column" aria-label="Consumers">
-      <h4 class="column-label">Consumers</h4>
       {#each card.consumers as entry (entry.node_id + entry.element_path.join('/'))}
         <ElementEntry {entry} />
       {/each}
@@ -118,6 +128,26 @@
     padding: 12px;
   }
 
+  .labels-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    padding: 0 12px;
+    padding-top: 8px;
+    padding-bottom: 2px;
+  }
+
+  .label-column {
+    flex: 1;
+    display: flex;
+    min-width: 0;
+  }
+
+  .label-spacer {
+    flex-shrink: 0;
+    width: 60px;
+  }
+
   .column {
     flex: 1;
     display: flex;
@@ -127,20 +157,23 @@
   }
 
   .column-label {
-    margin: 0 0 6px;
+    margin: 0;
     font-size: 0.72rem;
     font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
     padding: 4px 8px;
     border-radius: 4px;
     display: inline-block;
+    width: fit-content;
   }
 
-  .producers-column .column-label {
+  .producers-label {
     color: #0b6a0b;
     background: #dff6dd;
   }
 
-  .consumers-column .column-label {
+  .consumers-label {
     color: #0078d4;
     background: #deecf9;
   }
