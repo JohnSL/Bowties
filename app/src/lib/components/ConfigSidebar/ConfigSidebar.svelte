@@ -121,6 +121,7 @@
         {@const nodeError = sidebarState.nodeErrors[nodeId] ?? null}
         {@const hasSelectedSegment = sidebarState.selectedSegment?.nodeId === nodeId}
         {@const isConfigNotRead = node.snip_data !== null && !configReadNodes.has(nodeId)}
+        {@const isNodeSelected = sidebarState.selectedNodeId === nodeId && !hasSelectedSegment}
 
         <div class="node-group" class:child-selected={hasSelectedSegment}>
           <NodeEntry
@@ -132,6 +133,7 @@
             {isOffline}
             {isLoading}
             configNotRead={isConfigNotRead}
+            isSelected={isNodeSelected}
             hasPendingEdits={allPendingEdits.some(e => e.nodeId === nodeId && (e.writeState === 'dirty' || e.writeState === 'error'))}
             on:toggle={() => handleNodeToggle(nodeId, node, isExpanded)}
             on:readConfig={() => dispatch('readNodeConfig', { nodeId })}

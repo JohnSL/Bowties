@@ -118,6 +118,13 @@ export interface ConfigSidebarState {
    */
   expandedNodeIds: string[];
 
+  /**
+   * The node the user most recently clicked, regardless of whether it has
+   * any segments loaded.  Used to enable node-level menu actions (e.g.
+   * Re-download CDI) even when no segment is selected.
+   */
+  selectedNodeId: string | null;
+
   /** The currently selected segment (one at a time globally) */
   selectedSegment: { nodeId: string; segmentId: string; segmentPath: string } | null;
 
@@ -140,6 +147,7 @@ export interface ConfigSidebarState {
 
 const initialState: ConfigSidebarState = {
   expandedNodeIds: [],
+  selectedNodeId: null,
   selectedSegment: null,
   cardDeck: null,
   nodeLoadingStates: {},
@@ -159,17 +167,26 @@ function createConfigSidebarStore() {
     /**
      * Toggle expansion of a node entry in the sidebar.
      * FR-015: Expanding does NOT collapse previously expanded nodes.
+     * Clicking a node header selects that node and clears any active segment.
      */
     toggleNodeExpanded(nodeId: string): void {
       update(state => {
         const isExpanded = state.expandedNodeIds.includes(nodeId);
         return {
           ...state,
+          selectedNodeId: nodeId,
+          selectedSegment: null,
+          cardDeck: null,
           expandedNodeIds: isExpanded
             ? state.expandedNodeIds.filter(id => id !== nodeId)
             : [...state.expandedNodeIds, nodeId],
         };
       });
+    },
+
+    /** Track which node the user most recently interacted with. */
+    setSelectedNode(nodeId: string | null): void {
+      update(state => ({ ...state, selectedNodeId: nodeId }));
     },
 
     /** Record that a node's segments have loaded successfully */
@@ -211,6 +228,7 @@ function createConfigSidebarStore() {
     selectSegment(nodeId: string, segmentId: string, segmentName: string, segmentPath: string): void {
       update(state => ({
         ...state,
+        selectedNodeId: nodeId,
         selectedSegment: { nodeId, segmentId, segmentPath },
         cardDeck: {
           nodeId,

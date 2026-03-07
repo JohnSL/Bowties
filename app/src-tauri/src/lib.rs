@@ -70,14 +70,15 @@ async fn disconnect_lcc(
 async fn update_menu_state(
     connected: bool,
     is_busy: bool,
-    has_selection: bool,
+    can_view_cdi: bool,
+    can_redownload_cdi: bool,
     handles: tauri::State<'_, MenuHandles>,
 ) -> Result<(), String> {
     handles.disconnect     .set_enabled(connected)                      .map_err(|e| e.to_string())?;
     handles.refresh_nodes  .set_enabled(connected && !is_busy)          .map_err(|e| e.to_string())?;
     handles.traffic_monitor.set_enabled(connected)                      .map_err(|e| e.to_string())?;
-    handles.view_cdi       .set_enabled(connected && has_selection)     .map_err(|e| e.to_string())?;
-    handles.redownload_cdi .set_enabled(connected && has_selection)     .map_err(|e| e.to_string())?;
+    handles.view_cdi       .set_enabled(can_view_cdi)                   .map_err(|e| e.to_string())?;
+    handles.redownload_cdi .set_enabled(can_redownload_cdi)             .map_err(|e| e.to_string())?;
     Ok(())
 }
 

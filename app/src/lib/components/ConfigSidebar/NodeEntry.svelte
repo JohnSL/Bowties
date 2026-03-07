@@ -14,6 +14,8 @@
   export let configNotRead: boolean = false;
   /** Whether this node has unsaved pending edits (FR-012a) */
   export let hasPendingEdits: boolean = false;
+  /** Whether this node is selected (node-level selection, no segment) */
+  export let isSelected: boolean = false;
 
   const dispatch = createEventDispatcher<{
     toggle: { nodeId: string };
@@ -34,6 +36,7 @@
   class="node-entry"
   class:expanded={isExpanded}
   class:offline={isOffline}
+  class:selected={isSelected}
   on:click={handleClick}
   aria-expanded={isExpanded}
   title={nodeTooltip ?? undefined}
@@ -94,11 +97,17 @@
     font-size: 13px;
     color: var(--text-primary, #333);
     border-bottom: 1px solid var(--border-color, #eee);
-    transition: background-color 0.1s;
+    border-left: 3px solid transparent;
+    transition: background-color 0.1s, border-left-color 0.1s;
   }
 
   .node-entry:hover {
     background-color: var(--hover-bg, #f5f5f5);
+  }
+
+  .node-entry.selected {
+    border-left-color: #0078d4;
+    background-color: rgba(0, 120, 212, 0.06);
   }
 
   .node-entry.offline {

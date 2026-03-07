@@ -22,6 +22,8 @@
   import BowtieCatalogPanel from '$lib/components/Bowtie/BowtieCatalogPanel.svelte';
   import DiscoveryProgressModal from '$lib/components/DiscoveryProgressModal.svelte';
   import SaveControls from '$lib/components/ElementCardDeck/SaveControls.svelte';
+  import CdiDownloadDialog from '$lib/components/CdiDownloadDialog.svelte';
+  import type { MissingCdiNode } from '$lib/components/CdiDownloadDialog.svelte';
 
   // Active tab state — 'config' (default) or 'bowties'
   let activeTab = $state<'config' | 'bowties'>('config');
@@ -66,6 +68,15 @@
   let viewerXmlContent = $state<string | null>(null);
   let viewerStatus = $state<ViewerStatus>('idle');
   let viewerErrorMessage = $state<string | null>(null);
+
+  // CDI download dialog state
+  let cdiDownloadDialogVisible = $state(false);
+  let cdiMissingNodes = $state<MissingCdiNode[]>([]);
+  let cdiDownloading = $state(false);
+  let cdiDownloadedCount = $state(0);
+
+  // Track which nodes have CDI available in cache (populated during discovery/refresh)
+  let nodesWithCdi = $state(new Set<string>());
 
   // Check connection status on mount
   onMount(async () => {
@@ -112,11 +123,13 @@
     unlistens.push(await listen('menu-refresh',        () => { if (connected) discover(); }));
     unlistens.push(await listen('menu-traffic',        () => { if (connected) openTrafficMonitor(); }));
     unlistens.push(await listen('menu-view-cdi',       () => {
-      const nodeId = get(configSidebarStore).selectedSegment?.nodeId;
+      const state = get(configSidebarStore);
+      const nodeId = state.selectedSegment?.nodeId ?? state.selectedNodeId;
       if (nodeId) openCdiViewer(nodeId, false);
     }));
     unlistens.push(await listen('menu-redownload-cdi', () => {
-      const nodeId = get(configSidebarStore).selectedSegment?.nodeId;
+      const state = get(configSidebarStore);
+      const nodeId = state.selectedSegment?.nodeId ?? state.selectedNodeId;
       if (nodeId) openCdiViewer(nodeId, true);
     }));
     unlistens.push(await listen('menu-discovery-opts', () => { showDiscoveryOptions = !showDiscoveryOptions; }));
@@ -181,35 +194,40 @@
         const cdiCandidatesRefresh = nodes.filter(n => n.snip_data !== null);
         let totalSuccessfulRefresh = 0;
         let totalFailedRefresh = 0;
+        cdiMissingNodes = [];
+        const newNodesWithCdi = new Set<string>();
         for (let nodeIdx = 0; nodeIdx < cdiCandidatesRefresh.length; nodeIdx++) {
           const node = cdiCandidatesRefresh[nodeIdx];
           try {
             // Format node_id from array to dotted hex string
             const nodeId = formatNodeId(node.node_id);
             const nodeName = node.snip_data?.user_name || nodeId;
-            
+
             let hasCdi = false;
             try {
               const cdiCheck = await getCdiXml(nodeId);
               hasCdi = cdiCheck.xmlContent !== null;
+              if (hasCdi) {
+                newNodesWithCdi.add(nodeId);
+              }
             } catch {
               // CdiNotRetrieved or similar — CDI not available yet
             }
 
             if (!hasCdi) {
-              console.log(`Skipping config read for ${nodeName} — CDI not yet downloaded`);
+              cdiMissingNodes = [...cdiMissingNodes, { nodeId, nodeName }];
               continue;
             }
 
             console.log(`Reading config values from ${nodeName}...`);
             const response = await readAllConfigValues(nodeId, undefined, nodeIdx, cdiCandidatesRefresh.length);
-            
+
             // Update store with batch values
             millerColumnsStore.setConfigValues(response.values);
             markNodeConfigRead(nodeId);
             totalSuccessfulRefresh += response.successfulReads;
             totalFailedRefresh += response.failedReads;
-            
+
             console.log(`✓ Read ${response.successfulReads} of ${response.totalElements} config values from ${nodeName}`);
             if (response.failedReads > 0) {
               console.warn(`  ${response.failedReads} values failed to read`);
@@ -221,6 +239,7 @@
             // Continue with next node - don't fail entire refresh
           }
         }
+        nodesWithCdi = newNodesWithCdi;
         // Emit synthetic Complete so the progress strip auto-dismisses
         if (cdiCandidatesRefresh.length > 0) {
           const doneState: ReadProgressState = {
@@ -243,9 +262,15 @@
             isCancelling = false;
             millerColumnsStore.setCancelling(false);
             discoveryModalVisible = false;
+            if (cdiMissingNodes.length > 0) {
+              cdiDownloadDialogVisible = true;
+            }
           }, 1500);
         } else {
           discoveryModalVisible = false;
+          if (cdiMissingNodes.length > 0) {
+            cdiDownloadDialogVisible = true;
+          }
         }
       } catch (e) {
         console.error("Refresh failed:", e);
@@ -301,35 +326,40 @@
         const cdiCandidates = nodes.filter(n => n.snip_data !== null);
         let totalSuccessful = 0;
         let totalFailed = 0;
+        cdiMissingNodes = [];
+        const newNodesWithCdi = new Set<string>();
         for (let nodeIdx = 0; nodeIdx < cdiCandidates.length; nodeIdx++) {
           const node = cdiCandidates[nodeIdx];
           try {
             // Format node_id from array to dotted hex string
             const nodeId = formatNodeId(node.node_id);
             const nodeName = node.snip_data?.user_name || nodeId;
-            
+
             let hasCdi = false;
             try {
               const cdiCheck = await getCdiXml(nodeId);
               hasCdi = cdiCheck.xmlContent !== null;
+              if (hasCdi) {
+                newNodesWithCdi.add(nodeId);
+              }
             } catch {
               // CdiNotRetrieved or similar — CDI not available yet
             }
 
             if (!hasCdi) {
-              console.log(`Skipping config read for ${nodeName} — CDI not yet downloaded`);
+              cdiMissingNodes = [...cdiMissingNodes, { nodeId, nodeName }];
               continue;
             }
 
             console.log(`Reading config values from ${nodeName}...`);
             const response = await readAllConfigValues(nodeId, undefined, nodeIdx, cdiCandidates.length);
-            
+
             // Update store with batch values
             millerColumnsStore.setConfigValues(response.values);
             markNodeConfigRead(nodeId);
             totalSuccessful += response.successfulReads;
             totalFailed += response.failedReads;
-            
+
             console.log(`✓ Read ${response.successfulReads} of ${response.totalElements} config values from ${nodeName}`);
             if (response.failedReads > 0) {
               console.warn(`  ${response.failedReads} values failed to read`);
@@ -341,6 +371,7 @@
             // Continue with next node - don't fail entire discovery
           }
         }
+        nodesWithCdi = newNodesWithCdi;
         // Emit synthetic Complete so the progress strip auto-dismisses
         if (cdiCandidates.length > 0) {
           const doneState: ReadProgressState = {
@@ -363,9 +394,15 @@
             isCancelling = false;
             millerColumnsStore.setCancelling(false);
             discoveryModalVisible = false;
+            if (cdiMissingNodes.length > 0) {
+              cdiDownloadDialogVisible = true;
+            }
           }, 1500);
         } else {
           discoveryModalVisible = false;
+          if (cdiMissingNodes.length > 0) {
+            cdiDownloadDialogVisible = true;
+          }
         }
       } catch (e) {
         console.error("Discovery failed:", e);
@@ -600,12 +637,65 @@
     viewerErrorMessage = null;
   }
 
+  function handleCdiDownloadCancel() {
+    cdiDownloadDialogVisible = false;
+    cdiMissingNodes = [];
+  }
+
+  async function handleCdiDownload() {
+    cdiDownloading = true;
+    cdiDownloadedCount = 0;
+    const nodesToDownload = [...cdiMissingNodes];
+
+    for (let i = 0; i < nodesToDownload.length; i++) {
+      const { nodeId, nodeName } = nodesToDownload[i];
+      try {
+        await downloadCdi(nodeId);
+        console.log(`Downloaded CDI for ${nodeName}`);
+        nodesWithCdi = new Set([...nodesWithCdi, nodeId]);
+      } catch (e) {
+        console.warn(`Failed to download CDI for ${nodeName}:`, e);
+      }
+      cdiDownloadedCount = i + 1;
+    }
+
+    cdiDownloadDialogVisible = false;
+    cdiDownloading = false;
+    cdiMissingNodes = [];
+
+    // Read config values for nodes that now have CDI
+    for (let i = 0; i < nodesToDownload.length; i++) {
+      const { nodeId, nodeName } = nodesToDownload[i];
+      try {
+        const cdiCheck = await getCdiXml(nodeId);
+        if (cdiCheck.xmlContent !== null) {
+          const response = await readAllConfigValues(nodeId, undefined, i, nodesToDownload.length);
+          millerColumnsStore.setConfigValues(response.values);
+          markNodeConfigRead(nodeId);
+          console.log(`✓ Read config for ${nodeName}`);
+        }
+      } catch (e) {
+        console.warn(`Failed to read config for ${nodeId}:`, e);
+      }
+    }
+  }
+
   // Sync native menu item enable/disable state with current app state.
   // Tauri v2 has no "menu will open" event, so we push state eagerly whenever
   // any of the tracked reactive values change.
-  async function syncMenuState(conn: boolean, busy: boolean, sel: boolean) {
+  async function syncMenuState(
+    conn: boolean,
+    busy: boolean,
+    canViewCdi: boolean,
+    canRedownloadCdi: boolean
+  ) {
     try {
-      await invoke("update_menu_state", { connected: conn, isBusy: busy, hasSelection: sel });
+      await invoke("update_menu_state", {
+        connected: conn,
+        isBusy: busy,
+        canViewCdi,
+        canRedownloadCdi,
+      });
     } catch (e) {
       console.warn("Failed to update menu state:", e);
     }
@@ -614,8 +704,23 @@
   $effect(() => {
     const conn = connected;
     const busy = discovering || queryingSnip || refreshing || readingRemaining;
-    const sel  = !!$configSidebarStore.selectedSegment;
-    syncMenuState(conn, busy, sel);
+    const store = $configSidebarStore;
+
+    // Determine which node is selected
+    const selectedNodeId = store.selectedSegment?.nodeId ?? store.selectedNodeId;
+
+    // Re-download CDI is available if any node is selected
+    const canRedownloadCdi = conn && !busy && !!selectedNodeId;
+
+    // View CDI is available if:
+    // - A segment is selected (segment exists → CDI exists), OR
+    // - A node is selected and has cached CDI
+    const canViewCdi =
+      conn &&
+      !busy &&
+      (!!store.selectedSegment || (!!selectedNodeId && nodesWithCdi.has(selectedNodeId)));
+
+    syncMenuState(conn, busy, canViewCdi, canRedownloadCdi);
   });
 </script>
 
@@ -762,6 +867,17 @@
   errorMessage={viewerErrorMessage}
   onClose={closeCdiViewer}
 />
+
+<!-- CDI Download Dialog — shown when nodes lack a cached CDI after discovery -->
+{#if cdiDownloadDialogVisible}
+  <CdiDownloadDialog
+    nodes={cdiMissingNodes}
+    downloading={cdiDownloading}
+    downloadedCount={cdiDownloadedCount}
+    onDownload={handleCdiDownload}
+    onCancel={handleCdiDownloadCancel}
+  />
+{/if}
 
 <style>
   :global(html, body) {
