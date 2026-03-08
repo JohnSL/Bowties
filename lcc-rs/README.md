@@ -291,4 +291,4 @@ When adding new protocol features:
 
 ## License
 
-See LICENSE file in parent directory.
+Licensed under either of [MIT License](../LICENSE-MIT) or [Apache License, Version 2.0](../LICENSE-APACHE) at your option.
