@@ -55,16 +55,20 @@ impl LccConnection {
     /// }
     /// ```
     pub async fn connect_with_dispatcher(host: &str, port: u16, node_id: NodeID) -> Result<Arc<Mutex<Self>>> {
-        // Create transport and allocate alias
+        // Create transport, allocate alias, then hand the same connection to the
+        // dispatcher. (Previously a second TCP connection was opened for the dispatcher
+        // and the allocation connection was discarded — that was wrong because other
+        // nodes only register our alias from the InitializationComplete we sent, and
+        // a fresh connection without re-sending InitComplete left us invisible to any
+        // node that joined after our first connection closed.)
         let transport = TcpTransport::connect(host, port).await?;
         let mut boxed_transport: Box<dyn LccTransport> = Box::new(transport);
         let our_alias = AliasAllocator::allocate(&node_id, &mut boxed_transport).await?;
-        
-        // Reconnect for the dispatcher (fresh connection)
-        let transport = TcpTransport::connect(host, port).await?;
-        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
+
+        // Pass the same connection (which already sent CID/RID/InitComplete) to the dispatcher.
+        let mut dispatcher = MessageDispatcher::new(boxed_transport);
         dispatcher.start();
-        
+
         let connection = Self {
             dispatcher: Some(Arc::new(Mutex::new(dispatcher))),
             transport: None,
@@ -72,10 +76,42 @@ impl LccConnection {
             our_alias,
             our_snip: None,
         };
-        
+
         Ok(Arc::new(Mutex::new(connection)))
     }
     
+    /// Connect to an LCC network using any pre-opened transport with a persistent
+    /// message dispatcher.
+    ///
+    /// Use this for serial transports (GridConnect, SLCAN) where there is only one
+    /// physical connection. The transport is used for alias allocation and then handed
+    /// to the dispatcher.
+    ///
+    /// # Arguments
+    /// * `transport` — An already-opened, ready-to-use transport
+    /// * `node_id` — Our Node ID (6 bytes)
+    pub async fn connect_with_dispatcher_and_transport(
+        mut transport: Box<dyn LccTransport>,
+        node_id: NodeID,
+    ) -> Result<Arc<Mutex<Self>>> {
+        // Perform alias allocation on the transport
+        let our_alias = AliasAllocator::allocate(&node_id, &mut transport).await?;
+
+        // Hand the transport to the dispatcher
+        let mut dispatcher = MessageDispatcher::new(transport);
+        dispatcher.start();
+
+        let connection = Self {
+            dispatcher: Some(Arc::new(Mutex::new(dispatcher))),
+            transport: None,
+            our_node_id: node_id,
+            our_alias,
+            our_snip: None,
+        };
+
+        Ok(Arc::new(Mutex::new(connection)))
+    }
+
     /// Connect to an LCC network via TCP (legacy direct mode)
     /// 
     /// This creates a connection without a persistent dispatcher.

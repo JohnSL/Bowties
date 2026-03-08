@@ -1097,7 +1097,7 @@ mod tests {
                 node_id.clone(),
             ).unwrap();
             
-            assert_eq!(init_frame.to_string(), ":X10010AAAN010203040506;");
+            assert_eq!(init_frame.to_string(), ":X19100AAAN010203040506;");
             
             // Verify NodeID is in the data
             assert_eq!(init_frame.data, node_id);
@@ -1139,13 +1139,13 @@ mod tests {
             let rid = GridConnectFrame::from_mti(MTI::ReserveID, alias, vec![]).unwrap();
             assert_eq!(rid.to_string(), ":X10700AAAN;");
             
-            // Step 3: Send InitializationComplete with NodeID
+            // Step 3: Send InitializationComplete with NodeID  (MTI 0x19100 per S-9.7.2.1)
             let init = GridConnectFrame::from_mti(
                 MTI::InitializationComplete,
                 alias,
                 node_id.clone(),
             ).unwrap();
-            assert_eq!(init.to_string(), ":X10010AAAN010203040506;");
+            assert_eq!(init.to_string(), ":X19100AAAN010203040506;");
             
             // Step 4: Optionally send VerifiedNode (in response to VerifyNodeGlobal)
             let verified = GridConnectFrame::from_mti(

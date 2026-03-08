@@ -12,8 +12,9 @@ pub mod profile;
 
 use menu::MenuHandles;
 
-use lcc_rs::{LccConnection, NodeID};
+use lcc_rs::{LccConnection, NodeID, GridConnectSerialTransport, SlcanSerialTransport};
 use state::AppState;
+use commands::{ConnectionConfig, AdapterType};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 
@@ -22,38 +23,102 @@ const OUR_NODE_ID: [u8; 6] = [0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF];
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ConnectionInfo {
-    host: String,
-    port: u16,
     connected: bool,
+    config: Option<ConnectionConfig>,
+}
+
+/// Retry a fallible async port-open operation up to 3 times, with a 300 ms
+/// delay between attempts, but only when the OS error looks like
+/// "access denied" (port still claimed by a previous connection).
+async fn open_with_retry<T, E, Fut, F>(mut f: F, label: &str) -> Result<T, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    let mut last_err = String::new();
+    for attempt in 0..3u8 {
+        match f().await {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                last_err = format!("Failed to open {}: {}", label, e);
+                let msg = e.to_string().to_lowercase();
+                if attempt < 2 && (msg.contains("access") || msg.contains("denied")) {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    Err(last_err)
 }
 
 /// Connect to an LCC network
 #[tauri::command]
 async fn connect_lcc(
-    host: String,
-    port: u16,
+    config: ConnectionConfig,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<ConnectionInfo, String> {
     // Disconnect existing connection if any
     state.disconnect().await;
-    
-    // Create new connection with dispatcher
+
     let node_id = NodeID::new(OUR_NODE_ID);
-    match LccConnection::connect_with_dispatcher(&host, port, node_id).await {
-        Ok(connection) => {
-            *state.host.write().await = host.clone();
-            *state.port.write().await = port;
-            state.set_connection_with_dispatcher(connection, app).await;
-            
-            Ok(ConnectionInfo {
-                host,
-                port,
-                connected: true,
-            })
+
+    let connection = match &config.adapter_type {
+        AdapterType::Tcp => {
+            let host = config.host.as_deref().unwrap_or("localhost");
+            let port = config.port.unwrap_or(12021);
+            LccConnection::connect_with_dispatcher(host, port, node_id)
+                .await
+                .map_err(|e| format!("Failed to connect via TCP: {}", e))?
         }
-        Err(e) => Err(format!("Failed to connect: {}", e)),
-    }
+        AdapterType::GridConnectSerial => {
+            let serial_port = config
+                .serial_port
+                .as_deref()
+                .ok_or_else(|| "serial_port is required for GridConnect".to_string())?;
+            let baud_rate = config.baud_rate.unwrap_or(57600);
+            let transport = open_with_retry(
+                || GridConnectSerialTransport::open(serial_port, baud_rate),
+                "GridConnect serial port",
+            )
+            .await?;
+            LccConnection::connect_with_dispatcher_and_transport(
+                Box::new(transport),
+                node_id,
+            )
+            .await
+            .map_err(|e| format!("Failed to connect via GridConnect serial: {}", e))?
+        }
+        AdapterType::SlcanSerial => {
+            let serial_port = config
+                .serial_port
+                .as_deref()
+                .ok_or_else(|| "serial_port is required for SLCAN".to_string())?;
+            let baud_rate = config.baud_rate.unwrap_or(115200);
+            let transport = open_with_retry(
+                || SlcanSerialTransport::open(serial_port, baud_rate),
+                "SLCAN serial port",
+            )
+            .await?;
+            LccConnection::connect_with_dispatcher_and_transport(
+                Box::new(transport),
+                node_id,
+            )
+            .await
+            .map_err(|e| format!("Failed to connect via SLCAN serial: {}", e))?
+        }
+    };
+
+    *state.active_connection.write().await = Some(config.clone());
+    state.set_connection_with_dispatcher(connection, app).await;
+
+    Ok(ConnectionInfo {
+        connected: true,
+        config: Some(config),
+    })
 }
 
 /// Disconnect from the LCC network
@@ -92,9 +157,8 @@ async fn get_connection_status(
     state: tauri::State<'_, AppState>,
 ) -> Result<ConnectionInfo, String> {
     Ok(ConnectionInfo {
-        host: state.host.read().await.clone(),
-        port: *state.port.read().await,
         connected: state.is_connected().await,
+        config: state.active_connection.read().await.clone(),
     })
 }
 
@@ -158,6 +222,9 @@ pub fn run() {
             commands::get_node_tree,  // Spec 007: unified node tree
             commands::write_config_value,  // Spec 007: write config value
             commands::send_update_complete,  // Spec 007: send update complete
+            commands::list_serial_ports,
+            commands::load_connection_prefs,
+            commands::save_connection_prefs,
             update_menu_state,
         ])
         .run(tauri::generate_context!())

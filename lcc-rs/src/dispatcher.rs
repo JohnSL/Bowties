@@ -139,9 +139,10 @@ impl MessageDispatcher {
         mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
     ) {
         loop {
-            // Check for shutdown signal
-            if shutdown_rx.try_recv().is_ok() {
-                break;
+            // Check for shutdown signal (Ok = explicit send, Closed = sender dropped)
+            match shutdown_rx.try_recv() {
+                Ok(()) | Err(tokio::sync::oneshot::error::TryRecvError::Closed) => break,
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
             }
 
             // Drive receive - TapTransport broadcasts to all_tx automatically.

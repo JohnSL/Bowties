@@ -1,6 +1,7 @@
 //! Application state management for Bowties Tauri application
 
 use lcc_rs::{LccConnection, DiscoveredNode, MessageDispatcher, SNIPData};
+use crate::commands::{ConnectionConfig};
 use crate::events::EventRouter;
 use crate::node_tree::NodeConfigTree;
 use std::sync::Arc;
@@ -98,14 +99,11 @@ pub struct AppState {
     /// Cache of discovered nodes
     pub nodes: Arc<RwLock<Vec<DiscoveredNode>>>,
     
-    /// Connection host
-    pub host: Arc<RwLock<String>>,
-    
-    /// Connection port
-    pub port: Arc<RwLock<u16>>,
-    
     /// Cancellation token for config reading operations (T012)
     pub config_read_cancel: Arc<AtomicBool>,
+
+    /// Active connection configuration (None when not connected)
+    pub active_connection: Arc<RwLock<Option<ConnectionConfig>>>,
 
     // ── Feature 006: Bowtie catalog fields ────────────────────────────────
 
@@ -148,8 +146,7 @@ impl AppState {
             dispatcher: Arc::new(RwLock::new(None)),
             event_router: Arc::new(RwLock::new(None)),
             nodes: Arc::new(RwLock::new(Vec::new())),
-            host: Arc::new(RwLock::new("localhost".to_string())),
-            port: Arc::new(RwLock::new(12021)),
+            active_connection: Arc::new(RwLock::new(None)),
             config_read_cancel: Arc::new(AtomicBool::new(false)),
             bowties_catalog: Arc::new(RwLock::new(None)),
             event_roles: Arc::new(RwLock::new(HashMap::new())),
@@ -224,11 +221,14 @@ impl AppState {
             router.stop().await;
         }
         
-        // Clear dispatcher
-        *self.dispatcher.write().await = None;
+        // Shutdown dispatcher (signals background task to exit, releasing the serial port)
+        if let Some(disp_arc) = self.dispatcher.write().await.take() {
+            disp_arc.lock().await.shutdown().await;
+        }
         
-        // Clear connection
+        // Clear connection and active config
         *self.connection.write().await = None;
+        *self.active_connection.write().await = None;
     }
 
     /// Get all cached nodes

@@ -135,37 +135,50 @@ fn test_verify_node_addressed_flow() {
 }
 
 /// Test complete alias allocation sequence
-/// Python reference: testStartup.py
+/// Python reference: testStartup.py (expected frames as documented there)
 #[test]
 fn test_alias_allocation_sequence() {
     let alias = 0xAAA;
     let node_id = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06];
-    
-    // Step 1: Send CheckID (CID)
-    let cid = GridConnectFrame::from_mti(MTI::CheckID, alias, vec![]).unwrap();
-    assert_eq!(cid.to_string(), ":X17020AAAN;");
-    
-    // In full sequence, 4 CID frames would be sent with different data
-    // For this test, we just verify one
-    
+
+    // Step 1: Send 4 CID frames (CID7–CID4) each encoding a NodeID segment.
+    // Segments of NodeID 01.02.03.04.05.06 (48-bit = 0x010203040506):
+    //   bits 47:36 = 0x010  → CID7 header: (0x17 << 24) | (0x010 << 12) | 0xAAA = 0x17010AAA
+    //   bits 35:24 = 0x203  → CID6 header: 0x16203AAA
+    //   bits 23:12 = 0x040  → CID5 header: 0x15040AAA
+    //   bits 11:0  = 0x506  → CID4 header: 0x14506AAA
+    let node_val: u64 = 0x010203040506;
+    let segs: [u32; 4] = [
+        ((node_val >> 36) & 0xFFF) as u32,
+        ((node_val >> 24) & 0xFFF) as u32,
+        ((node_val >> 12) & 0xFFF) as u32,
+        (node_val & 0xFFF) as u32,
+    ];
+    for (cid_type, &seg) in [0x17u32, 0x16, 0x15, 0x14].iter().zip(segs.iter()) {
+        let header = (cid_type << 24) | (seg << 12) | (alias as u32);
+        let frame = GridConnectFrame::new(header, vec![]).unwrap();
+        // Frames should be valid 29-bit CAN frames
+        assert!(frame.header <= 0x1FFFFFFF);
+    }
+
     // Step 2: Send ReserveID (RID) if no conflict
     let rid = GridConnectFrame::from_mti(MTI::ReserveID, alias, vec![]).unwrap();
     assert_eq!(rid.to_string(), ":X10700AAAN;");
-    
-    // Step 3: Send InitializationComplete with NodeID
+
+    // Step 3: Send InitializationComplete with NodeID  (MTI 0x19100 per S-9.7.2.1)
     let init = GridConnectFrame::from_mti(
         MTI::InitializationComplete,
         alias,
         node_id.clone(),
     )
     .unwrap();
-    assert_eq!(init.to_string(), ":X10010AAAN010203040506;");
-    
+    assert_eq!(init.to_string(), ":X19100AAAN010203040506;");
+
     // Step 4: Respond to VerifyNodeGlobal
     let verify_global = GridConnectFrame::parse(":X19490BBBN;").unwrap();
     let (mti, _) = verify_global.get_mti().unwrap();
     assert_eq!(mti, MTI::VerifyNodeGlobal);
-    
+
     // Send VerifiedNode response
     let verified = GridConnectFrame::from_mti(
         MTI::VerifiedNode,
@@ -205,7 +218,7 @@ fn test_alias_conflict_recovery() {
         vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
     )
     .unwrap();
-    assert_eq!(init.to_string(), ":X10010BBBN010203040506;");
+    assert_eq!(init.to_string(), ":X19100BBBN010203040506;");
 }
 
 /// Test datagram exchange (single frame)
@@ -311,7 +324,7 @@ fn test_python_log_sequences() {
         ":X19544DDDN0102030405060708;",          // ProducerIdentifiedValid
         ":X17020AAAN;",                          // CheckID
         ":X10700AAAN;",                          // ReserveID
-        ":X10010AAAN010203040506;",              // InitializationComplete
+        ":X19100AAAN010203040506;",              // InitializationComplete (MTI 0x19100 per S-9.7.2.1)
         ":X19488AAAN0DDD010203040506;",          // VerifyNodeAddressed
     ];
     

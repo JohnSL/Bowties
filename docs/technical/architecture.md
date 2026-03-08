@@ -2,14 +2,15 @@
 
 *This document describes the current implementation of Bowties, including what's built, what's in progress, and what remains to be implemented. For the aspirational vision, see [docs/design/vision.md](../design/vision.md).*
 
-**Last Updated:** 2026-02-22
+**Last Updated:** 2026-03-08
 
 ## Implementation Status
 
 ### ✅ Completed (Phase 1)
 
 **Connection & Discovery MVP:**
-- TCP connection to GridConnect hub
+- TCP connection to GridConnect hubs (JMRI, standalone bridges)
+- Direct USB-to-CAN adapter support (GridConnect Serial and SLCAN Serial protocols)
 - Connection state persistence
 - Node discovery using Verify Node ID protocol
 - SNIP data retrieval (manufacturer, model, version, user name)
@@ -18,7 +19,8 @@
 **lcc-rs Library:**
 - GridConnect frame parsing/encoding
 - MTI encoder/decoder
-- Basic TCP transport with tokio
+- TCP transport with tokio async I/O
+- Serial/USB transport (GridConnect Serial and SLCAN protocols)
 - Node discovery protocol
 - SNIP datagram protocol
 - Memory Configuration Protocol (CDI retrieval)
@@ -60,22 +62,11 @@
 
 ### ✅ Completed (Phase 3)
 
-**Miller Columns Configuration Navigator (Feature 003):**
-- CDI XML parsing (roxmltree-based parser in lcc-rs)
-- Dynamic column-based navigation UI (Svelte components)
-- Hierarchical CDI structure display (segments → groups → elements)
-- Replicated group expansion with instance numbering
-- Element details panel with metadata display
-- Breadcrumb navigation with instance indicators
-- pathId-based navigation system (seg:N, elem:N, elem:N#I format)
-- UUID-based unique IDs for UI elements
-- Keyboard navigation support (arrow keys, Enter/Space)
-- WCAG 2.1 AA accessibility compliance
-- CDI parsing cache (lazy_static HashMap)
-- Error handling with graceful degradation
-- Performance optimizations (debouncing, request cancellation)
+**Miller Columns Configuration Navigator (Feature 003) — Superseded:**
+- This phase implemented a Miller Columns navigation approach for CDI browsing, which was subsequently replaced by a simpler flat configuration view.
+- The lcc-rs CDI module (parser, type system, path navigation) developed here remains in use by the current implementation.
 
-**lcc-rs CDI Module:**
+**lcc-rs CDI Module (retained):**
 - Complete CDI type system (Cdi, Segment, DataElement, Group, etc.)
 - Recursive XML parser with error recovery
 - Group replication expansion logic
@@ -140,21 +131,22 @@
 - Tab disabled until `cdi-read-complete` fires; enables automatically after first build
 - Full Vitest test coverage for all new Svelte components; cargo unit tests for `build_bowtie_catalog` and `classify_event_slot`
 
-### 🚧 In Progress
+### ✅ Completed (Phase 6)
 
-**Protocol Implementation:**
+**Configuration Viewing & Editing:**
 - Configuration memory read/write (value retrieval and editing)
+- Configuration value display and editing UI
+
+### 🚧 In Progress
 
 **UI Enhancements:**
 - Dark mode / theme consistency across Bowtie components (inherits app theme; dark-mode CSS variables need alignment with global custom properties)
-- Configuration value editing in Miller Columns
 
 ### ⏳ Not Yet Implemented
 
 **Core Features:**
 - Event link visualization (canvas drag-and-drop)
 - Drag-and-drop event linking (create new producer ↔ consumer pairs)
-- Configuration value editing (UI complete, backend pending)
 
 See [docs/project/roadmap.md](../project/roadmap.md) for detailed feature timeline.
 
@@ -280,10 +272,21 @@ app/src/lib/types/
 
 **Connection (Event-Driven Architecture):**
 
+Bowties supports three connection types. All use the same `LccConnection` abstraction in lcc-rs; only the transport layer differs.
+
+| Type | Protocol | Typical devices | Default baud |
+|------|----------|-----------------|-------------|
+| **TCP** | GridConnect over TCP | JMRI, standalone bridges | N/A (port 12021) |
+| **GridConnect Serial** | GridConnect over USB/Serial | SPROG CANISB, SPROG USB-LCC, RR-Cirkits Buffer LCC, CAN2USBINO, CANRS | 57600 |
+| **SLCAN Serial** | SLCAN over USB/Serial | Canable, Lawicel CANUSB, slcand-compatible adapters | 115200 |
+
 ```
 Frontend                    Tauri Backend               lcc-rs Library
 -------                     -------------               --------------
-connect(host, port)    →    connect_lcc(host, port) →   LccConnection::connect_with_dispatcher()
+connect(config)        →    connect_lcc(config)    →   LccConnection::connect_with_dispatcher()
+                                                        - TCP: TcpTransport (host:port)
+                                                        - GridConnect Serial: SerialTransport
+                                                        - SLCAN Serial: SlcanTransport
                        ←    Result<(), Error>       ←   - Creates MessageDispatcher
                                                         - Spawns background listener
                                                         - Starts EventRouter
@@ -299,7 +302,8 @@ sequenceDiagram
     participant F as Frontend
     participant T as Tauri Backend
 
-    F->>T: connect(host, port)
+    F->>T: connect(config)
+    note over T: TCP → TcpTransport<br/>GridConnect Serial → SerialTransport<br/>SLCAN Serial → SlcanTransport
     T-->>F: Result<(), Error>
     
     F->>T: get_connection_status()
@@ -391,7 +395,7 @@ sequenceDiagram
 ```
 
 **State Management:**
-- Backend holds TCP connection and discovered nodes
+- Backend holds LCC connection (TCP or serial/USB) and discovered nodes
 - Frontend caches nodes in local/store state
 - CDI data cached on disk in platform-specific app data directory
 - Cache key format: `cdi_{manufacturer}_{model}_{software_version}.xml`

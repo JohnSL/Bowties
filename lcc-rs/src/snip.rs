@@ -109,22 +109,25 @@ async fn query_snip_internal(
                     )));
                 }
 
-                let frame_type = frame.data[0];
-                eprintln!("SNIP: Frame type byte: 0x{:02X}", frame_type);
+                // data[0] high nibble = frame-type flag; low nibble = high nibble
+                // of the destination alias.  data[1] = low byte of dest alias.
+                // Mask to the upper nibble so the match is alias-independent.
+                let frame_type = frame.data[0] & 0xF0;
+                eprintln!("SNIP: Frame type nibble: 0x{:01X}0 (raw byte: 0x{:02X})", frame_type >> 4, frame.data[0]);
 
                 // Extract payload (skip bytes 0-1, take bytes 2+)
                 let payload_chunk = &frame.data[2..];
                 eprintln!("SNIP: Payload chunk: {} bytes", payload_chunk.len());
 
                 match frame_type {
-                    0x1A => {
+                    0x10 => {
                         // First frame - start new datagram
                         eprintln!("SNIP: First frame, starting new datagram");
                         snip_payload.clear();
                         snip_payload.extend_from_slice(payload_chunk);
                         receiving_datagram = true;
                     }
-                    0x3A => {
+                    0x30 => {
                         // Middle frame - append to existing datagram
                         if !receiving_datagram {
                             eprintln!("SNIP: Middle frame without first frame");
@@ -135,7 +138,7 @@ async fn query_snip_internal(
                         eprintln!("SNIP: Middle frame, appending to datagram");
                         snip_payload.extend_from_slice(payload_chunk);
                     }
-                    0x2A => {
+                    0x20 => {
                         // Final frame - complete the datagram
                         if !receiving_datagram {
                             eprintln!("SNIP: Final frame without first frame");
@@ -164,7 +167,7 @@ async fn query_snip_internal(
                             }
                         }
                     }
-                    0x0A => {
+                    0x00 => {
                         // Single-frame datagram (DatagramOnly equivalent)
                         eprintln!("SNIP: Single-frame datagram");
                         snip_payload.clear();
@@ -189,11 +192,10 @@ async fn query_snip_internal(
                         }
                     }
                     _ => {
-                        eprintln!("SNIP: Unknown frame type: 0x{:02X}", frame_type);
-                        return Err(Error::Protocol(format!(
-                            "Unknown SNIP frame type: 0x{:02X}",
-                            frame_type
-                        )));
+                        // Unknown flag nibble — log and skip rather than aborting
+                        eprintln!("SNIP: Unrecognised frame type nibble: 0x{:02X} (raw byte 0x{:02X}), skipping",
+                            frame_type, frame.data[0]);
+                        continue;
                     }
                 }
             }
@@ -354,6 +356,202 @@ fn parse_section(data: &[u8], offset: &mut usize) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::mock::MockTransport;
+
+    // ── helpers ────────────────────────────────────────────────────────────
+
+    /// Build a SNIP reply frame the way a real node sends it.
+    ///
+    /// SNIP responses are **addressed messages** using MTI 0x19A08.  The CAN
+    /// header carries only the MTI and the *source* alias; the destination is
+    /// encoded in data[0..2]:
+    ///
+    ///   data[0]: (flag_nibble << 4) | (dest_alias >> 8) & 0x0F
+    ///   data[1]: dest_alias & 0xFF
+    ///   data[2..]: payload chunk
+    ///
+    /// flag_nibble values:
+    ///   0x1 = DatagramFirst   0x3 = DatagramMiddle
+    ///   0x2 = DatagramFinal   0x0 = DatagramOnly (single-frame)
+    ///
+    /// The real-world example from the logs:
+    ///   header 0x19A083AE  →  MTI 0x19A08, source alias 0x3AE
+    ///   data[0] = 0x18     →  flag 0x1 (first), dest-alias high nibble 0x8 (→ 0x825)
+    ///   data[1] = 0x25     →  dest-alias low byte
+    fn snip_reply_frame(source_alias: u16, dest_alias: u16, flag_nibble: u8, chunk: &[u8]) -> String {
+        // Addressed-message header: (MTI << 12) | source_alias
+        // dest_alias is NOT encoded in the header — it lives in data[0..2].
+        let header = (0x19A08u32 << 12) | source_alias as u32;
+        let dest_hi = ((dest_alias >> 8) & 0x0F) as u8;
+        let dest_lo = (dest_alias & 0xFF) as u8;
+        let frame_type_byte = (flag_nibble << 4) | dest_hi;
+        let mut data = vec![frame_type_byte, dest_lo];
+        data.extend_from_slice(chunk);
+        // CAN frames hold at most 8 data bytes
+        assert!(data.len() <= 8, "chunk too large: {} data bytes (max 6 after 2 header bytes)", data.len());
+        let data_hex: String = data.iter().map(|b| format!("{:02X}", b)).collect();
+        format!(":X{:08X}N{};", header, data_hex)
+    }
+
+    /// Short SNIP payload used in several tests.
+    fn minimal_snip_payload() -> Vec<u8> {
+        let mut p = vec![0x04u8];
+        p.extend_from_slice(b"ACME\x00Widget\x001.0\x002.3\x00");
+        p.push(0x02);
+        p.extend_from_slice(b"MyNode\x00Desc\x00");
+        p
+    }
+
+    // ── Frame-type nibble decoding tests ───────────────────────────────────
+
+    /// Regression test for the bug: source alias 0x3AE → dest-alias high nibble 0xA
+    /// caused data[0] = 0x1A for "first frame", which is what the OLD code matched.
+    /// Any other alias (e.g. 0x825 → data[0] = 0x18) was silently rejected.
+    #[tokio::test]
+    async fn test_query_snip_multiframe_alias_825() {
+        // Simulate receiving a SNIP reply FROM alias 0x3AE addressed TO alias 0x825.
+        // data[0] will be 0x18 / 0x38 / 0x28 — the old code failed here.
+        let our_alias: u16 = 0x825;
+        let node_alias: u16 = 0x3AE;
+        let payload = minimal_snip_payload();
+
+        // Split into 3 chunks of up to 6 bytes (leaving room for 2 header bytes)
+        let chunks: Vec<&[u8]> = payload.chunks(6).collect();
+        let n = chunks.len();
+
+        let mut transport = MockTransport::new();
+        for (i, chunk) in chunks.iter().enumerate() {
+            let flag = if n == 1 { 0x0 } else if i == 0 { 0x1 } else if i == n - 1 { 0x2 } else { 0x3 };
+            transport.add_receive_frame(snip_reply_frame(node_alias, our_alias, flag, chunk));
+        }
+        // Queue a DatgramReceived-OK ack from the node (not needed for this path but harmless)
+
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
+        let (snip, status) = query_snip(&mut transport, our_alias, node_alias, sem).await.unwrap();
+
+        assert_eq!(status, SNIPStatus::Complete, "status must be Complete");
+        let snip = snip.expect("must have SNIP data");
+        assert_eq!(snip.manufacturer, "ACME");
+        assert_eq!(snip.model, "Widget");
+    }
+
+    /// Same test but with alias 0x3AE as OUR alias (data[0] low nibble = 0x3).
+    #[tokio::test]
+    async fn test_query_snip_multiframe_alias_3ae() {
+        let our_alias: u16 = 0x3AE;
+        let node_alias: u16 = 0xC41;
+        let payload = minimal_snip_payload();
+        let chunks: Vec<&[u8]> = payload.chunks(6).collect();
+        let n = chunks.len();
+
+        let mut transport = MockTransport::new();
+        for (i, chunk) in chunks.iter().enumerate() {
+            let flag = if n == 1 { 0x0 } else if i == 0 { 0x1 } else if i == n - 1 { 0x2 } else { 0x3 };
+            transport.add_receive_frame(snip_reply_frame(node_alias, our_alias, flag, chunk));
+        }
+
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
+        let (snip, status) = query_snip(&mut transport, our_alias, node_alias, sem).await.unwrap();
+
+        assert_eq!(status, SNIPStatus::Complete);
+        let snip = snip.unwrap();
+        assert_eq!(snip.manufacturer, "ACME");
+    }
+
+    /// Alias 0xFFF — low nibble of data[0] = 0xF.  Old code: 0x1F ≠ 0x1A → broken.
+    #[tokio::test]
+    async fn test_query_snip_multiframe_alias_fff() {
+        let our_alias: u16 = 0xFFF;
+        let node_alias: u16 = 0x001;
+        let payload = minimal_snip_payload();
+        let chunks: Vec<&[u8]> = payload.chunks(6).collect();
+        let n = chunks.len();
+
+        let mut transport = MockTransport::new();
+        for (i, chunk) in chunks.iter().enumerate() {
+            let flag = if n == 1 { 0x0 } else if i == 0 { 0x1 } else if i == n - 1 { 0x2 } else { 0x3 };
+            transport.add_receive_frame(snip_reply_frame(node_alias, our_alias, flag, chunk));
+        }
+
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
+        let (snip, status) = query_snip(&mut transport, our_alias, node_alias, sem).await.unwrap();
+
+        assert_eq!(status, SNIPStatus::Complete);
+        let snip = snip.unwrap();
+        assert_eq!(snip.manufacturer, "ACME");
+    }
+
+    /// Single-frame SNIP reply (DatagramOnly, flag nibble 0x0).
+    #[tokio::test]
+    async fn test_query_snip_single_frame() {
+        let our_alias: u16 = 0x825;
+        let node_alias: u16 = 0x3AE;
+        // 6 bytes max payload per CAN frame (8 total - 2 header bytes)
+        let payload = vec![
+            0x04u8,
+            b'A', 0x00,  // manufacturer "A"
+            0x00,        // model ""
+            0x00,        // hw ""
+            0x00,        // sw ""
+        ];
+
+        let mut transport = MockTransport::new();
+        transport.add_receive_frame(snip_reply_frame(node_alias, our_alias, 0x0, &payload));
+
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
+        let (snip, status) = query_snip(&mut transport, our_alias, node_alias, sem).await.unwrap();
+
+        assert_eq!(status, SNIPStatus::Complete);
+        let snip = snip.unwrap();
+        assert_eq!(snip.manufacturer, "A");
+        assert_eq!(snip.model, "");
+    }
+
+    /// Frames from a different alias are ignored; only frames from dest_alias matter.
+    #[tokio::test]
+    async fn test_query_snip_ignores_other_sources() {
+        let our_alias: u16 = 0x825;
+        let node_alias: u16 = 0x3AE;
+        let other_alias: u16 = 0x111;
+        let payload = minimal_snip_payload();
+        let chunks: Vec<&[u8]> = payload.chunks(6).collect();
+        let n = chunks.len();
+
+        let mut transport = MockTransport::new();
+
+        // Interleave frames from another node — should be ignored
+        for (i, chunk) in chunks.iter().enumerate() {
+            // Noise from a different alias
+            let noise_flag = if i == 0 { 0x1 } else { 0x3 };
+            transport.add_receive_frame(snip_reply_frame(other_alias, our_alias, noise_flag, chunk));
+            // Real frame from the correct alias
+            let flag = if n == 1 { 0x0 } else if i == 0 { 0x1 } else if i == n - 1 { 0x2 } else { 0x3 };
+            transport.add_receive_frame(snip_reply_frame(node_alias, our_alias, flag, chunk));
+        }
+
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
+        let (snip, status) = query_snip(&mut transport, our_alias, node_alias, sem).await.unwrap();
+
+        assert_eq!(status, SNIPStatus::Complete);
+        let snip = snip.unwrap();
+        assert_eq!(snip.manufacturer, "ACME");
+    }
+
+    /// No response → timeout → (None, Timeout).
+    #[tokio::test]
+    async fn test_query_snip_timeout() {
+        let mut transport = MockTransport::new();
+        // No frames queued at all — MockTransport returns None after a short sleep
+
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
+        // Use a 1-second overall timeout via the public wrapper
+        let (snip, status) = query_snip(&mut transport, 0x825, 0x3AE, sem).await.unwrap();
+
+        assert_eq!(status, SNIPStatus::Timeout);
+        assert!(snip.is_none());
+    }
+
+    // ── Payload parsing tests (existing, unchanged) ────────────────────────
 
     #[test]
     fn test_snip_request_frame_format() {

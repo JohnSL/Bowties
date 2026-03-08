@@ -76,7 +76,10 @@ pub enum MTI {
     
     /// Reserve ID (RID) - Part of alias allocation (0x10700)
     ReserveID,
-    
+
+    /// Alias Map Definition (AMD) - Announce alias→NodeID mapping (0x10701)
+    AliasMapDefinition,
+
     /// Alias Map Reset (AMR) (0x10703)
     AliasMapReset,
     
@@ -115,7 +118,7 @@ impl MTI {
     /// Get the raw MTI value (top 17 bits of the header, shifted right by 12)
     pub fn value(&self) -> u32 {
         match self {
-            MTI::InitializationComplete => 0x10010,
+            MTI::InitializationComplete => 0x19100,
             MTI::VerifyNodeGlobal => 0x19490,
             MTI::VerifyNodeAddressed => 0x19488,
             MTI::VerifiedNode => 0x19170,
@@ -137,6 +140,7 @@ impl MTI {
             MTI::ProducerRangeIdentified => 0x19524,
             MTI::CheckID => 0x17020,
             MTI::ReserveID => 0x10700,
+            MTI::AliasMapDefinition => 0x10701,
             MTI::AliasMapReset => 0x10703,
             MTI::Datagram => 0x1C480,
             MTI::DatagramOnly => 0x1A000,
@@ -154,7 +158,7 @@ impl MTI {
     /// Create MTI from raw value
     pub fn from_value(value: u32) -> Self {
         match value {
-            0x10010 => MTI::InitializationComplete,
+            0x19100 => MTI::InitializationComplete,
             0x19490 => MTI::VerifyNodeGlobal,
             0x19488 => MTI::VerifyNodeAddressed,
             0x19170 => MTI::VerifiedNode,
@@ -176,6 +180,7 @@ impl MTI {
             0x19524 => MTI::ProducerRangeIdentified,
             0x17020 => MTI::CheckID,
             0x10700 => MTI::ReserveID,
+            0x10701 => MTI::AliasMapDefinition,
             0x10703 => MTI::AliasMapReset,
             0x1C480 => MTI::Datagram,
             0x1A000 => MTI::DatagramOnly,
@@ -339,7 +344,7 @@ mod tests {
     #[test]
     fn test_all_mti_values_match_python() {
         // Test all MTI values against Python reference implementation
-        assert_eq!(MTI::InitializationComplete.value(), 0x10010);
+        assert_eq!(MTI::InitializationComplete.value(), 0x19100);
         assert_eq!(MTI::VerifyNodeGlobal.value(), 0x19490);
         assert_eq!(MTI::VerifyNodeAddressed.value(), 0x19488);
         assert_eq!(MTI::VerifiedNode.value(), 0x19170);
@@ -388,6 +393,7 @@ mod tests {
             MTI::ProducerRangeIdentified,
             MTI::CheckID,
             MTI::ReserveID,
+            MTI::AliasMapDefinition,
             MTI::AliasMapReset,
             MTI::DatagramOnly,
             MTI::DatagramFirst,
@@ -409,12 +415,16 @@ mod tests {
         // Test alias allocation sequence MTIs
         assert_eq!(MTI::CheckID.value(), 0x17020);
         assert_eq!(MTI::ReserveID.value(), 0x10700);
+        assert_eq!(MTI::AliasMapDefinition.value(), 0x10701);
         assert_eq!(MTI::AliasMapReset.value(), 0x10703);
-        
+        assert_eq!(MTI::InitializationComplete.value(), 0x19100);
+
         // Test round-trip
         assert_eq!(MTI::from_value(0x17020), MTI::CheckID);
         assert_eq!(MTI::from_value(0x10700), MTI::ReserveID);
+        assert_eq!(MTI::from_value(0x10701), MTI::AliasMapDefinition);
         assert_eq!(MTI::from_value(0x10703), MTI::AliasMapReset);
+        assert_eq!(MTI::from_value(0x19100), MTI::InitializationComplete);
     }
     
     #[test]

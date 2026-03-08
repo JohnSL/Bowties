@@ -23,16 +23,15 @@
   import DiscoveryProgressModal from '$lib/components/DiscoveryProgressModal.svelte';
   import SaveControls from '$lib/components/ElementCardDeck/SaveControls.svelte';
   import CdiDownloadDialog from '$lib/components/CdiDownloadDialog.svelte';
+  import ConnectionManager from '$lib/ConnectionManager.svelte';
   import type { MissingCdiNode } from '$lib/components/CdiDownloadDialog.svelte';
 
   // Active tab state — 'config' (default) or 'bowties'
   let activeTab = $state<'config' | 'bowties'>('config');
 
   // Connection state
-  let host = $state("localhost");
-  let port = $state(12021);
+  let connectionLabel = $state("");
   let connected = $state(false);
-  let connecting = $state(false);
   let errorMessage = $state("");
 
   // Discovery state
@@ -83,8 +82,10 @@
     try {
       const status = await invoke("get_connection_status");
       connected = (status as any).connected;
-      host = (status as any).host;
-      port = (status as any).port;
+      if (connected && (status as any).config) {
+        const cfg = (status as any).config;
+        connectionLabel = cfg.name ?? (cfg.host ? `${cfg.host}:${cfg.port}` : cfg.serialPort ?? 'LCC');
+      }
     } catch (e) {
       console.error("Failed to get connection status:", e);
     }
@@ -140,24 +141,15 @@
     };
   });
 
-  async function connect(event: Event) {
-    event.preventDefault();
-    errorMessage = "";
-    connecting = true;
-
-    try {
-      await invoke("connect_lcc", { host, port });
-      connected = true;
-    } catch (e) {
-      errorMessage = `Connection failed: ${e}`;
-      connected = false;
-    } finally {
-      connecting = false;
-    }
+  function handleConnected(e: CustomEvent<{ config: any }>) {
+    const cfg = e.detail.config;
+    connectionLabel = cfg.name ?? (cfg.host ? `${cfg.host}:${cfg.port}` : cfg.serialPort ?? 'LCC');
+    connected = true;
   }
 
   async function disconnect() {
     errorMessage = "";
+    connectionLabel = "";
     try {
       await invoke("disconnect_lcc");
       connected = false;
@@ -774,11 +766,11 @@
         <button
           class="toolbar-status-btn"
           onclick={disconnect}
-          title="Disconnect from {host}:{port}"
-          aria-label="Disconnect from {host}:{port}"
+          title="Disconnect from {connectionLabel}"
+          aria-label="Disconnect from {connectionLabel}"
         >
           <span class="status-dot status-connected" aria-hidden="true"></span>
-          <span class="status-text">{host}:{port}</span>
+          <span class="status-text">{connectionLabel}</span>
           <span class="status-disconnect-hint" aria-hidden="true">Disconnect</span>
         </button>
       </div>
@@ -817,16 +809,7 @@
   <div class="main-content">
     {#if !connected}
       <div class="connect-area">
-        <div class="connect-card">
-          <h2>Connect to LCC Network</h2>
-          <form onsubmit={connect}>
-            <label>Host: <input type="text" bind:value={host} disabled={connecting} /></label>
-            <label>Port: <input type="number" bind:value={port} disabled={connecting} /></label>
-            <button type="submit" class="btn-primary" disabled={connecting}>
-              {connecting ? "Connecting..." : "Connect"}
-            </button>
-          </form>
-        </div>
+        <ConnectionManager on:connected={handleConnected} />
       </div>
 
     {:else if nodes.length === 0}

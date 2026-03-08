@@ -10,7 +10,10 @@ Bowties transforms complex LCC (Layout Command Control) event configuration into
 
 - **Rust** (1.70+): Install via [rustup](https://rustup.rs/)
 - **Node.js** (18+): For frontend development
-- **LCC Network**: TCP-accessible GridConnect hub (port 12021 or 23)
+- **LCC Network**: one of:
+  - TCP hub: JMRI, standalone GridConnect bridge (port 12021 or 23)
+  - USB-to-CAN (GridConnect): SPROG CANISB, SPROG USB-LCC, RR-Cirkits Buffer LCC, CAN2USBINO
+  - USB-to-CAN (SLCAN): Canable, Lawicel CANUSB, any slcand-compatible adapter
 
 ### Installation
 
@@ -30,34 +33,40 @@ npm run tauri dev
 
 ### First Launch
 
-1. **Connect** to your GridConnect hub (e.g., `localhost:12021`)
-2. **Discover Nodes** to scan your LCC network
-3. View discovered nodes with manufacturer info and status
+**Via USB adapter** (GridConnect or SLCAN):
+1. Plug in your USB-to-CAN adapter
+2. Click **Add connection**, select **GridConnect (USB/Serial)** or **SLCAN (USB/Serial)**
+3. Choose the COM port and click **Connect**
+4. **Discover Nodes** to scan your LCC network
 
-🚧 **Status:** Phase 1 (Foundation) complete. Configuration and Event Bowties views in development.
+**Via TCP hub** (JMRI or standalone bridge):
+1. Click **Add connection**, select **TCP**
+2. Enter host and port (e.g., `localhost:12021`) and click **Connect**
+3. **Discover Nodes** to scan your LCC network
+
+After connecting either way: view discovered nodes with manufacturer info and status.
+
+✅ **Status:** Configuration viewing/editing and read-only Bowties view complete. Drag-and-drop event linking in development.
 
 ## Features
 
-### ✅ Current (Phase 1)
+### ✅ Current
 
-- TCP connection to GridConnect hubs
+- TCP connection to GridConnect hubs (JMRI, standalone bridges)
+- Direct USB-to-CAN adapter support (GridConnect Serial and SLCAN protocols)
+- Supported USB adapters: SPROG CANISB, SPROG USB-LCC, RR-Cirkits Buffer LCC, CAN2USBINO, Canable, Lawicel CANUSB
 - Node discovery (Verify Node ID protocol)
 - SNIP data retrieval (manufacturer, model, versions)
+- CDI retrieval and disk caching
+- Configuration viewing and editing (read/write configuration memory)
+- Read-only Bowties view (event relationship map across all nodes)
+- Real-time traffic monitor
 - Responsive node list interface
 - Connection state persistence
 
-### 🚧 In Development (Phase 2)
-
-- Miller Columns configuration view
-- CDI retrieval and caching
-- Configuration value display
-
 ### ⏳ Planned
 
-- Event Bowties view (visual event relationships)
-- Drag-and-drop event linking
-- Real-time Event Monitor
-- Configuration editing
+- Drag-and-drop event linking (create new producer ↔ consumer pairs)
 
 See [docs/project/roadmap.md](docs/project/roadmap.md) for complete timeline.
 
@@ -86,12 +95,12 @@ See [docs/project/roadmap.md](docs/project/roadmap.md) for complete timeline.
 ```
 Frontend (SvelteKit)     IPC     Backend (Tauri/Rust)     Protocol     LCC Network
 ─────────────────────   ─────   ──────────────────────   ────────   ─────────────
-  +page.svelte          ←──→    connection.rs           ←────→     GridConnect Hub
-  NodeList.svelte              discovery.rs                         (TCP:12021)
+  +page.svelte          ←──→    connection.rs           ←────→     TCP Hub
+  NodeList.svelte              discovery.rs                         (port 12021)
   Svelte Stores                snip.rs                                    │
-                                    ↓                                     │
-                               lcc-rs library                             │
-                               ├── gridconnect.rs                        │
+  ConnectionManager            │                                          │
+                               lcc-rs library           ←────→     USB/Serial Adapter
+                               ├── gridconnect.rs                   (GridConnect or SLCAN)
                                ├── discovery.rs        ←─────────────────┘
                                ├── snip.rs                LCC Protocol
                                └── transport.rs           Messages
