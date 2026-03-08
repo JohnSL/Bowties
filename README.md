@@ -161,7 +161,12 @@ npm test
 
 ## License
 
-*(License information TBD)*
+Licensed under either of
+
+- [MIT License](LICENSE-MIT)
+- [Apache License, Version 2.0](LICENSE-APACHE)
+
+at your option.
 
 ## Acknowledgments
 
