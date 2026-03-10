@@ -181,7 +181,7 @@
     <div class="cm-error" role="alert">{errorMessage}</div>
   {/if}
 
-  <!-- â”€â”€ Saved connections list â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+  <!-- ── Saved connections list ──────────────────────────── -->
   {#if savedConnections.length > 0}
     <ul class="cm-list">
       {#each savedConnections as conn (conn.id)}
@@ -222,7 +222,7 @@
   <button class="btn-secondary cm-add-btn" onclick={openAddModal}>+ Add connection</button>
 </div>
 
-<!-- â”€â”€ Modal dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+<!-- ── Modal dialog ──────────────────────────────────────── -->
 {#if showModal}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -349,7 +349,7 @@
     margin-bottom: 1rem;
   }
 
-  /* â”€â”€ Saved list â”€â”€ */
+  /* ── Saved list ── */
   .cm-list {
     list-style: none;
     margin: 0 0 0.75rem 0;
@@ -443,7 +443,7 @@
     font-size: 13px;
   }
 
-  /* â”€â”€ Modal overlay â”€â”€ */
+  /* ── Modal overlay ── */
   .cm-overlay {
     position: fixed;
     inset: 0;
@@ -491,7 +491,7 @@
   }
   .cm-close-btn:hover { color: #111827; background: #f3f4f6; }
 
-  /* â”€â”€ Form (shared in modal) â”€â”€ */
+  /* ── Form (shared in modal) ── */
   .cm-form {
     display: flex;
     flex-direction: column;

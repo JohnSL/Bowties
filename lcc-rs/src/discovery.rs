@@ -28,6 +28,11 @@ pub struct LccConnection {
     our_alias: NodeAlias,
     /// Optional SNIP data to provide when queried
     our_snip: Option<SNIPData>,
+    /// Handles for background responder tasks (query + SNIP).
+    /// Stored so they can be aborted on disconnect, preventing the tasks
+    /// from keeping `Arc<Mutex<MessageDispatcher>>` (and therefore the
+    /// serial port) alive after the connection is closed.
+    responder_handles: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl LccConnection {
@@ -75,6 +80,7 @@ impl LccConnection {
             our_node_id: node_id,
             our_alias,
             our_snip: None,
+            responder_handles: vec![],
         };
 
         Ok(Arc::new(Mutex::new(connection)))
@@ -107,6 +113,7 @@ impl LccConnection {
             our_node_id: node_id,
             our_alias,
             our_snip: None,
+            responder_handles: vec![],
         };
 
         Ok(Arc::new(Mutex::new(connection)))
@@ -134,6 +141,7 @@ impl LccConnection {
             our_node_id: node_id,
             our_alias,
             our_snip: None,
+            responder_handles: vec![],
         })
     }
     
@@ -145,6 +153,7 @@ impl LccConnection {
             our_node_id: node_id,
             our_alias,
             our_snip: None,
+            responder_handles: vec![],
         }
     }
     
@@ -533,7 +542,7 @@ impl LccConnection {
     /// 
     /// # Errors
     /// Returns an error if the connection is not using dispatcher mode.
-    pub fn start_responding_to_queries(&self) -> Result<()> {
+    pub fn start_responding_to_queries(&mut self) -> Result<()> {
         let dispatcher = self.dispatcher.clone()
             .ok_or_else(|| crate::Error::Protocol(
                 "start_responding_to_queries requires dispatcher mode (use connect_with_dispatcher)".to_string()
@@ -542,8 +551,9 @@ impl LccConnection {
         let our_alias = self.our_alias;
         let our_node_id = self.our_node_id;
         
-        // Spawn background task to handle queries
-        tokio::spawn(async move {
+        // Spawn background task to handle queries; store the handle so it can be
+        // aborted on disconnect (prevents keeping MessageDispatcher alive indefinitely).
+        let handle = tokio::spawn(async move {
             // Subscribe to VerifyNodeGlobal messages
             let mut rx = {
                 let disp = dispatcher.lock().await;
@@ -571,6 +581,7 @@ impl LccConnection {
                 }
             }
         });
+        self.responder_handles.push(handle);
         
         Ok(())
     }
@@ -598,7 +609,7 @@ impl LccConnection {
     /// 
     /// # Errors
     /// Returns an error if the connection is not using dispatcher mode.
-    pub fn start_responding_to_snip_requests(&self) -> Result<()> {
+    pub fn start_responding_to_snip_requests(&mut self) -> Result<()> {
         let dispatcher = self.dispatcher.clone()
             .ok_or_else(|| crate::Error::Protocol(
                 "start_responding_to_snip_requests requires dispatcher mode (use connect_with_dispatcher)".to_string()
@@ -607,8 +618,9 @@ impl LccConnection {
         let our_alias = self.our_alias;
         let snip_data = self.our_snip.clone();
         
-        // Spawn background task to handle SNIP requests
-        tokio::spawn(async move {
+        // Spawn background task to handle SNIP requests; store the handle so it can be
+        // aborted on disconnect (prevents keeping MessageDispatcher alive indefinitely).
+        let handle = tokio::spawn(async move {
             // Subscribe to SNIP request messages
             let mut rx = {
                 let disp = dispatcher.lock().await;
@@ -696,8 +708,21 @@ impl LccConnection {
                 }
             }
         });
+        self.responder_handles.push(handle);
         
         Ok(())
+    }
+
+    /// Abort and await all background responder tasks (query + SNIP responders).
+    ///
+    /// Must be called before dropping the connection so that the background tasks
+    /// release their `Arc<Mutex<MessageDispatcher>>` clones, allowing the dispatcher
+    /// — and therefore the underlying serial port — to be freed immediately.
+    pub async fn shutdown_responders(&mut self) {
+        for handle in self.responder_handles.drain(..) {
+            handle.abort();
+            let _ = handle.await; // Resolves immediately once aborted
+        }
     }
 
     /// Close the connection

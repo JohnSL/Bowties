@@ -220,6 +220,15 @@ impl AppState {
         if let Some(mut router) = self.event_router.write().await.take() {
             router.stop().await;
         }
+
+        // Abort background responder tasks (VerifyNodeGlobal + SNIP responders) that
+        // were spawned by LccConnection.  These tasks hold an Arc<Mutex<MessageDispatcher>>
+        // clone; if they are not aborted here they keep the dispatcher — and therefore
+        // the serial port — alive after the dispatcher is shut down.
+        if let Some(conn_arc) = self.connection.read().await.as_ref().cloned() {
+            let mut conn = conn_arc.lock().await;
+            conn.shutdown_responders().await;
+        }
         
         // Shutdown dispatcher (signals background task to exit, releasing the serial port)
         if let Some(disp_arc) = self.dispatcher.write().await.take() {
