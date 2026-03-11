@@ -9,7 +9,7 @@ Bowties transforms complex LCC (Layout Command Control) event configuration into
 ### Prerequisites
 
 - **Rust** (1.70+): Install via [rustup](https://rustup.rs/)
-- **Node.js** (18+): For frontend development
+- **Node.js** (20+): For frontend development
 - **LCC Network**: one of:
   - TCP hub: JMRI, standalone GridConnect bridge (port 12021 or 23)
   - USB-to-CAN (GridConnect): SPROG CANISB, SPROG USB-LCC, RR-Cirkits Buffer LCC, CAN2USBINO
@@ -17,9 +17,25 @@ Bowties transforms complex LCC (Layout Command Control) event configuration into
 
 ### Installation
 
+**macOS / Linux:**
 ```bash
 # Install Rust toolchain
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Clone repository
+git clone <repository-url>
+cd Bowties
+
+# Build and run
+cd app
+npm install
+npm run tauri dev
+```
+
+**Windows (PowerShell):**
+```powershell
+# Install Rust toolchain (via winget, or download from https://rustup.rs)
+winget install Rustlang.Rustup
 
 # Clone repository
 git clone <repository-url>
