@@ -205,6 +205,8 @@ pub fn run() {
             commands::discover_nodes,
             commands::query_snip_single,
             commands::query_snip_batch,
+            commands::query_pip_single,
+            commands::query_pip_batch,
             commands::verify_node_status,
             commands::refresh_all_nodes,
             commands::get_cdi_xml,

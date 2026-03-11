@@ -1,7 +1,7 @@
 //! Node discovery and SNIP query commands
 
 use crate::state::AppState;
-use lcc_rs::{DiscoveredNode, NodeAlias, SNIPData, SNIPStatus};
+use lcc_rs::{DiscoveredNode, NodeAlias, PIPStatus, ProtocolFlags, SNIPData, SNIPStatus};
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -260,4 +260,103 @@ pub async fn refresh_all_nodes(
     
     // Return updated nodes
     Ok(state.get_nodes().await)
+}
+
+// ── Protocol Identification Protocol (PIP) ────────────────────────────────────
+
+/// Response from a PIP query
+#[derive(Debug, Serialize)]
+pub struct QueryPipResponse {
+    pub alias: u16,
+    pub pip_flags: Option<ProtocolFlags>,
+    pub status: PIPStatus,
+}
+
+/// Query Protocol Identification Protocol data for a single node
+#[tauri::command]
+pub async fn query_pip_single(
+    alias: u16,
+    state: tauri::State<'_, AppState>,
+) -> Result<QueryPipResponse, String> {
+    let _node_alias = NodeAlias::new(alias).map_err(|e| format!("Invalid alias: {}", e))?;
+
+    let connection_arc = {
+        let conn_guard = state.connection.read().await;
+        match conn_guard.as_ref() {
+            Some(conn) => conn.clone(),
+            None => return Err("Not connected to LCC network".to_string()),
+        }
+    };
+
+    let mut connection = connection_arc.lock().await;
+    let (pip_flags, status) = connection
+        .query_pip(alias, None)
+        .await
+        .map_err(|e| format!("PIP query failed: {}", e))?;
+    drop(connection);
+
+    // Update node in cache if it exists
+    if let Some(node_id) = state.get_nodes().await.iter()
+        .find(|n| n.alias.value() == alias)
+        .map(|n| n.node_id)
+    {
+        state.update_node(node_id, |node| {
+            node.pip_flags = pip_flags;
+            node.pip_status = status;
+        }).await;
+    }
+
+    Ok(QueryPipResponse { alias, pip_flags, status })
+}
+
+/// Query Protocol Identification Protocol data for multiple nodes
+#[tauri::command]
+pub async fn query_pip_batch(
+    aliases: Vec<u16>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<QueryPipResponse>, String> {
+    if aliases.is_empty() {
+        return Ok(vec![]);
+    }
+
+    for &alias in &aliases {
+        NodeAlias::new(alias).map_err(|e| format!("Invalid alias {}: {}", alias, e))?;
+    }
+
+    let connection_arc = {
+        let conn_guard = state.connection.read().await;
+        match conn_guard.as_ref() {
+            Some(conn) => conn.clone(),
+            None => return Err("Not connected to LCC network".to_string()),
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(5));
+    let mut results = Vec::new();
+
+    for alias in aliases {
+        let mut connection = connection_arc.lock().await;
+        let (pip_flags, status) = connection
+            .query_pip(alias, Some(semaphore.clone()))
+            .await
+            .unwrap_or((None, PIPStatus::Error));
+        drop(connection);
+
+        results.push(QueryPipResponse { alias, pip_flags, status });
+    }
+
+    // Update nodes in cache
+    for response in &results {
+        if let Some(node_id) = state.get_nodes().await.iter()
+            .find(|n| n.alias.value() == response.alias)
+            .map(|n| n.node_id)
+        {
+            state.update_node(node_id, |node| {
+                node.pip_flags = response.pip_flags;
+                node.pip_status = response.status;
+            }).await;
+        }
+    }
+
+    Ok(results)
 }

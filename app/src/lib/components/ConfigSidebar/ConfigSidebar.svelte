@@ -59,6 +59,13 @@
     return node.connection_status === 'NotResponding';
   }
 
+  /** Returns true when PIP has confirmed this node doesn't support CDI */
+  function pipConfirmsNoCdi(node: any): boolean {
+    if (node.pip_status !== 'Complete') return false;
+    if (!node.pip_flags) return false;
+    return !node.pip_flags.cdi && !node.pip_flags.memory_configuration;
+  }
+
   /** Handle node toggle — expand/collapse and load segments on first expand */
   async function handleNodeToggle(nodeId: string, node: any, isCurrentlyExpanded: boolean) {
     configSidebarStore.toggleNodeExpanded(nodeId);
@@ -120,7 +127,7 @@
         {@const segments = nodeSegments.get(nodeId) ?? []}
         {@const nodeError = sidebarState.nodeErrors[nodeId] ?? null}
         {@const hasSelectedSegment = sidebarState.selectedSegment?.nodeId === nodeId}
-        {@const isConfigNotRead = node.snip_data !== null && !configReadNodes.has(nodeId)}
+        {@const isConfigNotRead = node.snip_data !== null && !pipConfirmsNoCdi(node) && !configReadNodes.has(nodeId)}
         {@const isNodeSelected = sidebarState.selectedNodeId === nodeId && !hasSelectedSegment}
 
         <div class="node-group" class:child-selected={hasSelectedSegment}>
@@ -142,7 +149,11 @@
           {#if isExpanded}
             <div class="segment-list" role="list" aria-label="Segments for {getNodeDisplayName(node)}">
               {#if nodeError}
-                <div class="segment-error" role="alert">{nodeError}</div>
+                {#if nodeError.includes('CdiUnavailable') || nodeError.includes('CdiNotRetrieved')}
+                  <p class="segment-empty">Configuration not supported by this node</p>
+                {:else}
+                  <div class="segment-error" role="alert">{nodeError}</div>
+                {/if}
               {:else if isLoading}
                 <div class="segment-loading">
                   <span role="status" aria-label="Loading segments">Loading segments…</span>

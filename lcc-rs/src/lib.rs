@@ -35,12 +35,13 @@ pub mod protocol;
 pub mod transport;
 pub mod discovery;
 pub mod snip;
+pub mod pip;
 pub mod cdi;
 pub mod dispatcher;
 pub mod alias_allocation;
 
 // Re-export commonly used types
-pub use types::{NodeID, EventID, NodeAlias, DiscoveredNode, SNIPData, SNIPStatus, ConnectionStatus, CdiData};
+pub use types::{NodeID, EventID, NodeAlias, DiscoveredNode, SNIPData, SNIPStatus, ConnectionStatus, CdiData, ProtocolFlags, PIPStatus};
 pub use protocol::{GridConnectFrame, MTI, DatagramAssembler, DatagramState, MemoryConfigCmd, AddressSpace, ReadReply};
 pub use transport::LccTransport;
 pub use transport::{GridConnectSerialTransport, SlcanSerialTransport};

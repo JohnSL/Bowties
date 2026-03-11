@@ -234,6 +234,93 @@ pub struct CdiData {
     pub retrieved_at: DateTime<Utc>,
 }
 
+/// Status of Protocol Identification Protocol (PIP) data retrieval
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PIPStatus {
+    /// PIP status unknown (not yet queried)
+    Unknown,
+    /// PIP request in progress
+    InProgress,
+    /// PIP data successfully retrieved
+    Complete,
+    /// Node does not support Protocol Identification Protocol
+    NotSupported,
+    /// PIP request timed out
+    Timeout,
+    /// Error occurred during PIP retrieval
+    Error,
+}
+
+/// Protocol flags reported by a node via Protocol Identification Protocol (PIP).
+///
+/// Parsed from the 6 wire bytes returned in a ProtocolSupportReply frame.
+/// Each byte is MSB-first: bit 7 of byte 0 is `simple_protocol`, etc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProtocolFlags {
+    // Byte 0
+    pub simple_protocol: bool,
+    pub datagram: bool,
+    pub stream: bool,
+    pub memory_configuration: bool,
+    pub reservation: bool,
+    pub event_exchange: bool,
+    pub identification: bool,
+    pub teach_learn: bool,
+    // Byte 1
+    pub remote_button: bool,
+    pub acdi: bool,
+    pub display: bool,
+    pub snip: bool,
+    pub cdi: bool,
+    pub traction_control: bool,
+    pub function_description_information: bool,
+    pub dcc_command_station: bool,
+    // Byte 2
+    pub simple_train_node: bool,
+    pub function_configuration: bool,
+    pub firmware_upgrade: bool,
+    pub firmware_upgrade_active: bool,
+}
+
+impl ProtocolFlags {
+    /// Parse a `ProtocolFlags` value from the wire bytes in a ProtocolSupportReply.
+    ///
+    /// The spec specifies 6 bytes, MSB-first within each byte.  Fewer bytes are
+    /// accepted (trailing bytes treated as zero) so the caller need not zero-pad
+    /// before calling this function.
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        let b = |idx: usize| if idx < bytes.len() { bytes[idx] } else { 0u8 };
+        let bit = |byte: u8, n: u8| (byte >> n) & 1 == 1;
+
+        let b0 = b(0);
+        let b1 = b(1);
+        let b2 = b(2);
+
+        Self {
+            simple_protocol:                  bit(b0, 7),
+            datagram:                         bit(b0, 6),
+            stream:                           bit(b0, 5),
+            memory_configuration:             bit(b0, 4),
+            reservation:                      bit(b0, 3),
+            event_exchange:                   bit(b0, 2),
+            identification:                   bit(b0, 1),
+            teach_learn:                      bit(b0, 0),
+            remote_button:                    bit(b1, 7),
+            acdi:                             bit(b1, 6),
+            display:                          bit(b1, 5),
+            snip:                             bit(b1, 4),
+            cdi:                              bit(b1, 3),
+            traction_control:                 bit(b1, 2),
+            function_description_information: bit(b1, 1),
+            dcc_command_station:              bit(b1, 0),
+            simple_train_node:                bit(b2, 7),
+            function_configuration:           bit(b2, 6),
+            firmware_upgrade:                 bit(b2, 5),
+            firmware_upgrade_active:          bit(b2, 4),
+        }
+    }
+}
+
 /// A discovered node on the LCC network
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveredNode {
@@ -246,6 +333,10 @@ pub struct DiscoveredNode {
     pub last_seen: DateTime<Utc>,
     /// Configuration Description Information (CDI) XML data
     pub cdi: Option<CdiData>,
+    /// Protocol flags from Protocol Identification Protocol (PIP)
+    pub pip_flags: Option<ProtocolFlags>,
+    /// Status of PIP data retrieval
+    pub pip_status: PIPStatus,
 }
 
 #[cfg(test)]

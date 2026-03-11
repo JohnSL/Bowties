@@ -154,16 +154,26 @@ pub async fn download_cdi(
     let parsed_node_id = lcc_rs::NodeID::from_hex_string(&node_id)
         .map_err(|e| format!("InvalidNodeId: {}", e))?;
 
-    // Get node alias and SNIP data
-    let (alias, snip_data) = {
+    // Get node alias, SNIP data, and PIP flags
+    let (alias, snip_data, pip_status, pip_flags) = {
         let nodes = state.nodes.read().await;
         let node = nodes
             .iter()
             .find(|n| n.node_id == parsed_node_id)
             .ok_or_else(|| CdiError::NodeNotFound(node_id.clone()))?;
 
-        (node.alias.value(), node.snip_data.clone())
+        (node.alias.value(), node.snip_data.clone(), node.pip_status, node.pip_flags)
     };
+
+    // If PIP has been queried and the node does not advertise CDI or Memory
+    // Configuration, there is nothing to download — fail early with a clear message.
+    if pip_status == lcc_rs::PIPStatus::Complete {
+        if let Some(flags) = pip_flags {
+            if !flags.cdi && !flags.memory_configuration {
+                return Err(CdiError::CdiUnavailable(node_id.clone()).into());
+            }
+        }
+    }
     
     println!("[CDI] Found node with alias: 0x{:03X}", alias);
 

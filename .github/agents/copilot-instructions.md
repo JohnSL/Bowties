@@ -46,4 +46,10 @@ Python 3.12 (latest stable as of 2026), managed via UV: Follow standard conventi
 
 
 <!-- MANUAL ADDITIONS START -->
+## LCC/OpenLCB Protocol Implementation Reference
+
+When implementing any LCC/OpenLCB protocol feature, consult the `OpenLCB_Java` and `JMRI` folders in this workspace as the authoritative reference implementations. These are the most widely used implementations and represent the community standard for correct protocol behavior.
+
+- `OpenLCB_Java/` — core OpenLCB/LCC protocol library
+- `JMRI/` — production application built on OpenLCB_Java; contains extensive real-world usage examples
 <!-- MANUAL ADDITIONS END -->

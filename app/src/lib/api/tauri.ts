@@ -47,6 +47,46 @@ export interface CdiData {
 }
 
 /**
+ * Status of Protocol Identification Protocol (PIP) data retrieval
+ */
+export type PIPStatus =
+  | 'Unknown'
+  | 'InProgress'
+  | 'Complete'
+  | 'NotSupported'
+  | 'Timeout'
+  | 'Error';
+
+/**
+ * Protocol flags from Protocol Identification Protocol (PIP)
+ */
+export interface ProtocolFlags {
+  // Byte 0
+  simple_protocol: boolean;
+  datagram: boolean;
+  stream: boolean;
+  memory_configuration: boolean;
+  reservation: boolean;
+  event_exchange: boolean;
+  identification: boolean;
+  teach_learn: boolean;
+  // Byte 1
+  remote_button: boolean;
+  acdi: boolean;
+  display: boolean;
+  snip: boolean;
+  cdi: boolean;
+  traction_control: boolean;
+  function_description_information: boolean;
+  dcc_command_station: boolean;
+  // Byte 2
+  simple_train_node: boolean;
+  function_configuration: boolean;
+  firmware_upgrade: boolean;
+  firmware_upgrade_active: boolean;
+}
+
+/**
  * Discovered LCC node with SNIP data
  */
 export interface DiscoveredNode {
@@ -58,6 +98,8 @@ export interface DiscoveredNode {
   last_verified: string | null;  // ISO 8601 timestamp
   last_seen: string;              // ISO 8601 timestamp
   cdi: CdiData | null;            // CDI XML data if available
+  pip_flags: ProtocolFlags | null; // Protocol flags from PIP
+  pip_status: PIPStatus;           // Status of PIP query
 }
 
 /**
@@ -102,6 +144,33 @@ export async function querySnipBatch(
   timeout_ms?: number
 ): Promise<QuerySnipResponse[]> {
   return invoke<QuerySnipResponse[]>('query_snip_batch', { aliases, timeout_ms });
+}
+
+/**
+ * Response from query_pip command
+ */
+export interface QueryPipResponse {
+  alias: number;
+  pip_flags: ProtocolFlags | null;
+  status: PIPStatus;
+}
+
+/**
+ * Query Protocol Identification Protocol data for a specific node
+ */
+export async function queryPip(
+  alias: number
+): Promise<QueryPipResponse> {
+  return invoke<QueryPipResponse>('query_pip_single', { alias });
+}
+
+/**
+ * Query Protocol Identification Protocol data for multiple nodes
+ */
+export async function queryPipBatch(
+  aliases: number[]
+): Promise<QueryPipResponse[]> {
+  return invoke<QueryPipResponse[]>('query_pip_batch', { aliases });
 }
 
 /**

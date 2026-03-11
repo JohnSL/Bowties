@@ -268,6 +268,8 @@ impl LccConnection {
                                     last_verified: None,
                                     last_seen: chrono::Utc::now(),
                                     cdi: None,
+                                    pip_flags: None,
+                                    pip_status: crate::types::PIPStatus::Unknown,
                                 },
                             );
                         }
@@ -351,6 +353,8 @@ impl LccConnection {
                                     last_verified: None,
                                     last_seen: chrono::Utc::now(),
                                     cdi: None,
+                                    pip_flags: None,
+                                    pip_status: crate::types::PIPStatus::Unknown,
                                 },
                             );
                         }
@@ -407,7 +411,50 @@ impl LccConnection {
             Err(crate::Error::Protocol("No transport or dispatcher available".to_string()))
         }
     }
-    
+
+    /// Query Protocol Identification Protocol (PIP) data for a specific node.
+    ///
+    /// Returns the set of optional LCC protocols the node advertises support for.
+    /// Call this after SNIP to decide whether CDI/Memory Config reads are worthwhile.
+    ///
+    /// # Arguments
+    /// * `dest_alias` - Target node's alias
+    /// * `semaphore` - Optional semaphore for concurrency limiting
+    ///
+    /// # Returns
+    /// * `Ok((Some(ProtocolFlags), PIPStatus::Complete))` on success
+    /// * `Ok((None, PIPStatus::Timeout))` when the node does not reply
+    pub async fn query_pip(
+        &mut self,
+        dest_alias: u16,
+        semaphore: Option<std::sync::Arc<tokio::sync::Semaphore>>,
+    ) -> Result<(Option<crate::types::ProtocolFlags>, crate::types::PIPStatus)> {
+        let sem = semaphore.unwrap_or_else(|| std::sync::Arc::new(tokio::sync::Semaphore::new(5)));
+
+        if let Some(ref dispatcher) = self.dispatcher {
+            let transport_arc = {
+                let disp = dispatcher.lock().await;
+                disp.transport()
+            };
+            let mut transport = transport_arc.lock().await;
+            crate::pip::query_pip(
+                transport.as_mut(),
+                self.our_alias.value(),
+                dest_alias,
+                sem,
+            ).await
+        } else if let Some(ref mut transport) = self.transport {
+            crate::pip::query_pip(
+                transport.as_mut(),
+                self.our_alias.value(),
+                dest_alias,
+                sem,
+            ).await
+        } else {
+            Err(crate::Error::Protocol("No transport or dispatcher available".to_string()))
+        }
+    }
+
     /// Verify a specific node's presence on the network
     /// 
     /// Sends an addressed Verify Node ID message to a specific node and waits for its response.

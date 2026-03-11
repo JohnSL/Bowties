@@ -81,10 +81,7 @@ async fn query_snip_internal(
                 // Parse header to extract MTI and source alias
                 let (mti, source) = match MTI::from_header(frame.header) {
                     Ok(result) => result,
-                    Err(_) => {
-                        eprintln!("SNIP: Failed to parse header {:08X}", frame.header);
-                        continue;
-                    }
+                    Err(_) => continue,
                 };
 
                 // Only process frames from our target node
@@ -97,12 +94,9 @@ async fn query_snip_internal(
                     continue;
                 }
 
-                eprintln!("SNIP: Received SNIPResponse from {:03X}, data len: {}", source, frame.data.len());
-
                 // SNIP responses have datagram frame type in data[0]
                 // 0x1A = first, 0x3A = middle, 0x2A = final
                 if frame.data.len() < 2 {
-                    eprintln!("SNIP: Frame data too short: {} bytes", frame.data.len());
                     return Err(Error::Protocol(format!(
                         "SNIP frame data too short: {} bytes",
                         frame.data.len()
@@ -113,16 +107,13 @@ async fn query_snip_internal(
                 // of the destination alias.  data[1] = low byte of dest alias.
                 // Mask to the upper nibble so the match is alias-independent.
                 let frame_type = frame.data[0] & 0xF0;
-                eprintln!("SNIP: Frame type nibble: 0x{:01X}0 (raw byte: 0x{:02X})", frame_type >> 4, frame.data[0]);
 
                 // Extract payload (skip bytes 0-1, take bytes 2+)
                 let payload_chunk = &frame.data[2..];
-                eprintln!("SNIP: Payload chunk: {} bytes", payload_chunk.len());
 
                 match frame_type {
                     0x10 => {
                         // First frame - start new datagram
-                        eprintln!("SNIP: First frame, starting new datagram");
                         snip_payload.clear();
                         snip_payload.extend_from_slice(payload_chunk);
                         receiving_datagram = true;
@@ -130,83 +121,60 @@ async fn query_snip_internal(
                     0x30 => {
                         // Middle frame - append to existing datagram
                         if !receiving_datagram {
-                            eprintln!("SNIP: Middle frame without first frame");
                             return Err(Error::Protocol(
                                 "SNIP middle frame received without first frame".to_string()
                             ));
                         }
-                        eprintln!("SNIP: Middle frame, appending to datagram");
                         snip_payload.extend_from_slice(payload_chunk);
                     }
                     0x20 => {
                         // Final frame - complete the datagram
                         if !receiving_datagram {
-                            eprintln!("SNIP: Final frame without first frame");
                             return Err(Error::Protocol(
                                 "SNIP final frame received without first frame".to_string()
                             ));
                         }
-                        eprintln!("SNIP: Final frame, completing datagram");
                         snip_payload.extend_from_slice(payload_chunk);
-                        
-                        eprintln!("SNIP: Complete payload: {} bytes", snip_payload.len());
-                        
+
                         // Datagram complete - parse SNIP data
                         match parse_snip_payload(&snip_payload) {
                             Ok(snip_data) => {
                                 // Send acknowledgment
                                 let ack = DatagramAssembler::send_acknowledgment(source_alias, dest_alias)?;
                                 transport.send(&ack).await?;
-
-                                eprintln!("SNIP: Successfully parsed SNIP data");
                                 return Ok((Some(snip_data), SNIPStatus::Complete));
                             }
-                            Err(e) => {
-                                eprintln!("SNIP: Failed to parse SNIP payload: {:?}", e);
-                                return Err(e);
-                            }
+                            Err(e) => return Err(e),
                         }
                     }
                     0x00 => {
                         // Single-frame datagram (DatagramOnly equivalent)
-                        eprintln!("SNIP: Single-frame datagram");
                         snip_payload.clear();
                         snip_payload.extend_from_slice(payload_chunk);
-                        
-                        eprintln!("SNIP: Complete payload: {} bytes", snip_payload.len());
-                        
+
                         // Datagram complete - parse SNIP data
                         match parse_snip_payload(&snip_payload) {
                             Ok(snip_data) => {
                                 // Send acknowledgment
                                 let ack = DatagramAssembler::send_acknowledgment(source_alias, dest_alias)?;
                                 transport.send(&ack).await?;
-
-                                eprintln!("SNIP: Successfully parsed SNIP data");
                                 return Ok((Some(snip_data), SNIPStatus::Complete));
                             }
-                            Err(e) => {
-                                eprintln!("SNIP: Failed to parse SNIP payload: {:?}", e);
-                                return Err(e);
-                            }
+                            Err(e) => return Err(e),
                         }
                     }
                     _ => {
-                        // Unknown flag nibble — log and skip rather than aborting
-                        eprintln!("SNIP: Unrecognised frame type nibble: 0x{:02X} (raw byte 0x{:02X}), skipping",
-                            frame_type, frame.data[0]);
+                        // Unknown flag nibble — skip rather than aborting
                         continue;
                     }
                 }
             }
             Ok(None) => {
                 // Timeout with no frame - silence detected, query timed out
-                eprintln!("SNIP: Timeout waiting for response");
                 return Ok((None, SNIPStatus::Timeout));
             }
             Err(e) => {
                 // Transport error
-                eprintln!("SNIP: Transport error: {:?}", e);
                 return Err(e);
             }
         }

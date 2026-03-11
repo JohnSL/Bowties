@@ -8,7 +8,7 @@
   import SegmentView from '$lib/components/ElementCardDeck/SegmentView.svelte';
   import CdiXmlViewer from '$lib/components/CdiXmlViewer.svelte';
   import { configSidebarStore } from '$lib/stores/configSidebar';
-  import { discoverNodes as discoverNodesApi, querySnipBatch, refreshAllNodes } from '$lib/api/tauri';
+  import { discoverNodes as discoverNodesApi, querySnipBatch, queryPipBatch, refreshAllNodes } from '$lib/api/tauri';
   import { readAllConfigValues, cancelConfigReading, getCdiXml, downloadCdi } from '$lib/api/cdi';
   import { getCdiErrorMessage, isCdiError } from '$lib/types/cdi';
   import type { ViewerStatus } from '$lib/types/cdi';
@@ -53,10 +53,18 @@
   // Track whether a single-node or batch "read remaining" is in progress
   let readingRemaining = $state(false);
 
+  // Returns true when PIP has confirmed the node does not support CDI or Memory Configuration
+  function pipConfirmsNoCdi(n: DiscoveredNode): boolean {
+    if (n.pip_status !== 'Complete') return false;
+    if (!n.pip_flags) return false;
+    return !n.pip_flags.cdi && !n.pip_flags.memory_configuration;
+  }
+
   // Reactive count of nodes with SNIP data not yet config-read — drives "Read Remaining" visibility
   let unreadCount = $derived(
     nodes.filter(n => {
       if (!n.snip_data) return false;
+      if (pipConfirmsNoCdi(n)) return false;
       return !$configReadNodesStore.has(formatNodeId(n.node_id));
     }).length
   );
@@ -181,9 +189,25 @@
         nodes = updated;
         updateNodeInfo(nodes);
 
+        // Query PIP data for all refreshed nodes
+        if (nodes.length > 0) {
+          try {
+            const pipResults = await queryPipBatch(nodes.map(n => n.alias));
+            nodes = nodes.map(node => {
+              const result = pipResults.find(r => r.alias === node.alias);
+              if (result) {
+                return { ...node, pip_flags: result.pip_flags, pip_status: result.status };
+              }
+              return node;
+            });
+          } catch (e) {
+            console.error("Failed to query PIP data:", e);
+          }
+        }
+
         // T064: Read all config values for nodes with SNIP data (likely to have CDI)
         // The backend will automatically load CDI from cache if available
-        const cdiCandidatesRefresh = nodes.filter(n => n.snip_data !== null);
+        const cdiCandidatesRefresh = nodes.filter(n => n.snip_data !== null && !pipConfirmsNoCdi(n));
         let totalSuccessfulRefresh = 0;
         let totalFailedRefresh = 0;
         cdiMissingNodes = [];
@@ -308,6 +332,26 @@
           } finally {
             queryingSnip = false;
           }
+
+          // Query PIP data for all discovered nodes
+          try {
+            const pipResults = await queryPipBatch(aliases);
+
+            // Update each node with its PIP data
+            nodes = nodes.map(node => {
+              const result = pipResults.find(r => r.alias === node.alias);
+              if (result) {
+                return {
+                  ...node,
+                  pip_flags: result.pip_flags,
+                  pip_status: result.status
+                };
+              }
+              return node;
+            });
+          } catch (e) {
+            console.error("Failed to query PIP data:", e);
+          }
         }
         
         // Populate nodeInfo store for tooltips and display names
@@ -315,7 +359,7 @@
 
         // T064: Read all config values for nodes with SNIP data (likely to have CDI)
         // The backend will automatically load CDI from cache if available
-        const cdiCandidates = nodes.filter(n => n.snip_data !== null);
+        const cdiCandidates = nodes.filter(n => n.snip_data !== null && !pipConfirmsNoCdi(n));
         let totalSuccessful = 0;
         let totalFailed = 0;
         cdiMissingNodes = [];
@@ -455,6 +499,7 @@
     const readNodes = get(configReadNodesStore);
     const unread = nodes.filter(n => {
       if (!n.snip_data) return false;
+      if (pipConfirmsNoCdi(n)) return false;
       const nodeId = formatNodeId(n.node_id);
       return !readNodes.has(nodeId);
     });
