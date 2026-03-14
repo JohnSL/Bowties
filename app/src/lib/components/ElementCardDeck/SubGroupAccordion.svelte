@@ -197,6 +197,7 @@
     font-size: 11px;
     color: var(--text-secondary, #666);
     line-height: 1.4;
+    white-space: pre-wrap;                         /* preserve newlines from CDI descriptions */
   }
 
   .fields-list {
@@ -228,6 +229,7 @@
     font-size: 11px;
     color: var(--text-secondary, #666);
     line-height: 1.4;
+    white-space: pre-wrap;                         /* preserve newlines from CDI descriptions */
   }
 
   .field-value {

@@ -300,6 +300,7 @@ mod tests {
             event_roles: vec![crate::profile::types::EventRoleDecl {
                 group_path: "Port I/O/Line/Event".to_string(),
                 role: crate::profile::types::ProfileEventRole::Consumer,
+                label: None,
             }],
             relevance_rules: vec![],
         };

@@ -421,6 +421,7 @@
     font-size: 13px;
     color: var(--text-primary, #333);
     line-height: 1.5;
+    white-space: pre-wrap;                         /* preserve newlines from CDI descriptions */
   }
 
   .default-value {
@@ -502,7 +503,6 @@
   }
 
   /* T043-T044: Current value styling */
-  .value-loading,
   .value-error,
   .value-placeholder {
     display: flex;
@@ -513,11 +513,6 @@
     font-size: 13px;
   }
 
-  .value-loading {
-    background-color: var(--info-bg, #e3f2fd);
-    color: var(--info-text, #1976d2);
-  }
-
   .value-error {
     background-color: var(--error-bg, #ffebee);
     color: var(--error-text, #c62828);
@@ -526,10 +521,6 @@
   .value-placeholder {
     color: var(--text-secondary, #666);
     font-style: italic;
-  }
-
-  .loading-spinner {
-    animation: spin 1s linear infinite;
   }
 
   @keyframes spin {

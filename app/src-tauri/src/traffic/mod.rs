@@ -420,9 +420,9 @@ mod tests {
 
     #[test]
     fn test_decode_verified_node() {
-        // Construct a VerifiedNode frame (MTI 0x19170 = InitializationComplete, 0x10700 = VerifiedNode)
+        // Construct a VerifiedNode frame (MTI 0x19170 = VerifiedNode, source_alias=0xABC)
         let frame = GridConnectFrame {
-            header: 0x10700ABC, // MTI=VerifiedNode, source_alias=0xABC
+            header: 0x19170ABC, // MTI=VerifiedNode, source_alias=0xABC
             data: vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
         };
 

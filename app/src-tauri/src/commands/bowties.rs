@@ -660,6 +660,8 @@ mod build_bowtie_catalog_tests {
                 last_verified: None,
                 last_seen: chrono::Utc::now(),
                 cdi: None,
+                pip_flags: None,
+                pip_status: lcc_rs::types::PIPStatus::Unknown,
             })
             .collect()
     }
@@ -772,6 +774,8 @@ mod build_bowtie_catalog_tests {
                 xml_content: cdi_xml.to_string(),
                 retrieved_at: chrono::Utc::now(),
             }),
+            pip_flags: None,
+            pip_status: lcc_rs::types::PIPStatus::Unknown,
         };
         let node1 = lcc_rs::DiscoveredNode {
             node_id: lcc_rs::NodeID::new([0x05, 0x02, 0x01, 0x00, 0x00, 0x01]),
@@ -782,6 +786,8 @@ mod build_bowtie_catalog_tests {
             last_verified: None,
             last_seen: chrono::Utc::now(),
             cdi: None,
+            pip_flags: None,
+            pip_status: lcc_rs::types::PIPStatus::Unknown,
         };
 
         let nodes = vec![node0, node1];
@@ -838,6 +844,8 @@ mod build_bowtie_catalog_tests {
                 xml_content: cdi_xml.to_string(),
                 retrieved_at: chrono::Utc::now(),
             }),
+            pip_flags: None,
+            pip_status: lcc_rs::types::PIPStatus::Unknown,
         };
         let node1 = lcc_rs::DiscoveredNode {
             node_id: lcc_rs::NodeID::new([0x05, 0x02, 0x01, 0x00, 0x00, 0x01]),
@@ -848,6 +856,8 @@ mod build_bowtie_catalog_tests {
             last_verified: None,
             last_seen: chrono::Utc::now(),
             cdi: None,
+            pip_flags: None,
+            pip_status: lcc_rs::types::PIPStatus::Unknown,
         };
 
         let nodes = vec![node0, node1];
@@ -1012,6 +1022,8 @@ mod build_bowtie_catalog_tests {
                 xml_content: cdi_xml.to_string(),
                 retrieved_at: chrono::Utc::now(),
             }),
+            pip_flags: None,
+            pip_status: lcc_rs::types::PIPStatus::Unknown,
         };
         let node1 = lcc_rs::DiscoveredNode {
             node_id: lcc_rs::NodeID::new([0x05, 0x02, 0x01, 0x00, 0x00, 0x01]),
@@ -1022,6 +1034,8 @@ mod build_bowtie_catalog_tests {
             last_verified: None,
             last_seen: chrono::Utc::now(),
             cdi: None,
+            pip_flags: None,
+            pip_status: lcc_rs::types::PIPStatus::Unknown,
         };
 
         let nodes = vec![node0, node1];

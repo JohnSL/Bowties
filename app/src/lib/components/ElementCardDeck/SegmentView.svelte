@@ -100,6 +100,9 @@
     <div class="segment-content">
 
       <h2 class="segment-heading">{segment.name}</h2>
+      {#if segment.description}
+        <p class="segment-description">{segment.description}</p>
+      {/if}
       {#each groupedChildren as item, idx (idx)}
         {#if item.type === 'leaf'}
           <!-- Direct leaf field at segment level (e.g. User Info fields) -->
@@ -234,6 +237,7 @@
     font-size: 13px;
     color: #605e5c;                                /* colorNeutralForeground2 */
     line-height: 1.5;
+    white-space: pre-wrap;                         /* preserve newlines from CDI descriptions */
   }
 
   .segment-leaf {
@@ -271,6 +275,7 @@
     font-size: 12px;
     color: #605e5c;                                /* colorNeutralForeground2 */
     line-height: 1.5;
+    white-space: pre-wrap;                         /* preserve newlines from CDI descriptions */
   }
 
   /* Remove the top border on the very first group after the heading —

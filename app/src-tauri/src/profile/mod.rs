@@ -277,10 +277,12 @@ mod tests {
                 types::EventRoleDecl {
                     group_path: "TestSeg/GroupA".to_string(),
                     role: types::ProfileEventRole::Producer,
+                    label: None,
                 },
                 types::EventRoleDecl {
                     group_path: "TestSeg/GroupB".to_string(),
                     role: types::ProfileEventRole::Consumer,
+                    label: None,
                 },
             ],
             relevance_rules: vec![],

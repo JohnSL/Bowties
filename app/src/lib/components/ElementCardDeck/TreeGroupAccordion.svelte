@@ -16,8 +16,9 @@
    */
   import type { GroupConfigNode, ConfigNode, GroupedChild } from '$lib/types/nodeTree';
   import { isGroup, isLeaf, groupReplicatedChildren, getInstanceDisplayName } from '$lib/types/nodeTree';
-  import type { PillItem } from '$lib/components/PillSelector/PillSelector.svelte';
   import PillSelector from '$lib/components/PillSelector/PillSelector.svelte';
+
+  interface PillItem { value: number; label: string; description?: string; }
   import TreeLeafRow from './TreeLeafRow.svelte';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { pendingEditsStore, pendingEditsVersion } from '$lib/stores/pendingEdits.svelte';
@@ -277,5 +278,6 @@
     color: #605e5c;                                /* colorNeutralForeground2 */
     line-height: 1.5;
     font-weight: 400;
+    white-space: pre-wrap;                         /* preserve newlines from CDI descriptions */
   }
 </style>

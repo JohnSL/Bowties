@@ -98,7 +98,7 @@
 
 {#if visible}
   <div class="modal-overlay" onclick={handleOverlayClick} onkeydown={handleKeydown} role="presentation" tabindex="-1">
-    <div class="modal-content" onclick={(e) => e.stopPropagation()} role="dialog" aria-labelledby="modal-title" aria-modal="true" tabindex="0">
+    <div class="modal-content" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()} role="dialog" aria-labelledby="modal-title" aria-modal="true" tabindex="0">
       <!-- Header -->
       <header class="modal-header">
         <h2 id="modal-title">CDI XML - Node {nodeId || 'Unknown'}</h2>

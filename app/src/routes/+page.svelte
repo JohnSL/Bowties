@@ -969,8 +969,6 @@
   }
 
   .status-connected    { background: #10b981; }
-  .status-connecting   { background: #f59e0b; animation: status-pulse 1.2s infinite; }
-  .status-disconnected { background: #9ca3af; }
 
   @keyframes status-pulse {
     0%, 100% { opacity: 1; }
@@ -1145,51 +1143,6 @@
     padding: 2rem;
   }
 
-  .connect-card {
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    padding: 2rem;
-    width: 340px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.08);
-  }
-
-  .connect-card h2 {
-    margin-top: 0;
-    margin-bottom: 1.5rem;
-    color: #2563eb;
-    font-size: 1.1rem;
-  }
-
-  .connect-card form {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .connect-card label {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    font-size: 14px;
-    font-weight: 500;
-    color: #374151;
-  }
-
-  .connect-card input {
-    flex: 1;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid #d1d5db;
-    border-radius: 6px;
-    font-size: 14px;
-  }
-
-  .connect-card input:focus {
-    outline: none;
-    border-color: #2563eb;
-    box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
-  }
-
   /* ─── Empty / loading state ─────────────────────────── */
 
   .empty-area {
@@ -1228,14 +1181,5 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
-  }
-
-  .main-empty {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-secondary, #999);
-    font-size: 14px;
   }
 </style>

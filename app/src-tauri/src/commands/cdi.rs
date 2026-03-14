@@ -1588,15 +1588,23 @@ pub async fn read_all_config_values(
     let mut raw_data_by_address: HashMap<u32, Vec<u8>> = HashMap::new();
 
     // --- Build a flat list of (orig_index, absolute_address, size, space) ---
-    // Items whose size is invalid or >64 are counted as errors immediately and
-    // excluded from the batch plan (same behaviour as before, just up-front).
+    // Items whose size is invalid are counted as errors immediately and excluded
+    // from the batch plan.  Items whose size exceeds 64 bytes are split into
+    // consecutive 64-byte chunks, each of which becomes its own ReadItem.
     struct ReadItem {
         orig_index: usize,
         absolute_address: u32,
         size: u32,
         space: u8,
+        /// Byte offset of this chunk within the full element (0 for non-split elements).
+        _chunk_offset: u32,
+        /// Full declared size of the element (equals `size` for non-split elements).
+        element_total_size: u32,
     }
 
+    // Tracks original indices of elements that were split into multiple chunks.
+    // These elements are assembled and parsed after all batches complete.
+    let mut multi_chunk_elements: std::collections::BTreeSet<usize> = Default::default();
     let mut sized_items: Vec<ReadItem> = Vec::new();
     for (idx, (_, segment_origin, element_offset, element_name, element, segment_space))
         in all_elements.iter().enumerate()
@@ -1608,11 +1616,26 @@ pub async fn read_all_config_values(
                     absolute_address: segment_origin + element_offset,
                     size: s,
                     space: *segment_space,
+                    _chunk_offset: 0,
+                    element_total_size: s,
                 });
             }
             Ok(s) => {
-                error_count += 1;
-                eprintln!("Element {} size {} exceeds 64 bytes, skipping", element_name, s);
+                // Element is too large for a single read; split into 64-byte chunks.
+                multi_chunk_elements.insert(idx);
+                let mut offset = 0u32;
+                while offset < s {
+                    let chunk_size = std::cmp::min(64, s - offset);
+                    sized_items.push(ReadItem {
+                        orig_index: idx,
+                        absolute_address: segment_origin + element_offset + offset,
+                        size: chunk_size,
+                        space: *segment_space,
+                        _chunk_offset: offset,
+                        element_total_size: s,
+                    });
+                    offset += chunk_size;
+                }
             }
             Err(e) => {
                 error_count += 1;
@@ -1671,13 +1694,18 @@ pub async fn read_all_config_values(
     }
 
     let total_batches = batches.len();
+    let total_chunks = sized_items.len();
+    let logical_elements = all_elements.len();
     eprintln!(
-        "[CDI] {} elements grouped into {} read batches (was {} round-trips)",
-        sized_items.len(), total_batches, sized_items.len()
+        "[CDI] {} elements ({} chunks) grouped into {} read batches",
+        logical_elements, total_chunks, total_batches
     );
 
     // --- Issue one read_memory per batch, slice individual element values from reply ---
     let mut elements_processed: usize = 0;
+    // Tracks orig_index of any element whose chunk batch failed; used in
+    // the multi-chunk assembly pass to skip partially-failed elements.
+    let mut failed_orig_indices: std::collections::HashSet<usize> = Default::default();
 
     for batch in batches.iter() {
         // T054: Check for cancellation between batches
@@ -1731,9 +1759,11 @@ pub async fn read_all_config_values(
             Ok(data) => { drop(conn); data }
             Err(e) => {
                 drop(conn);
-                // Count every element in the batch as failed
+                // Count every chunk in the batch as failed and record orig_index
+                // so the assembly pass can skip partially-failed large elements.
                 error_count += batch.len();
                 for &i in batch {
+                    failed_orig_indices.insert(sized_items[i].orig_index);
                     let (_, _, _, element_name, _, _) = &all_elements[sized_items[i].orig_index];
                     eprintln!("Failed to read element {} (batch read @{:#010x}+{}): {}",
                         element_name, batch_start_addr, batch_total_size, e);
@@ -1762,27 +1792,85 @@ pub async fn read_all_config_values(
 
             let item_data = &response_data[offset_in_batch..end];
 
-            // Spec 007: record raw bytes for tree merging
+            // Spec 007: record raw bytes for tree merging (also used by assembly pass).
             raw_data_by_address.insert(item.absolute_address, item_data.to_vec());
 
-            let typed_value = match parse_config_value(element, item_data) {
-                Ok(v) => v,
+            // Multi-chunk elements are assembled and parsed in the pass below;
+            // only parse immediately for elements that fit in a single read.
+            if item.element_total_size <= 64 {
+                let typed_value = match parse_config_value(element, item_data) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        error_count += 1;
+                        eprintln!("Failed to parse element {}: {}", element_name, e);
+                        continue;
+                    }
+                };
+
+                let cache_key = format!("{}:{}", node_id, element_path.join("/"));
+                values.insert(cache_key, ConfigValueWithMetadata {
+                    value: typed_value,
+                    memory_address: item.absolute_address,
+                    address_space: item.space,
+                    element_path: element_path.clone(),
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                });
+                success_count += 1;
+            }
+        }
+    }
+
+    // --- Assemble and parse multi-chunk elements ---
+    // Each large element was split into 64-byte chunks above.  Now that all
+    // chunks have been read into raw_data_by_address, concatenate them and
+    // parse the complete value.
+    for orig_idx in &multi_chunk_elements {
+        if failed_orig_indices.contains(orig_idx) {
+            // One or more chunks failed; the error was already counted in the
+            // batch error handler.  Do not attempt a partial parse.
+            continue;
+        }
+        let (element_path, segment_origin, element_offset, element_name, element, segment_space) =
+            &all_elements[*orig_idx];
+        let base_addr = segment_origin + element_offset;
+        let total_size = match get_element_size(element) {
+            Ok(s) => s,
+            Err(_) => { error_count += 1; continue; }
+        };
+        let mut assembled: Vec<u8> = Vec::with_capacity(total_size as usize);
+        let mut ok = true;
+        let mut offset = 0u32;
+        while offset < total_size {
+            let chunk_size = std::cmp::min(64, total_size - offset);
+            let chunk_addr = base_addr + offset;
+            if let Some(chunk_bytes) = raw_data_by_address.get(&chunk_addr) {
+                assembled.extend_from_slice(chunk_bytes);
+            } else {
+                eprintln!("Missing chunk @{:#010x} for element {}", chunk_addr, element_name);
+                ok = false;
+                error_count += 1;
+                break;
+            }
+            offset += chunk_size;
+        }
+        if ok {
+            match parse_config_value(element, &assembled) {
+                Ok(typed_value) => {
+                    let cache_key = format!("{}:{}", node_id, element_path.join("/"));
+                    values.insert(cache_key, ConfigValueWithMetadata {
+                        value: typed_value,
+                        memory_address: base_addr,
+                        address_space: *segment_space,
+                        element_path: element_path.clone(),
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                    });
+                    success_count += 1;
+                }
                 Err(e) => {
                     error_count += 1;
-                    eprintln!("Failed to parse element {}: {}", element_name, e);
-                    continue;
+                    eprintln!("Failed to parse multi-chunk element {}: {}", element_name, e);
                 }
-            };
-
-            let cache_key = format!("{}:{}", node_id, element_path.join("/"));
-            values.insert(cache_key, ConfigValueWithMetadata {
-                value: typed_value,
-                memory_address: item.absolute_address,
-                address_space: item.space,
-                element_path: element_path.clone(),
-                timestamp: chrono::Utc::now().to_rfc3339(),
-            });
-            success_count += 1;
+            }
         }
     }
     
@@ -2697,5 +2785,191 @@ mod get_card_elements_tests {
         for field in &tree.fields {
             assert_eq!(field.address_space, 253, "All fields should carry address_space=253");
         }
+    }
+}
+
+// ============================================================================
+// Tests for parse_config_value (T022-T028)
+// ============================================================================
+#[cfg(test)]
+mod parse_config_value_tests {
+    use super::{parse_config_value, ConfigValue};
+    use lcc_rs::cdi::{DataElement, IntElement, StringElement, EventIdElement, FloatElement};
+
+    fn make_int(size: u8) -> DataElement {
+        DataElement::Int(IntElement {
+            name: None,
+            description: None,
+            size,
+            offset: 0,
+            min: None,
+            max: None,
+            default: None,
+            map: None,
+        })
+    }
+
+    fn make_string(size: usize) -> DataElement {
+        DataElement::String(StringElement {
+            name: None,
+            description: None,
+            size,
+            offset: 0,
+        })
+    }
+
+    fn make_eventid() -> DataElement {
+        DataElement::EventId(EventIdElement {
+            name: None,
+            description: None,
+            offset: 0,
+        })
+    }
+
+    fn make_float() -> DataElement {
+        DataElement::Float(FloatElement {
+            name: None,
+            description: None,
+            offset: 0,
+        })
+    }
+
+    // T022 — 1-byte int
+    #[test]
+    fn test_parse_int_value_1_byte() {
+        let elem = make_int(1);
+        let result = parse_config_value(&elem, &[42u8]).unwrap();
+        assert!(matches!(result, ConfigValue::Int { value: 42, size_bytes: 1 }));
+    }
+
+    // T022 — 1-byte int, negative (sign-extended from i8)
+    #[test]
+    fn test_parse_int_value_1_byte_negative() {
+        let elem = make_int(1);
+        // 0xFF as i8 = -1
+        let result = parse_config_value(&elem, &[0xFFu8]).unwrap();
+        assert!(matches!(result, ConfigValue::Int { value: -1, size_bytes: 1 }));
+    }
+
+    // T022 — 2-byte int (big-endian)
+    #[test]
+    fn test_parse_int_value_2_bytes() {
+        let elem = make_int(2);
+        let result = parse_config_value(&elem, &[0x01u8, 0x00u8]).unwrap();
+        assert!(matches!(result, ConfigValue::Int { value: 256, size_bytes: 2 }));
+    }
+
+    // T023 — 4-byte int (big-endian)
+    #[test]
+    fn test_parse_int_value_4_bytes() {
+        let elem = make_int(4);
+        let data = 1_000_000i32.to_be_bytes();
+        let result = parse_config_value(&elem, &data).unwrap();
+        assert!(matches!(result, ConfigValue::Int { value: 1_000_000, size_bytes: 4 }));
+    }
+
+    // T024 — 8-byte int (big-endian)
+    #[test]
+    fn test_parse_int_value_8_bytes() {
+        let elem = make_int(8);
+        let data = 0x0102030405060708i64.to_be_bytes();
+        let result = parse_config_value(&elem, &data).unwrap();
+        assert!(matches!(result, ConfigValue::Int { value: 0x0102030405060708, size_bytes: 8 }));
+    }
+
+    // T022 — insufficient data returns Err
+    #[test]
+    fn test_parse_int_insufficient_data() {
+        let elem = make_int(4);
+        let result = parse_config_value(&elem, &[0x00u8, 0x01u8]); // only 2 bytes for a 4-byte int
+        assert!(result.is_err());
+    }
+
+    // T025 — plain ASCII string (null-terminated)
+    #[test]
+    fn test_parse_string_value() {
+        let elem = make_string(32);
+        let mut data = [0u8; 32];
+        data[..5].copy_from_slice(b"hello");
+        let result = parse_config_value(&elem, &data).unwrap();
+        match result {
+            ConfigValue::String { value, size_bytes: 32 } => assert_eq!(value, "hello"),
+            other => panic!("Expected String, got {:?}", other),
+        }
+    }
+
+    // T025 — string with no null terminator uses full buffer
+    #[test]
+    fn test_parse_string_no_null() {
+        let elem = make_string(4);
+        let result = parse_config_value(&elem, b"abcd").unwrap();
+        match result {
+            ConfigValue::String { value, .. } => assert_eq!(value, "abcd"),
+            other => panic!("Expected String, got {:?}", other),
+        }
+    }
+
+    // T028 — 0xFF bytes (uninitialized flash) are filtered out
+    #[test]
+    fn test_parse_string_filters_0xff() {
+        let elem = make_string(8);
+        // Device returns all 0xFF (factory-erased flash)
+        let result = parse_config_value(&elem, &[0xFFu8; 8]).unwrap();
+        match result {
+            ConfigValue::String { value, .. } => assert_eq!(value, ""),
+            other => panic!("Expected String, got {:?}", other),
+        }
+    }
+
+    // T028 — mixed valid UTF-8 and 0xFF bytes
+    #[test]
+    fn test_parse_string_mixed_ff_bytes() {
+        let elem = make_string(8);
+        let data = [b'h', b'i', 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00];
+        let result = parse_config_value(&elem, &data).unwrap();
+        match result {
+            ConfigValue::String { value, .. } => assert_eq!(value, "hi"),
+            other => panic!("Expected String, got {:?}", other),
+        }
+    }
+
+    // T026 — EventId: 8 bytes round-trip
+    #[test]
+    fn test_parse_eventid_value() {
+        let elem = make_eventid();
+        let bytes: [u8; 8] = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let result = parse_config_value(&elem, &bytes).unwrap();
+        match result {
+            ConfigValue::EventId { value } => assert_eq!(value, bytes),
+            other => panic!("Expected EventId, got {:?}", other),
+        }
+    }
+
+    // T026 — EventId wrong length returns Err
+    #[test]
+    fn test_parse_eventid_wrong_length() {
+        let elem = make_eventid();
+        let result = parse_config_value(&elem, &[0x01u8; 4]);
+        assert!(result.is_err());
+    }
+
+    // T027 — Float: known IEEE 754 big-endian value
+    #[test]
+    fn test_parse_float_value() {
+        let elem = make_float();
+        let data = 1.5f32.to_be_bytes();
+        let result = parse_config_value(&elem, &data).unwrap();
+        match result {
+            ConfigValue::Float { value } => assert!((value - 1.5f32).abs() < f32::EPSILON),
+            other => panic!("Expected Float, got {:?}", other),
+        }
+    }
+
+    // T027 — Float wrong length returns Err
+    #[test]
+    fn test_parse_float_wrong_length() {
+        let elem = make_float();
+        let result = parse_config_value(&elem, &[0x00u8; 2]);
+        assert!(result.is_err());
     }
 }

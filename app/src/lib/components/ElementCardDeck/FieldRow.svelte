@@ -147,6 +147,7 @@
     color: var(--text-secondary, #666);
     line-height: 1.4;
     padding-left: 4px;
+    white-space: pre-wrap;                         /* preserve newlines from CDI descriptions */
   }
 
   .refresh-error {

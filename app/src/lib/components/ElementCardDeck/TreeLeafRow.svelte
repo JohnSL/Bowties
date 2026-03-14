@@ -362,7 +362,7 @@
   /** Validate an event ID in dotted-hex and update the pending store */
   function handleEventIdInput(e: Event) {
     const raw = (e.target as HTMLInputElement).value;
-    const original = leaf.value ?? { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0] };
+    const original = leaf.value ?? { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0], hex: '00.00.00.00.00.00.00.00' };
 
     const parsedBytes = parseEventIdHex(raw);
 
@@ -371,6 +371,7 @@
       const invalidVal: TreeConfigValue = {
         type: 'eventId',
         bytes: original.type === 'eventId' ? original.bytes : [0, 0, 0, 0, 0, 0, 0, 0],
+        hex: raw,
       };
       const edit: PendingEdit = {
         key: editKey,
@@ -395,7 +396,7 @@
       return;
     }
 
-    const newVal: TreeConfigValue = { type: 'eventId', bytes: parsedBytes };
+    const newVal: TreeConfigValue = { type: 'eventId', bytes: parsedBytes, hex: formatEventIdHex(parsedBytes) };
     const edit: PendingEdit = {
       key: editKey,
       nodeId,
@@ -739,6 +740,7 @@
     font-size: 12px;
     font-style: italic;                            /* hint-like feel */
     line-height: 1.35;
+    white-space: pre-wrap;                         /* preserve newlines from CDI descriptions */
   }
 
   .desc-expand-btn {

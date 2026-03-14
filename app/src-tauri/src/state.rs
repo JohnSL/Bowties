@@ -13,7 +13,7 @@ use tokio::sync::{RwLock, Mutex};
 
 /// Protocol-level producer/consumer ground truth from the Identify Events exchange.
 ///
-/// Keyed in `AppState.event_roles` by `event_id_hex` (dotted-hex notation).
+/// Returned by `query_event_roles`, keyed by raw event_id bytes.
 /// Populated by sending `IdentifyEventsAddressed` to each known node (125 ms
 /// between sends) and collecting `ProducerIdentified` / `ConsumerIdentified` replies.
 #[derive(Debug, Clone, Default)]
@@ -111,11 +111,6 @@ pub struct AppState {
     /// `None` until the first `cdi-read-complete` cycle completes.
     pub bowties_catalog: Arc<RwLock<Option<BowtieCatalog>>>,
 
-    /// Node-level producer/consumer roles from the Identify Events exchange.
-    /// Key = event_id_hex (e.g. "05.02.01.02.03.00.00.01").
-    /// Populated by `query_event_roles` in `commands/bowties.rs`.
-    pub event_roles: Arc<RwLock<HashMap<String, NodeRoles>>>,
-
     /// Config value cache: actual event ID bytes read from each CDI slot.
     /// Outer key = node_id_hex; inner key = element_path joined by "/".
     /// Populated as `read_all_config_values` completes for each node.
@@ -149,7 +144,6 @@ impl AppState {
             active_connection: Arc::new(RwLock::new(None)),
             config_read_cancel: Arc::new(AtomicBool::new(false)),
             bowties_catalog: Arc::new(RwLock::new(None)),
-            event_roles: Arc::new(RwLock::new(HashMap::new())),
             config_value_cache: Arc::new(RwLock::new(HashMap::new())),
             node_trees: Arc::new(RwLock::new(HashMap::new())),
             profiles: Arc::new(RwLock::new(HashMap::new())),
