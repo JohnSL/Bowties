@@ -530,6 +530,66 @@ mod tests {
     }
 
     #[test]
+    fn test_calculate_size_with_spacer_children() {
+        // A spacer group (<group offset='N'/>) has no elements of its own but contributes
+        // its offset to the parent's total size, just like any other child element.
+        // This is tested separately because the parser change that preserves spacers was
+        // introduced specifically to fix CDI address miscalculation (e.g. UWT-100).
+        use crate::cdi::{DataElement, IntElement, StringElement};
+
+        // Simulate the per-profile layout inside UWT-100 WiFi Profiles:
+        //   <string size='32'>  SSID
+        //   <string size='128'> Password
+        //   <int    size='1'>   Mode
+        //   <group offset='1'/> spacer
+        //   <group offset='5'/> spacer
+        //   <group>             Advanced (contains more fields)
+        //     ...
+        //   </group>
+        // For simplicity, verify that two plain spacers contribute their offsets.
+        let group_with_spacers = Group {
+            name: Some("Profile".to_string()),
+            description: None,
+            offset: 0,
+            replication: 1,
+            repname: vec![],
+            elements: vec![
+                DataElement::String(StringElement {
+                    name: Some("SSID".to_string()),
+                    description: None,
+                    size: 32,
+                    offset: 0,
+                }),
+                // spacer: 6 bytes of padding (offset=6, no elements)
+                DataElement::Group(Group {
+                    name: None,
+                    description: None,
+                    offset: 6,
+                    replication: 1,
+                    repname: vec![],
+                    elements: vec![],
+                    hints: None,
+                }),
+                DataElement::Int(IntElement {
+                    name: Some("Port".to_string()),
+                    description: None,
+                    size: 2,
+                    offset: 0,
+                    min: None,
+                    max: None,
+                    default: None,
+                    map: None,
+                }),
+            ],
+            hints: None,
+        };
+
+        // size = 32 (SSID) + 6 (spacer offset) + 2 (Port) = 40
+        assert_eq!(group_with_spacers.calculate_size(), 40,
+            "Spacer offset must be included in parent calculate_size()");
+    }
+
+    #[test]
     fn test_navigate_to_element_with_hash_in_name() {
         // Test navigating to elements with '#' in their CDI names inside replicated groups
         // This was previously failing because name-based parsing couldn't distinguish

@@ -417,6 +417,76 @@ fn test_edge_case_deep_nesting() {
 }
 
 #[test]
+fn test_spacer_groups_correct_field_addresses() {
+    // Regression test for the UWT-100 address bug: spacer groups (<group offset='N'/>)
+    // were previously dropped by the Footnote-4 filter, causing all subsequent fields
+    // to be calculated at wrong addresses.
+    //
+    // Layout (segment origin=512, space=253):
+    //   int(1)   Show Welcome Tutorial  -> address 512
+    //   int(1)   Regulatory Region      -> address 513
+    //   group offset=6 (spacer)         -> advances cursor to 520
+    //   group replication=2 (Profiles)  -> first instance at 520
+    //     string(32) SSID               -> 520
+    //     int(2)     Port               -> 552
+    //     group offset=4 (inner spacer) -> advances to 558 (end of instance)
+    //   second Profiles instance        -> 558
+    //     string(32) SSID               -> 558
+    //     int(2)     Port               -> 590
+    let xml = r#"
+        <cdi>
+            <segment space='253' origin='512'>
+                <int size='1'><name>Show Welcome Tutorial</name></int>
+                <int size='1'><name>Regulatory Region</name></int>
+                <group offset='6'/>
+                <group replication='2'>
+                    <name>Profiles</name>
+                    <repname>Profile</repname>
+                    <string size='32'><name>SSID</name></string>
+                    <int size='2'><name>Port</name></int>
+                    <group offset='4'/>
+                </group>
+            </segment>
+        </cdi>
+    "#;
+
+    let cdi = parse_cdi(xml).expect("Should parse");
+    let seg = &cdi.segments[0];
+    assert_eq!(seg.origin, 512);
+
+    // The segment elements, in order, should be:
+    //   0: Int "Show Welcome Tutorial"
+    //   1: Int "Regulatory Region"
+    //   2: Group (spacer, offset=6)
+    //   3: Group (Profiles, replication=2)
+    assert_eq!(seg.elements.len(), 4, "Spacer group must be preserved as element 2");
+
+    let DataElement::Group(spacer) = &seg.elements[2] else {
+        panic!("Expected spacer group at index 2");
+    };
+    assert_eq!(spacer.offset, 6);
+    assert!(spacer.elements.is_empty());
+
+    let DataElement::Group(profiles) = &seg.elements[3] else {
+        panic!("Expected Profiles group at index 3");
+    };
+    assert_eq!(profiles.replication, 2);
+
+    // calculate_size() of one Profiles instance: 32 (SSID) + 2 (Port) + 4 (inner spacer) = 38
+    let stride = profiles.calculate_size();
+    assert_eq!(stride, 38, "Profile stride must include inner spacer offset");
+
+    // Verify addresses via expand_replications.
+    // The Profiles group starts at: 512 (origin) + 1+1 (two ints) + 6 (outer spacer offset) = 520.
+    let profile_base = 512 + 1 + 1 + 6;  // = 520
+    let expanded = profiles.expand_replications(profile_base);
+    assert_eq!(expanded.len(), 2);
+
+    assert_eq!(expanded[0].address, 520, "Profile 1 base address");
+    assert_eq!(expanded[1].address, 520 + 38, "Profile 2 base address = 558");
+}
+
+#[test]
 fn test_edge_case_negative_offset() {
     // Tower-LCC.xml contains negative offsets
     let xml = r#"

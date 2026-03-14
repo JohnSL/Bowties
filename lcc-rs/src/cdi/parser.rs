@@ -196,9 +196,13 @@ fn parse_data_element(node: Node) -> Result<Option<DataElement>, String> {
     let element = match node.tag_name().name() {
         "group" => {
             let group = parse_group(node)?;
-            // Apply Footnote 4 filtering: Hide empty groups and groups with
-            // only metadata (description, name) but no actual config elements
-            if !group.should_render() {
+            // Footnote 4: Only filter groups that are *both* visually empty (no
+            // name/description/elements) AND have zero offset.  Groups with a
+            // non-zero offset attribute are CDI spacers — they represent padding
+            // bytes in the node's memory layout and MUST be preserved so that the
+            // cursor-based address calculation advances past those bytes.
+            // Dropping them causes every subsequent field address to be wrong.
+            if group.offset == 0 && !group.should_render() {
                 return Ok(None);
             }
             DataElement::Group(group)
@@ -683,7 +687,7 @@ mod tests {
 
     #[test]
     fn test_parse_group_footnote4_filtering() {
-        // Empty groups should be filtered out per Footnote 4
+        // Empty groups (offset=0, no name/description/elements) are filtered per Footnote 4
         let xml = r#"
             <cdi>
                 <segment space="253">
@@ -706,7 +710,34 @@ mod tests {
         assert_eq!(group.name, Some("Valid Group".to_string()));
     }
 
-    // T043h: Unit tests for parse_int_element
+    #[test]
+    fn test_parse_group_spacer_preserved() {
+        // Spacer groups (<group offset='N'/>) must NOT be filtered even though they
+        // have no name, description, or elements.  They represent padding bytes in
+        // the device memory layout and are required for correct address calculation.
+        let xml = r#"
+            <cdi>
+                <segment space="253" origin="512">
+                    <int size="1"><name>A</name></int>
+                    <group offset="6"/>
+                    <group>
+                        <name>Real Group</name>
+                        <int size="2"><name>Port</name></int>
+                    </group>
+                </segment>
+            </cdi>
+        "#;
+        let cdi = parse_cdi(xml).expect("Failed to parse CDI");
+        // The segment should have 3 elements: the int, the spacer group, and the real group.
+        assert_eq!(cdi.segments[0].elements.len(), 3, "Spacer group must be preserved");
+        let DataElement::Group(spacer) = &cdi.segments[0].elements[1] else {
+            panic!("Expected spacer Group at index 1");
+        };
+        assert_eq!(spacer.offset, 6, "Spacer should have offset=6");
+        assert!(spacer.elements.is_empty(), "Spacer should have no children");
+    }
+
+
     #[test]
     fn test_parse_int_element_basic() {
         let xml = r#"

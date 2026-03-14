@@ -237,6 +237,15 @@ fn build_children(
                     g.replication
                 };
 
+                // Spacer groups (offset-only, no name/description/elements) were
+                // preserved by the CDI parser for address-calculation correctness.
+                // We've already advanced `cursor` above; now skip tree-node creation
+                // so they don't pollute the visible config tree.
+                if !g.should_render() {
+                    cursor += effective_replication as i32 * stride;
+                    continue;
+                }
+
                 let original_name = g
                     .name
                     .clone()
@@ -504,12 +513,14 @@ fn parse_leaf_value(leaf_type: LeafType, size: u32, raw: &[u8]) -> Option<Config
         }
         LeafType::String => {
             // CDI strings are NUL-terminated within `size` bytes.
-            let s = raw
+            // 0xFF bytes are uninitialized flash on LCC nodes — strip them out.
+            let s: String = raw
                 .iter()
                 .take(size as usize)
                 .take_while(|&&b| b != 0)
+                .filter(|&&b| b != 0xFF)
                 .map(|&b| b as char)
-                .collect::<String>();
+                .collect();
             Some(ConfigValue::String { value: s })
         }
         LeafType::EventId => {

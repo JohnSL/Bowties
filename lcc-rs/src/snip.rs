@@ -71,10 +71,19 @@ async fn query_snip_internal(
     // SNIP responses have MTI 0x19A08 in header with datagram frame type in data[0]
     let mut snip_payload = Vec::new();
     let mut receiving_datagram = false;
+    // Some nodes (e.g. TCS UWT-100) take >100ms before sending their first frame.
+    // Use the full SNIP_TIMEOUT while waiting for the first frame, then switch to
+    // the shorter SILENCE_TIMEOUT for subsequent inter-frame gaps.
+    let mut received_first_frame = false;
 
     loop {
-        // Wait for next frame with silence detection timeout
-        let receive_result = transport.receive(SILENCE_TIMEOUT.as_millis() as u64).await;
+        // Use full timeout until first frame arrives, then silence detection
+        let recv_timeout_ms = if received_first_frame {
+            SILENCE_TIMEOUT.as_millis() as u64
+        } else {
+            SNIP_TIMEOUT.as_millis() as u64
+        };
+        let receive_result = transport.receive(recv_timeout_ms).await;
         
         match receive_result {
             Ok(Some(frame)) => {
@@ -93,6 +102,9 @@ async fn query_snip_internal(
                 if mti != MTI::SNIPResponse {
                     continue;
                 }
+
+                // We have a frame from our target — switch to silence-detection timing
+                received_first_frame = true;
 
                 // SNIP responses have datagram frame type in data[0]
                 // 0x1A = first, 0x3A = middle, 0x2A = final

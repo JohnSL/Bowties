@@ -918,6 +918,12 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
                     }
                 }
                 crate::protocol::ReadReply::Failed { error_code, message, .. } => {
+                    // 0x1082 = "address out of bounds" / "not found" — some nodes
+                    // (e.g. TCS UWT-100) return this instead of a null terminator to
+                    // signal end-of-CDI.  Treat it the same as a null terminator.
+                    if error_code == 0x1082 {
+                        break;
+                    }
                     return Err(crate::Error::Protocol(format!(
                         "CDI read failed at address {}: error 0x{:04X} - {}",
                         address, error_code, message

@@ -1121,9 +1121,12 @@ fn parse_config_value(element: &lcc_rs::cdi::DataElement, data: &[u8]) -> Result
         DataElement::String(e) => {
             // Find the first null byte to avoid parsing padding as UTF-8
             let end = data.iter().position(|&b| b == 0).unwrap_or(data.len());
-            // Only parse up to the null byte
-            let s = String::from_utf8(data[..end].to_vec())
-                .map_err(|e| format!("Invalid UTF-8: {}", e))?;
+            let raw = &data[..end];
+            // 0xFF is never valid UTF-8 and represents uninitialized flash on LCC
+            // nodes. Filter ALL 0xFF bytes out (not just leading) then use lossy
+            // conversion for any remaining non-UTF-8 bytes.
+            let filtered: Vec<u8> = raw.iter().copied().filter(|&b| b != 0xFF).collect();
+            let s = String::from_utf8_lossy(&filtered).into_owned();
             Ok(ConfigValue::String {
                 value: s,
                 size_bytes: e.size as u32,
