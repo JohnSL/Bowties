@@ -14,7 +14,6 @@
   import type { ViewerStatus } from '$lib/types/cdi';
   import type { DiscoveredNode } from '$lib/api/tauri';
   import type { ReadProgressState } from '$lib/api/types';
-  import { millerColumnsStore } from '$lib/stores/millerColumns';
   import { updateNodeInfo } from '$lib/stores/nodeInfo';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
@@ -111,7 +110,6 @@
     // T063: Setup config-read-progress event listener
     unlistens.push(await listen<ReadProgressState>('config-read-progress', (event) => {
       readProgress = event.payload;
-      millerColumnsStore.setReadProgress(event.payload);
       discoveryPhase = 'reading';
       
       // Clear progress on completion or cancellation
@@ -119,9 +117,7 @@
         discoveryPhase = event.payload.status.type === 'Cancelled' ? 'cancelled' : 'complete';
         setTimeout(() => {
           readProgress = null;
-          millerColumnsStore.setReadProgress(null);
           isCancelling = false;
-          millerColumnsStore.setCancelling(false);
           discoveryModalVisible = false;
         }, 500); // Brief pause so user sees the final status
       }
@@ -179,8 +175,6 @@
       refreshing = true;
       discoveryPhase = 'refreshing';
       try {
-        // T068: Clear config cache before refresh
-        millerColumnsStore.clearConfigValues();
         // FR-018: reset sidebar state on node refresh
         configSidebarStore.reset();
         clearConfigReadStatus();
@@ -238,8 +232,6 @@
             console.log(`Reading config values from ${nodeName}...`);
             const response = await readAllConfigValues(nodeId, undefined, nodeIdx, cdiCandidatesRefresh.length);
 
-            // Update store with batch values
-            millerColumnsStore.setConfigValues(response.values);
             markNodeConfigRead(nodeId);
             totalSuccessfulRefresh += response.successfulReads;
             totalFailedRefresh += response.failedReads;
@@ -270,13 +262,10 @@
             status: { type: 'Complete', success_count: totalSuccessfulRefresh, fail_count: totalFailedRefresh }
           };
           readProgress = doneState;
-          millerColumnsStore.setReadProgress(doneState);
           discoveryPhase = 'complete';
           setTimeout(() => {
             readProgress = null;
-            millerColumnsStore.setReadProgress(null);
             isCancelling = false;
-            millerColumnsStore.setCancelling(false);
             discoveryModalVisible = false;
             if (cdiMissingNodes.length > 0) {
               cdiDownloadDialogVisible = true;
@@ -390,8 +379,6 @@
             console.log(`Reading config values from ${nodeName}...`);
             const response = await readAllConfigValues(nodeId, undefined, nodeIdx, cdiCandidates.length);
 
-            // Update store with batch values
-            millerColumnsStore.setConfigValues(response.values);
             markNodeConfigRead(nodeId);
             totalSuccessful += response.successfulReads;
             totalFailed += response.failedReads;
@@ -422,13 +409,10 @@
             status: { type: 'Complete', success_count: totalSuccessful, fail_count: totalFailed }
           };
           readProgress = doneState;
-          millerColumnsStore.setReadProgress(doneState);
           discoveryPhase = 'complete';
           setTimeout(() => {
             readProgress = null;
-            millerColumnsStore.setReadProgress(null);
             isCancelling = false;
-            millerColumnsStore.setCancelling(false);
             discoveryModalVisible = false;
             if (cdiMissingNodes.length > 0) {
               cdiDownloadDialogVisible = true;
@@ -479,7 +463,6 @@
     if (isCancelling) return; // Already cancelling
     
     isCancelling = true;
-    millerColumnsStore.setCancelling(true);
     
     try {
       await cancelConfigReading();
@@ -488,7 +471,6 @@
       console.error('Failed to cancel config reading:', e);
       errorMessage = `Cancel failed: ${e}`;
       isCancelling = false;
-      millerColumnsStore.setCancelling(false);
     }
   }
 
@@ -529,7 +511,6 @@
           }
           console.log(`Reading config values from ${nodeName}...`);
           const response = await readAllConfigValues(nodeId, undefined, nodeIdx, unread.length);
-          millerColumnsStore.setConfigValues(response.values);
           markNodeConfigRead(nodeId);
           // Force tree refresh so any visible SegmentView updates
           await nodeTreeStore.refreshTree(nodeId);
@@ -553,13 +534,10 @@
         status: { type: 'Complete', success_count: totalSuccessful, fail_count: totalFailed }
       };
       readProgress = doneState;
-      millerColumnsStore.setReadProgress(doneState);
       discoveryPhase = 'complete';
       setTimeout(() => {
         readProgress = null;
-        millerColumnsStore.setReadProgress(null);
         isCancelling = false;
-        millerColumnsStore.setCancelling(false);
         discoveryModalVisible = false;
       }, 1500);
     } catch (e) {
@@ -594,7 +572,6 @@
         return;
       }
       const response = await readAllConfigValues(nodeId, undefined, 0, 1);
-      millerColumnsStore.setConfigValues(response.values);
       markNodeConfigRead(nodeId);
       // Force tree refresh so the currently visible SegmentView updates
       await nodeTreeStore.refreshTree(nodeId);
@@ -611,13 +588,10 @@
         status: { type: 'Complete', success_count: response.successfulReads, fail_count: response.failedReads }
       };
       readProgress = doneState;
-      millerColumnsStore.setReadProgress(doneState);
       discoveryPhase = 'complete';
       setTimeout(() => {
         readProgress = null;
-        millerColumnsStore.setReadProgress(null);
         isCancelling = false;
-        millerColumnsStore.setCancelling(false);
         discoveryModalVisible = false;
       }, 1500);
     } catch (e) {
@@ -707,7 +681,6 @@
         const cdiCheck = await getCdiXml(nodeId);
         if (cdiCheck.xmlContent !== null) {
           const response = await readAllConfigValues(nodeId, undefined, i, nodesToDownload.length);
-          millerColumnsStore.setConfigValues(response.values);
           markNodeConfigRead(nodeId);
           console.log(`✓ Read config for ${nodeName}`);
         }
