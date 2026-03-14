@@ -309,4 +309,190 @@ mod tests {
         assert_eq!(leaf_b.event_role, Some(EventRole::Consumer),
             "GroupB leaf should have Consumer role");
     }
+
+    // ── make_profile_key ──────────────────────────────────────────────────────
+
+    #[test]
+    fn make_profile_key_strips_whitespace_and_lowercases() {
+        let key = make_profile_key("  Acme Corp  ", "  Widget 100  ");
+        assert_eq!(key, "acme corp::widget 100");
+    }
+
+    #[test]
+    fn make_profile_key_already_lowercase_no_change() {
+        let key = make_profile_key("acme", "model");
+        assert_eq!(key, "acme::model");
+    }
+
+    // ── annotate_tree with label ───────────────────────────────────────────────
+
+    #[test]
+    fn annotate_tree_label_sets_display_name_on_matched_group() {
+        let cdi = parse_cdi(CDI_TWO_EVENT_GROUPS).expect("CDI parse should succeed");
+        let mut tree = build_node_config_tree("test:node", &cdi);
+
+        let profile = StructureProfile {
+            schema_version: "1.0".to_string(),
+            node_type: types::ProfileNodeType {
+                manufacturer: "Test".to_string(),
+                model: "Test Node".to_string(),
+            },
+            firmware_version_range: None,
+            event_roles: vec![
+                types::EventRoleDecl {
+                    group_path: "TestSeg/GroupA".to_string(),
+                    role: types::ProfileEventRole::Producer,
+                    label: Some("Output Events".to_string()),
+                },
+                types::EventRoleDecl {
+                    group_path: "TestSeg/GroupB".to_string(),
+                    role: types::ProfileEventRole::Consumer,
+                    label: None, // no label
+                },
+            ],
+            relevance_rules: vec![],
+        };
+
+        let report = annotate_tree(&mut tree, &profile, &cdi);
+        assert_eq!(report.event_roles_applied, 2);
+        assert!(report.warnings.is_empty());
+
+        let seg_children = &tree.segments[0].children;
+        // GroupA should have display_name set from label
+        if let ConfigNode::Group(g) = &seg_children[0] {
+            assert_eq!(g.display_name.as_deref(), Some("Output Events"), "GroupA should have display_name");
+        } else {
+            panic!("Expected GroupA");
+        }
+        // GroupB should have no display_name (label was None)
+        if let ConfigNode::Group(g) = &seg_children[1] {
+            assert!(g.display_name.is_none(), "GroupB should not have display_name");
+        } else {
+            panic!("Expected GroupB");
+        }
+    }
+
+    // ── annotate_tree with replicated group ───────────────────────────────────
+
+    const CDI_REPLICATED: &str = r#"<cdi>
+        <segment space="253" origin="0">
+            <name>Config</name>
+            <group replication="3">
+                <name>Events</name>
+                <repname>Event</repname>
+                <eventid><name>Event ID</name></eventid>
+            </group>
+        </segment>
+    </cdi>"#;
+
+    #[test]
+    fn annotate_tree_replicated_group_annotates_all_instances() {
+        let cdi = parse_cdi(CDI_REPLICATED).expect("CDI parse should succeed");
+        let mut tree = build_node_config_tree("test:node", &cdi);
+
+        let profile = StructureProfile {
+            schema_version: "1.0".to_string(),
+            node_type: types::ProfileNodeType {
+                manufacturer: "Test".to_string(),
+                model: "Test".to_string(),
+            },
+            firmware_version_range: None,
+            event_roles: vec![types::EventRoleDecl {
+                group_path: "Config/Events".to_string(),
+                role: types::ProfileEventRole::Producer,
+                label: None,
+            }],
+            relevance_rules: vec![],
+        };
+
+        let report = annotate_tree(&mut tree, &profile, &cdi);
+        // 3 replicated instances × 1 EventId each = 3 roles applied
+        assert_eq!(report.event_roles_applied, 3, "All 3 replicated instances should be annotated");
+        assert!(report.warnings.is_empty());
+
+        // Verify all 3 instance EventId leaves have Producer role
+        let wrapper = match &tree.segments[0].children[0] {
+            ConfigNode::Group(g) => g,
+            _ => panic!("Expected wrapper group"),
+        };
+        for instance in &wrapper.children {
+            match instance {
+                ConfigNode::Group(g) => match &g.children[0] {
+                    ConfigNode::Leaf(l) => {
+                        assert_eq!(l.event_role, Some(EventRole::Producer),
+                            "Instance {:?} EventId should be Producer", g.instance);
+                    }
+                    _ => panic!("Expected leaf"),
+                },
+                _ => panic!("Expected instance group"),
+            }
+        }
+    }
+
+    // ── annotate_tree unresolved path ─────────────────────────────────────────
+
+    #[test]
+    fn annotate_tree_unresolved_path_produces_warning() {
+        let cdi = parse_cdi(CDI_TWO_EVENT_GROUPS).expect("CDI parse should succeed");
+        let mut tree = build_node_config_tree("test:node", &cdi);
+
+        let profile = StructureProfile {
+            schema_version: "1.0".to_string(),
+            node_type: types::ProfileNodeType {
+                manufacturer: "Test".to_string(),
+                model: "Test".to_string(),
+            },
+            firmware_version_range: None,
+            event_roles: vec![types::EventRoleDecl {
+                group_path: "TestSeg/NonExistentGroup".to_string(),
+                role: types::ProfileEventRole::Producer,
+                label: None,
+            }],
+            relevance_rules: vec![],
+        };
+
+        let report = annotate_tree(&mut tree, &profile, &cdi);
+        assert_eq!(report.event_roles_applied, 0, "No roles should be applied for unresolved path");
+        assert_eq!(report.warnings.len(), 1, "Should have exactly one warning");
+        assert!(report.warnings[0].contains("TestSeg/NonExistentGroup"));
+    }
+
+    // ── annotate_tree resolved but no EventId leaves ──────────────────────────
+
+    #[test]
+    fn annotate_tree_resolved_group_without_eventid_leaves_produces_warning() {
+        // CDI with a group that contains only Int leaves (no EventId)
+        let cdi_int_only = r#"<cdi>
+            <segment space="253" origin="0">
+                <name>TestSeg</name>
+                <group>
+                    <name>Settings</name>
+                    <int size="1"><name>Value</name></int>
+                </group>
+            </segment>
+        </cdi>"#;
+        let cdi = parse_cdi(cdi_int_only).expect("CDI parse should succeed");
+        let mut tree = build_node_config_tree("test:node", &cdi);
+
+        let profile = StructureProfile {
+            schema_version: "1.0".to_string(),
+            node_type: types::ProfileNodeType {
+                manufacturer: "Test".to_string(),
+                model: "Test".to_string(),
+            },
+            firmware_version_range: None,
+            event_roles: vec![types::EventRoleDecl {
+                group_path: "TestSeg/Settings".to_string(),
+                role: types::ProfileEventRole::Producer,
+                label: None,
+            }],
+            relevance_rules: vec![],
+        };
+
+        let report = annotate_tree(&mut tree, &profile, &cdi);
+        // Path resolves but no EventId leaves → applied == 0 → warning
+        assert_eq!(report.event_roles_applied, 0);
+        assert_eq!(report.warnings.len(), 1, "Should have one warning for matched-but-no-eventid");
+        assert!(report.warnings[0].contains("TestSeg/Settings"));
+    }
 }

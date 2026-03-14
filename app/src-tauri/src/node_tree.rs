@@ -1359,4 +1359,649 @@ mod tests {
         assert_eq!(id.hardware_version.as_deref(), Some("1.0"));
         assert_eq!(id.software_version.as_deref(), Some("2.0"));
     }
+
+    // ── parse_leaf_value ────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_leaf_value_int_1byte() {
+        let result = parse_leaf_value(LeafType::Int, 1, &[0xAB]);
+        match result {
+            Some(ConfigValue::Int { value }) => assert_eq!(value, 0xAB),
+            other => panic!("Expected Int, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_leaf_value_int_2byte_signed() {
+        // 0xFF, 0xFE = -2 as big-endian i16
+        let result = parse_leaf_value(LeafType::Int, 2, &[0xFF, 0xFE]);
+        match result {
+            Some(ConfigValue::Int { value }) => assert_eq!(value, -2_i64),
+            other => panic!("Expected Int, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_leaf_value_int_4byte() {
+        let result = parse_leaf_value(LeafType::Int, 4, &[0x00, 0x00, 0x03, 0xE8]);
+        match result {
+            Some(ConfigValue::Int { value }) => assert_eq!(value, 1000),
+            other => panic!("Expected Int, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_leaf_value_int_8byte_signed() {
+        let bytes = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+        let result = parse_leaf_value(LeafType::Int, 8, &bytes);
+        match result {
+            Some(ConfigValue::Int { value }) => assert_eq!(value, -1_i64),
+            other => panic!("Expected Int, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_leaf_value_int_short_data_returns_none() {
+        // size=2 but only 1 byte of data → None
+        let result = parse_leaf_value(LeafType::Int, 2, &[0xAA]);
+        assert!(result.is_none(), "Expected None for insufficient data");
+    }
+
+    #[test]
+    fn parse_leaf_value_string_nul_termination() {
+        let raw = b"Hello\0Extra\0".to_vec();
+        let result = parse_leaf_value(LeafType::String, 12, &raw);
+        match result {
+            Some(ConfigValue::String { value }) => assert_eq!(value, "Hello"),
+            other => panic!("Expected String, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_leaf_value_string_ff_pruning() {
+        // 0xFF bytes (flash-uninitialized) must be filtered out before NUL-stop
+        let raw = vec![b'H', b'i', 0xFF, b'C', 0x00];
+        let result = parse_leaf_value(LeafType::String, 5, &raw);
+        match result {
+            Some(ConfigValue::String { value }) => assert_eq!(value, "HiC"),
+            other => panic!("Expected String, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_leaf_value_event_id_8byte() {
+        let raw: Vec<u8> = vec![0x05, 0x02, 0x01, 0x02, 0x03, 0x00, 0x00, 0x01];
+        let result = parse_leaf_value(LeafType::EventId, 8, &raw);
+        match result {
+            Some(ConfigValue::EventId { bytes, hex }) => {
+                assert_eq!(bytes, [0x05, 0x02, 0x01, 0x02, 0x03, 0x00, 0x00, 0x01]);
+                assert_eq!(hex, "05.02.01.02.03.00.00.01");
+            }
+            other => panic!("Expected EventId, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_leaf_value_event_id_too_short_returns_none() {
+        let result = parse_leaf_value(LeafType::EventId, 8, &[0x01, 0x02, 0x03]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_leaf_value_float() {
+        // 1.0f32 in big-endian bytes = [0x3F, 0x80, 0x00, 0x00]
+        let raw: Vec<u8> = vec![0x3F, 0x80, 0x00, 0x00];
+        let result = parse_leaf_value(LeafType::Float, 4, &raw);
+        match result {
+            Some(ConfigValue::Float { value }) => {
+                assert!((value - 1.0_f64).abs() < 1e-6, "Expected 1.0, got {}", value);
+            }
+            other => panic!("Expected Float, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_leaf_value_action_returns_none() {
+        let result = parse_leaf_value(LeafType::Action, 1, &[0x01]);
+        assert!(result.is_none(), "Action should always return None");
+    }
+
+    #[test]
+    fn parse_leaf_value_blob_returns_none() {
+        let result = parse_leaf_value(LeafType::Blob, 4, &[0x01, 0x02, 0x03, 0x04]);
+        assert!(result.is_none(), "Blob should always return None");
+    }
+
+    // ── classify_leaf_roles_from_protocol ───────────────────────────────────
+
+    #[test]
+    fn classify_leaf_roles_producer_only() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <eventid><name>Evt</name></eventid>
+                </segment>
+            </cdi>"#,
+        );
+        let event_bytes = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let mut values = HashMap::new();
+        values.insert(0u32, event_bytes.to_vec());
+        merge_config_values(&mut tree, &values);
+
+        let mut event_roles_map = HashMap::new();
+        event_roles_map.insert(event_bytes, crate::state::NodeRoles {
+            producers: ["05.02.01.02.03.00".to_string()].iter().cloned().collect(),
+            consumers: std::collections::HashSet::new(),
+        });
+        let result = classify_leaf_roles_from_protocol(&tree, &event_roles_map);
+        assert_eq!(result.get("seg:0/elem:0"), Some(&EventRole::Producer));
+    }
+
+    #[test]
+    fn classify_leaf_roles_consumer_only() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <eventid><name>Evt</name></eventid>
+                </segment>
+            </cdi>"#,
+        );
+        let event_bytes = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x09];
+        let mut values = HashMap::new();
+        values.insert(0u32, event_bytes.to_vec());
+        merge_config_values(&mut tree, &values);
+
+        let mut event_roles_map = HashMap::new();
+        event_roles_map.insert(event_bytes, crate::state::NodeRoles {
+            producers: std::collections::HashSet::new(),
+            consumers: ["05.02.01.02.03.00".to_string()].iter().cloned().collect(),
+        });
+        let result = classify_leaf_roles_from_protocol(&tree, &event_roles_map);
+        assert_eq!(result.get("seg:0/elem:0"), Some(&EventRole::Consumer));
+    }
+
+    #[test]
+    fn classify_leaf_roles_both_is_ambiguous() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <eventid><name>Evt</name></eventid>
+                </segment>
+            </cdi>"#,
+        );
+        let event_bytes = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11];
+        let mut values = HashMap::new();
+        values.insert(0u32, event_bytes.to_vec());
+        merge_config_values(&mut tree, &values);
+
+        let node_id_str = "05.02.01.02.03.00".to_string();
+        let mut event_roles_map = HashMap::new();
+        event_roles_map.insert(event_bytes, crate::state::NodeRoles {
+            producers: [node_id_str.clone()].iter().cloned().collect(),
+            consumers: [node_id_str].iter().cloned().collect(),
+        });
+        let result = classify_leaf_roles_from_protocol(&tree, &event_roles_map);
+        assert_eq!(result.get("seg:0/elem:0"), Some(&EventRole::Ambiguous));
+    }
+
+    #[test]
+    fn classify_leaf_roles_uninvolved_not_included() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <eventid><name>Evt</name></eventid>
+                </segment>
+            </cdi>"#,
+        );
+        let event_bytes = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let mut values = HashMap::new();
+        values.insert(0u32, event_bytes.to_vec());
+        merge_config_values(&mut tree, &values);
+
+        // A third-party node is the producer; this tree's node is uninvolved
+        let mut event_roles_map = HashMap::new();
+        event_roles_map.insert(event_bytes, crate::state::NodeRoles {
+            producers: ["99.99.99.99.99.01".to_string()].iter().cloned().collect(),
+            consumers: std::collections::HashSet::new(),
+        });
+        let result = classify_leaf_roles_from_protocol(&tree, &event_roles_map);
+        assert!(result.is_empty(), "Uninvolved node must produce no result");
+    }
+
+    #[test]
+    fn classify_leaf_roles_no_value_is_skipped() {
+        // EventId leaf has no value — leaf should be skipped entirely
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <eventid><name>Evt</name></eventid>
+                </segment>
+            </cdi>"#,
+        );
+        let event_bytes = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        // No merge_config_values — leaf.value is None
+        let mut event_roles_map = HashMap::new();
+        event_roles_map.insert(event_bytes, crate::state::NodeRoles {
+            producers: ["05.02.01.02.03.00".to_string()].iter().cloned().collect(),
+            consumers: std::collections::HashSet::new(),
+        });
+        let result = classify_leaf_roles_from_protocol(&tree, &event_roles_map);
+        assert!(result.is_empty(), "Leaf without value must be skipped");
+    }
+
+    // ── merge_config_values extensions ────────────────────────────────────────
+
+    #[test]
+    fn merge_config_values_4byte_int() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <int size="4"><name>Val</name></int>
+                </segment>
+            </cdi>"#,
+        );
+        let mut values = HashMap::new();
+        values.insert(0u32, vec![0x00, 0x01, 0x86, 0xA0]); // 100000
+        merge_config_values(&mut tree, &values);
+
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => match &l.value {
+                Some(ConfigValue::Int { value }) => assert_eq!(*value, 100000),
+                other => panic!("Expected Int, got {:?}", other),
+            },
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn merge_config_values_8byte_int() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <int size="8"><name>Val</name></int>
+                </segment>
+            </cdi>"#,
+        );
+        let val_bytes = 1_000_000_000_000i64.to_be_bytes();
+        let mut values = HashMap::new();
+        values.insert(0u32, val_bytes.to_vec());
+        merge_config_values(&mut tree, &values);
+
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => match &l.value {
+                Some(ConfigValue::Int { value }) => assert_eq!(*value, 1_000_000_000_000),
+                other => panic!("Expected Int, got {:?}", other),
+            },
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn merge_config_values_float() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <float><name>Temp</name></float>
+                </segment>
+            </cdi>"#,
+        );
+        let raw = std::f32::consts::PI.to_be_bytes();
+        let mut values = HashMap::new();
+        values.insert(0u32, raw.to_vec());
+        merge_config_values(&mut tree, &values);
+
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => match &l.value {
+                Some(ConfigValue::Float { value }) => {
+                    assert!((*value as f32 - std::f32::consts::PI).abs() < 1e-5);
+                }
+                other => panic!("Expected Float, got {:?}", other),
+            },
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn merge_config_values_string_with_embedded_ff() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <string size="8"><name>Label</name></string>
+                </segment>
+            </cdi>"#,
+        );
+        // 0xFF bytes (flash-uninitialised) are stripped; NUL terminates
+        let raw = vec![b'A', b'B', 0xFF, b'C', 0x00, 0x00, 0x00, 0x00];
+        let mut values = HashMap::new();
+        values.insert(0u32, raw);
+        merge_config_values(&mut tree, &values);
+
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => match &l.value {
+                Some(ConfigValue::String { value }) => assert_eq!(value, "ABC"),
+                other => panic!("Expected String, got {:?}", other),
+            },
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn merge_config_values_address_not_found_stays_none() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="10">
+                    <name>Config</name>
+                    <int size="1"><name>A</name></int>
+                </segment>
+            </cdi>"#,
+        );
+        let mut values = HashMap::new();
+        values.insert(20u32, vec![0x42]); // Wrong address
+        merge_config_values(&mut tree, &values);
+
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => assert!(l.value.is_none(), "Value should remain None"),
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn merge_config_values_in_replicated_group_instance() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <group replication="3">
+                        <name>Ch</name>
+                        <int size="1"><name>Val</name></int>
+                    </group>
+                </segment>
+            </cdi>"#,
+        );
+        // Instance addresses: 0, 1, 2 (stride = 1 byte)
+        let mut values = HashMap::new();
+        values.insert(0u32, vec![0x10]);
+        values.insert(1u32, vec![0x20]);
+        values.insert(2u32, vec![0x30]);
+        merge_config_values(&mut tree, &values);
+
+        let expected = [0x10i64, 0x20, 0x30];
+        match &tree.segments[0].children[0] {
+            ConfigNode::Group(wrapper) => {
+                for (i, instance) in wrapper.children.iter().enumerate() {
+                    match instance {
+                        ConfigNode::Group(g) => match &g.children[0] {
+                            ConfigNode::Leaf(l) => match &l.value {
+                                Some(ConfigValue::Int { value }) => {
+                                    assert_eq!(*value, expected[i]);
+                                }
+                                other => panic!("Instance {}: expected Int, got {:?}", i, other),
+                            },
+                            _ => panic!("Expected leaf at instance {}", i),
+                        },
+                        _ => panic!("Expected instance group"),
+                    }
+                }
+            }
+            _ => panic!("Expected wrapper group"),
+        }
+    }
+
+    // ── merge_event_roles extensions ──────────────────────────────────────────
+
+    #[test]
+    fn merge_event_roles_in_group() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <group>
+                        <name>Output</name>
+                        <eventid><name>Trigger</name></eventid>
+                    </group>
+                </segment>
+            </cdi>"#,
+        );
+        let mut roles = HashMap::new();
+        roles.insert("seg:0/elem:0/elem:0".to_string(), EventRole::Producer);
+        merge_event_roles(&mut tree, &roles);
+
+        match &tree.segments[0].children[0] {
+            ConfigNode::Group(g) => match &g.children[0] {
+                ConfigNode::Leaf(l) => assert_eq!(l.event_role, Some(EventRole::Producer)),
+                _ => panic!("Expected leaf"),
+            },
+            _ => panic!("Expected group"),
+        }
+    }
+
+    #[test]
+    fn merge_event_roles_int_leaf_unchanged() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <int size="1"><name>Setting</name></int>
+                </segment>
+            </cdi>"#,
+        );
+        let mut roles = HashMap::new();
+        // Path matches an Int leaf — must be silently skipped (only EventId leaves get roles)
+        roles.insert("seg:0/elem:0".to_string(), EventRole::Producer);
+        merge_event_roles(&mut tree, &roles);
+
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                assert_eq!(l.element_type, LeafType::Int);
+                assert!(l.event_role.is_none(), "Int leaf must not receive an event_role");
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn merge_event_roles_nonmatching_path_is_noop() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <eventid><name>Evt</name></eventid>
+                </segment>
+            </cdi>"#,
+        );
+        let mut roles = HashMap::new();
+        roles.insert("seg:0/elem:99".to_string(), EventRole::Consumer);
+        merge_event_roles(&mut tree, &roles);
+
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                assert!(l.event_role.is_none(), "Unmatched path must not set event_role");
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    // ── collect_event_id_leaves extensions ────────────────────────────────────
+
+    #[test]
+    fn collect_event_leaves_with_populated_value() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <eventid><name>Evt</name></eventid>
+                </segment>
+            </cdi>"#,
+        );
+        let event_bytes = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let mut values = HashMap::new();
+        values.insert(0u32, event_bytes.to_vec());
+        merge_config_values(&mut tree, &values);
+
+        let leaves = collect_event_id_leaves(&tree);
+        assert_eq!(leaves.len(), 1);
+        assert_eq!(leaves[0].value, Some(event_bytes));
+    }
+
+    #[test]
+    fn collect_event_leaves_deeply_nested() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <group>
+                        <name>Outer</name>
+                        <group>
+                            <name>Inner</name>
+                            <eventid><name>Deep Event</name></eventid>
+                        </group>
+                    </group>
+                </segment>
+            </cdi>"#,
+        );
+        let leaves = collect_event_id_leaves(&tree);
+        assert_eq!(leaves.len(), 1);
+        assert_eq!(leaves[0].name, "Deep Event");
+    }
+
+    // ── build_node_config_tree extensions ─────────────────────────────────────
+
+    #[test]
+    fn build_tree_string_leaf_size_preserved() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <string size="32"><name>Label</name></string>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                assert_eq!(l.element_type, LeafType::String);
+                assert_eq!(l.size, 32);
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn build_tree_float_leaf() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <float><name>Temperature</name></float>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                assert_eq!(l.element_type, LeafType::Float);
+                assert_eq!(l.size, 4);
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn build_tree_action_leaf_size_one() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <action><name>Reset</name></action>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                assert_eq!(l.element_type, LeafType::Action);
+                assert_eq!(l.size, 1);
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn build_tree_blob_leaf() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <blob size="64"><name>Raw Data</name></blob>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                assert_eq!(l.element_type, LeafType::Blob);
+                assert_eq!(l.size, 64);
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn build_tree_negative_offset_arithmetic() {
+        // Negative offsets are valid per CDI spec; cursor arithmetic must use i32.
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="200">
+                    <name>Config</name>
+                    <int size="4"><name>Header</name></int>
+                    <int size="1" offset="-2"><name>Overlap</name></int>
+                </segment>
+            </cdi>"#,
+        );
+        // Header: cursor=0, addr=200, size=4 → cursor=4
+        // Overlap: cursor=4+(-2)=2, addr=200+2=202
+        let seg = &tree.segments[0];
+        match &seg.children[0] {
+            ConfigNode::Leaf(l) => assert_eq!(l.address, 200, "Header should be at 200"),
+            _ => panic!("Expected leaf"),
+        }
+        match &seg.children[1] {
+            ConfigNode::Leaf(l) => assert_eq!(l.address, 202, "Overlap should be at 202"),
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn build_tree_map_constraints_survive() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <int size="1">
+                        <name>Mode</name>
+                        <map>
+                            <relation><property>0</property><value>Off</value></relation>
+                            <relation><property>1</property><value>On</value></relation>
+                            <relation><property>2</property><value>Auto</value></relation>
+                        </map>
+                    </int>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                let entries = l.constraints.as_ref().unwrap().map_entries.as_ref().unwrap();
+                assert_eq!(entries.len(), 3);
+                assert_eq!(entries[0].label, "Off");
+                assert_eq!(entries[1].label, "On");
+                assert_eq!(entries[2].label, "Auto");
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
 }

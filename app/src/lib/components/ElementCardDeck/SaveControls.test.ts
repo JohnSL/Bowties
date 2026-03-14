@@ -83,10 +83,10 @@ describe('SaveControls.svelte', () => {
       render(SaveControls, {
         props: { nodeId: NODE_ID, segmentOrigin: SEG_ORIGIN, segmentName: SEG_NAME },
       });
-      // Toolbar is always present; both buttons are disabled with no edits
-      expect(screen.getByRole('toolbar')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
-      expect(screen.getByRole('button', { name: /discard/i })).toBeDisabled();
+      // Toolbar is hidden entirely when there are no pending edits
+      expect(screen.queryByRole('toolbar')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /discard/i })).not.toBeInTheDocument();
     });
 
     it('renders the save toolbar when there are pending edits', () => {
@@ -103,13 +103,11 @@ describe('SaveControls.svelte', () => {
 
   describe('Save button state', () => {
     it('Save button is disabled when no pending edits', () => {
-      // Render with no edits but with a "completed" state to force toolbar to show
-      // Instead just confirm the button is not rendered at all when no edits
-      const { getByRole } = render(SaveControls, {
+      const { queryByRole } = render(SaveControls, {
         props: { nodeId: NODE_ID, segmentOrigin: SEG_ORIGIN, segmentName: SEG_NAME },
       });
-      // Save button is rendered but disabled
-      expect(getByRole('button', { name: /^save$/i })).toBeDisabled();
+      // Toolbar is hidden when there are no edits, so the button is not rendered
+      expect(queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument();
     });
 
     it('Save button is enabled when valid pending edits exist', async () => {
@@ -186,8 +184,8 @@ describe('SaveControls.svelte', () => {
       render(SaveControls, {
         props: { nodeId: NODE_ID, segmentOrigin: SEG_ORIGIN, segmentName: SEG_NAME },
       });
-      const btn = screen.getByRole('button', { name: /discard/i });
-      expect(btn).toBeDisabled();
+      // Toolbar is hidden when there are no edits, so the button is not rendered
+      expect(screen.queryByRole('button', { name: /discard/i })).not.toBeInTheDocument();
     });
 
     it('Discard button is enabled when edits exist', async () => {

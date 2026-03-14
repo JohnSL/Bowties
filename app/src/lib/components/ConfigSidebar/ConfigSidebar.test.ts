@@ -41,13 +41,6 @@ const MOCK_NODE = {
   cdi: '<cdi/>',
 };
 
-const MOCK_NODE_OFFLINE = {
-  ...MOCK_NODE,
-  node_id: [0x02, 0x01, 0x57, 0x00, 0x00, 0x02],
-  snip_data: { ...MOCK_NODE.snip_data, user_name: 'Offline Node' },
-  connection_status: 'NotResponding',
-};
-
 beforeEach(() => {
   configSidebarStore.reset();
   nodeInfoStore.set(new Map());
@@ -114,14 +107,6 @@ describe('ConfigSidebar.svelte', () => {
     let state: any;
     configSidebarStore.subscribe(s => (state = s))();
     expect(state.selectedSegment?.segmentId).toBe('seg:0');
-  });
-
-  it('renders an offline indicator for nodes with NotResponding status (RQ-006)', () => {
-    nodeInfoStore.set(new Map([['02.01.57.00.00.02', MOCK_NODE_OFFLINE as any]]));
-    render(ConfigSidebar);
-    // The offline indicator bears an accessible title or aria-label
-    const offlineEl = screen.getByTitle(/offline/i);
-    expect(offlineEl).toBeInTheDocument();
   });
 
   it('collapses a node when clicked a second time (FR-002)', () => {

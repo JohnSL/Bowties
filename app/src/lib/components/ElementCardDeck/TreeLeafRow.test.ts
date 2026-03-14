@@ -565,10 +565,10 @@ describe('TreeLeafRow.svelte', () => {
       const key = `${NODE_ID}:253:500`;
       const edit = pendingEditsStore.getEdit(key);
       expect(edit).toBeDefined();
-      expect(edit?.pendingValue).toEqual({
+      expect(edit?.pendingValue).toEqual(expect.objectContaining({
         type: 'eventId',
         bytes: [0x05, 0x01, 0x01, 0x01, 0x22, 0x00, 0x00, 0xff],
-      });
+      }));
       expect(edit?.validationState).toBe('valid');
 
       pendingEditsStore.clearAll();

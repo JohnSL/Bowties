@@ -447,4 +447,270 @@ mod tests {
         let decoded2 = DecodedMessage::decode(&frame, 0x456);
         assert_eq!(decoded2.direction, "R"); // Not our alias = received
     }
+
+    // ── parse_mti_and_alias ────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_mti_standard_mti_header() {
+        // VerifiedNode (0x19170) with source alias 0xABC
+        // header = (0x19170 << 12) | 0xABC = 0x19170ABC
+        let result = DecodedMessage::parse_mti_and_alias(0x19170ABC);
+        let (mti, src, dest) = result.expect("Should parse successfully");
+        assert_eq!(mti, MTI::VerifiedNode);
+        assert_eq!(src, 0xABC);
+        assert!(dest.is_none(), "No dest in standard global frame");
+    }
+
+    #[test]
+    fn parse_mti_datagram_header() {
+        // DatagramOnly (0x1A000), source=0x100, dest=0x200
+        // Datagram header format: (mti_upper << 24) | (dest << 12) | source
+        // mti_upper for DatagramOnly = 0x1A
+        // header = (0x1A << 24) | (0x200 << 12) | 0x100 = 0x1A200100
+        let result = DecodedMessage::parse_mti_and_alias(0x1A200100);
+        let (mti, src, dest) = result.expect("Should parse successfully");
+        assert_eq!(mti, MTI::DatagramOnly);
+        assert_eq!(src, 0x100);
+        assert_eq!(dest, Some(0x200));
+    }
+
+    // ── extract_dest_alias ────────────────────────────────────────────────────
+
+    #[test]
+    fn extract_dest_alias_snip_request_uses_header_bits_27_16() {
+        // For standard addressed MTIs, dest = (header >> 16) & 0x0FFF
+        let frame = GridConnectFrame {
+            header: 0x19DE8100, // SNIPRequest source=0x100
+            data: vec![],
+        };
+        let dest = DecodedMessage::extract_dest_alias(&frame, &MTI::SNIPRequest);
+        // (0x19DE8100 >> 16) & 0xFFF = 0x9DE
+        assert_eq!(dest, Some(0x9DE));
+    }
+
+    #[test]
+    fn extract_dest_alias_datagram_only_uses_header_bits_23_12() {
+        // For datagram MTIs, dest = (header >> 12) & 0x0FFF
+        // header = 0x1A200100 → (header >> 12) & 0xFFF = 0x200
+        let frame = GridConnectFrame {
+            header: 0x1A200100,
+            data: vec![],
+        };
+        let dest = DecodedMessage::extract_dest_alias(&frame, &MTI::DatagramOnly);
+        assert_eq!(dest, Some(0x200));
+    }
+
+    #[test]
+    fn extract_dest_alias_global_returns_none() {
+        let frame = GridConnectFrame {
+            header: 0x19490123, // VerifyNodeGlobal source=0x123
+            data: vec![],
+        };
+        let dest = DecodedMessage::extract_dest_alias(&frame, &MTI::VerifyNodeGlobal);
+        assert!(dest.is_none(), "Global messages have no destination alias");
+    }
+
+    // ── decode_payload ────────────────────────────────────────────────────────
+
+    #[test]
+    fn decode_payload_initialization_complete_valid() {
+        let frame = GridConnectFrame {
+            header: 0x19100ABC,
+            data: vec![0x05, 0x02, 0x01, 0x00, 0x00, 0x01],
+        };
+        let (summary, detail, node_id) = DecodedMessage::decode_payload(&frame, &MTI::InitializationComplete);
+        assert!(summary.contains("05.02.01.00.00.01"));
+        assert!(detail.contains("05.02.01.00.00.01"));
+        assert_eq!(node_id, Some("05.02.01.00.00.01".to_string()));
+    }
+
+    #[test]
+    fn decode_payload_initialization_complete_invalid_len() {
+        let frame = GridConnectFrame {
+            header: 0x19100ABC,
+            data: vec![0x01, 0x02], // Too short
+        };
+        let (summary, _detail, node_id) = DecodedMessage::decode_payload(&frame, &MTI::InitializationComplete);
+        assert!(summary.contains("startup"));
+        assert!(node_id.is_none());
+    }
+
+    #[test]
+    fn decode_payload_verify_node_global() {
+        let frame = GridConnectFrame {
+            header: 0x19490123,
+            data: vec![],
+        };
+        let (summary, _detail, node_id) = DecodedMessage::decode_payload(&frame, &MTI::VerifyNodeGlobal);
+        assert!(summary.contains("nodes"));
+        assert!(node_id.is_none());
+    }
+
+    #[test]
+    fn decode_payload_snip_request() {
+        let frame = GridConnectFrame {
+            header: 0x19DE8200,
+            data: vec![0x02, 0x00], // dest alias in body
+        };
+        let (summary, detail, node_id) = DecodedMessage::decode_payload(&frame, &MTI::SNIPRequest);
+        assert_eq!(summary, "Requested device identity information");
+        assert_eq!(detail, "SNIP Request");
+        assert!(node_id.is_none());
+    }
+
+    #[test]
+    fn decode_payload_datagram_received_ok_no_flags() {
+        let frame = GridConnectFrame {
+            header: 0x19A28ABC,
+            data: vec![],
+        };
+        let (summary, detail, _) = DecodedMessage::decode_payload(&frame, &MTI::DatagramReceivedOk);
+        assert!(summary.contains("acknowledged"));
+        assert_eq!(detail, "(no flags)");
+    }
+
+    #[test]
+    fn decode_payload_datagram_rejected_with_error_code() {
+        let frame = GridConnectFrame {
+            header: 0x19A48ABC,
+            data: vec![0x10, 0x10, 0x80], // flags + error code 0x1080
+        };
+        let (summary, detail, _) = DecodedMessage::decode_payload(&frame, &MTI::DatagramRejected);
+        assert!(summary.contains("rejected"));
+        assert!(detail.contains("0x1080"));
+    }
+
+    #[test]
+    fn decode_payload_generic_no_data() {
+        let frame = GridConnectFrame {
+            header: 0x19914ABC,
+            data: vec![],
+        };
+        let (summary, detail, _) = DecodedMessage::decode_payload(&frame, &MTI::IdentifyProducers);
+        assert!(!summary.is_empty());
+        assert_eq!(detail, "(no data)");
+    }
+
+    #[test]
+    fn decode_payload_generic_with_data() {
+        let frame = GridConnectFrame {
+            header: 0x198F4ABC,
+            data: vec![0xAB, 0xCD],
+        };
+        let (summary, detail, _) = DecodedMessage::decode_payload(&frame, &MTI::IdentifyConsumers);
+        assert!(summary.contains("2 bytes"));
+        assert!(detail.contains("AB CD"));
+    }
+
+    // ── decode_snip_response ──────────────────────────────────────────────────
+
+    #[test]
+    fn decode_snip_response_valid_with_manufacturer() {
+        // Version byte + manufacturer string "Acme\0"
+        let mut data = vec![0x00, 0x00]; // 2 header bytes
+        data.push(4); // SNIP version
+        data.extend_from_slice(b"Acme\0");
+        let frame = GridConnectFrame {
+            header: 0x19A08ABC,
+            data,
+        };
+        let (summary, detail, node_id) = DecodedMessage::decode_snip_response(&frame);
+        assert_eq!(summary, "Received device identity response fragment");
+        assert!(detail.contains("Acme"), "Detail should contain manufacturer name");
+        assert!(node_id.is_none());
+    }
+
+    #[test]
+    fn decode_snip_response_too_short() {
+        let frame = GridConnectFrame {
+            header: 0x19A08ABC,
+            data: vec![0x01], // Only 1 byte — less than 2 required
+        };
+        let (summary, _detail, _) = DecodedMessage::decode_snip_response(&frame);
+        assert_eq!(summary, "Received device identity response fragment");
+    }
+
+    // ── decode_datagram_ack ───────────────────────────────────────────────────
+
+    #[test]
+    fn decode_datagram_ack_accepted_no_flags() {
+        let frame = GridConnectFrame {
+            header: 0x19A28ABC,
+            data: vec![],
+        };
+        let (summary, detail, _) = DecodedMessage::decode_datagram_ack(&frame, &MTI::DatagramReceivedOk);
+        assert!(summary.contains("acknowledged"));
+        assert_eq!(detail, "(no flags)");
+    }
+
+    #[test]
+    fn decode_datagram_ack_rejected_with_flags() {
+        let frame = GridConnectFrame {
+            header: 0x19A48ABC,
+            data: vec![0x20], // flags byte only
+        };
+        let (summary, detail, _) = DecodedMessage::decode_datagram_ack(&frame, &MTI::DatagramRejected);
+        assert!(summary.contains("rejected"));
+        assert!(detail.contains("0x20"));
+    }
+
+    #[test]
+    fn decode_datagram_ack_rejected_with_error_code() {
+        let frame = GridConnectFrame {
+            header: 0x19A48ABC,
+            data: vec![0x10, 0x20, 0x30], // flags + 2-byte error code 0x2030
+        };
+        let (summary, detail, _) = DecodedMessage::decode_datagram_ack(&frame, &MTI::DatagramRejected);
+        assert!(summary.contains("rejected"));
+        assert!(detail.contains("0x2030"));
+    }
+
+    // ── ascii_preview ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn ascii_preview_printable_passes_through() {
+        let result = DecodedMessage::ascii_preview(b"Hello", 10);
+        assert_eq!(result, "Hello");
+    }
+
+    #[test]
+    fn ascii_preview_null_byte_produces_backslash_zero() {
+        // Null byte 0x00 → '\' which is then replaced with "\0" (two chars: \ and 0)
+        let result = DecodedMessage::ascii_preview(&[0x00], 10);
+        assert_eq!(result, "\\0");
+    }
+
+    #[test]
+    fn ascii_preview_control_char_becomes_dot() {
+        // 0x01 (SOH) is not graphic/space → '.'
+        let result = DecodedMessage::ascii_preview(&[0x41, 0x01, 0x42], 10); // A, control, B
+        assert_eq!(result, "A.B");
+    }
+
+    #[test]
+    fn ascii_preview_truncates_at_max_len() {
+        let result = DecodedMessage::ascii_preview(b"ABCDEFGHIJ", 5); // 10 bytes, max 5
+        assert_eq!(result, "ABCDE");
+    }
+
+    // ── mti_display_name ──────────────────────────────────────────────────────
+
+    #[test]
+    fn mti_display_name_datagram_variants() {
+        assert_eq!(DecodedMessage::mti_display_name(&MTI::DatagramOnly), "Datagram Only");
+        assert_eq!(DecodedMessage::mti_display_name(&MTI::DatagramFirst), "Datagram First");
+        assert_eq!(DecodedMessage::mti_display_name(&MTI::DatagramMiddle), "Datagram Middle");
+        assert_eq!(DecodedMessage::mti_display_name(&MTI::DatagramFinal), "Datagram Final");
+        assert_eq!(DecodedMessage::mti_display_name(&MTI::DatagramReceivedOk), "Datagram Received Ok");
+        assert_eq!(DecodedMessage::mti_display_name(&MTI::DatagramRejected), "Datagram Rejected");
+    }
+
+    #[test]
+    fn mti_display_name_fallback_uses_debug_format() {
+        // Non-special MTIs fall back to Debug format ("VerifiedNode", etc.)
+        let name = DecodedMessage::mti_display_name(&MTI::VerifiedNode);
+        assert_eq!(name, "VerifiedNode");
+        let name2 = DecodedMessage::mti_display_name(&MTI::SNIPRequest);
+        assert_eq!(name2, "SNIPRequest");
+    }
 }

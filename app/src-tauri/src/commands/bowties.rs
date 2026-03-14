@@ -1070,6 +1070,268 @@ mod build_bowtie_catalog_tests {
         assert_eq!(card.producers[0].role, lcc_rs::EventRole::Producer);
         assert_eq!(card.producers[0].node_id, node_id(0));
     }
+
+    // ── node_display_name ──────────────────────────────────────────────────────
+
+    fn make_snip(user_name: &str, manufacturer: &str, model: &str) -> lcc_rs::SNIPData {
+        lcc_rs::SNIPData {
+            manufacturer: manufacturer.to_string(),
+            model: model.to_string(),
+            hardware_version: String::new(),
+            software_version: String::new(),
+            user_name: user_name.to_string(),
+            user_description: String::new(),
+        }
+    }
+
+    fn make_node_with_snip(index: usize, snip: lcc_rs::SNIPData) -> lcc_rs::DiscoveredNode {
+        lcc_rs::DiscoveredNode {
+            node_id: lcc_rs::NodeID::new([0x05, 0x02, 0x01, 0x00, 0x00, index as u8]),
+            alias: lcc_rs::NodeAlias::new(0x100 + index as u16).unwrap(),
+            snip_data: Some(snip),
+            snip_status: lcc_rs::types::SNIPStatus::Complete,
+            connection_status: lcc_rs::types::ConnectionStatus::Unknown,
+            last_verified: None,
+            last_seen: chrono::Utc::now(),
+            cdi: None,
+            pip_flags: None,
+            pip_status: lcc_rs::types::PIPStatus::Unknown,
+        }
+    }
+
+    #[test]
+    fn node_display_name_user_name_wins() {
+        let node = make_node_with_snip(0, make_snip("My Node", "Acme", "XYZ-100"));
+        assert_eq!(node_display_name(&node), "My Node");
+    }
+
+    #[test]
+    fn node_display_name_mfg_and_model() {
+        let node = make_node_with_snip(0, make_snip("", "Acme", "Widget-100"));
+        assert_eq!(node_display_name(&node), "Acme — Widget-100");
+    }
+
+    #[test]
+    fn node_display_name_model_only() {
+        let node = make_node_with_snip(0, make_snip("", "", "Widget-100"));
+        assert_eq!(node_display_name(&node), "Widget-100");
+    }
+
+    #[test]
+    fn node_display_name_no_snip_uses_node_id() {
+        let node = make_nodes(1).into_iter().next().unwrap(); // snip_data: None
+        let expected = lcc_rs::NodeID::new([0x05, 0x02, 0x01, 0x00, 0x00, 0x00]).to_hex_string();
+        assert_eq!(node_display_name(&node), expected);
+    }
+
+    #[test]
+    fn node_display_name_empty_user_name_falls_through_to_mfg_model() {
+        // Empty user_name → should fall through to mfg/model
+        let node = make_node_with_snip(0, make_snip("", "Mfg Co", "Model X"));
+        assert_eq!(node_display_name(&node), "Mfg Co — Model X");
+    }
+
+    // ── element_label ──────────────────────────────────────────────────────────
+
+    fn event_id_elem(name: Option<&str>, description: Option<&str>) -> lcc_rs::cdi::EventIdElement {
+        lcc_rs::cdi::EventIdElement {
+            name: name.map(|s| s.to_string()),
+            description: description.map(|s| s.to_string()),
+            offset: 0,
+        }
+    }
+
+    #[test]
+    fn element_label_name_wins_over_description() {
+        let elem = event_id_elem(Some("Trigger Event"), Some("When activated."));
+        let label = element_label(&elem, &["Settings"], &["seg:0".to_string()]);
+        assert_eq!(label, "Settings.Trigger Event");
+    }
+
+    #[test]
+    fn element_label_first_sentence_of_description() {
+        let elem = event_id_elem(None, Some("When pressed. More detail."));
+        let label = element_label(&elem, &[], &["seg:0".to_string()]);
+        assert_eq!(label, "When pressed");
+    }
+
+    #[test]
+    fn element_label_last_path_component_fallback() {
+        let elem = event_id_elem(None, None);
+        let label = element_label(&elem, &[], &["seg:0".to_string(), "elem:3".to_string()]);
+        assert_eq!(label, "elem:3");
+    }
+
+    #[test]
+    fn element_label_empty_ancestors_skipped() {
+        let elem = event_id_elem(Some("Fan On"), None);
+        // Empty first ancestor should be skipped
+        let label = element_label(&elem, &["", "Outputs"], &["seg:0".to_string()]);
+        assert_eq!(label, "Outputs.Fan On");
+    }
+
+    #[test]
+    fn element_label_dot_joins_non_empty_ancestors() {
+        let elem = event_id_elem(Some("Heat"), None);
+        let label = element_label(&elem, &["Zone A", "Temperature"], &["seg:0".to_string()]);
+        assert_eq!(label, "Zone A.Temperature.Heat");
+    }
+
+    // ── best_slot ──────────────────────────────────────────────────────────────
+
+    fn make_slot(label: &str, role: lcc_rs::EventRole) -> SlotInfo {
+        SlotInfo {
+            node_id: "test".to_string(),
+            node_name: "Test Node".to_string(),
+            element_path: vec!["path".to_string()],
+            element_label: label.to_string(),
+            element_description: None,
+            heuristic_role: role,
+        }
+    }
+
+    #[test]
+    fn best_slot_exact_role_match_returned() {
+        let slots = vec![
+            make_slot("Input", lcc_rs::EventRole::Consumer),
+            make_slot("Output", lcc_rs::EventRole::Producer),
+        ];
+        let result = best_slot(&slots, lcc_rs::EventRole::Producer);
+        assert_eq!(result.unwrap().element_label, "Output");
+    }
+
+    #[test]
+    fn best_slot_fallback_to_first_when_no_match() {
+        let slots = vec![
+            make_slot("Input A", lcc_rs::EventRole::Consumer),
+            make_slot("Input B", lcc_rs::EventRole::Consumer),
+        ];
+        // No Producer slot → falls back to the first slot
+        let result = best_slot(&slots, lcc_rs::EventRole::Producer);
+        assert_eq!(result.unwrap().element_label, "Input A");
+    }
+
+    #[test]
+    fn best_slot_empty_slice_returns_none() {
+        let result = best_slot(&[], lcc_rs::EventRole::Producer);
+        assert!(result.is_none());
+    }
+
+    // ── slot_for_event_id ──────────────────────────────────────────────────────
+
+    fn make_slot_with_path(label: &str, path_str: &str, role: lcc_rs::EventRole) -> SlotInfo {
+        SlotInfo {
+            node_id: "test".to_string(),
+            node_name: "Test Node".to_string(),
+            element_path: path_str.split('/').map(|s| s.to_string()).collect(),
+            element_label: label.to_string(),
+            element_description: None,
+            heuristic_role: role,
+        }
+    }
+
+    const SLOT_EVENT: [u8; 8] = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x11, 0x22];
+
+    #[test]
+    fn slot_for_event_id_cache_hit_returns_precise_slot() {
+        let slots = vec![
+            make_slot_with_path("Consumer Slot", "seg:0/elem:0", lcc_rs::EventRole::Consumer),
+            make_slot_with_path("Producer Slot", "seg:0/elem:1", lcc_rs::EventRole::Producer),
+        ];
+        // Cache says "seg:0/elem:1" holds SLOT_EVENT
+        let mut node_cache = HashMap::new();
+        node_cache.insert("seg:0/elem:1".to_string(), SLOT_EVENT);
+        let mut config_cache = HashMap::new();
+        config_cache.insert("test".to_string(), node_cache);
+
+        let result = slot_for_event_id(&slots, "test", &SLOT_EVENT, &config_cache, lcc_rs::EventRole::Consumer);
+        assert_eq!(result.unwrap().element_label, "Producer Slot");
+    }
+
+    #[test]
+    fn slot_for_event_id_node_not_in_cache_uses_heuristic() {
+        let slots = vec![
+            make_slot_with_path("Consumer Slot", "seg:0/elem:0", lcc_rs::EventRole::Consumer),
+            make_slot_with_path("Producer Slot", "seg:0/elem:1", lcc_rs::EventRole::Producer),
+        ];
+        // Node "missing" not in cache → heuristic: find first Producer slot
+        let result = slot_for_event_id(&slots, "missing", &SLOT_EVENT, &HashMap::new(), lcc_rs::EventRole::Producer);
+        assert_eq!(result.unwrap().element_label, "Producer Slot");
+    }
+
+    #[test]
+    fn slot_for_event_id_cache_present_but_no_event_match_uses_heuristic() {
+        let slots = vec![make_slot_with_path("Only Slot", "seg:0/elem:0", lcc_rs::EventRole::Consumer)];
+        // Cache has the node but with different event bytes
+        let different_event = [0x00u8; 8];
+        let mut node_cache = HashMap::new();
+        node_cache.insert("seg:0/elem:0".to_string(), different_event);
+        let mut config_cache = HashMap::new();
+        config_cache.insert("test".to_string(), node_cache);
+
+        let result = slot_for_event_id(&slots, "test", &SLOT_EVENT, &config_cache, lcc_rs::EventRole::Consumer);
+        // No cache match for SLOT_EVENT → heuristic fallback to first Consumer slot
+        assert_eq!(result.unwrap().element_label, "Only Slot");
+    }
+
+    #[test]
+    fn slot_for_event_id_no_slots_returns_none() {
+        let result = slot_for_event_id(&[], "node", &SLOT_EVENT, &HashMap::new(), lcc_rs::EventRole::Producer);
+        assert!(result.is_none());
+    }
+
+    // ── walk_cdi_slots ─────────────────────────────────────────────────────────
+
+    fn make_node_with_cdi_xml(index: usize, cdi_xml: &str) -> lcc_rs::DiscoveredNode {
+        lcc_rs::DiscoveredNode {
+            node_id: lcc_rs::NodeID::new([0x05, 0x02, 0x01, 0x00, 0x00, index as u8]),
+            alias: lcc_rs::NodeAlias::new(0x100 + index as u16).unwrap(),
+            snip_data: None,
+            snip_status: lcc_rs::types::SNIPStatus::Unknown,
+            connection_status: lcc_rs::types::ConnectionStatus::Unknown,
+            last_verified: None,
+            last_seen: chrono::Utc::now(),
+            cdi: Some(lcc_rs::types::CdiData {
+                xml_content: cdi_xml.to_string(),
+                retrieved_at: chrono::Utc::now(),
+            }),
+            pip_flags: None,
+            pip_status: lcc_rs::types::PIPStatus::Unknown,
+        }
+    }
+
+    #[test]
+    fn walk_cdi_slots_valid_cdi_returns_correct_count() {
+        let cdi_xml = r#"<cdi>
+            <segment space="253" origin="0">
+                <name>Config</name>
+                <group><name>Producers</name>
+                    <eventid><name>Output A</name></eventid>
+                    <eventid><name>Output B</name></eventid>
+                </group>
+                <group><name>Consumers</name>
+                    <eventid><name>Input A</name></eventid>
+                </group>
+            </segment>
+        </cdi>"#;
+        let node = make_node_with_cdi_xml(0, cdi_xml);
+        let slots = walk_cdi_slots(&node);
+        assert_eq!(slots.len(), 3, "Expected 3 event slots");
+    }
+
+    #[test]
+    fn walk_cdi_slots_no_cdi_returns_empty() {
+        let node = make_nodes(1).into_iter().next().unwrap(); // cdi: None
+        let slots = walk_cdi_slots(&node);
+        assert!(slots.is_empty(), "No CDI must return empty slots");
+    }
+
+    #[test]
+    fn walk_cdi_slots_invalid_xml_returns_empty() {
+        let node = make_node_with_cdi_xml(0, "<not valid xml<<<<");
+        let slots = walk_cdi_slots(&node);
+        assert!(slots.is_empty(), "Invalid XML must return empty slots");
+    }
 }
 
 // ── Integration test stubs ────────────────────────────────────────────────────

@@ -327,4 +327,107 @@ mod tests {
         // They must differ
         assert_ne!(resolved_1, resolved_2);
     }
+
+    // ── parse_name_ordinal ────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_name_ordinal_no_suffix_gives_ordinal_one() {
+        let (base, ord) = parse_name_ordinal("Event");
+        assert_eq!(base, "Event");
+        assert_eq!(ord, 1);
+    }
+
+    #[test]
+    fn parse_name_ordinal_hash_two() {
+        let (base, ord) = parse_name_ordinal("Event#2");
+        assert_eq!(base, "Event");
+        assert_eq!(ord, 2);
+    }
+
+    #[test]
+    fn parse_name_ordinal_invalid_suffix_defaults_to_one() {
+        // Non-numeric suffix → parse fails → ordinal defaults to 1 (max(1, 0) = 1)
+        let (base, ord) = parse_name_ordinal("Event#x");
+        assert_eq!(base, "Event");
+        assert_eq!(ord, 1);
+    }
+
+    // ── strip_instance_steps ──────────────────────────────────────────────────
+
+    #[test]
+    fn strip_instance_steps_removes_inst_steps() {
+        let path = vec![
+            "seg:0".to_string(),
+            "elem:0".to_string(),
+            "inst:3".to_string(),
+        ];
+        let stripped = strip_instance_steps(&path);
+        assert_eq!(stripped, vec!["seg:0", "elem:0"]);
+    }
+
+    #[test]
+    fn strip_instance_steps_preserves_seg_and_elem() {
+        let path = vec![
+            "seg:1".to_string(),
+            "elem:2".to_string(),
+            "inst:1".to_string(),
+            "elem:5".to_string(),
+        ];
+        let stripped = strip_instance_steps(&path);
+        assert_eq!(stripped, vec!["seg:1", "elem:2", "elem:5"]);
+    }
+
+    // ── find_segment_prefix ────────────────────────────────────────────────────
+
+    #[test]
+    fn find_segment_prefix_simple_name_match() {
+        let cdi = make_test_cdi();
+        // "Port I/O" is the segment name; succeeds with greedy match
+        let result = find_segment_prefix("Port I/O/Line/Event", &cdi);
+        let (seg_idx, remaining) = result.expect("Should match 'Port I/O'");
+        assert_eq!(seg_idx, 0);
+        assert_eq!(remaining, "Line/Event");
+    }
+
+    #[test]
+    fn find_segment_prefix_slash_in_name_greedy_match() {
+        // The segment is named "Port I/O" which contains a slash.
+        // A short-match strategy would incorrectly match "Port I" if there were such a segment;
+        // the greedy strategy must prefer the longer name.
+        let cdi = make_test_cdi();
+        let result = find_segment_prefix("Port I/O", &cdi);
+        let (seg_idx, remaining) = result.expect("Should match 'Port I/O'");
+        assert_eq!(seg_idx, 0);
+        assert_eq!(remaining, ""); // consumed the whole path
+    }
+
+    #[test]
+    fn find_segment_prefix_no_match_returns_none() {
+        let cdi = make_test_cdi();
+        let result = find_segment_prefix("NonExistentSegment/Foo", &cdi);
+        assert!(result.is_none());
+    }
+
+    // ── resolve_one_path ──────────────────────────────────────────────────────
+
+    #[test]
+    fn resolve_one_path_segment_not_found_returns_err() {
+        let cdi = make_test_cdi();
+        let result = resolve_one_path("NoSuchSegment/Line", &cdi);
+        assert!(result.is_err(), "Unknown segment must return Err");
+    }
+
+    #[test]
+    fn resolve_one_path_group_not_found_returns_err() {
+        let cdi = make_test_cdi();
+        let result = resolve_one_path("Port I/O/NoSuchGroup", &cdi);
+        assert!(result.is_err(), "Unknown group must return Err");
+    }
+
+    #[test]
+    fn resolve_one_path_empty_returns_err() {
+        let cdi = make_test_cdi();
+        let result = resolve_one_path("", &cdi);
+        assert!(result.is_err(), "Empty path must return Err");
+    }
 }
