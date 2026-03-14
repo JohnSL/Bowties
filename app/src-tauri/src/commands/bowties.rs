@@ -16,6 +16,31 @@ use serde::{Serialize, Deserialize};
 
 use crate::state::{AppState, BowtieCatalog, BowtieCard, EventSlotEntry, NodeRoles};
 
+// ── Well-known event IDs ──────────────────────────────────────────────────────
+
+/// Standard LCC well-known event IDs from the OpenLCB Event Identifiers Standard.
+///
+/// These events are handled at the protocol level by nodes such as command stations
+/// and throttles — those nodes respond to `IdentifyEventsAddressed` for them even
+/// when no user has configured a CDI slot to one of these values.  Therefore bowtie
+/// cards for well-known event IDs are built exclusively from `config_value_cache`
+/// (CDI slots the user explicitly set to these values), not from the protocol exchange.
+const WELL_KNOWN_EVENT_IDS: &[([u8; 8], &str)] = &[
+    ([0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF], "Emergency Off"),
+    ([0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFE], "Clear Emergency Off"),
+    ([0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFD], "Emergency Stop"),
+    ([0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFC], "Clear Emergency Stop"),
+    ([0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xF8], "New Log Entry"),
+    ([0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFE, 0x00], "Ident Button Pressed"),
+    ([0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFD, 0x01], "Link Error 1"),
+    ([0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFD, 0x02], "Link Error 2"),
+    ([0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFD, 0x03], "Link Error 3"),
+    ([0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFD, 0x04], "Link Error 4"),
+    ([0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x02, 0x01], "Duplicate Node ID"),
+    ([0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x03, 0x03], "Is Train"),
+    ([0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x03, 0x04], "Is Traction Proxy"),
+];
+
 // ── Payload ───────────────────────────────────────────────────────────────────
 
 /// Payload emitted with the `cdi-read-complete` Tauri event.
@@ -232,7 +257,19 @@ pub fn build_bowtie_catalog(
 
     let mut bowties: Vec<BowtieCard> = Vec::new();
 
+    // Build a set of well-known event IDs for O(1) skip in the protocol loop.
+    let well_known_set: std::collections::HashSet<[u8; 8]> =
+        WELL_KNOWN_EVENT_IDS.iter().map(|&(bytes, _)| bytes).collect();
+
     for (event_id_bytes, roles) in event_roles {
+        // Well-known event IDs are handled exclusively via config_value_cache (see below).
+        // Protocol replies for these events come from structural participants (e.g. command
+        // stations, throttles) regardless of whether the user configured a CDI slot, so
+        // the protocol exchange alone is not sufficient evidence of a user-wired connection.
+        if well_known_set.contains(event_id_bytes) {
+            continue;
+        }
+
         // FR-002: bowtie requires ≥1 confirmed producer AND ≥1 confirmed consumer.
         if roles.producers.is_empty() || roles.consumers.is_empty() {
             continue;
@@ -428,6 +465,114 @@ pub fn build_bowtie_catalog(
             consumers,
             ambiguous_entries,
             name: None,
+        });
+    }
+
+    // Well-known events: build cards solely from config_value_cache.
+    //
+    // Protocol replies from nodes like JMRI or UWT-100 are ignored for these IDs because
+    // those nodes participate at the protocol level even when no CDI slot has been set.
+    // A card is emitted only when ≥1 node has a CDI config slot whose cached value equals
+    // the well-known event ID.  A single-entry card is valid here — it informs the user
+    // which slot they have configured; the "requires ≥2 entries" rule does not apply.
+    for &(wk_bytes, wk_name) in WELL_KNOWN_EVENT_IDS {
+        let event_id_hex = format!(
+            "{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}",
+            wk_bytes[0], wk_bytes[1], wk_bytes[2], wk_bytes[3],
+            wk_bytes[4], wk_bytes[5], wk_bytes[6], wk_bytes[7]
+        );
+
+        let mut wk_producers: Vec<EventSlotEntry> = Vec::new();
+        let mut wk_consumers: Vec<EventSlotEntry> = Vec::new();
+        let mut wk_ambiguous: Vec<EventSlotEntry> = Vec::new();
+
+        for (node_id, node_cache) in config_value_cache {
+            let slots = slot_map.get(node_id).map(|s| s.as_slice()).unwrap_or(&[]);
+            let node_name = nodes
+                .iter()
+                .find(|n| n.node_id.to_hex_string() == *node_id)
+                .map(node_display_name)
+                .unwrap_or_else(|| node_id.clone());
+
+            for (path_key, &cached_bytes) in node_cache {
+                if cached_bytes != wk_bytes {
+                    continue;
+                }
+
+                // Resolve SlotInfo for this path to obtain label, description, and
+                // heuristic role classification.
+                let slot = slots.iter().find(|s| s.element_path.join("/") == *path_key);
+                let (ep, el, ed, heuristic) = slot
+                    .map(|s| (
+                        s.element_path.clone(),
+                        s.element_label.clone(),
+                        s.element_description.clone(),
+                        s.heuristic_role,
+                    ))
+                    .unwrap_or_else(|| (
+                        path_key.split('/').map(|s| s.to_string()).collect(),
+                        path_key.clone(),
+                        None,
+                        lcc_rs::EventRole::Ambiguous,
+                    ));
+
+                // Profile role overrides the CDI heuristic; Ambiguous heuristic stays Ambiguous.
+                let profile_key = format!("{}:{}", node_id, path_key);
+                let resolved_role = profile_group_roles
+                    .and_then(|map| map.get(&profile_key))
+                    .copied()
+                    .unwrap_or(heuristic);
+
+                match resolved_role {
+                    lcc_rs::EventRole::Producer => {
+                        wk_producers.push(EventSlotEntry {
+                            node_id: node_id.clone(),
+                            node_name: node_name.clone(),
+                            element_path: ep,
+                            element_label: el,
+                            element_description: ed,
+                            event_id: wk_bytes,
+                            role: lcc_rs::EventRole::Producer,
+                        });
+                    }
+                    lcc_rs::EventRole::Consumer => {
+                        wk_consumers.push(EventSlotEntry {
+                            node_id: node_id.clone(),
+                            node_name: node_name.clone(),
+                            element_path: ep,
+                            element_label: el,
+                            element_description: ed,
+                            event_id: wk_bytes,
+                            role: lcc_rs::EventRole::Consumer,
+                        });
+                    }
+                    lcc_rs::EventRole::Ambiguous => {
+                        wk_ambiguous.push(EventSlotEntry {
+                            node_id: node_id.clone(),
+                            node_name: node_name.clone(),
+                            element_path: ep,
+                            element_label: el,
+                            element_description: ed,
+                            event_id: wk_bytes,
+                            role: lcc_rs::EventRole::Ambiguous,
+                        });
+                    }
+                }
+            }
+        }
+
+        let wk_total = wk_producers.len() + wk_consumers.len() + wk_ambiguous.len();
+        if wk_total == 0 {
+            continue;
+        }
+
+        bowties.push(BowtieCard {
+            event_id_hex,
+            event_id_bytes: wk_bytes,
+            producers: wk_producers,
+            consumers: wk_consumers,
+            ambiguous_entries: wk_ambiguous,
+            name: Some(wk_name.to_string()),
         });
     }
 
@@ -1331,6 +1476,116 @@ mod build_bowtie_catalog_tests {
         let node = make_node_with_cdi_xml(0, "<not valid xml<<<<");
         let slots = walk_cdi_slots(&node);
         assert!(slots.is_empty(), "Invalid XML must return empty slots");
+    }
+
+    // ── T007: well-known event ID tests ───────────────────────────────────────
+
+    // Emergency Off bytes for convenience in these tests.
+    const WK_EMERGENCY_OFF: [u8; 8] = [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF];
+
+    /// (T007a) Well-known event ID appears in protocol event_roles only (no config
+    /// cache entry) → no card is emitted.
+    #[test]
+    fn t007a_well_known_protocol_only_no_card() {
+        let nodes = make_nodes(2);
+        let mut event_roles = HashMap::new();
+        // Simulate JMRI (node 0) and UWT-100 (node 1) replying for Emergency Off.
+        event_roles.insert(WK_EMERGENCY_OFF, roles(&[0], &[1]));
+
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new(), None);
+
+        assert_eq!(
+            catalog.bowties.len(), 0,
+            "Well-known event with only protocol replies → no card"
+        );
+    }
+
+    /// (T007b) Well-known event ID is in a CDI config slot on one node → a
+    /// single-entry card is emitted (single-entry rule is relaxed for well-known events).
+    #[test]
+    fn t007b_well_known_config_one_node_gives_card() {
+        let nodes = make_nodes(1);
+        let event_roles: HashMap<[u8; 8], NodeRoles> = HashMap::new();
+
+        let mut node_cache = HashMap::new();
+        node_cache.insert("seg:0/elem:0".to_string(), WK_EMERGENCY_OFF);
+        let mut config_cache = HashMap::new();
+        config_cache.insert(node_id(0), node_cache);
+
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &config_cache, None);
+
+        assert_eq!(catalog.bowties.len(), 1, "Single config entry → card emitted");
+        let card = &catalog.bowties[0];
+        assert_eq!(card.event_id_bytes, WK_EMERGENCY_OFF);
+        assert_eq!(card.name, Some("Emergency Off".to_string()));
+        let total = card.producers.len() + card.consumers.len() + card.ambiguous_entries.len();
+        assert_eq!(total, 1, "Exactly the one configured slot");
+    }
+
+    /// (T007c) Well-known event ID in config on two separate nodes → 2-entry card.
+    #[test]
+    fn t007c_well_known_config_two_nodes_gives_card() {
+        let nodes = make_nodes(2);
+        let event_roles: HashMap<[u8; 8], NodeRoles> = HashMap::new();
+
+        let mut cache0 = HashMap::new();
+        cache0.insert("seg:0/elem:0".to_string(), WK_EMERGENCY_OFF);
+        let mut cache1 = HashMap::new();
+        cache1.insert("seg:0/elem:0".to_string(), WK_EMERGENCY_OFF);
+        let mut config_cache = HashMap::new();
+        config_cache.insert(node_id(0), cache0);
+        config_cache.insert(node_id(1), cache1);
+
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &config_cache, None);
+
+        assert_eq!(catalog.bowties.len(), 1);
+        let card = &catalog.bowties[0];
+        assert_eq!(card.name, Some("Emergency Off".to_string()));
+        let total = card.producers.len() + card.consumers.len() + card.ambiguous_entries.len();
+        assert_eq!(total, 2, "Both configured nodes appear in the card");
+    }
+
+    /// (T007d) Well-known event ID appears in both protocol event_roles (nodes 0 & 1)
+    /// AND in config cache (node 2 only) → only the config entry is shown; protocol
+    /// participants are excluded.
+    #[test]
+    fn t007d_well_known_protocol_and_config_uses_config_only() {
+        let nodes = make_nodes(3);
+        let mut event_roles = HashMap::new();
+        event_roles.insert(WK_EMERGENCY_OFF, roles(&[0], &[1]));
+
+        let mut cache2 = HashMap::new();
+        cache2.insert("seg:0/elem:0".to_string(), WK_EMERGENCY_OFF);
+        let mut config_cache = HashMap::new();
+        config_cache.insert(node_id(2), cache2);
+
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &config_cache, None);
+
+        assert_eq!(catalog.bowties.len(), 1);
+        let card = &catalog.bowties[0];
+        let all_node_ids: Vec<String> = card.producers.iter()
+            .chain(card.consumers.iter())
+            .chain(card.ambiguous_entries.iter())
+            .map(|e| e.node_id.clone())
+            .collect();
+        assert_eq!(all_node_ids.len(), 1, "Only the config-cache entry for node 2");
+        assert!(all_node_ids.contains(&node_id(2)), "Node 2 (config) should be present");
+        assert!(!all_node_ids.contains(&node_id(0)), "Node 0 (protocol only) must not appear");
+        assert!(!all_node_ids.contains(&node_id(1)), "Node 1 (protocol only) must not appear");
+    }
+
+    /// (T007e) A normal (non-well-known) event pair is unaffected — regular bowtie
+    /// cards still appear via the protocol loop (regression guard).
+    #[test]
+    fn t007e_non_well_known_event_still_creates_card() {
+        let nodes = make_nodes(2);
+        let mut event_roles = HashMap::new();
+        event_roles.insert(EVENT_A, roles(&[0], &[1]));
+
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new(), None);
+
+        assert_eq!(catalog.bowties.len(), 1, "Normal event still creates a card");
+        assert_eq!(catalog.bowties[0].name, None, "Normal events have no canonical name");
     }
 }
 
