@@ -67,7 +67,7 @@ export async function downloadCdi(nodeId: string): Promise<GetCdiXmlResponse> {
 }
 
 // ============================================================================
-// Miller Columns Navigation API
+// CDI Navigation API
 // ============================================================================
 
 /**

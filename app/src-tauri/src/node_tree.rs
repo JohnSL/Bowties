@@ -92,6 +92,18 @@ pub struct GroupNode {
     pub display_name: Option<String>,
 }
 
+/// Write lifecycle state for a pending modification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WriteState {
+    /// User has set a modified value that differs from the on-node value.
+    Dirty,
+    /// A write to the node is in progress.
+    Writing,
+    /// The last write attempt failed.
+    Error,
+}
+
 /// A leaf configuration element (int, string, eventid, float, action, blob).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -116,6 +128,17 @@ pub struct LeafNode {
     pub event_role: Option<EventRole>,
     /// Constraints (min, max, default, map entries)
     pub constraints: Option<LeafConstraints>,
+    /// User-modified value not yet written to the node.
+    /// When `Some`, this is the value the user intends to write.
+    /// `value` retains the last-confirmed on-node value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_value: Option<ConfigValue>,
+    /// Write lifecycle state.  `None` when no modification is pending.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_state: Option<WriteState>,
+    /// Error message from the last failed write attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_error: Option<String>,
 }
 
 /// Discriminator for leaf element types.
@@ -131,7 +154,7 @@ pub enum LeafType {
 }
 
 /// A configuration value read from a node.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ConfigValue {
     /// Integer value
@@ -263,10 +286,10 @@ fn build_children(
 
                     for instance in 0..effective_replication {
                         let inst_num = instance + 1; // 1-based
-                        let instance_path_step = format!("inst:{}", inst_num);
 
-                        let mut child_path = group_path.clone();
-                        child_path.push(instance_path_step);
+                        // Use CDI-walker-compatible format: "elem:I#N"
+                        let mut child_path = parent_path.to_vec();
+                        child_path.push(format!("elem:{}#{}", i, inst_num));
 
                         let instance_base = group_start + instance as i32 * stride;
                         let instance_label = g.compute_repname(instance);
@@ -350,6 +373,9 @@ fn build_children(
                                 .collect()
                         }),
                     }),
+                    modified_value: None,
+                    write_state: None,
+                    write_error: None,
                 }));
                 cursor += e.size as i32;
             }
@@ -369,6 +395,9 @@ fn build_children(
                     value: None,
                     event_role: None,
                     constraints: None,
+                    modified_value: None,
+                    write_state: None,
+                    write_error: None,
                 }));
                 cursor += s.size as i32;
             }
@@ -388,6 +417,9 @@ fn build_children(
                     value: None,
                     event_role: None,
                     constraints: None,
+                    modified_value: None,
+                    write_state: None,
+                    write_error: None,
                 }));
                 cursor += 8;
             }
@@ -407,6 +439,9 @@ fn build_children(
                     value: None,
                     event_role: None,
                     constraints: None,
+                    modified_value: None,
+                    write_state: None,
+                    write_error: None,
                 }));
                 cursor += 4;
             }
@@ -426,6 +461,9 @@ fn build_children(
                     value: None,
                     event_role: None,
                     constraints: None,
+                    modified_value: None,
+                    write_state: None,
+                    write_error: None,
                 }));
                 cursor += 1;
             }
@@ -445,6 +483,9 @@ fn build_children(
                     value: None,
                     event_role: None,
                     constraints: None,
+                    modified_value: None,
+                    write_state: None,
+                    write_error: None,
                 }));
                 cursor += b.size as i32;
             }
@@ -616,7 +657,7 @@ fn collect_event_leaves_recursive(children: &[ConfigNode], results: &mut Vec<Eve
                 collect_event_leaves_recursive(&g.children, results);
             }
             ConfigNode::Leaf(leaf) if leaf.element_type == LeafType::EventId => {
-                let value = match &leaf.value {
+                let value = match effective_value(leaf) {
                     Some(ConfigValue::EventId { bytes, .. }) => Some(*bytes),
                     _ => None,
                 };
@@ -686,6 +727,225 @@ pub fn classify_leaf_roles_from_protocol(
     }
 
     result
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Modified value operations
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Set a modified value on a leaf identified by `(space, address)`.
+///
+/// If `new_value` equals the leaf's committed `value`, the modification is
+/// automatically cleared (the user reverted to the original).
+/// Returns `true` if the leaf was found.
+pub fn set_modified_value(
+    tree: &mut NodeConfigTree,
+    space: u8,
+    address: u32,
+    new_value: ConfigValue,
+) -> bool {
+    for segment in &mut tree.segments {
+        if set_modified_in_children(&mut segment.children, space, address, &new_value) {
+            return true;
+        }
+    }
+    false
+}
+
+fn set_modified_in_children(
+    children: &mut [ConfigNode],
+    space: u8,
+    address: u32,
+    new_value: &ConfigValue,
+) -> bool {
+    for child in children.iter_mut() {
+        match child {
+            ConfigNode::Group(g) => {
+                if set_modified_in_children(&mut g.children, space, address, new_value) {
+                    return true;
+                }
+            }
+            ConfigNode::Leaf(leaf) if leaf.space == space && leaf.address == address => {
+                // Auto-revert: if the new value equals the committed value, clear the edit.
+                if leaf.value.as_ref() == Some(new_value) {
+                    leaf.modified_value = None;
+                    leaf.write_state = None;
+                    leaf.write_error = None;
+                } else {
+                    leaf.modified_value = Some(new_value.clone());
+                    leaf.write_state = Some(WriteState::Dirty);
+                    leaf.write_error = None;
+                }
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Clear all modified values in the tree (discard all pending edits).
+pub fn discard_all_modified(tree: &mut NodeConfigTree) {
+    for segment in &mut tree.segments {
+        discard_in_children(&mut segment.children);
+    }
+}
+
+fn discard_in_children(children: &mut [ConfigNode]) {
+    for child in children.iter_mut() {
+        match child {
+            ConfigNode::Group(g) => discard_in_children(&mut g.children),
+            ConfigNode::Leaf(leaf) => {
+                leaf.modified_value = None;
+                leaf.write_state = None;
+                leaf.write_error = None;
+            }
+        }
+    }
+}
+
+/// Returns `true` if any leaf in the tree has a pending modification.
+pub fn has_modified_values(tree: &NodeConfigTree) -> bool {
+    tree.segments
+        .iter()
+        .any(|s| has_modified_in_children(&s.children))
+}
+
+fn has_modified_in_children(children: &[ConfigNode]) -> bool {
+    children.iter().any(|c| match c {
+        ConfigNode::Group(g) => has_modified_in_children(&g.children),
+        ConfigNode::Leaf(leaf) => leaf.modified_value.is_some(),
+    })
+}
+
+/// Info about a leaf with a pending modification, used by the write pipeline.
+#[derive(Debug, Clone)]
+pub struct ModifiedLeafInfo {
+    pub address: u32,
+    pub space: u8,
+    pub size: u32,
+    pub element_type: LeafType,
+    pub path: Vec<String>,
+    pub name: String,
+    pub value: ConfigValue,
+}
+
+/// Collect all leaves that have pending modifications (write_state == Dirty or Error).
+pub fn collect_modified_leaves(tree: &NodeConfigTree) -> Vec<ModifiedLeafInfo> {
+    let mut results = Vec::new();
+    for segment in &tree.segments {
+        collect_modified_recursive(&segment.children, &mut results);
+    }
+    results
+}
+
+fn collect_modified_recursive(children: &[ConfigNode], results: &mut Vec<ModifiedLeafInfo>) {
+    for child in children {
+        match child {
+            ConfigNode::Group(g) => collect_modified_recursive(&g.children, results),
+            ConfigNode::Leaf(leaf) => {
+                if let Some(ref modified) = leaf.modified_value {
+                    match leaf.write_state {
+                        Some(WriteState::Dirty) | Some(WriteState::Error) => {
+                            results.push(ModifiedLeafInfo {
+                                address: leaf.address,
+                                space: leaf.space,
+                                size: leaf.size,
+                                element_type: leaf.element_type,
+                                path: leaf.path.clone(),
+                                name: leaf.name.clone(),
+                                value: modified.clone(),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Update the write_state for a specific leaf identified by (space, address).
+pub fn set_leaf_write_state(
+    tree: &mut NodeConfigTree,
+    space: u8,
+    address: u32,
+    state: WriteState,
+    error: Option<String>,
+) -> bool {
+    for segment in &mut tree.segments {
+        if set_write_state_in_children(&mut segment.children, space, address, state, &error) {
+            return true;
+        }
+    }
+    false
+}
+
+fn set_write_state_in_children(
+    children: &mut [ConfigNode],
+    space: u8,
+    address: u32,
+    state: WriteState,
+    error: &Option<String>,
+) -> bool {
+    for child in children.iter_mut() {
+        match child {
+            ConfigNode::Group(g) => {
+                if set_write_state_in_children(&mut g.children, space, address, state, error) {
+                    return true;
+                }
+            }
+            ConfigNode::Leaf(leaf) if leaf.space == space && leaf.address == address => {
+                leaf.write_state = Some(state);
+                leaf.write_error = error.clone();
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Promote a leaf's `modified_value` to `value` after a successful write,
+/// clearing the modification state.
+pub fn commit_leaf_value(
+    tree: &mut NodeConfigTree,
+    space: u8,
+    address: u32,
+) -> bool {
+    for segment in &mut tree.segments {
+        if commit_in_children(&mut segment.children, space, address) {
+            return true;
+        }
+    }
+    false
+}
+
+fn commit_in_children(children: &mut [ConfigNode], space: u8, address: u32) -> bool {
+    for child in children.iter_mut() {
+        match child {
+            ConfigNode::Group(g) => {
+                if commit_in_children(&mut g.children, space, address) {
+                    return true;
+                }
+            }
+            ConfigNode::Leaf(leaf) if leaf.space == space && leaf.address == address => {
+                if let Some(modified) = leaf.modified_value.take() {
+                    leaf.value = Some(modified);
+                }
+                leaf.write_state = None;
+                leaf.write_error = None;
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Return the "effective" value for a leaf: `modified_value` if present, else `value`.
+pub fn effective_value(leaf: &LeafNode) -> Option<&ConfigValue> {
+    leaf.modified_value.as_ref().or(leaf.value.as_ref())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -833,13 +1093,12 @@ mod tests {
                                 _ => panic!("Expected leaf"),
                             }
 
-                            // Path: seg:0 / elem:0 / inst:N
+                            // Path: seg:0 / elem:0#N (CDI-walker-compatible)
                             assert_eq!(
                                 g.path,
                                 vec![
                                     "seg:0".to_string(),
-                                    "elem:0".to_string(),
-                                    format!("inst:{}", idx + 1)
+                                    format!("elem:0#{}", idx + 1)
                                 ]
                             );
                         }
@@ -899,13 +1158,12 @@ mod tests {
                             assert_eq!(g.instance_label, format!("Event {}", i + 1));
                             // Instances don't repeat the description (only wrapper has it)
                             assert_eq!(g.description, None);
-                            // Path: seg:0 / elem:0 / inst:N
+                            // Path: seg:0 / elem:0#N (CDI-walker-compatible)
                             assert_eq!(
                                 g.path,
                                 vec![
                                     "seg:0".to_string(),
-                                    "elem:0".to_string(),
-                                    format!("inst:{}", i + 1)
+                                    format!("elem:0#{}", i + 1)
                                 ]
                             );
                             // Each eventid is 8 bytes, address = i * 8
@@ -943,13 +1201,12 @@ mod tests {
                             assert_eq!(g.instance_label, format!("Event {}", i + 1));
                             // Instances don't repeat the description (only wrapper has it)
                             assert_eq!(g.description, None);
-                            // Path: seg:0 / elem:1 / inst:N
+                            // Path: seg:0 / elem:1#N (CDI-walker-compatible)
                             assert_eq!(
                                 g.path,
                                 vec![
                                     "seg:0".to_string(),
-                                    "elem:1".to_string(),
-                                    format!("inst:{}", i + 1)
+                                    format!("elem:1#{}", i + 1)
                                 ]
                             );
                             // Address continues from 48: 48 + i*8

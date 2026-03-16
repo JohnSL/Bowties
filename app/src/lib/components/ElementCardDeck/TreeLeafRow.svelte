@@ -7,14 +7,15 @@
    * Maps enum values to labels via `constraints.mapEntries`.
    * Event IDs in monospace dotted hex, "(not set)" for all-zeros.
    *
-   * Spec 007: string and int (no map) fields are editable inline.
-   * Dirty state tracked in PendingEditsStore. Validation enforced on input.
+   * Editable fields send their values to the Rust tree via `setModifiedValue`.
+   * The tree's `modifiedValue` and `writeState` drive dirty/error display.
    */
-  import type { LeafConfigNode, TreeConfigValue, TreeMapEntry, PendingEdit } from '$lib/types/nodeTree';
+  import type { LeafConfigNode, TreeConfigValue, TreeMapEntry } from '$lib/types/nodeTree';
+  import { effectiveValue } from '$lib/types/nodeTree';
   import type { BowtieCard } from '$lib/api/tauri';
   import { bowtieName } from '$lib/api/tauri';
   import { goto } from '$app/navigation';
-  import { pendingEditsStore, makePendingEditKey, pendingEditsVersion } from '$lib/stores/pendingEdits.svelte';
+  import { setModifiedValue } from '$lib/api/config';
   import { parseEventIdHex, formatEventIdHex } from '$lib/utils/serialize';
 
   let {
@@ -46,36 +47,18 @@
   let descExpanded = $state(false);
 
   /**
-   * Local pending value set while the user is editing this field.
-   * null = no in-progress edit (show leaf.value as read-only or pre-fill input).
+   * Local validation state tracked on the frontend only.
+   * Invalid values are not sent to Rust — they stay local until corrected.
    */
-  let localPending = $state<TreeConfigValue | null>(null);
-
-  // Sync localPending with store on mount / leaf change / any store mutation.
-  // If the store already has an edit for this field (e.g. navigated away
-  // and back, or another component discarded the edit), restore or clear it.
-  $effect(() => {
-    void $pendingEditsVersion;  // subscribe so this re-runs on any store mutation
-    const key = makePendingEditKey(nodeId, leaf.space, leaf.address);
-    const stored = pendingEditsStore.getEdit(key);
-    if (stored) {
-      localPending = stored.pendingValue;
-    } else {
-      localPending = null;
-    }
-  });
+  let localInvalidValue = $state<string | null>(null);
+  let localValidationMessage = $state<string | null>(null);
 
   // ── Derived values ─────────────────────────────────────────────────────────
 
-  // Version counter ensures $derived re-evaluates when any edit changes
-  let _version = $derived($pendingEditsVersion);
-
-  let editKey = $derived(makePendingEditKey(nodeId, leaf.space, leaf.address));
-  let currentEdit = $derived(_version >= 0 ? pendingEditsStore.getEdit(editKey) : undefined);
-  let isDirty = $derived(localPending !== null || currentEdit !== undefined);
-  let isInvalid = $derived(currentEdit?.validationState === 'invalid');
-  let isWriting = $derived(currentEdit?.writeState === 'writing');
-  let hasWriteError = $derived(currentEdit?.writeState === 'error');
+  let isDirty = $derived(leaf.modifiedValue != null);
+  let isInvalid = $derived(localInvalidValue !== null);
+  let isWriting = $derived(leaf.writeState === 'writing');
+  let hasWriteError = $derived(leaf.writeState === 'error');
   /** True when input should be disabled: either saving or node is offline (FR-007) */
   let isDisabled = $derived(isWriting || isNodeOffline);
 
@@ -105,8 +88,8 @@
     leaf.elementType === 'eventId'
   );
 
-  /** Current display value — pending if dirty, else canonical */
-  let displayValue = $derived(localPending ?? leaf.value);
+  /** Current display value — modifiedValue if pending, else committed value */
+  let displayValue = $derived(effectiveValue(leaf));
 
   /** String value for controlled text input */
   let inputStr = $derived(
@@ -149,11 +132,10 @@
 
   // ── Edit handlers ──────────────────────────────────────────────────────────
 
-  /** Validate a string value and update the pending store */
+  /** Validate a string value and send to Rust tree */
   function handleStringInput(e: Event) {
     const raw = (e.target as HTMLInputElement).value;
     const newVal: TreeConfigValue = { type: 'string', value: raw };
-    const original = leaf.value ?? { type: 'string', value: '' };
 
     // Validate: max length
     const maxLen = leaf.size - 1;
@@ -161,165 +143,66 @@
     const byteLen = encoder.encode(raw).length;
     const isValid = byteLen <= maxLen;
 
-    const edit: PendingEdit = {
-      key: editKey,
-      nodeId,
-      segmentOrigin,
-      segmentName,
-      address: leaf.address,
-      space: leaf.space,
-      size: leaf.size,
-      elementType: leaf.elementType,
-      fieldPath: leaf.path,
-      fieldLabel: leaf.name,
-      originalValue: original,
-      pendingValue: newVal,
-      validationState: isValid ? 'valid' : 'invalid',
-      validationMessage: isValid ? null : `Text too long (max ${maxLen} characters)`,
-      writeState: 'dirty',
-      writeError: null,
-      constraints: leaf.constraints,
-    };
+    if (!isValid) {
+      localInvalidValue = raw;
+      localValidationMessage = `Text too long (max ${maxLen} characters)`;
+      return;
+    }
 
-    pendingEditsStore.setEdit(editKey, edit);
-    // Sync localPending with store — auto-clears if value reverted to original
-    localPending = pendingEditsStore.getEdit(editKey)?.pendingValue ?? null;
+    localInvalidValue = null;
+    localValidationMessage = null;
+    setModifiedValue(nodeId, leaf.address, leaf.space, newVal);
   }
 
-  /** Validate an integer value and update the pending store */
+  /** Validate an integer value and send to Rust tree */
   function handleIntInput(e: Event) {
     const raw = (e.target as HTMLInputElement).value;
     const parsed = parseInt(raw, 10);
 
     if (isNaN(parsed)) {
-      // Keep localPending as-is; mark invalid
-      const original = leaf.value ?? { type: 'int', value: 0 };
-      const newVal: TreeConfigValue = { type: 'int', value: 0 };
-      const edit: PendingEdit = {
-        key: editKey,
-        nodeId,
-        segmentOrigin,
-        segmentName,
-        address: leaf.address,
-        space: leaf.space,
-        size: leaf.size,
-        elementType: leaf.elementType,
-        fieldPath: leaf.path,
-        fieldLabel: leaf.name,
-        originalValue: original,
-        pendingValue: newVal,
-        validationState: 'invalid',
-        validationMessage: 'Must be a valid number',
-        writeState: 'dirty',
-        writeError: null,
-        constraints: leaf.constraints,
-      };
-      pendingEditsStore.setEdit(editKey, edit);
+      localInvalidValue = raw;
+      localValidationMessage = 'Must be a valid number';
       return;
     }
 
     const newVal: TreeConfigValue = { type: 'int', value: parsed };
-    const original = leaf.value ?? { type: 'int', value: 0 };
 
     // Validate: min/max
     const min = leaf.constraints?.min;
     const max = leaf.constraints?.max;
     const tooLow = min !== null && min !== undefined && parsed < min;
     const tooHigh = max !== null && max !== undefined && parsed > max;
-    const isValid = !tooLow && !tooHigh;
-    const validMsg = tooLow
-      ? `Value must be between ${min} and ${max}`
-      : tooHigh
-      ? `Value must be between ${min} and ${max}`
-      : null;
 
-    const edit: PendingEdit = {
-      key: editKey,
-      nodeId,
-      segmentOrigin,
-      segmentName,
-      address: leaf.address,
-      space: leaf.space,
-      size: leaf.size,
-      elementType: leaf.elementType,
-      fieldPath: leaf.path,
-      fieldLabel: leaf.name,
-      originalValue: original,
-      pendingValue: newVal,
-      validationState: isValid ? 'valid' : 'invalid',
-      validationMessage: validMsg,
-      writeState: 'dirty',
-      writeError: null,
-      constraints: leaf.constraints,
-    };
+    if (tooLow || tooHigh) {
+      localInvalidValue = raw;
+      localValidationMessage = `Value must be between ${min} and ${max}`;
+      return;
+    }
 
-    pendingEditsStore.setEdit(editKey, edit);
-    // Sync localPending with store — auto-clears if value reverted to original
-    localPending = pendingEditsStore.getEdit(editKey)?.pendingValue ?? null;
+    localInvalidValue = null;
+    localValidationMessage = null;
+    setModifiedValue(nodeId, leaf.address, leaf.space, newVal);
   }
 
   /** Handle int-with-mapEntries select change */
   function handleSelectChange(e: Event) {
     const raw = (e.target as HTMLSelectElement).value;
     const parsed = parseInt(raw, 10);
-    const original = leaf.value ?? { type: 'int', value: 0 };
     const newVal: TreeConfigValue = { type: 'int', value: parsed };
 
-    const edit: PendingEdit = {
-      key: editKey,
-      nodeId,
-      segmentOrigin,
-      segmentName,
-      address: leaf.address,
-      space: leaf.space,
-      size: leaf.size,
-      elementType: leaf.elementType,
-      fieldPath: leaf.path,
-      fieldLabel: leaf.name,
-      originalValue: original,
-      pendingValue: newVal,
-      validationState: 'valid',
-      validationMessage: null,
-      writeState: 'dirty',
-      writeError: null,
-      constraints: leaf.constraints,
-    };
-
-    localPending = newVal;
-    pendingEditsStore.setEdit(editKey, edit);
-    // Sync localPending with store — auto-clears if value reverted to original
-    localPending = pendingEditsStore.getEdit(editKey)?.pendingValue ?? null;
+    localInvalidValue = null;
+    localValidationMessage = null;
+    setModifiedValue(nodeId, leaf.address, leaf.space, newVal);
   }
 
-  /** Validate a float value and update the pending store */
+  /** Validate a float value and send to Rust tree */
   function handleFloatInput(e: Event) {
     const raw = (e.target as HTMLInputElement).value;
     const parsed = parseFloat(raw);
-    const original = leaf.value ?? { type: 'float', value: 0 };
 
     if (isNaN(parsed)) {
-      // Invalid — record invalid state
-      const newVal: TreeConfigValue = { type: 'float', value: 0 };
-      const edit: PendingEdit = {
-        key: editKey,
-        nodeId,
-        segmentOrigin,
-        segmentName,
-        address: leaf.address,
-        space: leaf.space,
-        size: leaf.size,
-        elementType: leaf.elementType,
-        fieldPath: leaf.path,
-        fieldLabel: leaf.name,
-        originalValue: original,
-        pendingValue: newVal,
-        validationState: 'invalid',
-        validationMessage: 'Must be a valid number',
-        writeState: 'dirty',
-        writeError: null,
-        constraints: leaf.constraints,
-      };
-      pendingEditsStore.setEdit(editKey, edit);
+      localInvalidValue = raw;
+      localValidationMessage = 'Must be a valid number';
       return;
     }
 
@@ -330,97 +213,35 @@
     const max = leaf.constraints?.max;
     const tooLow = min !== null && min !== undefined && parsed < min;
     const tooHigh = max !== null && max !== undefined && parsed > max;
-    const isValid = !tooLow && !tooHigh;
-    const validMsg = (!isValid) ? `Value must be between ${min} and ${max}` : null;
 
-    const edit: PendingEdit = {
-      key: editKey,
-      nodeId,
-      segmentOrigin,
-      segmentName,
-      address: leaf.address,
-      space: leaf.space,
-      size: leaf.size,
-      elementType: leaf.elementType,
-      fieldPath: leaf.path,
-      fieldLabel: leaf.name,
-      originalValue: original,
-      pendingValue: newVal,
-      validationState: isValid ? 'valid' : 'invalid',
-      validationMessage: validMsg,
-      writeState: 'dirty',
-      writeError: null,
-      constraints: leaf.constraints,
-    };
+    if (tooLow || tooHigh) {
+      localInvalidValue = raw;
+      localValidationMessage = `Value must be between ${min} and ${max}`;
+      return;
+    }
 
-    localPending = newVal;
-    pendingEditsStore.setEdit(editKey, edit);
-    // Sync localPending with store — auto-clears if value reverted to original
-    localPending = pendingEditsStore.getEdit(editKey)?.pendingValue ?? null;
+    localInvalidValue = null;
+    localValidationMessage = null;
+    setModifiedValue(nodeId, leaf.address, leaf.space, newVal);
   }
 
-  /** Validate an event ID in dotted-hex and update the pending store */
+  /** Validate an event ID in dotted-hex and send to Rust tree */
   function handleEventIdInput(e: Event) {
     const raw = (e.target as HTMLInputElement).value;
-    const original = leaf.value ?? { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0], hex: '00.00.00.00.00.00.00.00' };
 
     const parsedBytes = parseEventIdHex(raw);
 
     if (!parsedBytes) {
-      // Invalid format — record invalid state without a displayable value
-      const invalidVal: TreeConfigValue = {
-        type: 'eventId',
-        bytes: original.type === 'eventId' ? original.bytes : [0, 0, 0, 0, 0, 0, 0, 0],
-        hex: raw,
-      };
-      const edit: PendingEdit = {
-        key: editKey,
-        nodeId,
-        segmentOrigin,
-        segmentName,
-        address: leaf.address,
-        space: leaf.space,
-        size: leaf.size,
-        elementType: leaf.elementType,
-        fieldPath: leaf.path,
-        fieldLabel: leaf.name,
-        originalValue: original,
-        pendingValue: invalidVal,
-        validationState: 'invalid',
-        validationMessage: 'Invalid event ID format — use HH.HH.HH.HH.HH.HH.HH.HH',
-        writeState: 'dirty',
-        writeError: null,
-        constraints: leaf.constraints,
-      };
-      pendingEditsStore.setEdit(editKey, edit);
+      localInvalidValue = raw;
+      localValidationMessage = 'Invalid event ID format — use HH.HH.HH.HH.HH.HH.HH.HH';
       return;
     }
 
     const newVal: TreeConfigValue = { type: 'eventId', bytes: parsedBytes, hex: formatEventIdHex(parsedBytes) };
-    const edit: PendingEdit = {
-      key: editKey,
-      nodeId,
-      segmentOrigin,
-      segmentName,
-      address: leaf.address,
-      space: leaf.space,
-      size: leaf.size,
-      elementType: leaf.elementType,
-      fieldPath: leaf.path,
-      fieldLabel: leaf.name,
-      originalValue: original,
-      pendingValue: newVal,
-      validationState: 'valid',
-      validationMessage: null,
-      writeState: 'dirty',
-      writeError: null,
-      constraints: leaf.constraints,
-    };
 
-    localPending = newVal;
-    pendingEditsStore.setEdit(editKey, edit);
-    // Sync localPending with store — auto-clears if value reverted to original
-    localPending = pendingEditsStore.getEdit(editKey)?.pendingValue ?? null;
+    localInvalidValue = null;
+    localValidationMessage = null;
+    setModifiedValue(nodeId, leaf.address, leaf.space, newVal);
   }
 
   // ── Value display helpers ──────────────────────────────────────────────────
@@ -539,12 +360,12 @@
       </span>
     {/if}
 
-    {#if isInvalid && currentEdit?.validationMessage}
-      <span class="validation-msg" role="alert">{currentEdit.validationMessage}</span>
+    {#if isInvalid && localValidationMessage}
+      <span class="validation-msg" role="alert">{localValidationMessage}</span>
     {/if}
 
-    {#if hasWriteError && currentEdit?.writeError}
-      <span class="write-error-msg" role="alert">⚠ {currentEdit.writeError}</span>
+    {#if hasWriteError && leaf.writeError}
+      <span class="write-error-msg" role="alert">⚠ {leaf.writeError}</span>
     {/if}
 
     {#if descText}

@@ -241,6 +241,10 @@ export interface BowtieCard {
   ambiguous_entries: EventSlotEntry[];
   /** User-assigned name (null = unnamed, show event_id_hex as header per FR-014) */
   name: string | null;
+  /** User-assigned tags from layout metadata */
+  tags: string[];
+  /** Derived state based on element membership */
+  state: 'Active' | 'Incomplete' | 'Planning';
 }
 
 /**

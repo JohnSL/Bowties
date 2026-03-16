@@ -13,8 +13,9 @@
 
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
+use tauri::{Emitter, Manager};
 
-use crate::state::{AppState, BowtieCatalog, BowtieCard, EventSlotEntry, NodeRoles};
+use crate::state::{AppState, BowtieCatalog, BowtieCard, BowtieState, EventSlotEntry, NodeRoles};
 
 // ── Well-known event IDs ──────────────────────────────────────────────────────
 
@@ -261,19 +262,59 @@ pub fn build_bowtie_catalog(
     let well_known_set: std::collections::HashSet<[u8; 8]> =
         WELL_KNOWN_EVENT_IDS.iter().map(|&(bytes, _)| bytes).collect();
 
-    for (event_id_bytes, roles) in event_roles {
-        // Well-known event IDs are handled exclusively via config_value_cache (see below).
-        // Protocol replies for these events come from structural participants (e.g. command
-        // stations, throttles) regardless of whether the user configured a CDI slot, so
-        // the protocol exchange alone is not sufficient evidence of a user-wired connection.
-        if well_known_set.contains(event_id_bytes) {
-            continue;
-        }
+    // ── Config-primary event discovery ───────────────────────────────────────────
+    //
+    // The config value cache is the canonical source for which event IDs are
+    // configured across the network.  Reading CDI memory reliably surfaces every
+    // configured slot; IdentifyEvents replies are NOT always present (some firmware
+    // never sends ProducerIdentified / ConsumerIdentified, and nodes with both a
+    // producer and a consumer slot wired to the same event respond on both sides).
+    //
+    // Algorithm:
+    //   1. Build a per-event slot list from config_value_cache (config-primary map).
+    //   2. Union with events found only via the protocol exchange (backward-compat).
+    //   3. For each event, classify every config slot:
+    //      - If the node has exactly one slot for this event AND the protocol reply
+    //        unambiguously names it as producer XOR consumer → use that role.
+    //      - If the node has multiple slots OR replied on both sides (or neither) →
+    //        use the CDI heuristic / profile role; this handles the common case of
+    //        a single node with a producer slot and a consumer slot wired to the
+    //        same event ID.
+    //   4. Visibility: emit a card when ≥2 config slots share the event ID.
+    //      Protocol-only events (no config evidence) fall back to the original
+    //      FR-002 rule (≥1 confirmed producer AND ≥1 confirmed consumer).
+    //
+    // Named single-slot events (e.g. Planning bowties in the layout file) are
+    // added by merge_layout_metadata; they do not need special handling here.
 
-        // FR-002: bowtie requires ≥1 confirmed producer AND ≥1 confirmed consumer.
-        if roles.producers.is_empty() || roles.consumers.is_empty() {
-            continue;
+    // Step 1 — build event_id → [(node_id, path_key)] from config cache.
+    let mut config_slot_map: HashMap<[u8; 8], Vec<(String, String)>> = HashMap::new();
+    for (node_id, node_cache) in config_value_cache {
+        for (path_key, &event_bytes) in node_cache {
+            if well_known_set.contains(&event_bytes) {
+                continue;
+            }
+            config_slot_map
+                .entry(event_bytes)
+                .or_default()
+                .push((node_id.clone(), path_key.clone()));
         }
+    }
+
+    // Step 2 — union: include protocol-only events not already in config_slot_map.
+    let mut all_event_ids: std::collections::HashSet<[u8; 8]> =
+        config_slot_map.keys().copied().collect();
+    for event_id_bytes in event_roles.keys() {
+        if !well_known_set.contains(event_id_bytes) {
+            all_event_ids.insert(*event_id_bytes);
+        }
+    }
+
+    // Step 3 — build a BowtieCard for each eligible event.
+    for event_id_bytes in &all_event_ids {
+        let config_slots = config_slot_map.get(event_id_bytes);
+        let config_slot_count = config_slots.map(|v| v.len()).unwrap_or(0);
+        let roles_opt = event_roles.get(event_id_bytes);
 
         let event_id_hex = format!(
             "{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}",
@@ -285,178 +326,274 @@ pub fn build_bowtie_catalog(
         let mut consumers: Vec<EventSlotEntry> = Vec::new();
         let mut ambiguous_entries: Vec<EventSlotEntry> = Vec::new();
 
-        // Same-node set: nodes that appear in both producer and consumer sets.
-        let both: std::collections::HashSet<&String> = roles
-            .producers
-            .intersection(&roles.consumers)
-            .collect();
+        if config_slot_count > 0 {
+            // ── Config-primary path ───────────────────────────────────────────
+            let slot_refs = config_slots.unwrap();
 
-        // Pure producers
-        for node_id in roles.producers.difference(&roles.consumers) {
-            let slots = slot_map.get(node_id).map(|s| s.as_slice()).unwrap_or(&[]);
-            let slot = slot_for_event_id(slots, node_id, event_id_bytes, config_value_cache, lcc_rs::EventRole::Producer);
-            let (ep, el, ed) = slot
-                .map(|s| (s.element_path.clone(), s.element_label.clone(), s.element_description.clone()))
-                .unwrap_or_else(|| (vec![], node_id.clone(), None));
+            // Count per-node slots so we know when the node-level protocol reply
+            // can classify an individual slot vs when we need the CDI heuristic.
+            let mut node_slot_count: HashMap<&str, usize> = HashMap::new();
+            for (node_id, _) in slot_refs {
+                *node_slot_count.entry(node_id.as_str()).or_insert(0) += 1;
+            }
 
-            let node_name = nodes
-                .iter()
-                .find(|n| n.node_id.to_hex_string() == *node_id)
-                .map(node_display_name)
-                .unwrap_or_else(|| node_id.clone());
+            for (node_id, path_key) in slot_refs {
+                let slots = slot_map.get(node_id).map(|s| s.as_slice()).unwrap_or(&[]);
+                let node_name = nodes
+                    .iter()
+                    .find(|n| n.node_id.to_hex_string() == *node_id)
+                    .map(node_display_name)
+                    .unwrap_or_else(|| node_id.clone());
 
-            debug_assert_ne!(
-                lcc_rs::EventRole::Ambiguous,
-                lcc_rs::EventRole::Producer,
-                "EventSlotEntry must not hold Ambiguous in the producers vec"
-            );
+                let slot = slots.iter().find(|s| s.element_path.join("/") == *path_key);
+                let (ep, el, ed, heuristic) = slot
+                    .map(|s| (
+                        s.element_path.clone(),
+                        s.element_label.clone(),
+                        s.element_description.clone(),
+                        s.heuristic_role,
+                    ))
+                    .unwrap_or_else(|| (
+                        path_key.split('/').map(|s| s.to_string()).collect(),
+                        path_key.clone(),
+                        None,
+                        lcc_rs::EventRole::Ambiguous,
+                    ));
 
-            producers.push(EventSlotEntry {
-                node_id: node_id.clone(),
-                node_name,
-                element_path: ep,
-                element_label: el,
-                element_description: ed,
-                event_id: *event_id_bytes,
-                role: lcc_rs::EventRole::Producer,
-            });
-        }
+                // Node-level protocol classification is reliable only when the node has
+                // exactly one config slot for this event.  Multiple slots → fall back to
+                // CDI heuristic / profile, which classifies each slot individually.
+                let multi_slot_node =
+                    node_slot_count.get(node_id.as_str()).copied().unwrap_or(1) > 1;
+                let node_in_producers = !multi_slot_node
+                    && roles_opt.map(|r| r.producers.contains(node_id)).unwrap_or(false);
+                let node_in_consumers = !multi_slot_node
+                    && roles_opt.map(|r| r.consumers.contains(node_id)).unwrap_or(false);
 
-        // Pure consumers
-        for node_id in roles.consumers.difference(&roles.producers) {
-            let slots = slot_map.get(node_id).map(|s| s.as_slice()).unwrap_or(&[]);
-            let slot = slot_for_event_id(slots, node_id, event_id_bytes, config_value_cache, lcc_rs::EventRole::Consumer);
-            let (ep, el, ed) = slot
-                .map(|s| (s.element_path.clone(), s.element_label.clone(), s.element_description.clone()))
-                .unwrap_or_else(|| (vec![], node_id.clone(), None));
-
-            let node_name = nodes
-                .iter()
-                .find(|n| n.node_id.to_hex_string() == *node_id)
-                .map(node_display_name)
-                .unwrap_or_else(|| node_id.clone());
-
-            consumers.push(EventSlotEntry {
-                node_id: node_id.clone(),
-                node_name,
-                element_path: ep,
-                element_label: el,
-                element_description: ed,
-                event_id: *event_id_bytes,
-                role: lcc_rs::EventRole::Consumer,
-            });
-        }
-
-        // Same-node entries: per-slot classification using config cache, with heuristic fallback.
-        //
-        // A node in `both` replied ProducerIdentified AND ConsumerIdentified for this event,
-        // meaning it has at least one slot on each side — or the role is genuinely unknown.
-        // With the config cache we can find each individual slot that holds this event ID and
-        // classify it by its own heuristic role, emitting separate entries per slot.  This
-        // correctly handles nodes that have distinct Producer and Consumer CDI slots both
-        // configured to the same event ID (e.g. "Output A" + "Input A" on Async Blink).
-        //
-        // Fallback (no cache data or no cache hits for this event): vote-tally across all CDI
-        // slots for the node and emit one entry with the majority role (or Ambiguous on tie).
-        for node_id in &both {
-            let slots = slot_map.get(*node_id).map(|s| s.as_slice()).unwrap_or(&[]);
-
-            let node_name = nodes
-                .iter()
-                .find(|n| n.node_id.to_hex_string() == **node_id)
-                .map(node_display_name)
-                .unwrap_or_else(|| (*node_id).clone());
-
-            // Precise: find every slot whose cached value matches this event ID.
-            let mut cache_hits: Vec<&SlotInfo> = Vec::new();
-            if let Some(node_cache) = config_value_cache.get(*node_id) {
-                for slot in slots {
-                    let path_key = slot.element_path.join("/");
-                    if let Some(&cached_bytes) = node_cache.get(&path_key) {
-                        if &cached_bytes == event_id_bytes {
-                            cache_hits.push(slot);
-                        }
+                let resolved_role = match (node_in_producers, node_in_consumers) {
+                    (true, false) => lcc_rs::EventRole::Producer,
+                    (false, true) => lcc_rs::EventRole::Consumer,
+                    _ => {
+                        let profile_key = format!("{}:{}", node_id, path_key);
+                        profile_group_roles
+                            .and_then(|map| map.get(&profile_key))
+                            .copied()
+                            .unwrap_or(heuristic)
                     }
+                };
+
+                let entry = EventSlotEntry {
+                    node_id: node_id.clone(),
+                    node_name,
+                    element_path: ep,
+                    element_label: el,
+                    element_description: ed,
+                    event_id: *event_id_bytes,
+                    role: resolved_role,
+                };
+                match resolved_role {
+                    lcc_rs::EventRole::Producer => producers.push(entry),
+                    lcc_rs::EventRole::Consumer => consumers.push(entry),
+                    lcc_rs::EventRole::Ambiguous => ambiguous_entries.push(entry),
                 }
             }
 
-            if !cache_hits.is_empty() {
-                // Emit one entry per matching slot.
-                // If profile_group_roles provides a definitive role for a slot, route it into
-                // producers / consumers.  Otherwise fall back to Ambiguous so the user can
-                // classify it manually.
-                for slot in cache_hits {
-                    let profile_key = format!("{}:{}", *node_id, slot.element_path.join("/"));
-                    let resolved_role = profile_group_roles
-                        .and_then(|map| map.get(&profile_key))
-                        .copied();
+            // Require ≥2 total entries as evidence of a connection.
+            // Include protocol-confirmed nodes that have no config slot for this event —
+            // they count toward the threshold and are classified by their protocol role.
+            let config_nodes: std::collections::HashSet<&str> =
+                slot_refs.iter().map(|(nid, _)| nid.as_str()).collect();
 
-                    match resolved_role {
-                        Some(lcc_rs::EventRole::Producer) => {
-                            producers.push(EventSlotEntry {
-                                node_id: (*node_id).clone(),
-                                node_name: node_name.clone(),
-                                element_path: slot.element_path.clone(),
-                                element_label: slot.element_label.clone(),
-                                element_description: slot.element_description.clone(),
-                                event_id: *event_id_bytes,
-                                role: lcc_rs::EventRole::Producer,
-                            });
-                        }
-                        Some(lcc_rs::EventRole::Consumer) => {
-                            consumers.push(EventSlotEntry {
-                                node_id: (*node_id).clone(),
-                                node_name: node_name.clone(),
-                                element_path: slot.element_path.clone(),
-                                element_label: slot.element_label.clone(),
-                                element_description: slot.element_description.clone(),
-                                event_id: *event_id_bytes,
-                                role: lcc_rs::EventRole::Consumer,
-                            });
-                        }
-                        _ => {
-                            // No profile entry (or Ambiguous) — surface in ambiguous_entries so
-                            // the user can clarify roles manually.
-                            ambiguous_entries.push(EventSlotEntry {
-                                node_id: (*node_id).clone(),
-                                node_name: node_name.clone(),
-                                element_path: slot.element_path.clone(),
-                                element_label: slot.element_label.clone(),
-                                element_description: slot.element_description.clone(),
-                                event_id: *event_id_bytes,
-                                role: lcc_rs::EventRole::Ambiguous,
-                            });
-                        }
-                    }
+            if let Some(roles) = roles_opt {
+                for node_id in roles.producers.difference(&roles.consumers) {
+                    if config_nodes.contains(node_id.as_str()) { continue; }
+                    let slots = slot_map.get(node_id).map(|s| s.as_slice()).unwrap_or(&[]);
+                    let slot = slot_for_event_id(
+                        slots, node_id, event_id_bytes, config_value_cache,
+                        lcc_rs::EventRole::Producer,
+                    );
+                    let (ep, el, ed) = slot
+                        .map(|s| (s.element_path.clone(), s.element_label.clone(), s.element_description.clone()))
+                        .unwrap_or_else(|| (vec![], node_id.clone(), None));
+                    let node_name = nodes
+                        .iter()
+                        .find(|n| n.node_id.to_hex_string() == *node_id)
+                        .map(node_display_name)
+                        .unwrap_or_else(|| node_id.clone());
+                    producers.push(EventSlotEntry {
+                        node_id: node_id.clone(),
+                        node_name,
+                        element_path: ep,
+                        element_label: el,
+                        element_description: ed,
+                        event_id: *event_id_bytes,
+                        role: lcc_rs::EventRole::Producer,
+                    });
                 }
-            } else {
-                // Fallback (no cache data for this node): emit one Ambiguous entry using
-                // the first available CDI slot for label context, or bare node ID if no CDI.
+                for node_id in roles.consumers.difference(&roles.producers) {
+                    if config_nodes.contains(node_id.as_str()) { continue; }
+                    let slots = slot_map.get(node_id).map(|s| s.as_slice()).unwrap_or(&[]);
+                    let slot = slot_for_event_id(
+                        slots, node_id, event_id_bytes, config_value_cache,
+                        lcc_rs::EventRole::Consumer,
+                    );
+                    let (ep, el, ed) = slot
+                        .map(|s| (s.element_path.clone(), s.element_label.clone(), s.element_description.clone()))
+                        .unwrap_or_else(|| (vec![], node_id.clone(), None));
+                    let node_name = nodes
+                        .iter()
+                        .find(|n| n.node_id.to_hex_string() == *node_id)
+                        .map(node_display_name)
+                        .unwrap_or_else(|| node_id.clone());
+                    consumers.push(EventSlotEntry {
+                        node_id: node_id.clone(),
+                        node_name,
+                        element_path: ep,
+                        element_label: el,
+                        element_description: ed,
+                        event_id: *event_id_bytes,
+                        role: lcc_rs::EventRole::Consumer,
+                    });
+                }
+                for node_id in roles.producers.intersection(&roles.consumers) {
+                    if config_nodes.contains(node_id.as_str()) { continue; }
+                    let slots = slot_map.get(node_id).map(|s| s.as_slice()).unwrap_or(&[]);
+                    let node_name = nodes
+                        .iter()
+                        .find(|n| n.node_id.to_hex_string() == *node_id)
+                        .map(node_display_name)
+                        .unwrap_or_else(|| node_id.clone());
+                    let slot = slots.first();
+                    let (ep, el, ed) = slot
+                        .map(|s| (s.element_path.clone(), s.element_label.clone(), s.element_description.clone()))
+                        .unwrap_or_else(|| (vec![], node_id.clone(), None));
+                    ambiguous_entries.push(EventSlotEntry {
+                        node_id: node_id.clone(),
+                        node_name,
+                        element_path: ep,
+                        element_label: el,
+                        element_description: ed,
+                        event_id: *event_id_bytes,
+                        role: lcc_rs::EventRole::Ambiguous,
+                    });
+                }
+            }
+
+            let total_entries =
+                producers.len() + consumers.len() + ambiguous_entries.len();
+            if total_entries < 2 {
+                continue;
+            }
+        } else {
+            // ── Protocol-only path ────────────────────────────────────────────
+            // No config slot confirms this event; rely on FR-002 (original rule):
+            // ≥1 confirmed producer AND ≥1 confirmed consumer from the protocol.
+            let roles = match roles_opt {
+                Some(r) if !r.producers.is_empty() && !r.consumers.is_empty() => r,
+                _ => continue,
+            };
+
+            let both: std::collections::HashSet<&String> =
+                roles.producers.intersection(&roles.consumers).collect();
+
+            for node_id in roles.producers.difference(&roles.consumers) {
+                let slots = slot_map.get(node_id).map(|s| s.as_slice()).unwrap_or(&[]);
+                let slot = slot_for_event_id(
+                    slots, node_id, event_id_bytes, config_value_cache,
+                    lcc_rs::EventRole::Producer,
+                );
+                let (ep, el, ed) = slot
+                    .map(|s| (s.element_path.clone(), s.element_label.clone(), s.element_description.clone()))
+                    .unwrap_or_else(|| (vec![], node_id.clone(), None));
+                let node_name = nodes
+                    .iter()
+                    .find(|n| n.node_id.to_hex_string() == *node_id)
+                    .map(node_display_name)
+                    .unwrap_or_else(|| node_id.clone());
+                producers.push(EventSlotEntry {
+                    node_id: node_id.clone(),
+                    node_name,
+                    element_path: ep,
+                    element_label: el,
+                    element_description: ed,
+                    event_id: *event_id_bytes,
+                    role: lcc_rs::EventRole::Producer,
+                });
+            }
+
+            for node_id in roles.consumers.difference(&roles.producers) {
+                let slots = slot_map.get(node_id).map(|s| s.as_slice()).unwrap_or(&[]);
+                let slot = slot_for_event_id(
+                    slots, node_id, event_id_bytes, config_value_cache,
+                    lcc_rs::EventRole::Consumer,
+                );
+                let (ep, el, ed) = slot
+                    .map(|s| (s.element_path.clone(), s.element_label.clone(), s.element_description.clone()))
+                    .unwrap_or_else(|| (vec![], node_id.clone(), None));
+                let node_name = nodes
+                    .iter()
+                    .find(|n| n.node_id.to_hex_string() == *node_id)
+                    .map(node_display_name)
+                    .unwrap_or_else(|| node_id.clone());
+                consumers.push(EventSlotEntry {
+                    node_id: node_id.clone(),
+                    node_name,
+                    element_path: ep,
+                    element_label: el,
+                    element_description: ed,
+                    event_id: *event_id_bytes,
+                    role: lcc_rs::EventRole::Consumer,
+                });
+            }
+
+            for node_id in &both {
+                let slots = slot_map.get(*node_id).map(|s| s.as_slice()).unwrap_or(&[]);
+                let node_name = nodes
+                    .iter()
+                    .find(|n| n.node_id.to_hex_string() == **node_id)
+                    .map(node_display_name)
+                    .unwrap_or_else(|| (*node_id).clone());
                 let slot = slots.first();
                 let (ep, el, ed) = slot
                     .map(|s| (s.element_path.clone(), s.element_label.clone(), s.element_description.clone()))
                     .unwrap_or_else(|| (vec![], (*node_id).clone(), None));
-
-                ambiguous_entries.push(EventSlotEntry {
+                let profile_key = slot
+                    .map(|s| format!("{}:{}", *node_id, s.element_path.join("/")))
+                    .unwrap_or_else(|| (*node_id).clone());
+                let resolved = profile_group_roles
+                    .and_then(|map| map.get(&profile_key))
+                    .copied()
+                    .unwrap_or(lcc_rs::EventRole::Ambiguous);
+                let entry = EventSlotEntry {
                     node_id: (*node_id).clone(),
                     node_name,
                     element_path: ep,
                     element_label: el,
                     element_description: ed,
                     event_id: *event_id_bytes,
-                    role: lcc_rs::EventRole::Ambiguous,
-                });
+                    role: resolved,
+                };
+                match resolved {
+                    lcc_rs::EventRole::Producer => producers.push(entry),
+                    lcc_rs::EventRole::Consumer => consumers.push(entry),
+                    lcc_rs::EventRole::Ambiguous => ambiguous_entries.push(entry),
+                }
+            }
+
+            let total_entries = producers.len() + consumers.len() + ambiguous_entries.len();
+            if total_entries < 2 {
+                continue;
             }
         }
 
-        // Emit a card when ≥2 total entries across producers, consumers, and ambiguous_entries.
-        // A single-entry event (one slot, one node) carries no connection information and is
-        // silently excluded.  Cards with only ambiguous entries are valid — the protocol
-        // confirmed the node is on both sides; the user can clarify roles in a future flow.
-        let total_entries = producers.len() + consumers.len() + ambiguous_entries.len();
-        if total_entries < 2 {
-            continue;
-        }
+        // Shared card-emission code (both paths reach here).
+        let state = if !producers.is_empty() && !consumers.is_empty() {
+            BowtieState::Active
+        } else if !producers.is_empty() || !consumers.is_empty() || !ambiguous_entries.is_empty() {
+            BowtieState::Incomplete
+        } else {
+            BowtieState::Planning
+        };
 
         bowties.push(BowtieCard {
             event_id_hex,
@@ -465,6 +602,8 @@ pub fn build_bowtie_catalog(
             consumers,
             ambiguous_entries,
             name: None,
+            tags: Vec::new(),
+            state,
         });
     }
 
@@ -566,6 +705,14 @@ pub fn build_bowtie_catalog(
             continue;
         }
 
+        let wk_state = if !wk_producers.is_empty() && !wk_consumers.is_empty() {
+            BowtieState::Active
+        } else if !wk_producers.is_empty() || !wk_consumers.is_empty() || !wk_ambiguous.is_empty() {
+            BowtieState::Incomplete
+        } else {
+            BowtieState::Planning
+        };
+
         bowties.push(BowtieCard {
             event_id_hex,
             event_id_bytes: wk_bytes,
@@ -573,6 +720,8 @@ pub fn build_bowtie_catalog(
             consumers: wk_consumers,
             ambiguous_entries: wk_ambiguous,
             name: Some(wk_name.to_string()),
+            tags: Vec::new(),
+            state: wk_state,
         });
     }
 
@@ -594,6 +743,100 @@ pub fn build_bowtie_catalog(
         source_node_count,
         total_slots_scanned,
     }
+}
+
+/// Merge layout file metadata onto an existing bowtie catalog.
+///
+/// This enriches discovered bowties with user-assigned names, tags, and role
+/// classifications from the layout YAML. It also creates planning-state cards
+/// for layout entries that don't match any discovered event ID.
+pub fn merge_layout_metadata(
+    catalog: &mut BowtieCatalog,
+    layout: &crate::layout::types::LayoutFile,
+) {
+    // Build a lookup for fast event-ID → card-index matching
+    let mut hex_to_idx: HashMap<String, usize> = HashMap::new();
+    for (i, card) in catalog.bowties.iter().enumerate() {
+        hex_to_idx.insert(card.event_id_hex.clone(), i);
+    }
+
+    // Merge names and tags onto matching cards
+    for (event_id_hex, meta) in &layout.bowties {
+        if let Some(&idx) = hex_to_idx.get(event_id_hex) {
+            let card = &mut catalog.bowties[idx];
+            if meta.name.is_some() {
+                card.name = meta.name.clone();
+            }
+            if !meta.tags.is_empty() {
+                card.tags = meta.tags.clone();
+            }
+        } else {
+            // Create planning-state card for unmatched layout entry
+            let hex_upper = event_id_hex.to_uppercase();
+            let bytes = parse_event_id_hex(&hex_upper).unwrap_or([0u8; 8]);
+            catalog.bowties.push(BowtieCard {
+                event_id_hex: hex_upper,
+                event_id_bytes: bytes,
+                producers: Vec::new(),
+                consumers: Vec::new(),
+                ambiguous_entries: Vec::new(),
+                name: meta.name.clone(),
+                tags: meta.tags.clone(),
+                state: BowtieState::Planning,
+            });
+        }
+    }
+
+    // Merge role classifications: reclassify ambiguous entries based on user input.
+    // Classification key format: "{nodeId}:{element_path_joined_by_/}"
+    for card in &mut catalog.bowties {
+        let mut still_ambiguous = Vec::new();
+        for entry in card.ambiguous_entries.drain(..) {
+            let class_key = format!("{}:{}", entry.node_id, entry.element_path.join("/"));
+            if let Some(rc) = layout.role_classifications.get(&class_key) {
+                let mut classified = entry;
+                match rc.role.as_str() {
+                    "Producer" => {
+                        classified.role = lcc_rs::EventRole::Producer;
+                        card.producers.push(classified);
+                    }
+                    "Consumer" => {
+                        classified.role = lcc_rs::EventRole::Consumer;
+                        card.consumers.push(classified);
+                    }
+                    _ => still_ambiguous.push(classified),
+                }
+            } else {
+                still_ambiguous.push(entry);
+            }
+        }
+        card.ambiguous_entries = still_ambiguous;
+
+        // Recompute state after reclassification
+        card.state = if !card.producers.is_empty() && !card.consumers.is_empty() {
+            BowtieState::Active
+        } else if !card.producers.is_empty() || !card.consumers.is_empty() || !card.ambiguous_entries.is_empty() {
+            BowtieState::Incomplete
+        } else {
+            BowtieState::Planning
+        };
+    }
+
+    // Re-sort after adding planning cards
+    catalog.bowties.sort_by_key(|b| b.event_id_bytes);
+}
+
+/// Parse a dotted-hex event ID string into 8 bytes.
+fn parse_event_id_hex(hex: &str) -> Option<[u8; 8]> {
+    let parts: Vec<&str> = hex.split('.').collect();
+    if parts.len() != 8 {
+        return None;
+    }
+    let mut bytes = [0u8; 8];
+    for (i, part) in parts.iter().enumerate() {
+        bytes[i] = u8::from_str_radix(part, 16).ok()?;
+    }
+    Some(bytes)
 }
 
 // ── Protocol query ────────────────────────────────────────────────────────────
@@ -768,7 +1011,177 @@ pub async fn query_event_roles(
     roles
 }
 
-// ── Tauri command ─────────────────────────────────────────────────────────────
+// ── Layout file Tauri commands ────────────────────────────────────────────────
+
+/// Load a YAML layout file from disk.
+///
+/// Validates the schema and emits a `layout-loaded` event on success.
+#[tauri::command]
+pub async fn load_layout(
+    path: String,
+    app: tauri::AppHandle,
+) -> Result<crate::layout::types::LayoutFile, String> {
+    let layout = crate::layout::io::load_file(std::path::Path::new(&path))?;
+
+    // Emit layout-loaded event
+    let _ = app.emit("layout-loaded", serde_json::json!({
+        "path": path,
+        "bowtieCount": layout.bowties.len(),
+        "classificationCount": layout.role_classifications.len(),
+    }));
+
+    Ok(layout)
+}
+
+/// Save bowtie metadata and role classifications to a YAML layout file.
+///
+/// Uses atomic write (temp → flush → rename). Emits `layout-save-error` on failure.
+#[tauri::command]
+pub async fn save_layout(
+    path: String,
+    layout: crate::layout::types::LayoutFile,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    match crate::layout::io::save_file(std::path::Path::new(&path), &layout) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = app.emit("layout-save-error", serde_json::json!({
+                "path": path,
+                "error": e,
+            }));
+            Err(e)
+        }
+    }
+}
+
+/// Retrieve the most recently opened layout file path from app data dir.
+#[tauri::command]
+pub async fn get_recent_layout(
+    app: tauri::AppHandle,
+) -> Result<Option<crate::layout::types::RecentLayout>, String> {
+    let app_data = app.path().app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    let recent_path = app_data.join("recent-layout.json");
+    if !recent_path.exists() {
+        return Ok(None);
+    }
+
+    let contents = std::fs::read_to_string(&recent_path)
+        .map_err(|e| format!("Failed to read recent layout file: {}", e))?;
+
+    let recent: crate::layout::types::RecentLayout = serde_json::from_str(&contents)
+        .map_err(|e| format!("Failed to parse recent layout data: {}", e))?;
+
+    // Verify the referenced file still exists
+    if !std::path::Path::new(&recent.path).exists() {
+        return Ok(None);
+    }
+
+    Ok(Some(recent))
+}
+
+/// Store the most recently opened layout file path in app data dir.
+#[tauri::command]
+pub async fn set_recent_layout(
+    path: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let app_data = app.path().app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    std::fs::create_dir_all(&app_data)
+        .map_err(|e| format!("Failed to create app data dir: {}", e))?;
+
+    let recent = crate::layout::types::RecentLayout {
+        path,
+        last_opened: chrono::Utc::now().to_rfc3339(),
+    };
+
+    let json = serde_json::to_string_pretty(&recent)
+        .map_err(|e| format!("Failed to serialize recent layout: {}", e))?;
+
+    let recent_path = app_data.join("recent-layout.json");
+    std::fs::write(&recent_path, json)
+        .map_err(|e| format!("Failed to write recent layout: {}", e))?;
+
+    Ok(())
+}
+
+// ── Tauri commands ────────────────────────────────────────────────────────────
+
+/// Rebuild the bowtie catalog, optionally merging layout file metadata.
+///
+/// Uses the current AppState (discovered nodes, event roles, config cache)
+/// to build a fresh catalog, then merges layout metadata if provided.
+/// The result is stored in AppState and emitted via `cdi-read-complete`.
+#[tauri::command]
+pub async fn build_bowtie_catalog_command(
+    layout_metadata: Option<crate::layout::types::LayoutFile>,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<BowtieCatalog, String> {
+    let nodes_snap = state.nodes.read().await.clone();
+    let config_cache_snap = state.config_value_cache.read().await.clone();
+
+    // Gather profile group roles from node trees
+    let profile_group_roles = {
+        let trees = state.node_trees.read().await;
+        let mut map = HashMap::new();
+        for (nid, tree) in trees.iter() {
+            for leaf in crate::node_tree::collect_event_id_leaves(tree) {
+                if let Some(role) = leaf.event_role {
+                    if role != lcc_rs::EventRole::Ambiguous {
+                        let key = format!("{}:{}", nid, leaf.path.join("/"));
+                        map.insert(key, role);
+                    }
+                }
+            }
+        }
+        map
+    };
+
+    // Run event query from existing cached roles (use stored catalog's data)
+    // We rebuild from AppState, not re-querying the network
+    let event_roles = {
+        // If we have a catalog already, we can extract event roles from it
+        // Otherwise query fresh
+        let existing = state.bowties_catalog.read().await;
+        if existing.is_some() {
+            // Reconstruct event roles from existing catalog nodes
+            // For a proper rebuild, we need the raw event roles
+            // Use query_event_roles only if needed
+            drop(existing);
+            query_event_roles(&state, 125, 500).await
+        } else {
+            HashMap::new()
+        }
+    };
+
+    let mut catalog = build_bowtie_catalog(
+        &nodes_snap,
+        &event_roles,
+        &config_cache_snap,
+        Some(&profile_group_roles),
+    );
+
+    // Merge layout metadata if provided
+    if let Some(layout) = &layout_metadata {
+        merge_layout_metadata(&mut catalog, layout);
+    }
+
+    // Store in AppState
+    *state.bowties_catalog.write().await = Some(catalog.clone());
+
+    // Emit to frontend
+    let node_count = nodes_snap.len();
+    let _ = app.emit(
+        "cdi-read-complete",
+        CdiReadCompletePayload { catalog: catalog.clone(), node_count },
+    );
+
+    Ok(catalog)
+}
 
 /// Return the current `BowtieCatalog` from AppState.
 ///
@@ -1025,6 +1438,44 @@ mod build_bowtie_catalog_tests {
         assert_eq!(card.consumers.len(), 1, "node1 is a pure consumer");
         assert_eq!(card.ambiguous_entries.len(), 1, "node0 tie → ambiguous");
         assert_eq!(card.ambiguous_entries[0].role, lcc_rs::EventRole::Ambiguous);
+    }
+
+    /// A bowtie where both the producer and consumer slots are confirmed via the
+    /// config value cache must appear in the catalog, even when the IdentifyEvents
+    /// exchange returned no roles for that event.
+    ///
+    /// This covers the common case where nodes don't respond to
+    /// `IdentifyEventsAddressed` (e.g. firmware limitation) but the CDI config
+    /// values are already known from the memory read.
+    #[test]
+    fn catalog_includes_event_confirmed_by_config_cache_when_identify_events_returns_no_roles() {
+        let nodes = make_nodes(2);
+        // IdentifyEvents exchange produced no roles for EVENT_A — nodes didn't respond.
+        let event_roles: HashMap<[u8; 8], NodeRoles> = HashMap::new();
+
+        // Config cache confirms: node 0 has EVENT_A in a producer slot,
+        // node 1 has EVENT_A in a consumer slot.
+        let mut config_cache: HashMap<String, HashMap<String, [u8; 8]>> = HashMap::new();
+        let mut node0_cache: HashMap<String, [u8; 8]> = HashMap::new();
+        node0_cache.insert("seg:0/elem:0".to_string(), EVENT_A);
+        config_cache.insert(node_id(0), node0_cache);
+        let mut node1_cache: HashMap<String, [u8; 8]> = HashMap::new();
+        node1_cache.insert("seg:0/elem:1".to_string(), EVENT_A);
+        config_cache.insert(node_id(1), node1_cache);
+
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &config_cache, None);
+
+        assert_eq!(
+            catalog.bowties.len(), 1,
+            "Event confirmed in config cache on two nodes must appear in catalog \
+             even when IdentifyEvents returned no roles"
+        );
+        assert_eq!(catalog.bowties[0].event_id_bytes, EVENT_A);
+        // Both nodes should appear as entries (producer + consumer or ambiguous)
+        let total = catalog.bowties[0].producers.len()
+            + catalog.bowties[0].consumers.len()
+            + catalog.bowties[0].ambiguous_entries.len();
+        assert_eq!(total, 2, "Both config-cache-confirmed nodes must surface as entries");
     }
 
     /// (e) Event ID only in producers → no card (FR-002).

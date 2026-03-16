@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "opener:default",
+    "dialog:default",
     "core:window:allow-create",
     "core:window:allow-set-focus",
     "core:webview:allow-create-webview-window"

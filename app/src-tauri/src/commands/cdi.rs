@@ -2535,6 +2535,313 @@ pub async fn send_update_complete(
         .map_err(|e| format!("Failed to send update complete: {}", e))
 }
 
+// ── Modified value commands ───────────────────────────────────────────────────
+
+/// Set a modified (pending) value on a leaf in the in-memory tree.
+///
+/// The modification is stored alongside the committed value so both are
+/// available for display and catalog building.  If the new value matches
+/// the committed value the modification is automatically cleared (revert).
+///
+/// Emits `node-tree-updated` so the frontend reactively picks up the change.
+#[tauri::command]
+pub async fn set_modified_value(
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+    node_id: String,
+    address: u32,
+    space: u8,
+    value: crate::node_tree::ConfigValue,
+) -> Result<bool, String> {
+    let mut trees = state.node_trees.write().await;
+    let tree = trees
+        .get_mut(&node_id)
+        .ok_or_else(|| format!("No tree loaded for node {}", node_id))?;
+
+    let found = crate::node_tree::set_modified_value(tree, space, address, value);
+    if !found {
+        return Err(format!(
+            "Leaf not found at space={}, address={} in node {}",
+            space, address, node_id
+        ));
+    }
+
+    // Also update config_value_cache for EventId modifications so the
+    // bowtie catalog builder sees them.
+    {
+        let tree_ref = trees.get(&node_id).unwrap();
+        // Walk to find this leaf and check if it's an EventId with a modified value
+        for leaf_info in crate::node_tree::collect_event_id_leaves(tree_ref) {
+            if leaf_info.address == address && leaf_info.space == space {
+                let mut cache = state.config_value_cache.write().await;
+                let node_cache = cache.entry(node_id.clone()).or_default();
+                let path_key = leaf_info.path.join("/");
+                if let Some(bytes) = leaf_info.value {
+                    node_cache.insert(path_key, bytes);
+                }
+                break;
+            }
+        }
+    }
+
+    drop(trees);
+
+    let _ = app_handle.emit(
+        "node-tree-updated",
+        serde_json::json!({ "nodeId": node_id }),
+    );
+
+    Ok(found)
+}
+
+/// Discard all modified values across all loaded trees (or for a specific node).
+///
+/// Emits `node-tree-updated` for each affected node.
+#[tauri::command]
+pub async fn discard_modified_values(
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+    node_id: Option<String>,
+) -> Result<u32, String> {
+    let mut trees = state.node_trees.write().await;
+    let mut count = 0u32;
+
+    if let Some(nid) = node_id {
+        // Discard for a specific node
+        if let Some(tree) = trees.get_mut(&nid) {
+            if crate::node_tree::has_modified_values(tree) {
+                crate::node_tree::discard_all_modified(tree);
+                count += 1;
+            }
+        }
+        // Rebuild config cache from committed values for this node
+        if let Some(tree) = trees.get(&nid) {
+            let mut cache = state.config_value_cache.write().await;
+            let node_cache = cache.entry(nid.clone()).or_default();
+            node_cache.clear();
+            for leaf_info in crate::node_tree::collect_event_id_leaves(tree) {
+                if let Some(bytes) = leaf_info.value {
+                    node_cache.insert(leaf_info.path.join("/"), bytes);
+                }
+            }
+        }
+        if count > 0 {
+            let _ = app_handle.emit(
+                "node-tree-updated",
+                serde_json::json!({ "nodeId": nid }),
+            );
+        }
+    } else {
+        // Discard across all nodes
+        let node_ids: Vec<String> = trees.keys().cloned().collect();
+        for nid in &node_ids {
+            if let Some(tree) = trees.get_mut(nid) {
+                if crate::node_tree::has_modified_values(tree) {
+                    crate::node_tree::discard_all_modified(tree);
+                    count += 1;
+                }
+            }
+        }
+        // Rebuild config cache from committed values
+        {
+            let mut cache = state.config_value_cache.write().await;
+            for (nid, tree) in trees.iter() {
+                let node_cache = cache.entry(nid.clone()).or_default();
+                for leaf_info in crate::node_tree::collect_event_id_leaves(tree) {
+                    let path_key = leaf_info.path.join("/");
+                    if let Some(bytes) = leaf_info.value {
+                        node_cache.insert(path_key, bytes);
+                    }
+                }
+            }
+        }
+        drop(trees);
+        for nid in &node_ids {
+            let _ = app_handle.emit(
+                "node-tree-updated",
+                serde_json::json!({ "nodeId": nid }),
+            );
+        }
+    }
+
+    Ok(count)
+}
+
+/// Write all pending modifications to their respective nodes.
+///
+/// Iterates every tree, collects leaves with `write_state == Dirty | Error`,
+/// writes each to the network, updates states, and emits events.
+/// Returns the number of successful + failed writes.
+#[tauri::command]
+pub async fn write_modified_values(
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<WriteModifiedResult, String> {
+    // Collect all modifications across all nodes
+    let mut work: Vec<(String, crate::node_tree::ModifiedLeafInfo)> = Vec::new();
+    {
+        let trees = state.node_trees.read().await;
+        for (node_id, tree) in trees.iter() {
+            for leaf in crate::node_tree::collect_modified_leaves(tree) {
+                work.push((node_id.clone(), leaf));
+            }
+        }
+    }
+
+    if work.is_empty() {
+        return Ok(WriteModifiedResult {
+            total: 0,
+            succeeded: 0,
+            failed: 0,
+        });
+    }
+
+    let conn_lock = state.connection.read().await;
+    let connection = conn_lock
+        .as_ref()
+        .ok_or("Not connected to network")?
+        .clone();
+    drop(conn_lock);
+
+    let nodes = state.nodes.read().await;
+    let mut succeeded = 0u32;
+    let mut failed = 0u32;
+    let mut success_node_ids = std::collections::HashSet::new();
+
+    for (node_id, leaf_info) in &work {
+        let parsed_nid = lcc_rs::NodeID::from_hex_string(node_id)
+            .map_err(|e| format!("Invalid node ID: {}", e))?;
+        let node = nodes
+            .iter()
+            .find(|n| n.node_id == parsed_nid)
+            .ok_or_else(|| format!("Node not found: {}", node_id))?;
+        let alias = node.alias.value();
+
+        // Mark as writing
+        {
+            let mut trees = state.node_trees.write().await;
+            if let Some(tree) = trees.get_mut(node_id) {
+                crate::node_tree::set_leaf_write_state(
+                    tree,
+                    leaf_info.space,
+                    leaf_info.address,
+                    crate::node_tree::WriteState::Writing,
+                    None,
+                );
+            }
+        }
+
+        // Serialize and write
+        let bytes = serialize_config_value(&leaf_info.value, leaf_info.element_type, leaf_info.size);
+        let mut conn = connection.lock().await;
+        let result = conn.write_memory(alias, leaf_info.space, leaf_info.address, &bytes).await;
+        drop(conn);
+
+        let mut trees = state.node_trees.write().await;
+        if let Some(tree) = trees.get_mut(node_id) {
+            match result {
+                Ok(()) => {
+                    // Commit: promote modified_value → value
+                    crate::node_tree::commit_leaf_value(tree, leaf_info.space, leaf_info.address);
+                    succeeded += 1;
+                    success_node_ids.insert(node_id.clone());
+                }
+                Err(e) => {
+                    crate::node_tree::set_leaf_write_state(
+                        tree,
+                        leaf_info.space,
+                        leaf_info.address,
+                        crate::node_tree::WriteState::Error,
+                        Some(e.to_string()),
+                    );
+                    failed += 1;
+                }
+            }
+        }
+    }
+    drop(nodes);
+
+    // Send Update Complete to each node that had successful writes
+    for nid in &success_node_ids {
+        let parsed_nid = match lcc_rs::NodeID::from_hex_string(nid) {
+            Ok(id) => id,
+            Err(_) => continue,
+        };
+        let nodes = state.nodes.read().await;
+        if let Some(node) = nodes.iter().find(|n| n.node_id == parsed_nid) {
+            let alias = node.alias.value();
+            drop(nodes);
+            let mut conn = connection.lock().await;
+            let _ = conn.send_update_complete(alias).await;
+        }
+    }
+
+    // Emit tree updates for all affected nodes
+    let affected_nodes: std::collections::HashSet<&String> = work.iter().map(|(nid, _)| nid).collect();
+    for nid in affected_nodes {
+        let _ = app_handle.emit(
+            "node-tree-updated",
+            serde_json::json!({ "nodeId": nid }),
+        );
+    }
+
+    Ok(WriteModifiedResult {
+        total: work.len() as u32,
+        succeeded,
+        failed,
+    })
+}
+
+/// Result of a `write_modified_values` operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteModifiedResult {
+    pub total: u32,
+    pub succeeded: u32,
+    pub failed: u32,
+}
+
+/// Check whether any loaded tree has pending modifications.
+#[tauri::command]
+pub async fn has_modified_values(
+    state: tauri::State<'_, AppState>,
+) -> Result<bool, String> {
+    let trees = state.node_trees.read().await;
+    Ok(trees.values().any(crate::node_tree::has_modified_values))
+}
+
+/// Serialize a ConfigValue to raw bytes for writing to a node.
+fn serialize_config_value(
+    value: &crate::node_tree::ConfigValue,
+    _element_type: crate::node_tree::LeafType,
+    size: u32,
+) -> Vec<u8> {
+    match value {
+        crate::node_tree::ConfigValue::Int { value: v } => {
+            match size {
+                1 => vec![*v as u8],
+                2 => (*v as i16).to_be_bytes().to_vec(),
+                4 => (*v as i32).to_be_bytes().to_vec(),
+                8 => v.to_be_bytes().to_vec(),
+                _ => vec![*v as u8],
+            }
+        }
+        crate::node_tree::ConfigValue::String { value: s } => {
+            let mut bytes: Vec<u8> = s.bytes().take(size as usize - 1).collect();
+            // NUL-terminate, pad to full size
+            bytes.push(0);
+            while bytes.len() < size as usize {
+                bytes.push(0);
+            }
+            bytes
+        }
+        crate::node_tree::ConfigValue::EventId { bytes, .. } => bytes.to_vec(),
+        crate::node_tree::ConfigValue::Float { value: v } => {
+            (*v as f32).to_be_bytes().to_vec()
+        }
+    }
+}
+
 // ============================================================================
 // T009: Unit tests for get_card_elements (navigate_and_build_card_tree)
 // ============================================================================

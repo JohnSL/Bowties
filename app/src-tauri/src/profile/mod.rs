@@ -152,7 +152,7 @@ fn apply_event_role(
 }
 
 /// Recursive descent: for each `GroupNode`, check whether its path (with
-/// `inst:N` steps stripped) equals `resolved_path`.
+/// instance suffixes stripped) equals `resolved_path`.
 ///
 /// - **Match**: apply `role` to every `EventId` leaf descendant of this group;
 ///   if `label` is `Some`, set `group.display_name` on the matched group only

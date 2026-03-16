@@ -2,22 +2,21 @@
   /**
    * SaveControls — Global Save button and progress display.
    *
-   * Operates on ALL pending edits across every node and segment, not just
-   * the currently visible one. This allows users to freely navigate between
-   * segments and nodes while accumulating edits, then save everything in one
-   * click.
+   * Operates on ALL modified tree leaves across every node and segment.
+   * The Rust backend writes all modified values in one batch via
+   * `write_modified_values`, then sends Update Complete per node.
    *
-   * Per FR-013a (progress feedback), FR-014 (blocked when invalid),
-   * FR-022 (Update Complete after all writes), FR-021 (value cache sync).
+   * Per FR-013a (progress feedback), FR-022 (Update Complete after all writes).
    *
    * Spec: 007-edit-node-config.
    */
   import type { SaveProgress, SaveState } from '$lib/types/nodeTree';
-  import { pendingEditsStore, pendingEditsVersion } from '$lib/stores/pendingEdits.svelte';
+  import { countModifiedLeaves } from '$lib/types/nodeTree';
+  import { writeModifiedValues, discardModifiedValues } from '$lib/api/config';
+  import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
+  import { layoutStore } from '$lib/stores/layout.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { updateNodeSnipField } from '$lib/stores/nodeInfo';
-  import { serializeConfigValue } from '$lib/utils/serialize';
-  import { writeConfigValue, sendUpdateComplete } from '$lib/api/config';
   import DiscardConfirmDialog from '$lib/components/DiscardConfirmDialog.svelte';
 
   interface Props {
@@ -42,19 +41,29 @@
     currentFieldLabel: null,
   });
 
-  // Subscribe to the version counter so $derived below re-evaluates on every
-  // store mutation. Svelte 5 $derived doesn't reliably track Map.values()
-  // iteration inside external class methods without this explicit dependency.
-  let _version = $derived($pendingEditsVersion);
+  // Derive dirty count from the tree's modifiedValue leaves
+  let dirtyCount = $derived.by(() => {
+    let count = 0;
+    for (const tree of nodeTreeStore.trees.values()) {
+      count += countModifiedLeaves(tree);
+    }
+    return count;
+  });
 
-  // Derived: all dirty or error edits across every node/segment (T046: retry includes error)
-  let dirtyEdits = $derived(_version >= 0 ? pendingEditsStore.getRetryableAll() : []);
-  let hasEdits = $derived(dirtyEdits.length > 0);
-  let hasInvalid = $derived(_version >= 0 && pendingEditsStore.hasInvalid);
-  let canSave = $derived(hasEdits && !hasInvalid && saveProgress.state !== 'saving');
+  let hasConfigEdits = $derived(dirtyCount > 0);
+  let hasMetadataEdits = $derived(bowtieMetadataStore.isDirty);
+  // T019/T020: Unified dirty state across both config edits and bowtie metadata
+  let hasEdits = $derived(hasConfigEdits || hasMetadataEdits);
+  let canSave = $derived(hasEdits && saveProgress.state !== 'saving');
   let isSaving = $derived(saveProgress.state === 'saving');
-  // Distinct node count for the discard confirmation message.
-  let dirtyNodeCount = $derived(new Set(dirtyEdits.map((e) => e.nodeId)).size);
+  // Count distinct nodes with modified leaves for discard confirmation
+  let dirtyNodeCount = $derived.by(() => {
+    const nodeIds = new Set<string>();
+    for (const [nodeId, tree] of nodeTreeStore.trees) {
+      if (countModifiedLeaves(tree) > 0) nodeIds.add(nodeId);
+    }
+    return nodeIds.size;
+  });
 
   // Whether the discard confirmation dialog is open.
   let showDiscardDialog = $state(false);
@@ -62,82 +71,62 @@
   // ── Save handler ────────────────────────────────────────────────────────────
 
   async function handleSave() {
-    const edits = pendingEditsStore.getRetryableAll();
-    if (edits.length === 0) return;
+    const hasNodeEdits = hasConfigEdits;
+    const hasYamlEdits = bowtieMetadataStore.isDirty;
+
+    if (!hasNodeEdits && !hasYamlEdits) return;
 
     saveProgress = {
       state: 'saving',
-      total: edits.length,
+      total: dirtyCount + (hasYamlEdits ? 1 : 0),
       completed: 0,
       failed: 0,
-      currentFieldLabel: edits[0]?.fieldLabel ?? null,
+      currentFieldLabel: hasNodeEdits ? 'Writing configuration…' : 'Layout metadata',
     };
 
     let failCount = 0;
-    // Track which nodes had at least one successful write (for Update Complete)
-    const successNodeIds = new Set<string>();
 
-    for (let i = 0; i < edits.length; i++) {
-      const edit = edits[i];
-      saveProgress = { ...saveProgress, currentFieldLabel: edit.fieldLabel };
-
-      // Transition store to writing state
-      pendingEditsStore.markWriting(edit.key);
-
+    // Write all modified tree leaves in one Rust batch
+    if (hasNodeEdits) {
       try {
-        // Serialize the pending value to bytes
-        const bytes = serializeConfigValue(edit.pendingValue, edit.elementType, edit.size);
-
-        // Write to node — each edit carries its own nodeId
-        const result = await writeConfigValue(edit.nodeId, edit.address, edit.space, bytes);
-
-        if (result.success) {
-          // Mark clean (removes from store)
-          pendingEditsStore.markClean(edit.key);
-          saveProgress = { ...saveProgress, completed: saveProgress.completed + 1 };
-          successNodeIds.add(edit.nodeId);
-
-          // Update in-memory tree cache so the leaf shows the written value (FR-021)
-          nodeTreeStore.updateLeafValue(edit.nodeId, edit.fieldPath, edit.pendingValue);
-
-          // If this is an ACDI User space field (0xFB), patch nodeInfoStore so the
-          // sidebar node name / tooltip updates immediately without re-discovery.
-          //   offset 1  = user_name
-          //   offset 64 = user_description
-          const ACDI_USER_SPACE = 0xFB;
-          if (edit.space === ACDI_USER_SPACE && edit.pendingValue.type === 'string') {
-            if (edit.address === 1) {
-              updateNodeSnipField(edit.nodeId, 'user_name', edit.pendingValue.value);
-            } else if (edit.address === 64) {
-              updateNodeSnipField(edit.nodeId, 'user_description', edit.pendingValue.value);
-            }
-          }
-        } else {
-          failCount++;
-          pendingEditsStore.markError(
-            edit.key,
-            result.errorMessage ?? 'Write failed'
-          );
-          saveProgress = { ...saveProgress, failed: saveProgress.failed + 1 };
-        }
+        const result = await writeModifiedValues();
+        saveProgress = {
+          ...saveProgress,
+          completed: result.succeeded,
+          failed: result.failed,
+        };
+        failCount += result.failed;
       } catch (err: unknown) {
-        failCount++;
         const msg = err instanceof Error ? err.message : String(err);
-        pendingEditsStore.markError(edit.key, msg);
-        saveProgress = { ...saveProgress, failed: saveProgress.failed + 1 };
+        console.error('[SaveControls] writeModifiedValues failed:', msg);
+        failCount += dirtyCount;
+        saveProgress = { ...saveProgress, failed: dirtyCount };
       }
     }
 
-    // Send Update Complete to each node that received at least one successful write (FR-022)
-    for (const nid of successNodeIds) {
+    // T019: After node writes, save bowtie metadata to YAML layout file
+    let yamlSaveOk = true;
+    if (bowtieMetadataStore.isDirty) {
+      saveProgress = { ...saveProgress, currentFieldLabel: 'Layout metadata' };
       try {
-        await sendUpdateComplete(nid);
-      } catch {
-        // Non-fatal — node might not require it in all cases
+        await layoutStore.saveCurrentLayout();
+        bowtieMetadataStore.clearAll();
+      } catch (err: unknown) {
+        yamlSaveOk = false;
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[SaveControls] Layout save failed:', msg);
+        // Attempt Save As as fallback
+        try {
+          await layoutStore.saveLayoutAs();
+          bowtieMetadataStore.clearAll();
+          yamlSaveOk = true;
+        } catch {
+          // Save As also cancelled/failed — metadata remains dirty
+        }
       }
     }
 
-    const finalState: SaveState = failCount === 0 ? 'completed' : 'partial-failure';
+    const finalState: SaveState = failCount === 0 && yamlSaveOk ? 'completed' : 'partial-failure';
     saveProgress = { ...saveProgress, state: finalState, currentFieldLabel: null };
 
     // Auto-dismiss 'completed' state after 2s
@@ -152,9 +141,11 @@
     showDiscardDialog = true;
   }
 
-  function handleConfirmDiscard() {
+  // T020: Unified discard — clear both tree modifications and bowtie metadata
+  async function handleConfirmDiscard() {
     showDiscardDialog = false;
-    pendingEditsStore.clearAll();
+    await discardModifiedValues();
+    bowtieMetadataStore.clearAll();
     saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
   }
 
@@ -193,13 +184,9 @@
 
 {:else if hasEdits}
   <!-- Idle with pending edits -->
-  {#if hasInvalid}
-    <span class="invalid-hint" role="status">Fix invalid fields before saving</span>
-  {:else}
-    <span class="pending-hint" role="status">
-      {dirtyEdits.length} unsaved change{dirtyEdits.length === 1 ? '' : 's'}
-    </span>
-  {/if}
+  <span class="pending-hint" role="status">
+    {dirtyCount + (hasMetadataEdits ? bowtieMetadataStore.editCount : 0)} unsaved change{(dirtyCount + (hasMetadataEdits ? bowtieMetadataStore.editCount : 0)) === 1 ? '' : 's'}
+  </span>
 {/if}
 
 <button
@@ -225,7 +212,7 @@
 
 {#if showDiscardDialog}
   <DiscardConfirmDialog
-    fieldCount={dirtyEdits.length}
+    fieldCount={dirtyCount}
     nodeCount={dirtyNodeCount}
     onConfirm={handleConfirmDiscard}
     onCancel={handleCancelDiscard}
@@ -267,12 +254,6 @@
   .pending-hint {
     flex: 1;
     color: #835b00;                                /* amber: unsaved changes */
-    font-style: italic;
-  }
-
-  .invalid-hint {
-    flex: 1;
-    color: #a4262c;                                /* colorPaletteRedForeground1 */
     font-style: italic;
   }
 

@@ -13,7 +13,7 @@ use crate::profile::types::StructureProfile;
 /// Maps a profile group-path string to a resolved index-based path prefix.
 ///
 /// Key:   profile group path, e.g. `"Port I/O/Line/Event#1"`
-/// Value: path prefix without `inst:M` steps, e.g. `["seg:1", "elem:0", "elem:3"]`
+/// Value: path prefix without instance suffixes, e.g. `["seg:1", "elem:0", "elem:3"]`
 pub type ProfilePathMap = HashMap<String, Vec<String>>;
 
 /// Resolve all paths declared in a profile against the parsed CDI.
@@ -51,7 +51,7 @@ pub fn resolve_profile_paths(profile: &StructureProfile, cdi: &Cdi) -> ProfilePa
 }
 
 /// Parse a name-based profile path and walk the CDI by name+ordinal to produce
-/// an index-based path prefix (without `inst:M` steps).
+/// an index-based path prefix (without instance suffixes).
 ///
 /// ## Path format
 /// `"Segment Name/Group Name[/#N]/..."`
@@ -195,15 +195,22 @@ fn parse_name_ordinal(s: &str) -> (&str, usize) {
     }
 }
 
-/// Strip `inst:M` steps from an index-based path, returning only `seg:N` and
-/// `elem:K` components.
+/// Strip instance suffixes from an index-based path, returning the
+/// template-level path with `seg:N` and `elem:K` components.
 ///
-/// Used during tree annotation to compare a GroupNode's actual path (which
-/// includes instance steps) against a resolved profile path prefix.
+/// Converts `elem:N#M` → `elem:N` so instance paths can be compared
+/// against resolved profile path prefixes.
 pub fn strip_instance_steps(path: &[String]) -> Vec<String> {
     path.iter()
-        .filter(|s| !s.starts_with("inst:"))
-        .cloned()
+        .map(|s| {
+            // "elem:2#3" → "elem:2"
+            if let Some(hash_pos) = s.find('#') {
+                if s.starts_with("elem:") {
+                    return s[..hash_pos].to_string();
+                }
+            }
+            s.clone()
+        })
         .collect()
 }
 
@@ -358,8 +365,7 @@ mod tests {
     fn strip_instance_steps_removes_inst_steps() {
         let path = vec![
             "seg:0".to_string(),
-            "elem:0".to_string(),
-            "inst:3".to_string(),
+            "elem:0#3".to_string(),
         ];
         let stripped = strip_instance_steps(&path);
         assert_eq!(stripped, vec!["seg:0", "elem:0"]);
@@ -369,8 +375,7 @@ mod tests {
     fn strip_instance_steps_preserves_seg_and_elem() {
         let path = vec![
             "seg:1".to_string(),
-            "elem:2".to_string(),
-            "inst:1".to_string(),
+            "elem:2#1".to_string(),
             "elem:5".to_string(),
         ];
         let stripped = strip_instance_steps(&path);

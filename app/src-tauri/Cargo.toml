@@ -36,4 +36,5 @@ thiserror = "1.0"
 lazy_static = "1.4"
 uuid = { version = "1.10", features = ["v4"] }
 serde_yaml_ng = "0.10"
+tauri-plugin-dialog = "2"
 

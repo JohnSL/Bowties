@@ -7,6 +7,7 @@ mod menu;
 mod state;
 mod events;
 mod traffic;
+pub mod layout;
 pub mod node_tree;
 pub mod profile;
 
@@ -166,6 +167,7 @@ async fn get_connection_status(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             // Build and set the native menu
@@ -221,9 +223,18 @@ pub fn run() {
             commands::cancel_config_reading,
             commands::get_card_elements,
             commands::get_bowties,  // T011: Feature 006 bowtie catalog
+            commands::build_bowtie_catalog_command,  // Feature 009: rebuild with layout merge
+            commands::load_layout,  // Feature 009: layout file persistence
+            commands::save_layout,  // Feature 009: layout file persistence
+            commands::get_recent_layout,  // Feature 009: recent layout tracking
+            commands::set_recent_layout,  // Feature 009: recent layout tracking
             commands::get_node_tree,  // Spec 007: unified node tree
             commands::write_config_value,  // Spec 007: write config value
             commands::send_update_complete,  // Spec 007: send update complete
+            commands::set_modified_value,  // Modified value: set pending edit on tree
+            commands::discard_modified_values,  // Modified value: discard pending edits
+            commands::write_modified_values,  // Modified value: write all pending edits
+            commands::has_modified_values,  // Modified value: check for pending edits
             commands::list_serial_ports,
             commands::load_connection_prefs,
             commands::save_connection_prefs,

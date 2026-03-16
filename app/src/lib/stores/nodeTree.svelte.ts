@@ -201,11 +201,11 @@ class NodeTreeStore {
       'node-tree-updated',
       (event) => {
         const { nodeId } = event.payload;
-        // Only refresh if we already have this tree loaded.
-        // If the frontend never requested this tree, skip the fetch.
-        if (this._trees.has(nodeId)) {
-          this.refreshTree(nodeId);
-        }
+        // Load the tree whether or not it was previously loaded — this ensures
+        // newly discovered nodes are fetched automatically after CDI scan, not
+        // just nodes the user already expanded.  `loadTree` deduplicates via the
+        // _loading set, and for already-loaded nodes it acts as a refresh.
+        void this.loadTree(nodeId);
       },
     );
   }
@@ -304,25 +304,23 @@ function findLeafByPathInChildren(children: ConfigNode[], path: string[]): LeafC
 
   const segment = path[0];
 
-  // Handle "inst:N" — 1-based instance index within a replicated group's children.
-  // Rust emits these for every replicated group instance (e.g. "inst:3" → children[2]).
-  const instMatch = segment.match(/^inst:(\d+)$/);
-  if (instMatch) {
-    const instNum = parseInt(instMatch[1], 10);
-    const node = children[instNum - 1]; // convert 1-based → 0-based
-    if (!node) return null;
-    if (path.length === 1) return isLeaf(node) ? node : null;
-    if (isGroup(node)) return findLeafByPathInChildren(node.children, path.slice(1));
-    return null;
-  }
-
   // Could be "elem:N" or "elem:N#M"
   const elemMatch = segment.match(/^elem:(\d+)(?:#(\d+))?$/);
   if (!elemMatch) return null;
 
   const elemIdx = parseInt(elemMatch[1], 10);
+  const instanceNum = elemMatch[2] ? parseInt(elemMatch[2], 10) : undefined;
   const node = children[elemIdx];
   if (!node) return null;
+
+  if (instanceNum !== undefined && isGroup(node)) {
+    // elem:N#M — navigate into wrapper group's children to find instance M (1-based → 0-based)
+    const instanceNode = node.children[instanceNum - 1];
+    if (!instanceNode) return null;
+    if (path.length === 1) return isLeaf(instanceNode) ? instanceNode : null;
+    if (isGroup(instanceNode)) return findLeafByPathInChildren(instanceNode.children, path.slice(1));
+    return null;
+  }
 
   if (path.length === 1) {
     // Should be a leaf at this point

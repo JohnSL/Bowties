@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import { nodeInfoStore } from '$lib/stores/nodeInfo';
 import { configSidebarStore } from '$lib/stores/configSidebar';
+import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import ConfigSidebar from './ConfigSidebar.svelte';
 
 // Mock Tauri invoke so we don't need an actual backend
@@ -44,6 +45,7 @@ const MOCK_NODE = {
 beforeEach(() => {
   configSidebarStore.reset();
   nodeInfoStore.set(new Map());
+  nodeTreeStore.reset();
   vi.clearAllMocks();
 });
 
@@ -63,11 +65,10 @@ describe('ConfigSidebar.svelte', () => {
     const { invoke } = await import('@tauri-apps/api/core');
     (invoke as any).mockResolvedValue({
       nodeId: '02.01.57.00.00.01',
-      nodeName: 'Test Node',
+      identity: null,
       segments: [
-        { id: 'seg:0', name: 'Port I/O', description: null, space: 253, hasGroups: true, hasElements: false },
+        { name: 'Port I/O', description: null, space: 253, origin: 0, children: [] },
       ],
-      maxDepth: 3,
     });
     nodeInfoStore.set(new Map([['02.01.57.00.00.01', MOCK_NODE as any]]));
     const { container } = render(ConfigSidebar);
@@ -119,5 +120,48 @@ describe('ConfigSidebar.svelte', () => {
     let state: any;
     configSidebarStore.subscribe(s => (state = s))();
     expect(state.expandedNodeIds).not.toContain('02.01.57.00.00.01');
+  });
+
+  it('shows segments on remount without requiring the user to re-expand the node (route change)', async () => {
+    // Setup: mock invoke to return a valid NodeConfigTree
+    const { invoke } = await import('@tauri-apps/api/core');
+    const MOCK_TREE = {
+      nodeId: '02.01.57.00.00.01',
+      identity: null,
+      segments: [
+        { name: 'Port I/O', description: null, origin: 0, space: 253, children: [] },
+      ],
+    };
+    (invoke as any).mockResolvedValue(MOCK_TREE);
+
+    nodeInfoStore.set(new Map([['02.01.57.00.00.01', MOCK_NODE as any]]));
+
+    // First mount: expand node, segments load
+    const { unmount } = render(ConfigSidebar);
+    const nodeRow = screen.getByText('Test Node');
+    await fireEvent.click(nodeRow);
+
+    // Wait for the async tree load to complete
+    await vi.waitFor(() => {
+      expect(screen.getByText('Port I/O')).toBeInTheDocument();
+    });
+
+    // Simulate navigation away: unmount the component
+    unmount();
+
+    // The store still remembers the node is expanded
+    let state: any;
+    configSidebarStore.subscribe(s => (state = s))();
+    expect(state.expandedNodeIds).toContain('02.01.57.00.00.01');
+
+    // Remount: simulates navigating back to config page
+    render(ConfigSidebar);
+
+    // The node is expanded (store state persists across navigation).
+    // Segments must be visible — the user should not have to re-expand the node.
+    await vi.waitFor(() => {
+      expect(screen.queryByText('No segments available')).not.toBeInTheDocument();
+    });
+    expect(screen.getByText('Port I/O')).toBeInTheDocument();
   });
 });

@@ -1,12 +1,13 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { nodeInfoStore } from '$lib/stores/nodeInfo';
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import { configReadNodesStore } from '$lib/stores/configReadStatus';
   import NodeEntry from './NodeEntry.svelte';
   import SegmentEntry from './SegmentEntry.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
-  import { pendingEditsStore, pendingEditsVersion } from '$lib/stores/pendingEdits.svelte';
+  import { hasModifiedLeaves, hasModifiedDescendant } from '$lib/types/nodeTree';
   import type { SegmentInfo } from '$lib/stores/configSidebar';
 
   const dispatch = createEventDispatcher<{ readNodeConfig: { nodeId: string } }>();
@@ -66,17 +67,44 @@
     return !node.pip_flags.cdi && !node.pip_flags.memory_configuration;
   }
 
-  /** Handle node toggle — expand/collapse and load segments on first expand */
-  async function handleNodeToggle(nodeId: string, node: any, isCurrentlyExpanded: boolean) {
-    configSidebarStore.toggleNodeExpanded(nodeId);
+  /** Load a node's config tree and populate nodeSegments from it. */
+  async function loadSegmentsForNode(nodeId: string): Promise<void> {
+    nodeLoadingMap = new Map(nodeLoadingMap.set(nodeId, true));
+    configSidebarStore.setNodeLoading(nodeId, 'loading');
+    try {
+      const tree = await nodeTreeStore.loadTree(nodeId);
+      if (tree) {
+        const segments: SegmentInfo[] = tree.segments.map((seg, idx) => ({
+          segmentId: `seg:${idx}`,
+          segmentPath: `seg:${idx}`,
+          segmentName: seg.name ?? 'Unnamed Segment',
+          description: seg.description ?? null,
+          space: seg.space,
+          origin: seg.origin,
+        }));
+        nodeSegments = new Map(nodeSegments.set(nodeId, segments));
+        configSidebarStore.setNodeSegments(nodeId, segments);
+      } else {
+        const err = nodeTreeStore.getError(nodeId);
+        configSidebarStore.setNodeLoading(nodeId, 'error', err ?? 'Failed to load tree');
+      }
+    } catch (err) {
+      configSidebarStore.setNodeLoading(nodeId, 'error', String(err));
+    } finally {
+      nodeLoadingMap = new Map(nodeLoadingMap.set(nodeId, false));
+    }
+  }
 
-    // Load segments on first expansion via unified tree (Spec 007, Phase 4)
-    if (!isCurrentlyExpanded && !nodeSegments.has(nodeId)) {
-      nodeLoadingMap = new Map(nodeLoadingMap.set(nodeId, true));
-      configSidebarStore.setNodeLoading(nodeId, 'loading');
-
-      try {
-        const tree = await nodeTreeStore.loadTree(nodeId);
+  // On mount, restore segments for nodes that are already expanded in the store
+  // (e.g. after a route change unmounts and remounts this component).
+  // Reading from the store via `get()` is reliable regardless of when $: runs.
+  onMount(() => {
+    const { expandedNodeIds } = get(configSidebarStore);
+    for (const nodeId of expandedNodeIds) {
+      if (!nodeSegments.has(nodeId)) {
+        // If the tree is already cached (from a prior expansion), populate segments
+        // synchronously so the user sees them immediately without a loading flash.
+        const tree = nodeTreeStore.getTree(nodeId);
         if (tree) {
           const segments: SegmentInfo[] = tree.segments.map((seg, idx) => ({
             segmentId: `seg:${idx}`,
@@ -89,14 +117,19 @@
           nodeSegments = new Map(nodeSegments.set(nodeId, segments));
           configSidebarStore.setNodeSegments(nodeId, segments);
         } else {
-          const err = nodeTreeStore.getError(nodeId);
-          configSidebarStore.setNodeLoading(nodeId, 'error', err ?? 'Failed to load tree');
+          void loadSegmentsForNode(nodeId);
         }
-      } catch (err) {
-        configSidebarStore.setNodeLoading(nodeId, 'error', String(err));
-      } finally {
-        nodeLoadingMap = new Map(nodeLoadingMap.set(nodeId, false));
       }
+    }
+  });
+
+  /** Handle node toggle — expand/collapse and load segments on first expand */
+  async function handleNodeToggle(nodeId: string, node: any, isCurrentlyExpanded: boolean) {
+    configSidebarStore.toggleNodeExpanded(nodeId);
+
+    // Load segments on first expansion via unified tree (Spec 007, Phase 4)
+    if (!isCurrentlyExpanded && !nodeSegments.has(nodeId)) {
+      await loadSegmentsForNode(nodeId);
     }
   }
 
@@ -108,9 +141,6 @@
   $: nodes = $nodeInfoStore;
   $: sidebarState = $configSidebarStore;
   $: configReadNodes = $configReadNodesStore;
-  $: _editsVersion = $pendingEditsVersion;
-  // Recompute all pending edits whenever _editsVersion ticks so template badges update
-  $: allPendingEdits = _editsVersion >= 0 ? pendingEditsStore.allEdits : [];
 </script>
 
 <aside class="config-sidebar">
@@ -141,7 +171,7 @@
             {isLoading}
             configNotRead={isConfigNotRead}
             isSelected={isNodeSelected}
-            hasPendingEdits={allPendingEdits.some(e => e.nodeId === nodeId && (e.writeState === 'dirty' || e.writeState === 'error'))}
+            hasPendingEdits={(() => { const t = nodeTreeStore.getTree(nodeId); return t ? hasModifiedLeaves(t) : false; })()}
             on:toggle={() => handleNodeToggle(nodeId, node, isExpanded)}
             on:readConfig={() => dispatch('readNodeConfig', { nodeId })}
           />
@@ -170,7 +200,7 @@
                     segmentName={seg.segmentName}
                     description={seg.description}
                     {isSelected}
-                    hasPendingEdits={allPendingEdits.some(e => e.nodeId === nodeId && e.segmentOrigin === seg.origin && (e.writeState === 'dirty' || e.writeState === 'error'))}
+                    hasPendingEdits={(() => { const t = nodeTreeStore.getTree(nodeId); if (!t) return false; const ts = t.segments.find(s => s.origin === seg.origin); return ts ? hasModifiedDescendant(ts.children, []) : false; })()}
                     on:select={() => handleSegmentSelect(nodeId, seg)}
                   />
                 {/each}

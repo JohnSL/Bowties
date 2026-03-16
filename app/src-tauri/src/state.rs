@@ -26,6 +26,14 @@ pub struct NodeRoles {
 
 // ── Bowtie catalog types (defined here to avoid circular deps with commands::bowties) ──
 
+/// Bowtie state reflecting current element membership.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub enum BowtieState {
+    Active,
+    Incomplete,
+    Planning,
+}
+
 /// A single classified event ID configuration field from one node.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -62,8 +70,18 @@ pub struct BowtieCard {
     pub consumers: Vec<EventSlotEntry>,
     /// Slots whose role could not be determined
     pub ambiguous_entries: Vec<EventSlotEntry>,
-    /// User-assigned name (None in this phase)
+    /// User-assigned name (None = unnamed, show event_id_hex as header)
     pub name: Option<String>,
+    /// User-assigned tags from layout metadata
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Derived state based on element membership
+    #[serde(default = "default_bowtie_state")]
+    pub state: BowtieState,
+}
+
+fn default_bowtie_state() -> BowtieState {
+    BowtieState::Active
 }
 
 /// Complete in-memory collection of discovered bowties for the current session.

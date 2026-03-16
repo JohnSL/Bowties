@@ -16,7 +16,10 @@
   import type { ReadProgressState } from '$lib/api/types';
   import { updateNodeInfo } from '$lib/stores/nodeInfo';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
+  import { layoutStore } from '$lib/stores/layout.svelte';
+  import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
+  import { hasModifiedLeaves } from '$lib/types/nodeTree';
   import { configReadNodesStore, markNodeConfigRead, clearConfigReadStatus } from '$lib/stores/configReadStatus';
   import BowtieCatalogPanel from '$lib/components/Bowtie/BowtieCatalogPanel.svelte';
   import DiscoveryProgressModal from '$lib/components/DiscoveryProgressModal.svelte';
@@ -85,59 +88,64 @@
   let nodesWithCdi = $state(new Set<string>());
 
   // Check connection status on mount
-  onMount(async () => {
-    try {
-      const status = await invoke("get_connection_status");
-      connected = (status as any).connected;
-      if (connected && (status as any).config) {
-        const cfg = (status as any).config;
-        connectionLabel = cfg.name ?? (cfg.host ? `${cfg.host}:${cfg.port}` : cfg.serialPort ?? 'LCC');
-      }
-    } catch (e) {
-      console.error("Failed to get connection status:", e);
-    }
-
-    // Feature 006: Start bowties store listener so cdi-read-complete is captured
-    // regardless of whether the user has visited the Bowties page.
-    bowtieCatalogStore.startListening();
-
-    // Spec 007: Start node-tree-updated listener so trees are refreshed
-    // automatically as config values and event roles are merged server-side.
-    nodeTreeStore.startListening();
-
+  onMount(() => {
     const unlistens: Array<() => void> = [];
 
-    // T063: Setup config-read-progress event listener
-    unlistens.push(await listen<ReadProgressState>('config-read-progress', (event) => {
-      readProgress = event.payload;
-      discoveryPhase = 'reading';
-      
-      // Clear progress on completion or cancellation
-      if (event.payload.status.type === 'Complete' || event.payload.status.type === 'Cancelled') {
-        discoveryPhase = event.payload.status.type === 'Cancelled' ? 'cancelled' : 'complete';
-        setTimeout(() => {
-          readProgress = null;
-          isCancelling = false;
-          discoveryModalVisible = false;
-        }, 500); // Brief pause so user sees the final status
+    (async () => {
+      try {
+        const status = await invoke("get_connection_status");
+        connected = (status as any).connected;
+        if (connected && (status as any).config) {
+          const cfg = (status as any).config;
+          connectionLabel = cfg.name ?? (cfg.host ? `${cfg.host}:${cfg.port}` : cfg.serialPort ?? 'LCC');
+        }
+      } catch (e) {
+        console.error("Failed to get connection status:", e);
       }
-    }));
 
-    // Native menu event listeners — relay OS menu clicks to handler functions
-    unlistens.push(await listen('menu-disconnect',     () => disconnect()));
-    unlistens.push(await listen('menu-refresh',        () => { if (connected) discover(); }));
-    unlistens.push(await listen('menu-traffic',        () => { if (connected) openTrafficMonitor(); }));
-    unlistens.push(await listen('menu-view-cdi',       () => {
-      const state = get(configSidebarStore);
-      const nodeId = state.selectedSegment?.nodeId ?? state.selectedNodeId;
-      if (nodeId) openCdiViewer(nodeId, false);
-    }));
-    unlistens.push(await listen('menu-redownload-cdi', () => {
-      const state = get(configSidebarStore);
-      const nodeId = state.selectedSegment?.nodeId ?? state.selectedNodeId;
-      if (nodeId) openCdiViewer(nodeId, true);
-    }));
-    unlistens.push(await listen('menu-discovery-opts', () => { showDiscoveryOptions = !showDiscoveryOptions; }));
+      // Feature 006: Start bowties store listener so cdi-read-complete is captured
+      // regardless of whether the user has visited the Bowties page.
+      bowtieCatalogStore.startListening();
+
+      // Spec 009 T015: Auto-reopen the most recent layout file on startup
+      layoutStore.checkAndReopenRecent();
+
+      // Spec 007: Start node-tree-updated listener so trees are refreshed
+      // automatically as config values and event roles are merged server-side.
+      nodeTreeStore.startListening();
+
+      // T063: Setup config-read-progress event listener
+      unlistens.push(await listen<ReadProgressState>('config-read-progress', (event) => {
+        readProgress = event.payload;
+        discoveryPhase = 'reading';
+
+        // Clear progress on completion or cancellation
+        if (event.payload.status.type === 'Complete' || event.payload.status.type === 'Cancelled') {
+          discoveryPhase = event.payload.status.type === 'Cancelled' ? 'cancelled' : 'complete';
+          setTimeout(() => {
+            readProgress = null;
+            isCancelling = false;
+            discoveryModalVisible = false;
+          }, 500); // Brief pause so user sees the final status
+        }
+      }));
+
+      // Native menu event listeners — relay OS menu clicks to handler functions
+      unlistens.push(await listen('menu-disconnect',     () => disconnect()));
+      unlistens.push(await listen('menu-refresh',        () => { if (connected) discover(); }));
+      unlistens.push(await listen('menu-traffic',        () => { if (connected) openTrafficMonitor(); }));
+      unlistens.push(await listen('menu-view-cdi',       () => {
+        const state = get(configSidebarStore);
+        const nodeId = state.selectedSegment?.nodeId ?? state.selectedNodeId;
+        if (nodeId) openCdiViewer(nodeId, false);
+      }));
+      unlistens.push(await listen('menu-redownload-cdi', () => {
+        const state = get(configSidebarStore);
+        const nodeId = state.selectedSegment?.nodeId ?? state.selectedNodeId;
+        if (nodeId) openCdiViewer(nodeId, true);
+      }));
+      unlistens.push(await listen('menu-discovery-opts', () => { showDiscoveryOptions = !showDiscoveryOptions; }));
+    })();
 
     // Cleanup all listeners on component unmount
     return () => {
@@ -233,6 +241,7 @@
             const response = await readAllConfigValues(nodeId, undefined, nodeIdx, cdiCandidatesRefresh.length);
 
             markNodeConfigRead(nodeId);
+            await nodeTreeStore.loadTree(nodeId);
             totalSuccessfulRefresh += response.successfulReads;
             totalFailedRefresh += response.failedReads;
 
@@ -380,6 +389,7 @@
             const response = await readAllConfigValues(nodeId, undefined, nodeIdx, cdiCandidates.length);
 
             markNodeConfigRead(nodeId);
+            await nodeTreeStore.loadTree(nodeId);
             totalSuccessful += response.successfulReads;
             totalFailed += response.failedReads;
 
@@ -682,6 +692,7 @@
         if (cdiCheck.xmlContent !== null) {
           const response = await readAllConfigValues(nodeId, undefined, i, nodesToDownload.length);
           markNodeConfigRead(nodeId);
+          await nodeTreeStore.loadTree(nodeId);
           console.log(`✓ Read config for ${nodeName}`);
         }
       } catch (e) {
@@ -777,8 +788,45 @@
         >
           <span class="tb-icon">🎀</span>
           <span>Bowties</span>
+          <!-- T022: Global unsaved indicator — show dot when trees have modified values or metadata is dirty -->
+          {#if [...nodeTreeStore.trees.values()].some(t => hasModifiedLeaves(t)) || bowtieMetadataStore.isDirty}
+            <span class="global-dirty-dot" title="Unsaved changes" aria-label="Unsaved changes">●</span>
+          {/if}
         </button>
         <SaveControls toolbar={true} />
+        <!-- Feature 009: Layout file controls -->
+        {#if bowtieCatalogStore.readComplete}
+          <span class="toolbar-sep" aria-hidden="true"></span>
+          <button
+            class="toolbar-btn"
+            onclick={() => layoutStore.openLayout()}
+            disabled={layoutStore.isBusy}
+            title="Open a layout file (.bowties.yaml)"
+          >
+            <span class="tb-icon">📂</span>
+            <span>Open Layout</span>
+          </button>
+          {#if layoutStore.isLoaded}
+            <button
+              class="toolbar-btn"
+              onclick={() => layoutStore.saveCurrentLayout()}
+              disabled={layoutStore.isBusy || !layoutStore.isDirty}
+              title={layoutStore.isDirty ? `Save changes to ${layoutStore.displayName}` : 'No unsaved changes'}
+            >
+              <span class="tb-icon">💾</span>
+              <span>Save{layoutStore.isDirty ? '*' : ''}</span>
+            </button>
+            <button
+              class="toolbar-btn"
+              onclick={() => layoutStore.saveLayoutAs()}
+              disabled={layoutStore.isBusy}
+              title="Save layout to a new file"
+            >
+              <span class="tb-icon">💾</span>
+              <span>Save As</span>
+            </button>
+          {/if}
+        {/if}
       </div>
       <div class="toolbar-right">
         <button
@@ -1031,6 +1079,15 @@
     background: #eff6ff;
     border-color: #6366f1 !important;
     color: #4338ca !important;
+  }
+
+  /* T022: Global unsaved-changes indicator dot */
+  .global-dirty-dot {
+    color: #ca5010;
+    font-size: 0.55rem;
+    vertical-align: super;
+    margin-left: 2px;
+    line-height: 1;
   }
 
 

@@ -21,6 +21,8 @@ Auto-generated from all feature plans. Last updated: 2026-02-14
 - Output files in `specs/008-guided-configuration/` as structured markdown/JSON (008-guided-configuration)
 - Rust 2021 (stable 1.75+) — backend; TypeScript 5.x / SvelteKit 2.x / Svelte 5 — frontend (008-guided-configuration)
 - YAML files on disk (`.profile.yaml`). Two discovery paths: (008-guided-configuration)
+- Rust 2021 (stable 1.70+) backend; TypeScript 5.6 / Svelte 5 / SvelteKit 2.9 frontend + Tauri 2, tokio 1.41, serde_yaml_ng 0.10, lcc-rs (workspace crate), TailwindCSS 4.2 (009-editable-bowties)
+- User-managed YAML layout file (serde_yaml_ng); in-memory bowtie catalog (AppState); pending edits (frontend Svelte store) (009-editable-bowties)
 
 - Python 3.12 (latest stable as of 2026), managed via UV + PySerial (serial port communication), IntelHex (firmware loading), UV (Python version management) (001-python3-migration)
 
@@ -40,9 +42,9 @@ cd src; pytest; ruff check .
 Python 3.12 (latest stable as of 2026), managed via UV: Follow standard conventions
 
 ## Recent Changes
+- 009-editable-bowties: Added Rust 2021 (stable 1.70+) backend; TypeScript 5.6 / Svelte 5 / SvelteKit 2.9 frontend + Tauri 2, tokio 1.41, serde_yaml_ng 0.10, lcc-rs (workspace crate), TailwindCSS 4.2
 - 008-guided-configuration: Added Rust 2021 (stable 1.75+) — backend; TypeScript 5.x / SvelteKit 2.x / Svelte 5 — frontend
 - 007-edit-node-config: Added Rust 2021 edition (stable 1.70+), TypeScript (strict), SvelteKit 2.x + lcc-rs (path dep), Tauri 2, tokio 1.41, serde 1.0, roxmltree 0.20, thiserror (2.0 in lcc-rs, 1.0 in app)
-- 008-guided-configuration: Added N/A — this phase is prompt engineering and document production, not code + Copilot Chat (or any capable LLM), `pdf-utilities` MCP extension for PDF text extraction
 
 
 <!-- MANUAL ADDITIONS START -->

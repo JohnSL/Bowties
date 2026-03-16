@@ -4,7 +4,7 @@
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import { nodeInfoStore, updateNodeInfo } from '$lib/stores/nodeInfo';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
-  import { pendingEditsStore } from '$lib/stores/pendingEdits.svelte';
+  import { hasModifiedLeaves } from '$lib/types/nodeTree';
   import { listen } from '@tauri-apps/api/event';
   import { invoke } from '@tauri-apps/api/core';
   import { onMount, onDestroy } from 'svelte';
@@ -15,10 +15,9 @@
   let unlisten: (() => void) | null = null;
 
   // FR-026: Warn before navigating away from the page when there are unsaved edits.
-  // Note: In Tauri (no real page navigation), this primarily guards SvelteKit
-  // client-side navigation between routes.
   beforeNavigate(({ cancel }) => {
-    if (pendingEditsStore.hasPendingEdits) {
+    const hasModified = [...nodeTreeStore.trees.values()].some(t => hasModifiedLeaves(t));
+    if (hasModified) {
       const ok = window.confirm(
         'You have unsaved configuration changes.\n\nIf you leave this page, your changes will be lost.\n\nDo you want to leave?'
       );

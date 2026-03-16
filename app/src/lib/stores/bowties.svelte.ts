@@ -1,8 +1,9 @@
 /**
- * Svelte 5 reactive stores for the Bowties tab — Feature 006.
+ * Svelte 5 reactive stores for the Bowties tab — Feature 006 + 009.
  *
  * bowtieCatalogStore  — holds the latest BowtieCatalog or null (before first CDI read)
  * cdiReadCompleteStore — true once the first cdi-read-complete event has been received
+ * editableBowtiePreview — derived view merging catalog + pending edits + metadata
  *
  * The stores are populated by registering a persistent Tauri event listener for
  * the `cdi-read-complete` event emitted by the backend after CDI reads + the
@@ -10,7 +11,14 @@
  */
 
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { type BowtieCatalog, type BowtieCard, type CdiReadCompletePayload } from '../api/tauri';
+import { get } from 'svelte/store';
+import { type BowtieCatalog, type BowtieCard, type CdiReadCompletePayload, type EventSlotEntry } from '../api/tauri';
+import type { PreviewBowtieCard, EditableBowtiePreview } from '$lib/types/bowtie';
+import { buildElementLabel, collectEventIdLeaves, effectiveValue, hasModifiedLeaves } from '$lib/types/nodeTree';
+import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
+import { layoutStore } from '$lib/stores/layout.svelte';
+import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
+import { nodeInfoStore } from '$lib/stores/nodeInfo';
 
 // ─── Store class ─────────────────────────────────────────────────────────────
 
@@ -132,3 +140,215 @@ class BowtieCatalogStore {
  * ```
  */
 export const bowtieCatalogStore = new BowtieCatalogStore();
+
+// ─── Editable Bowtie Preview (T018, T023) ─────────────────────────────────────
+
+/**
+ * Derived class that merges the live BowtieCatalog + tree modifications
+ * + metadata from BowtieMetadataStore to produce the current user-visible
+ * bowtie state with per-card dirty flags.
+ *
+ * Reactively recomputes when any of its inputs change (T023).
+ * Tree modifications are reflected because `nodeTreeStore.trees` is reactive
+ * and `collectEntriesForEventId` reads effective values from tree leaves.
+ */
+class EditableBowtiePreviewStore {
+  /**
+   * Compute the editable preview by merging catalog, metadata, and tree modifications.
+   */
+  get preview(): EditableBowtiePreview {
+    const catalog = bowtieCatalogStore.catalog;
+    const metadataIsDirty = bowtieMetadataStore.isDirty;
+    // Check whether any tree has modified leaves (replaces pendingEditsStore.hasPendingEdits)
+    let configIsDirty = false;
+    for (const tree of nodeTreeStore.trees.values()) {
+      if (hasModifiedLeaves(tree)) { configIsDirty = true; break; }
+    }
+    const layout = layoutStore.layout;
+
+    const previews: PreviewBowtieCard[] = [];
+    const seenEventIds = new Set<string>();
+
+    // 1. Process catalog cards (if available)
+    if (catalog) {
+    // Process each card from the catalog
+    for (const card of catalog.bowties) {
+      seenEventIds.add(card.event_id_hex);
+      const meta = bowtieMetadataStore.getMetadata(card.event_id_hex);
+
+      // Build dirty fields set
+      const dirtyFields = new Set<string>();
+
+      // Check if metadata has been edited for this card
+      if (meta) {
+        const originalMeta = layout?.bowties[card.event_id_hex];
+        if (!originalMeta) {
+          dirtyFields.add('name');
+          dirtyFields.add('tags');
+        } else {
+          if (meta.name !== originalMeta.name) dirtyFields.add('name');
+          if (JSON.stringify(meta.tags) !== JSON.stringify(originalMeta.tags)) dirtyFields.add('tags');
+        }
+      }
+
+      // Collect entries from tree leaves (including modified values)
+      const { producers: treeProducers, consumers: treeConsumers } =
+        collectEntriesForEventId(card.event_id_hex);
+
+      // Filter out entries already present in the catalog card
+      const allExisting = [...card.producers, ...card.consumers, ...card.ambiguous_entries];
+      const newProducers = treeProducers.filter(p =>
+        !allExisting.some(e => e.node_id === p.node_id && e.element_path.join('/') === p.element_path.join('/'))
+      );
+      const newConsumers = treeConsumers.filter(c =>
+        !allExisting.some(e => e.node_id === c.node_id && e.element_path.join('/') === c.element_path.join('/'))
+      );
+
+      if (newProducers.length > 0 || newConsumers.length > 0) {
+        dirtyFields.add('elements');
+      }
+
+      previews.push({
+        eventIdHex: card.event_id_hex,
+        eventIdBytes: card.event_id_bytes,
+        producers: [...card.producers, ...newProducers],
+        consumers: [...card.consumers, ...newConsumers],
+        ambiguousEntries: card.ambiguous_entries,
+        name: meta?.name ?? card.name ?? undefined,
+        tags: meta?.tags ?? card.tags ?? [],
+        state: card.state === 'Active' ? 'active' : card.state === 'Incomplete' ? 'incomplete' : 'planning',
+        isDirty: dirtyFields.size > 0 || newProducers.length > 0 || newConsumers.length > 0,
+        dirtyFields,
+      });
+    }
+    } // end if (catalog)
+
+    // 2. Always process layout bowties not already covered by catalog
+    if (layout) {
+      for (const [eventIdHex, meta] of Object.entries(layout.bowties)) {
+        if (!seenEventIds.has(eventIdHex)) {
+          seenEventIds.add(eventIdHex);
+          const metaOverride = bowtieMetadataStore.getMetadata(eventIdHex);
+
+          const { producers, consumers } = collectEntriesForEventId(eventIdHex);
+
+          // Only flag dirty if pending metadata edits actually changed something
+          const dirtyFields = new Set<string>();
+          if (metaOverride) {
+            if (metaOverride.name !== meta.name) dirtyFields.add('name');
+            if (JSON.stringify(metaOverride.tags) !== JSON.stringify(meta.tags ?? [])) dirtyFields.add('tags');
+          }
+
+          previews.push({
+            eventIdHex,
+            eventIdBytes: eventIdHexToBytes(eventIdHex),
+            producers,
+            consumers,
+            ambiguousEntries: [],
+            name: metaOverride?.name ?? meta.name,
+            tags: metaOverride?.tags ?? meta.tags ?? [],
+            state: 'planning',
+            isDirty: dirtyFields.size > 0,
+            dirtyFields,
+          });
+        }
+      }
+    }
+
+    // Add newly-created bowties from metadata that aren't in catalog or layout
+    for (const eventIdHex of bowtieMetadataStore.allEventIds) {
+      if (!seenEventIds.has(eventIdHex)) {
+        seenEventIds.add(eventIdHex);
+        const meta = bowtieMetadataStore.getMetadata(eventIdHex);
+
+        const { producers, consumers } = collectEntriesForEventId(eventIdHex);
+
+        previews.push({
+          eventIdHex,
+          eventIdBytes: eventIdHexToBytes(eventIdHex),
+          producers,
+          consumers,
+          ambiguousEntries: [],
+          name: meta?.name,
+          tags: meta?.tags ?? [],
+          state: 'planning',
+          isDirty: true,
+          dirtyFields: new Set(['name']),
+        });
+      }
+    }
+
+    return {
+      bowties: previews,
+      hasUnsavedChanges: metadataIsDirty || configIsDirty,
+    };
+  }
+}
+
+/**
+ * Convert a dotted-hex event ID string to a bytes array.
+ * E.g., "05.01.01.01.FF.00.00.01" → [5, 1, 1, 1, 255, 0, 0, 1]
+ */
+function eventIdHexToBytes(hex: string): number[] {
+  return hex.split('.').map(h => parseInt(h, 16));
+}
+
+/**
+ * Collect all entries for a given event ID hex by scanning all loaded tree
+ * leaves (using their effective value — committed or modified).
+ *
+ * This mirrors the Rust catalog builder's approach: walk all CDI event-ID
+ * slots, reuse tree and SNIP data for full display quality.
+ */
+function collectEntriesForEventId(eventIdHex: string): { producers: EventSlotEntry[]; consumers: EventSlotEntry[] } {
+  const producers: EventSlotEntry[] = [];
+  const consumers: EventSlotEntry[] = [];
+
+  for (const [nodeId, tree] of nodeTreeStore.trees) {
+    const leaves = collectEventIdLeaves(tree);
+    for (const leaf of leaves) {
+      const val = effectiveValue(leaf);
+      if (val?.type !== 'eventId' || val.hex !== eventIdHex) continue;
+
+      const entry: EventSlotEntry = {
+        node_id: nodeId,
+        node_name: resolveNodeDisplayName(nodeId),
+        element_path: leaf.path,
+        element_label: buildElementLabel(tree, leaf),
+        element_description: leaf.description,
+        event_id: val.bytes,
+        role: leaf.eventRole ?? 'Ambiguous',
+      };
+
+      if (entry.role === 'Producer') {
+        producers.push(entry);
+      } else if (entry.role === 'Consumer') {
+        consumers.push(entry);
+      } else {
+        consumers.push(entry);
+      }
+    }
+  }
+
+  return { producers, consumers };
+}
+
+/**
+ * Resolve a human-readable node name, mirroring the Rust `node_display_name()` logic:
+ * user_name → "manufacturer — model" → node_id_hex.
+ */
+function resolveNodeDisplayName(nodeId: string): string {
+  const nodes = get(nodeInfoStore);
+  const node = nodes.get(nodeId);
+  if (!node?.snip_data) return nodeId;
+  const snip = node.snip_data;
+  if (snip.user_name && snip.user_name.length > 0) return snip.user_name;
+  const mfg = snip.manufacturer?.trim() ?? '';
+  const mdl = snip.model?.trim() ?? '';
+  if (mfg && mdl) return `${mfg} — ${mdl}`;
+  if (mdl) return mdl;
+  return nodeId;
+}
+
+/** Singleton editable bowtie preview store. */
+export const editableBowtiePreviewStore = new EditableBowtiePreviewStore();

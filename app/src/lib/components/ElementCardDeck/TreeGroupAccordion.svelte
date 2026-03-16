@@ -21,7 +21,7 @@
   interface PillItem { value: number; label: string; description?: string; }
   import TreeLeafRow from './TreeLeafRow.svelte';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
-  import { pendingEditsStore, pendingEditsVersion } from '$lib/stores/pendingEdits.svelte';
+  import { hasModifiedDescendant } from '$lib/types/nodeTree';
 
   /** The group node from the unified tree */
   export let group: GroupConfigNode;
@@ -36,7 +36,7 @@
   export let siblings: GroupConfigNode[] = [];
   /** Whether the parent node is offline — disables all inputs (FR-007, T050) */
   export let isNodeOffline: boolean = false;
-  /** Segment origin address — forwarded to TreeLeafRow for PendingEdit keying */
+  /** Segment origin address — forwarded to TreeLeafRow for save context */
   export let segmentOrigin: number = 0;
   /** Segment display name — forwarded to TreeLeafRow for progress labels */
   export let segmentName: string = '';
@@ -55,34 +55,24 @@
   }));
 
   // ── Dirty-instance tracking ──
-  // Subscribe to the version counter so the derived set re-computes on every edit.
-  $: _version = $pendingEditsVersion;
+  // Check which sibling instances have modified descendant leaves.
 
   /**
-   * Returns the set of sibling indices that have at least one pending edit,
-   * determined by checking whether any edit's fieldPath starts with the
-   * sibling's own path (i.e. the edit is a descendant of that instance).
+   * Returns the set of sibling indices that have at least one modified leaf,
+   * determined by checking the tree's modifiedValue on descendant leaves.
    */
-  function computeDirtyInstances(sibs: GroupConfigNode[], nid: string, _v: number): Set<number> {
+  function computeDirtyInstances(sibs: GroupConfigNode[]): Set<number> {
     const result = new Set<number>();
     if (sibs.length < 2) return result;
-    const edits = pendingEditsStore.allEdits.filter(
-      (e) => e.nodeId === nid && (e.writeState === 'dirty' || e.writeState === 'error'),
-    );
-    if (edits.length === 0) return result;
     for (let i = 0; i < sibs.length; i++) {
-      const sibPath = sibs[i].path;
-      const hasDirty = edits.some(
-        (edit) =>
-          edit.fieldPath.length >= sibPath.length &&
-          sibPath.every((seg, j) => edit.fieldPath[j] === seg),
-      );
-      if (hasDirty) result.add(i);
+      if (hasModifiedDescendant(sibs[i].children, [])) {
+        result.add(i);
+      }
     }
     return result;
   }
 
-  $: dirtyInstances = computeDirtyInstances(siblings, nodeId, _version);
+  $: dirtyInstances = computeDirtyInstances(siblings);
   $: hasDirtyInstances = dirtyInstances.size > 0;
 
   // Group children for the active group to handle nested replications

@@ -17,6 +17,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import TreeLeafRow from './TreeLeafRow.svelte';
 import type { LeafConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
 import type { BowtieCard } from '$lib/api/tauri';
+import { setModifiedValue } from '$lib/api/config';
 
 // Mock $app/navigation
 vi.mock('$app/navigation', () => ({
@@ -28,6 +29,10 @@ vi.mock('$lib/stores/bowties.svelte', () => ({
   bowtieCatalogStore: {
     nodeSlotMap: new Map(),
   },
+}));
+
+vi.mock('$lib/api/config', () => ({
+  setModifiedValue: vi.fn(),
 }));
 
 function makeLeaf(overrides: Partial<LeafConfigNode> = {}): LeafConfigNode {
@@ -272,10 +277,7 @@ describe('TreeLeafRow.svelte', () => {
       expect(input).toHaveAttribute('maxlength', '15');
     });
 
-    it('updates pendingEditsStore when text is entered', async () => {
-      const { pendingEditsStore } = await import('$lib/stores/pendingEdits.svelte');
-      pendingEditsStore.clearAll();
-
+    it('calls setModifiedValue when text is entered', async () => {
       const leaf = makeLeaf({
         elementType: 'string',
         value: { type: 'string', value: 'old' },
@@ -287,14 +289,7 @@ describe('TreeLeafRow.svelte', () => {
       const input = screen.getByRole('textbox');
       await fireEvent.input(input, { target: { value: 'new value' } });
 
-      // Store should have the edit
-      const key = `${NODE_ID}:253:100`;
-      const edit = pendingEditsStore.getEdit(key);
-      expect(edit).toBeDefined();
-      expect(edit?.pendingValue).toEqual({ type: 'string', value: 'new value' });
-      expect(edit?.validationState).toBe('valid');
-
-      pendingEditsStore.clearAll();
+      expect(setModifiedValue).toHaveBeenCalledWith(NODE_ID, 100, 253, { type: 'string', value: 'new value' });
     });
   });
 
@@ -344,10 +339,7 @@ describe('TreeLeafRow.svelte', () => {
       expect(input).toHaveAttribute('max', '1000');
     });
 
-    it('updates pendingEditsStore when a number is entered', async () => {
-      const { pendingEditsStore } = await import('$lib/stores/pendingEdits.svelte');
-      pendingEditsStore.clearAll();
-
+    it('calls setModifiedValue when a number is entered', async () => {
       const leaf = makeLeaf({
         elementType: 'int',
         value: { type: 'int', value: 0 },
@@ -360,13 +352,7 @@ describe('TreeLeafRow.svelte', () => {
       const input = screen.getByRole('spinbutton');
       await fireEvent.input(input, { target: { value: '7' } });
 
-      const key = `${NODE_ID}:253:200`;
-      const edit = pendingEditsStore.getEdit(key);
-      expect(edit).toBeDefined();
-      expect(edit?.pendingValue).toEqual({ type: 'int', value: 7 });
-      expect(edit?.validationState).toBe('valid');
-
-      pendingEditsStore.clearAll();
+      expect(setModifiedValue).toHaveBeenCalledWith(NODE_ID, 200, 253, { type: 'int', value: 7 });
     });
   });
 
@@ -408,9 +394,6 @@ describe('TreeLeafRow.svelte', () => {
     });
 
     it('stores numeric value (not label text) on change', async () => {
-      const { pendingEditsStore } = await import('$lib/stores/pendingEdits.svelte');
-      pendingEditsStore.clearAll();
-
       const leaf = makeLeaf({
         elementType: 'int',
         value: { type: 'int', value: 0 },
@@ -426,13 +409,7 @@ describe('TreeLeafRow.svelte', () => {
       const select = screen.getByRole('combobox');
       await fireEvent.change(select, { target: { value: '1' } });
 
-      const key = `${NODE_ID}:253:300`;
-      const edit = pendingEditsStore.getEdit(key);
-      expect(edit).toBeDefined();
-      expect(edit?.pendingValue).toEqual({ type: 'int', value: 1 });
-      expect(edit?.validationState).toBe('valid');
-
-      pendingEditsStore.clearAll();
+      expect(setModifiedValue).toHaveBeenCalledWith(NODE_ID, 300, 253, { type: 'int', value: 1 });
     });
 
     it('does NOT render a number input for int with mapEntries', () => {
@@ -465,10 +442,7 @@ describe('TreeLeafRow.svelte', () => {
       expect(input).toHaveAttribute('step', 'any');
     });
 
-    it('updates pendingEditsStore when float value entered', async () => {
-      const { pendingEditsStore } = await import('$lib/stores/pendingEdits.svelte');
-      pendingEditsStore.clearAll();
-
+    it('calls setModifiedValue when float value entered', async () => {
       const leaf = makeLeaf({
         elementType: 'float',
         value: { type: 'float', value: 1.0 },
@@ -481,18 +455,10 @@ describe('TreeLeafRow.svelte', () => {
       const input = screen.getByRole('spinbutton');
       await fireEvent.input(input, { target: { value: '2.718' } });
 
-      const key = `${NODE_ID}:253:400`;
-      const edit = pendingEditsStore.getEdit(key);
-      expect(edit).toBeDefined();
-      expect(edit?.pendingValue).toEqual({ type: 'float', value: 2.718 });
-
-      pendingEditsStore.clearAll();
+      expect(setModifiedValue).toHaveBeenCalledWith(NODE_ID, 400, 253, { type: 'float', value: 2.718 });
     });
 
-    it('sets validation state to invalid for non-numeric float input', async () => {
-      const { pendingEditsStore } = await import('$lib/stores/pendingEdits.svelte');
-      pendingEditsStore.clearAll();
-
+    it('does not call setModifiedValue for non-numeric float input', async () => {
       const leaf = makeLeaf({
         elementType: 'float',
         value: { type: 'float', value: 1.0 },
@@ -505,18 +471,8 @@ describe('TreeLeafRow.svelte', () => {
       const input = screen.getByRole('spinbutton');
       await fireEvent.input(input, { target: { value: 'abc' } });
 
-      // Non-numeric input — store should record invalid state or no edit
-      const key = `${NODE_ID}:253:401`;
-      const edit = pendingEditsStore.getEdit(key);
-      // Either no edit or an edit with invalid validation state
-      if (edit) {
-        expect(edit.validationState).toBe('invalid');
-      } else {
-        // No edit recorded for invalid input is also acceptable
-        expect(edit).toBeUndefined();
-      }
-
-      pendingEditsStore.clearAll();
+      expect(setModifiedValue).not.toHaveBeenCalled();
+      expect(screen.getByRole('alert')).toBeInTheDocument();
     });
 
     it('applies min/max constraints from float constraints', () => {
@@ -547,10 +503,7 @@ describe('TreeLeafRow.svelte', () => {
       expect(screen.getByRole('textbox', { name: /test field/i })).toBeInTheDocument();
     });
 
-    it('stores parsed bytes when valid dotted-hex event ID entered', async () => {
-      const { pendingEditsStore } = await import('$lib/stores/pendingEdits.svelte');
-      pendingEditsStore.clearAll();
-
+    it('calls setModifiedValue with parsed bytes when valid dotted-hex event ID entered', async () => {
       const leaf = makeLeaf({
         elementType: 'eventId',
         value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0] },
@@ -562,22 +515,13 @@ describe('TreeLeafRow.svelte', () => {
       const input = screen.getByRole('textbox', { name: /test field/i });
       await fireEvent.input(input, { target: { value: '05.01.01.01.22.00.00.FF' } });
 
-      const key = `${NODE_ID}:253:500`;
-      const edit = pendingEditsStore.getEdit(key);
-      expect(edit).toBeDefined();
-      expect(edit?.pendingValue).toEqual(expect.objectContaining({
-        type: 'eventId',
-        bytes: [0x05, 0x01, 0x01, 0x01, 0x22, 0x00, 0x00, 0xff],
-      }));
-      expect(edit?.validationState).toBe('valid');
-
-      pendingEditsStore.clearAll();
+      expect(setModifiedValue).toHaveBeenCalledWith(
+        NODE_ID, 500, 253,
+        expect.objectContaining({ type: 'eventId', bytes: [0x05, 0x01, 0x01, 0x01, 0x22, 0x00, 0x00, 0xff] }),
+      );
     });
 
-    it('sets validation state to invalid for malformed event ID', async () => {
-      const { pendingEditsStore } = await import('$lib/stores/pendingEdits.svelte');
-      pendingEditsStore.clearAll();
-
+    it('does not call setModifiedValue for malformed event ID', async () => {
       const leaf = makeLeaf({
         elementType: 'eventId',
         value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0] },
@@ -589,12 +533,8 @@ describe('TreeLeafRow.svelte', () => {
       const input = screen.getByRole('textbox', { name: /test field/i });
       await fireEvent.input(input, { target: { value: 'not-a-valid-event-id' } });
 
-      const key = `${NODE_ID}:253:501`;
-      const edit = pendingEditsStore.getEdit(key);
-      expect(edit).toBeDefined();
-      expect(edit?.validationState).toBe('invalid');
-
-      pendingEditsStore.clearAll();
+      expect(setModifiedValue).not.toHaveBeenCalled();
+      expect(screen.getByRole('alert')).toBeInTheDocument();
     });
 
     it('does NOT render event ID text input when no nodeId provided', () => {
@@ -614,10 +554,7 @@ describe('TreeLeafRow.svelte', () => {
   describe('T049: input shows original value when no pending edit in store', () => {
     const NODE_ID = '05.01.01.01.03.00';
 
-    it('string input shows original leaf value when no pending edit exists', async () => {
-      const { pendingEditsStore } = await import('$lib/stores/pendingEdits.svelte');
-      pendingEditsStore.clearAll();
-
+    it('string input shows original leaf value when no pending edit exists', () => {
       const leaf = makeLeaf({
         elementType: 'string',
         value: { type: 'string', value: 'Original Name' },
@@ -645,10 +582,7 @@ describe('TreeLeafRow.svelte', () => {
       expect(input).toHaveValue(42);
     });
 
-    it('store has no edit for field after clearForNode is called', async () => {
-      const { pendingEditsStore } = await import('$lib/stores/pendingEdits.svelte');
-      pendingEditsStore.clearAll();
-
+    it('calls setModifiedValue when user types in a string field', async () => {
       const leaf = makeLeaf({
         elementType: 'string',
         value: { type: 'string', value: 'Hello' },
@@ -658,16 +592,81 @@ describe('TreeLeafRow.svelte', () => {
       });
       render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
       const input = screen.getByRole('textbox', { name: /test field/i });
-
-      // Make an edit
       await fireEvent.input(input, { target: { value: 'World' } });
-      const key = `${NODE_ID}:253:300`;
-      expect(pendingEditsStore.getEdit(key)).toBeDefined();
 
-      // Discard
-      pendingEditsStore.clearForNode(NODE_ID);
-      expect(pendingEditsStore.getEdit(key)).toBeUndefined();
+      expect(setModifiedValue).toHaveBeenCalledWith(NODE_ID, 300, 253, { type: 'string', value: 'World' });
     });
+  });
+});
+
+// ── Dirty / write-state display ───────────────────────────────────────────────
+
+describe('dirty and write state display', () => {
+  const NODE_ID = '05.01.01.01.03.00';
+
+  it('applies dirty class when leaf has a modifiedValue', () => {
+    const leaf = makeLeaf({
+      elementType: 'int',
+      value: { type: 'int', value: 0 },
+      modifiedValue: { type: 'int', value: 42 },
+    });
+    render(TreeLeafRow, { props: { leaf } });
+    expect(screen.getByRole('listitem')).toHaveClass('dirty');
+  });
+
+  it('does not apply dirty class when modifiedValue is null', () => {
+    const leaf = makeLeaf({
+      value: { type: 'int', value: 0 },
+      modifiedValue: null,
+    });
+    render(TreeLeafRow, { props: { leaf } });
+    expect(screen.getByRole('listitem')).not.toHaveClass('dirty');
+  });
+
+  it('shows modifiedValue in input instead of original committed value', () => {
+    const leaf = makeLeaf({
+      elementType: 'int',
+      value: { type: 'int', value: 0 },
+      constraints: { min: 0, max: 100, defaultValue: null, mapEntries: null },
+      modifiedValue: { type: 'int', value: 55 },
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+    expect(screen.getByRole('spinbutton')).toHaveValue(55);
+  });
+
+  it('disables input when writeState is writing', () => {
+    const leaf = makeLeaf({
+      elementType: 'int',
+      value: { type: 'int', value: 5 },
+      constraints: { min: 0, max: 10, defaultValue: null, mapEntries: null },
+      modifiedValue: { type: 'int', value: 7 },
+      writeState: 'writing',
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+    expect(screen.getByRole('spinbutton')).toBeDisabled();
+  });
+
+  it('shows write error message when writeState is error', () => {
+    const leaf = makeLeaf({
+      elementType: 'string',
+      value: { type: 'string', value: 'Hello' },
+      size: 16,
+      modifiedValue: { type: 'string', value: 'New Value' },
+      writeState: 'error',
+      writeError: 'Node did not respond',
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+    expect(screen.getByText(/⚠ Node did not respond/)).toBeInTheDocument();
+  });
+
+  it('applies write-error class when writeState is error', () => {
+    const leaf = makeLeaf({
+      modifiedValue: { type: 'int', value: 1 },
+      writeState: 'error',
+      writeError: 'Timeout',
+    });
+    render(TreeLeafRow, { props: { leaf } });
+    expect(screen.getByRole('listitem')).toHaveClass('write-error');
   });
 });
 

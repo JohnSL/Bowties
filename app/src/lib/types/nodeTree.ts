@@ -115,6 +115,9 @@ export interface TreeMapEntry {
   label: string;
 }
 
+/** Write lifecycle state for a pending modification — matches Rust `WriteState`. */
+export type LeafWriteState = 'dirty' | 'writing' | 'error';
+
 /** A leaf configuration element (int, string, eventid, float, action, blob). */
 export interface LeafConfigNode extends ConfigNodeBase {
   kind: 'leaf';
@@ -138,6 +141,12 @@ export interface LeafConfigNode extends ConfigNodeBase {
   eventRole: EventRole | null;
   /** Constraints (min, max, default, map entries) */
   constraints: LeafConstraints | null;
+  /** User-modified value not yet written to the node. */
+  modifiedValue?: TreeConfigValue | null;
+  /** Write lifecycle state. Absent when no modification is pending. */
+  writeState?: LeafWriteState | null;
+  /** Error message from the last failed write attempt. */
+  writeError?: string | null;
 }
 
 // ─── Event payloads ──────────────────────────────────────────────────────────
@@ -158,6 +167,68 @@ export function isGroup(node: ConfigNode): node is GroupConfigNode {
 /** Narrow a ConfigNode to LeafConfigNode. */
 export function isLeaf(node: ConfigNode): node is LeafConfigNode {
   return node.kind === 'leaf';
+}
+
+/** Return the effective value for display: modifiedValue if present, else value. */
+export function effectiveValue(leaf: LeafConfigNode): TreeConfigValue | null {
+  return leaf.modifiedValue ?? leaf.value;
+}
+
+/** Count the number of leaves with a pending `modifiedValue` in a tree. */
+export function countModifiedLeaves(tree: NodeConfigTree): number {
+  let count = 0;
+  for (const seg of tree.segments) {
+    count += countModifiedInChildren(seg.children);
+  }
+  return count;
+}
+
+function countModifiedInChildren(children: ConfigNode[]): number {
+  let count = 0;
+  for (const child of children) {
+    if (isLeaf(child)) {
+      if (child.modifiedValue != null) count++;
+    } else if (isGroup(child)) {
+      count += countModifiedInChildren(child.children);
+    }
+  }
+  return count;
+}
+
+/** Check whether any leaf in a tree has a pending `modifiedValue`. */
+export function hasModifiedLeaves(tree: NodeConfigTree): boolean {
+  for (const seg of tree.segments) {
+    if (hasModifiedInChildren(seg.children)) return true;
+  }
+  return false;
+}
+
+function hasModifiedInChildren(children: ConfigNode[]): boolean {
+  for (const child of children) {
+    if (isLeaf(child)) {
+      if (child.modifiedValue != null) return true;
+    } else if (isGroup(child)) {
+      if (hasModifiedInChildren(child.children)) return true;
+    }
+  }
+  return false;
+}
+
+/** Check whether any child has a pending modification (for a subtree path). */
+export function hasModifiedDescendant(children: ConfigNode[], path: string[]): boolean {
+  for (const child of children) {
+    if (isLeaf(child)) {
+      if (child.modifiedValue != null && childIsDescendant(child.path, path)) return true;
+    } else if (isGroup(child)) {
+      if (hasModifiedDescendant(child.children, path)) return true;
+    }
+  }
+  return false;
+}
+
+function childIsDescendant(childPath: string[], ancestorPath: string[]): boolean {
+  if (childPath.length < ancestorPath.length) return false;
+  return ancestorPath.every((seg, i) => childPath[i] === seg);
 }
 
 // ─── Tree traversal helpers ──────────────────────────────────────────────────
@@ -210,7 +281,7 @@ export function findLeafByAddress(
   return null;
 }
 
-function findLeafInChildren(
+export function findLeafInChildren(
   children: ConfigNode[],
   address: number,
 ): LeafConfigNode | null {
@@ -226,9 +297,68 @@ function findLeafInChildren(
 }
 
 /**
+ * Build a dot-joined element label for a leaf, mirroring the Rust `element_label()` logic.
+ * Walks from segment root to the leaf, collecting non-empty group names as ancestors.
+ *
+ * Format: `Ancestor1.Ancestor2.LeafLabel`
+ * Leaf label priority: `name` → first sentence of `description` → last path component.
+ */
+export function buildElementLabel(
+  tree: NodeConfigTree,
+  leaf: LeafConfigNode,
+): string {
+  // Find the leaf's ancestors by walking the tree
+  const ancestors: string[] = [];
+  for (const seg of tree.segments) {
+    if (collectAncestorNames(seg.children, leaf.address, ancestors)) {
+      break;
+    }
+  }
+
+  // Resolve leaf label: name → first sentence of description → last path component
+  let leafLabel = leaf.name?.trim() || '';
+  if (!leafLabel && leaf.description) {
+    const sentence = leaf.description.split('.')[0]?.trim() || '';
+    if (sentence) leafLabel = sentence;
+  }
+  if (!leafLabel) {
+    leafLabel = leaf.path[leaf.path.length - 1] ?? '';
+  }
+
+  const parts = [...ancestors.filter(n => n.length > 0), leafLabel];
+  return parts.join('.');
+}
+
+/**
+ * Walk children to find a leaf by address, collecting group names along the path.
+ * Returns true if the leaf was found in this subtree.
+ */
+function collectAncestorNames(
+  children: ConfigNode[],
+  address: number,
+  ancestors: string[],
+): boolean {
+  for (const child of children) {
+    if (isLeaf(child) && child.address === address) {
+      return true;
+    }
+    if (isGroup(child)) {
+      const name = (child.displayName ?? child.name)?.trim() || '';
+      ancestors.push(name);
+      if (collectAncestorNames(child.children, address, ancestors)) {
+        return true;
+      }
+      ancestors.pop();
+    }
+  }
+  return false;
+}
+
+/**
  * Count all leaf nodes in the tree.
  */
 export function countLeaves(tree: NodeConfigTree): number {
+
   let count = 0;
   for (const seg of tree.segments) {
     count += countLeavesInChildren(seg.children);
@@ -374,55 +504,11 @@ function parseSegIndex(key: string): number | null {
 
 // ─── Spec 007: Edit & Write Types ─────────────────────────────────────────────
 
-/** Validation state for a pending edit. */
-export type ValidationState = 'valid' | 'invalid';
-
 /** Write lifecycle state for a pending edit. */
 export type WriteState = 'dirty' | 'writing' | 'error' | 'clean';
 
 /** State of an overall save operation. */
 export type SaveState = 'idle' | 'saving' | 'completed' | 'partial-failure';
-
-/**
- * Represents a single field that has been modified but not yet persisted to
- * the node. Keyed by `"${nodeId}:${space}:${address}"` in `PendingEditsStore`.
- */
-export interface PendingEdit {
-  /** Unique compound key: `"${nodeId}:${space}:${address}"` */
-  key: string;
-  /** Node ID in dotted-hex (e.g., `"05.01.01.01.03.00"`) */
-  nodeId: string;
-  /** Segment origin address (for per-segment save queries) */
-  segmentOrigin: number;
-  /** Segment name (for progress display) */
-  segmentName: string;
-  /** Memory address of the field */
-  address: number;
-  /** Address space byte (e.g. 0xFD for Configuration) */
-  space: number;
-  /** Field size in bytes (from CDI) */
-  size: number;
-  /** Leaf element type */
-  elementType: LeafType;
-  /** Path in the config tree (for display in errors) */
-  fieldPath: string[];
-  /** Human-readable field name */
-  fieldLabel: string;
-  /** Value last confirmed read from the node */
-  originalValue: TreeConfigValue;
-  /** Current user-entered value */
-  pendingValue: TreeConfigValue;
-  /** Whether the pending value passes CDI constraint validation */
-  validationState: ValidationState;
-  /** Validation error message, or null when valid */
-  validationMessage: string | null;
-  /** Current write lifecycle state */
-  writeState: WriteState;
-  /** Error message from the last failed write attempt */
-  writeError: string | null;
-  /** CDI-defined constraints for this field */
-  constraints: LeafConstraints | null;
-}
 
 /**
  * Outcome of a write operation for a single field.
