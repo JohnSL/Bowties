@@ -18,6 +18,7 @@
 
   // Saved connections loaded from backend
   let savedConnections = $state<ConnectionConfig[]>([]);
+  let sortedConnections = $derived([...savedConnections].sort((a, b) => a.name.localeCompare(b.name)));
 
   // Available serial ports
   let availablePorts = $state<string[]>([]);
@@ -38,6 +39,9 @@
   // Connection in progress
   let connectingId = $state<string | null>(null);
   let errorMessage = $state('');
+
+  // Pending delete confirmation
+  let confirmDeleteId = $state<string | null>(null);
 
   // Default baud rates per adapter type
   const defaultBaudRates: Record<AdapterType, number> = {
@@ -144,6 +148,7 @@
 
   async function deleteConnection(id: string) {
     savedConnections = savedConnections.filter(c => c.id !== id);
+    confirmDeleteId = null;
     await savePrefs();
   }
 
@@ -170,56 +175,78 @@
 
   function connectionSummary(c: ConnectionConfig): string {
     if (c.adapterType === 'tcp') return `${c.host ?? 'localhost'}:${c.port ?? 12021}`;
-    return `${c.serialPort ?? '?'} @ ${c.baudRate} baud`;
+    return c.serialPort ?? '?';
   }
 </script>
 
 <div class="cm-card">
-  <h2>Connect to LCC Network</h2>
+  <div class="cm-card-header">
+    <h2>Connect to LCC Network</h2>
+    <button class="cm-add-icon-btn" onclick={openAddModal} title="Add connection" aria-label="Add connection">+</button>
+  </div>
 
   {#if errorMessage}
     <div class="cm-error" role="alert">{errorMessage}</div>
   {/if}
 
   <!-- ── Saved connections list ──────────────────────────── -->
-  {#if savedConnections.length > 0}
-    <ul class="cm-list">
-      {#each savedConnections as conn (conn.id)}
-        <li class="cm-item">
-          <div class="cm-item-info">
-            <span class="cm-item-name" title={conn.name}>{conn.name}</span>
-            <span class="cm-badge {conn.adapterType}">{adapterLabel(conn.adapterType)}</span>
-            <span class="cm-item-detail">{connectionSummary(conn)}</span>
-          </div>
-          <div class="cm-item-actions">
-            <button
-              class="btn-primary cm-connect-btn"
-              onclick={() => connect(conn)}
-              disabled={connectingId !== null}
-            >
-              {connectingId === conn.id ? 'Connecting…' : 'Connect'}
-            </button>
-            <button
-              class="cm-edit-btn"
-              onclick={() => openEditModal(conn)}
-              title="Edit {conn.name}"
-              aria-label="Edit {conn.name}"
-              disabled={connectingId !== null}
-            >✏</button>
-            <button
-              class="cm-delete-btn"
-              onclick={() => deleteConnection(conn.id)}
-              title="Remove this connection"
-              aria-label="Remove {conn.name}"
-              disabled={connectingId !== null}
-            >×</button>
-          </div>
-        </li>
-      {/each}
-    </ul>
+  {#if sortedConnections.length > 0}
+    <table class="cm-table">
+      <tbody>
+        {#each sortedConnections as conn (conn.id)}
+          <tr class="cm-row">
+            <td class="cm-col-connect">
+              <button
+                class="btn-primary cm-connect-btn"
+                onclick={() => connect(conn)}
+                disabled={connectingId !== null}
+              >
+                {connectingId === conn.id ? 'Connecting…' : 'Connect'}
+              </button>
+            </td>
+            <td class="cm-col-name">
+              <span class="cm-item-name" title={conn.name}>{conn.name}</span>
+            </td>
+            <td class="cm-col-type">
+              <span class="cm-badge {conn.adapterType}">{adapterLabel(conn.adapterType)}</span>
+            </td>
+            <td class="cm-col-detail">
+              <span class="cm-item-detail">{connectionSummary(conn)}</span>
+            </td>
+            <td class="cm-col-actions">
+              {#if confirmDeleteId === conn.id}
+                <span class="cm-delete-confirm">
+                  <button
+                    class="cm-delete-confirm-btn"
+                    onclick={() => deleteConnection(conn.id)}
+                  >Delete</button>
+                  <button
+                    class="btn-secondary cm-delete-cancel-btn"
+                    onclick={() => confirmDeleteId = null}
+                  >Cancel</button>
+                </span>
+              {:else}
+                <button
+                  class="cm-edit-btn"
+                  onclick={() => openEditModal(conn)}
+                  title="Edit {conn.name}"
+                  aria-label="Edit {conn.name}"
+                  disabled={connectingId !== null}
+                >🖊</button>
+                <button
+                  class="cm-delete-btn"
+                  onclick={() => confirmDeleteId = conn.id}
+                  title="Remove this connection"
+                  aria-label="Remove {conn.name}"
+                  disabled={connectingId !== null}
+                >×</button>
+              {/if}
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
   {/if}
-
-  <button class="btn-secondary cm-add-btn" onclick={openAddModal}>+ Add connection</button>
 </div>
 
 <!-- ── Modal dialog ──────────────────────────────────────── -->
@@ -333,11 +360,31 @@
     box-shadow: 0 4px 16px rgba(0,0,0,0.08);
   }
 
-  .cm-card h2 {
-    margin: 0 0 1.25rem 0;
+  .cm-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.25rem;
+  }
+
+  .cm-card-header h2 {
+    margin: 0;
     color: #2563eb;
     font-size: 1.1rem;
   }
+
+  .cm-add-icon-btn {
+    background: none;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    padding: 2px 8px;
+    color: #2563eb;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .cm-add-icon-btn:hover { background: #eff6ff; border-color: #2563eb; }
 
   .cm-error {
     background: #fef2f2;
@@ -350,42 +397,33 @@
   }
 
   /* ── Saved list ── */
-  .cm-list {
-    list-style: none;
-    margin: 0 0 0.75rem 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .cm-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    padding: 0.6rem 0.75rem;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
-    background: #f9fafb;
-  }
-
-  .cm-item-info {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    min-width: 0;
-    flex: 1;
+  .cm-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 0.5rem;
     font-size: 13px;
   }
+
+  .cm-row td {
+    padding: 0.35rem 0.4rem;
+    vertical-align: middle;
+  }
+
+  .cm-row:not(:last-child) td {
+    border-bottom: 1px solid #f3f4f6;
+  }
+
+  .cm-col-connect { width: 1%; white-space: nowrap; padding-left: 0 !important; }
+  .cm-col-actions { width: 1%; white-space: nowrap; padding-right: 0 !important; text-align: right; }
 
   .cm-item-name {
     font-weight: 600;
     color: #111827;
+    display: block;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 160px;
+    max-width: 150px;
   }
 
   .cm-badge {
@@ -394,7 +432,6 @@
     border-radius: 4px;
     padding: 1px 5px;
     white-space: nowrap;
-    flex-shrink: 0;
   }
   .cm-badge.tcp             { background: #dbeafe; color: #1d4ed8; }
   .cm-badge.gridConnectSerial { background: #dcfce7; color: #15803d; }
@@ -403,16 +440,6 @@
   .cm-item-detail {
     color: #6b7280;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    flex-shrink: 1;
-  }
-
-  .cm-item-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    flex-shrink: 0;
   }
 
   .cm-connect-btn {
@@ -438,9 +465,28 @@
   .cm-edit-btn:disabled,
   .cm-delete-btn:disabled { opacity: 0.4; cursor: default; }
 
-  .cm-add-btn {
-    width: 100%;
-    font-size: 13px;
+  .cm-delete-confirm {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+
+  .cm-delete-confirm-btn {
+    font-size: 12px;
+    padding: 0.2rem 0.5rem;
+    background: #ef4444;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: background 0.15s;
+  }
+  .cm-delete-confirm-btn:hover { background: #dc2626; }
+
+  .cm-delete-cancel-btn {
+    font-size: 12px;
+    padding: 0.2rem 0.5rem;
   }
 
   /* ── Modal overlay ── */
