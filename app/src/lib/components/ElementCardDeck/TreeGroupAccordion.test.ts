@@ -14,10 +14,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { get } from 'svelte/store';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import TreeGroupAccordion from './TreeGroupAccordion.svelte';
 import type { GroupConfigNode, LeafConfigNode, ConfigNode } from '$lib/types/nodeTree';
 import { groupReplicatedChildren, getInstanceDisplayName } from '$lib/types/nodeTree';
+import { pillSelections, setPillSelection } from '$lib/stores/pillSelection';
 
 // Mock stores
 vi.mock('$lib/stores/bowties.svelte', () => ({
@@ -61,6 +63,7 @@ function makeGroup(
     replicationCount: 3,
     path: ['seg:0', 'elem:0'],
     children,
+    displayName: null,
     ...overrides,
   };
 }
@@ -68,6 +71,7 @@ function makeGroup(
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  pillSelections.set(new Map());  // reset persisted pill state between tests
 });
 
 describe('TreeGroupAccordion.svelte', () => {
@@ -201,6 +205,58 @@ describe('TreeGroupAccordion.svelte', () => {
       const buttons = screen.getAllByRole('button');
       expect(buttons).toHaveLength(1);
       expect(buttons[0]).toHaveAttribute('aria-haspopup', 'listbox');
+    });
+
+    it('clicking a pill switches the visible instance content', async () => {
+      const [instance1, instance2] = makeSiblings();
+      const nodeId = '02.01.00.00.00.01';
+
+      render(TreeGroupAccordion, {
+        props: { group: instance1, nodeId, siblings: [instance1, instance2] },
+      });
+
+      expect(screen.getByText('Field A')).toBeInTheDocument();
+
+      // Open dropdown then select Line 2
+      await fireEvent.click(screen.getByRole('button', { name: /line 1/i }));
+      await fireEvent.click(screen.getAllByRole('option')[1]);
+
+      expect(screen.getByText('Field B')).toBeInTheDocument();
+      expect(screen.queryByText('Field A')).not.toBeInTheDocument();
+    });
+
+    it('clicking a pill persists the selection to the store', async () => {
+      const [instance1, instance2, instance3] = makeSiblings();
+      const nodeId = '02.01.00.00.00.01';
+
+      render(TreeGroupAccordion, {
+        props: { group: instance1, nodeId, siblings: [instance1, instance2, instance3] },
+      });
+
+      // Open dropdown then select Line 2 (index 1)
+      await fireEvent.click(screen.getByRole('button', { name: /line 1/i }));
+      await fireEvent.click(screen.getAllByRole('option')[1]);
+
+      const key = `${nodeId}:${instance1.path.join('/')}`;
+      expect(get(pillSelections).get(key)).toBe(1);
+    });
+
+    it('restores a persisted selection on mount', () => {
+      const [instance1, instance2, instance3] = makeSiblings();
+      const nodeId = '02.01.00.00.00.01';
+
+      // Pre-seed the store with index 1 (Line 2) before mounting
+      const key = `${nodeId}:${instance1.path.join('/')}`;
+      setPillSelection(key, 1);
+
+      render(TreeGroupAccordion, {
+        props: { group: instance1, nodeId, siblings: [instance1, instance2, instance3] },
+      });
+
+      // Should display instance 2's content and show "Line 2" in the pill
+      expect(screen.getByText('Field B')).toBeInTheDocument();
+      expect(screen.queryByText('Field A')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /line 2/i })).toBeInTheDocument();
     });
   });
 

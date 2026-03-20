@@ -1489,9 +1489,9 @@ use lcc_rs::EventRole;
 let cdi = parse_cdi(cdi_xml)?;
 for slot_info in walk_event_slots(&cdi) {
     match slot_info.role {
-        EventRole::Producer => println!("Producer: {}", slot_info.element_label),
-        EventRole::Consumer => println!("Consumer: {}", slot_info.element_label),
-        EventRole::Ambiguous => println!("Ambiguous: {}", slot_info.element_label),
+        EventRole::Producer => println!("Producer: {}", slot_info.element_path.join("/")),
+        EventRole::Consumer => println!("Consumer: {}", slot_info.element_path.join("/")),
+        EventRole::Ambiguous => println!("Ambiguous: {}", slot_info.element_path.join("/")),
     }
 }
 ```
@@ -1509,7 +1509,6 @@ The `hierarchy.rs` module exposes a `walk_event_slots` function that traverses a
 pub struct SlotInfo {
     pub element: EventIdElement,
     pub element_path: Vec<String>,   // index-based pathId segments
-    pub element_label: String,       // CDI <name> → <description> first sentence → path
     pub ancestor_names: Vec<String>, // <group><name> values, outermost first
     pub role: EventRole,             // classify_event_slot() result
 }
@@ -1525,7 +1524,7 @@ let cdi = parse_cdi(cdi_xml)?;
 let slots = walk_event_slots(&cdi);
 println!("Found {} event ID slots", slots.len());
 for slot in &slots {
-    println!("{} ({:?}) path: {}", slot.element_label, slot.role, slot.element_path.join("/"));
+    println!("{} ({:?})", slot.element_path.join("/"), slot.role);
 }
 ```
 

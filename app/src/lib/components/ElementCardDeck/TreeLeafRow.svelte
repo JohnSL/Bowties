@@ -17,6 +17,7 @@
   import { goto } from '$app/navigation';
   import { setModifiedValue } from '$lib/api/config';
   import { parseEventIdHex, formatEventIdHex } from '$lib/utils/serialize';
+  import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
 
   let {
     leaf,
@@ -277,6 +278,20 @@
       goto('/bowties?highlight=' + usedIn.event_id_hex);
     }
   }
+
+  /** T039: Open the bowties tab with this slot pre-filled as a connection side. */
+  function handleCreateConnection() {
+    const selection = {
+      nodeId,
+      elementPath: leaf.path,
+      address: leaf.address,
+      space: leaf.space,
+      currentEventId: leaf.value?.type === 'eventId'
+        ? (leaf.value as { type: 'eventId'; bytes: number[]; hex: string }).hex
+        : '00.00.00.00.00.00.00.00',
+    };
+    connectionRequestStore.requestConnection(selection, leaf.eventRole ?? 'Ambiguous');
+  }
 </script>
 
 <div
@@ -396,6 +411,15 @@
           aria-label="View bowtie connection for {bowtieName(usedIn)}"
         >{bowtieName(usedIn)}</button>
       </span>
+    {/if}
+
+    {#if isEventIdEditable && !usedIn}
+      <button
+        class="new-connection-btn"
+        onclick={handleCreateConnection}
+        title="Create a bowtie connection using this event slot"
+        aria-label="Create connection from {leaf.name}"
+      >→ New Connection</button>
     {/if}
   </div>
 </div>
@@ -637,5 +661,27 @@
     outline: 2px solid #0078d4;
     outline-offset: 1px;
     border-radius: 2px;
+  }
+
+  .new-connection-btn {
+    background: none;
+    border: 1px solid #b4d6fa;
+    padding: 1px 8px;
+    font-size: 11px;
+    color: #0078d4;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: background 0.15s, border-color 0.15s;
+    white-space: nowrap;
+  }
+
+  .new-connection-btn:hover {
+    background: #deecf9;
+    border-color: #0078d4;
+  }
+
+  .new-connection-btn:focus-visible {
+    outline: 2px solid #0078d4;
+    outline-offset: 1px;
   }
 </style>

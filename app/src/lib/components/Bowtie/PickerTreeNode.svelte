@@ -29,6 +29,102 @@
   }
 
   /**
+   * Collapse a group that has exactly one visible event-ID leaf (after applying
+   * roleFilter + query) into a single "Group.Leaf" slot button, mirroring
+   * VS Code's compact-folders behaviour.
+   *
+   * This intentionally ignores non-eventId siblings (string/int config leaves)
+   * in the raw CDI tree — it counts only the leaves that would actually be
+   * rendered for the current filter state.
+   *
+   * Returns { combinedLabel, terminal } where:
+   *   - terminal === node           → render as normal expandable group
+   *   - isLeaf(terminal)            → render as collapsed slot button;
+   *                                    combinedLabel already includes the leaf name
+   *   - isGroup(terminal) ≠ node   → chain of single-child groups (legacy path)
+   */
+  export function collapseGroupChain(
+    node: GroupConfigNode,
+    query: string = '',
+    roleFilter: EventRole | null = null,
+    nodeName: string = '',
+  ): { combinedLabel: string; terminal: ConfigNode } {
+    const label = pickerGroupLabel(node);
+
+    // Count visible event-ID leaves (respecting role filter + search query)
+    const visibleLeaves = findVisibleEventIdLeaves(node.children, query, roleFilter, nodeName);
+    if (visibleLeaves.length === 1 && isLeaf(visibleLeaves[0])) {
+      const leaf = visibleLeaves[0];
+      // Build full label: outerGroupName[.intermediateGroups].leafName
+      const labelParts: string[] = [label];
+      appendGroupNamesToLeaf(node.children, leaf.address, labelParts);
+      labelParts.push(leaf.name);
+      return { combinedLabel: labelParts.join('.'), terminal: leaf };
+    }
+
+    // Legacy: chain of single raw-child groups (no eventId siblings)
+    if (node.children.length === 1 && isGroup(node.children[0])) {
+      const child = node.children[0] as GroupConfigNode;
+      const r = collapseGroupChain(child, query, roleFilter, nodeName);
+      return { combinedLabel: `${label}.${r.combinedLabel}`, terminal: r.terminal };
+    }
+
+    return { combinedLabel: label, terminal: node };
+  }
+
+  /** Collect all event-ID leaf nodes visible under children for the given filter state. */
+  function findVisibleEventIdLeaves(
+    children: ConfigNode[],
+    query: string,
+    roleFilter: EventRole | null,
+    nodeName: string,
+  ): ConfigNode[] {
+    const results: ConfigNode[] = [];
+    for (const child of children) {
+      if (isLeaf(child) && child.elementType === 'eventId') {
+        const matchesRole =
+          roleFilter === null ||
+          child.eventRole === roleFilter ||
+          child.eventRole === 'Ambiguous' ||
+          child.eventRole === null;
+        if (!matchesRole) continue;
+        if (
+          query === '' ||
+          child.name.toLowerCase().includes(query) ||
+          (child.description ?? '').toLowerCase().includes(query) ||
+          child.path.join('/').toLowerCase().includes(query) ||
+          nodeName.toLowerCase().includes(query)
+        ) {
+          results.push(child);
+        }
+      } else if (isGroup(child)) {
+        results.push(...findVisibleEventIdLeaves(child.children, query, roleFilter, nodeName));
+      }
+    }
+    return results;
+  }
+
+  /**
+   * Walk children searching for a leaf at `address`, appending intermediate
+   * group labels to `labelParts` along the way (backtracking if not found).
+   */
+  function appendGroupNamesToLeaf(
+    children: ConfigNode[],
+    address: number,
+    labelParts: string[],
+  ): boolean {
+    for (const child of children) {
+      if (isLeaf(child) && child.address === address) return true;
+      if (isGroup(child)) {
+        labelParts.push(pickerGroupLabel(child));
+        if (appendGroupNamesToLeaf(child.children, address, labelParts)) return true;
+        labelParts.pop();
+      }
+    }
+    return false;
+  }
+
+  /**
    * Returns true if `children` contain any event-ID leaf matching `roleFilter`
    * and `query` (already lowercased and trimmed).
    *
@@ -154,43 +250,89 @@
   {/if}
 {:else if isGroup(node)}
   {@const q = searchQuery.toLowerCase().trim()}
-  {@const groupLabel = pickerGroupLabel(node)}
-  {@const groupNameMatches = q !== '' && groupLabel.toLowerCase().includes(q)}
+  {@const { combinedLabel, terminal } = collapseGroupChain(node, q, roleFilter, nodeName)}
+  {@const groupNameMatches = q !== '' && combinedLabel.toLowerCase().includes(q)}
   {@const hasMatch =
     groupNameMatches ||
     hasMatchingDescendant(node.children, q, roleFilter, nodeName)}
   {#if hasMatch}
     {@const childQuery = groupNameMatches ? '' : searchQuery}
     {@const key = `${pathKey}:${node.path.join('/')}`}
-    {@const expanded = expandedNodes.has(key)}
-    <div class="tree-group" role="treeitem" aria-expanded={expanded} aria-selected={false}>
-      <button
-        class="tree-toggle"
-        style="padding-left: {4 + depth * 16}px"
-        onclick={() => onToggle(key)}
-      >
-        <span class="toggle-icon">{expanded ? '▾' : '▸'}</span>
-        <span class="group-label">{groupLabel}</span>
-      </button>
-      {#if expanded}
-        {#each node.children as child (child.path.join('/'))}
-          <PickerTreeNode
-            node={child}
-            depth={depth + 1}
-            {roleFilter}
-            searchQuery={childQuery}
-            pathKey={key}
-            {expandedNodes}
-            {onToggle}
-            {onSelect}
-            {isSlotFree}
-            {isSelected}
-            {nodeId}
-            {nodeName}
-          />
-        {/each}
+
+    {#if terminal !== (node as ConfigNode) && isLeaf(terminal) && terminal.elementType === 'eventId'}
+      <!-- Collapsed to a single eventId leaf: combinedLabel already includes the leaf name -->
+      {@const leafLabel = combinedLabel}
+      {@const leafQ = childQuery.toLowerCase().trim()}
+      {@const matchesRole =
+        roleFilter === null ||
+        terminal.eventRole === roleFilter ||
+        terminal.eventRole === 'Ambiguous' ||
+        terminal.eventRole === null}
+      {@const matchesSearch =
+        leafQ === '' ||
+        leafLabel.toLowerCase().includes(leafQ) ||
+        terminal.name.toLowerCase().includes(leafQ) ||
+        (terminal.description ?? '').toLowerCase().includes(leafQ) ||
+        nodeName.toLowerCase().includes(leafQ)}
+      {#if matchesRole && matchesSearch}
+        {@const isFree = isSlotFree(terminal)}
+        {@const selected = isSelected(terminal)}
+        <button
+          class="tree-slot"
+          style="padding-left: {4 + depth * 16}px"
+          class:selected
+          class:unavailable={!isFree}
+          disabled={!isFree}
+          onclick={() => onSelect(terminal, nodeId)}
+          title={isFree ? `Select ${leafLabel}` : 'Slot already in use'}
+        >
+          <span
+            class="role-icon"
+            class:role-producer={terminal.eventRole === 'Producer'}
+            class:role-consumer={terminal.eventRole === 'Consumer'}
+            class:role-ambiguous={terminal.eventRole === 'Ambiguous' || terminal.eventRole === null}
+          >
+            {terminal.eventRole === 'Producer' ? '▲' : terminal.eventRole === 'Consumer' ? '▼' : '?'}
+          </span>
+          <span class="slot-name">{leafLabel}</span>
+          {#if !isFree}
+            <span class="slot-used" aria-label="In use">(in use)</span>
+          {/if}
+        </button>
       {/if}
-    </div>
+    {:else}
+      <!-- Normal group or collapsed multi-child group -->
+      {@const terminalChildren = isGroup(terminal) && terminal !== (node as ConfigNode) ? terminal.children : node.children}
+      {@const expanded = expandedNodes.has(key)}
+      <div class="tree-group" role="treeitem" aria-expanded={expanded} aria-selected={false}>
+        <button
+          class="tree-toggle"
+          style="padding-left: {4 + depth * 16}px"
+          onclick={() => onToggle(key)}
+        >
+          <span class="toggle-icon">{expanded ? '▾' : '▸'}</span>
+          <span class="group-label">{combinedLabel}</span>
+        </button>
+        {#if expanded}
+          {#each terminalChildren as child (child.path.join('/'))}
+            <PickerTreeNode
+              node={child}
+              depth={depth + 1}
+              {roleFilter}
+              searchQuery={childQuery}
+              pathKey={key}
+              {expandedNodes}
+              {onToggle}
+              {onSelect}
+              {isSlotFree}
+              {isSelected}
+              {nodeId}
+              {nodeName}
+            />
+          {/each}
+        {/if}
+      </div>
+    {/if}
   {/if}
 {/if}
 

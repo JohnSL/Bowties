@@ -18,27 +18,33 @@
 -->
 
 <script lang="ts">
-  import type { BowtieCard as BowtieCardType } from '$lib/api/tauri';
+  import type { BowtieCard as BowtieCardType, EventSlotEntry } from '$lib/api/tauri';
   import ElementEntry from './ElementEntry.svelte';
   import ConnectorArrow from './ConnectorArrow.svelte';
+  import RoleClassifyPrompt from './RoleClassifyPrompt.svelte';
+  import { isWellKnownEvent } from '$lib/utils/formatters';
 
   /** Write feedback state for a bowtie card (FR-030) */
   type WriteStatus = 'idle' | 'writing' | 'success' | 'error' | 'rolled-back' | 'rollback-failed';
 
   interface Props {
     card: BowtieCardType;
-    /** Pass true to visually highlight (e.g. when navigated via cross-reference) */
     highlighted?: boolean;
-    /** T021: Set of dirty field names for unsaved-change indicators */
     dirtyFields?: Set<string>;
-    /** T021: Whether this card has any unsaved changes */
     isDirty?: boolean;
-    /** T029: Write operation feedback state */
     writeStatus?: WriteStatus;
-    /** T029: Error message when writeStatus is 'error' or 'rollback-failed' */
     writeError?: string | null;
-    /** T029: Callback for retry button */
     onRetry?: (() => void) | null;
+    /** T030: callback to add a producer */
+    onAddProducer?: (() => void) | null;
+    /** T030: callback to add a consumer */
+    onAddConsumer?: (() => void) | null;
+    /** T031: callback to remove an element */
+    onRemoveElement?: ((entry: EventSlotEntry) => void) | null;
+    /** T037: callback to reclassify an ambiguous entry (includes chosen role) */
+    onReclassifyRole?: ((nodeId: string, elementPath: string[], role: 'Producer' | 'Consumer') => void) | null;
+    /** Keys of newly-added entries for "new" badge display. */
+    newEntryKeys?: Set<string> | null;
   }
 
   let {
@@ -49,9 +55,17 @@
     writeStatus = 'idle',
     writeError = null,
     onRetry = null,
+    onAddProducer = null,
+    onAddConsumer = null,
+    onRemoveElement = null,
+    onReclassifyRole = null,
+    newEntryKeys = null,
   }: Props = $props();
 
   let hasAmbiguous = $derived(card.ambiguous_entries.length > 0);
+
+  // T033: card state for visual indicators
+  let cardState = $derived(card.state?.toLowerCase() as 'active' | 'incomplete' | 'planning' | undefined);
 
   // Auto-dismiss success feedback after 3s
   let showSuccess = $state(false);
@@ -64,12 +78,17 @@
       showSuccess = false;
     }
   });
+
+  // T037: which ambiguous entry is being reclassified inline
+  let reclassifyingEntry = $state<EventSlotEntry | null>(null);
 </script>
 
 <div
   class="bowtie-card"
   class:highlighted
   class:is-dirty={isDirty}
+  class:is-incomplete={cardState === 'incomplete'}
+  class:is-planning={cardState === 'planning'}
   aria-label="Bowtie card for event {card.event_id_hex}"
   data-event-id={card.event_id_hex}
 >
@@ -132,9 +151,31 @@
   <div class="card-body">
     <!-- Producers entries -->
     <section class="column producers-column" aria-label="Producers">
-      {#each card.producers as entry (entry.node_id + entry.element_path.join('/'))}
-        <ElementEntry {entry} />
-      {/each}
+      {#if card.producers.length === 0}
+        {#if !isWellKnownEvent(card.event_id_hex)}
+          <span class="empty-column-hint">⚠ No producers</span>
+        {/if}
+      {:else}
+        {#each card.producers as entry (entry.node_id + entry.element_path.join('/'))}
+          {@const isNew = newEntryKeys?.has(`${entry.node_id}:${entry.element_path.join('/')}`) ?? false}
+          <div class="entry-row">
+            <ElementEntry {entry} {isNew} />
+            {#if onRemoveElement}
+              <button
+                class="remove-btn"
+                onclick={() => onRemoveElement?.(entry)}
+                title="Remove this producer"
+                aria-label="Remove producer {entry.element_label}"
+              >×</button>
+            {/if}
+          </div>
+        {/each}
+      {/if}
+      {#if onAddProducer}
+        <button class="add-element-btn add-element-btn--producer" onclick={onAddProducer}>
+          + Add producer
+        </button>
+      {/if}
     </section>
 
     <!-- Centre connector arrow (FR-005) -->
@@ -142,19 +183,62 @@
 
     <!-- Consumers entries -->
     <section class="column consumers-column" aria-label="Consumers">
-      {#each card.consumers as entry (entry.node_id + entry.element_path.join('/'))}
-        <ElementEntry {entry} />
-      {/each}
+      {#if card.consumers.length === 0}
+        {#if !isWellKnownEvent(card.event_id_hex)}
+          <span class="empty-column-hint">⚠ No consumers</span>
+        {/if}
+      {:else}
+        {#each card.consumers as entry (entry.node_id + entry.element_path.join('/'))}
+          {@const isNew = newEntryKeys?.has(`${entry.node_id}:${entry.element_path.join('/')}`) ?? false}
+          <div class="entry-row">
+            <ElementEntry {entry} {isNew} />
+            {#if onRemoveElement}
+              <button
+                class="remove-btn"
+                onclick={() => onRemoveElement?.(entry)}
+                title="Remove this consumer"
+                aria-label="Remove consumer {entry.element_label}"
+              >×</button>
+            {/if}
+          </div>
+        {/each}
+      {/if}
+      {#if onAddConsumer}
+        <button class="add-element-btn add-element-btn--consumer" onclick={onAddConsumer}>
+          + Add consumer
+        </button>
+      {/if}
     </section>
   </div>
 
   <!-- Ambiguous entries section (only rendered when non-empty) -->
   {#if hasAmbiguous}
     <div class="ambiguous-section" aria-label="Unknown role entries">
-      <h4 class="ambiguous-label">Unknown role — needs clarification</h4>
+      <h4 class="ambiguous-label">Unknown role — click to classify</h4>
       <div class="ambiguous-entries">
         {#each card.ambiguous_entries as entry (entry.node_id + entry.element_path.join('/'))}
-          <ElementEntry {entry} />
+          <div class="ambiguous-entry-row">
+            {#if reclassifyingEntry === entry}
+              <RoleClassifyPrompt
+                elementName={entry.element_label}
+                onClassify={(role) => {
+                  onReclassifyRole?.(entry.node_id, entry.element_path, role);
+                  reclassifyingEntry = null;
+                }}
+                onCancel={() => { reclassifyingEntry = null; }}
+              />
+            {:else}
+              <button
+                class="ambiguous-classify-btn"
+                onclick={() => { reclassifyingEntry = entry; }}
+                title="Click to classify this entry as Producer or Consumer"
+                aria-label="Classify role for {entry.element_label}"
+              >
+                <span class="ambiguous-question">?</span>
+                <ElementEntry {entry} />
+              </button>
+            {/if}
+          </div>
         {/each}
       </div>
     </div>
@@ -355,6 +439,129 @@
 
   @keyframes spin {
     to { transform: rotate(360deg); }
+  }
+
+  .bowtie-card.is-incomplete {
+    border-color: #f59e0b;
+    box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.2);
+  }
+
+  .bowtie-card.is-planning {
+    border-color: #9ca3af;
+    box-shadow: 0 0 0 1px rgba(156, 163, 175, 0.2);
+    opacity: 0.85;
+  }
+
+  .empty-column-hint {
+    font-size: 0.75rem;
+    color: #d97706;
+    font-style: italic;
+    padding: 4px 6px;
+    background: #fffbeb;
+    border: 1px dashed #fcd34d;
+    border-radius: 4px;
+    text-align: center;
+  }
+
+  .entry-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    position: relative;
+  }
+
+  .remove-btn {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: #9ca3af;
+    font-size: 0.9rem;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+    border-radius: 3px;
+    transition: color 0.15s, background 0.15s;
+  }
+
+  .remove-btn:hover {
+    color: #a4262c;
+    background: #fde7e9;
+  }
+
+  .add-element-btn {
+    margin-top: 6px;
+    padding: 3px 10px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 1px dashed;
+    background: transparent;
+    transition: background 0.15s, border-color 0.15s;
+    width: 100%;
+    text-align: left;
+  }
+
+  .add-element-btn--producer {
+    color: #0b6a0b;
+    border-color: #a3cfb4;
+  }
+
+  .add-element-btn--producer:hover {
+    background: #dff6dd;
+    border-color: #0b6a0b;
+  }
+
+  .add-element-btn--consumer {
+    color: #0078d4;
+    border-color: #b4d6fa;
+  }
+
+  .add-element-btn--consumer:hover {
+    background: #deecf9;
+    border-color: #0078d4;
+  }
+
+  .ambiguous-entry-row {
+    margin-bottom: 4px;
+  }
+
+  .ambiguous-classify-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 3px 4px;
+    border-radius: 4px;
+    text-align: left;
+    transition: background 0.15s;
+  }
+
+  .ambiguous-classify-btn:hover {
+    background: rgba(202, 80, 16, 0.06);
+  }
+
+  .ambiguous-question {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #d97706;
+    background: #fef3c7;
+    border: 1px solid #fde68a;
+    border-radius: 50%;
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
   }
 
   .retry-btn {

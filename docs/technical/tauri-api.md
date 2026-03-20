@@ -10,7 +10,8 @@ This document describes all Tauri commands available to the frontend application
 4. [Bowties Commands](#bowties-commands)
 5. [Events](#events)
 6. [TypeScript Type Definitions](#typescript-type-definitions)
-7. [Error Handling](#error-handling)
+7. [Frontend Stores & Utilities](#frontend-stores--utilities)
+8. [Error Handling](#error-handling)
 
 ---
 
@@ -537,6 +538,77 @@ if (catalog) {
 
 ---
 
+### `load_layout`
+
+Open a YAML layout file via a native OS file-open dialog and merge its metadata into the running catalog. Emits `layout-loaded` on success.
+
+**Parameters:**
+- `layout_path?: string` — Optional absolute path; if omitted a native open-file dialog is shown.
+
+**Returns:** `Promise<LayoutFile>`
+
+```typescript
+// Rust type mirrored to TypeScript via serde
+export interface LayoutFile {
+  version: number;             // Schema version (currently 1)
+  bowties: Record<string, BowtieMetadata>; // Keyed by dotted-hex event ID
+  role_classifications: Record<string, 'Producer' | 'Consumer'>; // "{nodeId}:{elementPath}"
+}
+export interface BowtieMetadata {
+  name: string | null;
+  tags: string[];
+}
+```
+
+**Tauri Event emitted:** `layout-loaded` with the loaded `LayoutFile` payload.
+
+**Error Conditions:**
+- Dialog cancelled (returns `null` rather than throwing)
+- `IoError` — file not readable
+- `ParseError` — YAML schema validation failed; returns degraded mode (empty `LayoutFile`) rather than erroring
+
+---
+
+### `save_layout`
+
+Atomically write the current layout file to disk (temp file → flush → rename). Uses the current layout path; if none is set, falls back to a native save-file dialog.
+
+**Parameters:**
+- `layout: LayoutFile` — Full layout to write.
+- `path?: string` — Absolute path to write to. If omitted, uses the current layout path or shows dialog.
+
+**Returns:** `Promise<string>` — The path the file was saved to.
+
+**Tauri Event emitted:** `layout-save-error` on failure with error string payload.
+
+**Error Conditions:**
+- `IoError` — temp write, flush, or rename failed
+
+---
+
+### `get_recent_layout`
+
+Return the path of the most recently opened layout file, or `null` if none.
+
+**Parameters:** None
+
+**Returns:** `Promise<string | null>`
+
+**Persistence:** Stored in `{app_data_dir}/recent-layout.json`.
+
+---
+
+### `set_recent_layout`
+
+Persist a layout path as the most recently used.
+
+**Parameters:**
+- `path: string` — Absolute path to the layout file.
+
+**Returns:** `Promise<void>`
+
+---
+
 ## Events
 
 The application emits Tauri events for real-time updates when network changes occur. These events enable the frontend to stay synchronized with the LCC network without polling.
@@ -802,7 +874,7 @@ export interface EventSlotEntry {
   node_id: string;            // "02.01.57.00.00.01"
   node_name: string;          // SNIP user_name, or "{mfg} — {model}", or node_id fallback
   element_path: string[];     // ["seg:0", "elem:3", "elem:2"]
-  element_label: string;      // CDI <name>, or first sentence of <description>, or path
+  element_label?: string;     // Computed by the frontend from the live tree (not sent by Rust)
   event_id: number[];         // 8-byte event ID array
   role: EventRole;            // "Producer" | "Consumer"
 }
@@ -823,7 +895,9 @@ export interface BowtieCard {
   producers: EventSlotEntry[];  // Confirmed producer slots
   consumers: EventSlotEntry[];  // Confirmed consumer slots
   ambiguous_entries: EventSlotEntry[]; // Same-node, heuristic unresolved
-  name: string | null;          // User-assigned name (future feature, null now)
+  name: string | null;          // User-assigned bowtie name (from layout file metadata)
+  tags: string[];               // User-assigned tags (from layout file metadata)
+  state: 'Active' | 'Incomplete' | 'Planning'; // Active = both sides present; Incomplete = one side empty; Planning = metadata-only, no live event
 }
 ```
 
@@ -1377,6 +1451,76 @@ interface Constraint {
   label?: string;           // For map values (key-value pairs)
 }
 ```
+
+---
+
+## Frontend Stores & Utilities
+
+These are TypeScript/Svelte modules that live entirely in the frontend. They are not Tauri commands but are key architectural pieces referenced by components.
+
+### `bowtieMetadata.svelte.ts` — `BowtieMetadataStore`
+
+Singleton store (Svelte 5 `$state` runes) holding all user-authored bowtie metadata: names, tags, and role classifications. Changes here drive the `EditableBowtiePreviewStore` derived computation.
+
+**Key mutations:**
+| Method | Description |
+|--------|-------------|
+| `createBowtie(eventIdHex, name?)` | Register a new bowtie in the metadata map |
+| `deleteBowtie(eventIdHex)` | Remove all metadata for a bowtie |
+| `renameBowtie(eventIdHex, name)` | Update display name |
+| `addTag(eventIdHex, tag)` | Add a tag |
+| `removeTag(eventIdHex, tag)` | Remove a tag |
+| `classifyRole(key, role)` | Persist `'Producer' \| 'Consumer'` for `"${nodeId}:${elementPath.join('/')}"` |
+| `clearAll()` | Reset to empty (used on discard) |
+
+**Key queries:** `isDirty`, `getMetadata(hex)`, `getRoleClassification(key)`, `getAllTags()`
+
+---
+
+### `layout.svelte.ts` — `LayoutStore`
+
+Manages the current layout file path, dirty state, and open/save operations via the native OS dialog plugin.
+
+**Methods:** `loadLayout(path?)`, `saveLayout()`, `saveLayoutAs()`
+
+**State:** `layoutPath: string | null`, `isDirty: boolean`, `currentLayout: LayoutFile | null`
+
+---
+
+### `bowties.svelte.ts` — `EditableBowtiePreviewStore`
+
+Derives `EditableBowtiePreview` by merging:
+1. Live `BowtieCatalog` from the backend
+2. Pending event ID edits from `pendingEditsStore`
+3. Name/tag/role metadata from `BowtieMetadataStore`
+
+Each card in the preview carries `isDirty`, `dirtyFields`, and `newEntryKeys` for UI indicators. `enrichEntryLabel()` computes `element_label` from the live node tree (reflecting pending string edits and `getInstanceDisplayName()`). `isEntryStillActive()` filters catalog entries whose slot event ID has already been reassigned.
+
+---
+
+### `connectionRequest.svelte.ts` — `ConnectionRequestStore`
+
+Singleton for config-first connection requests. `TreeLeafRow` calls `requestConnection(selection, role)` when the user clicks **→ New Connection**; `+page.svelte` watches `pendingRequest` and switches to the Bowties tab; `BowtieCatalogPanel` reads the request, pre-fills `NewConnectionDialog`, then calls `clearRequest()`.
+
+---
+
+### `pillSelection.ts` — `pillSelections`
+
+Svelte writable store (`Map<string, number>`) persisting the selected pill (instance) index for replicated `TreeGroupAccordion` groups across view switches (e.g. Config ↔ Bowties). Key format: `"${nodeId}:${siblings[0].path.join('/')}"`.
+
+**Exports:** `pillSelections: Writable<Map<string, number>>`, `setPillSelection(key, index)`
+
+---
+
+### `app/src/lib/utils/eventIds.ts`
+
+**`generateFreshEventIdForNode(nodeId, tree)`** — Generates a unique event ID for a node that does not conflict with any existing event IDs already assigned in that node's config tree. Algorithm: parse node ID as 6 bytes, collect all 16-bit counters (bytes 6–7) of existing IDs whose first 6 bytes match, return `max+1` (or first gap if counter overflows).
+
+---
+
+### `app/src/lib/utils/formatters.ts`
+
+**`isWellKnownEvent(hex)`** — Returns `true` when the given dotted-hex event ID is an LCC well-known event (Emergency Off, Emergency Stop, Duplicate Node ID, Is Train, etc.). Used in `BowtieCard` to suppress "No producers / No consumers" hints for global protocol events.
 
 ---
 

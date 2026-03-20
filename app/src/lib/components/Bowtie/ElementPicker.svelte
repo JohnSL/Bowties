@@ -16,17 +16,20 @@
   import { get } from 'svelte/store';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
+  import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { nodeInfoStore } from '$lib/stores/nodeInfo';
   import {
     type SegmentNode,
     type ConfigNode,
     type LeafConfigNode,
+    buildElementLabel,
     isGroup,
     isLeaf,
   } from '$lib/types/nodeTree';
   import type { ElementSelection } from '$lib/types/bowtie';
   import type { EventRole } from '$lib/types/nodeTree';
   import PickerTreeNode, { hasMatchingDescendant } from './PickerTreeNode.svelte';
+  import RoleClassifyPrompt from './RoleClassifyPrompt.svelte';
 
   interface Props {
     /** Filter elements by event role. null = show all. */
@@ -45,6 +48,9 @@
 
   let searchQuery = $state('');
   let expandedNodes = $state<Set<string>>(new Set());
+
+  // T035: pending ambiguous leaf waiting for role classification
+  let pendingAmbiguous = $state<{ leaf: LeafConfigNode; nodeId: string } | null>(null);
 
   // Get all node trees
   let trees = $derived(nodeTreeStore.trees);
@@ -125,14 +131,51 @@
 
   function handleSelect(leaf: LeafConfigNode, nodeId: string): void {
     if (!isSlotFree(leaf)) return; // FR-012: can't select occupied slots
+
+    // Phase 3: when the picker has a definite role filter and the slot is
+    // ambiguous/unclassified, auto-classify it and skip the prompt entirely.
+    if ((leaf.eventRole === 'Ambiguous' || leaf.eventRole === null) &&
+        (roleFilter === 'Producer' || roleFilter === 'Consumer')) {
+      const key = `${nodeId}:${leaf.path.join('/')}`;
+      bowtieMetadataStore.classifyRole(key, roleFilter);
+      doSelect(leaf, nodeId);
+      return;
+    }
+
+    // T035: intercept ambiguous/null role slots — ask user to classify first
+    if (leaf.eventRole === 'Ambiguous' || leaf.eventRole === null) {
+      pendingAmbiguous = { leaf, nodeId };
+      return;
+    }
+
+    doSelect(leaf, nodeId);
+  }
+
+  function doSelect(leaf: LeafConfigNode, nodeId: string): void {
+    const tree = nodeTreeStore.getTree(nodeId);
     const selection: ElementSelection = {
       nodeId,
+      nodeName: getNodeDisplayName(nodeId),
       elementPath: leaf.path,
+      elementLabel: tree ? buildElementLabel(tree, leaf) : leaf.name,
       address: leaf.address,
       space: leaf.space,
       currentEventId: leaf.value?.type === 'eventId' ? leaf.value.hex : '00.00.00.00.00.00.00.00',
     };
     onSelect?.(selection);
+  }
+
+  function handleAmbiguousClassify(role: 'Producer' | 'Consumer'): void {
+    if (!pendingAmbiguous) return;
+    const { leaf, nodeId } = pendingAmbiguous;
+
+    // Persist the classification
+    const key = `${nodeId}:${leaf.path.join('/')}`;
+    bowtieMetadataStore.classifyRole(key, role);
+
+    // Forward the selection
+    doSelect(leaf, nodeId);
+    pendingAmbiguous = null;
   }
 
   function isSelectedLeaf(leaf: LeafConfigNode, nodeId: string): boolean {
@@ -217,13 +260,24 @@
     {/each}
   </div>
 
+  <!-- T035: Ambiguous classification prompt -->
+  {#if pendingAmbiguous}
+    <div class="ambiguous-overlay">
+      <RoleClassifyPrompt
+        elementName={pendingAmbiguous.leaf.name}
+        onClassify={handleAmbiguousClassify}
+        onCancel={() => { pendingAmbiguous = null; }}
+      />
+    </div>
+  {/if}
+
   <!-- Selection preview -->
   {#if selectedElement}
     <div class="selection-preview">
       <h4 class="preview-title">Selected</h4>
       <div class="preview-detail">
-        <span class="preview-node">{selectedElement.nodeId}</span>
-        <span class="preview-path">{selectedElement.elementPath.join(' / ')}</span>
+        <span class="preview-node">{selectedElement.nodeName}</span>
+        <span class="preview-path">{selectedElement.elementLabel}</span>
       </div>
     </div>
   {/if}
@@ -363,5 +417,11 @@
     font-size: 0.72rem;
     color: #6b7280;
     font-family: 'ui-monospace', monospace;
+  }
+
+  .ambiguous-overlay {
+    border-top: 1px solid #e5e7eb;
+    padding: 8px 10px;
+    background: #fffbf0;
   }
 </style>

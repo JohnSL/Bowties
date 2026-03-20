@@ -26,10 +26,18 @@
   import SaveControls from '$lib/components/ElementCardDeck/SaveControls.svelte';
   import CdiDownloadDialog from '$lib/components/CdiDownloadDialog.svelte';
   import ConnectionManager from '$lib/ConnectionManager.svelte';
+  import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
   import type { MissingCdiNode } from '$lib/components/CdiDownloadDialog.svelte';
 
   // Active tab state — 'config' (default) or 'bowties'
   let activeTab = $state<'config' | 'bowties'>('config');
+
+  // T041: Switch to bowties tab when a config-first connection request is pending
+  $effect(() => {
+    if (connectionRequestStore.pendingRequest) {
+      activeTab = 'bowties';
+    }
+  });
 
   // Connection state
   let connectionLabel = $state("");

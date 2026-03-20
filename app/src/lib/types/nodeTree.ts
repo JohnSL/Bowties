@@ -297,6 +297,38 @@ export function findLeafInChildren(
 }
 
 /**
+ * Find a leaf node by its path array (matching `LeafConfigNode.path`).
+ * Used to resolve address/space from an EventSlotEntry.element_path.
+ * Returns `undefined` if not found.
+ */
+export function findLeafByPath(
+  tree: NodeConfigTree,
+  path: string[],
+): LeafConfigNode | undefined {
+  const target = path.join('/');
+  for (const seg of tree.segments) {
+    const found = findLeafInChildrenByPath(seg.children, target);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function findLeafInChildrenByPath(
+  children: ConfigNode[],
+  targetPath: string,
+): LeafConfigNode | undefined {
+  for (const child of children) {
+    if (isLeaf(child)) {
+      if (child.path.join('/') === targetPath) return child;
+    } else if (isGroup(child)) {
+      const found = findLeafInChildrenByPath(child.children, targetPath);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Build a dot-joined element label for a leaf, mirroring the Rust `element_label()` logic.
  * Walks from segment root to the leaf, collecting non-empty group names as ancestors.
  *
@@ -343,7 +375,7 @@ function collectAncestorNames(
       return true;
     }
     if (isGroup(child)) {
-      const name = (child.displayName ?? child.name)?.trim() || '';
+      const name = (child.displayName ?? getInstanceDisplayName(child)).trim();
       ancestors.push(name);
       if (collectAncestorNames(child.children, address, ancestors)) {
         return true;
@@ -415,14 +447,15 @@ function collectEventIdLeavesInChildren(
  */
 export function getInstanceDisplayName(group: GroupConfigNode): string {
   for (const child of group.children) {
+    const ev = effectiveValue(child as LeafConfigNode);
     if (
       isLeaf(child) &&
       child.elementType === 'string' &&
-      child.value !== null &&
-      child.value.type === 'string' &&
-      child.value.value.trim() !== ''
+      ev !== null &&
+      ev.type === 'string' &&
+      ev.value.trim() !== ''
     ) {
-      return `${child.value.value.trim()} (${group.instance})`;
+      return `${ev.value.trim()} (${group.instance})`;
     }
   }
   return group.instanceLabel;

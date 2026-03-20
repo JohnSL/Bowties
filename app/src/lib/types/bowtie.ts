@@ -59,7 +59,9 @@ export interface BowtieMetadataEdit {
 /** A selected element for one side of a connection */
 export interface ElementSelection {
   nodeId: string;
+  nodeName: string;
   elementPath: string[];
+  elementLabel: string;
   address: number;
   space: number;
   currentEventId: string;
@@ -115,4 +117,6 @@ export interface PreviewBowtieCard {
   state: BowtieState;
   isDirty: boolean;
   dirtyFields: Set<string>;
+  /** Keys (`${node_id}:${element_path.join('/')}`) of entries added in this session. */
+  newEntryKeys: Set<string>;
 }

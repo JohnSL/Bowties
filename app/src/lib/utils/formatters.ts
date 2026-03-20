@@ -85,3 +85,29 @@ export function getValueTypeLabel(value: ConfigValue): string {
             return 'Unknown';
     }
 }
+
+// ── Well-Known Event IDs (LCC Spec) ──────────────────────────────────────────
+
+const WELL_KNOWN_EVENT_HEX_SET = new Set<string>([
+  '01.00.00.00.00.00.FF.FF', // Emergency Off
+  '01.00.00.00.00.00.FF.FE', // Clear Emergency Off
+  '01.00.00.00.00.00.FF.FD', // Emergency Stop
+  '01.00.00.00.00.00.FF.FC', // Clear Emergency Stop
+  '01.00.00.00.00.00.FF.F8', // New Log Entry
+  '01.00.00.00.00.00.FE.00', // Ident Button Pressed
+  '01.00.00.00.00.00.FD.01', // Link Error 1
+  '01.00.00.00.00.00.FD.02', // Link Error 2
+  '01.00.00.00.00.00.FD.03', // Link Error 3
+  '01.00.00.00.00.00.FD.04', // Link Error 4
+  '01.01.00.00.00.00.02.01', // Duplicate Node ID
+  '01.01.00.00.00.00.03.03', // Is Train
+  '01.01.00.00.00.00.03.04', // Is Traction Proxy
+]);
+
+/**
+ * Returns true when the given dotted-hex event ID is a well-known LCC event.
+ * Well-known events do not require producers/consumers to be catalogued.
+ */
+export function isWellKnownEvent(hex: string): boolean {
+  return WELL_KNOWN_EVENT_HEX_SET.has(hex);
+}

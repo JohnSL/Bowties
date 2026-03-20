@@ -76,57 +76,6 @@ fn node_display_name(node: &lcc_rs::DiscoveredNode) -> String {
     node.node_id.to_hex_string()
 }
 
-/// Return a full dot-joined path label for an event ID slot.
-///
-/// Format: `Ancestor1.Ancestor2.LeafLabel`
-///
-/// Leaf label priority: `<name>` → first sentence of `<description>` → last path component.
-/// Empty ancestor names (groups with no `<name>`) are skipped.
-/// Examples:
-///   ["Settings", "Button 1"] + name "Event On" → "Settings.Button 1.Event On"
-///   [] + name "Trigger"                         → "Trigger"
-///   ["Outputs"] + no name, desc "When active." → "Outputs.When active"
-fn element_label(
-    element: &lcc_rs::cdi::EventIdElement,
-    ancestor_names: &[&str],
-    path: &[String],
-) -> String {
-    // Resolve the leaf label.
-    let leaf = if let Some(name) = &element.name {
-        let trimmed = name.trim();
-        if !trimmed.is_empty() {
-            trimmed.to_string()
-        } else {
-            String::new()
-        }
-    } else {
-        String::new()
-    };
-
-    let leaf = if leaf.is_empty() {
-        if let Some(desc) = &element.description {
-            let sentence = desc.split('.').next().unwrap_or("").trim().to_string();
-            if !sentence.is_empty() { sentence } else { String::new() }
-        } else {
-            String::new()
-        }
-    } else {
-        leaf
-    };
-
-    let leaf = if leaf.is_empty() {
-        // Ultimate fallback: last path component.
-        path.last().cloned().unwrap_or_default()
-    } else {
-        leaf
-    };
-
-    // Prepend non-empty ancestor names.
-    let mut parts: Vec<&str> = ancestor_names.iter().copied().filter(|s| !s.is_empty()).collect();
-    parts.push(leaf.as_str());
-    parts.join(".")
-}
-
 // ── Core builder ─────────────────────────────────────────────────────────────
 
 /// Slot metadata gathered from a single CDI walk.
@@ -136,7 +85,6 @@ struct SlotInfo {
     node_id: String,
     node_name: String,
     element_path: Vec<String>,
-    element_label: String,
     /// Raw CDI <description> text, preserved for forwarding to frontend.
     element_description: Option<String>,
     heuristic_role: lcc_rs::EventRole,
@@ -166,7 +114,6 @@ fn walk_cdi_slots(node: &lcc_rs::DiscoveredNode) -> Vec<SlotInfo> {
             node_id: node_id.clone(),
             node_name: node_name.clone(),
             element_path: path.to_vec(),
-            element_label: element_label(element, ancestor_names, path),
             element_description: element.description.clone(),
             heuristic_role: role,
         });
@@ -346,16 +293,14 @@ pub fn build_bowtie_catalog(
                     .unwrap_or_else(|| node_id.clone());
 
                 let slot = slots.iter().find(|s| s.element_path.join("/") == *path_key);
-                let (ep, el, ed, heuristic) = slot
+                let (ep, ed, heuristic) = slot
                     .map(|s| (
                         s.element_path.clone(),
-                        s.element_label.clone(),
                         s.element_description.clone(),
                         s.heuristic_role,
                     ))
                     .unwrap_or_else(|| (
                         path_key.split('/').map(|s| s.to_string()).collect(),
-                        path_key.clone(),
                         None,
                         lcc_rs::EventRole::Ambiguous,
                     ));
@@ -386,7 +331,6 @@ pub fn build_bowtie_catalog(
                     node_id: node_id.clone(),
                     node_name,
                     element_path: ep,
-                    element_label: el,
                     element_description: ed,
                     event_id: *event_id_bytes,
                     role: resolved_role,
@@ -412,9 +356,9 @@ pub fn build_bowtie_catalog(
                         slots, node_id, event_id_bytes, config_value_cache,
                         lcc_rs::EventRole::Producer,
                     );
-                    let (ep, el, ed) = slot
-                        .map(|s| (s.element_path.clone(), s.element_label.clone(), s.element_description.clone()))
-                        .unwrap_or_else(|| (vec![], node_id.clone(), None));
+                    let (ep, ed) = slot
+                        .map(|s| (s.element_path.clone(), s.element_description.clone()))
+                        .unwrap_or_else(|| (vec![], None));
                     let node_name = nodes
                         .iter()
                         .find(|n| n.node_id.to_hex_string() == *node_id)
@@ -424,7 +368,6 @@ pub fn build_bowtie_catalog(
                         node_id: node_id.clone(),
                         node_name,
                         element_path: ep,
-                        element_label: el,
                         element_description: ed,
                         event_id: *event_id_bytes,
                         role: lcc_rs::EventRole::Producer,
@@ -437,9 +380,9 @@ pub fn build_bowtie_catalog(
                         slots, node_id, event_id_bytes, config_value_cache,
                         lcc_rs::EventRole::Consumer,
                     );
-                    let (ep, el, ed) = slot
-                        .map(|s| (s.element_path.clone(), s.element_label.clone(), s.element_description.clone()))
-                        .unwrap_or_else(|| (vec![], node_id.clone(), None));
+                    let (ep, ed) = slot
+                        .map(|s| (s.element_path.clone(), s.element_description.clone()))
+                        .unwrap_or_else(|| (vec![], None));
                     let node_name = nodes
                         .iter()
                         .find(|n| n.node_id.to_hex_string() == *node_id)
@@ -449,7 +392,6 @@ pub fn build_bowtie_catalog(
                         node_id: node_id.clone(),
                         node_name,
                         element_path: ep,
-                        element_label: el,
                         element_description: ed,
                         event_id: *event_id_bytes,
                         role: lcc_rs::EventRole::Consumer,
@@ -464,14 +406,13 @@ pub fn build_bowtie_catalog(
                         .map(node_display_name)
                         .unwrap_or_else(|| node_id.clone());
                     let slot = slots.first();
-                    let (ep, el, ed) = slot
-                        .map(|s| (s.element_path.clone(), s.element_label.clone(), s.element_description.clone()))
-                        .unwrap_or_else(|| (vec![], node_id.clone(), None));
+                    let (ep, ed) = slot
+                        .map(|s| (s.element_path.clone(), s.element_description.clone()))
+                        .unwrap_or_else(|| (vec![], None));
                     ambiguous_entries.push(EventSlotEntry {
                         node_id: node_id.clone(),
                         node_name,
                         element_path: ep,
-                        element_label: el,
                         element_description: ed,
                         event_id: *event_id_bytes,
                         role: lcc_rs::EventRole::Ambiguous,
@@ -502,9 +443,9 @@ pub fn build_bowtie_catalog(
                     slots, node_id, event_id_bytes, config_value_cache,
                     lcc_rs::EventRole::Producer,
                 );
-                let (ep, el, ed) = slot
-                    .map(|s| (s.element_path.clone(), s.element_label.clone(), s.element_description.clone()))
-                    .unwrap_or_else(|| (vec![], node_id.clone(), None));
+                let (ep, ed) = slot
+                    .map(|s| (s.element_path.clone(), s.element_description.clone()))
+                    .unwrap_or_else(|| (vec![], None));
                 let node_name = nodes
                     .iter()
                     .find(|n| n.node_id.to_hex_string() == *node_id)
@@ -514,7 +455,6 @@ pub fn build_bowtie_catalog(
                     node_id: node_id.clone(),
                     node_name,
                     element_path: ep,
-                    element_label: el,
                     element_description: ed,
                     event_id: *event_id_bytes,
                     role: lcc_rs::EventRole::Producer,
@@ -527,9 +467,9 @@ pub fn build_bowtie_catalog(
                     slots, node_id, event_id_bytes, config_value_cache,
                     lcc_rs::EventRole::Consumer,
                 );
-                let (ep, el, ed) = slot
-                    .map(|s| (s.element_path.clone(), s.element_label.clone(), s.element_description.clone()))
-                    .unwrap_or_else(|| (vec![], node_id.clone(), None));
+                let (ep, ed) = slot
+                    .map(|s| (s.element_path.clone(), s.element_description.clone()))
+                    .unwrap_or_else(|| (vec![], None));
                 let node_name = nodes
                     .iter()
                     .find(|n| n.node_id.to_hex_string() == *node_id)
@@ -539,7 +479,6 @@ pub fn build_bowtie_catalog(
                     node_id: node_id.clone(),
                     node_name,
                     element_path: ep,
-                    element_label: el,
                     element_description: ed,
                     event_id: *event_id_bytes,
                     role: lcc_rs::EventRole::Consumer,
@@ -554,9 +493,9 @@ pub fn build_bowtie_catalog(
                     .map(node_display_name)
                     .unwrap_or_else(|| (*node_id).clone());
                 let slot = slots.first();
-                let (ep, el, ed) = slot
-                    .map(|s| (s.element_path.clone(), s.element_label.clone(), s.element_description.clone()))
-                    .unwrap_or_else(|| (vec![], (*node_id).clone(), None));
+                let (ep, ed) = slot
+                    .map(|s| (s.element_path.clone(), s.element_description.clone()))
+                    .unwrap_or_else(|| (vec![], None));
                 let profile_key = slot
                     .map(|s| format!("{}:{}", *node_id, s.element_path.join("/")))
                     .unwrap_or_else(|| (*node_id).clone());
@@ -568,7 +507,6 @@ pub fn build_bowtie_catalog(
                     node_id: (*node_id).clone(),
                     node_name,
                     element_path: ep,
-                    element_label: el,
                     element_description: ed,
                     event_id: *event_id_bytes,
                     role: resolved,
@@ -638,19 +576,17 @@ pub fn build_bowtie_catalog(
                     continue;
                 }
 
-                // Resolve SlotInfo for this path to obtain label, description, and
+                // Resolve SlotInfo for this path to obtain description and
                 // heuristic role classification.
                 let slot = slots.iter().find(|s| s.element_path.join("/") == *path_key);
-                let (ep, el, ed, heuristic) = slot
+                let (ep, ed, heuristic) = slot
                     .map(|s| (
                         s.element_path.clone(),
-                        s.element_label.clone(),
                         s.element_description.clone(),
                         s.heuristic_role,
                     ))
                     .unwrap_or_else(|| (
                         path_key.split('/').map(|s| s.to_string()).collect(),
-                        path_key.clone(),
                         None,
                         lcc_rs::EventRole::Ambiguous,
                     ));
@@ -668,7 +604,6 @@ pub fn build_bowtie_catalog(
                             node_id: node_id.clone(),
                             node_name: node_name.clone(),
                             element_path: ep,
-                            element_label: el,
                             element_description: ed,
                             event_id: wk_bytes,
                             role: lcc_rs::EventRole::Producer,
@@ -679,7 +614,6 @@ pub fn build_bowtie_catalog(
                             node_id: node_id.clone(),
                             node_name: node_name.clone(),
                             element_path: ep,
-                            element_label: el,
                             element_description: ed,
                             event_id: wk_bytes,
                             role: lcc_rs::EventRole::Consumer,
@@ -690,7 +624,6 @@ pub fn build_bowtie_catalog(
                             node_id: node_id.clone(),
                             node_name: node_name.clone(),
                             element_path: ep,
-                            element_label: el,
                             element_description: ed,
                             event_id: wk_bytes,
                             role: lcc_rs::EventRole::Ambiguous,
@@ -1727,60 +1660,13 @@ mod build_bowtie_catalog_tests {
         assert_eq!(node_display_name(&node), "Mfg Co — Model X");
     }
 
-    // ── element_label ──────────────────────────────────────────────────────────
-
-    fn event_id_elem(name: Option<&str>, description: Option<&str>) -> lcc_rs::cdi::EventIdElement {
-        lcc_rs::cdi::EventIdElement {
-            name: name.map(|s| s.to_string()),
-            description: description.map(|s| s.to_string()),
-            offset: 0,
-        }
-    }
-
-    #[test]
-    fn element_label_name_wins_over_description() {
-        let elem = event_id_elem(Some("Trigger Event"), Some("When activated."));
-        let label = element_label(&elem, &["Settings"], &["seg:0".to_string()]);
-        assert_eq!(label, "Settings.Trigger Event");
-    }
-
-    #[test]
-    fn element_label_first_sentence_of_description() {
-        let elem = event_id_elem(None, Some("When pressed. More detail."));
-        let label = element_label(&elem, &[], &["seg:0".to_string()]);
-        assert_eq!(label, "When pressed");
-    }
-
-    #[test]
-    fn element_label_last_path_component_fallback() {
-        let elem = event_id_elem(None, None);
-        let label = element_label(&elem, &[], &["seg:0".to_string(), "elem:3".to_string()]);
-        assert_eq!(label, "elem:3");
-    }
-
-    #[test]
-    fn element_label_empty_ancestors_skipped() {
-        let elem = event_id_elem(Some("Fan On"), None);
-        // Empty first ancestor should be skipped
-        let label = element_label(&elem, &["", "Outputs"], &["seg:0".to_string()]);
-        assert_eq!(label, "Outputs.Fan On");
-    }
-
-    #[test]
-    fn element_label_dot_joins_non_empty_ancestors() {
-        let elem = event_id_elem(Some("Heat"), None);
-        let label = element_label(&elem, &["Zone A", "Temperature"], &["seg:0".to_string()]);
-        assert_eq!(label, "Zone A.Temperature.Heat");
-    }
-
     // ── best_slot ──────────────────────────────────────────────────────────────
 
-    fn make_slot(label: &str, role: lcc_rs::EventRole) -> SlotInfo {
+    fn make_slot(path: &str, role: lcc_rs::EventRole) -> SlotInfo {
         SlotInfo {
             node_id: "test".to_string(),
             node_name: "Test Node".to_string(),
-            element_path: vec!["path".to_string()],
-            element_label: label.to_string(),
+            element_path: vec![path.to_string()],
             element_description: None,
             heuristic_role: role,
         }
@@ -1789,22 +1675,22 @@ mod build_bowtie_catalog_tests {
     #[test]
     fn best_slot_exact_role_match_returned() {
         let slots = vec![
-            make_slot("Input", lcc_rs::EventRole::Consumer),
-            make_slot("Output", lcc_rs::EventRole::Producer),
+            make_slot("input", lcc_rs::EventRole::Consumer),
+            make_slot("output", lcc_rs::EventRole::Producer),
         ];
         let result = best_slot(&slots, lcc_rs::EventRole::Producer);
-        assert_eq!(result.unwrap().element_label, "Output");
+        assert_eq!(result.unwrap().element_path, vec!["output"]);
     }
 
     #[test]
     fn best_slot_fallback_to_first_when_no_match() {
         let slots = vec![
-            make_slot("Input A", lcc_rs::EventRole::Consumer),
-            make_slot("Input B", lcc_rs::EventRole::Consumer),
+            make_slot("input-a", lcc_rs::EventRole::Consumer),
+            make_slot("input-b", lcc_rs::EventRole::Consumer),
         ];
         // No Producer slot → falls back to the first slot
         let result = best_slot(&slots, lcc_rs::EventRole::Producer);
-        assert_eq!(result.unwrap().element_label, "Input A");
+        assert_eq!(result.unwrap().element_path, vec!["input-a"]);
     }
 
     #[test]
@@ -1815,12 +1701,11 @@ mod build_bowtie_catalog_tests {
 
     // ── slot_for_event_id ──────────────────────────────────────────────────────
 
-    fn make_slot_with_path(label: &str, path_str: &str, role: lcc_rs::EventRole) -> SlotInfo {
+    fn make_slot_with_path(path_str: &str, role: lcc_rs::EventRole) -> SlotInfo {
         SlotInfo {
             node_id: "test".to_string(),
             node_name: "Test Node".to_string(),
             element_path: path_str.split('/').map(|s| s.to_string()).collect(),
-            element_label: label.to_string(),
             element_description: None,
             heuristic_role: role,
         }
@@ -1831,8 +1716,8 @@ mod build_bowtie_catalog_tests {
     #[test]
     fn slot_for_event_id_cache_hit_returns_precise_slot() {
         let slots = vec![
-            make_slot_with_path("Consumer Slot", "seg:0/elem:0", lcc_rs::EventRole::Consumer),
-            make_slot_with_path("Producer Slot", "seg:0/elem:1", lcc_rs::EventRole::Producer),
+            make_slot_with_path("seg:0/elem:0", lcc_rs::EventRole::Consumer),
+            make_slot_with_path("seg:0/elem:1", lcc_rs::EventRole::Producer),
         ];
         // Cache says "seg:0/elem:1" holds SLOT_EVENT
         let mut node_cache = HashMap::new();
@@ -1841,23 +1726,23 @@ mod build_bowtie_catalog_tests {
         config_cache.insert("test".to_string(), node_cache);
 
         let result = slot_for_event_id(&slots, "test", &SLOT_EVENT, &config_cache, lcc_rs::EventRole::Consumer);
-        assert_eq!(result.unwrap().element_label, "Producer Slot");
+        assert_eq!(result.unwrap().element_path, vec!["seg:0", "elem:1"]);
     }
 
     #[test]
     fn slot_for_event_id_node_not_in_cache_uses_heuristic() {
         let slots = vec![
-            make_slot_with_path("Consumer Slot", "seg:0/elem:0", lcc_rs::EventRole::Consumer),
-            make_slot_with_path("Producer Slot", "seg:0/elem:1", lcc_rs::EventRole::Producer),
+            make_slot_with_path("seg:0/elem:0", lcc_rs::EventRole::Consumer),
+            make_slot_with_path("seg:0/elem:1", lcc_rs::EventRole::Producer),
         ];
         // Node "missing" not in cache → heuristic: find first Producer slot
         let result = slot_for_event_id(&slots, "missing", &SLOT_EVENT, &HashMap::new(), lcc_rs::EventRole::Producer);
-        assert_eq!(result.unwrap().element_label, "Producer Slot");
+        assert_eq!(result.unwrap().element_path, vec!["seg:0", "elem:1"]);
     }
 
     #[test]
     fn slot_for_event_id_cache_present_but_no_event_match_uses_heuristic() {
-        let slots = vec![make_slot_with_path("Only Slot", "seg:0/elem:0", lcc_rs::EventRole::Consumer)];
+        let slots = vec![make_slot_with_path("seg:0/elem:0", lcc_rs::EventRole::Consumer)];
         // Cache has the node but with different event bytes
         let different_event = [0x00u8; 8];
         let mut node_cache = HashMap::new();
@@ -1867,7 +1752,7 @@ mod build_bowtie_catalog_tests {
 
         let result = slot_for_event_id(&slots, "test", &SLOT_EVENT, &config_cache, lcc_rs::EventRole::Consumer);
         // No cache match for SLOT_EVENT → heuristic fallback to first Consumer slot
-        assert_eq!(result.unwrap().element_label, "Only Slot");
+        assert_eq!(result.unwrap().element_path, vec!["seg:0", "elem:0"]);
     }
 
     #[test]

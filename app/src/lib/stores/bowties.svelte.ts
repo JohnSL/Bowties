@@ -14,7 +14,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { get } from 'svelte/store';
 import { type BowtieCatalog, type BowtieCard, type CdiReadCompletePayload, type EventSlotEntry } from '../api/tauri';
 import type { PreviewBowtieCard, EditableBowtiePreview } from '$lib/types/bowtie';
-import { buildElementLabel, collectEventIdLeaves, effectiveValue, hasModifiedLeaves } from '$lib/types/nodeTree';
+import { buildElementLabel, collectEventIdLeaves, effectiveValue, findLeafByPath, hasModifiedLeaves } from '$lib/types/nodeTree';
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
 import { layoutStore } from '$lib/stores/layout.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
@@ -208,17 +208,23 @@ class EditableBowtiePreviewStore {
         dirtyFields.add('elements');
       }
 
+      const newEntryKeys = new Set<string>();
+      for (const e of [...newProducers, ...newConsumers]) {
+        newEntryKeys.add(`${e.node_id}:${e.element_path.join('/')}`);
+      }
+
       previews.push({
         eventIdHex: card.event_id_hex,
         eventIdBytes: card.event_id_bytes,
-        producers: [...card.producers, ...newProducers],
-        consumers: [...card.consumers, ...newConsumers],
+        producers: [...card.producers.filter(e => isEntryStillActive(e, card.event_id_hex)).map(enrichEntryLabel), ...newProducers],
+        consumers: [...card.consumers.filter(e => isEntryStillActive(e, card.event_id_hex)).map(enrichEntryLabel), ...newConsumers],
         ambiguousEntries: card.ambiguous_entries,
         name: meta?.name ?? card.name ?? undefined,
         tags: meta?.tags ?? card.tags ?? [],
         state: card.state === 'Active' ? 'active' : card.state === 'Incomplete' ? 'incomplete' : 'planning',
         isDirty: dirtyFields.size > 0 || newProducers.length > 0 || newConsumers.length > 0,
         dirtyFields,
+        newEntryKeys,
       });
     }
     } // end if (catalog)
@@ -250,6 +256,7 @@ class EditableBowtiePreviewStore {
             state: 'planning',
             isDirty: dirtyFields.size > 0,
             dirtyFields,
+            newEntryKeys: new Set<string>(),
           });
         }
       }
@@ -274,6 +281,7 @@ class EditableBowtiePreviewStore {
           state: 'planning',
           isDirty: true,
           dirtyFields: new Set(['name']),
+          newEntryKeys: new Set<string>(),
         });
       }
     }
@@ -283,6 +291,34 @@ class EditableBowtiePreviewStore {
       hasUnsavedChanges: metadataIsDirty || configIsDirty,
     };
   }
+}
+
+/**
+ * Compute the element_label for a catalog entry from the live tree so it
+ * reflects getInstanceDisplayName (e.g. "GPIO13 (1)") and pending name edits.
+ * Falls back to element_path.join('.') when the tree or leaf cannot be found.
+ */
+function enrichEntryLabel(entry: EventSlotEntry): EventSlotEntry {
+  const tree = nodeTreeStore.getTree(entry.node_id);
+  if (!tree) return { ...entry, element_label: entry.element_label ?? entry.element_path.join('.') };
+  const leaf = findLeafByPath(tree, entry.element_path);
+  if (!leaf) return { ...entry, element_label: entry.element_label ?? entry.element_path.join('.') };
+  return { ...entry, element_label: buildElementLabel(tree, leaf) };
+}
+
+/**
+ * Check whether a catalog entry is still active — i.e., its tree leaf's
+ * effective value still matches the given event ID hex.  Returns true when
+ * the leaf cannot be found (conservative: keep the entry).
+ */
+function isEntryStillActive(entry: import('../api/tauri').EventSlotEntry, eventIdHex: string): boolean {
+  const tree = nodeTreeStore.getTree(entry.node_id);
+  if (!tree) return true;
+  const leaf = findLeafByPath(tree, entry.element_path);
+  if (!leaf) return true;
+  const val = effectiveValue(leaf);
+  if (val?.type !== 'eventId') return false;
+  return val.hex === eventIdHex;
 }
 
 /**

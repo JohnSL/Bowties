@@ -118,10 +118,10 @@
 
 ### Implementation for User Story 5
 
-- [ ] T030 [US5] Add **+ Add producer** and **+ Add consumer** action buttons to `BowtieCard` that open `ElementPicker` filtered by role; write the bowtie's existing event ID to the selected element's first free slot as a pending edit in `app/src/lib/components/Bowtie/BowtieCard.svelte`
-- [ ] T031 [US5] Implement remove-element flow on `BowtieCard`: remove button per element; create pending edit restoring the slot to its original value; handle state transitions (active → incomplete) in `app/src/lib/components/Bowtie/BowtieCard.svelte`
-- [ ] T032 [US5] Add deletion confirmation prompt when removing the last element from both sides: offer to keep as planning-state bowtie or delete entirely (FR-011) in `app/src/lib/components/Bowtie/BowtieCard.svelte`
-- [ ] T033 [US5] Add incomplete-state visual indicator to `BowtieCard` when one side has zero elements (FR-010) in `app/src/lib/components/Bowtie/BowtieCard.svelte`
+- [x] T030 [US5] Add **+ Add producer** and **+ Add consumer** action buttons to `BowtieCard` that open `ElementPicker` filtered by role; write the bowtie's existing event ID to the selected element's first free slot as a pending edit in `app/src/lib/components/Bowtie/BowtieCard.svelte`
+- [x] T031 [US5] Implement remove-element flow on `BowtieCard`: remove button per element; create pending edit restoring the slot to its original value; handle state transitions (active → incomplete) in `app/src/lib/components/Bowtie/BowtieCard.svelte`
+- [x] T032 [US5] Add deletion confirmation prompt when removing the last element from both sides: offer to keep as planning-state bowtie or delete entirely (FR-011) in `app/src/lib/components/Bowtie/BowtieCard.svelte`
+- [x] T033 [US5] Add incomplete-state visual indicator to `BowtieCard` when one side has zero elements (FR-010) in `app/src/lib/components/Bowtie/BowtieCard.svelte`
 
 **Checkpoint**: Bowties can be grown and trimmed. Element removal correctly restores node slot values. State transitions (active ↔ incomplete ↔ planning) work visually.
 
@@ -135,11 +135,11 @@
 
 ### Implementation for User Story 8
 
-- [ ] T034 [P] [US8] Create `RoleClassifyPrompt` component: inline prompt asking user to classify an ambiguous element as Producer or Consumer; styled consistently with existing UI patterns in `app/src/lib/components/Bowtie/RoleClassifyPrompt.svelte`
-- [ ] T035 [US8] Extend `ElementPicker` to visually distinguish ambiguous elements with a "?" badge (FR-015b); trigger `RoleClassifyPrompt` on selection of an ambiguous element; place element on correct picker side after classification in `app/src/lib/components/Bowtie/ElementPicker.svelte`
-- [ ] T036 [US8] Wire role classification persistence: `BowtieMetadataStore.classifyRole()` saves classification keyed by `{nodeId}:{elementPath}` in layout YAML via `roleClassifications` section; loaded classifications applied during catalog merge in `app/src/lib/stores/bowtieMetadata.svelte.ts`
-- [ ] T037 [US8] Add re-classify role support on `BowtieCard`: allow clicking a role badge to change classification; update element placement from producer to consumer side (or vice versa) on all affected bowties (FR-015d) in `app/src/lib/components/Bowtie/BowtieCard.svelte`
-- [ ] T038 [US8] Show ambiguous elements in a dedicated "ambiguous" section on `BowtieCard` (between producers and consumers) until the user classifies their role (FR-015e) in `app/src/lib/components/Bowtie/BowtieCard.svelte`
+- [x] T034 [P] [US8] Create `RoleClassifyPrompt` component: inline prompt asking user to classify an ambiguous element as Producer or Consumer; styled consistently with existing UI patterns in `app/src/lib/components/Bowtie/RoleClassifyPrompt.svelte`
+- [x] T035 [US8] Extend `ElementPicker` to visually distinguish ambiguous elements with a "?" badge (FR-015b); trigger `RoleClassifyPrompt` on selection of an ambiguous element; place element on correct picker side after classification in `app/src/lib/components/Bowtie/ElementPicker.svelte`
+- [x] T036 [US8] Wire role classification persistence: `BowtieMetadataStore.classifyRole()` saves classification keyed by `{nodeId}:{elementPath}` in layout YAML via `roleClassifications` section; loaded classifications applied during catalog merge in `app/src/lib/stores/bowtieMetadata.svelte.ts`
+- [x] T037 [US8] Add re-classify role support on `BowtieCard`: allow clicking a role badge to change classification; update element placement from producer to consumer side (or vice versa) on all affected bowties (FR-015d) in `app/src/lib/components/Bowtie/BowtieCard.svelte`
+- [x] T038 [US8] Show ambiguous elements in a dedicated "ambiguous" section on `BowtieCard` (between producers and consumers) until the user classifies their role (FR-015e) in `app/src/lib/components/Bowtie/BowtieCard.svelte`
 
 **Checkpoint**: Nodes without profiles can participate in bowties. Classifications persist. Re-classification moves elements between sides.
 
@@ -153,9 +153,9 @@
 
 ### Implementation for User Story 3
 
-- [ ] T039 [US3] Add "Create Connection from Here" context action (button or right-click menu item) to `TreeLeafRow` for event slot elements with at least one free slot in `app/src/lib/components/ElementCardDeck/TreeLeafRow.svelte`
-- [ ] T040 [US3] Extend `NewConnectionDialog` to accept an optional pre-filled `ElementSelection` for either the producer or consumer side; auto-detect role from element's event role annotation and place on correct side in `app/src/lib/components/Bowtie/NewConnectionDialog.svelte`
-- [ ] T041 [US3] Wire context action to dialog: `TreeLeafRow` dispatches event with element selection data; parent page catches event and opens `NewConnectionDialog` with pre-fill in `app/src/lib/components/ElementCardDeck/TreeLeafRow.svelte`
+- [x] T039 [US3] Add "Create Connection from Here" context action (button or right-click menu item) to `TreeLeafRow` for event slot elements with at least one free slot in `app/src/lib/components/ElementCardDeck/TreeLeafRow.svelte`
+- [x] T040 [US3] Extend `NewConnectionDialog` to accept an optional pre-filled `ElementSelection` for either the producer or consumer side; auto-detect role from element's event role annotation and place on correct side in `app/src/lib/components/Bowtie/NewConnectionDialog.svelte`
+- [x] T041 [US3] Wire context action to dialog: `TreeLeafRow` dispatches event with element selection data; parent page catches event and opens `NewConnectionDialog` with pre-fill in `app/src/lib/components/ElementCardDeck/TreeLeafRow.svelte`
 
 **Checkpoint**: Config-first entry point works. Same dialog, same result — just a different starting point.
 

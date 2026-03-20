@@ -2,7 +2,7 @@
 
 *This document describes the current implementation of Bowties, including what's built, what's in progress, and what remains to be implemented. For the aspirational vision, see [docs/design/vision.md](../design/vision.md).*
 
-**Last Updated:** 2026-03-08
+**Last Updated:** 2026-03-20
 
 ## Implementation Status
 
@@ -137,6 +137,63 @@
 - Configuration memory read/write (value retrieval and editing)
 - Configuration value display and editing UI
 
+### ✅ Completed (Phase 7)
+
+**Editable Bowties — Feature 009 (Phases 3–8 of spec):**
+
+*Persistence (US7):*
+- YAML layout file I/O: atomic write (temp → flush → rename), schema validation, corrupted-file degraded mode
+- `load_layout` / `save_layout` Tauri commands with `layout-loaded` / `layout-save-error` events
+- `get_recent_layout` / `set_recent_layout` Tauri commands using `app_data_dir/recent-layout.json`
+- `build_bowtie_catalog` extended to accept optional `LayoutFile` parameter; merges role classifications, names, tags
+- Layout store (`layout.svelte.ts`) with native OS file dialogs, dirty state, open/save/save-as methods
+- Automatic recent-layout reopen prompt on startup
+
+*Bidirectional Sync & Unsaved Tracking (US2):*
+- `BowtieMetadataStore` (`bowtieMetadata.svelte.ts`) with `$state` runes for names, tags, role classifications; mutations: `createBowtie`, `deleteBowtie`, `renameBowtie`, `addTag`, `removeTag`, `classifyRole`
+- `pendingEditsStore` extended with `source: 'config' | 'bowtie'` discriminator
+- `EditableBowtiePreviewStore` — `$derived` merging live catalog + pending edits + metadata
+- `enrichEntryLabel()` — computes `element_label` from the live node tree (frontend-only; no longer sent by Rust)
+- `isEntryStillActive()` — filters catalog entries whose event ID has been reassigned
+- Unified save flow: node writes first, then YAML save with retry/Save As prompt
+- Unified discard flow: clears both stores atomically
+- Unsaved-change indicators (dirty dot/badge) on `BowtieCard` and toolbar
+
+*Visual Connection Creation — Core MVP (US1):*
+- `ElementPicker.svelte` — browsable node → segment → group → event slot tree, filtered by role, search, free-slot gating
+- `NewConnectionDialog.svelte` — dual-panel (producer + consumer) with optional name, event ID resolution rules (FR-002)
+- `BowtieCatalogPanel.svelte` — **+ New Connection** button, dialog orchestration
+- Multi-node sequential write with rollback on failure; `WriteOperation` / `WriteStep` tracking
+- `BowtieCard.svelte` write feedback: spinner, success confirmation, error with retry (FR-030)
+
+*Add/Remove Elements (US5):*
+- **+ Add producer** / **+ Add consumer** buttons on `BowtieCard` open role-filtered `AddElementDialog`
+- `AddElementDialog.svelte` — modal wrapping `ElementPicker` for adding to an existing bowtie
+- Remove button per element with `generateFreshEventIdForNode()` to restore slot uniquely
+- Remove confirmation dialog; delete confirmation when removing the last element(s) (FR-011)
+- Incomplete-state visual indicator: amber border when one side is empty (FR-010)
+- `generateFreshEventIdForNode()` in `app/src/lib/utils/eventIds.ts` — generates a unique node-scoped event ID avoiding all existing slot values
+
+*Role Classification (US8):*
+- `RoleClassifyPrompt.svelte` — inline prompt (amber card with "?" icon, Producer/Consumer buttons)
+- `ElementPicker` intercepts ambiguous/null-role slots; auto-classifies when picker has a definite role filter; shows `RoleClassifyPrompt` overlay otherwise
+- Reclassify role inline on `BowtieCard` — click ambiguous entry → `RoleClassifyPrompt` replaces it; updates `BowtieMetadataStore`
+- Ambiguous entries shown in dedicated section between producers and consumers until classified
+
+*Config-First Entry (US3):*
+- **→ New Connection** button on `TreeLeafRow` for unlinked event slots
+- `connectionRequestStore` (`connectionRequest.svelte.ts`) — singleton store carrying pending selection + role to the Bowties tab
+- `+page.svelte` watches `connectionRequestStore` and switches to Bowties tab
+- `BowtieCatalogPanel` handles pre-fill: opens `NewConnectionDialog` with producer or consumer side pre-filled; ambiguous role triggers `RoleClassifyPrompt` first
+
+*Cross-Cutting Refactors:*
+- `element_label` removed from Rust `EventSlotEntry` / `state.rs`; now computed lazily by the frontend via `enrichEntryLabel()` so labels reflect live pending name edits and `getInstanceDisplayName()` (e.g. "GPIO13 (1)")
+- `findLeafByPath()` added to `nodeTree.ts` for O(n) path-based leaf lookup
+- `getInstanceDisplayName()` fixed to use `effectiveValue()` so pending string edits appear in group headers
+- `pillSelections` store (`pillSelection.ts`) — persists selected pill (instance) index across view switches; `TreeGroupAccordion` reads/writes it
+- `isWellKnownEvent()` in `formatters.ts` — gates "No producers / No consumers" hints on `BowtieCard` for LCC well-known event IDs
+- `SegmentView.svelte` — fixed if/else ordering so a segment renders immediately when available even while a parallel load is in progress
+
 ### 🚧 In Progress
 
 **UI Enhancements:**
@@ -144,9 +201,13 @@
 
 ### ⏳ Not Yet Implemented
 
-**Core Features:**
+**Editable Bowties — Remaining Stories (Feature 009):**
+- US6 (Phase 9): Inline bowtie rename, "Used in" Config tab cross-reference, filter bar — T042–T044
+- US4 (Phase 10): Intent-first / planning-state bowtie creation (empty named bowties) — T045–T048
+- Polish (Phase 11): Tag management UI, prompt-to-save guard, performance validation — T049–T054
+
+**Other Core Features:**
 - Event link visualization (canvas drag-and-drop)
-- Drag-and-drop event linking (create new producer ↔ consumer pairs)
 
 See [docs/project/roadmap.md](../project/roadmap.md) for detailed feature timeline.
 
@@ -245,12 +306,13 @@ app/src/lib/components/
     EventSlotRow.svelte             # Event ID field row; shows "Used in" cross-ref when in a bowtie
   Bowtie/
     BowtieCard.svelte               # Three-column layout (producers | arrow | consumers)
-    ElementEntry.svelte             # One EventSlotEntry row (node_name + element_label)
+    ElementEntry.svelte             # One EventSlotEntry row (node_name + element_label computed by frontend)
     ConnectorArrow.svelte           # Rightward arrow with event ID label
     EmptyState.svelte               # Shown when no bowties found
 app/src/lib/stores/
   millerColumns.ts                  # Miller Columns state management
   bowties.svelte.ts                 # BowtieCatalogStore + usedInMap derived store
+  pillSelection.ts                  # Persists pill (instance) selector positions across view switches
 app/src/lib/utils/
   xmlFormatter.ts                   # XML indentation utility
 app/src/lib/api/

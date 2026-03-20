@@ -86,14 +86,6 @@
       <p>Select a segment from the sidebar to view its configuration</p>
     </div>
 
-  {:else if isLoading}
-    <div class="loading" role="status" aria-label="Loading segment">
-      <span aria-hidden="true">⋯</span> Loading…
-    </div>
-
-  {:else if loadError}
-    <div class="load-error" role="alert">{loadError}</div>
-
   {:else if segment}
     {@const nodeId = selectedSegment.nodeId}
     {@const groupedChildren = groupReplicatedChildren(segment.children)}
@@ -164,6 +156,18 @@
         {/if}
       {/each}
 
+    </div>
+
+  {:else if isLoading}
+    <!-- Initial load — segment not yet available -->
+    <div class="loading" role="status" aria-label="Loading segment">
+      <span aria-hidden="true">⋯</span> Loading…
+    </div>
+
+  {:else if loadError}
+    <!-- Load error on initial fetch -->
+    <div class="load-error" role="alert">
+      {loadError}
     </div>
 
   {:else}

@@ -212,8 +212,8 @@ export interface EventSlotEntry {
   node_name: string;
   /** CDI path from segment root to this element */
   element_path: string[];
-  /** Display label (CDI name → description first sentence → slash-joined path) */
-  element_label: string;
+  /** Display label — computed by the frontend from the live tree (not sent by Rust) */
+  element_label?: string;
   /** Full CDI <description> text (null when absent). Shown in the Unknown role section
    *  so users can read the raw firmware description and classify the slot manually. */
   element_description: string | null;

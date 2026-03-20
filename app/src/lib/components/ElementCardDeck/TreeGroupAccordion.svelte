@@ -22,6 +22,7 @@
   import TreeLeafRow from './TreeLeafRow.svelte';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { hasModifiedDescendant } from '$lib/types/nodeTree';
+  import { pillSelections, setPillSelection } from '$lib/stores/pillSelection';
 
   /** The group node from the unified tree */
   export let group: GroupConfigNode;
@@ -42,7 +43,10 @@
   export let segmentName: string = '';
 
   // ── Pill-selector state ──
-  let selectedInstanceIndex = 0;
+  // Stable key for this replicated set — persisted in pillSelections store so the
+  // selected instance survives view switches (e.g. Bowties view ↔ config view).
+  $: pillKey = siblings.length > 1 ? `${nodeId}:${siblings[0].path.join('/')}` : '';
+  $: selectedInstanceIndex = pillKey ? ($pillSelections.get(pillKey) ?? 0) : 0;
 
   $: pillMode = siblings.length > 1;
   $: activeGroup = pillMode ? (siblings[selectedInstanceIndex] ?? siblings[0]) : group;
@@ -87,7 +91,7 @@
   }
 
   function handlePillSelect(value: number) {
-    selectedInstanceIndex = value;
+    if (pillKey) setPillSelection(pillKey, value);
   }
 </script>
 

@@ -44,8 +44,6 @@ pub struct EventSlotEntry {
     pub node_name: String,
     /// CDI element path from segment root
     pub element_path: Vec<String>,
-    /// Display label (CDI name → description first sentence → slash-joined path)
-    pub element_label: String,
     /// Full CDI <description> text for this slot (None when absent).
     /// Forwarded to the frontend so users can read the raw description when the
     /// role is Ambiguous and decide how to classify the slot.

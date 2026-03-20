@@ -53,6 +53,7 @@ vi.mock('$lib/stores/layout.svelte', () => ({
 vi.mock('$lib/stores/nodeTree.svelte', () => ({
   nodeTreeStore: {
     get trees() { return mockTreesMap; },
+    getTree(nodeId: string) { return mockTreesMap.get(nodeId) ?? null; },
   },
 }));
 
