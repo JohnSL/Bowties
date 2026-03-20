@@ -61,6 +61,7 @@ vi.mock('$lib/stores/bowtieMetadata.svelte', () => ({
   bowtieMetadataStore: {
     get isDirty() { return false; },
     getMetadata(_eventIdHex: string) { return undefined; },
+    getDirtyFields(_eventIdHex: string) { return new Set<string>(); },
     get allEventIds() { return []; },
   },
 }));

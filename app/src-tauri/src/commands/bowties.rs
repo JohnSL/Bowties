@@ -704,11 +704,19 @@ pub fn merge_layout_metadata(
                 card.tags = meta.tags.clone();
             }
         } else {
-            // Create planning-state card for unmatched layout entry
-            let hex_upper = event_id_hex.to_uppercase();
-            let bytes = parse_event_id_hex(&hex_upper).unwrap_or([0u8; 8]);
+            // Create planning-state card for unmatched layout entry.
+            // Only canonicalise to upper-case when the key is a valid dotted-hex
+            // event ID.  Planning placeholder keys like "planning-1234567890" must
+            // be preserved as-is so the TypeScript preview store can match them
+            // against the layout's lowercase keys (prevents duplicate cards).
+            let upper = event_id_hex.to_uppercase();
+            let (hex_used, bytes) = if let Some(b) = parse_event_id_hex(&upper) {
+                (upper, b)
+            } else {
+                (event_id_hex.clone(), [0u8; 8])
+            };
             catalog.bowties.push(BowtieCard {
-                event_id_hex: hex_upper,
+                event_id_hex: hex_used,
                 event_id_bytes: bytes,
                 producers: Vec::new(),
                 consumers: Vec::new(),

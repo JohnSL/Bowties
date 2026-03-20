@@ -43,6 +43,14 @@
     onRemoveElement?: ((entry: EventSlotEntry) => void) | null;
     /** T037: callback to reclassify an ambiguous entry (includes chosen role) */
     onReclassifyRole?: ((nodeId: string, elementPath: string[], role: 'Producer' | 'Consumer') => void) | null;
+    /** T042: callback to rename bowtie (eventIdHex, newName) */
+    onRename?: ((eventIdHex: string, newName: string) => void) | null;
+    /** T049: callback to add a tag */
+    onAddTag?: ((eventIdHex: string, tag: string) => void) | null;
+    /** T049: callback to remove a tag */
+    onRemoveTag?: ((eventIdHex: string, tag: string) => void) | null;
+    /** T049: all known tags for autocomplete suggestions */
+    allTags?: string[] | null;
     /** Keys of newly-added entries for "new" badge display. */
     newEntryKeys?: Set<string> | null;
   }
@@ -59,6 +67,10 @@
     onAddConsumer = null,
     onRemoveElement = null,
     onReclassifyRole = null,
+    onRename = null,
+    onAddTag = null,
+    onRemoveTag = null,
+    allTags = null,
     newEntryKeys = null,
   }: Props = $props();
 
@@ -81,29 +93,88 @@
 
   // T037: which ambiguous entry is being reclassified inline
   let reclassifyingEntry = $state<EventSlotEntry | null>(null);
+
+  // T042: inline name editing
+  let isEditingName = $state(false);
+  let nameEditValue = $state('');
+
+  function startRename() {
+    nameEditValue = card.name ?? '';
+    isEditingName = true;
+  }
+
+  function commitRename() {
+    isEditingName = false;
+    const trimmed = nameEditValue.trim();
+    onRename?.(card.event_id_hex, trimmed);
+  }
+
+  function handleNameKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') commitRename();
+    if (e.key === 'Escape') { isEditingName = false; }
+  }
+
+  function focusInput(node: HTMLInputElement) {
+    node.focus();
+    node.select();
+  }
+
+  // T049: tag management
+  let newTag = $state('');
+  let tagListId = $derived(`tag-list-${card.event_id_hex.replace(/\./g, '_')}`);
+
+  function handleTagKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter' && newTag.trim()) {
+      onAddTag?.(card.event_id_hex, newTag.trim());
+      newTag = '';
+    }
+    if (e.key === 'Escape') { newTag = ''; }
+  }
 </script>
 
 <div
   class="bowtie-card"
   class:highlighted
   class:is-dirty={isDirty}
-  class:is-incomplete={cardState === 'incomplete'}
+  class:is-incomplete={cardState === 'incomplete' && !isWellKnownEvent(card.event_id_hex)}
   class:is-planning={cardState === 'planning'}
   aria-label="Bowtie card for event {card.event_id_hex}"
   data-event-id={card.event_id_hex}
 >
   <!-- Header: name (if set) or event_id_hex as fallback (FR-014) -->
   <header class="card-header">
-    <h3 class="card-title">
-      {#if card.name}
-        {card.name} <span class="event-id-suffix">({card.event_id_hex})</span>
+    <div class="card-title-area">
+      {#if isEditingName}
+        <input
+          class="name-edit-input"
+          type="text"
+          bind:value={nameEditValue}
+          onblur={commitRename}
+          onkeydown={handleNameKeydown}
+          use:focusInput
+          aria-label="Edit connection name"
+        />
       {:else}
-        {card.event_id_hex}
+        <h3 class="card-title">
+          {#if card.name}
+            {card.name} <span class="event-id-suffix">({card.event_id_hex})</span>
+          {:else}
+            {card.event_id_hex}
+          {/if}
+          {#if isDirty}
+            <span class="dirty-dot" title="Unsaved changes" aria-label="Unsaved changes">●</span>
+          {/if}
+        </h3>
+        {#if onRename && !isWellKnownEvent(card.event_id_hex)}
+          <button
+            class="rename-btn"
+            onclick={startRename}
+            title="Rename connection"
+            aria-label="Rename connection"
+          >✎</button>
+        {/if}
       {/if}
-      {#if isDirty}
-        <span class="dirty-dot" title="Unsaved changes" aria-label="Unsaved changes">●</span>
-      {/if}
-    </h3>
+    </div>
     <div class="header-badges">
       {#if dirtyFields && dirtyFields.size > 0}
         <span class="dirty-badge" aria-label="Modified fields: {[...dirtyFields].join(', ')}">
@@ -243,6 +314,45 @@
       </div>
     </div>
   {/if}
+
+  <!-- T049: Tags section -->
+  {#if (card.tags?.length ?? 0) > 0 || onAddTag}
+    <div class="tags-section">
+      {#each (card.tags ?? []) as tag (tag)}
+        <span class="tag-chip">
+          <span class="tag-text">{tag}</span>
+          {#if onRemoveTag}
+            <button
+              class="tag-remove"
+              onclick={() => onRemoveTag?.(card.event_id_hex, tag)}
+              title="Remove tag: {tag}"
+              aria-label="Remove tag: {tag}"
+            >×</button>
+          {/if}
+        </span>
+      {/each}
+      {#if onAddTag}
+        <div class="tag-input-wrapper">
+          <input
+            class="tag-input"
+            type="text"
+            placeholder="+ Add tag"
+            bind:value={newTag}
+            onkeydown={handleTagKeydown}
+            list={tagListId}
+            aria-label="Add tag"
+          />
+          {#if allTags && allTags.length > 0}
+            <datalist id={tagListId}>
+              {#each allTags.filter(t => !(card.tags ?? []).includes(t)) as suggestion}
+                <option value={suggestion}></option>
+              {/each}
+            </datalist>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -288,6 +398,48 @@
     padding: 10px 14px 8px;
     border-bottom: 1px solid #d1d5db;
     background: #ffffff;
+  }
+
+  .card-title-area {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  /* T042: inline rename button and input */
+  .rename-btn {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: #9ca3af;
+    font-size: 0.85rem;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 3px;
+    line-height: 1;
+    transition: color 0.15s, background 0.15s;
+  }
+
+  .rename-btn:hover {
+    color: #374151;
+    background: #f3f4f6;
+  }
+
+  .name-edit-input {
+    flex: 1 1 0;
+    min-width: 0;
+    font-size: 0.9rem;
+    font-weight: 600;
+    font-family: 'ui-monospace', monospace;
+    color: #242424;
+    border: 1px solid #0078d4;
+    border-radius: 4px;
+    padding: 2px 6px;
+    outline: none;
+    background: #fff;
   }
 
   .header-badges {
@@ -579,5 +731,74 @@
 
   .retry-btn:hover {
     background: #fde7e9;
+  }
+
+  /* T049: Tags section */
+  .tags-section {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-top: 1px solid #e5e7eb;
+    background: #fafafa;
+  }
+
+  .tag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 8px;
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: #374151;
+    background: #e5e7eb;
+    border-radius: 12px;
+    border: 1px solid #d1d5db;
+  }
+
+  .tag-text {
+    line-height: 1.4;
+  }
+
+  .tag-remove {
+    background: none;
+    border: none;
+    color: #9ca3af;
+    font-size: 0.8rem;
+    cursor: pointer;
+    padding: 0 1px;
+    line-height: 1;
+    border-radius: 50%;
+    transition: color 0.15s;
+  }
+
+  .tag-remove:hover {
+    color: #a4262c;
+  }
+
+  .tag-input-wrapper {
+    position: relative;
+  }
+
+  .tag-input {
+    font-size: 0.72rem;
+    color: #374151;
+    background: #fff;
+    border: 1px dashed #d1d5db;
+    border-radius: 12px;
+    padding: 2px 10px;
+    outline: none;
+    width: 90px;
+    transition: border-color 0.15s, width 0.15s;
+  }
+
+  .tag-input:focus {
+    border-color: #0078d4;
+    width: 130px;
+  }
+
+  .tag-input::placeholder {
+    color: #9ca3af;
   }
 </style>

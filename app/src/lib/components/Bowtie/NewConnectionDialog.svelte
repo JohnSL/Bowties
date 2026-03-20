@@ -58,8 +58,13 @@
     if (prefillConsumer) consumerSelection = prefillConsumer;
   });
 
-  // FR-034: Create button enabled when both sides selected
-  let canCreate = $derived(producerSelection !== null && consumerSelection !== null);
+  // FR-034: Create button enabled when both sides selected OR name provided alone (T045 intent-first)
+  let canCreate = $derived(
+    (name.trim().length > 0) || (producerSelection !== null && consumerSelection !== null)
+  );
+
+  // Whether this is a name-only (planning) creation
+  let isNameOnly = $derived(name.trim().length > 0 && !producerSelection && !consumerSelection);
 
   // T026: Event ID selection rules (FR-002)
   function resolveEventId(
@@ -123,6 +128,13 @@
   }
 
   function handleCreate(): void {
+    if (isNameOnly) {
+      // T045: name-only planning bowtie creation (no element picks)
+      onConfirm(null, null, name.trim(), { eventIdHex: '', writeTo: 'none' });
+      name = '';
+      return;
+    }
+
     if (!producerSelection || !consumerSelection) return;
 
     const resolution = resolveEventId(producerSelection, consumerSelection);
@@ -205,9 +217,11 @@
         class="btn btn-primary"
         disabled={!canCreate}
         onclick={handleCreate}
-        title={canCreate ? 'Create connection' : 'Select both a producer and consumer'}
+        title={canCreate
+          ? isNameOnly ? 'Create planning bowtie' : 'Create connection'
+          : 'Enter a name or select both a producer and consumer'}
       >
-        Create Connection
+        {isNameOnly ? 'Create Planning Bowtie' : 'Create Connection'}
       </button>
     </footer>
   </dialog>

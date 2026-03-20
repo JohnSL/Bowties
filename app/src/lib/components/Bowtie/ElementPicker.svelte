@@ -66,13 +66,15 @@
     return ids;
   });
 
-  // Load trees for all discovered nodes on mount (backend already has data in memory)
+  // Load (or refresh) trees for all discovered nodes on mount.
+  // Always refresh even for already-loaded trees: after CDI reads complete, profiles
+  // are applied server-side but the frontend copy may be pre-profile (event roles
+  // show as '?' and element names are missing).  loadTree() only skips nodes that
+  // are currently mid-fetch, so this is safe and deduplicated automatically.
   onMount(() => {
     const nodes = get(nodeInfoStore);
     for (const nodeId of nodes.keys()) {
-      if (!nodeTreeStore.hasTree(nodeId)) {
-        nodeTreeStore.loadTree(nodeId);
-      }
+      nodeTreeStore.loadTree(nodeId);
     }
   });
 

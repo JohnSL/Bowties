@@ -184,6 +184,7 @@ pub fn run() {
                     "menu-view-cdi"       => { let _ = app_h.emit("menu-view-cdi", ()); }
                     "menu-redownload-cdi" => { let _ = app_h.emit("menu-redownload-cdi", ()); }
                     "menu-discovery-opts" => { let _ = app_h.emit("menu-discovery-opts", ()); }
+                    "menu-exit"           => { let _ = app_h.emit("menu-exit", ()); }
                     _ => {}
                 }
             });

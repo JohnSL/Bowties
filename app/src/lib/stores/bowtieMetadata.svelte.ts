@@ -115,9 +115,51 @@ class BowtieMetadataStore {
     this.classifyRole(key, newRole);
   }
 
+  /**
+   * T047: Re-key a planning bowtie from a placeholder event ID to the real
+   * adopted event ID (when the first element is added to a name-only bowtie).
+   */
+  adoptEventId(placeholderHex: string, realEventIdHex: string): void {
+    // Re-key the create edit
+    const createEdit = this._edits.get(`create:${placeholderHex}`);
+    if (createEdit?.kind.type === 'create') {
+      this._edits.delete(`create:${placeholderHex}`);
+      this._edits.set(`create:${realEventIdHex}`, {
+        ...createEdit,
+        kind: { ...createEdit.kind, eventIdHex: realEventIdHex },
+      });
+    }
+    // Re-key any rename edit
+    const renameEdit = this._edits.get(`rename:${placeholderHex}`);
+    if (renameEdit?.kind.type === 'rename') {
+      this._edits.delete(`rename:${placeholderHex}`);
+      this._edits.set(`rename:${realEventIdHex}`, {
+        ...renameEdit,
+        kind: { ...renameEdit.kind, eventIdHex: realEventIdHex },
+      });
+    }
+    // Re-key addTag / removeTag edits
+    for (const [key, edit] of [...this._edits.entries()]) {
+      if (
+        (edit.kind.type === 'addTag' || edit.kind.type === 'removeTag') &&
+        edit.kind.eventIdHex === placeholderHex
+      ) {
+        const newKey = key.replace(placeholderHex, realEventIdHex);
+        this._edits.delete(key);
+        this._edits.set(newKey, {
+          ...edit,
+          kind: { ...edit.kind, eventIdHex: realEventIdHex },
+        });
+      }
+    }
+    this._applyToLayout();
+  }
+
   /** Clear all pending metadata edits (used by discard). */
   clearAll(): void {
-    this._edits.clear();
+    // Reassign rather than .clear() so Svelte 5 reactive $state sees a new Map
+    // and reliably re-evaluates all derived values that depend on _edits.
+    this._edits = new Map();
   }
 
   // ── Queries ────────────────────────────────────────────────────────────────
@@ -158,6 +200,28 @@ class BowtieMetadataStore {
   /** Get all pending edits as an array. */
   get allEdits(): BowtieMetadataEdit[] {
     return Array.from(this._edits.values());
+  }
+
+  /**
+   * Return which metadata fields have pending (unsaved) edits for a given event ID.
+   * Driven by the _edits map directly, not by diffing the layout, so it stays
+   * accurate even after _applyToLayout() has merged the edits in-memory.
+   */
+  getDirtyFields(eventIdHex: string): Set<string> {
+    const fields = new Set<string>();
+    if (this._edits.has(`create:${eventIdHex}`)) {
+      fields.add('name');
+    }
+    if (this._edits.has(`rename:${eventIdHex}`)) {
+      fields.add('name');
+    }
+    for (const edit of this._edits.values()) {
+      if ((edit.kind.type === 'addTag' || edit.kind.type === 'removeTag') &&
+          edit.kind.eventIdHex === eventIdHex) {
+        fields.add('tags');
+      }
+    }
+    return fields;
   }
 
   /** Get all event IDs that have pending create edits. */
@@ -264,6 +328,9 @@ class BowtieMetadataStore {
           const entry = updated.bowties[edit.kind.eventIdHex];
           if (entry) {
             updated.bowties[edit.kind.eventIdHex] = { ...entry, name: edit.kind.newName };
+          } else {
+            // Bowtie exists in discovery but not yet in the layout file; create entry now
+            updated.bowties[edit.kind.eventIdHex] = { name: edit.kind.newName, tags: [] };
           }
           break;
         }

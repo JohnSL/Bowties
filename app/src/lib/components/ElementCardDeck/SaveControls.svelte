@@ -146,6 +146,7 @@
     showDiscardDialog = false;
     await discardModifiedValues();
     bowtieMetadataStore.clearAll();
+    layoutStore.revertToSaved();
     saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
   }
 

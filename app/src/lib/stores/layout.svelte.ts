@@ -16,6 +16,9 @@ class LayoutStore {
   /** The currently loaded layout file data, or null if none loaded. */
   private _layout = $state<LayoutFile | null>(null);
 
+  /** Last-saved (or last-loaded) snapshot — used to revert unsaved metadata edits. */
+  private _savedLayout: LayoutFile | null = null;
+
   /** Absolute path to the currently loaded/saved layout file. */
   private _path = $state<string | null>(null);
 
@@ -81,6 +84,7 @@ class LayoutStore {
     try {
       const layout = await loadLayout(filePath);
       this._layout = layout;
+      this._savedLayout = JSON.parse(JSON.stringify(layout));
       this._path = filePath;
       this._dirty = false;
 
@@ -108,6 +112,7 @@ class LayoutStore {
     this._busy = true;
     try {
       await saveLayout(this._path, this._layout);
+      this._savedLayout = JSON.parse(JSON.stringify(this._layout));
       this._dirty = false;
     } finally {
       this._busy = false;
@@ -134,6 +139,7 @@ class LayoutStore {
     try {
       await saveLayout(selected, this._layout);
       this._path = selected;
+      this._savedLayout = JSON.parse(JSON.stringify(this._layout));
       this._dirty = false;
 
       // Remember as recent layout
@@ -152,6 +158,18 @@ class LayoutStore {
   updateLayout(layout: LayoutFile): void {
     this._layout = layout;
     this._dirty = true;
+  }
+
+  /**
+   * Revert in-memory layout to the last saved (or loaded) snapshot.
+   * Called as part of the unified Discard flow so metadata edits that were
+   * already baked into the layout by _applyToLayout() are rolled back.
+   */
+  revertToSaved(): void {
+    if (this._savedLayout) {
+      this._layout = JSON.parse(JSON.stringify(this._savedLayout));
+    }
+    this._dirty = false;
   }
 
   /**
@@ -177,6 +195,7 @@ class LayoutStore {
       bowties: {},
       roleClassifications: {},
     };
+    this._savedLayout = JSON.parse(JSON.stringify(this._layout));
     this._path = null;
     this._dirty = false;
   }
@@ -186,6 +205,7 @@ class LayoutStore {
    */
   reset(): void {
     this._layout = null;
+    this._savedLayout = null;
     this._path = null;
     this._dirty = false;
     this._busy = false;

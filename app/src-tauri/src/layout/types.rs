@@ -75,6 +75,13 @@ fn is_valid_event_id_hex(s: &str) -> bool {
     parts.iter().all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
+/// Check if a bowtie key is acceptable: either a valid dotted-hex event ID or
+/// a planning placeholder of the form "planning-<digits>".
+fn is_valid_bowtie_key(s: &str) -> bool {
+    is_valid_event_id_hex(s)
+        || (s.starts_with("planning-") && s[9..].chars().all(|c| c.is_ascii_digit()))
+}
+
 impl LayoutFile {
     /// Validate schema version and basic structure.
     /// Returns Ok(()) if valid, Err with description otherwise.
@@ -86,11 +93,11 @@ impl LayoutFile {
             ));
         }
 
-        // Validate bowtie keys match event ID hex format
+        // Validate bowtie keys match event ID hex format or planning placeholder format
         for key in self.bowties.keys() {
-            if !is_valid_event_id_hex(key) {
+            if !is_valid_bowtie_key(key) {
                 return Err(format!(
-                    "Invalid bowtie key '{}': must be dotted hex (e.g. 05.01.01.01.FF.00.00.01)",
+                    "Invalid bowtie key '{}': must be dotted hex (e.g. 05.01.01.01.FF.00.00.01) or a planning placeholder (e.g. planning-1234567890)",
                     key
                 ));
             }
@@ -137,6 +144,16 @@ mod tests {
             tags: vec![],
         });
         assert!(layout.validate().unwrap_err().contains("Invalid bowtie key"));
+    }
+
+    #[test]
+    fn planning_bowtie_key_is_valid() {
+        let mut layout = LayoutFile::default();
+        layout.bowties.insert("planning-1774043332542".to_string(), BowtieMetadata {
+            name: Some("My planning bowtie".to_string()),
+            tags: vec![],
+        });
+        assert!(layout.validate().is_ok());
     }
 
     #[test]

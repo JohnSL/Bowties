@@ -2001,6 +2001,21 @@ pub async fn read_all_config_values(
                     }
                 }
             }
+
+            // Now that profiles are fully applied, notify the frontend to refresh every
+            // tree so the annotated event roles and element names are visible immediately
+            // (e.g. in ElementPicker search) without requiring the user to first expand
+            // a node to trigger a lazy reload.
+            for nid in &node_ids {
+                let leaf_count = {
+                    let trees = state.node_trees.read().await;
+                    trees.get(nid.as_str()).map(crate::node_tree::count_leaves).unwrap_or(0)
+                };
+                let _ = app_handle.emit("node-tree-updated", serde_json::json!({
+                    "nodeId": nid,
+                    "leafCount": leaf_count,
+                }));
+            }
         }
 
         // Build the bowtie catalog AFTER profile annotation so profile-declared event roles

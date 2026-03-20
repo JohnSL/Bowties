@@ -46,6 +46,7 @@ vi.mock('$lib/stores/layout.svelte', () => ({
   layoutStore: {
     saveCurrentLayout: vi.fn().mockResolvedValue(undefined),
     saveLayoutAs: vi.fn().mockResolvedValue(undefined),
+    revertToSaved: vi.fn(),
   },
 }));
 

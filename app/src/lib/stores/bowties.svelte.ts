@@ -179,16 +179,10 @@ class EditableBowtiePreviewStore {
       // Build dirty fields set
       const dirtyFields = new Set<string>();
 
-      // Check if metadata has been edited for this card
-      if (meta) {
-        const originalMeta = layout?.bowties[card.event_id_hex];
-        if (!originalMeta) {
-          dirtyFields.add('name');
-          dirtyFields.add('tags');
-        } else {
-          if (meta.name !== originalMeta.name) dirtyFields.add('name');
-          if (JSON.stringify(meta.tags) !== JSON.stringify(originalMeta.tags)) dirtyFields.add('tags');
-        }
+      // Check if metadata has been edited for this card (compare against _edits map,
+      // not layout, since _applyToLayout already merges edits into the layout in-memory)
+      for (const f of bowtieMetadataStore.getDirtyFields(card.event_id_hex)) {
+        dirtyFields.add(f);
       }
 
       // Collect entries from tree leaves (including modified values)
@@ -239,11 +233,7 @@ class EditableBowtiePreviewStore {
           const { producers, consumers } = collectEntriesForEventId(eventIdHex);
 
           // Only flag dirty if pending metadata edits actually changed something
-          const dirtyFields = new Set<string>();
-          if (metaOverride) {
-            if (metaOverride.name !== meta.name) dirtyFields.add('name');
-            if (JSON.stringify(metaOverride.tags) !== JSON.stringify(meta.tags ?? [])) dirtyFields.add('tags');
-          }
+          const dirtyFields = bowtieMetadataStore.getDirtyFields(eventIdHex);
 
           previews.push({
             eventIdHex,

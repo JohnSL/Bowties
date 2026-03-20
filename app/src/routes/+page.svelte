@@ -32,6 +32,19 @@
   // Active tab state — 'config' (default) or 'bowties'
   let activeTab = $state<'config' | 'bowties'>('config');
 
+  // T050: prompt-to-save guard state
+  let unsavedDialog = $state<{ message: string; proceed: () => void; confirmLabel: string } | null>(null);
+  let isForceClosing = false;
+
+  function promptUnsaved(message: string, proceed: () => void, confirmLabel = 'Discard & Continue'): void {
+    const hasUnsaved = [...nodeTreeStore.trees.values()].some(t => hasModifiedLeaves(t)) || bowtieMetadataStore.isDirty;
+    if (hasUnsaved) {
+      unsavedDialog = { message, proceed, confirmLabel };
+    } else {
+      proceed();
+    }
+  }
+
   // T041: Switch to bowties tab when a config-first connection request is pending
   $effect(() => {
     if (connectionRequestStore.pendingRequest) {
@@ -113,7 +126,9 @@
 
       // Feature 006: Start bowties store listener so cdi-read-complete is captured
       // regardless of whether the user has visited the Bowties page.
-      bowtieCatalogStore.startListening();
+      // Must be awaited so the listener is registered before checkAndReopenRecent()
+      // triggers buildBowtieCatalog which immediately emits cdi-read-complete.
+      await bowtieCatalogStore.startListening();
 
       // Spec 009 T015: Auto-reopen the most recent layout file on startup
       layoutStore.checkAndReopenRecent();
@@ -121,6 +136,21 @@
       // Spec 007: Start node-tree-updated listener so trees are refreshed
       // automatically as config values and event roles are merged server-side.
       nodeTreeStore.startListening();
+
+      // T050: Prompt-to-save guard on app close (FR-024)
+      const appWindow = getCurrentWebviewWindow();
+      unlistens.push(await appWindow.onCloseRequested((event) => {
+        if (isForceClosing) return;
+        const hasUnsaved = [...nodeTreeStore.trees.values()].some(t => hasModifiedLeaves(t)) || bowtieMetadataStore.isDirty;
+        if (hasUnsaved) {
+          event.preventDefault();
+          unsavedDialog = {
+            message: 'You have unsaved changes. Exit without saving?',
+            confirmLabel: 'Exit Without Saving',
+            proceed: () => { isForceClosing = true; bowtieMetadataStore.clearAll(); appWindow.close(); },
+          };
+        }
+      }));
 
       // T063: Setup config-read-progress event listener
       unlistens.push(await listen<ReadProgressState>('config-read-progress', (event) => {
@@ -153,6 +183,14 @@
         if (nodeId) openCdiViewer(nodeId, true);
       }));
       unlistens.push(await listen('menu-discovery-opts', () => { showDiscoveryOptions = !showDiscoveryOptions; }));
+      unlistens.push(await listen('menu-exit', () => {
+        const win = getCurrentWebviewWindow();
+        promptUnsaved('You have unsaved changes. Exit without saving?', () => {
+          isForceClosing = true;
+          bowtieMetadataStore.clearAll();
+          win.close();
+        }, 'Exit Without Saving');
+      }));
     })();
 
     // Cleanup all listeners on component unmount
@@ -807,7 +845,7 @@
           <span class="toolbar-sep" aria-hidden="true"></span>
           <button
             class="toolbar-btn"
-            onclick={() => layoutStore.openLayout()}
+            onclick={() => promptUnsaved('Opening a new layout will discard unsaved changes. Continue?', () => layoutStore.openLayout(), 'Discard & Open')}
             disabled={layoutStore.isBusy}
             title="Open a layout file (.bowties.yaml)"
           >
@@ -817,7 +855,7 @@
           {#if layoutStore.isLoaded}
             <button
               class="toolbar-btn"
-              onclick={() => layoutStore.saveCurrentLayout()}
+              onclick={async () => { await layoutStore.saveCurrentLayout(); bowtieMetadataStore.clearAll(); }}
               disabled={layoutStore.isBusy || !layoutStore.isDirty}
               title={layoutStore.isDirty ? `Save changes to ${layoutStore.displayName}` : 'No unsaved changes'}
             >
@@ -826,7 +864,7 @@
             </button>
             <button
               class="toolbar-btn"
-              onclick={() => layoutStore.saveLayoutAs()}
+              onclick={async () => { await layoutStore.saveLayoutAs(); bowtieMetadataStore.clearAll(); }}
               disabled={layoutStore.isBusy}
               title="Save layout to a new file"
             >
@@ -934,6 +972,31 @@
     onDownload={handleCdiDownload}
     onCancel={handleCdiDownloadCancel}
   />
+{/if}
+
+<!-- T050: Prompt-to-save guard dialog (FR-024) -->
+{#if unsavedDialog}
+  <div
+    class="unsaved-overlay"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Unsaved changes warning"
+  >
+    <div class="unsaved-dialog">
+      <h3 class="unsaved-title">Unsaved Changes</h3>
+      <p class="unsaved-body">{unsavedDialog.message}</p>
+      <div class="unsaved-actions">
+        <button
+          class="unsaved-btn unsaved-btn-secondary"
+          onclick={() => { unsavedDialog = null; }}
+        >Cancel</button>
+        <button
+          class="unsaved-btn unsaved-btn-danger"
+          onclick={() => { const proceed = unsavedDialog!.proceed; unsavedDialog = null; proceed(); }}
+        >{unsavedDialog.confirmLabel}</button>
+      </div>
+    </div>
+  </div>
 {/if}
 
 <style>
@@ -1219,5 +1282,75 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+  }
+
+  /* T050: Unsaved changes dialog (FR-024) */
+  .unsaved-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .unsaved-dialog {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    padding: 20px 24px;
+    width: 380px;
+    max-width: 95vw;
+  }
+
+  .unsaved-title {
+    margin: 0 0 10px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #1f2937;
+  }
+
+  .unsaved-body {
+    margin: 0 0 16px;
+    font-size: 0.85rem;
+    color: #6b7280;
+    line-height: 1.5;
+  }
+
+  .unsaved-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  .unsaved-btn {
+    padding: 6px 14px;
+    font-size: 0.82rem;
+    font-weight: 500;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background 0.15s;
+  }
+
+  .unsaved-btn-secondary {
+    color: #374151;
+    background: #fff;
+    border-color: #d1d5db;
+  }
+
+  .unsaved-btn-secondary:hover {
+    background: #f9fafb;
+  }
+
+  .unsaved-btn-danger {
+    color: #fff;
+    background: #dc2626;
+    border-color: #dc2626;
+  }
+
+  .unsaved-btn-danger:hover {
+    background: #b91c1c;
   }
 </style>

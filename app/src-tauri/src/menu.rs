@@ -30,11 +30,13 @@ pub fn build_app_menu(app: &AppHandle<Wry>) -> tauri::Result<(tauri::menu::Menu<
     let connect_item    = MenuItem::with_id(app, "menu-connect",    "Connect…",   true,  None::<&str>)?;
     let disconnect_item = MenuItem::with_id(app, "menu-disconnect", "Disconnect", false, None::<&str>)?;
 
+    let exit_item = MenuItem::with_id(app, "menu-exit", "Exit", true, None::<&str>)?;
+
     let file_submenu = SubmenuBuilder::new(app, "File")
         .item(&connect_item)
         .item(&disconnect_item)
         .separator()
-        .item(&PredefinedMenuItem::quit(app, None)?)
+        .item(&exit_item)
         .build()?;
 
     // ── View ──────────────────────────────────────────────────────────────

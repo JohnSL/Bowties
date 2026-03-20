@@ -32,6 +32,17 @@
   let preview = $derived(editableBowtiePreviewStore.preview);
   let previewCards = $derived(preview.bowties);
 
+  // T044: Filter bar state
+  let filterText = $state('');
+  let filteredCards = $derived(
+    filterText.trim()
+      ? previewCards.filter(c => {
+          const q = filterText.trim().toLowerCase();
+          return (c.name?.toLowerCase().includes(q)) || c.eventIdHex.toLowerCase().includes(q);
+        })
+      : previewCards
+  );
+
   // ── New Connection Dialog state ──────────────────────────────────────────
   let showNewConnectionDialog = $state(false);
   let prefillProducer = $state<ElementSelection | null>(null);
@@ -120,6 +131,15 @@
     prefillProducer = null;
     prefillConsumer = null;
 
+    // T045: name-only planning bowtie (no element selections)
+    if (!producer && !consumer) {
+      if (name.trim()) {
+        const placeholderKey = `planning-${Date.now()}`;
+        bowtieMetadataStore.createBowtie(placeholderKey, name.trim());
+      }
+      return;
+    }
+
     if (!producer || !consumer) return;
 
     const eventIdHex = resolution.eventIdHex;
@@ -172,9 +192,26 @@
   }
 
   function handleAddElement(selection: ElementSelection) {
-    const card = addElementDialog.card;
+    const { card, role } = addElementDialog;
     addElementDialog = { visible: false, role: 'Producer', card: null };
     if (!card) return;
+
+    // T047: Event ID adoption flow for planning bowties with no elements yet
+    // (placeholder key starts with 'planning-', meaning user created name-only bowtie)
+    if (
+      card.state === 'planning' &&
+      card.producers.length === 0 &&
+      card.consumers.length === 0 &&
+      card.eventIdHex.startsWith('planning-')
+    ) {
+      // Adopt the element's current event ID — no node write
+      if (selection.currentEventId && selection.currentEventId !== '00.00.00.00.00.00.00.00') {
+        bowtieMetadataStore.adoptEventId(card.eventIdHex, selection.currentEventId);
+      }
+      return;
+    }
+
+    // Normal case: write the bowtie's event ID to the selected element slot
     setEventIdOnLeaf(selection, card.eventIdHex);
   }
 
@@ -258,6 +295,24 @@
     const key = `${nodeId}:${elementPath.join('/')}`;
     bowtieMetadataStore.classifyRole(key, role);
   }
+
+  // ── T042: Rename bowtie ────────────────────────────────────────────────
+
+  function handleRename(eventIdHex: string, newName: string) {
+    bowtieMetadataStore.renameBowtie(eventIdHex, newName);
+  }
+
+  // ── T049: Tag management ───────────────────────────────────────────────
+
+  function handleAddTag(eventIdHex: string, tag: string) {
+    bowtieMetadataStore.addTag(eventIdHex, tag);
+  }
+
+  function handleRemoveTag(eventIdHex: string, tag: string) {
+    bowtieMetadataStore.removeTag(eventIdHex, tag);
+  }
+
+  let allKnownTags = $derived(bowtieMetadataStore.getAllTags());
 </script>
 
 <div class="bowties-panel">
@@ -275,6 +330,14 @@
         {catalog.bowties.length} connection{catalog.bowties.length !== 1 ? 's' : ''}
         · {catalog.source_node_count} node{catalog.source_node_count !== 1 ? 's' : ''}
       </span>
+      <!-- T044: Filter bar -->
+      <input
+        class="filter-input"
+        type="search"
+        placeholder="Filter by name…"
+        bind:value={filterText}
+        aria-label="Filter connections by name"
+      />
     </div>
   {/if}
 
@@ -292,7 +355,10 @@
     {:else}
       <!-- FR-003, FR-010: scrollable list of bowtie cards with dirty indicators -->
       <div class="card-list" role="list" aria-label="Bowtie connections">
-        {#each previewCards as previewCard (previewCard.eventIdHex)}
+        {#if filteredCards.length === 0 && filterText.trim()}
+          <div class="filter-empty">No connections match "{filterText}"</div>
+        {/if}
+        {#each filteredCards as previewCard (previewCard.eventIdHex)}
           <div role="listitem">
             <BowtieCard
               card={toBowtieCard(previewCard)}
@@ -304,6 +370,10 @@
               onAddConsumer={() => openAddElement(previewCard, 'Consumer')}
               onRemoveElement={(entry) => handleRemoveElement(previewCard, entry)}
               onReclassifyRole={(nodeId, elementPath, role) => handleReclassifyConfirm(nodeId, elementPath, role)}
+              onRename={handleRename}
+              onAddTag={handleAddTag}
+              onRemoveTag={handleRemoveTag}
+              allTags={allKnownTags}
             />
           </div>
         {/each}
@@ -444,6 +514,31 @@
   .catalog-meta {
     font-size: 0.78rem;
     color: #6b7280;
+  }
+
+  /* T044: filter bar */
+  .filter-input {
+    padding: 3px 10px;
+    font-size: 0.78rem;
+    color: #374151;
+    background: #fff;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    outline: none;
+    width: 160px;
+    transition: border-color 0.15s, width 0.15s;
+  }
+
+  .filter-input:focus {
+    border-color: #0078d4;
+    width: 220px;
+  }
+
+  .filter-empty {
+    text-align: center;
+    padding: 32px 24px;
+    font-size: 0.85rem;
+    color: #9ca3af;
   }
 
   .panel-content {

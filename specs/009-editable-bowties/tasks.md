@@ -169,9 +169,9 @@
 
 ### Implementation for User Story 6
 
-- [ ] T042 [US6] Add inline name editing to `BowtieCard` header: pencil icon triggers contenteditable or input field; on blur/Enter, commit rename via `BowtieMetadataStore.renameBowtie()` in `app/src/lib/components/Bowtie/BowtieCard.svelte`
-- [ ] T043 [US6] Add "Used in: [connection name]" cross-reference display on event slot fields in the Configuration tab; link text navigates to the Bowties tab filtered to that bowtie in `app/src/lib/components/ElementCardDeck/TreeLeafRow.svelte`
-- [ ] T044 [US6] Add filter bar to `BowtieCatalogPanel` with text search matching against bowtie names; filter `EditableBowtiePreview` results reactively in `app/src/lib/components/Bowtie/BowtieCatalogPanel.svelte`
+- [x] T042 [US6] Add inline name editing to `BowtieCard` header: pencil icon triggers contenteditable or input field; on blur/Enter, commit rename via `BowtieMetadataStore.renameBowtie()` in `app/src/lib/components/Bowtie/BowtieCard.svelte`
+- [x] T043 [US6] Add "Used in: [connection name]" cross-reference display on event slot fields in the Configuration tab; link text navigates to the Bowties tab filtered to that bowtie in `app/src/lib/components/ElementCardDeck/TreeLeafRow.svelte`
+- [x] T044 [US6] Add filter bar to `BowtieCatalogPanel` with text search matching against bowtie names; filter `EditableBowtiePreview` results reactively in `app/src/lib/components/Bowtie/BowtieCatalogPanel.svelte`
 
 **Checkpoint**: Bowties have meaningful names. Users can find connections by name. Config tab shows which bowtie uses each event slot.
 
@@ -185,10 +185,10 @@
 
 ### Implementation for User Story 4
 
-- [ ] T045 [US4] Extend `NewConnectionDialog` to allow creation with only a name and no element selections: Create button enabled when name is provided even without element picks in `app/src/lib/components/Bowtie/NewConnectionDialog.svelte`
-- [ ] T046 [US4] Add planning-state visual treatment to `BowtieCard`: show name with "No elements yet" placeholder, prominent + Add buttons, and distinct styling (dashed border or muted colors) in `app/src/lib/components/Bowtie/BowtieCard.svelte`
-- [ ] T047 [US4] Implement event ID adoption flow in bowtie store: when first element is added to a planning bowtie, adopt that element's current event ID (no node write); when second element added on opposite side, write adopted event ID to the new slot in `app/src/lib/stores/bowties.svelte.ts`
-- [ ] T048 [US4] Ensure planning-state bowties persist in YAML layout file and survive app restart: created with a placeholder key, re-keyed when event ID is adopted in `app/src/lib/stores/layout.svelte.ts`
+- [x] T045 [US4] Extend `NewConnectionDialog` to allow creation with only a name and no element selections: Create button enabled when name is provided even without element picks in `app/src/lib/components/Bowtie/NewConnectionDialog.svelte`
+- [x] T046 [US4] Add planning-state visual treatment to `BowtieCard`: show name with "No elements yet" placeholder, prominent + Add buttons, and distinct styling (dashed border or muted colors) in `app/src/lib/components/Bowtie/BowtieCard.svelte`
+- [x] T047 [US4] Implement event ID adoption flow in bowtie store: when first element is added to a planning bowtie, adopt that element's current event ID (no node write); when second element added on opposite side, write adopted event ID to the new slot in `app/src/lib/stores/bowties.svelte.ts`
+- [x] T048 [US4] Ensure planning-state bowties persist in YAML layout file and survive app restart: created with a placeholder key, re-keyed when event ID is adopted in `app/src/lib/stores/layout.svelte.ts`
 
 **Checkpoint**: Design-first workflow works. Empty bowties persist and can be populated later.
 
@@ -198,10 +198,10 @@
 
 **Purpose**: Tag management, safety guards, and end-to-end validation
 
-- [ ] T049 [P] Add tag management UI to `BowtieCard`: add/remove tag chips, auto-suggest from `BowtieMetadataStore.getAllTags()` in `app/src/lib/components/Bowtie/BowtieCard.svelte`
-- [ ] T050 [P] Add prompt-to-save guard when closing app, opening different layout, or creating new layout with unsaved changes (FR-024) in `app/src/routes/+page.svelte`
-- [ ] T051 Verify all write operations block on offline nodes with descriptive error messages per FR-028/FR-029 in `app/src/lib/stores/pendingEdits.svelte.ts`
-- [ ] T052 [P] Validate YAML file human-readability: ensure `serde_yaml_ng` output uses readable formatting, sorted keys, and properly escaped special characters (FR-025) in `app/src-tauri/src/layout/io.rs`
+- [x] T049 [P] Add tag management UI to `BowtieCard`: add/remove tag chips, auto-suggest from `BowtieMetadataStore.getAllTags()` in `app/src/lib/components/Bowtie/BowtieCard.svelte`
+- [x] T050 [P] Add prompt-to-save guard when closing app, opening different layout, or creating new layout with unsaved changes (FR-024) in `app/src/routes/+page.svelte`
+- [x] T051 Verify all write operations block on offline nodes with descriptive error messages per FR-028/FR-029 in `app/src/lib/stores/pendingEdits.svelte.ts`
+- [x] T052 [P] Validate YAML file human-readability: ensure `serde_yaml_ng` output uses readable formatting, sorted keys, and properly escaped special characters (FR-025) in `app/src-tauri/src/layout/io.rs`
 - [ ] T053 [P] Run quickstart.md validation: execute all 5 workflows end-to-end against discovered nodes
 - [ ] T054 [P] Performance check: verify bowtie catalog rebuild completes in <1s for layouts with 50–100 bowties per plan.md performance goals
 
