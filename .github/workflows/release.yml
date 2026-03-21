@@ -15,7 +15,7 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            bundles: nsis
+            bundles: msi
           - os: ubuntu-latest
             bundles: deb,appimage
 

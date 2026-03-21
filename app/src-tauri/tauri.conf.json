@@ -37,8 +37,8 @@
       "profiles/": "profiles/"
     },
     "windows": {
-      "nsis": {
-        "installMode": "currentUser"
+      "wix": {
+        "installMode": "perUser"
       }
     }
   }
