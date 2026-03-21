@@ -35,6 +35,12 @@
     ],
     "resources": {
       "profiles/": "profiles/"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "preInstallSection": "nsis/pre-install.nsi"
+      }
     }
   }
 }
