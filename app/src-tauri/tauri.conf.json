@@ -38,8 +38,7 @@
     },
     "windows": {
       "nsis": {
-        "installMode": "currentUser",
-        "preInstallSection": "nsis/pre-install.nsi"
+        "installMode": "currentUser"
       }
     }
   }
