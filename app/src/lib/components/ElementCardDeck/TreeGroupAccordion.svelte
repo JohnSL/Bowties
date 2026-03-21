@@ -22,7 +22,7 @@
   import TreeLeafRow from './TreeLeafRow.svelte';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { hasModifiedDescendant } from '$lib/types/nodeTree';
-  import { pillSelections, setPillSelection } from '$lib/stores/pillSelection';
+  import { pillSelections, setPillSelection, makePillKey } from '$lib/stores/pillSelection';
 
   /** The group node from the unified tree */
   export let group: GroupConfigNode;
@@ -45,7 +45,7 @@
   // ── Pill-selector state ──
   // Stable key for this replicated set — persisted in pillSelections store so the
   // selected instance survives view switches (e.g. Bowties view ↔ config view).
-  $: pillKey = siblings.length > 1 ? `${nodeId}:${siblings[0].path.join('/')}` : '';
+  $: pillKey = siblings.length > 1 ? makePillKey(nodeId, siblings[0]) : '';
   $: selectedInstanceIndex = pillKey ? ($pillSelections.get(pillKey) ?? 0) : 0;
 
   $: pillMode = siblings.length > 1;
@@ -83,7 +83,7 @@
   $: groupedChildren = groupReplicatedChildren(activeGroup.children);
 
   // Cross-reference lookup: nodeId + CDI path → BowtieCard
-  $: nodeSlotMap = bowtieCatalogStore.nodeSlotMap;
+  $: nodeSlotMap = bowtieCatalogStore.effectiveNodeSlotMap;
 
   /** Get the BowtieCard cross-reference for a leaf's path */
   function getUsedIn(leaf: { path: string[] }) {

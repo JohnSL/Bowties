@@ -126,7 +126,7 @@ export interface ConfigSidebarState {
   selectedNodeId: string | null;
 
   /** The currently selected segment (one at a time globally) */
-  selectedSegment: { nodeId: string; segmentId: string; segmentPath: string } | null;
+  selectedSegment: { nodeId: string; segmentId: string } | null;
 
   /** Card deck for the selected segment; null when no segment is selected */
   cardDeck: ConfigSidebarCardDeck | null;
@@ -225,11 +225,11 @@ function createConfigSidebarStore() {
      * Select a segment — triggers card deck load.
      * FR-005: Replaces any previously shown card deck.
      */
-    selectSegment(nodeId: string, segmentId: string, segmentName: string, segmentPath: string): void {
+    selectSegment(nodeId: string, segmentId: string, segmentName: string): void {
       update(state => ({
         ...state,
         selectedNodeId: nodeId,
-        selectedSegment: { nodeId, segmentId, segmentPath },
+        selectedSegment: { nodeId, segmentId },
         cardDeck: {
           nodeId,
           segmentId,

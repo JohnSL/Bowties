@@ -15,6 +15,14 @@ import { writable } from 'svelte/store';
 export const pillSelections = writable<Map<string, number>>(new Map());
 
 /**
+ * Stable key for a replicated-group pill selector.
+ * `firstSibling` is the first instance (instance === 1) of the replicated group.
+ */
+export function makePillKey(nodeId: string, firstSibling: { path: string[] }): string {
+  return `${nodeId}:${firstSibling.path.join('/')}`;
+}
+
+/**
  * Persist the selected instance index for a replicated group.
  * @param key  `nodeId:firstSiblingPath` for the replicated set
  * @param index  0-based index of the selected sibling

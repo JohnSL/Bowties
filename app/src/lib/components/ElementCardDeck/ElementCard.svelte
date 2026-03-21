@@ -23,7 +23,7 @@
   $: if (localLoading || localError) localExpanded = true;
 
   // Cross-reference lookup: nodeId + CDI path → BowtieCard (FR-008, SC-005)
-  $: nodeSlotMap = bowtieCatalogStore.nodeSlotMap;
+  $: nodeSlotMap = bowtieCatalogStore.effectiveNodeSlotMap;
 
   async function handleToggle() {
     localExpanded = !localExpanded;

@@ -299,6 +299,18 @@ function findLeafByPath(tree: NodeConfigTree, path: string[]): LeafConfigNode | 
   return findLeafByPathInChildren(segment.children, path.slice(1));
 }
 
+/**
+ * Find a child node by matching the last path component string, not by array index.
+ *
+ * This is necessary because Rust's `build_node_config_tree` encodes the CDI element
+ * index `i` in path strings (e.g. `"elem:2"`), but spacer groups hit a `continue`
+ * before `children.push(...)`, so the CDI index and the array index can diverge.
+ * Matching on `path.at(-1)` is authoritative.
+ */
+function findChildByComponent(children: ConfigNode[], component: string): ConfigNode | undefined {
+  return children.find(c => c.path.at(-1) === component);
+}
+
 function findLeafByPathInChildren(children: ConfigNode[], path: string[]): LeafConfigNode | null {
   if (path.length === 0) return null;
 
@@ -308,22 +320,26 @@ function findLeafByPathInChildren(children: ConfigNode[], path: string[]): LeafC
   const elemMatch = segment.match(/^elem:(\d+)(?:#(\d+))?$/);
   if (!elemMatch) return null;
 
-  const elemIdx = parseInt(elemMatch[1], 10);
   const instanceNum = elemMatch[2] ? parseInt(elemMatch[2], 10) : undefined;
-  const node = children[elemIdx];
-  if (!node) return null;
 
-  if (instanceNum !== undefined && isGroup(node)) {
-    // elem:N#M — navigate into wrapper group's children to find instance M (1-based → 0-based)
-    const instanceNode = node.children[instanceNum - 1];
+  if (instanceNum !== undefined) {
+    // elem:N#M — find the wrapper group by its base path component "elem:N",
+    // then navigate to instance M (1-based → 0-based)
+    const wrapperComponent = `elem:${elemMatch[1]}`;
+    const wrapper = findChildByComponent(children, wrapperComponent);
+    if (!wrapper || !isGroup(wrapper)) return null;
+    const instanceNode = wrapper.children[instanceNum - 1];
     if (!instanceNode) return null;
     if (path.length === 1) return isLeaf(instanceNode) ? instanceNode : null;
     if (isGroup(instanceNode)) return findLeafByPathInChildren(instanceNode.children, path.slice(1));
     return null;
   }
 
+  // Plain "elem:N" — find by path component matching
+  const node = findChildByComponent(children, segment);
+  if (!node) return null;
+
   if (path.length === 1) {
-    // Should be a leaf at this point
     return isLeaf(node) ? node : null;
   }
 

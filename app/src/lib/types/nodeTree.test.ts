@@ -10,6 +10,7 @@ import {
   findLeafByAddress,
   countLeaves,
   collectEventIdLeaves,
+  resolvePillSelectionsForPath,
 } from '$lib/types/nodeTree';
 import type {
   NodeConfigTree,
@@ -250,5 +251,195 @@ describe('Tower-LCC dual Event group disambiguation', () => {
     // elem:0#1 vs elem:1#1
     expect(g0.path[g0.path.length - 1]).toBe('elem:0#1');
     expect(g1.path[g1.path.length - 1]).toBe('elem:1#1');
+  });
+});
+
+// ─── resolvePillSelectionsForPath ────────────────────────────────────────────
+
+describe('resolvePillSelectionsForPath', () => {
+  const nodeId = 'nodeId';
+
+  // Helper: make a replicated instance group
+  function makeInstance(
+    outerIdx: number,
+    instNum: number,
+    innerChildren: ConfigNode[] = [],
+  ): GroupConfigNode {
+    return makeGroup(innerChildren, {
+      name: 'G', instance: instNum, instanceLabel: `G ${instNum}`,
+      replicationOf: 'G', replicationCount: 3,
+      path: ['seg:0', `elem:${outerIdx}#${instNum}`],
+    });
+  }
+
+  // Helper: make a wrapper group for a replicated set (instance === 0 in real trees,
+  // but the path component is just "elem:N" without a hash)
+  function makeWrapper(outerIdx: number, instances: GroupConfigNode[]): GroupConfigNode {
+    return makeGroup(instances, {
+      name: 'G', instance: 0, instanceLabel: 'G',
+      replicationOf: 'G', replicationCount: instances.length,
+      path: ['seg:0', `elem:${outerIdx}`],
+    });
+  }
+
+  it('flat leaf — path with no replicated ancestors returns empty Map', () => {
+    const leaf = makeLeaf({ path: ['seg:0', 'elem:2'] });
+    const seg = makeSegment([leaf]);
+    const result = resolvePillSelectionsForPath(nodeId, seg, ['seg:0', 'elem:2']);
+    expect(result.size).toBe(0);
+  });
+
+  it('single-level replicated, instance 1 — emits correct 0-based index', () => {
+    const inst1 = makeInstance(0, 1);
+    const inst2 = makeInstance(0, 2);
+    const inst3 = makeInstance(0, 3);
+    const wrapper = makeWrapper(0, [inst1, inst2, inst3]);
+    const seg = makeSegment([wrapper]);
+
+    const result = resolvePillSelectionsForPath(nodeId, seg, ['seg:0', 'elem:0#1']);
+    expect(result.size).toBe(1);
+    // pillKey = nodeId:inst1.path.join('/') = "nodeId:seg:0/elem:0#1"
+    expect(result.get('nodeId:seg:0/elem:0#1')).toBe(0);
+  });
+
+  it('single-level replicated, instance 3 — emits 0-based index 2', () => {
+    const inst1 = makeInstance(0, 1);
+    const inst2 = makeInstance(0, 2);
+    const inst3 = makeInstance(0, 3);
+    const wrapper = makeWrapper(0, [inst1, inst2, inst3]);
+    const seg = makeSegment([wrapper]);
+
+    const result = resolvePillSelectionsForPath(nodeId, seg, ['seg:0', 'elem:0#3']);
+    expect(result.size).toBe(1);
+    expect(result.get('nodeId:seg:0/elem:0#1')).toBe(2);
+  });
+
+  it('two-level nested replicated groups — emits both pill entries', () => {
+    // Inner instances for each outer instance
+    function makeInnerInst(outerInst: number, innerInst: number): GroupConfigNode {
+      return makeGroup([], {
+        name: 'I', instance: innerInst, instanceLabel: `I ${innerInst}`,
+        replicationOf: 'I', replicationCount: 4,
+        path: ['seg:0', `elem:0#${outerInst}`, `elem:1#${innerInst}`],
+      });
+    }
+    function makeInnerWrapper(outerInst: number): GroupConfigNode {
+      const instances = [1, 2, 3, 4].map(i => makeInnerInst(outerInst, i));
+      return makeGroup(instances, {
+        name: 'I', instance: 0, instanceLabel: 'I',
+        replicationOf: 'I', replicationCount: 4,
+        path: ['seg:0', `elem:0#${outerInst}`, 'elem:1'],
+      });
+    }
+    const outerInst1 = makeGroup([makeInnerWrapper(1)], {
+      name: 'G', instance: 1, instanceLabel: 'G 1', replicationOf: 'G', replicationCount: 3,
+      path: ['seg:0', 'elem:0#1'],
+    });
+    const outerInst2 = makeGroup([makeInnerWrapper(2)], {
+      name: 'G', instance: 2, instanceLabel: 'G 2', replicationOf: 'G', replicationCount: 3,
+      path: ['seg:0', 'elem:0#2'],
+    });
+    const outerInst3 = makeGroup([makeInnerWrapper(3)], {
+      name: 'G', instance: 3, instanceLabel: 'G 3', replicationOf: 'G', replicationCount: 3,
+      path: ['seg:0', 'elem:0#3'],
+    });
+    const outerWrapper = makeWrapper(0, [outerInst1, outerInst2, outerInst3]);
+    const seg = makeSegment([outerWrapper]);
+
+    // Target: outer instance 2, inner instance 3
+    const result = resolvePillSelectionsForPath(
+      nodeId, seg, ['seg:0', 'elem:0#2', 'elem:1#3', 'elem:2'],
+    );
+    expect(result.size).toBe(2);
+    // Outer pill: inst1.path = ['seg:0', 'elem:0#1'] → key "nodeId:seg:0/elem:0#1", index 1
+    expect(result.get('nodeId:seg:0/elem:0#1')).toBe(1);
+    // Inner pill: first inner sibling of outerInst2 = makeInnerInst(2, 1)
+    //   path = ['seg:0', 'elem:0#2', 'elem:1#1'] → key "nodeId:seg:0/elem:0#2/elem:1#1", index 2
+    expect(result.get('nodeId:seg:0/elem:0#2/elem:1#1')).toBe(2);
+  });
+
+  it('multi-wrapper siblings (two event sets) — emits outer AND inner pill entries', () => {
+    // Simulates: consumer events (elem:0) and producer events (elem:1) both named
+    // "Event" at the same segment level.  groupReplicatedChildren groups them into
+    // a single replicatedSet where the outer pill selects between the two sets and
+    // the inner pill selects the instance within the chosen set.
+    function makeEventInst(wrapperIdx: number, instNum: number): GroupConfigNode {
+      return makeGroup([], {
+        name: 'Event', instance: instNum, instanceLabel: `Event ${instNum}`,
+        replicationOf: 'Event', replicationCount: 8,
+        path: ['seg:0', `elem:${wrapperIdx}#${instNum}`],
+      });
+    }
+    const consumerInsts = [1, 2, 3, 4, 5, 6, 7, 8].map(i => makeEventInst(0, i));
+    const wrapperCons = makeGroup(consumerInsts, {
+      name: 'Event', instance: 0, instanceLabel: 'Event',
+      replicationOf: 'Event', replicationCount: 8,
+      path: ['seg:0', 'elem:0'],
+    });
+    const producerInsts = [1, 2, 3, 4, 5, 6, 7, 8].map(i => makeEventInst(1, i));
+    const wrapperProd = makeGroup(producerInsts, {
+      name: 'Event', instance: 0, instanceLabel: 'Event',
+      replicationOf: 'Event', replicationCount: 8,
+      path: ['seg:0', 'elem:1'],
+    });
+    const seg = makeSegment([wrapperCons, wrapperProd]);
+
+    // Navigate to producer wrapper (elem:1), instance 5
+    const result = resolvePillSelectionsForPath(nodeId, seg, ['seg:0', 'elem:1#5']);
+    expect(result.size).toBe(2);
+    // Outer pill: first sibling = wrapperCons (path 'seg:0/elem:0') → index 1 selects producer set
+    expect(result.get('nodeId:seg:0/elem:0')).toBe(1);
+    // Inner pill: first producer inst (path 'seg:0/elem:1#1') → index 4 selects instance 5
+    expect(result.get('nodeId:seg:0/elem:1#1')).toBe(4);
+  });
+
+  it('spacer before target — path-based lookup finds elem:1 wrapper at children[0]', () => {
+    // Simulates: CDI elem:0 was a spacer (skipped); CDI elem:1 is the replicated set
+    // pushed as children[0] with path ending in "elem:1".
+    const inst1 = makeGroup([], {
+      name: 'G', instance: 1, instanceLabel: 'G 1', replicationOf: 'G', replicationCount: 2,
+      path: ['seg:0', 'elem:1#1'],
+    });
+    const inst2 = makeGroup([], {
+      name: 'G', instance: 2, instanceLabel: 'G 2', replicationOf: 'G', replicationCount: 2,
+      path: ['seg:0', 'elem:1#2'],
+    });
+    const wrapper = makeGroup([inst1, inst2], {
+      name: 'G', instance: 0, instanceLabel: 'G', replicationOf: 'G', replicationCount: 2,
+      path: ['seg:0', 'elem:1'],  // CDI index 1, but at array index 0
+    });
+    const seg = makeSegment([wrapper]); // children[0] has path "elem:1" (not "elem:0")
+
+    const result = resolvePillSelectionsForPath(nodeId, seg, ['seg:0', 'elem:1#2']);
+    expect(result.size).toBe(1);
+    // inst1 is the first sibling: path ['seg:0', 'elem:1#1']
+    expect(result.get('nodeId:seg:0/elem:1#1')).toBe(1); // instance 2 → index 1
+  });
+
+  it('non-replicated group wrapper — navigates through without emitting a pill', () => {
+    const leaf = makeLeaf({ path: ['seg:0', 'elem:0', 'elem:1'] });
+    const innerGroup = makeGroup([leaf], {
+      name: 'Inner', instance: 1, replicationCount: 1,
+      path: ['seg:0', 'elem:0'],
+    });
+    const seg = makeSegment([innerGroup]);
+
+    const result = resolvePillSelectionsForPath(nodeId, seg, ['seg:0', 'elem:0', 'elem:1']);
+    expect(result.size).toBe(0);
+  });
+
+  it('out-of-bounds instance index — returns partial Map and stops cleanly without throwing', () => {
+    const inst1 = makeInstance(0, 1);
+    const inst2 = makeInstance(0, 2);
+    const wrapper = makeWrapper(0, [inst1, inst2]); // only 2 instances
+    const seg = makeSegment([wrapper]);
+
+    // instNum=5 exceeds wrapper.children.length → selectedInst is undefined → breaks
+    expect(() => {
+      const result = resolvePillSelectionsForPath(nodeId, seg, ['seg:0', 'elem:0#5', 'elem:1']);
+      // Should return an entry for the outer level (since inst1 exists as firstSibling)
+      // but stop before navigating deeper
+      expect(result.get('nodeId:seg:0/elem:0#1')).toBe(4); // 5-1=4
+    }).not.toThrow();
   });
 });

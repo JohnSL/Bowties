@@ -10,6 +10,9 @@
  * This is required for the bowtie preview store's `collectEntriesForEventId()`
  * to have data — layout-named bowties should show their producer/consumer
  * entries as soon as discovery completes.
+ *
+ * Also covers Step 1 of plan-config-nav-refactor: CDI-index vs array-index
+ * correctness in findLeafByPathInChildren (tested indirectly via updateLeafValue).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -95,5 +98,93 @@ describe('nodeTreeStore — node-tree-updated', () => {
     await vi.waitFor(() => {
       expect(invoke).toHaveBeenCalledWith('get_node_tree', { nodeId: NODE_ID });
     }, { timeout: 1000 });
+  });
+});
+
+// ─── Step 1: CDI-index vs array-index (findLeafByPathInChildren) ─────────────
+//
+// Tested indirectly via updateLeafValue, which calls findLeafByPath →
+// findLeafByPathInChildren internally.  The key scenario: the Rust backend
+// encodes CDI element index i in path strings, but spacer groups are skipped
+// before push(), so children[0] may have path "elem:1" (not "elem:0").
+// The fix uses path-component matching instead of array-index lookup.
+
+import type { ConfigNode, LeafConfigNode, GroupConfigNode } from '$lib/types/nodeTree';
+
+function makeTestLeaf(path: string[], address = 0): LeafConfigNode {
+  return {
+    kind: 'leaf',
+    name: 'Test',
+    description: null,
+    elementType: 'int',
+    address,
+    size: 1,
+    space: 253,
+    path,
+    value: { type: 'int', value: 42 },
+    eventRole: null,
+    constraints: null,
+  };
+}
+
+function makeTestGroup(path: string[], children: ConfigNode[]): GroupConfigNode {
+  return {
+    kind: 'group',
+    name: 'G',
+    description: null,
+    instance: 1,
+    instanceLabel: 'G 1',
+    replicationOf: 'G',
+    replicationCount: 1,
+    path,
+    children,
+    displayName: null,
+  };
+}
+
+describe('updateLeafValue — CDI-index vs array-index (Step 1)', () => {
+  it('no spacers — finds leaf by path at matching array index', () => {
+    const leaf = makeTestLeaf(['seg:0', 'elem:0'], 0);
+    nodeTreeStore.setTree(NODE_ID, {
+      nodeId: NODE_ID, identity: null,
+      segments: [{ name: 'S', description: null, origin: 0, space: 253, children: [leaf] }],
+    });
+    nodeTreeStore.updateLeafValue(NODE_ID, ['seg:0', 'elem:0'], { type: 'int', value: 99 });
+    expect(nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0]).toMatchObject({
+      kind: 'leaf', value: { type: 'int', value: 99 },
+    });
+  });
+
+  it('spacer before target — finds elem:1 at children[0] by path matching, not array index', () => {
+    // Simulates: CDI elem:0 was a spacer (not pushed), CDI elem:1 was pushed → children[0]
+    // has path ending in "elem:1".
+    const leaf = makeTestLeaf(['seg:0', 'elem:1'], 0);
+    nodeTreeStore.setTree(NODE_ID, {
+      nodeId: NODE_ID, identity: null,
+      segments: [{ name: 'S', description: null, origin: 0, space: 253, children: [leaf] }],
+    });
+    // Before fix: children[1] → undefined → null. After fix: path-match finds children[0].
+    nodeTreeStore.updateLeafValue(NODE_ID, ['seg:0', 'elem:1'], { type: 'int', value: 77 });
+    expect(nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0]).toMatchObject({
+      kind: 'leaf', value: { type: 'int', value: 77 },
+    });
+  });
+
+  it('spacer before replicated instance — finds elem:1#2 at correct child by path matching', () => {
+    // Wrapper group at CDI index 1 (spacer skipped at 0), containing two instances.
+    const inst1 = makeTestGroup(['seg:0', 'elem:1#1'], [makeTestLeaf(['seg:0', 'elem:1#1', 'elem:0'], 10)]);
+    const inst2 = makeTestGroup(['seg:0', 'elem:1#2'], [makeTestLeaf(['seg:0', 'elem:1#2', 'elem:0'], 11)]);
+    // Wrapper has path ending in "elem:1" (the base without instance suffix)
+    const wrapper = makeTestGroup(['seg:0', 'elem:1'], [inst1, inst2]);
+    nodeTreeStore.setTree(NODE_ID, {
+      nodeId: NODE_ID, identity: null,
+      segments: [{ name: 'S', description: null, origin: 0, space: 253, children: [wrapper] }],
+    });
+    // Path targets leaf inside instance 2 of the replicated group
+    nodeTreeStore.updateLeafValue(NODE_ID, ['seg:0', 'elem:1#2', 'elem:0'], { type: 'int', value: 55 });
+    const tree = nodeTreeStore.getTree(NODE_ID)!;
+    const wrapperNode = tree.segments[0].children[0] as GroupConfigNode;
+    const inst2Node = wrapperNode.children[1] as GroupConfigNode;
+    expect(inst2Node.children[0]).toMatchObject({ kind: 'leaf', value: { type: 'int', value: 55 } });
   });
 });

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from '@tauri-apps/api/event';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { get } from 'svelte/store';
   import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import ConfigSidebar from '$lib/components/ConfigSidebar/ConfigSidebar.svelte';
@@ -19,7 +19,7 @@
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
-  import { hasModifiedLeaves } from '$lib/types/nodeTree';
+  import { hasModifiedLeaves, resolvePillSelectionsForPath } from '$lib/types/nodeTree';
   import { configReadNodesStore, markNodeConfigRead, clearConfigReadStatus } from '$lib/stores/configReadStatus';
   import BowtieCatalogPanel from '$lib/components/Bowtie/BowtieCatalogPanel.svelte';
   import DiscoveryProgressModal from '$lib/components/DiscoveryProgressModal.svelte';
@@ -27,6 +27,9 @@
   import CdiDownloadDialog from '$lib/components/CdiDownloadDialog.svelte';
   import ConnectionManager from '$lib/ConnectionManager.svelte';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
+  import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
+  import { configFocusStore } from '$lib/stores/configFocus.svelte';
+  import { setPillSelection } from '$lib/stores/pillSelection';
   import type { MissingCdiNode } from '$lib/components/CdiDownloadDialog.svelte';
 
   // Active tab state — 'config' (default) or 'bowties'
@@ -50,6 +53,50 @@
     if (connectionRequestStore.pendingRequest) {
       activeTab = 'bowties';
     }
+  });
+
+  // Switch to bowties tab when a "Used in" link is clicked on the config page
+  $effect(() => {
+    if (bowtieFocusStore.highlightedEventIdHex) {
+      activeTab = 'bowties';
+    }
+  });
+
+  // Switch to config tab and navigate to the target field when a bowtie entry link is clicked
+  $effect(() => {
+    const focus = configFocusStore.navigationRequest;
+    if (!focus) return;
+
+    // Consume immediately — TreeLeafRow handles its own leafFocusRequest.
+    untrack(() => configFocusStore.clearNavigation());
+
+    activeTab = 'config';
+
+    const tree = untrack(() => nodeTreeStore.getTree(focus.nodeId));
+    if (!tree) return;
+
+    const segMatch = focus.elementPath[0]?.match(/^seg:(\d+)$/);
+    if (!segMatch) return;
+    const segIdx = parseInt(segMatch[1], 10);
+    const seg = tree.segments[segIdx];
+    if (!seg) return;
+
+    // Compute and apply pill selections (pure utility — no tree-structure
+    // knowledge required here).
+    const pillEntries = resolvePillSelectionsForPath(focus.nodeId, seg, focus.elementPath);
+    for (const [key, idx] of pillEntries) {
+      setPillSelection(key, idx);
+    }
+
+    // Expand node in sidebar if needed
+    const sidebarState = get(configSidebarStore);
+    if (!sidebarState.expandedNodeIds.includes(focus.nodeId)) {
+      configSidebarStore.toggleNodeExpanded(focus.nodeId);
+    }
+
+    // Select the segment → triggers card deck render → TreeLeafRow mounts →
+    // leafFocusRequest scrolls + focuses the input.
+    configSidebarStore.selectSegment(focus.nodeId, `seg:${segIdx}`, seg.name);
   });
 
   // Connection state
@@ -938,7 +985,7 @@
 
     {:else if activeTab === 'bowties'}
       <!-- Feature 006: Bowties catalog in-page tab (no navigation) -->
-      <BowtieCatalogPanel />
+      <BowtieCatalogPanel highlightedEventIdHex={bowtieFocusStore.highlightedEventIdHex} />
 
     {:else}
       <!-- FR-001: two-panel layout — fixed sidebar + scrollable main area -->

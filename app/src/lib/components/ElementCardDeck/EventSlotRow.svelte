@@ -1,9 +1,9 @@
 <script lang="ts">
   import type { CardField } from '$lib/stores/configSidebar';
   import type { BowtieCard } from '$lib/api/tauri';
-  import { bowtieName } from '$lib/api/tauri';
-  import { goto } from '$app/navigation';
   import { createEventDispatcher } from 'svelte';
+  import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
+  import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
 
   export let field: CardField;
   /** Raw event ID bytes (8 bytes); null if not yet read */
@@ -33,7 +33,7 @@
 
   function handleNavigateToBowties() {
     if (usedIn) {
-      goto('/bowties?highlight=' + usedIn.event_id_hex);
+      bowtieFocusStore.focusBowtie(usedIn.event_id_hex);
     }
   }
 </script>
@@ -72,8 +72,8 @@
         class="used-in-link"
         on:click={handleNavigateToBowties}
         title="View bowtie for event {usedIn.event_id_hex}"
-        aria-label="View bowtie connection for {bowtieName(usedIn)}"
-      >{bowtieName(usedIn)}</button>
+        aria-label="View bowtie connection for {bowtieCatalogStore.getDisplayName(usedIn.event_id_hex)}"
+      >{bowtieCatalogStore.getDisplayName(usedIn.event_id_hex)}</button>
     </div>
   {/if}
 </div>

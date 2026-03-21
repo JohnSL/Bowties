@@ -13,6 +13,7 @@
 
 <script lang="ts">
   import type { EventSlotEntry } from '$lib/api/tauri';
+  import { configFocusStore } from '$lib/stores/configFocus.svelte';
 
   interface Props {
     entry: EventSlotEntry;
@@ -28,7 +29,12 @@
   <div class="entry-meta">
     <span class="node-name">{entry.node_name}</span>
     <span class="element-label">
-      {entry.element_label ?? ''}
+      <button
+        class="element-label-link"
+        onclick={() => configFocusStore.focusConfigField(entry.node_id, entry.element_path)}
+        title="Go to this field in the configuration"
+        aria-label="Go to {entry.element_label ?? 'field'} in configuration"
+      >{entry.element_label ?? ''}</button>
       {#if isNew}<span class="new-badge" aria-label="New entry">● new</span>{/if}
     </span>
   </div>
@@ -69,6 +75,23 @@
     font-size: 0.78rem;
     color: #242424;
     word-break: break-word;
+  }
+
+  .element-label-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 0.78rem;
+    color: #0078d4;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    text-align: left;
+    word-break: break-word;
+  }
+
+  .element-label-link:hover {
+    color: #005a9e;
   }
 
   .new-badge {

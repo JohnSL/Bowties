@@ -77,6 +77,56 @@ class BowtieCatalogStore {
     return map;
   }
 
+  /**
+   * Like `nodeSlotMap`, but also covers eventId leaves whose value has been
+   * modified but not yet saved (pending / unsaved consumers or producers).
+   *
+   * For committed entries the structural identity lookup is used (same as
+   * nodeSlotMap).  For leaves that only have a `modifiedValue`, the effective
+   * hex value is matched against catalog event IDs so the "Used in" link
+   * appears immediately after an assignment is made.
+   */
+  get effectiveNodeSlotMap(): Map<string, BowtieCard> {
+    // Start from the committed structural entries.
+    const map = new Map(this.nodeSlotMap);
+    if (!this._catalog) return map;
+
+    // Build event_id_hex → BowtieCard reverse index for the pending-value scan.
+    const cardByEventId = new Map<string, BowtieCard>();
+    for (const card of this._catalog.bowties) {
+      cardByEventId.set(card.event_id_hex, card);
+    }
+
+    // Scan every eventId leaf in every loaded tree.  When the effective value is
+    // an eventId that matches a catalog card, and the structural key isn't already
+    // present (committed entry wins), add an entry for the leaf's path.
+    for (const [nodeId, tree] of nodeTreeStore.trees) {
+      for (const leaf of collectEventIdLeaves(tree)) {
+        const val = effectiveValue(leaf);
+        if (val?.type !== 'eventId') continue;
+        const key = `${nodeId}:${leaf.path.join('/')}`;
+        if (map.has(key)) continue;
+        const card = cardByEventId.get(val.hex);
+        if (card) map.set(key, card);
+      }
+    }
+    return map;
+  }
+
+  /**
+   * Display name for a bowtie, preferring the user-defined name from metadata
+   * over the backend catalog name, falling back to the raw event ID hex.
+   *
+   * Used by config-page "Used in" links to show a meaningful label (FR-008).
+   */
+  getDisplayName(eventIdHex: string): string {
+    return (
+      bowtieMetadataStore.getMetadata(eventIdHex)?.name ??
+      this.usedInMap.get(eventIdHex)?.name ??
+      eventIdHex
+    );
+  }
+
   // ── Mutations ─────────────────────────────────────────────────────────────
 
   /** Set the catalog directly (used by the event listener and in tests). */

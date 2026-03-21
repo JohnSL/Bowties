@@ -12,6 +12,7 @@
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
+  import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
   import { setModifiedValue } from '$lib/api/config';
   import BowtieCard from '$lib/components/Bowtie/BowtieCard.svelte';
   import EmptyState from '$lib/components/Bowtie/EmptyState.svelte';
@@ -86,10 +87,13 @@
     };
   }
 
-  // Scroll to highlighted card when it becomes available (FR-009)
+  // Scroll to highlighted card when it becomes available (FR-009).
+  // Depends on the focusRequest object (not just the id string) so that
+  // re-clicking the same event always re-triggers the scroll.
   $effect(() => {
-    if (highlightedEventIdHex) {
-      const id = highlightedEventIdHex;
+    const req = bowtieFocusStore.focusRequest;
+    if (req) {
+      const id = req.id;
       requestAnimationFrame(() => {
         const el = document.querySelector(`[data-event-id="${CSS.escape(id)}"]`);
         el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -366,6 +370,7 @@
               isDirty={previewCard.isDirty}
               dirtyFields={previewCard.dirtyFields}
               newEntryKeys={previewCard.newEntryKeys}
+              onSelect={() => bowtieFocusStore.focusBowtie(previewCard.eventIdHex)}
               onAddProducer={() => openAddElement(previewCard, 'Producer')}
               onAddConsumer={() => openAddElement(previewCard, 'Consumer')}
               onRemoveElement={(entry) => handleRemoveElement(previewCard, entry)}

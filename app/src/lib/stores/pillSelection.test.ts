@@ -2,6 +2,7 @@
  * Tests for pillSelection store
  *
  * Covers:
+ * - makePillKey returns the expected stable string
  * - Store starts empty
  * - setPillSelection stores a value at the given key
  * - setPillSelection overwrites an existing value for the same key
@@ -10,10 +11,22 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
-import { pillSelections, setPillSelection } from './pillSelection';
+import { pillSelections, setPillSelection, makePillKey } from './pillSelection';
 
 beforeEach(() => {
   pillSelections.set(new Map());
+});
+
+describe('makePillKey', () => {
+  it('returns nodeId:path for a flat sibling path', () => {
+    expect(makePillKey('02.01.57.00.00.01', { path: ['seg:0', 'elem:0#1'] }))
+      .toBe('02.01.57.00.00.01:seg:0/elem:0#1');
+  });
+
+  it('returns correct key for a nested sibling path', () => {
+    expect(makePillKey('02.01.57.00.00.01', { path: ['seg:0', 'elem:0#2', 'elem:1#1'] }))
+      .toBe('02.01.57.00.00.01:seg:0/elem:0#2/elem:1#1');
+  });
 });
 
 describe('pillSelection store', () => {

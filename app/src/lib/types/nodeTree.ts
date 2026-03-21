@@ -535,6 +535,119 @@ function parseSegIndex(key: string): number | null {
   return match ? parseInt(match[1], 10) : null;
 }
 
+// ─── Pill navigation helper ──────────────────────────────────────────────────
+
+/**
+ * Return all consecutive wrappers in `children` that belong to the same
+ * sibling group as `wrapper` (same replicationOf, same replicationCount > 1).
+ *
+ * Mirrors the contiguous-grouping logic of `groupReplicatedChildren`.
+ */
+function findWrapperSiblings(children: ConfigNode[], wrapper: GroupConfigNode): GroupConfigNode[] {
+  const idx = children.findIndex(c => c === wrapper);
+  if (idx === -1) return [wrapper];
+
+  // Walk backwards to find the start of the contiguous block
+  let start = idx;
+  while (start > 0) {
+    const prev = children[start - 1];
+    if (isGroup(prev) && prev.replicationOf === wrapper.replicationOf && prev.replicationCount > 1) {
+      start--;
+    } else {
+      break;
+    }
+  }
+
+  // Collect the full contiguous block
+  const siblings: GroupConfigNode[] = [];
+  let i = start;
+  while (i < children.length) {
+    const c = children[i];
+    if (isGroup(c) && c.replicationOf === wrapper.replicationOf && c.replicationCount > 1) {
+      siblings.push(c as GroupConfigNode);
+      i++;
+    } else {
+      break;
+    }
+  }
+  return siblings;
+}
+
+/**
+ * Walk `elementPath` from `seg.children`, computing the pill-store entries
+ * that must be set so every replicated-group ancestor of the target field shows
+ * the correct instance.
+ *
+ * Returns a Map<pillKey, 0-based selectedIndex> ready to write to pillSelections.
+ *
+ * Uses path-component matching (not array-index) so spacers are handled correctly.
+ *
+ * Each `elem:N#K` path component may produce up to two entries:
+ *  1. An **outer entry** (when wrapper_N is one of multiple same-named sibling
+ *     wrappers) — key uses the first sibling wrapper's path (no # suffix),
+ *     selects which wrapper.
+ *  2. An **inner entry** — key uses the first instance inside wrapper_N,
+ *     selects which instance within that wrapper.
+ *
+ * @param nodeId       - LCC node ID string (used to build pill keys)
+ * @param seg          - The SegmentNode to walk into
+ * @param elementPath  - Full element path, e.g. ["seg:0", "elem:0#2", "elem:1#3", "elem:2"]
+ */
+export function resolvePillSelectionsForPath(
+  nodeId: string,
+  seg: SegmentNode,
+  elementPath: string[],
+): Map<string, number> {
+  const result = new Map<string, number>();
+  let currentChildren = seg.children;
+
+  for (let pi = 1; pi < elementPath.length; pi++) {
+    const component = elementPath[pi];
+    const rm = component.match(/^elem:(\d+)#(\d+)$/);
+
+    if (rm) {
+      const instNum = parseInt(rm[2], 10); // 1-based
+      // Find the wrapper group by matching path component "elem:N" (without instance suffix)
+      const wrapperComponent = `elem:${rm[1]}`;
+      const wrapper = currentChildren.find(
+        c => isGroup(c) && c.path.at(-1) === wrapperComponent,
+      ) as GroupConfigNode | undefined;
+      if (!wrapper) break;
+
+      // Check whether wrapper_N is one of multiple same-named sibling wrappers.
+      // When it is, `groupReplicatedChildren` groups THOSE WRAPPERS into a
+      // replicatedSet, so the pill key uses the first WRAPPER's path (no # suffix).
+      const wrapperSiblings = findWrapperSiblings(currentChildren, wrapper);
+      if (wrapperSiblings.length > 1) {
+        const firstWrapperSibling = wrapperSiblings[0];
+        const wrapperIndexInSiblings = wrapperSiblings.indexOf(wrapper);
+        result.set(`${nodeId}:${firstWrapperSibling.path.join('/')}`, wrapperIndexInSiblings);
+      }
+
+      // Inner pill: selects which INSTANCE within wrapper_N.
+      // The pill key uses the first instance's path (has # suffix).
+      const firstInstance = wrapper.children[0];
+      if (!firstInstance || !isGroup(firstInstance)) break;
+      result.set(`${nodeId}:${firstInstance.path.join('/')}`, instNum - 1);
+
+      const selectedInst = wrapper.children[instNum - 1];
+      if (!selectedInst || !isGroup(selectedInst)) break;
+      currentChildren = selectedInst.children;
+    } else {
+      // Non-replicated group — navigate into it without setting a pill
+      const nm = component.match(/^elem:(\d+)$/);
+      if (!nm) break;
+      const node = currentChildren.find(
+        c => isGroup(c) && c.path.at(-1) === component,
+      ) as GroupConfigNode | undefined;
+      if (!node) break;
+      currentChildren = node.children;
+    }
+  }
+
+  return result;
+}
+
 // ─── Spec 007: Edit & Write Types ─────────────────────────────────────────────
 
 /** Write lifecycle state for a pending edit. */

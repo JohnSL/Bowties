@@ -28,6 +28,27 @@ vi.mock('$app/navigation', () => ({
 vi.mock('$lib/stores/bowties.svelte', () => ({
   bowtieCatalogStore: {
     nodeSlotMap: new Map(),
+    effectiveNodeSlotMap: new Map(),
+    getDisplayName: vi.fn((id: string) => id),
+  },
+}));
+
+vi.mock('$lib/stores/bowtieFocus.svelte', () => ({
+  bowtieFocusStore: {
+    highlightedEventIdHex: null,
+    focusBowtie: vi.fn(),
+    clearFocus: vi.fn(),
+  },
+}));
+
+vi.mock('$lib/stores/configFocus.svelte', () => ({
+  configFocusStore: {
+    navigationRequest: null,
+    leafFocusRequest: null,
+    focusConfigField: vi.fn(),
+    clearNavigation: vi.fn(),
+    clearLeafFocus: vi.fn(),
+    clearFocus: vi.fn(),
   },
 }));
 
@@ -223,14 +244,14 @@ describe('TreeLeafRow.svelte', () => {
     });
 
     it('navigates to bowties page when link clicked', async () => {
-      const { goto } = await import('$app/navigation');
+      const { bowtieFocusStore } = await import('$lib/stores/bowtieFocus.svelte');
       const bowtie = makeBowtie({ event_id_hex: '05.02.01.02.03.00.00.01' });
       render(TreeLeafRow, {
         props: { leaf: makeLeaf(), usedIn: bowtie },
       });
       const link = screen.getByRole('button', { name: /bowtie/i });
       await fireEvent.click(link);
-      expect(goto).toHaveBeenCalledWith('/bowties?highlight=05.02.01.02.03.00.00.01');
+      expect(bowtieFocusStore.focusBowtie).toHaveBeenCalledWith('05.02.01.02.03.00.00.01');
     });
 
     it('does not show link when usedIn is undefined', () => {

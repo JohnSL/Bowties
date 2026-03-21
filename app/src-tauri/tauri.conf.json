@@ -37,9 +37,7 @@
       "profiles/": "profiles/"
     },
     "windows": {
-      "wix": {
-        "installMode": "perUser"
-      }
+      "wix": {}
     }
   }
 }

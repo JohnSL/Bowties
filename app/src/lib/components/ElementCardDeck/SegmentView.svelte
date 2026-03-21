@@ -21,7 +21,7 @@
   let selectedSegment = $derived($configSidebarStore.selectedSegment);
 
   // Cross-reference lookup for event ID → bowtie card
-  let nodeSlotMap = $derived(bowtieCatalogStore.nodeSlotMap);
+  let nodeSlotMap = $derived(bowtieCatalogStore.effectiveNodeSlotMap);
 
   // Access trees reactively so segment derivation re-runs when tree data changes
   // (e.g. after node-tree-updated event merges config values)
@@ -47,15 +47,15 @@
   );
 
   function deriveSegment(
-    sel: { nodeId: string; segmentId: string; segmentPath: string } | null,
+    sel: { nodeId: string; segmentId: string } | null,
     _trees: Map<string, any>,  // reactive dependency; value used via nodeTreeStore
   ): SegmentNode | null {
     if (!sel) return null;
     const tree = nodeTreeStore.getTree(sel.nodeId);
     if (!tree) return null;
 
-    // Parse "seg:N" from segmentPath
-    const match = sel.segmentPath.match(/^seg:(\d+)$/);
+    // Parse "seg:N" from segmentId
+    const match = sel.segmentId.match(/^seg:(\d+)$/);
     if (!match) return null;
     const idx = parseInt(match[1], 10);
     return tree.segments[idx] ?? null;

@@ -10,13 +10,28 @@
  * - Hides ambiguous_entries section when ambiguous_entries is empty
  */
 
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/svelte';
 import BowtieCard from './BowtieCard.svelte';
 import type { BowtieCard as BowtieCardType } from '$lib/api/tauri';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
+}));
+
+// Regression: clicking Add producer/consumer must not trigger config navigation.
+const { focusConfigFieldMock } = vi.hoisted(() => ({
+  focusConfigFieldMock: vi.fn(),
+}));
+vi.mock('$lib/stores/configFocus.svelte', () => ({
+  configFocusStore: {
+    focusConfigField: focusConfigFieldMock,
+    get navigationRequest() { return null; },
+    get leafFocusRequest() { return null; },
+    clearNavigation: vi.fn(),
+    clearLeafFocus: vi.fn(),
+    clearFocus: vi.fn(),
+  },
 }));
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -47,6 +62,10 @@ function makeCard(overrides: Partial<BowtieCardType> = {}): BowtieCardType {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('BowtieCard.svelte', () => {
+  beforeEach(() => {
+    focusConfigFieldMock.mockClear();
+  });
+
   // FR-014: Card header shows name if present, event_id_hex if not.
 
   it('shows event_id_hex as header when name is null (FR-014)', () => {
@@ -108,5 +127,39 @@ describe('BowtieCard.svelte', () => {
     render(BowtieCard, { props: { card: makeCard() } });
     // ConnectorArrow renders an arrow element containing '→'
     expect(screen.getByText('→')).toBeInTheDocument();
+  });
+
+  // Regression: Add producer / Add consumer must not trigger config navigation.
+  // Root cause was that configFocusStore.pendingFocus was never cleared after
+  // the +page.svelte effect consumed it. When ElementPicker loaded trees via
+  // nodeTreeStore.loadTree() the effect re-ran, found pendingFocus still set,
+  // and erroneously switched the active tab back to config.
+
+  it('clicking Add producer does not call configFocusStore.focusConfigField (regression)', async () => {
+    const onAddProducer = vi.fn();
+    render(BowtieCard, { props: { card: makeCard(), onAddProducer } });
+    const btn = screen.getByRole('button', { name: /\+ add producer/i });
+    await fireEvent.click(btn);
+    expect(focusConfigFieldMock).not.toHaveBeenCalled();
+    expect(onAddProducer).toHaveBeenCalledOnce();
+  });
+
+  it('clicking Add consumer does not call configFocusStore.focusConfigField (regression)', async () => {
+    const onAddConsumer = vi.fn();
+    render(BowtieCard, { props: { card: makeCard(), onAddConsumer } });
+    const btn = screen.getByRole('button', { name: /\+ add consumer/i });
+    await fireEvent.click(btn);
+    expect(focusConfigFieldMock).not.toHaveBeenCalled();
+    expect(onAddConsumer).toHaveBeenCalledOnce();
+  });
+
+  it('clicking a producer element\'s label link calls configFocusStore.focusConfigField', async () => {
+    render(BowtieCard, { props: { card: makeCard() } });
+    const link = screen.getByRole('button', { name: /go to button pressed in configuration/i });
+    await fireEvent.click(link);
+    expect(focusConfigFieldMock).toHaveBeenCalledWith(
+      '02.01.57.00.00.01',
+      ['seg:0', 'elem:0', 'elem:0'],
+    );
   });
 });

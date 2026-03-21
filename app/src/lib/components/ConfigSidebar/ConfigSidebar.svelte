@@ -135,7 +135,7 @@
 
   /** Handle segment selection */
   function handleSegmentSelect(nodeId: string, seg: SegmentInfo) {
-    configSidebarStore.selectSegment(nodeId, seg.segmentId, seg.segmentName, seg.segmentPath);
+    configSidebarStore.selectSegment(nodeId, seg.segmentId, seg.segmentName);
   }
 
   $: nodes = $nodeInfoStore;

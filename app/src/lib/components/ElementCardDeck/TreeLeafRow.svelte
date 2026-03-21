@@ -13,11 +13,13 @@
   import type { LeafConfigNode, TreeConfigValue, TreeMapEntry } from '$lib/types/nodeTree';
   import { effectiveValue } from '$lib/types/nodeTree';
   import type { BowtieCard } from '$lib/api/tauri';
-  import { bowtieName } from '$lib/api/tauri';
-  import { goto } from '$app/navigation';
   import { setModifiedValue } from '$lib/api/config';
+  import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
+  import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
+  import { configFocusStore } from '$lib/stores/configFocus.svelte';
   import { parseEventIdHex, formatEventIdHex } from '$lib/utils/serialize';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
+  import { untrack } from 'svelte';
 
   let {
     leaf,
@@ -45,6 +47,7 @@
 
   // ── Local state ────────────────────────────────────────────────────────────
 
+  let rowEl: HTMLDivElement;
   let descExpanded = $state(false);
 
   /**
@@ -130,6 +133,23 @@
   let displayDesc = $derived(
     needsTruncation && !descExpanded ? descText.slice(0, DESC_TRUNCATE_AT) + '…' : descText
   );
+
+  // ── Config focus: scroll + focus this leaf if it is the navigation target ──
+
+  $effect(() => {
+    const focus = configFocusStore.leafFocusRequest;
+    if (!focus || !nodeId) return;
+    if (focus.nodeId !== nodeId) return;
+    if (focus.elementPath.join('/') !== leaf.path.join('/')) return;
+
+    // Consume the focus before scheduling side-effects to avoid re-triggering
+    untrack(() => configFocusStore.clearLeafFocus());
+
+    requestAnimationFrame(() => {
+      rowEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      rowEl?.querySelector<HTMLElement>('input, select')?.focus();
+    });
+  });
 
   // ── Edit handlers ──────────────────────────────────────────────────────────
 
@@ -275,7 +295,7 @@
 
   function handleNavigateToBowties() {
     if (usedIn) {
-      goto('/bowties?highlight=' + usedIn.event_id_hex);
+      bowtieFocusStore.focusBowtie(usedIn.event_id_hex);
     }
   }
 
@@ -295,6 +315,7 @@
 </script>
 
 <div
+  bind:this={rowEl}
   class="field-row"
   class:compact={depth >= 3}
   class:dirty={isDirty && !isInvalid}
@@ -408,8 +429,8 @@
           class="used-in-link"
           onclick={handleNavigateToBowties}
           title="View bowtie for event {usedIn.event_id_hex}"
-          aria-label="View bowtie connection for {bowtieName(usedIn)}"
-        >{bowtieName(usedIn)}</button>
+          aria-label="View bowtie connection for {bowtieCatalogStore.getDisplayName(usedIn.event_id_hex)}"
+        >{bowtieCatalogStore.getDisplayName(usedIn.event_id_hex)}</button>
       </span>
     {/if}
 

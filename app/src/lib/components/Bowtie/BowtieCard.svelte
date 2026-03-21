@@ -53,6 +53,8 @@
     allTags?: string[] | null;
     /** Keys of newly-added entries for "new" badge display. */
     newEntryKeys?: Set<string> | null;
+    /** Callback when the user selects (focuses) this card. */
+    onSelect?: (() => void) | null;
   }
 
   let {
@@ -72,6 +74,7 @@
     onRemoveTag = null,
     allTags = null,
     newEntryKeys = null,
+    onSelect = null,
   }: Props = $props();
 
   let hasAmbiguous = $derived(card.ambiguous_entries.length > 0);
@@ -155,7 +158,15 @@
           aria-label="Edit connection name"
         />
       {:else}
-        <h3 class="card-title">
+        <h3
+          class="card-title"
+          class:card-title-selectable={!highlighted && !!onSelect}
+          onclick={!highlighted && onSelect ? onSelect : undefined}
+          title={!highlighted ? 'Click to focus this bowtie' : undefined}
+          role={!highlighted && onSelect ? 'button' : undefined}
+          tabindex={!highlighted && onSelect ? 0 : undefined}
+          onkeydown={!highlighted && onSelect ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect?.(); } } : undefined}
+        >
           {#if card.name}
             {card.name} <span class="event-id-suffix">({card.event_id_hex})</span>
           {:else}
@@ -460,6 +471,15 @@
     white-space: nowrap;
     flex: 1 1 0;
     min-width: 0;
+  }
+
+  .card-title-selectable {
+    cursor: pointer;
+    border-radius: 3px;
+  }
+
+  .card-title-selectable:hover {
+    color: #0078d4;
   }
 
   .event-id-suffix {

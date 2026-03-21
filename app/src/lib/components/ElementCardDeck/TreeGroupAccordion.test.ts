@@ -25,6 +25,7 @@ import { pillSelections, setPillSelection } from '$lib/stores/pillSelection';
 vi.mock('$lib/stores/bowties.svelte', () => ({
   bowtieCatalogStore: {
     nodeSlotMap: new Map(),
+    effectiveNodeSlotMap: new Map(),
   },
 }));
 

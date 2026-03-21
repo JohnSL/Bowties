@@ -16,7 +16,7 @@
   $: {
     const sel = $configSidebarStore.selectedSegment;
     if (sel && sel.segmentId !== lastLoadedSegmentId) {
-      loadCardDeck(sel.nodeId, sel.segmentId, sel.segmentPath);
+      loadCardDeck(sel.nodeId, sel.segmentId, sel.segmentId);
     }
   }
 

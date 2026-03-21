@@ -2,7 +2,7 @@
 
 *This document describes the current implementation of Bowties, including what's built, what's in progress, and what remains to be implemented. For the aspirational vision, see [docs/design/vision.md](../design/vision.md).*
 
-**Last Updated:** 2026-03-20
+**Last Updated:** 2026-03-21
 
 ## Implementation Status
 
@@ -121,6 +121,8 @@
 - `get_bowties` Tauri command returning `Option<BowtieCatalog>` from `AppState`
 - `cdi-read-complete` Tauri event emitted with full `BowtieCatalog` when CDI reads finish
 - `bowtieCatalogStore` + `usedInMap` derived store (Svelte; O(1) event → bowtie lookup)
+- `nodeSlotMap` on `BowtieCatalogStore` — `${nodeId}:${elementPath.join('/')}` → `BowtieCard` from committed catalog entries (structural identity lookup; FR-008)
+- `effectiveNodeSlotMap` on `BowtieCatalogStore` — extends `nodeSlotMap` with pending (unsaved) assignments by scanning tree leaves via `effectiveValue()` so "Used in" links appear before a save
 - `BowtieCard.svelte` three-column layout (producers | arrow | consumers)
 - `ElementEntry.svelte` (node name + element label per slot)
 - `ConnectorArrow.svelte` (rightward arrow + event ID label)
@@ -193,6 +195,14 @@
 - `pillSelections` store (`pillSelection.ts`) — persists selected pill (instance) index across view switches; `TreeGroupAccordion` reads/writes it
 - `isWellKnownEvent()` in `formatters.ts` — gates "No producers / No consumers" hints on `BowtieCard` for LCC well-known event IDs
 - `SegmentView.svelte` — fixed if/else ordering so a segment renders immediately when available even while a parallel load is in progress
+
+*Config-Navigation Architecture Refactor (post-Phase 7):*
+- **CDI-index bug fix:** `findLeafByPathInChildren` in `nodeTree.svelte.ts` previously navigated via array index instead of matching on path component — now uses `path.at(-1)` matching so spacer elements preceding a replicated group no longer cause off-by-one lookup failures
+- **`makePillKey` utility** extracted to `pillSelection.ts` (DRY); used by both `TreeGroupAccordion.svelte` and `resolvePillSelectionsForPath`
+- **`resolvePillSelectionsForPath(nodeId, seg, elementPath)`** extracted to `nodeTree.ts` (pure, testable); walks a full element path and returns a `Map<pillKey, 0-based index>` ready to write into `pillSelections`. Handles two cases per `elem:N#K` component: (1) wrapper is one of multiple same-named sibling wrappers (e.g. consumer-events + producer-events groups both named "Event") → emits **outer pill** (using the first sibling wrapper's path) and **inner pill** (using the first instance's path); (2) single wrapper → emits inner pill only
+- **`configFocus.svelte.ts`** split `pendingFocus` into two independent signals: `navigationRequest` (consumed by `+page.svelte` to drive segment/pill selection) and `leafFocusRequest` (consumed by `TreeLeafRow` to scroll/focus the field); each has its own clear method (`clearNavigation`, `clearLeafFocus`)
+- **`configSidebar.ts`** `selectSegment` simplified from 4 params to 3 — the redundant `segmentPath` parameter removed
+- **`effectiveNodeSlotMap` getter** added to `BowtieCatalogStore`: extends the committed structural `nodeSlotMap` by scanning all loaded tree leaves via `effectiveValue()` so a newly assigned (unsaved) eventId leaf immediately shows its "Used in" bowtie link
 
 ### 🚧 In Progress
 
@@ -311,8 +321,10 @@ app/src/lib/components/
     EmptyState.svelte               # Shown when no bowties found
 app/src/lib/stores/
   millerColumns.ts                  # Miller Columns state management
-  bowties.svelte.ts                 # BowtieCatalogStore + usedInMap derived store
-  pillSelection.ts                  # Persists pill (instance) selector positions across view switches
+  bowties.svelte.ts                 # BowtieCatalogStore: usedInMap, nodeSlotMap, effectiveNodeSlotMap
+  pillSelection.ts                  # Persists pill (instance) selector positions; makePillKey() utility
+  configFocus.svelte.ts             # navigationRequest + leafFocusRequest signals (split from pendingFocus)
+  configSidebar.ts                  # selectSegment(nodeId, segmentId, segmentName) — sidebar segment selector
 app/src/lib/utils/
   xmlFormatter.ts                   # XML indentation utility
 app/src/lib/api/
