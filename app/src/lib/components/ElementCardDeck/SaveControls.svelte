@@ -109,17 +109,19 @@
     if (bowtieMetadataStore.isDirty) {
       saveProgress = { ...saveProgress, currentFieldLabel: 'Layout metadata' };
       try {
-        await layoutStore.saveCurrentLayout();
-        bowtieMetadataStore.clearAll();
+        const saved = await layoutStore.saveCurrentLayout();
+        if (saved) bowtieMetadataStore.clearAll();
       } catch (err: unknown) {
         yamlSaveOk = false;
         const msg = err instanceof Error ? err.message : String(err);
         console.error('[SaveControls] Layout save failed:', msg);
         // Attempt Save As as fallback
         try {
-          await layoutStore.saveLayoutAs();
-          bowtieMetadataStore.clearAll();
-          yamlSaveOk = true;
+          const saved = await layoutStore.saveLayoutAs();
+          if (saved) {
+            bowtieMetadataStore.clearAll();
+            yamlSaveOk = true;
+          }
         } catch {
           // Save As also cancelled/failed — metadata remains dirty
         }
@@ -161,8 +163,8 @@
   }
 
   export async function triggerSaveAs(): Promise<void> {
-    await layoutStore.saveLayoutAs();
-    bowtieMetadataStore.clearAll();
+    const saved = await layoutStore.saveLayoutAs();
+    if (saved) bowtieMetadataStore.clearAll();
   }
 </script>
 

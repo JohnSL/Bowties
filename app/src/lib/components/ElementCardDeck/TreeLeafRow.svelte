@@ -57,6 +57,13 @@
   let localInvalidValue = $state<string | null>(null);
   let localValidationMessage = $state<string | null>(null);
 
+  /**
+   * Local buffer for the string input value while the user is actively typing.
+   * Prevents the async IPC round-trip from resetting the input mid-keystroke.
+   * Cleared on blur so the committed tree value takes over after focus leaves.
+   */
+  let localStrInput = $state<string | null>(null);
+
   // ── Derived values ─────────────────────────────────────────────────────────
 
   let isDirty = $derived(leaf.modifiedValue != null);
@@ -95,9 +102,11 @@
   /** Current display value — modifiedValue if pending, else committed value */
   let displayValue = $derived(effectiveValue(leaf));
 
-  /** String value for controlled text input */
+  /** String value for controlled text input — local buffer takes priority while typing */
   let inputStr = $derived(
-    displayValue?.type === 'string' ? displayValue.value : (leaf.value?.type === 'string' ? leaf.value.value : '')
+    localStrInput !== null
+      ? localStrInput
+      : (displayValue?.type === 'string' ? displayValue.value : (leaf.value?.type === 'string' ? leaf.value.value : ''))
   );
 
   /** Number value for controlled number input */
@@ -156,6 +165,12 @@
   /** Validate a string value and send to Rust tree */
   function handleStringInput(e: Event) {
     const raw = (e.target as HTMLInputElement).value;
+
+    // Synchronously buffer the typed value so the derived inputStr stays
+    // at what the user typed, preventing the async IPC response from
+    // overwriting the input while they continue typing.
+    localStrInput = raw;
+
     const newVal: TreeConfigValue = { type: 'string', value: raw };
 
     // Validate: max length
@@ -338,6 +353,7 @@
         aria-label={leaf.name}
         aria-invalid={isInvalid}
         oninput={handleStringInput}
+        onblur={() => { localStrInput = null; }}
       />
     {:else if isEditable && leaf.elementType === 'int'}
       <input

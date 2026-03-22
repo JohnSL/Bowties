@@ -8,14 +8,21 @@
  * Spec: 009-editable-bowties, data-model.md §4, research.md R-004.
  */
 
+import { SvelteMap } from 'svelte/reactivity';
 import type { LayoutFile, BowtieMetadata, RoleClassification, BowtieMetadataEdit, BowtieEditKind } from '$lib/types/bowtie';
 import { layoutStore } from '$lib/stores/layout.svelte';
 
 // ─── Store class ──────────────────────────────────────────────────────────────
 
 class BowtieMetadataStore {
-  /** Pending metadata edits keyed by a unique edit key. */
-  private _edits = $state<Map<string, BowtieMetadataEdit>>(new Map());
+  /**
+   * Pending metadata edits keyed by a unique edit key.
+   *
+   * Uses SvelteMap (svelte/reactivity) so that .set() / .delete() / .clear()
+   * mutations are natively tracked by Svelte 5's reactive scheduler, making
+   * isDirty / editCount reliably reactive from any component $derived or $effect.
+   */
+  private _edits = new SvelteMap<string, BowtieMetadataEdit>();
 
   /** Counter for generating unique edit IDs. */
   private _nextId = 0;
@@ -123,6 +130,14 @@ class BowtieMetadataStore {
     // Re-key the create edit
     const createEdit = this._edits.get(`create:${placeholderHex}`);
     if (createEdit?.kind.type === 'create') {
+      // Add a delete edit for the placeholder so _applyToLayout() removes it
+      // from the layout (which already contains the placeholder from the prior
+      // _applyToLayout() call that created it).
+      this._edits.set(`delete:${placeholderHex}`, {
+        id: this._makeId(),
+        kind: { type: 'delete', eventIdHex: placeholderHex },
+        timestamp: Date.now(),
+      });
       this._edits.delete(`create:${placeholderHex}`);
       this._edits.set(`create:${realEventIdHex}`, {
         ...createEdit,
@@ -221,9 +236,8 @@ class BowtieMetadataStore {
 
   /** Clear all pending metadata edits (used by discard). */
   clearAll(): void {
-    // Reassign rather than .clear() so Svelte 5 reactive $state sees a new Map
-    // and reliably re-evaluates all derived values that depend on _edits.
-    this._edits = new Map();
+    // SvelteMap.clear() is natively reactive — all subscribers re-evaluate.
+    this._edits.clear();
   }
 
   // ── Queries ────────────────────────────────────────────────────────────────

@@ -30,7 +30,6 @@ pub struct MenuHandles {
 pub fn build_app_menu(app: &AppHandle<Wry>) -> tauri::Result<(tauri::menu::Menu<Wry>, MenuHandles)> {
 
     // ── File ──────────────────────────────────────────────────────────────
-    let connect_item    = MenuItem::with_id(app, "menu-connect",    "Connect…",   true,  None::<&str>)?;
     let disconnect_item = MenuItem::with_id(app, "menu-disconnect", "Disconnect", false, None::<&str>)?;
 
     let exit_item = MenuItem::with_id(app, "menu-exit", "Exit", true, None::<&str>)?;
@@ -40,7 +39,6 @@ pub fn build_app_menu(app: &AppHandle<Wry>) -> tauri::Result<(tauri::menu::Menu<
     let save_layout_as_item = MenuItem::with_id(app, "menu-save-layout-as", "Save Layout As\u{2026}", false, Some("CmdOrCtrl+Shift+S"))?;
 
     let file_submenu = SubmenuBuilder::new(app, "File")
-        .item(&connect_item)
         .item(&disconnect_item)
         .separator()
         .item(&open_layout_item)

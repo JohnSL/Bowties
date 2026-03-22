@@ -1519,55 +1519,13 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
 
         let frames = MemoryConfigCmd::build_update_complete(our_alias, dest_alias)?;
 
-        let mut rx = {
-            let disp = dispatcher.lock().await;
-            disp.subscribe_all()
-        };
-
-        {
-            let disp = dispatcher.lock().await;
-            for frame in frames.iter() {
-                disp.send(frame).await?;
-            }
+        let disp = dispatcher.lock().await;
+        for frame in frames.iter() {
+            disp.send(frame).await?;
         }
 
-        // Wait for Datagram Received OK — node may spend several seconds writing to non-volatile storage.
-        let start_time = Instant::now();
-        let max_duration = Duration::from_millis(crate::constants::UPDATE_COMPLETE_TIMEOUT_MS);
-
-        loop {
-            let remaining = max_duration.saturating_sub(start_time.elapsed());
-            if remaining.is_zero() {
-                return Err(crate::Error::Timeout(
-                    "Timeout waiting for update complete acknowledgment".to_string(),
-                ));
-            }
-
-            match tokio::time::timeout(remaining, rx.recv()).await {
-                Ok(Ok(msg)) => {
-                    if let Ok((mti, src)) = MTI::from_header(msg.frame.header) {
-                        if mti == MTI::DatagramReceivedOk && src == dest_alias {
-                            if msg.frame.data.len() >= 2 {
-                                let dst = ((msg.frame.data[0] as u16) << 8) | (msg.frame.data[1] as u16);
-                                if dst == our_alias {
-                                    return Ok(());
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(Err(_)) => {
-                    return Err(crate::Error::Timeout(
-                        "Broadcast channel lagged during update complete".to_string(),
-                    ));
-                }
-                Err(_) => {
-                    return Err(crate::Error::Timeout(
-                        "Timeout waiting for update complete acknowledgment".to_string(),
-                    ));
-                }
-            }
-        }
+        // Fire-and-forget: not all nodes send a Datagram Received OK acknowledgement.
+        Ok(())
     }
 
     /// Send update complete using direct transport.
@@ -1601,29 +1559,8 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
             transport.send(frame).await?;
         }
 
-        // Wait for Datagram Received OK — node may spend several seconds writing to non-volatile storage.
-        let start_time = Instant::now();
-        let max_duration = Duration::from_millis(crate::constants::UPDATE_COMPLETE_TIMEOUT_MS);
-
-        while start_time.elapsed() < max_duration {
-            let remaining = max_duration.saturating_sub(start_time.elapsed());
-            if let Some(frame) = transport.receive(remaining.as_millis() as u64).await? {
-                if let Ok((mti, src)) = MTI::from_header(frame.header) {
-                    if mti == MTI::DatagramReceivedOk && src == dest_alias {
-                        if frame.data.len() >= 2 {
-                            let dst = ((frame.data[0] as u16) << 8) | (frame.data[1] as u16);
-                            if dst == our_alias {
-                                return Ok(());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Err(crate::Error::Timeout(
-            "Timeout waiting for update complete acknowledgment".to_string(),
-        ))
+        // Fire-and-forget: not all nodes send a Datagram Received OK acknowledgement.
+        Ok(())
     }
 }
 
@@ -1899,8 +1836,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_update_complete_success() {
-        let ack = make_datagram_ack(0xBBB, 0xAAA);
-        let mock = MockTransport::new(vec![ack]);
+        let mock = MockTransport::new(vec![]); // no response needed — fire-and-forget
         let mut connection = LccConnection::with_transport(
             Box::new(mock),
             NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]),
@@ -1912,8 +1848,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_send_update_complete_timeout() {
-        let mock = MockTransport::new(vec![]); // no responses
+    async fn test_send_update_complete_no_ack_still_succeeds() {
+        let mock = MockTransport::new(vec![]); // no response — should still succeed
         let mut connection = LccConnection::with_transport(
             Box::new(mock),
             NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]),
@@ -1921,7 +1857,7 @@ mod tests {
         );
 
         let result = connection.send_update_complete(0xBBB).await;
-        assert!(result.is_err(), "Update complete with no ACK should fail");
+        assert!(result.is_ok(), "Update complete without ACK should still succeed (fire-and-forget)");
     }
 
     // --- probe_nodes tests ---

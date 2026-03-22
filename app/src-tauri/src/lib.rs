@@ -189,6 +189,9 @@ pub fn run() {
                     "menu-traffic"        => { let _ = app_h.emit("menu-traffic", ()); }
                     "menu-view-cdi"       => { let _ = app_h.emit("menu-view-cdi", ()); }
                     "menu-redownload-cdi" => { let _ = app_h.emit("menu-redownload-cdi", ()); }
+                    "menu-open-layout"    => { let _ = app_h.emit("menu-open-layout", ()); }
+                    "menu-save-layout"    => { let _ = app_h.emit("menu-save-layout", ()); }
+                    "menu-save-layout-as" => { let _ = app_h.emit("menu-save-layout-as", ()); }
                     "menu-exit"           => { let _ = app_h.emit("menu-exit", ()); }
                     _ => {}
                 }

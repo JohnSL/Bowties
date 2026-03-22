@@ -101,9 +101,10 @@ class LayoutStore {
   /**
    * Save the current layout to its existing path.
    * If no path is set, falls back to saveLayoutAs.
+   * Returns true if the save was performed, false if cancelled or no-op.
    */
-  async saveCurrentLayout(): Promise<void> {
-    if (!this._layout) return;
+  async saveCurrentLayout(): Promise<boolean> {
+    if (!this._layout) return false;
 
     if (!this._path) {
       return this.saveLayoutAs();
@@ -114,6 +115,7 @@ class LayoutStore {
       await saveLayout(this._path, this._layout);
       this._savedLayout = JSON.parse(JSON.stringify(this._layout));
       this._dirty = false;
+      return true;
     } finally {
       this._busy = false;
     }
@@ -121,9 +123,11 @@ class LayoutStore {
 
   /**
    * Save the current layout with a native "Save As" dialog.
+   * Auto-creates an empty layout when none is loaded (fixes Bug 3).
+   * Returns true if the save was performed, false if the user cancelled.
    */
-  async saveLayoutAs(): Promise<void> {
-    if (!this._layout) return;
+  async saveLayoutAs(): Promise<boolean> {
+    if (!this._layout) this.newLayout();
 
     const selected = await save({
       title: 'Save Layout File',
@@ -133,17 +137,18 @@ class LayoutStore {
       ],
     });
 
-    if (!selected) return; // user cancelled
+    if (!selected) return false; // user cancelled
 
     this._busy = true;
     try {
-      await saveLayout(selected, this._layout);
+      await saveLayout(selected, this._layout!);
       this._path = selected;
       this._savedLayout = JSON.parse(JSON.stringify(this._layout));
       this._dirty = false;
 
       // Remember as recent layout
       await setRecentLayout(selected);
+      return true;
     } finally {
       this._busy = false;
     }

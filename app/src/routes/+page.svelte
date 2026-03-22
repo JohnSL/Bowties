@@ -359,8 +359,9 @@
       unlistens.push(await listen('menu-save-layout', () => {
         saveControlsRef?.triggerSave();
       }));
-      unlistens.push(await listen('menu-save-layout-as', () => {
-        saveControlsRef?.triggerSaveAs();
+      unlistens.push(await listen('menu-save-layout-as', async () => {
+        const saved = await layoutStore.saveLayoutAs();
+        if (saved) bowtieMetadataStore.clearAll();
       }));
     })();
 
@@ -740,19 +741,23 @@
     const layoutDirty  = layoutStore.isDirty;
     const metaDirty    = bowtieMetadataStore.isDirty;
 
-    const canOpenLayout   = conn && !busy;
-    const canSaveLayout   = conn && layoutLoaded && (layoutDirty || metaDirty);
-    const canSaveLayoutAs = conn && !busy;
+    const canOpenLayout   = !busy;
+    const canSaveLayout   = layoutLoaded && (layoutDirty || metaDirty);
+    const canSaveLayoutAs = !busy;
 
     syncMenuState(conn, busy, canViewCdi, canRedownloadCdi, canOpenLayout, canSaveLayout, canSaveLayoutAs);
   });
 
-  // Dynamic window title — reflects current layout file name and dirty state
-  $effect(() => {
-    const title = layoutStore.isLoaded
+  // Dynamic window title — reflects current layout file name and dirty state.
+  // Using $derived (not computed inside $effect) so Svelte 5 reliably tracks
+  // all reactive dependencies: _layout, _path, _dirty, and the SvelteMap edits.
+  let windowTitle = $derived(
+    layoutStore.isLoaded
       ? `Bowties::LCC \u2014 ${layoutStore.displayName}${layoutStore.isDirty || bowtieMetadataStore.isDirty ? ' \u2022' : ''}`
-      : 'Bowties::LCC';
-    getCurrentWebviewWindow().setTitle(title).catch(() => {});
+      : 'Bowties::LCC'
+  );
+  $effect(() => {
+    getCurrentWebviewWindow().setTitle(windowTitle).catch(() => {});
   });
 </script>
 
