@@ -24,6 +24,8 @@ The status indicator in the connection bar turns green when the link is establis
 4. Choose the correct COM port (Windows) or `/dev/ttyUSB*` device (Linux) from the dropdown.
 5. Click **Connect**.
 
+![Add connection dialog with GridConnect serial selected](../images/add-connection-dialog.png)
+
 ### Via a USB-to-CAN adapter (SLCAN)
 
 > Supported adapters: Canable, Lawicel CANUSB, other `slcand`-compatible adapters
@@ -34,19 +36,17 @@ Same steps as GridConnect serial, but choose **SLCAN (USB/Serial)** in step 3.
 
 ## Discovering nodes
 
-After connecting, click **Discover Nodes** in the toolbar. Bowties sends a broadcast and collects responses from every node on the network.
+After connecting, click **Discover Nodes** in the toolbar. The **Node List** will populate with the nodes on your layout. This only takes a second or two.
 
-The **Node List** appears showing:
+## Reading node configuration
 
-| Column | Description |
-|--------|-------------|
-| Name | User-assigned name (if set) or node ID |
-| Manufacturer | From the node's SNIP data |
-| Model | Hardware model string |
-| Version | Software version |
-| Status | Online / Offline |
+Before you can view configuration or the Bowties event map, click **Read Node Configuration** in the toolbar. Progress bars show how each node is coming along — on a large layout this can take a while.
 
-Discovery takes about one second on a typical layout. You can run it again at any time to refresh the list.
+![Node list after discovery, showing the Read Node Configuration button](../images/nodes-list.png)
+
+Once complete, you can click into any node to view or edit its configuration, or switch to the Bowties view.
+
+> **Note:** Configuration is cached after the first read, so subsequent launches are much faster.
 
 ---
 
@@ -57,7 +57,7 @@ Discovery takes about one second on a typical layout. You can run it again at an
 3. The main area shows the segment's groups as cards. Each card displays the fields and sub-groups for that configuration group.
 4. Field values are read from the node and shown in-place inside each card.
 
-> **Note:** The first time you open a node, Bowties fetches and caches its CDI from the hardware. Subsequent opens load from the local cache and are instant.
+![Configuration view showing discovered nodes and a node being edited](../images/config-view-edit.png)
 
 ---
 
@@ -78,8 +78,10 @@ The field indicator changes to ✓ when the write is confirmed by the node.
 
 The **Bowties View** shows a visual map of event producer/consumer relationships across your entire layout.
 
-- Each **bowtie** shape represents a matched producer ↔ consumer pair.
-- **Half-bowties** represent events that have a producer but no consumer yet, or vice versa.
+![Bowties view showing two buttons wired to a turnout's direction and indicator LED](../images/bowties-view.png)
+
+- Each **bowtie** shape represents an event shared between one or more producers and one or more consumers.
+- **Half-bowties** represent events that have producers but no consumers yet, or vice versa.
 - **Hovering** a bowtie shows a summary tooltip (node name, segment, element).
 - **Clicking** a bowtie jumps to that element in the Configuration View.
 
@@ -103,11 +105,7 @@ To link a producer to a consumer:
 
 You can also start a connection from the Configuration View: click **→ New Connection** next to any event ID field in a card. The dialog opens with that element pre-filled on the appropriate side.
 
----
-
-## Traffic monitor
-
-Click **Monitor** in the toolbar to open the real-time traffic monitor. All LCC frames received on the connection are displayed with timestamps, MTI labels, and decoded payloads. This is useful for verifying that a node is responding and for watching event traffic when you press buttons or trigger sensors.
+![New Connection dialog with a planning bowtie being created](../images/planning-bowtie.png)
 
 ---
 
