@@ -267,3 +267,83 @@ describe('tag management', () => {
     expect(meta?.tags).toContain('main');
   });
 });
+
+// ─── adoptEventId ─────────────────────────────────────────────────────────────
+
+describe('adoptEventId', () => {
+  it('in-session created bowtie: re-keys create edit to real event ID', () => {
+    bowtieMetadataStore.createBowtie(PLANNING_ID, 'Future');
+    bowtieMetadataStore.adoptEventId(PLANNING_ID, REAL_ID);
+    expect(bowtieMetadataStore.allEventIds).toContain(REAL_ID);
+    expect(bowtieMetadataStore.allEventIds).not.toContain(PLANNING_ID);
+    expect(bowtieMetadataStore.getMetadata(REAL_ID)?.name).toBe('Future');
+  });
+
+  it('file-loaded bowtie: removes placeholder and adds real event ID to layout', () => {
+    seedLayout({ [PLANNING_ID]: { name: 'Future', tags: [] } });
+    bowtieMetadataStore.adoptEventId(PLANNING_ID, REAL_ID);
+    expect(mockLayout.current?.bowties[PLANNING_ID]).toBeUndefined();
+    expect(mockLayout.current?.bowties[REAL_ID]).toBeDefined();
+  });
+
+  it('file-loaded bowtie: preserves the original name', () => {
+    seedLayout({ [PLANNING_ID]: { name: 'Future', tags: [] } });
+    bowtieMetadataStore.adoptEventId(PLANNING_ID, REAL_ID);
+    expect(bowtieMetadataStore.getMetadata(REAL_ID)?.name).toBe('Future');
+  });
+
+  it('file-loaded bowtie: marks store as dirty', () => {
+    seedLayout({ [PLANNING_ID]: { name: 'Future', tags: [] } });
+    bowtieMetadataStore.adoptEventId(PLANNING_ID, REAL_ID);
+    expect(bowtieMetadataStore.isDirty).toBe(true);
+  });
+});
+
+// ─── demoteToPlanningBowtie ───────────────────────────────────────────────────
+
+describe('demoteToPlanningBowtie', () => {
+  it('removes the real event ID from the layout', () => {
+    seedLayout({ [REAL_ID]: { name: 'Blink', tags: [] } });
+    bowtieMetadataStore.demoteToPlanningBowtie(REAL_ID);
+    expect(mockLayout.current?.bowties[REAL_ID]).toBeUndefined();
+  });
+
+  it('adds a planning-prefixed entry to the layout', () => {
+    seedLayout({ [REAL_ID]: { name: 'Blink', tags: [] } });
+    bowtieMetadataStore.demoteToPlanningBowtie(REAL_ID);
+    const keys = Object.keys(mockLayout.current?.bowties ?? {});
+    expect(keys.some(k => k.startsWith('planning-'))).toBe(true);
+  });
+
+  it('preserves the bowtie name in the new planning entry', () => {
+    seedLayout({ [REAL_ID]: { name: 'Blink', tags: [] } });
+    bowtieMetadataStore.demoteToPlanningBowtie(REAL_ID);
+    const keys = Object.keys(mockLayout.current?.bowties ?? {});
+    const planningKey = keys.find(k => k.startsWith('planning-'))!;
+    expect(mockLayout.current?.bowties[planningKey]?.name).toBe('Blink');
+  });
+
+  it('preserves tags in the new planning entry', () => {
+    seedLayout({ [REAL_ID]: { name: 'Blink', tags: ['yard', 'main'] } });
+    bowtieMetadataStore.demoteToPlanningBowtie(REAL_ID);
+    const keys = Object.keys(mockLayout.current?.bowties ?? {});
+    const planningKey = keys.find(k => k.startsWith('planning-'))!;
+    expect(mockLayout.current?.bowties[planningKey]?.tags).toEqual(
+      expect.arrayContaining(['yard', 'main'])
+    );
+  });
+
+  it('marks store as dirty', () => {
+    seedLayout({ [REAL_ID]: { name: 'Blink', tags: [] } });
+    bowtieMetadataStore.demoteToPlanningBowtie(REAL_ID);
+    expect(bowtieMetadataStore.isDirty).toBe(true);
+  });
+
+  it('new planning entry appears in allEventIds', () => {
+    seedLayout({ [REAL_ID]: { name: 'Blink', tags: [] } });
+    bowtieMetadataStore.demoteToPlanningBowtie(REAL_ID);
+    const allIds = bowtieMetadataStore.allEventIds;
+    expect(allIds.some(id => id.startsWith('planning-'))).toBe(true);
+    expect(allIds).not.toContain(REAL_ID);
+  });
+});

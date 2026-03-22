@@ -128,6 +128,21 @@ class BowtieMetadataStore {
         ...createEdit,
         kind: { ...createEdit.kind, eventIdHex: realEventIdHex },
       });
+    } else {
+      // The planning bowtie was loaded from the layout file — no in-session
+      // create edit exists. Add a delete for the old placeholder key and a
+      // create for the real event ID (preserving the original name).
+      const existingMeta = layoutStore.layout?.bowties[placeholderHex];
+      this._edits.set(`delete:${placeholderHex}`, {
+        id: this._makeId(),
+        kind: { type: 'delete', eventIdHex: placeholderHex },
+        timestamp: Date.now(),
+      });
+      this._edits.set(`create:${realEventIdHex}`, {
+        id: this._makeId(),
+        kind: { type: 'create', eventIdHex: realEventIdHex, name: existingMeta?.name },
+        timestamp: Date.now(),
+      });
     }
     // Re-key any rename edit
     const renameEdit = this._edits.get(`rename:${placeholderHex}`);
@@ -152,6 +167,55 @@ class BowtieMetadataStore {
         });
       }
     }
+    this._applyToLayout();
+  }
+
+  /**
+   * Demote a bowtie from an active/incomplete state back to planning by
+   * replacing its real event ID key with a fresh `planning-` placeholder.
+   *
+   * Used when the user removes the last element from a bowtie but chooses
+   * to keep the bowtie as a planning entry. The node's event slot is left
+   * unchanged — no hardware write is needed.
+   */
+  demoteToPlanningBowtie(eventIdHex: string): void {
+    const placeholderHex = `planning-${Date.now()}`;
+    const existingMeta = this._getEffectiveMetadata(eventIdHex);
+
+    // Remove any in-session create/rename/tag edits for the old event ID
+    this._edits.delete(`create:${eventIdHex}`);
+    this._edits.delete(`rename:${eventIdHex}`);
+    for (const key of [...this._edits.keys()]) {
+      const edit = this._edits.get(key)!;
+      if (
+        (edit.kind.type === 'addTag' || edit.kind.type === 'removeTag') &&
+        edit.kind.eventIdHex === eventIdHex
+      ) {
+        this._edits.delete(key);
+      }
+    }
+
+    // Delete the real event ID from the layout
+    this._edits.set(`delete:${eventIdHex}`, {
+      id: this._makeId(),
+      kind: { type: 'delete', eventIdHex },
+      timestamp: Date.now(),
+    });
+
+    // Create a fresh planning entry preserving the bowtie's name and tags
+    this._edits.set(`create:${placeholderHex}`, {
+      id: this._makeId(),
+      kind: { type: 'create', eventIdHex: placeholderHex, name: existingMeta?.name },
+      timestamp: Date.now(),
+    });
+    for (const tag of existingMeta?.tags ?? []) {
+      this._edits.set(`addTag:${placeholderHex}:${tag}`, {
+        id: this._makeId(),
+        kind: { type: 'addTag', eventIdHex: placeholderHex, tag },
+        timestamp: Date.now(),
+      });
+    }
+
     this._applyToLayout();
   }
 

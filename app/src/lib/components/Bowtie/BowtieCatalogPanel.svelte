@@ -222,10 +222,10 @@
       card.consumers.length === 0 &&
       card.eventIdHex.startsWith('planning-')
     ) {
-      // Adopt the element's current event ID — no node write
-      if (selection.currentEventId && selection.currentEventId !== '00.00.00.00.00.00.00.00') {
-        bowtieMetadataStore.adoptEventId(card.eventIdHex, selection.currentEventId);
-      }
+      // Adopt the selected element's event ID as the bowtie's canonical event ID.
+      // LCC nodes always have manufacturer-assigned event IDs in their slots, so
+      // we unconditionally use whatever is there — no node write needed.
+      bowtieMetadataStore.adoptEventId(card.eventIdHex, selection.currentEventId);
       return;
     }
 
@@ -289,9 +289,12 @@
   // ── T032: Delete confirmation ──────────────────────────────────────────
 
   function confirmDeleteKeepPlanning() {
-    const { card, pendingEntry } = deleteConfirmDialog;
+    const { card } = deleteConfirmDialog;
     deleteConfirmDialog = { visible: false, card: null, pendingEntry: null };
-    if (card && pendingEntry) doRemoveElement(card, pendingEntry);
+    if (!card) return;
+    // Demote to planning: replace the real event ID with a planning placeholder.
+    // The node's event slot is left unchanged — no hardware write needed.
+    bowtieMetadataStore.demoteToPlanningBowtie(card.eventIdHex);
   }
 
   function confirmDeleteBowtie() {

@@ -386,6 +386,11 @@ function collectEntriesForEventId(eventIdHex: string): { producers: EventSlotEnt
       const val = effectiveValue(leaf);
       if (val?.type !== 'eventId' || val.hex !== eventIdHex) continue;
 
+      // Prefer the JS-side role classification (set when the user picks a slot
+      // in the ElementPicker) over the Rust tree's eventRole, which may still
+      // be 'Ambiguous' for unclassified slots.
+      const slotKey = `${nodeId}:${leaf.path.join('/')}`;
+      const classifiedRole = bowtieMetadataStore.getRoleClassification(slotKey)?.role;
       const entry: EventSlotEntry = {
         node_id: nodeId,
         node_name: resolveNodeDisplayName(nodeId),
@@ -393,7 +398,7 @@ function collectEntriesForEventId(eventIdHex: string): { producers: EventSlotEnt
         element_label: buildElementLabel(tree, leaf),
         element_description: leaf.description,
         event_id: val.bytes,
-        role: leaf.eventRole ?? 'Ambiguous',
+        role: classifiedRole ?? leaf.eventRole ?? 'Ambiguous',
       };
 
       if (entry.role === 'Producer') {

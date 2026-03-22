@@ -29,6 +29,8 @@ const mockLayoutState = { layout: null as LayoutFile | null };
 const mockTreesMap = new Map<string, NodeConfigTree>();
 const mockMetadataEdits = new Map<string, any>();
 const mockNodeInfoMap = new Map<string, any>();
+// Controllable role-classification map — tests set entries to exercise Bug 2 fix.
+const mockRoleClassificationsMap = new Map<string, { role: string }>();
 
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(() => Promise.resolve(() => {})),
@@ -63,6 +65,7 @@ vi.mock('$lib/stores/bowtieMetadata.svelte', () => ({
     getMetadata(_eventIdHex: string) { return undefined; },
     getDirtyFields(_eventIdHex: string) { return new Set<string>(); },
     get allEventIds() { return []; },
+    getRoleClassification(key: string) { return mockRoleClassificationsMap.get(key); },
   },
 }));
 
@@ -153,6 +156,7 @@ beforeEach(() => {
   mockTreesMap.clear();
   mockMetadataEdits.clear();
   mockNodeInfoMap.clear();
+  mockRoleClassificationsMap.clear();
   bowtieCatalogStore.reset();
 });
 
@@ -216,6 +220,34 @@ describe('EditableBowtiePreviewStore.preview', () => {
     expect(preview.bowties.length).toBe(1);
     expect(preview.bowties[0].producers.length).toBe(1);
     expect(preview.bowties[0].consumers.length).toBe(1);
+  });
+
+  // ── Scenario 5: JS-side role classification overrides Rust tree eventRole ──
+
+  it('uses JS-side role classification to place ambiguous slot as producer (Bug 2 fix)', () => {
+    // Arrange: layout bowtie + tree with one Ambiguous leaf that was classified as Producer
+    mockLayoutState.layout = makeLayout(TEST_EVENT_HEX, 'Test Bowtie');
+
+    const nodeId = '02.01.57.00.00.01';
+    const leafPath = ['seg:0', 'elem:0#1', 'elem:0'];
+    const leaf = makeEventIdLeaf({
+      path: leafPath,
+      eventRole: null, // Ambiguous/unclassified in Rust tree
+    });
+    mockTreesMap.set(nodeId, makeTree(nodeId, [leaf]));
+
+    // User classified this slot as Producer via the picker
+    const slotKey = `${nodeId}:${leafPath.join('/')}`;
+    mockRoleClassificationsMap.set(slotKey, { role: 'Producer' });
+
+    // Act
+    const preview = editableBowtiePreviewStore.preview;
+
+    // Assert: entry must appear as a producer, not a consumer
+    const card = preview.bowties.find(b => b.eventIdHex === TEST_EVENT_HEX);
+    expect(card).toBeDefined();
+    expect(card!.producers.length).toBe(1);
+    expect(card!.consumers.length).toBe(0);
   });
 
   // ── Scenario 4: Catalog card merges with tree entries ─────────────────────
