@@ -153,6 +153,17 @@
   function handleCancelDiscard() {
     showDiscardDialog = false;
   }
+
+  // Exposed imperative API — callable via bind:this from a parent component.
+  // Used by the File → Save Layout (Ctrl+S) and Save Layout As… menu listeners.
+  export function triggerSave(): void {
+    handleSave();
+  }
+
+  export async function triggerSaveAs(): Promise<void> {
+    await layoutStore.saveLayoutAs();
+    bowtieMetadataStore.clearAll();
+  }
 </script>
 
 {#if hasEdits || isSaving || saveProgress.state === 'completed' || saveProgress.state === 'partial-failure'}

@@ -35,6 +35,15 @@
   // Active tab state — 'config' (default) or 'bowties'
   let activeTab = $state<'config' | 'bowties'>('config');
 
+  // Ref to SaveControls for imperative save calls from menu shortcuts
+  let saveControlsRef = $state<SaveControls | null>(null);
+
+  // Keyboard handler for the segmented mode control (ArrowLeft / ArrowRight)
+  function handleModeKeydown(e: KeyboardEvent): void {
+    if (e.key === 'ArrowLeft')  { activeTab = 'config';  e.preventDefault(); }
+    else if (e.key === 'ArrowRight') { activeTab = 'bowties'; e.preventDefault(); }
+  }
+
   // T050: prompt-to-save guard state
   let unsavedDialog = $state<{ message: string; proceed: () => void; confirmLabel: string } | null>(null);
   let isForceClosing = false;
@@ -343,6 +352,15 @@
           bowtieMetadataStore.clearAll();
           win.close();
         }, 'Exit Without Saving');
+      }));
+      unlistens.push(await listen('menu-open-layout', () => {
+        promptUnsaved('Opening a new layout will discard unsaved changes. Continue?', () => layoutStore.openLayout(), 'Discard & Open');
+      }));
+      unlistens.push(await listen('menu-save-layout', () => {
+        saveControlsRef?.triggerSave();
+      }));
+      unlistens.push(await listen('menu-save-layout-as', () => {
+        saveControlsRef?.triggerSaveAs();
       }));
     })();
 
@@ -678,7 +696,10 @@
     conn: boolean,
     busy: boolean,
     canViewCdi: boolean,
-    canRedownloadCdi: boolean
+    canRedownloadCdi: boolean,
+    canOpenLayout: boolean,
+    canSaveLayout: boolean,
+    canSaveLayoutAs: boolean,
   ) {
     try {
       await invoke("update_menu_state", {
@@ -686,6 +707,9 @@
         isBusy: busy,
         canViewCdi,
         canRedownloadCdi,
+        canOpenLayout,
+        canSaveLayout,
+        canSaveLayoutAs,
       });
     } catch (e) {
       console.warn("Failed to update menu state:", e);
@@ -711,7 +735,24 @@
       !busy &&
       (!!store.selectedSegment || (!!selectedNodeId && nodesWithCdi.has(selectedNodeId)));
 
-    syncMenuState(conn, busy, canViewCdi, canRedownloadCdi);
+    // Layout menu items
+    const layoutLoaded = layoutStore.isLoaded;
+    const layoutDirty  = layoutStore.isDirty;
+    const metaDirty    = bowtieMetadataStore.isDirty;
+
+    const canOpenLayout   = conn && !busy;
+    const canSaveLayout   = conn && layoutLoaded && (layoutDirty || metaDirty);
+    const canSaveLayoutAs = conn && !busy;
+
+    syncMenuState(conn, busy, canViewCdi, canRedownloadCdi, canOpenLayout, canSaveLayout, canSaveLayoutAs);
+  });
+
+  // Dynamic window title — reflects current layout file name and dirty state
+  $effect(() => {
+    const title = layoutStore.isLoaded
+      ? `Bowties::LCC \u2014 ${layoutStore.displayName}${layoutStore.isDirty || bowtieMetadataStore.isDirty ? ' \u2022' : ''}`
+      : 'Bowties::LCC';
+    getCurrentWebviewWindow().setTitle(title).catch(() => {});
   });
 </script>
 
@@ -722,15 +763,35 @@
   {#if connected}
     <div class="toolbar" role="toolbar" aria-label="Main toolbar">
       <div class="toolbar-left">
-        <button
-          class="toolbar-btn"
-          onclick={handleRefresh}
-          disabled={probing || readingRemaining}
-          title={nodes.length > 0 ? 'Refresh nodes on the network' : 'Discover nodes on the network'}
+        <!-- Segmented mode control: Config | Bowties -->
+        <div
+          class="mode-control"
+          role="group"
+          aria-label="View mode"
         >
-          <span class="tb-icon" class:tb-spin={probing}>⟳</span>
-          <span>{probing ? 'Refreshing…' : nodes.length > 0 ? 'Refresh Nodes' : 'Discover Nodes'}</span>
-        </button>
+          <button
+            class="toolbar-seg"
+            class:toolbar-btn-active={activeTab === 'config'}
+            aria-pressed={activeTab === 'config'}
+            onclick={() => activeTab = 'config'}
+            onkeydown={handleModeKeydown}
+            title="Configuration view"
+          >
+            <span class="tb-icon">⚙</span>
+            <span>Config</span>
+          </button>
+          <button
+            class="toolbar-seg"
+            class:toolbar-btn-active={activeTab === 'bowties'}
+            aria-pressed={activeTab === 'bowties'}
+            onclick={() => activeTab = 'bowties'}
+            onkeydown={handleModeKeydown}
+            title="Bowtie connections view"
+          >
+            <span class="tb-icon">🎀</span>
+            <span>Bowties</span>
+          </button>
+        </div>
         {#if readingRemaining || unreadCount > 0}
           <span class="toolbar-sep" aria-hidden="true"></span>
           <button
@@ -743,60 +804,7 @@
             <span>{readingRemaining ? 'Reading…' : `Read Remaining (${unreadCount})`}</span>
           </button>
         {/if}
-        <span class="toolbar-sep" aria-hidden="true"></span>
-        <!-- FR-013: Bowties tab — disabled until cdi-read-complete fires -->
-        <button
-          class="toolbar-btn toolbar-btn-bowties"
-          class:toolbar-btn-active={activeTab === 'bowties'}
-          onclick={() => { activeTab = activeTab === 'bowties' ? 'config' : 'bowties'; }}
-          disabled={!bowtieCatalogStore.readComplete}
-          aria-disabled={!bowtieCatalogStore.readComplete}
-          aria-pressed={activeTab === 'bowties'}
-          title={bowtieCatalogStore.readComplete
-            ? 'View discovered bowtie connections'
-            : 'Bowties available after reading all node configurations'}
-        >
-          <span class="tb-icon">🎀</span>
-          <span>Bowties</span>
-          <!-- T022: Global unsaved indicator — show dot when trees have modified values or metadata is dirty -->
-          {#if [...nodeTreeStore.trees.values()].some(t => hasModifiedLeaves(t)) || bowtieMetadataStore.isDirty}
-            <span class="global-dirty-dot" title="Unsaved changes" aria-label="Unsaved changes">●</span>
-          {/if}
-        </button>
-        <SaveControls toolbar={true} />
-        <!-- Feature 009: Layout file controls -->
-        {#if bowtieCatalogStore.readComplete}
-          <span class="toolbar-sep" aria-hidden="true"></span>
-          <button
-            class="toolbar-btn"
-            onclick={() => promptUnsaved('Opening a new layout will discard unsaved changes. Continue?', () => layoutStore.openLayout(), 'Discard & Open')}
-            disabled={layoutStore.isBusy}
-            title="Open a layout file (.bowties.yaml)"
-          >
-            <span class="tb-icon">📂</span>
-            <span>Open Layout</span>
-          </button>
-          {#if layoutStore.isLoaded}
-            <button
-              class="toolbar-btn"
-              onclick={async () => { await layoutStore.saveCurrentLayout(); bowtieMetadataStore.clearAll(); }}
-              disabled={layoutStore.isBusy || !layoutStore.isDirty}
-              title={layoutStore.isDirty ? `Save changes to ${layoutStore.displayName}` : 'No unsaved changes'}
-            >
-              <span class="tb-icon">💾</span>
-              <span>Save{layoutStore.isDirty ? '*' : ''}</span>
-            </button>
-            <button
-              class="toolbar-btn"
-              onclick={async () => { await layoutStore.saveLayoutAs(); bowtieMetadataStore.clearAll(); }}
-              disabled={layoutStore.isBusy}
-              title="Save layout to a new file"
-            >
-              <span class="tb-icon">💾</span>
-              <span>Save As</span>
-            </button>
-          {/if}
-        {/if}
+        <SaveControls toolbar={true} bind:this={saveControlsRef} />
       </div>
       <div class="toolbar-right">
         <button
@@ -1101,13 +1109,44 @@
     color: #4338ca !important;
   }
 
-  /* T022: Global unsaved-changes indicator dot */
-  .global-dirty-dot {
-    color: #ca5010;
-    font-size: 0.55rem;
-    vertical-align: super;
-    margin-left: 2px;
-    line-height: 1;
+  /* ── Segmented mode control (Config | Bowties capsule) ── */
+
+  .mode-control {
+    display: flex;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  }
+
+  .toolbar-seg {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    background: #ffffff;
+    border: none;
+    border-radius: 0;
+    font-size: 13px;
+    color: #374151;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.12s, color 0.12s;
+  }
+
+  .toolbar-seg + .toolbar-seg {
+    border-left: 1px solid #e0e0e0;
+  }
+
+  .toolbar-seg:hover:not(:disabled) {
+    background: #f0f4ff;
+    color: #4338ca;
+  }
+
+  .toolbar-seg.toolbar-btn-active {
+    background: #eff6ff;
+    color: #4338ca;
+    font-weight: 500;
   }
 
 

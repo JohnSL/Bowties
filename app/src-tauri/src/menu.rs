@@ -12,11 +12,14 @@ use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItem, PredefinedMenuItem};
 /// `MenuItem<Wry>` is internally Arc-backed and is `Clone + Send + Sync`,
 /// so the struct can be stored as managed Tauri state.
 pub struct MenuHandles {
-    pub disconnect:      MenuItem<Wry>,
-    pub refresh_nodes:   MenuItem<Wry>,
-    pub traffic_monitor: MenuItem<Wry>,
-    pub view_cdi:        MenuItem<Wry>,
-    pub redownload_cdi:  MenuItem<Wry>,
+    pub disconnect:       MenuItem<Wry>,
+    pub refresh_nodes:    MenuItem<Wry>,
+    pub traffic_monitor:  MenuItem<Wry>,
+    pub view_cdi:         MenuItem<Wry>,
+    pub redownload_cdi:   MenuItem<Wry>,
+    pub open_layout:      MenuItem<Wry>,
+    pub save_layout:      MenuItem<Wry>,
+    pub save_layout_as:   MenuItem<Wry>,
 }
 
 /// Build the native application menu.
@@ -32,9 +35,17 @@ pub fn build_app_menu(app: &AppHandle<Wry>) -> tauri::Result<(tauri::menu::Menu<
 
     let exit_item = MenuItem::with_id(app, "menu-exit", "Exit", true, None::<&str>)?;
 
+    let open_layout_item    = MenuItem::with_id(app, "menu-open-layout",    "Open Layout\u{2026}",    false, Some("CmdOrCtrl+O"))?;
+    let save_layout_item    = MenuItem::with_id(app, "menu-save-layout",    "Save Layout",        false, Some("CmdOrCtrl+S"))?;
+    let save_layout_as_item = MenuItem::with_id(app, "menu-save-layout-as", "Save Layout As\u{2026}", false, Some("CmdOrCtrl+Shift+S"))?;
+
     let file_submenu = SubmenuBuilder::new(app, "File")
         .item(&connect_item)
         .item(&disconnect_item)
+        .separator()
+        .item(&open_layout_item)
+        .item(&save_layout_item)
+        .item(&save_layout_as_item)
         .separator()
         .item(&exit_item)
         .build()?;
@@ -52,13 +63,10 @@ pub fn build_app_menu(app: &AppHandle<Wry>) -> tauri::Result<(tauri::menu::Menu<
     // ── Tools ─────────────────────────────────────────────────────────────
     let view_cdi_item       = MenuItem::with_id(app, "menu-view-cdi",       "View CDI XML for Selected Node",    false, None::<&str>)?;
     let redownload_cdi_item = MenuItem::with_id(app, "menu-redownload-cdi", "Re-download CDI for Selected Node", false, None::<&str>)?;
-    let disc_opts_item      = MenuItem::with_id(app, "menu-discovery-opts", "Discovery Options…",                true,  None::<&str>)?;
 
     let tools_submenu = SubmenuBuilder::new(app, "Tools")
         .item(&view_cdi_item)
         .item(&redownload_cdi_item)
-        .separator()
-        .item(&disc_opts_item)
         .build()?;
 
     // ── Help ──────────────────────────────────────────────────────────────
@@ -80,6 +88,9 @@ pub fn build_app_menu(app: &AppHandle<Wry>) -> tauri::Result<(tauri::menu::Menu<
         traffic_monitor: traffic_item,
         view_cdi:        view_cdi_item,
         redownload_cdi:  redownload_cdi_item,
+        open_layout:     open_layout_item,
+        save_layout:     save_layout_item,
+        save_layout_as:  save_layout_as_item,
     };
 
     Ok((menu, handles))

@@ -142,6 +142,9 @@ async fn update_menu_state(
     is_busy: bool,
     can_view_cdi: bool,
     can_redownload_cdi: bool,
+    can_open_layout: bool,
+    can_save_layout: bool,
+    can_save_layout_as: bool,
     handles: tauri::State<'_, MenuHandles>,
 ) -> Result<(), String> {
     handles.disconnect     .set_enabled(connected)                      .map_err(|e| e.to_string())?;
@@ -149,6 +152,9 @@ async fn update_menu_state(
     handles.traffic_monitor.set_enabled(connected)                      .map_err(|e| e.to_string())?;
     handles.view_cdi       .set_enabled(can_view_cdi)                   .map_err(|e| e.to_string())?;
     handles.redownload_cdi .set_enabled(can_redownload_cdi)             .map_err(|e| e.to_string())?;
+    handles.open_layout    .set_enabled(can_open_layout)                .map_err(|e| e.to_string())?;
+    handles.save_layout    .set_enabled(can_save_layout)                .map_err(|e| e.to_string())?;
+    handles.save_layout_as .set_enabled(can_save_layout_as)             .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -183,7 +189,6 @@ pub fn run() {
                     "menu-traffic"        => { let _ = app_h.emit("menu-traffic", ()); }
                     "menu-view-cdi"       => { let _ = app_h.emit("menu-view-cdi", ()); }
                     "menu-redownload-cdi" => { let _ = app_h.emit("menu-redownload-cdi", ()); }
-                    "menu-discovery-opts" => { let _ = app_h.emit("menu-discovery-opts", ()); }
                     "menu-exit"           => { let _ = app_h.emit("menu-exit", ()); }
                     _ => {}
                 }

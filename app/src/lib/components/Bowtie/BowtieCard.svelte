@@ -158,15 +158,7 @@
           aria-label="Edit connection name"
         />
       {:else}
-        <h3
-          class="card-title"
-          class:card-title-selectable={!highlighted && !!onSelect}
-          onclick={!highlighted && onSelect ? onSelect : undefined}
-          title={!highlighted ? 'Click to focus this bowtie' : undefined}
-          role={!highlighted && onSelect ? 'button' : undefined}
-          tabindex={!highlighted && onSelect ? 0 : undefined}
-          onkeydown={!highlighted && onSelect ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect?.(); } } : undefined}
-        >
+        {#snippet titleContent()}
           {#if card.name}
             {card.name} <span class="event-id-suffix">({card.event_id_hex})</span>
           {:else}
@@ -175,7 +167,21 @@
           {#if isDirty}
             <span class="dirty-dot" title="Unsaved changes" aria-label="Unsaved changes">●</span>
           {/if}
-        </h3>
+        {/snippet}
+        {#if !highlighted && !!onSelect}
+          <button
+            class="card-title card-title-selectable"
+            onclick={onSelect}
+            title="Click to focus this bowtie"
+            onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect?.(); } }}
+          >
+            {@render titleContent()}
+          </button>
+        {:else}
+          <h3 class="card-title">
+            {@render titleContent()}
+          </h3>
+        {/if}
         {#if onRename && !isWellKnownEvent(card.event_id_hex)}
           <button
             class="rename-btn"
