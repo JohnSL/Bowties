@@ -138,12 +138,35 @@
     }).length
   );
 
-  // Show CTA panel when nodes discovered but not yet read and nothing selected
+  // Show CTA panel only on a fresh session where NO nodes have been read yet.
+  // Once the user has read at least one node we stop showing it — new arrivals
+  // mid-session are signalled by the toolbar badge instead, so we don't
+  // disrupt whatever the user is already doing.
+  // Use configReadNodesStore.size === 0 rather than unreadCount === nodes.length
+  // because unreadCount excludes CDI-less nodes (e.g. JMRI), so the counts
+  // would never match on a mixed network.
   let showConfigCta = $derived(
     nodes.length > 0 &&
     unreadCount > 0 &&
+    $configReadNodesStore.size === 0 &&
     !$configSidebarStore.selectedSegment &&
     !$configSidebarStore.selectedNodeId
+  );
+
+  // The node whose segment is currently selected in the sidebar, if it has not
+  // been read yet. Used to show a per-node "read this node" CTA instead of an
+  // empty SegmentView.
+  let selectedUnreadNodeId = $derived((() => {
+    const sel = $configSidebarStore.selectedSegment?.nodeId ?? $configSidebarStore.selectedNodeId;
+    if (!sel) return null;
+    if ($configReadNodesStore.has(sel)) return null;
+    return sel;
+  })());
+
+  let selectedUnreadNodeName = $derived(
+    selectedUnreadNodeId
+      ? (nodes.find(n => formatNodeId(n.node_id) === selectedUnreadNodeId)?.snip_data?.user_name || selectedUnreadNodeId)
+      : null
   );
 
   // CDI XML viewer state
@@ -229,10 +252,14 @@
           });
         }
 
-        // Close modal immediately on cancellation
+        // Close modal immediately on cancellation or completion
         if (payload.status.type === 'Cancelled') {
           readProgress = null;
           isCancelling = false;
+          discoveryModalVisible = false;
+          nodeReadStates = [];
+        } else if (payload.status.type === 'Complete') {
+          readProgress = null;
           discoveryModalVisible = false;
           nodeReadStates = [];
         }
@@ -850,6 +877,20 @@
               {#if unreadCount > 0}
                 <span class="cta-badge">{unreadCount} unread</span>
               {/if}
+            </div>
+          {:else if selectedUnreadNodeId}
+            <div class="config-cta-panel">
+              <h2 class="cta-title">{selectedUnreadNodeName}</h2>
+              <p class="cta-desc">
+                Configuration has not been read from this node yet.
+              </p>
+              <button
+                class="cta-btn"
+                onclick={() => readSingleNodeConfig(selectedUnreadNodeId!)}
+                disabled={readingRemaining}
+              >
+                Read Configuration
+              </button>
             </div>
           {:else}
             <SegmentView />

@@ -158,9 +158,13 @@ impl MessageDispatcher {
                 Ok(Some(frame)) => {
                     // TapTransport already broadcast to all_tx.
                     // Route to MTI-specific subscribers here.
-                    if let Ok((mti, _)) = frame.get_mti() {
+                    if let Ok((mti, alias)) = frame.get_mti() {
                         let senders = mti_senders.read().await;
                         if let Some(tx) = senders.get(&mti) {
+                            eprintln!(
+                                "[Dispatcher] routing {:?} frame (alias=0x{:03X}, data_len={}) to MTI channel",
+                                mti, alias, frame.data.len()
+                            );
                             let msg = ReceivedMessage {
                                 frame,
                                 timestamp: std::time::Instant::now(),

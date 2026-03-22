@@ -52,6 +52,7 @@ pub async fn discover_nodes(
 pub async fn probe_nodes(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    eprintln!("[probe_nodes] command invoked");
     let connection_arc = {
         let conn_guard = state.connection.read().await;
         match conn_guard.as_ref() {
@@ -109,7 +110,15 @@ pub async fn query_snip_single(
 ) -> Result<QuerySnipResponse, String> {
     // Validate alias
     let _node_alias = NodeAlias::new(alias).map_err(|e| format!("Invalid alias: {}", e))?;
-    
+
+    // Look up node ID for logging before we query
+    let cached_node_id = state.get_nodes().await.iter()
+        .find(|n| n.alias.value() == alias)
+        .map(|n| n.node_id);
+    if let Some(node_id) = cached_node_id {
+        eprintln!("[SNIP] alias=0x{:03X}  node_id={}", alias, node_id);
+    }
+
     // Get connection reference
     let connection_arc = {
         let conn_guard = state.connection.read().await;
@@ -128,10 +137,7 @@ pub async fn query_snip_single(
     drop(connection);
     
     // Update node in cache if it exists
-    if let Some(node_id) = state.get_nodes().await.iter()
-        .find(|n| n.alias.value() == alias)
-        .map(|n| n.node_id)
-    {
+    if let Some(node_id) = cached_node_id {
         state.update_node(node_id, |node| {
             node.snip_data = snip_data.clone();
             node.snip_status = status;
@@ -385,6 +391,14 @@ pub async fn query_pip_single(
 ) -> Result<QueryPipResponse, String> {
     let _node_alias = NodeAlias::new(alias).map_err(|e| format!("Invalid alias: {}", e))?;
 
+    // Look up the node ID for logging before we query (pip.rs logs alias-only)
+    let cached_node_id = state.get_nodes().await.iter()
+        .find(|n| n.alias.value() == alias)
+        .map(|n| n.node_id);
+    if let Some(node_id) = cached_node_id {
+        eprintln!("[PIP] alias=0x{:03X}  node_id={}", alias, node_id);
+    }
+
     let connection_arc = {
         let conn_guard = state.connection.read().await;
         match conn_guard.as_ref() {
@@ -401,10 +415,7 @@ pub async fn query_pip_single(
     drop(connection);
 
     // Update node in cache if it exists
-    if let Some(node_id) = state.get_nodes().await.iter()
-        .find(|n| n.alias.value() == alias)
-        .map(|n| n.node_id)
-    {
+    if let Some(node_id) = cached_node_id {
         state.update_node(node_id, |node| {
             node.pip_flags = pip_flags;
             node.pip_status = status;

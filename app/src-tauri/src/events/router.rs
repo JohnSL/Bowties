@@ -160,13 +160,23 @@ impl EventRouter {
 
     /// Handle node discovered events
     fn handle_node_discovered(app: &AppHandle, msg: ReceivedMessage, our_alias: u16) {
-        // Parse VerifiedNode response
-        if msg.frame.data.len() == 6 {
+        eprintln!(
+            "[EventRouter] handle_node_discovered: frame={} data_len={}",
+            msg.frame.to_string(),
+            msg.frame.data.len()
+        );
+        // Parse VerifiedNode response — accept >= 6 bytes so nodes that include
+        // extra reserved/type bytes (some implementations send 8 bytes) are not
+        // silently ignored.
+        if msg.frame.data.len() >= 6 {
             if let Ok((_, alias)) = msg.frame.get_mti() {
                 // Ignore echoes of our own VerifiedNode responses
-                if alias == our_alias { return; }
-                // Node ID is in the data
-                let node_id_bytes: [u8; 6] = msg.frame.data.as_slice().try_into().unwrap_or([0; 6]);
+                if alias == our_alias {
+                    eprintln!("[EventRouter] ignoring own VerifiedNode (alias=0x{:03X})", alias);
+                    return;
+                }
+                // Node ID is in the first 6 bytes
+                let node_id_bytes: [u8; 6] = msg.frame.data[0..6].try_into().unwrap_or([0; 6]);
                 let node_id = format!(
                     "{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}",
                     node_id_bytes[0],
@@ -183,9 +193,12 @@ impl EventRouter {
                     timestamp: chrono::Utc::now().to_rfc3339(),
                 };
 
+                eprintln!("[EventRouter] emitting lcc-node-discovered: node_id={} alias=0x{:03X}", event.node_id, event.alias);
                 // Emit to frontend
                 let _ = app.emit("lcc-node-discovered", event);
             }
+        } else {
+            eprintln!("[EventRouter] handle_node_discovered: ignoring frame with {} data bytes (expected >= 6): {}", msg.frame.data.len(), msg.frame.to_string());
         }
     }
 
