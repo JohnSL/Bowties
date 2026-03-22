@@ -17,8 +17,10 @@ pub const UPDATE_COMPLETE_TIMEOUT_MS: u64 = 10_000;
 /// After the first VerifiedNode response during discovery, stop waiting once
 /// this many milliseconds have elapsed with no further responses. This avoids
 /// stalling on the full discovery timeout on a quiet network, while still
-/// allowing slower nodes time to reply.
-pub const DISCOVERY_SILENCE_THRESHOLD_MS: u64 = 100;
+/// allowing slower/bridged nodes (e.g. JMRI TCP gateway nodes) time to reply.
+/// Set to 250ms to cover typical bridge latencies (observed ~165ms for a JMRI
+/// TCP-bridged UWT-100 throttle on initial connect).
+pub const DISCOVERY_SILENCE_THRESHOLD_MS: u64 = 250;
 
 /// Maximum time (ms) to block on a single channel/transport poll tick inside
 /// the discovery loop. Keeps the silence-threshold check responsive.

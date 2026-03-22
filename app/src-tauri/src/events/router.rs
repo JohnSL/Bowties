@@ -61,44 +61,52 @@ impl EventRouter {
         }
     }
 
-    /// Start the event router
-    pub fn start(&mut self) {
+    /// Start the event router.
+    ///
+    /// Subscriptions are set up **synchronously** (before `tokio::spawn`) so that by the
+    /// time this function returns all broadcast receivers are in place.  This eliminates
+    /// the race where `probe_nodes` could be called before the spawned task had a chance
+    /// to run and subscribe, causing `VerifiedNode` replies to be silently dropped.
+    pub async fn start(&mut self) {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
         
+        // Subscribe BEFORE spawning — guaranteed in place when start() returns.
+        let all_rx = {
+            let disp = self.dispatcher.lock().await;
+            disp.subscribe_all()
+        };
+        let verified_node_rx = {
+            let disp = self.dispatcher.lock().await;
+            disp.subscribe_mti(MTI::VerifiedNode).await
+        };
+        let init_complete_rx = {
+            let disp = self.dispatcher.lock().await;
+            disp.subscribe_mti(MTI::InitializationComplete).await
+        };
+
+        eprintln!("[EventRouter] Subscribed to message channels (alias=0x{:03X})", self.our_alias);
+
         let app = self.app.clone();
-        let dispatcher = self.dispatcher.clone();
         let our_alias = self.our_alias;
         
         let handle = tokio::spawn(async move {
-            Self::router_loop(app, dispatcher, our_alias, shutdown_rx).await;
+            Self::router_loop(app, all_rx, verified_node_rx, init_complete_rx, our_alias, shutdown_rx).await;
         });
         
         self.router_task = Some(handle);
         self.shutdown_tx = Some(shutdown_tx);
     }
 
-    /// Main router loop
+    /// Main router loop — receivers are created by `start()` before this task is spawned.
     async fn router_loop(
         app: AppHandle,
-        dispatcher: Arc<Mutex<MessageDispatcher>>,
+        mut all_rx: tokio::sync::broadcast::Receiver<lcc_rs::ReceivedMessage>,
+        mut verified_node_rx: tokio::sync::broadcast::Receiver<lcc_rs::ReceivedMessage>,
+        mut init_complete_rx: tokio::sync::broadcast::Receiver<lcc_rs::ReceivedMessage>,
         our_alias: u16,
         mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
     ) {
-        eprintln!("[EventRouter] Starting router loop with our_alias=0x{:03X}", our_alias);
-        
-        // Subscribe to all messages
-        let mut all_rx = {
-            let disp = dispatcher.lock().await;
-            disp.subscribe_all()
-        };
-
-        // Subscribe to specific MTIs for node discovery
-        let mut verified_node_rx = {
-            let disp = dispatcher.lock().await;
-            disp.subscribe_mti(MTI::VerifiedNode).await
-        };
-
-        eprintln!("[EventRouter] Subscribed to message channels");
+        eprintln!("[EventRouter] Router loop started with our_alias=0x{:03X}", our_alias);
 
         loop {
             tokio::select! {
@@ -113,9 +121,14 @@ impl EventRouter {
                     Self::handle_all_messages(&app, msg, our_alias);
                 }
                 
-                // Handle node discovery
+                // Handle node discovery via VerifyNodeGlobal replies
                 Ok(msg) = verified_node_rx.recv() => {
-                    Self::handle_node_discovered(&app, msg);
+                    Self::handle_node_discovered(&app, msg, our_alias);
+                }
+
+                // Handle nodes that join mid-session (they announce via InitializationComplete)
+                Ok(msg) = init_complete_rx.recv() => {
+                    Self::handle_node_discovered(&app, msg, our_alias);
                 }
             }
         }
@@ -146,10 +159,12 @@ impl EventRouter {
     }
 
     /// Handle node discovered events
-    fn handle_node_discovered(app: &AppHandle, msg: ReceivedMessage) {
+    fn handle_node_discovered(app: &AppHandle, msg: ReceivedMessage, our_alias: u16) {
         // Parse VerifiedNode response
         if msg.frame.data.len() == 6 {
             if let Ok((_, alias)) = msg.frame.get_mti() {
+                // Ignore echoes of our own VerifiedNode responses
+                if alias == our_alias { return; }
                 // Node ID is in the data
                 let node_id_bytes: [u8; 6] = msg.frame.data.as_slice().try_into().unwrap_or([0; 6]);
                 let node_id = format!(

@@ -18,7 +18,18 @@ export function markNodeConfigRead(nodeId: string): void {
   });
 }
 
-/** Clear all read status (e.g. on refresh or disconnect) */
+/** Clear all read status (e.g. on disconnect) */
 export function clearConfigReadStatus(): void {
   configReadNodesStore.set(new Set());
+}
+
+/** Remove read status for a specific set of node IDs (e.g. nodes removed after refresh) */
+export function removeNodesConfigRead(nodeIds: string[]): void {
+  if (nodeIds.length === 0) return;
+  const staleSet = new Set(nodeIds);
+  configReadNodesStore.update(s => {
+    const next = new Set(s);
+    for (const id of staleSet) next.delete(id);
+    return next;
+  });
 }

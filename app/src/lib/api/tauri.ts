@@ -121,6 +121,24 @@ export async function discoverNodes(timeout_ms?: number): Promise<DiscoveredNode
 }
 
 /**
+ * Fire a VerifyNodeGlobal probe and return immediately.
+ * Nodes appear asynchronously via the `lcc-node-discovered` Tauri event.
+ * Subscribe to that event before calling this.
+ */
+export async function probeNodes(): Promise<void> {
+  return invoke<void>('probe_nodes');
+}
+
+/**
+ * Register a newly appeared node in the backend state cache.
+ * Call this when a `lcc-node-discovered` event is received so that
+ * subsequent backend commands can find the node.
+ */
+export async function registerNode(nodeIdHex: string, alias: number): Promise<void> {
+  return invoke<void>('register_node', { nodeIdHex, alias });
+}
+
+/**
  * Query SNIP data for a specific node
  * @param alias - Destination node alias (1-4095)
  * @param timeout_ms - Timeout for SNIP request (default: 5000ms)
@@ -187,12 +205,13 @@ export async function verifyNodeStatus(
 }
 
 /**
- * Refresh all discovered nodes to check their current status
- * @param timeout_ms - Timeout per node (default: 500ms)
- * @returns Promise with updated node list
+ * Re-probe the network and return the dotted-hex Node IDs of nodes that did not respond.
+ * Those nodes should be removed from the UI.  New nodes that do respond appear via
+ * `lcc-node-discovered` events automatically.
+ * @returns Promise with an array of stale node ID strings (e.g. "05.01.01.01.A2.FF")
  */
-export async function refreshAllNodes(timeout_ms?: number): Promise<DiscoveredNode[]> {
-  return invoke<DiscoveredNode[]>('refresh_all_nodes', { timeout_ms });
+export async function refreshAllNodes(): Promise<string[]> {
+  return invoke<string[]>('refresh_all_nodes');
 }
 // ─── Feature 006: Bowties — Discover Existing Connections ─────────────────
 

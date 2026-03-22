@@ -53,6 +53,14 @@ export interface ReadAllConfigValuesResponse {
     durationMs: number;
 }
 
+// NodeReadState: per-node progress state for the redesigned progress modal
+export interface NodeReadState {
+    nodeId: string;
+    name: string;
+    percentage: number;  // 0-100
+    status: 'waiting' | 'reading' | 'complete' | 'failed' | 'no-cdi';
+}
+
 // T019: ConfigValueMap type
 export type ConfigValueMap = Map<string, ConfigValueWithMetadata>;
 

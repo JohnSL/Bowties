@@ -195,9 +195,11 @@ impl AppState {
         if let Some(disp) = dispatcher {
             *self.dispatcher.write().await = Some(disp.clone());
             
-            // Start event router with our alias for direction detection
+            // Start event router with our alias for direction detection.
+            // start() is async so it sets up subscriptions before returning — no race
+            // between EventRouter being ready and probe_nodes() firing.
             let mut router = EventRouter::new(app, disp, our_alias);
-            router.start();
+            router.start().await;
             *self.event_router.write().await = Some(router);
         }
         
@@ -261,7 +263,6 @@ impl AppState {
     }
 
     /// Add a single node to the cache (deduplicates by node_id)
-    #[allow(dead_code)]
     pub async fn add_node(&self, node: DiscoveredNode) {
         let mut nodes = self.nodes.write().await;
         

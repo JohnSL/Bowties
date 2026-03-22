@@ -8,19 +8,19 @@
   import SegmentView from '$lib/components/ElementCardDeck/SegmentView.svelte';
   import CdiXmlViewer from '$lib/components/CdiXmlViewer.svelte';
   import { configSidebarStore } from '$lib/stores/configSidebar';
-  import { discoverNodes as discoverNodesApi, querySnipBatch, queryPipBatch, refreshAllNodes } from '$lib/api/tauri';
+  import { probeNodes as probeNodesApi, querySnip, queryPip, registerNode, refreshAllNodes } from '$lib/api/tauri';
   import { readAllConfigValues, cancelConfigReading, getCdiXml, downloadCdi } from '$lib/api/cdi';
   import { getCdiErrorMessage, isCdiError } from '$lib/types/cdi';
   import type { ViewerStatus } from '$lib/types/cdi';
   import type { DiscoveredNode } from '$lib/api/tauri';
-  import type { ReadProgressState } from '$lib/api/types';
+  import type { ReadProgressState, NodeReadState } from '$lib/api/types';
   import { updateNodeInfo } from '$lib/stores/nodeInfo';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { hasModifiedLeaves, resolvePillSelectionsForPath } from '$lib/types/nodeTree';
-  import { configReadNodesStore, markNodeConfigRead, clearConfigReadStatus } from '$lib/stores/configReadStatus';
+  import { configReadNodesStore, markNodeConfigRead, clearConfigReadStatus, removeNodesConfigRead } from '$lib/stores/configReadStatus';
   import BowtieCatalogPanel from '$lib/components/Bowtie/BowtieCatalogPanel.svelte';
   import DiscoveryProgressModal from '$lib/components/DiscoveryProgressModal.svelte';
   import SaveControls from '$lib/components/ElementCardDeck/SaveControls.svelte';
@@ -106,11 +106,7 @@
 
   // Discovery state
   let nodes = $state<DiscoveredNode[]>([]);
-  let discovering = $state(false);
-  let discoveryTimeout = $state(250);
-  let queryingSnip = $state(false);
-  let refreshing = $state(false);
-  let showDiscoveryOptions = $state(false);
+  let probing = $state(false);
 
   // Config reading progress state (T063-T067)
   let readProgress = $state<ReadProgressState | null>(null);
@@ -118,10 +114,13 @@
 
   // Discovery progress modal state
   let discoveryModalVisible = $state(false);
-  let discoveryPhase = $state<'discovering' | 'querying' | 'refreshing' | 'reading' | 'complete' | 'cancelled'>('discovering');
+  let discoveryPhase = $state<'reading' | 'complete' | 'cancelled'>('reading');
 
   // Track whether a single-node or batch "read remaining" is in progress
   let readingRemaining = $state(false);
+
+  // Per-node progress state for the redesigned progress modal
+  let nodeReadStates = $state<NodeReadState[]>([]);
 
   // Returns true when PIP has confirmed the node does not support CDI or Memory Configuration
   function pipConfirmsNoCdi(n: DiscoveredNode): boolean {
@@ -137,6 +136,14 @@
       if (pipConfirmsNoCdi(n)) return false;
       return !$configReadNodesStore.has(formatNodeId(n.node_id));
     }).length
+  );
+
+  // Show CTA panel when nodes discovered but not yet read and nothing selected
+  let showConfigCta = $derived(
+    nodes.length > 0 &&
+    unreadCount > 0 &&
+    !$configSidebarStore.selectedSegment &&
+    !$configSidebarStore.selectedNodeId
   );
 
   // CDI XML viewer state
@@ -204,20 +211,93 @@
         readProgress = event.payload;
         discoveryPhase = 'reading';
 
-        // Clear progress on completion or cancellation
-        if (event.payload.status.type === 'Complete' || event.payload.status.type === 'Cancelled') {
-          discoveryPhase = event.payload.status.type === 'Cancelled' ? 'cancelled' : 'complete';
-          setTimeout(() => {
-            readProgress = null;
-            isCancelling = false;
-            discoveryModalVisible = false;
-          }, 500); // Brief pause so user sees the final status
+        const payload = event.payload;
+        const idx = payload.currentNodeIndex;
+
+        // Update per-node progress bar states
+        if (nodeReadStates.length > 0) {
+          nodeReadStates = nodeReadStates.map((s, i) => {
+            if (i < idx) return { ...s, status: 'complete' as const, percentage: 100 };
+            if (i === idx) {
+              if (payload.status.type === 'NodeComplete') {
+                return { ...s, status: 'complete' as const, percentage: 100 };
+              }
+              // payload.percentage is per-node local progress (0-100)
+              return { ...s, status: 'reading' as const, percentage: payload.percentage };
+            }
+            return s;
+          });
+        }
+
+        // Close modal immediately on cancellation
+        if (payload.status.type === 'Cancelled') {
+          readProgress = null;
+          isCancelling = false;
+          discoveryModalVisible = false;
+          nodeReadStates = [];
         }
       }));
 
+      // Reactive node discovery: nodes appear one-by-one as VerifiedNode replies arrive.
+      // Register in backend cache, add skeleton to local list, then fetch SNIP+PIP per node.
+      unlistens.push(await listen<{ nodeId: string; alias: number; timestamp: string }>('lcc-node-discovered', async (event) => {
+        if (!connected) return; // ignore stray events after disconnect
+        const { nodeId, alias } = event.payload;
+        if (nodes.some(n => formatNodeId(n.node_id) === nodeId)) return; // dedup
+
+        // Parse dotted-hex nodeId back to number[]
+        const nodeIdBytes = nodeId.split('.').map(b => parseInt(b, 16));
+
+        // Add skeleton immediately so the UI shows the node without waiting for SNIP
+        const skeleton: DiscoveredNode = {
+          node_id: nodeIdBytes,
+          alias,
+          snip_data: null,
+          snip_status: 'Unknown',
+          connection_status: 'Connected',
+          last_verified: null,
+          last_seen: new Date().toISOString(),
+          cdi: null,
+          pip_flags: null,
+          pip_status: 'Unknown',
+        };
+        nodes = [...nodes, skeleton];
+        updateNodeInfo(nodes);
+
+        try {
+          // Register in backend state first so SNIP/CDI cache updates work correctly
+          await registerNode(nodeId, alias);
+
+          // Fetch SNIP + PIP concurrently
+          const [snipResult, pipResult] = await Promise.all([
+            querySnip(alias),
+            queryPip(alias),
+          ]);
+
+          nodes = nodes.map(n => {
+            if (n.alias !== alias) return n;
+            return {
+              ...n,
+              snip_data: snipResult.snip_data,
+              snip_status: snipResult.status,
+              pip_flags: pipResult.pip_flags,
+              pip_status: pipResult.status,
+            };
+          });
+          updateNodeInfo(nodes);
+        } catch (e) {
+          console.warn(`Failed to query node ${nodeId}:`, e);
+        }
+      }));
+
+      // Now that the lcc-node-discovered listener is registered, probe for existing nodes.
+      // Doing this after listener setup avoids a race where VerifiedNode replies arrive
+      // before the frontend listener is ready and get silently dropped.
+      if (connected) probeForNodes();
+
       // Native menu event listeners — relay OS menu clicks to handler functions
       unlistens.push(await listen('menu-disconnect',     () => disconnect()));
-      unlistens.push(await listen('menu-refresh',        () => { if (connected) discover(); }));
+      unlistens.push(await listen('menu-refresh',        () => { if (connected) handleRefresh(); }));
       unlistens.push(await listen('menu-traffic',        () => { if (connected) openTrafficMonitor(); }));
       unlistens.push(await listen('menu-view-cdi',       () => {
         const state = get(configSidebarStore);
@@ -229,7 +309,6 @@
         const nodeId = state.selectedSegment?.nodeId ?? state.selectedNodeId;
         if (nodeId) openCdiViewer(nodeId, true);
       }));
-      unlistens.push(await listen('menu-discovery-opts', () => { showDiscoveryOptions = !showDiscoveryOptions; }));
       unlistens.push(await listen('menu-exit', () => {
         const win = getCurrentWebviewWindow();
         promptUnsaved('You have unsaved changes. Exit without saving?', () => {
@@ -250,6 +329,7 @@
     const cfg = e.detail.config;
     connectionLabel = cfg.name ?? (cfg.host ? `${cfg.host}:${cfg.port}` : cfg.serialPort ?? 'LCC');
     connected = true;
+    probeForNodes();
   }
 
   async function disconnect() {
@@ -267,273 +347,44 @@
     }
   }
 
-  async function discover() {
+  /** Fire-and-forget probe — nodes appear via lcc-node-discovered events */
+  async function probeForNodes() {
+    try {
+      await probeNodesApi();
+    } catch (e) {
+      console.error("Probe failed:", e);
+    }
+  }
+
+  /**
+   * Re-probe the network. Culls stale nodes (those that don't reply) from the
+   * UI; new or returning nodes appear automatically via lcc-node-discovered events.
+   */
+  async function handleRefresh() {
+    if (probing) return;
     errorMessage = "";
-    discoveryModalVisible = true;
-    
-    // If we already have nodes, refresh them; otherwise discover new ones
-    if (nodes.length > 0) {
-      refreshing = true;
-      discoveryPhase = 'refreshing';
-      try {
-        // FR-018: reset sidebar state on node refresh
-        configSidebarStore.reset();
-        clearConfigReadStatus();
-        
-        const updated = await refreshAllNodes();
-        nodes = updated;
+    probing = true;
+    try {
+      const staleIds = await refreshAllNodes();
+      if (staleIds.length > 0) {
+        nodes = nodes.filter(n => !staleIds.includes(formatNodeId(n.node_id)));
         updateNodeInfo(nodes);
-
-        // Query PIP data for all refreshed nodes
-        if (nodes.length > 0) {
-          try {
-            const pipResults = await queryPipBatch(nodes.map(n => n.alias));
-            nodes = nodes.map(node => {
-              const result = pipResults.find(r => r.alias === node.alias);
-              if (result) {
-                return { ...node, pip_flags: result.pip_flags, pip_status: result.status };
-              }
-              return node;
-            });
-          } catch (e) {
-            console.error("Failed to query PIP data:", e);
-          }
+        // Only clean up state for nodes that actually left — preserve config read
+        // status and CDI data for nodes that are still present.
+        removeNodesConfigRead(staleIds);
+        nodesWithCdi = new Set([...nodesWithCdi].filter(id => !staleIds.includes(id)));
+        // Reset the sidebar only if the currently selected node was removed.
+        const sidebarState = get(configSidebarStore);
+        const selectedId = sidebarState.selectedSegment?.nodeId ?? sidebarState.selectedNodeId;
+        if (selectedId && staleIds.includes(selectedId)) {
+          configSidebarStore.reset();
         }
-
-        // T064: Read all config values for nodes with SNIP data (likely to have CDI)
-        // The backend will automatically load CDI from cache if available
-        const cdiCandidatesRefresh = nodes.filter(n => n.snip_data !== null && !pipConfirmsNoCdi(n));
-        let totalSuccessfulRefresh = 0;
-        let totalFailedRefresh = 0;
-        cdiMissingNodes = [];
-        const newNodesWithCdi = new Set<string>();
-        for (let nodeIdx = 0; nodeIdx < cdiCandidatesRefresh.length; nodeIdx++) {
-          const node = cdiCandidatesRefresh[nodeIdx];
-          try {
-            // Format node_id from array to dotted hex string
-            const nodeId = formatNodeId(node.node_id);
-            const nodeName = node.snip_data?.user_name || nodeId;
-
-            let hasCdi = false;
-            try {
-              const cdiCheck = await getCdiXml(nodeId);
-              hasCdi = cdiCheck.xmlContent !== null;
-              if (hasCdi) {
-                newNodesWithCdi.add(nodeId);
-              }
-            } catch {
-              // CdiNotRetrieved or similar — CDI not available yet
-            }
-
-            if (!hasCdi) {
-              cdiMissingNodes = [...cdiMissingNodes, { nodeId, nodeName }];
-              continue;
-            }
-
-            console.log(`Reading config values from ${nodeName}...`);
-            const response = await readAllConfigValues(nodeId, undefined, nodeIdx, cdiCandidatesRefresh.length);
-
-            markNodeConfigRead(nodeId);
-            await nodeTreeStore.loadTree(nodeId);
-            totalSuccessfulRefresh += response.successfulReads;
-            totalFailedRefresh += response.failedReads;
-
-            console.log(`✓ Read ${response.successfulReads} of ${response.totalElements} config values from ${nodeName}`);
-            if (response.failedReads > 0) {
-              console.warn(`  ${response.failedReads} values failed to read`);
-            }
-          } catch (e) {
-            const nodeName = node.snip_data?.user_name || 'unknown';
-            console.warn(`Failed to read config values from node ${nodeName}:`, e);
-            totalFailedRefresh++;
-            // Continue with next node - don't fail entire refresh
-          }
-        }
-        nodesWithCdi = newNodesWithCdi;
-        // Emit synthetic Complete so the progress strip auto-dismisses
-        if (cdiCandidatesRefresh.length > 0) {
-          const doneState: ReadProgressState = {
-            totalNodes: cdiCandidatesRefresh.length,
-            currentNodeIndex: cdiCandidatesRefresh.length - 1,
-            currentNodeName: '',
-            currentNodeId: '',
-            totalElements: 0,
-            elementsRead: totalSuccessfulRefresh,
-            elementsFailed: totalFailedRefresh,
-            percentage: 100,
-            status: { type: 'Complete', success_count: totalSuccessfulRefresh, fail_count: totalFailedRefresh }
-          };
-          readProgress = doneState;
-          discoveryPhase = 'complete';
-          setTimeout(() => {
-            readProgress = null;
-            isCancelling = false;
-            discoveryModalVisible = false;
-            if (cdiMissingNodes.length > 0) {
-              cdiDownloadDialogVisible = true;
-            }
-          }, 1500);
-        } else {
-          discoveryModalVisible = false;
-          if (cdiMissingNodes.length > 0) {
-            cdiDownloadDialogVisible = true;
-          }
-        }
-      } catch (e) {
-        console.error("Refresh failed:", e);
-        errorMessage = `Refresh failed: ${e}`;
-        discoveryModalVisible = false;
-      } finally {
-        refreshing = false;
       }
-    } else {
-      discovering = true;
-      discoveryPhase = 'discovering';
-      nodes = [];
-
-      try {
-        // Discover nodes
-        const discovered = await discoverNodesApi(discoveryTimeout);
-        nodes = discovered;
-        
-        // Query SNIP data for all discovered nodes
-        if (discovered.length > 0) {
-          queryingSnip = true;
-          discoveryPhase = 'querying';
-          const aliases = discovered.map(n => n.alias);
-          
-          try {
-            const results = await querySnipBatch(aliases);
-            
-            // Update each node with its SNIP data
-            nodes = nodes.map(node => {
-              const result = results.find(r => r.alias === node.alias);
-              if (result) {
-                return {
-                  ...node,
-                  snip_data: result.snip_data,
-                  snip_status: result.status
-                };
-              }
-              return node;
-            });
-          } catch (e) {
-            console.error("Failed to query SNIP data:", e);
-            errorMessage = `Failed to retrieve node information: ${e}`;
-          } finally {
-            queryingSnip = false;
-          }
-
-          // Query PIP data for all discovered nodes
-          try {
-            const pipResults = await queryPipBatch(aliases);
-
-            // Update each node with its PIP data
-            nodes = nodes.map(node => {
-              const result = pipResults.find(r => r.alias === node.alias);
-              if (result) {
-                return {
-                  ...node,
-                  pip_flags: result.pip_flags,
-                  pip_status: result.status
-                };
-              }
-              return node;
-            });
-          } catch (e) {
-            console.error("Failed to query PIP data:", e);
-          }
-        }
-        
-        // Populate nodeInfo store for tooltips and display names
-        updateNodeInfo(nodes);
-
-        // T064: Read all config values for nodes with SNIP data (likely to have CDI)
-        // The backend will automatically load CDI from cache if available
-        const cdiCandidates = nodes.filter(n => n.snip_data !== null && !pipConfirmsNoCdi(n));
-        let totalSuccessful = 0;
-        let totalFailed = 0;
-        cdiMissingNodes = [];
-        const newNodesWithCdi = new Set<string>();
-        for (let nodeIdx = 0; nodeIdx < cdiCandidates.length; nodeIdx++) {
-          const node = cdiCandidates[nodeIdx];
-          try {
-            // Format node_id from array to dotted hex string
-            const nodeId = formatNodeId(node.node_id);
-            const nodeName = node.snip_data?.user_name || nodeId;
-
-            let hasCdi = false;
-            try {
-              const cdiCheck = await getCdiXml(nodeId);
-              hasCdi = cdiCheck.xmlContent !== null;
-              if (hasCdi) {
-                newNodesWithCdi.add(nodeId);
-              }
-            } catch {
-              // CdiNotRetrieved or similar — CDI not available yet
-            }
-
-            if (!hasCdi) {
-              cdiMissingNodes = [...cdiMissingNodes, { nodeId, nodeName }];
-              continue;
-            }
-
-            console.log(`Reading config values from ${nodeName}...`);
-            const response = await readAllConfigValues(nodeId, undefined, nodeIdx, cdiCandidates.length);
-
-            markNodeConfigRead(nodeId);
-            await nodeTreeStore.loadTree(nodeId);
-            totalSuccessful += response.successfulReads;
-            totalFailed += response.failedReads;
-
-            console.log(`✓ Read ${response.successfulReads} of ${response.totalElements} config values from ${nodeName}`);
-            if (response.failedReads > 0) {
-              console.warn(`  ${response.failedReads} values failed to read`);
-            }
-          } catch (e) {
-            const nodeName = node.snip_data?.user_name || 'unknown';
-            console.warn(`Failed to read config values from node ${nodeName}:`, e);
-            totalFailed++;
-            // Continue with next node - don't fail entire discovery
-          }
-        }
-        nodesWithCdi = newNodesWithCdi;
-        // Emit synthetic Complete so the progress strip auto-dismisses
-        if (cdiCandidates.length > 0) {
-          const doneState: ReadProgressState = {
-            totalNodes: cdiCandidates.length,
-            currentNodeIndex: cdiCandidates.length - 1,
-            currentNodeName: '',
-            currentNodeId: '',
-            totalElements: 0,
-            elementsRead: totalSuccessful,
-            elementsFailed: totalFailed,
-            percentage: 100,
-            status: { type: 'Complete', success_count: totalSuccessful, fail_count: totalFailed }
-          };
-          readProgress = doneState;
-          discoveryPhase = 'complete';
-          setTimeout(() => {
-            readProgress = null;
-            isCancelling = false;
-            discoveryModalVisible = false;
-            if (cdiMissingNodes.length > 0) {
-              cdiDownloadDialogVisible = true;
-            }
-          }, 1500);
-        } else {
-          discoveryModalVisible = false;
-          if (cdiMissingNodes.length > 0) {
-            cdiDownloadDialogVisible = true;
-          }
-        }
-      } catch (e) {
-        console.error("Discovery failed:", e);
-        errorMessage = `Discovery failed: ${e}`;
-        discoveryModalVisible = false;
-      } finally {
-        discovering = false;
-      }
+    } catch (e) {
+      console.error("Refresh failed:", e);
+      errorMessage = `Refresh failed: ${e}`;
+    } finally {
+      probing = false;
     }
   }
 
@@ -590,13 +441,21 @@
     });
     if (unread.length === 0) return;
 
+    // Init per-node progress states (all waiting)
+    nodeReadStates = unread.map(n => ({
+      nodeId: formatNodeId(n.node_id),
+      name: n.snip_data?.user_name || formatNodeId(n.node_id),
+      percentage: 0,
+      status: 'waiting' as const,
+    }));
+
     readingRemaining = true;
     discoveryModalVisible = true;
     discoveryPhase = 'reading';
     errorMessage = '';
 
-    let totalSuccessful = 0;
-    let totalFailed = 0;
+    const localCdiMissing: MissingCdiNode[] = [];
+    const newNodesWithCdi = new Set<string>();
     try {
       for (let nodeIdx = 0; nodeIdx < unread.length; nodeIdx++) {
         const node = unread[nodeIdx];
@@ -607,45 +466,44 @@
           try {
             const cdiCheck = await getCdiXml(nodeId);
             hasCdi = cdiCheck.xmlContent !== null;
+            if (hasCdi) newNodesWithCdi.add(nodeId);
           } catch { /* CDI not available */ }
           if (!hasCdi) {
-            console.log(`Skipping config read for ${nodeName} — CDI not yet downloaded`);
+            localCdiMissing.push({ nodeId, nodeName });
+            nodeReadStates = nodeReadStates.map((s, i) =>
+              i === nodeIdx ? { ...s, status: 'no-cdi' as const } : s
+            );
             continue;
           }
           console.log(`Reading config values from ${nodeName}...`);
-          const response = await readAllConfigValues(nodeId, undefined, nodeIdx, unread.length);
+          await readAllConfigValues(nodeId, undefined, nodeIdx, unread.length);
           markNodeConfigRead(nodeId);
-          // Force tree refresh so any visible SegmentView updates
           await nodeTreeStore.refreshTree(nodeId);
-          totalSuccessful += response.successfulReads;
-          totalFailed += response.failedReads;
+          // Ensure slot marked complete (listener may have done it already)
+          nodeReadStates = nodeReadStates.map((s, i) =>
+            i === nodeIdx ? { ...s, status: 'complete' as const, percentage: 100 } : s
+          );
         } catch (e) {
           console.warn(`Failed to read config values from ${nodeName}:`, e);
-          totalFailed++;
+          nodeReadStates = nodeReadStates.map((s, i) =>
+            i === nodeIdx ? { ...s, status: 'failed' as const } : s
+          );
         }
       }
-      // Synthetic completion
-      const doneState: ReadProgressState = {
-        totalNodes: unread.length,
-        currentNodeIndex: unread.length - 1,
-        currentNodeName: '',
-        currentNodeId: '',
-        totalElements: 0,
-        elementsRead: totalSuccessful,
-        elementsFailed: totalFailed,
-        percentage: 100,
-        status: { type: 'Complete', success_count: totalSuccessful, fail_count: totalFailed }
-      };
-      readProgress = doneState;
-      discoveryPhase = 'complete';
-      setTimeout(() => {
-        readProgress = null;
-        isCancelling = false;
-        discoveryModalVisible = false;
-      }, 1500);
+      nodesWithCdi = newNodesWithCdi;
+      cdiMissingNodes = localCdiMissing;
+      // Close immediately — no delay
+      discoveryModalVisible = false;
+      readProgress = null;
+      isCancelling = false;
+      nodeReadStates = [];
+      if (cdiMissingNodes.length > 0) {
+        cdiDownloadDialogVisible = true;
+      }
     } catch (e) {
       errorMessage = `Read remaining failed: ${e}`;
       discoveryModalVisible = false;
+      nodeReadStates = [];
     } finally {
       readingRemaining = false;
     }
@@ -656,50 +514,42 @@
     const node = nodes.find(n => formatNodeId(n.node_id) === nodeId);
     if (!node?.snip_data) return;
 
+    const nodeName = node.snip_data.user_name || nodeId;
+    // Init single-node progress state
+    nodeReadStates = [{ nodeId, name: nodeName, percentage: 0, status: 'waiting' }];
+
     readingRemaining = true;
     discoveryModalVisible = true;
     discoveryPhase = 'reading';
     errorMessage = '';
 
-    const nodeName = node.snip_data.user_name || nodeId;
     try {
       let hasCdi = false;
       try {
         const cdiCheck = await getCdiXml(nodeId);
         hasCdi = cdiCheck.xmlContent !== null;
+        if (hasCdi) nodesWithCdi = new Set([...nodesWithCdi, nodeId]);
       } catch { /* CDI not available */ }
       if (!hasCdi) {
         errorMessage = `CDI not available for ${nodeName}`;
         discoveryModalVisible = false;
+        nodeReadStates = [];
         readingRemaining = false;
         return;
       }
-      const response = await readAllConfigValues(nodeId, undefined, 0, 1);
+      await readAllConfigValues(nodeId, undefined, 0, 1);
       markNodeConfigRead(nodeId);
       // Force tree refresh so the currently visible SegmentView updates
       await nodeTreeStore.refreshTree(nodeId);
-      // Synthetic completion
-      const doneState: ReadProgressState = {
-        totalNodes: 1,
-        currentNodeIndex: 0,
-        currentNodeName: nodeName,
-        currentNodeId: nodeId,
-        totalElements: response.totalElements,
-        elementsRead: response.successfulReads,
-        elementsFailed: response.failedReads,
-        percentage: 100,
-        status: { type: 'Complete', success_count: response.successfulReads, fail_count: response.failedReads }
-      };
-      readProgress = doneState;
-      discoveryPhase = 'complete';
-      setTimeout(() => {
-        readProgress = null;
-        isCancelling = false;
-        discoveryModalVisible = false;
-      }, 1500);
+      // Close immediately — no delay
+      discoveryModalVisible = false;
+      readProgress = null;
+      isCancelling = false;
+      nodeReadStates = [];
     } catch (e) {
       errorMessage = `Failed to read config for ${nodeName}: ${e}`;
       discoveryModalVisible = false;
+      nodeReadStates = [];
     } finally {
       readingRemaining = false;
     }
@@ -817,7 +667,7 @@
 
   $effect(() => {
     const conn = connected;
-    const busy = discovering || queryingSnip || refreshing || readingRemaining;
+    const busy = probing || readingRemaining;
     const store = $configSidebarStore;
 
     // Determine which node is selected
@@ -847,19 +697,19 @@
       <div class="toolbar-left">
         <button
           class="toolbar-btn"
-          onclick={discover}
-          disabled={discovering || queryingSnip || refreshing || readingRemaining}
+          onclick={handleRefresh}
+          disabled={probing || readingRemaining}
           title={nodes.length > 0 ? 'Refresh nodes on the network' : 'Discover nodes on the network'}
         >
-          <span class="tb-icon" class:tb-spin={discovering || refreshing}>⟳</span>
-          <span>{discovering ? 'Discovering…' : queryingSnip ? 'Querying…' : refreshing ? 'Refreshing…' : nodes.length > 0 ? 'Refresh Nodes' : 'Discover Nodes'}</span>
+          <span class="tb-icon" class:tb-spin={probing}>⟳</span>
+          <span>{probing ? 'Refreshing…' : nodes.length > 0 ? 'Refresh Nodes' : 'Discover Nodes'}</span>
         </button>
         {#if readingRemaining || unreadCount > 0}
           <span class="toolbar-sep" aria-hidden="true"></span>
           <button
             class="toolbar-btn"
             onclick={readRemainingNodes}
-            disabled={discovering || queryingSnip || refreshing || readingRemaining}
+            disabled={probing || readingRemaining}
             title="Read configuration values for nodes not yet read"
           >
             <span class="tb-icon" class:tb-spin={readingRemaining}>⟳</span>
@@ -942,6 +792,7 @@
     phase={discoveryPhase}
     {readProgress}
     {isCancelling}
+    {nodeReadStates}
     onCancel={handleCancelConfigReading}
   />
 
@@ -950,17 +801,6 @@
     <div class="error-banner" role="alert">
       <span class="error-banner-text">⚠ {errorMessage}</span>
       <button class="error-banner-close" onclick={() => errorMessage = ''} aria-label="Dismiss error">✕</button>
-    </div>
-  {/if}
-
-  <!-- ═══ DISCOVERY OPTIONS BAR ═══ -->
-  {#if showDiscoveryOptions}
-    <div class="discovery-options-bar">
-      <label class="dob-label">
-        Discovery Timeout (ms):
-        <input class="dob-input" type="number" bind:value={discoveryTimeout} min="50" max="1000" step="50" disabled={discovering} />
-      </label>
-      <button class="btn-secondary !text-xs !px-2 !py-1" onclick={() => showDiscoveryOptions = false}>Close</button>
     </div>
   {/if}
 
@@ -973,26 +813,47 @@
 
     {:else if nodes.length === 0}
       <div class="empty-area">
-        {#if discovering}
-          <p class="empty-status">Scanning network for nodes…</p>
-        {:else if queryingSnip}
-          <p class="empty-status">Retrieving node information…</p>
-        {:else}
-          <p class="empty-status">No nodes found.</p>
-          <p class="empty-hint">Click <strong>Discover Nodes</strong> in the toolbar or View menu.</p>
-        {/if}
+        <p class="empty-status">No nodes found.</p>
+        <p class="empty-hint">Click <strong>Refresh Nodes</strong> in the toolbar to scan the network again.</p>
       </div>
 
     {:else if activeTab === 'bowties'}
       <!-- Feature 006: Bowties catalog in-page tab (no navigation) -->
-      <BowtieCatalogPanel highlightedEventIdHex={bowtieFocusStore.highlightedEventIdHex} />
+      <BowtieCatalogPanel
+        highlightedEventIdHex={bowtieFocusStore.highlightedEventIdHex}
+        onReadConfig={readRemainingNodes}
+        hasUnreadNodes={showConfigCta}
+        readingConfig={readingRemaining}
+        {unreadCount}
+        nodesCount={nodes.length}
+      />
 
     {:else}
       <!-- FR-001: two-panel layout — fixed sidebar + scrollable main area -->
       <div class="config-layout">
         <ConfigSidebar on:readNodeConfig={(e) => readSingleNodeConfig(e.detail.nodeId)} />
         <div class="config-main">
-          <SegmentView />
+          {#if showConfigCta}
+            <div class="config-cta-panel">
+              <h2 class="cta-title">Node Configuration</h2>
+              <p class="cta-desc">
+                {nodes.length} {nodes.length === 1 ? 'node' : 'nodes'} discovered.
+                Click below to read their configuration.
+              </p>
+              <button
+                class="cta-btn"
+                onclick={readRemainingNodes}
+                disabled={readingRemaining}
+              >
+                Read Node Configuration
+              </button>
+              {#if unreadCount > 0}
+                <span class="cta-badge">{unreadCount} unread</span>
+              {/if}
+            </div>
+          {:else}
+            <SegmentView />
+          {/if}
         </div>
       </div>
     {/if}
@@ -1243,34 +1104,6 @@
     background: #fecaca;
   }
 
-  /* ─── Discovery Options Bar ─────────────────────────── */
-
-  .discovery-options-bar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 6px 12px;
-    background: #f9fafb;
-    border-bottom: 1px solid #e5e7eb;
-    flex-shrink: 0;
-    font-size: 13px;
-  }
-
-  .dob-label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: #374151;
-  }
-
-  .dob-input {
-    width: 90px;
-    padding: 4px 8px;
-    border: 1px solid #d1d5db;
-    border-radius: 4px;
-    font-size: 13px;
-  }
-
   /* ─── Main Content ──────────────────────────────────── */
 
   .main-content {
@@ -1399,5 +1232,59 @@
 
   .unsaved-btn-danger:hover {
     background: #b91c1c;
+  }
+
+  /* ─── Read Configuration CTA Panel ─────────────────── */
+
+  .config-cta-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    height: 100%;
+    padding: 48px 32px;
+    text-align: center;
+  }
+
+  .cta-title {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: #1e293b;
+  }
+
+  .cta-desc {
+    margin: 0;
+    font-size: 14px;
+    color: #64748b;
+    max-width: 360px;
+    line-height: 1.6;
+  }
+
+  .cta-btn {
+    padding: 10px 24px;
+    font-size: 14px;
+    font-weight: 500;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .cta-btn:hover:not(:disabled) {
+    background: #1d4ed8;
+  }
+
+  .cta-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .cta-badge {
+    font-size: 12px;
+    color: #94a3b8;
   }
 </style>

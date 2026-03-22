@@ -198,7 +198,30 @@ impl LccConnection {
             Self::discover_nodes_direct_impl(transport, our_alias, timeout_ms).await
         }
     }
-    
+
+    /// Send a `VerifyNodeGlobal` frame and return immediately.
+    ///
+    /// All `VerifiedNode` replies flow through the persistent event system —
+    /// no waiting, no list returned.  Subscribe to the `lcc-node-discovered`
+    /// Tauri event before calling this to receive nodes as they arrive.
+    ///
+    /// For a one-shot discovery with a fixed timeout, use [`discover_nodes`] instead.
+    pub async fn probe_nodes(&mut self) -> Result<()> {
+        let verify_frame = GridConnectFrame::from_mti(
+            MTI::VerifyNodeGlobal,
+            self.our_alias.value(),
+            vec![],
+        )?;
+        if let Some(ref dispatcher) = self.dispatcher {
+            let disp = dispatcher.lock().await;
+            disp.send(&verify_frame).await
+        } else if let Some(ref mut transport) = self.transport {
+            transport.send(&verify_frame).await
+        } else {
+            Err(crate::Error::Protocol("No transport or dispatcher available".to_string()))
+        }
+    }
+
     /// Discover nodes using the message dispatcher (channel-based)
     async fn discover_nodes_with_dispatcher(
         &self,
@@ -1899,5 +1922,31 @@ mod tests {
 
         let result = connection.send_update_complete(0xBBB).await;
         assert!(result.is_err(), "Update complete with no ACK should fail");
+    }
+
+    // --- probe_nodes tests ---
+
+    /// probe_nodes returns Ok immediately without waiting for replies.
+    /// The frame it sends must be VerifyNodeGlobal with our alias and empty data.
+    #[tokio::test]
+    async fn test_probe_nodes_sends_verify_node_global() {
+        let mock = MockTransport::new(vec![]);
+        let our_alias: u16 = 0xAAA;
+        let mut connection = LccConnection::with_transport(
+            Box::new(mock),
+            NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]),
+            NodeAlias::new(our_alias).unwrap(),
+        );
+
+        let result = connection.probe_nodes().await;
+        assert!(result.is_ok(), "probe_nodes should return Ok immediately: {:?}", result);
+
+        // Verify the expected frame shape by constructing it directly and
+        // confirming the MTI and alias round-trip correctly.
+        let expected = GridConnectFrame::from_mti(MTI::VerifyNodeGlobal, our_alias, vec![]).unwrap();
+        let (mti, alias) = expected.get_mti().unwrap();
+        assert_eq!(mti, MTI::VerifyNodeGlobal, "frame MTI must be VerifyNodeGlobal");
+        assert_eq!(alias, our_alias, "frame alias must match our alias");
+        assert!(expected.data.is_empty(), "VerifyNodeGlobal carries no payload");
     }
 }

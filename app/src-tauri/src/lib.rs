@@ -206,6 +206,8 @@ pub fn run() {
             disconnect_lcc,
             get_connection_status,
             commands::discover_nodes,
+            commands::probe_nodes,
+            commands::register_node,
             commands::query_snip_single,
             commands::query_snip_batch,
             commands::query_pip_single,

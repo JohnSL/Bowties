@@ -25,7 +25,21 @@
   import { generateFreshEventIdForNode } from '$lib/utils/eventIds';
 
   // Optional: event ID hex to scroll to and highlight (FR-009)
-  let { highlightedEventIdHex = null }: { highlightedEventIdHex?: string | null } = $props();
+  let {
+    highlightedEventIdHex = null,
+    onReadConfig = null,
+    hasUnreadNodes = false,
+    readingConfig = false,
+    unreadCount = 0,
+    nodesCount = 0,
+  }: {
+    highlightedEventIdHex?: string | null;
+    onReadConfig?: (() => void) | null;
+    hasUnreadNodes?: boolean;
+    readingConfig?: boolean;
+    unreadCount?: number;
+    nodesCount?: number;
+  } = $props();
 
   // Store access
   let catalog = $derived(bowtieCatalogStore.catalog);
@@ -347,7 +361,26 @@
 
   <!-- Content area -->
   <div class="panel-content">
-    {#if !readComplete}
+    {#if hasUnreadNodes}
+      <div class="bowtie-cta-panel">
+        <h2 class="cta-title">Bowtie Connections</h2>
+        <p class="cta-desc">
+          {nodesCount} {nodesCount === 1 ? 'node' : 'nodes'} discovered.
+          Read their configuration to build bowtie connections.
+        </p>
+        <button
+          class="cta-btn"
+          onclick={onReadConfig}
+          disabled={readingConfig}
+        >
+          Read Node Configuration
+        </button>
+        {#if unreadCount > 0}
+          <span class="cta-badge">{unreadCount} unread</span>
+        {/if}
+      </div>
+
+    {:else if !readComplete}
       <div class="not-ready">
         <p>Bowties will be available after CDI reads complete.</p>
         <p class="hint">Discover nodes and read their configuration from the toolbar.</p>
@@ -563,6 +596,59 @@
     font-size: 0.85rem;
     margin-top: 8px;
     color: #9ca3af;
+  }
+
+  .bowtie-cta-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    height: 100%;
+    min-height: 300px;
+    padding: 48px 32px;
+    text-align: center;
+  }
+
+  .cta-title {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: #1e293b;
+  }
+
+  .cta-desc {
+    margin: 0;
+    font-size: 14px;
+    color: #64748b;
+    max-width: 360px;
+    line-height: 1.6;
+  }
+
+  .cta-btn {
+    padding: 10px 24px;
+    font-size: 14px;
+    font-weight: 500;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .cta-btn:hover:not(:disabled) {
+    background: #1d4ed8;
+  }
+
+  .cta-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .cta-badge {
+    font-size: 12px;
+    color: #94a3b8;
   }
 
   .card-list {

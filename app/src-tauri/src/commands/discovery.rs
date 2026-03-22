@@ -1,7 +1,7 @@
 //! Node discovery and SNIP query commands
 
 use crate::state::AppState;
-use lcc_rs::{DiscoveredNode, NodeAlias, PIPStatus, ProtocolFlags, SNIPData, SNIPStatus};
+use lcc_rs::{ConnectionStatus, DiscoveredNode, MTI, NodeAlias, NodeID, PIPStatus, ProtocolFlags, SNIPData, SNIPStatus};
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -41,6 +41,64 @@ pub async fn discover_nodes(
     state.set_nodes(nodes.clone()).await;
     
     Ok(nodes)
+}
+
+/// Fire a `VerifyNodeGlobal` probe and return immediately.
+///
+/// All `VerifiedNode` replies are forwarded to the frontend as `lcc-node-discovered`
+/// Tauri events by the persistent `EventRouter`. Subscribe to that event before
+/// calling this command so no replies are missed.
+#[tauri::command]
+pub async fn probe_nodes(
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let connection_arc = {
+        let conn_guard = state.connection.read().await;
+        match conn_guard.as_ref() {
+            Some(conn) => conn.clone(),
+            None => return Err("Not connected to LCC network".to_string()),
+        }
+    };
+    let mut connection = connection_arc.lock().await;
+    connection.probe_nodes().await.map_err(|e| format!("Probe failed: {}", e))
+}
+
+/// Register a newly appeared node in the backend state cache.
+///
+/// Called by the frontend when it receives a `lcc-node-discovered` event so that
+/// subsequent commands (SNIP update caching, CDI, bowtie catalog) can find the
+/// node by alias or node-ID.  Does nothing if the node is already registered.
+#[tauri::command]
+pub async fn register_node(
+    node_id_hex: String,
+    alias: u16,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let node_alias = NodeAlias::new(alias).map_err(|e| format!("Invalid alias: {}", e))?;
+
+    let bytes: Vec<u8> = node_id_hex
+        .split('.')
+        .map(|s| u8::from_str_radix(s, 16).map_err(|e| format!("Bad node ID byte '{}': {}", s, e)))
+        .collect::<Result<Vec<_>, _>>()?;
+    if bytes.len() != 6 {
+        return Err(format!("Expected 6 bytes in node ID, got {}", bytes.len()));
+    }
+    let node_id = NodeID::from_slice(&bytes).map_err(|e| e.to_string())?;
+
+    state.add_node(DiscoveredNode {
+        node_id,
+        alias: node_alias,
+        snip_data: None,
+        snip_status: SNIPStatus::Unknown,
+        connection_status: ConnectionStatus::Connected,
+        last_verified: None,
+        last_seen: chrono::Utc::now(),
+        cdi: None,
+        pip_flags: None,
+        pip_status: PIPStatus::Unknown,
+    }).await;
+
+    Ok(())
 }
 
 /// Query SNIP data for a single node
@@ -202,22 +260,19 @@ pub async fn verify_node_status(
     Ok(is_online)
 }
 
-/// Refresh all discovered nodes to check their current status
+/// Re-probe the network and return the dotted-hex Node IDs of nodes that did not respond.
+///
+/// Sends a `VerifyNodeGlobal` frame, then waits for a 500 ms liveness window while
+/// collecting all `VerifiedNode` replies via the dispatcher.  Known nodes that do not
+/// reply within the window are removed from the state cache and their IDs are returned
+/// so the frontend can remove them from the UI.
+///
+/// Active nodes that **do** respond also trigger `lcc-node-discovered` events (via the
+/// persistent `EventRouter`), so any genuinely new nodes appear in the UI automatically.
 #[tauri::command]
 pub async fn refresh_all_nodes(
-    timeout_ms: Option<u64>,
     state: tauri::State<'_, AppState>,
-) -> Result<Vec<DiscoveredNode>, String> {
-    let timeout = timeout_ms.unwrap_or(500);
-    
-    // Get current list of nodes
-    let nodes = state.get_nodes().await;
-    
-    if nodes.is_empty() {
-        return Ok(vec![]);
-    }
-    
-    // Get connection reference
+) -> Result<Vec<String>, String> {
     let connection_arc = {
         let conn_guard = state.connection.read().await;
         match conn_guard.as_ref() {
@@ -225,41 +280,91 @@ pub async fn refresh_all_nodes(
             None => return Err("Not connected to LCC network".to_string()),
         }
     };
-    
-    // Verify each node
-    for node in &nodes {
-        let alias = node.alias.value();
-        
-        let mut connection = connection_arc.lock().await;
-        let result = connection.verify_node(alias, timeout).await;
-        drop(connection);
-        
-        match result {
-            Ok(Some(_node_id)) => {
-                // Node responded - update status
-                state.update_node(node.node_id, |n| {
-                    n.connection_status = lcc_rs::types::ConnectionStatus::Connected;
-                    n.last_verified = Some(chrono::Utc::now());
-                    n.last_seen = chrono::Utc::now();
-                }).await;
-            }
-            Ok(None) => {
-                // Node did not respond - mark as not responding
-                state.update_node(node.node_id, |n| {
-                    n.connection_status = lcc_rs::types::ConnectionStatus::NotResponding;
-                }).await;
-            }
-            Err(_e) => {
-                // Error occurred - mark as unknown
-                state.update_node(node.node_id, |n| {
-                    n.connection_status = lcc_rs::types::ConnectionStatus::Unknown;
-                }).await;
+
+    let expected_nodes = state.get_nodes().await;
+
+    // If no known nodes, just probe and let node-appeared events handle everything.
+    if expected_nodes.is_empty() {
+        let mut conn = connection_arc.lock().await;
+        conn.probe_nodes().await.map_err(|e| format!("Probe failed: {}", e))?;
+        return Ok(vec![]);
+    }
+
+    // Subscribe to VerifiedNode replies *before* sending the probe so we don't
+    // miss fast responders.
+    let mut rx = {
+        let conn = connection_arc.lock().await;
+        conn.dispatcher().map(|disp| {
+            // We need to unlock dispatcher to get the channel; capture it first.
+            disp
+        })
+    };
+    let mut maybe_rx = match rx.take() {
+        Some(disp_arc) => {
+            let disp = disp_arc.lock().await;
+            Some(disp.subscribe_mti(MTI::VerifiedNode).await)
+        }
+        None => None,
+    };
+
+    // Send the probe.
+    {
+        let mut conn = connection_arc.lock().await;
+        conn.probe_nodes().await.map_err(|e| format!("Probe failed: {}", e))?;
+    }
+
+    // Collect respondents during the liveness window (500 ms, no early exit).
+    const LIVENESS_MS: u64 = 500;
+    let mut responded: std::collections::HashSet<NodeID> = std::collections::HashSet::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(LIVENESS_MS);
+
+    if let Some(ref mut recv) = maybe_rx {
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() { break; }
+            match tokio::time::timeout(remaining, recv.recv()).await {
+                Ok(Ok(msg)) => {
+                    if msg.frame.data.len() == 6 {
+                        if let Ok(node_id) = NodeID::from_slice(&msg.frame.data) {
+                            responded.insert(node_id);
+                        }
+                    }
+                }
+                Ok(Err(_)) => continue, // broadcast lagged
+                Err(_) => break,        // timeout elapsed
             }
         }
+    } else {
+        // No dispatcher (direct-transport mode) — just wait.
+        tokio::time::sleep(std::time::Duration::from_millis(LIVENESS_MS)).await;
     }
-    
-    // Return updated nodes
-    Ok(state.get_nodes().await)
+
+    // Determine which previously-known nodes did not respond.
+    let stale: Vec<NodeID> = expected_nodes
+        .iter()
+        .filter(|n| !responded.contains(&n.node_id))
+        .map(|n| n.node_id)
+        .collect();
+
+    // Remove stale nodes from the backend cache.
+    if !stale.is_empty() {
+        let mut nodes_guard = state.nodes.write().await;
+        nodes_guard.retain(|n| !stale.contains(&n.node_id));
+    }
+
+    // Return stale node IDs as dotted-hex strings for the frontend to cull its list.
+    let stale_strings: Vec<String> = stale
+        .iter()
+        .map(|id| {
+            let b = id.as_bytes();
+            format!(
+                "{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}",
+                b[0], b[1], b[2], b[3], b[4], b[5]
+            )
+        })
+        .collect();
+
+    Ok(stale_strings)
 }
 
 // ── Protocol Identification Protocol (PIP) ────────────────────────────────────

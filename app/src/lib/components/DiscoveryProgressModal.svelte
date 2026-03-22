@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import type { ReadProgressState } from '$lib/api/types';
+  import type { ReadProgressState, NodeReadState } from '$lib/api/types';
 
   /** Whether the modal is visible */
   export let visible: boolean = false;
@@ -8,6 +8,8 @@
   export let phase: 'discovering' | 'querying' | 'refreshing' | 'reading' | 'complete' | 'cancelled' = 'discovering';
   /** Config reading progress (only meaningful during 'reading' phase) */
   export let readProgress: ReadProgressState | null = null;
+  /** Per-node progress states for the reading phase */
+  export let nodeReadStates: NodeReadState[] = [];
   /** Whether cancellation is in flight */
   export let isCancelling: boolean = false;
   /** Cancel callback */
@@ -58,6 +60,9 @@
   /** Whether the cancel button should be shown */
   $: showCancel = phase !== 'complete' && phase !== 'cancelled';
 
+  /** Whether to show per-node progress list */
+  $: showNodeList = phase === 'reading' && nodeReadStates.length > 0;
+
   /** Progress percentage for the bar */
   $: percentage = readProgress?.percentage ?? 0;
 
@@ -73,6 +78,7 @@
   <div class="discovery-modal-overlay" role="presentation">
     <div
       class="discovery-modal-content"
+      class:dm-wide={showNodeList}
       role="dialog"
       aria-modal="true"
       aria-label="Discovery progress"
@@ -80,9 +86,11 @@
       <!-- Header -->
       <h2 class="dm-title">
         {#if phase === 'complete'}
-          ✓ Discovery Complete
+          ✓ Complete
         {:else if phase === 'cancelled'}
-          ⚠ Discovery Cancelled
+          ⚠ Cancelled
+        {:else if phase === 'reading'}
+          Reading Node Configurations
         {:else}
           Node Discovery
         {/if}
@@ -90,39 +98,79 @@
 
       <!-- Body -->
       <div class="dm-body">
-        <!-- Phase text -->
-        <p class="dm-phase-text">
-          {#if phase === 'reading' && readProgress}
-            {#if readProgress.status.type === 'ReadingNode'}
-              Reading "{readProgress.status.node_name}" ({readProgress.currentNodeIndex + 1} of {readProgress.totalNodes})
-            {:else if readProgress.status.type === 'NodeComplete'}
-              ✓ {readProgress.status.node_name}
+        {#if showNodeList}
+          <!-- Per-node progress list -->
+          <div class="dm-node-list">
+            {#each nodeReadStates as nodeState}
+              <div class="dm-node-row">
+                <span class="dm-node-name" title={nodeState.nodeId}>{nodeState.name}</span>
+                <div class="dm-node-bar-track">
+                  <div
+                    class="dm-node-bar"
+                    class:dm-node-bar-waiting={nodeState.status === 'waiting' || nodeState.status === 'no-cdi'}
+                    class:dm-node-bar-reading={nodeState.status === 'reading'}
+                    class:dm-node-bar-complete={nodeState.status === 'complete'}
+                    class:dm-node-bar-failed={nodeState.status === 'failed'}
+                    style="width: {nodeState.status === 'complete' ? 100 : nodeState.status === 'reading' ? nodeState.percentage : 0}%"
+                  ></div>
+                </div>
+                <span
+                  class="dm-node-badge"
+                  class:dm-badge-complete={nodeState.status === 'complete'}
+                  class:dm-badge-reading={nodeState.status === 'reading'}
+                  class:dm-badge-failed={nodeState.status === 'failed'}
+                  class:dm-badge-nocdi={nodeState.status === 'no-cdi'}
+                >
+                  {#if nodeState.status === 'waiting'}
+                    Waiting
+                  {:else if nodeState.status === 'reading'}
+                    {nodeState.percentage}%
+                  {:else if nodeState.status === 'complete'}
+                    ✓
+                  {:else if nodeState.status === 'failed'}
+                    Failed
+                  {:else if nodeState.status === 'no-cdi'}
+                    No CDI
+                  {/if}
+                </span>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <!-- Phase text -->
+          <p class="dm-phase-text">
+            {#if phase === 'reading' && readProgress}
+              {#if readProgress.status.type === 'ReadingNode'}
+                Reading "{readProgress.status.node_name}" ({readProgress.currentNodeIndex + 1} of {readProgress.totalNodes})
+              {:else if readProgress.status.type === 'NodeComplete'}
+                ✓ {readProgress.status.node_name}
+              {:else}
+                Starting configuration read…
+              {/if}
+            {:else if phase === 'complete' && readProgress}
+              All {readProgress.totalNodes} {readProgress.totalNodes === 1 ? 'node' : 'nodes'} read{readProgress.status.type === 'Complete' && readProgress.status.fail_count > 0 ? ` — ${readProgress.status.fail_count} failed` : ''}
+            {:else if phase === 'cancelled'}
+              Operation was cancelled
             {:else}
-              Starting configuration read…
+              {phaseLabel(phase)}
             {/if}
-          {:else if phase === 'complete' && readProgress}
-            All {readProgress.totalNodes} {readProgress.totalNodes === 1 ? 'node' : 'nodes'} read{readProgress.status.type === 'Complete' && readProgress.status.fail_count > 0 ? ` — ${readProgress.status.fail_count} failed` : ''}
-          {:else if phase === 'cancelled'}
-            Operation was cancelled
-          {:else}
-            {phaseLabel(phase)}
-          {/if}
-        </p>
+          </p>
 
-        <!-- Progress bar -->
-        <div class="dm-bar-track" aria-hidden="true">
-          {#if indeterminate}
-            <div class="dm-bar-fill dm-bar-indeterminate"></div>
-          {:else}
-            <div class="dm-bar-fill" style="width: {percentage}%"></div>
-          {/if}
-        </div>
+          <!-- Progress bar -->
+          <div class="dm-bar-track" aria-hidden="true">
+            {#if indeterminate}
+              <div class="dm-bar-fill dm-bar-indeterminate"></div>
+            {:else}
+              <div class="dm-bar-fill" style="width: {percentage}%"></div>
+            {/if}
+          </div>
 
-        <!-- Percentage / status -->
-        {#if phase === 'reading' && readProgress}
-          <span class="dm-percentage">{percentage}%</span>
-        {:else if phase === 'complete'}
-          <span class="dm-percentage">100%</span>
+          <!-- Percentage / status -->
+          {#if phase === 'reading' && readProgress}
+            <span class="dm-percentage">{percentage}%</span>
+          {:else if phase === 'complete'}
+            <span class="dm-percentage">100%</span>
+          {/if}
         {/if}
       </div>
 
@@ -257,4 +305,65 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
+
+  /* ─── Wide modal for per-node list ────────────────────── */
+
+  .dm-wide {
+    width: 500px;
+  }
+
+  .dm-node-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+
+  .dm-node-row {
+    display: grid;
+    grid-template-columns: 1fr 100px 44px;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .dm-node-name {
+    font-size: 13px;
+    color: #334155;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  .dm-node-bar-track {
+    width: 100%;
+    height: 6px;
+    background: #e2e8f0;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .dm-node-bar {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease-out;
+  }
+
+  .dm-node-bar-waiting  { background: #cbd5e1; }
+  .dm-node-bar-reading  { background: #2563eb; }
+  .dm-node-bar-complete { background: #16a34a; }
+  .dm-node-bar-failed   { background: #dc2626; }
+
+  .dm-node-badge {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    color: #94a3b8;
+  }
+
+  .dm-badge-complete { color: #16a34a; font-weight: 600; }
+  .dm-badge-reading  { color: #2563eb; }
+  .dm-badge-failed   { color: #dc2626; }
+  .dm-badge-nocdi    { color: #94a3b8; font-style: italic; }
 </style>
