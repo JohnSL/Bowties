@@ -1,10 +1,10 @@
 # Installing Bowties
 
-Bowties is a desktop application for Windows and Linux. Pre-built installers are available on the [GitHub Releases page](../../releases).
+Bowties is a desktop application for Windows and Linux. Pre-built installers are available on the [GitHub Releases page](https://github.com/JohnSL/Bowties/releases).
 
 ## Windows
 
-1. Download the latest `Bowties_x.y.z_x64-setup.exe` from [Releases](../../releases).
+1. Download the latest `Bowties_x.y.z_x64-setup.exe` from [Releases](https://github.com/JohnSL/Bowties/releases).
 2. You may see security warnings during and after the download — see [Windows security warnings](#windows-security-warnings) below for how to proceed through each one.
 3. Run the installer and follow the prompts. Bowties installs to `%LOCALAPPDATA%\Programs\Bowties` by default.
 4. Launch **Bowties** from the Start Menu or desktop shortcut.
