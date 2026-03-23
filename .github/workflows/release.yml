@@ -61,11 +61,31 @@ jobs:
         if: matrix.cross_target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo dpkg --add-architecture arm64
-          sudo sed -i 's/^deb \(http[^ ]*\)/deb [arch=amd64] \1/g' /etc/apt/sources.list
           . /etc/os-release
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
+
+          # Rewrite sources.list with explicit amd64-only entries (traditional format)
+          printf "deb [arch=amd64] http://archive.ubuntu.com/ubuntu %s main restricted universe multiverse\n" \
+            "$VERSION_CODENAME" "$VERSION_CODENAME-updates" "$VERSION_CODENAME-backports" \
+            | sudo tee /etc/apt/sources.list
+          echo "deb [arch=amd64] http://security.ubuntu.com/ubuntu $VERSION_CODENAME-security main restricted universe multiverse" \
+            | sudo tee -a /etc/apt/sources.list
+
+          # Remove deb822-format sources (ubuntu.sources) — these have no per-arch filtering
+          # and cause apt to request arm64 packages from mirrors that don't carry them.
+          sudo rm -f /etc/apt/sources.list.d/ubuntu.sources
+
+          # Restrict any remaining .list files to amd64
+          sudo find /etc/apt/sources.list.d/ -name "*.list" \
+            -exec sudo sed -i \
+              's/^deb \[arch=\([^]]*\)\]/deb [arch=amd64]/; t; s/^deb http/deb [arch=amd64] http/' \
+            {} \;
+
+          # Add arm64 package sources from ports.ubuntu.com
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/ubuntu-ports-arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/ubuntu-ports-arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-backports main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/ubuntu-ports-arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/ubuntu-ports-arm64.list
+
           sudo apt-get update
           sudo apt-get install -y \
             gcc-aarch64-linux-gnu \
