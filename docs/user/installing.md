@@ -59,22 +59,48 @@ After these steps the installer runs normally.
 
 ## Linux
 
-### Debian / Ubuntu (.deb)
+### Debian / Ubuntu (x86-64)
 
+1. Download the latest `bowties_x.y.z_amd64.deb` from [Releases](https://github.com/JohnSL/Bowties/releases).
+2. Install it:
+   ```bash
+   sudo apt install ./bowties_x.y.z_amd64.deb
+   ```
+   Using `apt install` (rather than `dpkg -i`) automatically handles any missing runtime dependencies.
+3. Launch via your application menu or run `bowties` in a terminal.
+
+### Raspberry Pi (64-bit)
+
+Bowties requires a **64-bit** OS. Raspberry Pi OS ships in both 32-bit and 64-bit editions — make sure you are running the 64-bit version before installing.
+
+**Check your OS:**
 ```bash
-wget https://github.com/<owner>/Bowties/releases/latest/download/bowties_x.y.z_amd64.deb
-sudo dpkg -i bowties_x.y.z_amd64.deb
+uname -m
 ```
+The output should be `aarch64`. If it shows `armv7l` or `armhf` you are on a 32-bit OS and will need to re-image with the 64-bit edition before continuing.
 
-Then launch via your application menu or run `bowties` in a terminal.
+**Install:**
+
+1. Download the latest `bowties_x.y.z_arm64.deb` from [Releases](https://github.com/JohnSL/Bowties/releases).
+2. Install it:
+   ```bash
+   sudo apt install ./bowties_x.y.z_arm64.deb
+   ```
+3. Launch from the application menu or run `bowties` in a terminal.
+
+Bowties has been tested on Raspberry Pi 5. Raspberry Pi 4 should also work but has not been formally tested.
+
+> **Raspberry Pi OS Lite (no desktop):** Bowties is a graphical application and requires a desktop environment. It will not run on the Lite image unless you separately install a desktop environment such as `xfce4`.
 
 ### Other distributions (AppImage)
 
 ```bash
-wget https://github.com/<owner>/Bowties/releases/latest/download/Bowties_x.y.z_amd64.AppImage
+wget https://github.com/JohnSL/Bowties/releases/latest/download/Bowties_x.y.z_amd64.AppImage
 chmod +x Bowties_x.y.z_amd64.AppImage
 ./Bowties_x.y.z_amd64.AppImage
 ```
+
+AppImage is only available for x86-64 Linux. Raspberry Pi users should use the `.deb` package above.
 
 ## Supported hardware
 
@@ -92,7 +118,7 @@ No additional software or drivers are required for the TCP hub method. For USB a
 
 **Windows:** Use **Add or Remove Programs** and uninstall **Bowties**.
 
-**Linux (.deb):** `sudo apt remove bowties`
+**Linux (.deb — Ubuntu and Raspberry Pi):** `sudo apt remove bowties`
 
 **Linux (AppImage):** Delete the `.AppImage` file. Configuration is stored in `~/.config/com.lcc.bowties/`.
 

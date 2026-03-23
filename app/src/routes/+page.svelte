@@ -657,36 +657,87 @@
     cdiDownloadedCount = 0;
     const nodesToDownload = [...cdiMissingNodes];
 
+    // Mark all nodes as waiting before we start
+    cdiMissingNodes = nodesToDownload.map(n => ({ ...n, downloadStatus: 'waiting' as const }));
+
     for (let i = 0; i < nodesToDownload.length; i++) {
       const { nodeId, nodeName } = nodesToDownload[i];
+      cdiMissingNodes = cdiMissingNodes.map((n, idx) =>
+        idx === i ? { ...n, downloadStatus: 'downloading' as const } : n
+      );
       try {
         await downloadCdi(nodeId);
         console.log(`Downloaded CDI for ${nodeName}`);
         nodesWithCdi = new Set([...nodesWithCdi, nodeId]);
+        cdiMissingNodes = cdiMissingNodes.map((n, idx) =>
+          idx === i ? { ...n, downloadStatus: 'done' as const } : n
+        );
       } catch (e) {
         console.warn(`Failed to download CDI for ${nodeName}:`, e);
+        cdiMissingNodes = cdiMissingNodes.map((n, idx) =>
+          idx === i ? { ...n, downloadStatus: 'failed' as const } : n
+        );
       }
       cdiDownloadedCount = i + 1;
     }
 
     cdiDownloadDialogVisible = false;
     cdiDownloading = false;
+
+    // Only read config for nodes whose CDI was successfully downloaded
+    const nodesToRead = nodesToDownload.filter(n => nodesWithCdi.has(n.nodeId));
     cdiMissingNodes = [];
 
-    // Read config values for nodes that now have CDI
-    for (let i = 0; i < nodesToDownload.length; i++) {
-      const { nodeId, nodeName } = nodesToDownload[i];
-      try {
-        const cdiCheck = await getCdiXml(nodeId);
-        if (cdiCheck.xmlContent !== null) {
-          const response = await readAllConfigValues(nodeId, undefined, i, nodesToDownload.length);
-          markNodeConfigRead(nodeId);
-          await nodeTreeStore.loadTree(nodeId);
-          console.log(`✓ Read config for ${nodeName}`);
+    if (nodesToRead.length === 0) return;
+
+    // Show the progress modal for the config-read phase
+    nodeReadStates = nodesToRead.map(({ nodeId, nodeName }) => ({
+      nodeId,
+      name: nodeName,
+      percentage: 0,
+      status: 'waiting' as const,
+    }));
+    readingRemaining = true;
+    discoveryModalVisible = true;
+    discoveryPhase = 'reading';
+    errorMessage = '';
+
+    try {
+      // Read config values for nodes that now have CDI
+      for (let i = 0; i < nodesToRead.length; i++) {
+        const { nodeId, nodeName } = nodesToRead[i];
+        try {
+          const cdiCheck = await getCdiXml(nodeId);
+          if (cdiCheck.xmlContent !== null) {
+            await readAllConfigValues(nodeId, undefined, i, nodesToRead.length);
+            markNodeConfigRead(nodeId);
+            await nodeTreeStore.loadTree(nodeId);
+            nodeReadStates = nodeReadStates.map((s, idx) =>
+              idx === i ? { ...s, status: 'complete' as const, percentage: 100 } : s
+            );
+            console.log(`✓ Read config for ${nodeName}`);
+          } else {
+            nodeReadStates = nodeReadStates.map((s, idx) =>
+              idx === i ? { ...s, status: 'no-cdi' as const } : s
+            );
+          }
+        } catch (e) {
+          console.warn(`Failed to read config for ${nodeId}:`, e);
+          nodeReadStates = nodeReadStates.map((s, idx) =>
+            idx === i ? { ...s, status: 'failed' as const } : s
+          );
         }
-      } catch (e) {
-        console.warn(`Failed to read config for ${nodeId}:`, e);
       }
+      discoveryModalVisible = false;
+      readProgress = null;
+      isCancelling = false;
+      nodeReadStates = [];
+    } catch (e) {
+      errorMessage = `Read config after CDI download failed: ${e}`;
+      discoveryModalVisible = false;
+      nodeReadStates = [];
+    } finally {
+      readingRemaining = false;
     }
   }
 

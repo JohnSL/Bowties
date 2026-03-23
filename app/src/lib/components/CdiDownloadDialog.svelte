@@ -12,6 +12,7 @@
   export interface MissingCdiNode {
     nodeId: string;
     nodeName: string;
+    downloadStatus?: 'waiting' | 'downloading' | 'done' | 'failed';
   }
 
   interface Props {
@@ -110,8 +111,19 @@
     <ul class="cd-node-list" aria-label="Nodes missing CDI">
       {#each nodes as node}
         <li class="cd-node-item">
-          <span class="cd-node-name">{node.nodeName}</span>
-          <span class="cd-node-id">{node.nodeId}</span>
+          <div class="cd-node-info">
+            <span class="cd-node-name">{node.nodeName}</span>
+            <span class="cd-node-id">{node.nodeId}</span>
+          </div>
+          {#if node.downloadStatus === 'downloading'}
+            <span class="cd-node-status cd-node-status--downloading" aria-label="Downloading">
+              <span class="cd-spinner" aria-hidden="true"></span>
+            </span>
+          {:else if node.downloadStatus === 'done'}
+            <span class="cd-node-status cd-node-status--done" aria-label="Downloaded">✓</span>
+          {:else if node.downloadStatus === 'failed'}
+            <span class="cd-node-status cd-node-status--failed" aria-label="Failed">✗</span>
+          {/if}
         </li>
       {/each}
     </ul>
@@ -235,13 +247,22 @@
 
   .cd-node-item {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
     padding: 6px 10px;
     border-bottom: 1px solid #f0f0f0;
+    gap: 8px;
   }
 
   .cd-node-item:last-child {
     border-bottom: none;
+  }
+
+  .cd-node-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
   }
 
   .cd-node-name {
@@ -253,6 +274,48 @@
     font-size: 11px;
     color: #605e5c;
     font-family: 'Consolas', 'Courier New', monospace;
+  }
+
+  /* ── Per-node download status indicators ── */
+
+  .cd-node-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    font-size: 12px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .cd-node-status--done {
+    background: #d4edda;
+    color: #155724;
+  }
+
+  .cd-node-status--failed {
+    background: #f8d7da;
+    color: #721c24;
+  }
+
+  .cd-node-status--downloading {
+    background: transparent;
+  }
+
+  .cd-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid #c8c6c4;
+    border-top-color: #0078d4;
+    border-radius: 50%;
+    animation: cd-spin 0.7s linear infinite;
+  }
+
+  @keyframes cd-spin {
+    to { transform: rotate(360deg); }
   }
 
   /* ── Status ── */
