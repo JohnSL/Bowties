@@ -180,7 +180,11 @@
             <div class="segment-list" role="list" aria-label="Segments for {getNodeDisplayName(node)}">
               {#if nodeError}
                 {#if nodeError.includes('CdiUnavailable') || nodeError.includes('CdiNotRetrieved')}
-                  <p class="segment-empty">Configuration not supported by this node</p>
+                  {#if isConfigNotRead}
+                    <p class="segment-empty">Configuration has not been read from this node yet</p>
+                  {:else}
+                    <p class="segment-empty">Configuration not supported by this node</p>
+                  {/if}
                 {:else}
                   <div class="segment-error" role="alert">{nodeError}</div>
                 {/if}

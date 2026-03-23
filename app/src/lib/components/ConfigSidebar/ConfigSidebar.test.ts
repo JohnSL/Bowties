@@ -16,6 +16,7 @@ import { render, screen, fireEvent } from '@testing-library/svelte';
 import { nodeInfoStore } from '$lib/stores/nodeInfo';
 import { configSidebarStore } from '$lib/stores/configSidebar';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
+import { clearConfigReadStatus, markNodeConfigRead } from '$lib/stores/configReadStatus';
 import ConfigSidebar from './ConfigSidebar.svelte';
 
 // Mock Tauri invoke so we don't need an actual backend
@@ -46,6 +47,7 @@ beforeEach(() => {
   configSidebarStore.reset();
   nodeInfoStore.set(new Map());
   nodeTreeStore.reset();
+  clearConfigReadStatus();
   vi.clearAllMocks();
 });
 
@@ -163,5 +165,40 @@ describe('ConfigSidebar.svelte', () => {
       expect(screen.queryByText('No segments available')).not.toBeInTheDocument();
     });
     expect(screen.getByText('Port I/O')).toBeInTheDocument();
+  });
+
+  it('shows "not read yet" message when a CDI error fires and config has not been read', async () => {
+    // invoke rejects with a CDI error (no cache) — config has NOT been read yet
+    const { invoke } = await import('@tauri-apps/api/core');
+    (invoke as any).mockRejectedValue('CdiNotRetrieved: no cache entry');
+
+    const nodeId = '02.01.57.00.00.01';
+    nodeInfoStore.set(new Map([[nodeId, MOCK_NODE as any]]));
+
+    render(ConfigSidebar);
+    await fireEvent.click(screen.getByText('Test Node'));
+
+    await vi.waitFor(() => {
+      expect(screen.getByText(/configuration has not been read from this node yet/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/configuration not supported/i)).not.toBeInTheDocument();
+  });
+
+  it('shows "not supported" message when a CDI error fires and the node has been marked as read', async () => {
+    // invoke rejects with a CDI error — but config IS already marked as read
+    const { invoke } = await import('@tauri-apps/api/core');
+    (invoke as any).mockRejectedValue('CdiUnavailable: 02.01.57.00.00.01');
+
+    const nodeId = '02.01.57.00.00.01';
+    markNodeConfigRead(nodeId);
+    nodeInfoStore.set(new Map([[nodeId, MOCK_NODE as any]]));
+
+    render(ConfigSidebar);
+    await fireEvent.click(screen.getByText('Test Node'));
+
+    await vi.waitFor(() => {
+      expect(screen.getByText(/configuration not supported by this node/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/has not been read from this node yet/i)).not.toBeInTheDocument();
   });
 });

@@ -163,12 +163,15 @@
   );
 
   // The node whose segment is currently selected in the sidebar, if it has not
-  // been read yet. Used to show a per-node "read this node" CTA instead of an
-  // empty SegmentView.
+  // been read yet AND supports CDI. Used to show a per-node "read this node" CTA
+  // instead of an empty SegmentView. CDI-less nodes (e.g. JMRI LccPro) are excluded
+  // so we don't show a "Read Configuration" button for nodes that can't provide one.
   let selectedUnreadNodeId = $derived((() => {
     const sel = $configSidebarStore.selectedSegment?.nodeId ?? $configSidebarStore.selectedNodeId;
     if (!sel) return null;
     if ($configReadNodesStore.has(sel)) return null;
+    const selectedNode = nodes.find(n => formatNodeId(n.node_id) === sel);
+    if (selectedNode && pipConfirmsNoCdi(selectedNode)) return null;
     return sel;
   })());
 
@@ -577,10 +580,13 @@
         if (hasCdi) nodesWithCdi = new Set([...nodesWithCdi, nodeId]);
       } catch { /* CDI not available */ }
       if (!hasCdi) {
-        errorMessage = `CDI not available for ${nodeName}`;
+        // CDI not in cache — close the progress modal and show the download dialog
+        // for just this node, matching the batch-read behaviour.
         discoveryModalVisible = false;
         nodeReadStates = [];
         readingRemaining = false;
+        cdiMissingNodes = [{ nodeId, nodeName }];
+        cdiDownloadDialogVisible = true;
         return;
       }
       await readAllConfigValues(nodeId, undefined, 0, 1);
@@ -913,7 +919,7 @@
       <BowtieCatalogPanel
         highlightedEventIdHex={bowtieFocusStore.highlightedEventIdHex}
         onReadConfig={readRemainingNodes}
-        hasUnreadNodes={showConfigCta}
+        hasUnreadNodes={unreadCount > 0}
         readingConfig={readingRemaining}
         {unreadCount}
         nodesCount={nodes.length}
