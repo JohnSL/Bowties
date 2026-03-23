@@ -18,7 +18,7 @@ jobs:
             args: --bundles nsis
           - os: ubuntu-latest
             args: --bundles deb,appimage
-          - os: ubuntu-22.04
+          - os: ubuntu-latest
             args: --bundles deb --target aarch64-unknown-linux-gnu
             cross_target: aarch64-unknown-linux-gnu
 
@@ -45,6 +45,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: app/src-tauri -> target
+          prefix-key: ${{ matrix.cross_target || 'native' }}
 
       - name: Install Linux system dependencies
         if: matrix.os == 'ubuntu-latest'
