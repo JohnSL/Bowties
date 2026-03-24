@@ -16,7 +16,7 @@ jobs:
         include:
           - os: windows-latest
             args: --bundles nsis
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             args: --bundles deb,appimage
           - os: ubuntu-22.04
             args: --bundles deb --target aarch64-unknown-linux-gnu
@@ -48,7 +48,7 @@ jobs:
           prefix-key: ${{ matrix.cross_target || 'native' }}
 
       - name: Install Linux system dependencies
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-22.04' && matrix.cross_target == ''
         run: |
           sudo apt-get update
           sudo apt-get install -y \
