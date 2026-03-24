@@ -249,7 +249,18 @@ pub fn run() {
                     let _ = window.set_icon(icon);
                 }
                 window.show().unwrap();
+
+                // Close the traffic monitor window when the main window closes
+                let app_handle = app.handle().clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Destroyed = event {
+                        if let Some(traffic) = app_handle.get_webview_window("traffic") {
+                            let _ = traffic.close();
+                        }
+                    }
+                });
             }
+
             Ok(())
         })
         .manage(AppState::new())

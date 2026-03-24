@@ -461,7 +461,9 @@
       title: 'LCC Traffic Monitor',
       width: 960,
       height: 640,
-      parent: getCurrentWebviewWindow(),
+      maximizable: true,
+      minimizable: true,
+      visible: false,
     });
     // If a window with this label already exists Tauri emits tauri://error
     // instead of creating a duplicate — just focus the existing one.

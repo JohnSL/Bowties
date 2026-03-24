@@ -242,7 +242,7 @@
     transform: translate(-50%, -50%);
     z-index: 101;
     width: min(90vw, 960px);
-    max-height: 85vh;
+    height: 85vh;
     display: flex;
     flex-direction: column;
     background: #fff;
@@ -287,11 +287,12 @@
 
   .dialog-body {
     flex: 1;
-    overflow-y: auto;
+    overflow: hidden;
     padding: 16px 18px;
     display: flex;
     flex-direction: column;
     gap: 14px;
+    min-height: 0;
   }
 
   .name-field {
@@ -324,7 +325,8 @@
     display: flex;
     gap: 0;
     flex: 1;
-    min-height: 300px;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .picker-panel {
@@ -333,6 +335,8 @@
     flex-direction: column;
     gap: 6px;
     min-width: 0;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .panel-label {
@@ -379,6 +383,7 @@
     padding: 12px 18px;
     border-top: 1px solid #e5e7eb;
     background: #fafafa;
+    flex-shrink: 0;
   }
 
   .btn {
