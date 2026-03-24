@@ -10,6 +10,7 @@ mod traffic;
 pub mod layout;
 pub mod node_tree;
 pub mod profile;
+pub mod diagnostics;
 
 use menu::MenuHandles;
 
@@ -116,6 +117,47 @@ async fn connect_lcc(
     *state.active_connection.write().await = Some(config.clone());
     state.set_connection_with_dispatcher(connection, app).await;
 
+    // Log connection event.
+    let adapter_label = match &config.adapter_type {
+        AdapterType::Tcp => {
+            let host = config.host.as_deref().unwrap_or("localhost");
+            let port = config.port.unwrap_or(12021);
+            format!("{}:{}", host, port)
+        }
+        AdapterType::GridConnectSerial | AdapterType::SlcanSerial => {
+            config.serial_port.clone().unwrap_or_default()
+        }
+    };
+    bwlog!(state.inner(), "Connected: adapter={:?} label={}", config.adapter_type, adapter_label);
+    {
+        let mut stats = state.diag_stats.write().await;
+        stats.connected_at = Some(chrono::Utc::now());
+        stats.adapter_type = Some(format!("{:?}", config.adapter_type));
+        stats.connection_label = Some(adapter_label);
+        stats.discovery.initial_probe_at = Some(chrono::Utc::now());
+    }
+
+    // Phase 1: For TCP connections, fire a second probe at T+2 s to pick up nodes
+    // that were not yet visible when the initial probe fired (common behind JMRI hubs).
+    if config.adapter_type == AdapterType::Tcp {
+        let state_clone = state.inner().clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            let conn_opt = state_clone.connection.read().await.clone();
+            if let Some(conn_arc) = conn_opt {
+                let node_count = state_clone.nodes.read().await.len();
+                bwlog!(state_clone, "TCP second probe fired at T+2s ({} nodes visible before probe)", node_count);
+                {
+                    let mut stats = state_clone.diag_stats.write().await;
+                    stats.discovery.second_probe_at = Some(chrono::Utc::now());
+                    stats.discovery.second_probe_node_count = Some(node_count);
+                }
+                let mut conn = conn_arc.lock().await;
+                let _ = conn.probe_nodes().await;
+            }
+        });
+    }
+
     Ok(ConnectionInfo {
         connected: true,
         config: Some(config),
@@ -150,6 +192,7 @@ async fn update_menu_state(
     handles.disconnect     .set_enabled(connected)                      .map_err(|e| e.to_string())?;
     handles.refresh_nodes  .set_enabled(connected && !is_busy)          .map_err(|e| e.to_string())?;
     handles.traffic_monitor.set_enabled(connected)                      .map_err(|e| e.to_string())?;
+    handles.diagnostics    .set_enabled(connected)                      .map_err(|e| e.to_string())?;
     handles.view_cdi       .set_enabled(can_view_cdi)                   .map_err(|e| e.to_string())?;
     handles.redownload_cdi .set_enabled(can_redownload_cdi)             .map_err(|e| e.to_string())?;
     handles.open_layout    .set_enabled(can_open_layout)                .map_err(|e| e.to_string())?;
@@ -193,6 +236,7 @@ pub fn run() {
                     "menu-save-layout"    => { let _ = app_h.emit("menu-save-layout", ()); }
                     "menu-save-layout-as" => { let _ = app_h.emit("menu-save-layout-as", ()); }
                     "menu-exit"           => { let _ = app_h.emit("menu-exit", ()); }
+                    "menu-diagnostics"    => { let _ = app_h.emit("menu-diagnostics", ()); }
                     _ => {}
                 }
             });
@@ -249,6 +293,7 @@ pub fn run() {
             commands::list_serial_ports,
             commands::load_connection_prefs,
             commands::save_connection_prefs,
+            diagnostics::get_diagnostic_report,
             update_menu_state,
         ])
         .run(tauri::generate_context!())

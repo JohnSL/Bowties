@@ -46,6 +46,7 @@ pub use protocol::{GridConnectFrame, MTI, DatagramAssembler, DatagramState, Memo
 pub use transport::LccTransport;
 pub use transport::{GridConnectSerialTransport, SlcanSerialTransport};
 pub use discovery::LccConnection;
+pub use discovery::MemoryReadTiming;
 pub use snip::{query_snip, parse_snip_payload, encode_snip_payload};
 pub use cdi::{Cdi, Segment, DataElement, Group, IntElement, EventIdElement, StringElement, FloatElement, ActionElement, BlobElement, EventRole, classify_event_slot, walk_event_slots};
 pub use dispatcher::{MessageDispatcher, ReceivedMessage, MessageFilter};

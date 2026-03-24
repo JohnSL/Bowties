@@ -801,6 +801,7 @@ pub async fn query_event_roles(
     use lcc_rs::protocol::{GridConnectFrame, MTI};
     use tokio::sync::broadcast;
     use tokio::time::{sleep, Duration};
+    use std::time::Instant as StdInstant;
 
     // Grab connection + dispatcher + own alias
     let (_connection, dispatcher, our_alias) = {
@@ -833,6 +834,11 @@ pub async fn query_event_roles(
         return HashMap::new();
     }
 
+    let exchange_start = StdInstant::now();
+    let started_at = chrono::Utc::now();
+    let nodes_queried = nodes.len();
+    crate::bwlog!(state, "[bowties] query_event_roles: sending to {} nodes", nodes_queried);
+
     // Subscribe to all broadcast traffic so we catch the six relevant MTIs.
     let mut rx = {
         let disp = dispatcher.lock().await;
@@ -840,6 +846,7 @@ pub async fn query_event_roles(
     };
 
     // Send IdentifyEventsAddressed to each node, 125 ms apart.
+    let mut events_sent: usize = 0;
     for (i, node) in nodes.iter().enumerate() {
         if i > 0 {
             sleep(Duration::from_millis(send_delay_ms)).await;
@@ -859,6 +866,8 @@ pub async fn query_event_roles(
                         "[bowties] IdentifyEventsAddressed send error to {:?}: {}",
                         node.node_id, e
                     );
+                } else {
+                    events_sent += 1;
                 }
             }
             Err(e) => {
@@ -878,6 +887,7 @@ pub async fn query_event_roles(
 
     // Collect replies for `collect_window_ms` ms.
     let mut roles: HashMap<[u8; 8], NodeRoles> = HashMap::new();
+    let mut responses_received: usize = 0;
 
     let collect_deadline = tokio::time::Instant::now()
         + Duration::from_millis(collect_window_ms);
@@ -929,6 +939,7 @@ pub async fn query_event_roles(
                 } else {
                     entry.consumers.insert(node_id);
                 }
+                responses_received += 1;
             }
             Ok(Err(broadcast::error::RecvError::Lagged(_))) => {
                 // Missed some frames — continue collecting
@@ -944,10 +955,22 @@ pub async fn query_event_roles(
         }
     }
 
-    eprintln!(
-        "[bowties] query_event_roles complete: {} event IDs collected",
-        roles.len()
-    );
+    let duration_ms = exchange_start.elapsed().as_millis() as u64;
+    crate::bwlog!(state,
+        "[bowties] query_event_roles complete: {} event IDs, {} responses, {} nodes, {}ms",
+        roles.len(), responses_received, nodes_queried, duration_ms);
+
+    // Record EventRoleExchangeStats in diagnostics.
+    {
+        let stats = crate::diagnostics::EventRoleExchangeStats {
+            started_at,
+            nodes_queried,
+            events_sent,
+            responses_received,
+            duration_ms,
+        };
+        state.diag_stats.write().await.event_role_exchange = Some(stats);
+    }
 
     roles
 }

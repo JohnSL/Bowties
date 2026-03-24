@@ -148,6 +148,7 @@ pub async fn download_cdi(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<GetCdiXmlResponse, String> {
+    use std::time::Instant as StdInstant;
     println!("[CDI] download_cdi called for node: {}", node_id);
     
     // Parse node ID
@@ -174,6 +175,10 @@ pub async fn download_cdi(
             }
         }
     }
+
+    let snip_label = snip_data.as_ref().map(|s| {
+        if !s.user_name.is_empty() { s.user_name.clone() } else { s.model.clone() }
+    }).unwrap_or_else(|| node_id.clone());
     
     println!("[CDI] Found node with alias: 0x{:03X}", alias);
 
@@ -187,6 +192,8 @@ pub async fn download_cdi(
     };
 
     println!("[CDI] Starting CDI download from alias 0x{:03X}...", alias);
+    crate::bwlog!(state.inner(), "[cdi] Downloading CDI for {} (alias={:#05x})", snip_label, alias);
+    let dl_start = StdInstant::now();
     
     // Download CDI from node (5 second timeout per chunk to accommodate slower nodes)
     let xml_content = {
@@ -200,9 +207,26 @@ pub async fn download_cdi(
             })?
     };
 
+    let dl_ms = dl_start.elapsed().as_millis() as u64;
     println!("[CDI] Download complete, size: {} bytes", xml_content.len());
+    crate::bwlog!(state.inner(), "[cdi] CDI download complete for {}: {} bytes in {}ms",
+        snip_label, xml_content.len(), dl_ms);
     
     let retrieved_at = Utc::now();
+
+    // Record CdiDownloadStats.
+    {
+        let stats_entry = crate::diagnostics::CdiDownloadStats {
+            node_id: node_id.clone(),
+            snip_name: snip_data.as_ref().map(|_s| snip_label.clone()),
+            from_cache: false,
+            total_bytes: xml_content.len(),
+            chunks: 0,  // not exposed by read_cdi
+            chunk_durations_ms: vec![],
+            total_duration_ms: dl_ms,
+        };
+        state.diag_stats.write().await.cdi_downloads.insert(node_id.clone(), stats_entry);
+    }
 
     // Create CdiData
     let cdi_data = lcc_rs::CdiData {
@@ -1706,6 +1730,8 @@ pub async fn read_all_config_values(
     // Tracks orig_index of any element whose chunk batch failed; used in
     // the multi-chunk assembly pass to skip partially-failed elements.
     let mut failed_orig_indices: std::collections::HashSet<usize> = Default::default();
+    // Per-batch diagnostic timing records (Phase 4c instrumentation).
+    let mut batch_stats: Vec<crate::diagnostics::BatchReadStat> = Vec::with_capacity(total_batches);
 
     for batch in batches.iter() {
         // T054: Check for cancellation between batches
@@ -1751,14 +1777,47 @@ pub async fn read_all_config_values(
         });
 
         // T056: Single read covering all elements in this batch
+        let batch_read_start = Instant::now();
         let mut conn = connection.lock().await;
-        let response_data = match conn
-            .read_memory(alias, batch_space, batch_start_addr, batch_total_size as u8, timeout)
-            .await
-        {
-            Ok(data) => { drop(conn); data }
+        let timed_result = conn
+            .read_memory_timed(alias, batch_space, batch_start_addr, batch_total_size as u8, timeout)
+            .await;
+        drop(conn);
+        let response_data = match timed_result {
+            Ok((data, timing)) => {
+                crate::bwlog!(state.inner(),
+                    "[config-read] {} @{:#010x}+{} space={:#04x}: ok latency={}ms frames={} total={}ms",
+                    node_name, batch_start_addr, batch_total_size, batch_space,
+                    timing.first_frame_latency_ms, timing.frame_count, timing.total_duration_ms);
+                batch_stats.push(crate::diagnostics::BatchReadStat {
+                    address_space: batch_space,
+                    address: batch_start_addr,
+                    byte_count: batch_total_size as u8,
+                    success: true,
+                    error: None,
+                    first_frame_latency_ms: Some(timing.first_frame_latency_ms),
+                    frame_gaps_ms: timing.frame_gaps_ms,
+                    frame_count: Some(timing.frame_count),
+                    total_duration_ms: timing.total_duration_ms,
+                });
+                data
+            }
             Err(e) => {
-                drop(conn);
+                let err_str = e.to_string();
+                crate::bwlog!(state.inner(),
+                    "[config-read] {} @{:#010x}+{} space={:#04x}: FAILED {}",
+                    node_name, batch_start_addr, batch_total_size, batch_space, err_str);
+                batch_stats.push(crate::diagnostics::BatchReadStat {
+                    address_space: batch_space,
+                    address: batch_start_addr,
+                    byte_count: batch_total_size as u8,
+                    success: false,
+                    error: Some(err_str.clone()),
+                    first_frame_latency_ms: None,
+                    frame_gaps_ms: vec![],
+                    frame_count: None,
+                    total_duration_ms: batch_read_start.elapsed().as_millis() as u64,
+                });
                 // Count every chunk in the batch as failed and record orig_index
                 // so the assembly pass can skip partially-failed large elements.
                 error_count += batch.len();
@@ -1766,7 +1825,7 @@ pub async fn read_all_config_values(
                     failed_orig_indices.insert(sized_items[i].orig_index);
                     let (_, _, _, element_name, _, _) = &all_elements[sized_items[i].orig_index];
                     eprintln!("Failed to read element {} (batch read @{:#010x}+{}): {}",
-                        element_name, batch_start_addr, batch_total_size, e);
+                        element_name, batch_start_addr, batch_total_size, err_str);
                 }
                 continue;
             }
@@ -2063,8 +2122,36 @@ pub async fn read_all_config_values(
         );
     }
 
+    // Phase 4c: Record NodeConfigReadStats in diagnostics.
+    {
+        let snip_name = node.snip_data.as_ref().and_then(|s| {
+            if !s.user_name.is_empty() { Some(s.user_name.clone()) }
+            else if !s.model.is_empty() { Some(s.model.clone()) }
+            else { None }
+        });
+        let successful_batches = batch_stats.iter().filter(|b| b.success).count();
+        let failed_batches = batch_stats.iter().filter(|b| !b.success).count();
+        let stats_entry = crate::diagnostics::NodeConfigReadStats {
+            node_id: node_id.clone(),
+            snip_name,
+            total_batches: batch_stats.len(),
+            successful_batches,
+            failed_batches,
+            total_elements: total_count,
+            successful_elements: success_count,
+            failed_elements: error_count,
+            total_duration_ms: duration,
+            batch_stats,
+        };
+        crate::bwlog!(state.inner(),
+            "[config-read] {} complete: {}/{} elements ok, {}/{} batches ok, {}ms total",
+            node_id, success_count, total_count,
+            stats_entry.successful_batches, stats_entry.total_batches, duration);
+        state.diag_stats.write().await.config_reads.insert(node_id.clone(), stats_entry);
+    }
+
     Ok(ReadAllConfigValuesResponse {
-        node_id,
+        node_id: node_id.clone(),
         values,
         total_elements: total_count,
         successful_reads: success_count,

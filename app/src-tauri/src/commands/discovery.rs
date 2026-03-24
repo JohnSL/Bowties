@@ -38,7 +38,13 @@ pub async fn discover_nodes(
     
     // Process result
     let nodes = result.map_err(|e| format!("Discovery failed: {}", e))?;
+    let node_count = nodes.len();
     state.set_nodes(nodes.clone()).await;
+    crate::bwlog!(state.inner(), "[discovery] initial probe complete: {} node(s) found", node_count);
+    {
+        let mut stats = state.diag_stats.write().await;
+        stats.discovery.initial_probe_node_count = node_count;
+    }
     
     Ok(nodes)
 }

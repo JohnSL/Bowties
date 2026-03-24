@@ -366,6 +366,16 @@
         const saved = await layoutStore.saveLayoutAs();
         if (saved) bowtieMetadataStore.clearAll();
       }));
+      unlistens.push(await listen('menu-diagnostics', async () => {
+        try {
+          const report = await invoke('get_diagnostic_report');
+          await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+          // Brief visual feedback via console — a toast could be added later.
+          console.info('Diagnostic report copied to clipboard');
+        } catch (e) {
+          console.error('Failed to copy diagnostic report:', e);
+        }
+      }));
     })();
 
     // Cleanup all listeners on component unmount
@@ -525,8 +535,15 @@
             continue;
           }
           console.log(`Reading config values from ${nodeName}...`);
-          await readAllConfigValues(nodeId, undefined, nodeIdx, unread.length);
-          markNodeConfigRead(nodeId);
+          const result = await readAllConfigValues(nodeId, undefined, nodeIdx, unread.length);
+          if (result.failedReads === 0) {
+            markNodeConfigRead(nodeId);
+          } else {
+            console.warn(`Config read for ${nodeName}: ${result.failedReads}/${result.totalElements} elements failed — node not marked as read`);
+            nodeReadStates = nodeReadStates.map((s, i) =>
+              i === nodeIdx ? { ...s, status: 'failed' as const } : s
+            );
+          }
           await nodeTreeStore.refreshTree(nodeId);
           // Ensure slot marked complete (listener may have done it already)
           nodeReadStates = nodeReadStates.map((s, i) =>
@@ -589,8 +606,15 @@
         cdiDownloadDialogVisible = true;
         return;
       }
-      await readAllConfigValues(nodeId, undefined, 0, 1);
-      markNodeConfigRead(nodeId);
+      const result2 = await readAllConfigValues(nodeId, undefined, 0, 1);
+      if (result2.failedReads === 0) {
+        markNodeConfigRead(nodeId);
+      } else {
+        console.warn(`Config read for ${nodeName}: ${result2.failedReads}/${result2.totalElements} elements failed — node not marked as read`);
+        nodeReadStates = nodeReadStates.map((s, i) =>
+          i === 0 ? { ...s, status: 'failed' as const } : s
+        );
+      }
       // Force tree refresh so the currently visible SegmentView updates
       await nodeTreeStore.refreshTree(nodeId);
       // Close immediately — no delay
@@ -715,8 +739,15 @@
         try {
           const cdiCheck = await getCdiXml(nodeId);
           if (cdiCheck.xmlContent !== null) {
-            await readAllConfigValues(nodeId, undefined, i, nodesToRead.length);
-            markNodeConfigRead(nodeId);
+            const result3 = await readAllConfigValues(nodeId, undefined, i, nodesToRead.length);
+            if (result3.failedReads === 0) {
+              markNodeConfigRead(nodeId);
+            } else {
+              console.warn(`Config read for ${nodeName}: ${result3.failedReads}/${result3.totalElements} elements failed — node not marked as read`);
+              nodeReadStates = nodeReadStates.map((s, idx) =>
+                idx === i ? { ...s, status: 'failed' as const } : s
+              );
+            }
             await nodeTreeStore.loadTree(nodeId);
             nodeReadStates = nodeReadStates.map((s, idx) =>
               idx === i ? { ...s, status: 'complete' as const, percentage: 100 } : s

@@ -147,6 +147,14 @@ pub struct AppState {
     /// Loaded structure profiles keyed by `ProfileKey` (manufacturer::model).
     /// `None` entry means "looked up but not found" (avoids re-scanning).
     pub profiles: crate::profile::ProfileCache,
+
+    // ── Diagnostics ───────────────────────────────────────────────────────
+
+    /// Ring-buffer diagnostic log (most recent 2000 lines, timestamped).
+    pub diag_log: crate::diagnostics::DiagLog,
+
+    /// Aggregate diagnostic statistics (updated as operations complete).
+    pub diag_stats: crate::diagnostics::DiagStats,
 }
 
 impl AppState {
@@ -163,6 +171,8 @@ impl AppState {
             config_value_cache: Arc::new(RwLock::new(HashMap::new())),
             node_trees: Arc::new(RwLock::new(HashMap::new())),
             profiles: Arc::new(RwLock::new(HashMap::new())),
+            diag_log: crate::diagnostics::new_diag_log(),
+            diag_stats: crate::diagnostics::new_diag_stats(),
         }
     }
 

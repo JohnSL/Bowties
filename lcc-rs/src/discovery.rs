@@ -16,6 +16,22 @@ use std::sync::Arc;
 use tokio::time::{sleep, Duration, Instant};
 use tokio::sync::Mutex;
 
+/// Timing data captured during a single `read_memory_timed` call.
+///
+/// Provides per-frame latency and gap information useful for diagnosing
+/// slow TCP forwarding (e.g. via a JMRI LCC Hub).
+#[derive(Debug, Clone)]
+pub struct MemoryReadTiming {
+    /// Elapsed milliseconds from the request being sent to the first datagram frame arriving.
+    pub first_frame_latency_ms: u64,
+    /// Milliseconds between consecutive datagram frames (empty for single-frame datagrams).
+    pub frame_gaps_ms: Vec<u32>,
+    /// Total elapsed milliseconds for the entire read (request sent → data ready).
+    pub total_duration_ms: u64,
+    /// Number of datagram frames received.
+    pub frame_count: u8,
+}
+
 /// High-level LCC connection for performing network operations
 pub struct LccConnection {
     /// Optional message dispatcher for persistent listening
@@ -1010,7 +1026,46 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
         }
     }
 
-    /// Read memory in dispatcher mode.
+    /// Like [`read_memory`] but also returns per-read timing metadata.
+    ///
+    /// Used by `read_all_config_values` to populate `BatchReadStat` diagnostics.
+    /// Only dispatcher mode captures per-frame timing; direct-transport mode
+    /// synthesises a single-frame summary from wall-clock time.
+    pub async fn read_memory_timed(
+        &mut self,
+        dest_alias: u16,
+        address_space: u8,
+        address: u32,
+        count: u8,
+        timeout_ms: u64,
+    ) -> Result<(Vec<u8>, MemoryReadTiming)> {
+        if let Some(ref dispatcher) = self.dispatcher {
+            let our_alias = self.our_alias.value();
+            Self::read_memory_with_dispatcher_timed(
+                dispatcher,
+                our_alias,
+                dest_alias,
+                address_space,
+                address,
+                count,
+                timeout_ms,
+            ).await
+        } else if self.transport.is_some() {
+            let t0 = Instant::now();
+            let data = self.read_memory_direct(dest_alias, address_space, address, count, timeout_ms).await?;
+            let ms = t0.elapsed().as_millis() as u64;
+            Ok((data, MemoryReadTiming {
+                first_frame_latency_ms: ms,
+                frame_gaps_ms: vec![],
+                total_duration_ms: ms,
+                frame_count: 1,
+            }))
+        } else {
+            Err(crate::Error::Protocol("No transport or dispatcher available".to_string()))
+        }
+    }
+
+    /// Read memory in dispatcher mode (untimed thin wrapper).
     ///
     /// The dispatcher background task is the sole owner of the transport receive path.
     /// This method:
@@ -1029,6 +1084,21 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
         count: u8,
         timeout_ms: u64,
     ) -> Result<Vec<u8>> {
+        Self::read_memory_with_dispatcher_timed(
+            dispatcher, our_alias, dest_alias, address_space, address, count, timeout_ms,
+        ).await.map(|(data, _timing)| data)
+    }
+
+    /// Dispatcher-mode read that also captures per-frame timing for diagnostics.
+    async fn read_memory_with_dispatcher_timed(
+        dispatcher: &Arc<Mutex<MessageDispatcher>>,
+        our_alias: u16,
+        dest_alias: u16,
+        address_space: u8,
+        address: u32,
+        count: u8,
+        timeout_ms: u64,
+    ) -> Result<(Vec<u8>, MemoryReadTiming)> {
         use crate::protocol::{MemoryConfigCmd, AddressSpace, DatagramAssembler};
 
         let space = match address_space {
@@ -1051,6 +1121,7 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
         };
 
         // Step 2: Send the request (brief lock — just for the write operation).
+        let send_time = Instant::now();
         {
             let disp = dispatcher.lock().await;
             for frame in read_frames.iter() {
@@ -1059,19 +1130,19 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
         }
 
         // Step 3: Wait for reply on the broadcast channel (no transport lock held).
-        let start_time = Instant::now();
         let max_duration = Duration::from_millis(timeout_ms);
         let mut assembler = DatagramAssembler::new();
+        let mut first_frame_latency_ms: Option<u64> = None;
+        let mut last_frame_ms: u64 = 0;
+        let mut frame_gaps_ms: Vec<u32> = Vec::new();
+        let mut frame_count: u8 = 0;
 
         loop {
-            let remaining = max_duration.saturating_sub(start_time.elapsed());
-            if remaining.is_zero() {
-                return Err(crate::Error::Timeout(
-                    "Timeout waiting for memory read response".to_string(),
-                ));
-            }
-
-            match tokio::time::timeout(remaining, rx.recv()).await {
+            // Phase 2: idle timeout — reset on every received frame.
+            // As long as the node keeps sending frames within `timeout_ms` of the
+            // previous one the read succeeds, regardless of total elapsed time.
+            // A truly unresponsive node still fails after exactly `timeout_ms` of silence.
+            match tokio::time::timeout(max_duration, rx.recv()).await {
                 Ok(Ok(msg)) => {
                     // Only process datagram frames from dest_alias addressed to us.
                     let is_our_datagram = MTI::from_datagram_header(msg.frame.header)
@@ -1091,6 +1162,17 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
                         continue;
                     }
 
+                    // Record per-frame timing.
+                    let elapsed_ms = send_time.elapsed().as_millis() as u64;
+                    if first_frame_latency_ms.is_none() {
+                        first_frame_latency_ms = Some(elapsed_ms);
+                        last_frame_ms = elapsed_ms;
+                    } else {
+                        frame_gaps_ms.push((elapsed_ms.saturating_sub(last_frame_ms)) as u32);
+                        last_frame_ms = elapsed_ms;
+                    }
+                    frame_count = frame_count.saturating_add(1);
+
                     if let Ok(Some(datagram_data)) = assembler.handle_frame(&msg.frame) {
                         // Step 4: Send ACK (brief lock).
                         let ack_frame = DatagramAssembler::send_acknowledgment(our_alias, dest_alias)?;
@@ -1099,9 +1181,17 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
                             disp.send(&ack_frame).await?;
                         }
 
+                        let total_duration_ms = send_time.elapsed().as_millis() as u64;
+                        let timing = MemoryReadTiming {
+                            first_frame_latency_ms: first_frame_latency_ms.unwrap_or(total_duration_ms),
+                            frame_gaps_ms,
+                            total_duration_ms,
+                            frame_count,
+                        };
+
                         let reply = MemoryConfigCmd::parse_read_reply(&datagram_data)?;
                         return match reply {
-                            crate::protocol::ReadReply::Success { data, .. } => Ok(data),
+                            crate::protocol::ReadReply::Success { data, .. } => Ok((data, timing)),
                             crate::protocol::ReadReply::Failed { error_code, message, .. } => {
                                 Err(crate::Error::Protocol(format!(
                                     "Memory read failed: error 0x{:04X} - {}",

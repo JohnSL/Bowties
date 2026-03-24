@@ -49,7 +49,7 @@ checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
 
 [[package]]
 name = "app"
-version = "0.1.0"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "lazy_static",
@@ -1908,7 +1908,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "lcc-rs"
-version = "0.1.0"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "chrono",

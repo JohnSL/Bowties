@@ -20,6 +20,7 @@ pub struct MenuHandles {
     pub open_layout:      MenuItem<Wry>,
     pub save_layout:      MenuItem<Wry>,
     pub save_layout_as:   MenuItem<Wry>,
+    pub diagnostics:      MenuItem<Wry>,
 }
 
 /// Build the native application menu.
@@ -61,10 +62,13 @@ pub fn build_app_menu(app: &AppHandle<Wry>) -> tauri::Result<(tauri::menu::Menu<
     // ── Tools ─────────────────────────────────────────────────────────────
     let view_cdi_item       = MenuItem::with_id(app, "menu-view-cdi",       "View CDI XML for Selected Node",    false, None::<&str>)?;
     let redownload_cdi_item = MenuItem::with_id(app, "menu-redownload-cdi", "Re-download CDI for Selected Node", false, None::<&str>)?;
+    let diagnostics_item    = MenuItem::with_id(app, "menu-diagnostics",    "Copy Diagnostic Report",            false, None::<&str>)?;
 
     let tools_submenu = SubmenuBuilder::new(app, "Tools")
         .item(&view_cdi_item)
         .item(&redownload_cdi_item)
+        .separator()
+        .item(&diagnostics_item)
         .build()?;
 
     // ── Help ──────────────────────────────────────────────────────────────
@@ -89,6 +93,7 @@ pub fn build_app_menu(app: &AppHandle<Wry>) -> tauri::Result<(tauri::menu::Menu<
         open_layout:     open_layout_item,
         save_layout:     save_layout_item,
         save_layout_as:  save_layout_as_item,
+        diagnostics:     diagnostics_item,
     };
 
     Ok((menu, handles))
