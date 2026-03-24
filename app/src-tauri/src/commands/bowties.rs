@@ -26,6 +26,11 @@ use crate::state::{AppState, BowtieCatalog, BowtieCard, BowtieState, EventSlotEn
 /// when no user has configured a CDI slot to one of these values.  Therefore bowtie
 /// cards for well-known event IDs are built exclusively from `config_value_cache`
 /// (CDI slots the user explicitly set to these values), not from the protocol exchange.
+/// The all-zeros event ID is the default "unset" value written to CDI event ID
+/// slots that have never been configured.  It is not a valid routable event ID
+/// and must be excluded from bowtie catalog discovery.
+const ZERO_EVENT_ID: [u8; 8] = [0u8; 8];
+
 const WELL_KNOWN_EVENT_IDS: &[([u8; 8], &str)] = &[
     ([0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF], "Emergency Off"),
     ([0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFE], "Clear Emergency Off"),
@@ -238,7 +243,7 @@ pub fn build_bowtie_catalog(
     let mut config_slot_map: HashMap<[u8; 8], Vec<(String, String)>> = HashMap::new();
     for (node_id, node_cache) in config_value_cache {
         for (path_key, &event_bytes) in node_cache {
-            if well_known_set.contains(&event_bytes) {
+            if event_bytes == ZERO_EVENT_ID || well_known_set.contains(&event_bytes) {
                 continue;
             }
             config_slot_map
@@ -252,7 +257,7 @@ pub fn build_bowtie_catalog(
     let mut all_event_ids: std::collections::HashSet<[u8; 8]> =
         config_slot_map.keys().copied().collect();
     for event_id_bytes in event_roles.keys() {
-        if !well_known_set.contains(event_id_bytes) {
+        if *event_id_bytes != ZERO_EVENT_ID && !well_known_set.contains(event_id_bytes) {
             all_event_ids.insert(*event_id_bytes);
         }
     }
@@ -1939,6 +1944,48 @@ mod build_bowtie_catalog_tests {
         assert!(all_node_ids.contains(&node_id(2)), "Node 2 (config) should be present");
         assert!(!all_node_ids.contains(&node_id(0)), "Node 0 (protocol only) must not appear");
         assert!(!all_node_ids.contains(&node_id(1)), "Node 1 (protocol only) must not appear");
+    }
+
+    /// Zero event ID (all-zeros) in config cache must be silently ignored — it
+    /// represents an unconfigured CDI slot and is not a valid event ID.
+    #[test]
+    fn zero_event_id_in_config_cache_is_ignored() {
+        let nodes = make_nodes(2);
+        let zero: [u8; 8] = [0u8; 8];
+
+        // Two nodes both have an unconfigured slot (all-zeros) in their config cache.
+        let mut config_cache: HashMap<String, HashMap<String, [u8; 8]>> = HashMap::new();
+        let mut node0_cache = HashMap::new();
+        node0_cache.insert("seg:0/elem:0".to_string(), zero);
+        config_cache.insert(node_id(0), node0_cache);
+        let mut node1_cache = HashMap::new();
+        node1_cache.insert("seg:0/elem:0".to_string(), zero);
+        config_cache.insert(node_id(1), node1_cache);
+
+        let catalog = build_bowtie_catalog(&nodes, &HashMap::new(), &config_cache, None);
+
+        assert!(
+            catalog.bowties.is_empty(),
+            "All-zero event IDs must not generate a bowtie card"
+        );
+    }
+
+    /// Zero event ID (all-zeros) arriving via the protocol exchange must also be
+    /// silently ignored (defensive guard for misbehaving nodes).
+    #[test]
+    fn zero_event_id_in_protocol_roles_is_ignored() {
+        let nodes = make_nodes(2);
+        let zero: [u8; 8] = [0u8; 8];
+
+        let mut event_roles = HashMap::new();
+        event_roles.insert(zero, roles(&[0], &[1]));
+
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &HashMap::new(), None);
+
+        assert!(
+            catalog.bowties.is_empty(),
+            "All-zero event ID from protocol exchange must not generate a bowtie card"
+        );
     }
 
     /// (T007e) A normal (non-well-known) event pair is unaffected — regular bowtie
