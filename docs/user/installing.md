@@ -2,6 +2,20 @@
 
 Bowties is a desktop application for Windows and Linux. Pre-built installers are available on the [GitHub Releases page](https://github.com/JohnSL/Bowties/releases).
 
+## Supported platforms
+
+| Platform | Architecture | Minimum version | Boards | Available installers |
+|---|---|---|---|---|
+| Windows | x86-64 | Windows 10 | — | `.exe` (NSIS) |
+| Linux | x86-64 | Ubuntu 22.04 | — | `.deb`, `.AppImage` |
+| Linux | ARM64 | Ubuntu 22.04 | — | `.deb` |
+| Raspberry Pi OS | ARM64 | Pi OS 12 (Bookworm) | Pi 3, 3A+, 3B+, 4, 400, 5, Zero 2 W, CM3/4/5 | `.deb` |
+| macOS | — | 11 (Big Sur) | — | Not yet available |
+
+> **Note:** Raspberry Pi support has been tested on a Pi 5 running Raspberry Pi OS 12 (Bookworm) only. Other boards and OS versions listed above are expected to work but have not been verified. Requires a 64-bit OS; the original Pi, Pi 2, and Pi Zero (32-bit only) are not supported.
+
+> **Building from source:** Bowties may run on older OS versions than those listed above, but pre-built installers are only provided for the versions shown. If you want to try an older OS, you can build Bowties from source by following the instructions in the [README](https://github.com/JohnSL/Bowties/blob/main/README.md). Success is not guaranteed on unsupported versions.
+
 ## Windows
 
 1. Download the latest `Bowties_x.y.z_x64-setup.exe` from [Releases](https://github.com/JohnSL/Bowties/releases).

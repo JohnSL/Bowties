@@ -16,6 +16,18 @@
 
   const dispatch = createEventDispatcher<{ connected: { config: ConnectionConfig } }>();
 
+  // crypto.randomUUID() requires Safari 15.4+ / WebKit 615+ (macOS 12+, Ubuntu 22.04+).
+  // Use getRandomValues() which is available everywhere Tauri runs (Safari 11+, WebKit 606+).
+  function generateUUID(): string {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 1
+    return [...bytes].map((b, i) =>
+      ([4, 6, 8, 10].includes(i) ? '-' : '') + b.toString(16).padStart(2, '0')
+    ).join('');
+  }
+
   // Saved connections loaded from backend
   let savedConnections = $state<ConnectionConfig[]>([]);
   let sortedConnections = $derived([...savedConnections].sort((a, b) => a.name.localeCompare(b.name)));
@@ -123,27 +135,31 @@
   async function submitForm() {
     if (!formName.trim()) return;
 
-    const config: ConnectionConfig = {
-      id: editingId ?? crypto.randomUUID(),
-      name: formName.trim(),
-      adapterType: formType,
-    };
+    try {
+      const config: ConnectionConfig = {
+        id: editingId ?? generateUUID(),
+        name: formName.trim(),
+        adapterType: formType,
+      };
 
-    if (formType === 'tcp') {
-      config.host = formHost;
-      config.port = formTcpPort;
-    } else {
-      config.serialPort = formSerialPort;
-      config.baudRate = formBaudRate;
-    }
+      if (formType === 'tcp') {
+        config.host = formHost;
+        config.port = formTcpPort;
+      } else {
+        config.serialPort = formSerialPort;
+        config.baudRate = formBaudRate;
+      }
 
-    if (editingId !== null) {
-      savedConnections = savedConnections.map(c => c.id === editingId ? config : c);
-    } else {
-      savedConnections = [...savedConnections, config];
+      if (editingId !== null) {
+        savedConnections = savedConnections.map(c => c.id === editingId ? config : c);
+      } else {
+        savedConnections = [...savedConnections, config];
+      }
+      await savePrefs();
+      closeModal();
+    } catch (e) {
+      errorMessage = `Failed to save connection: ${e}`;
     }
-    await savePrefs();
-    closeModal();
   }
 
   async function deleteConnection(id: string) {
