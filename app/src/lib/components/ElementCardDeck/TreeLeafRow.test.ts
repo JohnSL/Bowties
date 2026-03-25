@@ -569,6 +569,66 @@ describe('TreeLeafRow.svelte', () => {
       // Should show read-only display instead
       expect(screen.getByText('(not set)')).toBeInTheDocument();
     });
+
+    it('does not call setModifiedValue when all-zero event ID is typed', async () => {
+      const leaf = makeLeaf({
+        elementType: 'eventId',
+        value: { type: 'eventId', bytes: [5, 1, 1, 1, 22, 0, 0, 1], hex: '05.01.01.01.16.00.00.01' },
+        size: 8,
+        address: 502,
+        space: 253,
+      });
+      render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+      const input = screen.getByRole('textbox', { name: /test field/i });
+      await fireEvent.input(input, { target: { value: '00.00.00.00.00.00.00.00' } });
+
+      expect(setModifiedValue).not.toHaveBeenCalled();
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+      expect(screen.getByRole('alert').textContent).toContain('00.00.00.00.00.00.00.00 is not a valid event ID');
+    });
+
+    it('accepts and writes FF.FF.FF.FF.FF.FF.FF.FF (empty slot)', async () => {
+      const leaf = makeLeaf({
+        elementType: 'eventId',
+        value: { type: 'eventId', bytes: [5, 1, 1, 1, 22, 0, 0, 1], hex: '05.01.01.01.16.00.00.01' },
+        size: 8,
+        address: 503,
+        space: 253,
+      });
+      render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+      const input = screen.getByRole('textbox', { name: /test field/i });
+      await fireEvent.input(input, { target: { value: 'FF.FF.FF.FF.FF.FF.FF.FF' } });
+
+      expect(setModifiedValue).toHaveBeenCalledWith(
+        NODE_ID, 503, 253,
+        expect.objectContaining({ type: 'eventId', bytes: [255, 255, 255, 255, 255, 255, 255, 255] }),
+      );
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    it('flags the row invalid on initial render when committed value is all-zero', () => {
+      const leaf = makeLeaf({
+        elementType: 'eventId',
+        value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0], hex: '00.00.00.00.00.00.00.00' },
+        size: 8,
+      });
+      render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+
+      expect(screen.getByRole('listitem')).toHaveClass('invalid');
+      expect(screen.getByRole('alert').textContent).toContain('00.00.00.00.00.00.00.00 is not a valid event ID');
+    });
+
+    it('does not flag the row invalid on initial render when committed value is non-zero', () => {
+      const leaf = makeLeaf({
+        elementType: 'eventId',
+        value: { type: 'eventId', bytes: [5, 1, 1, 1, 22, 0, 0, 1], hex: '05.01.01.01.16.00.00.01' },
+        size: 8,
+      });
+      render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+
+      expect(screen.getByRole('listitem')).not.toHaveClass('invalid');
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
   });
 
   // ── T049: US6 — Input reverts to original value after discard ─────────────

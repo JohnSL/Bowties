@@ -1229,169 +1229,181 @@ fn get_node_display_name(node: &lcc_rs::DiscoveredNode) -> String {
     node.node_id.to_hex_string()
 }
 
-/// Recursively extract all configurable elements from CDI with their absolute memory addresses (T050)
-/// Returns Vec<(element_path, segment_origin, element_offset, element_name, element_ref)>
+/// A configurable CDI element together with its resolved absolute memory location.
+/// Produced by [`extract_all_elements_with_addresses`].
+struct ElementWithAddress<'a> {
+    /// Navigation path used as the cache key (e.g. `["seg:0", "elem:0#1", "elem:2"]`).
+    path: Vec<String>,
+    /// Byte address at which the owning segment begins (from `<segment origin=…>`).
+    segment_origin: u32,
+    /// Byte offset of this element from `segment_origin`, after all CDI cursor
+    /// skips have been applied.
+    element_offset: u32,
+    /// Human-readable name extracted from the CDI `<name>` child (or a fallback).
+    name: String,
+    /// Borrowed reference to the parsed CDI element.
+    element: &'a lcc_rs::cdi::DataElement,
+    /// LCC address space byte for this element's segment (e.g. `0xFD`).
+    space: u8,
+}
+
+impl<'a> ElementWithAddress<'a> {
+    /// Absolute byte address to use in a `read_memory` call.
+    fn absolute_address(&self) -> u32 {
+        self.segment_origin + self.element_offset
+    }
+}
+
+/// Recursively walk a CDI element slice, collecting every leaf (non-group) element
+/// with its resolved absolute address into `results`.
+///
+/// Per the CDI spec each element's `offset` field is a *relative skip* from the end
+/// of the previous element (not an absolute address).  `base_offset` tracks the
+/// running cursor baseline at the start of this slice, and a local `cursor` grows
+/// as elements are visited.
+fn process_elements<'a>(
+    elements: &'a [lcc_rs::cdi::DataElement],
+    current_path: &mut Vec<String>,
+    segment_origin: u32,
+    // Absolute byte offset of the first element in this slice from `segment_origin`.
+    base_offset: u32,
+    segment_space: u8,
+    results: &mut Vec<ElementWithAddress<'a>>,
+) {
+    use lcc_rs::cdi::DataElement;
+
+    // Sequential cursor within this group/segment level.  Each element *skips*
+    // cursor by `element.offset` first, then *advances* cursor by the element's size.
+    let mut cursor: i32 = 0;
+
+    for (i, element) in elements.iter().enumerate() {
+        match element {
+            DataElement::Group(g) => {
+                let group_name = g.name.as_ref().map(|s| s.as_str()).unwrap_or("group");
+
+                cursor += g.offset;
+                let group_start = base_offset as i32 + cursor;
+                let stride = g.calculate_size();
+
+                // Guard: stride=0 with replication>1 would map all instances to the
+                // same address, producing identical reads.  Clamp to 1 instance.
+                let effective_replication = if stride == 0 && g.replication > 1 {
+                    eprintln!(
+                        "[CDI] Warning: group '{}' has replication={} but calculate_size()=0; \
+                         clamping to 1 instance to avoid duplicate reads",
+                        group_name, g.replication
+                    );
+                    1u32
+                } else {
+                    g.replication
+                };
+
+                for instance in 0..effective_replication {
+                    if g.replication > 1 {
+                        current_path.push(format!("elem:{}#{}", i, instance + 1));
+                    } else {
+                        current_path.push(format!("elem:{}", i));
+                    }
+
+                    let instance_base = (group_start + instance as i32 * stride) as u32;
+                    process_elements(
+                        &g.elements,
+                        current_path,
+                        segment_origin,
+                        instance_base,
+                        segment_space,
+                        results,
+                    );
+                    current_path.pop();
+                }
+
+                cursor += effective_replication as i32 * stride;
+            }
+            DataElement::Int(e) => {
+                cursor += e.offset;
+                let name = e.name.as_ref().map(|s| s.as_str()).unwrap_or("int");
+                current_path.push(format!("elem:{}", i));
+                results.push(ElementWithAddress {
+                    path: current_path.clone(),
+                    segment_origin,
+                    element_offset: (base_offset as i32 + cursor) as u32,
+                    name: name.to_string(),
+                    element,
+                    space: segment_space,
+                });
+                current_path.pop();
+                cursor += e.size as i32;
+            }
+            DataElement::String(e) => {
+                cursor += e.offset;
+                let name = e.name.as_ref().map(|s| s.as_str()).unwrap_or("string");
+                current_path.push(format!("elem:{}", i));
+                results.push(ElementWithAddress {
+                    path: current_path.clone(),
+                    segment_origin,
+                    element_offset: (base_offset as i32 + cursor) as u32,
+                    name: name.to_string(),
+                    element,
+                    space: segment_space,
+                });
+                current_path.pop();
+                cursor += e.size as i32;
+            }
+            DataElement::EventId(e) => {
+                cursor += e.offset;
+                let name = e.name.as_ref().map(|s| s.as_str()).unwrap_or("eventid");
+                current_path.push(format!("elem:{}", i));
+                results.push(ElementWithAddress {
+                    path: current_path.clone(),
+                    segment_origin,
+                    element_offset: (base_offset as i32 + cursor) as u32,
+                    name: name.to_string(),
+                    element,
+                    space: segment_space,
+                });
+                current_path.pop();
+                cursor += 8; // EventId is always 8 bytes
+            }
+            DataElement::Float(e) => {
+                cursor += e.offset;
+                let name = e.name.as_ref().map(|s| s.as_str()).unwrap_or("float");
+                current_path.push(format!("elem:{}", i));
+                results.push(ElementWithAddress {
+                    path: current_path.clone(),
+                    segment_origin,
+                    element_offset: (base_offset as i32 + cursor) as u32,
+                    name: name.to_string(),
+                    element,
+                    space: segment_space,
+                });
+                current_path.pop();
+                cursor += 4; // 32-bit float
+            }
+            // Skip Action and Blob — they don't store readable configuration values,
+            // but advance the cursor so subsequent elements get the right addresses.
+            DataElement::Action(e) => { cursor += e.offset + 1; }
+            DataElement::Blob(e)   => { cursor += e.offset + e.size as i32; }
+        }
+    }
+}
+
+/// Recursively extract all configurable elements from CDI with their absolute
+/// memory addresses (T050).
 fn extract_all_elements_with_addresses<'a>(
     cdi: &'a lcc_rs::cdi::Cdi,
-) -> Vec<(Vec<String>, u32, u32, String, &'a lcc_rs::cdi::DataElement, u8)> {
-    use lcc_rs::cdi::DataElement;
-    
+) -> Vec<ElementWithAddress<'a>> {
     let mut results = Vec::new();
-    
-    // Process each segment
     for (seg_idx, segment) in cdi.segments.iter().enumerate() {
-        let segment_origin = segment.origin as u32;
-        let _segment_name = segment.name.as_ref().map(|s| s.as_str()).unwrap_or("config");
-        let segment_space = segment.space;
-        
-        // Helper to recursively process elements within a group/segment.
-        // `instance_offset` accumulates the byte offset contributed by replicated
-        // group instances at every nesting level, so the final element address is
-        // segment_origin + element.offset + instance_offset.
-        fn process_elements<'a>(
-            elements: &'a [DataElement],
-            current_path: &mut Vec<String>,
-            segment_origin: u32,
-            // Absolute byte offset of this group's start from segment_origin.
-            // Per CDI spec, elements use *relative* offsets (skips from the current
-            // sequential position), so we maintain a running cursor here.
-            base_offset: u32,
-            segment_space: u8,
-            results: &mut Vec<(Vec<String>, u32, u32, String, &'a DataElement, u8)>,
-        ) {
-            // Sequential cursor within the current group/segment level.
-            // Starts at 0 (= base_offset in absolute terms).
-            // Each element SKIPS cursor by element.offset first, then ADVANCES cursor
-            // by the element's size.  This implements the CDI spec rule that `offset`
-            // is a relative skip from the previous element's end, not an absolute address.
-            let mut cursor: i32 = 0;
-
-            for (i, element) in elements.iter().enumerate() {
-                match element {
-                    DataElement::Group(g) => {
-                        let group_name = g.name.as_ref().map(|s| s.as_str()).unwrap_or("group");
-
-                        // Apply this group's own offset skip before placing it.
-                        cursor += g.offset;
-                        let group_start = base_offset as i32 + cursor;
-
-                        // Size of one group instance = stride between replications.
-                        let stride = g.calculate_size();
-
-                        // Guard: stride=0 with replication>1 means all instances would map
-                        // to the same address → identical reads.  Clamp to 1 instance.
-                        let effective_replication = if stride == 0 && g.replication > 1 {
-                            eprintln!(
-                                "[CDI] Warning: group '{}' has replication={} but calculate_size()=0; \
-                                 clamping to 1 instance to avoid duplicate reads",
-                                group_name, g.replication
-                            );
-                            1u32
-                        } else {
-                            g.replication
-                        };
-
-                        for instance in 0..effective_replication {
-                            if g.replication > 1 {
-                                current_path.push(format!("elem:{}#{}", i, instance + 1));
-                            } else {
-                                current_path.push(format!("elem:{}", i));
-                            }
-
-                            let instance_base = (group_start + instance as i32 * stride) as u32;
-
-                            process_elements(
-                                &g.elements,
-                                current_path,
-                                segment_origin,
-                                instance_base,
-                                segment_space,
-                                results,
-                            );
-
-                            current_path.pop();
-                        }
-
-                        // Advance cursor past all instances of this group.
-                        cursor += effective_replication as i32 * stride;
-                    }
-                    DataElement::Int(e) => {
-                        cursor += e.offset; // explicit skip before this element
-                        let name = e.name.as_ref().map(|s| s.as_str()).unwrap_or("int");
-                        current_path.push(format!("elem:{}", i));
-                        let element_offset = (base_offset as i32 + cursor) as u32;
-                        results.push((
-                            current_path.clone(),
-                            segment_origin,
-                            element_offset,
-                            name.to_string(),
-                            element,
-                            segment_space,
-                        ));
-                        current_path.pop();
-                        cursor += e.size as i32;
-                    }
-                    DataElement::String(e) => {
-                        cursor += e.offset;
-                        let name = e.name.as_ref().map(|s| s.as_str()).unwrap_or("string");
-                        current_path.push(format!("elem:{}", i));
-                        let element_offset = (base_offset as i32 + cursor) as u32;
-                        results.push((
-                            current_path.clone(),
-                            segment_origin,
-                            element_offset,
-                            name.to_string(),
-                            element,
-                            segment_space,
-                        ));
-                        current_path.pop();
-                        cursor += e.size as i32;
-                    }
-                    DataElement::EventId(e) => {
-                        cursor += e.offset;
-                        let name = e.name.as_ref().map(|s| s.as_str()).unwrap_or("eventid");
-                        current_path.push(format!("elem:{}", i));
-                        let element_offset = (base_offset as i32 + cursor) as u32;
-                        results.push((
-                            current_path.clone(),
-                            segment_origin,
-                            element_offset,
-                            name.to_string(),
-                            element,
-                            segment_space,
-                        ));
-                        current_path.pop();
-                        cursor += 8; // EventId is always 8 bytes
-                    }
-                    DataElement::Float(e) => {
-                        cursor += e.offset;
-                        let name = e.name.as_ref().map(|s| s.as_str()).unwrap_or("float");
-                        current_path.push(format!("elem:{}", i));
-                        let element_offset = (base_offset as i32 + cursor) as u32;
-                        results.push((
-                            current_path.clone(),
-                            segment_origin,
-                            element_offset,
-                            name.to_string(),
-                            element,
-                            segment_space,
-                        ));
-                        current_path.pop();
-                        cursor += 4; // 32-bit float
-                    }
-                    // Skip Action and Blob - they don't store readable configuration values;
-                    // but still advance the cursor past them so subsequent elements
-                    // get the right addresses.
-                    DataElement::Action(e) => { cursor += e.offset + 1; }
-                    DataElement::Blob(e)   => { cursor += e.offset + e.size as i32; }
-                }
-            }
-        }
-        
         let mut path = vec![format!("seg:{}", seg_idx)];
-        process_elements(&segment.elements, &mut path, segment_origin, 0, segment_space, &mut results);
+        process_elements(
+            &segment.elements,
+            &mut path,
+            segment.origin as u32,
+            0,
+            segment.space,
+            &mut results,
+        );
     }
-    
     results
 }
 
@@ -1419,11 +1431,11 @@ pub async fn read_config_value(
     let all_elements = extract_all_elements_with_addresses(&cdi);
     let found = all_elements
         .iter()
-        .find(|(path, ..)| path.as_slice() == element_path.as_slice())
+        .find(|ewa| ewa.path.as_slice() == element_path.as_slice())
         .ok_or_else(|| format!("Element not found at path: {}", element_path.join("/")))?;
-    let absolute_address = found.1 + found.2;
-    let element = found.4;
-    let space = found.5;
+    let absolute_address = found.absolute_address();
+    let element = found.element;
+    let space = found.space;
     
     // Get connection
     let conn_lock = state.connection.read().await;
@@ -1530,6 +1542,150 @@ pub async fn get_node_tree(
     Ok(tree)
 }
 
+/// A single memory-read unit produced by [`build_read_plan`].
+///
+/// Large CDI elements (> 64 bytes) are split into 64-byte chunks; each chunk
+/// becomes one `ReadItem`.
+struct ReadItem {
+    orig_index: usize,
+    absolute_address: u32,
+    size: u32,
+    space: u8,
+    /// Full declared size of the element (equals `size` for non-split elements).
+    element_total_size: u32,
+}
+
+/// Output of [`build_read_plan`].
+struct ReadPlan {
+    /// Flat list of read-ready items (large elements split into 64-byte chunks).
+    items: Vec<ReadItem>,
+    /// Groups of `items` indices to read in a single `read_memory_timed` call.
+    batches: Vec<Vec<usize>>,
+    /// Original element indices for elements that were split into multiple chunks.
+    multi_chunk_indices: std::collections::BTreeSet<usize>,
+    /// Number of elements whose size could not be determined (already counted as errors).
+    invalid_element_count: usize,
+}
+
+/// Build an optimised read plan from a list of CDI elements.
+///
+/// Large elements (> 64 bytes) are split into 64-byte chunks.  All items are
+/// sorted by `(space, address)` and then packed into batches: elements that share
+/// an address space and whose combined span fits within 64 bytes are merged into
+/// a single batch read (gap bytes are read and discarded).
+fn build_read_plan(all_elements: &[ElementWithAddress<'_>]) -> ReadPlan {
+    let mut multi_chunk_indices = std::collections::BTreeSet::new();
+    let mut items: Vec<ReadItem> = Vec::new();
+    let mut invalid_element_count = 0;
+
+    for (idx, ewa) in all_elements.iter().enumerate() {
+        match get_element_size(ewa.element) {
+            Ok(s) if s <= 64 => {
+                items.push(ReadItem {
+                    orig_index: idx,
+                    absolute_address: ewa.absolute_address(),
+                    size: s,
+                    space: ewa.space,
+                    element_total_size: s,
+                });
+            }
+            Ok(s) => {
+                multi_chunk_indices.insert(idx);
+                let mut offset = 0u32;
+                while offset < s {
+                    let chunk_size = std::cmp::min(64, s - offset);
+                    items.push(ReadItem {
+                        orig_index: idx,
+                        absolute_address: ewa.absolute_address() + offset,
+                        size: chunk_size,
+                        space: ewa.space,
+                        element_total_size: s,
+                    });
+                    offset += chunk_size;
+                }
+            }
+            Err(e) => {
+                invalid_element_count += 1;
+                eprintln!("Failed to get element size for {}: {}", ewa.name, e);
+            }
+        }
+    }
+
+    items.sort_by_key(|item| (item.space, item.absolute_address));
+
+    let mut batches: Vec<Vec<usize>> = Vec::new();
+    {
+        let mut current_batch: Vec<usize> = Vec::new();
+        let mut batch_start_addr: u32 = 0;
+        let mut batch_end_addr: u32 = 0;
+        let mut batch_space: u8 = 0;
+
+        for (i, item) in items.iter().enumerate() {
+            // An item fits in the current batch when it shares the same address space
+            // and the span from batch start to this item's end fits in 64 bytes.
+            let fits = !current_batch.is_empty()
+                && item.space == batch_space
+                && (item.absolute_address + item.size - batch_start_addr) <= 64;
+
+            if fits {
+                let item_end = item.absolute_address + item.size;
+                if item_end > batch_end_addr {
+                    batch_end_addr = item_end;
+                }
+                current_batch.push(i);
+            } else {
+                if !current_batch.is_empty() {
+                    batches.push(std::mem::take(&mut current_batch));
+                }
+                batch_start_addr = item.absolute_address;
+                batch_end_addr = item.absolute_address + item.size;
+                batch_space = item.space;
+                current_batch.push(i);
+            }
+        }
+        if !current_batch.is_empty() {
+            batches.push(current_batch);
+        }
+    }
+
+    ReadPlan { items, batches, multi_chunk_indices, invalid_element_count }
+}
+
+/// Attempt a single `read_memory_timed` call, retrying up to twice when the
+/// node times out.  A 200 ms pause before each retry lets the node drain any
+/// stale datagram-ack state from a previous dropped TCP frame.
+///
+/// Returns `(result, retry_count)`.
+async fn read_memory_with_retry(
+    connection: &tokio::sync::Mutex<lcc_rs::LccConnection>,
+    alias: u16,
+    space: u8,
+    address: u32,
+    size: u8,
+    timeout_ms: u64,
+) -> (lcc_rs::Result<(Vec<u8>, lcc_rs::MemoryReadTiming)>, u32) {
+    const MAX_RETRIES: u32 = 2;
+    let mut result;
+    let mut retry_count = 0u32;
+    loop {
+        {
+            let mut conn = connection.lock().await;
+            result = conn
+                .read_memory_timed(alias, space, address, size, timeout_ms)
+                .await;
+        }
+        match &result {
+            Ok(_) => break,
+            Err(e) if retry_count < MAX_RETRIES && e.to_string().contains("Timeout") => {
+                retry_count += 1;
+                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+            }
+            Err(_) => break,
+        }
+    }
+    (result, retry_count)
+}
+
 /// Read all configuration values from a node with progress tracking (T051)
 #[tauri::command]
 pub async fn read_all_config_values(
@@ -1616,111 +1772,12 @@ pub async fn read_all_config_values(
     // Spec 007: collect raw bytes keyed by absolute address for tree merging.
     let mut raw_data_by_address: HashMap<u32, Vec<u8>> = HashMap::new();
 
-    // --- Build a flat list of (orig_index, absolute_address, size, space) ---
-    // Items whose size is invalid are counted as errors immediately and excluded
-    // from the batch plan.  Items whose size exceeds 64 bytes are split into
-    // consecutive 64-byte chunks, each of which becomes its own ReadItem.
-    struct ReadItem {
-        orig_index: usize,
-        absolute_address: u32,
-        size: u32,
-        space: u8,
-        /// Byte offset of this chunk within the full element (0 for non-split elements).
-        _chunk_offset: u32,
-        /// Full declared size of the element (equals `size` for non-split elements).
-        element_total_size: u32,
-    }
-
-    // Tracks original indices of elements that were split into multiple chunks.
-    // These elements are assembled and parsed after all batches complete.
-    let mut multi_chunk_elements: std::collections::BTreeSet<usize> = Default::default();
-    let mut sized_items: Vec<ReadItem> = Vec::new();
-    for (idx, (_, segment_origin, element_offset, element_name, element, segment_space))
-        in all_elements.iter().enumerate()
-    {
-        match get_element_size(element) {
-            Ok(s) if s <= 64 => {
-                sized_items.push(ReadItem {
-                    orig_index: idx,
-                    absolute_address: segment_origin + element_offset,
-                    size: s,
-                    space: *segment_space,
-                    _chunk_offset: 0,
-                    element_total_size: s,
-                });
-            }
-            Ok(s) => {
-                // Element is too large for a single read; split into 64-byte chunks.
-                multi_chunk_elements.insert(idx);
-                let mut offset = 0u32;
-                while offset < s {
-                    let chunk_size = std::cmp::min(64, s - offset);
-                    sized_items.push(ReadItem {
-                        orig_index: idx,
-                        absolute_address: segment_origin + element_offset + offset,
-                        size: chunk_size,
-                        space: *segment_space,
-                        _chunk_offset: offset,
-                        element_total_size: s,
-                    });
-                    offset += chunk_size;
-                }
-            }
-            Err(e) => {
-                error_count += 1;
-                eprintln!("Failed to get element size for {}: {}", element_name, e);
-            }
-        }
-    }
-
-    // --- Sort by (space, absolute_address) to enable consecutive grouping ---
-    sized_items.sort_by_key(|item| (item.space, item.absolute_address));
-
-    // --- Group into batches of same-space elements fitting within a 64-byte window ---
-    // Elements that are not consecutive (have gaps between them) are still batched
-    // together as long as the span from the first element's start to the last element's
-    // end is <= 64 bytes.  Gap bytes are read from the node but discarded during slicing.
-    // This matches JMRI's behaviour and eliminates the "one read per element" phase that
-    // occurs when CDI elements have small non-zero offsets between them.
-    //
-    // A batch is a Vec of indices into `sized_items`.
-    let mut batches: Vec<Vec<usize>> = Vec::new();
-    {
-        let mut current_batch: Vec<usize> = Vec::new();
-        let mut batch_start_addr: u32 = 0;
-        let mut batch_end_addr: u32 = 0;  // end of the last element added
-        let mut batch_space: u8 = 0;
-
-        for (i, item) in sized_items.iter().enumerate() {
-            // An item fits in the current batch when:
-            //   - same address space
-            //   - the span from our batch start to this item's end fits in 64 bytes
-            // Items are sorted by address so item.absolute_address >= batch_start_addr always.
-            let fits = !current_batch.is_empty()
-                && item.space == batch_space
-                && (item.absolute_address + item.size - batch_start_addr) <= 64;
-
-            if fits {
-                // Extend the window end if this element reaches further.
-                let item_end = item.absolute_address + item.size;
-                if item_end > batch_end_addr {
-                    batch_end_addr = item_end;
-                }
-                current_batch.push(i);
-            } else {
-                if !current_batch.is_empty() {
-                    batches.push(std::mem::take(&mut current_batch));
-                }
-                batch_start_addr = item.absolute_address;
-                batch_end_addr = item.absolute_address + item.size;
-                batch_space = item.space;
-                current_batch.push(i);
-            }
-        }
-        if !current_batch.is_empty() {
-            batches.push(current_batch);
-        }
-    }
+    // --- Build the read plan: size every element, split large ones, group into batches ---
+    let plan = build_read_plan(&all_elements);
+    let sized_items = plan.items;
+    let batches = plan.batches;
+    let multi_chunk_elements = plan.multi_chunk_indices;
+    error_count += plan.invalid_element_count;
 
     let total_batches = batches.len();
     let total_chunks = sized_items.len();
@@ -1782,34 +1839,16 @@ pub async fn read_all_config_values(
         });
 
         // T056: Single read covering all elements in this batch.
-        // Retry up to 2 times on timeout: the first failure may be caused by the
-        // TcpTransport/JMRI frame-loss cascade (node stuck waiting for a
-        // DatagramReceivedOK that was never sent).  A brief pause lets the node's
-        // own datagram-ack timeout elapse so it accepts the next request.
-        const MAX_RETRIES: u32 = 2;
+        // Retries transparently handled by `read_memory_with_retry`.
         let batch_read_start = Instant::now();
-        let mut timed_result;
-        let mut retry_count = 0u32;
-        loop {
-            let mut conn = connection.lock().await;
-            timed_result = conn
-                .read_memory_timed(alias, batch_space, batch_start_addr, batch_total_size as u8, timeout)
-                .await;
-            drop(conn);
-            match &timed_result {
-                Ok(_) => break,
-                Err(e) if retry_count < MAX_RETRIES && e.to_string().contains("Timeout") => {
-                    retry_count += 1;
-                    crate::bwlog!(state.inner(),
-                        "[config-read] {} @{:#010x}+{} space={:#04x}: timeout, retry {}/{}",
-                        node_name, batch_start_addr, batch_total_size, batch_space,
-                        retry_count, MAX_RETRIES);
-                    // Brief pause so the node can clear any pending datagram-ack state.
-                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                }
-                Err(_) => break,
-            }
-        }
+        let (timed_result, retry_count) = read_memory_with_retry(
+            &connection,
+            alias,
+            batch_space,
+            batch_start_addr,
+            batch_total_size as u8,
+            timeout,
+        ).await;
         let response_data = match timed_result {
             Ok((data, timing)) => {
                 crate::bwlog!(state.inner(),
@@ -1851,9 +1890,9 @@ pub async fn read_all_config_values(
                 error_count += batch.len();
                 for &i in batch {
                     failed_orig_indices.insert(sized_items[i].orig_index);
-                    let (_, _, _, element_name, _, _) = &all_elements[sized_items[i].orig_index];
+                    let ewa = &all_elements[sized_items[i].orig_index];
                     eprintln!("Failed to read element {} (batch read @{:#010x}+{}): {}",
-                        element_name, batch_start_addr, batch_total_size, err_str);
+                        ewa.name, batch_start_addr, batch_total_size, err_str);
                 }
                 // Abort on first unrecoverable failure — continuing would waste
                 // time and produce incomplete data the UI cannot usefully display.
@@ -1868,8 +1907,7 @@ pub async fn read_all_config_values(
         // Slice and parse each element's bytes from the batch reply
         for &i in batch {
             let item = &sized_items[i];
-            let (element_path, _, _, element_name, element, _) =
-                &all_elements[item.orig_index];
+            let ewa = &all_elements[item.orig_index];
 
             let offset_in_batch = (item.absolute_address - batch_start_addr) as usize;
             let end = offset_in_batch + item.size as usize;
@@ -1878,7 +1916,7 @@ pub async fn read_all_config_values(
                 error_count += 1;
                 eprintln!(
                     "Batch reply too short for element {}: need bytes [{}..{}] but reply is {} bytes",
-                    element_name, offset_in_batch, end, response_data.len()
+                    ewa.name, offset_in_batch, end, response_data.len()
                 );
                 continue;
             }
@@ -1891,21 +1929,21 @@ pub async fn read_all_config_values(
             // Multi-chunk elements are assembled and parsed in the pass below;
             // only parse immediately for elements that fit in a single read.
             if item.element_total_size <= 64 {
-                let typed_value = match parse_config_value(element, item_data) {
+                let typed_value = match parse_config_value(ewa.element, item_data) {
                     Ok(v) => v,
                     Err(e) => {
                         error_count += 1;
-                        eprintln!("Failed to parse element {}: {}", element_name, e);
+                        eprintln!("Failed to parse element {}: {}", ewa.name, e);
                         continue;
                     }
                 };
 
-                let cache_key = format!("{}:{}", node_id, element_path.join("/"));
+                let cache_key = format!("{}:{}", node_id, ewa.path.join("/"));
                 values.insert(cache_key, ConfigValueWithMetadata {
                     value: typed_value,
                     memory_address: item.absolute_address,
                     address_space: item.space,
-                    element_path: element_path.clone(),
+                    element_path: ewa.path.clone(),
                     timestamp: chrono::Utc::now().to_rfc3339(),
                 });
                 success_count += 1;
@@ -1923,10 +1961,9 @@ pub async fn read_all_config_values(
             // batch error handler.  Do not attempt a partial parse.
             continue;
         }
-        let (element_path, segment_origin, element_offset, element_name, element, segment_space) =
-            &all_elements[*orig_idx];
-        let base_addr = segment_origin + element_offset;
-        let total_size = match get_element_size(element) {
+        let ewa = &all_elements[*orig_idx];
+        let base_addr = ewa.absolute_address();
+        let total_size = match get_element_size(ewa.element) {
             Ok(s) => s,
             Err(_) => { error_count += 1; continue; }
         };
@@ -1939,7 +1976,7 @@ pub async fn read_all_config_values(
             if let Some(chunk_bytes) = raw_data_by_address.get(&chunk_addr) {
                 assembled.extend_from_slice(chunk_bytes);
             } else {
-                eprintln!("Missing chunk @{:#010x} for element {}", chunk_addr, element_name);
+                eprintln!("Missing chunk @{:#010x} for element {}", chunk_addr, ewa.name);
                 ok = false;
                 error_count += 1;
                 break;
@@ -1947,21 +1984,21 @@ pub async fn read_all_config_values(
             offset += chunk_size;
         }
         if ok {
-            match parse_config_value(element, &assembled) {
+            match parse_config_value(ewa.element, &assembled) {
                 Ok(typed_value) => {
-                    let cache_key = format!("{}:{}", node_id, element_path.join("/"));
+                    let cache_key = format!("{}:{}", node_id, ewa.path.join("/"));
                     values.insert(cache_key, ConfigValueWithMetadata {
                         value: typed_value,
                         memory_address: base_addr,
-                        address_space: *segment_space,
-                        element_path: element_path.clone(),
+                        address_space: ewa.space,
+                        element_path: ewa.path.clone(),
                         timestamp: chrono::Utc::now().to_rfc3339(),
                     });
                     success_count += 1;
                 }
                 Err(e) => {
                     error_count += 1;
-                    eprintln!("Failed to parse multi-chunk element {}: {}", element_name, e);
+                    eprintln!("Failed to parse multi-chunk element {}: {}", ewa.name, e);
                 }
             }
         }
@@ -3424,5 +3461,218 @@ mod parse_config_value_tests {
         let elem = make_float();
         let result = parse_config_value(&elem, &[0x00u8; 2]);
         assert!(result.is_err());
+    }
+}
+
+// ============================================================================
+// Tests for extract_all_elements_with_addresses and build_read_plan
+// ============================================================================
+#[cfg(test)]
+mod read_plan_tests {
+    use super::*;
+
+    /// One segment, three consecutive Int elements (no offset skips).
+    /// Expected addresses: 0, 1, 3  (sizes 1, 2, 4 → cursor 0, 1, 3)
+    fn make_flat_cdi() -> lcc_rs::cdi::Cdi {
+        use lcc_rs::cdi::{IntElement, DataElement};
+        lcc_rs::cdi::Cdi {
+            identification: None,
+            acdi: None,
+            segments: vec![lcc_rs::cdi::Segment {
+                name: Some("Config".to_string()),
+                description: None,
+                space: 0xFD,
+                origin: 0,
+                elements: vec![
+                    DataElement::Int(IntElement { name: Some("A".to_string()), description: None, size: 1, offset: 0, min: None, max: None, default: None, map: None }),
+                    DataElement::Int(IntElement { name: Some("B".to_string()), description: None, size: 2, offset: 0, min: None, max: None, default: None, map: None }),
+                    DataElement::Int(IntElement { name: Some("C".to_string()), description: None, size: 4, offset: 0, min: None, max: None, default: None, map: None }),
+                ],
+            }],
+        }
+    }
+
+    /// Segment with a non-zero origin and an element that has an offset skip.
+    fn make_offset_cdi() -> lcc_rs::cdi::Cdi {
+        use lcc_rs::cdi::{IntElement, DataElement};
+        lcc_rs::cdi::Cdi {
+            identification: None,
+            acdi: None,
+            segments: vec![lcc_rs::cdi::Segment {
+                name: None,
+                description: None,
+                space: 0xFD,
+                origin: 100,
+                elements: vec![
+                    // 2-byte int at offset 0 → absolute address 100
+                    DataElement::Int(IntElement { name: Some("X".to_string()), description: None, size: 2, offset: 0, min: None, max: None, default: None, map: None }),
+                    // 1-byte int with a 3-byte skip → absolute address 100+2+3=105
+                    DataElement::Int(IntElement { name: Some("Y".to_string()), description: None, size: 1, offset: 3, min: None, max: None, default: None, map: None }),
+                ],
+            }],
+        }
+    }
+
+    // ---- extract_all_elements_with_addresses tests ----
+
+    #[test]
+    fn test_extract_flat_addresses() {
+        let cdi = make_flat_cdi();
+        let elems = extract_all_elements_with_addresses(&cdi);
+        assert_eq!(elems.len(), 3);
+
+        assert_eq!(elems[0].name, "A");
+        assert_eq!(elems[0].absolute_address(), 0);
+        assert_eq!(elems[0].space, 0xFD);
+
+        assert_eq!(elems[1].name, "B");
+        assert_eq!(elems[1].absolute_address(), 1);
+
+        assert_eq!(elems[2].name, "C");
+        assert_eq!(elems[2].absolute_address(), 3);
+    }
+
+    #[test]
+    fn test_extract_segment_origin_and_element_offset() {
+        let cdi = make_offset_cdi();
+        let elems = extract_all_elements_with_addresses(&cdi);
+        assert_eq!(elems.len(), 2);
+        assert_eq!(elems[0].absolute_address(), 100); // origin 100 + offset 0
+        assert_eq!(elems[1].absolute_address(), 105); // origin 100 + cursor(2) + skip(3)
+    }
+
+    #[test]
+    fn test_extract_empty_cdi_returns_empty() {
+        let cdi = lcc_rs::cdi::Cdi { identification: None, acdi: None, segments: vec![] };
+        let elems = extract_all_elements_with_addresses(&cdi);
+        assert!(elems.is_empty());
+    }
+
+    #[test]
+    fn test_extract_replicated_group_addresses() {
+        use lcc_rs::cdi::{IntElement, DataElement, Group};
+        // Group with replication=2, stride = 4 (one 4-byte Int)
+        let cdi = lcc_rs::cdi::Cdi {
+            identification: None,
+            acdi: None,
+            segments: vec![lcc_rs::cdi::Segment {
+                name: None, description: None, space: 253, origin: 0,
+                elements: vec![DataElement::Group(Group {
+                    name: Some("G".to_string()),
+                    description: None,
+                    offset: 0,
+                    replication: 2,
+                    repname: vec!["G".to_string()],
+                    elements: vec![DataElement::Int(IntElement {
+                        name: Some("V".to_string()), description: None,
+                        size: 4, offset: 0, min: None, max: None, default: None, map: None,
+                    })],
+                    hints: None,
+                })],
+            }],
+        };
+        let elems = extract_all_elements_with_addresses(&cdi);
+        assert_eq!(elems.len(), 2, "Two instances → two elements");
+        assert_eq!(elems[0].absolute_address(), 0);  // instance 1
+        assert_eq!(elems[1].absolute_address(), 4);  // instance 2 (stride = 4)
+        // The group instance step (path[1]) carries the '#' instance marker
+        assert!(elems[0].path[1].contains('#'), "Group path step should contain instance marker #");
+        assert!(elems[1].path[1].contains('#'));
+    }
+
+    #[test]
+    fn test_extract_path_structure() {
+        let cdi = make_flat_cdi();
+        let elems = extract_all_elements_with_addresses(&cdi);
+        // All elements are in seg:0, so paths should start with "seg:0"
+        for e in &elems {
+            assert_eq!(e.path[0], "seg:0");
+            assert!(e.path[1].starts_with("elem:"), "Second step should be elem:N");
+        }
+    }
+
+    // ---- build_read_plan tests ----
+
+    #[test]
+    fn test_build_read_plan_single_element() {
+        let cdi = make_flat_cdi();
+        let elems = extract_all_elements_with_addresses(&cdi);
+        // Just use the first element
+        let single = &elems[..1];
+        let plan = build_read_plan(single);
+        assert_eq!(plan.items.len(), 1);
+        assert_eq!(plan.batches.len(), 1);
+        assert!(plan.multi_chunk_indices.is_empty());
+        assert_eq!(plan.invalid_element_count, 0);
+    }
+
+    #[test]
+    fn test_build_read_plan_consecutive_elements_grouped() {
+        let cdi = make_flat_cdi();
+        let elems = extract_all_elements_with_addresses(&cdi);
+        // A(1) at 0, B(2) at 1, C(4) at 3 → span 0..7 = 7 bytes, fits in 64
+        let plan = build_read_plan(&elems);
+        assert_eq!(plan.items.len(), 3);
+        assert_eq!(plan.batches.len(), 1, "All 3 elements fit in one batch");
+    }
+
+    #[test]
+    fn test_build_read_plan_different_spaces_split() {
+        use lcc_rs::cdi::{IntElement, DataElement};
+        let cdi = lcc_rs::cdi::Cdi {
+            identification: None,
+            acdi: None,
+            segments: vec![
+                lcc_rs::cdi::Segment {
+                    name: None, description: None, space: 0xFD, origin: 0,
+                    elements: vec![DataElement::Int(IntElement {
+                        name: Some("P".to_string()), description: None, size: 1, offset: 0,
+                        min: None, max: None, default: None, map: None,
+                    })],
+                },
+                lcc_rs::cdi::Segment {
+                    name: None, description: None, space: 0xFE, origin: 0,
+                    elements: vec![DataElement::Int(IntElement {
+                        name: Some("Q".to_string()), description: None, size: 1, offset: 0,
+                        min: None, max: None, default: None, map: None,
+                    })],
+                },
+            ],
+        };
+        let elems = extract_all_elements_with_addresses(&cdi);
+        let plan = build_read_plan(&elems);
+        assert_eq!(plan.batches.len(), 2, "Different spaces must be separate batches");
+    }
+
+    #[test]
+    fn test_build_read_plan_large_element_chunked() {
+        use lcc_rs::cdi::{StringElement, DataElement};
+        // String of 130 bytes → ceil(130/64) = 3 chunks
+        let cdi = lcc_rs::cdi::Cdi {
+            identification: None,
+            acdi: None,
+            segments: vec![lcc_rs::cdi::Segment {
+                name: None, description: None, space: 0xFD, origin: 0,
+                elements: vec![DataElement::String(StringElement {
+                    name: Some("Long".to_string()), description: None, size: 130, offset: 0,
+                })],
+            }],
+        };
+        let elems = extract_all_elements_with_addresses(&cdi);
+        let plan = build_read_plan(&elems);
+        assert_eq!(plan.items.len(), 3, "130 bytes → 3 chunks of 64, 64, 2");
+        assert!(plan.multi_chunk_indices.contains(&0), "Element 0 flagged as multi-chunk");
+        assert_eq!(plan.items[0].size, 64);
+        assert_eq!(plan.items[1].size, 64);
+        assert_eq!(plan.items[2].size, 2);
+    }
+
+    #[test]
+    fn test_build_read_plan_gap_elements_same_batch_if_span_fits() {
+        let cdi = make_offset_cdi();
+        // X(2) at 100, Y(1) at 105 → span = 105+1-100 = 6 ≤ 64 → same batch
+        let elems = extract_all_elements_with_addresses(&cdi);
+        let plan = build_read_plan(&elems);
+        assert_eq!(plan.batches.len(), 1, "Elements with a gap but span ≤ 64 share a batch");
     }
 }

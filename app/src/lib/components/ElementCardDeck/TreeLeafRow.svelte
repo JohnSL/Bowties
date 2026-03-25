@@ -67,7 +67,20 @@
   // ── Derived values ─────────────────────────────────────────────────────────
 
   let isDirty = $derived(leaf.modifiedValue != null);
-  let isInvalid = $derived(localInvalidValue !== null);
+
+  /** True when an editable event ID field's effective value is all-zero (not a valid configured ID) */
+  let isEventIdValueInvalid = $derived.by(() => {
+    if (!(nodeId.length > 0 && leaf.elementType === 'eventId')) return false;
+    const ev = effectiveValue(leaf);
+    return ev?.type === 'eventId' && ev.bytes.every(b => b === 0);
+  });
+
+  let isInvalid = $derived(localInvalidValue !== null || isEventIdValueInvalid);
+
+  /** Active validation message: local input error takes priority, then committed-value warning */
+  let activeValidationMessage = $derived(
+    localValidationMessage ?? (isEventIdValueInvalid ? '00.00.00.00.00.00.00.00 is not a valid event ID' : null)
+  );
   let isWriting = $derived(leaf.writeState === 'writing');
   let hasWriteError = $derived(leaf.writeState === 'error');
   /** True when input should be disabled: either saving or node is offline (FR-007) */
@@ -273,6 +286,12 @@
       return;
     }
 
+    if (parsedBytes.every(b => b === 0)) {
+      localInvalidValue = raw;
+      localValidationMessage = '00.00.00.00.00.00.00.00 is not a valid event ID';
+      return;
+    }
+
     const newVal: TreeConfigValue = { type: 'eventId', bytes: parsedBytes, hex: formatEventIdHex(parsedBytes) };
 
     localInvalidValue = null;
@@ -412,8 +431,8 @@
       </span>
     {/if}
 
-    {#if isInvalid && localValidationMessage}
-      <span class="validation-msg" role="alert">{localValidationMessage}</span>
+    {#if isInvalid && activeValidationMessage}
+      <span class="validation-msg" role="alert">{activeValidationMessage}</span>
     {/if}
 
     {#if hasWriteError && leaf.writeError}
