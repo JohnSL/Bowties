@@ -1072,6 +1072,9 @@ pub struct ReadAllConfigValuesResponse {
     pub successful_reads: usize,
     pub failed_reads: usize,
     pub duration_ms: u64,
+    /// Set when reading was aborted after an unrecoverable batch failure.
+    /// Contains a user-facing description of the error.
+    pub abort_error: Option<String>,
 }
 
 /// Get element size in bytes from CDI element (T009)
@@ -1579,6 +1582,7 @@ pub async fn read_all_config_values(
             successful_reads: 0,
             failed_reads: 0,
             duration_ms: start_time.elapsed().as_millis() as u64,
+            abort_error: None,
         });
     }
     
@@ -1607,6 +1611,7 @@ pub async fn read_all_config_values(
     let mut values = HashMap::new();
     let mut success_count = 0;
     let mut error_count = 0;
+    let mut abort_error: Option<String> = None;
 
     // Spec 007: collect raw bytes keyed by absolute address for tree merging.
     let mut raw_data_by_address: HashMap<u32, Vec<u8>> = HashMap::new();
@@ -1776,19 +1781,42 @@ pub async fn read_all_config_values(
             status: ProgressStatus::ReadingNode { node_name: node_name.clone() },
         });
 
-        // T056: Single read covering all elements in this batch
+        // T056: Single read covering all elements in this batch.
+        // Retry up to 2 times on timeout: the first failure may be caused by the
+        // TcpTransport/JMRI frame-loss cascade (node stuck waiting for a
+        // DatagramReceivedOK that was never sent).  A brief pause lets the node's
+        // own datagram-ack timeout elapse so it accepts the next request.
+        const MAX_RETRIES: u32 = 2;
         let batch_read_start = Instant::now();
-        let mut conn = connection.lock().await;
-        let timed_result = conn
-            .read_memory_timed(alias, batch_space, batch_start_addr, batch_total_size as u8, timeout)
-            .await;
-        drop(conn);
+        let mut timed_result;
+        let mut retry_count = 0u32;
+        loop {
+            let mut conn = connection.lock().await;
+            timed_result = conn
+                .read_memory_timed(alias, batch_space, batch_start_addr, batch_total_size as u8, timeout)
+                .await;
+            drop(conn);
+            match &timed_result {
+                Ok(_) => break,
+                Err(e) if retry_count < MAX_RETRIES && e.to_string().contains("Timeout") => {
+                    retry_count += 1;
+                    crate::bwlog!(state.inner(),
+                        "[config-read] {} @{:#010x}+{} space={:#04x}: timeout, retry {}/{}",
+                        node_name, batch_start_addr, batch_total_size, batch_space,
+                        retry_count, MAX_RETRIES);
+                    // Brief pause so the node can clear any pending datagram-ack state.
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                }
+                Err(_) => break,
+            }
+        }
         let response_data = match timed_result {
             Ok((data, timing)) => {
                 crate::bwlog!(state.inner(),
-                    "[config-read] {} @{:#010x}+{} space={:#04x}: ok latency={}ms frames={} total={}ms",
+                    "[config-read] {} @{:#010x}+{} space={:#04x}: ok latency={}ms frames={} total={}ms{}",
                     node_name, batch_start_addr, batch_total_size, batch_space,
-                    timing.first_frame_latency_ms, timing.frame_count, timing.total_duration_ms);
+                    timing.first_frame_latency_ms, timing.frame_count, timing.total_duration_ms,
+                    if retry_count > 0 { format!(" (after {} retries)", retry_count) } else { String::new() });
                 batch_stats.push(crate::diagnostics::BatchReadStat {
                     address_space: batch_space,
                     address: batch_start_addr,
@@ -1827,7 +1855,13 @@ pub async fn read_all_config_values(
                     eprintln!("Failed to read element {} (batch read @{:#010x}+{}): {}",
                         element_name, batch_start_addr, batch_total_size, err_str);
                 }
-                continue;
+                // Abort on first unrecoverable failure — continuing would waste
+                // time and produce incomplete data the UI cannot usefully display.
+                abort_error = Some(format!(
+                    "Configuration read failed: {err_str}. \
+                     Check your connection and try again."
+                ));
+                break;
             }
         };
 
@@ -2129,11 +2163,20 @@ pub async fn read_all_config_values(
             else if !s.model.is_empty() { Some(s.model.clone()) }
             else { None }
         });
+        let snip = node.snip_data.as_ref().map(|s| crate::diagnostics::SnipInfo {
+            manufacturer: s.manufacturer.clone(),
+            model: s.model.clone(),
+            hardware_version: s.hardware_version.clone(),
+            software_version: s.software_version.clone(),
+            user_name: s.user_name.clone(),
+            user_description: s.user_description.clone(),
+        });
         let successful_batches = batch_stats.iter().filter(|b| b.success).count();
         let failed_batches = batch_stats.iter().filter(|b| !b.success).count();
         let stats_entry = crate::diagnostics::NodeConfigReadStats {
             node_id: node_id.clone(),
             snip_name,
+            snip,
             total_batches: batch_stats.len(),
             successful_batches,
             failed_batches,
@@ -2157,6 +2200,7 @@ pub async fn read_all_config_values(
         successful_reads: success_count,
         failed_reads: error_count,
         duration_ms: duration,
+        abort_error,
     })
 }
 

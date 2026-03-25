@@ -51,6 +51,8 @@ export interface ReadAllConfigValuesResponse {
     successfulReads: number;
     failedReads: number;
     durationMs: number;
+    /** Set when reading was aborted after an unrecoverable batch failure. */
+    abortError?: string | null;
 }
 
 // NodeReadState: per-node progress state for the redesigned progress modal

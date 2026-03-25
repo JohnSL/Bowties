@@ -538,6 +538,12 @@
           }
           console.log(`Reading config values from ${nodeName}...`);
           const result = await readAllConfigValues(nodeId, undefined, nodeIdx, unread.length);
+          if (result.abortError) {
+            nodeReadStates = nodeReadStates.map((s, i) =>
+              i === nodeIdx ? { ...s, status: 'failed' as const } : s
+            );
+            throw new Error(result.abortError);
+          }
           if (result.failedReads === 0) {
             markNodeConfigRead(nodeId);
           } else {
@@ -609,6 +615,12 @@
         return;
       }
       const result2 = await readAllConfigValues(nodeId, undefined, 0, 1);
+      if (result2.abortError) {
+        nodeReadStates = nodeReadStates.map((s, i) =>
+          i === 0 ? { ...s, status: 'failed' as const } : s
+        );
+        throw new Error(result2.abortError);
+      }
       if (result2.failedReads === 0) {
         markNodeConfigRead(nodeId);
       } else {
@@ -742,6 +754,12 @@
           const cdiCheck = await getCdiXml(nodeId);
           if (cdiCheck.xmlContent !== null) {
             const result3 = await readAllConfigValues(nodeId, undefined, i, nodesToRead.length);
+            if (result3.abortError) {
+              nodeReadStates = nodeReadStates.map((s, idx) =>
+                idx === i ? { ...s, status: 'failed' as const } : s
+              );
+              throw new Error(result3.abortError);
+            }
             if (result3.failedReads === 0) {
               markNodeConfigRead(nodeId);
             } else {

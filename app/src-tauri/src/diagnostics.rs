@@ -104,6 +104,8 @@ pub struct CdiDownloadStats {
 pub struct NodeConfigReadStats {
     pub node_id: String,
     pub snip_name: Option<String>,
+    /// Full SNIP information for this node (manufacturer, model, versions, etc.)
+    pub snip: Option<SnipInfo>,
     pub total_batches: usize,
     pub successful_batches: usize,
     pub failed_batches: usize,
@@ -112,6 +114,18 @@ pub struct NodeConfigReadStats {
     pub failed_elements: usize,
     pub total_duration_ms: u64,
     pub batch_stats: Vec<BatchReadStat>,
+}
+
+/// SNIP (Simple Node Information Protocol) data captured at the time of config read.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnipInfo {
+    pub manufacturer: String,
+    pub model: String,
+    pub hardware_version: String,
+    pub software_version: String,
+    pub user_name: String,
+    pub user_description: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
