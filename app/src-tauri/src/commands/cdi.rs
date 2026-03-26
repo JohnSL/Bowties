@@ -1651,6 +1651,53 @@ fn build_read_plan(all_elements: &[ElementWithAddress<'_>]) -> ReadPlan {
     ReadPlan { items, batches, multi_chunk_indices, invalid_element_count }
 }
 
+/// Maximum number of continuation reads issued when a node returns fewer
+/// bytes than requested (LCC spec permits short replies).
+const MAX_CONTINUATIONS: u32 = 5;
+
+/// Issue continuation reads to fill a short memory config reply.
+///
+/// LCC-spec-compliant nodes may return 1..N bytes when N bytes are requested.
+/// Embedded nodes (e.g. RR-Cirkits TowerLCC) commonly have limited response
+/// buffers and routinely return fewer bytes.  This helper issues follow-up
+/// reads advancing by actual bytes received each time — matching the pattern
+/// in OpenLCB_Java `MemorySpaceCache.handleReadData()`.
+///
+/// `read_fn` is called as `read_fn(address, size) -> Result<Vec<u8>>` for each
+/// continuation chunk.  Returns the number of continuation reads issued.
+async fn fill_short_reply<F, Fut>(
+    data: &mut Vec<u8>,
+    batch_start_addr: u32,
+    batch_total_size: u32,
+    mut read_fn: F,
+) -> u32
+where
+    F: FnMut(u32, u8) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<u8>, String>>,
+{
+    let mut continuations = 0u32;
+    while (data.len() as u32) < batch_total_size && continuations < MAX_CONTINUATIONS {
+        let received = data.len() as u32;
+        let remaining = batch_total_size - received;
+        let cont_addr = batch_start_addr + received;
+        let cont_size = std::cmp::min(remaining, 64) as u8;
+
+        match read_fn(cont_addr, cont_size).await {
+            Ok(cont_data) => {
+                if cont_data.is_empty() {
+                    break;
+                }
+                data.extend_from_slice(&cont_data);
+            }
+            Err(_) => {
+                break;
+            }
+        }
+        continuations += 1;
+    }
+    continuations
+}
+
 /// Attempt a single `read_memory_timed` call, retrying up to twice when the
 /// node times out.  A 200 ms pause before each retry lets the node drain any
 /// stale datagram-ack state from a previous dropped TCP frame.
@@ -1850,12 +1897,73 @@ pub async fn read_all_config_values(
             timeout,
         ).await;
         let response_data = match timed_result {
-            Ok((data, timing)) => {
+            Ok((mut data, timing)) => {
                 crate::bwlog!(state.inner(),
                     "[config-read] {} @{:#010x}+{} space={:#04x}: ok latency={}ms frames={} total={}ms{}",
                     node_name, batch_start_addr, batch_total_size, batch_space,
                     timing.first_frame_latency_ms, timing.frame_count, timing.total_duration_ms,
                     if retry_count > 0 { format!(" (after {} retries)", retry_count) } else { String::new() });
+
+                // LCC spec allows nodes to return fewer bytes than requested.
+                // Embedded nodes (e.g. RR-Cirkits TowerLCC) commonly have limited
+                // response buffers.  Issue continuation reads for any remaining
+                // bytes, advancing by actual bytes received each time — matching
+                // the pattern in OpenLCB_Java MemorySpaceCache.handleReadData().
+                if (data.len() as u32) < batch_total_size {
+                    let cont_node_name = node_name.clone();
+                    let cont_state = state.inner().clone();
+                    let continuations = fill_short_reply(
+                        &mut data,
+                        batch_start_addr,
+                        batch_total_size,
+                        |cont_addr, cont_size| {
+                            let connection = connection.clone();
+                            let node_name = cont_node_name.clone();
+                            let state_ref = cont_state.clone();
+                            async move {
+                                let (cont_result, _) = read_memory_with_retry(
+                                    &connection,
+                                    alias,
+                                    batch_space,
+                                    cont_addr,
+                                    cont_size,
+                                    timeout,
+                                ).await;
+                                match cont_result {
+                                    Ok((cont_data, _timing)) => {
+                                        if !cont_data.is_empty() {
+                                            crate::bwlog!(state_ref,
+                                                "[config-read] {} @{:#010x}+{} space={:#04x}: \
+                                                 continuation got {} bytes",
+                                                node_name, cont_addr, cont_size, batch_space,
+                                                cont_data.len());
+                                        } else {
+                                            eprintln!(
+                                                "[config-read] {} @{:#010x}: continuation returned \
+                                                 0 bytes, stopping",
+                                                node_name, cont_addr);
+                                        }
+                                        Ok(cont_data)
+                                    }
+                                    Err(e) => {
+                                        eprintln!(
+                                            "[config-read] {} @{:#010x}: continuation failed: {}",
+                                            node_name, cont_addr, e);
+                                        Err(e.to_string())
+                                    }
+                                }
+                            }
+                        },
+                    ).await;
+                    if continuations > 0 {
+                        crate::bwlog!(state.inner(),
+                            "[config-read] {} @{:#010x}+{}: short reply filled with {} \
+                             continuation read(s), final size {} bytes",
+                            node_name, batch_start_addr, batch_total_size,
+                            continuations, data.len());
+                    }
+                }
+
                 batch_stats.push(crate::diagnostics::BatchReadStat {
                     address_space: batch_space,
                     address: batch_start_addr,
@@ -1865,7 +1973,7 @@ pub async fn read_all_config_values(
                     first_frame_latency_ms: Some(timing.first_frame_latency_ms),
                     frame_gaps_ms: timing.frame_gaps_ms,
                     frame_count: Some(timing.frame_count),
-                    total_duration_ms: timing.total_duration_ms,
+                    total_duration_ms: batch_read_start.elapsed().as_millis() as u64,
                 });
                 data
             }
@@ -3674,5 +3782,184 @@ mod read_plan_tests {
         let elems = extract_all_elements_with_addresses(&cdi);
         let plan = build_read_plan(&elems);
         assert_eq!(plan.batches.len(), 1, "Elements with a gap but span ≤ 64 share a batch");
+    }
+}
+
+// ============================================================================
+// Tests for fill_short_reply (short memory config reply continuation)
+// ============================================================================
+#[cfg(test)]
+mod fill_short_reply_tests {
+    use super::*;
+
+    /// Node returns 40 of 58 requested bytes.  Continuation should read the
+    /// remaining 18 bytes at the correct address and append them.
+    #[tokio::test]
+    async fn continuation_fills_remaining_bytes() {
+        let mut data: Vec<u8> = (0..40u8).collect();
+        let batch_start = 0x0C5Cu32;
+        let batch_total = 58u32;
+        let remaining_bytes: Vec<u8> = (40..58u8).collect();
+
+        let mut call_count = 0u32;
+        let continuations = fill_short_reply(
+            &mut data,
+            batch_start,
+            batch_total,
+            |addr, size| {
+                call_count += 1;
+                let rb = remaining_bytes.clone();
+                async move {
+                    // First (and only) continuation: should request at addr 0x0C5C+40=0x0C84, size 18
+                    assert_eq!(addr, 0x0C5C + 40, "continuation address = batch_start + received");
+                    assert_eq!(size, 18, "continuation size = remaining bytes");
+                    Ok(rb)
+                }
+            },
+        ).await;
+
+        assert_eq!(continuations, 1, "Exactly one continuation read needed");
+        assert_eq!(call_count, 1);
+        assert_eq!(data.len(), 58, "Data fully filled");
+        let expected: Vec<u8> = (0..58u8).collect();
+        assert_eq!(data, expected, "Data bytes match original + continuation");
+    }
+
+    /// Multiple continuations needed when node returns small chunks.
+    #[tokio::test]
+    async fn multiple_continuations_for_small_chunks() {
+        let mut data: Vec<u8> = vec![0; 10]; // initial 10 of 64
+        let batch_start = 0u32;
+        let batch_total = 64u32;
+
+        let mut calls = Vec::new();
+        let continuations = fill_short_reply(
+            &mut data,
+            batch_start,
+            batch_total,
+            |addr, size| {
+                calls.push((addr, size));
+                async move {
+                    // Return 20 bytes each time
+                    Ok(vec![0xAA; 20])
+                }
+            },
+        ).await;
+
+        // 10 + 20 + 20 + 20 = 70 ≥ 64 → but capped: 10+20=30, 30+20=50, 50+20=70
+        // Actually data fills to 70 which is > 64, so loop stops after continuation 3
+        // because 30 < 64, 50 < 64, 70 ≥ 64
+        assert_eq!(continuations, 3);
+        assert_eq!(data.len(), 70); // overread is fine; slicing happens in caller
+        // Verify addresses advanced correctly: 10, 30, 50
+        assert_eq!(calls[0].0, 10);
+        assert_eq!(calls[1].0, 30);
+        assert_eq!(calls[2].0, 50);
+    }
+
+    /// Zero-byte continuation reply terminates the loop (node has no more data).
+    #[tokio::test]
+    async fn zero_byte_reply_stops_continuation() {
+        let mut data: Vec<u8> = vec![0; 20]; // 20 of 64
+        let batch_start = 100u32;
+        let batch_total = 64u32;
+
+        let continuations = fill_short_reply(
+            &mut data,
+            batch_start,
+            batch_total,
+            |_addr, _size| async move {
+                Ok(vec![]) // node returns empty
+            },
+        ).await;
+
+        assert_eq!(continuations, 0, "Zero-byte reply breaks before incrementing");
+        assert_eq!(data.len(), 20, "Data unchanged — no bytes appended");
+    }
+
+    /// Error on continuation terminates the loop gracefully.
+    #[tokio::test]
+    async fn error_stops_continuation() {
+        let mut data: Vec<u8> = vec![0; 30]; // 30 of 58
+        let batch_start = 0u32;
+        let batch_total = 58u32;
+
+        let continuations = fill_short_reply(
+            &mut data,
+            batch_start,
+            batch_total,
+            |_addr, _size| async move {
+                Err("Timeout waiting for datagram reply".to_string())
+            },
+        ).await;
+
+        assert_eq!(continuations, 0, "Error breaks before incrementing");
+        assert_eq!(data.len(), 30, "Data unchanged on error");
+    }
+
+    /// If initial data already meets batch_total_size, no continuations issued.
+    #[tokio::test]
+    async fn no_continuation_when_full() {
+        let mut data: Vec<u8> = vec![0; 64];
+        let batch_start = 0u32;
+        let batch_total = 64u32;
+
+        let continuations = fill_short_reply(
+            &mut data,
+            batch_start,
+            batch_total,
+            |_addr, _size| async move {
+                panic!("Should not be called");
+            },
+        ).await;
+
+        assert_eq!(continuations, 0);
+        assert_eq!(data.len(), 64);
+    }
+
+    /// Continuation is capped at MAX_CONTINUATIONS even if data never fills.
+    #[tokio::test]
+    async fn max_continuations_cap() {
+        let mut data: Vec<u8> = vec![0; 10];
+        let batch_start = 0u32;
+        let batch_total = 200u32; // impossibly large for a single batch, but tests the cap
+
+        let continuations = fill_short_reply(
+            &mut data,
+            batch_start,
+            batch_total,
+            |_addr, _size| async move {
+                Ok(vec![0xFF; 1]) // return 1 byte at a time — very slow node
+            },
+        ).await;
+
+        assert_eq!(continuations, MAX_CONTINUATIONS, "Capped at MAX_CONTINUATIONS");
+        assert_eq!(data.len(), 10 + MAX_CONTINUATIONS as usize, "Got 1 byte per continuation");
+    }
+
+    /// Continuation read sizes are capped at 64 bytes per read.
+    #[tokio::test]
+    async fn continuation_size_capped_at_64() {
+        let mut data: Vec<u8> = vec![0; 10];
+        let batch_start = 0u32;
+        let batch_total = 200u32;
+
+        let mut requested_sizes = Vec::new();
+        let _continuations = fill_short_reply(
+            &mut data,
+            batch_start,
+            batch_total,
+            |_addr, size| {
+                requested_sizes.push(size);
+                async move {
+                    // Return exactly what was requested to advance normally
+                    Ok(vec![0; size as usize])
+                }
+            },
+        ).await;
+
+        for &sz in &requested_sizes {
+            assert!(sz <= 64, "Continuation size {} exceeds 64-byte CAN datagram limit", sz);
+        }
     }
 }
