@@ -656,4 +656,59 @@ mod tests {
         assert_eq!(s, "Hello");
         assert_eq!(offset, 5);
     }
+
+    /// SNIP string spanning a CAN frame boundary.
+    ///
+    /// The manufacturer name "LongMfgName" (11 bytes + null) must be split
+    /// across two CAN frames because each frame only carries 6 payload bytes
+    /// (8 total minus the 2-byte addressed-message header).  The first frame
+    /// delivers bytes 0-5 and the second frame delivers bytes 6-11.
+    /// Verifies that the payload assembler correctly concatenates the chunks
+    /// before parse_snip_payload sees them.
+    #[tokio::test]
+    async fn test_query_snip_string_spanning_frame_boundary() {
+        let our_alias: u16 = 0x825;
+        let node_alias: u16 = 0x3AE;
+
+        // Build a SNIP payload where the manufacturer name spans a frame boundary.
+        //   Byte layout:  [0x04] "LongMfgName\0" "M\0" "1\0" "2\0" [0x02] "U\0" "D\0"
+        //   Chunk 0 (6 bytes): 0x04 'L' 'o' 'n' 'g' 'M'
+        //   Chunk 1 (6 bytes): 'f' 'g' 'N' 'a' 'm' 'e'
+        //   Chunk 2 (6 bytes): '\0' 'M' '\0'  '1' '\0' '2'
+        //   Chunk 3 (5 bytes): '\0' 0x02 'U' '\0' 'D'   -- note: < 6
+        //   Chunk 4 (1 byte):  '\0'
+        let mut payload = vec![0x04u8];
+        payload.extend_from_slice(b"LongMfgName\x00M\x001\x002\x00");
+        payload.push(0x02);
+        payload.extend_from_slice(b"U\x00D\x00");
+
+        let chunks: Vec<&[u8]> = payload.chunks(6).collect();
+        let n = chunks.len();
+
+        let mut transport = MockTransport::new();
+        for (i, chunk) in chunks.iter().enumerate() {
+            let flag = if n == 1 {
+                0x0
+            } else if i == 0 {
+                0x1
+            } else if i == n - 1 {
+                0x2
+            } else {
+                0x3
+            };
+            transport.add_receive_frame(snip_reply_frame(node_alias, our_alias, flag, chunk));
+        }
+
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
+        let (snip, status) = query_snip(&mut transport, our_alias, node_alias, sem).await.unwrap();
+
+        assert_eq!(status, SNIPStatus::Complete, "status must be Complete");
+        let snip = snip.expect("must have SNIP data");
+        assert_eq!(snip.manufacturer, "LongMfgName", "name spanning frame boundary must reassemble");
+        assert_eq!(snip.model, "M");
+        assert_eq!(snip.hardware_version, "1");
+        assert_eq!(snip.software_version, "2");
+        assert_eq!(snip.user_name, "U");
+        assert_eq!(snip.user_description, "D");
+    }
 }

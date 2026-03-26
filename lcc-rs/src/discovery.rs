@@ -2644,4 +2644,96 @@ mod tests {
         connection.shutdown_responders().await;
         disp_arc.lock().await.shutdown().await;
     }
+
+    // D10: FLAG_REPLY_PENDING followed by write-reply error datagram → error propagated
+    #[tokio::test]
+    async fn test_d10_write_reply_pending_then_error() {
+        let our_alias: u16 = 0xAAA;
+        let node_alias: u16 = 0xBBB;
+
+        // DatagramReceivedOk with reply-pending flag (0x80)
+        let ack = make_datagram_ack_with_flags(node_alias, our_alias, 0x80);
+        // Write-reply datagram with error bit set (command 0x19 = 0x10 write-reply | 0x08 error | 0x01 config)
+        // Error code 0x1999 in bytes [2..4]
+        let header = MTI::DatagramOnly.to_header_with_dest(node_alias, our_alias).unwrap();
+        let error_reply = GridConnectFrame {
+            header,
+            data: vec![0x20, 0x19, 0x19, 0x99],
+        };
+
+        let mut transport = GlobalMockTransport::new();
+        transport.add_receive_frame(ack.to_string());
+        transport.add_receive_frame(error_reply.to_string());
+
+        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
+        dispatcher.start();
+
+        let disp = Arc::new(Mutex::new(dispatcher));
+
+        let result = LccConnection::write_memory_with_dispatcher(
+            &disp, our_alias, node_alias, 0xFD, 0x0000, &[0x42], 3000,
+        ).await;
+
+        disp.lock().await.shutdown().await;
+
+        assert!(result.is_err(), "Write should fail when reply-pending is followed by error reply");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("1999"), "Error should contain the reply error code: {}", err_msg);
+    }
+
+    // CDI read: error 0x1082 (address out of bounds) treated as end-of-CDI
+    #[tokio::test]
+    async fn test_cdi_read_0x1082_treated_as_end() {
+        let src: u16 = 0xBBB;
+        let dst: u16 = 0xAAA;
+
+        // First chunk: partial CDI with no null terminator
+        let chunk1 = make_cdi_reply_frame(src, dst, 0, b"<cdi>");
+        // Second chunk: 0x1082 failure reply signals end-of-CDI
+        // Embedded CDI fail: command 0x5B (0x50|0x08|0x03), address 4, error 0x1082
+        let header = MTI::DatagramOnly.to_header_with_dest(src, dst).unwrap();
+        let fail_reply = GridConnectFrame {
+            header,
+            data: vec![0x20, 0x5B, 0x00, 0x00, 0x00, 0x04, 0x10, 0x82],
+        };
+
+        let mut mock = MockTransport::new(vec![chunk1, fail_reply]);
+
+        let result = LccConnection::read_cdi_impl(
+            &mut mock,
+            dst,
+            src,
+            2000,
+        ).await;
+
+        assert!(result.is_ok(), "0x1082 should be treated as end-of-CDI: {:?}", result);
+        assert_eq!(result.unwrap(), "<cdi>");
+    }
+
+    // CDI read: non-0x1082 failure is a real error
+    #[tokio::test]
+    async fn test_cdi_read_other_error_propagates() {
+        let src: u16 = 0xBBB;
+        let dst: u16 = 0xAAA;
+
+        // Immediate failure reply with error 0x1037
+        let header = MTI::DatagramOnly.to_header_with_dest(src, dst).unwrap();
+        let fail_reply = GridConnectFrame {
+            header,
+            data: vec![0x20, 0x5B, 0x00, 0x00, 0x00, 0x00, 0x10, 0x37],
+        };
+
+        let mut mock = MockTransport::new(vec![fail_reply]);
+
+        let result = LccConnection::read_cdi_impl(
+            &mut mock,
+            dst,
+            src,
+            2000,
+        ).await;
+
+        assert!(result.is_err(), "Non-0x1082 error should propagate");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("1037"), "Error should contain code: {}", err_msg);
+    }
 }

@@ -876,4 +876,52 @@ mod tests {
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].data, vec![0x20, 0x84, 0x50]);
     }
+
+    // --- parse_read_reply for non-standard address spaces ---
+
+    #[test]
+    fn test_parse_read_reply_generic_other_space() {
+        // Generic format read reply for space 0x01 (non-embedded, uses space byte)
+        // Command 0x50 (read reply, generic format, no error)
+        // Address 0x00000100, space byte 0x01, payload [0xAA, 0xBB]
+        let data = vec![0x20, 0x50, 0x00, 0x00, 0x01, 0x00, 0x01, 0xAA, 0xBB];
+        let reply = MemoryConfigCmd::parse_read_reply(&data).unwrap();
+        match reply {
+            ReadReply::Success { address, space, data } => {
+                assert_eq!(address, 0x0100);
+                assert_eq!(space, AddressSpace::Other(0x01));
+                assert_eq!(data, vec![0xAA, 0xBB]);
+            }
+            ReadReply::Failed { .. } => panic!("Expected success reply"),
+        }
+    }
+
+    #[test]
+    fn test_parse_read_reply_generic_space_fb() {
+        // Space 0xFB = AcdiUser in generic format
+        let data = vec![0x20, 0x50, 0x00, 0x00, 0x00, 0x00, 0xFB, 0x42];
+        let reply = MemoryConfigCmd::parse_read_reply(&data).unwrap();
+        match reply {
+            ReadReply::Success { space, data, .. } => {
+                assert_eq!(space, AddressSpace::AcdiUser);
+                assert_eq!(data, vec![0x42]);
+            }
+            ReadReply::Failed { .. } => panic!("Expected success reply"),
+        }
+    }
+
+    #[test]
+    fn test_parse_read_reply_generic_failed_other_space() {
+        // Generic format, failure for Other(0x01)
+        // Command 0x58 (0x50 | 0x08 fail), space 0x01, error code 0x1037
+        let data = vec![0x20, 0x58, 0x00, 0x00, 0x01, 0x00, 0x01, 0x10, 0x37];
+        let reply = MemoryConfigCmd::parse_read_reply(&data).unwrap();
+        match reply {
+            ReadReply::Failed { space, error_code, .. } => {
+                assert_eq!(space, AddressSpace::Other(0x01));
+                assert_eq!(error_code, 0x1037);
+            }
+            ReadReply::Success { .. } => panic!("Expected failure reply"),
+        }
+    }
 }
