@@ -80,6 +80,9 @@ pub enum MTI {
     /// Alias Map Definition (AMD) - Announce alias→NodeID mapping (0x10701)
     AliasMapDefinition,
 
+    /// Alias Map Enquiry (AME) - Request nodes to re-announce their alias mapping (0x10702)
+    AliasMapEnquiry,
+
     /// Alias Map Reset (AMR) (0x10703)
     AliasMapReset,
     
@@ -141,6 +144,7 @@ impl MTI {
             MTI::CheckID => 0x17020,
             MTI::ReserveID => 0x10700,
             MTI::AliasMapDefinition => 0x10701,
+            MTI::AliasMapEnquiry => 0x10702,
             MTI::AliasMapReset => 0x10703,
             MTI::Datagram => 0x1C480,
             MTI::DatagramOnly => 0x1A000,
@@ -181,6 +185,7 @@ impl MTI {
             0x17020 => MTI::CheckID,
             0x10700 => MTI::ReserveID,
             0x10701 => MTI::AliasMapDefinition,
+            0x10702 => MTI::AliasMapEnquiry,
             0x10703 => MTI::AliasMapReset,
             0x1C480 => MTI::Datagram,
             0x1A000 => MTI::DatagramOnly,

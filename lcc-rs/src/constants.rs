@@ -25,3 +25,15 @@ pub const DISCOVERY_SILENCE_THRESHOLD_MS: u64 = 250;
 /// Maximum time (ms) to block on a single channel/transport poll tick inside
 /// the discovery loop. Keeps the silence-threshold check responsive.
 pub const DISCOVERY_POLL_INTERVAL_MS: u64 = 10;
+
+/// Time (ms) to listen for alias conflicts after sending CID frames.
+/// Per OpenLCB S-9.7.2.1: "nodes that may take time to set up a response
+/// shall be given 400ms". JMRI/OpenLCB_Java use 400ms; Bowties previously
+/// used 200ms which could cause false-positive alias claims on slower buses.
+pub const ALIAS_CONFLICT_LISTEN_MS: u64 = 400;
+
+/// Delay (ms) after TCP connect before starting alias allocation.
+/// Bridges/gateways (e.g. JMRI LCC Hub, WifiTrax) may not be ready to
+/// relay frames immediately after the TCP handshake. JMRI applies a similar
+/// delay before beginning alias negotiation.
+pub const CONNECTION_STABILIZATION_MS: u64 = 500;

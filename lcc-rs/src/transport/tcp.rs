@@ -3,6 +3,7 @@
 //! Provides async TCP connection to LCC networks using GridConnect protocol.
 
 use crate::{Error, Result, protocol::GridConnectFrame};
+use socket2::SockRef;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::{timeout, Duration};
@@ -51,6 +52,17 @@ impl TcpTransport {
         
         // Set TCP nodelay for lower latency
         stream.set_nodelay(true)?;
+
+        // Enable TCP keepalive so the OS detects dead connections (e.g. when a
+        // Wi-Fi bridge silently drops off the network). Without this, a broken
+        // connection can hang indefinitely inside a blocking read.
+        let sock = SockRef::from(&stream);
+        let keepalive = socket2::TcpKeepalive::new()
+            .with_time(Duration::from_secs(60));
+        // with_interval is not available on all platforms; ignore the error
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        let keepalive = keepalive.with_interval(Duration::from_secs(15));
+        sock.set_tcp_keepalive(&keepalive)?;
         
         Ok(Self {
             stream: BufReader::new(stream),

@@ -10,6 +10,7 @@ use crate::{
     transport::{LccTransport, TcpTransport},
     dispatcher::MessageDispatcher,
     alias_allocation::AliasAllocator,
+    constants::CONNECTION_STABILIZATION_MS,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -84,6 +85,11 @@ impl LccConnection {
         // node that joined after our first connection closed.)
         let transport = TcpTransport::connect(host, port).await?;
         let mut boxed_transport: Box<dyn LccTransport> = Box::new(transport);
+
+        // Give the bridge/gateway time to stabilize after the TCP handshake
+        // before we start alias negotiation (JMRI does a similar delay).
+        sleep(Duration::from_millis(CONNECTION_STABILIZATION_MS)).await;
+
         let our_alias = AliasAllocator::allocate(&node_id, &mut boxed_transport).await?;
 
         // Pass the same connection (which already sent CID/RID/InitComplete) to the dispatcher.
@@ -621,7 +627,9 @@ impl LccConnection {
     /// 
     /// This spawns a background task that:
     /// - Listens for VerifyNodeGlobal queries (MTI 0x19490)
-    /// - Responds with VerifiedNode frames containing our Node ID
+    /// - Listens for VerifyNodeAddressed queries (MTI 0x19488)
+    /// - Listens for AliasMapEnquiry (AME) frames (MTI 0x10702)
+    /// - Responds with VerifiedNode / AliasMapDefinition frames as appropriate
     /// 
     /// Only works when using dispatcher mode (connect_with_dispatcher).
     /// This method returns immediately; the response task runs in the background.
@@ -637,37 +645,94 @@ impl LccConnection {
         let our_alias = self.our_alias;
         let our_node_id = self.our_node_id;
         
-        // Spawn background task to handle queries; store the handle so it can be
-        // aborted on disconnect (prevents keeping MessageDispatcher alive indefinitely).
-        let handle = tokio::spawn(async move {
-            // Subscribe to VerifyNodeGlobal messages
+        // --- VerifyNodeGlobal responder ---
+        let disp_global = dispatcher.clone();
+        let handle_global = tokio::spawn(async move {
             let mut rx = {
-                let disp = dispatcher.lock().await;
+                let disp = disp_global.lock().await;
                 disp.subscribe_mti(MTI::VerifyNodeGlobal).await
             };
-            
-            // Listen for queries and respond
             loop {
                 match rx.recv().await {
                     Ok(_msg) => {
-                        // We received a VerifyNodeGlobal query - respond with our Node ID
                         if let Ok(response_frame) = GridConnectFrame::from_mti(
                             MTI::VerifiedNode,
                             our_alias.value(),
                             our_node_id.as_bytes().to_vec(),
                         ) {
-                            let disp = dispatcher.lock().await;
+                            let disp = disp_global.lock().await;
                             let _ = disp.send(&response_frame).await;
                         }
                     }
-                    Err(_) => {
-                        // Receiver closed, exit background task
-                        break;
-                    }
+                    Err(_) => break,
                 }
             }
         });
-        self.responder_handles.push(handle);
+        self.responder_handles.push(handle_global);
+
+        // --- VerifyNodeAddressed responder (D8) ---
+        let disp_addressed = dispatcher.clone();
+        let handle_addressed = tokio::spawn(async move {
+            let mut rx = {
+                let disp = disp_addressed.lock().await;
+                disp.subscribe_mti(MTI::VerifyNodeAddressed).await
+            };
+            loop {
+                match rx.recv().await {
+                    Ok(msg) => {
+                        // Only respond if the query is addressed to us (dest alias matches)
+                        let is_for_us = msg.frame.get_dest_from_body()
+                            .map(|(dest, _)| dest == our_alias.value())
+                            .unwrap_or(false);
+                        if is_for_us {
+                            if let Ok(response_frame) = GridConnectFrame::from_mti(
+                                MTI::VerifiedNode,
+                                our_alias.value(),
+                                our_node_id.as_bytes().to_vec(),
+                            ) {
+                                let disp = disp_addressed.lock().await;
+                                let _ = disp.send(&response_frame).await;
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        self.responder_handles.push(handle_addressed);
+
+        // --- AliasMapEnquiry (AME) responder (D5) ---
+        let disp_ame = dispatcher.clone();
+        let handle_ame = tokio::spawn(async move {
+            let mut rx = {
+                let disp = disp_ame.lock().await;
+                disp.subscribe_mti(MTI::AliasMapEnquiry).await
+            };
+            loop {
+                match rx.recv().await {
+                    Ok(msg) => {
+                        // AME data is the 6-byte NodeID being enquired, or empty for global.
+                        // Respond if it matches our NodeID or is a global enquiry (empty data).
+                        let data = &msg.frame.data;
+                        let is_global = data.is_empty();
+                        let matches_us = data.len() == 6 && data.as_slice() == our_node_id.as_bytes();
+                        if is_global || matches_us {
+                            // Respond with AliasMapDefinition carrying our NodeID
+                            if let Ok(amd_frame) = GridConnectFrame::from_mti(
+                                MTI::AliasMapDefinition,
+                                our_alias.value(),
+                                our_node_id.as_bytes().to_vec(),
+                            ) {
+                                let disp = disp_ame.lock().await;
+                                let _ = disp.send(&amd_frame).await;
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        self.responder_handles.push(handle_ame);
         
         Ok(())
     }

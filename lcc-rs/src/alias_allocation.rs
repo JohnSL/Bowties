@@ -2,7 +2,7 @@
 //!
 //! This module implements the CAN alias allocation sequence per OpenLCB S-9.7.2.1:
 //! 1. Send 4 CID frames (CID7→CID4): same alias, NodeID segments in header bits 23:12
-//! 2. Listen 200 ms for conflict responses (RID from another node using our alias)
+//! 2. Listen 400 ms for conflict responses (RID from another node using our alias)
 //! 3. Send RID frame to reserve the alias
 //! 4. Send InitializationComplete frame carrying the 6-byte NodeID
 //!
@@ -18,6 +18,7 @@ use crate::{
     transport::LccTransport,
 };
 use crate::protocol::MTI;
+use crate::constants::ALIAS_CONFLICT_LISTEN_MS;
 use std::time::Duration;
 use tokio::time::{timeout, Instant};
 
@@ -29,7 +30,7 @@ impl AliasAllocator {
     ///
     /// Per OpenLCB S-9.7.2.1:
     /// - Sends CID7, CID6, CID5, CID4 frames (same alias; NodeID segments in header)
-    /// - Waits 200 ms for any RID conflict frame carrying our alias
+    /// - Waits 400 ms for any RID conflict frame carrying our alias
     /// - On no conflict: sends RID then InitializationComplete (with 6-byte NodeID)
     /// - Retries up to 3 times with offset aliases if a conflict is detected
     pub async fn allocate(
@@ -69,11 +70,12 @@ impl AliasAllocator {
                 transport.send(&frame).await?;
             }
 
-            // Wait 200 ms; abort early if we see a frame bearing our alias (conflict)
+            // Wait for conflict per OpenLCB S-9.7.2.1 (400 ms gives slower
+            // bridges and gateways time to relay RID frames)
             let conflict = Self::listen_for_conflict(
                 transport,
                 alias_val,
-                Duration::from_millis(200),
+                Duration::from_millis(ALIAS_CONFLICT_LISTEN_MS),
             )
             .await?;
 
