@@ -127,8 +127,9 @@ impl EventRouter {
                 }
 
                 // Handle nodes that join mid-session (they announce via InitializationComplete)
+                // D15: Emit lcc-node-reinitialized so the frontend can refresh cached data.
                 Ok(msg) = init_complete_rx.recv() => {
-                    Self::handle_node_discovered(&app, msg, our_alias);
+                    Self::handle_node_reinitialized(&app, msg, our_alias);
                 }
             }
         }
@@ -199,6 +200,35 @@ impl EventRouter {
             }
         } else {
             eprintln!("[EventRouter] handle_node_discovered: ignoring frame with {} data bytes (expected >= 6): {}", msg.frame.data.len(), msg.frame.to_string());
+        }
+    }
+
+    /// D15: Handle InitializationComplete — emit both node-discovered (for new nodes)
+    /// and node-reinitialized (so the frontend can refresh cached SNIP/PIP/CDI).
+    fn handle_node_reinitialized(app: &AppHandle, msg: ReceivedMessage, our_alias: u16) {
+        if msg.frame.data.len() >= 6 {
+            if let Ok((_, alias)) = msg.frame.get_mti() {
+                if alias == our_alias {
+                    return;
+                }
+                let node_id_bytes: [u8; 6] = msg.frame.data[0..6].try_into().unwrap_or([0; 6]);
+                let node_id = format!(
+                    "{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}",
+                    node_id_bytes[0], node_id_bytes[1], node_id_bytes[2],
+                    node_id_bytes[3], node_id_bytes[4], node_id_bytes[5]
+                );
+
+                // Always emit node-discovered so new nodes get added
+                let event = NodeDiscoveredEvent {
+                    node_id: node_id.clone(),
+                    alias,
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                };
+                let _ = app.emit("lcc-node-discovered", event.clone());
+
+                // Also emit reinitialized so frontend refreshes stale cache
+                let _ = app.emit("lcc-node-reinitialized", event);
+            }
         }
     }
 

@@ -87,6 +87,8 @@ pub struct MessageDispatcher {
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     /// Transport reference for sending
     transport: Arc<Mutex<Box<dyn LccTransport>>>,
+    /// D11: Alias-to-NodeID map maintained from AMD/AMR frames
+    alias_map: Arc<RwLock<HashMap<u16, [u8; 6]>>>,
 }
 
 impl MessageDispatcher {
@@ -109,6 +111,7 @@ impl MessageDispatcher {
             listener_handle: None,
             shutdown_tx: None,
             transport,
+            alias_map: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -118,10 +121,11 @@ impl MessageDispatcher {
         
         let mti_senders = self.mti_senders.clone();
         let transport = self.transport.clone();
+        let alias_map = self.alias_map.clone();
         
         // Spawn background task
         let handle = tokio::spawn(async move {
-            Self::listener_loop(transport, mti_senders, shutdown_rx).await;
+            Self::listener_loop(transport, mti_senders, alias_map, shutdown_rx).await;
         });
         
         self.listener_handle = Some(handle);
@@ -136,6 +140,7 @@ impl MessageDispatcher {
     async fn listener_loop(
         transport: Arc<Mutex<Box<dyn LccTransport>>>,
         mti_senders: Arc<RwLock<HashMap<MTI, broadcast::Sender<ReceivedMessage>>>>,
+        alias_map: Arc<RwLock<HashMap<u16, [u8; 6]>>>,
         mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
     ) {
         loop {
@@ -159,6 +164,23 @@ impl MessageDispatcher {
                     // TapTransport already broadcast to all_tx.
                     // Route to MTI-specific subscribers here.
                     if let Ok((mti, alias)) = frame.get_mti() {
+                        // D11: Maintain alias map from AMD/AMR frames
+                        match mti {
+                            MTI::AliasMapDefinition => {
+                                if frame.data.len() >= 6 {
+                                    let mut node_id = [0u8; 6];
+                                    node_id.copy_from_slice(&frame.data[0..6]);
+                                    let mut map = alias_map.write().await;
+                                    map.insert(alias, node_id);
+                                }
+                            }
+                            MTI::AliasMapReset => {
+                                let mut map = alias_map.write().await;
+                                map.remove(&alias);
+                            }
+                            _ => {}
+                        }
+
                         let senders = mti_senders.read().await;
                         if let Some(tx) = senders.get(&mti) {
                             eprintln!(
@@ -215,6 +237,18 @@ impl MessageDispatcher {
     /// This should be used sparingly - prefer using send() and subscribe methods
     pub fn transport(&self) -> Arc<Mutex<Box<dyn LccTransport>>> {
         self.transport.clone()
+    }
+
+    /// D11: Look up the NodeID associated with an alias.
+    pub async fn lookup_alias(&self, alias: u16) -> Option<[u8; 6]> {
+        let map = self.alias_map.read().await;
+        map.get(&alias).copied()
+    }
+
+    /// D11: Get a snapshot of the current alias map.
+    pub async fn alias_map_snapshot(&self) -> HashMap<u16, [u8; 6]> {
+        let map = self.alias_map.read().await;
+        map.clone()
     }
 
     /// Stop the background listener and cleanup
@@ -287,6 +321,89 @@ mod tests {
         let (mti, _) = msg.frame.get_mti().unwrap();
         assert_eq!(mti, MTI::VerifiedNode);
         
+        dispatcher.shutdown().await;
+    }
+
+    // --- D11: Alias map maintenance tests ---
+
+    #[tokio::test]
+    async fn test_alias_map_tracks_amd() {
+        // AMD from alias 0x123 carries NodeID 01.02.03.04.05.06
+        let amd_frame = GridConnectFrame::from_mti(
+            MTI::AliasMapDefinition,
+            0x123,
+            vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
+        ).unwrap();
+
+        let mut transport = MockTransport::new();
+        transport.add_receive_frame(amd_frame.to_string());
+
+        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
+        dispatcher.start();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        let node_id = dispatcher.lookup_alias(0x123).await;
+        assert_eq!(node_id, Some([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]));
+
+        // Unknown alias should return None
+        assert_eq!(dispatcher.lookup_alias(0x999).await, None);
+
+        dispatcher.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn test_alias_map_removes_on_amr() {
+        // First AMD, then AMR from the same alias
+        let amd_frame = GridConnectFrame::from_mti(
+            MTI::AliasMapDefinition,
+            0x456,
+            vec![0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F],
+        ).unwrap();
+        let amr_frame = GridConnectFrame::from_mti(
+            MTI::AliasMapReset,
+            0x456,
+            vec![0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F],
+        ).unwrap();
+
+        let mut transport = MockTransport::new();
+        transport.add_receive_frame(amd_frame.to_string());
+        transport.add_receive_frame(amr_frame.to_string());
+
+        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
+        dispatcher.start();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
+
+        // After AMR, the alias should be gone
+        assert_eq!(dispatcher.lookup_alias(0x456).await, None);
+
+        dispatcher.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn test_alias_map_snapshot() {
+        let amd1 = GridConnectFrame::from_mti(
+            MTI::AliasMapDefinition, 0x111, vec![1, 2, 3, 4, 5, 6],
+        ).unwrap();
+        let amd2 = GridConnectFrame::from_mti(
+            MTI::AliasMapDefinition, 0x222, vec![7, 8, 9, 10, 11, 12],
+        ).unwrap();
+
+        let mut transport = MockTransport::new();
+        transport.add_receive_frame(amd1.to_string());
+        transport.add_receive_frame(amd2.to_string());
+
+        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
+        dispatcher.start();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+
+        let snap = dispatcher.alias_map_snapshot().await;
+        assert_eq!(snap.len(), 2);
+        assert_eq!(snap[&0x111], [1, 2, 3, 4, 5, 6]);
+        assert_eq!(snap[&0x222], [7, 8, 9, 10, 11, 12]);
+
         dispatcher.shutdown().await;
     }
 }

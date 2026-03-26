@@ -319,6 +319,36 @@ impl ProtocolFlags {
             firmware_upgrade_active:          bit(b2, 4),
         }
     }
+
+    /// Encode the protocol flags back into wire bytes (6 bytes, MSB-first).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let set = |val: bool, bit: u8| -> u8 { if val { 1 << bit } else { 0 } };
+
+        let b0 = set(self.simple_protocol, 7)
+            | set(self.datagram, 6)
+            | set(self.stream, 5)
+            | set(self.memory_configuration, 4)
+            | set(self.reservation, 3)
+            | set(self.event_exchange, 2)
+            | set(self.identification, 1)
+            | set(self.teach_learn, 0);
+
+        let b1 = set(self.remote_button, 7)
+            | set(self.acdi, 6)
+            | set(self.display, 5)
+            | set(self.snip, 4)
+            | set(self.cdi, 3)
+            | set(self.traction_control, 2)
+            | set(self.function_description_information, 1)
+            | set(self.dcc_command_station, 0);
+
+        let b2 = set(self.simple_train_node, 7)
+            | set(self.function_configuration, 6)
+            | set(self.firmware_upgrade, 5)
+            | set(self.firmware_upgrade_active, 4);
+
+        vec![b0, b1, b2, 0, 0, 0]
+    }
 }
 
 /// A discovered node on the LCC network
@@ -575,6 +605,95 @@ mod tests {
         assert_eq!(NodeAlias::new(0x0AA).unwrap().to_string(), "0AA");
         assert_eq!(NodeAlias::new(0xAAA).unwrap().to_string(), "AAA");
         assert_eq!(NodeAlias::new(0xFFF).unwrap().to_string(), "FFF");
+    }
+
+    // --- D13: ProtocolFlags::to_bytes tests ---
+
+    #[test]
+    fn test_protocol_flags_to_bytes_roundtrip() {
+        // Build a flags value with known bits, serialize, then deserialize and compare.
+        let original = ProtocolFlags {
+            simple_protocol: true,
+            datagram: true,
+            stream: false,
+            memory_configuration: true,
+            reservation: false,
+            event_exchange: true,
+            identification: true,
+            teach_learn: false,
+            remote_button: false,
+            acdi: false,
+            display: false,
+            snip: true,
+            cdi: true,
+            traction_control: false,
+            function_description_information: false,
+            dcc_command_station: false,
+            simple_train_node: false,
+            function_configuration: false,
+            firmware_upgrade: false,
+            firmware_upgrade_active: false,
+        };
+
+        let bytes = original.to_bytes();
+        assert_eq!(bytes.len(), 6);
+        let restored = ProtocolFlags::from_bytes(&bytes);
+        assert_eq!(restored, original);
+    }
+
+    #[test]
+    fn test_protocol_flags_to_bytes_all_set() {
+        let all_set = ProtocolFlags {
+            simple_protocol: true,
+            datagram: true,
+            stream: true,
+            memory_configuration: true,
+            reservation: true,
+            event_exchange: true,
+            identification: true,
+            teach_learn: true,
+            remote_button: true,
+            acdi: true,
+            display: true,
+            snip: true,
+            cdi: true,
+            traction_control: true,
+            function_description_information: true,
+            dcc_command_station: true,
+            simple_train_node: true,
+            function_configuration: true,
+            firmware_upgrade: true,
+            firmware_upgrade_active: true,
+        };
+
+        let bytes = all_set.to_bytes();
+        assert_eq!(bytes[0], 0xFF);
+        assert_eq!(bytes[1], 0xFF);
+        assert_eq!(bytes[2], 0xF0); // top 4 bits of byte 2
+        assert_eq!(bytes[3], 0x00);
+        let restored = ProtocolFlags::from_bytes(&bytes);
+        assert_eq!(restored, all_set);
+    }
+
+    #[test]
+    fn test_protocol_flags_to_bytes_empty() {
+        let empty = ProtocolFlags::from_bytes(&[]);
+        let bytes = empty.to_bytes();
+        assert_eq!(bytes, vec![0, 0, 0, 0, 0, 0]);
+        let restored = ProtocolFlags::from_bytes(&bytes);
+        assert_eq!(restored, empty);
+    }
+
+    #[test]
+    fn test_protocol_flags_to_bytes_known_pattern() {
+        // A real-world JMRI pattern: datagram + event_exchange + identification + snip
+        // Byte 0: datagram(6) + event_exchange(2) + identification(1) = 0x46
+        // Byte 1: snip(4) = 0x10
+        let flags = ProtocolFlags::from_bytes(&[0x46, 0x10, 0x00]);
+        let bytes = flags.to_bytes();
+        assert_eq!(bytes[0], 0x46);
+        assert_eq!(bytes[1], 0x10);
+        assert_eq!(bytes[2], 0x00);
     }
 }
 

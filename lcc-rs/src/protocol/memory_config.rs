@@ -19,6 +19,8 @@ pub enum AddressSpace {
     AllMemory,
     /// CDI space (0xFF) - Configuration Description Information
     Cdi,
+    /// Any other address space (0x00–0xFA) — vendor-specific, traction, etc.
+    Other(u8),
 }
 
 impl AddressSpace {
@@ -30,23 +32,25 @@ impl AddressSpace {
             AddressSpace::Configuration => 0xFD,
             AddressSpace::AllMemory => 0xFE,
             AddressSpace::Cdi => 0xFF,
+            AddressSpace::Other(v) => *v,
         }
     }
 
     /// Convert a raw u8 space byte to an AddressSpace enum variant.
     pub fn from_u8(byte: u8) -> std::result::Result<Self, String> {
-        match byte {
-            0xFB => Ok(AddressSpace::AcdiUser),
-            0xFC => Ok(AddressSpace::AcdiManufacturer),
-            0xFD => Ok(AddressSpace::Configuration),
-            0xFE => Ok(AddressSpace::AllMemory),
-            0xFF => Ok(AddressSpace::Cdi),
-            _ => Err(format!("Unknown address space: 0x{:02X}", byte)),
-        }
+        Ok(match byte {
+            0xFB => AddressSpace::AcdiUser,
+            0xFC => AddressSpace::AcdiManufacturer,
+            0xFD => AddressSpace::Configuration,
+            0xFE => AddressSpace::AllMemory,
+            0xFF => AddressSpace::Cdi,
+            other => AddressSpace::Other(other),
+        })
     }
 
     /// Get the command flag for this space (without space byte).
-    /// AcdiUser and AcdiManufacturer use the generic format (0x40 + space byte).
+    /// Spaces >= 0xFD use embedded format (low 2 bits encode the space).
+    /// Spaces < 0xFD use generic format (0x40 + separate space byte).
     pub fn command_flag(&self) -> u8 {
         match self {
             AddressSpace::AcdiUser => 0x40,
@@ -54,6 +58,7 @@ impl AddressSpace {
             AddressSpace::Configuration => 0x41,
             AddressSpace::AllMemory => 0x42,
             AddressSpace::Cdi => 0x43,
+            AddressSpace::Other(_) => 0x40, // generic format
         }
     }
 }
@@ -197,9 +202,7 @@ impl MemoryConfigCmd {
                 0xFD => AddressSpace::Configuration,
                 0xFE => AddressSpace::AllMemory,
                 0xFF => AddressSpace::Cdi,
-                b => return Err(Error::Protocol(format!(
-                    "Unknown space byte in generic reply: 0x{:02X}", b
-                ))),
+                b => AddressSpace::Other(b),
             };
 
             if is_fail {
@@ -290,6 +293,100 @@ impl MemoryConfigCmd {
     ) -> Result<Vec<GridConnectFrame>> {
         let data = vec![0x20, 0xA8];
         GridConnectFrame::create_datagram_frames(source_alias, dest_alias, data)
+    }
+
+    /// D21: Build a Get Address Space Information command.
+    ///
+    /// Sends `[0x20, 0x84, space]` to query info about an address space.
+    /// The reply carries the highest address, flags, and optional description.
+    pub fn build_get_address_space_info(
+        source_alias: u16,
+        dest_alias: u16,
+        space: AddressSpace,
+    ) -> Result<Vec<GridConnectFrame>> {
+        let data = vec![0x20, 0x84, space.value()];
+        GridConnectFrame::create_datagram_frames(source_alias, dest_alias, data)
+    }
+
+    /// D22: Build a Factory Reset (Reboot) command.
+    ///
+    /// Sends `[0x20, 0xA9]` to request the node perform a factory reset.
+    pub fn build_factory_reset(
+        source_alias: u16,
+        dest_alias: u16,
+    ) -> Result<Vec<GridConnectFrame>> {
+        let data = vec![0x20, 0xA9];
+        GridConnectFrame::create_datagram_frames(source_alias, dest_alias, data)
+    }
+
+    /// D22: Build a Reboot/Reset command.
+    ///
+    /// Sends `[0x20, 0xAA]` to request the node reboot without factory reset.
+    pub fn build_reboot(
+        source_alias: u16,
+        dest_alias: u16,
+    ) -> Result<Vec<GridConnectFrame>> {
+        let data = vec![0x20, 0xAA];
+        GridConnectFrame::create_datagram_frames(source_alias, dest_alias, data)
+    }
+}
+
+/// D21: Parsed address space information reply.
+#[derive(Debug, Clone)]
+pub struct AddressSpaceInfo {
+    /// Address space number
+    pub space: AddressSpace,
+    /// Highest address in this space
+    pub highest_address: u32,
+    /// Lowest address (0 if not present in reply)
+    pub lowest_address: u32,
+    /// Whether this space is read-only
+    pub read_only: bool,
+    /// Optional description string
+    pub description: String,
+}
+
+impl AddressSpaceInfo {
+    /// Parse a Get Address Space Information reply datagram.
+    ///
+    /// Reply format: `[0x20, 0x87, space, highest(4), flags, [lowest(4)], [description...]]`
+    pub fn parse(data: &[u8]) -> Result<Self> {
+        if data.len() < 8 {
+            return Err(crate::Error::Protocol(
+                format!("Address Space Info reply too short: {} bytes", data.len()),
+            ));
+        }
+        if data[0] != 0x20 || data[1] != 0x87 {
+            return Err(crate::Error::Protocol(
+                format!("Not an Address Space Info reply: [{:02X}, {:02X}]", data[0], data[1]),
+            ));
+        }
+        let space = AddressSpace::from_u8(data[2])
+            .map_err(|e| crate::Error::Protocol(e))?;
+        let highest_address = u32::from_be_bytes([data[3], data[4], data[5], data[6]]);
+        let flags = data[7];
+        let read_only = flags & 0x01 != 0;
+
+        let mut offset = 8;
+        // If bit 1 of flags is set, lowest address is present (4 bytes)
+        let lowest_address = if flags & 0x02 != 0 && data.len() >= offset + 4 {
+            let la = u32::from_be_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3]]);
+            offset += 4;
+            la
+        } else {
+            0
+        };
+
+        // Remaining bytes are a null-terminated description string
+        let description = if offset < data.len() {
+            let desc_bytes = &data[offset..];
+            let end = desc_bytes.iter().position(|&b| b == 0).unwrap_or(desc_bytes.len());
+            String::from_utf8_lossy(&desc_bytes[..end]).to_string()
+        } else {
+            String::new()
+        };
+
+        Ok(Self { space, highest_address, lowest_address, read_only, description })
     }
 }
 
@@ -588,8 +685,9 @@ mod tests {
         assert_eq!(AddressSpace::from_u8(0xFD).unwrap(), AddressSpace::Configuration);
         assert_eq!(AddressSpace::from_u8(0xFE).unwrap(), AddressSpace::AllMemory);
         assert_eq!(AddressSpace::from_u8(0xFF).unwrap(), AddressSpace::Cdi);
-        assert!(AddressSpace::from_u8(0x00).is_err());
-        assert!(AddressSpace::from_u8(0xFA).is_err());
+        // D17: Arbitrary spaces now return Other(n) instead of error
+        assert_eq!(AddressSpace::from_u8(0x00).unwrap(), AddressSpace::Other(0x00));
+        assert_eq!(AddressSpace::from_u8(0xFA).unwrap(), AddressSpace::Other(0xFA));
     }
 
     // --- T051: Proptest write encoding roundtrip ---
@@ -604,6 +702,7 @@ mod tests {
             Just(AddressSpace::Configuration),
             Just(AddressSpace::AllMemory),
             Just(AddressSpace::Cdi),
+            (0u8..=0xFAu8).prop_map(AddressSpace::Other),
         ]
     }
 
@@ -637,5 +736,144 @@ mod tests {
             );
             prop_assert_eq!(&data[payload_start..payload_start + payload.len()], payload.as_slice());
         }
+    }
+
+    // --- D17: AddressSpace::Other tests ---
+
+    #[test]
+    fn test_address_space_other_value_roundtrip() {
+        // Other(n) should roundtrip through value() and from_u8()
+        for n in 0u8..=0xFA {
+            let space = AddressSpace::Other(n);
+            assert_eq!(space.value(), n);
+            assert_eq!(AddressSpace::from_u8(n).unwrap(), AddressSpace::Other(n));
+        }
+    }
+
+    #[test]
+    fn test_address_space_other_uses_generic_command_flag() {
+        // Other spaces must use the generic format (0x40 flag)
+        assert_eq!(AddressSpace::Other(0x00).command_flag(), 0x40);
+        assert_eq!(AddressSpace::Other(0x50).command_flag(), 0x40);
+        assert_eq!(AddressSpace::Other(0xFA).command_flag(), 0x40);
+    }
+
+    #[test]
+    fn test_build_read_other_space() {
+        // Reading from an Other(0x50) space should use generic format with space byte
+        let frames = MemoryConfigCmd::build_read(0x100, 0x200, AddressSpace::Other(0x50), 0, 64).unwrap();
+        assert_eq!(frames.len(), 1);
+        let f = &frames[0];
+        assert_eq!(f.data[1], 0x40); // generic read command
+        assert_eq!(f.data[6], 0x50); // space byte
+        assert_eq!(f.data[7], 64);   // count after space byte
+    }
+
+    #[test]
+    fn test_build_write_other_space() {
+        let frames = MemoryConfigCmd::build_write(0x100, 0x200, AddressSpace::Other(0x50), 0, &[0xAB]).unwrap();
+        assert_eq!(frames.len(), 1);
+        let f = &frames[0];
+        assert_eq!(f.data[1], 0x00); // generic write command
+        assert_eq!(f.data[6], 0x50); // space byte
+        assert_eq!(f.data[7], 0xAB); // payload
+    }
+
+    // --- D21: AddressSpaceInfo::parse tests ---
+
+    #[test]
+    fn test_address_space_info_parse_minimal() {
+        // Minimal reply: [0x20, 0x87, space=0xFF, highest(4), flags=0x00]
+        let data = [0x20, 0x87, 0xFF, 0x00, 0x00, 0x10, 0x00, 0x00];
+        let info = AddressSpaceInfo::parse(&data).unwrap();
+        assert_eq!(info.space, AddressSpace::Cdi);
+        assert_eq!(info.highest_address, 0x00001000);
+        assert!(!info.read_only);
+        assert_eq!(info.lowest_address, 0);
+        assert_eq!(info.description, "");
+    }
+
+    #[test]
+    fn test_address_space_info_parse_read_only() {
+        let data = [0x20, 0x87, 0xFF, 0x00, 0x00, 0x10, 0x00, 0x01]; // flags=0x01 → read-only
+        let info = AddressSpaceInfo::parse(&data).unwrap();
+        assert!(info.read_only);
+    }
+
+    #[test]
+    fn test_address_space_info_parse_with_lowest_address() {
+        // flags=0x02 means lowest address is present
+        let data = [0x20, 0x87, 0xFD, 0x00, 0x01, 0x00, 0x00, 0x02,
+                     0x00, 0x00, 0x00, 0x80]; // lowest_address = 0x80
+        let info = AddressSpaceInfo::parse(&data).unwrap();
+        assert_eq!(info.space, AddressSpace::Configuration);
+        assert_eq!(info.highest_address, 0x00010000);
+        assert_eq!(info.lowest_address, 0x80);
+        assert!(!info.read_only);
+    }
+
+    #[test]
+    fn test_address_space_info_parse_with_description() {
+        // No lowest address (flags=0x01, read-only), but has description
+        let mut data = vec![0x20, 0x87, 0xFD, 0x00, 0x00, 0xFF, 0xFF, 0x01];
+        data.extend_from_slice(b"Configuration\x00");
+        let info = AddressSpaceInfo::parse(&data).unwrap();
+        assert!(info.read_only);
+        assert_eq!(info.description, "Configuration");
+    }
+
+    #[test]
+    fn test_address_space_info_parse_with_lowest_and_description() {
+        // flags=0x03 → read-only + lowest present
+        let mut data = vec![0x20, 0x87, 0xFF, 0x00, 0x00, 0x20, 0x00, 0x03,
+                            0x00, 0x00, 0x00, 0x00]; // lowest = 0
+        data.extend_from_slice(b"CDI space\x00");
+        let info = AddressSpaceInfo::parse(&data).unwrap();
+        assert_eq!(info.space, AddressSpace::Cdi);
+        assert!(info.read_only);
+        assert_eq!(info.lowest_address, 0);
+        assert_eq!(info.description, "CDI space");
+    }
+
+    #[test]
+    fn test_address_space_info_parse_too_short() {
+        let data = [0x20, 0x87, 0xFF, 0x00, 0x00];
+        assert!(AddressSpaceInfo::parse(&data).is_err());
+    }
+
+    #[test]
+    fn test_address_space_info_parse_wrong_command() {
+        let data = [0x20, 0x84, 0xFF, 0x00, 0x00, 0x10, 0x00, 0x00]; // 0x84 is request, not reply
+        assert!(AddressSpaceInfo::parse(&data).is_err());
+    }
+
+    // --- D22: Factory reset / reboot build tests ---
+
+    #[test]
+    fn test_build_factory_reset() {
+        let frames = MemoryConfigCmd::build_factory_reset(0x100, 0x200).unwrap();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].data, vec![0x20, 0xA9]);
+    }
+
+    #[test]
+    fn test_build_reboot() {
+        let frames = MemoryConfigCmd::build_reboot(0x100, 0x200).unwrap();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].data, vec![0x20, 0xAA]);
+    }
+
+    #[test]
+    fn test_build_get_address_space_info() {
+        let frames = MemoryConfigCmd::build_get_address_space_info(0x100, 0x200, AddressSpace::Cdi).unwrap();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].data, vec![0x20, 0x84, 0xFF]);
+    }
+
+    #[test]
+    fn test_build_get_address_space_info_other() {
+        let frames = MemoryConfigCmd::build_get_address_space_info(0x100, 0x200, AddressSpace::Other(0x50)).unwrap();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].data, vec![0x20, 0x84, 0x50]);
     }
 }

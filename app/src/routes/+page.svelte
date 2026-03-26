@@ -329,6 +329,36 @@
         }
       }));
 
+      // D15: When a known node sends InitializationComplete (reboot/factory-reset),
+      // re-query its SNIP+PIP so the UI reflects any changed configuration.
+      unlistens.push(await listen<{ nodeId: string; alias: number; timestamp: string }>('lcc-node-reinitialized', async (event) => {
+        if (!connected) return;
+        const { nodeId, alias } = event.payload;
+        // Only refresh if we already know this node
+        if (!nodes.some(n => formatNodeId(n.node_id) === nodeId)) return;
+        console.log(`[D15] Node ${nodeId} reinitialized — refreshing SNIP+PIP`);
+        try {
+          const [snipResult, pipResult] = await Promise.all([
+            querySnip(alias),
+            queryPip(alias),
+          ]);
+          nodes = nodes.map(n => {
+            if (n.alias !== alias) return n;
+            return {
+              ...n,
+              snip_data: snipResult.snip_data,
+              snip_status: snipResult.status,
+              pip_flags: pipResult.pip_flags,
+              pip_status: pipResult.status,
+              cdi: null, // invalidate cached CDI — will be re-fetched on next open
+            };
+          });
+          updateNodeInfo(nodes);
+        } catch (e) {
+          console.warn(`Failed to refresh reinitialized node ${nodeId}:`, e);
+        }
+      }));
+
       // Now that the lcc-node-discovered listener is registered, probe for existing nodes.
       // Doing this after listener setup avoids a race where VerifiedNode replies arrive
       // before the frontend listener is ready and get silently dropped.

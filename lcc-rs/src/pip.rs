@@ -77,6 +77,12 @@ async fn query_pip_internal(
                     continue;
                 }
 
+                // D20: OptionalInteractionRejected — node does not support PIP.
+                if mti == MTI::OptionalInteractionRejected {
+                    eprintln!("[PIP] {:03X}: OptionalInteractionRejected — node does not support PIP", dest_alias);
+                    return Ok((None, PIPStatus::Timeout));
+                }
+
                 if mti != MTI::ProtocolSupportReply {
                     continue;
                 }
@@ -188,5 +194,59 @@ mod tests {
         let flags = ProtocolFlags::from_bytes(&[]);
         assert!(!flags.simple_protocol);
         assert!(!flags.cdi);
+    }
+
+    // --- D20: OIR fast-fail tests ---
+
+    #[tokio::test]
+    async fn test_pip_oir_fast_fail() {
+        use crate::transport::mock::MockTransport;
+
+        let our_alias: u16 = 0xAAA;
+        let node_alias: u16 = 0xBBB;
+
+        // Build an OptionalInteractionRejected frame from dest_alias→us
+        let oir_frame = GridConnectFrame::from_addressed_mti(
+            MTI::OptionalInteractionRejected,
+            node_alias,
+            our_alias,
+            vec![0x10, 0x43], // error code + rejected MTI
+        ).unwrap();
+
+        let mut transport = MockTransport::new();
+        transport.add_receive_frame(oir_frame.to_string());
+
+        let semaphore = Arc::new(Semaphore::new(1));
+        let result = query_pip(&mut transport, our_alias, node_alias, semaphore).await;
+
+        assert!(result.is_ok());
+        let (flags, status) = result.unwrap();
+        assert!(flags.is_none(), "OIR should return None flags");
+        assert_eq!(status, PIPStatus::Timeout, "OIR should report Timeout status");
+    }
+
+    #[tokio::test]
+    async fn test_pip_normal_reply_still_works() {
+        use crate::transport::mock::MockTransport;
+
+        let our_alias: u16 = 0xAAA;
+        let node_alias: u16 = 0xBBB;
+
+        // A real PIP reply with datagram + SNIP + CDI
+        let reply = make_pip_reply(our_alias, node_alias, &[0x50, 0x18, 0x00, 0x00, 0x00, 0x00]);
+        let mut transport = MockTransport::new();
+        transport.add_receive_frame(reply.to_string());
+
+        let semaphore = Arc::new(Semaphore::new(1));
+        let result = query_pip(&mut transport, our_alias, node_alias, semaphore).await;
+
+        assert!(result.is_ok());
+        let (flags, status) = result.unwrap();
+        assert!(flags.is_some());
+        assert_eq!(status, PIPStatus::Complete);
+        let f = flags.unwrap();
+        assert!(f.datagram);
+        assert!(f.snip);
+        assert!(f.cdi);
     }
 }

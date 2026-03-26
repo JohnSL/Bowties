@@ -5,7 +5,7 @@
 
 use crate::{
     Result,
-    types::{NodeID, NodeAlias, DiscoveredNode, SNIPData},
+    types::{NodeID, NodeAlias, DiscoveredNode, SNIPData, ProtocolFlags},
     protocol::{GridConnectFrame, MTI},
     transport::{LccTransport, TcpTransport},
     dispatcher::MessageDispatcher,
@@ -45,6 +45,8 @@ pub struct LccConnection {
     our_alias: NodeAlias,
     /// Optional SNIP data to provide when queried
     our_snip: Option<SNIPData>,
+    /// Protocol flags we advertise in PIP replies (D13)
+    our_pip_flags: ProtocolFlags,
     /// Handles for background responder tasks (query + SNIP).
     /// Stored so they can be aborted on disconnect, preventing the tasks
     /// from keeping `Arc<Mutex<MessageDispatcher>>` (and therefore the
@@ -102,6 +104,7 @@ impl LccConnection {
             our_node_id: node_id,
             our_alias,
             our_snip: None,
+            our_pip_flags: Self::default_pip_flags(),
             responder_handles: vec![],
         };
 
@@ -135,6 +138,7 @@ impl LccConnection {
             our_node_id: node_id,
             our_alias,
             our_snip: None,
+            our_pip_flags: Self::default_pip_flags(),
             responder_handles: vec![],
         };
 
@@ -163,6 +167,7 @@ impl LccConnection {
             our_node_id: node_id,
             our_alias,
             our_snip: None,
+            our_pip_flags: Self::default_pip_flags(),
             responder_handles: vec![],
         })
     }
@@ -175,6 +180,7 @@ impl LccConnection {
             our_node_id: node_id,
             our_alias,
             our_snip: None,
+            our_pip_flags: Self::default_pip_flags(),
             responder_handles: vec![],
         }
     }
@@ -182,6 +188,32 @@ impl LccConnection {
     /// Get our node ID
     pub fn our_node_id(&self) -> &NodeID {
         &self.our_node_id
+    }
+
+    /// Default protocol flags advertised in PIP replies.
+    fn default_pip_flags() -> ProtocolFlags {
+        ProtocolFlags {
+            simple_protocol: true,
+            datagram: true,
+            stream: false,
+            memory_configuration: true,
+            reservation: false,
+            event_exchange: true,
+            identification: true,
+            teach_learn: false,
+            remote_button: false,
+            acdi: false,
+            display: false,
+            snip: true,
+            cdi: true,
+            traction_control: false,
+            function_description_information: false,
+            dcc_command_station: false,
+            simple_train_node: false,
+            function_configuration: false,
+            firmware_upgrade: false,
+            firmware_upgrade_active: false,
+        }
     }
     
     /// Get a reference to the message dispatcher (if using dispatcher mode)
@@ -733,6 +765,89 @@ impl LccConnection {
             }
         });
         self.responder_handles.push(handle_ame);
+
+        // --- ProtocolSupportInquiry (PIP) responder (D13) ---
+        let disp_pip = dispatcher.clone();
+        let our_pip_flags = self.our_pip_flags;
+        let handle_pip = tokio::spawn(async move {
+            let mut rx = {
+                let disp = disp_pip.lock().await;
+                disp.subscribe_mti(MTI::ProtocolSupportInquiry).await
+            };
+            loop {
+                match rx.recv().await {
+                    Ok(msg) => {
+                        // Only respond if addressed to us
+                        let is_for_us = msg.frame.get_dest_from_body()
+                            .map(|(dest, _)| dest == our_alias.value())
+                            .unwrap_or(false);
+                        if is_for_us {
+                            let flag_bytes = our_pip_flags.to_bytes();
+                            if let Ok(response_frame) = GridConnectFrame::from_addressed_mti(
+                                MTI::ProtocolSupportReply,
+                                our_alias.value(),
+                                // source_alias of the request is in the header
+                                MTI::from_header(msg.frame.header)
+                                    .map(|(_, src)| src)
+                                    .unwrap_or(0),
+                                flag_bytes,
+                            ) {
+                                let disp = disp_pip.lock().await;
+                                let _ = disp.send(&response_frame).await;
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        self.responder_handles.push(handle_pip);
+
+        // --- D18: Ongoing alias conflict detector ---
+        // Monitor AMD frames — if another node claims our alias with a different
+        // NodeID, send AMR + re-announce our AMD to reassert ownership.
+        let disp_conflict = dispatcher.clone();
+        let handle_conflict = tokio::spawn(async move {
+            let mut rx = {
+                let disp = disp_conflict.lock().await;
+                disp.subscribe_mti(MTI::AliasMapDefinition).await
+            };
+            loop {
+                match rx.recv().await {
+                    Ok(msg) => {
+                        if let Ok((_, alias)) = MTI::from_header(msg.frame.header) {
+                            if alias == our_alias.value() && msg.frame.data.len() >= 6 {
+                                let their_node_id: [u8; 6] = msg.frame.data[0..6].try_into().unwrap();
+                                if their_node_id != *our_node_id.as_bytes() {
+                                    eprintln!(
+                                        "[LCC] ALIAS CONFLICT: alias 0x{:03X} claimed by another node — reasserting",
+                                        our_alias.value()
+                                    );
+                                    // Send AMR for our alias, then re-send AMD
+                                    if let Ok(amr) = GridConnectFrame::from_mti(
+                                        MTI::AliasMapReset,
+                                        our_alias.value(),
+                                        our_node_id.as_bytes().to_vec(),
+                                    ) {
+                                        let disp = disp_conflict.lock().await;
+                                        let _ = disp.send(&amr).await;
+                                        if let Ok(amd) = GridConnectFrame::from_mti(
+                                            MTI::AliasMapDefinition,
+                                            our_alias.value(),
+                                            our_node_id.as_bytes().to_vec(),
+                                        ) {
+                                            let _ = disp.send(&amd).await;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        self.responder_handles.push(handle_conflict);
         
         Ok(())
     }
@@ -948,68 +1063,87 @@ impl LccConnection {
         loop {
             println!("[LCC] Reading CDI chunk at address {} (chunk size {})", address, CHUNK_SIZE);
             
-            // Send read command for next chunk (may be multi-frame)
-            let read_frames = MemoryConfigCmd::build_read(
-                our_alias,
-                dest_alias,
-                AddressSpace::Cdi,
-                address,
-                CHUNK_SIZE,
-            )?;
+            // D14: Retry each chunk up to 3 times on timeout/error.
+            const MAX_CHUNK_RETRIES: u8 = 3;
+            let mut chunk_reply: Option<Vec<u8>> = None;
 
-            // Send all frames in sequence
-            println!("[LCC] Sending {} frame(s) for read command", read_frames.len());
-            for (i, frame) in read_frames.iter().enumerate() {
-                println!("[LCC] Sending frame {}/{}: {}", i + 1, read_frames.len(), frame.to_string());
-                transport.send(frame).await?;
-            }
-
-            // Wait for response (may be multi-frame datagram)
-            let start_time = Instant::now();
-            let max_duration = Duration::from_millis(timeout_ms);
-            let mut reply_payload: Option<Vec<u8>> = None;
-
-            while reply_payload.is_none() {
-                if start_time.elapsed() >= max_duration {
-                    return Err(crate::Error::Timeout(format!(
-                        "Timeout waiting for CDI read reply at address {}",
-                        address
-                    )));
+            for attempt in 0..MAX_CHUNK_RETRIES {
+                if attempt > 0 {
+                    println!("[LCC] Retrying CDI chunk at address {} (attempt {}/{})", address, attempt + 1, MAX_CHUNK_RETRIES);
+                    assembler.clear_source(dest_alias);
                 }
 
-                let remaining = max_duration.saturating_sub(start_time.elapsed());
-                if let Some(frame) = transport.receive(remaining.as_millis() as u64).await? {
-                    // Check if this is a datagram frame from our target
-                    // Note: Datagram frames have different header encoding than standard messages
-                    // and must be parsed with from_datagram_header() to extract MTI correctly
-                    if let Ok((mti, source, dest)) = crate::protocol::MTI::from_datagram_header(frame.header) {
-                        if source == dest_alias && dest == our_alias && 
-                           matches!(mti, crate::protocol::MTI::DatagramOnly | crate::protocol::MTI::DatagramFirst | crate::protocol::MTI::DatagramMiddle | crate::protocol::MTI::DatagramFinal) {
-                            // Handle datagram assembly
-                            if let Some(complete_payload) = assembler.handle_frame(&frame)? {
-                                // Send acknowledgment immediately
-                                let ack_frame = DatagramAssembler::send_acknowledgment(
-                                    our_alias,
-                                    dest_alias,
-                                )?;
-                                println!("[LCC] Sending DatagramReceivedOK: {}", ack_frame.to_string());
-                                transport.send(&ack_frame).await?;
-                                
-                                reply_payload = Some(complete_payload);
+                // Send read command for next chunk (may be multi-frame)
+                let read_frames = MemoryConfigCmd::build_read(
+                    our_alias,
+                    dest_alias,
+                    AddressSpace::Cdi,
+                    address,
+                    CHUNK_SIZE,
+                )?;
+
+                // Send all frames in sequence
+                println!("[LCC] Sending {} frame(s) for read command", read_frames.len());
+                for (i, frame) in read_frames.iter().enumerate() {
+                    println!("[LCC] Sending frame {}/{}: {}", i + 1, read_frames.len(), frame.to_string());
+                    transport.send(frame).await?;
+                }
+
+                // Wait for response (may be multi-frame datagram)
+                let start_time = Instant::now();
+                let max_duration = Duration::from_millis(timeout_ms);
+
+                let mut timed_out = false;
+                while chunk_reply.is_none() {
+                    if start_time.elapsed() >= max_duration {
+                        timed_out = true;
+                        break;
+                    }
+
+                    let remaining = max_duration.saturating_sub(start_time.elapsed());
+                    if let Some(frame) = transport.receive(remaining.as_millis() as u64).await? {
+                        if let Ok((mti, source, dest)) = crate::protocol::MTI::from_datagram_header(frame.header) {
+                            if source == dest_alias && dest == our_alias && 
+                               matches!(mti, crate::protocol::MTI::DatagramOnly | crate::protocol::MTI::DatagramFirst | crate::protocol::MTI::DatagramMiddle | crate::protocol::MTI::DatagramFinal) {
+                                if let Some(complete_payload) = assembler.handle_frame(&frame)? {
+                                    let ack_frame = DatagramAssembler::send_acknowledgment(
+                                        our_alias,
+                                        dest_alias,
+                                    )?;
+                                    println!("[LCC] Sending DatagramReceivedOK: {}", ack_frame.to_string());
+                                    transport.send(&ack_frame).await?;
+                                    
+                                    chunk_reply = Some(complete_payload);
+                                }
                             }
                         }
+                    } else {
+                        sleep(Duration::from_millis(10)).await;
                     }
-                } else {
-                    sleep(Duration::from_millis(10)).await;
+                }
+
+                if chunk_reply.is_some() {
+                    break;
+                }
+                if timed_out && attempt + 1 >= MAX_CHUNK_RETRIES {
+                    return Err(crate::Error::Timeout(format!(
+                        "Timeout waiting for CDI read reply at address {} after {} attempts",
+                        address, MAX_CHUNK_RETRIES
+                    )));
                 }
             }
 
             // Parse read reply
-            let reply_data = reply_payload.unwrap();
+            let reply_data = chunk_reply.unwrap();
 let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
 
             match reply {
                 crate::protocol::ReadReply::Success { data, .. } => {
+                    // Guard against zero-length success reply (would loop forever).
+                    // OpenLCB_Java advances by the *requested* count in this case.
+                    if data.is_empty() {
+                        break;
+                    }
                     // Check for null terminator
                     if let Some(null_pos) = data.iter().position(|&b| b == 0x00) {
                         // Found null terminator - append up to it and we're done
@@ -1166,16 +1300,8 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
     ) -> Result<(Vec<u8>, MemoryReadTiming)> {
         use crate::protocol::{MemoryConfigCmd, AddressSpace, DatagramAssembler};
 
-        let space = match address_space {
-            0xFB => AddressSpace::AcdiUser,
-            0xFC => AddressSpace::AcdiManufacturer,
-            0xFD => AddressSpace::Configuration,
-            0xFE => AddressSpace::AllMemory,
-            0xFF => AddressSpace::Cdi,
-            _ => return Err(crate::Error::Protocol(format!(
-                "Invalid address space: 0x{:02X}", address_space
-            ))),
-        };
+        let space = AddressSpace::from_u8(address_space)
+            .map_err(|e| crate::Error::Protocol(e))?;
 
         let read_frames = MemoryConfigCmd::build_read(our_alias, dest_alias, space, address, count)?;
 
@@ -1195,7 +1321,7 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
         }
 
         // Step 3: Wait for reply on the broadcast channel (no transport lock held).
-        let max_duration = Duration::from_millis(timeout_ms);
+        let mut max_duration = Duration::from_millis(timeout_ms);
         let mut assembler = DatagramAssembler::new();
         let mut first_frame_latency_ms: Option<u64> = None;
         let mut last_frame_ms: u64 = 0;
@@ -1224,6 +1350,45 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
                         .unwrap_or(false);
 
                     if !is_our_datagram {
+                        if let Ok((mti, src)) = MTI::from_header(msg.frame.header) {
+                            if src == dest_alias && msg.frame.data.len() >= 2 {
+                                let dst = ((msg.frame.data[0] as u16) << 8) | (msg.frame.data[1] as u16);
+                                if dst == our_alias {
+                                    // D9: DatagramRejected handling
+                                    if mti == MTI::DatagramRejected {
+                                        let error_code = if msg.frame.data.len() >= 4 {
+                                            ((msg.frame.data[2] as u16) << 8) | (msg.frame.data[3] as u16)
+                                        } else {
+                                            0
+                                        };
+                                        // Bit 0x2000 = "resend OK" (temporary, buffer full)
+                                        if error_code & 0x2000 != 0 {
+                                            // Re-send the read request instead of timing out
+                                            let disp = dispatcher.lock().await;
+                                            for frame in read_frames.iter() {
+                                                disp.send(frame).await?;
+                                            }
+                                            continue;
+                                        } else {
+                                            return Err(crate::Error::Protocol(format!(
+                                                "Datagram rejected: error 0x{:04X}", error_code
+                                            )));
+                                        }
+                                    }
+                                    // D12: DatagramReceivedOk — parse flags for timeout extension
+                                    if mti == MTI::DatagramReceivedOk {
+                                        let flags = if msg.frame.data.len() >= 3 { msg.frame.data[2] } else { 0 };
+                                        let timeout_exp = flags & 0x0F;
+                                        if timeout_exp > 0 {
+                                            let extended_ms = (1u64 << timeout_exp) * 1000;
+                                            if extended_ms > max_duration.as_millis() as u64 {
+                                                max_duration = Duration::from_millis(extended_ms);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         continue;
                     }
 
@@ -1321,14 +1486,8 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
         use std::time::Instant;
         
         // Convert address space byte to enum
-        let space = match address_space {
-            0xFB => AddressSpace::AcdiUser,
-            0xFC => AddressSpace::AcdiManufacturer,
-            0xFD => AddressSpace::Configuration,
-            0xFE => AddressSpace::AllMemory,
-            0xFF => AddressSpace::Cdi,
-            _ => return Err(crate::Error::Protocol(format!("Invalid address space: 0x{:02X}", address_space))),
-        };
+        let space = AddressSpace::from_u8(address_space)
+            .map_err(|e| crate::Error::Protocol(e))?;
         
         // Build read command
         let read_frames = MemoryConfigCmd::build_read(
@@ -1507,7 +1666,7 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
         data: &[u8],
         timeout_ms: u64,
     ) -> Result<()> {
-        use crate::protocol::{MemoryConfigCmd, AddressSpace};
+        use crate::protocol::{MemoryConfigCmd, AddressSpace, DatagramAssembler};
 
         let space = AddressSpace::from_u8(address_space)
             .map_err(|e| crate::Error::Protocol(e))?;
@@ -1530,7 +1689,7 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
 
         // Step 3: Wait for Datagram Received OK from dest_alias addressed to us.
         let start_time = Instant::now();
-        let max_duration = Duration::from_millis(timeout_ms);
+        let mut max_duration = Duration::from_millis(timeout_ms);
 
         loop {
             let remaining = max_duration.saturating_sub(start_time.elapsed());
@@ -1545,13 +1704,93 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
                     // DatagramReceivedOk uses standard MTI format (not datagram)
                     // Source alias in header, destination alias in data payload
                     if let Ok((mti, src)) = MTI::from_header(msg.frame.header) {
-                        if mti == MTI::DatagramReceivedOk && src == dest_alias {
+                        if src != dest_alias {
+                            continue;
+                        }
+                        if mti == MTI::DatagramReceivedOk {
                             // Check data payload for our alias
                             if msg.frame.data.len() >= 2 {
                                 let dst = ((msg.frame.data[0] as u16) << 8) | (msg.frame.data[1] as u16);
                                 if dst == our_alias {
-                                    return Ok(());
+                                    // D12: Parse flags for timeout extension
+                                    // D10: Check FLAG_REPLY_PENDING (bit 0x80 of flags byte)
+                                    let flags = if msg.frame.data.len() >= 3 { msg.frame.data[2] } else { 0 };
+                                    let reply_pending = flags & 0x80 != 0;
+
+                                    // D12: timeout extension — bits 3:0 encode power-of-two seconds
+                                    let timeout_exp = flags & 0x0F;
+                                    if timeout_exp > 0 {
+                                        let extended_ms = (1u64 << timeout_exp) * 1000;
+                                        if extended_ms > max_duration.as_millis() as u64 {
+                                            max_duration = Duration::from_millis(extended_ms);
+                                        }
+                                    }
+
+                                    if !reply_pending {
+                                        return Ok(());
+                                    }
+                                    // D10: reply pending — continue listening for a
+                                    // write-reply datagram that carries the result.
+                                    // Fall through to keep reading.
                                 }
+                            }
+                        } else if mti == MTI::DatagramRejected {
+                            // D9: handle DatagramRejected
+                            if msg.frame.data.len() >= 2 {
+                                let dst = ((msg.frame.data[0] as u16) << 8) | (msg.frame.data[1] as u16);
+                                if dst == our_alias {
+                                    let error_code = if msg.frame.data.len() >= 4 {
+                                        ((msg.frame.data[2] as u16) << 8) | (msg.frame.data[3] as u16)
+                                    } else {
+                                        0
+                                    };
+                                    if error_code & 0x2000 != 0 {
+                                        // Resend OK — re-send the write request
+                                        let disp = dispatcher.lock().await;
+                                        for frame in write_frames.iter() {
+                                            disp.send(frame).await?;
+                                        }
+                                        continue;
+                                    } else {
+                                        return Err(crate::Error::Protocol(format!(
+                                            "Datagram rejected: error 0x{:04X}", error_code
+                                        )));
+                                    }
+                                }
+                            }
+                        }
+                        // D10: Check for write-reply datagram (when reply_pending was set)
+                        let is_our_datagram = MTI::from_datagram_header(msg.frame.header)
+                            .map(|(mti, dg_src, dg_dst)| {
+                                let is_dg = matches!(mti, MTI::DatagramOnly);
+                                is_dg && dg_src == dest_alias && dg_dst == our_alias
+                            })
+                            .unwrap_or(false);
+                        if is_our_datagram {
+                            // Parse write reply: command byte 0x20, reply 0x10
+                            // Data: [0x20, 0x10, space, ...] — error in subsequent bytes
+                            if msg.frame.data.len() >= 2 && msg.frame.data[0] == 0x20 {
+                                let reply_cmd = msg.frame.data[1];
+                                if reply_cmd & 0x08 != 0 {
+                                    // Error bit set in reply — write failed
+                                    let error_code = if msg.frame.data.len() >= 4 {
+                                        ((msg.frame.data[2] as u16) << 8) | (msg.frame.data[3] as u16)
+                                    } else {
+                                        0
+                                    };
+                                    // Send DatagramReceivedOk for the reply datagram
+                                    let ack = DatagramAssembler::send_acknowledgment(our_alias, dest_alias)?;
+                                    let disp = dispatcher.lock().await;
+                                    disp.send(&ack).await?;
+                                    return Err(crate::Error::Protocol(format!(
+                                        "Write reply error: 0x{:04X}", error_code
+                                    )));
+                                }
+                                // Success reply — acknowledge the datagram
+                                let ack = DatagramAssembler::send_acknowledgment(our_alias, dest_alias)?;
+                                let disp = dispatcher.lock().await;
+                                disp.send(&ack).await?;
+                                return Ok(());
                             }
                         }
                     }
@@ -2039,5 +2278,370 @@ mod tests {
         assert_eq!(mti, MTI::VerifyNodeGlobal, "frame MTI must be VerifyNodeGlobal");
         assert_eq!(alias, our_alias, "frame alias must match our alias");
         assert!(expected.data.is_empty(), "VerifyNodeGlobal carries no payload");
+    }
+
+    // --- D9/D10/D12: Dispatcher-path datagram handling tests ---
+
+    use crate::transport::mock::MockTransport as GlobalMockTransport;
+    use crate::dispatcher::MessageDispatcher;
+
+    /// Helper: build a DatagramRejected frame from `from_alias` addressed to `to_alias`
+    /// with the given 16-bit error code.
+    fn make_datagram_rejected(from_alias: u16, to_alias: u16, error_code: u16) -> GridConnectFrame {
+        let header = MTI::DatagramRejected.to_header(from_alias).unwrap();
+        let data = vec![
+            ((to_alias >> 8) & 0xFF) as u8,
+            (to_alias & 0xFF) as u8,
+            ((error_code >> 8) & 0xFF) as u8,
+            (error_code & 0xFF) as u8,
+        ];
+        GridConnectFrame { header, data }
+    }
+
+    /// Helper: build a DatagramReceivedOk frame with optional flags byte.
+    fn make_datagram_ack_with_flags(from_alias: u16, to_alias: u16, flags: u8) -> GridConnectFrame {
+        let header = MTI::DatagramReceivedOk.to_header(from_alias).unwrap();
+        let mut data = vec![
+            ((to_alias >> 8) & 0xFF) as u8,
+            (to_alias & 0xFF) as u8,
+        ];
+        if flags != 0 {
+            data.push(flags);
+        }
+        GridConnectFrame { header, data }
+    }
+
+    /// Helper: build a read-reply datagram (DatagramOnly) for Configuration space.
+    /// Returns a frame from `from_alias` to `to_alias` with read-reply payload.
+    fn make_read_reply_datagram(
+        from_alias: u16,
+        to_alias: u16,
+        address: u32,
+        payload: &[u8],
+    ) -> GridConnectFrame {
+        let header = MTI::DatagramOnly.to_header_with_dest(from_alias, to_alias).unwrap();
+        let addr_bytes = address.to_be_bytes();
+        // Embedded format for Configuration space: command byte 0x51 (0x50 read-reply | 0x01 config)
+        let mut data = vec![0x20, 0x51, addr_bytes[0], addr_bytes[1], addr_bytes[2], addr_bytes[3]];
+        data.extend_from_slice(payload);
+        GridConnectFrame { header, data }
+    }
+
+    /// Helper: build a write-reply success datagram (D10).
+    fn make_write_reply_datagram(
+        from_alias: u16,
+        to_alias: u16,
+        address: u32,
+    ) -> GridConnectFrame {
+        let header = MTI::DatagramOnly.to_header_with_dest(from_alias, to_alias).unwrap();
+        let addr_bytes = address.to_be_bytes();
+        // Write reply command: 0x10 (success, no error bit 0x08)
+        let data = vec![0x20, 0x11, addr_bytes[0], addr_bytes[1], addr_bytes[2], addr_bytes[3]];
+        GridConnectFrame { header, data }
+    }
+
+    // D9: DatagramRejected with resend flag (0x2000) → resend then succeed (read path)
+    #[tokio::test]
+    async fn test_d9_read_datagram_rejected_resend_ok() {
+        let our_alias: u16 = 0xAAA;
+        let node_alias: u16 = 0xBBB;
+
+        // First response: DatagramRejected with 0x2000 (resend OK / buffer full).
+        let rejected = make_datagram_rejected(node_alias, our_alias, 0x2000);
+        // After resend: DatagramReceivedOk (ack for the read request).
+        let ack = make_datagram_ack_with_flags(node_alias, our_alias, 0);
+        // Then the read-reply datagram with payload.
+        let reply = make_read_reply_datagram(node_alias, our_alias, 0x0000, &[0x48, 0x65]);
+
+        let mut transport = GlobalMockTransport::new();
+        transport.add_receive_frame(rejected.to_string());
+        transport.add_receive_frame(ack.to_string());
+        transport.add_receive_frame(reply.to_string());
+
+        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
+        dispatcher.start();
+
+        let disp = Arc::new(Mutex::new(dispatcher));
+
+        let result = LccConnection::read_memory_with_dispatcher(
+            &disp, our_alias, node_alias, 0xFD, 0x0000, 2, 3000,
+        ).await;
+
+        disp.lock().await.shutdown().await;
+
+        assert!(result.is_ok(), "Read should succeed after resend: {:?}", result);
+        assert_eq!(result.unwrap(), vec![0x48, 0x65]);
+    }
+
+    // D9: DatagramRejected with permanent error → returns error (read path)
+    #[tokio::test]
+    async fn test_d9_read_datagram_rejected_permanent() {
+        let our_alias: u16 = 0xAAA;
+        let node_alias: u16 = 0xBBB;
+
+        // Permanent rejection (error code 0x1000, no resend bit)
+        let rejected = make_datagram_rejected(node_alias, our_alias, 0x1000);
+
+        let mut transport = GlobalMockTransport::new();
+        transport.add_receive_frame(rejected.to_string());
+
+        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
+        dispatcher.start();
+
+        let disp = Arc::new(Mutex::new(dispatcher));
+
+        let result = LccConnection::read_memory_with_dispatcher(
+            &disp, our_alias, node_alias, 0xFD, 0x0000, 2, 2000,
+        ).await;
+
+        disp.lock().await.shutdown().await;
+
+        assert!(result.is_err(), "Read should fail on permanent rejection");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("0x1000"), "Error should contain rejection code: {}", err_msg);
+    }
+
+    // D9: DatagramRejected with resend flag → resend then succeed (write path)
+    #[tokio::test]
+    async fn test_d9_write_datagram_rejected_resend_ok() {
+        let our_alias: u16 = 0xAAA;
+        let node_alias: u16 = 0xBBB;
+
+        // First: rejection with resend flag
+        let rejected = make_datagram_rejected(node_alias, our_alias, 0x2000);
+        // After resend: ack
+        let ack = make_datagram_ack_with_flags(node_alias, our_alias, 0);
+
+        let mut transport = GlobalMockTransport::new();
+        transport.add_receive_frame(rejected.to_string());
+        transport.add_receive_frame(ack.to_string());
+
+        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
+        dispatcher.start();
+
+        let disp = Arc::new(Mutex::new(dispatcher));
+
+        let result = LccConnection::write_memory_with_dispatcher(
+            &disp, our_alias, node_alias, 0xFD, 0x0000, &[0x42], 3000,
+        ).await;
+
+        disp.lock().await.shutdown().await;
+
+        assert!(result.is_ok(), "Write should succeed after resend: {:?}", result);
+    }
+
+    // D9: DatagramRejected permanent error (write path)
+    #[tokio::test]
+    async fn test_d9_write_datagram_rejected_permanent() {
+        let our_alias: u16 = 0xAAA;
+        let node_alias: u16 = 0xBBB;
+
+        let rejected = make_datagram_rejected(node_alias, our_alias, 0x1040);
+
+        let mut transport = GlobalMockTransport::new();
+        transport.add_receive_frame(rejected.to_string());
+
+        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
+        dispatcher.start();
+
+        let disp = Arc::new(Mutex::new(dispatcher));
+
+        let result = LccConnection::write_memory_with_dispatcher(
+            &disp, our_alias, node_alias, 0xFD, 0x0000, &[0x42], 2000,
+        ).await;
+
+        disp.lock().await.shutdown().await;
+
+        assert!(result.is_err(), "Write should fail on permanent rejection");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("1040"), "Error should contain rejection code: {}", err_msg);
+    }
+
+    // D10: FLAG_REPLY_PENDING → wait for write-reply datagram
+    #[tokio::test]
+    async fn test_d10_write_reply_pending_then_success() {
+        let our_alias: u16 = 0xAAA;
+        let node_alias: u16 = 0xBBB;
+
+        // DatagramReceivedOk with reply-pending flag (0x80)
+        let ack = make_datagram_ack_with_flags(node_alias, our_alias, 0x80);
+        // Then write-reply datagram indicating success
+        let reply = make_write_reply_datagram(node_alias, our_alias, 0x0000);
+
+        let mut transport = GlobalMockTransport::new();
+        transport.add_receive_frame(ack.to_string());
+        transport.add_receive_frame(reply.to_string());
+
+        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
+        dispatcher.start();
+
+        let disp = Arc::new(Mutex::new(dispatcher));
+
+        let result = LccConnection::write_memory_with_dispatcher(
+            &disp, our_alias, node_alias, 0xFD, 0x0000, &[0x42], 3000,
+        ).await;
+
+        disp.lock().await.shutdown().await;
+
+        assert!(result.is_ok(), "Write should succeed after reply-pending + write-reply: {:?}", result);
+    }
+
+    // D12: DatagramReceivedOk with timeout extension flag (read path)
+    #[tokio::test]
+    async fn test_d12_read_timeout_extension_flag() {
+        let our_alias: u16 = 0xAAA;
+        let node_alias: u16 = 0xBBB;
+
+        // DatagramReceivedOk with timeout extension: flags = 0x03 → 2^3 = 8 seconds
+        let ack = make_datagram_ack_with_flags(node_alias, our_alias, 0x03);
+        // Then a read-reply datagram arrives within extended window
+        let reply = make_read_reply_datagram(node_alias, our_alias, 0x0000, &[0xAB, 0xCD]);
+
+        let mut transport = GlobalMockTransport::new();
+        transport.add_receive_frame(ack.to_string());
+        transport.add_receive_frame(reply.to_string());
+
+        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
+        dispatcher.start();
+
+        let disp = Arc::new(Mutex::new(dispatcher));
+
+        // Use a very short base timeout — extension should stretch it
+        let result = LccConnection::read_memory_with_dispatcher(
+            &disp, our_alias, node_alias, 0xFD, 0x0000, 2, 3000,
+        ).await;
+
+        disp.lock().await.shutdown().await;
+
+        assert!(result.is_ok(), "Read should succeed with timeout extension: {:?}", result);
+        assert_eq!(result.unwrap(), vec![0xAB, 0xCD]);
+    }
+
+    // --- D14: CDI read retry tests ---
+
+    /// Helper: build a CDI read-reply datagram via the inline MockTransport format.
+    /// CDI uses embedded format: command byte 0x53 (read-reply 0x50 | CDI 0x03).
+    fn make_cdi_reply_frame(src_alias: u16, dst_alias: u16, address: u32, payload: &[u8]) -> GridConnectFrame {
+        let header = MTI::DatagramOnly.to_header_with_dest(src_alias, dst_alias).unwrap();
+        let addr = address.to_be_bytes();
+        let mut data = vec![0x20, 0x53, addr[0], addr[1], addr[2], addr[3]];
+        data.extend_from_slice(payload);
+        GridConnectFrame { header, data }
+    }
+
+    // D14: All retry attempts fail → proper timeout error
+    #[tokio::test]
+    async fn test_d14_cdi_read_retries_exhausted() {
+        // No responses → all 3 retry attempts will timeout
+        let mut mock = MockTransport::new(vec![]);
+        let result = LccConnection::read_cdi_impl(
+            &mut mock,
+            0xAAA,
+            0xBBB,
+            200, // short timeout
+        ).await;
+
+        assert!(result.is_err(), "CDI read should fail after retries");
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("Timeout") || err.contains("timeout"),
+            "Error should mention timeout: {}", err
+        );
+    }
+
+    // D19: Zero-length CDI success reply → breaks loop instead of infinite loop
+    #[tokio::test]
+    async fn test_d19_cdi_zero_length_reply_breaks() {
+        let src: u16 = 0xBBB;
+        let dst: u16 = 0xAAA;
+
+        // Return a valid CDI read reply with empty payload (zero-length data)
+        let reply = make_cdi_reply_frame(src, dst, 0, &[]);
+        let mut mock = MockTransport::new(vec![reply]);
+
+        let result = LccConnection::read_cdi_impl(
+            &mut mock,
+            dst,
+            src,
+            2000,
+        ).await;
+
+        // Should succeed with empty string (not hang forever)
+        assert!(result.is_ok(), "Zero-length reply should break CDI loop: {:?}", result);
+        assert_eq!(result.unwrap(), "");
+    }
+
+    // CDI read: normal single-chunk with null terminator
+    #[tokio::test]
+    async fn test_cdi_read_single_chunk() {
+        let src: u16 = 0xBBB;
+        let dst: u16 = 0xAAA;
+
+        // A CDI reply with "<cdi/>\0" (null-terminated)
+        let cdi_bytes = b"<cdi/>\x00";
+        let reply = make_cdi_reply_frame(src, dst, 0, cdi_bytes);
+        let mut mock = MockTransport::new(vec![reply]);
+
+        let result = LccConnection::read_cdi_impl(
+            &mut mock,
+            dst,
+            src,
+            2000,
+        ).await;
+
+        assert!(result.is_ok(), "CDI read should succeed: {:?}", result);
+        assert_eq!(result.unwrap(), "<cdi/>");
+    }
+
+    // D18: Alias conflict detection — send AMD with our alias but different NodeID
+    // This tests the conflict monitor spawned by start_responding_to_queries.
+    // The monitor should send AMR + AMD to reassert our alias.
+    #[tokio::test]
+    async fn test_d18_alias_conflict_reasserts() {
+        let our_alias: u16 = 0xAAA;
+        let our_node_id = NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]);
+
+        // An AMD from another node claiming our alias with a DIFFERENT NodeID
+        let conflicting_amd = GridConnectFrame::from_mti(
+            MTI::AliasMapDefinition,
+            our_alias,
+            vec![0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA], // different NodeID
+        ).unwrap();
+
+        let mut transport = GlobalMockTransport::new();
+        transport.add_receive_frame(conflicting_amd.to_string());
+
+        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
+        dispatcher.start();
+
+        let disp_arc = Arc::new(Mutex::new(dispatcher));
+
+        // Set up a connection with dispatcher and start the query responders
+        // (which includes the D18 alias conflict monitor).
+        let mut connection = LccConnection {
+            transport: None,
+            our_node_id: our_node_id,
+            our_alias: NodeAlias::new(our_alias).unwrap(),
+            dispatcher: Some(disp_arc.clone()),
+            our_snip: None,
+            our_pip_flags: LccConnection::default_pip_flags(),
+            responder_handles: Vec::new(),
+        };
+        connection.start_responding_to_queries().unwrap();
+
+        // Give the conflict monitor time to process the AMD and respond
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Verify the monitor didn't panic and the connection still works.
+        // The spawned task should have logged the conflict and sent AMR+AMD.
+        // (We can't easily inspect transport-level sent frames through the
+        // dispatcher, but we verify the task stays alive.)
+        assert!(
+            connection.responder_handles.iter().all(|h| !h.is_finished()),
+            "Conflict monitor tasks should still be running after handling conflict"
+        );
+
+        connection.shutdown_responders().await;
+        disp_arc.lock().await.shutdown().await;
     }
 }

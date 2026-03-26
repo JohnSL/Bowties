@@ -3,7 +3,6 @@
 //! SNIP provides manufacturer, model, version, and user-assigned identification
 //! for LCC nodes via the datagram protocol.
 
-use crate::protocol::datagram::DatagramAssembler;
 use crate::protocol::frame::GridConnectFrame;
 use crate::protocol::mti::MTI;
 use crate::transport::LccTransport;
@@ -98,6 +97,12 @@ async fn query_snip_internal(
                     continue;
                 }
 
+                // D20: OptionalInteractionRejected — node does not support SNIP.
+                if mti == MTI::OptionalInteractionRejected {
+                    eprintln!("[SNIP] {:03X}: OptionalInteractionRejected — node does not support SNIP", dest_alias);
+                    return Ok((None, SNIPStatus::Timeout));
+                }
+
                 // Check for SNIP response MTI (0x19A08)
                 if mti != MTI::SNIPResponse {
                     continue;
@@ -151,9 +156,8 @@ async fn query_snip_internal(
                         // Datagram complete - parse SNIP data
                         match parse_snip_payload(&snip_payload) {
                             Ok(snip_data) => {
-                                // Send acknowledgment
-                                let ack = DatagramAssembler::send_acknowledgment(source_alias, dest_alias)?;
-                                transport.send(&ack).await?;
+                                // Note: SNIP responses are addressed messages (not
+                                // datagrams), so we must NOT send DatagramReceivedOk.
                                 return Ok((Some(snip_data), SNIPStatus::Complete));
                             }
                             Err(e) => return Err(e),
@@ -167,9 +171,8 @@ async fn query_snip_internal(
                         // Datagram complete - parse SNIP data
                         match parse_snip_payload(&snip_payload) {
                             Ok(snip_data) => {
-                                // Send acknowledgment
-                                let ack = DatagramAssembler::send_acknowledgment(source_alias, dest_alias)?;
-                                transport.send(&ack).await?;
+                                // Note: SNIP responses are addressed messages (not
+                                // datagrams), so we must NOT send DatagramReceivedOk.
                                 return Ok((Some(snip_data), SNIPStatus::Complete));
                             }
                             Err(e) => return Err(e),
