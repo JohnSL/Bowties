@@ -250,13 +250,21 @@ pub fn run() {
                 }
                 window.show().unwrap();
 
-                // Close the traffic monitor window when the main window closes
+                // Disconnect gracefully before the window (and Tokio runtime) tears
+                // down so the LCC hub receives a FIN rather than a RST.
                 let app_handle = app.handle().clone();
                 window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::Destroyed = event {
-                        if let Some(traffic) = app_handle.get_webview_window("traffic") {
-                            let _ = traffic.close();
-                        }
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let state = app_handle.state::<AppState>().inner().clone();
+                        let app_h = app_handle.clone();
+                        tauri::async_runtime::spawn(async move {
+                            state.disconnect().await;
+                            if let Some(traffic) = app_h.get_webview_window("traffic") {
+                                let _ = traffic.close();
+                            }
+                            app_h.exit(0);
+                        });
                     }
                 });
             }

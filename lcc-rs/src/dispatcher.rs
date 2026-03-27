@@ -260,6 +260,12 @@ impl MessageDispatcher {
         if let Some(handle) = self.listener_handle.take() {
             let _ = handle.await;
         }
+
+        // Send a graceful TCP FIN so the remote hub sees EOF (readLine → null)
+        // rather than RST (SocketException: Connection reset).  The listener
+        // task has fully exited above, so there is no contention on the lock.
+        let mut transport = self.transport.lock().await;
+        let _ = transport.close().await;
     }
 
     /// Check if the listener is running
