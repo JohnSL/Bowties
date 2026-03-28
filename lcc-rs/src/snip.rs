@@ -5,7 +5,7 @@
 
 use crate::protocol::frame::GridConnectFrame;
 use crate::protocol::mti::MTI;
-use crate::transport::LccTransport;
+use crate::transport_actor::TransportHandle;
 use crate::types::{SNIPData, SNIPStatus};
 use crate::{Error, Result};
 use tokio::sync::Semaphore;
@@ -18,10 +18,10 @@ const SNIP_TIMEOUT: Duration = Duration::from_secs(5);
 /// Silence detection timeout (100ms with no frames = end of response)
 const SILENCE_TIMEOUT: Duration = Duration::from_millis(100);
 
-/// Query SNIP data from a specific node
+/// Query SNIP data from a specific node using a TransportHandle (channel-based).
 ///
 /// # Arguments
-/// * `transport` - LCC transport connection (mutable reference)
+/// * `handle` - Transport handle for sending and subscribing
 /// * `source_alias` - Our alias (source of the request)
 /// * `dest_alias` - Target node's alias
 /// * `semaphore` - Semaphore for concurrency limiting (capacity 5)
@@ -30,7 +30,7 @@ const SILENCE_TIMEOUT: Duration = Duration::from_millis(100);
 /// * `Ok((SNIPData, SNIPStatus))` - Retrieved SNIP data and status
 /// * `Err(_)` - Network or protocol error
 pub async fn query_snip(
-    transport: &mut dyn LccTransport,
+    handle: &TransportHandle,
     source_alias: u16,
     dest_alias: u16,
     semaphore: Arc<Semaphore>,
@@ -41,7 +41,7 @@ pub async fn query_snip(
     })?;
 
     // Send SNIP request with timeout
-    match timeout(SNIP_TIMEOUT, query_snip_internal(transport, source_alias, dest_alias)).await {
+    match timeout(SNIP_TIMEOUT, query_snip_handle_internal(handle, source_alias, dest_alias)).await {
         Ok(result) => result,
         Err(_) => {
             // Timeout occurred
@@ -50,51 +50,55 @@ pub async fn query_snip(
     }
 }
 
-/// Internal SNIP query implementation (without semaphore/timeout wrapper)
-async fn query_snip_internal(
-    transport: &mut dyn LccTransport,
+/// Channel-based SNIP query implementation using TransportHandle.
+async fn query_snip_handle_internal(
+    handle: &TransportHandle,
     source_alias: u16,
     dest_alias: u16,
 ) -> Result<(Option<SNIPData>, SNIPStatus)> {
+    // Subscribe BEFORE sending so we cannot miss the reply.
+    let mut rx = handle.subscribe_all();
+
     // Send SNIP request as addressed message
     let request_frame = GridConnectFrame::from_addressed_mti(
         MTI::SNIPRequest,
         source_alias,
         dest_alias,
-        vec![],  // SNIP request has no payload beyond destination
+        vec![],
     )?;
+    handle.send(&request_frame).await?;
 
-    transport.send(&request_frame).await?;
-
-    // Manually assemble SNIP response payload
-    // SNIP responses have MTI 0x19A08 in header with datagram frame type in data[0]
     let mut snip_payload = Vec::new();
     let mut receiving_datagram = false;
-    // Some nodes (e.g. TCS UWT-100) take >100ms before sending their first frame.
-    // Use the full SNIP_TIMEOUT while waiting for the first frame, then switch to
-    // the shorter SILENCE_TIMEOUT for subsequent inter-frame gaps.
     let mut received_first_frame = false;
 
     loop {
-        // Use full timeout until first frame arrives, then silence detection
-        let recv_timeout_ms = if received_first_frame {
-            SILENCE_TIMEOUT.as_millis() as u64
+        let recv_timeout = if received_first_frame {
+            SILENCE_TIMEOUT
         } else {
-            SNIP_TIMEOUT.as_millis() as u64
+            SNIP_TIMEOUT
         };
-        let receive_result = transport.receive(recv_timeout_ms).await;
-        
-        match receive_result {
-            Ok(Some(frame)) => {
-                // Parse header to extract MTI and source alias
+
+        match timeout(recv_timeout, rx.recv()).await {
+            Ok(Ok(msg)) => {
+                let frame = &msg.frame;
+
                 let (mti, source) = match MTI::from_header(frame.header) {
                     Ok(result) => result,
                     Err(_) => continue,
                 };
 
-                // Only process frames from our target node
                 if source != dest_alias {
                     continue;
+                }
+
+                // Filter by destination alias to prevent interleaving when
+                // another node (e.g. JMRI) queries the same target.
+                if frame.data.len() >= 2 {
+                    let dest_in_frame = ((frame.data[0] as u16 & 0x0F) << 8) | frame.data[1] as u16;
+                    if dest_in_frame != source_alias {
+                        continue;
+                    }
                 }
 
                 // D20: OptionalInteractionRejected — node does not support SNIP.
@@ -103,16 +107,12 @@ async fn query_snip_internal(
                     return Ok((None, SNIPStatus::Timeout));
                 }
 
-                // Check for SNIP response MTI (0x19A08)
                 if mti != MTI::SNIPResponse {
                     continue;
                 }
 
-                // We have a frame from our target — switch to silence-detection timing
                 received_first_frame = true;
 
-                // SNIP responses have datagram frame type in data[0]
-                // 0x1A = first, 0x3A = middle, 0x2A = final
                 if frame.data.len() < 2 {
                     return Err(Error::Protocol(format!(
                         "SNIP frame data too short: {} bytes",
@@ -120,23 +120,16 @@ async fn query_snip_internal(
                     )));
                 }
 
-                // data[0] high nibble = frame-type flag; low nibble = high nibble
-                // of the destination alias.  data[1] = low byte of dest alias.
-                // Mask to the upper nibble so the match is alias-independent.
                 let frame_type = frame.data[0] & 0xF0;
-
-                // Extract payload (skip bytes 0-1, take bytes 2+)
                 let payload_chunk = &frame.data[2..];
 
                 match frame_type {
                     0x10 => {
-                        // First frame - start new datagram
                         snip_payload.clear();
                         snip_payload.extend_from_slice(payload_chunk);
                         receiving_datagram = true;
                     }
                     0x30 => {
-                        // Middle frame - append to existing datagram
                         if !receiving_datagram {
                             return Err(Error::Protocol(
                                 "SNIP middle frame received without first frame".to_string()
@@ -145,52 +138,45 @@ async fn query_snip_internal(
                         snip_payload.extend_from_slice(payload_chunk);
                     }
                     0x20 => {
-                        // Final frame - complete the datagram
                         if !receiving_datagram {
                             return Err(Error::Protocol(
                                 "SNIP final frame received without first frame".to_string()
                             ));
                         }
                         snip_payload.extend_from_slice(payload_chunk);
-
-                        // Datagram complete - parse SNIP data
                         match parse_snip_payload(&snip_payload) {
-                            Ok(snip_data) => {
-                                // Note: SNIP responses are addressed messages (not
-                                // datagrams), so we must NOT send DatagramReceivedOk.
-                                return Ok((Some(snip_data), SNIPStatus::Complete));
-                            }
+                            Ok(snip_data) => return Ok((Some(snip_data), SNIPStatus::Complete)),
                             Err(e) => return Err(e),
                         }
                     }
                     0x00 => {
-                        // Single-frame datagram (DatagramOnly equivalent)
                         snip_payload.clear();
                         snip_payload.extend_from_slice(payload_chunk);
-
-                        // Datagram complete - parse SNIP data
                         match parse_snip_payload(&snip_payload) {
-                            Ok(snip_data) => {
-                                // Note: SNIP responses are addressed messages (not
-                                // datagrams), so we must NOT send DatagramReceivedOk.
-                                return Ok((Some(snip_data), SNIPStatus::Complete));
-                            }
+                            Ok(snip_data) => return Ok((Some(snip_data), SNIPStatus::Complete)),
                             Err(e) => return Err(e),
                         }
                     }
                     _ => {
-                        // Unknown flag nibble — skip rather than aborting
                         continue;
                     }
                 }
             }
-            Ok(None) => {
-                // Timeout with no frame - silence detected, query timed out
+            Ok(Err(_)) => {
+                // Broadcast channel lagged — treat as timeout
+                eprintln!(
+                    "[SNIP] WARNING: broadcast channel lagged during SNIP query for alias 0x{:03X}",
+                    dest_alias
+                );
                 return Ok((None, SNIPStatus::Timeout));
             }
-            Err(e) => {
-                // Transport error
-                return Err(e);
+            Err(_) => {
+                // Timeout — silence detected
+                eprintln!(
+                    "[SNIP] Timeout waiting for SNIP response from alias 0x{:03X} (received_first_frame={}, payload_len={})",
+                    dest_alias, received_first_frame, snip_payload.len()
+                );
+                return Ok((None, SNIPStatus::Timeout));
             }
         }
     }
@@ -340,6 +326,7 @@ fn parse_section(data: &[u8], offset: &mut usize) -> Result<String> {
 mod tests {
     use super::*;
     use crate::transport::mock::MockTransport;
+    use crate::transport_actor::TransportActor;
 
     // ── helpers ────────────────────────────────────────────────────────────
 
@@ -356,21 +343,13 @@ mod tests {
     /// flag_nibble values:
     ///   0x1 = DatagramFirst   0x3 = DatagramMiddle
     ///   0x2 = DatagramFinal   0x0 = DatagramOnly (single-frame)
-    ///
-    /// The real-world example from the logs:
-    ///   header 0x19A083AE  →  MTI 0x19A08, source alias 0x3AE
-    ///   data[0] = 0x18     →  flag 0x1 (first), dest-alias high nibble 0x8 (→ 0x825)
-    ///   data[1] = 0x25     →  dest-alias low byte
     fn snip_reply_frame(source_alias: u16, dest_alias: u16, flag_nibble: u8, chunk: &[u8]) -> String {
-        // Addressed-message header: (MTI << 12) | source_alias
-        // dest_alias is NOT encoded in the header — it lives in data[0..2].
         let header = (0x19A08u32 << 12) | source_alias as u32;
         let dest_hi = ((dest_alias >> 8) & 0x0F) as u8;
         let dest_lo = (dest_alias & 0xFF) as u8;
         let frame_type_byte = (flag_nibble << 4) | dest_hi;
         let mut data = vec![frame_type_byte, dest_lo];
         data.extend_from_slice(chunk);
-        // CAN frames hold at most 8 data bytes
         assert!(data.len() <= 8, "chunk too large: {} data bytes (max 6 after 2 header bytes)", data.len());
         let data_hex: String = data.iter().map(|b| format!("{:02X}", b)).collect();
         format!(":X{:08X}N{};", header, data_hex)
@@ -385,91 +364,82 @@ mod tests {
         p
     }
 
-    // ── Frame-type nibble decoding tests ───────────────────────────────────
-
-    /// Regression test for the bug: source alias 0x3AE → dest-alias high nibble 0xA
-    /// caused data[0] = 0x1A for "first frame", which is what the OLD code matched.
-    /// Any other alias (e.g. 0x825 → data[0] = 0x18) was silently rejected.
-    #[tokio::test]
-    async fn test_query_snip_multiframe_alias_825() {
-        // Simulate receiving a SNIP reply FROM alias 0x3AE addressed TO alias 0x825.
-        // data[0] will be 0x18 / 0x38 / 0x28 — the old code failed here.
-        let our_alias: u16 = 0x825;
-        let node_alias: u16 = 0x3AE;
-        let payload = minimal_snip_payload();
-
-        // Split into 3 chunks of up to 6 bytes (leaving room for 2 header bytes)
+    /// Queue multi-frame SNIP reply chunks onto a MockTransport.
+    fn queue_snip_reply(transport: &mut MockTransport, source_alias: u16, dest_alias: u16, payload: &[u8]) {
         let chunks: Vec<&[u8]> = payload.chunks(6).collect();
         let n = chunks.len();
-
-        let mut transport = MockTransport::new();
         for (i, chunk) in chunks.iter().enumerate() {
             let flag = if n == 1 { 0x0 } else if i == 0 { 0x1 } else if i == n - 1 { 0x2 } else { 0x3 };
-            transport.add_receive_frame(snip_reply_frame(node_alias, our_alias, flag, chunk));
+            transport.add_receive_frame(snip_reply_frame(source_alias, dest_alias, flag, chunk));
         }
-        // Queue a DatgramReceived-OK ack from the node (not needed for this path but harmless)
+    }
 
-        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
-        let (snip, status) = query_snip(&mut transport, our_alias, node_alias, sem).await.unwrap();
+    /// Create a TransportActor from a MockTransport and return the handle.
+    /// The actor is spawned in the background and must be shut down after the test.
+    fn make_actor(transport: MockTransport) -> (TransportActor, TransportHandle) {
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
+        (actor, handle)
+    }
 
-        assert_eq!(status, SNIPStatus::Complete, "status must be Complete");
+    // ── Frame-type nibble decoding tests ───────────────────────────────────
+
+    #[tokio::test]
+    async fn test_query_snip_multiframe_alias_825() {
+        let our_alias: u16 = 0x825;
+        let node_alias: u16 = 0x3AE;
+        let mut transport = MockTransport::new();
+        queue_snip_reply(&mut transport, node_alias, our_alias, &minimal_snip_payload());
+
+        let (mut actor, handle) = make_actor(transport);
+        let sem = Arc::new(Semaphore::new(5));
+        let (snip, status) = query_snip(&handle, our_alias, node_alias, sem).await.unwrap();
+        actor.shutdown().await;
+
+        assert_eq!(status, SNIPStatus::Complete);
         let snip = snip.expect("must have SNIP data");
         assert_eq!(snip.manufacturer, "ACME");
         assert_eq!(snip.model, "Widget");
     }
 
-    /// Same test but with alias 0x3AE as OUR alias (data[0] low nibble = 0x3).
     #[tokio::test]
     async fn test_query_snip_multiframe_alias_3ae() {
         let our_alias: u16 = 0x3AE;
         let node_alias: u16 = 0xC41;
-        let payload = minimal_snip_payload();
-        let chunks: Vec<&[u8]> = payload.chunks(6).collect();
-        let n = chunks.len();
-
         let mut transport = MockTransport::new();
-        for (i, chunk) in chunks.iter().enumerate() {
-            let flag = if n == 1 { 0x0 } else if i == 0 { 0x1 } else if i == n - 1 { 0x2 } else { 0x3 };
-            transport.add_receive_frame(snip_reply_frame(node_alias, our_alias, flag, chunk));
-        }
+        queue_snip_reply(&mut transport, node_alias, our_alias, &minimal_snip_payload());
 
-        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
-        let (snip, status) = query_snip(&mut transport, our_alias, node_alias, sem).await.unwrap();
+        let (mut actor, handle) = make_actor(transport);
+        let sem = Arc::new(Semaphore::new(5));
+        let (snip, status) = query_snip(&handle, our_alias, node_alias, sem).await.unwrap();
+        actor.shutdown().await;
 
         assert_eq!(status, SNIPStatus::Complete);
         let snip = snip.unwrap();
         assert_eq!(snip.manufacturer, "ACME");
     }
 
-    /// Alias 0xFFF — low nibble of data[0] = 0xF.  Old code: 0x1F ≠ 0x1A → broken.
     #[tokio::test]
     async fn test_query_snip_multiframe_alias_fff() {
         let our_alias: u16 = 0xFFF;
         let node_alias: u16 = 0x001;
-        let payload = minimal_snip_payload();
-        let chunks: Vec<&[u8]> = payload.chunks(6).collect();
-        let n = chunks.len();
-
         let mut transport = MockTransport::new();
-        for (i, chunk) in chunks.iter().enumerate() {
-            let flag = if n == 1 { 0x0 } else if i == 0 { 0x1 } else if i == n - 1 { 0x2 } else { 0x3 };
-            transport.add_receive_frame(snip_reply_frame(node_alias, our_alias, flag, chunk));
-        }
+        queue_snip_reply(&mut transport, node_alias, our_alias, &minimal_snip_payload());
 
-        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
-        let (snip, status) = query_snip(&mut transport, our_alias, node_alias, sem).await.unwrap();
+        let (mut actor, handle) = make_actor(transport);
+        let sem = Arc::new(Semaphore::new(5));
+        let (snip, status) = query_snip(&handle, our_alias, node_alias, sem).await.unwrap();
+        actor.shutdown().await;
 
         assert_eq!(status, SNIPStatus::Complete);
         let snip = snip.unwrap();
         assert_eq!(snip.manufacturer, "ACME");
     }
 
-    /// Single-frame SNIP reply (DatagramOnly, flag nibble 0x0).
     #[tokio::test]
     async fn test_query_snip_single_frame() {
         let our_alias: u16 = 0x825;
         let node_alias: u16 = 0x3AE;
-        // 6 bytes max payload per CAN frame (8 total - 2 header bytes)
         let payload = vec![
             0x04u8,
             b'A', 0x00,  // manufacturer "A"
@@ -481,8 +451,10 @@ mod tests {
         let mut transport = MockTransport::new();
         transport.add_receive_frame(snip_reply_frame(node_alias, our_alias, 0x0, &payload));
 
-        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
-        let (snip, status) = query_snip(&mut transport, our_alias, node_alias, sem).await.unwrap();
+        let (mut actor, handle) = make_actor(transport);
+        let sem = Arc::new(Semaphore::new(5));
+        let (snip, status) = query_snip(&handle, our_alias, node_alias, sem).await.unwrap();
+        actor.shutdown().await;
 
         assert_eq!(status, SNIPStatus::Complete);
         let snip = snip.unwrap();
@@ -490,7 +462,6 @@ mod tests {
         assert_eq!(snip.model, "");
     }
 
-    /// Frames from a different alias are ignored; only frames from dest_alias matter.
     #[tokio::test]
     async fn test_query_snip_ignores_other_sources() {
         let our_alias: u16 = 0x825;
@@ -501,10 +472,8 @@ mod tests {
         let n = chunks.len();
 
         let mut transport = MockTransport::new();
-
-        // Interleave frames from another node — should be ignored
         for (i, chunk) in chunks.iter().enumerate() {
-            // Noise from a different alias
+            // Noise from a different source alias — should be ignored
             let noise_flag = if i == 0 { 0x1 } else { 0x3 };
             transport.add_receive_frame(snip_reply_frame(other_alias, our_alias, noise_flag, chunk));
             // Real frame from the correct alias
@@ -512,29 +481,79 @@ mod tests {
             transport.add_receive_frame(snip_reply_frame(node_alias, our_alias, flag, chunk));
         }
 
-        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
-        let (snip, status) = query_snip(&mut transport, our_alias, node_alias, sem).await.unwrap();
+        let (mut actor, handle) = make_actor(transport);
+        let sem = Arc::new(Semaphore::new(5));
+        let (snip, status) = query_snip(&handle, our_alias, node_alias, sem).await.unwrap();
+        actor.shutdown().await;
 
         assert_eq!(status, SNIPStatus::Complete);
         let snip = snip.unwrap();
         assert_eq!(snip.manufacturer, "ACME");
     }
 
-    /// No response → timeout → (None, Timeout).
+    /// Frames addressed to a different destination (e.g. JMRI) are ignored.
+    /// This is the interleaving bug fix: two requesters query the same node,
+    /// replies are interleaved on the bus, but each requester only sees its own.
+    #[tokio::test]
+    async fn test_query_snip_ignores_other_destinations() {
+        let our_alias: u16 = 0x825;     // Bowties
+        let jmri_alias: u16 = 0x6AD;    // JMRI
+        let node_alias: u16 = 0x036;     // Target node
+
+        // "Our" SNIP payload: manufacturer "ACME"
+        let our_payload = minimal_snip_payload();
+        let our_chunks: Vec<&[u8]> = our_payload.chunks(6).collect();
+        let our_n = our_chunks.len();
+
+        // "JMRI's" SNIP payload: manufacturer "Other"
+        let mut jmri_payload = vec![0x04u8];
+        jmri_payload.extend_from_slice(b"Other\x00Thing\x003.0\x004.5\x00");
+        jmri_payload.push(0x02);
+        jmri_payload.extend_from_slice(b"JNode\x00JDesc\x00");
+        let jmri_chunks: Vec<&[u8]> = jmri_payload.chunks(6).collect();
+        let jmri_n = jmri_chunks.len();
+
+        let mut transport = MockTransport::new();
+
+        // Interleave replies: node replies to JMRI and to us alternately
+        let max_chunks = our_n.max(jmri_n);
+        for i in 0..max_chunks {
+            if i < jmri_n {
+                let flag = if jmri_n == 1 { 0x0 } else if i == 0 { 0x1 } else if i == jmri_n - 1 { 0x2 } else { 0x3 };
+                transport.add_receive_frame(snip_reply_frame(node_alias, jmri_alias, flag, jmri_chunks[i]));
+            }
+            if i < our_n {
+                let flag = if our_n == 1 { 0x0 } else if i == 0 { 0x1 } else if i == our_n - 1 { 0x2 } else { 0x3 };
+                transport.add_receive_frame(snip_reply_frame(node_alias, our_alias, flag, our_chunks[i]));
+            }
+        }
+
+        let (mut actor, handle) = make_actor(transport);
+        let sem = Arc::new(Semaphore::new(5));
+        let (snip, status) = query_snip(&handle, our_alias, node_alias, sem).await.unwrap();
+        actor.shutdown().await;
+
+        assert_eq!(status, SNIPStatus::Complete);
+        let snip = snip.expect("must have SNIP data");
+        // Must see OUR payload, not JMRI's interleaved data
+        assert_eq!(snip.manufacturer, "ACME");
+        assert_eq!(snip.model, "Widget");
+    }
+
     #[tokio::test]
     async fn test_query_snip_timeout() {
-        let mut transport = MockTransport::new();
-        // No frames queued at all — MockTransport returns None after a short sleep
+        let transport = MockTransport::new();
 
-        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
-        // Use a 1-second overall timeout via the public wrapper
-        let (snip, status) = query_snip(&mut transport, 0x825, 0x3AE, sem).await.unwrap();
+        let (mut actor, handle) = make_actor(transport);
+        let sem = Arc::new(Semaphore::new(5));
+        let (snip, status) = query_snip(&handle, 0x825, 0x3AE, sem).await.unwrap();
+        actor.shutdown().await;
 
         assert_eq!(status, SNIPStatus::Timeout);
         assert!(snip.is_none());
     }
 
-    // ── Payload parsing tests (existing, unchanged) ────────────────────────
+    // ── Payload parsing tests ──────────────────────────────────────────────
 
     #[test]
     fn test_snip_request_frame_format() {
@@ -657,50 +676,23 @@ mod tests {
         assert_eq!(offset, 5);
     }
 
-    /// SNIP string spanning a CAN frame boundary.
-    ///
-    /// The manufacturer name "LongMfgName" (11 bytes + null) must be split
-    /// across two CAN frames because each frame only carries 6 payload bytes
-    /// (8 total minus the 2-byte addressed-message header).  The first frame
-    /// delivers bytes 0-5 and the second frame delivers bytes 6-11.
-    /// Verifies that the payload assembler correctly concatenates the chunks
-    /// before parse_snip_payload sees them.
     #[tokio::test]
     async fn test_query_snip_string_spanning_frame_boundary() {
         let our_alias: u16 = 0x825;
         let node_alias: u16 = 0x3AE;
 
-        // Build a SNIP payload where the manufacturer name spans a frame boundary.
-        //   Byte layout:  [0x04] "LongMfgName\0" "M\0" "1\0" "2\0" [0x02] "U\0" "D\0"
-        //   Chunk 0 (6 bytes): 0x04 'L' 'o' 'n' 'g' 'M'
-        //   Chunk 1 (6 bytes): 'f' 'g' 'N' 'a' 'm' 'e'
-        //   Chunk 2 (6 bytes): '\0' 'M' '\0'  '1' '\0' '2'
-        //   Chunk 3 (5 bytes): '\0' 0x02 'U' '\0' 'D'   -- note: < 6
-        //   Chunk 4 (1 byte):  '\0'
         let mut payload = vec![0x04u8];
         payload.extend_from_slice(b"LongMfgName\x00M\x001\x002\x00");
         payload.push(0x02);
         payload.extend_from_slice(b"U\x00D\x00");
 
-        let chunks: Vec<&[u8]> = payload.chunks(6).collect();
-        let n = chunks.len();
-
         let mut transport = MockTransport::new();
-        for (i, chunk) in chunks.iter().enumerate() {
-            let flag = if n == 1 {
-                0x0
-            } else if i == 0 {
-                0x1
-            } else if i == n - 1 {
-                0x2
-            } else {
-                0x3
-            };
-            transport.add_receive_frame(snip_reply_frame(node_alias, our_alias, flag, chunk));
-        }
+        queue_snip_reply(&mut transport, node_alias, our_alias, &payload);
 
-        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(5));
-        let (snip, status) = query_snip(&mut transport, our_alias, node_alias, sem).await.unwrap();
+        let (mut actor, handle) = make_actor(transport);
+        let sem = Arc::new(Semaphore::new(5));
+        let (snip, status) = query_snip(&handle, our_alias, node_alias, sem).await.unwrap();
+        actor.shutdown().await;
 
         assert_eq!(status, SNIPStatus::Complete, "status must be Complete");
         let snip = snip.expect("must have SNIP data");

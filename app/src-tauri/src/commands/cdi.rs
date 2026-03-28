@@ -5,16 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use chrono::Utc;
 use tauri::{Manager, Emitter};
-use std::sync::Arc;
 use std::collections::HashMap;
-use tokio::sync::RwLock;
 use uuid::Uuid;
-
-// T104: CDI parsing cache (parsed Cdi structs by node ID)
-lazy_static::lazy_static! {
-    static ref CDI_PARSE_CACHE: Arc<RwLock<HashMap<String, lcc_rs::cdi::Cdi>>> = 
-        Arc::new(RwLock::new(HashMap::new()));
-}
 
 /// Error types for CDI operations
 #[derive(Debug, thiserror::Error)]
@@ -155,16 +147,14 @@ pub async fn download_cdi(
     let parsed_node_id = lcc_rs::NodeID::from_hex_string(&node_id)
         .map_err(|e| format!("InvalidNodeId: {}", e))?;
 
-    // Get node alias, SNIP data, and PIP flags
-    let (alias, snip_data, pip_status, pip_flags) = {
-        let nodes = state.nodes.read().await;
-        let node = nodes
-            .iter()
-            .find(|n| n.node_id == parsed_node_id)
-            .ok_or_else(|| CdiError::NodeNotFound(node_id.clone()))?;
-
-        (node.alias.value(), node.snip_data.clone(), node.pip_status, node.pip_flags)
-    };
+    // Get node alias, SNIP data, and PIP flags from proxy
+    let proxy = state.node_registry.get(&parsed_node_id).await
+        .ok_or_else(|| CdiError::NodeNotFound(node_id.clone()))?;
+    let snap = proxy.get_snapshot().await
+        .map_err(|e| format!("Failed to get node snapshot: {}", e))?;
+    let (alias, snip_data, pip_status, pip_flags) = (
+        snap.alias.value(), snap.snip_data.clone(), snap.pip_status, snap.pip_flags,
+    );
 
     // If PIP has been queried and the node does not advertise CDI or Memory
     // Configuration, there is nothing to download — fail early with a clear message.
@@ -234,12 +224,10 @@ pub async fn download_cdi(
         retrieved_at,
     };
 
-    // Update node cache with CDI
-    state
-        .update_node(parsed_node_id, |node| {
-            node.cdi = Some(cdi_data.clone());
-        })
-        .await;
+    // Store in proxy (primary)
+    if let Some(proxy) = state.node_registry.get(&parsed_node_id).await {
+        let _ = proxy.set_cdi_data(cdi_data.clone()).await;
+    }
 
     // Write to file cache if we have SNIP data
     if let Some(snip) = snip_data {
@@ -277,27 +265,31 @@ pub async fn get_cdi_xml(
     // Parse node ID
     let parsed_node_id = lcc_rs::NodeID::from_hex_string(&node_id)
         .map_err(|e| format!("InvalidNodeId: {}", e))?;
-    
-    // Access node cache
-    let nodes = state.nodes.read().await;
-    
-    // Find node
-    let node = nodes
-        .iter()
-        .find(|n| n.node_id == parsed_node_id)
-        .ok_or_else(|| CdiError::NodeNotFound(node_id.clone()))?;
-    
-    // Check memory cache first
-    if let Some(cdi) = &node.cdi {
-        return Ok(GetCdiXmlResponse {
-            xml_content: Some(cdi.xml_content.clone()),
-            size_bytes: Some(cdi.xml_content.len()),
-            retrieved_at: Some(cdi.retrieved_at.to_rfc3339()),
-        });
+
+    // Check proxy first (primary source)
+    if let Some(proxy) = state.node_registry.get(&parsed_node_id).await {
+        if let Ok(Some(cdi_data)) = proxy.get_cdi_data().await {
+            return Ok(GetCdiXmlResponse {
+                xml_content: Some(cdi_data.xml_content.clone()),
+                size_bytes: Some(cdi_data.xml_content.len()),
+                retrieved_at: Some(cdi_data.retrieved_at.to_rfc3339()),
+            });
+        }
     }
 
+    // Get node SNIP data from proxy snapshot for file cache lookup
+    let snip_data = if let Some(proxy) = state.node_registry.get(&parsed_node_id).await {
+        if let Ok(snap) = proxy.get_snapshot().await {
+            snap.snip_data.clone()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // Check file cache if we have SNIP data
-    if let Some(snip) = &node.snip_data {
+    if let Some(snip) = &snip_data {
         let cache_path = get_cdi_cache_path(
             &app_handle,
             &snip.manufacturer,
@@ -306,19 +298,16 @@ pub async fn get_cdi_xml(
         )?;
 
         if let Some(xml_content) = read_cdi_from_cache(&cache_path).await {
-            // Found in file cache - update memory cache for future requests
             let retrieved_at = Utc::now();
             let cdi_data = lcc_rs::CdiData {
                 xml_content: xml_content.clone(),
                 retrieved_at,
             };
 
-            drop(nodes); // Release read lock before updating
-            state
-                .update_node(parsed_node_id, |node| {
-                    node.cdi = Some(cdi_data);
-                })
-                .await;
+            // Store in proxy
+            if let Some(proxy) = state.node_registry.get(&parsed_node_id).await {
+                let _ = proxy.set_cdi_data(cdi_data).await;
+            }
 
             return Ok(GetCdiXmlResponse {
                 xml_content: Some(xml_content.clone()),
@@ -358,11 +347,12 @@ pub async fn get_discovered_nodes(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<GetDiscoveredNodesResponse, String> {
-    let nodes = state.nodes.read().await;
+    // Primary: build from registry snapshots
+    let snapshots = state.node_registry.get_all_snapshots().await;
     
     let mut discovered_nodes = Vec::new();
     
-    for node in nodes.iter() {
+    for node in &snapshots {
         let node_name = node
             .snip_data
             .as_ref()
@@ -423,32 +413,7 @@ pub async fn get_cdi_structure(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<CdiStructureResponse, String> {
-    // T104: Check parse cache first
-    let cache = CDI_PARSE_CACHE.read().await;
-    let cached_cdi = cache.get(&node_id).cloned();
-    drop(cache);
-
-    let cdi = if let Some(cached) = cached_cdi {
-        cached
-    } else {
-        // Get CDI XML from cache
-        let cdi_response = get_cdi_xml(node_id.clone(), app_handle, state.clone()).await?;
-        
-        let xml_content = cdi_response
-            .xml_content
-            .ok_or_else(|| CdiError::CdiNotRetrieved(node_id.clone()))?;
-        
-        // Parse CDI XML
-        let parsed_cdi = lcc_rs::cdi::parser::parse_cdi(&xml_content)
-            .map_err(CdiError::InvalidXml)?;
-        
-        // T104: Cache the parsed CDI
-        let mut cache = CDI_PARSE_CACHE.write().await;
-        cache.insert(node_id.clone(), parsed_cdi.clone());
-        drop(cache);
-        
-        parsed_cdi
-    };
+    let cdi = get_cdi_from_cache(&node_id, &app_handle, &state).await?;
     
     // Calculate max depth
     let max_depth = lcc_rs::cdi::hierarchy::calculate_max_depth(&cdi);
@@ -478,17 +443,21 @@ pub async fn get_cdi_structure(
         })
         .collect();
     
-    // Get node name
-    let nodes = state.nodes.read().await;
+    // Get node name from proxy
     let parsed_node_id = lcc_rs::NodeID::from_hex_string(&node_id)
         .map_err(|e| format!("InvalidNodeId: {}", e))?;
     
-    let node_name = nodes
-        .iter()
-        .find(|n| n.node_id == parsed_node_id)
-        .and_then(|n| n.snip_data.as_ref())
-        .map(|s| s.user_name.clone())
-        .unwrap_or_else(|| format!("Node {}", node_id));
+    let node_name = if let Some(proxy) = state.node_registry.get(&parsed_node_id).await {
+        if let Ok(snap) = proxy.get_snapshot().await {
+            snap.snip_data.as_ref()
+                .map(|s| s.user_name.clone())
+                .unwrap_or_else(|| format!("Node {}", node_id))
+        } else {
+            format!("Node {}", node_id)
+        }
+    } else {
+        format!("Node {}", node_id)
+    };
     
     Ok(CdiStructureResponse {
         node_id,
@@ -533,33 +502,8 @@ pub async fn get_column_items(
 ) -> Result<GetColumnItemsResponse, String> {
     // T103: Start performance tracking
     let start_time = std::time::Instant::now();
-    
-    // T104: Check parse cache first
-    let cache = CDI_PARSE_CACHE.read().await;
-    let cached_cdi = cache.get(&node_id).cloned();
-    drop(cache);
 
-    let cdi = if let Some(cached) = cached_cdi {
-        cached
-    } else {
-        // Get CDI XML from cache
-        let cdi_response = get_cdi_xml(node_id.clone(), app_handle, state.clone()).await?;
-        
-        let xml_content = cdi_response
-            .xml_content
-            .ok_or_else(|| CdiError::CdiNotRetrieved(node_id.clone()))?;
-        
-        // Parse CDI XML
-        let parsed_cdi = lcc_rs::cdi::parser::parse_cdi(&xml_content)
-            .map_err(CdiError::InvalidXml)?;
-        
-        // T104: Cache the parsed CDI
-        let mut cache = CDI_PARSE_CACHE.write().await;
-        cache.insert(node_id.clone(), parsed_cdi.clone());
-        drop(cache);
-        
-        parsed_cdi
-    };
+    let cdi = get_cdi_from_cache(&node_id, &app_handle, &state).await?;
     
     // If parent_path is empty, we're at the segments level (should not happen - segments are in get_cdi_structure)
     if parent_path.is_empty() {
@@ -794,17 +738,21 @@ pub async fn get_element_details(
         }
     };
     
-    // Get node name for breadcrumb
-    let nodes = state.nodes.read().await;
+    // Get node name from proxy
     let parsed_node_id = lcc_rs::NodeID::from_hex_string(&node_id)
         .map_err(|e| format!("InvalidNodeId: {}", e))?;
     
-    let node_name = nodes
-        .iter()
-        .find(|n| n.node_id == parsed_node_id)
-        .and_then(|n| n.snip_data.as_ref())
-        .map(|s| s.user_name.clone())
-        .unwrap_or_else(|| format!("Node {}", node_id));
+    let node_name = if let Some(proxy) = state.node_registry.get(&parsed_node_id).await {
+        if let Ok(snap) = proxy.get_snapshot().await {
+            snap.snip_data.as_ref()
+                .map(|s| s.user_name.clone())
+                .unwrap_or_else(|| format!("Node {}", node_id))
+        } else {
+            format!("Node {}", node_id)
+        }
+    } else {
+        format!("Node {}", node_id)
+    };
     
     // Build full path breadcrumb
     let full_path = format!("{} › {}", node_name, element_path.join(" › "));
@@ -1184,28 +1132,30 @@ async fn get_cdi_from_cache(
     app_handle: &tauri::AppHandle,
     state: &tauri::State<'_, AppState>,
 ) -> Result<lcc_rs::cdi::Cdi, String> {
-    // Check parse cache first
-    let cache = CDI_PARSE_CACHE.read().await;
-    if let Some(cdi) = cache.get(node_id) {
-        return Ok(cdi.clone());
+    let parsed_node_id = lcc_rs::NodeID::from_hex_string(node_id)
+        .map_err(|e| format!("InvalidNodeId: {}", e))?;
+
+    // Try the proxy first
+    if let Some(proxy) = state.node_registry.get(&parsed_node_id).await {
+        if let Ok(Some(cdi)) = proxy.get_cdi_parsed().await {
+            return Ok(cdi);
+        }
     }
-    drop(cache);
-    
-    // Not in parse cache - try to get CDI XML and parse it
+
+    // Not in cache — get CDI XML and parse it
     let cdi_response = get_cdi_xml(node_id.to_string(), app_handle.clone(), state.clone()).await?;
     
     let xml_content = cdi_response
         .xml_content
         .ok_or_else(|| CdiError::CdiNotRetrieved(node_id.to_string()))?;
     
-    // Parse CDI XML
     let parsed_cdi = lcc_rs::cdi::parser::parse_cdi(&xml_content)
         .map_err(CdiError::InvalidXml)?;
     
-    // Cache the parsed CDI for future use
-    let mut cache = CDI_PARSE_CACHE.write().await;
-    cache.insert(node_id.to_string(), parsed_cdi.clone());
-    drop(cache);
+    // Store in proxy
+    if let Some(proxy) = state.node_registry.get(&parsed_node_id).await {
+        let _ = proxy.set_cdi_parsed(parsed_cdi.clone()).await;
+    }
     
     Ok(parsed_cdi)
 }
@@ -1445,14 +1395,10 @@ pub async fn read_config_value(
         .clone();
     drop(conn_lock);
     
-    // Get node alias
-    let nodes = state.nodes.read().await;
-    let node = nodes
-        .iter()
-        .find(|n| n.node_id == parsed_node_id)
+    // Get node alias from proxy
+    let proxy = state.node_registry.get(&parsed_node_id).await
         .ok_or_else(|| format!("Node not found: {}", node_id))?;
-    let alias = node.alias.value();
-    drop(nodes);
+    let alias = proxy.alias;
     
     // Get element size
     let size = get_element_size(element)?;
@@ -1497,11 +1443,13 @@ pub async fn get_node_tree(
     app_handle: tauri::AppHandle,
     node_id: String,
 ) -> Result<crate::node_tree::NodeConfigTree, String> {
-    // Fast path: return cached tree
-    {
-        let trees = state.node_trees.read().await;
-        if let Some(tree) = trees.get(&node_id) {
-            return Ok(tree.clone());
+    let parsed_node_id = lcc_rs::NodeID::from_hex_string(&node_id)
+        .map_err(|e| format!("InvalidNodeId: {}", e))?;
+
+    // Fast path: check proxy for cached tree
+    if let Some(proxy) = state.node_registry.get(&parsed_node_id).await {
+        if let Ok(Some(tree)) = proxy.get_config_tree().await {
+            return Ok(tree);
         }
     }
 
@@ -1509,9 +1457,7 @@ pub async fn get_node_tree(
     let cdi = get_cdi_from_cache(&node_id, &app_handle, &state).await?;
     let mut tree = crate::node_tree::build_node_config_tree(&node_id, &cdi);
 
-    // Apply structure profile if available (must be AFTER merge_event_roles so
-    // profile-declared roles take precedence over protocol-exchange heuristics).
-    // Use CDI identification fields as the manufacturer/model key source.
+    // Apply structure profile if available
     if let Some(identity) = &cdi.identification {
         let manufacturer = identity.manufacturer.as_deref().unwrap_or("");
         let model = identity.model.as_deref().unwrap_or("");
@@ -1535,9 +1481,10 @@ pub async fn get_node_tree(
         }
     }
 
-    // Cache and return
-    let mut trees = state.node_trees.write().await;
-    trees.insert(node_id.clone(), tree.clone());
+    // Store in proxy
+    if let Some(proxy) = state.node_registry.get(&parsed_node_id).await {
+        let _ = proxy.set_config_tree(tree.clone()).await;
+    }
 
     Ok(tree)
 }
@@ -1758,14 +1705,11 @@ pub async fn read_all_config_values(
     let parsed_node_id = lcc_rs::NodeID::from_hex_string(&node_id)
         .map_err(|e| format!("Invalid node ID: {}", e))?;
     
-    // Get node info
-    let nodes = state.nodes.read().await;
-    let node = nodes
-        .iter()
-        .find(|n| n.node_id == parsed_node_id)
-        .ok_or_else(|| format!("Node not found: {}", node_id))?
-        .clone();
-    drop(nodes);
+    // Get node info from proxy
+    let proxy = state.node_registry.get(&parsed_node_id).await
+        .ok_or_else(|| format!("Node not found: {}", node_id))?;
+    let node = proxy.get_snapshot().await
+        .map_err(|e| format!("Failed to get node snapshot: {}", e))?;
     
     // Get display name for progress messages (T049)
     let node_name = get_node_display_name(&node);
@@ -2130,41 +2074,46 @@ pub async fn read_all_config_values(
     
     let duration = start_time.elapsed().as_millis() as u64;
 
-    // Bug 2 fix: populate config_value_cache with EventId values from this node's read.
-    // Outer key = node_id_hex; inner key = element_path.join("/"); value = raw 8-byte event ID.
-    {
-        let mut cache = state.config_value_cache.write().await;
-        let node_slot_map = cache.entry(node_id.clone()).or_insert_with(HashMap::new);
-        for (cache_key, value_with_meta) in &values {
-            if let ConfigValue::EventId { value: event_bytes } = value_with_meta.value {
-                // cache_key is "node_id:element_path/..." — extract just the path portion.
-                let path_key = cache_key
-                    .strip_prefix(&format!("{}:", node_id))
-                    .unwrap_or(cache_key.as_str())
-                    .to_string();
-                node_slot_map.insert(path_key, event_bytes);
-            }
-        }
-        let event_count = node_slot_map.len();
-        eprintln!("[bowties][cache] node {} — {} EventId slots cached", node_id, event_count);
+    // Store EventId values in proxy
+    if let Some(proxy) = state.node_registry.get(&parsed_node_id).await {
+        let event_map: HashMap<String, [u8; 8]> = values.iter()
+            .filter_map(|(cache_key, meta)| {
+                if let ConfigValue::EventId { value: event_bytes } = meta.value {
+                    let path_key = cache_key
+                        .strip_prefix(&format!("{}:", node_id))
+                        .unwrap_or(cache_key.as_str())
+                        .to_string();
+                    Some((path_key, event_bytes))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let event_count = event_map.len();
+        let _ = proxy.merge_config_values(event_map).await;
+        eprintln!("[bowties][cache] node {} — {} EventId slots cached in proxy", node_id, event_count);
     }
 
     // Spec 007: build (or update) the unified node tree with config values.
     {
-        let mut trees = state.node_trees.write().await;
-        let tree = trees.entry(node_id.clone()).or_insert_with(|| {
-            crate::node_tree::build_node_config_tree(&node_id, &cdi)
-        });
-        crate::node_tree::merge_config_values(tree, &raw_data_by_address);
-        let leaf_count = crate::node_tree::count_leaves(tree);
-        eprintln!("[node_tree] node {} — tree updated with {} values ({} leaves total)",
-            node_id, raw_data_by_address.len(), leaf_count);
+        let proxy = state.node_registry.get(&parsed_node_id).await;
+        if let Some(proxy) = &proxy {
+            let mut tree = proxy.get_config_tree().await
+                .ok().flatten()
+                .unwrap_or_else(|| crate::node_tree::build_node_config_tree(&node_id, &cdi));
+            crate::node_tree::merge_config_values(&mut tree, &raw_data_by_address);
+            let leaf_count = crate::node_tree::count_leaves(&tree);
+            eprintln!("[node_tree] node {} — tree updated with {} values ({} leaves total)",
+                node_id, raw_data_by_address.len(), leaf_count);
 
-        // Emit node-tree-updated event so the frontend can refresh.
-        let _ = app_handle.emit("node-tree-updated", serde_json::json!({
-            "nodeId": node_id,
-            "leafCount": leaf_count,
-        }));
+            let _ = proxy.set_config_tree(tree).await;
+
+            // Emit node-tree-updated event so the frontend can refresh.
+            let _ = app_handle.emit("node-tree-updated", serde_json::json!({
+                "nodeId": node_id,
+                "leafCount": leaf_count,
+            }));
+        }
     }
 
     // T011: When this is the last node, run the Identify Events exchange and build the catalog.
@@ -2181,22 +2130,38 @@ pub async fn read_all_config_values(
             500,  // ms collection window
         ).await;
 
-        let nodes_snap = state.nodes.read().await.clone();
+        let nodes_snap = state.node_registry.get_all_snapshots().await;
         let node_count = nodes_snap.len();
 
-        let config_cache_snap = state.config_value_cache.read().await.clone();
+        // Gather config values from all proxies
+        let config_cache_snap: HashMap<String, HashMap<String, [u8; 8]>> = {
+            let handles = state.node_registry.get_all_handles().await;
+            let mut map = HashMap::new();
+            for h in &handles {
+                if let Ok(vals) = h.get_config_values().await {
+                    if !vals.is_empty() {
+                        map.insert(h.node_id.to_hex_string(), vals);
+                    }
+                }
+            }
+            map
+        };
 
-        // Spec 007: merge protocol-level event roles into every node tree.
+        // Spec 007: merge protocol-level event roles into every node tree via proxies.
         {
-            let mut trees = state.node_trees.write().await;
-            for (nid, tree) in trees.iter_mut() {
-                let path_roles = crate::node_tree::classify_leaf_roles_from_protocol(
-                    tree,
-                    &event_roles,
-                );
-                if !path_roles.is_empty() {
-                    crate::node_tree::merge_event_roles(tree, &path_roles);
-                    eprintln!("[node_tree] node {} — {} event roles merged", nid, path_roles.len());
+            let handles = state.node_registry.get_all_handles().await;
+            for h in &handles {
+                if let Ok(Some(mut tree)) = h.get_config_tree().await {
+                    let nid = h.node_id.to_hex_string();
+                    let path_roles = crate::node_tree::classify_leaf_roles_from_protocol(
+                        &tree,
+                        &event_roles,
+                    );
+                    if !path_roles.is_empty() {
+                        crate::node_tree::merge_event_roles(&mut tree, &path_roles);
+                        eprintln!("[node_tree] node {} — {} event roles merged", nid, path_roles.len());
+                        let _ = h.set_config_tree(tree).await;
+                    }
                 }
             }
         }
@@ -2204,12 +2169,10 @@ pub async fn read_all_config_values(
         // Apply structure profiles to every node tree (must be AFTER merge_event_roles
         // so profile-declared roles take precedence over protocol-exchange heuristics).
         {
-            let node_ids: Vec<String> = {
-                let trees = state.node_trees.read().await;
-                trees.keys().cloned().collect()
-            };
-            for nid in &node_ids {
-                let cdi = match get_cdi_from_cache(nid, &app_handle, &state).await {
+            let handles = state.node_registry.get_all_handles().await;
+            for h in &handles {
+                let nid = h.node_id.to_hex_string();
+                let cdi = match get_cdi_from_cache(&nid, &app_handle, &state).await {
                     Ok(c) => c,
                     Err(_) => continue,
                 };
@@ -2224,9 +2187,8 @@ pub async fn read_all_config_values(
                             &app_handle,
                             &state.profiles,
                         ).await {
-                            let mut trees = state.node_trees.write().await;
-                            if let Some(tree) = trees.get_mut(nid) {
-                                let report = crate::profile::annotate_tree(tree, &profile, &cdi);
+                            if let Ok(Some(mut tree)) = h.get_config_tree().await {
+                                let report = crate::profile::annotate_tree(&mut tree, &profile, &cdi);
                                 eprintln!(
                                     "[profile] {} — {} event roles, {} rules applied, {} warnings",
                                     nid,
@@ -2234,6 +2196,7 @@ pub async fn read_all_config_values(
                                     report.rules_applied,
                                     report.warnings.len()
                                 );
+                                let _ = h.set_config_tree(tree).await;
                             }
                         }
                     }
@@ -2244,11 +2207,12 @@ pub async fn read_all_config_values(
             // tree so the annotated event roles and element names are visible immediately
             // (e.g. in ElementPicker search) without requiring the user to first expand
             // a node to trigger a lazy reload.
-            for nid in &node_ids {
-                let leaf_count = {
-                    let trees = state.node_trees.read().await;
-                    trees.get(nid.as_str()).map(crate::node_tree::count_leaves).unwrap_or(0)
-                };
+            for h in &handles {
+                let nid = h.node_id.to_hex_string();
+                let leaf_count = h.get_config_tree().await
+                    .ok().flatten()
+                    .map(|t| crate::node_tree::count_leaves(&t))
+                    .unwrap_or(0);
                 let _ = app_handle.emit("node-tree-updated", serde_json::json!({
                     "nodeId": nid,
                     "leafCount": leaf_count,
@@ -2262,14 +2226,17 @@ pub async fn read_all_config_values(
         // Collect profile_group_roles: all EventId leaves with a non-Ambiguous role from the
         // now-annotated trees, keyed by "{node_id}:{element_path.join("/")}".
         let profile_group_roles: std::collections::HashMap<String, lcc_rs::EventRole> = {
-            let trees = state.node_trees.read().await;
+            let handles = state.node_registry.get_all_handles().await;
             let mut map = std::collections::HashMap::new();
-            for (nid, tree) in trees.iter() {
-                for leaf in crate::node_tree::collect_event_id_leaves(tree) {
-                    if let Some(role) = leaf.event_role {
-                        if role != lcc_rs::EventRole::Ambiguous {
-                            let key = format!("{}:{}", nid, leaf.path.join("/"));
-                            map.insert(key, role);
+            for h in &handles {
+                let nid = h.node_id.to_hex_string();
+                if let Ok(Some(tree)) = h.get_config_tree().await {
+                    for leaf in crate::node_tree::collect_event_id_leaves(&tree) {
+                        if let Some(role) = leaf.event_role {
+                            if role != lcc_rs::EventRole::Ambiguous {
+                                let key = format!("{}:{}", nid, leaf.path.join("/"));
+                                map.insert(key, role);
+                            }
                         }
                     }
                 }
@@ -2758,14 +2725,10 @@ pub async fn write_config_value(
         .clone();
     drop(conn_lock);
 
-    // Get node alias
-    let nodes = state.nodes.read().await;
-    let node = nodes
-        .iter()
-        .find(|n| n.node_id == parsed_node_id)
+    // Get node alias from proxy
+    let proxy = state.node_registry.get(&parsed_node_id).await
         .ok_or_else(|| format!("Node not found: {}", node_id))?;
-    let alias = node.alias.value();
-    drop(nodes);
+    let alias = proxy.alias;
 
     // Perform write
     let mut conn = connection.lock().await;
@@ -2810,14 +2773,10 @@ pub async fn send_update_complete(
         .clone();
     drop(conn_lock);
 
-    // Get node alias
-    let nodes = state.nodes.read().await;
-    let node = nodes
-        .iter()
-        .find(|n| n.node_id == parsed_node_id)
+    // Get node alias from proxy
+    let proxy = state.node_registry.get(&parsed_node_id).await
         .ok_or_else(|| format!("Node not found: {}", node_id))?;
-    let alias = node.alias.value();
-    drop(nodes);
+    let alias = proxy.alias;
 
     // Send update complete
     let mut conn = connection.lock().await;
@@ -2844,12 +2803,16 @@ pub async fn set_modified_value(
     space: u8,
     value: crate::node_tree::ConfigValue,
 ) -> Result<bool, String> {
-    let mut trees = state.node_trees.write().await;
-    let tree = trees
-        .get_mut(&node_id)
+    let parsed_node_id = lcc_rs::NodeID::from_hex_string(&node_id)
+        .map_err(|e| format!("InvalidNodeId: {}", e))?;
+    let proxy = state.node_registry.get(&parsed_node_id).await
+        .ok_or_else(|| format!("No proxy for node {}", node_id))?;
+
+    let mut tree = proxy.get_config_tree().await
+        .map_err(|e| format!("Proxy error: {}", e))?
         .ok_or_else(|| format!("No tree loaded for node {}", node_id))?;
 
-    let found = crate::node_tree::set_modified_value(tree, space, address, value);
+    let found = crate::node_tree::set_modified_value(&mut tree, space, address, value);
     if !found {
         return Err(format!(
             "Leaf not found at space={}, address={} in node {}",
@@ -2857,25 +2820,21 @@ pub async fn set_modified_value(
         ));
     }
 
-    // Also update config_value_cache for EventId modifications so the
+    // Also update config values in proxy for EventId modifications so the
     // bowtie catalog builder sees them.
-    {
-        let tree_ref = trees.get(&node_id).unwrap();
-        // Walk to find this leaf and check if it's an EventId with a modified value
-        for leaf_info in crate::node_tree::collect_event_id_leaves(tree_ref) {
-            if leaf_info.address == address && leaf_info.space == space {
-                let mut cache = state.config_value_cache.write().await;
-                let node_cache = cache.entry(node_id.clone()).or_default();
-                let path_key = leaf_info.path.join("/");
-                if let Some(bytes) = leaf_info.value {
-                    node_cache.insert(path_key, bytes);
-                }
-                break;
+    for leaf_info in crate::node_tree::collect_event_id_leaves(&tree) {
+        if leaf_info.address == address && leaf_info.space == space {
+            if let Some(bytes) = leaf_info.value {
+                let mut update = HashMap::new();
+                update.insert(leaf_info.path.join("/"), bytes);
+                let _ = proxy.merge_config_values(update).await;
             }
+            break;
         }
     }
 
-    drop(trees);
+    // Store updated tree back to proxy
+    let _ = proxy.set_config_tree(tree).await;
 
     let _ = app_handle.emit(
         "node-tree-updated",
@@ -2894,64 +2853,55 @@ pub async fn discard_modified_values(
     app_handle: tauri::AppHandle,
     node_id: Option<String>,
 ) -> Result<u32, String> {
-    let mut trees = state.node_trees.write().await;
     let mut count = 0u32;
 
     if let Some(nid) = node_id {
         // Discard for a specific node
-        if let Some(tree) = trees.get_mut(&nid) {
-            if crate::node_tree::has_modified_values(tree) {
-                crate::node_tree::discard_all_modified(tree);
-                count += 1;
-            }
-        }
-        // Rebuild config cache from committed values for this node
-        if let Some(tree) = trees.get(&nid) {
-            let mut cache = state.config_value_cache.write().await;
-            let node_cache = cache.entry(nid.clone()).or_default();
-            node_cache.clear();
-            for leaf_info in crate::node_tree::collect_event_id_leaves(tree) {
-                if let Some(bytes) = leaf_info.value {
-                    node_cache.insert(leaf_info.path.join("/"), bytes);
+        let parsed = lcc_rs::NodeID::from_hex_string(&nid)
+            .map_err(|e| format!("InvalidNodeId: {}", e))?;
+        if let Some(proxy) = state.node_registry.get(&parsed).await {
+            if let Ok(Some(mut tree)) = proxy.get_config_tree().await {
+                if crate::node_tree::has_modified_values(&tree) {
+                    crate::node_tree::discard_all_modified(&mut tree);
+                    count += 1;
+
+                    // Rebuild config values from committed values
+                    let rebuilt: HashMap<String, [u8; 8]> = crate::node_tree::collect_event_id_leaves(&tree)
+                        .into_iter().filter_map(|l| l.value.map(|v| (l.path.join("/"), v)))
+                        .collect();
+                    let _ = proxy.set_config_values(rebuilt).await;
+                    let _ = proxy.set_config_tree(tree).await;
+
+                    let _ = app_handle.emit(
+                        "node-tree-updated",
+                        serde_json::json!({ "nodeId": nid }),
+                    );
                 }
             }
-        }
-        if count > 0 {
-            let _ = app_handle.emit(
-                "node-tree-updated",
-                serde_json::json!({ "nodeId": nid }),
-            );
         }
     } else {
         // Discard across all nodes
-        let node_ids: Vec<String> = trees.keys().cloned().collect();
-        for nid in &node_ids {
-            if let Some(tree) = trees.get_mut(nid) {
-                if crate::node_tree::has_modified_values(tree) {
-                    crate::node_tree::discard_all_modified(tree);
+        let handles = state.node_registry.get_all_handles().await;
+        for h in &handles {
+            if let Ok(Some(mut tree)) = h.get_config_tree().await {
+                if crate::node_tree::has_modified_values(&tree) {
+                    crate::node_tree::discard_all_modified(&mut tree);
                     count += 1;
+
+                    // Rebuild config values from committed values
+                    let rebuilt: HashMap<String, [u8; 8]> = crate::node_tree::collect_event_id_leaves(&tree)
+                        .into_iter().filter_map(|l| l.value.map(|v| (l.path.join("/"), v)))
+                        .collect();
+                    let _ = h.set_config_values(rebuilt).await;
+                    let _ = h.set_config_tree(tree).await;
+
+                    let nid = h.node_id.to_hex_string();
+                    let _ = app_handle.emit(
+                        "node-tree-updated",
+                        serde_json::json!({ "nodeId": nid }),
+                    );
                 }
             }
-        }
-        // Rebuild config cache from committed values
-        {
-            let mut cache = state.config_value_cache.write().await;
-            for (nid, tree) in trees.iter() {
-                let node_cache = cache.entry(nid.clone()).or_default();
-                for leaf_info in crate::node_tree::collect_event_id_leaves(tree) {
-                    let path_key = leaf_info.path.join("/");
-                    if let Some(bytes) = leaf_info.value {
-                        node_cache.insert(path_key, bytes);
-                    }
-                }
-            }
-        }
-        drop(trees);
-        for nid in &node_ids {
-            let _ = app_handle.emit(
-                "node-tree-updated",
-                serde_json::json!({ "nodeId": nid }),
-            );
         }
     }
 
@@ -2968,13 +2918,16 @@ pub async fn write_modified_values(
     state: tauri::State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<WriteModifiedResult, String> {
-    // Collect all modifications across all nodes
+    // Collect all modifications across all nodes from proxies
     let mut work: Vec<(String, crate::node_tree::ModifiedLeafInfo)> = Vec::new();
     {
-        let trees = state.node_trees.read().await;
-        for (node_id, tree) in trees.iter() {
-            for leaf in crate::node_tree::collect_modified_leaves(tree) {
-                work.push((node_id.clone(), leaf));
+        let handles = state.node_registry.get_all_handles().await;
+        for h in &handles {
+            if let Ok(Some(tree)) = h.get_config_tree().await {
+                let nid = h.node_id.to_hex_string();
+                for leaf in crate::node_tree::collect_modified_leaves(&tree) {
+                    work.push((nid.clone(), leaf));
+                }
             }
         }
     }
@@ -2994,7 +2947,6 @@ pub async fn write_modified_values(
         .clone();
     drop(conn_lock);
 
-    let nodes = state.nodes.read().await;
     let mut succeeded = 0u32;
     let mut failed = 0u32;
     let mut success_node_ids = std::collections::HashSet::new();
@@ -3002,24 +2954,20 @@ pub async fn write_modified_values(
     for (node_id, leaf_info) in &work {
         let parsed_nid = lcc_rs::NodeID::from_hex_string(node_id)
             .map_err(|e| format!("Invalid node ID: {}", e))?;
-        let node = nodes
-            .iter()
-            .find(|n| n.node_id == parsed_nid)
+        let proxy = state.node_registry.get(&parsed_nid).await
             .ok_or_else(|| format!("Node not found: {}", node_id))?;
-        let alias = node.alias.value();
+        let alias = proxy.alias;
 
-        // Mark as writing
-        {
-            let mut trees = state.node_trees.write().await;
-            if let Some(tree) = trees.get_mut(node_id) {
-                crate::node_tree::set_leaf_write_state(
-                    tree,
-                    leaf_info.space,
-                    leaf_info.address,
-                    crate::node_tree::WriteState::Writing,
-                    None,
-                );
-            }
+        // Mark as writing via proxy
+        if let Ok(Some(mut tree)) = proxy.get_config_tree().await {
+            crate::node_tree::set_leaf_write_state(
+                &mut tree,
+                leaf_info.space,
+                leaf_info.address,
+                crate::node_tree::WriteState::Writing,
+                None,
+            );
+            let _ = proxy.set_config_tree(tree).await;
         }
 
         // Serialize and write
@@ -3028,18 +2976,17 @@ pub async fn write_modified_values(
         let result = conn.write_memory(alias, leaf_info.space, leaf_info.address, &bytes).await;
         drop(conn);
 
-        let mut trees = state.node_trees.write().await;
-        if let Some(tree) = trees.get_mut(node_id) {
+        if let Ok(Some(mut tree)) = proxy.get_config_tree().await {
             match result {
                 Ok(()) => {
                     // Commit: promote modified_value → value
-                    crate::node_tree::commit_leaf_value(tree, leaf_info.space, leaf_info.address);
+                    crate::node_tree::commit_leaf_value(&mut tree, leaf_info.space, leaf_info.address);
                     succeeded += 1;
                     success_node_ids.insert(node_id.clone());
                 }
                 Err(e) => {
                     crate::node_tree::set_leaf_write_state(
-                        tree,
+                        &mut tree,
                         leaf_info.space,
                         leaf_info.address,
                         crate::node_tree::WriteState::Error,
@@ -3048,9 +2995,9 @@ pub async fn write_modified_values(
                     failed += 1;
                 }
             }
+            let _ = proxy.set_config_tree(tree).await;
         }
     }
-    drop(nodes);
 
     // Send Update Complete to each node that had successful writes
     for nid in &success_node_ids {
@@ -3058,10 +3005,8 @@ pub async fn write_modified_values(
             Ok(id) => id,
             Err(_) => continue,
         };
-        let nodes = state.nodes.read().await;
-        if let Some(node) = nodes.iter().find(|n| n.node_id == parsed_nid) {
-            let alias = node.alias.value();
-            drop(nodes);
+        if let Some(proxy) = state.node_registry.get(&parsed_nid).await {
+            let alias = proxy.alias;
             let mut conn = connection.lock().await;
             let _ = conn.send_update_complete(alias).await;
         }
@@ -3097,8 +3042,15 @@ pub struct WriteModifiedResult {
 pub async fn has_modified_values(
     state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
-    let trees = state.node_trees.read().await;
-    Ok(trees.values().any(crate::node_tree::has_modified_values))
+    let handles = state.node_registry.get_all_handles().await;
+    for h in &handles {
+        if let Ok(Some(tree)) = h.get_config_tree().await {
+            if crate::node_tree::has_modified_values(&tree) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Serialize a ConfigValue to raw bytes for writing to a node.

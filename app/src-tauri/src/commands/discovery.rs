@@ -3,8 +3,6 @@
 use crate::state::AppState;
 use lcc_rs::{ConnectionStatus, DiscoveredNode, MTI, NodeAlias, NodeID, PIPStatus, ProtocolFlags, SNIPData, SNIPStatus};
 use serde::Serialize;
-use std::sync::Arc;
-use tokio::sync::Semaphore;
 
 /// Response from a SNIP query
 #[derive(Debug, Serialize)]
@@ -39,7 +37,12 @@ pub async fn discover_nodes(
     // Process result
     let nodes = result.map_err(|e| format!("Discovery failed: {}", e))?;
     let node_count = nodes.len();
-    state.set_nodes(nodes.clone()).await;
+
+    // Register a proxy for each discovered node
+    for node in &nodes {
+        let _ = state.node_registry.get_or_create(node.node_id, node.alias.value()).await;
+    }
+
     crate::bwlog!(state.inner(), "[discovery] initial probe complete: {} node(s) found", node_count);
     {
         let mut stats = state.diag_stats.write().await;
@@ -81,7 +84,7 @@ pub async fn register_node(
     alias: u16,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let node_alias = NodeAlias::new(alias).map_err(|e| format!("Invalid alias: {}", e))?;
+    let _node_alias = NodeAlias::new(alias).map_err(|e| format!("Invalid alias: {}", e))?;
 
     let bytes: Vec<u8> = node_id_hex
         .split('.')
@@ -92,18 +95,8 @@ pub async fn register_node(
     }
     let node_id = NodeID::from_slice(&bytes).map_err(|e| e.to_string())?;
 
-    state.add_node(DiscoveredNode {
-        node_id,
-        alias: node_alias,
-        snip_data: None,
-        snip_status: SNIPStatus::Unknown,
-        connection_status: ConnectionStatus::Connected,
-        last_verified: None,
-        last_seen: chrono::Utc::now(),
-        cdi: None,
-        pip_flags: None,
-        pip_status: PIPStatus::Unknown,
-    }).await;
+    // Create proxy in the registry (or get existing)
+    let _ = state.node_registry.get_or_create(node_id, alias).await?;
 
     Ok(())
 }
@@ -114,42 +107,15 @@ pub async fn query_snip_single(
     alias: u16,
     state: tauri::State<'_, AppState>,
 ) -> Result<QuerySnipResponse, String> {
-    // Validate alias
     let _node_alias = NodeAlias::new(alias).map_err(|e| format!("Invalid alias: {}", e))?;
 
-    // Look up node ID for logging before we query
-    let cached_node_id = state.get_nodes().await.iter()
-        .find(|n| n.alias.value() == alias)
-        .map(|n| n.node_id);
-    if let Some(node_id) = cached_node_id {
-        eprintln!("[SNIP] alias=0x{:03X}  node_id={}", alias, node_id);
-    }
+    let proxy = state.node_registry.get_by_alias(alias).await
+        .ok_or_else(|| format!("No node registered with alias 0x{:03X}", alias))?;
 
-    // Get connection reference
-    let connection_arc = {
-        let conn_guard = state.connection.read().await;
-        match conn_guard.as_ref() {
-            Some(conn) => conn.clone(),
-            None => return Err("Not connected to LCC network".to_string()),
-        }
-    };
-    
-    // Lock and query SNIP
-    let mut connection = connection_arc.lock().await;
-    let (snip_data, status) = connection
-        .query_snip(alias, None)
-        .await
-        .map_err(|e| format!("SNIP query failed: {}", e))?;
-    drop(connection);
-    
-    // Update node in cache if it exists
-    if let Some(node_id) = cached_node_id {
-        state.update_node(node_id, |node| {
-            node.snip_data = snip_data.clone();
-            node.snip_status = status;
-        }).await;
-    }
-    
+    eprintln!("[SNIP] alias=0x{:03X}  node_id={}", alias, proxy.node_id);
+
+    let (snip_data, status) = proxy.query_snip().await?;
+
     Ok(QuerySnipResponse {
         alias,
         snip_data,
@@ -157,7 +123,10 @@ pub async fn query_snip_single(
     })
 }
 
-/// Query SNIP data for multiple nodes concurrently
+/// Query SNIP data for multiple nodes concurrently via per-node proxies.
+///
+/// Each proxy independently handles its own SNIP query using the `TransportHandle`
+/// (no connection mutex), so all nodes are queried in parallel.
 #[tauri::command]
 pub async fn query_snip_batch(
     aliases: Vec<u16>,
@@ -166,56 +135,41 @@ pub async fn query_snip_batch(
     if aliases.is_empty() {
         return Ok(vec![]);
     }
-    
-    // Validate all aliases
+
     for &alias in &aliases {
         NodeAlias::new(alias).map_err(|e| format!("Invalid alias {}: {}", alias, e))?;
     }
-    
-    // Get connection reference
-    let connection_arc = {
-        let conn_guard = state.connection.read().await;
-        match conn_guard.as_ref() {
-            Some(conn) => conn.clone(),
-            None => return Err("Not connected to LCC network".to_string()),
+
+    // Collect proxy handles for all aliases
+    let mut proxy_aliases = Vec::with_capacity(aliases.len());
+    for &alias in &aliases {
+        if let Some(proxy) = state.node_registry.get_by_alias(alias).await {
+            proxy_aliases.push((alias, proxy));
         }
-    };
-    
-    // Create shared semaphore for concurrency limiting (max 5 concurrent)
-    let semaphore = Arc::new(Semaphore::new(5));
-    
-    // Query SNIP for each node (sequential for now due to mutable borrow)
-    // TODO: Refactor to support true concurrency with Arc<Mutex<Transport>>
+    }
+
+    // Query all in parallel using JoinSet
+    let mut join_set = tokio::task::JoinSet::new();
+    for (alias, proxy) in proxy_aliases {
+        let proxy = proxy.clone();
+        join_set.spawn(async move {
+            let result = proxy.query_snip().await;
+            (alias, proxy.node_id, result)
+        });
+    }
+
     let mut results = Vec::new();
-    
-    for alias in aliases {
-        let mut connection = connection_arc.lock().await;
-        let (snip_data, status) = connection
-            .query_snip(alias, Some(semaphore.clone()))
-            .await
-            .unwrap_or((None, SNIPStatus::Error));
-        drop(connection);
-        
+    while let Some(join_result) = join_set.join_next().await {
+        let (alias, _node_id, result) = join_result.map_err(|e| e.to_string())?;
+        let (snip_data, status) = result.unwrap_or((None, SNIPStatus::Error));
+
         results.push(QuerySnipResponse {
             alias,
             snip_data,
             status,
         });
     }
-    
-    // Update nodes in cache
-    for response in &results {
-        if let Some(node_id) = state.get_nodes().await.iter()
-            .find(|n| n.alias.value() == response.alias)
-            .map(|n| n.node_id)
-        {
-            state.update_node(node_id, |node| {
-                node.snip_data = response.snip_data.clone();
-                node.snip_status = response.status;
-            }).await;
-        }
-    }
-    
+
     Ok(results)
 }
 
@@ -248,24 +202,23 @@ pub async fn verify_node_status(
         .map_err(|e| format!("Verification failed: {}", e))?;
     drop(connection);
     
-    // Update node status in cache
+    // Update node status via proxy
     let is_online = node_id_opt.is_some();
     
     if let Some(node_id) = node_id_opt {
-        state.update_node(node_id, |node| {
-            node.connection_status = lcc_rs::types::ConnectionStatus::Connected;
-            node.last_verified = Some(chrono::Utc::now());
-            node.last_seen = chrono::Utc::now();
-        }).await;
+        if let Some(proxy) = state.node_registry.get(&node_id).await {
+            let _ = proxy.update_connection_status(
+                ConnectionStatus::Connected,
+                Some(chrono::Utc::now()),
+            ).await;
+        }
     } else {
         // Find node by alias and mark as not responding
-        if let Some(node_id) = state.get_nodes().await.iter()
-            .find(|n| n.alias.value() == alias)
-            .map(|n| n.node_id)
-        {
-            state.update_node(node_id, |node| {
-                node.connection_status = lcc_rs::types::ConnectionStatus::NotResponding;
-            }).await;
+        if let Some(proxy) = state.node_registry.get_by_alias(alias).await {
+            let _ = proxy.update_connection_status(
+                ConnectionStatus::NotResponding,
+                None,
+            ).await;
         }
     }
     
@@ -293,7 +246,7 @@ pub async fn refresh_all_nodes(
         }
     };
 
-    let expected_nodes = state.get_nodes().await;
+    let expected_nodes = state.node_registry.get_all_snapshots().await;
 
     // If no known nodes, just probe and let node-appeared events handle everything.
     if expected_nodes.is_empty() {
@@ -304,20 +257,15 @@ pub async fn refresh_all_nodes(
 
     // Subscribe to VerifiedNode replies *before* sending the probe so we don't
     // miss fast responders.
-    let mut rx = {
+    let maybe_rx = {
         let conn = connection_arc.lock().await;
-        conn.dispatcher().map(|disp| {
-            // We need to unlock dispatcher to get the channel; capture it first.
-            disp
-        })
-    };
-    let mut maybe_rx = match rx.take() {
-        Some(disp_arc) => {
-            let disp = disp_arc.lock().await;
-            Some(disp.subscribe_mti(MTI::VerifiedNode).await)
+        if let Some(handle) = conn.transport_handle() {
+            Some(handle.subscribe_mti(MTI::VerifiedNode).await)
+        } else {
+            None
         }
-        None => None,
     };
+    let mut maybe_rx = maybe_rx;
 
     // Send the probe.
     {
@@ -347,7 +295,7 @@ pub async fn refresh_all_nodes(
             }
         }
     } else {
-        // No dispatcher (direct-transport mode) — just wait.
+        // No transport handle — just wait.
         tokio::time::sleep(std::time::Duration::from_millis(LIVENESS_MS)).await;
     }
 
@@ -358,10 +306,11 @@ pub async fn refresh_all_nodes(
         .map(|n| n.node_id)
         .collect();
 
-    // Remove stale nodes from the backend cache.
+    // Remove stale nodes from the registry.
     if !stale.is_empty() {
-        let mut nodes_guard = state.nodes.write().await;
-        nodes_guard.retain(|n| !stale.contains(&n.node_id));
+        for id in &stale {
+            state.node_registry.remove(id).await;
+        }
     }
 
     // Return stale node IDs as dotted-hex strings for the frontend to cull its list.
@@ -397,41 +346,17 @@ pub async fn query_pip_single(
 ) -> Result<QueryPipResponse, String> {
     let _node_alias = NodeAlias::new(alias).map_err(|e| format!("Invalid alias: {}", e))?;
 
-    // Look up the node ID for logging before we query (pip.rs logs alias-only)
-    let cached_node_id = state.get_nodes().await.iter()
-        .find(|n| n.alias.value() == alias)
-        .map(|n| n.node_id);
-    if let Some(node_id) = cached_node_id {
-        eprintln!("[PIP] alias=0x{:03X}  node_id={}", alias, node_id);
-    }
+    let proxy = state.node_registry.get_by_alias(alias).await
+        .ok_or_else(|| format!("No node registered with alias 0x{:03X}", alias))?;
 
-    let connection_arc = {
-        let conn_guard = state.connection.read().await;
-        match conn_guard.as_ref() {
-            Some(conn) => conn.clone(),
-            None => return Err("Not connected to LCC network".to_string()),
-        }
-    };
+    eprintln!("[PIP] alias=0x{:03X}  node_id={}", alias, proxy.node_id);
 
-    let mut connection = connection_arc.lock().await;
-    let (pip_flags, status) = connection
-        .query_pip(alias, None)
-        .await
-        .map_err(|e| format!("PIP query failed: {}", e))?;
-    drop(connection);
-
-    // Update node in cache if it exists
-    if let Some(node_id) = cached_node_id {
-        state.update_node(node_id, |node| {
-            node.pip_flags = pip_flags;
-            node.pip_status = status;
-        }).await;
-    }
+    let (pip_flags, status) = proxy.query_pip().await?;
 
     Ok(QueryPipResponse { alias, pip_flags, status })
 }
 
-/// Query Protocol Identification Protocol data for multiple nodes
+/// Query Protocol Identification Protocol data for multiple nodes concurrently.
 #[tauri::command]
 pub async fn query_pip_batch(
     aliases: Vec<u16>,
@@ -445,39 +370,28 @@ pub async fn query_pip_batch(
         NodeAlias::new(alias).map_err(|e| format!("Invalid alias {}: {}", alias, e))?;
     }
 
-    let connection_arc = {
-        let conn_guard = state.connection.read().await;
-        match conn_guard.as_ref() {
-            Some(conn) => conn.clone(),
-            None => return Err("Not connected to LCC network".to_string()),
+    let mut proxy_aliases = Vec::with_capacity(aliases.len());
+    for &alias in &aliases {
+        if let Some(proxy) = state.node_registry.get_by_alias(alias).await {
+            proxy_aliases.push((alias, proxy));
         }
-    };
-
-    let semaphore = Arc::new(Semaphore::new(5));
-    let mut results = Vec::new();
-
-    for alias in aliases {
-        let mut connection = connection_arc.lock().await;
-        let (pip_flags, status) = connection
-            .query_pip(alias, Some(semaphore.clone()))
-            .await
-            .unwrap_or((None, PIPStatus::Error));
-        drop(connection);
-
-        results.push(QueryPipResponse { alias, pip_flags, status });
     }
 
-    // Update nodes in cache
-    for response in &results {
-        if let Some(node_id) = state.get_nodes().await.iter()
-            .find(|n| n.alias.value() == response.alias)
-            .map(|n| n.node_id)
-        {
-            state.update_node(node_id, |node| {
-                node.pip_flags = response.pip_flags;
-                node.pip_status = response.status;
-            }).await;
-        }
+    let mut join_set = tokio::task::JoinSet::new();
+    for (alias, proxy) in proxy_aliases {
+        let proxy = proxy.clone();
+        join_set.spawn(async move {
+            let result = proxy.query_pip().await;
+            (alias, proxy.node_id, result)
+        });
+    }
+
+    let mut results = Vec::new();
+    while let Some(join_result) = join_set.join_next().await {
+        let (alias, _node_id, result) = join_result.map_err(|e| e.to_string())?;
+        let (pip_flags, status) = result.unwrap_or((None, PIPStatus::Error));
+
+        results.push(QueryPipResponse { alias, pip_flags, status });
     }
 
     Ok(results)

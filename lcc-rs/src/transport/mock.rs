@@ -1,7 +1,7 @@
 //! Mock transport for testing
 
 use crate::protocol::GridConnectFrame;
-use crate::transport::LccTransport;
+use crate::transport::{LccTransport, TransportReader, TransportWriter};
 use crate::Error;
 use async_trait::async_trait;
 use std::collections::VecDeque;
@@ -51,6 +51,11 @@ impl LccTransport for MockTransport {
         
         match frame_str {
             Some(s) => {
+                // Yield before returning so the dispatcher listener loop does not
+                // consume all queued frames in a single burst.  This gives callers
+                // of subscribe-before-send patterns (multi-chunk reads/writes) a
+                // chance to process the previous response and re-subscribe.
+                tokio::task::yield_now().await;
                 let frame = GridConnectFrame::parse(&s)?;
                 Ok(Some(frame))
             }
@@ -60,6 +65,54 @@ impl LccTransport for MockTransport {
                 Ok(None)
             }
         }
+    }
+
+    async fn close(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn into_halves(self: Box<Self>) -> (Box<dyn TransportReader>, Box<dyn TransportWriter>) {
+        (
+            Box::new(MockTransportReader {
+                receive_queue: self.receive_queue.clone(),
+            }),
+            Box::new(MockTransportWriter {
+                sent_frames: self.sent_frames.clone(),
+            }),
+        )
+    }
+}
+
+/// Read half of a split mock transport.
+pub struct MockTransportReader {
+    receive_queue: Arc<Mutex<VecDeque<String>>>,
+}
+
+#[async_trait]
+impl TransportReader for MockTransportReader {
+    async fn receive(&mut self) -> Result<GridConnectFrame, Error> {
+        loop {
+            let frame_str = self.receive_queue.lock().unwrap().pop_front();
+            if let Some(s) = frame_str {
+                tokio::task::yield_now().await;
+                let frame = GridConnectFrame::parse(&s)?;
+                return Ok(frame);
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
+    }
+}
+
+/// Write half of a split mock transport.
+pub struct MockTransportWriter {
+    sent_frames: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl TransportWriter for MockTransportWriter {
+    async fn send(&mut self, frame: &GridConnectFrame) -> Result<(), Error> {
+        self.sent_frames.lock().unwrap().push(frame.to_string());
+        Ok(())
     }
 
     async fn close(&mut self) -> Result<(), Error> {

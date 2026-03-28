@@ -4,8 +4,10 @@
 
 use crate::{Error, Result, protocol::GridConnectFrame};
 use socket2::SockRef;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use std::pin::Pin;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::time::{timeout, Duration};
 
 /// Transport trait for sending and receiving frames
@@ -18,6 +20,32 @@ pub trait LccTransport: Send + Sync {
     async fn receive(&mut self, timeout_ms: u64) -> Result<Option<GridConnectFrame>>;
     
     /// Close the connection
+    async fn close(&mut self) -> Result<()>;
+
+    /// Split into independent read and write halves for concurrent use.
+    ///
+    /// The returned halves each own their side of the underlying I/O resource,
+    /// eliminating the need for a shared mutex.
+    fn into_halves(self: Box<Self>) -> (Box<dyn TransportReader>, Box<dyn TransportWriter>) {
+        unimplemented!("This transport does not support splitting into halves")
+    }
+}
+
+/// Read half of a split transport — blocks until a frame arrives.
+#[async_trait::async_trait]
+pub trait TransportReader: Send {
+    /// Receive a single frame. Blocks until data arrives or an error (including
+    /// ConnectionClosed) occurs. No timeout — the caller uses `tokio::select!`
+    /// with a shutdown signal instead.
+    async fn receive(&mut self) -> Result<GridConnectFrame>;
+}
+
+/// Write half of a split transport.
+#[async_trait::async_trait]
+pub trait TransportWriter: Send {
+    /// Send a GridConnect frame.
+    async fn send(&mut self, frame: &GridConnectFrame) -> Result<()>;
+    /// Close the transport.
     async fn close(&mut self) -> Result<()>;
 }
 
@@ -69,6 +97,23 @@ impl TcpTransport {
             buffer: String::with_capacity(64),
         })
     }
+
+    /// Extract and parse a complete GridConnect line ending at `newline_pos`
+    /// from the accumulation buffer.
+    fn extract_line(&mut self, newline_pos: usize) -> Result<Option<GridConnectFrame>> {
+        let line = self.buffer[..newline_pos].trim().to_string();
+        self.buffer.drain(..=newline_pos);
+        if line.is_empty() {
+            return Ok(None);
+        }
+        match GridConnectFrame::parse(&line) {
+            Ok(frame) => Ok(Some(frame)),
+            Err(e) => {
+                eprintln!("Warning: Failed to parse frame '{}': {}", line, e);
+                Ok(None)
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -82,61 +127,61 @@ impl LccTransport for TcpTransport {
     }
     
     async fn receive(&mut self, timeout_ms: u64) -> Result<Option<GridConnectFrame>> {
-        // NOTE: do NOT clear self.buffer here.
-        //
-        // BufReader::read_line is not cancellation-safe: when the timeout fires
-        // mid-read, it drops the future after already consuming bytes from the
-        // BufReader's internal buffer and appending them to self.buffer.  If we
-        // cleared the buffer at entry, those bytes would be permanently lost on
-        // the next call and the stream would be misaligned, causing silent frame
-        // drops.  Instead we preserve the partial content so the next call picks
-        // up where this one left off — identical to how GridConnectSerialTransport
-        // accumulates bytes in read_buf across calls.
+        // Fast path: if previous fill_buf() calls left multiple frames in our
+        // accumulation buffer, return the next one without touching the stream.
+        if let Some(pos) = self.buffer.find('\n') {
+            return self.extract_line(pos);
+        }
 
-        let read_result = if timeout_ms > 0 {
+        // Fill BufReader's internal buffer from the TCP stream.
+        //
+        // fill_buf() is cancellation-safe: any bytes already read into
+        // BufReader's internal buffer persist if the future is cancelled by
+        // a timeout — unlike read_line, whose *private* internal Vec<u8> is
+        // dropped along with the future, permanently losing bytes that
+        // BufReader already consumed from the stream.  That silent data loss
+        // caused byte-drop corruption on TCP (but not CAN serial, which
+        // reads one byte at a time via read_exact).
+        let fill_result = if timeout_ms > 0 {
             timeout(
                 Duration::from_millis(timeout_ms),
-                self.stream.read_line(&mut self.buffer),
+                self.stream.fill_buf(),
             )
             .await
         } else {
-            Ok(self.stream.read_line(&mut self.buffer).await)
+            Ok(self.stream.fill_buf().await)
         };
-        
-        match read_result {
-            Ok(Ok(0)) => {
-                // Connection closed — reset reassembly state
+
+        match fill_result {
+            Ok(Ok(available)) if available.is_empty() => {
+                // EOF — connection closed.
                 self.buffer.clear();
                 Err(Error::ConnectionClosed)
             }
-            Ok(Ok(_)) => {
-                // Successfully read a complete newline-terminated frame.
-                // Extract the line, then clear so the next call starts fresh.
-                let line = self.buffer.trim().to_string();
-                self.buffer.clear();
+            Ok(Ok(available)) => {
+                // Copy data out of BufReader (to release the immutable borrow)
+                // then advance BufReader's cursor.
+                let chunk = available.to_vec();
+                Pin::new(&mut self.stream).consume(chunk.len());
 
-                if line.is_empty() {
-                    return Ok(None);
-                }
-                
-                match GridConnectFrame::parse(&line) {
-                    Ok(frame) => Ok(Some(frame)),
-                    Err(e) => {
-                        // Log parse error but don't fail - skip invalid frames
-                        eprintln!("Warning: Failed to parse frame '{}': {}", line, e);
-                        Ok(None)
-                    }
+                let text = std::str::from_utf8(&chunk)
+                    .map_err(|_| Error::Transport("Invalid UTF-8 in TCP stream".to_string()))?;
+                self.buffer.push_str(text);
+
+                if let Some(pos) = self.buffer.find('\n') {
+                    self.extract_line(pos)
+                } else {
+                    // Partial data — no complete line yet.
+                    Ok(None)
                 }
             }
             Ok(Err(e)) => {
-                // I/O error — reset state so the next call doesn't try to
-                // continue from a now-undefined buffer position.
                 self.buffer.clear();
                 Err(Error::Io(e))
             }
             Err(_) => {
-                // Timeout — partial bytes (if any) are preserved in self.buffer
-                // so the next call continues seamlessly.
+                // Timeout — no data lost thanks to fill_buf's cancellation
+                // safety guarantee.
                 Ok(None)
             }
         }
@@ -144,6 +189,101 @@ impl LccTransport for TcpTransport {
     
     async fn close(&mut self) -> Result<()> {
         self.stream.get_mut().shutdown().await?;
+        Ok(())
+    }
+
+    fn into_halves(self: Box<Self>) -> (Box<dyn TransportReader>, Box<dyn TransportWriter>) {
+        // Capture any bytes buffered in BufReader that haven't been consumed yet.
+        let pending_bytes = self.stream.buffer().to_vec();
+        let tcp_stream = self.stream.into_inner();
+        let (read_half, write_half) = tcp_stream.into_split();
+
+        // Build accumulation buffer: existing partial frame + any pending BufReader bytes.
+        let mut buffer = self.buffer;
+        if !pending_bytes.is_empty() {
+            if let Ok(s) = std::str::from_utf8(&pending_bytes) {
+                buffer.push_str(s);
+            }
+        }
+
+        let reader = TcpTransportReader {
+            stream: BufReader::new(read_half),
+            buffer,
+        };
+        let writer = TcpTransportWriter { stream: write_half };
+        (Box::new(reader), Box::new(writer))
+    }
+}
+
+/// Read half of a split TCP transport.
+pub struct TcpTransportReader {
+    stream: BufReader<OwnedReadHalf>,
+    buffer: String,
+}
+
+impl TcpTransportReader {
+    /// Extract and parse a complete GridConnect line ending at `newline_pos`.
+    fn extract_line(&mut self, newline_pos: usize) -> Result<Option<GridConnectFrame>> {
+        let line = self.buffer[..newline_pos].trim().to_string();
+        self.buffer.drain(..=newline_pos);
+        if line.is_empty() {
+            return Ok(None);
+        }
+        match GridConnectFrame::parse(&line) {
+            Ok(frame) => Ok(Some(frame)),
+            Err(e) => {
+                eprintln!("Warning: Failed to parse frame '{}': {}", line, e);
+                Ok(None)
+            }
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl TransportReader for TcpTransportReader {
+    async fn receive(&mut self) -> Result<GridConnectFrame> {
+        loop {
+            // Fast path: complete frame already in buffer.
+            if let Some(pos) = self.buffer.find('\n') {
+                if let Some(frame) = self.extract_line(pos)? {
+                    return Ok(frame);
+                }
+                continue;
+            }
+
+            // Block until data arrives from the network.
+            let available = self.stream.fill_buf().await?;
+            if available.is_empty() {
+                return Err(Error::ConnectionClosed);
+            }
+
+            let chunk = available.to_vec();
+            Pin::new(&mut self.stream).consume(chunk.len());
+
+            let text = std::str::from_utf8(&chunk)
+                .map_err(|_| Error::Transport("Invalid UTF-8 in TCP stream".to_string()))?;
+            self.buffer.push_str(text);
+        }
+    }
+}
+
+/// Write half of a split TCP transport.
+pub struct TcpTransportWriter {
+    stream: OwnedWriteHalf,
+}
+
+#[async_trait::async_trait]
+impl TransportWriter for TcpTransportWriter {
+    async fn send(&mut self, frame: &GridConnectFrame) -> Result<()> {
+        let frame_str = frame.to_string();
+        self.stream.write_all(frame_str.as_bytes()).await?;
+        self.stream.write_all(b"\n").await?;
+        self.stream.flush().await?;
+        Ok(())
+    }
+
+    async fn close(&mut self) -> Result<()> {
+        self.stream.shutdown().await?;
         Ok(())
     }
 }
@@ -189,25 +329,23 @@ mod tests {
         assert_eq!(result.unwrap().to_string(), ":X19490AAAN;");
     }
 
-    /// Regression test for the cancellation-safety bug.
+    /// Regression test: partial frame data in the accumulation buffer is
+    /// correctly completed when the rest of the frame arrives.
     ///
-    /// `BufReader::read_line` is not cancellation-safe: when a timeout fires
-    /// mid-read, any bytes already copied from BufReader's internal buffer into
-    /// `self.buffer` remain there.  The old code called `self.buffer.clear()`
-    /// at the top of `receive()`, which silently discarded those bytes and
-    /// misaligned the stream, causing sporadic frame drops over TCP (but not
-    /// over CAN, whose serial transport never clears its accumulation buffer).
+    /// The previous implementation used `BufReader::read_line` wrapped in a
+    /// timeout, which is not cancellation-safe.  When the timeout fired
+    /// mid-read, bytes consumed from BufReader into the future's private
+    /// `Vec<u8>` were silently lost — the output `String` was never written.
+    /// This caused byte-drop corruption on TCP (but not CAN serial, which
+    /// reads one byte at a time via `read_exact`).
     ///
-    /// This test simulates the state after a partial read (i.e. `self.buffer`
-    /// contains the first portion of a frame but no `\n` yet) and verifies
-    /// that the *next* `receive()` call completes the frame rather than
-    /// discarding the prefix.
+    /// The current implementation uses `fill_buf()`/`consume()`, which IS
+    /// cancellation-safe: bytes stay in BufReader's internal buffer until we
+    /// explicitly consume them.
     ///
-    /// Note: The actual mid-read cancellation is not exercised here because on
-    /// Windows the IOCP read model returns `Pending` on the first poll, so the
-    /// timeout fires before any bytes reach `self.buffer` — making a
-    /// timing-based test unreliable. Testing the invariant directly (preserved
-    /// buffer + tail data → complete frame) is equivalent and deterministic.
+    /// This test pre-populates `self.buffer` with a partial frame and sends
+    /// the remaining bytes from the server, verifying the frame is correctly
+    /// reassembled.
     #[tokio::test]
     async fn test_partial_frame_completed_after_timeout() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -245,5 +383,38 @@ mod tests {
             ":X19490AAAN;",
             "Frame reconstructed from partial buffer + tail should match original"
         );
+    }
+
+    /// When the server sends multiple frames in one TCP segment, fill_buf()
+    /// returns all of them at once.  The first receive() should return the
+    /// first frame and buffer the rest; subsequent calls should return
+    /// buffered frames without hitting the network.
+    #[tokio::test]
+    async fn test_multiple_frames_in_single_segment() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut server, _) = listener.accept().await.unwrap();
+            // Send two frames in a single write (single TCP segment).
+            server.write_all(b":X19490AAAN;\n:X195B4BBBN010203;\n").await.unwrap();
+            server.flush().await.unwrap();
+        });
+
+        let stream = TcpStream::connect(addr).await.unwrap();
+        stream.set_nodelay(true).unwrap();
+        let mut transport = TcpTransport {
+            stream: BufReader::new(stream),
+            buffer: String::with_capacity(64),
+        };
+
+        let frame1 = transport.receive(500).await.unwrap();
+        assert!(frame1.is_some(), "First frame should be returned");
+        assert_eq!(frame1.unwrap().to_string(), ":X19490AAAN;");
+
+        // Second frame should come from the accumulation buffer (no network I/O).
+        let frame2 = transport.receive(500).await.unwrap();
+        assert!(frame2.is_some(), "Second frame should be available from buffer");
+        assert_eq!(frame2.unwrap().to_string(), ":X195B4BBBN010203;");
     }
 }

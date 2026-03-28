@@ -5,8 +5,8 @@
 //! sequence on open: `V\r` (version), `S4\r` (125 kbps CAN), `O\r` (open channel).
 
 use crate::{Error, Result, protocol::GridConnectFrame};
-use crate::transport::LccTransport;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use crate::transport::{LccTransport, TransportReader, TransportWriter};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio_serial::{SerialStream, SerialPortBuilderExt};
 
 /// SLCAN serial transport for USB-to-CAN adapters
@@ -185,6 +185,82 @@ impl LccTransport for SlcanSerialTransport {
         // Send CAN channel close command before the port is dropped
         let _ = self.port.write_all(b"C\r").await;
         let _ = self.port.flush().await;
+        Ok(())
+    }
+
+    fn into_halves(self: Box<Self>) -> (Box<dyn TransportReader>, Box<dyn TransportWriter>) {
+        let (reader, writer) = tokio::io::split(self.port);
+        (
+            Box::new(SlcanSerialReader {
+                reader,
+                read_buf: self.read_buf,
+            }),
+            Box::new(SlcanSerialWriter { writer }),
+        )
+    }
+}
+
+/// Read half of a split SLCAN serial transport.
+pub struct SlcanSerialReader {
+    reader: ReadHalf<SerialStream>,
+    read_buf: Vec<u8>,
+}
+
+#[async_trait::async_trait]
+impl TransportReader for SlcanSerialReader {
+    async fn receive(&mut self) -> Result<GridConnectFrame> {
+        loop {
+            let mut byte = [0u8; 1];
+            match self.reader.read_exact(&mut byte).await {
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    return Err(Error::ConnectionClosed);
+                }
+                Err(e) => return Err(Error::Io(e)),
+            }
+
+            let ch = byte[0];
+
+            if ch == b'\r' {
+                let line = String::from_utf8_lossy(&self.read_buf).to_string();
+                self.read_buf.clear();
+
+                match SlcanSerialTransport::decode_slcan(&line) {
+                    Ok(Some(frame)) => return Ok(frame),
+                    Ok(None) => continue,
+                    Err(e) => {
+                        eprintln!("Warning: Failed to decode SLCAN frame '{}': {}", line, e);
+                        continue;
+                    }
+                }
+            } else if ch != b'\n' {
+                self.read_buf.push(ch);
+
+                if self.read_buf.len() > 512 {
+                    self.read_buf.clear();
+                }
+            }
+        }
+    }
+}
+
+/// Write half of a split SLCAN serial transport.
+pub struct SlcanSerialWriter {
+    writer: WriteHalf<SerialStream>,
+}
+
+#[async_trait::async_trait]
+impl TransportWriter for SlcanSerialWriter {
+    async fn send(&mut self, frame: &GridConnectFrame) -> Result<()> {
+        let slcan_str = SlcanSerialTransport::encode_slcan(frame);
+        self.writer.write_all(slcan_str.as_bytes()).await?;
+        self.writer.flush().await?;
+        Ok(())
+    }
+
+    async fn close(&mut self) -> Result<()> {
+        let _ = self.writer.write_all(b"C\r").await;
+        let _ = self.writer.flush().await;
         Ok(())
     }
 }

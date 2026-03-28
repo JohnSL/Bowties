@@ -797,19 +797,20 @@ fn parse_event_id_hex(hex: &str) -> Option<[u8; 8]> {
 /// Returns a map of `event_id_bytes → NodeRoles` where `NodeRoles` records
 /// which node IDs claimed to produce / consume each event.
 ///
-/// If the connection or dispatcher is unavailable the function returns an empty map.
+/// If the connection or transport handle is unavailable the function returns an empty map.
 pub async fn query_event_roles(
     state: &AppState,
     send_delay_ms: u64,
     collect_window_ms: u64,
 ) -> HashMap<[u8; 8], NodeRoles> {
     use lcc_rs::protocol::{GridConnectFrame, MTI};
+    use lcc_rs::TransportHandle;
     use tokio::sync::broadcast;
     use tokio::time::{sleep, Duration};
     use std::time::Instant as StdInstant;
 
-    // Grab connection + dispatcher + own alias
-    let (_connection, dispatcher, our_alias) = {
+    // Grab connection + transport handle + own alias.
+    let (_connection, handle, our_alias) = {
         let conn_lock = state.connection.read().await;
         let conn_opt = match conn_lock.as_ref() {
             Some(c) => c.clone(),
@@ -818,23 +819,24 @@ pub async fn query_event_roles(
                 return HashMap::new();
             }
         };
-        let our_alias = {
+        let (our_alias, handle) = {
             let c = conn_opt.lock().await;
-            c.our_alias().value()
+            let alias = c.our_alias().value();
+            let h = c.transport_handle().cloned();
+            (alias, h)
         };
-        let disp_lock = state.dispatcher.read().await;
-        let disp_opt = match disp_lock.as_ref() {
-            Some(d) => d.clone(),
+        let handle: TransportHandle = match handle {
+            Some(h) => h,
             None => {
-                eprintln!("[bowties] query_event_roles: no dispatcher");
+                eprintln!("[bowties] query_event_roles: no transport handle");
                 return HashMap::new();
             }
         };
-        (conn_opt, disp_opt, our_alias)
+        (conn_opt, handle, our_alias)
     };
 
-    // Read current node list
-    let nodes = state.nodes.read().await.clone();
+    // Read current node list from proxy registry
+    let nodes = state.node_registry.get_all_snapshots().await;
     if nodes.is_empty() {
         return HashMap::new();
     }
@@ -845,10 +847,7 @@ pub async fn query_event_roles(
     crate::bwlog!(state, "[bowties] query_event_roles: sending to {} nodes", nodes_queried);
 
     // Subscribe to all broadcast traffic so we catch the six relevant MTIs.
-    let mut rx = {
-        let disp = dispatcher.lock().await;
-        disp.subscribe_all()
-    };
+    let mut rx = handle.subscribe_all();
 
     // Send IdentifyEventsAddressed to each node, 125 ms apart.
     let mut events_sent: usize = 0;
@@ -865,8 +864,7 @@ pub async fn query_event_roles(
             vec![],
         ) {
             Ok(frame) => {
-                let disp = dispatcher.lock().await;
-                if let Err(e) = disp.send(&frame).await {
+                if let Err(e) = handle.send(&frame).await {
                     eprintln!(
                         "[bowties] IdentifyEventsAddressed send error to {:?}: {}",
                         node.node_id, e
@@ -1090,19 +1088,35 @@ pub async fn build_bowtie_catalog_command(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<BowtieCatalog, String> {
-    let nodes_snap = state.nodes.read().await.clone();
-    let config_cache_snap = state.config_value_cache.read().await.clone();
+    let nodes_snap = state.node_registry.get_all_snapshots().await;
 
-    // Gather profile group roles from node trees
-    let profile_group_roles = {
-        let trees = state.node_trees.read().await;
+    // Gather config values from all proxies
+    let config_cache_snap: HashMap<String, HashMap<String, [u8; 8]>> = {
+        let handles = state.node_registry.get_all_handles().await;
         let mut map = HashMap::new();
-        for (nid, tree) in trees.iter() {
-            for leaf in crate::node_tree::collect_event_id_leaves(tree) {
-                if let Some(role) = leaf.event_role {
-                    if role != lcc_rs::EventRole::Ambiguous {
-                        let key = format!("{}:{}", nid, leaf.path.join("/"));
-                        map.insert(key, role);
+        for h in &handles {
+            if let Ok(vals) = h.get_config_values().await {
+                if !vals.is_empty() {
+                    map.insert(h.node_id.to_hex_string(), vals);
+                }
+            }
+        }
+        map
+    };
+
+    // Gather profile group roles from proxy config trees
+    let profile_group_roles = {
+        let handles = state.node_registry.get_all_handles().await;
+        let mut map = HashMap::new();
+        for h in &handles {
+            let nid = h.node_id.to_hex_string();
+            if let Ok(Some(tree)) = h.get_config_tree().await {
+                for leaf in crate::node_tree::collect_event_id_leaves(&tree).into_iter() {
+                    if let Some(role) = leaf.event_role {
+                        if role != lcc_rs::EventRole::Ambiguous {
+                            let key = format!("{}:{}", nid, leaf.path.join("/"));
+                            map.insert(key, role);
+                        }
                     }
                 }
             }

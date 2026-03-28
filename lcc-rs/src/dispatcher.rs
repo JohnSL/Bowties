@@ -9,8 +9,9 @@
 
 use crate::protocol::{GridConnectFrame, MTI};
 use crate::transport::LccTransport;
+use crate::transport_actor::TransportHandle;
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex, RwLock};
+use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use tokio::task::JoinHandle;
 use std::collections::HashMap;
 
@@ -53,6 +54,23 @@ impl LccTransport for TapTransport {
 /// Channel capacity for broadcast channels
 const CHANNEL_CAPACITY: usize = 256;
 
+/// A no-op transport used as a placeholder when the dispatcher is backed by
+/// a `TransportHandle` (the actor owns the real transport).
+struct NullTransport;
+
+#[async_trait::async_trait]
+impl LccTransport for NullTransport {
+    async fn send(&mut self, _frame: &GridConnectFrame) -> crate::Result<()> {
+        Err(crate::Error::Transport("NullTransport: use TransportHandle".to_string()))
+    }
+    async fn receive(&mut self, _timeout_ms: u64) -> crate::Result<Option<GridConnectFrame>> {
+        Ok(None)
+    }
+    async fn close(&mut self) -> crate::Result<()> {
+        Ok(())
+    }
+}
+
 /// Filters for subscribing to specific message types
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MessageFilter {
@@ -67,13 +85,9 @@ pub enum MessageFilter {
 }
 
 /// A message received from the LCC network with metadata
-#[derive(Debug, Clone)]
-pub struct ReceivedMessage {
-    /// The GridConnect frame
-    pub frame: GridConnectFrame,
-    /// Timestamp when received
-    pub timestamp: std::time::Instant,
-}
+///
+/// Re-exported from `transport_actor` for backward compatibility.
+pub use crate::transport_actor::ReceivedMessage;
 
 /// Message dispatcher that runs a persistent listener and broadcasts frames
 pub struct MessageDispatcher {
@@ -89,6 +103,8 @@ pub struct MessageDispatcher {
     transport: Arc<Mutex<Box<dyn LccTransport>>>,
     /// D11: Alias-to-NodeID map maintained from AMD/AMR frames
     alias_map: Arc<RwLock<HashMap<u16, [u8; 6]>>>,
+    /// When backed by a TransportActor, delegate send/subscribe through the handle.
+    handle: Option<TransportHandle>,
 }
 
 impl MessageDispatcher {
@@ -112,11 +128,42 @@ impl MessageDispatcher {
             shutdown_tx: None,
             transport,
             alias_map: Arc::new(RwLock::new(HashMap::new())),
+            handle: None,
+        }
+    }
+
+    /// Create a dispatcher facade backed by a `TransportHandle`.
+    ///
+    /// The `TransportActor` owns the real transport; this dispatcher delegates
+    /// `subscribe_*`, `send`, and alias-map queries to the handle / actor.
+    /// `start()` is a no-op on a handle-backed dispatcher; the actor's reader
+    /// loop is already running.
+    pub fn from_handle(handle: TransportHandle) -> Self {
+        // Create a dummy TapTransport-less transport (never used for I/O).
+        // subscribe/send go through the handle.
+        let all_tx = handle.all_tx_clone();
+        let mti_senders = handle.mti_senders_clone();
+
+        Self {
+            all_tx,
+            mti_senders,
+            listener_handle: None,
+            shutdown_tx: None,
+            transport: Arc::new(Mutex::new(Box::new(NullTransport) as Box<dyn LccTransport>)),
+            alias_map: Arc::new(RwLock::new(HashMap::new())),
+            handle: Some(handle),
         }
     }
 
     /// Start the background listener task
+    ///
+    /// No-op when this dispatcher is backed by a `TransportHandle` — the actor's
+    /// reader loop is already running.
     pub fn start(&mut self) {
+        if self.handle.is_some() {
+            return;
+        }
+
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
         
         let mti_senders = self.mti_senders.clone();
@@ -196,8 +243,7 @@ impl MessageDispatcher {
                     }
                 }
                 Ok(None) => {
-                    // Timeout, continue
-                    continue;
+                    // Timeout, no frame this iteration
                 }
                 Err(e) => {
                     // Connection error - log and break
@@ -205,6 +251,12 @@ impl MessageDispatcher {
                     break;
                 }
             }
+
+            // Yield between iterations so other tasks (senders) can acquire the
+            // transport lock.  Without this, in single-threaded Tokio runtimes
+            // the listener re-locks immediately, starving send() callers.
+            // In multi-threaded runtimes this is essentially a no-op.
+            tokio::task::yield_now().await;
         }
     }
 
@@ -226,8 +278,12 @@ impl MessageDispatcher {
     }
 
     /// Send a frame to the LCC network
-    /// TapTransport automatically broadcasts the frame to all_tx on send.
+    /// When backed by a TransportHandle, delegates to the actor.
+    /// Otherwise, TapTransport automatically broadcasts the frame to all_tx on send.
     pub async fn send(&self, frame: &GridConnectFrame) -> Result<(), crate::Error> {
+        if let Some(ref handle) = self.handle {
+            return handle.send(frame).await;
+        }
         let mut transport = self.transport.lock().await;
         transport.send(frame).await
     }
@@ -237,6 +293,30 @@ impl MessageDispatcher {
     /// This should be used sparingly - prefer using send() and subscribe methods
     pub fn transport(&self) -> Arc<Mutex<Box<dyn LccTransport>>> {
         self.transport.clone()
+    }
+
+    /// Create a `TransportHandle` backed by this dispatcher's channels and transport.
+    ///
+    /// This is a Phase 2/3 bridge: the handle's `send()` goes through an mpsc channel
+    /// to a spawned task that forwards to the transport via the mutex, and `subscribe_all()`
+    /// / `subscribe_mti()` use the existing broadcast channels.
+    pub fn transport_handle(&self) -> TransportHandle {
+        let transport = self.transport.clone();
+        let (tx, mut rx) = mpsc::channel::<GridConnectFrame>(64);
+        let all_tx = self.all_tx.clone();
+
+        // Spawn a bridge task that forwards outbound frames to the transport.
+        tokio::spawn(async move {
+            while let Some(frame) = rx.recv().await {
+                let mut t = transport.lock().await;
+                if let Err(e) = t.send(&frame).await {
+                    eprintln!("[TransportHandle bridge] send error: {}", e);
+                    break;
+                }
+            }
+        });
+
+        TransportHandle::from_parts(tx, all_tx, self.mti_senders.clone())
     }
 
     /// D11: Look up the NodeID associated with an alias.
@@ -270,6 +350,9 @@ impl MessageDispatcher {
 
     /// Check if the listener is running
     pub fn is_running(&self) -> bool {
+        if self.handle.is_some() {
+            return true; // Actor manages its own lifetime
+        }
         self.listener_handle.as_ref().map_or(false, |h| !h.is_finished())
     }
 }

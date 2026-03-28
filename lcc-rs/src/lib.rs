@@ -18,8 +18,9 @@
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let node_id = NodeID::new([0x05, 0x01, 0x01, 0x01, 0xA2, 0xFF]);
-//!     let mut connection = LccConnection::connect("localhost", 12021, node_id).await?;
-//!     let nodes = connection.discover_nodes(250).await?;
+//!     let connection = LccConnection::connect_with_dispatcher("localhost", 12021, node_id).await?;
+//!     let mut conn = connection.lock().await;
+//!     let nodes = conn.discover_nodes(250).await?;
 //!     
 //!     for node in nodes {
 //!         println!("Found node: {}", node.node_id);
@@ -37,7 +38,7 @@ pub mod discovery;
 pub mod snip;
 pub mod pip;
 pub mod cdi;
-pub mod dispatcher;
+pub mod transport_actor;
 pub mod alias_allocation;
 
 // Re-export commonly used types
@@ -49,7 +50,7 @@ pub use discovery::LccConnection;
 pub use discovery::MemoryReadTiming;
 pub use snip::{query_snip, parse_snip_payload, encode_snip_payload};
 pub use cdi::{Cdi, Segment, DataElement, Group, IntElement, EventIdElement, StringElement, FloatElement, ActionElement, BlobElement, EventRole, classify_event_slot, walk_event_slots};
-pub use dispatcher::{MessageDispatcher, ReceivedMessage, MessageFilter};
+pub use transport_actor::{TransportActor, TransportHandle, ReceivedMessage};
 pub use alias_allocation::AliasAllocator;
 
 /// LCC-RS error type

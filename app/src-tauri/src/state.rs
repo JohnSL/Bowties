@@ -1,9 +1,9 @@
 //! Application state management for Bowties Tauri application
 
-use lcc_rs::{LccConnection, DiscoveredNode, MessageDispatcher, SNIPData};
+use lcc_rs::{LccConnection, SNIPData, TransportHandle};
 use crate::commands::{ConnectionConfig};
 use crate::events::EventRouter;
-use crate::node_tree::NodeConfigTree;
+use crate::node_registry::NodeRegistry;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::collections::{HashMap, HashSet};
@@ -103,17 +103,17 @@ pub struct BowtieCatalog {
 /// Global application state shared across Tauri commands
 #[derive(Clone)]
 pub struct AppState {
-    /// LCC network connection with dispatcher (optional, None if not connected)
+    /// LCC network connection (optional, None if not connected)
     pub connection: Arc<RwLock<Option<Arc<Mutex<LccConnection>>>>>,
-    
-    /// Message dispatcher for persistent listening
-    pub dispatcher: Arc<RwLock<Option<Arc<Mutex<MessageDispatcher>>>>>,
+
+    /// Transport handle for direct channel-based communication
+    pub transport_handle: Arc<RwLock<Option<TransportHandle>>>,
     
     /// Event router for frontend notifications
     pub event_router: Arc<RwLock<Option<EventRouter>>>,
-    
-    /// Cache of discovered nodes
-    pub nodes: Arc<RwLock<Vec<DiscoveredNode>>>,
+
+    /// Per-node proxy registry — the canonical source of per-node state.
+    pub node_registry: Arc<NodeRegistry>,
     
     /// Cancellation token for config reading operations (T012)
     pub config_read_cancel: Arc<AtomicBool>,
@@ -127,20 +127,7 @@ pub struct AppState {
     /// `None` until the first `cdi-read-complete` cycle completes.
     pub bowties_catalog: Arc<RwLock<Option<BowtieCatalog>>>,
 
-    /// Config value cache: actual event ID bytes read from each CDI slot.
-    /// Outer key = node_id_hex; inner key = element_path joined by "/".
-    /// Populated as `read_all_config_values` completes for each node.
-    /// Consulted by `build_bowtie_catalog` to identify the correct CDI slot
-    /// for each event ID (precise match, fallback to heuristic if missing).
-    pub config_value_cache: Arc<RwLock<HashMap<String, HashMap<String, [u8; 8]>>>>,
 
-    // ── Spec 007: Unified node configuration trees ────────────────────────
-
-    /// Canonical per-node tree merging CDI structure, absolute addresses,
-    /// config values, and event roles.  Built once after CDI parse, then
-    /// progressively enriched by `merge_config_values` / `merge_event_roles`.
-    /// Key = node_id_hex.
-    pub node_trees: Arc<RwLock<HashMap<String, NodeConfigTree>>>,
 
     // ── Spec 008: Structure profile cache ─────────────────────────────────
 
@@ -162,14 +149,13 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             connection: Arc::new(RwLock::new(None)),
-            dispatcher: Arc::new(RwLock::new(None)),
+            transport_handle: Arc::new(RwLock::new(None)),
             event_router: Arc::new(RwLock::new(None)),
-            nodes: Arc::new(RwLock::new(Vec::new())),
+            node_registry: Arc::new(NodeRegistry::new()),
             active_connection: Arc::new(RwLock::new(None)),
             config_read_cancel: Arc::new(AtomicBool::new(false)),
             bowties_catalog: Arc::new(RwLock::new(None)),
-            config_value_cache: Arc::new(RwLock::new(HashMap::new())),
-            node_trees: Arc::new(RwLock::new(HashMap::new())),
+
             profiles: Arc::new(RwLock::new(HashMap::new())),
             diag_log: crate::diagnostics::new_diag_log(),
             diag_stats: crate::diagnostics::new_diag_stats(),
@@ -181,7 +167,7 @@ impl AppState {
         self.connection.read().await.is_some()
     }
 
-    /// Set the LCC connection (dispatcher-based)
+    /// Set the LCC connection
     pub async fn set_connection_with_dispatcher(
         &self,
         connection: Arc<Mutex<LccConnection>>,
@@ -190,10 +176,10 @@ impl AppState {
         // Set connection
         *self.connection.write().await = Some(connection.clone());
         
-        // Get dispatcher from connection
-        let dispatcher = {
+        // Get transport handle from connection
+        let handle = {
             let conn = connection.lock().await;
-            conn.dispatcher()
+            conn.transport_handle().cloned()
         };
         
         // Get our alias from connection for event routing
@@ -201,14 +187,17 @@ impl AppState {
             let conn = connection.lock().await;
             conn.our_alias().value()
         };
-        
-        if let Some(disp) = dispatcher {
-            *self.dispatcher.write().await = Some(disp.clone());
-            
-            // Start event router with our alias for direction detection.
-            // start() is async so it sets up subscriptions before returning — no race
-            // between EventRouter being ready and probe_nodes() firing.
-            let mut router = EventRouter::new(app, disp, our_alias);
+
+        // Store transport handle
+        if let Some(ref h) = handle {
+            *self.transport_handle.write().await = Some(h.clone());
+            // Configure node registry so proxies can be spawned
+            self.node_registry.set_transport(h.clone(), our_alias).await;
+        }
+
+        // Start event router
+        if let Some(ref h) = handle {
+            let mut router = EventRouter::from_handle(app, h.clone(), our_alias, self.node_registry.clone());
             router.start().await;
             *self.event_router.write().await = Some(router);
         }
@@ -243,60 +232,25 @@ impl AppState {
             router.stop().await;
         }
 
+        // Shut down all node proxy actors
+        self.node_registry.shutdown_all().await;
+
         // Abort background responder tasks (VerifyNodeGlobal + SNIP responders) that
-        // were spawned by LccConnection.  These tasks hold an Arc<Mutex<MessageDispatcher>>
-        // clone; if they are not aborted here they keep the dispatcher — and therefore
-        // the serial port — alive after the dispatcher is shut down.
+        // were spawned by LccConnection.  These tasks hold channel handles;
+        // if they are not aborted here they keep the transport alive.
+        // Then close the connection (shuts down the TransportActor if present).
         if let Some(conn_arc) = self.connection.read().await.as_ref().cloned() {
             let mut conn = conn_arc.lock().await;
             conn.shutdown_responders().await;
+            let _ = conn.close().await;
         }
         
-        // Shutdown dispatcher (signals background task to exit, releasing the serial port)
-        if let Some(disp_arc) = self.dispatcher.write().await.take() {
-            disp_arc.lock().await.shutdown().await;
-        }
+        // Clear transport handle
+        *self.transport_handle.write().await = None;
         
         // Clear connection and active config
         *self.connection.write().await = None;
         *self.active_connection.write().await = None;
-    }
-
-    /// Get all cached nodes
-    pub async fn get_nodes(&self) -> Vec<DiscoveredNode> {
-        self.nodes.read().await.clone()
-    }
-
-    /// Update the nodes cache
-    pub async fn set_nodes(&self, nodes: Vec<DiscoveredNode>) {
-        *self.nodes.write().await = nodes;
-    }
-
-    /// Add a single node to the cache (deduplicates by node_id)
-    pub async fn add_node(&self, node: DiscoveredNode) {
-        let mut nodes = self.nodes.write().await;
-        
-        // Check if node already exists
-        let exists = nodes.iter().any(|n| n.node_id == node.node_id);
-        
-        if !exists {
-            nodes.push(node);
-        }
-    }
-
-    /// Update a specific node in the cache
-    pub async fn update_node(&self, node_id: lcc_rs::NodeID, update_fn: impl FnOnce(&mut DiscoveredNode)) {
-        let mut nodes = self.nodes.write().await;
-        
-        if let Some(node) = nodes.iter_mut().find(|n| n.node_id == node_id) {
-            update_fn(node);
-        }
-    }
-
-    /// Clear all cached nodes
-    #[allow(dead_code)]
-    pub async fn clear_nodes(&self) {
-        self.nodes.write().await.clear();
     }
 }
 

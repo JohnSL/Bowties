@@ -9,6 +9,8 @@ mod events;
 mod traffic;
 pub mod layout;
 pub mod node_tree;
+pub mod node_proxy;
+pub mod node_registry;
 pub mod profile;
 pub mod diagnostics;
 
@@ -145,7 +147,7 @@ async fn connect_lcc(
             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             let conn_opt = state_clone.connection.read().await.clone();
             if let Some(conn_arc) = conn_opt {
-                let node_count = state_clone.nodes.read().await.len();
+                let node_count = state_clone.node_registry.len().await;
                 bwlog!(state_clone, "TCP second probe fired at T+2s ({} nodes visible before probe)", node_count);
                 {
                     let mut stats = state_clone.diag_stats.write().await;

@@ -1,10 +1,10 @@
 //! Event router for LCC message broadcasting to frontend
 
-use lcc_rs::{MessageDispatcher, ReceivedMessage, MTI};
+use lcc_rs::{TransportHandle, ReceivedMessage, MTI};
 use serde::Serialize;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tauri::{AppHandle, Emitter};
+use crate::node_registry::NodeRegistry;
 use crate::traffic::DecodedMessage;
 
 /// Event payloads sent to the frontend
@@ -40,24 +40,27 @@ pub struct MessageReceivedEvent {
     pub dest_alias: Option<u16>,
 }
 
-/// Event router that subscribes to dispatcher and emits Tauri events
+/// Event router that subscribes to transport handle and emits Tauri events
 pub struct EventRouter {
     app: AppHandle,
-    dispatcher: Arc<Mutex<MessageDispatcher>>,
+    /// Transport handle for direct channel access
+    handle: Option<TransportHandle>,
     router_task: Option<tokio::task::JoinHandle<()>>,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     our_alias: u16,
+    registry: Arc<NodeRegistry>,
 }
 
 impl EventRouter {
-    /// Create a new event router
-    pub fn new(app: AppHandle, dispatcher: Arc<Mutex<MessageDispatcher>>, our_alias: u16) -> Self {
+    /// Create a new event router backed by a TransportHandle
+    pub fn from_handle(app: AppHandle, handle: TransportHandle, our_alias: u16, registry: Arc<NodeRegistry>) -> Self {
         Self {
             app,
-            dispatcher,
+            handle: Some(handle),
             router_task: None,
             shutdown_tx: None,
             our_alias,
+            registry,
         }
     }
 
@@ -71,26 +74,25 @@ impl EventRouter {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
         
         // Subscribe BEFORE spawning — guaranteed in place when start() returns.
-        let all_rx = {
-            let disp = self.dispatcher.lock().await;
-            disp.subscribe_all()
-        };
-        let verified_node_rx = {
-            let disp = self.dispatcher.lock().await;
-            disp.subscribe_mti(MTI::VerifiedNode).await
-        };
-        let init_complete_rx = {
-            let disp = self.dispatcher.lock().await;
-            disp.subscribe_mti(MTI::InitializationComplete).await
+        let (all_rx, verified_node_rx, init_complete_rx) = if let Some(ref h) = self.handle {
+            (
+                h.subscribe_all(),
+                h.subscribe_mti(MTI::VerifiedNode).await,
+                h.subscribe_mti(MTI::InitializationComplete).await,
+            )
+        } else {
+            eprintln!("[EventRouter] No transport handle — cannot start");
+            return;
         };
 
         eprintln!("[EventRouter] Subscribed to message channels (alias=0x{:03X})", self.our_alias);
 
         let app = self.app.clone();
         let our_alias = self.our_alias;
+        let registry = self.registry.clone();
         
         let handle = tokio::spawn(async move {
-            Self::router_loop(app, all_rx, verified_node_rx, init_complete_rx, our_alias, shutdown_rx).await;
+            Self::router_loop(app, all_rx, verified_node_rx, init_complete_rx, our_alias, registry, shutdown_rx).await;
         });
         
         self.router_task = Some(handle);
@@ -104,6 +106,7 @@ impl EventRouter {
         mut verified_node_rx: tokio::sync::broadcast::Receiver<lcc_rs::ReceivedMessage>,
         mut init_complete_rx: tokio::sync::broadcast::Receiver<lcc_rs::ReceivedMessage>,
         our_alias: u16,
+        registry: Arc<NodeRegistry>,
         mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
     ) {
         eprintln!("[EventRouter] Router loop started with our_alias=0x{:03X}", our_alias);
@@ -123,13 +126,13 @@ impl EventRouter {
                 
                 // Handle node discovery via VerifyNodeGlobal replies
                 Ok(msg) = verified_node_rx.recv() => {
-                    Self::handle_node_discovered(&app, msg, our_alias);
+                    Self::handle_node_discovered(&app, &registry, msg, our_alias).await;
                 }
 
                 // Handle nodes that join mid-session (they announce via InitializationComplete)
                 // D15: Emit lcc-node-reinitialized so the frontend can refresh cached data.
                 Ok(msg) = init_complete_rx.recv() => {
-                    Self::handle_node_reinitialized(&app, msg, our_alias);
+                    Self::handle_node_reinitialized(&app, &registry, msg, our_alias).await;
                 }
             }
         }
@@ -160,7 +163,7 @@ impl EventRouter {
     }
 
     /// Handle node discovered events
-    fn handle_node_discovered(app: &AppHandle, msg: ReceivedMessage, our_alias: u16) {
+    async fn handle_node_discovered(app: &AppHandle, registry: &NodeRegistry, msg: ReceivedMessage, our_alias: u16) {
         eprintln!(
             "[EventRouter] handle_node_discovered: frame={} data_len={}",
             msg.frame.to_string(),
@@ -189,10 +192,15 @@ impl EventRouter {
                 );
 
                 let event = NodeDiscoveredEvent {
-                    node_id,
+                    node_id: node_id.clone(),
                     alias,
                     timestamp: chrono::Utc::now().to_rfc3339(),
                 };
+
+                // Auto-register proxy for this node
+                if let Ok(parsed_node_id) = lcc_rs::NodeID::from_hex_string(&node_id) {
+                    let _ = registry.get_or_create(parsed_node_id, alias).await;
+                }
 
                 eprintln!("[EventRouter] emitting lcc-node-discovered: node_id={} alias=0x{:03X}", event.node_id, event.alias);
                 // Emit to frontend
@@ -205,7 +213,7 @@ impl EventRouter {
 
     /// D15: Handle InitializationComplete — emit both node-discovered (for new nodes)
     /// and node-reinitialized (so the frontend can refresh cached SNIP/PIP/CDI).
-    fn handle_node_reinitialized(app: &AppHandle, msg: ReceivedMessage, our_alias: u16) {
+    async fn handle_node_reinitialized(app: &AppHandle, registry: &NodeRegistry, msg: ReceivedMessage, our_alias: u16) {
         if msg.frame.data.len() >= 6 {
             if let Ok((_, alias)) = msg.frame.get_mti() {
                 if alias == our_alias {
@@ -217,6 +225,13 @@ impl EventRouter {
                     node_id_bytes[0], node_id_bytes[1], node_id_bytes[2],
                     node_id_bytes[3], node_id_bytes[4], node_id_bytes[5]
                 );
+
+                // Auto-register proxy and signal reinitialization
+                if let Ok(parsed_node_id) = lcc_rs::NodeID::from_hex_string(&node_id) {
+                    if let Ok(proxy) = registry.get_or_create(parsed_node_id, alias).await {
+                        let _ = proxy.node_reinitialised().await;
+                    }
+                }
 
                 // Always emit node-discovered so new nodes get added
                 let event = NodeDiscoveredEvent {

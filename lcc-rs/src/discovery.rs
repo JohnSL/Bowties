@@ -8,7 +8,7 @@ use crate::{
     types::{NodeID, NodeAlias, DiscoveredNode, SNIPData, ProtocolFlags},
     protocol::{GridConnectFrame, MTI},
     transport::{LccTransport, TcpTransport},
-    dispatcher::MessageDispatcher,
+    transport_actor::{TransportActor, TransportHandle},
     alias_allocation::AliasAllocator,
     constants::CONNECTION_STABILIZATION_MS,
 };
@@ -35,10 +35,10 @@ pub struct MemoryReadTiming {
 
 /// High-level LCC connection for performing network operations
 pub struct LccConnection {
-    /// Optional message dispatcher for persistent listening
-    dispatcher: Option<Arc<Mutex<MessageDispatcher>>>,
-    /// Direct transport access (used when no dispatcher)
-    transport: Option<Box<dyn LccTransport>>,
+    /// Transport actor that owns the transport (lifecycle management).
+    actor: Option<TransportActor>,
+    /// Cheap-to-clone handle for sending/subscribing (main API surface).
+    handle: Option<TransportHandle>,
     /// Our node ID
     our_node_id: NodeID,
     /// Our node alias (negotiated via alias allocation protocol)
@@ -48,9 +48,7 @@ pub struct LccConnection {
     /// Protocol flags we advertise in PIP replies (D13)
     our_pip_flags: ProtocolFlags,
     /// Handles for background responder tasks (query + SNIP).
-    /// Stored so they can be aborted on disconnect, preventing the tasks
-    /// from keeping `Arc<Mutex<MessageDispatcher>>` (and therefore the
-    /// serial port) alive after the connection is closed.
+    /// Stored so they can be aborted on disconnect.
     responder_handles: Vec<tokio::task::JoinHandle<()>>,
 }
 
@@ -94,13 +92,13 @@ impl LccConnection {
 
         let our_alias = AliasAllocator::allocate(&node_id, &mut boxed_transport).await?;
 
-        // Pass the same connection (which already sent CID/RID/InitComplete) to the dispatcher.
-        let mut dispatcher = MessageDispatcher::new(boxed_transport);
-        dispatcher.start();
+        // Create the transport actor (sole owner of the transport).
+        let actor = TransportActor::new(boxed_transport);
+        let transport_handle = actor.handle();
 
         let connection = Self {
-            dispatcher: Some(Arc::new(Mutex::new(dispatcher))),
-            transport: None,
+            actor: Some(actor),
+            handle: Some(transport_handle),
             our_node_id: node_id,
             our_alias,
             our_snip: None,
@@ -128,13 +126,13 @@ impl LccConnection {
         // Perform alias allocation on the transport
         let our_alias = AliasAllocator::allocate(&node_id, &mut transport).await?;
 
-        // Hand the transport to the dispatcher
-        let mut dispatcher = MessageDispatcher::new(transport);
-        dispatcher.start();
+        // Create the transport actor (sole owner of the transport).
+        let actor = TransportActor::new(transport);
+        let transport_handle = actor.handle();
 
         let connection = Self {
-            dispatcher: Some(Arc::new(Mutex::new(dispatcher))),
-            transport: None,
+            actor: Some(actor),
+            handle: Some(transport_handle),
             our_node_id: node_id,
             our_alias,
             our_snip: None,
@@ -145,38 +143,13 @@ impl LccConnection {
         Ok(Arc::new(Mutex::new(connection)))
     }
 
-    /// Connect to an LCC network via TCP (legacy direct mode)
-    /// 
-    /// This creates a connection without a persistent dispatcher.
-    /// For new code, prefer `connect_with_dispatcher`.
-    /// 
-    /// # Arguments
-    /// * `host` - Hostname or IP address
-    /// * `port` - Port number (typically 12021)
-    /// * `node_id` - Our Node ID (6 bytes)
-    pub async fn connect(host: &str, port: u16, node_id: NodeID) -> Result<Self> {
-        let mut transport: Box<dyn LccTransport> = Box::new(TcpTransport::connect(host, port).await?);
-        let our_alias = AliasAllocator::allocate(&node_id, &mut transport).await?;
-        
-        // Reconnect for fresh channel
-        let transport = TcpTransport::connect(host, port).await?;
-        
-        Ok(Self {
-            dispatcher: None,
-            transport: Some(Box::new(transport)),
-            our_node_id: node_id,
-            our_alias,
-            our_snip: None,
-            our_pip_flags: Self::default_pip_flags(),
-            responder_handles: vec![],
-        })
-    }
-    
     /// Create an LCC connection with a custom transport (for testing)
     pub fn with_transport(transport: Box<dyn LccTransport>, node_id: NodeID, our_alias: NodeAlias) -> Self {
+        let actor = TransportActor::new(transport);
+        let transport_handle = actor.handle();
         Self {
-            dispatcher: None,
-            transport: Some(transport),
+            actor: Some(actor),
+            handle: Some(transport_handle),
             our_node_id: node_id,
             our_alias,
             our_snip: None,
@@ -216,9 +189,9 @@ impl LccConnection {
         }
     }
     
-    /// Get a reference to the message dispatcher (if using dispatcher mode)
-    pub fn dispatcher(&self) -> Option<Arc<Mutex<MessageDispatcher>>> {
-        self.dispatcher.clone()
+    /// Get a reference to the transport handle
+    pub fn transport_handle(&self) -> Option<&TransportHandle> {
+        self.handle.as_ref()
     }
     
     /// Get our node alias
@@ -242,15 +215,10 @@ impl LccConnection {
     /// - Uses silence detection: stops when no frames arrive for 25ms
     /// - Maximum timeout prevents hanging if network is busy
     pub async fn discover_nodes(&mut self, timeout_ms: u64) -> Result<Vec<DiscoveredNode>> {
-        if let Some(ref dispatcher) = self.dispatcher {
-            self.discover_nodes_with_dispatcher(dispatcher, timeout_ms).await
-        } else {
-            // Use direct transport mode
-            let our_alias = self.our_alias.value();
-            let transport = self.transport.as_mut()
-                .ok_or_else(|| crate::Error::Protocol("No transport or dispatcher available".to_string()))?;
-            Self::discover_nodes_direct_impl(transport, our_alias, timeout_ms).await
-        }
+        let handle = self.handle.as_ref()
+            .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?
+            .clone();
+        Self::discover_nodes_with_handle(&handle, self.our_alias.value(), timeout_ms).await
     }
 
     /// Send a `VerifyNodeGlobal` frame and return immediately.
@@ -266,39 +234,28 @@ impl LccConnection {
             self.our_alias.value(),
             vec![],
         )?;
-        if let Some(ref dispatcher) = self.dispatcher {
-            let disp = dispatcher.lock().await;
-            disp.send(&verify_frame).await
-        } else if let Some(ref mut transport) = self.transport {
-            transport.send(&verify_frame).await
-        } else {
-            Err(crate::Error::Protocol("No transport or dispatcher available".to_string()))
-        }
+        let handle = self.handle.as_ref()
+            .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?;
+        handle.send(&verify_frame).await
     }
 
-    /// Discover nodes using the message dispatcher (channel-based)
-    async fn discover_nodes_with_dispatcher(
-        &self,
-        dispatcher: &Arc<Mutex<MessageDispatcher>>,
+    /// Discover nodes via a `TransportHandle` (no mutex).
+    async fn discover_nodes_with_handle(
+        handle: &TransportHandle,
+        our_alias: u16,
         timeout_ms: u64,
     ) -> Result<Vec<DiscoveredNode>> {
         // Subscribe to VerifiedNode messages
-        let mut rx = {
-            let disp = dispatcher.lock().await;
-            disp.subscribe_mti(MTI::VerifiedNode).await
-        };
+        let mut rx = handle.subscribe_mti(MTI::VerifiedNode).await;
         
         // Send global Verify Node ID message
         let verify_frame = GridConnectFrame::from_mti(
             MTI::VerifyNodeGlobal,
-            self.our_alias.value(),
+            our_alias,
             vec![],
         )?;
         
-        {
-            let disp = dispatcher.lock().await;
-            disp.send(&verify_frame).await?;
-        }
+        handle.send(&verify_frame).await?;
         
         // Collect responses
         let mut nodes = HashMap::new();
@@ -366,88 +323,6 @@ impl LccConnection {
         Ok(nodes.into_values().collect())
     }
     
-    /// Discover nodes using direct transport (legacy polling mode) - static implementation
-    async fn discover_nodes_direct_impl(
-        transport: &mut Box<dyn LccTransport>,
-        our_alias: u16,
-        timeout_ms: u64,
-    ) -> Result<Vec<DiscoveredNode>> {
-        // Send global Verify Node ID message
-        let verify_frame = GridConnectFrame::from_mti(
-            MTI::VerifyNodeGlobal,
-            our_alias,
-            vec![],
-        )?;
-        
-        transport.send(&verify_frame).await?;
-        
-        // Collect responses
-        let mut nodes = HashMap::new();
-        let start_time = Instant::now();
-        let max_duration = Duration::from_millis(timeout_ms);
-        // After the first response, end collection once DISCOVERY_SILENCE_THRESHOLD_MS
-        // elapses with no further replies. Before any response we wait the full timeout
-        // so slow/high-latency networks are not prematurely abandoned.
-        let silence_threshold = Duration::from_millis(crate::constants::DISCOVERY_SILENCE_THRESHOLD_MS);
-        let mut last_receive_time: Option<Instant> = None;
-        
-        loop {
-            // Check if we've exceeded max timeout
-            if start_time.elapsed() >= max_duration {
-                break;
-            }
-            
-            // Only apply silence guard after seeing at least one response.
-            if let Some(t) = last_receive_time {
-                if t.elapsed() >= silence_threshold {
-                    break;
-                }
-            }
-            
-            // Try to receive a frame with a short timeout
-            let remaining_time = max_duration.saturating_sub(start_time.elapsed());
-            let poll_timeout = std::cmp::min(remaining_time, Duration::from_millis(crate::constants::DISCOVERY_POLL_INTERVAL_MS));
-            
-            match transport.receive(poll_timeout.as_millis() as u64).await? {
-                Some(frame) => {
-                    last_receive_time = Some(Instant::now());
-                    
-                    // Check if this is a Verified Node response
-                    if let Ok((mti, alias)) = frame.get_mti() {
-                        if mti == MTI::VerifiedNode && frame.data.len() == 6 {
-                            // Extract Node ID from data
-                            let node_id = NodeID::from_slice(&frame.data)?;
-                            let node_alias = NodeAlias::new(alias)?;
-                            
-                            nodes.insert(
-                                node_id,
-                                DiscoveredNode {
-                                    node_id,
-                                    alias: node_alias,
-                                    snip_data: None,
-                                    snip_status: crate::types::SNIPStatus::Unknown,
-                                    connection_status: crate::types::ConnectionStatus::Connected,
-                                    last_verified: None,
-                                    last_seen: chrono::Utc::now(),
-                                    cdi: None,
-                                    pip_flags: None,
-                                    pip_status: crate::types::PIPStatus::Unknown,
-                                },
-                            );
-                        }
-                    }
-                }
-                None => {
-                    // No frame received in this poll period
-                    // Small sleep to avoid busy-waiting
-                    sleep(Duration::from_millis(1)).await;
-                }
-            }
-        }
-        
-        Ok(nodes.into_values().collect())
-    }
-    
     /// Query SNIP data for a specific node
     /// 
     /// # Arguments
@@ -462,31 +337,14 @@ impl LccConnection {
         semaphore: Option<std::sync::Arc<tokio::sync::Semaphore>>,
     ) -> Result<(Option<crate::types::SNIPData>, crate::types::SNIPStatus)> {
         let sem = semaphore.unwrap_or_else(|| std::sync::Arc::new(tokio::sync::Semaphore::new(5)));
-        
-        if let Some(ref dispatcher) = self.dispatcher {
-            // TODO: Implement dispatcher-based SNIP query
-            // For now, use direct transport via dispatcher
-            let transport_arc = {
-                let disp = dispatcher.lock().await;
-                disp.transport()
-            };
-            let mut transport = transport_arc.lock().await;
-            crate::snip::query_snip(
-                transport.as_mut(),
-                self.our_alias.value(),
-                dest_alias,
-                sem,
-            ).await
-        } else if let Some(ref mut transport) = self.transport {
-            crate::snip::query_snip(
-                transport.as_mut(),
-                self.our_alias.value(),
-                dest_alias,
-                sem,
-            ).await
-        } else {
-            Err(crate::Error::Protocol("No transport or dispatcher available".to_string()))
-        }
+        let handle = self.handle.as_ref()
+            .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?;
+        crate::snip::query_snip(
+            handle,
+            self.our_alias.value(),
+            dest_alias,
+            sem,
+        ).await
     }
 
     /// Query Protocol Identification Protocol (PIP) data for a specific node.
@@ -507,29 +365,14 @@ impl LccConnection {
         semaphore: Option<std::sync::Arc<tokio::sync::Semaphore>>,
     ) -> Result<(Option<crate::types::ProtocolFlags>, crate::types::PIPStatus)> {
         let sem = semaphore.unwrap_or_else(|| std::sync::Arc::new(tokio::sync::Semaphore::new(5)));
-
-        if let Some(ref dispatcher) = self.dispatcher {
-            let transport_arc = {
-                let disp = dispatcher.lock().await;
-                disp.transport()
-            };
-            let mut transport = transport_arc.lock().await;
-            crate::pip::query_pip(
-                transport.as_mut(),
-                self.our_alias.value(),
-                dest_alias,
-                sem,
-            ).await
-        } else if let Some(ref mut transport) = self.transport {
-            crate::pip::query_pip(
-                transport.as_mut(),
-                self.our_alias.value(),
-                dest_alias,
-                sem,
-            ).await
-        } else {
-            Err(crate::Error::Protocol("No transport or dispatcher available".to_string()))
-        }
+        let handle = self.handle.as_ref()
+            .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?;
+        crate::pip::query_pip(
+            handle,
+            self.our_alias.value(),
+            dest_alias,
+            sem,
+        ).await
     }
 
     /// Verify a specific node's presence on the network
@@ -544,43 +387,30 @@ impl LccConnection {
     /// * `Ok(Some(NodeID))` - Node responded with its Node ID
     /// * `Ok(None)` - Node did not respond within timeout
     pub async fn verify_node(&mut self, dest_alias: u16, timeout_ms: u64) -> Result<Option<NodeID>> {
-        if let Some(ref dispatcher) = self.dispatcher {
-            self.verify_node_with_dispatcher(dispatcher, dest_alias, timeout_ms).await
-        } else {
-            let our_alias = self.our_alias.value();
-            let transport = self.transport.as_mut()
-                .ok_or_else(|| crate::Error::Protocol("No transport or dispatcher available".to_string()))?;
-            Self::verify_node_direct_impl(transport, our_alias, dest_alias, timeout_ms).await
-        }
+        let handle = self.handle.as_ref()
+            .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?
+            .clone();
+        Self::verify_node_with_handle(&handle, self.our_alias.value(), dest_alias, timeout_ms).await
     }
     
-    /// Verify node using message dispatcher
-    async fn verify_node_with_dispatcher(
-        &self,
-        dispatcher: &Arc<Mutex<MessageDispatcher>>,
+    /// Verify node using a `TransportHandle` (no mutex).
+    async fn verify_node_with_handle(
+        handle: &TransportHandle,
+        our_alias: u16,
         dest_alias: u16,
         timeout_ms: u64,
     ) -> Result<Option<NodeID>> {
-        // Subscribe to VerifiedNode messages
-        let mut rx = {
-            let disp = dispatcher.lock().await;
-            disp.subscribe_mti(MTI::VerifiedNode).await
-        };
+        let mut rx = handle.subscribe_mti(MTI::VerifiedNode).await;
         
-        // Send addressed Verify Node ID message
         let verify_frame = GridConnectFrame::from_addressed_mti(
             MTI::VerifyNodeAddressed,
-            self.our_alias.value(),
+            our_alias,
             dest_alias,
             vec![],
         )?;
         
-        {
-            let disp = dispatcher.lock().await;
-            disp.send(&verify_frame).await?;
-        }
+        handle.send(&verify_frame).await?;
         
-        // Wait for response
         let start_time = Instant::now();
         let max_duration = Duration::from_millis(timeout_ms);
         
@@ -600,57 +430,8 @@ impl LccConnection {
                         }
                     }
                 }
-                Ok(Err(_)) => continue, // Channel lagged
-                Err(_) => return Ok(None), // Timeout
-            }
-        }
-    }
-    
-    /// Verify node using direct transport - static implementation
-    async fn verify_node_direct_impl(
-        transport: &mut Box<dyn LccTransport>,
-        our_alias: u16,
-        dest_alias: u16,
-        timeout_ms: u64,
-    ) -> Result<Option<NodeID>> {
-        // Send addressed Verify Node ID message
-        let verify_frame = GridConnectFrame::from_addressed_mti(
-            MTI::VerifyNodeAddressed,
-            our_alias,
-            dest_alias,
-            vec![],
-        )?;
-        
-        transport.send(&verify_frame).await?;
-        
-        // Wait for response
-        let start_time = Instant::now();
-        let max_duration = Duration::from_millis(timeout_ms);
-        
-        loop {
-            // Check if we've exceeded timeout
-            if start_time.elapsed() >= max_duration {
-                return Ok(None); // Node did not respond
-            }
-            
-            // Try to receive a frame
-            let remaining_time = max_duration.saturating_sub(start_time.elapsed());
-            
-            match transport.receive(remaining_time.as_millis() as u64).await? {
-                Some(frame) => {
-                    // Check if this is a Verified Node response from our target
-                    if let Ok((mti, alias)) = frame.get_mti() {
-                        if mti == MTI::VerifiedNode && alias == dest_alias && frame.data.len() == 6 {
-                            let node_id = NodeID::from_slice(&frame.data)?;
-                            return Ok(Some(node_id));
-                        }
-                    }
-                    // Continue waiting for the right response
-                }
-                None => {
-                    // No frame received, continue waiting
-                    sleep(Duration::from_millis(1)).await;
-                }
+                Ok(Err(_)) => continue,
+                Err(_) => return Ok(None),
             }
         }
     }
@@ -663,27 +444,23 @@ impl LccConnection {
     /// - Listens for AliasMapEnquiry (AME) frames (MTI 0x10702)
     /// - Responds with VerifiedNode / AliasMapDefinition frames as appropriate
     /// 
-    /// Only works when using dispatcher mode (connect_with_dispatcher).
     /// This method returns immediately; the response task runs in the background.
     /// 
     /// # Errors
-    /// Returns an error if the connection is not using dispatcher mode.
+    /// Returns an error if the connection has no transport handle.
     pub fn start_responding_to_queries(&mut self) -> Result<()> {
-        let dispatcher = self.dispatcher.clone()
+        let handle = self.handle.clone()
             .ok_or_else(|| crate::Error::Protocol(
-                "start_responding_to_queries requires dispatcher mode (use connect_with_dispatcher)".to_string()
+                "start_responding_to_queries requires a transport handle".to_string()
             ))?;
         
         let our_alias = self.our_alias;
         let our_node_id = self.our_node_id;
         
         // --- VerifyNodeGlobal responder ---
-        let disp_global = dispatcher.clone();
+        let h = handle.clone();
         let handle_global = tokio::spawn(async move {
-            let mut rx = {
-                let disp = disp_global.lock().await;
-                disp.subscribe_mti(MTI::VerifyNodeGlobal).await
-            };
+            let mut rx = h.subscribe_mti(MTI::VerifyNodeGlobal).await;
             loop {
                 match rx.recv().await {
                     Ok(_msg) => {
@@ -692,8 +469,7 @@ impl LccConnection {
                             our_alias.value(),
                             our_node_id.as_bytes().to_vec(),
                         ) {
-                            let disp = disp_global.lock().await;
-                            let _ = disp.send(&response_frame).await;
+                            let _ = h.send(&response_frame).await;
                         }
                     }
                     Err(_) => break,
@@ -703,16 +479,12 @@ impl LccConnection {
         self.responder_handles.push(handle_global);
 
         // --- VerifyNodeAddressed responder (D8) ---
-        let disp_addressed = dispatcher.clone();
+        let h = handle.clone();
         let handle_addressed = tokio::spawn(async move {
-            let mut rx = {
-                let disp = disp_addressed.lock().await;
-                disp.subscribe_mti(MTI::VerifyNodeAddressed).await
-            };
+            let mut rx = h.subscribe_mti(MTI::VerifyNodeAddressed).await;
             loop {
                 match rx.recv().await {
                     Ok(msg) => {
-                        // Only respond if the query is addressed to us (dest alias matches)
                         let is_for_us = msg.frame.get_dest_from_body()
                             .map(|(dest, _)| dest == our_alias.value())
                             .unwrap_or(false);
@@ -722,8 +494,7 @@ impl LccConnection {
                                 our_alias.value(),
                                 our_node_id.as_bytes().to_vec(),
                             ) {
-                                let disp = disp_addressed.lock().await;
-                                let _ = disp.send(&response_frame).await;
+                                let _ = h.send(&response_frame).await;
                             }
                         }
                     }
@@ -734,29 +505,22 @@ impl LccConnection {
         self.responder_handles.push(handle_addressed);
 
         // --- AliasMapEnquiry (AME) responder (D5) ---
-        let disp_ame = dispatcher.clone();
+        let h = handle.clone();
         let handle_ame = tokio::spawn(async move {
-            let mut rx = {
-                let disp = disp_ame.lock().await;
-                disp.subscribe_mti(MTI::AliasMapEnquiry).await
-            };
+            let mut rx = h.subscribe_mti(MTI::AliasMapEnquiry).await;
             loop {
                 match rx.recv().await {
                     Ok(msg) => {
-                        // AME data is the 6-byte NodeID being enquired, or empty for global.
-                        // Respond if it matches our NodeID or is a global enquiry (empty data).
                         let data = &msg.frame.data;
                         let is_global = data.is_empty();
                         let matches_us = data.len() == 6 && data.as_slice() == our_node_id.as_bytes();
                         if is_global || matches_us {
-                            // Respond with AliasMapDefinition carrying our NodeID
                             if let Ok(amd_frame) = GridConnectFrame::from_mti(
                                 MTI::AliasMapDefinition,
                                 our_alias.value(),
                                 our_node_id.as_bytes().to_vec(),
                             ) {
-                                let disp = disp_ame.lock().await;
-                                let _ = disp.send(&amd_frame).await;
+                                let _ = h.send(&amd_frame).await;
                             }
                         }
                     }
@@ -767,17 +531,13 @@ impl LccConnection {
         self.responder_handles.push(handle_ame);
 
         // --- ProtocolSupportInquiry (PIP) responder (D13) ---
-        let disp_pip = dispatcher.clone();
+        let h = handle.clone();
         let our_pip_flags = self.our_pip_flags;
         let handle_pip = tokio::spawn(async move {
-            let mut rx = {
-                let disp = disp_pip.lock().await;
-                disp.subscribe_mti(MTI::ProtocolSupportInquiry).await
-            };
+            let mut rx = h.subscribe_mti(MTI::ProtocolSupportInquiry).await;
             loop {
                 match rx.recv().await {
                     Ok(msg) => {
-                        // Only respond if addressed to us
                         let is_for_us = msg.frame.get_dest_from_body()
                             .map(|(dest, _)| dest == our_alias.value())
                             .unwrap_or(false);
@@ -786,14 +546,12 @@ impl LccConnection {
                             if let Ok(response_frame) = GridConnectFrame::from_addressed_mti(
                                 MTI::ProtocolSupportReply,
                                 our_alias.value(),
-                                // source_alias of the request is in the header
                                 MTI::from_header(msg.frame.header)
                                     .map(|(_, src)| src)
                                     .unwrap_or(0),
                                 flag_bytes,
                             ) {
-                                let disp = disp_pip.lock().await;
-                                let _ = disp.send(&response_frame).await;
+                                let _ = h.send(&response_frame).await;
                             }
                         }
                     }
@@ -804,14 +562,9 @@ impl LccConnection {
         self.responder_handles.push(handle_pip);
 
         // --- D18: Ongoing alias conflict detector ---
-        // Monitor AMD frames — if another node claims our alias with a different
-        // NodeID, send AMR + re-announce our AMD to reassert ownership.
-        let disp_conflict = dispatcher.clone();
+        let h = handle.clone();
         let handle_conflict = tokio::spawn(async move {
-            let mut rx = {
-                let disp = disp_conflict.lock().await;
-                disp.subscribe_mti(MTI::AliasMapDefinition).await
-            };
+            let mut rx = h.subscribe_mti(MTI::AliasMapDefinition).await;
             loop {
                 match rx.recv().await {
                     Ok(msg) => {
@@ -823,20 +576,18 @@ impl LccConnection {
                                         "[LCC] ALIAS CONFLICT: alias 0x{:03X} claimed by another node — reasserting",
                                         our_alias.value()
                                     );
-                                    // Send AMR for our alias, then re-send AMD
                                     if let Ok(amr) = GridConnectFrame::from_mti(
                                         MTI::AliasMapReset,
                                         our_alias.value(),
                                         our_node_id.as_bytes().to_vec(),
                                     ) {
-                                        let disp = disp_conflict.lock().await;
-                                        let _ = disp.send(&amr).await;
+                                        let _ = h.send(&amr).await;
                                         if let Ok(amd) = GridConnectFrame::from_mti(
                                             MTI::AliasMapDefinition,
                                             our_alias.value(),
                                             our_node_id.as_bytes().to_vec(),
                                         ) {
-                                            let _ = disp.send(&amd).await;
+                                            let _ = h.send(&amd).await;
                                         }
                                     }
                                 }
@@ -870,48 +621,31 @@ impl LccConnection {
     /// - Listens for SNIPRequest messages (MTI 0x19DE8)
     /// - Responds with SNIPResponse datagrams containing our node's identification data
     /// 
-    /// Only works when using dispatcher mode (connect_with_dispatcher).
     /// This method returns immediately; the response task runs in the background.
     /// 
     /// # Errors
-    /// Returns an error if the connection is not using dispatcher mode.
+    /// Returns an error if the connection has no transport handle.
     pub fn start_responding_to_snip_requests(&mut self) -> Result<()> {
-        let dispatcher = self.dispatcher.clone()
+        let handle = self.handle.clone()
             .ok_or_else(|| crate::Error::Protocol(
-                "start_responding_to_snip_requests requires dispatcher mode (use connect_with_dispatcher)".to_string()
+                "start_responding_to_snip_requests requires a transport handle".to_string()
             ))?;
         
         let our_alias = self.our_alias;
         let snip_data = self.our_snip.clone();
         
-        // Spawn background task to handle SNIP requests; store the handle so it can be
-        // aborted on disconnect (prevents keeping MessageDispatcher alive indefinitely).
-        let handle = tokio::spawn(async move {
-            // Subscribe to SNIP request messages
-            let mut rx = {
-                let disp = dispatcher.lock().await;
-                disp.subscribe_mti(MTI::SNIPRequest).await
-            };
+        let h = handle;
+        let task_handle = tokio::spawn(async move {
+            let mut rx = h.subscribe_mti(MTI::SNIPRequest).await;
             
-            // Listen for SNIP requests and respond
             loop {
                 match rx.recv().await {
                     Ok(msg) => {
-                        // We received a SNIPRequest
-                        // Extract requester's alias from the frame's source field
                         if let Ok((_, requester_alias)) = msg.frame.get_mti() {
-                            // Only respond if we have SNIP data to provide
                             if let Some(ref snip) = snip_data {
-                                // Encode SNIP data as payload (include Section 2 even if empty)
                                 let snip_payload = crate::snip::encode_snip_payload(snip, true);
 
-                                // Send SNIP response as a datagram
-                                // The frame type byte is encoded in the upper nibble of data[0]
-                                // Formula: data[0] = (frame_type & 0xF0) | (dest_alias >> 8)
-                                // Followed by: data[1] = dest_alias & 0xFF
-                                
                                 if snip_payload.len() <= 6 {
-                                    // Single frame response (0x0A frame type)
                                     let frame_type = 0x0Au8;
                                     let mut data = vec![
                                         (frame_type & 0xF0) | ((requester_alias >> 8) as u8 & 0x0F),
@@ -924,11 +658,9 @@ impl LccConnection {
                                         our_alias.value(),
                                         data,
                                     ) {
-                                        let disp = dispatcher.lock().await;
-                                        let _ = disp.send(&response).await;
+                                        let _ = h.send(&response).await;
                                     }
                                 } else {
-                                    // Multi-frame response - send first, middle, and final frames
                                     let mut offset = 0;
                                     let chunk_size = 6;
                                     let mut frame_num = 0;
@@ -938,11 +670,11 @@ impl LccConnection {
                                         let chunk = &snip_payload[offset..end];
                                         
                                         let frame_type = if frame_num == 0 {
-                                            0x1Au8 // First frame
+                                            0x1Au8
                                         } else if end == snip_payload.len() {
-                                            0x2Au8 // Final frame
+                                            0x2Au8
                                         } else {
-                                            0x3Au8 // Middle frame
+                                            0x3Au8
                                         };
                                         
                                         let mut data = vec![
@@ -956,8 +688,7 @@ impl LccConnection {
                                             our_alias.value(),
                                             data,
                                         ) {
-                                            let disp = dispatcher.lock().await;
-                                            let _ = disp.send(&response).await;
+                                            let _ = h.send(&response).await;
                                         }
                                         
                                         offset = end;
@@ -968,13 +699,12 @@ impl LccConnection {
                         }
                     }
                     Err(_) => {
-                        // Receiver closed, exit background task
                         break;
                     }
                 }
             }
         });
-        self.responder_handles.push(handle);
+        self.responder_handles.push(task_handle);
         
         Ok(())
     }
@@ -982,8 +712,8 @@ impl LccConnection {
     /// Abort and await all background responder tasks (query + SNIP responders).
     ///
     /// Must be called before dropping the connection so that the background tasks
-    /// release their `Arc<Mutex<MessageDispatcher>>` clones, allowing the dispatcher
-    /// — and therefore the underlying serial port — to be freed immediately.
+    /// release their `TransportHandle` clones, allowing the transport
+    /// to be freed immediately.
     pub async fn shutdown_responders(&mut self) {
         for handle in self.responder_handles.drain(..) {
             handle.abort();
@@ -992,16 +722,14 @@ impl LccConnection {
     }
 
     /// Close the connection
-    pub async fn close(self) -> Result<()> {
-        if let Some(dispatcher) = self.dispatcher {
-            let mut disp = dispatcher.lock().await;
-            disp.shutdown().await;
-            Ok(())
-        } else if let Some(mut transport) = self.transport {
-            transport.close().await
-        } else {
-            Ok(())
+    pub async fn close(&mut self) -> Result<()> {
+        // Shut down the actor (this closes the underlying transport).
+        if let Some(ref mut actor) = self.actor {
+            actor.shutdown().await;
+            self.actor = None;
+            self.handle = None;
         }
+        Ok(())
     }
 
     /// Read CDI (Configuration Description Information) from a node
@@ -1017,148 +745,247 @@ impl LccConnection {
     /// * `Ok(String)` - Complete CDI XML document
     /// * `Err(_)` - Protocol error or timeout
     pub async fn read_cdi(&mut self, dest_alias: u16, timeout_ms: u64) -> Result<String> {
-        // For now, use direct transport access for both modes
-        // TODO: Implement proper dispatcher-based CDI reading
-        let transport_ref = if let Some(ref dispatcher) = self.dispatcher {
-            let disp = dispatcher.lock().await;
-            disp.transport()
-        } else if self.transport.is_some() {
-            // Will access directly below
-            return self.read_cdi_direct(dest_alias, timeout_ms).await;
-        } else {
-            return Err(crate::Error::Protocol("No transport or dispatcher available".to_string()));
-        };
-        
-        let mut transport = transport_ref.lock().await;
+        let handle = self.handle.as_ref()
+            .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?;
         let our_alias = self.our_alias.value();
-        Self::read_cdi_impl(transport.as_mut(), our_alias, dest_alias, timeout_ms).await
+        Self::read_cdi_with_handle(handle, our_alias, dest_alias, timeout_ms).await
     }
-    
-    /// Read CDI using direct transport reference
-    async fn read_cdi_direct(&mut self, dest_alias: u16, timeout_ms: u64) -> Result<String> {
-        let our_alias = self.our_alias.value();
-        if let Some(ref mut transport) = self.transport {
-            Self::read_cdi_impl(transport.as_mut(), our_alias, dest_alias, timeout_ms).await
-        } else {
-            Err(crate::Error::Protocol("No transport available".to_string()))
-        }
-    }
-    
-     /// Read CDI implementation - static method
-    async fn read_cdi_impl(
-        transport: &mut dyn LccTransport,
+
+    /// Read CDI using the subscribe-before-send pattern.
+    ///
+    /// This function:
+    ///   1. Subscribes to the broadcast channel BEFORE sending each request.
+    ///   2. Does not hold any lock while waiting for the reply.
+    ///   3. Handles DatagramRejected with "resend OK" flag (D9) by retransmitting.
+    ///   4. Handles DatagramReceivedOk timeout-extension flag (D12).
+    async fn read_cdi_with_handle(
+        handle: &TransportHandle,
         our_alias: u16,
         dest_alias: u16,
         timeout_ms: u64,
     ) -> Result<String> {
         use crate::protocol::{MemoryConfigCmd, AddressSpace, DatagramAssembler};
 
-        println!("[LCC] read_cdi starting for alias 0x{:03X}", dest_alias);
-        
-        let mut assembler = DatagramAssembler::new();
+        println!("[LCC] read_cdi_with_handle starting for alias 0x{:03X}", dest_alias);
+
         let mut cdi_data = Vec::new();
         let mut address = 0u32;
         const CHUNK_SIZE: u8 = 64;
+        const MAX_CHUNK_RETRIES: u8 = 3;
+
+        // Subscribe once for the entire CDI download.  This eliminates the gap
+        // between chunks where a per-chunk subscription would be dropped and
+        // re-created, which could cause stale replies to leak across chunk
+        // boundaries.
+        let mut rx = handle.subscribe_all();
 
         loop {
             println!("[LCC] Reading CDI chunk at address {} (chunk size {})", address, CHUNK_SIZE);
-            
-            // D14: Retry each chunk up to 3 times on timeout/error.
-            const MAX_CHUNK_RETRIES: u8 = 3;
+
+            let read_frames = MemoryConfigCmd::build_read(
+                our_alias,
+                dest_alias,
+                AddressSpace::Cdi,
+                address,
+                CHUNK_SIZE,
+            )?;
+
             let mut chunk_reply: Option<Vec<u8>> = None;
 
-            for attempt in 0..MAX_CHUNK_RETRIES {
+            'retry: for attempt in 0..MAX_CHUNK_RETRIES {
                 if attempt > 0 {
-                    println!("[LCC] Retrying CDI chunk at address {} (attempt {}/{})", address, attempt + 1, MAX_CHUNK_RETRIES);
-                    assembler.clear_source(dest_alias);
+                    println!(
+                        "[LCC] Retrying CDI chunk at address {} (attempt {}/{})",
+                        address,
+                        attempt + 1,
+                        MAX_CHUNK_RETRIES
+                    );
                 }
 
-                // Send read command for next chunk (may be multi-frame)
-                let read_frames = MemoryConfigCmd::build_read(
-                    our_alias,
-                    dest_alias,
-                    AddressSpace::Cdi,
-                    address,
-                    CHUNK_SIZE,
-                )?;
-
-                // Send all frames in sequence
-                println!("[LCC] Sending {} frame(s) for read command", read_frames.len());
-                for (i, frame) in read_frames.iter().enumerate() {
-                    println!("[LCC] Sending frame {}/{}: {}", i + 1, read_frames.len(), frame.to_string());
-                    transport.send(frame).await?;
-                }
-
-                // Wait for response (may be multi-frame datagram)
-                let start_time = Instant::now();
-                let max_duration = Duration::from_millis(timeout_ms);
-
-                let mut timed_out = false;
-                while chunk_reply.is_none() {
-                    if start_time.elapsed() >= max_duration {
-                        timed_out = true;
-                        break;
+                // Send the request.
+                {
+                    println!("[LCC] Sending {} frame(s) for CDI read command", read_frames.len());
+                    for (i, frame) in read_frames.iter().enumerate() {
+                        println!("[LCC] Sending frame {}/{}: {}", i + 1, read_frames.len(), frame.to_string());
+                        handle.send(frame).await?;
                     }
+                }
 
-                    let remaining = max_duration.saturating_sub(start_time.elapsed());
-                    if let Some(frame) = transport.receive(remaining.as_millis() as u64).await? {
-                        if let Ok((mti, source, dest)) = crate::protocol::MTI::from_datagram_header(frame.header) {
-                            if source == dest_alias && dest == our_alias && 
-                               matches!(mti, crate::protocol::MTI::DatagramOnly | crate::protocol::MTI::DatagramFirst | crate::protocol::MTI::DatagramMiddle | crate::protocol::MTI::DatagramFinal) {
-                                if let Some(complete_payload) = assembler.handle_frame(&frame)? {
-                                    let ack_frame = DatagramAssembler::send_acknowledgment(
-                                        our_alias,
-                                        dest_alias,
-                                    )?;
-                                    println!("[LCC] Sending DatagramReceivedOK: {}", ack_frame.to_string());
-                                    transport.send(&ack_frame).await?;
-                                    
-                                    chunk_reply = Some(complete_payload);
+                // Wait on broadcast channel (no transport lock held).
+                let mut max_duration = Duration::from_millis(timeout_ms);
+                let mut assembler = DatagramAssembler::new();
+
+                loop {
+                    match tokio::time::timeout(max_duration, rx.recv()).await {
+                        Ok(Ok(msg)) => {
+                            // Is this a datagram from dest_alias addressed to us?
+                            let is_our_datagram = MTI::from_datagram_header(msg.frame.header)
+                                .map(|(mti, src, dst)| {
+                                    matches!(
+                                        mti,
+                                        MTI::DatagramOnly
+                                            | MTI::DatagramFirst
+                                            | MTI::DatagramMiddle
+                                            | MTI::DatagramFinal
+                                    ) && src == dest_alias
+                                        && dst == our_alias
+                                })
+                                .unwrap_or(false);
+
+                            if is_our_datagram {
+                                if let Ok(Some(datagram_data)) = assembler.handle_frame(&msg.frame) {
+                                    // Validate size before accepting: 6-byte header + at most 65
+                                    // data bytes. If oversized, a spurious extra middle frame
+                                    // leaked in — ACK so the node doesn't hang, then retry.
+                                    if datagram_data.len() > 71 {
+                                        eprintln!(
+                                            "[LCC] WARNING: CDI reply oversized ({} bytes) at address {} (attempt {}/{}) — discarding and retrying",
+                                            datagram_data.len(), address, attempt + 1, MAX_CHUNK_RETRIES
+                                        );
+                                        if let Ok(ack) = DatagramAssembler::send_acknowledgment(our_alias, dest_alias) {
+                                            let _ = handle.send(&ack).await;
+                                        }
+                                        continue 'retry;
+                                    }
+                                    // Validate reply address: if it's from a stale/previous
+                                    // chunk, ACK to free the node, reset the assembler, and
+                                    // keep listening for the correct reply in this same inner
+                                    // loop (the real reply should be right behind the stale one).
+                                    if datagram_data.len() >= 6 {
+                                        let reply_addr = u32::from_be_bytes([
+                                            datagram_data[2], datagram_data[3],
+                                            datagram_data[4], datagram_data[5],
+                                        ]);
+                                        if reply_addr != address {
+                                            eprintln!(
+                                                "[LCC] WARNING: CDI stale reply (addr {} != expected {}) — ACK and discard, waiting for correct reply",
+                                                reply_addr, address
+                                            );
+                                            if let Ok(ack) = DatagramAssembler::send_acknowledgment(our_alias, dest_alias) {
+                                                let _ = handle.send(&ack).await;
+                                            }
+                                            assembler = DatagramAssembler::new();
+                                            continue; // inner recv loop — keep listening
+                                        }
+                                    }
+                                    // Step 4: ACK the reply datagram.
+                                    let ack = DatagramAssembler::send_acknowledgment(our_alias, dest_alias)?;
+                                    handle.send(&ack).await?;
+                                    println!("[LCC] Received CDI reply at address {}", address);
+                                    chunk_reply = Some(datagram_data);
+                                    break; // inner receive loop — got reply
+                                }
+                                // Multi-frame: keep accumulating.
+                                continue;
+                            }
+
+                            // Check for addressed control frames (DatagramRejected / DatagramReceivedOk).
+                            if let Ok((mti, src)) = MTI::from_header(msg.frame.header) {
+                                if src == dest_alias && msg.frame.data.len() >= 2 {
+                                    let dst = ((msg.frame.data[0] as u16) << 8)
+                                        | (msg.frame.data[1] as u16);
+                                    if dst == our_alias {
+                                        // D9: DatagramRejected — retry if "resend OK" (0x2000).
+                                        if mti == MTI::DatagramRejected {
+                                            let error_code = if msg.frame.data.len() >= 4 {
+                                                ((msg.frame.data[2] as u16) << 8)
+                                                    | (msg.frame.data[3] as u16)
+                                            } else {
+                                                0
+                                            };
+                                            if error_code & 0x2000 != 0 {
+                                                continue 'retry; // resend the request
+                                            } else {
+                                                return Err(crate::Error::Protocol(format!(
+                                                    "CDI read datagram rejected: error 0x{:04X}",
+                                                    error_code
+                                                )));
+                                            }
+                                        }
+                                        // D12: DatagramReceivedOk — honour timeout extension.
+                                        if mti == MTI::DatagramReceivedOk {
+                                            let flags = if msg.frame.data.len() >= 3 {
+                                                msg.frame.data[2]
+                                            } else {
+                                                0
+                                            };
+                                            let timeout_exp = flags & 0x0F;
+                                            if timeout_exp > 0 {
+                                                let extended_ms = (1u64 << timeout_exp) * 1000;
+                                                if extended_ms > max_duration.as_millis() as u64 {
+                                                    max_duration = Duration::from_millis(extended_ms);
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
+                            // Other frame: ignore and keep waiting.
                         }
-                    } else {
-                        sleep(Duration::from_millis(10)).await;
+                        Ok(Err(_)) => {
+                            // Broadcast channel lagged — retry this chunk.
+                            eprintln!(
+                                "[LCC] WARNING: broadcast channel lagged during CDI read at address {} (attempt {}/{})",
+                                address, attempt + 1, MAX_CHUNK_RETRIES
+                            );
+                            continue 'retry;
+                        }
+                        Err(_) => {
+                            // Timeout — try next attempt.
+                            continue 'retry;
+                        }
                     }
-                }
+                } // inner receive loop
 
                 if chunk_reply.is_some() {
-                    break;
+                    break 'retry;
                 }
-                if timed_out && attempt + 1 >= MAX_CHUNK_RETRIES {
-                    return Err(crate::Error::Timeout(format!(
-                        "Timeout waiting for CDI read reply at address {} after {} attempts",
-                        address, MAX_CHUNK_RETRIES
-                    )));
-                }
+            } // retry loop
+
+            let reply_data = chunk_reply.ok_or_else(|| {
+                crate::Error::Timeout(format!(
+                    "Timeout waiting for CDI read reply at address {} after {} attempts",
+                    address, MAX_CHUNK_RETRIES
+                ))
+            })?;
+
+            // Sanity-check assembled datagram size: must have at least 6 header + 1 data byte.
+            // Oversized replies (> 71) are caught and retried in the inner recv loop above.
+            if reply_data.len() < 7 {
+                eprintln!(
+                    "[LCC] WARNING: CDI reply datagram size {} is too small (< 7) at address {}",
+                    reply_data.len(), address
+                );
             }
 
-            // Parse read reply
-            let reply_data = chunk_reply.unwrap();
-let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
-
+            let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
             match reply {
-                crate::protocol::ReadReply::Success { data, .. } => {
-                    // Guard against zero-length success reply (would loop forever).
-                    // OpenLCB_Java advances by the *requested* count in this case.
+                crate::protocol::ReadReply::Success { address: reply_addr, data, .. } => {
+                    if reply_addr != address {
+                        eprintln!(
+                            "[LCC] WARNING: CDI chunk address mismatch: expected {} got {} (data len {})",
+                            address, reply_addr, data.len()
+                        );
+                    }
+                    if data.len() > CHUNK_SIZE as usize {
+                        eprintln!(
+                            "[LCC] WARNING: CDI chunk data length {} exceeds CHUNK_SIZE {} at address {}",
+                            data.len(), CHUNK_SIZE, address
+                        );
+                    }
                     if data.is_empty() {
                         break;
                     }
-                    // Check for null terminator
                     if let Some(null_pos) = data.iter().position(|&b| b == 0x00) {
-                        // Found null terminator - append up to it and we're done
                         cdi_data.extend_from_slice(&data[..null_pos]);
                         break;
                     } else {
-                        // No null terminator yet - append all data and continue
                         address += data.len() as u32;
                         cdi_data.extend_from_slice(&data);
                     }
                 }
                 crate::protocol::ReadReply::Failed { error_code, message, .. } => {
-                    // 0x1082 = "address out of bounds" / "not found" — some nodes
-                    // (e.g. TCS UWT-100) return this instead of a null terminator to
-                    // signal end-of-CDI.  Treat it the same as a null terminator.
+                    // 0x1082 = "address out of bounds" — end of CDI (same as read_cdi_impl).
                     if error_code == 0x1082 {
                         break;
                     }
@@ -1169,15 +996,11 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
                 }
             }
 
-            // Safety limit: max 10MB CDI
             if cdi_data.len() > 10 * 1024 * 1024 {
-                return Err(crate::Error::Protocol(
-                    "CDI exceeds 10MB size limit".to_string()
-                ));
+                return Err(crate::Error::Protocol("CDI exceeds 10MB size limit".to_string()));
             }
         }
 
-        // Convert to UTF-8 string
         String::from_utf8(cdi_data).map_err(|e| {
             crate::Error::Protocol(format!("CDI is not valid UTF-8: {}", e))
         })
@@ -1203,33 +1026,23 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
         count: u8,
         timeout_ms: u64,
     ) -> Result<Vec<u8>> {
-        if let Some(ref dispatcher) = self.dispatcher {
-            // Dispatcher mode: subscribe to broadcast channel, send request, wait for reply.
-            // This avoids holding the transport mutex for the entire receive loop — the
-            // dispatcher background task is the designated reader; we only need the mutex
-            // briefly for each outgoing send.
-            let our_alias = self.our_alias.value();
-            Self::read_memory_with_dispatcher(
-                dispatcher,
-                our_alias,
-                dest_alias,
-                address_space,
-                address,
-                count,
-                timeout_ms,
-            ).await
-        } else if self.transport.is_some() {
-            self.read_memory_direct(dest_alias, address_space, address, count, timeout_ms).await
-        } else {
-            Err(crate::Error::Protocol("No transport or dispatcher available".to_string()))
-        }
+        let handle = self.handle.as_ref()
+            .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?;
+        let our_alias = self.our_alias.value();
+        Self::read_memory_with_handle(
+            handle,
+            our_alias,
+            dest_alias,
+            address_space,
+            address,
+            count,
+            timeout_ms,
+        ).await
     }
 
     /// Like [`read_memory`] but also returns per-read timing metadata.
     ///
     /// Used by `read_all_config_values` to populate `BatchReadStat` diagnostics.
-    /// Only dispatcher mode captures per-frame timing; direct-transport mode
-    /// synthesises a single-frame summary from wall-clock time.
     pub async fn read_memory_timed(
         &mut self,
         dest_alias: u16,
@@ -1238,44 +1051,32 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
         count: u8,
         timeout_ms: u64,
     ) -> Result<(Vec<u8>, MemoryReadTiming)> {
-        if let Some(ref dispatcher) = self.dispatcher {
-            let our_alias = self.our_alias.value();
-            Self::read_memory_with_dispatcher_timed(
-                dispatcher,
-                our_alias,
-                dest_alias,
-                address_space,
-                address,
-                count,
-                timeout_ms,
-            ).await
-        } else if self.transport.is_some() {
-            let t0 = Instant::now();
-            let data = self.read_memory_direct(dest_alias, address_space, address, count, timeout_ms).await?;
-            let ms = t0.elapsed().as_millis() as u64;
-            Ok((data, MemoryReadTiming {
-                first_frame_latency_ms: ms,
-                frame_gaps_ms: vec![],
-                total_duration_ms: ms,
-                frame_count: 1,
-            }))
-        } else {
-            Err(crate::Error::Protocol("No transport or dispatcher available".to_string()))
-        }
+        let handle = self.handle.as_ref()
+            .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?;
+        let our_alias = self.our_alias.value();
+        Self::read_memory_with_handle_timed(
+            handle,
+            our_alias,
+            dest_alias,
+            address_space,
+            address,
+            count,
+            timeout_ms,
+        ).await
     }
 
-    /// Read memory in dispatcher mode (untimed thin wrapper).
+    /// Read memory (untimed thin wrapper).
     ///
-    /// The dispatcher background task is the sole owner of the transport receive path.
+    /// The transport actor is the sole owner of the transport receive path.
     /// This method:
     ///   1. Subscribes to the all-frames broadcast channel BEFORE sending (no frames missed).
-    ///   2. Locks the transport briefly to send the request frames only.
-    ///   3. Waits on the broadcast channel for reply datagram frames — no transport lock held.
-    ///   4. Sends the DatagramReceivedOK acknowledgment via a brief transport lock.
+    ///   2. Sends the request frames via the transport handle.
+    ///   3. Waits on the broadcast channel for reply datagram frames.
+    ///   4. Sends the DatagramReceivedOK acknowledgment.
     ///
     /// Round-trip latency is therefore pure network latency (~4ms), not 100ms poll cycles.
-    async fn read_memory_with_dispatcher(
-        dispatcher: &Arc<Mutex<MessageDispatcher>>,
+    async fn read_memory_with_handle(
+        handle: &TransportHandle,
         our_alias: u16,
         dest_alias: u16,
         address_space: u8,
@@ -1283,14 +1084,14 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
         count: u8,
         timeout_ms: u64,
     ) -> Result<Vec<u8>> {
-        Self::read_memory_with_dispatcher_timed(
-            dispatcher, our_alias, dest_alias, address_space, address, count, timeout_ms,
+        Self::read_memory_with_handle_timed(
+            handle, our_alias, dest_alias, address_space, address, count, timeout_ms,
         ).await.map(|(data, _timing)| data)
     }
 
-    /// Dispatcher-mode read that also captures per-frame timing for diagnostics.
-    async fn read_memory_with_dispatcher_timed(
-        dispatcher: &Arc<Mutex<MessageDispatcher>>,
+    /// Read that also captures per-frame timing for diagnostics.
+    async fn read_memory_with_handle_timed(
+        handle: &TransportHandle,
         our_alias: u16,
         dest_alias: u16,
         address_space: u8,
@@ -1306,18 +1107,12 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
         let read_frames = MemoryConfigCmd::build_read(our_alias, dest_alias, space, address, count)?;
 
         // Step 1: Subscribe BEFORE sending so we cannot miss the reply.
-        let mut rx = {
-            let disp = dispatcher.lock().await;
-            disp.subscribe_all()
-        };
+        let mut rx = handle.subscribe_all();
 
-        // Step 2: Send the request (brief lock — just for the write operation).
+        // Step 2: Send the request.
         let send_time = Instant::now();
-        {
-            let disp = dispatcher.lock().await;
-            for frame in read_frames.iter() {
-                disp.send(frame).await?;
-            }
+        for frame in read_frames.iter() {
+            handle.send(frame).await?;
         }
 
         // Step 3: Wait for reply on the broadcast channel (no transport lock held).
@@ -1364,9 +1159,8 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
                                         // Bit 0x2000 = "resend OK" (temporary, buffer full)
                                         if error_code & 0x2000 != 0 {
                                             // Re-send the read request instead of timing out
-                                            let disp = dispatcher.lock().await;
                                             for frame in read_frames.iter() {
-                                                disp.send(frame).await?;
+                                                handle.send(frame).await?;
                                             }
                                             continue;
                                         } else {
@@ -1406,10 +1200,7 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
                     if let Ok(Some(datagram_data)) = assembler.handle_frame(&msg.frame) {
                         // Step 4: Send ACK (brief lock).
                         let ack_frame = DatagramAssembler::send_acknowledgment(our_alias, dest_alias)?;
-                        {
-                            let disp = dispatcher.lock().await;
-                            disp.send(&ack_frame).await?;
-                        }
+                        handle.send(&ack_frame).await?;
 
                         let total_duration_ms = send_time.elapsed().as_millis() as u64;
                         let timing = MemoryReadTiming {
@@ -1445,119 +1236,6 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
                 }
             }
         }
-    }
-
-    /// Read memory using direct transport reference
-    async fn read_memory_direct(
-        &mut self,
-        dest_alias: u16,
-        address_space: u8,
-        address: u32,
-        count: u8,
-        timeout_ms: u64,
-    ) -> Result<Vec<u8>> {
-        let our_alias = self.our_alias.value();
-        if let Some(ref mut transport) = self.transport {
-            Self::read_memory_impl(
-                transport.as_mut(),
-                our_alias,
-                dest_alias,
-                address_space,
-                address,
-                count,
-                timeout_ms,
-            ).await
-        } else {
-            Err(crate::Error::Protocol("No transport available".to_string()))
-        }
-    }
-    
-    /// Read memory implementation - static method
-    async fn read_memory_impl(
-        transport: &mut dyn LccTransport,
-        our_alias: u16,
-        dest_alias: u16,
-        address_space: u8,
-        address: u32,
-        count: u8,
-        timeout_ms: u64,
-    ) -> Result<Vec<u8>> {
-        use crate::protocol::{MemoryConfigCmd, AddressSpace, DatagramAssembler};
-        use std::time::Instant;
-        
-        // Convert address space byte to enum
-        let space = AddressSpace::from_u8(address_space)
-            .map_err(|e| crate::Error::Protocol(e))?;
-        
-        // Build read command
-        let read_frames = MemoryConfigCmd::build_read(
-            our_alias,
-            dest_alias,
-            space,
-            address,
-            count,
-        )?;
-        
-        // Send all frames
-        for frame in read_frames.iter() {
-            transport.send(frame).await?;
-        }
-        
-        // Wait for response
-        let start_time = Instant::now();
-        let max_duration = Duration::from_millis(timeout_ms);
-        let mut assembler = DatagramAssembler::new();
-        
-        while start_time.elapsed() < max_duration {
-            let remaining = max_duration.saturating_sub(start_time.elapsed());
-            if let Some(frame) = transport.receive(remaining.as_millis() as u64).await? {
-                // Filter: only accept datagram frames addressed to us from the expected node.
-                // On a multi-node network, datagrams from unrelated nodes must be ignored
-                // so they don't corrupt the assembler state or return wrong data.
-                let is_our_datagram = MTI::from_datagram_header(frame.header)
-                    .map(|(mti, src, dst)| {
-                        let is_datagram = matches!(
-                            mti,
-                            MTI::DatagramOnly
-                                | MTI::DatagramFirst
-                                | MTI::DatagramMiddle
-                                | MTI::DatagramFinal
-                        );
-                        is_datagram && src == dest_alias && dst == our_alias
-                    })
-                    .unwrap_or(false);
-
-                if !is_our_datagram {
-                    continue;
-                }
-
-                // Check if datagram frame and assemble
-                if let Ok(Some(datagram_data)) = assembler.handle_frame(&frame) {
-                    // Send DatagramReceivedOK acknowledgment to the node
-                    let ack_frame = DatagramAssembler::send_acknowledgment(our_alias, dest_alias)?;
-                    transport.send(&ack_frame).await?;
-                    
-                    // Parse response
-                    let reply = MemoryConfigCmd::parse_read_reply(&datagram_data)?;
-                    
-                    match reply {
-                        crate::protocol::ReadReply::Success { data, .. } => {
-                            return Ok(data);
-                        }
-                        crate::protocol::ReadReply::Failed { error_code, message, .. } => {
-                            return Err(crate::Error::Protocol(format!(
-                                "Memory read failed: error 0x{:04X} - {}",
-                                error_code, message
-                            )));
-                        }
-                    }
-                }
-            }
-        }
-        
-        Err(crate::Error::Timeout(format!(
-            "Timeout waiting for memory read response"
-        )))
     }
 
     // ========================================================================
@@ -1638,27 +1316,23 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
         data: &[u8],
         timeout_ms: u64,
     ) -> Result<()> {
-        if let Some(ref dispatcher) = self.dispatcher {
-            let our_alias = self.our_alias.value();
-            Self::write_memory_with_dispatcher(
-                dispatcher,
-                our_alias,
-                dest_alias,
-                address_space,
-                address,
-                data,
-                timeout_ms,
-            ).await
-        } else if self.transport.is_some() {
-            self.write_memory_direct(dest_alias, address_space, address, data, timeout_ms).await
-        } else {
-            Err(crate::Error::Protocol("No transport or dispatcher available".to_string()))
-        }
+        let handle = self.handle.as_ref()
+            .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?;
+        let our_alias = self.our_alias.value();
+        Self::write_memory_with_handle(
+            handle,
+            our_alias,
+            dest_alias,
+            address_space,
+            address,
+            data,
+            timeout_ms,
+        ).await
     }
 
-    /// Write memory in dispatcher mode.
-    async fn write_memory_with_dispatcher(
-        dispatcher: &Arc<Mutex<MessageDispatcher>>,
+    /// Write memory via transport handle.
+    async fn write_memory_with_handle(
+        handle: &TransportHandle,
         our_alias: u16,
         dest_alias: u16,
         address_space: u8,
@@ -1674,17 +1348,11 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
         let write_frames = MemoryConfigCmd::build_write(our_alias, dest_alias, space, address, data)?;
 
         // Step 1: Subscribe BEFORE sending so we cannot miss the reply.
-        let mut rx = {
-            let disp = dispatcher.lock().await;
-            disp.subscribe_all()
-        };
+        let mut rx = handle.subscribe_all();
 
-        // Step 2: Send the request (brief lock).
-        {
-            let disp = dispatcher.lock().await;
-            for frame in write_frames.iter() {
-                disp.send(frame).await?;
-            }
+        // Step 2: Send the request.
+        for frame in write_frames.iter() {
+            handle.send(frame).await?;
         }
 
         // Step 3: Wait for Datagram Received OK from dest_alias addressed to us.
@@ -1746,9 +1414,8 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
                                     };
                                     if error_code & 0x2000 != 0 {
                                         // Resend OK — re-send the write request
-                                        let disp = dispatcher.lock().await;
                                         for frame in write_frames.iter() {
-                                            disp.send(frame).await?;
+                                            handle.send(frame).await?;
                                         }
                                         continue;
                                     } else {
@@ -1780,16 +1447,14 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
                                     };
                                     // Send DatagramReceivedOk for the reply datagram
                                     let ack = DatagramAssembler::send_acknowledgment(our_alias, dest_alias)?;
-                                    let disp = dispatcher.lock().await;
-                                    disp.send(&ack).await?;
+                                    handle.send(&ack).await?;
                                     return Err(crate::Error::Protocol(format!(
                                         "Write reply error: 0x{:04X}", error_code
                                     )));
                                 }
                                 // Success reply — acknowledge the datagram
                                 let ack = DatagramAssembler::send_acknowledgment(our_alias, dest_alias)?;
-                                let disp = dispatcher.lock().await;
-                                disp.send(&ack).await?;
+                                handle.send(&ack).await?;
                                 return Ok(());
                             }
                         }
@@ -1810,76 +1475,7 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
     }
 
     /// Write memory using direct transport reference.
-    async fn write_memory_direct(
-        &mut self,
-        dest_alias: u16,
-        address_space: u8,
-        address: u32,
-        data: &[u8],
-        timeout_ms: u64,
-    ) -> Result<()> {
-        let our_alias = self.our_alias.value();
-        if let Some(ref mut transport) = self.transport {
-            Self::write_memory_impl(
-                transport.as_mut(),
-                our_alias,
-                dest_alias,
-                address_space,
-                address,
-                data,
-                timeout_ms,
-            ).await
-        } else {
-            Err(crate::Error::Protocol("No transport available".to_string()))
-        }
-    }
 
-    /// Write memory implementation — static method using direct transport.
-    async fn write_memory_impl(
-        transport: &mut dyn LccTransport,
-        our_alias: u16,
-        dest_alias: u16,
-        address_space: u8,
-        address: u32,
-        data: &[u8],
-        timeout_ms: u64,
-    ) -> Result<()> {
-        use crate::protocol::{MemoryConfigCmd, AddressSpace};
-
-        let space = AddressSpace::from_u8(address_space)
-            .map_err(|e| crate::Error::Protocol(e))?;
-
-        let write_frames = MemoryConfigCmd::build_write(our_alias, dest_alias, space, address, data)?;
-
-        // Send all frames
-        for frame in write_frames.iter() {
-            transport.send(frame).await?;
-        }
-
-        // Wait for Datagram Received OK
-        let start_time = Instant::now();
-        let max_duration = Duration::from_millis(timeout_ms);
-
-        while start_time.elapsed() < max_duration {
-            let remaining = max_duration.saturating_sub(start_time.elapsed());
-            if let Some(frame) = transport.receive(remaining.as_millis() as u64).await? {
-                if let Ok((mti, src)) = MTI::from_header(frame.header) {
-                    if mti == MTI::DatagramReceivedOk && src == dest_alias {
-                        if frame.data.len() >= 2 {
-                            let dst = ((frame.data[0] as u16) << 8) | (frame.data[1] as u16);
-                            if dst == our_alias {
-                                return Ok(());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Err(crate::Error::Timeout(
-            "Timeout waiting for write acknowledgment".to_string(),
-        ))
-    }
 
     /// Send Update Complete command to a node.
     ///
@@ -1889,59 +1485,19 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
         &mut self,
         dest_alias: u16,
     ) -> Result<()> {
-        if let Some(ref dispatcher) = self.dispatcher {
-            let our_alias = self.our_alias.value();
-            Self::send_update_complete_with_dispatcher(
-                dispatcher,
-                our_alias,
-                dest_alias,
-            ).await
-        } else if self.transport.is_some() {
-            self.send_update_complete_direct(dest_alias).await
-        } else {
-            Err(crate::Error::Protocol("No transport or dispatcher available".to_string()))
-        }
-    }
-
-    /// Send update complete in dispatcher mode.
-    async fn send_update_complete_with_dispatcher(
-        dispatcher: &Arc<Mutex<MessageDispatcher>>,
-        our_alias: u16,
-        dest_alias: u16,
-    ) -> Result<()> {
-        use crate::protocol::MemoryConfigCmd;
-
-        let frames = MemoryConfigCmd::build_update_complete(our_alias, dest_alias)?;
-
-        let disp = dispatcher.lock().await;
-        for frame in frames.iter() {
-            disp.send(frame).await?;
-        }
-
-        // Fire-and-forget: not all nodes send a Datagram Received OK acknowledgement.
-        Ok(())
-    }
-
-    /// Send update complete using direct transport.
-    async fn send_update_complete_direct(
-        &mut self,
-        dest_alias: u16,
-    ) -> Result<()> {
+        let handle = self.handle.as_ref()
+            .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?;
         let our_alias = self.our_alias.value();
-        if let Some(ref mut transport) = self.transport {
-            Self::send_update_complete_impl(
-                transport.as_mut(),
-                our_alias,
-                dest_alias,
-            ).await
-        } else {
-            Err(crate::Error::Protocol("No transport available".to_string()))
-        }
+        Self::send_update_complete_with_handle(
+            handle,
+            our_alias,
+            dest_alias,
+        ).await
     }
 
-    /// Send update complete implementation — static method.
-    async fn send_update_complete_impl(
-        transport: &mut dyn LccTransport,
+    /// Send update complete via transport handle.
+    async fn send_update_complete_with_handle(
+        handle: &TransportHandle,
         our_alias: u16,
         dest_alias: u16,
     ) -> Result<()> {
@@ -1950,18 +1506,20 @@ let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
         let frames = MemoryConfigCmd::build_update_complete(our_alias, dest_alias)?;
 
         for frame in frames.iter() {
-            transport.send(frame).await?;
+            handle.send(frame).await?;
         }
 
         // Fire-and-forget: not all nodes send a Datagram Received OK acknowledgement.
         Ok(())
     }
+
 }
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::LccTransport;
+    use crate::transport::{LccTransport, TransportReader, TransportWriter};
     use async_trait::async_trait;
     
     // Mock transport for testing
@@ -1992,6 +1550,11 @@ mod tests {
             if self.response_index < self.responses.len() {
                 let frame = self.responses[self.response_index].clone();
                 self.response_index += 1;
+                // Yield before returning so the dispatcher listener loop does not
+                // consume all queued frames in a single burst.  This gives
+                // multi-step callers a chance to process the previous response
+                // and re-subscribe before the next frame is broadcast.
+                tokio::task::yield_now().await;
                 Ok(Some(frame))
             } else {
                 // Simulate silence - return None after all responses
@@ -2000,6 +1563,55 @@ mod tests {
             }
         }
         
+        async fn close(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        fn into_halves(self: Box<Self>) -> (Box<dyn TransportReader>, Box<dyn TransportWriter>) {
+            (
+                Box::new(DiscoveryMockReader {
+                    responses: self.responses,
+                    response_index: self.response_index,
+                }),
+                Box::new(DiscoveryMockWriter {
+                    sent_frames: self.sent_frames,
+                }),
+            )
+        }
+    }
+
+    struct DiscoveryMockReader {
+        responses: Vec<GridConnectFrame>,
+        response_index: usize,
+    }
+
+    #[async_trait]
+    impl TransportReader for DiscoveryMockReader {
+        async fn receive(&mut self) -> Result<GridConnectFrame> {
+            loop {
+                if self.response_index < self.responses.len() {
+                    let frame = self.responses[self.response_index].clone();
+                    self.response_index += 1;
+                    tokio::task::yield_now().await;
+                    return Ok(frame);
+                }
+                // No more responses — block until shutdown cancels us.
+                sleep(Duration::from_millis(30)).await;
+            }
+        }
+    }
+
+    struct DiscoveryMockWriter {
+        sent_frames: Vec<GridConnectFrame>,
+    }
+
+    #[async_trait]
+    impl TransportWriter for DiscoveryMockWriter {
+        async fn send(&mut self, frame: &GridConnectFrame) -> Result<()> {
+            self.sent_frames.push(frame.clone());
+            Ok(())
+        }
+
         async fn close(&mut self) -> Result<()> {
             Ok(())
         }
@@ -2280,10 +1892,10 @@ mod tests {
         assert!(expected.data.is_empty(), "VerifyNodeGlobal carries no payload");
     }
 
-    // --- D9/D10/D12: Dispatcher-path datagram handling tests ---
+    // --- D9/D10/D12: Datagram handling tests ---
 
     use crate::transport::mock::MockTransport as GlobalMockTransport;
-    use crate::dispatcher::MessageDispatcher;
+    use crate::transport_actor::TransportActor;
 
     /// Helper: build a DatagramRejected frame from `from_alias` addressed to `to_alias`
     /// with the given 16-bit error code.
@@ -2358,16 +1970,14 @@ mod tests {
         transport.add_receive_frame(ack.to_string());
         transport.add_receive_frame(reply.to_string());
 
-        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
-        dispatcher.start();
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
 
-        let disp = Arc::new(Mutex::new(dispatcher));
-
-        let result = LccConnection::read_memory_with_dispatcher(
-            &disp, our_alias, node_alias, 0xFD, 0x0000, 2, 3000,
+        let result = LccConnection::read_memory_with_handle(
+            &handle, our_alias, node_alias, 0xFD, 0x0000, 2, 3000,
         ).await;
 
-        disp.lock().await.shutdown().await;
+        actor.shutdown().await;
 
         assert!(result.is_ok(), "Read should succeed after resend: {:?}", result);
         assert_eq!(result.unwrap(), vec![0x48, 0x65]);
@@ -2385,16 +1995,14 @@ mod tests {
         let mut transport = GlobalMockTransport::new();
         transport.add_receive_frame(rejected.to_string());
 
-        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
-        dispatcher.start();
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
 
-        let disp = Arc::new(Mutex::new(dispatcher));
-
-        let result = LccConnection::read_memory_with_dispatcher(
-            &disp, our_alias, node_alias, 0xFD, 0x0000, 2, 2000,
+        let result = LccConnection::read_memory_with_handle(
+            &handle, our_alias, node_alias, 0xFD, 0x0000, 2, 2000,
         ).await;
 
-        disp.lock().await.shutdown().await;
+        actor.shutdown().await;
 
         assert!(result.is_err(), "Read should fail on permanent rejection");
         let err_msg = format!("{}", result.unwrap_err());
@@ -2416,16 +2024,14 @@ mod tests {
         transport.add_receive_frame(rejected.to_string());
         transport.add_receive_frame(ack.to_string());
 
-        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
-        dispatcher.start();
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
 
-        let disp = Arc::new(Mutex::new(dispatcher));
-
-        let result = LccConnection::write_memory_with_dispatcher(
-            &disp, our_alias, node_alias, 0xFD, 0x0000, &[0x42], 3000,
+        let result = LccConnection::write_memory_with_handle(
+            &handle, our_alias, node_alias, 0xFD, 0x0000, &[0x42], 3000,
         ).await;
 
-        disp.lock().await.shutdown().await;
+        actor.shutdown().await;
 
         assert!(result.is_ok(), "Write should succeed after resend: {:?}", result);
     }
@@ -2441,16 +2047,14 @@ mod tests {
         let mut transport = GlobalMockTransport::new();
         transport.add_receive_frame(rejected.to_string());
 
-        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
-        dispatcher.start();
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
 
-        let disp = Arc::new(Mutex::new(dispatcher));
-
-        let result = LccConnection::write_memory_with_dispatcher(
-            &disp, our_alias, node_alias, 0xFD, 0x0000, &[0x42], 2000,
+        let result = LccConnection::write_memory_with_handle(
+            &handle, our_alias, node_alias, 0xFD, 0x0000, &[0x42], 2000,
         ).await;
 
-        disp.lock().await.shutdown().await;
+        actor.shutdown().await;
 
         assert!(result.is_err(), "Write should fail on permanent rejection");
         let err_msg = format!("{}", result.unwrap_err());
@@ -2472,16 +2076,14 @@ mod tests {
         transport.add_receive_frame(ack.to_string());
         transport.add_receive_frame(reply.to_string());
 
-        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
-        dispatcher.start();
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
 
-        let disp = Arc::new(Mutex::new(dispatcher));
-
-        let result = LccConnection::write_memory_with_dispatcher(
-            &disp, our_alias, node_alias, 0xFD, 0x0000, &[0x42], 3000,
+        let result = LccConnection::write_memory_with_handle(
+            &handle, our_alias, node_alias, 0xFD, 0x0000, &[0x42], 3000,
         ).await;
 
-        disp.lock().await.shutdown().await;
+        actor.shutdown().await;
 
         assert!(result.is_ok(), "Write should succeed after reply-pending + write-reply: {:?}", result);
     }
@@ -2501,17 +2103,15 @@ mod tests {
         transport.add_receive_frame(ack.to_string());
         transport.add_receive_frame(reply.to_string());
 
-        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
-        dispatcher.start();
-
-        let disp = Arc::new(Mutex::new(dispatcher));
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
 
         // Use a very short base timeout — extension should stretch it
-        let result = LccConnection::read_memory_with_dispatcher(
-            &disp, our_alias, node_alias, 0xFD, 0x0000, 2, 3000,
+        let result = LccConnection::read_memory_with_handle(
+            &handle, our_alias, node_alias, 0xFD, 0x0000, 2, 3000,
         ).await;
 
-        disp.lock().await.shutdown().await;
+        actor.shutdown().await;
 
         assert!(result.is_ok(), "Read should succeed with timeout extension: {:?}", result);
         assert_eq!(result.unwrap(), vec![0xAB, 0xCD]);
@@ -2533,13 +2133,18 @@ mod tests {
     #[tokio::test]
     async fn test_d14_cdi_read_retries_exhausted() {
         // No responses → all 3 retry attempts will timeout
-        let mut mock = MockTransport::new(vec![]);
-        let result = LccConnection::read_cdi_impl(
-            &mut mock,
+        let transport = GlobalMockTransport::new();
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
+
+        let result = LccConnection::read_cdi_with_handle(
+            &handle,
             0xAAA,
             0xBBB,
             200, // short timeout
         ).await;
+
+        actor.shutdown().await;
 
         assert!(result.is_err(), "CDI read should fail after retries");
         let err = format!("{}", result.unwrap_err());
@@ -2555,18 +2160,15 @@ mod tests {
         let src: u16 = 0xBBB;
         let dst: u16 = 0xAAA;
 
-        // Return a valid CDI read reply with empty payload (zero-length data)
         let reply = make_cdi_reply_frame(src, dst, 0, &[]);
-        let mut mock = MockTransport::new(vec![reply]);
+        let mut transport = GlobalMockTransport::new();
+        transport.add_receive_frame(reply.to_string());
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
 
-        let result = LccConnection::read_cdi_impl(
-            &mut mock,
-            dst,
-            src,
-            2000,
-        ).await;
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000).await;
+        actor.shutdown().await;
 
-        // Should succeed with empty string (not hang forever)
         assert!(result.is_ok(), "Zero-length reply should break CDI loop: {:?}", result);
         assert_eq!(result.unwrap(), "");
     }
@@ -2577,20 +2179,18 @@ mod tests {
         let src: u16 = 0xBBB;
         let dst: u16 = 0xAAA;
 
-        // A CDI reply with "<cdi/>\0" (null-terminated)
-        let cdi_bytes = b"<cdi/>\x00";
-        let reply = make_cdi_reply_frame(src, dst, 0, cdi_bytes);
-        let mut mock = MockTransport::new(vec![reply]);
+        // Payload must fit CAN 8-byte limit: 6 header + 2 payload max.
+        let reply = make_cdi_reply_frame(src, dst, 0, b"A\x00");
+        let mut transport = GlobalMockTransport::new();
+        transport.add_receive_frame(reply.to_string());
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
 
-        let result = LccConnection::read_cdi_impl(
-            &mut mock,
-            dst,
-            src,
-            2000,
-        ).await;
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000).await;
+        actor.shutdown().await;
 
         assert!(result.is_ok(), "CDI read should succeed: {:?}", result);
-        assert_eq!(result.unwrap(), "<cdi/>");
+        assert_eq!(result.unwrap(), "A");
     }
 
     // D18: Alias conflict detection — send AMD with our alias but different NodeID
@@ -2611,18 +2211,16 @@ mod tests {
         let mut transport = GlobalMockTransport::new();
         transport.add_receive_frame(conflicting_amd.to_string());
 
-        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
-        dispatcher.start();
+        let mut actor = TransportActor::new(Box::new(transport));
+        let transport_handle = actor.handle();
 
-        let disp_arc = Arc::new(Mutex::new(dispatcher));
-
-        // Set up a connection with dispatcher and start the query responders
+        // Set up a connection with actor and start the query responders
         // (which includes the D18 alias conflict monitor).
         let mut connection = LccConnection {
-            transport: None,
+            actor: Some(actor),
+            handle: Some(transport_handle),
             our_node_id: our_node_id,
             our_alias: NodeAlias::new(our_alias).unwrap(),
-            dispatcher: Some(disp_arc.clone()),
             our_snip: None,
             our_pip_flags: LccConnection::default_pip_flags(),
             responder_handles: Vec::new(),
@@ -2642,7 +2240,7 @@ mod tests {
         );
 
         connection.shutdown_responders().await;
-        disp_arc.lock().await.shutdown().await;
+        connection.close().await.unwrap();
     }
 
     // D10: FLAG_REPLY_PENDING followed by write-reply error datagram → error propagated
@@ -2665,16 +2263,14 @@ mod tests {
         transport.add_receive_frame(ack.to_string());
         transport.add_receive_frame(error_reply.to_string());
 
-        let mut dispatcher = MessageDispatcher::new(Box::new(transport));
-        dispatcher.start();
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
 
-        let disp = Arc::new(Mutex::new(dispatcher));
-
-        let result = LccConnection::write_memory_with_dispatcher(
-            &disp, our_alias, node_alias, 0xFD, 0x0000, &[0x42], 3000,
+        let result = LccConnection::write_memory_with_handle(
+            &handle, our_alias, node_alias, 0xFD, 0x0000, &[0x42], 3000,
         ).await;
 
-        disp.lock().await.shutdown().await;
+        actor.shutdown().await;
 
         assert!(result.is_err(), "Write should fail when reply-pending is followed by error reply");
         let err_msg = format!("{}", result.unwrap_err());
@@ -2687,27 +2283,26 @@ mod tests {
         let src: u16 = 0xBBB;
         let dst: u16 = 0xAAA;
 
-        // First chunk: partial CDI with no null terminator
-        let chunk1 = make_cdi_reply_frame(src, dst, 0, b"<cdi>");
-        // Second chunk: 0x1082 failure reply signals end-of-CDI
-        // Embedded CDI fail: command 0x5B (0x50|0x08|0x03), address 4, error 0x1082
+        // First chunk: 2-byte payload (max for CAN 8-byte frame with 6-byte header)
+        let chunk1 = make_cdi_reply_frame(src, dst, 0, b"AB");
+        // Second chunk: 0x1082 failure reply at address 2 (= len of first chunk payload)
         let header = MTI::DatagramOnly.to_header_with_dest(src, dst).unwrap();
         let fail_reply = GridConnectFrame {
             header,
-            data: vec![0x20, 0x5B, 0x00, 0x00, 0x00, 0x04, 0x10, 0x82],
+            data: vec![0x20, 0x5B, 0x00, 0x00, 0x00, 0x02, 0x10, 0x82],
         };
 
-        let mut mock = MockTransport::new(vec![chunk1, fail_reply]);
+        let mut transport = GlobalMockTransport::new();
+        transport.add_receive_frame(chunk1.to_string());
+        transport.add_receive_frame(fail_reply.to_string());
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
 
-        let result = LccConnection::read_cdi_impl(
-            &mut mock,
-            dst,
-            src,
-            2000,
-        ).await;
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000).await;
+        actor.shutdown().await;
 
         assert!(result.is_ok(), "0x1082 should be treated as end-of-CDI: {:?}", result);
-        assert_eq!(result.unwrap(), "<cdi>");
+        assert_eq!(result.unwrap(), "AB");
     }
 
     // CDI read: non-0x1082 failure is a real error
@@ -2716,24 +2311,117 @@ mod tests {
         let src: u16 = 0xBBB;
         let dst: u16 = 0xAAA;
 
-        // Immediate failure reply with error 0x1037
         let header = MTI::DatagramOnly.to_header_with_dest(src, dst).unwrap();
         let fail_reply = GridConnectFrame {
             header,
             data: vec![0x20, 0x5B, 0x00, 0x00, 0x00, 0x00, 0x10, 0x37],
         };
 
-        let mut mock = MockTransport::new(vec![fail_reply]);
+        let mut transport = GlobalMockTransport::new();
+        transport.add_receive_frame(fail_reply.to_string());
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
 
-        let result = LccConnection::read_cdi_impl(
-            &mut mock,
-            dst,
-            src,
-            2000,
-        ).await;
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000).await;
+        actor.shutdown().await;
 
         assert!(result.is_err(), "Non-0x1082 error should propagate");
         let err_msg = format!("{}", result.unwrap_err());
         assert!(err_msg.contains("1037"), "Error should contain code: {}", err_msg);
+    }
+
+    /// Multi-chunk CDI download succeeds when all reply frames are pre-queued.
+    ///
+    /// A single broadcast subscription is held for the entire download, so no
+    /// frames can be lost between chunks.  With a per-chunk subscription this
+    /// scenario was timing-dependent on multi-threaded runtimes: the reader_loop
+    /// could broadcast chunk 1's reply before the CDI code re-subscribed.
+    #[tokio::test]
+    async fn test_cdi_multi_chunk_success() {
+        let src: u16 = 0xBBB;
+        let dst: u16 = 0xAAA;
+
+        // Chunk 0: 2 bytes at address 0, no null → another chunk expected
+        let chunk0 = make_cdi_reply_frame(src, dst, 0, b"AB");
+        // Chunk 1: 2 bytes at address 2, null-terminated → CDI complete
+        let chunk1 = make_cdi_reply_frame(src, dst, 2, b"C\x00");
+
+        let mut transport = GlobalMockTransport::new();
+        transport.add_receive_frame(chunk0.to_string());
+        transport.add_receive_frame(chunk1.to_string());
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
+
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000).await;
+        actor.shutdown().await;
+
+        assert!(result.is_ok(), "Multi-chunk CDI read should succeed: {:?}", result);
+        assert_eq!(result.unwrap(), "ABC");
+    }
+
+    /// A stale reply (from a previous chunk's address) is discarded by the
+    /// address check, and the correct reply for the current chunk is accepted.
+    ///
+    /// Regression test for the CDI corruption bug: stale replies from a previous
+    /// chunk leaked across a subscription boundary and were accepted as the
+    /// current chunk's data, causing a cascading address offset of −64 bytes
+    /// and ultimately an `InvalidXml` parse error.  The hoisted subscription
+    /// eliminates the gap; the address check provides defence in depth.
+    #[tokio::test]
+    async fn test_cdi_stale_reply_at_chunk_boundary_discarded() {
+        let src: u16 = 0xBBB;
+        let dst: u16 = 0xAAA;
+
+        // Chunk 0: 2 bytes at address 0
+        let chunk0 = make_cdi_reply_frame(src, dst, 0, b"AB");
+        // Stale duplicate: same address 0, different payload — would corrupt
+        // chunk 1 if mistakenly accepted.
+        let stale = make_cdi_reply_frame(src, dst, 0, b"XX");
+        // Chunk 1: 2 bytes at address 2, null-terminated → CDI complete
+        let chunk1 = make_cdi_reply_frame(src, dst, 2, b"C\x00");
+
+        let mut transport = GlobalMockTransport::new();
+        transport.add_receive_frame(chunk0.to_string());
+        transport.add_receive_frame(stale.to_string());
+        transport.add_receive_frame(chunk1.to_string());
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
+
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000).await;
+        actor.shutdown().await;
+
+        assert!(result.is_ok(), "Stale reply should be discarded: {:?}", result);
+        assert_eq!(
+            result.unwrap(), "ABC",
+            "CDI should contain only valid chunk data, not stale duplicate"
+        );
+    }
+
+    /// Multi-chunk CDI succeeds on a multi-threaded runtime where the reader_loop
+    /// runs concurrently and can broadcast frames at any time.
+    ///
+    /// With a per-chunk subscription, the reader_loop could race ahead and
+    /// broadcast chunk 1's reply before the CDI code re-subscribed, causing it
+    /// to be invisible to the new receiver.  A single subscription held for the
+    /// entire download prevents this regardless of thread scheduling.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_cdi_multi_chunk_no_frame_loss_threaded() {
+        let src: u16 = 0xBBB;
+        let dst: u16 = 0xAAA;
+
+        let chunk0 = make_cdi_reply_frame(src, dst, 0, b"AB");
+        let chunk1 = make_cdi_reply_frame(src, dst, 2, b"C\x00");
+
+        let mut transport = GlobalMockTransport::new();
+        transport.add_receive_frame(chunk0.to_string());
+        transport.add_receive_frame(chunk1.to_string());
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
+
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000).await;
+        actor.shutdown().await;
+
+        assert!(result.is_ok(), "Multi-chunk CDI read should succeed on multi-thread runtime: {:?}", result);
+        assert_eq!(result.unwrap(), "ABC");
     }
 }
