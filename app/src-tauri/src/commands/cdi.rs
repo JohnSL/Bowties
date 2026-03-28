@@ -184,12 +184,16 @@ pub async fn download_cdi(
     println!("[CDI] Starting CDI download from alias 0x{:03X}...", alias);
     crate::bwlog!(state.inner(), "[cdi] Downloading CDI for {} (alias={:#05x})", snip_label, alias);
     let dl_start = StdInstant::now();
-    
+
+    // Reset the cancel flag before starting (mirrors cancel_config_reading pattern).
+    state.cdi_download_cancel.store(false, std::sync::atomic::Ordering::Relaxed);
+    let cancel_flag = state.cdi_download_cancel.clone();
+
     // Download CDI from node (5 second timeout per chunk to accommodate slower nodes)
     let xml_content = {
         let mut connection = connection_arc.lock().await;
         connection
-            .read_cdi(alias, 5000)
+            .read_cdi_cancellable(alias, 5000, cancel_flag)
             .await
             .map_err(|e| {
                 println!("[CDI] Download failed: {}", e);
@@ -2321,6 +2325,14 @@ pub async fn read_all_config_values(
 pub async fn cancel_config_reading(state: tauri::State<'_, AppState>) -> Result<(), String> {
     use std::sync::atomic::Ordering;
     state.config_read_cancel.store(true, Ordering::Relaxed);
+    Ok(())
+}
+
+/// Cancel an in-progress CDI download
+#[tauri::command]
+pub async fn cancel_cdi_download(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    state.cdi_download_cancel.store(true, Ordering::Relaxed);
     Ok(())
 }
 

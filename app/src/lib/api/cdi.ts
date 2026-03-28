@@ -66,6 +66,13 @@ export async function downloadCdi(nodeId: string): Promise<GetCdiXmlResponse> {
   });
 }
 
+/**
+ * Cancel an in-progress CDI download started by downloadCdi.
+ */
+export async function cancelCdiDownload(): Promise<void> {
+  return await invoke<void>('cancel_cdi_download');
+}
+
 // ============================================================================
 // CDI Navigation API
 // ============================================================================

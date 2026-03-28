@@ -25,6 +25,7 @@
   import DiscoveryProgressModal from '$lib/components/DiscoveryProgressModal.svelte';
   import SaveControls from '$lib/components/ElementCardDeck/SaveControls.svelte';
   import CdiDownloadDialog from '$lib/components/CdiDownloadDialog.svelte';
+  import CdiRedownloadDialog from '$lib/components/CdiRedownloadDialog.svelte';
   import ConnectionManager from '$lib/ConnectionManager.svelte';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
   import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
@@ -188,11 +189,19 @@
   let viewerStatus = $state<ViewerStatus>('idle');
   let viewerErrorMessage = $state<string | null>(null);
 
+  // CDI re-download dialog state (menu-redownload-cdi)
+  let cdiRedownloadVisible = $state(false);
+  let cdiRedownloadNodeId = $state<string | null>(null);
+  let cdiRedownloadNodeName = $state<string | null>(null);
+
   // CDI download dialog state
   let cdiDownloadDialogVisible = $state(false);
   let cdiMissingNodes = $state<MissingCdiNode[]>([]);
   let cdiDownloading = $state(false);
   let cdiDownloadedCount = $state(0);
+  // All unread nodes pending config read — set by readRemainingNodes when CDI is missing.
+  // handleCdiDownload reads ALL of these (not just downloaded ones) after CDI download.
+  let pendingConfigNodes = $state<MissingCdiNode[]>([]);
 
   // Track which nodes have CDI available in cache (populated during discovery/refresh)
   let nodesWithCdi = $state(new Set<string>());
@@ -371,12 +380,12 @@
       unlistens.push(await listen('menu-view-cdi',       () => {
         const state = get(configSidebarStore);
         const nodeId = state.selectedSegment?.nodeId ?? state.selectedNodeId;
-        if (nodeId) openCdiViewer(nodeId, false);
+        if (nodeId) openCdiViewer(nodeId);
       }));
       unlistens.push(await listen('menu-redownload-cdi', () => {
         const state = get(configSidebarStore);
         const nodeId = state.selectedSegment?.nodeId ?? state.selectedNodeId;
-        if (nodeId) openCdiViewer(nodeId, true);
+        if (nodeId) openCdiRedownload(nodeId);
       }));
       unlistens.push(await listen('menu-exit', () => {
         const win = getCurrentWebviewWindow();
@@ -532,10 +541,46 @@
     });
     if (unread.length === 0) return;
 
-    // Init per-node progress states (all waiting)
-    nodeReadStates = unread.map(n => ({
+    // Phase A: CDI pre-check — check cache for all nodes BEFORE opening any modal.
+    // This ensures the download dialog is shown before any config reading begins.
+    const localCdiMissing: MissingCdiNode[] = [];
+    const newNodesWithCdi = new Set<string>();
+    for (const node of unread) {
+      const nodeId = formatNodeId(node.node_id);
+      const nodeName = node.snip_data?.user_name || nodeId;
+      try {
+        const cdiCheck = await getCdiXml(nodeId);
+        if (cdiCheck.xmlContent !== null) {
+          newNodesWithCdi.add(nodeId);
+        } else {
+          localCdiMissing.push({ nodeId, nodeName });
+        }
+      } catch {
+        localCdiMissing.push({ nodeId, nodeName });
+      }
+    }
+    nodesWithCdi = newNodesWithCdi;
+
+    if (localCdiMissing.length > 0) {
+      // Store ALL unread nodes — handleCdiDownload will read them all after download.
+      pendingConfigNodes = unread.map(n => ({
+        nodeId: formatNodeId(n.node_id),
+        nodeName: n.snip_data?.user_name || formatNodeId(n.node_id),
+      }));
+      cdiMissingNodes = localCdiMissing;
+      cdiDownloadDialogVisible = true;
+      return;
+    }
+
+    // Phase B: All nodes have CDI — read config immediately.
+    const allNodes = unread.map(n => ({
       nodeId: formatNodeId(n.node_id),
-      name: n.snip_data?.user_name || formatNodeId(n.node_id),
+      nodeName: n.snip_data?.user_name || formatNodeId(n.node_id),
+    }));
+
+    nodeReadStates = allNodes.map(({ nodeId, nodeName }) => ({
+      nodeId,
+      name: nodeName,
       percentage: 0,
       status: 'waiting' as const,
     }));
@@ -545,29 +590,12 @@
     discoveryPhase = 'reading';
     errorMessage = '';
 
-    const localCdiMissing: MissingCdiNode[] = [];
-    const newNodesWithCdi = new Set<string>();
     try {
-      for (let nodeIdx = 0; nodeIdx < unread.length; nodeIdx++) {
-        const node = unread[nodeIdx];
-        const nodeId = formatNodeId(node.node_id);
-        const nodeName = node.snip_data?.user_name || nodeId;
+      for (let nodeIdx = 0; nodeIdx < allNodes.length; nodeIdx++) {
+        const { nodeId, nodeName } = allNodes[nodeIdx];
         try {
-          let hasCdi = false;
-          try {
-            const cdiCheck = await getCdiXml(nodeId);
-            hasCdi = cdiCheck.xmlContent !== null;
-            if (hasCdi) newNodesWithCdi.add(nodeId);
-          } catch { /* CDI not available */ }
-          if (!hasCdi) {
-            localCdiMissing.push({ nodeId, nodeName });
-            nodeReadStates = nodeReadStates.map((s, i) =>
-              i === nodeIdx ? { ...s, status: 'no-cdi' as const } : s
-            );
-            continue;
-          }
           console.log(`Reading config values from ${nodeName}...`);
-          const result = await readAllConfigValues(nodeId, undefined, nodeIdx, unread.length);
+          const result = await readAllConfigValues(nodeId, undefined, nodeIdx, allNodes.length);
           if (result.abortError) {
             nodeReadStates = nodeReadStates.map((s, i) =>
               i === nodeIdx ? { ...s, status: 'failed' as const } : s
@@ -583,7 +611,6 @@
             );
           }
           await nodeTreeStore.refreshTree(nodeId);
-          // Ensure slot marked complete (listener may have done it already)
           nodeReadStates = nodeReadStates.map((s, i) =>
             i === nodeIdx ? { ...s, status: 'complete' as const, percentage: 100 } : s
           );
@@ -594,16 +621,10 @@
           );
         }
       }
-      nodesWithCdi = newNodesWithCdi;
-      cdiMissingNodes = localCdiMissing;
-      // Close immediately — no delay
       discoveryModalVisible = false;
       readProgress = null;
       isCancelling = false;
       nodeReadStates = [];
-      if (cdiMissingNodes.length > 0) {
-        cdiDownloadDialogVisible = true;
-      }
     } catch (e) {
       errorMessage = `Read remaining failed: ${e}`;
       discoveryModalVisible = false;
@@ -675,27 +696,23 @@
     }
   }
 
-  async function openCdiViewer(nodeId: string, forceDownload: boolean) {
+  async function openCdiViewer(nodeId: string) {
     viewerVisible = true;
     viewerNodeId = nodeId;
     viewerXmlContent = null;
     viewerStatus = 'loading';
-    viewerErrorMessage = forceDownload ? 'Downloading CDI from node…' : 'Checking cache…';
+    viewerErrorMessage = 'Checking cache…';
 
     try {
       let response;
-      if (forceDownload) {
-        response = await downloadCdi(nodeId);
-      } else {
-        try {
-          response = await getCdiXml(nodeId);
-        } catch (cacheError: any) {
-          if (isCdiError(cacheError, 'CdiNotRetrieved')) {
-            viewerErrorMessage = 'Downloading CDI from node…';
-            response = await downloadCdi(nodeId);
-          } else {
-            throw cacheError;
-          }
+      try {
+        response = await getCdiXml(nodeId);
+      } catch (cacheError: any) {
+        if (isCdiError(cacheError, 'CdiNotRetrieved')) {
+          viewerErrorMessage = 'Downloading CDI from node…';
+          response = await downloadCdi(nodeId);
+        } else {
+          throw cacheError;
         }
       }
 
@@ -713,6 +730,19 @@
     }
   }
 
+  function openCdiRedownload(nodeId: string) {
+    const node = nodes.find(n => formatNodeId(n.node_id) === nodeId);
+    cdiRedownloadNodeId = nodeId;
+    cdiRedownloadNodeName = node?.snip_data?.user_name || nodeId;
+    cdiRedownloadVisible = true;
+  }
+
+  function closeCdiRedownload() {
+    cdiRedownloadVisible = false;
+    cdiRedownloadNodeId = null;
+    cdiRedownloadNodeName = null;
+  }
+
   function closeCdiViewer() {
     viewerVisible = false;
     viewerNodeId = null;
@@ -724,6 +754,7 @@
   function handleCdiDownloadCancel() {
     cdiDownloadDialogVisible = false;
     cdiMissingNodes = [];
+    pendingConfigNodes = [];
   }
 
   async function handleCdiDownload() {
@@ -758,9 +789,13 @@
     cdiDownloadDialogVisible = false;
     cdiDownloading = false;
 
-    // Only read config for nodes whose CDI was successfully downloaded
-    const nodesToRead = nodesToDownload.filter(n => nodesWithCdi.has(n.nodeId));
+    // Read config for ALL pending nodes that now have CDI (pre-existing + newly downloaded).
+    // pendingConfigNodes contains all unread nodes from the original batch; fall back to
+    // just the downloaded nodes when triggered from a single-node flow.
+    const allPending = pendingConfigNodes.length > 0 ? pendingConfigNodes : nodesToDownload;
+    const nodesToRead = allPending.filter(n => nodesWithCdi.has(n.nodeId));
     cdiMissingNodes = [];
+    pendingConfigNodes = [];
 
     if (nodesToRead.length === 0) return;
 
@@ -1062,6 +1097,15 @@
   errorMessage={viewerErrorMessage}
   onClose={closeCdiViewer}
 />
+
+<!-- CDI Re-download Dialog — compact download-only dialog from menu-redownload-cdi -->
+{#if cdiRedownloadVisible && cdiRedownloadNodeId && cdiRedownloadNodeName}
+  <CdiRedownloadDialog
+    nodeId={cdiRedownloadNodeId}
+    nodeName={cdiRedownloadNodeName}
+    onClose={closeCdiRedownload}
+  />
+{/if}
 
 <!-- CDI Download Dialog — shown when nodes lack a cached CDI after discovery -->
 {#if cdiDownloadDialogVisible}

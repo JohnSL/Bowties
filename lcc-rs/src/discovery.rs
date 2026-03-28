@@ -14,6 +14,7 @@ use crate::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::time::{sleep, Duration, Instant};
 use tokio::sync::Mutex;
 
@@ -748,7 +749,21 @@ impl LccConnection {
         let handle = self.handle.as_ref()
             .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?;
         let our_alias = self.our_alias.value();
-        Self::read_cdi_with_handle(handle, our_alias, dest_alias, timeout_ms).await
+        Self::read_cdi_with_handle(handle, our_alias, dest_alias, timeout_ms, None).await
+    }
+
+    /// Like [`read_cdi`], but checks `cancel_flag` between chunks.
+    /// Setting the flag to `true` stops the download and returns an error.
+    pub async fn read_cdi_cancellable(
+        &mut self,
+        dest_alias: u16,
+        timeout_ms: u64,
+        cancel_flag: Arc<AtomicBool>,
+    ) -> Result<String> {
+        let handle = self.handle.as_ref()
+            .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?;
+        let our_alias = self.our_alias.value();
+        Self::read_cdi_with_handle(handle, our_alias, dest_alias, timeout_ms, Some(cancel_flag)).await
     }
 
     /// Read CDI using the subscribe-before-send pattern.
@@ -763,6 +778,7 @@ impl LccConnection {
         our_alias: u16,
         dest_alias: u16,
         timeout_ms: u64,
+        cancel_flag: Option<Arc<AtomicBool>>,
     ) -> Result<String> {
         use crate::protocol::{MemoryConfigCmd, AddressSpace, DatagramAssembler};
 
@@ -780,6 +796,13 @@ impl LccConnection {
         let mut rx = handle.subscribe_all();
 
         loop {
+            // Check for cancellation before each chunk.
+            if let Some(ref flag) = cancel_flag {
+                if flag.load(Ordering::Relaxed) {
+                    return Err(crate::Error::Protocol("CDI download cancelled".to_string()));
+                }
+            }
+
             println!("[LCC] Reading CDI chunk at address {} (chunk size {})", address, CHUNK_SIZE);
 
             let read_frames = MemoryConfigCmd::build_read(
@@ -2142,6 +2165,7 @@ mod tests {
             0xAAA,
             0xBBB,
             200, // short timeout
+            None,
         ).await;
 
         actor.shutdown().await;
@@ -2166,7 +2190,7 @@ mod tests {
         let mut actor = TransportActor::new(Box::new(transport));
         let handle = actor.handle();
 
-        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000).await;
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000, None).await;
         actor.shutdown().await;
 
         assert!(result.is_ok(), "Zero-length reply should break CDI loop: {:?}", result);
@@ -2186,7 +2210,7 @@ mod tests {
         let mut actor = TransportActor::new(Box::new(transport));
         let handle = actor.handle();
 
-        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000).await;
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000, None).await;
         actor.shutdown().await;
 
         assert!(result.is_ok(), "CDI read should succeed: {:?}", result);
@@ -2298,7 +2322,7 @@ mod tests {
         let mut actor = TransportActor::new(Box::new(transport));
         let handle = actor.handle();
 
-        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000).await;
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000, None).await;
         actor.shutdown().await;
 
         assert!(result.is_ok(), "0x1082 should be treated as end-of-CDI: {:?}", result);
@@ -2322,7 +2346,7 @@ mod tests {
         let mut actor = TransportActor::new(Box::new(transport));
         let handle = actor.handle();
 
-        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000).await;
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000, None).await;
         actor.shutdown().await;
 
         assert!(result.is_err(), "Non-0x1082 error should propagate");
@@ -2352,7 +2376,7 @@ mod tests {
         let mut actor = TransportActor::new(Box::new(transport));
         let handle = actor.handle();
 
-        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000).await;
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000, None).await;
         actor.shutdown().await;
 
         assert!(result.is_ok(), "Multi-chunk CDI read should succeed: {:?}", result);
@@ -2387,7 +2411,7 @@ mod tests {
         let mut actor = TransportActor::new(Box::new(transport));
         let handle = actor.handle();
 
-        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000).await;
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000, None).await;
         actor.shutdown().await;
 
         assert!(result.is_ok(), "Stale reply should be discarded: {:?}", result);
@@ -2418,10 +2442,38 @@ mod tests {
         let mut actor = TransportActor::new(Box::new(transport));
         let handle = actor.handle();
 
-        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000).await;
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000, None).await;
         actor.shutdown().await;
 
         assert!(result.is_ok(), "Multi-chunk CDI read should succeed on multi-thread runtime: {:?}", result);
         assert_eq!(result.unwrap(), "ABC");
+    }
+
+    // Cancel: flag pre-set to `true` → returns cancelled error before any I/O
+    #[tokio::test]
+    async fn test_cdi_cancel_before_first_chunk() {
+        let transport = GlobalMockTransport::new();
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
+
+        let cancel_flag = Arc::new(AtomicBool::new(true)); // already cancelled
+
+        let result = LccConnection::read_cdi_with_handle(
+            &handle,
+            0xAAA,
+            0xBBB,
+            2000,
+            Some(cancel_flag),
+        ).await;
+
+        actor.shutdown().await;
+
+        assert!(result.is_err(), "CDI read should fail immediately when cancel flag is pre-set");
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("cancelled") || err.contains("Cancelled"),
+            "Error should mention cancellation: {}",
+            err
+        );
     }
 }

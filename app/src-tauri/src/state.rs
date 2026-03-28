@@ -118,6 +118,9 @@ pub struct AppState {
     /// Cancellation token for config reading operations (T012)
     pub config_read_cancel: Arc<AtomicBool>,
 
+    /// Cancellation flag for CDI download operations.
+    pub cdi_download_cancel: Arc<AtomicBool>,
+
     /// Active connection configuration (None when not connected)
     pub active_connection: Arc<RwLock<Option<ConnectionConfig>>>,
 
@@ -154,6 +157,7 @@ impl AppState {
             node_registry: Arc::new(NodeRegistry::new()),
             active_connection: Arc::new(RwLock::new(None)),
             config_read_cancel: Arc::new(AtomicBool::new(false)),
+            cdi_download_cancel: Arc::new(AtomicBool::new(false)),
             bowties_catalog: Arc::new(RwLock::new(None)),
 
             profiles: Arc::new(RwLock::new(HashMap::new())),
