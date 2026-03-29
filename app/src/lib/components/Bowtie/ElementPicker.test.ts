@@ -159,4 +159,43 @@ describe('ElementPicker — picker content', () => {
 
     expect(screen.getByText(/no matching event slots found/i)).toBeInTheDocument();
   });
+
+  it('shows placeholder slot as disabled when event ID has leading-zero byte', async () => {
+    nodesRef.map.set(NODE_A, makeNodeInfo(NODE_A, 'Button Node'));
+
+    // Build a leaf whose value is a placeholder (leading-zero event ID)
+    const placeholderLeaf: LeafConfigNode = {
+      kind: 'leaf',
+      name: 'Push Button',
+      description: null,
+      elementType: 'eventId',
+      address: 200,
+      size: 8,
+      space: 253,
+      path: ['seg:0', 'elem:0'],
+      value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0xFF], hex: '00.00.00.00.00.00.00.FF' },
+      eventRole: 'Producer',
+      constraints: null,
+    };
+    const seg: SegmentNode = {
+      name: 'Configuration', description: null, origin: 0, space: 253, children: [placeholderLeaf],
+    };
+    treesRef.map.set(NODE_A, { nodeId: NODE_A, identity: null, segments: [seg] });
+
+    render(ElementPicker);
+
+    // Expand the node
+    const nodeToggle = await screen.findByText('Button Node');
+    const { fireEvent: fe } = await import('@testing-library/svelte');
+    await fe.click(nodeToggle.closest('button')!);
+
+    // Expand the segment
+    const segToggle = screen.getByText('Configuration');
+    await fe.click(segToggle.closest('button')!);
+
+    // The slot button should be present but disabled
+    const slotBtn = screen.getByRole('button', { name: /push button/i });
+    expect(slotBtn).toBeDisabled();
+    expect(screen.getByText('(placeholder)')).toBeInTheDocument();
+  });
 });

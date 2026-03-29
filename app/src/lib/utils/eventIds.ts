@@ -3,6 +3,18 @@
  */
 
 import { collectEventIdLeaves, effectiveValue } from '$lib/types/nodeTree';
+
+/**
+ * Returns true when an event ID hex string is a reserved leading-zero placeholder.
+ *
+ * Per the LCC Unique Identifiers Standard (S-9.7.0.3 §5.2), any event ID
+ * whose first byte is 0x00 is reserved — it is never a valid routable event.
+ * Nodes commonly store a leading-zero value (e.g. 00.00.00.00.00.00.00.FF) in
+ * CDI event slots that have never been configured by the user.
+ */
+export function isPlaceholderEventId(hex: string): boolean {
+  return hex.startsWith('00.');
+}
 import type { NodeConfigTree } from '$lib/types/nodeTree';
 
 /**

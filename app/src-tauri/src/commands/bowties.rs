@@ -26,10 +26,17 @@ use crate::state::{AppState, BowtieCatalog, BowtieCard, BowtieState, EventSlotEn
 /// when no user has configured a CDI slot to one of these values.  Therefore bowtie
 /// cards for well-known event IDs are built exclusively from `config_value_cache`
 /// (CDI slots the user explicitly set to these values), not from the protocol exchange.
-/// The all-zeros event ID is the default "unset" value written to CDI event ID
-/// slots that have never been configured.  It is not a valid routable event ID
-/// and must be excluded from bowtie catalog discovery.
-const ZERO_EVENT_ID: [u8; 8] = [0u8; 8];
+
+/// Returns `true` for any event ID whose first byte is 0x00.
+///
+/// Per the LCC Unique Identifiers Standard (S-9.7.0.3 §5.2), the leading-zero range
+/// is reserved / "uninitialized or non-standard".  Nodes commonly store a value in
+/// this range (e.g. 00.00.00.00.00.00.00.FF) in CDI slots that have never been
+/// configured by the user.  Such IDs must never appear as bowtie catalog entries.
+#[inline]
+fn is_placeholder_event_id(b: &[u8; 8]) -> bool {
+    b[0] == 0x00
+}
 
 const WELL_KNOWN_EVENT_IDS: &[([u8; 8], &str)] = &[
     ([0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF], "Emergency Off"),
@@ -243,7 +250,7 @@ pub fn build_bowtie_catalog(
     let mut config_slot_map: HashMap<[u8; 8], Vec<(String, String)>> = HashMap::new();
     for (node_id, node_cache) in config_value_cache {
         for (path_key, &event_bytes) in node_cache {
-            if event_bytes == ZERO_EVENT_ID || well_known_set.contains(&event_bytes) {
+            if is_placeholder_event_id(&event_bytes) || well_known_set.contains(&event_bytes) {
                 continue;
             }
             config_slot_map
@@ -257,7 +264,7 @@ pub fn build_bowtie_catalog(
     let mut all_event_ids: std::collections::HashSet<[u8; 8]> =
         config_slot_map.keys().copied().collect();
     for event_id_bytes in event_roles.keys() {
-        if *event_id_bytes != ZERO_EVENT_ID && !well_known_set.contains(event_id_bytes) {
+        if !is_placeholder_event_id(event_id_bytes) && !well_known_set.contains(event_id_bytes) {
             all_event_ids.insert(*event_id_bytes);
         }
     }
@@ -1999,6 +2006,33 @@ mod build_bowtie_catalog_tests {
         assert!(
             catalog.bowties.is_empty(),
             "All-zero event ID from protocol exchange must not generate a bowtie card"
+        );
+    }
+
+    /// Any event ID whose first byte is 0x00 (not just all-zeros) must be excluded.
+    ///
+    /// Per S-9.7.0.3 §5.2, the entire leading-zero range is reserved.  Nodes like
+    /// the TCS LT-50 use values such as 00.00.00.00.00.00.00.FF as factory defaults
+    /// for unconfigured CDI slots.
+    #[test]
+    fn leading_zero_event_id_in_config_cache_is_ignored() {
+        let nodes = make_nodes(2);
+        // 00.xx factory-default placeholder (e.g. TCS LT-50 style)
+        let placeholder: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF];
+
+        let mut config_cache: HashMap<String, HashMap<String, [u8; 8]>> = HashMap::new();
+        let mut node0_cache = HashMap::new();
+        node0_cache.insert("seg:0/elem:0".to_string(), placeholder);
+        config_cache.insert(node_id(0), node0_cache);
+        let mut node1_cache = HashMap::new();
+        node1_cache.insert("seg:0/elem:0".to_string(), placeholder);
+        config_cache.insert(node_id(1), node1_cache);
+
+        let catalog = build_bowtie_catalog(&nodes, &HashMap::new(), &config_cache, None);
+
+        assert!(
+            catalog.bowties.is_empty(),
+            "Leading-zero event IDs must not generate a bowtie card"
         );
     }
 

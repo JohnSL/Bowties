@@ -584,7 +584,7 @@ describe('TreeLeafRow.svelte', () => {
 
       expect(setModifiedValue).not.toHaveBeenCalled();
       expect(screen.getByRole('alert')).toBeInTheDocument();
-      expect(screen.getByRole('alert').textContent).toContain('00.00.00.00.00.00.00.00 is not a valid event ID');
+      expect(screen.getByRole('alert').textContent).toContain('Event IDs starting with 00 are reserved placeholders');
     });
 
     it('accepts and writes FF.FF.FF.FF.FF.FF.FF.FF (empty slot)', async () => {
@@ -606,7 +606,7 @@ describe('TreeLeafRow.svelte', () => {
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
 
-    it('flags the row invalid on initial render when committed value is all-zero', () => {
+    it('shows placeholder note on initial render when committed value is all-zero', () => {
       const leaf = makeLeaf({
         elementType: 'eventId',
         value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0], hex: '00.00.00.00.00.00.00.00' },
@@ -614,8 +614,39 @@ describe('TreeLeafRow.svelte', () => {
       });
       render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
 
-      expect(screen.getByRole('listitem')).toHaveClass('invalid');
-      expect(screen.getByRole('alert').textContent).toContain('00.00.00.00.00.00.00.00 is not a valid event ID');
+      expect(screen.getByRole('listitem')).toHaveClass('eventid-placeholder');
+      expect(screen.getByRole('listitem')).not.toHaveClass('invalid');
+      expect(screen.getByText(/Unconfigured placeholder/)).toBeInTheDocument();
+    });
+
+    it('shows placeholder note when committed value has leading-zero (e.g. TCS LT-50 00.00.00.00.00.00.00.FF)', () => {
+      const leaf = makeLeaf({
+        elementType: 'eventId',
+        value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0xFF], hex: '00.00.00.00.00.00.00.FF' },
+        size: 8,
+      });
+      render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+
+      expect(screen.getByRole('listitem')).toHaveClass('eventid-placeholder');
+      expect(screen.getByRole('listitem')).not.toHaveClass('invalid');
+      expect(screen.getByText(/Unconfigured placeholder/)).toBeInTheDocument();
+    });
+
+    it('does not call setModifiedValue when leading-zero event ID is typed', async () => {
+      const leaf = makeLeaf({
+        elementType: 'eventId',
+        value: { type: 'eventId', bytes: [5, 1, 1, 1, 22, 0, 0, 1], hex: '05.01.01.01.16.00.00.01' },
+        size: 8,
+        address: 502,
+        space: 253,
+      });
+      render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+      const input = screen.getByRole('textbox', { name: /test field/i });
+      await fireEvent.input(input, { target: { value: '00.00.00.00.00.00.00.FF' } });
+
+      expect(setModifiedValue).not.toHaveBeenCalled();
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+      expect(screen.getByRole('alert').textContent).toContain('Event IDs starting with 00 are reserved placeholders');
     });
 
     it('does not flag the row invalid on initial render when committed value is non-zero', () => {
@@ -628,6 +659,26 @@ describe('TreeLeafRow.svelte', () => {
 
       expect(screen.getByRole('listitem')).not.toHaveClass('invalid');
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    it('hides New Connection button when event ID is a placeholder', () => {
+      const leaf = makeLeaf({
+        elementType: 'eventId',
+        value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0xFF], hex: '00.00.00.00.00.00.00.FF' },
+        size: 8,
+      });
+      render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+      expect(screen.queryByRole('button', { name: /create connection/i })).not.toBeInTheDocument();
+    });
+
+    it('shows New Connection button when event ID is a valid non-placeholder', () => {
+      const leaf = makeLeaf({
+        elementType: 'eventId',
+        value: { type: 'eventId', bytes: [5, 1, 1, 1, 22, 0, 0, 1], hex: '05.01.01.01.16.00.00.01' },
+        size: 8,
+      });
+      render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+      expect(screen.getByRole('button', { name: /create connection/i })).toBeInTheDocument();
     });
   });
 

@@ -18,6 +18,7 @@
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { configFocusStore } from '$lib/stores/configFocus.svelte';
   import { parseEventIdHex, formatEventIdHex } from '$lib/utils/serialize';
+  import { isPlaceholderEventId } from '$lib/utils/eventIds';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
   import { untrack } from 'svelte';
 
@@ -68,19 +69,18 @@
 
   let isDirty = $derived(leaf.modifiedValue != null);
 
-  /** True when an editable event ID field's effective value is all-zero (not a valid configured ID) */
-  let isEventIdValueInvalid = $derived.by(() => {
+  /** True when an editable event ID field's effective value is a leading-zero placeholder
+   * (per LCC S-9.7.0.3 §5.2 — reserved range, never a valid routable event ID) */
+  let isEventIdPlaceholder = $derived.by(() => {
     if (!(nodeId.length > 0 && leaf.elementType === 'eventId')) return false;
     const ev = effectiveValue(leaf);
-    return ev?.type === 'eventId' && ev.bytes.every(b => b === 0);
+    return ev?.type === 'eventId' && ev.bytes[0] === 0;
   });
 
-  let isInvalid = $derived(localInvalidValue !== null || isEventIdValueInvalid);
+  let isInvalid = $derived(localInvalidValue !== null);
 
-  /** Active validation message: local input error takes priority, then committed-value warning */
-  let activeValidationMessage = $derived(
-    localValidationMessage ?? (isEventIdValueInvalid ? '00.00.00.00.00.00.00.00 is not a valid event ID' : null)
-  );
+  /** Active validation message: local input errors only (committed placeholder is shown separately) */
+  let activeValidationMessage = $derived(localValidationMessage ?? null);
   let isWriting = $derived(leaf.writeState === 'writing');
   let hasWriteError = $derived(leaf.writeState === 'error');
   /** True when input should be disabled: either saving or node is offline (FR-007) */
@@ -286,9 +286,18 @@
       return;
     }
 
-    if (parsedBytes.every(b => b === 0)) {
+    if (parsedBytes[0] === 0) {
+      // If the typed value exactly matches the committed (saved) value, the user has
+      // reverted to the original placeholder — clear local error state so the
+      // placeholder note takes over rather than showing a red error.
+      const committed = leaf.value;
+      if (committed?.type === 'eventId' && committed.bytes.every((b, i) => b === parsedBytes[i])) {
+        localInvalidValue = null;
+        localValidationMessage = null;
+        return;
+      }
       localInvalidValue = raw;
-      localValidationMessage = '00.00.00.00.00.00.00.00 is not a valid event ID';
+      localValidationMessage = 'Event IDs starting with 00 are reserved placeholders and cannot be configured';
       return;
     }
 
@@ -354,6 +363,7 @@
   class:compact={depth >= 3}
   class:dirty={isDirty && !isInvalid}
   class:invalid={isInvalid}
+  class:eventid-placeholder={isEventIdPlaceholder && !isInvalid}
   class:writing={isWriting}
   class:write-error={hasWriteError}
   role="listitem"
@@ -431,10 +441,6 @@
       </span>
     {/if}
 
-    {#if isInvalid && activeValidationMessage}
-      <span class="validation-msg" role="alert">{activeValidationMessage}</span>
-    {/if}
-
     {#if hasWriteError && leaf.writeError}
       <span class="write-error-msg" role="alert">⚠ {leaf.writeError}</span>
     {/if}
@@ -450,6 +456,10 @@
           >{descExpanded ? '[−]' : '[+]'}</button>
         {/if}
       </span>
+    {/if}
+
+    {#if isInvalid && activeValidationMessage}
+      <span class="validation-msg" role="alert">{activeValidationMessage}</span>
     {/if}
 
     {#if leaf.eventRole}
@@ -469,13 +479,17 @@
       </span>
     {/if}
 
-    {#if isEventIdEditable && !usedIn}
+    {#if isEventIdEditable && !usedIn && !isEventIdPlaceholder}
       <button
         class="new-connection-btn"
         onclick={handleCreateConnection}
         title="Create a bowtie connection using this event slot"
         aria-label="Create connection from {leaf.name}"
       >→ New Connection</button>
+    {/if}
+
+    {#if isEventIdPlaceholder && !isInvalid}
+      <span class="placeholder-msg">Unconfigured placeholder — this event ID will never be emitted</span>
     {/if}
   </div>
 </div>
@@ -527,6 +541,10 @@
   .field-row.write-error {
     border-left-color: #ca5010;                    /* colorPaletteOrangeForeground1 */
     background-color: rgba(202, 80, 16, 0.05);
+  }
+
+  .field-row.eventid-placeholder {
+    border-left-color: #0f6cbd;                    /* Fluent info blue — unconfigured placeholder */
   }
 
   .field-label {
@@ -625,6 +643,14 @@
     width: 100%;
     font-size: 11px;
     color: #a4262c;                                /* colorPaletteRedForeground1 */
+    margin-top: 2px;
+  }
+
+  .placeholder-msg {
+    display: block;
+    width: 100%;
+    font-size: 11px;
+    color: #0f6cbd;                                /* Fluent info blue — informational, no urgency */
     margin-top: 2px;
   }
 

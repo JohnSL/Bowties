@@ -168,6 +168,7 @@
 <script lang="ts">
   import type { LeafConfigNode } from '$lib/types/nodeTree';
   import PickerTreeNode from './PickerTreeNode.svelte';
+  import { isPlaceholderEventId } from '$lib/utils/eventIds';
 
   interface Props {
     /** The config tree node to render. */
@@ -223,6 +224,7 @@
       nodeName.toLowerCase().includes(q)}
     {#if matchesRole && matchesSearch}
       {@const isFree = isSlotFree(node)}
+      {@const isNodePlaceholder = !isFree && node.value?.type === 'eventId' && isPlaceholderEventId(node.value.hex)}
       {@const selected = isSelected(node)}
       <button
         class="tree-slot"
@@ -231,7 +233,7 @@
         class:unavailable={!isFree}
         disabled={!isFree}
         onclick={() => onSelect(node, nodeId)}
-        title={isFree ? `Select ${node.name}` : 'Slot already in use'}
+        title={isFree ? `Select ${node.name}` : isNodePlaceholder ? 'Unconfigured placeholder — set an event ID first' : 'Slot already in use'}
       >
         <span
           class="role-icon"
@@ -243,7 +245,7 @@
         </span>
         <span class="slot-name">{node.name}</span>
         {#if !isFree}
-          <span class="slot-used" aria-label="In use">(in use)</span>
+          <span class="slot-used" aria-label="In use">{isNodePlaceholder ? '(placeholder)' : '(in use)'}</span>
         {/if}
       </button>
     {/if}
@@ -276,6 +278,7 @@
         nodeName.toLowerCase().includes(leafQ)}
       {#if matchesRole && matchesSearch}
         {@const isFree = isSlotFree(terminal)}
+        {@const isTerminalPlaceholder = !isFree && terminal.value?.type === 'eventId' && isPlaceholderEventId(terminal.value.hex)}
         {@const selected = isSelected(terminal)}
         <button
           class="tree-slot"
@@ -284,7 +287,7 @@
           class:unavailable={!isFree}
           disabled={!isFree}
           onclick={() => onSelect(terminal, nodeId)}
-          title={isFree ? `Select ${leafLabel}` : 'Slot already in use'}
+          title={isFree ? `Select ${leafLabel}` : isTerminalPlaceholder ? 'Unconfigured placeholder — set an event ID first' : 'Slot already in use'}
         >
           <span
             class="role-icon"
@@ -296,7 +299,7 @@
           </span>
           <span class="slot-name">{leafLabel}</span>
           {#if !isFree}
-            <span class="slot-used" aria-label="In use">(in use)</span>
+            <span class="slot-used" aria-label="In use">{isTerminalPlaceholder ? '(placeholder)' : '(in use)'}</span>
           {/if}
         </button>
       {/if}

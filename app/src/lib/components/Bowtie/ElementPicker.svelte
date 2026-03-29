@@ -18,6 +18,7 @@
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { nodeInfoStore } from '$lib/stores/nodeInfo';
+  import { isPlaceholderEventId } from '$lib/utils/eventIds';
   import {
     type SegmentNode,
     type ConfigNode,
@@ -115,8 +116,8 @@
   function isSlotFree(leaf: LeafConfigNode): boolean {
     if (!leaf.value || leaf.value.type !== 'eventId') return true;
     const hex = leaf.value.hex;
-    // All zeros = definitely free
-    if (leaf.value.bytes.every(b => b === 0)) return true;
+    // Placeholder (leading-zero) event IDs can never be connected
+    if (isPlaceholderEventId(hex)) return false;
     // Free if this event ID is not part of any existing bowtie connection
     return !connectedEventIds.has(hex);
   }

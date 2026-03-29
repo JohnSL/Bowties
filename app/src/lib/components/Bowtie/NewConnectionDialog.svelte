@@ -27,6 +27,7 @@
   import ElementPicker from './ElementPicker.svelte';
   import type { ElementSelection, EventIdResolution } from '$lib/types/bowtie';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
+  import { isPlaceholderEventId } from '$lib/utils/eventIds';
 
   interface Props {
     visible: boolean;
@@ -72,8 +73,8 @@
     consumer: ElementSelection,
   ): EventIdResolution {
     const usedInMap = bowtieCatalogStore.usedInMap;
-    const prodConnected = usedInMap.has(producer.currentEventId) && producer.currentEventId !== '00.00.00.00.00.00.00.00';
-    const consConnected = usedInMap.has(consumer.currentEventId) && consumer.currentEventId !== '00.00.00.00.00.00.00.00';
+    const prodConnected = usedInMap.has(producer.currentEventId) && !isPlaceholderEventId(producer.currentEventId);
+    const consConnected = usedInMap.has(consumer.currentEventId) && !isPlaceholderEventId(consumer.currentEventId);
 
     // Rule 1: One side connected → use its event ID
     if (prodConnected && !consConnected) {
@@ -104,8 +105,8 @@
     }
 
     // Rule 3: Both unconnected → use producer's current event ID, write to consumer
-    const prodHasValue = producer.currentEventId !== '00.00.00.00.00.00.00.00';
-    const consHasValue = consumer.currentEventId !== '00.00.00.00.00.00.00.00';
+    const prodHasValue = !isPlaceholderEventId(producer.currentEventId);
+    const consHasValue = !isPlaceholderEventId(consumer.currentEventId);
 
     if (prodHasValue) {
       return {
