@@ -17,7 +17,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import TreeLeafRow from './TreeLeafRow.svelte';
 import type { LeafConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
 import type { BowtieCard } from '$lib/api/tauri';
-import { setModifiedValue } from '$lib/api/config';
+import { setModifiedValue, triggerAction } from '$lib/api/config';
 
 // Mock $app/navigation
 vi.mock('$app/navigation', () => ({
@@ -54,6 +54,7 @@ vi.mock('$lib/stores/configFocus.svelte', () => ({
 
 vi.mock('$lib/api/config', () => ({
   setModifiedValue: vi.fn(),
+  triggerAction: vi.fn().mockResolvedValue(undefined),
 }));
 
 function makeLeaf(overrides: Partial<LeafConfigNode> = {}): LeafConfigNode {
@@ -799,6 +800,247 @@ describe('dirty and write state display', () => {
     });
     render(TreeLeafRow, { props: { leaf } });
     expect(screen.getByRole('listitem')).toHaveClass('write-error');
+  });
+});
+
+// ── T040: US5 — Action element trigger button ─────────────────────────────────
+
+describe('T040: action element trigger button', () => {
+  const NODE_ID = '05.01.01.01.03.00';
+
+  it('renders a button for action-type leaf when nodeId provided', () => {
+    const leaf = makeLeaf({ elementType: 'action', size: 1 });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+    expect(screen.getByRole('button')).toBeInTheDocument();
+  });
+
+  it('shows leaf.buttonText on the button when set', () => {
+    const leaf = makeLeaf({ elementType: 'action', size: 1, buttonText: 'Reset Now' });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+    expect(screen.getByRole('button', { name: /reset now/i })).toBeInTheDocument();
+  });
+
+  it('falls back to "Trigger" when buttonText is not set', () => {
+    const leaf = makeLeaf({ elementType: 'action', size: 1 });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+    // The button uses aria-label for the accessible name (leaf name), so match by text content
+    const btn = screen.getByRole('button');
+    expect(btn).toBeInTheDocument();
+    expect(btn).toHaveTextContent('Trigger');
+  });
+
+  it('does NOT render action button without nodeId (read-only fallback)', () => {
+    const leaf = makeLeaf({ elementType: 'action', size: 1 });
+    render(TreeLeafRow, { props: { leaf } }); // no nodeId
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('calls triggerAction when button is clicked (no dialog)', async () => {
+    const leaf = makeLeaf({
+      elementType: 'action', size: 1,
+      address: 100, space: 253,
+      actionValue: 255,
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+    await fireEvent.click(screen.getByRole('button'));
+    expect(triggerAction).toHaveBeenCalledWith(NODE_ID, 253, 100, 1, 255);
+  });
+
+  it('does not call triggerAction when dialog is cancelled', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const leaf = makeLeaf({
+      elementType: 'action', size: 1,
+      address: 100, space: 253,
+      dialogText: 'Are you sure?',
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+    await fireEvent.click(screen.getByRole('button'));
+    expect(confirmSpy).toHaveBeenCalledWith('Are you sure?');
+    expect(triggerAction).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it('calls triggerAction when dialog is confirmed', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const leaf = makeLeaf({
+      elementType: 'action', size: 1,
+      address: 200, space: 253,
+      dialogText: 'Confirm?',
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+    await fireEvent.click(screen.getByRole('button'));
+    expect(triggerAction).toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it('action button is disabled when isNodeOffline is true', () => {
+    const leaf = makeLeaf({ elementType: 'action', size: 1 });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID, isNodeOffline: true } });
+    expect(screen.getByRole('button')).toBeDisabled();
+  });
+});
+
+// ── T041: Slider hint — range input ──────────────────────────────────────────
+
+describe('T041: int field with slider hint', () => {
+  const NODE_ID = '05.01.01.01.03.00';
+
+  it('renders a range input (not spinbutton) for int with hintSlider', () => {
+    const leaf = makeLeaf({
+      elementType: 'int',
+      value: { type: 'int', value: 5 },
+      size: 1,
+      constraints: { min: 0, max: 10, defaultValue: null, mapEntries: null },
+      hintSlider: { immediate: false, tickSpacing: 1, showValue: false },
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+    const slider = screen.getByRole('slider');
+    expect(slider).toBeInTheDocument();
+    expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument();
+  });
+
+  it('shows the current value label when showValue is true', () => {
+    const leaf = makeLeaf({
+      elementType: 'int',
+      value: { type: 'int', value: 7 },
+      size: 1,
+      constraints: { min: 0, max: 10, defaultValue: null, mapEntries: null },
+      hintSlider: { immediate: false, tickSpacing: 1, showValue: true },
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+    // The slider value label should show the current numeric value
+    expect(screen.getByText('7')).toBeInTheDocument();
+  });
+
+  it('does not show value label when showValue is false', () => {
+    const leaf = makeLeaf({
+      elementType: 'int',
+      value: { type: 'int', value: 7 },
+      size: 1,
+      constraints: { min: 0, max: 10, defaultValue: null, mapEntries: null },
+      hintSlider: { immediate: false, tickSpacing: 1, showValue: false },
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+    // No .slider-value span should be present
+    expect(document.querySelector('.slider-value')).not.toBeInTheDocument();
+  });
+
+  it('calls setModifiedValue on change when immediate is false', async () => {
+    const leaf = makeLeaf({
+      elementType: 'int',
+      value: { type: 'int', value: 5 },
+      size: 1,
+      address: 50,
+      space: 253,
+      constraints: { min: 0, max: 10, defaultValue: null, mapEntries: null },
+      hintSlider: { immediate: false, tickSpacing: 1, showValue: false },
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+    const slider = screen.getByRole('slider');
+    await fireEvent.change(slider, { target: { value: '8' } });
+    expect(setModifiedValue).toHaveBeenCalledWith(NODE_ID, 50, 253, { type: 'int', value: 8 });
+  });
+});
+
+// ── T042: Radio hint — radio buttons for int with map ────────────────────────
+
+describe('T042: int field with radio button hint', () => {
+  const NODE_ID = '05.01.01.01.03.00';
+
+  it('renders radio inputs (not combobox) for int with hintRadio + mapEntries', () => {
+    const leaf = makeLeaf({
+      elementType: 'int',
+      value: { type: 'int', value: 0 },
+      size: 1,
+      constraints: {
+        min: 0, max: 1, defaultValue: null,
+        mapEntries: [{ value: 0, label: 'Off' }, { value: 1, label: 'On' }],
+      },
+      hintRadio: true,
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+    expect(screen.getAllByRole('radio')).toHaveLength(2);
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+  });
+
+  it('shows map labels as radio button labels', () => {
+    const leaf = makeLeaf({
+      elementType: 'int',
+      value: { type: 'int', value: 0 },
+      size: 1,
+      constraints: {
+        min: 0, max: 2, defaultValue: null,
+        mapEntries: [
+          { value: 0, label: 'Slow' },
+          { value: 1, label: 'Medium' },
+          { value: 2, label: 'Fast' },
+        ],
+      },
+      hintRadio: true,
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+    expect(screen.getByLabelText('Slow')).toBeInTheDocument();
+    expect(screen.getByLabelText('Medium')).toBeInTheDocument();
+    expect(screen.getByLabelText('Fast')).toBeInTheDocument();
+  });
+
+  it('calls setModifiedValue with numeric value when radio is changed', async () => {
+    const leaf = makeLeaf({
+      elementType: 'int',
+      value: { type: 'int', value: 0 },
+      size: 1,
+      address: 300,
+      space: 253,
+      constraints: {
+        min: 0, max: 1, defaultValue: null,
+        mapEntries: [{ value: 0, label: 'Off' }, { value: 1, label: 'On' }],
+      },
+      hintRadio: true,
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+    const onRadio = screen.getByLabelText('On');
+    await fireEvent.change(onRadio, { target: { value: '1' } });
+    expect(setModifiedValue).toHaveBeenCalledWith(NODE_ID, 300, 253, { type: 'int', value: 1 });
+  });
+});
+
+// ── T043: Reserved value in dropdown ─────────────────────────────────────────
+
+describe('T043: reserved value option in dropdown select', () => {
+  const NODE_ID = '05.01.01.01.03.00';
+
+  it('shows disabled (Reserved: N) option when current value is not in mapEntries', () => {
+    const leaf = makeLeaf({
+      elementType: 'int',
+      value: { type: 'int', value: 99 }, // 99 not in map
+      size: 1,
+      constraints: {
+        min: 0, max: 2, defaultValue: null,
+        mapEntries: [
+          { value: 0, label: 'Off' },
+          { value: 1, label: 'On' },
+          { value: 2, label: 'Auto' },
+        ],
+      },
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+    const reservedOpt = screen.getByRole('option', { name: '(Reserved: 99)' });
+    expect(reservedOpt).toBeInTheDocument();
+    expect(reservedOpt).toBeDisabled();
+  });
+
+  it('does NOT show reserved option when current value is in mapEntries', () => {
+    const leaf = makeLeaf({
+      elementType: 'int',
+      value: { type: 'int', value: 1 }, // 1 IS in map
+      size: 1,
+      constraints: {
+        min: 0, max: 1, defaultValue: null,
+        mapEntries: [{ value: 0, label: 'Off' }, { value: 1, label: 'On' }],
+      },
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+    expect(screen.queryByRole('option', { name: /reserved/i })).not.toBeInTheDocument();
   });
 });
 

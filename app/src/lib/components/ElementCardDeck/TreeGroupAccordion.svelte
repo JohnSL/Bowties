@@ -79,6 +79,13 @@
   $: dirtyInstances = computeDirtyInstances(siblings);
   $: hasDirtyInstances = dirtyInstances.size > 0;
 
+  // ── Hideable group state ──
+  // Tracks collapsed state for groups with hideable hint.
+  let collapsed = group.hiddenByDefault ?? false;
+
+  // Propagate readOnly down the tree: if this group is read-only, disable all inputs.
+  $: isEffectivelyReadOnly = isNodeOffline || !!(group.readOnly);
+
   // Group children for the active group to handle nested replications
   $: groupedChildren = groupReplicatedChildren(activeGroup.children);
 
@@ -144,36 +151,49 @@
   <!-- Non-replicated group — subtle label header, always visible -->
   <div class="inline-section" style="--depth: {depth}; --field-label-width: {depth >= 3 ? '100px' : '120px'}">
     <div class="inline-header">
-      <span class="inline-name">{group.displayName ?? group.instanceLabel}</span>
+      {#if group.hideable}
+        <button
+          class="inline-name inline-toggle-btn"
+          aria-expanded={!collapsed}
+          onclick={() => { collapsed = !collapsed; }}
+        >
+          <span class="toggle-arrow" class:collapsed>{collapsed ? '▶' : '▼'}</span>
+          {group.displayName ?? group.instanceLabel}
+        </button>
+      {:else}
+        <span class="inline-name">{group.displayName ?? group.instanceLabel}</span>
+      {/if}
       {#if group.description}
         <p class="section-description">{group.description}</p>
       {/if}
     </div>
 
-    {#each groupedChildren as item}
-      {#if item.type === 'leaf'}
-        <TreeLeafRow leaf={item.node} usedIn={getUsedIn(item.node)} {depth} {nodeId} {segmentOrigin} {segmentName} {isNodeOffline} />
-      {:else if item.type === 'group'}
-        <svelte:self
-          group={item.node}
-          {nodeId}
-          depth={depth + 1}
-          {segmentOrigin}
-          {segmentName}
-          {isNodeOffline}
-        />
-      {:else if item.type === 'replicatedSet'}
-        <svelte:self
-          group={item.instances[0]}
-          {nodeId}
-          depth={depth + 1}
-          siblings={item.instances}
-          {segmentOrigin}
-          {segmentName}
-          {isNodeOffline}
-        />
-      {/if}
-    {/each}
+    {#if !collapsed}
+      {#each groupedChildren as item}
+        {#if item.type === 'leaf'}
+          <TreeLeafRow leaf={item.node} usedIn={getUsedIn(item.node)} {depth} {nodeId} {segmentOrigin} {segmentName} isNodeOffline={isEffectivelyReadOnly} />
+        {:else if item.type === 'group'}
+          <svelte:self
+            group={item.node}
+            {nodeId}
+            depth={depth + 1}
+            {segmentOrigin}
+            {segmentName}
+            isNodeOffline={isEffectivelyReadOnly}
+          />
+        {:else if item.type === 'replicatedSet'}
+          <svelte:self
+            group={item.instances[0]}
+            {nodeId}
+            depth={depth + 1}
+            siblings={item.instances}
+            {segmentOrigin}
+            {segmentName}
+            isNodeOffline={isEffectivelyReadOnly}
+          />
+        {/if}
+      {/each}
+    {/if}
   </div>
 {/if}
 
@@ -263,6 +283,33 @@
     font-size: 13px;
     font-weight: 600;
     color: #323130;                                /* colorNeutralForeground1 */
+  }
+
+  .inline-toggle-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    color: #323130;
+    text-align: left;
+  }
+
+  .inline-toggle-btn:hover {
+    color: #0078d4;
+  }
+
+  .toggle-arrow {
+    font-size: 10px;
+    transition: transform 0.15s;
+  }
+
+  .toggle-arrow.collapsed {
+    transform: rotate(-90deg);
   }
 
   /* ── Shared ── */

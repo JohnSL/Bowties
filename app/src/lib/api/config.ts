@@ -102,3 +102,24 @@ export async function discardModifiedValues(nodeId?: string): Promise<number> {
 export async function hasModifiedValues(): Promise<boolean> {
   return await invoke<boolean>('has_modified_values');
 }
+
+/**
+ * Trigger an action element: write `value` to the node's memory at the
+ * given space/address. This is a fire-once write that bypasses the
+ * modified-value pipeline.
+ *
+ * @param nodeId   Node ID in dotted-hex.
+ * @param space    Address space byte.
+ * @param address  Absolute memory address.
+ * @param size     Size in bytes (1, 2, 4, or 8).
+ * @param value    Integer value to write.
+ */
+export async function triggerAction(
+  nodeId: string,
+  space: number,
+  address: number,
+  size: number,
+  value: number,
+): Promise<void> {
+  return await invoke<void>('trigger_action', { nodeId, space, address, size, value });
+}

@@ -312,6 +312,7 @@ pub fn run() {
             commands::discard_modified_values,  // Modified value: discard pending edits
             commands::write_modified_values,  // Modified value: write all pending edits
             commands::has_modified_values,  // Modified value: check for pending edits
+            commands::trigger_action,         // Action element: fire-once write
             commands::list_serial_ports,
             commands::load_connection_prefs,
             commands::save_connection_prefs,

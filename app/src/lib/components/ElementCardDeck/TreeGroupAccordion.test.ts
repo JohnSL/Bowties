@@ -282,6 +282,91 @@ describe('TreeGroupAccordion.svelte', () => {
       expect(screen.getByText('Nested Value')).toBeInTheDocument();
     });
   });
+
+  // ── T050: Hideable group ───────────────────────────────────────────────────
+
+  describe('T050: hideable group', () => {
+    it('renders a button header when hideable is true', () => {
+      const group = makeGroup([makeLeaf()], {
+        replicationCount: 1, instanceLabel: 'Advanced', hideable: true,
+      });
+      render(TreeGroupAccordion, { props: { group, nodeId: '02.01.00.00.00.01' } });
+      expect(screen.getByRole('button', { name: /advanced/i })).toBeInTheDocument();
+    });
+
+    it('does NOT render a button header when hideable is not set', () => {
+      const group = makeGroup([makeLeaf()], {
+        replicationCount: 1, instanceLabel: 'Normal',
+      });
+      render(TreeGroupAccordion, { props: { group, nodeId: '02.01.00.00.00.01' } });
+      expect(screen.queryByRole('button', { name: /normal/i })).not.toBeInTheDocument();
+    });
+
+    it('shows children when hiddenByDefault is false', () => {
+      const group = makeGroup([makeLeaf({ name: 'Visible Field' })], {
+        replicationCount: 1, instanceLabel: 'Panel', hideable: true, hiddenByDefault: false,
+      });
+      render(TreeGroupAccordion, { props: { group, nodeId: '02.01.00.00.00.01' } });
+      expect(screen.getByText('Visible Field')).toBeInTheDocument();
+    });
+
+    it('hides children initially when hiddenByDefault is true', () => {
+      const group = makeGroup([makeLeaf({ name: 'Secret Field' })], {
+        replicationCount: 1, instanceLabel: 'Vault', hideable: true, hiddenByDefault: true,
+      });
+      render(TreeGroupAccordion, { props: { group, nodeId: '02.01.00.00.00.01' } });
+      expect(screen.queryByText('Secret Field')).not.toBeInTheDocument();
+    });
+
+    it('toggles children visible after clicking the header button', async () => {
+      const group = makeGroup([makeLeaf({ name: 'Toggle Target' })], {
+        replicationCount: 1, instanceLabel: 'Collapsible', hideable: true, hiddenByDefault: true,
+      });
+      render(TreeGroupAccordion, { props: { group, nodeId: '02.01.00.00.00.01' } });
+      expect(screen.queryByText('Toggle Target')).not.toBeInTheDocument();
+      await fireEvent.click(screen.getByRole('button', { name: /collapsible/i }));
+      expect(screen.getByText('Toggle Target')).toBeInTheDocument();
+    });
+
+    it('aria-expanded is false when collapsed', () => {
+      const group = makeGroup([makeLeaf()], {
+        replicationCount: 1, instanceLabel: 'Hidden', hideable: true, hiddenByDefault: true,
+      });
+      render(TreeGroupAccordion, { props: { group, nodeId: '02.01.00.00.00.01' } });
+      const btn = screen.getByRole('button', { name: /hidden/i });
+      expect(btn).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('aria-expanded is true when expanded', async () => {
+      const group = makeGroup([makeLeaf()], {
+        replicationCount: 1, instanceLabel: 'Shown', hideable: true, hiddenByDefault: true,
+      });
+      render(TreeGroupAccordion, { props: { group, nodeId: '02.01.00.00.00.01' } });
+      const btn = screen.getByRole('button', { name: /shown/i });
+      await fireEvent.click(btn);
+      expect(btn).toHaveAttribute('aria-expanded', 'true');
+    });
+  });
+
+  // ── T051: readOnly group ───────────────────────────────────────────────────
+
+  describe('T051: readOnly group', () => {
+    it('disables editing for int inputs inside a readOnly group', () => {
+      const group = makeGroup([
+        makeLeaf({
+          name: 'Speed',
+          elementType: 'int',
+          value: { type: 'int', value: 5 },
+          constraints: { min: 0, max: 10, defaultValue: null, mapEntries: null },
+        }),
+      ], {
+        replicationCount: 1, instanceLabel: 'Status', readOnly: true,
+      });
+      render(TreeGroupAccordion, { props: { group, nodeId: '02.01.00.00.00.01' } });
+      // With readOnly propagated, the int input is rendered but must be disabled
+      expect(screen.getByRole('spinbutton')).toBeDisabled();
+    });
+  });
 });
 
 describe('groupReplicatedChildren', () => {

@@ -85,6 +85,12 @@ export interface GroupConfigNode extends ConfigNodeBase {
    * Use `displayName ?? name` everywhere a group title is shown.
    */
   displayName: string | null;
+  /** When true, this group can be toggled hidden/visible by the user. */
+  hideable?: boolean;
+  /** Initial hidden state when hideable is true. */
+  hiddenByDefault?: boolean;
+  /** When true, all fields within this group should be read-only. */
+  readOnly?: boolean;
 }
 
 /** Leaf element types — matches Rust `LeafType`. */
@@ -118,6 +124,16 @@ export interface TreeMapEntry {
 /** Write lifecycle state for a pending modification — matches Rust `WriteState`. */
 export type LeafWriteState = 'dirty' | 'writing' | 'error';
 
+/** Slider hint for an integer field. */
+export interface SliderHints {
+  /** When true, value is applied immediately on drag. */
+  immediate: boolean;
+  /** Spacing between tick marks (0 = no ticks). */
+  tickSpacing: number;
+  /** When true, the current value is displayed alongside the slider. */
+  showValue: boolean;
+}
+
 /** A leaf configuration element (int, string, eventid, float, action, blob). */
 export interface LeafConfigNode extends ConfigNodeBase {
   kind: 'leaf';
@@ -141,6 +157,16 @@ export interface LeafConfigNode extends ConfigNodeBase {
   eventRole: EventRole | null;
   /** Constraints (min, max, default, map entries) */
   constraints: LeafConstraints | null;
+  /** For action elements: the label to display on the trigger button. */
+  buttonText?: string | null;
+  /** For action elements: confirmation dialog text (shown before triggering). */
+  dialogText?: string | null;
+  /** For action elements: the value written when triggered. */
+  actionValue?: number;
+  /** Slider display hint for int fields. */
+  hintSlider?: SliderHints | null;
+  /** When true, render int field as radio buttons (one per map entry). */
+  hintRadio?: boolean;
   /** User-modified value not yet written to the node. */
   modifiedValue?: TreeConfigValue | null;
   /** Write lifecycle state. Absent when no modification is pending. */

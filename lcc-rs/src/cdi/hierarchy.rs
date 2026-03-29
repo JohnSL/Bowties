@@ -44,11 +44,15 @@ impl Group {
             .collect()
     }
     
-    /// Compute instance name from repname template
+    /// Compute instance name from repname list
     ///
-    /// Handles numbering per CDI spec:
-    /// - If repname contains single string: append instance number (1-based)
-    /// - If repname is empty: use group name + instance number
+    /// Matches JMRI `JdomCdiRep.Group.getRepName()` behavior:
+    /// - `index < repname.len() - 1` → return `repname[index]` as-is (direct label)
+    /// - `index == repname.len() - 1 && index == replication - 1` → return last repname as-is
+    /// - overflow → extend last repname by appending/incrementing trailing digits:
+    ///   - if last repname ends in digits: increment those digits
+    ///   - otherwise: append the trailing number directly (no space, per JMRI spec)
+    /// - no repnames at all → fall back to group name + 1-based number
     ///
     /// # Arguments
     /// * `instance_index` - 0-based instance index
@@ -56,17 +60,42 @@ impl Group {
     /// # Returns
     /// Computed instance name
     pub fn compute_repname(&self, instance_index: u32) -> String {
-        let instance_num = instance_index + 1; // 1-based numbering
-        
-        if !self.repname.is_empty() {
-            // Use first repname entry as template
-            format!("{} {}", self.repname[0], instance_num)
-        } else if let Some(ref name) = self.name {
-            // Use group name as template
-            format!("{} {}", name, instance_num)
+        if self.repname.is_empty() {
+            // No repnames: use group name + 1-based number, or "Instance N"
+            let name = self.name.as_deref().unwrap_or("Instance");
+            return format!("{} {}", name, instance_index + 1);
+        }
+
+        // JMRI uses 1-based index internally; translate from 0-based
+        let index_1based = instance_index as usize + 1;
+        let repname_count = self.repname.len();
+
+        // Not the last repname: use the exact label at this position
+        if index_1based < repname_count {
+            return self.repname[instance_index as usize].clone();
+        }
+
+        // Exact match of last repname AND last replication: return as-is (no extension)
+        if index_1based == repname_count && instance_index + 1 == self.replication {
+            return self.repname[repname_count - 1].clone();
+        }
+
+        // Overflow: extend the last repname
+        let last = &self.repname[repname_count - 1];
+
+        // Find where trailing digit sequence begins (if any)
+        let first_trailing_digit = first_trailing_digit_index(last);
+
+        if first_trailing_digit == last.len() {
+            // No trailing digits — append the overflow number with a space
+            let trailing_number = index_1based - (repname_count - 1);
+            format!("{} {}", last, trailing_number)
         } else {
-            // Fallback to generic numbering
-            format!("Instance {}", instance_num)
+            // Has trailing digits — increment them
+            let prefix = &last[..first_trailing_digit];
+            let initial: i64 = last[first_trailing_digit..].parse().unwrap_or(0);
+            let excess = (instance_index as i64) - (repname_count as i64 - 1);
+            format!("{}{}", prefix, initial + excess)
         }
     }
     
@@ -81,6 +110,13 @@ impl Group {
     pub fn calculate_size(&self) -> i32 {
         self.elements.iter().map(calculate_element_size).sum()
     }
+}
+
+/// Returns the byte-index of the first digit in the trailing digit sequence.
+/// Returns `s.len()` if there are no trailing digits (mirrors JMRI's -1 sentinel).
+fn first_trailing_digit_index(s: &str) -> usize {
+    let trailing_count = s.chars().rev().take_while(|c| c.is_ascii_digit()).count();
+    s.len() - trailing_count
 }
 
 /// Calculate size of a data element in bytes, including its offset skip.
@@ -98,8 +134,8 @@ fn calculate_element_size(element: &DataElement) -> i32 {
         DataElement::Int(i) => i.offset + i.size as i32,
         DataElement::String(s) => s.offset + s.size as i32,
         DataElement::EventId(e) => e.offset + 8, // Event IDs are always 8 bytes
-        DataElement::Float(e) => e.offset + 4,   // 32-bit float
-        DataElement::Action(e) => e.offset + 1,
+        DataElement::Float(e) => e.offset + e.size as i32,
+        DataElement::Action(e) => e.offset + e.size as i32,
         DataElement::Blob(b) => b.offset + b.size as i32,
     }
 }
@@ -352,7 +388,8 @@ mod tests {
         
         let expanded = group.expand_replications(100);
         assert_eq!(expanded.len(), 1, "Replication=1 should produce exactly 1 instance");
-        assert_eq!(expanded[0].name, "Line 1");
+        // replication=1 and index==last → exact repname, no number
+        assert_eq!(expanded[0].name, "Line");
         assert_eq!(expanded[0].index, 0);
         assert_eq!(expanded[0].address, 100);
     }
@@ -376,6 +413,7 @@ mod tests {
                     max: None,
                     default: None,
                     map: None,
+                    hints: None,
                 }),
             ],
             hints: None,
@@ -384,7 +422,7 @@ mod tests {
         let expanded = group.expand_replications(1000);
         assert_eq!(expanded.len(), 16, "Replication=16 should produce 16 instances");
         
-        // Check first instance
+        // Check first instance — overflow with no trailing digits: no space
         assert_eq!(expanded[0].name, "Line 1");
         assert_eq!(expanded[0].index, 0);
         assert_eq!(expanded[0].address, 1000);
@@ -419,6 +457,7 @@ mod tests {
                     max: None,
                     default: None,
                     map: None,
+                    hints: None,
                 }),
             ],
             hints: None,
@@ -427,7 +466,7 @@ mod tests {
         let expanded = group.expand_replications(0);
         assert_eq!(expanded.len(), 100, "Replication=100 should produce 100 instances");
         
-        // Spot check instances
+        // Spot check instances — single repname "Ch", overflow appends number with no space
         assert_eq!(expanded[0].name, "Ch 1");
         assert_eq!(expanded[0].address, 0);
         
@@ -440,7 +479,7 @@ mod tests {
 
     #[test]
     fn test_compute_repname_with_template() {
-        // T043d: Test numbering with repname template
+        // T043d: Single-repname overflow — JMRI appends number without space
         let group = Group {
             name: Some("Input".to_string()),
             description: None,
@@ -451,9 +490,61 @@ mod tests {
             hints: None,
         };
         
-        assert_eq!(group.compute_repname(0), "Channel 1", "First instance should be 1-based");
+        // All instances overflow (single repname, replication > 1)
+        assert_eq!(group.compute_repname(0), "Channel 1", "First overflow: with space");
         assert_eq!(group.compute_repname(5), "Channel 6");
         assert_eq!(group.compute_repname(15), "Channel 16", "Last instance of 16");
+    }
+
+    #[test]
+    fn test_compute_repname_multi_entry() {
+        // Multi-repname: each instance gets its exact label
+        let group = Group {
+            name: Some("Button".to_string()),
+            description: None,
+            offset: 0,
+            replication: 9,
+            repname: vec![
+                "Button".to_string(),
+                " Thumb In".to_string(),
+                " Thumb Dn".to_string(),
+                " Thumb Up".to_string(),
+                " Thumb Lt".to_string(),
+                " Thumb Rt".to_string(),
+                " Star".to_string(),
+                " Pound".to_string(),
+                " OK".to_string(),
+            ],
+            elements: vec![],
+            hints: None,
+        };
+
+        // Each matches its repname exactly (spaces preserved)
+        assert_eq!(group.compute_repname(0), "Button");
+        assert_eq!(group.compute_repname(1), " Thumb In");
+        assert_eq!(group.compute_repname(2), " Thumb Dn");
+        // Last repname AND last replication: return as-is
+        assert_eq!(group.compute_repname(8), " OK");
+    }
+
+    #[test]
+    fn test_compute_repname_trailing_digits() {
+        // Last repname ends in digits: increment them for overflow
+        let group = Group {
+            name: None,
+            description: None,
+            offset: 0,
+            replication: 5,
+            repname: vec!["Step1".to_string(), "Step2".to_string()],
+            elements: vec![],
+            hints: None,
+        };
+
+        assert_eq!(group.compute_repname(0), "Step1");  // exact
+        assert_eq!(group.compute_repname(1), "Step2");  // exact (NOT last replication)
+        assert_eq!(group.compute_repname(2), "Step3");  // overflow: 2 + 1 = 3
+        assert_eq!(group.compute_repname(3), "Step4");
+        assert_eq!(group.compute_repname(4), "Step5");
     }
 
     #[test]
@@ -579,6 +670,7 @@ mod tests {
                     max: None,
                     default: None,
                     map: None,
+                    hints: None,
                 }),
             ],
             hints: None,
@@ -642,6 +734,7 @@ mod tests {
                                             max: None,
                                             default: None,
                                             map: None,
+                                            hints: None,
                                         }),
                                     ],
                                     hints: None,

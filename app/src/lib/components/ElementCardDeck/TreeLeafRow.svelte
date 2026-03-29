@@ -13,7 +13,7 @@
   import type { LeafConfigNode, TreeConfigValue, TreeMapEntry } from '$lib/types/nodeTree';
   import { effectiveValue } from '$lib/types/nodeTree';
   import type { BowtieCard } from '$lib/api/tauri';
-  import { setModifiedValue } from '$lib/api/config';
+  import { setModifiedValue, triggerAction } from '$lib/api/config';
   import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { configFocusStore } from '$lib/stores/configFocus.svelte';
@@ -50,6 +50,7 @@
 
   let rowEl: HTMLDivElement;
   let descExpanded = $state(false);
+  let actionTriggering = $state(false);
 
   /**
    * Local validation state tracked on the frontend only.
@@ -90,14 +91,37 @@
   let isEditable = $derived(
     nodeId.length > 0 &&
     (leaf.elementType === 'string' ||
-      (leaf.elementType === 'int' && !(leaf.constraints?.mapEntries?.length)))
+      (leaf.elementType === 'int' && !(leaf.constraints?.mapEntries?.length) && !leaf.hintSlider))
   );
 
   /** Whether this leaf is an int field with constrained map entries (dropdown) */
   let isSelectEditable = $derived(
     nodeId.length > 0 &&
     leaf.elementType === 'int' &&
+    !!(leaf.constraints?.mapEntries?.length) &&
+    !leaf.hintRadio
+  );
+
+  /** Whether this leaf is an int field with slider hint */
+  let isSliderEditable = $derived(
+    nodeId.length > 0 &&
+    leaf.elementType === 'int' &&
+    !!leaf.hintSlider &&
+    !leaf.constraints?.mapEntries?.length
+  );
+
+  /** Whether this leaf is an int field with radio button hint */
+  let isRadioEditable = $derived(
+    nodeId.length > 0 &&
+    leaf.elementType === 'int' &&
+    !!leaf.hintRadio &&
     !!(leaf.constraints?.mapEntries?.length)
+  );
+
+  /** Whether this leaf is an action element */
+  let isActionLeaf = $derived(
+    nodeId.length > 0 &&
+    leaf.elementType === 'action'
   );
 
   /** Whether this leaf is a float field that supports inline editing */
@@ -274,7 +298,7 @@
     setModifiedValue(nodeId, leaf.address, leaf.space, newVal);
   }
 
-  /** Validate an event ID in dotted-hex and send to Rust tree */
+  /** T034: event ID field — text input with dotted-hex validation */
   function handleEventIdInput(e: Event) {
     const raw = (e.target as HTMLInputElement).value;
 
@@ -334,6 +358,19 @@
   function formatEventId(bytes: number[]): string {
     if (bytes.every(b => b === 0)) return '(not set)';
     return bytes.map(b => b.toString(16).padStart(2, '0')).join('.');
+  }
+
+  /** Trigger an action element, with optional confirmation dialog. */
+  async function handleActionTrigger() {
+    if (leaf.dialogText) {
+      if (!confirm(leaf.dialogText)) return;
+    }
+    actionTriggering = true;
+    try {
+      await triggerAction(nodeId, leaf.space, leaf.address, leaf.size, leaf.actionValue ?? 0);
+    } finally {
+      actionTriggering = false;
+    }
   }
 
   function handleNavigateToBowties() {
@@ -405,10 +442,63 @@
         aria-label={leaf.name}
         onchange={handleSelectChange}
       >
+        {#if !leaf.constraints.mapEntries.some((e: TreeMapEntry) => e.value === inputSelect)}
+          <option value={inputSelect} disabled>(Reserved: {inputSelect})</option>
+        {/if}
         {#each leaf.constraints.mapEntries as entry}
           <option value={entry.value}>{entry.label}</option>
         {/each}
       </select>
+    {:else if isSliderEditable && leaf.hintSlider}
+      <!-- Slider hint: range input for int without map entries -->
+      <div class="field-slider-wrap">
+        <input
+          type="range"
+          class="field-input field-input--slider"
+          value={inputNum}
+          min={leaf.constraints?.min ?? undefined}
+          max={leaf.constraints?.max ?? undefined}
+          step={leaf.hintSlider.tickSpacing > 0 ? leaf.hintSlider.tickSpacing : 1}
+          disabled={isDisabled}
+          aria-label={leaf.name}
+          oninput={leaf.hintSlider.immediate ? handleIntInput : undefined}
+          onchange={!leaf.hintSlider.immediate ? handleIntInput : undefined}
+        />
+        {#if leaf.hintSlider.showValue}
+          <span class="slider-value mono">{inputNum}</span>
+        {/if}
+      </div>
+    {:else if isRadioEditable && leaf.constraints?.mapEntries}
+      <!-- Radio hint: radio buttons for int with map entries -->
+      <div class="field-radio-group" role="radiogroup" aria-label={leaf.name}>
+        {#each leaf.constraints.mapEntries as entry}
+          <label class="field-radio-label">
+            <input
+              type="radio"
+              name={`leaf-radio-${leaf.space}-${leaf.address}`}
+              value={entry.value}
+              checked={inputSelect === entry.value}
+              disabled={isDisabled}
+              onchange={handleSelectChange}
+            />
+            {entry.label}
+          </label>
+        {/each}
+      </div>
+    {:else if isActionLeaf}
+      <!-- Action element: trigger button -->
+      <button
+        class="action-trigger-btn"
+        disabled={isDisabled || actionTriggering}
+        onclick={handleActionTrigger}
+        aria-label={leaf.buttonText ?? leaf.name}
+      >
+        {#if actionTriggering}
+          Triggering…
+        {:else}
+          {leaf.buttonText ?? 'Trigger'}
+        {/if}
+      </button>
     {:else if isFloatEditable}
       <!-- T031: float field — number input with step="any" -->
       <input
@@ -625,6 +715,64 @@
     flex: 0 0 auto;                                /* don't stretch — size to content */
     width: auto;                                   /* browser measures widest <option> */
     max-width: 280px;                              /* guard against pathologically long labels */
+  }
+
+  .field-input--slider {
+    flex: 1 1 auto;
+    max-width: 200px;
+    accent-color: #0078d4;
+    cursor: pointer;
+  }
+
+  .field-slider-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 auto;
+  }
+
+  .slider-value {
+    font-family: 'Cascadia Code', 'Cascadia Mono', 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 12px;
+    min-width: 4ch;
+    text-align: right;
+  }
+
+  .field-radio-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    align-items: center;
+  }
+
+  .field-radio-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  .action-trigger-btn {
+    flex: 0 0 auto;
+    padding: 4px 12px;
+    font-size: 13px;
+    font-family: inherit;
+    background: #0078d4;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .action-trigger-btn:hover:not(:disabled) {
+    background: #106ebe;
+  }
+
+  .action-trigger-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .field-input--eventid {

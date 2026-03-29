@@ -267,6 +267,7 @@ mod tests {
             max: None,
             default: None,
             map: None,
+            hints: None,
         });
         let line_group = DataElement::Group(Group {
             name: Some("Line".to_string()),

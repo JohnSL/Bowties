@@ -122,8 +122,34 @@ impl Group {
 /// Optional rendering hints for groups
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupHints {
-    /// Display hint (e.g., "compact", "expanded")
-    pub display: Option<String>,
+    /// When true the group can be collapsed/expanded by the user
+    pub hideable: bool,
+    /// When true the group starts collapsed
+    pub hidden: bool,
+    /// When true all child fields are read-only (Write button disabled)
+    pub read_only: bool,
+}
+
+/// Optional rendering hints for integer elements
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IntegerHints {
+    /// Render as a slider (requires min/max)
+    pub slider: Option<SliderHints>,
+    /// Render as radio buttons instead of dropdown (requires map)
+    pub radiobutton: bool,
+}
+
+/// Parameters for slider rendering of an integer field
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SliderHints {
+    /// Write to node on every drag release
+    pub immediate: bool,
+    /// Major tick spacing (0 = no ticks)
+    pub tick_spacing: u32,
+    /// Show a numeric readout alongside the slider
+    pub show_value: bool,
 }
 
 /// Integer configuration element with optional constraints
@@ -152,6 +178,9 @@ pub struct IntElement {
     
     /// Value mapping (e.g., 0="Inactive", 1="Active")
     pub map: Option<Map>,
+
+    /// Optional rendering hints (slider, radiobutton)
+    pub hints: Option<IntegerHints>,
 }
 
 /// Event ID configuration element (always 8 bytes)
@@ -191,12 +220,24 @@ pub struct FloatElement {
     
     /// Element description (optional, user-visible)
     pub description: Option<String>,
+
+    /// Size in bytes: 2 (float16), 4 (float32), or 8 (float64)
+    pub size: u8,
+
+    /// Minimum allowed value (optional constraint)
+    pub min: Option<f64>,
+
+    /// Maximum allowed value (optional constraint)
+    pub max: Option<f64>,
+
+    /// Default value (optional)
+    pub default: Option<f64>,
     
     /// Memory offset from parent address
     pub offset: i32,
 }
 
-/// Action configuration element (triggers an action, no value)
+/// Action configuration element (triggers an action by writing a value)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionElement {
     /// Element name (optional, user-visible)
@@ -204,6 +245,18 @@ pub struct ActionElement {
     
     /// Element description (optional, user-visible)
     pub description: Option<String>,
+
+    /// Size in bytes (1, 2, 4, or 8) — controls write width
+    pub size: u8,
+
+    /// Value to write when the action is triggered
+    pub value: i64,
+
+    /// Label for the trigger button (defaults to element name)
+    pub button_text: Option<String>,
+
+    /// Confirmation dialog text shown before triggering (None = no dialog)
+    pub dialog_text: Option<String>,
     
     /// Memory offset from parent address
     pub offset: i32,
@@ -291,6 +344,7 @@ mod tests {
                     max: None,
                     default: None,
                     map: None,
+                    hints: None,
                 }),
             ],
             hints: None,
@@ -358,6 +412,7 @@ mod tests {
             max: Some(100),
             default: Some(50),
             map: None,
+            hints: None,
         };
         
         assert_eq!(int_elem.size, 2);

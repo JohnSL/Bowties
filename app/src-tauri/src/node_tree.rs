@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use lcc_rs::cdi::{
-    Cdi, DataElement, EventRole, Identification,
+    Cdi, DataElement, EventRole, Identification, SliderHints,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -84,12 +84,17 @@ pub struct GroupNode {
     /// Child nodes
     pub children: Vec<ConfigNode>,
     /// Profile-supplied display-name override.
-    ///
-    /// When `Some`, the frontend renders this instead of `name`.  Set by
-    /// `annotate_tree` from the `label` field of an `EventRoleDecl` (or a
-    /// future `RelevanceRule` with a label).  `None` means "use `name`".
     #[serde(default)]
     pub display_name: Option<String>,
+    /// When true the group can be collapsed/expanded by the user
+    #[serde(default)]
+    pub hideable: bool,
+    /// When true the group starts collapsed
+    #[serde(default)]
+    pub hidden_by_default: bool,
+    /// When true all child fields are read-only (Write button disabled)
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 /// Write lifecycle state for a pending modification.
@@ -128,6 +133,21 @@ pub struct LeafNode {
     pub event_role: Option<EventRole>,
     /// Constraints (min, max, default, map entries)
     pub constraints: Option<LeafConstraints>,
+    /// Action trigger: label for the button (action elements only)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub button_text: Option<String>,
+    /// Action trigger: confirmation dialog text (action elements only; None = no dialog)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dialog_text: Option<String>,
+    /// Action trigger: value to write on trigger (action elements only)
+    #[serde(default)]
+    pub action_value: i64,
+    /// Slider hint (int elements with slider hint only)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint_slider: Option<SliderHints>,
+    /// Radio-button hint (int elements with radiobutton hint only)
+    #[serde(default)]
+    pub hint_radio: bool,
     /// User-modified value not yet written to the node.
     /// When `Some`, this is the value the user intends to write.
     /// `value` retains the last-confirmed on-node value.
@@ -171,8 +191,8 @@ pub enum ConfigValue {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LeafConstraints {
-    pub min: Option<i64>,
-    pub max: Option<i64>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
     pub default_value: Option<String>,
     pub map_entries: Option<Vec<MapEntry>>,
 }
@@ -307,6 +327,9 @@ fn build_children(
                             path: child_path,
                             children: child_nodes,
                             display_name: None,
+                            hideable: g.hints.as_ref().map(|h| h.hideable).unwrap_or(false),
+                            hidden_by_default: g.hints.as_ref().map(|h| h.hidden).unwrap_or(false),
+                            read_only: g.hints.as_ref().map(|h| h.read_only).unwrap_or(false),
                         }));
                     }
 
@@ -321,6 +344,9 @@ fn build_children(
                         path: group_path,
                         children: replicated_children,
                         display_name: None,
+                        hideable: g.hints.as_ref().map(|h| h.hideable).unwrap_or(false),
+                        hidden_by_default: g.hints.as_ref().map(|h| h.hidden).unwrap_or(false),
+                        read_only: g.hints.as_ref().map(|h| h.read_only).unwrap_or(false),
                     }));
                 } else {
                     // Non-replicated group (replication=1): no wrapper needed.
@@ -338,6 +364,9 @@ fn build_children(
                         path: group_path,
                         children: child_nodes,
                         display_name: None,
+                        hideable: g.hints.as_ref().map(|h| h.hideable).unwrap_or(false),
+                        hidden_by_default: g.hints.as_ref().map(|h| h.hidden).unwrap_or(false),
+                        read_only: g.hints.as_ref().map(|h| h.read_only).unwrap_or(false),
                     }));
                 }
 
@@ -357,11 +386,11 @@ fn build_children(
                     size: e.size as u32,
                     space,
                     path,
-                    value: None,
+                    value: e.default.map(|d| ConfigValue::Int { value: d }),
                     event_role: None,
                     constraints: Some(LeafConstraints {
-                        min: e.min,
-                        max: e.max,
+                        min: e.min.map(|v| v as f64),
+                        max: e.max.map(|v| v as f64),
                         default_value: e.default.map(|v| v.to_string()),
                         map_entries: e.map.as_ref().map(|m| {
                             m.entries
@@ -373,6 +402,11 @@ fn build_children(
                                 .collect()
                         }),
                     }),
+                    button_text: None,
+                    dialog_text: None,
+                    action_value: 0,
+                    hint_slider: e.hints.as_ref().and_then(|h| h.slider.clone()),
+                    hint_radio: e.hints.as_ref().map(|h| h.radiobutton).unwrap_or(false),
                     modified_value: None,
                     write_state: None,
                     write_error: None,
@@ -395,6 +429,11 @@ fn build_children(
                     value: None,
                     event_role: None,
                     constraints: None,
+                    button_text: None,
+                    dialog_text: None,
+                    action_value: 0,
+                    hint_slider: None,
+                    hint_radio: false,
                     modified_value: None,
                     write_state: None,
                     write_error: None,
@@ -417,6 +456,11 @@ fn build_children(
                     value: None,
                     event_role: None,
                     constraints: None,
+                    button_text: None,
+                    dialog_text: None,
+                    action_value: 0,
+                    hint_slider: None,
+                    hint_radio: false,
                     modified_value: None,
                     write_state: None,
                     write_error: None,
@@ -433,17 +477,27 @@ fn build_children(
                     description: e.description.clone(),
                     element_type: LeafType::Float,
                     address: addr,
-                    size: 4,
+                    size: e.size as u32,
                     space,
                     path,
-                    value: None,
+                    value: e.default.map(|d| ConfigValue::Float { value: d }),
                     event_role: None,
-                    constraints: None,
+                    constraints: Some(LeafConstraints {
+                        min: e.min,
+                        max: e.max,
+                        default_value: e.default.map(|v| v.to_string()),
+                        map_entries: None,
+                    }),
+                    button_text: None,
+                    dialog_text: None,
+                    action_value: 0,
+                    hint_slider: None,
+                    hint_radio: false,
                     modified_value: None,
                     write_state: None,
                     write_error: None,
                 }));
-                cursor += 4;
+                cursor += e.size as i32;
             }
             DataElement::Action(e) => {
                 cursor += e.offset;
@@ -455,17 +509,22 @@ fn build_children(
                     description: e.description.clone(),
                     element_type: LeafType::Action,
                     address: addr,
-                    size: 1,
+                    size: e.size as u32,
                     space,
                     path,
                     value: None,
                     event_role: None,
                     constraints: None,
+                    button_text: e.button_text.clone(),
+                    dialog_text: e.dialog_text.clone(),
+                    action_value: e.value,
+                    hint_slider: None,
+                    hint_radio: false,
                     modified_value: None,
                     write_state: None,
                     write_error: None,
                 }));
-                cursor += 1;
+                cursor += e.size as i32;
             }
             DataElement::Blob(b) => {
                 cursor += b.offset;
@@ -483,6 +542,11 @@ fn build_children(
                     value: None,
                     event_role: None,
                     constraints: None,
+                    button_text: None,
+                    dialog_text: None,
+                    action_value: 0,
+                    hint_slider: None,
+                    hint_radio: false,
                     modified_value: None,
                     write_state: None,
                     write_error: None,
@@ -498,6 +562,29 @@ fn build_children(
 // ─────────────────────────────────────────────────────────────────────────────
 // Value and role merging
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Decode an IEEE 754 half-precision (float16) bit pattern to f64.
+fn f16_bits_to_f64(bits: u16) -> f64 {
+    let sign = ((bits as u32) >> 15) << 31;
+    let exp = ((bits >> 10) & 0x1F) as u32;
+    let mantissa = (bits & 0x3FF) as u32;
+    let f32_bits: u32 = if exp == 0 {
+        if mantissa == 0 {
+            sign // ±zero
+        } else {
+            // Denormal: normalize
+            let mut m = mantissa;
+            let mut e = 0u32;
+            while (m & 0x400) == 0 { m <<= 1; e += 1; }
+            sign | ((127 - 14 + 1 - e) << 23) | ((m & 0x3FF) << 13)
+        }
+    } else if exp == 31 {
+        sign | 0x7F80_0000 | (mantissa << 13) // Inf/NaN
+    } else {
+        sign | ((exp + 112) << 23) | (mantissa << 13)
+    };
+    f32::from_bits(f32_bits) as f64
+}
 
 /// Format 8 bytes as dotted-hex string (e.g. "05.02.01.02.03.00.00.01").
 fn bytes_to_dotted_hex(bytes: &[u8; 8]) -> String {
@@ -575,13 +662,22 @@ fn parse_leaf_value(leaf_type: LeafType, size: u32, raw: &[u8]) -> Option<Config
             }
         }
         LeafType::Float => {
-            if raw.len() >= 4 {
-                let val = f32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]);
-                Some(ConfigValue::Float {
-                    value: val as f64,
-                })
-            } else {
-                None
+            match size {
+                2 if raw.len() >= 2 => {
+                    let bits = u16::from_be_bytes([raw[0], raw[1]]);
+                    Some(ConfigValue::Float { value: f16_bits_to_f64(bits) })
+                }
+                4 if raw.len() >= 4 => {
+                    let val = f32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]);
+                    Some(ConfigValue::Float { value: val as f64 })
+                }
+                8 if raw.len() >= 8 => {
+                    let val = f64::from_be_bytes([
+                        raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+                    ]);
+                    Some(ConfigValue::Float { value: val })
+                }
+                _ => None,
             }
         }
         // Action and Blob don't carry user-editable values
@@ -1582,8 +1678,8 @@ mod tests {
         match &tree.segments[0].children[0] {
             ConfigNode::Leaf(l) => {
                 let c = l.constraints.as_ref().unwrap();
-                assert_eq!(c.min, Some(0));
-                assert_eq!(c.max, Some(100));
+                assert_eq!(c.min, Some(0.0_f64));
+                assert_eq!(c.max, Some(100.0_f64));
                 assert_eq!(c.default_value.as_deref(), Some("50"));
                 let entries = c.map_entries.as_ref().unwrap();
                 assert_eq!(entries.len(), 2);
@@ -1727,6 +1823,49 @@ mod tests {
     fn parse_leaf_value_blob_returns_none() {
         let result = parse_leaf_value(LeafType::Blob, 4, &[0x01, 0x02, 0x03, 0x04]);
         assert!(result.is_none(), "Blob should always return None");
+    }
+
+    #[test]
+    fn parse_leaf_value_float_f16() {
+        // 0x3C00 = 1.0 in IEEE 754 half-precision (big-endian)
+        let raw: Vec<u8> = vec![0x3C, 0x00];
+        let result = parse_leaf_value(LeafType::Float, 2, &raw);
+        match result {
+            Some(ConfigValue::Float { value }) => {
+                assert!((value - 1.0_f64).abs() < 1e-3, "Expected ≈1.0, got {}", value);
+            }
+            other => panic!("Expected Float, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_leaf_value_float_f16_zero() {
+        let raw: Vec<u8> = vec![0x00, 0x00];
+        let result = parse_leaf_value(LeafType::Float, 2, &raw);
+        match result {
+            Some(ConfigValue::Float { value }) => assert_eq!(value, 0.0_f64),
+            other => panic!("Expected Float, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_leaf_value_float_f64() {
+        // 1.5f64 in big-endian
+        let raw = 1.5f64.to_be_bytes().to_vec();
+        let result = parse_leaf_value(LeafType::Float, 8, &raw);
+        match result {
+            Some(ConfigValue::Float { value }) => {
+                assert!((value - 1.5_f64).abs() < f64::EPSILON, "Expected 1.5, got {}", value);
+            }
+            other => panic!("Expected Float, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_leaf_value_float_insufficient_data_returns_none() {
+        // size=4 but only 2 bytes → None
+        let result = parse_leaf_value(LeafType::Float, 4, &[0x3F, 0x80]);
+        assert!(result.is_none(), "Insufficient data should return None");
     }
 
     // ── classify_leaf_roles_from_protocol ───────────────────────────────────
@@ -2259,6 +2398,345 @@ mod tests {
                 assert_eq!(entries[2].label, "Auto");
             }
             _ => panic!("Expected leaf"),
+        }
+    }
+
+    // ── Float size variants ─────────────────────────────────────────────────
+
+    #[test]
+    fn build_tree_float_size2() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <float size="2"><name>Half</name></float>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                assert_eq!(l.element_type, LeafType::Float);
+                assert_eq!(l.size, 2);
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn build_tree_float_size8() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <float size="8"><name>Double</name></float>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                assert_eq!(l.element_type, LeafType::Float);
+                assert_eq!(l.size, 8);
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn build_tree_float_default_prepopulated() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <float size="4">
+                        <name>Gain</name>
+                        <default>3.14</default>
+                    </float>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                match &l.value {
+                    Some(ConfigValue::Float { value }) => {
+                        assert!((value - 3.14f64).abs() < 1e-6, "Expected ≈3.14, got {}", value);
+                    }
+                    other => panic!("Expected ConfigValue::Float, got {:?}", other),
+                }
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn build_tree_float_with_min_max_constraints() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <float size="4">
+                        <name>Vol</name>
+                        <min>-1.0</min>
+                        <max>1.0</max>
+                    </float>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                let c = l.constraints.as_ref().unwrap();
+                assert!((c.min.unwrap() - (-1.0f64)).abs() < f64::EPSILON);
+                assert!((c.max.unwrap() - 1.0f64).abs() < f64::EPSILON);
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    // ── Int default pre-population ──────────────────────────────────────────
+
+    #[test]
+    fn build_tree_int_default_prepopulated() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <int size="1">
+                        <name>Speed</name>
+                        <default>42</default>
+                    </int>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                match &l.value {
+                    Some(ConfigValue::Int { value }) => assert_eq!(*value, 42),
+                    other => panic!("Expected ConfigValue::Int, got {:?}", other),
+                }
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn build_tree_int_no_default_is_none() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <int size="1"><name>Mode</name></int>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => assert!(l.value.is_none(), "No default → value should be None"),
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    // ── Integer hints ───────────────────────────────────────────────────────
+
+    #[test]
+    fn build_tree_int_with_slider_hint() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <int size="1">
+                        <name>Brightness</name>
+                        <hints><slider immediate="1" tickSpacing="5" showValue="1"/></hints>
+                    </int>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                let slider = l.hint_slider.as_ref().expect("Expected hint_slider");
+                assert!(slider.immediate);
+                assert_eq!(slider.tick_spacing, 5);
+                assert!(slider.show_value);
+                assert!(!l.hint_radio, "hint_radio should be false");
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn build_tree_int_with_radio_hint() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <int size="1">
+                        <name>Mode</name>
+                        <hints><radiobutton/></hints>
+                    </int>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                assert!(l.hint_radio, "hint_radio should be true");
+                assert!(l.hint_slider.is_none(), "hint_slider should be None");
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn build_tree_int_no_hint_fields_are_default() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <int size="1"><name>X</name></int>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                assert!(l.hint_slider.is_none());
+                assert!(!l.hint_radio);
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    // ── Action with button_text / dialog_text ───────────────────────────────
+
+    #[test]
+    fn build_tree_action_with_button_and_dialog_text() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <action size="1">
+                        <name>Factory Reset</name>
+                        <buttonText>Reset Now</buttonText>
+                        <dialogText>Are you sure?</dialogText>
+                        <value>255</value>
+                    </action>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                assert_eq!(l.element_type, LeafType::Action);
+                assert_eq!(l.button_text.as_deref(), Some("Reset Now"));
+                assert_eq!(l.dialog_text.as_deref(), Some("Are you sure?"));
+                assert_eq!(l.action_value, 255);
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn build_tree_action_custom_size() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <action size="4"><name>Trigger</name></action>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                assert_eq!(l.element_type, LeafType::Action);
+                assert_eq!(l.size, 4);
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn build_tree_action_cursor_advances_by_size() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <action size="4"><name>Cmd</name></action>
+                    <int size="1"><name>After</name></int>
+                </segment>
+            </cdi>"#,
+        );
+        let seg = &tree.segments[0];
+        // Action at address=0, size=4 → next element starts at 4
+        match &seg.children[1] {
+            ConfigNode::Leaf(l) => assert_eq!(l.address, 4, "Int after 4-byte action should be at address 4"),
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    // ── Group hints ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn build_tree_group_hideable() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <group>
+                        <name>Advanced</name>
+                        <hints><visibility hideable="1" hidden="1"/></hints>
+                        <int size="1"><name>X</name></int>
+                    </group>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Group(g) => {
+                assert!(g.hideable, "hideable should be true");
+                assert!(g.hidden_by_default, "hidden_by_default should be true");
+                assert!(!g.read_only);
+            }
+            _ => panic!("Expected group"),
+        }
+    }
+
+    #[test]
+    fn build_tree_group_readonly() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <group>
+                        <name>Status</name>
+                        <hints><readOnly/></hints>
+                        <int size="1"><name>Y</name></int>
+                    </group>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Group(g) => {
+                assert!(g.read_only, "read_only should be true");
+                assert!(!g.hideable);
+                assert!(!g.hidden_by_default);
+            }
+            _ => panic!("Expected group"),
+        }
+    }
+
+    #[test]
+    fn build_tree_group_no_hints_defaults_false() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <group>
+                        <name>Plain</name>
+                        <int size="1"><name>Z</name></int>
+                    </group>
+                </segment>
+            </cdi>"#,
+        );
+        match &tree.segments[0].children[0] {
+            ConfigNode::Group(g) => {
+                assert!(!g.hideable);
+                assert!(!g.hidden_by_default);
+                assert!(!g.read_only);
+            }
+            _ => panic!("Expected group"),
         }
     }
 }

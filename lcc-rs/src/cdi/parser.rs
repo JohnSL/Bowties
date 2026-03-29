@@ -249,7 +249,7 @@ fn parse_group(node: Node) -> Result<Group, String> {
     let mut description = None;
     let mut repname = Vec::new();
     let mut elements = Vec::new();
-    let hints = None;
+    let mut hints = None;
     
     for child in node.children().filter(|n| n.is_element()) {
         match child.tag_name().name() {
@@ -260,6 +260,7 @@ fn parse_group(node: Node) -> Result<Group, String> {
                     repname.push(text.to_string());
                 }
             }
+            "hints" => hints = Some(parse_group_hints(child)),
             _ => {
                 // Try to parse as data element (recursive)
                 if let Some(element) = parse_data_element(child)? {
@@ -301,6 +302,7 @@ fn parse_int_element(node: Node) -> Result<IntElement, String> {
     let mut max = None;
     let mut default = None;
     let mut map = None;
+    let mut hints = None;
     
     for child in node.children().filter(|n| n.is_element()) {
         match child.tag_name().name() {
@@ -310,6 +312,7 @@ fn parse_int_element(node: Node) -> Result<IntElement, String> {
             "max" => max = child.text().and_then(|s| s.parse::<i64>().ok()),
             "default" => default = child.text().and_then(|s| s.parse::<i64>().ok()),
             "map" => map = Some(parse_map(child)),
+            "hints" => hints = Some(parse_int_hints(child)),
             _ => {}
         }
     }
@@ -323,6 +326,7 @@ fn parse_int_element(node: Node) -> Result<IntElement, String> {
         max,
         default,
         map,
+        hints,
     })
 }
 
@@ -381,17 +385,32 @@ fn parse_string_element(node: Node) -> Result<StringElement, String> {
 
 /// Parse float element
 fn parse_float_element(node: Node) -> Result<FloatElement, String> {
+    let size = node.attribute("size")
+        .and_then(|s| s.parse::<u8>().ok())
+        .unwrap_or(4);
+
+    // Validate size: 2 (float16), 4 (float32), 8 (float64)
+    if ![2, 4, 8].contains(&size) {
+        return Err(format!("Invalid float size: {}. Must be 2, 4, or 8", size));
+    }
+
     let offset = node.attribute("offset")
         .and_then(|s| s.parse::<i32>().ok())
         .unwrap_or(0);
     
     let mut name = None;
     let mut description = None;
+    let mut min = None;
+    let mut max = None;
+    let mut default = None;
     
     for child in node.children().filter(|n| n.is_element()) {
         match child.tag_name().name() {
             "name" => name = child.text().map(|s| s.to_string()),
             "description" => description = child.text().map(|s| s.to_string()),
+            "min" => min = child.text().and_then(|s| s.parse::<f64>().ok()),
+            "max" => max = child.text().and_then(|s| s.parse::<f64>().ok()),
+            "default" => default = child.text().and_then(|s| s.parse::<f64>().ok()),
             _ => {}
         }
     }
@@ -399,23 +418,48 @@ fn parse_float_element(node: Node) -> Result<FloatElement, String> {
     Ok(FloatElement {
         name,
         description,
+        size,
+        min,
+        max,
+        default,
         offset,
     })
 }
 
 /// Parse action element
 fn parse_action_element(node: Node) -> Result<ActionElement, String> {
+    let size = node.attribute("size")
+        .and_then(|s| s.parse::<u8>().ok())
+        .unwrap_or(1);
+
+    if ![1, 2, 4, 8].contains(&size) {
+        return Err(format!("Invalid action size: {}. Must be 1, 2, 4, or 8", size));
+    }
+
     let offset = node.attribute("offset")
         .and_then(|s| s.parse::<i32>().ok())
         .unwrap_or(0);
     
     let mut name = None;
     let mut description = None;
+    let mut value: i64 = 0;
+    let mut button_text = None;
+    let mut dialog_text = None;
     
     for child in node.children().filter(|n| n.is_element()) {
         match child.tag_name().name() {
             "name" => name = child.text().map(|s| s.to_string()),
             "description" => description = child.text().map(|s| s.to_string()),
+            "value" => value = child.text().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0),
+            "buttonText" => button_text = child.text().map(|s| s.to_string()),
+            "dialogText" => {
+                // Only set if non-empty
+                if let Some(t) = child.text() {
+                    if !t.trim().is_empty() {
+                        dialog_text = Some(t.to_string());
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -423,6 +467,10 @@ fn parse_action_element(node: Node) -> Result<ActionElement, String> {
     Ok(ActionElement {
         name,
         description,
+        size,
+        value,
+        button_text,
+        dialog_text,
         offset,
     })
 }
@@ -454,6 +502,57 @@ fn parse_blob_element(node: Node) -> Result<BlobElement, String> {
         size,
         offset,
     })
+}
+
+/// Parse `<hints>` element for integer elements
+fn parse_int_hints(node: Node) -> IntegerHints {
+    let mut slider = None;
+    let mut radiobutton = false;
+
+    for child in node.children().filter(|n| n.is_element()) {
+        match child.tag_name().name() {
+            "slider" => {
+                let immediate = child.attribute("immediate")
+                    .map(|v| v == "true" || v == "1")
+                    .unwrap_or(false);
+                let tick_spacing = child.attribute("tickSpacing")
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(0);
+                let show_value = child.attribute("showValue")
+                    .map(|v| v == "true" || v == "1")
+                    .unwrap_or(false);
+                slider = Some(SliderHints { immediate, tick_spacing, show_value });
+            }
+            "radiobutton" => radiobutton = true,
+            _ => {}
+        }
+    }
+
+    IntegerHints { slider, radiobutton }
+}
+
+/// Parse `<hints>` element for group elements
+fn parse_group_hints(node: Node) -> GroupHints {
+    let mut hideable = false;
+    let mut hidden = false;
+    let mut read_only = false;
+
+    for child in node.children().filter(|n| n.is_element()) {
+        match child.tag_name().name() {
+            "visibility" => {
+                hideable = child.attribute("hideable")
+                    .map(|v| v == "true" || v == "1")
+                    .unwrap_or(false);
+                hidden = child.attribute("hidden")
+                    .map(|v| v == "true" || v == "1")
+                    .unwrap_or(false);
+            }
+            "readOnly" => read_only = true,
+            _ => {}
+        }
+    }
+
+    GroupHints { hideable, hidden, read_only }
 }
 
 /// Parse map element
@@ -943,6 +1042,239 @@ mod tests {
         let result = parse_cdi(xml);
         assert!(result.is_err(), "Missing space attribute should return error");
         assert!(result.unwrap_err().contains("Segment missing 'space' attribute"));
+    }
+
+    // ── Float element parser tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_parse_float_element_default_size() {
+        let xml = r#"<cdi><segment space="253"><float><name>Temp</name></float></segment></cdi>"#;
+        let cdi = parse_cdi(xml).unwrap();
+        let DataElement::Float(e) = &cdi.segments[0].elements[0] else { panic!("Expected Float") };
+        assert_eq!(e.size, 4);
+        assert_eq!(e.name, Some("Temp".to_string()));
+    }
+
+    #[test]
+    fn test_parse_float_element_size2() {
+        let xml = r#"<cdi><segment space="253"><float size="2"><name>Half</name></float></segment></cdi>"#;
+        let cdi = parse_cdi(xml).unwrap();
+        let DataElement::Float(e) = &cdi.segments[0].elements[0] else { panic!("Expected Float") };
+        assert_eq!(e.size, 2);
+    }
+
+    #[test]
+    fn test_parse_float_element_size8() {
+        let xml = r#"<cdi><segment space="253"><float size="8"><name>Double</name></float></segment></cdi>"#;
+        let cdi = parse_cdi(xml).unwrap();
+        let DataElement::Float(e) = &cdi.segments[0].elements[0] else { panic!("Expected Float") };
+        assert_eq!(e.size, 8);
+    }
+
+    #[test]
+    fn test_parse_float_element_invalid_size() {
+        let xml = r#"<cdi><segment space="253"><float size="3"><name>Bad</name></float></segment></cdi>"#;
+        let result = parse_cdi(xml);
+        assert!(result.is_err(), "size=3 should be invalid for float");
+    }
+
+    #[test]
+    fn test_parse_float_element_with_min_max_default() {
+        let xml = r#"<cdi><segment space="253"><float size="4">
+            <name>Gain</name>
+            <min>0.0</min>
+            <max>100.0</max>
+            <default>50.0</default>
+        </float></segment></cdi>"#;
+        let cdi = parse_cdi(xml).unwrap();
+        let DataElement::Float(e) = &cdi.segments[0].elements[0] else { panic!("Expected Float") };
+        assert!((e.min.unwrap() - 0.0f64).abs() < f64::EPSILON);
+        assert!((e.max.unwrap() - 100.0f64).abs() < f64::EPSILON);
+        assert!((e.default.unwrap() - 50.0f64).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_float_element_min_max_none_by_default() {
+        let xml = r#"<cdi><segment space="253"><float><name>X</name></float></segment></cdi>"#;
+        let cdi = parse_cdi(xml).unwrap();
+        let DataElement::Float(e) = &cdi.segments[0].elements[0] else { panic!("Expected Float") };
+        assert!(e.min.is_none());
+        assert!(e.max.is_none());
+        assert!(e.default.is_none());
+    }
+
+    // ── Action element parser tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_parse_action_element_defaults() {
+        let xml = r#"<cdi><segment space="253"><action><name>Reset</name></action></segment></cdi>"#;
+        let cdi = parse_cdi(xml).unwrap();
+        let DataElement::Action(e) = &cdi.segments[0].elements[0] else { panic!("Expected Action") };
+        assert_eq!(e.size, 1);
+        assert_eq!(e.value, 0);
+        assert!(e.button_text.is_none());
+        assert!(e.dialog_text.is_none());
+        assert_eq!(e.name, Some("Reset".to_string()));
+    }
+
+    #[test]
+    fn test_parse_action_element_with_all_fields() {
+        let xml = r#"<cdi><segment space="253">
+            <action size="4">
+                <name>Factory Reset</name>
+                <value>255</value>
+                <buttonText>Reset Now</buttonText>
+                <dialogText>Are you sure?</dialogText>
+            </action>
+        </segment></cdi>"#;
+        let cdi = parse_cdi(xml).unwrap();
+        let DataElement::Action(e) = &cdi.segments[0].elements[0] else { panic!("Expected Action") };
+        assert_eq!(e.size, 4);
+        assert_eq!(e.value, 255);
+        assert_eq!(e.button_text, Some("Reset Now".to_string()));
+        assert_eq!(e.dialog_text, Some("Are you sure?".to_string()));
+    }
+
+    #[test]
+    fn test_parse_action_element_invalid_size() {
+        let xml = r#"<cdi><segment space="253"><action size="3"><name>Bad</name></action></segment></cdi>"#;
+        let result = parse_cdi(xml);
+        assert!(result.is_err(), "size=3 should be invalid for action");
+    }
+
+    #[test]
+    fn test_parse_action_element_empty_dialog_text_is_none() {
+        // empty dialogText should be treated as no dialog
+        let xml = r#"<cdi><segment space="253">
+            <action><name>Go</name><dialogText>  </dialogText></action>
+        </segment></cdi>"#;
+        let cdi = parse_cdi(xml).unwrap();
+        let DataElement::Action(e) = &cdi.segments[0].elements[0] else { panic!("Expected Action") };
+        assert!(e.dialog_text.is_none(), "Whitespace-only dialogText should be None");
+    }
+
+    #[test]
+    fn test_parse_action_valid_sizes() {
+        for size in [1u8, 2, 4, 8] {
+            let xml = format!(
+                r#"<cdi><segment space="253"><action size="{}"><name>A</name></action></segment></cdi>"#,
+                size
+            );
+            let cdi = parse_cdi(&xml).unwrap();
+            let DataElement::Action(e) = &cdi.segments[0].elements[0] else { panic!("Expected Action") };
+            assert_eq!(e.size, size);
+        }
+    }
+
+    // ── Integer hints parser tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_parse_int_no_hints() {
+        let xml = r#"<cdi><segment space="253"><int size="1"><name>Speed</name></int></segment></cdi>"#;
+        let cdi = parse_cdi(xml).unwrap();
+        let DataElement::Int(e) = &cdi.segments[0].elements[0] else { panic!("Expected Int") };
+        assert!(e.hints.is_none());
+    }
+
+    #[test]
+    fn test_parse_int_with_slider_hint() {
+        let xml = r#"<cdi><segment space="253">
+            <int size="1">
+                <name>Brightness</name>
+                <hints><slider immediate="1" tickSpacing="10" showValue="1"/></hints>
+            </int>
+        </segment></cdi>"#;
+        let cdi = parse_cdi(xml).unwrap();
+        let DataElement::Int(e) = &cdi.segments[0].elements[0] else { panic!("Expected Int") };
+        let hints = e.hints.as_ref().expect("Expected hints");
+        let slider = hints.slider.as_ref().expect("Expected slider hint");
+        assert!(slider.immediate);
+        assert_eq!(slider.tick_spacing, 10);
+        assert!(slider.show_value);
+    }
+
+    #[test]
+    fn test_parse_int_slider_defaults() {
+        // slider with no attributes → immediate=false, tick_spacing=0, show_value=false
+        let xml = r#"<cdi><segment space="253">
+            <int size="2"><name>Vol</name><hints><slider/></hints></int>
+        </segment></cdi>"#;
+        let cdi = parse_cdi(xml).unwrap();
+        let DataElement::Int(e) = &cdi.segments[0].elements[0] else { panic!("Expected Int") };
+        let slider = e.hints.as_ref().unwrap().slider.as_ref().unwrap();
+        assert!(!slider.immediate);
+        assert_eq!(slider.tick_spacing, 0);
+        assert!(!slider.show_value);
+    }
+
+    #[test]
+    fn test_parse_int_with_radiobutton_hint() {
+        let xml = r#"<cdi><segment space="253">
+            <int size="1"><name>Mode</name><hints><radiobutton/></hints></int>
+        </segment></cdi>"#;
+        let cdi = parse_cdi(xml).unwrap();
+        let DataElement::Int(e) = &cdi.segments[0].elements[0] else { panic!("Expected Int") };
+        let hints = e.hints.as_ref().expect("Expected hints");
+        assert!(hints.radiobutton);
+        assert!(hints.slider.is_none());
+    }
+
+    // ── Group hints parser tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_group_no_hints() {
+        let xml = r#"<cdi><segment space="253"><group><name>Config</name></group></segment></cdi>"#;
+        let cdi = parse_cdi(xml).unwrap();
+        let DataElement::Group(g) = &cdi.segments[0].elements[0] else { panic!("Expected Group") };
+        assert!(g.hints.is_none());
+    }
+
+    #[test]
+    fn test_parse_group_with_hideable_hint() {
+        let xml = r#"<cdi><segment space="253">
+            <group>
+                <name>Advanced</name>
+                <hints><visibility hideable="1" hidden="1"/></hints>
+            </group>
+        </segment></cdi>"#;
+        let cdi = parse_cdi(xml).unwrap();
+        let DataElement::Group(g) = &cdi.segments[0].elements[0] else { panic!("Expected Group") };
+        let hints = g.hints.as_ref().expect("Expected hints");
+        assert!(hints.hideable);
+        assert!(hints.hidden);
+        assert!(!hints.read_only);
+    }
+
+    #[test]
+    fn test_parse_group_with_readonly_hint() {
+        let xml = r#"<cdi><segment space="253">
+            <group>
+                <name>Status</name>
+                <hints><readOnly/></hints>
+            </group>
+        </segment></cdi>"#;
+        let cdi = parse_cdi(xml).unwrap();
+        let DataElement::Group(g) = &cdi.segments[0].elements[0] else { panic!("Expected Group") };
+        let hints = g.hints.as_ref().expect("Expected hints");
+        assert!(hints.read_only);
+        assert!(!hints.hideable);
+        assert!(!hints.hidden);
+    }
+
+    #[test]
+    fn test_parse_group_hideable_not_hidden_by_default() {
+        // hideable="1" but hidden not set → hidden defaults to false
+        let xml = r#"<cdi><segment space="253">
+            <group>
+                <name>Panel</name>
+                <hints><visibility hideable="1"/></hints>
+            </group>
+        </segment></cdi>"#;
+        let cdi = parse_cdi(xml).unwrap();
+        let DataElement::Group(g) = &cdi.segments[0].elements[0] else { panic!("Expected Group") };
+        let hints = g.hints.as_ref().unwrap();
+        assert!(hints.hideable);
+        assert!(!hints.hidden);
     }
 }
 
