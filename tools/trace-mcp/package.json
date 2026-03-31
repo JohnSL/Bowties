@@ -1,0 +1,29 @@
+{
+  "name": "@bowties/lcc-trace-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for analysing LCC/OpenLCB message traces from JMRI CAN Monitor",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "lcc-trace-mcp": "dist/index.js",
+    "lcc-trace": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "clipboardy": "^4.0.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "~5.6.2"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

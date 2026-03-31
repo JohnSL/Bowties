@@ -4,6 +4,7 @@ Thumbs.db
 *.tmp
 *.swp
 .vscode/
+!.vscode/mcp.json
 .idea/
 *.log
 

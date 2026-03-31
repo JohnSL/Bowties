@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "lcc-trace": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${workspaceFolder}/tools/trace-mcp/dist/index.js"]
+    }
+  }
+}
