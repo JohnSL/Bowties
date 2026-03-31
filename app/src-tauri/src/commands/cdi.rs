@@ -2949,6 +2949,7 @@ pub async fn write_modified_values(
             total: 0,
             succeeded: 0,
             failed: 0,
+            read_only_rejected: 0,
         });
     }
 
@@ -2961,6 +2962,7 @@ pub async fn write_modified_values(
 
     let mut succeeded = 0u32;
     let mut failed = 0u32;
+    let mut read_only_rejected = 0u32;
     let mut success_node_ids = std::collections::HashSet::new();
 
     for (node_id, leaf_info) in &work {
@@ -2997,14 +2999,31 @@ pub async fn write_modified_values(
                     success_node_ids.insert(node_id.clone());
                 }
                 Err(e) => {
-                    crate::node_tree::set_leaf_write_state(
-                        &mut tree,
-                        leaf_info.space,
-                        leaf_info.address,
-                        crate::node_tree::WriteState::Error,
-                        Some(e.to_string()),
-                    );
-                    failed += 1;
+                    let err_str = e.to_string();
+                    // Error 0x1083 = OpenLCB "address is read-only / cannot be written".
+                    // Revert the modification silently and mark the leaf read-only so the
+                    // control is disabled for the rest of the session.
+                    if err_str.contains("1083") {
+                        crate::node_tree::revert_and_mark_leaf_read_only(
+                            &mut tree,
+                            leaf_info.space,
+                            leaf_info.address,
+                        );
+                        read_only_rejected += 1;
+                        eprintln!(
+                            "[write] {} @{:#010x}: read-only rejection (0x1083), reverting '{}'",
+                            node_id, leaf_info.address, leaf_info.name
+                        );
+                    } else {
+                        crate::node_tree::set_leaf_write_state(
+                            &mut tree,
+                            leaf_info.space,
+                            leaf_info.address,
+                            crate::node_tree::WriteState::Error,
+                            Some(err_str),
+                        );
+                        failed += 1;
+                    }
                 }
             }
             let _ = proxy.set_config_tree(tree).await;
@@ -3037,6 +3056,7 @@ pub async fn write_modified_values(
         total: work.len() as u32,
         succeeded,
         failed,
+        read_only_rejected,
     })
 }
 
@@ -3047,6 +3067,9 @@ pub struct WriteModifiedResult {
     pub total: u32,
     pub succeeded: u32,
     pub failed: u32,
+    /// Number of writes silently reverted because the device returned 0x1083
+    /// (address is read-only).  Not counted in `failed`.
+    pub read_only_rejected: u32,
 }
 
 /// Check whether any loaded tree has pending modifications.

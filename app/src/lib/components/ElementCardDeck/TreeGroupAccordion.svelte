@@ -150,23 +150,25 @@
 {:else}
   <!-- Non-replicated group — subtle label header, always visible -->
   <div class="inline-section" style="--depth: {depth}; --field-label-width: {depth >= 3 ? '100px' : '120px'}">
-    <div class="inline-header">
-      {#if group.hideable}
-        <button
-          class="inline-name inline-toggle-btn"
-          aria-expanded={!collapsed}
-          onclick={() => { collapsed = !collapsed; }}
-        >
-          <span class="toggle-arrow" class:collapsed>{collapsed ? '▶' : '▼'}</span>
-          {group.displayName ?? group.instanceLabel}
-        </button>
-      {:else}
-        <span class="inline-name">{group.displayName ?? group.instanceLabel}</span>
-      {/if}
-      {#if group.description}
-        <p class="section-description">{group.description}</p>
-      {/if}
-    </div>
+    {#if group.hasName !== false}
+      <div class="inline-header">
+        {#if group.hideable}
+          <button
+            class="inline-name inline-toggle-btn"
+            aria-expanded={!collapsed}
+            onclick={() => { collapsed = !collapsed; }}
+          >
+            <span class="toggle-arrow" class:collapsed>{collapsed ? '▶' : '▼'}</span>
+            {group.displayName ?? group.instanceLabel}
+          </button>
+        {:else}
+          <span class="inline-name">{group.displayName ?? group.instanceLabel}</span>
+        {/if}
+        {#if group.description}
+          <p class="section-description">{group.description}</p>
+        {/if}
+      </div>
+    {/if}
 
     {#if !collapsed}
       {#each groupedChildren as item}

@@ -65,6 +65,12 @@ export interface GroupConfigNode extends ConfigNodeBase {
   kind: 'group';
   /** Display name for this group instance */
   name: string;
+  /**
+   * True when the CDI group had an explicit `<name>` element.
+   * When false (or absent) the UI should suppress the group section header.
+   * Absent means true (backward-compatible default).
+   */
+  hasName?: boolean;
   /** Optional description */
   description: string | null;
   /** 1-based replication instance number (1 when not replicated) */
@@ -173,6 +179,11 @@ export interface LeafConfigNode extends ConfigNodeBase {
   writeState?: LeafWriteState | null;
   /** Error message from the last failed write attempt. */
   writeError?: string | null;
+  /**
+   * Set to true at runtime when the device rejects a write with 0x1083
+   * (address is read-only). Disables the control for the rest of the session.
+   */
+  readOnly?: boolean;
 }
 
 // ─── Event payloads ──────────────────────────────────────────────────────────

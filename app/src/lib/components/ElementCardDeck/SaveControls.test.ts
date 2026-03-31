@@ -38,7 +38,7 @@ vi.mock('$lib/stores/bowtieMetadata.svelte', () => ({
 }));
 
 vi.mock('$lib/api/config', () => ({
-  writeModifiedValues: vi.fn().mockResolvedValue({ succeeded: 1, failed: 0 }),
+  writeModifiedValues: vi.fn().mockResolvedValue({ succeeded: 1, failed: 0, readOnlyRejected: 0 }),
   discardModifiedValues: vi.fn().mockResolvedValue(0),
 }));
 
@@ -52,6 +52,11 @@ vi.mock('$lib/stores/layout.svelte', () => ({
 
 vi.mock('$lib/stores/nodeInfo', () => ({
   updateNodeSnipField: vi.fn(),
+}));
+
+vi.mock('@zerodevx/svelte-toast', () => ({
+  toast: { push: vi.fn(), pop: vi.fn() },
+  SvelteToast: vi.fn(),
 }));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -229,6 +234,61 @@ describe('SaveControls.svelte', () => {
       await waitFor(() => {
         expect(screen.getByRole('group', { name: /configuration save controls/i })).toBeInTheDocument();
       });
+    });
+  });
+
+  // ── Read-only rejection (0x1083) ──────────────────────────────────────────
+  describe('read-only rejection', () => {
+    it('calls toast.push when readOnlyRejected > 0', async () => {
+      const { writeModifiedValues } = await import('$lib/api/config');
+      const { toast } = await import('@zerodevx/svelte-toast');
+      vi.mocked(writeModifiedValues).mockResolvedValueOnce({
+        total: 2,
+        succeeded: 0,
+        failed: 0,
+        readOnlyRejected: 2,
+      });
+      treesRef.map.set('node1', makeDirtyTree(2));
+      render(SaveControls);
+      const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
+      await fireEvent.click(saveBtn);
+      await waitFor(() => {
+        expect(toast.push).toHaveBeenCalledWith(
+          expect.stringMatching(/2 read-only fields reverted/i),
+          expect.objectContaining({ classes: ['warn'] })
+        );
+      });
+    });
+
+    it('uses singular wording for exactly one read-only field', async () => {
+      const { writeModifiedValues } = await import('$lib/api/config');
+      const { toast } = await import('@zerodevx/svelte-toast');
+      vi.mocked(writeModifiedValues).mockResolvedValueOnce({
+        total: 1,
+        succeeded: 0,
+        failed: 0,
+        readOnlyRejected: 1,
+      });
+      treesRef.map.set('node1', makeDirtyTree(1));
+      render(SaveControls);
+      const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
+      await fireEvent.click(saveBtn);
+      await waitFor(() => {
+        expect(toast.push).toHaveBeenCalledWith(
+          expect.stringMatching(/1 read-only field reverted/i),
+          expect.objectContaining({ classes: ['warn'] })
+        );
+      });
+    });
+
+    it('does not call toast.push when readOnlyRejected is 0', async () => {
+      const { toast } = await import('@zerodevx/svelte-toast');
+      treesRef.map.set('node1', makeDirtyTree(1));
+      render(SaveControls);
+      const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
+      await fireEvent.click(saveBtn);
+      await waitFor(() => screen.getByText(/✓ Saved/i));
+      expect(toast.push).not.toHaveBeenCalled();
     });
   });
 });

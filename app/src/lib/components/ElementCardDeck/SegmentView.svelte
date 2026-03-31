@@ -119,17 +119,20 @@
           {:else}
             <!-- Non-replicated group → section header with children -->
             {@const innerGrouped = groupReplicatedChildren(item.node.children)}
+            {@const groupEffectiveOffline = isNodeOffline || !!item.node.readOnly}
             <section class="group-section">
-              <div class="group-header">
-                <span class="group-name">{item.node.instanceLabel}</span>
-                {#if item.node.description}
-                  <p class="group-description">{item.node.description}</p>
-                {/if}
-              </div>
+              {#if item.node.hasName !== false}
+                <div class="group-header">
+                  <span class="group-name">{item.node.instanceLabel}</span>
+                  {#if item.node.description}
+                    <p class="group-description">{item.node.description}</p>
+                  {/if}
+                </div>
+              {/if}
 
               {#each innerGrouped as inner, innerIdx (innerIdx)}
                 {#if inner.type === 'leaf'}
-                  <TreeLeafRow leaf={inner.node} usedIn={getUsedIn(nodeId, inner.node)} depth={1} {nodeId} segmentOrigin={segment.origin} segmentName={segment.name} {isNodeOffline} />
+                  <TreeLeafRow leaf={inner.node} usedIn={getUsedIn(nodeId, inner.node)} depth={1} {nodeId} segmentOrigin={segment.origin} segmentName={segment.name} isNodeOffline={groupEffectiveOffline} />
                 {:else if inner.type === 'replicatedSet'}
                   <TreeGroupAccordion
                     group={inner.instances[0]}
@@ -138,7 +141,7 @@
                     siblings={inner.instances}
                     segmentOrigin={segment.origin}
                     segmentName={segment.name}
-                    {isNodeOffline}
+                    isNodeOffline={groupEffectiveOffline}
                   />
                 {:else if inner.type === 'group'}
                   <TreeGroupAccordion
@@ -147,7 +150,7 @@
                     depth={1}
                     segmentOrigin={segment.origin}
                     segmentName={segment.name}
-                    {isNodeOffline}
+                    isNodeOffline={groupEffectiveOffline}
                   />
                 {/if}
               {/each}

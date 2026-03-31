@@ -367,6 +367,33 @@ describe('TreeGroupAccordion.svelte', () => {
       expect(screen.getByRole('spinbutton')).toBeDisabled();
     });
   });
+
+  // ── unnamed group — no header ──────────────────────────────────────────────
+
+  describe('unnamed group (hasName: false)', () => {
+    it('suppresses the section header when hasName is false', () => {
+      const group = makeGroup([makeLeaf({ name: 'Hidden Label Field' })], {
+        name: 'Group 0',
+        instanceLabel: 'Group 0',
+        hasName: false,
+        replicationCount: 1,
+      });
+      render(TreeGroupAccordion, { props: { group, nodeId: '02.01.00.00.00.01' } });
+      // The auto-generated "Group 0" label must not be visible
+      expect(screen.queryByText('Group 0')).not.toBeInTheDocument();
+      // But child content is still rendered
+      expect(screen.getByText('Hidden Label Field')).toBeInTheDocument();
+    });
+
+    it('shows the section header when hasName is true (default)', () => {
+      const group = makeGroup([makeLeaf()], {
+        instanceLabel: 'Settings',
+        replicationCount: 1,
+      });
+      render(TreeGroupAccordion, { props: { group, nodeId: '02.01.00.00.00.01' } });
+      expect(screen.getByText('Settings')).toBeInTheDocument();
+    });
+  });
 });
 
 describe('groupReplicatedChildren', () => {

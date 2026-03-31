@@ -74,6 +74,8 @@ export interface WriteModifiedResult {
   total: number;
   succeeded: number;
   failed: number;
+  /** Fields silently reverted because the device returned 0x1083 (read-only). */
+  readOnlyRejected: number;
 }
 
 /**

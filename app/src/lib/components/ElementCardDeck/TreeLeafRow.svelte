@@ -84,8 +84,9 @@
   let activeValidationMessage = $derived(localValidationMessage ?? null);
   let isWriting = $derived(leaf.writeState === 'writing');
   let hasWriteError = $derived(leaf.writeState === 'error');
-  /** True when input should be disabled: either saving or node is offline (FR-007) */
-  let isDisabled = $derived(isWriting || isNodeOffline);
+  /** True when input should be disabled: either saving, node is offline (FR-007), or
+   * the device rejected a write for this field with 0x1083 (runtime read-only) */
+  let isDisabled = $derived(isWriting || isNodeOffline || !!leaf.readOnly);
 
   /** Whether this leaf type supports inline editing */
   let isEditable = $derived(

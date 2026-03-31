@@ -63,12 +63,18 @@ pub enum ConfigNode {
     Leaf(LeafNode),
 }
 
+fn default_true() -> bool { true }
+
 /// A (possibly replicated) group of child nodes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupNode {
     /// Display name for this group instance
     pub name: String,
+    /// True when the CDI group had an explicit <name> element.
+    /// When false the UI should suppress the group header.
+    #[serde(default = "default_true")]
+    pub has_name: bool,
     /// Optional description
     pub description: Option<String>,
     /// 1-based replication instance number (1 when not replicated)
@@ -159,6 +165,10 @@ pub struct LeafNode {
     /// Error message from the last failed write attempt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write_error: Option<String>,
+    /// Set to true at runtime when the device rejects a write with a read-only
+    /// error (0x1083).  Disables the control for the rest of the session.
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 /// Discriminator for leaf element types.
@@ -289,6 +299,7 @@ fn build_children(
                     continue;
                 }
 
+                let has_name = g.name.is_some();
                 let original_name = g
                     .name
                     .clone()
@@ -319,6 +330,7 @@ fn build_children(
 
                         replicated_children.push(ConfigNode::Group(GroupNode {
                             name: original_name.clone(),
+                            has_name,
                             description: None, // Instances don't repeat the description
                             instance: inst_num,
                             instance_label,
@@ -336,6 +348,7 @@ fn build_children(
                     // Wrapper group: instance=0 indicates it's the template/wrapper.
                     children.push(ConfigNode::Group(GroupNode {
                         name: original_name.clone(),
+                        has_name,
                         description: g.description.clone(),
                         instance: 0,
                         instance_label: original_name.clone(), // Wrapper uses the group name
@@ -356,6 +369,7 @@ fn build_children(
 
                     children.push(ConfigNode::Group(GroupNode {
                         name: original_name.clone(),
+                        has_name,
                         description: g.description.clone(),
                         instance: 1,
                         instance_label: original_name.clone(),
@@ -410,6 +424,7 @@ fn build_children(
                     modified_value: None,
                     write_state: None,
                     write_error: None,
+                    read_only: false,
                 }));
                 cursor += e.size as i32;
             }
@@ -437,6 +452,7 @@ fn build_children(
                     modified_value: None,
                     write_state: None,
                     write_error: None,
+                    read_only: false,
                 }));
                 cursor += s.size as i32;
             }
@@ -464,6 +480,7 @@ fn build_children(
                     modified_value: None,
                     write_state: None,
                     write_error: None,
+                    read_only: false,
                 }));
                 cursor += 8;
             }
@@ -496,6 +513,7 @@ fn build_children(
                     modified_value: None,
                     write_state: None,
                     write_error: None,
+                    read_only: false,
                 }));
                 cursor += e.size as i32;
             }
@@ -523,6 +541,7 @@ fn build_children(
                     modified_value: None,
                     write_state: None,
                     write_error: None,
+                    read_only: false,
                 }));
                 cursor += e.size as i32;
             }
@@ -550,6 +569,7 @@ fn build_children(
                     modified_value: None,
                     write_state: None,
                     write_error: None,
+                    read_only: false,
                 }));
                 cursor += b.size as i32;
             }
@@ -1031,6 +1051,49 @@ fn commit_in_children(children: &mut [ConfigNode], space: u8, address: u32) -> b
                 }
                 leaf.write_state = None;
                 leaf.write_error = None;
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Revert a leaf's pending modification and mark it as permanently read-only.
+///
+/// Called when the device rejects a write with error 0x1083 (address is read-only).
+/// Clears `modified_value`, `write_state`, and `write_error`, and sets
+/// `read_only = true` so the control is disabled for the rest of the session.
+pub fn revert_and_mark_leaf_read_only(
+    tree: &mut NodeConfigTree,
+    space: u8,
+    address: u32,
+) -> bool {
+    for segment in &mut tree.segments {
+        if revert_read_only_in_children(&mut segment.children, space, address) {
+            return true;
+        }
+    }
+    false
+}
+
+fn revert_read_only_in_children(
+    children: &mut [ConfigNode],
+    space: u8,
+    address: u32,
+) -> bool {
+    for child in children.iter_mut() {
+        match child {
+            ConfigNode::Group(g) => {
+                if revert_read_only_in_children(&mut g.children, space, address) {
+                    return true;
+                }
+            }
+            ConfigNode::Leaf(leaf) if leaf.space == space && leaf.address == address => {
+                leaf.modified_value = None;
+                leaf.write_state = None;
+                leaf.write_error = None;
+                leaf.read_only = true;
                 return true;
             }
             _ => {}

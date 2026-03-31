@@ -13,6 +13,7 @@
   import type { SaveProgress, SaveState } from '$lib/types/nodeTree';
   import { countModifiedLeaves } from '$lib/types/nodeTree';
   import { writeModifiedValues, discardModifiedValues } from '$lib/api/config';
+  import { toast } from '@zerodevx/svelte-toast';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
@@ -90,6 +91,13 @@
     if (hasNodeEdits) {
       try {
         const result = await writeModifiedValues();
+        if ((result.readOnlyRejected ?? 0) > 0) {
+          const n = result.readOnlyRejected;
+          toast.push(
+            `${n} read-only field${n === 1 ? '' : 's'} reverted — device rejected the write`,
+            { classes: ['warn'], duration: 6000, pausable: true }
+          );
+        }
         saveProgress = {
           ...saveProgress,
           completed: result.succeeded,
