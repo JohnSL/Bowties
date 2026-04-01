@@ -261,22 +261,23 @@ export function buildInteractionGroups(
     const cmd = dgReq.bytes[1];
     const noReply = isMemConfigNoReplyCmd(cmd);
 
-    // Find first matching reply: from opposite direction, after this request
+    // Find first matching reply: from opposite direction, after this request.
+    // Use frame index ordering (not timestamp) because request and reply can
+    // share the same millisecond timestamp in fast USB-to-CAN traces.
     let matchRep: DgEntry | undefined;
+    const reqLastFrameIdx = dgReq.frameIndices[dgReq.frameIndices.length - 1] ?? 0;
     if (!noReply) {
       matchRep = memReps.find(rep =>
         !usedRepDis.has(rep.di) &&
         datagrams[rep.di].srcAlias === dgReq.destAlias &&
         datagrams[rep.di].destAlias === dgReq.srcAlias &&
-        rep.ts > req.ts,
+        datagrams[rep.di].frameIndices[0] > reqLastFrameIdx,
       );
       if (matchRep) usedRepDis.add(matchRep.di);
     }
 
     const frameIndices = [...dgReq.frameIndices];
     if (matchRep) frameIndices.push(...datagrams[matchRep.di].frameIndices);
-
-    const reqLastFrameIdx = dgReq.frameIndices[dgReq.frameIndices.length - 1] ?? 0;
 
     // Request ACK: Datagram Received OK from responder → requester
     const reqAckIdx = findFrame(

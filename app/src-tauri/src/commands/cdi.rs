@@ -1790,7 +1790,30 @@ pub async fn read_all_config_values(
     // Per-batch diagnostic timing records (Phase 4c instrumentation).
     let mut batch_stats: Vec<crate::diagnostics::BatchReadStat> = Vec::with_capacity(total_batches);
 
-    for batch in batches.iter() {
+    // --- Pipelined batch read: subscribe once, pipeline ACK+requests tightly ---
+    // Build one descriptor per batch, then execute all reads in a single call
+    // that holds the broadcast subscription and sends ACK+next request back-to-back.
+    let batch_descriptors: Vec<lcc_rs::BatchReadDescriptor> = batches.iter().map(|batch| {
+        let first = &sized_items[batch[0]];
+        let batch_start_addr = first.absolute_address;
+        let batch_end_addr: u32 = batch.iter()
+            .map(|&i| sized_items[i].absolute_address + sized_items[i].size)
+            .max()
+            .unwrap_or(batch_start_addr);
+        lcc_rs::BatchReadDescriptor {
+            address_space: first.space,
+            address: batch_start_addr,
+            count: (batch_end_addr - batch_start_addr) as u8,
+        }
+    }).collect();
+
+    let mut reader = {
+        let conn = connection.lock().await;
+        conn.batch_reader(alias).map_err(|e| e.to_string())?
+    };
+    let reads_start = Instant::now();
+
+    for (batch_idx, batch) in batches.iter().enumerate() {
         // T054: Check for cancellation between batches
         if let Err(_) = check_cancellation(&state) {
             let _ = app_handle.emit("config-read-progress", ReadProgressUpdate {
@@ -1833,24 +1856,19 @@ pub async fn read_all_config_values(
             status: ProgressStatus::ReadingNode { node_name: node_name.clone() },
         });
 
-        // T056: Single read covering all elements in this batch.
-        // Retries transparently handled by `read_memory_with_retry`.
-        let batch_read_start = Instant::now();
-        let (timed_result, retry_count) = read_memory_with_retry(
-            &connection,
-            alias,
-            batch_space,
-            batch_start_addr,
-            batch_total_size as u8,
-            timeout,
-        ).await;
-        let response_data = match timed_result {
-            Ok((mut data, timing)) => {
+        // Perform the read, then emit updated progress.
+        let read_t_ms = reads_start.elapsed().as_millis() as u64;
+        let batch_result = reader.read_next(&batch_descriptors[batch_idx], timeout).await;
+        let response_data = match &batch_result.data {
+            Ok(initial_data) => {
+                let timing = batch_result.timing.as_ref().unwrap();
+                let mut data = initial_data.clone();
+
                 crate::bwlog!(state.inner(),
-                    "[config-read] {} @{:#010x}+{} space={:#04x}: ok latency={}ms frames={} total={}ms{}",
+                    "[config-read] t={}ms {} @{:#010x}+{} space={:#04x}: ok latency={}ms frames={} total={}ms",
+                    read_t_ms,
                     node_name, batch_start_addr, batch_total_size, batch_space,
-                    timing.first_frame_latency_ms, timing.frame_count, timing.total_duration_ms,
-                    if retry_count > 0 { format!(" (after {} retries)", retry_count) } else { String::new() });
+                    timing.first_frame_latency_ms, timing.frame_count, timing.total_duration_ms);
 
                 // LCC spec allows nodes to return fewer bytes than requested.
                 // Embedded nodes (e.g. RR-Cirkits TowerLCC) commonly have limited
@@ -1919,14 +1937,13 @@ pub async fn read_all_config_values(
                     success: true,
                     error: None,
                     first_frame_latency_ms: Some(timing.first_frame_latency_ms),
-                    frame_gaps_ms: timing.frame_gaps_ms,
+                    frame_gaps_ms: timing.frame_gaps_ms.clone(),
                     frame_count: Some(timing.frame_count),
-                    total_duration_ms: batch_read_start.elapsed().as_millis() as u64,
+                    total_duration_ms: timing.total_duration_ms,
                 });
                 data
             }
-            Err(e) => {
-                let err_str = e.to_string();
+            Err(err_str) => {
                 crate::bwlog!(state.inner(),
                     "[config-read] {} @{:#010x}+{} space={:#04x}: FAILED {}",
                     node_name, batch_start_addr, batch_total_size, batch_space, err_str);
@@ -1939,7 +1956,8 @@ pub async fn read_all_config_values(
                     first_frame_latency_ms: None,
                     frame_gaps_ms: vec![],
                     frame_count: None,
-                    total_duration_ms: batch_read_start.elapsed().as_millis() as u64,
+                    total_duration_ms: batch_result.timing.as_ref()
+                        .map(|t| t.total_duration_ms).unwrap_or(0),
                 });
                 // Count every chunk in the batch as failed and record orig_index
                 // so the assembly pass can skip partially-failed large elements.
@@ -2303,7 +2321,7 @@ pub async fn read_all_config_values(
             batch_stats,
         };
         crate::bwlog!(state.inner(),
-            "[config-read] {} complete: {}/{} elements ok, {}/{} batches ok, {}ms total",
+            "[config-read] {} complete: {}/{} elements ok, {}/{} batches ok, {}ms clock",
             node_id, success_count, total_count,
             stats_entry.successful_batches, stats_entry.total_batches, duration);
         state.diag_stats.write().await.config_reads.insert(node_id.clone(), stats_entry);

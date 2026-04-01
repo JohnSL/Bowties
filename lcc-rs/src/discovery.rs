@@ -8,7 +8,7 @@ use crate::{
     types::{NodeID, NodeAlias, DiscoveredNode, SNIPData, ProtocolFlags},
     protocol::{GridConnectFrame, MTI},
     transport::{LccTransport, TcpTransport},
-    transport_actor::{TransportActor, TransportHandle},
+    transport_actor::{TransportActor, TransportHandle, ReceivedMessage},
     alias_allocation::AliasAllocator,
     constants::CONNECTION_STABILIZATION_MS,
 };
@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::time::{sleep, Duration, Instant};
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 
 /// Timing data captured during a single `read_memory_timed` call.
 ///
@@ -32,6 +32,220 @@ pub struct MemoryReadTiming {
     pub total_duration_ms: u64,
     /// Number of datagram frames received.
     pub frame_count: u8,
+}
+
+/// Describes a single read performed by [`BatchReader::read_next`].
+#[derive(Debug, Clone)]
+pub struct BatchReadDescriptor {
+    pub address_space: u8,
+    pub address: u32,
+    pub count: u8,
+}
+
+/// Result of one read within a batch.
+#[derive(Debug, Clone)]
+pub struct BatchReadResult {
+    /// `Ok(data)` on success, `Err(message)` on failure.
+    pub data: std::result::Result<Vec<u8>, String>,
+    /// Timing data (present on success, `None` on failure).
+    pub timing: Option<MemoryReadTiming>,
+}
+
+/// Performs pipelined memory reads on a single node, holding a single broadcast
+/// subscription across all reads.
+///
+/// Obtain one via [`LccConnection::batch_reader`].  Call [`BatchReader::read_next`]
+/// in a loop, once per descriptor.  The subscription stays alive between calls so
+/// the ACK for read N and the request for read N+1 are issued back-to-back with
+/// no re-subscribe overhead.
+pub struct BatchReader {
+    handle: TransportHandle,
+    our_alias: u16,
+    dest_alias: u16,
+    rx: broadcast::Receiver<ReceivedMessage>,
+}
+
+impl BatchReader {
+    /// Create a new reader.  The broadcast subscription is established immediately.
+    pub fn new(handle: TransportHandle, our_alias: u16, dest_alias: u16) -> Self {
+        let rx = handle.subscribe_all();
+        Self { handle, our_alias, dest_alias, rx }
+    }
+
+    /// Perform one pipelined memory read.
+    ///
+    /// Sends the request via `send_direct` (bypassing the mpsc queue), waits for
+    /// the assembled datagram reply on the shared subscription, ACKs via
+    /// `send_direct`, and returns the result with timing data.
+    pub async fn read_next(&mut self, desc: &BatchReadDescriptor, timeout_ms: u64) -> BatchReadResult {
+        use crate::protocol::{MemoryConfigCmd, AddressSpace, DatagramAssembler};
+
+        let space = match AddressSpace::from_u8(desc.address_space) {
+            Ok(s) => s,
+            Err(e) => return BatchReadResult {
+                data: Err(format!("Invalid address space: {}", e)),
+                timing: None,
+            },
+        };
+
+        let read_frames = match MemoryConfigCmd::build_read(
+            self.our_alias, self.dest_alias, space, desc.address, desc.count,
+        ) {
+            Ok(f) => f,
+            Err(e) => return BatchReadResult {
+                data: Err(e.to_string()),
+                timing: None,
+            },
+        };
+
+        let send_time = Instant::now();
+        for frame in read_frames.iter() {
+            if let Err(e) = self.handle.send_direct(frame).await {
+                return BatchReadResult {
+                    data: Err(e.to_string()),
+                    timing: None,
+                };
+            }
+        }
+
+        let mut max_duration = Duration::from_millis(timeout_ms);
+        let mut assembler = DatagramAssembler::new();
+        let mut first_frame_latency_ms: Option<u64> = None;
+        let mut last_frame_ms: u64 = 0;
+        let mut frame_gaps_ms: Vec<u32> = Vec::new();
+        let mut frame_count: u8 = 0;
+
+        loop {
+            match tokio::time::timeout(max_duration, self.rx.recv()).await {
+                Ok(Ok(msg)) => {
+                    let is_our_datagram = MTI::from_datagram_header(msg.frame.header)
+                        .map(|(mti, src, dst)| {
+                            let is_dg = matches!(
+                                mti,
+                                MTI::DatagramOnly
+                                    | MTI::DatagramFirst
+                                    | MTI::DatagramMiddle
+                                    | MTI::DatagramFinal
+                            );
+                            is_dg && src == self.dest_alias && dst == self.our_alias
+                        })
+                        .unwrap_or(false);
+
+                    if !is_our_datagram {
+                        if let Ok((mti, src)) = MTI::from_header(msg.frame.header) {
+                            if src == self.dest_alias && msg.frame.data.len() >= 2 {
+                                let dst = ((msg.frame.data[0] as u16) << 8)
+                                    | (msg.frame.data[1] as u16);
+                                if dst == self.our_alias {
+                                    if mti == MTI::DatagramRejected {
+                                        let error_code = if msg.frame.data.len() >= 4 {
+                                            ((msg.frame.data[2] as u16) << 8)
+                                                | (msg.frame.data[3] as u16)
+                                        } else {
+                                            0
+                                        };
+                                        if error_code & 0x2000 != 0 {
+                                            for frame in read_frames.iter() {
+                                                let _ = self.handle.send_direct(frame).await;
+                                            }
+                                            continue;
+                                        } else {
+                                            return BatchReadResult {
+                                                data: Err(format!(
+                                                    "Datagram rejected: error 0x{:04X}",
+                                                    error_code
+                                                )),
+                                                timing: None,
+                                            };
+                                        }
+                                    }
+                                    if mti == MTI::DatagramReceivedOk {
+                                        let flags = if msg.frame.data.len() >= 3 {
+                                            msg.frame.data[2]
+                                        } else {
+                                            0
+                                        };
+                                        let timeout_exp = flags & 0x0F;
+                                        if timeout_exp > 0 {
+                                            let extended_ms = (1u64 << timeout_exp) * 1000;
+                                            if extended_ms > max_duration.as_millis() as u64 {
+                                                max_duration = Duration::from_millis(extended_ms);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
+                    let elapsed_ms = send_time.elapsed().as_millis() as u64;
+                    if first_frame_latency_ms.is_none() {
+                        first_frame_latency_ms = Some(elapsed_ms);
+                        last_frame_ms = elapsed_ms;
+                    } else {
+                        frame_gaps_ms.push((elapsed_ms.saturating_sub(last_frame_ms)) as u32);
+                        last_frame_ms = elapsed_ms;
+                    }
+                    frame_count = frame_count.saturating_add(1);
+
+                    if let Ok(Some(datagram_data)) = assembler.handle_frame(&msg.frame) {
+                        let ack_frame = match DatagramAssembler::send_acknowledgment(
+                            self.our_alias,
+                            self.dest_alias,
+                        ) {
+                            Ok(f) => f,
+                            Err(e) => return BatchReadResult {
+                                data: Err(e.to_string()),
+                                timing: None,
+                            },
+                        };
+                        let _ = self.handle.send_direct(&ack_frame).await;
+
+                        let total_duration_ms = send_time.elapsed().as_millis() as u64;
+                        let timing = MemoryReadTiming {
+                            first_frame_latency_ms: first_frame_latency_ms
+                                .unwrap_or(total_duration_ms),
+                            frame_gaps_ms,
+                            total_duration_ms,
+                            frame_count,
+                        };
+
+                        return match MemoryConfigCmd::parse_read_reply(&datagram_data) {
+                            Ok(crate::protocol::ReadReply::Success { data, .. }) => {
+                                BatchReadResult { data: Ok(data), timing: Some(timing) }
+                            }
+                            Ok(crate::protocol::ReadReply::Failed {
+                                error_code, message, ..
+                            }) => BatchReadResult {
+                                data: Err(format!(
+                                    "Memory read failed: error 0x{:04X} - {}",
+                                    error_code, message
+                                )),
+                                timing: Some(timing),
+                            },
+                            Err(e) => BatchReadResult {
+                                data: Err(e.to_string()),
+                                timing: Some(timing),
+                            },
+                        };
+                    }
+                }
+                Ok(Err(_)) => {
+                    return BatchReadResult {
+                        data: Err("Broadcast channel lagged during memory read".into()),
+                        timing: None,
+                    };
+                }
+                Err(_) => {
+                    return BatchReadResult {
+                        data: Err("Timeout waiting for memory read response".into()),
+                        timing: None,
+                    };
+                }
+            }
+        }
+    }
 }
 
 /// High-level LCC connection for performing network operations
@@ -1259,6 +1473,25 @@ impl LccConnection {
                 }
             }
         }
+    }
+
+    // ========================================================================
+    // Batch Memory Read (subscribe once, hold handle across loop)
+    // ========================================================================
+
+    /// Return a [`BatchReader`] ready to perform pipelined memory reads on `dest_alias`.
+    ///
+    /// The `BatchReader` holds a single broadcast subscription for its lifetime,
+    /// so consecutive [`BatchReader::read_next`] calls keep the subscription alive
+    /// between reads — eliminating per-read subscribe/unsubscribe overhead and
+    /// allowing the ACK for read N to be immediately followed by the request for
+    /// read N+1 without any scheduler hop.
+    pub fn batch_reader(&self, dest_alias: u16) -> crate::Result<BatchReader> {
+        let handle = self.handle.as_ref()
+            .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?
+            .clone();
+        let our_alias = self.our_alias.value();
+        Ok(BatchReader::new(handle, our_alias, dest_alias))
     }
 
     // ========================================================================

@@ -1,20 +1,28 @@
 //! Transport actor — sole owner of the underlying LCC transport.
 //!
-//! All network I/O goes through channels; no mutex around the transport.
+//! Outbound writes use a dual path:
+//! - Normal path: callers enqueue frames on an `mpsc` channel; the writer task
+//!   drains it and writes to the serial port.  Low overhead for background traffic.
+//! - Direct path (`send_direct`): callers lock `Arc<Mutex<WriteHalf>>` and write
+//!   inline, bypassing the mpsc queue and writer-task wakeup.  Used by
+//!   `BatchReader` to eliminate the ~13 ms Windows tokio scheduler hop between
+//!   receiving a datagram reply and writing the ACK / next request.
 //!
 //! Architecture:
 //! ```text
 //! ┌─────────────────────────────────────────────────────────┐
-//! │  transport_actor (single tokio task, owns transport)    │
+//! │  transport_actor (two tokio tasks, own the transport)   │
 //! │                                                         │
-//! │   recv loop ──► broadcast::Sender<ReceivedMessage>      │
+//! │   reader task ──► broadcast::Sender<ReceivedMessage>    │
 //! │                                                         │
-//! │   mpsc::Receiver<OutboundFrame> ──► transport.send()    │
+//! │   mpsc::Receiver<OutboundFrame>  ┐                      │
+//! │                                  ├─► Arc<Mutex<Writer>> │
+//! │   send_direct (caller inline)  ──┘                      │
 //! └─────────────────────────────────────────────────────────┘
 //!           ▲                        │
-//!           │ subscribe()            │ send(frame)
+//!           │ subscribe()            │ send() / send_direct()
 //!           │                        ▼
-//!    broadcast::Receiver      mpsc::Sender<OutboundFrame>
+//!    broadcast::Receiver      mpsc::Sender / Arc<Mutex<Writer>>
 //! ```
 
 use crate::protocol::{GridConnectFrame, MTI};
@@ -51,6 +59,11 @@ pub struct TransportHandle {
     all_tx: broadcast::Sender<ReceivedMessage>,
     /// MTI-specific broadcast senders for efficient filtering.
     mti_senders: Arc<RwLock<HashMap<MTI, broadcast::Sender<ReceivedMessage>>>>,
+    /// Direct access to the serial write half, shared with the writer task.
+    /// `None` when constructed via `from_parts` (legacy bridge path).
+    /// When `Some`, `send_direct` writes inline without going through the mpsc
+    /// queue, eliminating the writer-task-wakeup latency (~13 ms on Windows).
+    direct_writer: Option<Arc<tokio::sync::Mutex<Box<dyn TransportWriter>>>>,
 }
 
 impl TransportHandle {
@@ -82,6 +95,29 @@ impl TransportHandle {
         tx.subscribe()
     }
 
+    /// Send a frame directly to the serial writer, bypassing the mpsc queue.
+    ///
+    /// When a `direct_writer` is available (i.e. the handle was created by
+    /// `TransportActor::new`), this locks the writer mutex and writes inline,
+    /// eliminating the writer-task-wakeup latency of the mpsc path.  Falls
+    /// back to the mpsc path when no direct writer is present.
+    pub async fn send_direct(&self, frame: &GridConnectFrame) -> Result<()> {
+        if let Some(ref writer_lock) = self.direct_writer {
+            {
+                let mut writer = writer_lock.lock().await;
+                writer.send(frame).await?;
+            }
+            // Echo to the broadcast channel so the traffic monitor sees it.
+            let _ = self.all_tx.send(ReceivedMessage {
+                frame: frame.clone(),
+                timestamp: std::time::Instant::now(),
+            });
+            Ok(())
+        } else {
+            self.send(frame).await
+        }
+    }
+
     /// Construct a `TransportHandle` from pre-existing channel components.
     pub fn from_parts(
         tx: mpsc::Sender<GridConnectFrame>,
@@ -92,6 +128,7 @@ impl TransportHandle {
             tx,
             all_tx,
             mti_senders,
+            direct_writer: None,
         }
     }
 
@@ -131,15 +168,17 @@ impl TransportActor {
         let mti_senders: Arc<RwLock<HashMap<MTI, broadcast::Sender<ReceivedMessage>>>> =
             Arc::new(RwLock::new(HashMap::new()));
 
+        let alias_map = Arc::new(RwLock::new(HashMap::new()));
+
+        let (reader, writer) = transport.into_halves();
+        let direct_writer = Arc::new(tokio::sync::Mutex::new(writer));
+
         let handle = TransportHandle {
             tx: outbound_tx,
             all_tx: all_tx.clone(),
             mti_senders: mti_senders.clone(),
+            direct_writer: Some(direct_writer.clone()),
         };
-
-        let alias_map = Arc::new(RwLock::new(HashMap::new()));
-
-        let (reader, writer) = transport.into_halves();
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
@@ -157,7 +196,7 @@ impl TransportActor {
         };
 
         let writer_handle = {
-            tokio::spawn(Self::writer_loop(writer, outbound_rx, all_tx.clone()))
+            tokio::spawn(Self::writer_loop(direct_writer, outbound_rx, all_tx.clone()))
         };
 
         Self {
@@ -244,15 +283,20 @@ impl TransportActor {
 
     /// Writer loop: drains the outbound mpsc channel and sends frames via the writer.
     /// Also broadcasts sent frames to the all_tx channel so subscribers see both directions.
+    /// The writer is behind an `Arc<Mutex>` so `send_direct` callers can also write
+    /// inline without going through this loop.
     async fn writer_loop(
-        mut writer: Box<dyn TransportWriter>,
+        writer: Arc<tokio::sync::Mutex<Box<dyn TransportWriter>>>,
         mut rx: mpsc::Receiver<GridConnectFrame>,
         all_tx: broadcast::Sender<ReceivedMessage>,
     ) {
         while let Some(frame) = rx.recv().await {
-            if let Err(e) = writer.send(&frame).await {
-                eprintln!("TransportActor writer: send error: {}", e);
-                break;
+            {
+                let mut w = writer.lock().await;
+                if let Err(e) = w.send(&frame).await {
+                    eprintln!("TransportActor writer: send error: {}", e);
+                    break;
+                }
             }
             // Echo sent frames to the broadcast channel so the traffic monitor sees them.
             let _ = all_tx.send(ReceivedMessage {
