@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { NodeConfigTree } from '$lib/types/nodeTree';
 
 export interface CaptureSummary {
   capturedAt: string;
@@ -73,4 +74,8 @@ export async function closeLayout(decision: CloseLayoutDecision): Promise<CloseL
 
 export async function createNewLayoutCapture(): Promise<NewLayoutResult> {
   return invoke<NewLayoutResult>('create_new_layout_capture');
+}
+
+export async function buildOfflineNodeTree(nodeId: string): Promise<NodeConfigTree> {
+  return invoke<NodeConfigTree>('build_offline_node_tree', { nodeId });
 }

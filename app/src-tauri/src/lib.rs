@@ -311,6 +311,7 @@ pub fn run() {
             commands::open_layout_directory,  // Spec 010: offline open scaffolding
             commands::close_layout,  // Spec 010: layout context lifecycle scaffolding
             commands::create_new_layout_capture,  // Spec 010: new capture lifecycle scaffolding
+            commands::build_offline_node_tree,  // Spec 010: CDI-structured offline tree
             commands::set_offline_change,  // Spec 010: offline change scaffolding
             commands::revert_offline_change,  // Spec 010: offline change scaffolding
             commands::list_offline_changes,  // Spec 010: offline change scaffolding

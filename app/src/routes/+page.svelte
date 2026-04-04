@@ -11,7 +11,7 @@
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import { probeNodes as probeNodesApi, querySnip, queryPip, registerNode, refreshAllNodes } from '$lib/api/tauri';
   import { getRecentLayout } from '$lib/api/bowties';
-  import { captureLayoutSnapshot, saveLayoutDirectory, openLayoutDirectory, createNewLayoutCapture } from '$lib/api/layout';
+  import { captureLayoutSnapshot, saveLayoutDirectory, openLayoutDirectory, createNewLayoutCapture, buildOfflineNodeTree } from '$lib/api/layout';
   import type { OfflineNodeSnapshot } from '$lib/api/layout';
   import { readAllConfigValues, cancelConfigReading, getCdiXml, downloadCdi } from '$lib/api/cdi';
   import { getCdiErrorMessage, isCdiError } from '$lib/types/cdi';
@@ -205,7 +205,7 @@
     };
   }
 
-  function hydrateOfflineSnapshots(snapshots: OfflineNodeSnapshot[]) {
+  async function hydrateOfflineSnapshots(snapshots: OfflineNodeSnapshot[]) {
     const offlineNodes: DiscoveredNode[] = snapshots.map((s, idx) => ({
       node_id: canonicalToBytes(s.nodeId),
       alias: 0x700 + idx,
@@ -231,8 +231,31 @@
 
     clearConfigReadStatus();
     nodeTreeStore.reset();
-    for (const snapshot of snapshots) {
-      const tree = treeFromSnapshot(snapshot);
+
+    // Build CDI-structured trees in parallel; fall back to flat address-map
+    // if the CDI XML is not available in the local cache.
+    const results = await Promise.allSettled(
+      snapshots.map((s) => buildOfflineNodeTree(s.nodeId))
+    );
+    for (let i = 0; i < snapshots.length; i++) {
+      const snapshot = snapshots[i];
+      const result = results[i];
+      let tree;
+      if (result.status === 'fulfilled') {
+        tree = result.value;
+      } else {
+        const reason = String(result.reason);
+        if (reason.includes('CDI not in cache')) {
+          console.warn(
+            `[offline] CDI not cached for node ${snapshot.nodeId} — falling back to raw address tree`
+          );
+        } else {
+          console.warn(
+            `[offline] Could not build CDI tree for node ${snapshot.nodeId}: ${reason}`
+          );
+        }
+        tree = treeFromSnapshot(snapshot);
+      }
       nodeTreeStore.setTree(tree.nodeId, tree);
       markNodeConfigRead(tree.nodeId);
     }
@@ -248,7 +271,7 @@
 
     const result = await openLayoutDirectory(selected);
     partialCaptureNodes = new Set(result.partialNodes);
-    hydrateOfflineSnapshots(result.nodeSnapshots);
+    await hydrateOfflineSnapshots(result.nodeSnapshots);
     layoutStore.setActiveContext({
       layoutId: result.layoutId,
       rootPath: selected,

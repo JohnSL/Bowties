@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 use crate::layout::manifest::LayoutManifest;
 use crate::layout::node_snapshot::{capture_status_from_missing, missing_detail, CaptureStatus, CdiReference, NodeSnapshot, SnipSnapshot};
@@ -411,3 +411,114 @@ pub async fn create_new_layout_capture(
         created_at,
     })
 }
+
+/// Build a fully CDI-structured `NodeConfigTree` for a node loaded from a
+/// captured layout directory, applying the same pipeline as `get_node_tree`:
+///
+/// 1. Read node snapshot from `{root_path}/nodes/{node_id}.yaml`
+/// 2. Load CDI XML from the local cache (`app_data_dir/cdi_cache/{cache_key}.cdi.xml`)
+/// 3. Build the CDI tree via `build_node_config_tree`
+/// 4. Overlay captured configuration values via `merge_snapshot_values`
+/// 5. Apply structure profile annotations (event roles, display names, hints)
+///
+/// Returns `Err("CDI not in cache: …")` when the CDI file is absent — the
+/// frontend falls back to the flat address-map tree in that case.
+#[tauri::command]
+pub async fn build_offline_node_tree(
+    node_id: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::node_tree::NodeConfigTree, String> {
+    // ── Resolve root path from active layout context ──────────────────────
+    let root_path = {
+        let guard = state.active_layout.read().await;
+        guard
+            .as_ref()
+            .filter(|c| c.mode == crate::state::ActiveLayoutMode::OfflineDirectory)
+            .map(|c| c.root_path.clone())
+            .ok_or_else(|| "No offline directory layout is active".to_string())?
+    };
+
+    // ── Read node snapshot ─────────────────────────────────────────────────
+    let snapshot_path = std::path::Path::new(&root_path)
+        .join("nodes")
+        .join(format!("{}.yaml", node_id.to_uppercase()));
+    let snapshot: crate::layout::node_snapshot::NodeSnapshot =
+        crate::layout::io::read_yaml_file(&snapshot_path)
+            .map_err(|e| format!("Cannot load snapshot {}: {}", snapshot_path.display(), e))?;
+
+    // ── Load CDI XML from cache ────────────────────────────────────────────
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Cannot resolve app data directory: {}", e))?;
+    // Build the CDI cache filename using the same sanitization as get_cdi_cache_path
+    // (alphanumeric, '-', and '_' pass through; everything else becomes '_').
+    // The snapshot's cache_key was built with only replace(' ', "_"), which misses
+    // dots, slashes, colons etc., so we re-derive the filename from SNIP fields.
+    let sanitize = |s: &str| -> String {
+        s.chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .collect()
+    };
+    let cdi_filename = format!(
+        "{}_{}_{}.cdi.xml",
+        sanitize(&snapshot.snip.manufacturer_name),
+        sanitize(&snapshot.snip.model_name),
+        sanitize(&snapshot.cdi_ref.version),
+    );
+    let cdi_path = app_data_dir.join("cdi_cache").join(&cdi_filename);
+    if !cdi_path.exists() {
+        return Err(format!(
+            "CDI not in cache: {} (key: {})",
+            cdi_path.display(),
+            snapshot.cdi_ref.cache_key
+        ));
+    }
+    let xml = std::fs::read_to_string(&cdi_path)
+        .map_err(|e| format!("Cannot read CDI cache file {}: {}", cdi_path.display(), e))?;
+
+    // ── Parse CDI ──────────────────────────────────────────────────────────
+    let cdi = lcc_rs::cdi::parser::parse_cdi(&xml)
+        .map_err(|e| format!("Cannot parse CDI for {}: {}", node_id, e))?;
+
+    // ── Build tree + overlay values ────────────────────────────────────────
+    // `build_node_config_tree` expects dotted-hex node ID
+    let dotted_id = node_id
+        .as_bytes()
+        .chunks(2)
+        .map(|c| std::str::from_utf8(c).unwrap_or("00"))
+        .collect::<Vec<_>>()
+        .join(".");
+    let mut tree = crate::node_tree::build_node_config_tree(&dotted_id, &cdi);
+    crate::node_tree::merge_snapshot_values(&mut tree, &snapshot.values);
+
+    // ── Apply profile annotations (same path as get_node_tree) ────────────
+    if let Some(identity) = &cdi.identification {
+        let manufacturer = identity.manufacturer.as_deref().unwrap_or("");
+        let model = identity.model.as_deref().unwrap_or("");
+        if !manufacturer.is_empty() || !model.is_empty() {
+            if let Some(profile) = crate::profile::load_profile(
+                manufacturer,
+                model,
+                &cdi,
+                &app,
+                &state.profiles,
+            )
+            .await
+            {
+                let report = crate::profile::annotate_tree(&mut tree, &profile, &cdi);
+                eprintln!(
+                    "[offline profile] {} — {} event roles, {} rules applied, {} warnings",
+                    node_id,
+                    report.event_roles_applied,
+                    report.rules_applied,
+                    report.warnings.len()
+                );
+            }
+        }
+    }
+
+    Ok(tree)
+}
+
