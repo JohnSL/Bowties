@@ -606,7 +606,7 @@ Bowties/
   docs/                             # Documentation (this file)
   specs/                            # SpecKit feature specs
     001-cdi-xml-viewer/             # CDI XML Viewer feature spec
-    003-miller-columns/             # Miller Columns navigator spec
+    archive/003-miller-columns/     # Archived Miller Columns navigator spec
 ```
 
 ### CDI and Configuration Strategy

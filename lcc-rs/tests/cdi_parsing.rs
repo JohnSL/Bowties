@@ -5,8 +5,8 @@
 use lcc_rs::cdi::parser::parse_cdi;
 use lcc_rs::cdi::{DataElement, Cdi};
 
-// Tower-LCC.xml is a real-world CDI from specs/003-miller-columns/
-const TOWER_LCC_XML: &str = include_str!("../../specs/003-miller-columns/Tower-LCC.xml");
+// Tower-LCC.xml is a real-world CDI from the archived 003 Miller Columns spec.
+const TOWER_LCC_XML: &str = include_str!("../../specs/archive/003-miller-columns/Tower-LCC.xml");
 
 // T043j: Integration tests with real CDI XML samples
 #[test]

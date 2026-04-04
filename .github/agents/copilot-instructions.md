@@ -7,8 +7,6 @@ Auto-generated from all feature plans. Last updated: 2026-02-14
 - In-memory for this feature (future: SQLite for CDI cache) (001-node-snip-data)
 - Rust 2021+ (backend), TypeScript 5.x with SvelteKit 2.x (frontend) + Tauri 2.x, lcc-rs (protocol library), tokio (async runtime) (001-cdi-xml-viewer)
 - In-memory CDI data cache (already retrieved by node discovery/management) (001-cdi-xml-viewer)
-- TypeScript 5.x (frontend), Rust 2021+ edition (backend via Tauri 2) + SvelteKit 2.x, Tauri 2.x, lcc-rs (existing LCC protocol library), Tauri events (003-miller-columns)
-- In-memory CDI cache (already retrieved by Feature F2 - CDI Caching dependency) (003-miller-columns)
 - Rust 2021 (backend via lcc-rs), TypeScript 5.x (frontend) + lcc-rs (LCC protocol), Tauri 2 (desktop framework), SvelteKit (reactive UI) (004-read-node-config)
 - In-memory cache (Map<NodeId, Map<ElementPath, TypedValue>>), no persistence (004-read-node-config)
 - Rust 2021 (backend, `app/src-tauri/src/`), TypeScript 5.x strict mode (frontend, `app/src/`) + SvelteKit 2.x, Tauri 2.x, lcc-rs (internal library), tokio, serde, uuid (005-config-sidebar-view)
@@ -45,6 +43,13 @@ Python 3.12 (latest stable as of 2026), managed via UV: Follow standard conventi
 - 009-editable-bowties: Added Rust 2021 (stable 1.70+) backend; TypeScript 5.6 / Svelte 5 / SvelteKit 2.9 frontend + Tauri 2, tokio 1.41, serde_yaml_ng 0.10, lcc-rs (workspace crate), TailwindCSS 4.2
 - 008-guided-configuration: Added Rust 2021 (stable 1.75+) — backend; TypeScript 5.x / SvelteKit 2.x / Svelte 5 — frontend
 - 007-edit-node-config: Added Rust 2021 edition (stable 1.70+), TypeScript (strict), SvelteKit 2.x + lcc-rs (path dep), Tauri 2, tokio 1.41, serde 1.0, roxmltree 0.20, thiserror (2.0 in lcc-rs, 1.0 in app)
+
+
+## Current System Notes
+
+- The current configuration UI is the sidebar plus element card deck view introduced by feature 005. Miller Columns was removed and must be treated as superseded unless a task explicitly targets historical cleanup or migration work.
+- Items under `specs/archive/` are historical reference only. Do not use them as the source of truth for current behavior, requirements, naming, or UI descriptions.
+- When historical docs conflict with active implementation or newer specs, prefer the current code, the latest non-archived feature spec, and `docs/technical/architecture.md`.
 
 
 <!-- MANUAL ADDITIONS START -->
