@@ -10,6 +10,16 @@ import { save, open } from '@tauri-apps/plugin-dialog';
 import { loadLayout, saveLayout, getRecentLayout, setRecentLayout, buildBowtieCatalog } from '$lib/api/bowties';
 import type { LayoutFile } from '$lib/types/bowtie';
 
+export type ActiveLayoutMode = 'legacy_file' | 'offline_directory';
+
+export interface ActiveLayoutContext {
+  layoutId: string;
+  rootPath: string;
+  mode: ActiveLayoutMode;
+  capturedAt?: string;
+  pendingOfflineChangeCount: number;
+}
+
 // ─── Store class ─────────────────────────────────────────────────────────────
 
 class LayoutStore {
@@ -27,6 +37,12 @@ class LayoutStore {
 
   /** True if a file operation is in progress. */
   private _busy = $state<boolean>(false);
+
+  /** Current active layout context (legacy file or offline directory layout). */
+  private _activeContext = $state<ActiveLayoutContext | null>(null);
+
+  /** True when an offline directory layout is active. */
+  private _offlineMode = $state<boolean>(false);
 
   // ── Reactive getters ──────────────────────────────────────────────────────
 
@@ -48,6 +64,14 @@ class LayoutStore {
 
   get isBusy(): boolean {
     return this._busy;
+  }
+
+  get activeContext(): ActiveLayoutContext | null {
+    return this._activeContext;
+  }
+
+  get isOfflineMode(): boolean {
+    return this._offlineMode;
   }
 
   /** Display name for the layout file (filename only, or 'Untitled'). */
@@ -87,6 +111,13 @@ class LayoutStore {
       this._savedLayout = JSON.parse(JSON.stringify(layout));
       this._path = filePath;
       this._dirty = false;
+      this._offlineMode = false;
+      this._activeContext = {
+        layoutId: filePath,
+        rootPath: filePath,
+        mode: 'legacy_file',
+        pendingOfflineChangeCount: 0,
+      };
 
       // Remember as recent layout
       await setRecentLayout(filePath);
@@ -145,6 +176,13 @@ class LayoutStore {
       this._path = selected;
       this._savedLayout = JSON.parse(JSON.stringify(this._layout));
       this._dirty = false;
+      this._offlineMode = false;
+      this._activeContext = {
+        layoutId: selected,
+        rootPath: selected,
+        mode: 'legacy_file',
+        pendingOfflineChangeCount: 0,
+      };
 
       // Remember as recent layout
       await setRecentLayout(selected);
@@ -203,6 +241,8 @@ class LayoutStore {
     this._savedLayout = JSON.parse(JSON.stringify(this._layout));
     this._path = null;
     this._dirty = false;
+    this._activeContext = null;
+    this._offlineMode = false;
   }
 
   /**
@@ -214,6 +254,13 @@ class LayoutStore {
     this._path = null;
     this._dirty = false;
     this._busy = false;
+    this._activeContext = null;
+    this._offlineMode = false;
+  }
+
+  setActiveContext(context: ActiveLayoutContext | null): void {
+    this._activeContext = context;
+    this._offlineMode = context?.mode === 'offline_directory';
   }
 
   // ── Recent layout auto-reopen ─────────────────────────────────────────────
@@ -227,6 +274,13 @@ class LayoutStore {
     try {
       const recent = await getRecentLayout();
       if (!recent) return false;
+
+      // Legacy auto-reopen only handles single-file layouts.
+      // Directory layouts are reopened by the route's offline bootstrap flow.
+      const normalized = recent.path.replace(/\\/g, '/').toLowerCase();
+      if (!normalized.endsWith('.yaml') && !normalized.endsWith('.yml')) {
+        return false;
+      }
 
       // Auto-load the recent layout (the backend validates the file still exists)
       await this.loadLayoutFromPath(recent.path);

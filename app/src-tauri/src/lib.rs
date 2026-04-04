@@ -3,6 +3,7 @@
 //! Backend implementation for the LCC visual configuration tool.
 
 mod commands;
+mod cdi;
 mod menu;
 mod state;
 mod events;
@@ -305,6 +306,20 @@ pub fn run() {
             commands::save_layout,  // Feature 009: layout file persistence
             commands::get_recent_layout,  // Feature 009: recent layout tracking
             commands::set_recent_layout,  // Feature 009: recent layout tracking
+            commands::capture_layout_snapshot,  // Spec 010: offline layout capture scaffolding
+            commands::save_layout_directory,  // Spec 010: directory persistence scaffolding
+            commands::open_layout_directory,  // Spec 010: offline open scaffolding
+            commands::close_layout,  // Spec 010: layout context lifecycle scaffolding
+            commands::create_new_layout_capture,  // Spec 010: new capture lifecycle scaffolding
+            commands::set_offline_change,  // Spec 010: offline change scaffolding
+            commands::revert_offline_change,  // Spec 010: offline change scaffolding
+            commands::list_offline_changes,  // Spec 010: offline change scaffolding
+            commands::compute_layout_match_status,  // Spec 010: sync match scaffolding
+            commands::build_sync_session,  // Spec 010: sync session scaffolding
+            commands::set_sync_mode,  // Spec 010: sync mode scaffolding
+            commands::apply_sync_changes,  // Spec 010: sync apply scaffolding
+            cdi::bundle::export_cdi_bundle,  // Spec 010: CDI portability scaffolding
+            cdi::bundle::import_cdi_bundle,  // Spec 010: CDI portability scaffolding
             commands::get_node_tree,  // Spec 007: unified node tree
             commands::write_config_value,  // Spec 007: write config value
             commands::send_update_complete,  // Spec 007: send update complete

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from '@tauri-apps/api/event';
+  import { open } from '@tauri-apps/plugin-dialog';
   import { onMount, untrack } from 'svelte';
   import { get } from 'svelte/store';
   import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
@@ -9,6 +10,9 @@
   import CdiXmlViewer from '$lib/components/CdiXmlViewer.svelte';
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import { probeNodes as probeNodesApi, querySnip, queryPip, registerNode, refreshAllNodes } from '$lib/api/tauri';
+  import { getRecentLayout } from '$lib/api/bowties';
+  import { captureLayoutSnapshot, saveLayoutDirectory, openLayoutDirectory, createNewLayoutCapture } from '$lib/api/layout';
+  import type { OfflineNodeSnapshot } from '$lib/api/layout';
   import { readAllConfigValues, cancelConfigReading, getCdiXml, downloadCdi } from '$lib/api/cdi';
   import { getCdiErrorMessage, isCdiError } from '$lib/types/cdi';
   import type { ViewerStatus } from '$lib/types/cdi';
@@ -20,12 +24,15 @@
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { hasModifiedLeaves, resolvePillSelectionsForPath } from '$lib/types/nodeTree';
+  import type { NodeConfigTree, ConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
   import { configReadNodesStore, markNodeConfigRead, clearConfigReadStatus, removeNodesConfigRead } from '$lib/stores/configReadStatus';
   import BowtieCatalogPanel from '$lib/components/Bowtie/BowtieCatalogPanel.svelte';
   import DiscoveryProgressModal from '$lib/components/DiscoveryProgressModal.svelte';
   import SaveControls from '$lib/components/ElementCardDeck/SaveControls.svelte';
   import CdiDownloadDialog from '$lib/components/CdiDownloadDialog.svelte';
   import CdiRedownloadDialog from '$lib/components/CdiRedownloadDialog.svelte';
+  import OfflineBanner from '$lib/components/Layout/OfflineBanner.svelte';
+  import MissingCaptureBadge from '$lib/components/Layout/MissingCaptureBadge.svelte';
   import ConnectionManager from '$lib/ConnectionManager.svelte';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
   import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
@@ -117,6 +124,185 @@
   // Discovery state
   let nodes = $state<DiscoveredNode[]>([]);
   let probing = $state(false);
+  let partialCaptureNodes = $state(new Set<string>());
+  let showConnectionDialog = $state(false);
+
+  let activeLayoutLabel = $derived(layoutStore.activeContext?.layoutId ?? null);
+  let offlineCapturedAt = $derived(layoutStore.activeContext?.capturedAt ?? null);
+  function canonicalToBytes(nodeId: string): number[] {
+    const clean = nodeId.replace(/\./g, '').toUpperCase();
+    const pairs = clean.match(/.{1,2}/g) ?? [];
+    return pairs.slice(0, 6).map((p) => parseInt(p, 16));
+  }
+
+  function parseOfflineValue(value: string): TreeConfigValue {
+    if (/^[0-9]+$/.test(value)) {
+      return { type: 'int', value: parseInt(value, 10) };
+    }
+    if (/^[0-9]+\.[0-9]+$/.test(value)) {
+      return { type: 'float', value: parseFloat(value) };
+    }
+    if (/^([0-9A-F]{2}\.){7}[0-9A-F]{2}$/i.test(value)) {
+      const bytes = value.split('.').map((b) => parseInt(b, 16));
+      return { type: 'eventId', bytes, hex: value.toUpperCase() };
+    }
+    return { type: 'string', value };
+  }
+
+  function createOfflineLeaf(space: number, address: number, value: string, segIdx: number, leafIdx: number): ConfigNode {
+    const parsed = parseOfflineValue(value);
+    const elementType = parsed.type === 'eventId' ? 'eventId' : parsed.type;
+    return {
+      kind: 'leaf',
+      name: `0x${address.toString(16).toUpperCase().padStart(8, '0')}`,
+      description: null,
+      elementType,
+      address,
+      size: 8,
+      space,
+      path: [`seg:${segIdx}`, `elem:${leafIdx}`],
+      value: parsed,
+      eventRole: null,
+      constraints: null,
+      actionValue: 0,
+      hintSlider: null,
+      hintRadio: false,
+      modifiedValue: null,
+      writeState: null,
+      writeError: null,
+      readOnly: true,
+    };
+  }
+
+  function treeFromSnapshot(snapshot: OfflineNodeSnapshot): NodeConfigTree {
+    const spaces = Object.entries(snapshot.values);
+    const segments = spaces.map(([spaceKey, offsets], segIdx) => {
+      const space = Number(spaceKey);
+      const children: ConfigNode[] = Object.entries(offsets)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([offset, value], leafIdx) => {
+          const address = Number.parseInt(offset.replace(/^0x/i, ''), 16) || 0;
+          return createOfflineLeaf(space, address, value, segIdx, leafIdx);
+        });
+      return {
+        name: `Space ${space}`,
+        description: null,
+        origin: 0,
+        space,
+        children,
+      };
+    });
+
+    return {
+      nodeId: snapshot.nodeId.match(/.{1,2}/g)?.join('.') ?? snapshot.nodeId,
+      identity: {
+        manufacturer: snapshot.snip.manufacturerName || null,
+        model: snapshot.snip.modelName || null,
+        hardwareVersion: null,
+        softwareVersion: null,
+      },
+      segments,
+    };
+  }
+
+  function hydrateOfflineSnapshots(snapshots: OfflineNodeSnapshot[]) {
+    const offlineNodes: DiscoveredNode[] = snapshots.map((s, idx) => ({
+      node_id: canonicalToBytes(s.nodeId),
+      alias: 0x700 + idx,
+      snip_data: {
+        manufacturer: s.snip.manufacturerName,
+        model: s.snip.modelName,
+        hardware_version: '',
+        software_version: s.cdiRef.version,
+        user_name: s.snip.userName,
+        user_description: s.snip.userDescription,
+      },
+      snip_status: 'Complete',
+      connection_status: 'Unknown',
+      last_verified: null,
+      last_seen: s.capturedAt,
+      cdi: null,
+      pip_flags: null,
+      pip_status: 'Unknown',
+    }));
+
+    nodes = offlineNodes;
+    updateNodeInfo(offlineNodes);
+
+    clearConfigReadStatus();
+    nodeTreeStore.reset();
+    for (const snapshot of snapshots) {
+      const tree = treeFromSnapshot(snapshot);
+      nodeTreeStore.setTree(tree.nodeId, tree);
+      markNodeConfigRead(tree.nodeId);
+    }
+  }
+
+  async function openOfflineLayoutFromDialog() {
+    const selected = await open({
+      title: 'Open Captured Layout Directory',
+      directory: true,
+      multiple: false,
+    });
+    if (!selected) return;
+
+    const result = await openLayoutDirectory(selected);
+    partialCaptureNodes = new Set(result.partialNodes);
+    hydrateOfflineSnapshots(result.nodeSnapshots);
+    layoutStore.setActiveContext({
+      layoutId: result.layoutId,
+      rootPath: selected,
+      mode: 'offline_directory',
+      capturedAt: result.capturedAt,
+      pendingOfflineChangeCount: result.pendingOfflineChangeCount,
+    });
+  }
+
+  async function saveCurrentCaptureToDirectory() {
+    const selected = await open({
+      title: 'Select Capture Output Directory',
+      directory: true,
+      multiple: false,
+    });
+    if (!selected) return;
+
+    await captureLayoutSnapshot(true);
+    const result = await saveLayoutDirectory(selected, true);
+    partialCaptureNodes = new Set(result.warnings);
+    const contextLayoutId = selected.replace(/\\/g, '/').split('/').pop() ?? 'layout';
+    layoutStore.setActiveContext({
+      layoutId: contextLayoutId,
+      rootPath: selected,
+      mode: 'offline_directory',
+      capturedAt: new Date().toISOString(),
+      pendingOfflineChangeCount: 0,
+    });
+  }
+
+  async function startNewLayoutCapture() {
+    const created = await createNewLayoutCapture();
+    partialCaptureNodes = new Set<string>();
+    nodes = [];
+    updateNodeInfo([]);
+    clearConfigReadStatus();
+    nodeTreeStore.reset();
+    layoutStore.setActiveContext({
+      layoutId: created.layoutId,
+      rootPath: '',
+      mode: 'offline_directory',
+      capturedAt: created.createdAt,
+      pendingOfflineChangeCount: 0,
+    });
+  }
+
+  function clearActiveLayout() {
+    partialCaptureNodes = new Set<string>();
+    nodes = [];
+    updateNodeInfo([]);
+    clearConfigReadStatus();
+    nodeTreeStore.reset();
+    layoutStore.setActiveContext(null);
+  }
 
   // Config reading progress state (T063-T067)
   let readProgress = $state<ReadProgressState | null>(null);
@@ -182,6 +368,10 @@
       : null
   );
 
+  let selectedNodeIdAny = $derived(
+    $configSidebarStore.selectedSegment?.nodeId ?? $configSidebarStore.selectedNodeId ?? null
+  );
+
   // CDI XML viewer state
   let viewerVisible = $state(false);
   let viewerNodeId = $state<string | null>(null);
@@ -229,7 +419,29 @@
       await bowtieCatalogStore.startListening();
 
       // Spec 009 T015: Auto-reopen the most recent layout file on startup
-      layoutStore.checkAndReopenRecent();
+      const recent = await getRecentLayout().catch(() => null);
+      if (recent && recent.path) {
+        const normalized = recent.path.replace(/\\/g, '/').toLowerCase();
+        if (!normalized.endsWith('.yaml') && !normalized.endsWith('.yml')) {
+          try {
+            const opened = await openLayoutDirectory(recent.path);
+            partialCaptureNodes = new Set(opened.partialNodes);
+            hydrateOfflineSnapshots(opened.nodeSnapshots);
+            layoutStore.setActiveContext({
+              layoutId: opened.layoutId,
+              rootPath: recent.path,
+              mode: 'offline_directory',
+              capturedAt: opened.capturedAt,
+              pendingOfflineChangeCount: opened.pendingOfflineChangeCount,
+            });
+          } catch {
+            // Fall through to legacy auto-open if directory open fails.
+            await layoutStore.checkAndReopenRecent();
+          }
+        } else {
+          await layoutStore.checkAndReopenRecent();
+        }
+      }
 
       // Spec 007: Start node-tree-updated listener so trees are refreshed
       // automatically as config values and event roles are merged server-side.
@@ -396,14 +608,13 @@
         }, 'Exit Without Saving');
       }));
       unlistens.push(await listen('menu-open-layout', () => {
-        promptUnsaved('Opening a new layout will discard unsaved changes. Continue?', () => layoutStore.openLayout(), 'Discard & Open');
+        promptUnsaved('Opening a new layout will discard unsaved changes. Continue?', () => openOfflineLayoutFromDialog(), 'Discard & Open');
       }));
       unlistens.push(await listen('menu-save-layout', () => {
-        saveControlsRef?.triggerSave();
+        saveCurrentCaptureToDirectory();
       }));
       unlistens.push(await listen('menu-save-layout-as', async () => {
-        const saved = await layoutStore.saveLayoutAs();
-        if (saved) bowtieMetadataStore.clearAll();
+        await saveCurrentCaptureToDirectory();
       }));
       unlistens.push(await listen('menu-diagnostics', async () => {
         try {
@@ -427,6 +638,7 @@
     const cfg = e.detail.config;
     connectionLabel = cfg.name ?? (cfg.host ? `${cfg.host}:${cfg.port}` : cfg.serialPort ?? 'LCC');
     connected = true;
+    showConnectionDialog = false;
     probeForNodes();
   }
 
@@ -938,7 +1150,7 @@
 <div class="app-shell">
 
   <!-- ═══ TOOLBAR (connected only) ═══ -->
-  {#if connected}
+  {#if connected || layoutStore.isOfflineMode}
     <div class="toolbar" role="toolbar" aria-label="Main toolbar">
       <div class="toolbar-left">
         <!-- Segmented mode control: Config | Bowties -->
@@ -970,7 +1182,7 @@
             <span>Bowties</span>
           </button>
         </div>
-        {#if readingRemaining || unreadCount > 0}
+        {#if connected && (readingRemaining || unreadCount > 0)}
           <span class="toolbar-sep" aria-hidden="true"></span>
           <button
             class="toolbar-btn"
@@ -982,19 +1194,33 @@
             <span>{readingRemaining ? 'Reading…' : `Read Remaining (${unreadCount})`}</span>
           </button>
         {/if}
-        <SaveControls toolbar={true} bind:this={saveControlsRef} />
+        {#if connected}
+          <SaveControls toolbar={true} bind:this={saveControlsRef} />
+        {/if}
       </div>
       <div class="toolbar-right">
-        <button
-          class="toolbar-status-btn"
-          onclick={disconnect}
-          title="Disconnect from {connectionLabel}"
-          aria-label="Disconnect from {connectionLabel}"
-        >
-          <span class="status-dot status-connected" aria-hidden="true"></span>
-          <span class="status-text">{connectionLabel}</span>
-          <span class="status-disconnect-hint" aria-hidden="true">Disconnect</span>
-        </button>
+        {#if connected}
+          <button
+            class="toolbar-status-btn"
+            onclick={disconnect}
+            title="Disconnect from {connectionLabel}"
+            aria-label="Disconnect from {connectionLabel}"
+          >
+            <span class="status-dot status-connected" aria-hidden="true"></span>
+            <span class="status-text">{connectionLabel}</span>
+            <span class="status-disconnect-hint" aria-hidden="true">Disconnect</span>
+          </button>
+        {:else}
+          <button
+            class="toolbar-status-btn"
+            onclick={() => showConnectionDialog = true}
+            title="Offline. Click to connect."
+            aria-label="Offline. Click to connect."
+          >
+            <span class="status-dot status-offline" aria-hidden="true"></span>
+            <span class="status-text">Offline</span>
+          </button>
+        {/if}
       </div>
     </div>
   {/if}
@@ -1019,7 +1245,25 @@
 
   <!-- ═══ MAIN CONTENT ═══ -->
   <div class="main-content">
-    {#if !connected}
+    {#if layoutStore.isOfflineMode}
+      <OfflineBanner capturedAt={offlineCapturedAt} layoutId={activeLayoutLabel} />
+    {/if}
+
+    {#if activeLayoutLabel}
+      <div class="active-layout-strip">
+        <span>Active Layout: {activeLayoutLabel}</span>
+        <button class="active-layout-btn" onclick={openOfflineLayoutFromDialog}>Switch Layout</button>
+        <button class="active-layout-btn" onclick={clearActiveLayout}>Close Layout</button>
+      </div>
+    {:else}
+      <div class="active-layout-strip">
+        <span>No active layout</span>
+        <button class="active-layout-btn" onclick={openOfflineLayoutFromDialog}>Open Layout</button>
+        <button class="active-layout-btn" onclick={startNewLayoutCapture}>New Layout Capture</button>
+      </div>
+    {/if}
+
+    {#if !connected && !layoutStore.isOfflineMode && nodes.length === 0}
       <div class="connect-area">
         <ConnectionManager on:connected={handleConnected} />
       </div>
@@ -1067,6 +1311,9 @@
           {:else if selectedUnreadNodeId}
             <div class="config-cta-panel">
               <h2 class="cta-title">{selectedUnreadNodeName}</h2>
+              {#if partialCaptureNodes.has(selectedUnreadNodeId!)}
+                <MissingCaptureBadge text="(Not captured)" />
+              {/if}
               <p class="cta-desc">
                 Configuration has not been read from this node yet.
               </p>
@@ -1079,6 +1326,12 @@
               </button>
             </div>
           {:else}
+            {#if layoutStore.isOfflineMode && selectedNodeIdAny && partialCaptureNodes.has(selectedNodeIdAny.replace(/\./g, '').toUpperCase())}
+              <div class="partial-capture-note">
+                <MissingCaptureBadge text="(Not captured)" />
+                <span>Some values for this node were not captured and remain read-only offline.</span>
+              </div>
+            {/if}
             <SegmentView />
           {/if}
         </div>
@@ -1087,6 +1340,25 @@
   </div>
 
 </div>
+
+{#if showConnectionDialog}
+  <div
+    class="connect-overlay"
+    role="dialog"
+    tabindex="-1"
+    aria-modal="true"
+    aria-label="Connect to LCC network"
+    onclick={(e) => { if (e.target === e.currentTarget) showConnectionDialog = false; }}
+    onkeydown={(e) => { if (e.key === 'Escape') showConnectionDialog = false; }}
+  >
+    <div class="connect-modal">
+      <ConnectionManager on:connected={handleConnected} />
+      <div class="connect-modal-actions">
+        <button class="active-layout-btn" onclick={() => showConnectionDialog = false}>Close</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <!-- CDI XML Viewer Modal -->
 <CdiXmlViewer
@@ -1160,6 +1432,75 @@
     flex-direction: column;
     height: 100vh;
     overflow: hidden;
+  }
+
+  .active-layout-strip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid #e5e7eb;
+    background: #f8fafc;
+    font-size: 13px;
+    color: #334155;
+  }
+
+  .active-layout-btn {
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+    color: #1e293b;
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+
+  .active-layout-btn:hover {
+    background: #f1f5f9;
+  }
+
+  .partial-capture-note {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 12px;
+    padding: 8px 10px;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    background: #fff1f2;
+    color: #7f1d1d;
+    font-size: 12px;
+  }
+
+  .status-offline {
+    background: #f59e0b;
+  }
+
+  .connect-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.38);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 60;
+  }
+
+  .connect-modal {
+    width: min(860px, 92vw);
+    max-height: 90vh;
+    overflow: auto;
+    border-radius: 12px;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    box-shadow: 0 20px 60px rgba(15, 23, 42, 0.28);
+    padding: 14px;
+  }
+
+  .connect-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 8px;
   }
 
   /* ─── Status indicator (toolbar) ───────────────────── */

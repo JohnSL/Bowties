@@ -69,6 +69,21 @@
 
   /** Load a node's config tree and populate nodeSegments from it. */
   async function loadSegmentsForNode(nodeId: string): Promise<void> {
+    const cachedTree = nodeTreeStore.getTree(nodeId);
+    if (cachedTree) {
+      const segments: SegmentInfo[] = cachedTree.segments.map((seg, idx) => ({
+        segmentId: `seg:${idx}`,
+        segmentPath: `seg:${idx}`,
+        segmentName: seg.name ?? 'Unnamed Segment',
+        description: seg.description ?? null,
+        space: seg.space,
+        origin: seg.origin,
+      }));
+      nodeSegments = new Map(nodeSegments.set(nodeId, segments));
+      configSidebarStore.setNodeSegments(nodeId, segments);
+      return;
+    }
+
     nodeLoadingMap = new Map(nodeLoadingMap.set(nodeId, true));
     configSidebarStore.setNodeLoading(nodeId, 'loading');
     try {

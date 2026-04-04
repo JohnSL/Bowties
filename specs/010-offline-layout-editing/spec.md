@@ -5,6 +5,16 @@
 **Status**: Draft  
 **Input**: User description: "Currently you need to be connected to the LCC bus to be able to see or edit any node configuration. However, I have realized that there is a lot of value in support off-line editing of the configuration and bowties. For example, I might go to someone's layout and then 'capture' the entire layout. That means connecting to the LCC network and than saving the layout. That saved layout should contain not just the CDI and any event names, but also all of the current configuration values, and all of the captured producer identified events as well. This would then allow openign the layout without connecting to the LCC bus. Then then next time I open the layout and connect to the bus, I should have the option to save all the changes that have been saved only to files while I was offline."
 
+## Clarifications
+
+### Session 2026-04-04
+
+- Q: How should bus-to-layout matching be classified? → A: Use weighted node-ID overlap thresholds: likely same >=80%, uncertain 40-79%, likely different <40%.
+- Q: What on-disk file format should be canonical for persisted layout data? → A: YAML everywhere (manifest, node snapshots, bowtie metadata, and offline changes).
+- Q: How should node snapshot files be named? → A: Canonical Node ID only (for example `nodes/0501010114A2B3C4.yaml`).
+- Q: How should sync handle partial write failures? → A: Continue applying independent changes, mark failed rows, and keep failed rows pending for retry.
+- Q: How should sync handle a write reply that indicates the target field is read-only? → A: Treat it as not dirty and reset to the previously read node value.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Capture a Full Layout for Offline Use (Priority: P1)
@@ -97,6 +107,8 @@ The user resolves any conflicts, optionally reviews clean changes, and clicks **
 12. **Given** the user deselects a clean change before applying, **When** they click Apply, **Then** that change is left as a pending offline change in the layout and is not written to the bus.
 13. **Given** a node from the captured layout is not discovered on the current bus, **When** the Sync Panel is shown, **Then** that node's offline changes are displayed with a "Node not found on bus" indicator and do not block applying changes for other nodes.
 14. **Given** the user opens a layout with no offline changes while connected to the bus, **When** loading completes, **Then** no Sync Panel appears and the app enters normal online mode directly.
+15. **Given** Apply is in progress and one row write fails for a reason other than read-only, **When** the operation continues, **Then** independent remaining rows are still attempted, successful rows are cleared, and failed rows remain pending with explicit failure reasons for retry.
+16. **Given** a write reply explicitly indicates the target field is read-only, **When** that reply is processed, **Then** that row is treated as not dirty, removed from pending offline changes, and the displayed value is reset to the previously read node value.
 
 ---
 
@@ -154,7 +166,7 @@ A technically skilled helper receives a set of new nodes that are not yet instal
 - **FR-013a**: On startup, the system SHOULD auto-load the most recently used layout and MUST always show which layout is currently active, with a one-step switch-layout action available before connecting.
 - **FR-013a1**: The system MUST provide a Close Layout action that transitions the app to a no-layout state and clears active layout context from the UI.
 - **FR-013a2**: In no-layout state, the system MUST provide a New Layout Capture action that creates a new empty layout context for capturing current bus data.
-- **FR-013b**: During initial connect, the system MUST use discovered node IDs (from SNIP) to compute a preliminary bus-to-layout match status (`likely same`, `uncertain`, or `likely different`) before full value comparison is complete.
+- **FR-013b**: During initial connect, the system MUST use discovered node IDs (from SNIP) to compute a weighted overlap score and classify preliminary bus-to-layout match status with explicit thresholds: `likely same` at >=80%, `uncertain` at 40-79%, and `likely different` at <40%, before full value comparison is complete.
 - **FR-013c**: On a fresh bus connection, the system MUST treat discovery/SNIP data and configuration-value reads as separate phases; discovery alone is sufficient for identity/matching, but not for editable configuration values.
 - **FR-014**: The Sync Panel MUST separate offline changes into three categories: (a) conflicts — bus value differs from captured baseline, require explicit resolution per row; (b) clean — bus value still matches captured baseline, pre-selected for bulk apply and expandable for deselection; (c) already-applied — bus value already equals the planned offline value, silently cleared and shown only as a count.
 - **FR-015**: Conflict rows MUST display the captured baseline value, the offline planned value, and the current bus value side-by-side, and MUST require an explicit per-row apply or skip choice before Apply is enabled for that conflict.
@@ -163,6 +175,8 @@ A technically skilled helper receives a set of new nodes that are not yet instal
 - **FR-016b**: If match status is `uncertain` or `likely different`, the system MUST require explicit user mode selection (`target layout bus` or `bench/other bus`) before any bulk apply action.
 - **FR-016c**: In `bench/other bus` mode, the system MUST suppress automatic bulk sync prompting and preserve all pending offline changes for later application on the target layout bus.
 - **FR-017**: Applying a change in the Sync Panel MUST write the configuration value to the bus node exactly as the existing save mechanism in Feature 007 does.
+- **FR-017a**: During Apply, the system MUST continue processing independent rows after non-fatal per-row failures; successful rows are committed/cleared, failed rows remain pending with per-row error details.
+- **FR-017b**: If a write reply indicates a target field is read-only, the system MUST treat that row as non-dirty, clear it from pending offline changes, and restore the displayed value to the most recently read value from the node.
 - **FR-018**: If a node in the captured layout is not present on the bus when the Sync Panel is shown, its offline changes MUST be displayed as pending but non-blocking; they do not prevent the Sync Panel from completing for other nodes.
 - **FR-019**: If a node's CDI has changed since the layout was captured (CDI XML mismatch), the system MUST flag that node as "CDI changed" and block applying its offline configuration changes until the user acknowledges or re-reads the configuration.
 - **FR-020**: Bowtie offline changes (names, tags, connections) are applied to the layout files on Apply and do not require any bus write for metadata-only changes; event ID changes in bowties DO require bus writes and must go through the same sync path as configuration edits.
@@ -172,9 +186,10 @@ A technically skilled helper receives a set of new nodes that are not yet instal
 - **FR-024**: Layout directory structure and file naming MUST produce meaningful git diffs where changes to one node are isolated primarily to that node's file.
 - **FR-025**: If Close Layout is requested while unsaved or pending offline changes exist, the system MUST require explicit user choice to Save, Discard, or Cancel before closing.
 - **FR-026**: Configuration values for connected nodes MUST only be shown as editable after a successful read for that node (either via per-node read or read-all). Nodes without successful reads MUST remain identity-only.
-- **FR-027**: All persisted layout files MUST use a documented human-readable text format and UTF-8 encoding so users can inspect and review changes directly in standard editors.
+- **FR-027**: All persisted layout files MUST use YAML as the canonical documented human-readable text format (UTF-8 encoded), including manifest, node snapshots, bowtie metadata, and offline changes, so users can inspect and review changes directly in standard editors.
 - **FR-028**: Serialization MUST be deterministic for semantically unchanged data (stable field ordering, stable list ordering where order has no meaning, and normalized formatting) so repeated saves do not create noisy diffs.
 - **FR-029**: Volatile/session-only values (for example ephemeral timestamps or runtime-only identifiers) MUST be excluded from per-node content unless required for semantics; when required, they MUST be stored in a clearly scoped metadata location to minimize diff noise.
+- **FR-030**: Node snapshot filenames MUST be derived from canonical Node ID only (no user-editable node names in filenames), using a deterministic path pattern such as `nodes/<NODE_ID>.yaml`, so renames do not cause file churn in source control.
 
 ### Key Entities
 
