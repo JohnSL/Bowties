@@ -31,6 +31,7 @@
   import SaveControls from '$lib/components/ElementCardDeck/SaveControls.svelte';
   import CdiDownloadDialog from '$lib/components/CdiDownloadDialog.svelte';
   import CdiRedownloadDialog from '$lib/components/CdiRedownloadDialog.svelte';
+  import ErrorDialog from '$lib/components/ErrorDialog.svelte';
   import MissingCaptureBadge from '$lib/components/Layout/MissingCaptureBadge.svelte';
   import { OFFLINE_LAYOUT_DEFAULT_FILENAME, offlineLayoutDialogFilter } from '$lib/constants/layoutFiles';
   import ConnectionManager from '$lib/ConnectionManager.svelte';
@@ -58,6 +59,7 @@
   // T050: prompt-to-save guard state
   let unsavedDialog = $state<{ message: string; proceed: () => void; confirmLabel: string } | null>(null);
   let isForceClosing = false;
+  let errorDialog = $state<{ title: string; message: string } | null>(null);
 
   function promptUnsaved(message: string, proceed: () => void, confirmLabel = 'Discard & Continue'): void {
     const hasUnsaved =
@@ -386,7 +388,10 @@
       setLayoutOpenPhase('ready');
     } catch (error) {
       setLayoutOpenPhase('error');
-      throw error;
+      errorDialog = {
+        title: 'Failed to Load Layout',
+        message: String(error ?? 'Unknown error')
+      };
     } finally {
     }
   }
@@ -1613,6 +1618,14 @@
   </div>
 {/if}
 
+{#if errorDialog}
+  <ErrorDialog
+    title={errorDialog.title}
+    message={errorDialog.message}
+    onClose={() => { errorDialog = null; }}
+  />
+{/if}
+
 <style>
   :global(html, body) {
     margin: 0;
@@ -2158,3 +2171,4 @@
     color: #94a3b8;
   }
 </style>
+

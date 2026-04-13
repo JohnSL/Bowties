@@ -26,6 +26,7 @@ pub struct CaptureSummary {
 pub struct SaveLayoutResult {
     pub manifest_path: String,
     pub node_files_written: usize,
+    pub cdi_files_copied: usize,
     pub warnings: Vec<String>,
 }
 
@@ -396,11 +397,28 @@ pub async fn save_layout_directory(
         companion_dir,
     );
 
+    // Collect CDI files from cache - error if any snapshot's CDI is missing
+    let mut cdi_files: Vec<(String, std::path::PathBuf)> = Vec::new();
+    for snapshot in &snapshots {
+        let cdi_path = cdi_cache_path_for_snapshot(&snapshot, &app)?;
+        if !cdi_path.exists() {
+            return Err(format!(
+                "CDI file not found in cache for node {}: expected at {} (cache key: {})",
+                snapshot.node_id,
+                cdi_path.display(),
+                snapshot.cdi_ref.cache_key
+            ));
+        }
+        cdi_files.push((snapshot.cdi_ref.cache_key.clone(), cdi_path));
+    }
+
+    let cdi_files_count = cdi_files.len();
     let write_data = crate::layout::io::LayoutDirectoryWriteData {
         manifest,
         node_snapshots: snapshots,
         bowties,
         offline_changes,
+        cdi_files,
     };
 
     crate::layout::io::write_layout_capture(target, &write_data)?;
@@ -420,6 +438,7 @@ pub async fn save_layout_directory(
     Ok(SaveLayoutResult {
         manifest_path: target.to_string_lossy().to_string(),
         node_files_written: write_data.node_snapshots.len(),
+        cdi_files_copied: cdi_files_count,
         warnings: partial_nodes,
     })
 }

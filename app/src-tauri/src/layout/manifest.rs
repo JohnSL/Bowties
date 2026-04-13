@@ -22,26 +22,6 @@ impl Default for MatchThresholds {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ManifestFiles {
-    pub bowties: String,
-    pub event_names: String,
-    pub offline_changes: String,
-    pub nodes_dir: String,
-}
-
-impl Default for ManifestFiles {
-    fn default() -> Self {
-        Self {
-            bowties: "bowties.yaml".to_string(),
-            event_names: "event-names.yaml".to_string(),
-            offline_changes: "offline-changes.yaml".to_string(),
-            nodes_dir: "nodes".to_string(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct LayoutManifest {
     pub schema_version: u32,
     pub layout_id: String,
@@ -51,7 +31,6 @@ pub struct LayoutManifest {
     pub match_thresholds: MatchThresholds,
     #[serde(default)]
     pub companion_dir: String,
-    pub files: ManifestFiles,
 }
 
 impl LayoutManifest {
@@ -69,7 +48,6 @@ impl LayoutManifest {
             active_mode: "offline".to_string(),
             match_thresholds: MatchThresholds::default(),
             companion_dir,
-            files: ManifestFiles::default(),
         }
     }
 
@@ -86,9 +64,6 @@ impl LayoutManifest {
         }
         if self.schema_version == LAYOUT_SCHEMA_VERSION && self.companion_dir.trim().is_empty() {
             return Err("companionDir must not be empty for schema v3".to_string());
-        }
-        if self.files.nodes_dir.trim().is_empty() {
-            return Err("files.nodesDir must not be empty".to_string());
         }
         Ok(())
     }

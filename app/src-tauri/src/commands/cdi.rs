@@ -292,6 +292,44 @@ pub async fn get_cdi_xml(
         None
     };
 
+    // Try to get CDI from active layout first (if one is loaded)
+    if let Some(active_layout) = state.active_layout.read().await.clone() {
+        if let Some(snip) = &snip_data {
+            let cache_key = format!(
+                "{}_{}_{}",
+                snip.manufacturer.replace(' ', "_"),
+                snip.model.replace(' ', "_"),
+                snip.software_version.replace(' ', "_")
+            );
+            
+            // Derive companion directory from root_path
+            let base_file = std::path::Path::new(&active_layout.root_path);
+            if let Some(parent) = base_file.parent() {
+                if let Some(file_name) = base_file.file_name().and_then(|v| v.to_str()) {
+                    // Strip common suffixes to get stem
+                    let suffixes = [".layout", ".bowties-layout.yaml", ".bowties-layout.yml", ".yaml", ".yml"];
+                    let stem = suffixes.iter()
+                        .find_map(|suffix| file_name.strip_suffix(suffix))
+                        .unwrap_or(file_name);
+                    
+                    let companion_dir = parent.join(format!("{}.layout.d", stem));
+                    let cdi_path = companion_dir.join("cdi").join(format!("{}.xml", cache_key));
+                    
+                    if cdi_path.exists() {
+                        if let Ok(xml_content) = std::fs::read_to_string(&cdi_path) {
+                            let retrieved_at = Utc::now();
+                            return Ok(GetCdiXmlResponse {
+                                xml_content: Some(xml_content.clone()),
+                                size_bytes: Some(xml_content.len()),
+                                retrieved_at: Some(retrieved_at.to_rfc3339()),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Check file cache if we have SNIP data
     if let Some(snip) = &snip_data {
         let cache_path = get_cdi_cache_path(

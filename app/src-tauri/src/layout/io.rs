@@ -10,6 +10,12 @@ use super::manifest::LayoutManifest;
 use super::node_snapshot::NodeSnapshot;
 use super::offline_changes::OfflineChange;
 
+const BOWTIES_FILE: &str = "bowties.yaml";
+const OFFLINE_CHANGES_FILE: &str = "offline-changes.yaml";
+const EVENT_NAMES_FILE: &str = "event-names.yaml";
+const NODES_DIR: &str = "nodes";
+const CDI_DIR: &str = "cdi";
+
 /// Load a layout file from the given path.
 ///
 /// Validates the schema after parsing. If the YAML is malformed but parseable,
@@ -207,6 +213,8 @@ pub struct LayoutDirectoryWriteData {
     pub node_snapshots: Vec<NodeSnapshot>,
     pub bowties: LayoutFile,
     pub offline_changes: Vec<OfflineChange>,
+    /// List of (cache_key, source_path_to_cdi_file) pairs for CDI files to copy
+    pub cdi_files: Vec<(String, std::path::PathBuf)>,
 }
 
 #[derive(Debug, Clone)]
@@ -284,14 +292,14 @@ pub fn read_layout_capture(base_file: &Path) -> Result<LayoutDirectoryReadData, 
 }
 
 fn write_companion_contents(root_dir: &Path, data: &LayoutDirectoryWriteData) -> Result<(), String> {
-    write_yaml_file(&root_dir.join(&data.manifest.files.bowties), &data.bowties)?;
-    write_yaml_file(&root_dir.join(&data.manifest.files.offline_changes), &data.offline_changes)?;
+    write_yaml_file(&root_dir.join(BOWTIES_FILE), &data.bowties)?;
+    write_yaml_file(&root_dir.join(OFFLINE_CHANGES_FILE), &data.offline_changes)?;
     write_yaml_file(
-        &root_dir.join(&data.manifest.files.event_names),
+        &root_dir.join(EVENT_NAMES_FILE),
         &std::collections::BTreeMap::<String, String>::new(),
     )?;
 
-    let nodes_dir = root_dir.join(&data.manifest.files.nodes_dir);
+    let nodes_dir = root_dir.join(NODES_DIR);
     std::fs::create_dir_all(&nodes_dir)
         .map_err(|e| format!("Cannot create nodes dir {}: {}", nodes_dir.display(), e))?;
     for snapshot in &data.node_snapshots {
@@ -299,28 +307,42 @@ fn write_companion_contents(root_dir: &Path, data: &LayoutDirectoryWriteData) ->
         write_yaml_file(&node_path, snapshot)?;
     }
 
+    // Copy CDI files to layout directory
+    let cdi_dir = root_dir.join(CDI_DIR);
+    if !data.cdi_files.is_empty() {
+        std::fs::create_dir_all(&cdi_dir)
+            .map_err(|e| format!("Cannot create CDI directory {}: {}", cdi_dir.display(), e))?;
+        for (cache_key, source_path) in &data.cdi_files {
+            let dest_filename = format!("{}.xml", cache_key);
+            let dest_path = cdi_dir.join(&dest_filename);
+            std::fs::copy(source_path, &dest_path)
+                .map_err(|e| format!("Cannot copy CDI file from {} to {}: {}", 
+                    source_path.display(), dest_path.display(), e))?;
+        }
+    }
+
     Ok(())
 }
 
 fn read_companion_contents(
     root_dir: &Path,
-    manifest: &LayoutManifest,
+    _manifest: &LayoutManifest,
 ) -> Result<(LayoutFile, Vec<NodeSnapshot>, Vec<OfflineChange>), String> {
-    let bowties_path = root_dir.join(&manifest.files.bowties);
+    let bowties_path = root_dir.join(BOWTIES_FILE);
     let bowties: LayoutFile = if bowties_path.exists() {
         read_yaml_file(&bowties_path)?
     } else {
         LayoutFile::default()
     };
 
-    let offline_changes_path = root_dir.join(&manifest.files.offline_changes);
+    let offline_changes_path = root_dir.join(OFFLINE_CHANGES_FILE);
     let offline_changes: Vec<OfflineChange> = if offline_changes_path.exists() {
         read_yaml_file(&offline_changes_path)?
     } else {
         Vec::new()
     };
 
-    let nodes_dir = root_dir.join(&manifest.files.nodes_dir);
+    let nodes_dir = root_dir.join(NODES_DIR);
     let mut node_snapshots = Vec::new();
     if nodes_dir.exists() {
         let entries = std::fs::read_dir(&nodes_dir)
@@ -339,6 +361,26 @@ fn read_companion_contents(
 
     node_snapshots.sort_by(|a, b| a.node_id.cmp(&b.node_id));
     Ok((bowties, node_snapshots, offline_changes))
+}
+
+/// Locate CDI XML file for a snapshot within a layout directory.
+///
+/// Returns the path to the CDI file if it exists in the layout's cdi directory,
+/// or None if the file is not present.
+pub fn get_cdi_path_for_snapshot(
+    layout_root: &Path,
+    snapshot: &NodeSnapshot,
+    _manifest: &LayoutManifest,
+) -> Option<std::path::PathBuf> {
+    let cdi_dir = layout_root.join(CDI_DIR);
+    let cdi_filename = format!("{}.xml", snapshot.cdi_ref.cache_key);
+    let cdi_path = cdi_dir.join(&cdi_filename);
+    
+    if cdi_path.exists() {
+        Some(cdi_path)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -455,6 +497,7 @@ mod tests {
             node_snapshots: vec![test_node_snapshot("0501010114A2B3")],
             bowties: LayoutFile::default(),
             offline_changes: Vec::new(),
+            cdi_files: Vec::new(),
         };
 
         write_layout_capture(&base_file, &data).unwrap();
@@ -488,6 +531,7 @@ mod tests {
             node_snapshots: vec![test_node_snapshot("0501010114A2B3")],
             bowties: LayoutFile::default(),
             offline_changes: Vec::new(),
+            cdi_files: Vec::new(),
         };
 
         write_layout_capture(&base_file, &data).unwrap();
