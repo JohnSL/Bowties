@@ -3,6 +3,7 @@
 //! Backend implementation for the LCC visual configuration tool.
 
 mod commands;
+mod cdi;
 mod menu;
 mod state;
 mod events;
@@ -187,6 +188,7 @@ async fn update_menu_state(
     can_view_cdi: bool,
     can_redownload_cdi: bool,
     can_open_layout: bool,
+    can_close_layout: bool,
     can_save_layout: bool,
     can_save_layout_as: bool,
     handles: tauri::State<'_, MenuHandles>,
@@ -198,6 +200,7 @@ async fn update_menu_state(
     handles.view_cdi       .set_enabled(can_view_cdi)                   .map_err(|e| e.to_string())?;
     handles.redownload_cdi .set_enabled(can_redownload_cdi)             .map_err(|e| e.to_string())?;
     handles.open_layout    .set_enabled(can_open_layout)                .map_err(|e| e.to_string())?;
+    handles.close_layout   .set_enabled(can_close_layout)               .map_err(|e| e.to_string())?;
     handles.save_layout    .set_enabled(can_save_layout)                .map_err(|e| e.to_string())?;
     handles.save_layout_as .set_enabled(can_save_layout_as)             .map_err(|e| e.to_string())?;
     Ok(())
@@ -235,6 +238,7 @@ pub fn run() {
                     "menu-view-cdi"       => { let _ = app_h.emit("menu-view-cdi", ()); }
                     "menu-redownload-cdi" => { let _ = app_h.emit("menu-redownload-cdi", ()); }
                     "menu-open-layout"    => { let _ = app_h.emit("menu-open-layout", ()); }
+                    "menu-close-layout"   => { let _ = app_h.emit("menu-close-layout", ()); }
                     "menu-save-layout"    => { let _ = app_h.emit("menu-save-layout", ()); }
                     "menu-save-layout-as" => { let _ = app_h.emit("menu-save-layout-as", ()); }
                     "menu-exit"           => { let _ = app_h.emit("menu-exit", ()); }
@@ -300,11 +304,29 @@ pub fn run() {
             commands::cancel_cdi_download,
             commands::get_card_elements,
             commands::get_bowties,  // T011: Feature 006 bowtie catalog
+            commands::set_bowtie_metadata,  // Spec 010: offline bowtie name/tags edit
             commands::build_bowtie_catalog_command,  // Feature 009: rebuild with layout merge
             commands::load_layout,  // Feature 009: layout file persistence
             commands::save_layout,  // Feature 009: layout file persistence
             commands::get_recent_layout,  // Feature 009: recent layout tracking
             commands::set_recent_layout,  // Feature 009: recent layout tracking
+            commands::clear_recent_layout,  // Feature 009: recent layout tracking
+            commands::capture_layout_snapshot,  // Spec 010: offline layout capture scaffolding
+            commands::save_layout_directory,  // Spec 010: directory persistence scaffolding
+            commands::open_layout_directory,  // Spec 010: offline open scaffolding
+            commands::close_layout,  // Spec 010: layout context lifecycle scaffolding
+            commands::create_new_layout_capture,  // Spec 010: new capture lifecycle scaffolding
+            commands::build_offline_node_tree,  // Spec 010: CDI-structured offline tree
+            commands::set_offline_change,  // Spec 010: offline change scaffolding
+            commands::revert_offline_change,  // Spec 010: offline change scaffolding
+            commands::list_offline_changes,  // Spec 010: offline change scaffolding
+            commands::replace_offline_changes,  // Spec 010: bulk replace offline changes cache
+            commands::compute_layout_match_status,  // Spec 010: sync match scaffolding
+            commands::build_sync_session,  // Spec 010: sync session scaffolding
+            commands::set_sync_mode,  // Spec 010: sync mode scaffolding
+            commands::apply_sync_changes,  // Spec 010: sync apply scaffolding
+            cdi::bundle::export_cdi_bundle,  // Spec 010: CDI portability scaffolding
+            cdi::bundle::import_cdi_bundle,  // Spec 010: CDI portability scaffolding
             commands::get_node_tree,  // Spec 007: unified node tree
             commands::write_config_value,  // Spec 007: write config value
             commands::send_update_complete,  // Spec 007: send update complete

@@ -17,11 +17,12 @@
 //! 4. Is cheaply serializable to the frontend in one call
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use lcc_rs::cdi::{
     Cdi, DataElement, EventRole, Identification, SliderHints,
 };
+use crate::layout::node_snapshot::SnapshotValueNode;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tree node types
@@ -728,6 +729,119 @@ fn merge_children_roles(children: &mut [ConfigNode], roles: &HashMap<String, Eve
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// Merge string-encoded snapshot values (from a saved layout YAML) into an
+/// existing tree.
+///
+/// `values` uses the same format written by the capture pipeline:
+/// `space_number → "0xOFFSET" → string-encoded value`.
+/// Each string is re-parsed into the appropriate `ConfigValue` variant based
+/// on the leaf's `element_type`.  Leaves with no matching entry are left
+/// with whatever default value `build_node_config_tree` assigned.
+/// Parse a string-encoded snapshot value into a typed `ConfigValue`.
+fn parse_snapshot_value(leaf_type: LeafType, s: &str) -> Option<ConfigValue> {
+    match leaf_type {
+        LeafType::Int => s
+            .parse::<i64>()
+            .ok()
+            .map(|value| ConfigValue::Int { value }),
+        LeafType::String => Some(ConfigValue::String {
+            value: s.to_owned(),
+        }),
+        LeafType::EventId => {
+            // Stored as dotted hex: "05.02.01.02.03.04.05.06"
+            let parts: Vec<&str> = s.split('.').collect();
+            if parts.len() != 8 {
+                return None;
+            }
+            let mut bytes = [0u8; 8];
+            for (i, part) in parts.iter().enumerate() {
+                bytes[i] = u8::from_str_radix(part, 16).ok()?;
+            }
+            let hex = bytes_to_dotted_hex(&bytes);
+            Some(ConfigValue::EventId { bytes, hex })
+        }
+        LeafType::Float => s
+            .parse::<f64>()
+            .ok()
+            .map(|value| ConfigValue::Float { value }),
+        LeafType::Action | LeafType::Blob => None,
+    }
+}
+
+/// Merge path-centric snapshot values (new layout format) into an existing tree.
+fn canonical_offset_key(offset: &str) -> String {
+    let trimmed = offset.trim();
+    let hex = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(trimmed)
+        .to_uppercase();
+    format!("0x{}", hex)
+}
+
+///
+/// Values are matched by exact CDI path first, then by space+offset metadata.
+pub fn merge_snapshot_path_values(
+    tree: &mut NodeConfigTree,
+    config: &BTreeMap<String, SnapshotValueNode>,
+) {
+    let mut path_values: HashMap<String, String> = HashMap::new();
+    let mut addr_values: HashMap<(u8, String), String> = HashMap::new();
+    flatten_snapshot_config(config, &mut Vec::new(), &mut path_values, &mut addr_values);
+
+    for segment in &mut tree.segments {
+        merge_children_snapshot_path(&mut segment.children, &path_values, &addr_values);
+    }
+}
+
+fn flatten_snapshot_config(
+    root: &BTreeMap<String, SnapshotValueNode>,
+    path: &mut Vec<String>,
+    path_values: &mut HashMap<String, String>,
+    addr_values: &mut HashMap<(u8, String), String>,
+) {
+    for (key, node) in root {
+        path.push(key.clone());
+        match node {
+            SnapshotValueNode::Branch(children) => {
+                flatten_snapshot_config(children, path, path_values, addr_values);
+            }
+            SnapshotValueNode::Leaf(leaf) => {
+                path_values.insert(path.join("/"), leaf.value.clone());
+                if let (Some(space), Some(offset)) = (leaf.space, leaf.offset.clone()) {
+                    addr_values.insert((space, canonical_offset_key(&offset)), leaf.value.clone());
+                }
+            }
+        }
+        let _ = path.pop();
+    }
+}
+
+fn merge_children_snapshot_path(
+    children: &mut [ConfigNode],
+    path_values: &HashMap<String, String>,
+    addr_values: &HashMap<(u8, String), String>,
+) {
+    for child in children.iter_mut() {
+        match child {
+            ConfigNode::Group(g) => {
+                merge_children_snapshot_path(&mut g.children, path_values, addr_values);
+            }
+            ConfigNode::Leaf(leaf) => {
+                let path_key = leaf.path.join("/");
+                if let Some(s) = path_values.get(&path_key) {
+                    leaf.value = parse_snapshot_value(leaf.element_type, s);
+                    continue;
+                }
+                let offset_key = canonical_offset_key(&format!("0x{:08X}", leaf.address));
+                if let Some(s) = addr_values.get(&(leaf.space, offset_key)) {
+                    leaf.value = parse_snapshot_value(leaf.element_type, s);
+                }
+            }
         }
     }
 }

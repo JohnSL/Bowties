@@ -1,6 +1,6 @@
 ---
 name: profile-5-recipes
-description: Extract usage recipes and step-by-step configuration tasks from an LCC node's CDI XML and PDF manual. Keywords: CDI, recipe, configuration, howto, step-by-step, wiring, setup, profile extraction.
+description: Extract usage recipes and step-by-step configuration tasks from an LCC node's CDI XML and PDF manual. Keywords -- CDI, recipe, configuration, howto, step-by-step, wiring, setup, profile extraction.
 ---
 
 # Extract Usage Recipes

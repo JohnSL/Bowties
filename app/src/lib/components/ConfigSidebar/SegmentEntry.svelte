@@ -7,6 +7,8 @@
   export let isSelected: boolean = false;
   /** Whether this segment has unsaved pending edits (FR-012b) */
   export let hasPendingEdits: boolean = false;
+  /** Whether this segment has saved offline changes pending apply */
+  export let hasPendingApply: boolean = false;
 
   const dispatch = createEventDispatcher<{ select: { segmentId: string; segmentName: string } }>();
 
@@ -26,8 +28,15 @@
     {#if hasPendingEdits}
       <span
         class="pending-edits-dot"
-        title="Unsaved changes pending"
-        aria-label="Unsaved changes pending"
+        title="Unsaved changes"
+        aria-label="Unsaved changes"
+      ></span>
+    {/if}
+    {#if hasPendingApply}
+      <span
+        class="pending-apply-dot"
+        title="Saved in layout, pending apply to node"
+        aria-label="Saved in layout, pending apply to node"
       ></span>
     {/if}
   </span>
@@ -96,6 +105,17 @@
     background-color: #ca8500;                     /* amber — unsaved changes (distinct from selection blue) */
     border: 1.5px solid #fff;
     box-shadow: 0 0 0 1px rgba(202, 133, 0, 0.35);
+  }
+
+  .pending-apply-dot {
+    flex-shrink: 0;
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background-color: #0f766e;
+    border: 1.5px solid #fff;
+    box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.35);
   }
 
   .segment-description {

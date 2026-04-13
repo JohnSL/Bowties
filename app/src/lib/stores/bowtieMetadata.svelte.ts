@@ -11,6 +11,7 @@
 import { SvelteMap } from 'svelte/reactivity';
 import type { LayoutFile, BowtieMetadata, RoleClassification, BowtieMetadataEdit, BowtieEditKind } from '$lib/types/bowtie';
 import { layoutStore } from '$lib/stores/layout.svelte';
+import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
 
 // ─── Store class ──────────────────────────────────────────────────────────────
 
@@ -48,6 +49,7 @@ class BowtieMetadataStore {
 
   /** Record a bowtie creation. */
   createBowtie(eventIdHex: string, name?: string): void {
+    const baselineValue = this._serializeMetadata(this._getEffectiveMetadata(eventIdHex));
     const id = this._makeId();
     this._edits.set(`create:${eventIdHex}`, {
       id,
@@ -55,10 +57,12 @@ class BowtieMetadataStore {
       timestamp: Date.now(),
     });
     this._applyToLayout();
+    this._mirrorOfflineMetadataDelta(eventIdHex, baselineValue);
   }
 
   /** Record a bowtie deletion. */
   deleteBowtie(eventIdHex: string): void {
+    const baselineValue = this._serializeMetadata(this._getEffectiveMetadata(eventIdHex));
     const id = this._makeId();
     // Remove any pending create for this bowtie
     this._edits.delete(`create:${eventIdHex}`);
@@ -68,10 +72,12 @@ class BowtieMetadataStore {
       timestamp: Date.now(),
     });
     this._applyToLayout();
+    this._mirrorOfflineMetadataDelta(eventIdHex, baselineValue);
   }
 
   /** Rename a bowtie. */
   renameBowtie(eventIdHex: string, newName: string): void {
+    const baselineValue = this._serializeMetadata(this._getEffectiveMetadata(eventIdHex));
     const id = this._makeId();
     const current = this._getEffectiveMetadata(eventIdHex);
     this._edits.set(`rename:${eventIdHex}`, {
@@ -80,10 +86,12 @@ class BowtieMetadataStore {
       timestamp: Date.now(),
     });
     this._applyToLayout();
+    this._mirrorOfflineMetadataDelta(eventIdHex, baselineValue);
   }
 
   /** Add a tag to a bowtie. */
   addTag(eventIdHex: string, tag: string): void {
+    const baselineValue = this._serializeMetadata(this._getEffectiveMetadata(eventIdHex));
     const id = this._makeId();
     this._edits.set(`addTag:${eventIdHex}:${tag}`, {
       id,
@@ -91,10 +99,12 @@ class BowtieMetadataStore {
       timestamp: Date.now(),
     });
     this._applyToLayout();
+    this._mirrorOfflineMetadataDelta(eventIdHex, baselineValue);
   }
 
   /** Remove a tag from a bowtie. */
   removeTag(eventIdHex: string, tag: string): void {
+    const baselineValue = this._serializeMetadata(this._getEffectiveMetadata(eventIdHex));
     const id = this._makeId();
     // Remove any pending addTag for this same tag
     this._edits.delete(`addTag:${eventIdHex}:${tag}`);
@@ -104,6 +114,7 @@ class BowtieMetadataStore {
       timestamp: Date.now(),
     });
     this._applyToLayout();
+    this._mirrorOfflineMetadataDelta(eventIdHex, baselineValue);
   }
 
   /** Classify an ambiguous event slot role. */
@@ -127,6 +138,8 @@ class BowtieMetadataStore {
    * adopted event ID (when the first element is added to a name-only bowtie).
    */
   adoptEventId(placeholderHex: string, realEventIdHex: string): void {
+    const baselinePlaceholder = this._serializeMetadata(this._getEffectiveMetadata(placeholderHex));
+    const baselineReal = this._serializeMetadata(this._getEffectiveMetadata(realEventIdHex));
     // Re-key the create edit
     const createEdit = this._edits.get(`create:${placeholderHex}`);
     if (createEdit?.kind.type === 'create') {
@@ -183,6 +196,8 @@ class BowtieMetadataStore {
       }
     }
     this._applyToLayout();
+    this._mirrorOfflineMetadataDelta(placeholderHex, baselinePlaceholder);
+    this._mirrorOfflineMetadataDelta(realEventIdHex, baselineReal);
   }
 
   /**
@@ -194,7 +209,9 @@ class BowtieMetadataStore {
    * unchanged — no hardware write is needed.
    */
   demoteToPlanningBowtie(eventIdHex: string): void {
+    const baselineReal = this._serializeMetadata(this._getEffectiveMetadata(eventIdHex));
     const placeholderHex = `planning-${Date.now()}`;
+    const baselinePlaceholder = this._serializeMetadata(this._getEffectiveMetadata(placeholderHex));
     const existingMeta = this._getEffectiveMetadata(eventIdHex);
 
     // Remove any in-session create/rename/tag edits for the old event ID
@@ -232,6 +249,8 @@ class BowtieMetadataStore {
     }
 
     this._applyToLayout();
+    this._mirrorOfflineMetadataDelta(eventIdHex, baselineReal);
+    this._mirrorOfflineMetadataDelta(placeholderHex, baselinePlaceholder);
   }
 
   /** Clear all pending metadata edits (used by discard). */
@@ -439,6 +458,24 @@ class BowtieMetadataStore {
     }
 
     layoutStore.updateLayout(updated);
+  }
+
+  private _serializeMetadata(meta: BowtieMetadata | undefined): string {
+    if (!meta) return 'null';
+    return JSON.stringify({
+      name: meta.name ?? null,
+      tags: [...meta.tags],
+    });
+  }
+
+  private _mirrorOfflineMetadataDelta(eventIdHex: string, baselineValue: string): void {
+    if (!layoutStore.isOfflineMode) return;
+    const plannedValue = this._serializeMetadata(this._getEffectiveMetadata(eventIdHex));
+    offlineChangesStore.upsertBowtieMetadataChange({
+      eventIdHex,
+      baselineValue,
+      plannedValue,
+    });
   }
 }
 

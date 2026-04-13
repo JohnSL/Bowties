@@ -14,6 +14,7 @@
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use tauri::{Emitter, Manager};
+use chrono;
 
 use crate::state::{AppState, BowtieCatalog, BowtieCard, BowtieState, EventSlotEntry, NodeRoles};
 
@@ -1082,6 +1083,25 @@ pub async fn set_recent_layout(
     Ok(())
 }
 
+/// Clear the persisted startup layout marker from app data.
+#[tauri::command]
+pub async fn clear_recent_layout(
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let app_data = app.path().app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    let recent_path = app_data.join("recent-layout.json");
+    if !recent_path.exists() {
+        return Ok(());
+    }
+
+    std::fs::remove_file(&recent_path)
+        .map_err(|e| format!("Failed to clear recent layout file: {}", e))?;
+
+    Ok(())
+}
+
 // ── Tauri commands ────────────────────────────────────────────────────────────
 
 /// Rebuild the bowtie catalog, optionally merging layout file metadata.
@@ -1183,6 +1203,92 @@ pub async fn get_bowties(
 ) -> Result<Option<BowtieCatalog>, String> {
     let catalog = state.bowties_catalog.read().await;
     Ok(catalog.clone())
+}
+
+/// T034a: Set bowtie name/tags (emits offline change when offline, saves layout when online).
+/// Returns a change ID if offline, empty string if online.
+#[tauri::command]
+pub async fn set_bowtie_metadata(
+    event_id_hex: String,
+    name: Option<String>,
+    tags: Vec<String>,
+    _app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    // Check if offline mode is active
+    let is_offline = {
+        let guard = state.active_layout.read().await;
+        guard
+            .as_ref()
+            .map(|c| c.mode == crate::state::ActiveLayoutMode::OfflineFile)
+            .unwrap_or(false)
+    };
+
+    if is_offline {
+        // Offline mode: emit an offline change
+        // For bowtie metadata, we use a JSON representation of the new state as planned_value
+        let planned_value = serde_json::json!({
+            "name": name,
+            "tags": tags,
+        }).to_string();
+
+        let offline_change = crate::layout::offline_changes::OfflineChange {
+            change_id: format!(
+                "{}-{}",
+                uuid::Uuid::new_v4(),
+                chrono::Utc::now().timestamp_millis()
+            ),
+            kind: crate::layout::offline_changes::OfflineChangeKind::BowtieMetadata,
+            node_id: None,
+            space: None,
+            offset: None,
+            baseline_value: format!("event:{}", event_id_hex),
+            planned_value,
+            status: crate::layout::offline_changes::OfflineChangeStatus::Pending,
+            error: None,
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        };
+
+        offline_change.validate()?;
+
+        // In-memory only pre-save path: upsert same bowtie metadata target.
+        let mut change_id_out = offline_change.change_id.clone();
+        {
+            let mut cache = state.offline_changes_cache.write().await;
+            if let Some(existing) = cache.iter_mut().find(|c|
+                c.kind == crate::layout::offline_changes::OfflineChangeKind::BowtieMetadata
+                    && c.baseline_value == offline_change.baseline_value
+            ) {
+                existing.planned_value = offline_change.planned_value.clone();
+                existing.updated_at = offline_change.updated_at.clone();
+                existing.status = crate::layout::offline_changes::OfflineChangeStatus::Pending;
+                existing.error = None;
+                change_id_out = existing.change_id.clone();
+            } else {
+                cache.push(offline_change);
+            }
+        }
+
+        // Update pending count
+        {
+            let mut guard = state.active_layout.write().await;
+            if let Some(ctx) = &mut *guard {
+                ctx.pending_offline_change_count = state.offline_changes_cache.read().await.len();
+            }
+        }
+
+        Ok(change_id_out)
+    } else {
+        // Online mode: save to layout file (Feature 009 style)
+        // For now, just update the local catalog
+        if let Some(catalog) = state.bowties_catalog.write().await.as_mut() {
+            if let Some(card) = catalog.bowties.iter_mut().find(|c| c.event_id_hex == event_id_hex) {
+                card.name = name;
+                card.tags = tags;
+            }
+        }
+        Ok(String::new())
+    }
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

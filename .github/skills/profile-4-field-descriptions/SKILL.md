@@ -1,6 +1,6 @@
 ---
 name: profile-4-field-descriptions
-description: Extract detailed field and option descriptions for every leaf field in an LCC node's CDI XML using the PDF manual. Keywords: CDI, field, option, enum, description, int, string, eventid, profile extraction.
+description: Extract detailed field and option descriptions for every leaf field in an LCC node's CDI XML using the PDF manual. Keywords -- CDI, field, option, enum, description, int, string, eventid, profile extraction.
 ---
 
 # Extract Field & Option Descriptions

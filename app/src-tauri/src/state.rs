@@ -96,6 +96,29 @@ pub struct BowtieCatalog {
     pub total_slots_scanned: usize,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActiveLayoutMode {
+    OfflineFile,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncMode {
+    TargetLayoutBus,
+    BenchOtherBus,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveLayoutContext {
+    pub layout_id: String,
+    pub root_path: String,
+    pub mode: ActiveLayoutMode,
+    pub captured_at: Option<String>,
+    pub pending_offline_change_count: usize,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Application state ─────────────────────────────────────────────────────
@@ -130,6 +153,16 @@ pub struct AppState {
     /// `None` until the first `cdi-read-complete` cycle completes.
     pub bowties_catalog: Arc<RwLock<Option<BowtieCatalog>>>,
 
+    /// Active layout context for either legacy single-file layout or offline directory layout.
+    pub active_layout: Arc<RwLock<Option<ActiveLayoutContext>>>,
+
+    /// Runtime cache of pending offline changes for the active layout.
+    /// Synced to disk on each modification; cleared when layout is closed.
+    pub offline_changes_cache: Arc<RwLock<Vec<crate::layout::offline_changes::OfflineChange>>>,
+
+    /// User-selected sync mode when bus match is uncertain.
+    pub sync_mode: Arc<RwLock<Option<SyncMode>>>,
+
 
 
     // ── Spec 008: Structure profile cache ─────────────────────────────────
@@ -159,6 +192,9 @@ impl AppState {
             config_read_cancel: Arc::new(AtomicBool::new(false)),
             cdi_download_cancel: Arc::new(AtomicBool::new(false)),
             bowties_catalog: Arc::new(RwLock::new(None)),
+            active_layout: Arc::new(RwLock::new(None)),
+            offline_changes_cache: Arc::new(RwLock::new(Vec::new())),
+            sync_mode: Arc::new(RwLock::new(None)),
 
             profiles: Arc::new(RwLock::new(HashMap::new())),
             diag_log: crate::diagnostics::new_diag_log(),
@@ -255,6 +291,7 @@ impl AppState {
         // Clear connection and active config
         *self.connection.write().await = None;
         *self.active_connection.write().await = None;
+        *self.sync_mode.write().await = None;
     }
 }
 

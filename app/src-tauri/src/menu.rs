@@ -18,6 +18,7 @@ pub struct MenuHandles {
     pub view_cdi:         MenuItem<Wry>,
     pub redownload_cdi:   MenuItem<Wry>,
     pub open_layout:      MenuItem<Wry>,
+    pub close_layout:     MenuItem<Wry>,
     pub save_layout:      MenuItem<Wry>,
     pub save_layout_as:   MenuItem<Wry>,
     pub diagnostics:      MenuItem<Wry>,
@@ -35,14 +36,20 @@ pub fn build_app_menu(app: &AppHandle<Wry>) -> tauri::Result<(tauri::menu::Menu<
 
     let exit_item = MenuItem::with_id(app, "menu-exit", "Exit", true, None::<&str>)?;
 
+    // Keep shortcut UX in sync with frontend capture logic.
+    // When adding/changing these accelerators, update:
+    //   app/src/lib/keyboard/menuShortcuts.ts
     let open_layout_item    = MenuItem::with_id(app, "menu-open-layout",    "Open Layout\u{2026}",    false, Some("CmdOrCtrl+O"))?;
-    let save_layout_item    = MenuItem::with_id(app, "menu-save-layout",    "Save Layout",        false, Some("CmdOrCtrl+S"))?;
+    let close_layout_item   = MenuItem::with_id(app, "menu-close-layout",   "Close Layout",          false, Some("CmdOrCtrl+W"))?;
+    let save_layout_item    = MenuItem::with_id(app, "menu-save-layout",    "Save Layout",           false, Some("CmdOrCtrl+S"))?;
     let save_layout_as_item = MenuItem::with_id(app, "menu-save-layout-as", "Save Layout As\u{2026}", false, Some("CmdOrCtrl+Shift+S"))?;
 
     let file_submenu = SubmenuBuilder::new(app, "File")
         .item(&disconnect_item)
         .separator()
         .item(&open_layout_item)
+        .item(&close_layout_item)
+        .separator()
         .item(&save_layout_item)
         .item(&save_layout_as_item)
         .separator()
@@ -91,6 +98,7 @@ pub fn build_app_menu(app: &AppHandle<Wry>) -> tauri::Result<(tauri::menu::Menu<
         view_cdi:        view_cdi_item,
         redownload_cdi:  redownload_cdi_item,
         open_layout:     open_layout_item,
+        close_layout:    close_layout_item,
         save_layout:     save_layout_item,
         save_layout_as:  save_layout_as_item,
         diagnostics:     diagnostics_item,

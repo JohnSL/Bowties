@@ -184,6 +184,43 @@ class NodeTreeStore {
     }
   }
 
+  /**
+   * Set or clear a leaf's modifiedValue locally without backend IPC.
+   * Used by offline mode to keep dirty indicators aligned with online UX.
+   */
+  setLeafModifiedValue(
+    nodeId: string,
+    fieldPath: string[],
+    modifiedValue: import('$lib/types/nodeTree').TreeConfigValue | null,
+  ): void {
+    const tree = this._trees.get(nodeId);
+    if (!tree) return;
+
+    const updatedTree = deepCloneTree(tree);
+    const leaf = findLeafByPath(updatedTree, fieldPath);
+    if (!leaf) return;
+
+    leaf.modifiedValue = modifiedValue;
+    if (modifiedValue === null) {
+      leaf.writeState = null;
+      leaf.writeError = null;
+    }
+
+    this._trees = new Map(this._trees);
+    this._trees.set(nodeId, updatedTree);
+  }
+
+  /** Clear all modifiedValue markers across all cached trees. */
+  clearAllModifiedValues(): void {
+    const next = new Map<string, NodeConfigTree>();
+    for (const [nodeId, tree] of this._trees.entries()) {
+      const updatedTree = deepCloneTree(tree);
+      clearModifiedInChildren(updatedTree.segments.flatMap((s) => s.children));
+      next.set(nodeId, updatedTree);
+    }
+    this._trees = next;
+  }
+
   // ── Listener lifecycle ────────────────────────────────────────────────────
 
   /**
@@ -348,5 +385,19 @@ function findLeafByPathInChildren(children: ConfigNode[], path: string[]): LeafC
   }
 
   return null;
+}
+
+function clearModifiedInChildren(children: ConfigNode[]): void {
+  for (const child of children) {
+    if (isLeaf(child)) {
+      child.modifiedValue = null;
+      child.writeState = null;
+      child.writeError = null;
+      continue;
+    }
+    if (isGroup(child)) {
+      clearModifiedInChildren(child.children);
+    }
+  }
 }
 

@@ -4,18 +4,21 @@
   import { nodeInfoStore } from '$lib/stores/nodeInfo';
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import { configReadNodesStore } from '$lib/stores/configReadStatus';
+  import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+  import { layoutStore } from '$lib/stores/layout.svelte';
+  import { layoutOpenInProgress } from '$lib/stores/layoutOpenLifecycle';
   import NodeEntry from './NodeEntry.svelte';
   import SegmentEntry from './SegmentEntry.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
-  import { hasModifiedLeaves, hasModifiedDescendant } from '$lib/types/nodeTree';
+  import { hasModifiedLeaves, hasModifiedDescendant, isGroup, isLeaf, type ConfigNode } from '$lib/types/nodeTree';
   import type { SegmentInfo } from '$lib/stores/configSidebar';
 
   const dispatch = createEventDispatcher<{ readNodeConfig: { nodeId: string } }>();
 
   /** Cached segments per nodeId — loaded on first expansion */
-  let nodeSegments = new Map<string, SegmentInfo[]>();
+  let nodeSegments = $state(new Map<string, SegmentInfo[]>());
   /** Loading state per nodeId */
-  let nodeLoadingMap = new Map<string, boolean>();
+  let nodeLoadingMap = $state(new Map<string, boolean>());
 
   /** Get display name for a discovered node */
   function getNodeDisplayName(node: any): string {
@@ -60,6 +63,36 @@
     return node.connection_status === 'NotResponding';
   }
 
+  function canonicalNodeId(nodeId: string): string {
+    return nodeId.replace(/\./g, '').toUpperCase();
+  }
+
+  function offsetFromAddress(address: number): string {
+    return `0x${address.toString(16).toUpperCase().padStart(8, '0')}`;
+  }
+
+  function hasPendingApplyInChildren(nodeId: string, children: ConfigNode[]): boolean {
+    for (const child of children) {
+      if (isLeaf(child)) {
+        if (offlineChangesStore.hasPersistedConfigChange(nodeId, child.space, offsetFromAddress(child.address))) {
+          return true;
+        }
+        continue;
+      }
+      if (isGroup(child) && hasPendingApplyInChildren(nodeId, child.children)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function hasPendingApplyForNode(nodeId: string): boolean {
+    const canonical = canonicalNodeId(nodeId);
+    return offlineChangesStore.persistedRows.some(
+      (r) => r.kind === 'config' && r.status === 'pending' && canonicalNodeId(r.nodeId ?? '') === canonical
+    );
+  }
+
   /** Returns true when PIP has confirmed this node doesn't support CDI */
   function pipConfirmsNoCdi(node: any): boolean {
     if (node.pip_status !== 'Complete') return false;
@@ -69,6 +102,21 @@
 
   /** Load a node's config tree and populate nodeSegments from it. */
   async function loadSegmentsForNode(nodeId: string): Promise<void> {
+    const cachedTree = nodeTreeStore.getTree(nodeId);
+    if (cachedTree) {
+      const segments: SegmentInfo[] = cachedTree.segments.map((seg, idx) => ({
+        segmentId: `seg:${idx}`,
+        segmentPath: `seg:${idx}`,
+        segmentName: seg.name ?? 'Unnamed Segment',
+        description: seg.description ?? null,
+        space: seg.space,
+        origin: seg.origin,
+      }));
+      nodeSegments = new Map(nodeSegments.set(nodeId, segments));
+      configSidebarStore.setNodeSegments(nodeId, segments);
+      return;
+    }
+
     nodeLoadingMap = new Map(nodeLoadingMap.set(nodeId, true));
     configSidebarStore.setNodeLoading(nodeId, 'loading');
     try {
@@ -138,9 +186,12 @@
     configSidebarStore.selectSegment(nodeId, seg.segmentId, seg.segmentName);
   }
 
-  $: nodes = $nodeInfoStore;
-  $: sidebarState = $configSidebarStore;
-  $: configReadNodes = $configReadNodesStore;
+  let nodes = $derived($nodeInfoStore);
+  let sidebarState = $derived($configSidebarStore);
+  let configReadNodes = $derived($configReadNodesStore);
+
+  // Subscribe to tree changes to enable reactive updates on hasPendingEdits
+  let trees = $derived(nodeTreeStore.trees);
 </script>
 
 <aside class="config-sidebar">
@@ -157,7 +208,8 @@
         {@const segments = nodeSegments.get(nodeId) ?? []}
         {@const nodeError = sidebarState.nodeErrors[nodeId] ?? null}
         {@const hasSelectedSegment = sidebarState.selectedSegment?.nodeId === nodeId}
-        {@const isConfigNotRead = node.snip_data !== null && !pipConfirmsNoCdi(node) && !configReadNodes.has(nodeId)}
+        {@const showConfigReadBadge = !layoutStore.isOfflineMode && !$layoutOpenInProgress}
+        {@const isConfigNotRead = showConfigReadBadge && node.snip_data !== null && !pipConfirmsNoCdi(node) && !configReadNodes.has(nodeId)}
         {@const isNodeSelected = sidebarState.selectedNodeId === nodeId && !hasSelectedSegment}
 
         <div class="node-group" class:child-selected={hasSelectedSegment}>
@@ -171,7 +223,8 @@
             {isLoading}
             configNotRead={isConfigNotRead}
             isSelected={isNodeSelected}
-            hasPendingEdits={(() => { const t = nodeTreeStore.getTree(nodeId); return t ? hasModifiedLeaves(t) : false; })()}
+            hasPendingEdits={!$layoutOpenInProgress && (() => { const t = nodeTreeStore.getTree(nodeId); return t ? hasModifiedLeaves(t) : false; })()}
+            hasPendingApply={!$layoutOpenInProgress && hasPendingApplyForNode(nodeId)}
             on:toggle={() => handleNodeToggle(nodeId, node, isExpanded)}
             on:readConfig={() => dispatch('readNodeConfig', { nodeId })}
           />
@@ -204,7 +257,8 @@
                     segmentName={seg.segmentName}
                     description={seg.description}
                     {isSelected}
-                    hasPendingEdits={(() => { const t = nodeTreeStore.getTree(nodeId); if (!t) return false; const ts = t.segments.find(s => s.origin === seg.origin); return ts ? hasModifiedDescendant(ts.children, []) : false; })()}
+                    hasPendingEdits={!$layoutOpenInProgress && (() => { const t = nodeTreeStore.getTree(nodeId); if (!t) return false; const ts = t.segments.find(s => s.origin === seg.origin); return ts ? hasModifiedDescendant(ts.children, []) : false; })()}
+                    hasPendingApply={!$layoutOpenInProgress && (() => { const t = nodeTreeStore.getTree(nodeId); if (!t) return false; const ts = t.segments.find(s => s.origin === seg.origin); return ts ? hasPendingApplyInChildren(nodeId, ts.children) : false; })()}
                     on:select={() => handleSegmentSelect(nodeId, seg)}
                   />
                 {/each}

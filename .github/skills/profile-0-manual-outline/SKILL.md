@@ -1,6 +1,6 @@
 ---
 name: profile-0-manual-outline
-description: Create a structured outline of an LCC node's PDF manual with section names and page ranges. Use as the first step to index the manual for targeted reading by subsequent extraction skills. Keywords: CDI, manual, outline, index, page ranges, profile extraction.
+description: Create a structured outline of an LCC node's PDF manual with section names and page ranges. Use as the first step to index the manual for targeted reading by subsequent extraction skills. Keywords -- CDI, manual, outline, index, page ranges, profile extraction.
 ---
 
 # Create Manual Outline

@@ -1,6 +1,6 @@
 ---
 name: profile-6-validate
-description: Validate extraction outputs against a CDI XML to verify all referenced paths and enum values exist. Cross-reference and coverage check for node profile extraction. Keywords: CDI, validate, verification, coverage, path check, enum check, profile extraction.
+description: Validate extraction outputs against a CDI XML to verify all referenced paths and enum values exist. Cross-reference and coverage check for node profile extraction. Keywords -- CDI, validate, verification, coverage, path check, enum check, profile extraction.
 ---
 
 # Validate Extraction Outputs

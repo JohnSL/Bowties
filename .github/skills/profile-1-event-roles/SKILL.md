@@ -1,6 +1,6 @@
 ---
 name: profile-1-event-roles
-description: Extract event role classifications (Producer/Consumer) from an LCC node's CDI XML and PDF manual. Use when creating a node profile to classify eventid groups. Keywords: CDI, event role, producer, consumer, eventid, classification, profile extraction.
+description: Extract event role classifications (Producer/Consumer) from an LCC node's CDI XML and PDF manual. Use when creating a node profile to classify eventid groups. Keywords -- CDI, event role, producer, consumer, eventid, classification, profile extraction.
 ---
 
 # Extract Event Role Classifications

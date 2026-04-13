@@ -5,7 +5,7 @@ description: >
   Decodes CAN frame headers, identifies message types, resolves node aliases,
   reassembles datagrams, and decodes memory config / SNIP / PIP / traction
   payloads. Handles partial traces (JMRI's ~500-line buffer) gracefully.
-  Keywords: LCC, OpenLCB, CAN, trace, JMRI monitor, datagram, memory config,
+  Keywords -- LCC, OpenLCB, CAN, trace, JMRI monitor, datagram, memory config,
   SNIP, PIP, event, alias, decode, analyse.
 ---
 

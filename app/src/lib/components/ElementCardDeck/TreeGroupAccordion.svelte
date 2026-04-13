@@ -15,13 +15,14 @@
    * Spec: plan-cdiConfigNavigator.
    */
   import type { GroupConfigNode, ConfigNode, GroupedChild } from '$lib/types/nodeTree';
-  import { isGroup, isLeaf, groupReplicatedChildren, getInstanceDisplayName } from '$lib/types/nodeTree';
+  import { isGroup, isLeaf, hasModifiedDescendant, groupReplicatedChildren, getInstanceDisplayName } from '$lib/types/nodeTree';
   import PillSelector from '$lib/components/PillSelector/PillSelector.svelte';
 
   interface PillItem { value: number; label: string; description?: string; }
   import TreeLeafRow from './TreeLeafRow.svelte';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
-  import { hasModifiedDescendant } from '$lib/types/nodeTree';
+  import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+  import { layoutOpenInProgress } from '$lib/stores/layoutOpenLifecycle';
   import { pillSelections, setPillSelection, makePillKey } from '$lib/stores/pillSelection';
 
   /** The group node from the unified tree */
@@ -76,8 +77,43 @@
     return result;
   }
 
+  function offsetFromAddress(address: number): string {
+    return `0x${address.toString(16).toUpperCase().padStart(8, '0')}`;
+  }
+
+  function hasPendingApplyInChildren(children: ConfigNode[]): boolean {
+    for (const child of children) {
+      if (isLeaf(child)) {
+        if (offlineChangesStore.hasPersistedConfigChange(nodeId, child.space, offsetFromAddress(child.address))) {
+          return true;
+        }
+        continue;
+      }
+      if (isGroup(child) && hasPendingApplyInChildren(child.children)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function computePendingApplyInstances(sibs: GroupConfigNode[]): Set<number> {
+    const result = new Set<number>();
+    if (sibs.length < 2) return result;
+    for (let i = 0; i < sibs.length; i++) {
+      if (hasPendingApplyInChildren(sibs[i].children)) {
+        result.add(i);
+      }
+    }
+    return result;
+  }
+
   $: dirtyInstances = computeDirtyInstances(siblings);
   $: hasDirtyInstances = dirtyInstances.size > 0;
+  $: pendingApplyInstances = computePendingApplyInstances(siblings);
+  $: hasPendingApplyInstances = pendingApplyInstances.size > 0;
+  $: activeGroupHasDirty = hasModifiedDescendant(activeGroup.children, []);
+  $: activeGroupHasPendingApply = hasPendingApplyInChildren(activeGroup.children);
+  $: suppressTransientIndicators = $layoutOpenInProgress;
 
   // ── Hideable group state ──
   // Tracks collapsed state for groups with hideable hint.
@@ -106,12 +142,16 @@
   <!-- Replicated group with pill selector — label + pill on left, always expanded -->
   <div class="pill-section" style="--depth: {depth}; --field-label-width: {depth >= 3 ? '100px' : '120px'}">
     <div class="pill-section-header">
-      <span class="pill-section-name" class:pill-section-name--dirty={hasDirtyInstances}>{group.replicationOf}</span>
+      <span
+        class="pill-section-name"
+        class:pill-section-name--dirty={!suppressTransientIndicators && hasDirtyInstances}
+        class:pill-section-name--pending={!suppressTransientIndicators && hasPendingApplyInstances}
+      >{group.replicationOf}</span>
       <PillSelector
         items={pillItems}
         selected={selectedInstanceIndex}
         onSelect={handlePillSelect}
-        dirtyValues={dirtyInstances}
+        dirtyValues={suppressTransientIndicators ? new Set<number>() : dirtyInstances}
       />
     </div>
 
@@ -162,7 +202,11 @@
             {group.displayName ?? group.instanceLabel}
           </button>
         {:else}
-          <span class="inline-name">{group.displayName ?? group.instanceLabel}</span>
+          <span
+            class="inline-name"
+            class:inline-name--dirty={!suppressTransientIndicators && activeGroupHasDirty}
+            class:inline-name--pending={!suppressTransientIndicators && activeGroupHasPendingApply}
+          >{group.displayName ?? group.instanceLabel}</span>
         {/if}
         {#if group.description}
           <p class="section-description">{group.description}</p>
@@ -251,6 +295,21 @@
     background: #ca8500;                           /* amber — matches sidebar pending-edits dot */
   }
 
+  .pill-section-name--pending {
+    padding-right: 10px;
+  }
+
+  .pill-section-name--pending::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 2px;
+    bottom: 2px;
+    width: 3px;
+    border-radius: 1.5px;
+    background: #0f766e;                           /* teal — saved in layout, pending apply */
+  }
+
   .pill-section-body {
     padding: 4px 4px 6px;
     display: flex;
@@ -285,6 +344,38 @@
     font-size: 13px;
     font-weight: 600;
     color: #323130;                                /* colorNeutralForeground1 */
+  }
+
+  .inline-name--dirty {
+    position: relative;
+    padding-left: 9px;
+  }
+
+  .inline-name--dirty::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 1px;
+    bottom: 1px;
+    width: 3px;
+    border-radius: 1.5px;
+    background: #ca8500;
+  }
+
+  .inline-name--pending {
+    position: relative;
+    padding-right: 9px;
+  }
+
+  .inline-name--pending::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 1px;
+    bottom: 1px;
+    width: 3px;
+    border-radius: 1.5px;
+    background: #0f766e;
   }
 
   .inline-toggle-btn {

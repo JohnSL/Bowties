@@ -1,6 +1,6 @@
 ---
 name: profile-3-section-descriptions
-description: Extract section-level descriptions for every segment and group in an LCC node's CDI XML using the PDF manual. Keywords: CDI, section, segment, group, description, purpose, profile extraction.
+description: Extract section-level descriptions for every segment and group in an LCC node's CDI XML using the PDF manual. Keywords -- CDI, section, segment, group, description, purpose, profile extraction.
 ---
 
 # Extract Section Descriptions

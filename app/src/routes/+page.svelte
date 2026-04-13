@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from '@tauri-apps/api/event';
+  import { open, save } from '@tauri-apps/plugin-dialog';
   import { onMount, untrack } from 'svelte';
   import { get } from 'svelte/store';
   import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
@@ -9,6 +10,9 @@
   import CdiXmlViewer from '$lib/components/CdiXmlViewer.svelte';
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import { probeNodes as probeNodesApi, querySnip, queryPip, registerNode, refreshAllNodes } from '$lib/api/tauri';
+  import { clearRecentLayout, getRecentLayout } from '$lib/api/bowties';
+  import { captureLayoutSnapshot, closeLayout, saveLayoutFile, openLayoutFile, buildOfflineNodeTree } from '$lib/api/layout';
+  import type { OfflineNodeSnapshot, SnapshotValueNode } from '$lib/api/layout';
   import { readAllConfigValues, cancelConfigReading, getCdiXml, downloadCdi } from '$lib/api/cdi';
   import { getCdiErrorMessage, isCdiError } from '$lib/types/cdi';
   import type { ViewerStatus } from '$lib/types/cdi';
@@ -20,17 +24,23 @@
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { hasModifiedLeaves, resolvePillSelectionsForPath } from '$lib/types/nodeTree';
+  import type { NodeConfigTree, ConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
   import { configReadNodesStore, markNodeConfigRead, clearConfigReadStatus, removeNodesConfigRead } from '$lib/stores/configReadStatus';
   import BowtieCatalogPanel from '$lib/components/Bowtie/BowtieCatalogPanel.svelte';
   import DiscoveryProgressModal from '$lib/components/DiscoveryProgressModal.svelte';
   import SaveControls from '$lib/components/ElementCardDeck/SaveControls.svelte';
   import CdiDownloadDialog from '$lib/components/CdiDownloadDialog.svelte';
   import CdiRedownloadDialog from '$lib/components/CdiRedownloadDialog.svelte';
+  import MissingCaptureBadge from '$lib/components/Layout/MissingCaptureBadge.svelte';
+  import { OFFLINE_LAYOUT_DEFAULT_FILENAME, offlineLayoutDialogFilter } from '$lib/constants/layoutFiles';
   import ConnectionManager from '$lib/ConnectionManager.svelte';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
+   import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
   import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
   import { configFocusStore } from '$lib/stores/configFocus.svelte';
   import { setPillSelection } from '$lib/stores/pillSelection';
+  import { layoutOpenInProgress, layoutOpenStatusText, setLayoutOpenPhase } from '$lib/stores/layoutOpenLifecycle';
+  import { installMenuShortcuts } from '../lib/keyboard/menuShortcuts';
   import type { MissingCdiNode } from '$lib/components/CdiDownloadDialog.svelte';
 
   // Active tab state — 'config' (default) or 'bowties'
@@ -50,12 +60,62 @@
   let isForceClosing = false;
 
   function promptUnsaved(message: string, proceed: () => void, confirmLabel = 'Discard & Continue'): void {
-    const hasUnsaved = [...nodeTreeStore.trees.values()].some(t => hasModifiedLeaves(t)) || bowtieMetadataStore.isDirty;
+    const hasUnsaved =
+      [...nodeTreeStore.trees.values()].some(t => hasModifiedLeaves(t)) ||
+      bowtieMetadataStore.isDirty ||
+      offlineChangesStore.draftCount > 0;
     if (hasUnsaved) {
       unsavedDialog = { message, proceed, confirmLabel };
     } else {
       proceed();
     }
+  }
+
+  function isMenuBusy(): boolean {
+    return probing || readingRemaining;
+  }
+
+  function canOpenLayoutAction(): boolean {
+    return !isMenuBusy();
+  }
+
+  function canCloseLayoutAction(): boolean {
+    return !!layoutStore.activeContext;
+  }
+
+  function canSaveLayoutAction(): boolean {
+    const busy = isMenuBusy();
+    const layoutLoaded = layoutStore.isLoaded;
+    const layoutDirty = layoutStore.isDirty;
+    const metaDirty = bowtieMetadataStore.isDirty;
+    const offlineActive = !!layoutStore.activeContext && layoutStore.isOfflineMode;
+    const hasInMemoryEdits =
+      [...nodeTreeStore.trees.values()].some(t => hasModifiedLeaves(t)) ||
+      bowtieMetadataStore.isDirty ||
+      offlineChangesStore.draftCount > 0;
+    return !busy && ((offlineActive && hasInMemoryEdits) || (layoutLoaded && (layoutDirty || metaDirty)));
+  }
+
+  function runOpenLayoutAction(): void {
+    promptUnsaved('Opening a new layout will discard unsaved changes. Continue?', () => openOfflineLayoutFromDialog(), 'Discard & Open');
+  }
+
+  function runCloseLayoutAction(): void {
+    promptUnsaved('Closing the layout will discard unsaved changes. Continue?', () => {
+      void clearActiveLayout();
+    }, 'Discard & Close');
+  }
+
+  function runSaveLayoutAction(): void {
+    saveControlsRef?.triggerSave();
+  }
+
+  function runSaveLayoutAsAction(): void {
+    void saveControlsRef?.triggerSaveAs();
+  }
+
+  function canSaveLayoutAsAction(): boolean {
+    return !isMenuBusy();
   }
 
   // T041: Switch to bowties tab when a config-first connection request is pending
@@ -117,6 +177,295 @@
   // Discovery state
   let nodes = $state<DiscoveredNode[]>([]);
   let probing = $state(false);
+  let partialCaptureNodes = $state(new Set<string>());
+  let showConnectionDialog = $state(false);
+  let currentOfflineSnapshots = $state<OfflineNodeSnapshot[]>([]);
+  let startupBootstrapPending = $state(true);
+
+  function normalizeLayoutTitle(raw: string | null | undefined): string | null {
+    if (!raw) return null;
+    const fileName = raw.replace(/\\/g, '/').split('/').pop() ?? raw;
+    return fileName
+      .replace(/\.layout$/i, '')
+      .replace(/\.bowties\.ya?ml$/i, '')
+      .replace(/\.ya?ml$/i, '')
+      .replace(/\.layout\.d$/i, '');
+  }
+
+  let activeLayoutLabel = $derived.by(() => {
+    const ctx = layoutStore.activeContext;
+    if (!ctx) return null;
+    return normalizeLayoutTitle(ctx.layoutId) ?? normalizeLayoutTitle(ctx.rootPath);
+  });
+  function canonicalToBytes(nodeId: string): number[] {
+    const clean = nodeId.replace(/\./g, '').toUpperCase();
+    const pairs = clean.match(/.{1,2}/g) ?? [];
+    return pairs.slice(0, 6).map((p) => parseInt(p, 16));
+  }
+
+  function parseOfflineValue(value: string): TreeConfigValue {
+    if (/^[0-9]+$/.test(value)) {
+      return { type: 'int', value: parseInt(value, 10) };
+    }
+    if (/^[0-9]+\.[0-9]+$/.test(value)) {
+      return { type: 'float', value: parseFloat(value) };
+    }
+    if (/^([0-9A-F]{2}\.){7}[0-9A-F]{2}$/i.test(value)) {
+      const bytes = value.split('.').map((b) => parseInt(b, 16));
+      return { type: 'eventId', bytes, hex: value.toUpperCase() };
+    }
+    return { type: 'string', value };
+  }
+
+  function createOfflineLeaf(space: number, address: number, value: string, segIdx: number, leafIdx: number): ConfigNode {
+    const parsed = parseOfflineValue(value);
+    const elementType = parsed.type === 'eventId' ? 'eventId' : parsed.type;
+    return {
+      kind: 'leaf',
+      name: `0x${address.toString(16).toUpperCase().padStart(8, '0')}`,
+      description: null,
+      elementType,
+      address,
+      size: 8,
+      space,
+      path: [`seg:${segIdx}`, `elem:${leafIdx}`],
+      value: parsed,
+      eventRole: null,
+      constraints: null,
+      actionValue: 0,
+      hintSlider: null,
+      hintRadio: false,
+      modifiedValue: null,
+      writeState: null,
+      writeError: null,
+      readOnly: true,
+    };
+  }
+
+  function treeFromSnapshot(snapshot: OfflineNodeSnapshot): NodeConfigTree {
+    const merged = new Map<string, Record<string, string>>();
+
+    const flatten = (
+      node: SnapshotValueNode,
+      path: string[] = []
+    ): Array<{ path: string[]; value: string; space?: number; offset?: string }> => {
+      if (node && typeof node === 'object' && 'value' in node) {
+        const leaf = node as { value: string; space?: number; offset?: string };
+        return [{ path, value: leaf.value, space: leaf.space, offset: leaf.offset }];
+      }
+
+      if (!node || typeof node !== 'object') return [];
+      const out: Array<{ path: string[]; value: string; space?: number; offset?: string }> = [];
+      for (const [k, v] of Object.entries(node as Record<string, SnapshotValueNode>)) {
+        out.push(...flatten(v, [...path, k]));
+      }
+      return out;
+    };
+
+    for (const entry of flatten(snapshot.config ?? {})) {
+      if (entry.space === undefined || !entry.offset) continue;
+      const spaceKey = String(entry.space);
+      const offsets = merged.get(spaceKey) ?? {};
+      offsets[entry.offset.toUpperCase()] = entry.value;
+      merged.set(spaceKey, offsets);
+    }
+
+    const spaces = Array.from(merged.entries());
+    const segments = spaces.map(([spaceKey, offsets], segIdx) => {
+      const space = Number(spaceKey);
+      const children: ConfigNode[] = Object.entries(offsets)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([offset, value], leafIdx) => {
+          const address = Number.parseInt(offset.replace(/^0x/i, ''), 16) || 0;
+          return createOfflineLeaf(space, address, value, segIdx, leafIdx);
+        });
+      return {
+        name: `Space ${space}`,
+        description: null,
+        origin: 0,
+        space,
+        children,
+      };
+    });
+
+    return {
+      nodeId: snapshot.nodeId.match(/.{1,2}/g)?.join('.') ?? snapshot.nodeId,
+      identity: {
+        manufacturer: snapshot.snip.manufacturerName || null,
+        model: snapshot.snip.modelName || null,
+        hardwareVersion: null,
+        softwareVersion: null,
+      },
+      segments,
+    };
+  }
+
+  async function hydrateOfflineSnapshots(snapshots: OfflineNodeSnapshot[]) {
+    currentOfflineSnapshots = snapshots;
+    const offlineNodes: DiscoveredNode[] = snapshots.map((s, idx) => ({
+      node_id: canonicalToBytes(s.nodeId),
+      alias: 0x700 + idx,
+      snip_data: {
+        manufacturer: s.snip.manufacturerName,
+        model: s.snip.modelName,
+        hardware_version: '',
+        software_version: s.cdiRef.version,
+        user_name: s.snip.userName,
+        user_description: s.snip.userDescription,
+      },
+      snip_status: 'Complete',
+      connection_status: 'Unknown',
+      last_verified: null,
+      last_seen: s.capturedAt,
+      cdi: null,
+      pip_flags: null,
+      pip_status: 'Unknown',
+    }));
+
+    nodes = offlineNodes;
+    updateNodeInfo(offlineNodes);
+
+    clearConfigReadStatus();
+    nodeTreeStore.reset();
+
+    // Build CDI-structured trees in parallel; fall back to flat address-map
+    // if the CDI XML is not available in the local cache.
+    const results = await Promise.allSettled(
+      snapshots.map((s) => buildOfflineNodeTree(s.nodeId))
+    );
+    for (let i = 0; i < snapshots.length; i++) {
+      const snapshot = snapshots[i];
+      const result = results[i];
+      let tree;
+      if (result.status === 'fulfilled') {
+        tree = result.value;
+      } else {
+        const reason = String(result.reason);
+        if (reason.includes('CDI not in cache')) {
+          console.warn(
+            `[offline] CDI not cached for node ${snapshot.nodeId} — falling back to raw address tree`
+          );
+        } else {
+          console.warn(
+            `[offline] Could not build CDI tree for node ${snapshot.nodeId}: ${reason}`
+          );
+        }
+        tree = treeFromSnapshot(snapshot);
+      }
+      nodeTreeStore.setTree(tree.nodeId, tree);
+      markNodeConfigRead(tree.nodeId);
+    }
+  }
+
+  async function openOfflineLayoutFromDialog() {
+    const selected = await open({
+      title: 'Open Layout',
+      multiple: false,
+      filters: [offlineLayoutDialogFilter()],
+    });
+    if (!selected) return;
+
+    try {
+      setLayoutOpenPhase('opening_file');
+      const result = await openLayoutFile(selected);
+      partialCaptureNodes = new Set(result.partialNodes);
+
+      setLayoutOpenPhase('hydrating_snapshots');
+      await hydrateOfflineSnapshots(result.nodeSnapshots);
+      layoutStore.setActiveContext({
+        layoutId: result.layoutId,
+        rootPath: selected,
+        mode: 'offline_file',
+        capturedAt: result.capturedAt,
+        pendingOfflineChangeCount: result.pendingOfflineChangeCount,
+      });
+
+      // Load offline changes into store (T033c)
+      setLayoutOpenPhase('replaying_offline_changes');
+      await offlineChangesStore.reloadFromBackend();
+      setLayoutOpenPhase('ready');
+    } catch (error) {
+      setLayoutOpenPhase('error');
+      throw error;
+    } finally {
+    }
+  }
+
+  async function saveCurrentCaptureToFile(forceSaveAs = false): Promise<boolean> {
+    try {
+      let targetPath = layoutStore.activeContext?.mode === 'offline_file'
+        ? layoutStore.activeContext.rootPath
+        : '';
+      if (forceSaveAs || !targetPath) {
+        const selected = await save({
+          title: 'Save Layout File',
+          defaultPath: targetPath || OFFLINE_LAYOUT_DEFAULT_FILENAME,
+          filters: [offlineLayoutDialogFilter()],
+        });
+        if (!selected) return false;
+        targetPath = selected;
+      }
+
+      if (!layoutStore.isOfflineMode) {
+        await captureLayoutSnapshot(true);
+      }
+
+      if (layoutStore.isOfflineMode) {
+        await offlineChangesStore.flushPendingToBackend();
+      }
+
+      const snapshotsForSave = layoutStore.isOfflineMode ? currentOfflineSnapshots : undefined;
+      const result = await saveLayoutFile(targetPath, true, snapshotsForSave);
+      partialCaptureNodes = new Set(result.warnings);
+      const contextLayoutId = normalizeLayoutTitle(targetPath) ?? 'layout';
+      layoutStore.setActiveContext({
+        layoutId: contextLayoutId,
+        rootPath: targetPath,
+        mode: 'offline_file',
+        capturedAt: new Date().toISOString(),
+        pendingOfflineChangeCount: offlineChangesStore.pendingCount,
+      });
+
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      errorMessage = `Save failed: ${msg}`;
+      console.error('[Page] saveCurrentCaptureToFile failed:', msg);
+      throw e;
+    }
+  }
+
+  async function resetLayoutStateForNoLayout(reprobeLiveNodes = true) {
+    partialCaptureNodes = new Set<string>();
+    nodes = [];
+    updateNodeInfo([]);
+    clearConfigReadStatus();
+    nodeTreeStore.reset();
+    currentOfflineSnapshots = [];
+    bowtieMetadataStore.clearAll();
+    offlineChangesStore.clear();
+
+    layoutStore.reset();
+
+    if (connected && reprobeLiveNodes) {
+      await probeForNodes();
+    }
+  }
+
+  async function clearActiveLayout() {
+    const activeContext = layoutStore.activeContext;
+
+    if (activeContext?.mode === 'offline_file') {
+      const result = await closeLayout('discard');
+      if (!result.closed) return;
+    } else {
+      await clearRecentLayout().catch((error) => {
+        console.warn('[layout] Failed to clear persisted startup layout:', error);
+      });
+    }
+
+    await resetLayoutStateForNoLayout();
+  }
 
   // Config reading progress state (T063-T067)
   let readProgress = $state<ReadProgressState | null>(null);
@@ -156,6 +505,8 @@
   // because unreadCount excludes CDI-less nodes (e.g. JMRI), so the counts
   // would never match on a mixed network.
   let showConfigCta = $derived(
+    !layoutStore.isOfflineMode &&
+    !$layoutOpenInProgress &&
     nodes.length > 0 &&
     unreadCount > 0 &&
     $configReadNodesStore.size === 0 &&
@@ -180,6 +531,10 @@
     selectedUnreadNodeId
       ? (nodes.find(n => formatNodeId(n.node_id) === selectedUnreadNodeId)?.snip_data?.user_name || selectedUnreadNodeId)
       : null
+  );
+
+  let selectedNodeIdAny = $derived(
+    $configSidebarStore.selectedSegment?.nodeId ?? $configSidebarStore.selectedNodeId ?? null
   );
 
   // CDI XML viewer state
@@ -209,6 +564,22 @@
   // Check connection status on mount
   onMount(() => {
     const unlistens: Array<() => void> = [];
+    unlistens.push(
+      installMenuShortcuts({
+        guards: {
+          canOpenLayout: canOpenLayoutAction,
+          canCloseLayout: canCloseLayoutAction,
+          canSaveLayout: canSaveLayoutAction,
+          canSaveLayoutAs: canSaveLayoutAsAction,
+        },
+        actions: {
+          openLayout: runOpenLayoutAction,
+          closeLayout: runCloseLayoutAction,
+          saveLayout: runSaveLayoutAction,
+          saveLayoutAs: runSaveLayoutAsAction,
+        },
+      })
+    );
 
     (async () => {
       try {
@@ -229,7 +600,39 @@
       await bowtieCatalogStore.startListening();
 
       // Spec 009 T015: Auto-reopen the most recent layout file on startup
-      layoutStore.checkAndReopenRecent();
+      const recent = await getRecentLayout().catch((error) => {
+        console.warn('[layout] Failed to read persisted startup layout:', error);
+        return null;
+      });
+      if (recent && recent.path) {
+        try {
+          setLayoutOpenPhase('opening_file');
+          const opened = await openLayoutFile(recent.path);
+          partialCaptureNodes = new Set(opened.partialNodes);
+
+          setLayoutOpenPhase('hydrating_snapshots');
+          await hydrateOfflineSnapshots(opened.nodeSnapshots);
+          layoutStore.setActiveContext({
+            layoutId: opened.layoutId,
+            rootPath: recent.path,
+            mode: 'offline_file',
+            capturedAt: opened.capturedAt,
+            pendingOfflineChangeCount: opened.pendingOfflineChangeCount,
+          });
+
+          setLayoutOpenPhase('replaying_offline_changes');
+          await offlineChangesStore.reloadFromBackend();
+          setLayoutOpenPhase('ready');
+        } catch (error) {
+          setLayoutOpenPhase('error');
+          console.warn('[layout] Failed to restore startup layout:', error);
+          await clearRecentLayout().catch((clearError) => {
+            console.warn('[layout] Failed to clear invalid startup layout:', clearError);
+          });
+          await resetLayoutStateForNoLayout(false);
+          setLayoutOpenPhase('idle');
+        }
+      }
 
       // Spec 007: Start node-tree-updated listener so trees are refreshed
       // automatically as config values and event roles are merged server-side.
@@ -239,7 +642,10 @@
       const appWindow = getCurrentWebviewWindow();
       unlistens.push(await appWindow.onCloseRequested((event) => {
         if (isForceClosing) return;
-        const hasUnsaved = [...nodeTreeStore.trees.values()].some(t => hasModifiedLeaves(t)) || bowtieMetadataStore.isDirty;
+        const hasUnsaved =
+          [...nodeTreeStore.trees.values()].some(t => hasModifiedLeaves(t)) ||
+          bowtieMetadataStore.isDirty ||
+          offlineChangesStore.draftCount > 0;
         if (hasUnsaved) {
           event.preventDefault();
           unsavedDialog = {
@@ -371,7 +777,7 @@
       // Now that the lcc-node-discovered listener is registered, probe for existing nodes.
       // Doing this after listener setup avoids a race where VerifiedNode replies arrive
       // before the frontend listener is ready and get silently dropped.
-      if (connected) probeForNodes();
+      if (connected && !layoutStore.isOfflineMode) probeForNodes();
 
       // Native menu event listeners — relay OS menu clicks to handler functions
       unlistens.push(await listen('menu-disconnect',     () => disconnect()));
@@ -396,14 +802,16 @@
         }, 'Exit Without Saving');
       }));
       unlistens.push(await listen('menu-open-layout', () => {
-        promptUnsaved('Opening a new layout will discard unsaved changes. Continue?', () => layoutStore.openLayout(), 'Discard & Open');
+        runOpenLayoutAction();
+      }));
+      unlistens.push(await listen('menu-close-layout', () => {
+        runCloseLayoutAction();
       }));
       unlistens.push(await listen('menu-save-layout', () => {
-        saveControlsRef?.triggerSave();
+        runSaveLayoutAction();
       }));
       unlistens.push(await listen('menu-save-layout-as', async () => {
-        const saved = await layoutStore.saveLayoutAs();
-        if (saved) bowtieMetadataStore.clearAll();
+        runSaveLayoutAsAction();
       }));
       unlistens.push(await listen('menu-diagnostics', async () => {
         try {
@@ -415,7 +823,9 @@
           console.error('Failed to copy diagnostic report:', e);
         }
       }));
-    })();
+    })().finally(() => {
+      startupBootstrapPending = false;
+    });
 
     // Cleanup all listeners on component unmount
     return () => {
@@ -427,6 +837,7 @@
     const cfg = e.detail.config;
     connectionLabel = cfg.name ?? (cfg.host ? `${cfg.host}:${cfg.port}` : cfg.serialPort ?? 'LCC');
     connected = true;
+    showConnectionDialog = false;
     probeForNodes();
   }
 
@@ -872,6 +1283,7 @@
     canViewCdi: boolean,
     canRedownloadCdi: boolean,
     canOpenLayout: boolean,
+    canCloseLayout: boolean,
     canSaveLayout: boolean,
     canSaveLayoutAs: boolean,
   ) {
@@ -882,6 +1294,7 @@
         canViewCdi,
         canRedownloadCdi,
         canOpenLayout,
+        canCloseLayout,
         canSaveLayout,
         canSaveLayoutAs,
       });
@@ -913,22 +1326,24 @@
     const layoutLoaded = layoutStore.isLoaded;
     const layoutDirty  = layoutStore.isDirty;
     const metaDirty    = bowtieMetadataStore.isDirty;
+    const offlineActive = !!layoutStore.activeContext && layoutStore.isOfflineMode;
+    const canCloseLayout = !!layoutStore.activeContext;
+    const hasInMemoryEdits =
+      [...nodeTreeStore.trees.values()].some(t => hasModifiedLeaves(t)) ||
+      bowtieMetadataStore.isDirty ||
+      offlineChangesStore.draftCount > 0;
 
     const canOpenLayout   = !busy;
-    const canSaveLayout   = layoutLoaded && (layoutDirty || metaDirty);
+    const canSaveLayout   = !busy && ((offlineActive && hasInMemoryEdits) || (layoutLoaded && (layoutDirty || metaDirty)));
     const canSaveLayoutAs = !busy;
 
-    syncMenuState(conn, busy, canViewCdi, canRedownloadCdi, canOpenLayout, canSaveLayout, canSaveLayoutAs);
+    syncMenuState(conn, busy, canViewCdi, canRedownloadCdi, canOpenLayout, canCloseLayout, canSaveLayout, canSaveLayoutAs);
   });
 
   // Dynamic window title — reflects current layout file name and dirty state.
   // Using $derived (not computed inside $effect) so Svelte 5 reliably tracks
   // all reactive dependencies: _layout, _path, _dirty, and the SvelteMap edits.
-  let windowTitle = $derived(
-    layoutStore.isLoaded
-      ? `Bowties::LCC \u2014 ${layoutStore.displayName}${layoutStore.isDirty || bowtieMetadataStore.isDirty ? ' \u2022' : ''}`
-      : 'Bowties::LCC'
-  );
+  let windowTitle = $derived(activeLayoutLabel ? `Bowties::LCC - ${activeLayoutLabel}` : 'Bowties::LCC');
   $effect(() => {
     getCurrentWebviewWindow().setTitle(windowTitle).catch(() => {});
   });
@@ -938,7 +1353,7 @@
 <div class="app-shell">
 
   <!-- ═══ TOOLBAR (connected only) ═══ -->
-  {#if connected}
+  {#if connected || layoutStore.isOfflineMode}
     <div class="toolbar" role="toolbar" aria-label="Main toolbar">
       <div class="toolbar-left">
         <!-- Segmented mode control: Config | Bowties -->
@@ -970,7 +1385,7 @@
             <span>Bowties</span>
           </button>
         </div>
-        {#if readingRemaining || unreadCount > 0}
+        {#if connected && (readingRemaining || unreadCount > 0)}
           <span class="toolbar-sep" aria-hidden="true"></span>
           <button
             class="toolbar-btn"
@@ -982,19 +1397,33 @@
             <span>{readingRemaining ? 'Reading…' : `Read Remaining (${unreadCount})`}</span>
           </button>
         {/if}
-        <SaveControls toolbar={true} bind:this={saveControlsRef} />
+        {#if connected || layoutStore.isOfflineMode}
+          <SaveControls toolbar={true} bind:this={saveControlsRef} onOfflineSave={() => saveCurrentCaptureToFile(false)} onOfflineSaveAs={() => saveCurrentCaptureToFile(true)} />
+        {/if}
       </div>
       <div class="toolbar-right">
-        <button
-          class="toolbar-status-btn"
-          onclick={disconnect}
-          title="Disconnect from {connectionLabel}"
-          aria-label="Disconnect from {connectionLabel}"
-        >
-          <span class="status-dot status-connected" aria-hidden="true"></span>
-          <span class="status-text">{connectionLabel}</span>
-          <span class="status-disconnect-hint" aria-hidden="true">Disconnect</span>
-        </button>
+        {#if connected}
+          <button
+            class="toolbar-status-btn"
+            onclick={disconnect}
+            title="Disconnect from {connectionLabel}"
+            aria-label="Disconnect from {connectionLabel}"
+          >
+            <span class="status-dot status-connected" aria-hidden="true"></span>
+            <span class="status-text">{connectionLabel}</span>
+            <span class="status-disconnect-hint" aria-hidden="true">Disconnect</span>
+          </button>
+        {:else}
+          <button
+            class="toolbar-status-btn toolbar-status-btn--offline"
+            onclick={() => showConnectionDialog = true}
+            title="Offline. Click to connect."
+            aria-label="Offline. Click to connect."
+          >
+            <span class="status-dot status-offline" aria-hidden="true"></span>
+            <span class="status-text">Offline</span>
+          </button>
+        {/if}
       </div>
     </div>
   {/if}
@@ -1009,6 +1438,16 @@
     onCancel={handleCancelConfigReading}
   />
 
+  {#if $layoutOpenInProgress}
+    <div class="layout-loading-backdrop" role="presentation">
+      <div class="layout-loading-dialog" role="dialog" aria-modal="true" aria-live="polite" aria-label="Loading layout">
+        <div class="layout-loading-spinner" aria-hidden="true"></div>
+        <h2>Opening layout</h2>
+        <p>{$layoutOpenStatusText}</p>
+      </div>
+    </div>
+  {/if}
+
   <!-- ═══ ERROR BANNER ═══ -->
   {#if errorMessage}
     <div class="error-banner" role="alert">
@@ -1019,7 +1458,11 @@
 
   <!-- ═══ MAIN CONTENT ═══ -->
   <div class="main-content">
-    {#if !connected}
+    {#if startupBootstrapPending}
+      <div class="startup-placeholder" aria-live="polite">
+        <p>Loading Bowties…</p>
+      </div>
+    {:else if !connected && !layoutStore.isOfflineMode && nodes.length === 0}
       <div class="connect-area">
         <ConnectionManager on:connected={handleConnected} />
       </div>
@@ -1067,6 +1510,9 @@
           {:else if selectedUnreadNodeId}
             <div class="config-cta-panel">
               <h2 class="cta-title">{selectedUnreadNodeName}</h2>
+              {#if partialCaptureNodes.has(selectedUnreadNodeId!)}
+                <MissingCaptureBadge text="(Not captured)" />
+              {/if}
               <p class="cta-desc">
                 Configuration has not been read from this node yet.
               </p>
@@ -1079,6 +1525,12 @@
               </button>
             </div>
           {:else}
+            {#if layoutStore.isOfflineMode && selectedNodeIdAny && partialCaptureNodes.has(selectedNodeIdAny.replace(/\./g, '').toUpperCase())}
+              <div class="partial-capture-note">
+                <MissingCaptureBadge text="(Not captured)" />
+                <span>Some values for this node were not captured and remain read-only offline.</span>
+              </div>
+            {/if}
             <SegmentView />
           {/if}
         </div>
@@ -1087,6 +1539,24 @@
   </div>
 
 </div>
+
+{#if showConnectionDialog}
+  <div
+    class="connect-overlay"
+    role="dialog"
+    tabindex="-1"
+    aria-modal="true"
+    aria-label="Connect to LCC network"
+    onkeydown={(e) => { if (e.key === 'Escape') showConnectionDialog = false; }}
+  >
+    <div class="connect-modal">
+      <ConnectionManager on:connected={handleConnected} />
+      <div class="connect-modal-actions">
+        <button class="active-layout-btn" onclick={() => showConnectionDialog = false}>Close</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <!-- CDI XML Viewer Modal -->
 <CdiXmlViewer
@@ -1162,6 +1632,84 @@
     overflow: hidden;
   }
 
+  .active-layout-btn {
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+    color: #1e293b;
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+
+  .active-layout-btn:hover {
+    background: #f1f5f9;
+  }
+
+  .startup-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #475569;
+    font-size: 14px;
+  }
+
+  .partial-capture-note {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 12px;
+    padding: 8px 10px;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    background: #fff1f2;
+    color: #7f1d1d;
+    font-size: 12px;
+  }
+
+  .status-offline {
+    background: #f59e0b;
+  }
+
+  .connect-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.38);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 60;
+  }
+
+  .connect-modal {
+    width: min(560px, 95vw);
+    max-height: 90vh;
+    overflow: auto;
+    border-radius: 12px;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    box-shadow: 0 20px 60px rgba(15, 23, 42, 0.28);
+    padding: 14px;
+  }
+
+  .connect-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 10px;
+  }
+
+  .connect-modal :global(.cm-card) {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+
   /* ─── Status indicator (toolbar) ───────────────────── */
 
   .toolbar-status-btn {
@@ -1186,7 +1734,13 @@
     color: #b91c1c;
   }
 
-  .toolbar-status-btn:hover .status-text {
+  .toolbar-status-btn--offline:hover {
+    background: #eff6ff;
+    border-color: #93c5fd;
+    color: #1d4ed8;
+  }
+
+  .toolbar-status-btn:not(.toolbar-status-btn--offline):hover .status-text {
     display: none;
   }
 
@@ -1235,6 +1789,55 @@
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+
+  .layout-loading-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 2200;
+    background: rgba(15, 23, 42, 0.24);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+
+  .layout-loading-dialog {
+    width: min(360px, calc(100vw - 40px));
+    background: #fff;
+    color: #1f2937;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    box-shadow: 0 16px 38px rgba(15, 23, 42, 0.24);
+    padding: 18px 18px 16px;
+    text-align: center;
+  }
+
+  .layout-loading-dialog h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+
+  .layout-loading-dialog p {
+    margin: 8px 0 0;
+    font-size: 13px;
+    color: #4b5563;
+  }
+
+  .layout-loading-spinner {
+    width: 18px;
+    height: 18px;
+    margin: 0 auto 10px;
+    border-radius: 50%;
+    border: 2px solid #dbeafe;
+    border-top-color: #2563eb;
+    animation: layout-loading-spin 0.85s linear infinite;
+  }
+
+  @keyframes layout-loading-spin {
+    to { transform: rotate(360deg); }
   }
 
   .toolbar-btn {

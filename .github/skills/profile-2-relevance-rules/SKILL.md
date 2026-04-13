@@ -1,6 +1,6 @@
 ---
 name: profile-2-relevance-rules
-description: Extract conditional relevance rules from an LCC node's CDI XML and PDF manual. Identifies configuration sections that become irrelevant based on other field values. Keywords: CDI, relevance, conditional, irrelevant, disabled, profile extraction.
+description: Extract conditional relevance rules from an LCC node's CDI XML and PDF manual. Identifies configuration sections that become irrelevant based on other field values. Keywords -- CDI, relevance, conditional, irrelevant, disabled, profile extraction.
 ---
 
 # Extract Conditional Relevance Rules

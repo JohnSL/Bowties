@@ -46,10 +46,33 @@ export async function setRecentLayout(path: string): Promise<void> {
 }
 
 /**
+ * Clear the persisted startup layout marker.
+ */
+export async function clearRecentLayout(): Promise<void> {
+  return invoke<void>('clear_recent_layout');
+}
+
+/**
  * Build or rebuild the bowtie catalog, optionally merging layout metadata.
  * @param layoutMetadata Optional layout file to merge with discovered state
  * @returns Built catalog with merged metadata
  */
 export async function buildBowtieCatalog(layoutMetadata?: LayoutFile | null): Promise<BowtieCatalog> {
   return invoke<BowtieCatalog>('build_bowtie_catalog_command', { layoutMetadata: layoutMetadata ?? null });
+}
+
+/**
+ * Persist a bowtie metadata edit as an offline change row when offline.
+ * Returns the created change ID in offline mode.
+ */
+export async function setBowtieMetadata(
+  eventIdHex: string,
+  name: string | null,
+  tags: string[],
+): Promise<string> {
+  return invoke<string>('set_bowtie_metadata', {
+    eventIdHex,
+    name,
+    tags,
+  });
 }

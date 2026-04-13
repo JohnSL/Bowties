@@ -1,7 +1,7 @@
 ---skill
 ---
 name: profile-7-assemble
-description: Assemble a .profile.yaml structure profile from Phase 1 extraction outputs (event-roles.json and relevance-rules.json). Converts CDI paths from index-range notation to '#N' ordinal notation and produces a ready-to-validate profile file. Keywords: CDI, profile, assemble, .profile.yaml, structure profile, event roles, relevance rules, phase 2, guided configuration.
+description: Assemble a .profile.yaml structure profile from Phase 1 extraction outputs (event-roles.json and relevance-rules.json). Converts CDI paths from index-range notation to '#N' ordinal notation and produces a ready-to-validate profile file. Keywords -- CDI, profile, assemble, .profile.yaml, structure profile, event roles, relevance rules, phase 2, guided configuration.
 ---
 
 # Assemble Structure Profile from Extraction Outputs

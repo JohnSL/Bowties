@@ -17,6 +17,10 @@
   import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { configFocusStore } from '$lib/stores/configFocus.svelte';
+  import { layoutStore } from '$lib/stores/layout.svelte';
+  import { layoutOpenInProgress } from '$lib/stores/layoutOpenLifecycle';
+  import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+  import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { parseEventIdHex, formatEventIdHex } from '$lib/utils/serialize';
   import { isPlaceholderEventId } from '$lib/utils/eventIds';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
@@ -66,9 +70,65 @@
    */
   let localStrInput = $state<string | null>(null);
 
+  function leafOffsetKey(): string {
+    return `0x${leaf.address.toString(16).toUpperCase().padStart(8, '0')}`;
+  }
+
+  function valueToOfflineString(v: TreeConfigValue): string {
+    switch (v.type) {
+      case 'string':
+        return v.value;
+      case 'int':
+        return String(v.value);
+      case 'float':
+        return String(v.value);
+      case 'eventId':
+        return v.hex ?? formatEventIdHex(v.bytes);
+    }
+  }
+
+  function parseOfflinePlannedValue(raw: string): TreeConfigValue | null {
+    if (leaf.elementType === 'string') {
+      return { type: 'string', value: raw };
+    }
+    if (leaf.elementType === 'int') {
+      const n = parseInt(raw, 10);
+      return Number.isNaN(n) ? null : { type: 'int', value: n };
+    }
+    if (leaf.elementType === 'float') {
+      const n = parseFloat(raw);
+      return Number.isNaN(n) ? null : { type: 'float', value: n };
+    }
+    if (leaf.elementType === 'eventId') {
+      const bytes = parseEventIdHex(raw);
+      return bytes ? { type: 'eventId', bytes, hex: formatEventIdHex(bytes) } : null;
+    }
+    return null;
+  }
+
   // ── Derived values ─────────────────────────────────────────────────────────
 
   let isDirty = $derived(leaf.modifiedValue != null);
+  let draftOfflineRow = $derived.by(() => {
+    if (!layoutStore.isOfflineMode || !nodeId) return null;
+    return offlineChangesStore.findDraftConfigChange(nodeId, leaf.space, leafOffsetKey());
+  });
+
+  let persistedOfflineRow = $derived.by(() => {
+    if (!layoutStore.isOfflineMode || !nodeId) return null;
+    return offlineChangesStore.findPersistedConfigChange(nodeId, leaf.space, leafOffsetKey());
+  });
+
+  let pendingOfflineRow = $derived(draftOfflineRow ?? persistedOfflineRow);
+
+  let offlinePlannedValue = $derived.by(() => {
+    if (!pendingOfflineRow) return null;
+    return parseOfflinePlannedValue(pendingOfflineRow.plannedValue);
+  });
+
+  let hasPendingApply = $derived(!!persistedOfflineRow);
+  let suppressTransientIndicators = $derived($layoutOpenInProgress);
+  let isDirtyVisible = $derived(isDirty && !suppressTransientIndicators);
 
   /** True when an editable event ID field's effective value is a leading-zero placeholder
    * (per LCC S-9.7.0.3 §5.2 — reserved range, never a valid routable event ID) */
@@ -79,6 +139,7 @@
   });
 
   let isInvalid = $derived(localInvalidValue !== null);
+  let hasPendingApplyVisible = $derived(hasPendingApply && !isDirty && !isInvalid && !suppressTransientIndicators);
 
   /** Active validation message: local input errors only (committed placeholder is shown separately) */
   let activeValidationMessage = $derived(localValidationMessage ?? null);
@@ -137,8 +198,8 @@
     leaf.elementType === 'eventId'
   );
 
-  /** Current display value — modifiedValue if pending, else committed value */
-  let displayValue = $derived(effectiveValue(leaf));
+  /** Current display value: offline planned, else modifiedValue, else committed value */
+  let displayValue = $derived(offlinePlannedValue ?? effectiveValue(leaf));
 
   /** String value for controlled text input — local buffer takes priority while typing */
   let inputStr = $derived(
@@ -200,6 +261,36 @@
 
   // ── Edit handlers ──────────────────────────────────────────────────────────
 
+  function applyOfflineChange(newVal: TreeConfigValue): void {
+    if (!nodeId) return;
+
+    const baselineFromRow = pendingOfflineRow?.baselineValue;
+    const baselineFromLeaf = leaf.value ? valueToOfflineString(leaf.value) : '';
+    const baselineValue = baselineFromRow ?? baselineFromLeaf;
+    const plannedValue = valueToOfflineString(newVal);
+
+    offlineChangesStore.upsertConfigChange({
+      nodeId,
+      space: leaf.space,
+      offset: leafOffsetKey(),
+      baselineValue,
+      plannedValue,
+    });
+
+    const draftRow = offlineChangesStore.findDraftConfigChange(nodeId, leaf.space, leafOffsetKey());
+    const modifiedValue = draftRow ? parseOfflinePlannedValue(draftRow.plannedValue) : null;
+    nodeTreeStore.setLeafModifiedValue(nodeId, leaf.path, modifiedValue);
+  }
+
+  function applyLeafValueChange(newVal: TreeConfigValue): void {
+    if (layoutStore.isOfflineMode || isNodeOffline) {
+      applyOfflineChange(newVal);
+      return;
+    }
+
+    void setModifiedValue(nodeId, leaf.address, leaf.space, newVal);
+  }
+
   /** Validate a string value and send to Rust tree */
   function handleStringInput(e: Event) {
     const raw = (e.target as HTMLInputElement).value;
@@ -225,7 +316,27 @@
 
     localInvalidValue = null;
     localValidationMessage = null;
-    setModifiedValue(nodeId, leaf.address, leaf.space, newVal);
+
+    // In offline mode, commit on blur/tab to avoid creating rows per keystroke.
+    if (!layoutStore.isOfflineMode && !isNodeOffline) {
+      applyLeafValueChange(newVal);
+    }
+  }
+
+  function handleStringBlur() {
+    if (!(layoutStore.isOfflineMode || isNodeOffline)) {
+      localStrInput = null;
+      return;
+    }
+
+    const raw = localStrInput ?? inputStr;
+    const maxLen = leaf.size - 1;
+    const byteLen = new TextEncoder().encode(raw).length;
+    if (byteLen <= maxLen) {
+      const newVal: TreeConfigValue = { type: 'string', value: raw };
+      applyLeafValueChange(newVal);
+    }
+    localStrInput = null;
   }
 
   /** Validate an integer value and send to Rust tree */
@@ -255,7 +366,7 @@
 
     localInvalidValue = null;
     localValidationMessage = null;
-    setModifiedValue(nodeId, leaf.address, leaf.space, newVal);
+    applyLeafValueChange(newVal);
   }
 
   /** Handle int-with-mapEntries select change */
@@ -266,7 +377,7 @@
 
     localInvalidValue = null;
     localValidationMessage = null;
-    setModifiedValue(nodeId, leaf.address, leaf.space, newVal);
+    applyLeafValueChange(newVal);
   }
 
   /** Validate a float value and send to Rust tree */
@@ -296,7 +407,7 @@
 
     localInvalidValue = null;
     localValidationMessage = null;
-    setModifiedValue(nodeId, leaf.address, leaf.space, newVal);
+    applyLeafValueChange(newVal);
   }
 
   /** T034: event ID field — text input with dotted-hex validation */
@@ -330,7 +441,7 @@
 
     localInvalidValue = null;
     localValidationMessage = null;
-    setModifiedValue(nodeId, leaf.address, leaf.space, newVal);
+    applyLeafValueChange(newVal);
   }
 
   // ── Value display helpers ──────────────────────────────────────────────────
@@ -384,6 +495,8 @@
   function handleCreateConnection() {
     const selection = {
       nodeId,
+      nodeName: nodeId,
+      elementLabel: leaf.name,
       elementPath: leaf.path,
       address: leaf.address,
       space: leaf.space,
@@ -399,7 +512,8 @@
   bind:this={rowEl}
   class="field-row"
   class:compact={depth >= 3}
-  class:dirty={isDirty && !isInvalid}
+  class:dirty={isDirtyVisible && !isInvalid}
+  class:offline-pending={hasPendingApplyVisible}
   class:invalid={isInvalid}
   class:eventid-placeholder={isEventIdPlaceholder && !isInvalid}
   class:writing={isWriting}
@@ -420,7 +534,7 @@
         aria-label={leaf.name}
         aria-invalid={isInvalid}
         oninput={handleStringInput}
-        onblur={() => { localStrInput = null; }}
+        onblur={handleStringBlur}
       />
     {:else if isEditable && leaf.elementType === 'int'}
       <input
@@ -553,6 +667,18 @@
       <span class="validation-msg" role="alert">{activeValidationMessage}</span>
     {/if}
 
+    {#if !suppressTransientIndicators && draftOfflineRow}
+      <span class="offline-change-msg" role="status">
+        Unsaved offline edit: {draftOfflineRow.baselineValue} -> {draftOfflineRow.plannedValue}
+      </span>
+    {/if}
+
+    {#if !suppressTransientIndicators && persistedOfflineRow}
+      <span class="offline-pending-msg" role="status">
+        Pending apply: {persistedOfflineRow.baselineValue} -> {persistedOfflineRow.plannedValue}
+      </span>
+    {/if}
+
     {#if leaf.eventRole}
       <span class="event-role">
         <span class="role-tag role-{leaf.eventRole.toLowerCase()}">{leaf.eventRole}</span>
@@ -619,6 +745,11 @@
     background-color: rgba(202, 133, 0, 0.05);
   }
 
+  .field-row.offline-pending {
+    border-left-color: #0f766e;                    /* teal — saved in layout, pending apply */
+    background-color: rgba(15, 118, 110, 0.05);
+  }
+
   .field-row.invalid {
     border-left-color: #a4262c;                    /* colorPaletteRedForeground1 */
     background-color: rgba(164, 38, 44, 0.04);
@@ -670,6 +801,28 @@
     font-family: 'Cascadia Code', 'Cascadia Mono', 'SF Mono', 'Fira Code', 'Consolas', monospace;
     font-size: 12px;
     letter-spacing: -0.01em;
+  }
+
+  .offline-change-msg {
+    color: #7c2d12;
+    background: #ffedd5;
+    border: 1px solid #fdba74;
+    border-radius: 10px;
+    padding: 1px 8px;
+    font-size: 11px;
+    line-height: 1.5;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  .offline-pending-msg {
+    color: #115e59;
+    background: #ccfbf1;
+    border: 1px solid #99f6e4;
+    border-radius: 10px;
+    padding: 1px 8px;
+    font-size: 11px;
+    line-height: 1.5;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
   }
 
   /* ── Editable input fields ── */

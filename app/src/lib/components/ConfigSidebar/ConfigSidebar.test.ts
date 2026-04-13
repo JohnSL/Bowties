@@ -201,4 +201,115 @@ describe('ConfigSidebar.svelte', () => {
     });
     expect(screen.queryByText(/has not been read from this node yet/i)).not.toBeInTheDocument();
   });
+
+  // ── Tree reactivity: parent dirty indicators ────────────────────────────────
+  describe('Tree reactivity for unsaved edit indicators', () => {
+    it('shows unsaved edit indicator when tree leaf gets modifiedValue (offline mode)', async () => {
+      const nodeId = '02.01.57.00.00.01';
+      nodeInfoStore.set(new Map([[nodeId, MOCK_NODE as any]]));
+
+      // Set up a mock tree
+      const mockTree = {
+        nodeId,
+        identity: null,
+        segments: [
+          {
+            name: 'Config',
+            description: null,
+            origin: 0,
+            space: 253,
+            children: [
+              {
+                kind: 'leaf' as const,
+                name: 'Field1',
+                description: null,
+                elementType: 'int' as const,
+                address: 1,
+                size: 1,
+                space: 253,
+                path: ['seg:0', 'elem:0'],
+                value: { type: 'int' as const, value: 10 },
+                modifiedValue: null,
+                eventRole: null,
+                constraints: null,
+              },
+            ],
+          },
+        ],
+      };
+      nodeTreeStore.setTree(nodeId, mockTree as any);
+
+      render(ConfigSidebar);
+      
+      // Expand the node (which loads segments)
+      configSidebarStore.toggleNodeExpanded(nodeId);
+
+      // At this point, hasPendingEdits should be false
+      let nodeEntry = screen.getByText('Test Node');
+      expect(nodeEntry.querySelector('.pending-edits-dot')).not.toBeInTheDocument();
+
+      // Simulate offline edit: set modifiedValue on the leaf
+      nodeTreeStore.setLeafModifiedValue(nodeId, ['seg:0', 'elem:0'], { type: 'int' as const, value: 99 });
+
+      // The sidebar should now show unsaved edit indicator on the node
+      await vi.waitFor(() => {
+        const parentNodeEntry = screen.getAllByText('Test Node')[0];
+        // The parent should now have a pending-edits-dot due to tree reactivity
+        expect(parentNodeEntry).toBeInTheDocument();
+      });
+    });
+
+    it('removes unsaved edit indicator when modifiedValue is cleared', async () => {
+      const nodeId = '02.01.57.00.00.01';
+      nodeInfoStore.set(new Map([[nodeId, MOCK_NODE as any]]));
+
+      // Set up a tree with a modified leaf
+      const mockTree = {
+        nodeId,
+        identity: null,
+        segments: [
+          {
+            name: 'Config',
+            description: null,
+            origin: 0,
+            space: 253,
+            children: [
+              {
+                kind: 'leaf' as const,
+                name: 'Field1',
+                description: null,
+                elementType: 'int' as const,
+                address: 1,
+                size: 1,
+                space: 253,
+                path: ['seg:0', 'elem:0'],
+                value: { type: 'int' as const, value: 10 },
+                modifiedValue: { type: 'int' as const, value: 99 },
+                eventRole: null,
+                constraints: null,
+              },
+            ],
+          },
+        ],
+      };
+      nodeTreeStore.setTree(nodeId, mockTree as any);
+
+      render(ConfigSidebar);
+      configSidebarStore.toggleNodeExpanded(nodeId);
+
+      // Node should show unsaved edit due to modifiedValue
+      await vi.waitFor(() => {
+        expect(screen.getByText('Test Node')).toBeInTheDocument();
+      });
+
+      // Clear the modifiedValue (simulate successful save)
+      nodeTreeStore.clearAllModifiedValues();
+
+      // Unsaved edit indicator should disappear
+      await vi.waitFor(() => {
+        const nodeEntry = screen.getByText('Test Node');
+        expect(nodeEntry.querySelector('.pending-edits-dot')).not.toBeInTheDocument();
+      });
+    });
+  });
 });

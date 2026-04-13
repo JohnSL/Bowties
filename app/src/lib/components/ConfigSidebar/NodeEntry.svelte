@@ -14,6 +14,8 @@
   export let configNotRead: boolean = false;
   /** Whether this node has unsaved pending edits (FR-012a) */
   export let hasPendingEdits: boolean = false;
+  /** Whether this node has saved offline changes still pending apply to device */
+  export let hasPendingApply: boolean = false;
   /** Whether this node is selected (node-level selection, no segment) */
   export let isSelected: boolean = false;
 
@@ -57,8 +59,16 @@
   {#if hasPendingEdits}
     <span
       class="pending-edits-dot"
-      title="Unsaved changes pending"
-      aria-label="Unsaved changes pending"
+      title="Unsaved changes"
+      aria-label="Unsaved changes"
+    ></span>
+  {/if}
+
+  {#if hasPendingApply}
+    <span
+      class="pending-apply-dot"
+      title="Saved in layout, pending apply to node"
+      aria-label="Saved in layout, pending apply to node"
     ></span>
   {/if}
 
@@ -205,5 +215,16 @@
     background-color: #ca8500;                     /* amber — unsaved changes (distinct from selection blue) */
     border: 1.5px solid #fff;
     box-shadow: 0 0 0 1px rgba(202, 133, 0, 0.35);
+  }
+
+  .pending-apply-dot {
+    flex-shrink: 0;
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: #0f766e;
+    border: 1.5px solid #fff;
+    box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.35);
   }
 </style>

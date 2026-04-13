@@ -17,6 +17,7 @@
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
+  import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
   import { updateNodeSnipField } from '$lib/stores/nodeInfo';
   import DiscardConfirmDialog from '$lib/components/DiscardConfirmDialog.svelte';
 
@@ -28,9 +29,15 @@
      * identical in both variants.
      */
     toolbar?: boolean;
+    /**
+     * Optional offline-save handler provided by the page route.
+     * Returns true when a save was performed, false when user cancelled.
+     */
+    onOfflineSave: () => Promise<boolean>;
+    onOfflineSaveAs: () => Promise<boolean>;
   }
 
-  let { toolbar = false }: Props = $props();
+  let { toolbar = false, onOfflineSave, onOfflineSaveAs }: Props = $props();
 
   // ── Reactive state ──────────────────────────────────────────────────────────
 
@@ -53,8 +60,18 @@
 
   let hasConfigEdits = $derived(dirtyCount > 0);
   let hasMetadataEdits = $derived(bowtieMetadataStore.isDirty);
+  let offlineDraftCount = $derived(layoutStore.isOfflineMode ? offlineChangesStore.draftCount : 0);
+  let hasOfflineEdits = $derived(layoutStore.isOfflineMode && offlineDraftCount > 0);
   // T019/T020: Unified dirty state across both config edits and bowtie metadata
-  let hasEdits = $derived(hasConfigEdits || hasMetadataEdits);
+  let hasEdits = $derived(hasConfigEdits || hasMetadataEdits || hasOfflineEdits);
+  let pendingEditCount = $derived(
+    layoutStore.isOfflineMode
+      ? offlineDraftCount
+      : dirtyCount + (hasMetadataEdits ? bowtieMetadataStore.editCount : 0)
+  );
+  let pendingHintText = $derived(
+    `${pendingEditCount} ${layoutStore.isOfflineMode ? 'unsaved edit' : 'unsaved change'}${pendingEditCount === 1 ? '' : 's'}`
+  );
   let canSave = $derived(hasEdits && saveProgress.state !== 'saving');
   let isSaving = $derived(saveProgress.state === 'saving');
   // Count distinct nodes with modified leaves for discard confirmation
@@ -66,12 +83,62 @@
     return nodeIds.size;
   });
 
+  let offlineDirtyNodeCount = $derived.by(() => {
+    const nodeIds = new Set(
+      offlineChangesStore.draftRows
+        .filter((r) => r.status === 'pending' && r.nodeId)
+        .map((r) => r.nodeId as string)
+    );
+    return nodeIds.size;
+  });
+
   // Whether the discard confirmation dialog is open.
   let showDiscardDialog = $state(false);
 
   // ── Save handler ────────────────────────────────────────────────────────────
 
   async function handleSave() {
+    if (layoutStore.isOfflineMode) {
+      const localPending = offlineChangesStore.draftCount;
+      saveProgress = {
+        state: 'saving',
+        total: localPending,
+        completed: 0,
+        failed: 0,
+        currentFieldLabel: 'Offline layout changes',
+      };
+
+      try {
+        const saved = await onOfflineSave();
+        if (saved) {
+          await offlineChangesStore.reloadFromBackend();
+          nodeTreeStore.clearAllModifiedValues();
+          bowtieMetadataStore.clearAll();
+          layoutStore.markClean();
+          saveProgress = { ...saveProgress, state: 'completed', currentFieldLabel: null, completed: localPending };
+        } else {
+          // Save was cancelled (for example, Save As dialog dismissed).
+          saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[SaveControls] offline save failed:', msg);
+        toast.push(`Offline save failed: ${msg}`, {
+          classes: ['warn'],
+          duration: 7000,
+          pausable: true,
+        });
+        saveProgress = { ...saveProgress, state: 'partial-failure', currentFieldLabel: null, failed: localPending };
+      }
+
+      if (saveProgress.state === 'completed') {
+        setTimeout(() => {
+          saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
+        }, 2000);
+      }
+      return;
+    }
+
     const hasNodeEdits = hasConfigEdits;
     const hasYamlEdits = bowtieMetadataStore.isDirty;
 
@@ -117,22 +184,16 @@
     if (bowtieMetadataStore.isDirty) {
       saveProgress = { ...saveProgress, currentFieldLabel: 'Layout metadata' };
       try {
-        const saved = await layoutStore.saveCurrentLayout();
-        if (saved) bowtieMetadataStore.clearAll();
+        const saved = await onOfflineSave();
+        if (saved) {
+          bowtieMetadataStore.clearAll();
+        } else {
+          yamlSaveOk = false;
+        }
       } catch (err: unknown) {
         yamlSaveOk = false;
         const msg = err instanceof Error ? err.message : String(err);
         console.error('[SaveControls] Layout save failed:', msg);
-        // Attempt Save As as fallback
-        try {
-          const saved = await layoutStore.saveLayoutAs();
-          if (saved) {
-            bowtieMetadataStore.clearAll();
-            yamlSaveOk = true;
-          }
-        } catch {
-          // Save As also cancelled/failed — metadata remains dirty
-        }
       }
     }
 
@@ -154,6 +215,16 @@
   // T020: Unified discard — clear both tree modifications and bowtie metadata
   async function handleConfirmDiscard() {
     showDiscardDialog = false;
+
+    if (layoutStore.isOfflineMode) {
+      await offlineChangesStore.revertAllPending();
+      nodeTreeStore.clearAllModifiedValues();
+      bowtieMetadataStore.clearAll();
+      layoutStore.revertToSaved();
+      saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
+      return;
+    }
+
     await discardModifiedValues();
     bowtieMetadataStore.clearAll();
     layoutStore.revertToSaved();
@@ -171,8 +242,13 @@
   }
 
   export async function triggerSaveAs(): Promise<void> {
-    const saved = await layoutStore.saveLayoutAs();
-    if (saved) bowtieMetadataStore.clearAll();
+    const saved = await onOfflineSaveAs();
+    if (saved) {
+      await offlineChangesStore.reloadFromBackend();
+      nodeTreeStore.clearAllModifiedValues();
+      bowtieMetadataStore.clearAll();
+      layoutStore.markClean();
+    }
   }
 </script>
 
@@ -207,7 +283,7 @@
 {:else if hasEdits}
   <!-- Idle with pending edits -->
   <span class="pending-hint" role="status">
-    {dirtyCount + (hasMetadataEdits ? bowtieMetadataStore.editCount : 0)} unsaved change{(dirtyCount + (hasMetadataEdits ? bowtieMetadataStore.editCount : 0)) === 1 ? '' : 's'}
+    {pendingHintText}
   </span>
 {/if}
 
@@ -234,8 +310,8 @@
 
 {#if showDiscardDialog}
   <DiscardConfirmDialog
-    fieldCount={dirtyCount}
-    nodeCount={dirtyNodeCount}
+    fieldCount={layoutStore.isOfflineMode ? offlineDraftCount : dirtyCount}
+    nodeCount={layoutStore.isOfflineMode ? offlineDirtyNodeCount : dirtyNodeCount}
     onConfirm={handleConfirmDiscard}
     onCancel={handleCancelDiscard}
   />
