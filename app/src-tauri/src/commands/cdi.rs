@@ -1802,8 +1802,9 @@ pub async fn read_all_config_values(
     let mut error_count = 0;
     let mut abort_error: Option<String> = None;
 
-    // Spec 007: collect raw bytes keyed by absolute address for tree merging.
-    let mut raw_data_by_address: HashMap<u32, Vec<u8>> = HashMap::new();
+    // Spec 007: collect raw bytes keyed by (space, absolute address) for tree merging.
+    // Address-only keys can collide across spaces (e.g. LT-50 status vs macro offsets).
+    let mut raw_data_by_space_address: HashMap<(u8, u32), Vec<u8>> = HashMap::new();
 
     // --- Build the read plan: size every element, split large ones, group into batches ---
     let plan = build_read_plan(&all_elements);
@@ -2036,7 +2037,7 @@ pub async fn read_all_config_values(
             let item_data = &response_data[offset_in_batch..end];
 
             // Spec 007: record raw bytes for tree merging (also used by assembly pass).
-            raw_data_by_address.insert(item.absolute_address, item_data.to_vec());
+            raw_data_by_space_address.insert((item.space, item.absolute_address), item_data.to_vec());
 
             // Multi-chunk elements are assembled and parsed in the pass below;
             // only parse immediately for elements that fit in a single read.
@@ -2065,7 +2066,7 @@ pub async fn read_all_config_values(
 
     // --- Assemble and parse multi-chunk elements ---
     // Each large element was split into 64-byte chunks above.  Now that all
-    // chunks have been read into raw_data_by_address, concatenate them and
+    // chunks have been read into raw_data_by_space_address, concatenate them and
     // parse the complete value.
     for orig_idx in &multi_chunk_elements {
         if failed_orig_indices.contains(orig_idx) {
@@ -2085,7 +2086,7 @@ pub async fn read_all_config_values(
         while offset < total_size {
             let chunk_size = std::cmp::min(64, total_size - offset);
             let chunk_addr = base_addr + offset;
-            if let Some(chunk_bytes) = raw_data_by_address.get(&chunk_addr) {
+            if let Some(chunk_bytes) = raw_data_by_space_address.get(&(ewa.space, chunk_addr)) {
                 assembled.extend_from_slice(chunk_bytes);
             } else {
                 eprintln!("Missing chunk @{:#010x} for element {}", chunk_addr, ewa.name);
@@ -2161,10 +2162,10 @@ pub async fn read_all_config_values(
             let mut tree = proxy.get_config_tree().await
                 .ok().flatten()
                 .unwrap_or_else(|| crate::node_tree::build_node_config_tree(&node_id, &cdi));
-            crate::node_tree::merge_config_values(&mut tree, &raw_data_by_address);
+            crate::node_tree::merge_config_values_by_space(&mut tree, &raw_data_by_space_address);
             let leaf_count = crate::node_tree::count_leaves(&tree);
             eprintln!("[node_tree] node {} — tree updated with {} values ({} leaves total)",
-                node_id, raw_data_by_address.len(), leaf_count);
+                node_id, raw_data_by_space_address.len(), leaf_count);
 
             let _ = proxy.set_config_tree(tree).await;
 

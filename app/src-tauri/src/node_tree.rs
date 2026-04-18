@@ -622,9 +622,27 @@ fn bytes_to_dotted_hex(bytes: &[u8; 8]) -> String {
 /// the raw bytes read from the node's configuration memory.  This function
 /// walks the tree and writes the appropriate `ConfigValue` variant onto
 /// every matching leaf.
+///
+/// NOTE: This legacy helper ignores address space and can collide when
+/// multiple spaces use the same offset. Prefer `merge_config_values_by_space`
+/// for live config reads.
 pub fn merge_config_values(tree: &mut NodeConfigTree, values: &HashMap<u32, Vec<u8>>) {
     for segment in &mut tree.segments {
         merge_children_values(&mut segment.children, values);
+    }
+}
+
+/// Merge configuration values into a tree using `(space, address)` keys.
+///
+/// This avoids collisions when different CDI segments share the same absolute
+/// offset in different memory spaces (e.g. LT-50 status space 1 vs macros
+/// space 20 both using address 0x00000000).
+pub fn merge_config_values_by_space(
+    tree: &mut NodeConfigTree,
+    values: &HashMap<(u8, u32), Vec<u8>>,
+) {
+    for segment in &mut tree.segments {
+        merge_children_values_by_space(&mut segment.children, values);
     }
 }
 
@@ -636,6 +654,21 @@ fn merge_children_values(children: &mut [ConfigNode], values: &HashMap<u32, Vec<
             }
             ConfigNode::Leaf(leaf) => {
                 if let Some(raw) = values.get(&leaf.address) {
+                    leaf.value = parse_leaf_value(leaf.element_type, leaf.size, raw);
+                }
+            }
+        }
+    }
+}
+
+fn merge_children_values_by_space(children: &mut [ConfigNode], values: &HashMap<(u8, u32), Vec<u8>>) {
+    for child in children.iter_mut() {
+        match child {
+            ConfigNode::Group(g) => {
+                merge_children_values_by_space(&mut g.children, values);
+            }
+            ConfigNode::Leaf(leaf) => {
+                if let Some(raw) = values.get(&(leaf.space, leaf.address)) {
                     leaf.value = parse_leaf_value(leaf.element_type, leaf.size, raw);
                 }
             }
@@ -2327,6 +2360,72 @@ mod tests {
             }
             _ => panic!("Expected wrapper group"),
         }
+    }
+
+    #[test]
+    fn lt50_status_trace_bytes_decode_to_non_zero_ints() {
+        // From LT-50 trace reply at space=1, address=0x00000000:
+        // 20.50.00.00.00.00.01.00.00.3B.EF.00.00.00.12...
+        let track_voltage = parse_leaf_value(LeafType::Int, 4, &[0x00, 0x00, 0x3B, 0xEF]);
+        let track_current = parse_leaf_value(LeafType::Int, 4, &[0x00, 0x00, 0x00, 0x12]);
+
+        match track_voltage {
+            Some(ConfigValue::Int { value }) => assert_eq!(value, 15_343),
+            other => panic!("Expected non-zero Int for track voltage, got {:?}", other),
+        }
+
+        match track_current {
+            Some(ConfigValue::Int { value }) => assert_eq!(value, 18),
+            other => panic!("Expected non-zero Int for track current, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn merge_config_values_by_space_avoids_lt50_address_collision() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="1" origin="0">
+                    <name>Status</name>
+                    <int size="4"><name>Track Voltage</name></int>
+                    <int size="4"><name>Track Current</name></int>
+                </segment>
+                <segment space="20" origin="0">
+                    <name>Macros</name>
+                    <int size="4"><name>Startup Macro</name></int>
+                    <int size="4"><name>Macro Name Prefix</name></int>
+                </segment>
+            </cdi>"#,
+        );
+
+        // LT-50 status bytes from trace (space=1) are non-zero.
+        // Space=20 has zeros at the same offsets in this capture.
+        // By-space merge must keep each segment's value isolated.
+        let mut values = HashMap::new();
+        values.insert((1u8, 0u32), vec![0x00, 0x00, 0x3B, 0xEF]); // Track Voltage = 15343
+        values.insert((1u8, 4u32), vec![0x00, 0x00, 0x00, 0x12]); // Track Current = 18
+        values.insert((20u8, 0u32), vec![0x00, 0x00, 0x00, 0x00]);
+        values.insert((20u8, 4u32), vec![0x00, 0x00, 0x00, 0x00]);
+
+        merge_config_values_by_space(&mut tree, &values);
+
+        let status = &tree.segments[0];
+        let voltage = match &status.children[0] {
+            ConfigNode::Leaf(l) => match &l.value {
+                Some(ConfigValue::Int { value }) => *value,
+                other => panic!("Expected Int for voltage, got {:?}", other),
+            },
+            _ => panic!("Expected voltage leaf"),
+        };
+        let current = match &status.children[1] {
+            ConfigNode::Leaf(l) => match &l.value {
+                Some(ConfigValue::Int { value }) => *value,
+                other => panic!("Expected Int for current, got {:?}", other),
+            },
+            _ => panic!("Expected current leaf"),
+        };
+
+        assert_eq!(voltage, 15_343);
+        assert_eq!(current, 18);
     }
 
     // ── merge_event_roles extensions ──────────────────────────────────────────
