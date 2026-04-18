@@ -118,6 +118,8 @@ fn collect_leaf_values(
     hierarchy: &mut Vec<String>,
     snapshot: &mut NodeSnapshot,
     missing: &mut Vec<String>,
+    state: &AppState,
+    node_id: &str,
 ) {
     for node in nodes {
         match node {
@@ -136,6 +138,17 @@ fn collect_leaf_values(
                         },
                     );
                 } else {
+                    crate::bwlog!(
+                        state,
+                        "[layout capture] missing value: node={} leaf={} hierarchy={} cdi_path={} space={} offset={} type={:?}",
+                        node_id,
+                        leaf.name,
+                        hierarchy.join(" / "),
+                        leaf.path.join("/"),
+                        leaf.space,
+                        offset_key,
+                        leaf.element_type,
+                    );
                     missing.push(missing_detail(leaf.space, &offset_key, &leaf.path));
                 }
             }
@@ -145,7 +158,7 @@ fn collect_leaf_values(
                     hierarchy.push(group_key);
                     pushed = true;
                 }
-                collect_leaf_values(&group.children, hierarchy, snapshot, missing);
+                collect_leaf_values(&group.children, hierarchy, snapshot, missing, state, node_id);
                 if pushed {
                     let _ = hierarchy.pop();
                 }
@@ -171,15 +184,20 @@ async fn build_node_snapshot(
     handle: &crate::node_proxy::NodeProxyHandle,
     captured_at: &str,
     producer_events: Vec<String>,
+    state: &AppState,
 ) -> Result<NodeSnapshot, String> {
     let snapshot = handle.get_snapshot().await?;
     let tree = handle.get_config_tree().await?;
 
-    let cdi_fingerprint = snapshot
-        .cdi
-        .as_ref()
-        .map(|c| format!("len:{}", c.xml_content.len()))
-        .unwrap_or_else(|| "missing".to_string());
+    let cdi_fingerprint = if let Some(cdi) = &snapshot.cdi {
+        format!("len:{}", cdi.xml_content.len())
+    } else if snapshot.pip_status == lcc_rs::PIPStatus::Complete
+        && snapshot.pip_flags.as_ref().is_some_and(|f| !f.cdi)
+    {
+        "not_supported".to_string()
+    } else {
+        "missing".to_string()
+    };
 
     let (cache_key, version) = if let Some(snip) = &snapshot.snip_data {
         (
@@ -221,18 +239,51 @@ async fn build_node_snapshot(
         producer_identified_events: producer_events,
     };
 
+    let tree_segment_count = tree.as_ref().map(|t| t.segments.len()).unwrap_or(0);
+    crate::bwlog!(
+        state,
+        "[layout capture] snapshot start: node={} manufacturer={} model={} tree_available={} segments={}",
+        snapshot.node_id,
+        snapshot.snip.manufacturer_name,
+        snapshot.snip.model_name,
+        tree.is_some(),
+        tree_segment_count,
+    );
+    let node_id_for_logs = snapshot.node_id.clone();
+
     let mut missing = Vec::new();
     if let Some(tree) = tree {
         for segment in &tree.segments {
             let mut hierarchy = vec![segment.name.clone()];
-            collect_leaf_values(&segment.children, &mut hierarchy, &mut snapshot, &mut missing);
+            collect_leaf_values(
+                &segment.children,
+                &mut hierarchy,
+                &mut snapshot,
+                &mut missing,
+                state,
+                &node_id_for_logs,
+            );
         }
     } else {
+        crate::bwlog!(
+            state,
+            "[layout capture] missing configuration tree: node={} manufacturer={} model={}",
+            snapshot.node_id,
+            snapshot.snip.manufacturer_name,
+            snapshot.snip.model_name,
+        );
         missing.push("configuration tree not available".to_string());
     }
 
     snapshot.missing = missing;
     snapshot.capture_status = capture_status_from_missing(&snapshot.missing);
+    crate::bwlog!(
+        state,
+        "[layout capture] snapshot complete: node={} status={:?} missing_count={}",
+        snapshot.node_id,
+        snapshot.capture_status,
+        snapshot.missing.len(),
+    );
     Ok(snapshot)
 }
 
@@ -269,7 +320,7 @@ pub async fn capture_layout_snapshot(
             .get(&node_key)
             .cloned()
             .unwrap_or_default();
-        let snap = build_node_snapshot(&handle, &captured_at, producer_events).await?;
+        let snap = build_node_snapshot(&handle, &captured_at, producer_events, state.inner()).await?;
         node_count += 1;
         if snap.capture_status == CaptureStatus::Complete {
             complete_count += 1;
@@ -331,7 +382,7 @@ pub async fn save_layout_directory(
                 .get(&node_key)
                 .cloned()
                 .unwrap_or_default();
-            out.push(build_node_snapshot(handle, &captured_at, producer_events).await?);
+            out.push(build_node_snapshot(handle, &captured_at, producer_events, state.inner()).await?);
         }
         out
     };
@@ -397,9 +448,14 @@ pub async fn save_layout_directory(
         companion_dir,
     );
 
-    // Collect CDI files from cache - error if any snapshot's CDI is missing
+    // Collect CDI files from cache, skipping nodes that don't support CDI.
     let mut cdi_files: Vec<(String, std::path::PathBuf)> = Vec::new();
     for snapshot in &snapshots {
+        if snapshot.cdi_ref.fingerprint == "not_supported"
+            || snapshot.cdi_ref.fingerprint == "missing"
+        {
+            continue;
+        }
         let cdi_path = cdi_cache_path_for_snapshot(&snapshot, &app)?;
         if !cdi_path.exists() {
             return Err(format!(
@@ -567,6 +623,15 @@ pub async fn build_offline_node_tree(
 
     let snapshot: crate::layout::node_snapshot::NodeSnapshot = crate::layout::io::read_yaml_file(&snapshot_path)
         .map_err(|e| format!("Cannot load snapshot {}: {}", snapshot_path.display(), e))?;
+
+    if snapshot.cdi_ref.fingerprint == "not_supported"
+        || snapshot.cdi_ref.fingerprint == "missing"
+    {
+        return Err(format!(
+            "Node {} does not provide CDI; offline configuration is not available",
+            node_id
+        ));
+    }
 
     let cdi_path = cdi_cache_path_for_snapshot(&snapshot, &app)?;
     if !cdi_path.exists() {

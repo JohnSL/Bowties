@@ -544,4 +544,110 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&root);
     }
+
+    fn test_node_no_cdi(node_id: &str) -> NodeSnapshot {
+        NodeSnapshot {
+            node_id: node_id.to_string(),
+            captured_at: "2026-04-05T12:00:00Z".to_string(),
+            capture_status: CaptureStatus::Partial,
+            missing: vec!["configuration tree not available".to_string()],
+            snip: SnipSnapshot {
+                user_name: "JMRI".to_string(),
+                user_description: "".to_string(),
+                manufacturer_name: "JMRI".to_string(),
+                model_name: "LccPro".to_string(),
+            },
+            cdi_ref: CdiReference {
+                cache_key: "JMRI_LccPro_5.14".to_string(),
+                version: "5.14".to_string(),
+                fingerprint: "not_supported".to_string(),
+            },
+            config: BTreeMap::new(),
+            producer_identified_events: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn roundtrip_node_without_cdi() {
+        let root = std::env::temp_dir().join("bowties_test_no_cdi_roundtrip");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let base_file = root.join("layout.bowties-layout.yaml");
+        let manifest = LayoutManifest::new(
+            "layout".to_string(),
+            "2026-04-05T12:00:00Z".to_string(),
+            "2026-04-05T12:00:00Z".to_string(),
+            "layout.bowties-layout.d".to_string(),
+        );
+        let data = LayoutDirectoryWriteData {
+            manifest,
+            node_snapshots: vec![test_node_no_cdi("0201120033CC")],
+            bowties: LayoutFile::default(),
+            offline_changes: Vec::new(),
+            cdi_files: Vec::new(),
+        };
+
+        write_layout_capture(&base_file, &data).unwrap();
+        let loaded = read_layout_capture(&base_file).unwrap();
+
+        assert_eq!(loaded.node_snapshots.len(), 1);
+        let snap = &loaded.node_snapshots[0];
+        assert_eq!(snap.node_id, "0201120033CC");
+        assert_eq!(snap.cdi_ref.fingerprint, "not_supported");
+        assert_eq!(snap.capture_status, CaptureStatus::Partial);
+        assert!(snap.config.is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn roundtrip_mixed_cdi_and_no_cdi_nodes() {
+        let root = std::env::temp_dir().join("bowties_test_mixed_cdi");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let base_file = root.join("mixed.bowties-layout.yaml");
+        let manifest = LayoutManifest::new(
+            "mixed".to_string(),
+            "2026-04-05T12:00:00Z".to_string(),
+            "2026-04-05T12:00:00Z".to_string(),
+            "mixed.bowties-layout.d".to_string(),
+        );
+
+        // Create a fake CDI file in a temp location to simulate cache
+        let cdi_source = root.join("acme_modelx_1.0.cdi.xml");
+        std::fs::write(&cdi_source, "<cdi/>").unwrap();
+
+        let data = LayoutDirectoryWriteData {
+            manifest,
+            node_snapshots: vec![
+                test_node_snapshot("0501010114A2B3"),
+                test_node_no_cdi("0201120033CC"),
+            ],
+            bowties: LayoutFile::default(),
+            offline_changes: Vec::new(),
+            cdi_files: vec![("acme_modelx_1.0".to_string(), cdi_source)],
+        };
+
+        write_layout_capture(&base_file, &data).unwrap();
+        let loaded = read_layout_capture(&base_file).unwrap();
+
+        assert_eq!(loaded.node_snapshots.len(), 2);
+
+        let cdi_node = loaded.node_snapshots.iter().find(|n| n.node_id == "0501010114A2B3").unwrap();
+        assert_eq!(cdi_node.cdi_ref.fingerprint, "len:123");
+        assert!(!cdi_node.config.is_empty());
+
+        let no_cdi_node = loaded.node_snapshots.iter().find(|n| n.node_id == "0201120033CC").unwrap();
+        assert_eq!(no_cdi_node.cdi_ref.fingerprint, "not_supported");
+        assert!(no_cdi_node.config.is_empty());
+
+        // Verify CDI file was copied for the CDI node
+        let companion = derive_companion_dir_path(&base_file).unwrap();
+        let cdi_dest = companion.join("cdi").join("acme_modelx_1.0.xml");
+        assert!(cdi_dest.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
