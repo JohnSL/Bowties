@@ -3214,7 +3214,7 @@ fn f64_to_f16_bytes(v: f64) -> [u8; 2] {
     bits.to_be_bytes()
 }
 
-fn serialize_config_value(
+pub(crate) fn serialize_config_value(
     value: &crate::node_tree::ConfigValue,
     _element_type: crate::node_tree::LeafType,
     size: u32,

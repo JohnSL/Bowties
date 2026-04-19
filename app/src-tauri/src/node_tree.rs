@@ -1254,6 +1254,44 @@ pub fn effective_value(leaf: &LeafNode) -> Option<&ConfigValue> {
     leaf.modified_value.as_ref().or(leaf.value.as_ref())
 }
 
+/// Directly set a leaf's committed `value` (without going through modified_value).
+///
+/// Used by sync apply to reflect a successfully written value in the tree.
+pub fn update_leaf_value(
+    tree: &mut NodeConfigTree,
+    space: u8,
+    address: u32,
+    value: ConfigValue,
+) -> bool {
+    for segment in &mut tree.segments {
+        if update_leaf_in_children(&mut segment.children, space, address, &value) {
+            return true;
+        }
+    }
+    false
+}
+
+fn update_leaf_in_children(children: &mut [ConfigNode], space: u8, address: u32, value: &ConfigValue) -> bool {
+    for child in children.iter_mut() {
+        match child {
+            ConfigNode::Group(g) => {
+                if update_leaf_in_children(&mut g.children, space, address, value) {
+                    return true;
+                }
+            }
+            ConfigNode::Leaf(leaf) if leaf.space == space && leaf.address == address => {
+                leaf.value = Some(value.clone());
+                leaf.modified_value = None;
+                leaf.write_state = None;
+                leaf.write_error = None;
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────

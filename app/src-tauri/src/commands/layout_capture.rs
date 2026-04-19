@@ -481,12 +481,14 @@ pub async fn save_layout_directory(
 
     let _ = crate::commands::bowties::set_recent_layout(path.clone(), app.clone()).await;
 
+    let layout_node_ids = write_data.node_snapshots.iter().map(|s| s.node_id.clone()).collect();
     let context = ActiveLayoutContext {
         layout_id,
         root_path: path.clone(),
         mode: ActiveLayoutMode::OfflineFile,
         captured_at: Some(manifest_captured_at),
         pending_offline_change_count: write_data.offline_changes.len(),
+        layout_node_ids,
     };
     *state.active_layout.write().await = Some(context);
     *state.offline_changes_cache.write().await = write_data.offline_changes.clone();
@@ -521,12 +523,14 @@ pub async fn open_layout_directory(
     // Load offline changes into cache
     *state.offline_changes_cache.write().await = loaded.offline_changes.clone();
 
+    let layout_node_ids = loaded.node_snapshots.iter().map(|s| s.node_id.clone()).collect();
     let context = ActiveLayoutContext {
         layout_id: loaded.manifest.layout_id.clone(),
         root_path: recent_path.clone(),
         mode: ActiveLayoutMode::OfflineFile,
         captured_at: Some(loaded.manifest.captured_at.clone()),
         pending_offline_change_count: loaded.offline_changes.len(),
+        layout_node_ids,
     };
     *state.active_layout.write().await = Some(context);
 
@@ -588,6 +592,7 @@ pub async fn create_new_layout_capture(
         mode: ActiveLayoutMode::OfflineFile,
         captured_at: Some(created_at.clone()),
         pending_offline_change_count: 0,
+        layout_node_ids: Vec::new(),
     };
     *state.active_layout.write().await = Some(context);
     *state.offline_changes_cache.write().await = Vec::new();

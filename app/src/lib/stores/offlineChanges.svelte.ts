@@ -6,7 +6,7 @@
  */
 
 import type { OfflineChangeInput, OfflineChangeRow } from '$lib/api/sync';
-import { listOfflineChanges, replaceOfflineChanges } from '$lib/api/sync';
+import { listOfflineChanges, replaceOfflineChanges, revertOfflineChange } from '$lib/api/sync';
 
 class OfflineChangesStore {
   private _persistedRows = $state<OfflineChangeRow[]>([]);
@@ -186,6 +186,31 @@ class OfflineChangesStore {
 
   removeRow(changeId: string): void {
     this._draftRows = this._draftRows.filter((r) => r.changeId !== changeId);
+  }
+
+  /**
+   * Revert a single offline change back to its captured baseline.
+   * Removes the change from both draft and persisted rows, and calls
+   * the backend IPC to remove it from the persisted offline-changes file.
+   */
+  async revertToBaseline(changeId: string): Promise<boolean> {
+    this._busy = true;
+    try {
+      // Remove from draft rows immediately
+      this._draftRows = this._draftRows.filter((r) => r.changeId !== changeId);
+
+      // If persisted, call the backend to remove it and reload
+      const wasPersisted = this._persistedRows.some((r) => r.changeId === changeId);
+      if (wasPersisted) {
+        await revertOfflineChange(changeId);
+        await this.reloadFromBackend();
+      }
+      return true;
+    } catch {
+      return false;
+    } finally {
+      this._busy = false;
+    }
   }
 
   clear(): void {

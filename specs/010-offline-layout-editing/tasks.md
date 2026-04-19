@@ -87,7 +87,7 @@
 - [x] T034 [US3] Extend bowtie edit flow to emit offline change rows in `app/src-tauri/src/commands/bowties.rs`
 - [x] T035 [US3] Persist offline bowtie metadata edits in `app/src-tauri/src/layout/io.rs`
 - [x] T036 [US3] Implement offline-save path preserving baseline/planned separation in `app/src-tauri/src/commands/layout_capture.rs`
-- [ ] T037 [US3] Add field-level revert-to-baseline action in `app/src/lib/stores/offlineChanges.svelte.ts`
+- [x] T037 [US3] Add field-level revert-to-baseline action in `app/src/lib/stores/offlineChanges.svelte.ts`
 
 **Checkpoint**: Offline edits persist and remain clearly distinguishable from online unsaved state.
 
@@ -99,16 +99,16 @@
 
 **Independent Test**: With one clean, one conflict, and one already-applied row, verify sync classification, resolution gating, selective apply, non-fatal continuation, and read-only row clearing behavior.
 
-- [ ] T038 [US4] Implement preliminary overlap classification (`likely same/uncertain/likely different`) in `app/src-tauri/src/commands/sync_panel.rs`
-- [ ] T039 [P] [US4] Implement `build_sync_session` row triage logic (conflict/clean/already-applied/node-missing) in `app/src-tauri/src/commands/sync_panel.rs`
-- [ ] T040 [P] [US4] Implement sync panel state store for conflict resolution and clean row selection in `app/src/lib/stores/syncPanel.svelte.ts`
-- [ ] T041 [P] [US4] Build Sync Panel UI container and sections in `app/src/lib/components/Sync/SyncPanel.svelte`
-- [ ] T042 [P] [US4] Build conflict row component with baseline/planned/bus comparison in `app/src/lib/components/Sync/ConflictRow.svelte`
-- [ ] T043 [P] [US4] Build clean summary section with per-row deselection in `app/src/lib/components/Sync/CleanSummarySection.svelte`
-- [ ] T044 [US4] Implement explicit sync mode selection (`target layout bus` vs `bench/other bus`) in `app/src/routes/+page.svelte`
-- [ ] T045 [US4] Implement `apply_sync_changes` with continue-on-error row processing in `app/src-tauri/src/commands/sync_panel.rs`
-- [ ] T046 [US4] Implement read-only write-reply handling to clear row and reset displayed value in `app/src-tauri/src/commands/sync_panel.rs`
-- [ ] T047 [US4] Integrate startup auto-load, close layout, and new layout capture actions in `app/src/routes/+page.svelte`
+- [x] T038 [US4] Implement preliminary overlap classification (`likely same/uncertain/likely different`) in `app/src-tauri/src/commands/sync_panel.rs`
+- [x] T039 [P] [US4] Implement `build_sync_session` row triage logic (conflict/clean/already-applied/node-missing) in `app/src-tauri/src/commands/sync_panel.rs`
+- [x] T040 [P] [US4] Implement sync panel state store for conflict resolution and clean row selection in `app/src/lib/stores/syncPanel.svelte.ts`
+- [x] T041 [P] [US4] Build Sync Panel UI container and sections in `app/src/lib/components/Sync/SyncPanel.svelte`
+- [x] T042 [P] [US4] Build conflict row component with baseline/planned/bus comparison in `app/src/lib/components/Sync/ConflictRow.svelte`
+- [x] T043 [P] [US4] Build clean summary section with per-row deselection in `app/src/lib/components/Sync/CleanSummarySection.svelte`
+- [x] T044 [US4] Implement explicit sync mode selection (`target layout bus` vs `bench/other bus`) in `app/src-tauri/src/commands/sync_panel.rs` (backend `set_sync_mode`)
+- [x] T045 [US4] Implement `apply_sync_changes` with continue-on-error row processing in `app/src-tauri/src/commands/sync_panel.rs`
+- [x] T046 [US4] Implement read-only write-reply handling to clear row and reset displayed value in `app/src-tauri/src/commands/sync_panel.rs`
+- [x] T047 [US4] Integrate startup auto-load, close layout, and new layout capture actions in `app/src/routes/+page.svelte`
 
 **Checkpoint**: Sync panel prevents silent pushes and supports safe selective application.
 

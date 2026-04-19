@@ -1,0 +1,10 @@
+ {
+   "mcpServers": {
+     "lcc-trace": {
+       "type": "stdio",
+       "command": "node",
+       "args": ["tools\\trace-mcp\\dist\\index.js"],
+       "tools": ["*"]
+     }
+   }
+ }

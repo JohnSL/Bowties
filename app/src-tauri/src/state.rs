@@ -117,6 +117,10 @@ pub struct ActiveLayoutContext {
     pub mode: ActiveLayoutMode,
     pub captured_at: Option<String>,
     pub pending_offline_change_count: usize,
+    /// Node IDs from the captured layout (uppercase hex, no dots).
+    /// Populated when the layout is opened; used for bus-match overlap scoring.
+    #[serde(default)]
+    pub layout_node_ids: Vec<String>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

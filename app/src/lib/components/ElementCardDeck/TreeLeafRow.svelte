@@ -671,12 +671,26 @@
       <span class="offline-change-msg" role="status">
         Unsaved offline edit: {draftOfflineRow.baselineValue} -> {draftOfflineRow.plannedValue}
       </span>
+      <button
+        class="revert-baseline-btn"
+        onclick={() => offlineChangesStore.revertToBaseline(draftOfflineRow!.changeId)}
+        title="Revert to captured baseline value"
+        aria-label="Revert to baseline"
+        disabled={offlineChangesStore.isBusy}
+      >↩ Revert</button>
     {/if}
 
     {#if !suppressTransientIndicators && persistedOfflineRow}
       <span class="offline-pending-msg" role="status">
         Pending apply: {persistedOfflineRow.baselineValue} -> {persistedOfflineRow.plannedValue}
       </span>
+      <button
+        class="revert-baseline-btn"
+        onclick={() => offlineChangesStore.revertToBaseline(persistedOfflineRow!.changeId)}
+        title="Revert to captured baseline value"
+        aria-label="Revert to baseline"
+        disabled={offlineChangesStore.isBusy}
+      >↩ Revert</button>
     {/if}
 
     {#if leaf.eventRole}
@@ -823,6 +837,27 @@
     font-size: 11px;
     line-height: 1.5;
     font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  .revert-baseline-btn {
+    color: #616161;
+    background: transparent;
+    border: 1px solid #d1d1d1;
+    border-radius: 10px;
+    padding: 1px 8px;
+    font-size: 11px;
+    line-height: 1.5;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+    cursor: pointer;
+  }
+  .revert-baseline-btn:hover:not(:disabled) {
+    background: #f5f5f5;
+    border-color: #a0a0a0;
+    color: #242424;
+  }
+  .revert-baseline-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   /* ── Editable input fields ── */

@@ -158,3 +158,29 @@ pub fn missing_detail(space: u8, offset_hex: &str, path: &[String]) -> String {
 pub fn canonical_node_filename(node_id: &str) -> String {
     format!("{}.yaml", node_id.to_uppercase())
 }
+
+/// Update the baseline `value` for a leaf in the snapshot's config tree
+/// matching the given (space, offset). Returns `true` if a leaf was updated.
+pub fn update_snapshot_baseline(
+    config: &mut BTreeMap<String, SnapshotValueNode>,
+    space: u8,
+    offset: &str,
+    new_value: &str,
+) -> bool {
+    for node in config.values_mut() {
+        match node {
+            SnapshotValueNode::Branch(children) => {
+                if update_snapshot_baseline(children, space, offset, new_value) {
+                    return true;
+                }
+            }
+            SnapshotValueNode::Leaf(leaf) => {
+                if leaf.space == Some(space) && leaf.offset.as_deref() == Some(offset) {
+                    leaf.value = new_value.to_string();
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}

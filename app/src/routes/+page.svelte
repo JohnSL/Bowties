@@ -43,6 +43,8 @@
   import { layoutOpenInProgress, layoutOpenStatusText, setLayoutOpenPhase } from '$lib/stores/layoutOpenLifecycle';
   import { installMenuShortcuts } from '../lib/keyboard/menuShortcuts';
   import type { MissingCdiNode } from '$lib/components/CdiDownloadDialog.svelte';
+  import SyncPanel from '$lib/components/Sync/SyncPanel.svelte';
+  import { syncPanelStore } from '$lib/stores/syncPanel.svelte';
 
   // Active tab state — 'config' (default) or 'bowties'
   let activeTab = $state<'config' | 'bowties'>('config');
@@ -183,6 +185,12 @@
   let showConnectionDialog = $state(false);
   let currentOfflineSnapshots = $state<OfflineNodeSnapshot[]>([]);
   let startupBootstrapPending = $state(true);
+  let syncPanelVisible = $state(false);
+
+  // Discovery settling: wait for a quiet period after last node-discovered event
+  // before triggering sync, so all nodes have time to appear.
+  let discoverySettleTimer: ReturnType<typeof setTimeout> | null = null;
+  let syncTriggered = false;
 
   function normalizeLayoutTitle(raw: string | null | undefined): string | null {
     if (!raw) return null;
@@ -699,32 +707,49 @@
 
       // Reactive node discovery: nodes appear one-by-one as VerifiedNode replies arrive.
       // Register in backend cache, add skeleton to local list, then fetch SNIP+PIP per node.
+      // When a layout is open, nodes may already exist as offline skeletons (synthetic alias,
+      // no backend proxy). In that case we upgrade them with the real bus alias and proceed
+      // to registerNode + SNIP/PIP so backend proxies are created for sync.
       unlistens.push(await listen<{ nodeId: string; alias: number; timestamp: string }>('lcc-node-discovered', async (event) => {
         if (!connected) return; // ignore stray events after disconnect
         const { nodeId, alias } = event.payload;
-        if (nodes.some(n => formatNodeId(n.node_id) === nodeId)) return; // dedup
 
         // Parse dotted-hex nodeId back to number[]
         const nodeIdBytes = nodeId.split('.').map(b => parseInt(b, 16));
 
-        // Add skeleton immediately so the UI shows the node without waiting for SNIP
-        const skeleton: DiscoveredNode = {
-          node_id: nodeIdBytes,
-          alias,
-          snip_data: null,
-          snip_status: 'Unknown',
-          connection_status: 'Connected',
-          last_verified: null,
-          last_seen: new Date().toISOString(),
-          cdi: null,
-          pip_flags: null,
-          pip_status: 'Unknown',
-        };
-        nodes = [...nodes, skeleton];
-        updateNodeInfo(nodes);
+        const existingIdx = nodes.findIndex(n => formatNodeId(n.node_id) === nodeId);
+        if (existingIdx >= 0) {
+          const existing = nodes[existingIdx];
+          // True dedup: same node AND same real alias → already fully registered
+          if (existing.alias === alias) return;
+          // Upgrade offline skeleton (or stale alias) with real bus alias
+          nodes = nodes.map((n, i) => i !== existingIdx ? n : {
+            ...n,
+            alias,
+            connection_status: 'Connected' as const,
+            last_seen: new Date().toISOString(),
+          });
+          updateNodeInfo(nodes);
+        } else {
+          // Brand-new node — add skeleton immediately so the UI shows it
+          const skeleton: DiscoveredNode = {
+            node_id: nodeIdBytes,
+            alias,
+            snip_data: null,
+            snip_status: 'Unknown',
+            connection_status: 'Connected',
+            last_verified: null,
+            last_seen: new Date().toISOString(),
+            cdi: null,
+            pip_flags: null,
+            pip_status: 'Unknown',
+          };
+          nodes = [...nodes, skeleton];
+          updateNodeInfo(nodes);
+        }
 
         try {
-          // Register in backend state first so SNIP/CDI cache updates work correctly
+          // Register in backend state so SNIP/CDI cache updates work correctly
           await registerNode(nodeId, alias);
 
           // Fetch SNIP + PIP concurrently
@@ -737,15 +762,28 @@
             if (n.alias !== alias) return n;
             return {
               ...n,
-              snip_data: snipResult.snip_data,
+              snip_data: snipResult.snip_data ?? n.snip_data, // keep offline fallback
               snip_status: snipResult.status,
-              pip_flags: pipResult.pip_flags,
+              pip_flags: pipResult.pip_flags ?? n.pip_flags,
               pip_status: pipResult.status,
             };
           });
           updateNodeInfo(nodes);
         } catch (e) {
           console.warn(`Failed to query node ${nodeId}:`, e);
+        }
+
+        // Reset the discovery settling timer — wait for 1s of silence after the
+        // last node-discovered event before triggering sync.
+        if (!syncTriggered && layoutStore.isOfflineMode && offlineChangesStore.pendingCount > 0) {
+          if (discoverySettleTimer) clearTimeout(discoverySettleTimer);
+          discoverySettleTimer = setTimeout(() => {
+            discoverySettleTimer = null;
+            if (!syncTriggered) {
+              syncTriggered = true;
+              maybeTriggerSync();
+            }
+          }, 1000);
         }
       }));
 
@@ -843,7 +881,43 @@
     connectionLabel = cfg.name ?? (cfg.host ? `${cfg.host}:${cfg.port}` : cfg.serialPort ?? 'LCC');
     connected = true;
     showConnectionDialog = false;
+    syncTriggered = false;
     probeForNodes();
+  }
+
+  /**
+   * After connecting, check if an offline layout with pending changes is active.
+   * If so, compute match status and build a sync session, then show the panel.
+   */
+  async function maybeTriggerSync() {
+    if (!layoutStore.isOfflineMode) return;
+    if (offlineChangesStore.pendingCount === 0) return;
+
+    // Compute preliminary match from discovered node IDs
+    const discoveredIds = nodes.map(n => formatNodeId(n.node_id));
+    await syncPanelStore.computeMatch(discoveredIds);
+
+    // If user needs to choose bench mode, show the panel for the mode prompt
+    if (
+      syncPanelStore.matchStatus &&
+      syncPanelStore.matchStatus.classification !== 'likely_same' &&
+      syncPanelStore.syncMode === null
+    ) {
+      syncPanelVisible = true;
+      return; // Wait for mode selection — SyncPanel will call loadSession after
+    }
+
+    // Build and show the sync session
+    await syncPanelStore.loadSession();
+    if (syncPanelStore.session) {
+      const hasContent =
+        syncPanelStore.session.conflictRows.length > 0 ||
+        syncPanelStore.session.cleanRows.length > 0 ||
+        syncPanelStore.session.nodeMissingRows.length > 0;
+      if (hasContent) {
+        syncPanelVisible = true;
+      }
+    }
   }
 
   async function disconnect() {
@@ -856,6 +930,10 @@
       updateNodeInfo([]);
       nodeTreeStore.reset();
       clearConfigReadStatus();
+      syncPanelStore.reset();
+      syncPanelVisible = false;
+      if (discoverySettleTimer) { clearTimeout(discoverySettleTimer); discoverySettleTimer = null; }
+      syncTriggered = false;
     } catch (e) {
       errorMessage = `Disconnect failed: ${e}`;
     }
@@ -1442,6 +1520,9 @@
     {nodeReadStates}
     onCancel={handleCancelConfigReading}
   />
+
+  <!-- ═══ SYNC PANEL MODAL ═══ -->
+  <SyncPanel bind:visible={syncPanelVisible} />
 
   {#if $layoutOpenInProgress}
     <div class="layout-loading-backdrop" role="presentation">
