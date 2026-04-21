@@ -11,7 +11,7 @@
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import { probeNodes as probeNodesApi, querySnip, queryPip, registerNode, refreshAllNodes } from '$lib/api/tauri';
   import { clearRecentLayout, getRecentLayout } from '$lib/api/bowties';
-  import { captureLayoutSnapshot, closeLayout, saveLayoutFile, openLayoutFile, buildOfflineNodeTree } from '$lib/api/layout';
+  import { closeLayout, saveLayoutFile, openLayoutFile, buildOfflineNodeTree } from '$lib/api/layout';
   import type { OfflineNodeSnapshot, SnapshotValueNode } from '$lib/api/layout';
   import { readAllConfigValues, cancelConfigReading, getCdiXml, downloadCdi } from '$lib/api/cdi';
   import { getCdiErrorMessage, isCdiError } from '$lib/types/cdi';
@@ -45,6 +45,7 @@
   import type { MissingCdiNode } from '$lib/components/CdiDownloadDialog.svelte';
   import SyncPanel from '$lib/components/Sync/SyncPanel.svelte';
   import { syncPanelStore } from '$lib/stores/syncPanel.svelte';
+  import OfflineBanner from '$lib/components/Layout/OfflineBanner.svelte';
 
   // Active tab state — 'config' (default) or 'bowties'
   let activeTab = $state<'config' | 'bowties'>('config');
@@ -92,11 +93,12 @@
     const layoutLoaded = layoutStore.isLoaded;
     const layoutDirty = layoutStore.isDirty;
     const metaDirty = bowtieMetadataStore.isDirty;
-    const offlineActive = !!layoutStore.activeContext && layoutStore.isOfflineMode;
+    const offlineActive = !!layoutStore.activeContext && layoutStore.hasLayoutFile;
     const hasInMemoryEdits =
       [...nodeTreeStore.trees.values()].some(t => hasModifiedLeaves(t)) ||
       bowtieMetadataStore.isDirty ||
-      offlineChangesStore.draftCount > 0;
+      offlineChangesStore.draftCount > 0 ||
+      layoutStore.isDirty;
     return !busy && ((offlineActive && hasInMemoryEdits) || (layoutLoaded && (layoutDirty || metaDirty)));
   }
 
@@ -183,9 +185,12 @@
   let probing = $state(false);
   let partialCaptureNodes = $state(new Set<string>());
   let showConnectionDialog = $state(false);
-  let currentOfflineSnapshots = $state<OfflineNodeSnapshot[]>([]);
   let startupBootstrapPending = $state(true);
   let syncPanelVisible = $state(false);
+
+  // Snapshots from the currently active layout file — used to re-hydrate the
+  // offline tree after disconnect so nodes are not lost from the UI (Bug 4).
+  let currentLayoutSnapshots = $state<OfflineNodeSnapshot[]>([]);
 
   // Discovery settling: wait for a quiet period after last node-discovered event
   // before triggering sync, so all nodes have time to appear.
@@ -311,7 +316,6 @@
   }
 
   async function hydrateOfflineSnapshots(snapshots: OfflineNodeSnapshot[]) {
-    currentOfflineSnapshots = snapshots;
     const offlineNodes: DiscoveredNode[] = snapshots.map((s, idx) => ({
       node_id: canonicalToBytes(s.nodeId),
       alias: 0x700 + idx,
@@ -365,6 +369,11 @@
       nodeTreeStore.setTree(tree.nodeId, tree);
       markNodeConfigRead(tree.nodeId);
     }
+
+    // Apply persisted pending offline changes to show planned values in config fields
+    if (offlineChangesStore.persistedRows.length > 0) {
+      nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows);
+    }
   }
 
   async function openOfflineLayoutFromDialog() {
@@ -379,6 +388,7 @@
       setLayoutOpenPhase('opening_file');
       const result = await openLayoutFile(selected);
       partialCaptureNodes = new Set(result.partialNodes);
+      currentLayoutSnapshots = result.nodeSnapshots;
 
       setLayoutOpenPhase('hydrating_snapshots');
       await hydrateOfflineSnapshots(result.nodeSnapshots);
@@ -419,16 +429,11 @@
         targetPath = selected;
       }
 
-      if (!layoutStore.isOfflineMode) {
-        await captureLayoutSnapshot(true);
-      }
-
       if (layoutStore.isOfflineMode) {
         await offlineChangesStore.flushPendingToBackend();
       }
 
-      const snapshotsForSave = layoutStore.isOfflineMode ? currentOfflineSnapshots : undefined;
-      const result = await saveLayoutFile(targetPath, true, snapshotsForSave);
+      const result = await saveLayoutFile(targetPath, true);
       partialCaptureNodes = new Set(result.warnings);
       const contextLayoutId = normalizeLayoutTitle(targetPath) ?? 'layout';
       layoutStore.setActiveContext({
@@ -450,11 +455,11 @@
 
   async function resetLayoutStateForNoLayout(reprobeLiveNodes = true) {
     partialCaptureNodes = new Set<string>();
+    currentLayoutSnapshots = [];
     nodes = [];
     updateNodeInfo([]);
     clearConfigReadStatus();
     nodeTreeStore.reset();
-    currentOfflineSnapshots = [];
     bowtieMetadataStore.clearAll();
     offlineChangesStore.clear();
 
@@ -518,7 +523,7 @@
   // because unreadCount excludes CDI-less nodes (e.g. JMRI), so the counts
   // would never match on a mixed network.
   let showConfigCta = $derived(
-    !layoutStore.isOfflineMode &&
+    !layoutStore.hasLayoutFile &&
     !$layoutOpenInProgress &&
     nodes.length > 0 &&
     unreadCount > 0 &&
@@ -598,6 +603,7 @@
       try {
         const status = await invoke("get_connection_status");
         connected = (status as any).connected;
+        layoutStore.setConnected(connected);
         if (connected && (status as any).config) {
           const cfg = (status as any).config;
           connectionLabel = cfg.name ?? (cfg.host ? `${cfg.host}:${cfg.port}` : cfg.serialPort ?? 'LCC');
@@ -622,6 +628,7 @@
           setLayoutOpenPhase('opening_file');
           const opened = await openLayoutFile(recent.path);
           partialCaptureNodes = new Set(opened.partialNodes);
+          currentLayoutSnapshots = opened.nodeSnapshots;
 
           setLayoutOpenPhase('hydrating_snapshots');
           await hydrateOfflineSnapshots(opened.nodeSnapshots);
@@ -649,7 +656,13 @@
 
       // Spec 007: Start node-tree-updated listener so trees are refreshed
       // automatically as config values and event roles are merged server-side.
-      nodeTreeStore.startListening();
+      // The callback applies pending offline values to each freshly-loaded tree
+      // so the planned value is visible in the config field.
+      nodeTreeStore.startListening((nodeId) => {
+        if (layoutStore.hasLayoutFile) {
+          nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows);
+        }
+      });
 
       // T050: Prompt-to-save guard on app close (FR-024)
       const appWindow = getCurrentWebviewWindow();
@@ -775,7 +788,7 @@
 
         // Reset the discovery settling timer — wait for 1s of silence after the
         // last node-discovered event before triggering sync.
-        if (!syncTriggered && layoutStore.isOfflineMode && offlineChangesStore.pendingCount > 0) {
+        if (!syncTriggered && layoutStore.hasLayoutFile && offlineChangesStore.pendingCount > 0) {
           if (discoverySettleTimer) clearTimeout(discoverySettleTimer);
           discoverySettleTimer = setTimeout(() => {
             discoverySettleTimer = null;
@@ -820,7 +833,7 @@
       // Now that the lcc-node-discovered listener is registered, probe for existing nodes.
       // Doing this after listener setup avoids a race where VerifiedNode replies arrive
       // before the frontend listener is ready and get silently dropped.
-      if (connected && !layoutStore.isOfflineMode) probeForNodes();
+      if (connected) probeForNodes();
 
       // Native menu event listeners — relay OS menu clicks to handler functions
       unlistens.push(await listen('menu-disconnect',     () => disconnect()));
@@ -856,6 +869,9 @@
       unlistens.push(await listen('menu-save-layout-as', async () => {
         runSaveLayoutAsAction();
       }));
+      unlistens.push(await listen('menu-sync-to-bus', () => {
+        if (connected && layoutStore.hasLayoutFile) forceSyncPanel();
+      }));
       unlistens.push(await listen('menu-diagnostics', async () => {
         try {
           const report = await invoke('get_diagnostic_report');
@@ -880,6 +896,7 @@
     const cfg = e.detail.config;
     connectionLabel = cfg.name ?? (cfg.host ? `${cfg.host}:${cfg.port}` : cfg.serialPort ?? 'LCC');
     connected = true;
+    layoutStore.setConnected(true);
     showConnectionDialog = false;
     syncTriggered = false;
     probeForNodes();
@@ -890,8 +907,11 @@
    * If so, compute match status and build a sync session, then show the panel.
    */
   async function maybeTriggerSync() {
-    if (!layoutStore.isOfflineMode) return;
+    if (!layoutStore.hasLayoutFile) return;
     if (offlineChangesStore.pendingCount === 0) return;
+    // Block auto-triggers (settle timer) from re-opening a panel the user dismissed.
+    // `forceSyncPanel` resets syncTriggered before calling, so it bypasses this guard.
+    if (syncPanelStore.isDismissed && syncTriggered) return;
 
     // Compute preliminary match from discovered node IDs
     const discoveredIds = nodes.map(n => formatNodeId(n.node_id));
@@ -920,20 +940,36 @@
     }
   }
 
+  /** Re-open the sync panel on demand (e.g. from menu or OfflineBanner button). */
+  async function forceSyncPanel() {
+    syncPanelStore.reset();
+    syncTriggered = false;
+    await maybeTriggerSync();
+  }
+
   async function disconnect() {
     errorMessage = "";
     connectionLabel = "";
     try {
       await invoke("disconnect_lcc");
       connected = false;
-      nodes = [];
-      updateNodeInfo([]);
-      nodeTreeStore.reset();
+      layoutStore.setConnected(false);
       clearConfigReadStatus();
       syncPanelStore.reset();
       syncPanelVisible = false;
       if (discoverySettleTimer) { clearTimeout(discoverySettleTimer); discoverySettleTimer = null; }
       syncTriggered = false;
+
+      // Re-hydrate from saved snapshots when a layout is open so the node list
+      // is preserved after disconnect instead of going blank (Bug 4).
+      if (layoutStore.hasLayoutFile && currentLayoutSnapshots.length > 0) {
+        nodeTreeStore.reset();
+        await hydrateOfflineSnapshots(currentLayoutSnapshots);
+      } else {
+        nodes = [];
+        updateNodeInfo([]);
+        nodeTreeStore.reset();
+      }
     } catch (e) {
       errorMessage = `Disconnect failed: ${e}`;
     }
@@ -1369,6 +1405,7 @@
     canCloseLayout: boolean,
     canSaveLayout: boolean,
     canSaveLayoutAs: boolean,
+    canSyncToBus: boolean,
   ) {
     try {
       await invoke("update_menu_state", {
@@ -1380,6 +1417,7 @@
         canCloseLayout,
         canSaveLayout,
         canSaveLayoutAs,
+        canSyncToBus,
       });
     } catch (e) {
       console.warn("Failed to update menu state:", e);
@@ -1409,18 +1447,20 @@
     const layoutLoaded = layoutStore.isLoaded;
     const layoutDirty  = layoutStore.isDirty;
     const metaDirty    = bowtieMetadataStore.isDirty;
-    const offlineActive = !!layoutStore.activeContext && layoutStore.isOfflineMode;
+    const offlineActive = !!layoutStore.activeContext && layoutStore.hasLayoutFile;
     const canCloseLayout = !!layoutStore.activeContext;
     const hasInMemoryEdits =
       [...nodeTreeStore.trees.values()].some(t => hasModifiedLeaves(t)) ||
       bowtieMetadataStore.isDirty ||
-      offlineChangesStore.draftCount > 0;
+      offlineChangesStore.draftCount > 0 ||
+      layoutStore.isDirty;
 
     const canOpenLayout   = !busy;
     const canSaveLayout   = !busy && ((offlineActive && hasInMemoryEdits) || (layoutLoaded && (layoutDirty || metaDirty)));
     const canSaveLayoutAs = !busy;
+    const canSyncToBus    = conn && offlineActive && offlineChangesStore.pendingCount > 0;
 
-    syncMenuState(conn, busy, canViewCdi, canRedownloadCdi, canOpenLayout, canCloseLayout, canSaveLayout, canSaveLayoutAs);
+    syncMenuState(conn, busy, canViewCdi, canRedownloadCdi, canOpenLayout, canCloseLayout, canSaveLayout, canSaveLayoutAs, canSyncToBus);
   });
 
   // Dynamic window title — reflects current layout file name and dirty state.
@@ -1542,13 +1582,24 @@
     </div>
   {/if}
 
+  <!-- ═══ OFFLINE BANNER ═══ -->
+  {#if layoutStore.isOfflineMode}
+    <OfflineBanner
+      capturedAt={layoutStore.activeContext?.capturedAt ?? null}
+      layoutId={activeLayoutLabel}
+      isConnected={connected}
+      isSyncDismissed={syncPanelStore.isDismissed}
+      onsyncrequest={forceSyncPanel}
+    />
+  {/if}
+
   <!-- ═══ MAIN CONTENT ═══ -->
   <div class="main-content">
     {#if startupBootstrapPending}
       <div class="startup-placeholder" aria-live="polite">
         <p>Loading Bowties…</p>
       </div>
-    {:else if !connected && !layoutStore.isOfflineMode && nodes.length === 0}
+    {:else if !connected && !layoutStore.hasLayoutFile && nodes.length === 0}
       <div class="connect-area">
         <ConnectionManager on:connected={handleConnected} />
       </div>
@@ -1611,7 +1662,7 @@
               </button>
             </div>
           {:else}
-            {#if layoutStore.isOfflineMode && selectedNodeIdAny && partialCaptureNodes.has(selectedNodeIdAny.replace(/\./g, '').toUpperCase())}
+            {#if layoutStore.hasLayoutFile && selectedNodeIdAny && partialCaptureNodes.has(selectedNodeIdAny.replace(/\./g, '').toUpperCase())}
               <div class="partial-capture-note">
                 <MissingCaptureBadge text="(Not captured)" />
                 <span>Some values for this node were not captured and remain read-only offline.</span>

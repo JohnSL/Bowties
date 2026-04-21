@@ -18,6 +18,7 @@ import type {
   SegmentNode,
 } from '$lib/types/nodeTree';
 import { isGroup, isLeaf, getChildrenAtPath } from '$lib/types/nodeTree';
+import type { OfflineChangeRow } from '$lib/api/sync';
 
 // ─── Store class ─────────────────────────────────────────────────────────────
 
@@ -221,6 +222,44 @@ class NodeTreeStore {
     this._trees = next;
   }
 
+  /**
+   * Apply pending offline change values to the live tree.
+   *
+   * For each persisted offline row with `status === 'pending'`, find the
+   * matching leaf (by nodeId + space + address) and set
+   * `leaf.modifiedValue = plannedValue` and `leaf.isOfflinePending = true`.
+   * This makes the config field show the planned value while the bus value
+   * is shown in the annotation.
+   *
+   * Must be called after a tree is loaded/rebuilt when a layout is open.
+   */
+  applyOfflinePendingValues(offlineRows: OfflineChangeRow[]): void {
+    const pendingRows = offlineRows.filter((r) => r.status === 'pending' && r.nodeId && r.space != null && r.offset != null);
+    if (pendingRows.length === 0) return;
+
+    const next = new Map<string, NodeConfigTree>();
+    for (const [nodeId, tree] of this._trees.entries()) {
+      const rows = pendingRows.filter((r) => r.nodeId === nodeId);
+      if (rows.length === 0) {
+        next.set(nodeId, tree);
+        continue;
+      }
+      const updatedTree = deepCloneTree(tree);
+      for (const row of rows) {
+        const address = parseInt(row.offset!, 16);
+        const space = row.space!;
+        applyPendingInChildren(
+          updatedTree.segments.flatMap((s) => s.children),
+          space,
+          address,
+          row.plannedValue,
+        );
+      }
+      next.set(nodeId, updatedTree);
+    }
+    this._trees = next;
+  }
+
   // ── Listener lifecycle ────────────────────────────────────────────────────
 
   /**
@@ -229,9 +268,13 @@ class NodeTreeStore {
    * When the backend emits this event (after merging config values or
    * event roles), we automatically re-fetch the tree for the affected node.
    *
+   * The optional `onTreeLoaded` callback fires after each tree load completes.
+   * Callers can use this to apply post-load transformations (e.g. pending
+   * offline change values) without coupling stores together.
+   *
    * Safe to call multiple times — subsequent calls are no-ops.
    */
-  async startListening(): Promise<void> {
+  async startListening(onTreeLoaded?: (nodeId: string) => void): Promise<void> {
     if (this._unlisten) return;
 
     this._unlisten = await listen<NodeTreeUpdatedPayload>(
@@ -242,7 +285,9 @@ class NodeTreeStore {
         // newly discovered nodes are fetched automatically after CDI scan, not
         // just nodes the user already expanded.  `loadTree` deduplicates via the
         // _loading set, and for already-loaded nodes it acts as a refresh.
-        void this.loadTree(nodeId);
+        void this.loadTree(nodeId).then(() => {
+          if (onTreeLoaded) onTreeLoaded(nodeId);
+        });
       },
     );
   }
@@ -391,6 +436,7 @@ function clearModifiedInChildren(children: ConfigNode[]): void {
   for (const child of children) {
     if (isLeaf(child)) {
       child.modifiedValue = null;
+      child.isOfflinePending = false;
       child.writeState = null;
       child.writeError = null;
       continue;
@@ -399,5 +445,29 @@ function clearModifiedInChildren(children: ConfigNode[]): void {
       clearModifiedInChildren(child.children);
     }
   }
+}
+
+function parseOfflineValueString(value: string): import('$lib/types/nodeTree').TreeConfigValue {
+  if (/^[0-9]+$/.test(value)) return { type: 'int', value: parseInt(value, 10) };
+  if (/^[0-9]+\.[0-9]+$/.test(value)) return { type: 'float', value: parseFloat(value) };
+  if (/^([0-9A-F]{2}\.){7}[0-9A-F]{2}$/i.test(value)) {
+    const bytes = value.split('.').map((b) => parseInt(b, 16));
+    return { type: 'eventId', bytes, hex: value.toUpperCase() };
+  }
+  return { type: 'string', value };
+}
+
+function applyPendingInChildren(children: ConfigNode[], space: number, address: number, plannedValue: string): boolean {
+  for (const child of children) {
+    if (isLeaf(child) && child.space === space && child.address === address) {
+      child.modifiedValue = parseOfflineValueString(plannedValue);
+      child.isOfflinePending = true;
+      return true;
+    }
+    if (isGroup(child)) {
+      if (applyPendingInChildren(child.children, space, address, plannedValue)) return true;
+    }
+  }
+  return false;
 }
 

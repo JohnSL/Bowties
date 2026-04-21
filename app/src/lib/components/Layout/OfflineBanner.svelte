@@ -4,11 +4,15 @@
   interface Props {
     capturedAt: string | null;
     layoutId?: string | null;
+    isConnected?: boolean;
+    isSyncDismissed?: boolean;
+    onsyncrequest?: () => void;
   }
 
-  let { capturedAt, layoutId = null }: Props = $props();
+  let { capturedAt, layoutId = null, isConnected = false, isSyncDismissed = false, onsyncrequest }: Props = $props();
 
   const capturedText = $derived(capturedAt ? new Date(capturedAt).toLocaleString() : 'unknown time');
+  const showSyncButton = $derived(isConnected && isSyncDismissed && offlineChangesStore.pendingCount > 0);
 </script>
 
 <div class="offline-banner" role="status" aria-live="polite">
@@ -24,6 +28,10 @@
     <span class="pending-badge">
       {offlineChangesStore.pendingCount} pending {offlineChangesStore.pendingCount === 1 ? 'change' : 'changes'}
     </span>
+  {/if}
+  {#if showSyncButton}
+    <span class="sep">•</span>
+    <button class="sync-btn" onclick={onsyncrequest}>Open Sync Panel</button>
   {/if}
 </div>
 
@@ -50,5 +58,20 @@
     background: #fed7aa;
     padding: 2px 6px;
     border-radius: 4px;
+  }
+
+  .sync-btn {
+    cursor: pointer;
+    background: #c2410c;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .sync-btn:hover {
+    background: #9a3412;
   }
 </style>

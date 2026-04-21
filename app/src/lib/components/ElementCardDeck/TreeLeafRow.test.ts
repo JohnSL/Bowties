@@ -53,7 +53,7 @@ vi.mock('$lib/stores/configFocus.svelte', () => ({
 }));
 
 vi.mock('$lib/api/config', () => ({
-  setModifiedValue: vi.fn(),
+  setModifiedValue: vi.fn().mockResolvedValue(undefined),
   triggerAction: vi.fn().mockResolvedValue(undefined),
 }));
 

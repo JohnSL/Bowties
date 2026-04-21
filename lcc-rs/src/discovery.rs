@@ -2468,7 +2468,7 @@ mod tests {
         let mut transport = GlobalMockTransport::new();
         transport.add_receive_frame(conflicting_amd.to_string());
 
-        let mut actor = TransportActor::new(Box::new(transport));
+        let actor = TransportActor::new(Box::new(transport));
         let transport_handle = actor.handle();
 
         // Set up a connection with actor and start the query responders

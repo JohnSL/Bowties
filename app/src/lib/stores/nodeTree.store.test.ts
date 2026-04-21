@@ -265,6 +265,89 @@ describe('setLeafModifiedValue — offline dirty marker', () => {
   });
 });
 
+// ─── Offline pending: applyOfflinePendingValues ────────────────────────────
+
+import type { OfflineChangeRow } from '$lib/api/sync';
+
+function makePendingRow(overrides: Partial<OfflineChangeRow> = {}): OfflineChangeRow {
+  return {
+    changeId: 'row-1',
+    kind: 'config',
+    nodeId: NODE_ID,
+    space: 253,
+    offset: '0x00000000',
+    baselineValue: '3',
+    plannedValue: '5',
+    status: 'pending',
+    ...overrides,
+  };
+}
+
+describe('applyOfflinePendingValues', () => {
+  it('sets modifiedValue and isOfflinePending on a matching leaf (int)', () => {
+    const leaf = makeTestLeaf(['seg:0', 'elem:0'], 0);
+    nodeTreeStore.setTree(NODE_ID, {
+      nodeId: NODE_ID, identity: null,
+      segments: [{ name: 'Config', description: null, origin: 0, space: 253, children: [leaf] }],
+    });
+
+    nodeTreeStore.applyOfflinePendingValues([makePendingRow()]);
+
+    const updated = nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0] as LeafConfigNode;
+    expect(updated.modifiedValue).toEqual({ type: 'int', value: 5 });
+    expect(updated.isOfflinePending).toBe(true);
+  });
+
+  it('does not modify leaves when no row matches address', () => {
+    const leaf = makeTestLeaf(['seg:0', 'elem:0'], 4); // address 4, row targets 0x00000000
+    nodeTreeStore.setTree(NODE_ID, {
+      nodeId: NODE_ID, identity: null,
+      segments: [{ name: 'Config', description: null, origin: 0, space: 253, children: [leaf] }],
+    });
+
+    nodeTreeStore.applyOfflinePendingValues([makePendingRow()]);
+
+    const updated = nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0] as LeafConfigNode;
+    expect(updated.modifiedValue).toBeFalsy();
+    expect(updated.isOfflinePending).toBeFalsy();
+  });
+
+  it('skips rows with status !== pending', () => {
+    const leaf = makeTestLeaf(['seg:0', 'elem:0'], 0);
+    nodeTreeStore.setTree(NODE_ID, {
+      nodeId: NODE_ID, identity: null,
+      segments: [{ name: 'Config', description: null, origin: 0, space: 253, children: [leaf] }],
+    });
+
+    nodeTreeStore.applyOfflinePendingValues([makePendingRow({ status: 'applied' as any })]);
+
+    const updated = nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0] as LeafConfigNode;
+    expect(updated.modifiedValue).toBeFalsy();
+    expect(updated.isOfflinePending).toBeFalsy();
+  });
+
+  it('does not modify trees for nodes not in the store', () => {
+    // Store is empty (reset in beforeEach) — should not throw
+    expect(() => {
+      nodeTreeStore.applyOfflinePendingValues([makePendingRow()]);
+    }).not.toThrow();
+  });
+
+  it('sets modifiedValue as string for non-numeric plannedValue', () => {
+    const leaf = makeTestLeaf(['seg:0', 'elem:0'], 0);
+    nodeTreeStore.setTree(NODE_ID, {
+      nodeId: NODE_ID, identity: null,
+      segments: [{ name: 'Config', description: null, origin: 0, space: 253, children: [leaf] }],
+    });
+
+    nodeTreeStore.applyOfflinePendingValues([makePendingRow({ plannedValue: 'Hello' })]);
+
+    const updated = nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0] as LeafConfigNode;
+    expect(updated.modifiedValue).toEqual({ type: 'string', value: 'Hello' });
+    expect(updated.isOfflinePending).toBe(true);
+  });
+});
+
 describe('clearAllModifiedValues — offline save cleanup', () => {
   it('clears modifiedValue from all trees across all nodes', () => {
     const NODE_ID_2 = '06.02.01.00.00.00';

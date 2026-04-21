@@ -45,6 +45,9 @@ class LayoutStore {
   /** True when an offline directory layout is active. */
   private _offlineMode = $state<boolean>(false);
 
+  /** True when the LCC bus is connected. */
+  private _connected = $state<boolean>(false);
+
   // ── Reactive getters ──────────────────────────────────────────────────────
 
   get layout(): LayoutFile | null {
@@ -72,7 +75,17 @@ class LayoutStore {
   }
 
   get isOfflineMode(): boolean {
+    return this._offlineMode && !this._connected;
+  }
+
+  /** True when an offline directory layout file is open (regardless of connection). */
+  get hasLayoutFile(): boolean {
     return this._offlineMode;
+  }
+
+  /** True when the LCC bus is connected. */
+  get isConnected(): boolean {
+    return this._connected;
   }
 
   /** Display name for the layout file (filename only, or 'Untitled'). */
@@ -253,6 +266,15 @@ class LayoutStore {
     this._busy = false;
     this._activeContext = null;
     this._offlineMode = false;
+  }
+
+  /**
+   * Update the bus connection status.
+   * When connected, isOfflineMode returns false even if a layout file is open,
+   * so edits go to hardware instead of offline changes.
+   */
+  setConnected(connected: boolean): void {
+    this._connected = connected;
   }
 
   setActiveContext(context: ActiveLayoutContext | null): void {

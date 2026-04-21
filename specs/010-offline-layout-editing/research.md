@@ -7,12 +7,12 @@
 
 **Decision**: Use YAML (UTF-8) for all persisted layout artifacts: `manifest.yaml`, `nodes/<NODE_ID>.yaml`, `bowties.yaml`, `offline-changes.yaml`, and optional `cdi-bundle/` index files.
 
-**Rationale**: The spec explicitly requires YAML as canonical format (FR-027), deterministic serialization (FR-028), and git-friendly isolated diffs (FR-024, FR-030). YAML is already used in Bowties (`serde_yaml_ng`) and supports readable maps with stable ordering when encoded from `BTreeMap`.
+**Rationale**: The spec explicitly requires YAML as canonical format (FR-027), deterministic serialization (FR-028), and git-friendly isolated diffs (FR-036, FR-030). YAML is already used in Bowties (`serde_yaml_ng`) and supports readable maps with stable ordering when encoded from `BTreeMap`.
 
 **Alternatives considered**:
 - JSON: rejected because FR-027 mandates YAML.
 - SQLite: rejected as not human-readable and poor for git diffs.
-- Single monolithic file: rejected because FR-024 requires per-node diff isolation.
+- Single monolithic file: rejected because FR-036 requires per-node diff isolation.
 
 ## R-002: Directory Save Atomicity for Multi-File Layout Writes
 
@@ -32,7 +32,7 @@
 
 **Alternatives considered**:
 - Filename by user-visible name: rejected because renames create noisy file churn.
-- Embed all nodes in manifest: rejected because FR-024 expects node-local diffs.
+- Embed all nodes in manifest: rejected because FR-036 expects node-local diffs.
 
 ## R-004: Offline Change Representation and Sync Classification
 
@@ -88,8 +88,8 @@
 
 **Decision**: Treat layout files as source of truth for baseline + pending offline changes when offline; once online reads complete, build an in-memory sync session for classification and resolution, then commit back to layout files.
 
-**Rationale**: Aligns with FR-006, FR-012, FR-013, and FR-021. This keeps explicit user action as the only trigger for bus writes and ensures deterministic restart behavior.
+**Rationale**: Aligns with FR-006, FR-012, FR-013, and FR-033. This keeps explicit user action as the only trigger for bus writes and ensures deterministic restart behavior.
 
 **Alternatives considered**:
-- Immediate writes on connect: rejected because FR-021 forbids automatic push.
+- Immediate writes on connect: rejected because FR-033 forbids automatic push.
 - Keep sync session only in memory: rejected because apply retries and auditability need persisted row state.

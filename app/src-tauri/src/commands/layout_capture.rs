@@ -68,22 +68,8 @@ fn canonical_node_id(node_id_dotted_hex: &str) -> String {
     node_id_dotted_hex.replace('.', "").to_uppercase()
 }
 
-fn canonical_to_dotted_node_id(node_id: &str) -> String {
-    node_id
-        .as_bytes()
-        .chunks(2)
-        .map(|c| std::str::from_utf8(c).unwrap_or("00"))
-        .collect::<Vec<_>>()
-        .join(".")
-}
-
 fn config_value_to_string(value: &crate::node_tree::ConfigValue) -> String {
-    match value {
-        crate::node_tree::ConfigValue::Int { value } => value.to_string(),
-        crate::node_tree::ConfigValue::String { value } => value.clone(),
-        crate::node_tree::ConfigValue::EventId { hex, .. } => hex.clone(),
-        crate::node_tree::ConfigValue::Float { value } => value.to_string(),
-    }
+    value.to_snapshot_string()
 }
 
 fn sanitize_cache_fragment(s: &str) -> String {
@@ -225,7 +211,7 @@ async fn build_node_snapshot(
     };
 
     let mut snapshot = NodeSnapshot {
-        node_id: canonical_node_id(&snapshot.node_id.to_hex_string()),
+        node_id: snapshot.node_id,
         captured_at: captured_at.to_string(),
         capture_status: CaptureStatus::Complete,
         missing: Vec::new(),
@@ -249,7 +235,7 @@ async fn build_node_snapshot(
         tree.is_some(),
         tree_segment_count,
     );
-    let node_id_for_logs = snapshot.node_id.clone();
+    let node_id_for_logs = snapshot.node_id.to_string();
 
     let mut missing = Vec::new();
     if let Some(tree) = tree {
@@ -315,7 +301,7 @@ pub async fn capture_layout_snapshot(
     let mut partial_count = 0usize;
 
     for handle in handles {
-        let node_key = canonical_node_id(&handle.node_id.to_hex_string());
+        let node_key = handle.node_id.to_canonical();
         let producer_events = producer_events_by_node
             .get(&node_key)
             .cloned()
@@ -341,7 +327,6 @@ pub async fn capture_layout_snapshot(
 pub async fn save_layout_directory(
     path: String,
     overwrite: bool,
-    node_snapshots: Option<Vec<NodeSnapshot>>,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<SaveLayoutResult, String> {
@@ -358,10 +343,18 @@ pub async fn save_layout_directory(
 
     let captured_at = chrono::Utc::now().to_rfc3339();
 
-    let snapshots = if let Some(snaps) = node_snapshots {
-        snaps
+    // Read existing layout data once (needed for layout_id, bowties, offline_changes,
+    // and as fallback snapshot source when re-saving offline).
+    let previous = if target.exists() {
+        crate::layout::io::read_layout_capture(target).ok()
     } else {
-        let handles = state.node_registry.get_all_handles().await;
+        None
+    };
+
+    // Resolve snapshots: live node registry takes priority (fresh data from bus),
+    // otherwise fall back to existing companion dir snapshots (re-save while offline).
+    let handles = state.node_registry.get_all_handles().await;
+    let mut snapshots = if !handles.is_empty() {
         let mut producer_events_by_node: BTreeMap<String, Vec<String>> = BTreeMap::new();
         if let Some(catalog) = state.bowties_catalog.read().await.clone() {
             for bowtie in &catalog.bowties {
@@ -377,7 +370,7 @@ pub async fn save_layout_directory(
 
         let mut out = Vec::new();
         for handle in &handles {
-            let node_key = canonical_node_id(&handle.node_id.to_hex_string());
+            let node_key = handle.node_id.to_canonical();
             let producer_events = producer_events_by_node
                 .get(&node_key)
                 .cloned()
@@ -385,13 +378,23 @@ pub async fn save_layout_directory(
             out.push(build_node_snapshot(handle, &captured_at, producer_events, state.inner()).await?);
         }
         out
+    } else if let Some(ref prev) = previous {
+        prev.node_snapshots.clone()
+    } else {
+        Vec::new()
     };
 
-    let partial_nodes = snapshots
+    // Filter out nodes that do not support CDI — they cannot be usefully saved
+    // and cause "(Not captured)" banners on re-open.
+    snapshots.retain(|s| {
+        s.cdi_ref.fingerprint != "not_supported" && s.cdi_ref.fingerprint != "missing"
+    });
+
+    let partial_nodes: Vec<String> = snapshots
         .iter()
         .filter(|s| s.capture_status == CaptureStatus::Partial)
-        .map(|s| s.node_id.clone())
-        .collect::<Vec<_>>();
+        .map(|s| s.node_id.to_canonical())
+        .collect();
 
     let mut manifest_captured_at = snapshots
         .first()
@@ -407,13 +410,11 @@ pub async fn save_layout_directory(
     let mut bowties = crate::layout::types::LayoutFile::default();
     let mut offline_changes = Vec::<OfflineChange>::new();
 
-    if target.exists() {
-        if let Ok(previous) = crate::layout::io::read_layout_capture(target) {
-            layout_id = previous.manifest.layout_id;
-            manifest_captured_at = previous.manifest.captured_at;
-            bowties = previous.bowties;
-            offline_changes = previous.offline_changes;
-        }
+    if let Some(prev) = previous {
+        layout_id = prev.manifest.layout_id;
+        manifest_captured_at = prev.manifest.captured_at;
+        bowties = prev.bowties;
+        offline_changes = prev.offline_changes;
     }
 
     // Single pre-save edit path: if saving the currently active offline layout,
@@ -511,12 +512,12 @@ pub async fn open_layout_directory(
     let loaded = crate::layout::io::read_layout_capture(input_path)?;
     let recent_path = input_path.to_string_lossy().to_string();
 
-    let partial_nodes = loaded
+    let partial_nodes: Vec<String> = loaded
         .node_snapshots
         .iter()
         .filter(|n| n.capture_status == CaptureStatus::Partial)
-        .map(|n| n.node_id.clone())
-        .collect::<Vec<_>>();
+        .map(|n| n.node_id.to_canonical())
+        .collect();
 
     let _ = crate::commands::bowties::set_recent_layout(recent_path.clone(), app.clone()).await;
 
@@ -652,7 +653,9 @@ pub async fn build_offline_node_tree(
     let cdi = lcc_rs::cdi::parser::parse_cdi(&xml)
         .map_err(|e| format!("Cannot parse CDI for {}: {}", node_id, e))?;
 
-    let dotted_id = canonical_to_dotted_node_id(&node_id);
+    let parsed_nid = lcc_rs::NodeID::from_hex_string(&node_id)
+        .map_err(|e| format!("Invalid node ID '{}': {}", node_id, e))?;
+    let dotted_id = parsed_nid.to_hex_string();
     let mut tree = crate::node_tree::build_node_config_tree(&dotted_id, &cdi);
     crate::node_tree::merge_snapshot_path_values(&mut tree, &snapshot.config);
 

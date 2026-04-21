@@ -288,7 +288,9 @@
       return;
     }
 
-    void setModifiedValue(nodeId, leaf.address, leaf.space, newVal);
+    setModifiedValue(nodeId, leaf.address, leaf.space, newVal).catch((err) => {
+      console.error(`[TreeLeafRow] setModifiedValue failed for node ${nodeId}:`, err);
+    });
   }
 
   /** Validate a string value and send to Rust tree */
@@ -673,7 +675,10 @@
       </span>
       <button
         class="revert-baseline-btn"
-        onclick={() => offlineChangesStore.revertToBaseline(draftOfflineRow!.changeId)}
+        onclick={() => {
+          offlineChangesStore.revertToBaseline(draftOfflineRow!.changeId);
+          nodeTreeStore.setLeafModifiedValue(nodeId, leaf.path, null);
+        }}
         title="Revert to captured baseline value"
         aria-label="Revert to baseline"
         disabled={offlineChangesStore.isBusy}
@@ -682,11 +687,14 @@
 
     {#if !suppressTransientIndicators && persistedOfflineRow}
       <span class="offline-pending-msg" role="status">
-        Pending apply: {persistedOfflineRow.baselineValue} -> {persistedOfflineRow.plannedValue}
+        Bus: {persistedOfflineRow.baselineValue} | Pending: {persistedOfflineRow.plannedValue}
       </span>
       <button
         class="revert-baseline-btn"
-        onclick={() => offlineChangesStore.revertToBaseline(persistedOfflineRow!.changeId)}
+        onclick={() => {
+          offlineChangesStore.revertToBaseline(persistedOfflineRow!.changeId);
+          nodeTreeStore.setLeafModifiedValue(nodeId, leaf.path, null);
+        }}
         title="Revert to captured baseline value"
         aria-label="Revert to baseline"
         disabled={offlineChangesStore.isBusy}

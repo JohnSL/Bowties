@@ -21,6 +21,7 @@ pub struct MenuHandles {
     pub close_layout:     MenuItem<Wry>,
     pub save_layout:      MenuItem<Wry>,
     pub save_layout_as:   MenuItem<Wry>,
+    pub sync_to_bus:      MenuItem<Wry>,
     pub diagnostics:      MenuItem<Wry>,
 }
 
@@ -43,6 +44,7 @@ pub fn build_app_menu(app: &AppHandle<Wry>) -> tauri::Result<(tauri::menu::Menu<
     let close_layout_item   = MenuItem::with_id(app, "menu-close-layout",   "Close Layout",          false, Some("CmdOrCtrl+W"))?;
     let save_layout_item    = MenuItem::with_id(app, "menu-save-layout",    "Save Layout",           false, Some("CmdOrCtrl+S"))?;
     let save_layout_as_item = MenuItem::with_id(app, "menu-save-layout-as", "Save Layout As\u{2026}", false, Some("CmdOrCtrl+Shift+S"))?;
+    let sync_to_bus_item    = MenuItem::with_id(app, "menu-sync-to-bus",    "Sync to Bus",           false, None::<&str>)?;
 
     let file_submenu = SubmenuBuilder::new(app, "File")
         .item(&disconnect_item)
@@ -52,6 +54,7 @@ pub fn build_app_menu(app: &AppHandle<Wry>) -> tauri::Result<(tauri::menu::Menu<
         .separator()
         .item(&save_layout_item)
         .item(&save_layout_as_item)
+        .item(&sync_to_bus_item)
         .separator()
         .item(&exit_item)
         .build()?;
@@ -101,6 +104,7 @@ pub fn build_app_menu(app: &AppHandle<Wry>) -> tauri::Result<(tauri::menu::Menu<
         close_layout:    close_layout_item,
         save_layout:     save_layout_item,
         save_layout_as:  save_layout_as_item,
+        sync_to_bus:     sync_to_bus_item,
         diagnostics:     diagnostics_item,
     };
 

@@ -114,6 +114,52 @@
 
 ---
 
+## Phase 6b: Bug Fixes — Sync/Offline Lifecycle (Spec 010, Phase 6 follow-up)
+
+**Purpose**: Fix five correctness bugs discovered during end-to-end testing of Phase 6 and add unit/component test coverage for the underlying behaviors.
+
+- [x] T047b [US4] **Bug 1a** — `revert_offline_change` writes updated `offline-changes.yaml` to disk via new `persist_offline_changes` helper in `app/src-tauri/src/commands/sync_panel.rs`. Without this fix, reverted changes reappeared on next open.
+- [x] T047c [US4] **Bug 1b** — Remove `layoutStore.markDirty()` from persisted-row revert onclick in `TreeLeafRow.svelte`. Calling it caused false Save/Discard buttons ("0 unsaved changes") after going online.
+- [x] T047d [US3] **Bug 2** — Add `forceSyncPanel()` function and `menu-sync-to-bus` Tauri menu item so the user can re-open the sync panel after dismissing it. Add dismiss guard in `maybeTriggerSync` to prevent settle-timer auto-triggers from re-opening the panel.
+- [x] T047e [US3] **Bug 3** — Apply `isOfflinePending` flag and `applyOfflinePendingValues()` to show the planned offline value (not the bus value) as the field's `modifiedValue` when online with pending persisted changes. Update annotation from "Pending apply: X → Y" to "Bus: X | Pending: Y".
+- [x] T047f [US4] **Bug 4** — Persist `currentLayoutSnapshots` state on the page; `disconnect()` re-hydrates the node tree from those snapshots instead of clearing to empty when a layout is open.
+- [x] T047g [US1] **Bug 5** — Filter non-CDI nodes (fingerprint `"not_supported"` or `"missing"`) from the snapshot list in `save_layout_directory` so their YAML is not written and does not produce "(Not captured)" banners on reload.
+- [x] T047h [US4] **Tests** — `syncPanel.store.test.ts`: 11 store-level tests covering `dismiss()` persistence, settle-timer guard invariant, `loadSession()` reset contract, and `reset()` cleanup (`app/src/lib/stores/syncPanel.store.test.ts`).
+- [x] T047i [US3/US4] **Tests** — `TreeLeafRow.offline.test.ts`: 13 component tests covering draft/persisted offline row annotations, revert button clearing both store and tree, `markDirty` absence, and lifecycle suppression during layout open (`app/src/lib/components/ElementCardDeck/TreeLeafRow.offline.test.ts`).
+- [x] T047j [US3] **Tests** — `nodeTree.store.test.ts`: 5 tests for `applyOfflinePendingValues` covering address match, no-match, non-pending skip, empty store, and string value parsing.
+- [x] T047k [US3] **Tests** — `nodeTree.test.ts`: 4 tests for `countModifiedLeaves` excluding `isOfflinePending` leaves from the dirty count.
+- [x] T047l [US4] **Tests** — `offlineChanges.store.test.ts`: 2 tests verifying `pendingApplyCount` drops to 0 after persisted revert and that draft reverts never call backend IPC.
+
+---
+
+## Phase 6c: Bug Fixes — Revert/Save Lifecycle & Disconnect Corrections (Spec 010, Session 2026-04-20)
+
+**Purpose**: Correct behaviors from Phase 6b that conflict with the updated revert/save model and generalized disconnect behavior defined in spec Session 2026-04-20. T047b and T047c are directly superseded; T047f scope is extended.
+
+- [ ] T047m [US3] **Fix T047b** — Remove the `persist_offline_changes` auto-write call from `revert_offline_change` in `app/src-tauri/src/commands/sync_panel.rs`. Revert must remove the row from in-memory state only and signal the frontend to mark the layout dirty. The on-disk `offline-changes.yaml` is updated only when the user explicitly saves the layout, not at revert time.
+- [ ] T047n [US3] **Fix T047c** — Restore `layoutStore.markDirty()` in the revert onclick handler in `app/src/lib/components/ElementCardDeck/TreeLeafRow.svelte`. A revert is a pending modification until saved; the layout must be dirty so Save/Discard buttons appear and the user can either commit or undo the revert.
+- [ ] T047o [US3] **New** — Introduce saved-vs-in-memory layering to the offline changes store (`app/src/lib/stores/offlineChanges.svelte.ts`): track the last-saved snapshot of offline change rows separately from current in-memory rows. Discard must restore in-memory rows to the last-saved snapshot, which re-instates any planned offline values that were removed by an unsaved revert (US3 AS-7). Save must promote in-memory rows to the saved snapshot and write to disk.
+- [ ] T047p [US4] **Fix T047f** — Extend the disconnect handler in `app/src/routes/+page.svelte` to preserve the node tree for online-mode layouts as well as offline-mode layouts: when any layout is open at disconnect, re-hydrate from captured snapshots (or leave session-read values visible if no snapshots exist). When no layout is open at disconnect, transition to the connection dialog.
+- [ ] T047q **Tests** — Update `TreeLeafRow.offline.test.ts` to reflect restored `markDirty` on revert and no backend IPC call at revert time. Update `offlineChanges.store.test.ts` to cover the saved-vs-in-memory layering: discard restores a reverted planned value, save promotes in-memory to saved snapshot; add a test for the no-layout-open disconnect → connection dialog path.
+
+---
+
+## Phase 6d: Bug Fixes — Pending-Value Display (Spec 010, Session 2026-04-20)
+
+**Purpose**: Fix a cluster of defects that prevent pending offline values from being visibly applied to the config tree's `modifiedValue`/`isOfflinePending` leaf flags. These bugs make pending offline changes invisible to the user after going online, after discard, and after partial sync apply — despite the offline change rows being correctly stored. Also adds "already applied" auto-clearing and post-apply snapshot refresh.
+
+**Root cause summary**: `applyOfflinePendingValues` always silently no-ops in practice because (a) NodeID formats between tree keys (dotted hex `"05.02.01.02.00.00"`) and change-row `nodeId` (canonical no-dots `"050201020200"`) never match, and (b) the function is called before `reloadFromBackend` populates the rows it needs, so even a fixed format comparison would find an empty list.
+
+- [ ] T047r [US3/US4] **EC-1/2** — Fix NodeID format mismatch in `applyOfflinePendingValues` (`app/src/lib/stores/nodeTree.svelte.ts`): normalize both the tree key and the change-row `nodeId` using the same `normalizeNodeId` helper (strip dots, uppercase) before comparing, matching the convention already used in `offlineChanges.svelte.ts`.
+- [ ] T047s [US3/US4] **EC-7/8** — Fix `applyOfflinePendingValues` call-site ordering and coverage in `app/src/routes/+page.svelte` and `app/src/lib/stores/offlineChanges.svelte.ts`: (a) remove the premature call inside `hydrateOfflineSnapshots` (rows are not yet loaded at that point); (b) add a single guaranteed call after `offlineChangesStore.reloadFromBackend()` completes at every layout-open site (startup restore, manual open, and the online discovery path); (c) add a call after every direct `nodeTreeStore.setTree()` that occurs outside the `node-tree-updated` listener path (such as the offline fallback tree build in `hydrateOfflineSnapshots`), since these paths do not trigger `startListening`'s callback.
+- [ ] T047t [US3] **EC-3** — After `revertAllPending` (Discard path) restores `_persistedRows` from `_savedRows`, call `nodeTreeStore.applyOfflinePendingValues` with the restored rows so tree leaf `modifiedValue`/`isOfflinePending` flags are re-stamped to match the restored state. Without this, the field shows the snapshot baseline instead of the restored planned value after discard (breaks US3 AS-7).
+- [ ] T047u [US4] **EC-4** — After `handleApply` in `app/src/lib/components/Sync/SyncPanel.svelte` rebuilds trees for applied nodes via `buildOfflineNodeTree` + `nodeTreeStore.setTree`, call `nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows)` over all trees so any remaining pending rows on those (or other) nodes retain their `modifiedValue`/`isOfflinePending` display. Without this, a partial apply wipes the pending-value indicator for all other pending rows.
+- [ ] T047v [US4] **EC-5** — Auto-clear "already applied" rows from backend in-memory cache during `build_sync_session` in `app/src-tauri/src/commands/sync_panel.rs`: rows whose bus value already equals the planned value must be removed from `offline_changes_cache` inside `build_sync_session`, not merely counted. This matches the spec intent "silently cleared and shown only as a count" (US4 AS-5) and prevents already-applied rows from persistently re-appearing in future sessions.
+- [ ] T047w [US4] **EC-6** — After `apply_sync_changes` completes in `app/src-tauri/src/commands/sync_panel.rs`, update the per-node snapshot YAML files in the companion directory for each successfully applied row: write the applied `planned_value` into that node's snapshot config entry at the matching `space`/`offset`, and update the node's `captured_at` timestamp. Skipped, deselected, and failed rows are left unchanged. This prevents the snapshot from showing a stale pre-apply baseline on the next offline open.
+- [ ] T047x **Tests** — Add/update tests: `nodeTree.store.test.ts` — `applyOfflinePendingValues` matches when nodeId uses canonical format (EC-1/2 regression); `offlineChanges.store.test.ts` — `revertAllPending` triggers `applyOfflinePendingValues` with restored rows (EC-3); `SyncPanel` component test — `applyOfflinePendingValues` called after partial apply and after `handleApply` tree rebuild (EC-4).
+
+---
+
 ## Phase 7: User Story 5 - Prepare New Uninstalled Nodes at Home (Priority: P2)
 
 **Goal**: Support staged nodes that are added, edited, and later validated/synced when discovered on target bus.

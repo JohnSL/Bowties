@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// A 48-bit (6-byte) unique Node ID in the LCC network
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct NodeID(pub [u8; 6]);
 
 impl NodeID {
@@ -50,6 +50,14 @@ impl NodeID {
                 .map_err(|e| format!("Invalid hex: {}", e))?;
         }
         Ok(Self(bytes))
+    }
+
+    /// Convert NodeID to canonical uppercase hex without dots (e.g., "050201020200")
+    pub fn to_canonical(&self) -> String {
+        format!(
+            "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+            self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5]
+        )
     }
 
     /// Hash the Node ID to derive a 12-bit alias using the OpenLCB algorithm

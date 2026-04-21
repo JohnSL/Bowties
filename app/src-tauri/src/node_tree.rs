@@ -198,6 +198,18 @@ pub enum ConfigValue {
     Float { value: f64 },
 }
 
+impl ConfigValue {
+    /// Convert to the string representation used in layout node snapshots.
+    pub fn to_snapshot_string(&self) -> String {
+        match self {
+            ConfigValue::Int { value } => value.to_string(),
+            ConfigValue::String { value } => value.clone(),
+            ConfigValue::EventId { hex, .. } => hex.clone(),
+            ConfigValue::Float { value } => value.to_string(),
+        }
+    }
+}
+
 /// Optional constraints on a leaf element.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -3051,6 +3063,449 @@ mod tests {
                 assert!(!g.read_only);
             }
             _ => panic!("Expected group"),
+        }
+    }
+
+    // ── ConfigValue::to_snapshot_string ──────────────────────────────────
+
+    #[test]
+    fn config_value_to_snapshot_string_int() {
+        let v = ConfigValue::Int { value: 42 };
+        assert_eq!(v.to_snapshot_string(), "42");
+    }
+
+    #[test]
+    fn config_value_to_snapshot_string_string() {
+        let v = ConfigValue::String { value: "hello world".to_string() };
+        assert_eq!(v.to_snapshot_string(), "hello world");
+    }
+
+    #[test]
+    fn config_value_to_snapshot_string_event_id() {
+        let v = ConfigValue::EventId {
+            bytes: [0x05, 0x02, 0x01, 0x02, 0x03, 0x00, 0x00, 0x01],
+            hex: "05.02.01.02.03.00.00.01".to_string(),
+        };
+        assert_eq!(v.to_snapshot_string(), "05.02.01.02.03.00.00.01");
+    }
+
+    #[test]
+    fn config_value_to_snapshot_string_float() {
+        let v = ConfigValue::Float { value: 3.14 };
+        assert_eq!(v.to_snapshot_string(), "3.14");
+    }
+
+    // ── set_modified_value tests ────────────────────────────────────────
+
+    #[test]
+    fn set_modified_value_marks_leaf_dirty() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <int size="1"><name>Speed</name></int>
+                </segment>
+            </cdi>"#,
+        );
+        let result = set_modified_value(
+            &mut tree,
+            253,
+            0,
+            ConfigValue::Int { value: 42 },
+        );
+        assert!(result, "should find the leaf");
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                assert_eq!(
+                    l.modified_value,
+                    Some(ConfigValue::Int { value: 42 })
+                );
+                assert_eq!(l.write_state, Some(WriteState::Dirty));
+                assert!(l.write_error.is_none());
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn set_modified_value_autorevert_when_same_as_committed() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <int size="1"><name>Speed</name><default>10</default></int>
+                </segment>
+            </cdi>"#,
+        );
+        // First set a different value to make it dirty
+        set_modified_value(&mut tree, 253, 0, ConfigValue::Int { value: 42 });
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => assert!(l.modified_value.is_some()),
+            _ => panic!("Expected leaf"),
+        }
+        // Now set it back to the committed value — should auto-revert
+        set_modified_value(&mut tree, 253, 0, ConfigValue::Int { value: 10 });
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                assert!(l.modified_value.is_none(), "should auto-revert");
+                assert!(l.write_state.is_none(), "write_state cleared on auto-revert");
+                assert!(l.write_error.is_none());
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn set_modified_value_returns_false_for_missing_leaf() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <int size="1"><name>Speed</name></int>
+                </segment>
+            </cdi>"#,
+        );
+        // Wrong address — leaf is at 0, not 999
+        let result = set_modified_value(
+            &mut tree,
+            253,
+            999,
+            ConfigValue::Int { value: 1 },
+        );
+        assert!(!result, "should not find leaf at wrong address");
+    }
+
+    #[test]
+    fn set_modified_value_wrong_space_returns_false() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <int size="1"><name>Speed</name></int>
+                </segment>
+            </cdi>"#,
+        );
+        // Right address but wrong space
+        let result = set_modified_value(
+            &mut tree,
+            251,
+            0,
+            ConfigValue::Int { value: 1 },
+        );
+        assert!(!result, "should not find leaf in wrong space");
+    }
+
+    #[test]
+    fn set_modified_value_finds_nested_leaf_in_group() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <group>
+                        <name>Settings</name>
+                        <int size="2"><name>Volume</name></int>
+                    </group>
+                </segment>
+            </cdi>"#,
+        );
+        let result = set_modified_value(
+            &mut tree,
+            253,
+            0,
+            ConfigValue::Int { value: 100 },
+        );
+        assert!(result, "should find nested leaf");
+        // Navigate into the group
+        match &tree.segments[0].children[0] {
+            ConfigNode::Group(g) => match &g.children[0] {
+                ConfigNode::Leaf(l) => {
+                    assert_eq!(l.modified_value, Some(ConfigValue::Int { value: 100 }));
+                }
+                _ => panic!("Expected leaf inside group"),
+            },
+            _ => panic!("Expected group"),
+        }
+    }
+
+    #[test]
+    fn set_modified_value_targets_correct_leaf_among_siblings() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <int size="1"><name>First</name></int>
+                    <int size="1"><name>Second</name></int>
+                    <int size="1"><name>Third</name></int>
+                </segment>
+            </cdi>"#,
+        );
+        // Modify the second leaf (address=1, since size of first is 1)
+        let result = set_modified_value(
+            &mut tree,
+            253,
+            1,
+            ConfigValue::Int { value: 77 },
+        );
+        assert!(result);
+        // First leaf should be untouched
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => assert!(l.modified_value.is_none(), "first leaf unchanged"),
+            _ => panic!("Expected leaf"),
+        }
+        // Second leaf should be modified
+        match &tree.segments[0].children[1] {
+            ConfigNode::Leaf(l) => {
+                assert_eq!(l.modified_value, Some(ConfigValue::Int { value: 77 }));
+            }
+            _ => panic!("Expected leaf"),
+        }
+        // Third leaf should be untouched
+        match &tree.segments[0].children[2] {
+            ConfigNode::Leaf(l) => assert!(l.modified_value.is_none(), "third leaf unchanged"),
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    // ── merge_snapshot_path_values tests ─────────────────────────────────
+
+    #[test]
+    fn merge_snapshot_populates_empty_tree_from_path_values() {
+        use crate::layout::node_snapshot::{SnapshotLeafValue, SnapshotValueNode};
+
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <string size="20"><name>Name</name></string>
+                    <int size="1"><name>Mode</name></int>
+                </segment>
+            </cdi>"#,
+        );
+        // Verify tree starts without values
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => assert!(l.value.is_none()),
+            _ => panic!("Expected leaf"),
+        }
+        match &tree.segments[0].children[1] {
+            ConfigNode::Leaf(l) => assert!(l.value.is_none()),
+            _ => panic!("Expected leaf"),
+        }
+
+        // Build snapshot config matching the tree paths
+        let mut config = BTreeMap::new();
+        config.insert(
+            "seg:0".to_string(),
+            SnapshotValueNode::Branch({
+                let mut seg = BTreeMap::new();
+                seg.insert(
+                    "elem:0".to_string(),
+                    SnapshotValueNode::Leaf(SnapshotLeafValue {
+                        value: "My Node".to_string(),
+                        space: Some(253),
+                        offset: Some("0x00000000".to_string()),
+                    }),
+                );
+                seg.insert(
+                    "elem:1".to_string(),
+                    SnapshotValueNode::Leaf(SnapshotLeafValue {
+                        value: "5".to_string(),
+                        space: Some(253),
+                        offset: Some("0x00000014".to_string()),
+                    }),
+                );
+                seg
+            }),
+        );
+
+        merge_snapshot_path_values(&mut tree, &config);
+
+        // Verify values are now populated
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                assert_eq!(l.value, Some(ConfigValue::String { value: "My Node".to_string() }));
+            }
+            _ => panic!("Expected leaf"),
+        }
+        match &tree.segments[0].children[1] {
+            ConfigNode::Leaf(l) => {
+                assert_eq!(l.value, Some(ConfigValue::Int { value: 5 }));
+            }
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn merge_snapshot_preserves_existing_values() {
+        use crate::layout::node_snapshot::{SnapshotLeafValue, SnapshotValueNode};
+
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <int size="1"><name>Speed</name><default>10</default></int>
+                    <int size="1"><name>Mode</name></int>
+                </segment>
+            </cdi>"#,
+        );
+        // Speed has default=10 (pre-populated), Mode has no value
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => assert_eq!(l.value, Some(ConfigValue::Int { value: 10 })),
+            _ => panic!("Expected leaf"),
+        }
+
+        // Snapshot only provides Mode (no entry for Speed)
+        let mut config = BTreeMap::new();
+        config.insert(
+            "seg:0".to_string(),
+            SnapshotValueNode::Branch({
+                let mut seg = BTreeMap::new();
+                seg.insert(
+                    "elem:1".to_string(),
+                    SnapshotValueNode::Leaf(SnapshotLeafValue {
+                        value: "3".to_string(),
+                        space: Some(253),
+                        offset: Some("0x00000001".to_string()),
+                    }),
+                );
+                seg
+            }),
+        );
+
+        merge_snapshot_path_values(&mut tree, &config);
+
+        // Speed should keep its default
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => assert_eq!(l.value, Some(ConfigValue::Int { value: 10 })),
+            _ => panic!("Expected leaf"),
+        }
+        // Mode should now have the snapshot value
+        match &tree.segments[0].children[1] {
+            ConfigNode::Leaf(l) => assert_eq!(l.value, Some(ConfigValue::Int { value: 3 })),
+            _ => panic!("Expected leaf"),
+        }
+    }
+
+    /// This is the regression test for Issue 1: a CDI-built tree without
+    /// snapshot values shows empty strings where the node actually has data.
+    /// After merging snapshot values, set_modified_value should still work
+    /// and the other leaves should retain their snapshot values.
+    #[test]
+    fn set_modified_on_snapshot_merged_tree_preserves_other_values() {
+        use crate::layout::node_snapshot::{SnapshotLeafValue, SnapshotValueNode};
+
+        // Build a bare CDI tree (no config values — simulates proxy fallback)
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Segment A</name>
+                    <string size="20"><name>Name</name></string>
+                    <int size="1"><name>Speed</name></int>
+                </segment>
+                <segment space="253" origin="100">
+                    <name>Segment B</name>
+                    <int size="2"><name>Volume</name></int>
+                    <string size="32"><name>Label</name></string>
+                </segment>
+            </cdi>"#,
+        );
+
+        // Merge layout snapshot values into the bare tree
+        let mut config = BTreeMap::new();
+        config.insert(
+            "seg:0".to_string(),
+            SnapshotValueNode::Branch({
+                let mut seg = BTreeMap::new();
+                seg.insert(
+                    "elem:0".to_string(),
+                    SnapshotValueNode::Leaf(SnapshotLeafValue {
+                        value: "My Node".to_string(),
+                        space: Some(253),
+                        offset: Some("0x00000000".to_string()),
+                    }),
+                );
+                seg.insert(
+                    "elem:1".to_string(),
+                    SnapshotValueNode::Leaf(SnapshotLeafValue {
+                        value: "8".to_string(),
+                        space: Some(253),
+                        offset: Some("0x00000014".to_string()),
+                    }),
+                );
+                seg
+            }),
+        );
+        config.insert(
+            "seg:1".to_string(),
+            SnapshotValueNode::Branch({
+                let mut seg = BTreeMap::new();
+                seg.insert(
+                    "elem:0".to_string(),
+                    SnapshotValueNode::Leaf(SnapshotLeafValue {
+                        value: "500".to_string(),
+                        space: Some(253),
+                        offset: Some("0x00000064".to_string()),
+                    }),
+                );
+                seg.insert(
+                    "elem:1".to_string(),
+                    SnapshotValueNode::Leaf(SnapshotLeafValue {
+                        value: "Main Speaker".to_string(),
+                        space: Some(253),
+                        offset: Some("0x00000066".to_string()),
+                    }),
+                );
+                seg
+            }),
+        );
+
+        merge_snapshot_path_values(&mut tree, &config);
+
+        // Modify a leaf in Segment A
+        let result = set_modified_value(
+            &mut tree,
+            253,
+            0,
+            ConfigValue::String { value: "New Name".to_string() },
+        );
+        assert!(result);
+
+        // Segment A: Name should have modified_value, Speed should keep snapshot value
+        match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => {
+                assert_eq!(
+                    l.modified_value,
+                    Some(ConfigValue::String { value: "New Name".to_string() })
+                );
+                // Original snapshot value still present
+                assert_eq!(l.value, Some(ConfigValue::String { value: "My Node".to_string() }));
+            }
+            _ => panic!("Expected leaf"),
+        }
+        match &tree.segments[0].children[1] {
+            ConfigNode::Leaf(l) => {
+                assert_eq!(l.value, Some(ConfigValue::Int { value: 8 }));
+                assert!(l.modified_value.is_none(), "Speed should be untouched");
+            }
+            _ => panic!("Expected leaf"),
+        }
+
+        // Segment B: both leaves should retain snapshot values
+        match &tree.segments[1].children[0] {
+            ConfigNode::Leaf(l) => {
+                assert_eq!(l.value, Some(ConfigValue::Int { value: 500 }));
+                assert!(l.modified_value.is_none(), "Volume should be untouched");
+            }
+            _ => panic!("Expected leaf"),
+        }
+        match &tree.segments[1].children[1] {
+            ConfigNode::Leaf(l) => {
+                assert_eq!(
+                    l.value,
+                    Some(ConfigValue::String { value: "Main Speaker".to_string() })
+                );
+                assert!(l.modified_value.is_none(), "Label should be untouched");
+            }
+            _ => panic!("Expected leaf"),
         }
     }
 }

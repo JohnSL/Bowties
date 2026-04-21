@@ -79,9 +79,8 @@ export async function saveLayoutDirectory(path: string, overwrite = true): Promi
 export async function saveLayoutFile(
   path: string,
   overwrite = true,
-  nodeSnapshots?: OfflineNodeSnapshot[]
 ): Promise<SaveLayoutResult> {
-  return invoke<SaveLayoutResult>('save_layout_directory', { path, overwrite, nodeSnapshots });
+  return invoke<SaveLayoutResult>('save_layout_directory', { path, overwrite });
 }
 
 export async function openLayoutDirectory(path: string): Promise<OpenLayoutResult> {

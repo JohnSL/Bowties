@@ -5,9 +5,23 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use tauri::Manager;
+use lcc_rs::NodeID;
 use crate::layout::offline_changes::{OfflineChange, OfflineChangeKind, OfflineChangeStatus};
 use crate::node_tree::{ConfigValue, LeafNode, LeafType};
 use crate::state::{AppState, ActiveLayoutMode, SyncMode};
+
+/// Parse an optional string node ID into an `Option<NodeID>`.
+fn parse_opt_node_id(opt: Option<String>) -> Result<Option<NodeID>, String> {
+    match opt {
+        Some(s) => NodeID::from_hex_string(&s).map(Some),
+        None => Ok(None),
+    }
+}
+
+/// Convert an `Option<NodeID>` to `Option<String>` (canonical) for IPC output.
+fn opt_node_id_to_canonical(opt: &Option<NodeID>) -> Option<String> {
+    opt.as_ref().map(|id| id.to_canonical())
+}
 
 fn same_change_target(a: &OfflineChange, b: &OfflineChange) -> bool {
     a.kind == b.kind
@@ -398,7 +412,7 @@ pub async fn set_offline_change(
             "bowtieEvent" => OfflineChangeKind::BowtieEvent,
             _ => return Err(format!("Invalid change kind: {}", change.kind)),
         },
-        node_id: change.node_id,
+        node_id: parse_opt_node_id(change.node_id)?,
         space: change.space,
         offset: change.offset,
         baseline_value: change.baseline_value,
@@ -437,20 +451,36 @@ pub async fn set_offline_change(
     Ok(change_id_out)
 }
 
+/// Persist the current in-memory offline changes to disk.
+///
+/// Derives the companion directory from `root_path` and writes
+/// `offline-changes.yaml` atomically via [`crate::layout::io::write_yaml_file`].
+fn persist_offline_changes(
+    changes: &[crate::layout::offline_changes::OfflineChange],
+    root_path: &str,
+) -> Result<(), String> {
+    let base_file = std::path::Path::new(root_path);
+    let companion_dir = crate::layout::io::derive_companion_dir_path(base_file)?;
+    let offline_changes_path = companion_dir.join("offline-changes.yaml");
+    let changes_vec: Vec<_> = changes.to_vec();
+    crate::layout::io::write_yaml_file(&offline_changes_path, &changes_vec)
+}
+
 #[tauri::command]
 pub async fn revert_offline_change(
     change_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
-    // Verify active offline layout
-    {
+    // Verify active offline layout and capture root_path
+    let root_path = {
         let guard = state.active_layout.read().await;
         guard
             .as_ref()
             .cloned()
             .filter(|c| c.mode == ActiveLayoutMode::OfflineFile)
-            .ok_or_else(|| "No offline layout is active".to_string())?;
-    }
+            .ok_or_else(|| "No offline layout is active".to_string())?
+            .root_path
+    };
 
     // Remove from in-memory cache
     let removed = {
@@ -462,6 +492,12 @@ pub async fn revert_offline_change(
 
     if !removed {
         return Err(format!("Change not found: {}", change_id));
+    }
+
+    // Write updated changes to disk so the file stays consistent with in-memory state
+    {
+        let cache = state.offline_changes_cache.read().await;
+        persist_offline_changes(&cache, &root_path)?;
     }
 
     // Update pending count in active layout context
@@ -495,7 +531,7 @@ pub async fn list_offline_changes(
         .map(|c| OfflineChangeRow {
             change_id: c.change_id.clone(),
             kind: format!("{:?}", c.kind).to_lowercase(),
-            node_id: c.node_id.clone(),
+            node_id: opt_node_id_to_canonical(&c.node_id),
             space: c.space,
             offset: c.offset.clone(),
             baseline_value: c.baseline_value.clone(),
@@ -537,7 +573,7 @@ pub async fn replace_offline_changes(
         let row = OfflineChange {
             change_id: format!("{}-{}", Uuid::new_v4(), chrono::Utc::now().timestamp_millis()),
             kind,
-            node_id: change.node_id,
+            node_id: parse_opt_node_id(change.node_id)?,
             space: change.space,
             offset: change.offset,
             baseline_value: change.baseline_value,
@@ -577,7 +613,7 @@ pub async fn compute_layout_match_status(
     let layout_ids: std::collections::HashSet<String> = context
         .layout_node_ids
         .iter()
-        .map(|id| id.replace('.', "").to_uppercase())
+        .map(|id| id.to_canonical())
         .collect();
 
     if layout_ids.is_empty() {
@@ -658,7 +694,7 @@ pub async fn build_sync_session(
         if change.kind != OfflineChangeKind::Config {
             clean_rows.push(SyncRow {
                 change_id: change.change_id.clone(),
-                node_id: change.node_id.clone(),
+                node_id: opt_node_id_to_canonical(&change.node_id),
                 baseline_value: change.baseline_value.clone(),
                 planned_value: change.planned_value.clone(),
                 bus_value: None,
@@ -668,8 +704,8 @@ pub async fn build_sync_session(
             continue;
         }
 
-        let node_id_str = match &change.node_id {
-            Some(id) => id.clone(),
+        let parsed_node_id = match &change.node_id {
+            Some(id) => *id,
             None => {
                 node_missing_rows.push(SyncRow {
                     change_id: change.change_id.clone(),
@@ -685,28 +721,12 @@ pub async fn build_sync_session(
         };
 
         // Try to find this node on the bus via the node registry
-        let parsed_node_id = match lcc_rs::NodeID::from_hex_string(&node_id_str) {
-            Ok(id) => id,
-            Err(_) => {
-                node_missing_rows.push(SyncRow {
-                    change_id: change.change_id.clone(),
-                    node_id: change.node_id.clone(),
-                    baseline_value: change.baseline_value.clone(),
-                    planned_value: change.planned_value.clone(),
-                    bus_value: None,
-                    resolution: "unresolved".to_string(),
-                    error: Some(format!("Invalid node ID: {}", node_id_str)),
-                });
-                continue;
-            }
-        };
-
         let proxy = match state.node_registry.get(&parsed_node_id).await {
             Some(p) => p,
             None => {
                 node_missing_rows.push(SyncRow {
                     change_id: change.change_id.clone(),
-                    node_id: change.node_id.clone(),
+                    node_id: opt_node_id_to_canonical(&change.node_id),
                     baseline_value: change.baseline_value.clone(),
                     planned_value: change.planned_value.clone(),
                     bus_value: None,
@@ -726,7 +746,7 @@ pub async fn build_sync_session(
             .unwrap_or(0);
 
         // Resolve CDI from layout for this node (cached per node)
-        let canonical = node_id_str.replace('.', "").to_uppercase();
+        let canonical = parsed_node_id.to_canonical();
         let cdi = if let Some(c) = cdi_cache.get(&canonical) {
             c
         } else {
@@ -738,7 +758,7 @@ pub async fn build_sync_session(
                 Err(e) => {
                     node_missing_rows.push(SyncRow {
                         change_id: change.change_id.clone(),
-                        node_id: change.node_id.clone(),
+                        node_id: opt_node_id_to_canonical(&change.node_id),
                         baseline_value: change.baseline_value.clone(),
                         planned_value: change.planned_value.clone(),
                         bus_value: None,
@@ -756,7 +776,7 @@ pub async fn build_sync_session(
             None => {
                 node_missing_rows.push(SyncRow {
                     change_id: change.change_id.clone(),
-                    node_id: change.node_id.clone(),
+                    node_id: opt_node_id_to_canonical(&change.node_id),
                     baseline_value: change.baseline_value.clone(),
                     planned_value: change.planned_value.clone(),
                     bus_value: None,
@@ -782,7 +802,7 @@ pub async fn build_sync_session(
             Err(e) => {
                 node_missing_rows.push(SyncRow {
                     change_id: change.change_id.clone(),
-                    node_id: change.node_id.clone(),
+                    node_id: opt_node_id_to_canonical(&change.node_id),
                     baseline_value: change.baseline_value.clone(),
                     planned_value: change.planned_value.clone(),
                     bus_value: None,
@@ -798,7 +818,7 @@ pub async fn build_sync_session(
             None => {
                 node_missing_rows.push(SyncRow {
                     change_id: change.change_id.clone(),
-                    node_id: change.node_id.clone(),
+                    node_id: opt_node_id_to_canonical(&change.node_id),
                     baseline_value: change.baseline_value.clone(),
                     planned_value: change.planned_value.clone(),
                     bus_value: None,
@@ -815,7 +835,7 @@ pub async fn build_sync_session(
         } else if bus_value == change.baseline_value {
             clean_rows.push(SyncRow {
                 change_id: change.change_id.clone(),
-                node_id: change.node_id.clone(),
+                node_id: opt_node_id_to_canonical(&change.node_id),
                 baseline_value: change.baseline_value.clone(),
                 planned_value: change.planned_value.clone(),
                 bus_value: Some(bus_value),
@@ -825,7 +845,7 @@ pub async fn build_sync_session(
         } else {
             conflict_rows.push(SyncRow {
                 change_id: change.change_id.clone(),
-                node_id: change.node_id.clone(),
+                node_id: opt_node_id_to_canonical(&change.node_id),
                 baseline_value: change.baseline_value.clone(),
                 planned_value: change.planned_value.clone(),
                 bus_value: Some(bus_value),
@@ -920,23 +940,12 @@ pub async fn apply_sync_changes(
             continue;
         }
 
-        let node_id_str = match &change.node_id {
-            Some(id) => id.clone(),
+        let parsed_node_id = match &change.node_id {
+            Some(id) => *id,
             None => {
                 failed.push(ApplySyncFailure {
                     change_id: change_id.clone(),
                     reason: "No node ID on change".to_string(),
-                });
-                continue;
-            }
-        };
-
-        let parsed_node_id = match lcc_rs::NodeID::from_hex_string(&node_id_str) {
-            Ok(id) => id,
-            Err(e) => {
-                failed.push(ApplySyncFailure {
-                    change_id: change_id.clone(),
-                    reason: format!("Invalid node ID: {}", e),
                 });
                 continue;
             }
@@ -947,7 +956,7 @@ pub async fn apply_sync_changes(
             None => {
                 failed.push(ApplySyncFailure {
                     change_id: change_id.clone(),
-                    reason: format!("Node not found on bus: {}", node_id_str),
+                    reason: format!("Node not found on bus: {}", parsed_node_id),
                 });
                 continue;
             }
@@ -962,7 +971,7 @@ pub async fn apply_sync_changes(
             .unwrap_or(0);
 
         // Resolve field metadata from layout CDI
-        let canonical = node_id_str.replace('.', "").to_uppercase();
+        let canonical = parsed_node_id.to_canonical();
         let cdi = if let Some(c) = cdi_cache.get(&canonical) {
             c
         } else {
@@ -1018,7 +1027,7 @@ pub async fn apply_sync_changes(
         match result {
             Ok(()) => {
                 applied.push(change_id.clone());
-                write_success_nodes.insert((node_id_str.clone(), parsed_node_id));
+                write_success_nodes.insert(parsed_node_id);
 
                 // Record details for snapshot baseline update
                 if let Some(offset_hex) = &change.offset {
@@ -1057,11 +1066,11 @@ pub async fn apply_sync_changes(
     }
 
     // Send Update Complete to each node that had successful writes
-    for (node_id_str, parsed_nid) in &write_success_nodes {
+    for parsed_nid in &write_success_nodes {
         if let Some(proxy) = state.node_registry.get(parsed_nid).await {
             let mut conn = connection.lock().await;
             if let Err(e) = conn.send_update_complete(proxy.alias).await {
-                eprintln!("[sync] Update Complete failed for {}: {}", node_id_str, e);
+                eprintln!("[sync] Update Complete failed for {}: {}", parsed_nid, e);
             }
         }
     }
@@ -1108,7 +1117,7 @@ pub async fn apply_sync_changes(
                             eprintln!("[sync] Failed to read snapshot for {}: {}", canonical_nid, e);
                             // Return a dummy that won't be saved (we check below)
                             crate::layout::node_snapshot::NodeSnapshot {
-                                node_id: String::new(),
+                                node_id: lcc_rs::NodeID::new([0; 6]),
                                 captured_at: String::new(),
                                 capture_status: crate::layout::node_snapshot::CaptureStatus::Complete,
                                 missing: Vec::new(),
@@ -1135,7 +1144,7 @@ pub async fn apply_sync_changes(
 
             // Write back modified snapshots
             for (canonical_nid, snapshot) in &updated_snapshots {
-                if snapshot.node_id.is_empty() {
+                if snapshot.node_id == lcc_rs::NodeID::new([0; 6]) {
                     continue; // Skip dummies from failed reads
                 }
                 let node_path = crate::layout::io::derive_node_file_path(&nodes_dir, canonical_nid);

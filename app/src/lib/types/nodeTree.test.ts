@@ -11,6 +11,7 @@ import {
   countLeaves,
   collectEventIdLeaves,
   resolvePillSelectionsForPath,
+  countModifiedLeaves,
 } from '$lib/types/nodeTree';
 import type {
   NodeConfigTree,
@@ -441,5 +442,57 @@ describe('resolvePillSelectionsForPath', () => {
       // but stop before navigating deeper
       expect(result.get('nodeId:seg:0/elem:0#1')).toBe(4); // 5-1=4
     }).not.toThrow();
+  });
+});
+
+// ─── countModifiedLeaves — isOfflinePending exclusion ────────────────────────
+
+describe('countModifiedLeaves — isOfflinePending exclusion', () => {
+  it('counts leaves with modifiedValue and no isOfflinePending', () => {
+    const leaf = makeLeaf({ modifiedValue: { type: 'int', value: 5 } });
+    const tree = makeTree([makeSegment([leaf])]);
+    expect(countModifiedLeaves(tree)).toBe(1);
+  });
+
+  it('excludes leaves where isOfflinePending is true', () => {
+    const leaf = makeLeaf({
+      modifiedValue: { type: 'int', value: 5 },
+      isOfflinePending: true,
+    });
+    const tree = makeTree([makeSegment([leaf])]);
+    expect(countModifiedLeaves(tree)).toBe(0);
+  });
+
+  it('counts dirty leaves but skips offline-pending leaves in the same tree', () => {
+    const pendingLeaf = makeLeaf({
+      address: 0,
+      path: ['seg:0', 'elem:0'],
+      modifiedValue: { type: 'int', value: 5 },
+      isOfflinePending: true,
+    });
+    const dirtyLeaf = makeLeaf({
+      address: 4,
+      path: ['seg:0', 'elem:1'],
+      modifiedValue: { type: 'int', value: 99 },
+    });
+    const tree = makeTree([makeSegment([pendingLeaf, dirtyLeaf])]);
+    expect(countModifiedLeaves(tree)).toBe(1);
+  });
+
+  it('returns 0 when all modified leaves are offline-pending', () => {
+    const leaf1 = makeLeaf({
+      address: 0,
+      path: ['seg:0', 'elem:0'],
+      modifiedValue: { type: 'int', value: 1 },
+      isOfflinePending: true,
+    });
+    const leaf2 = makeLeaf({
+      address: 4,
+      path: ['seg:0', 'elem:1'],
+      modifiedValue: { type: 'int', value: 2 },
+      isOfflinePending: true,
+    });
+    const tree = makeTree([makeSegment([leaf1, leaf2])]);
+    expect(countModifiedLeaves(tree)).toBe(0);
   });
 });

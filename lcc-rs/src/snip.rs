@@ -377,7 +377,7 @@ mod tests {
     /// Create a TransportActor from a MockTransport and return the handle.
     /// The actor is spawned in the background and must be shut down after the test.
     fn make_actor(transport: MockTransport) -> (TransportActor, TransportHandle) {
-        let mut actor = TransportActor::new(Box::new(transport));
+        let actor = TransportActor::new(Box::new(transport));
         let handle = actor.handle();
         (actor, handle)
     }

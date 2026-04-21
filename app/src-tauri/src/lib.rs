@@ -191,6 +191,7 @@ async fn update_menu_state(
     can_close_layout: bool,
     can_save_layout: bool,
     can_save_layout_as: bool,
+    can_sync_to_bus: bool,
     handles: tauri::State<'_, MenuHandles>,
 ) -> Result<(), String> {
     handles.disconnect     .set_enabled(connected)                      .map_err(|e| e.to_string())?;
@@ -203,6 +204,7 @@ async fn update_menu_state(
     handles.close_layout   .set_enabled(can_close_layout)               .map_err(|e| e.to_string())?;
     handles.save_layout    .set_enabled(can_save_layout)                .map_err(|e| e.to_string())?;
     handles.save_layout_as .set_enabled(can_save_layout_as)             .map_err(|e| e.to_string())?;
+    handles.sync_to_bus    .set_enabled(can_sync_to_bus)                .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -241,6 +243,7 @@ pub fn run() {
                     "menu-close-layout"   => { let _ = app_h.emit("menu-close-layout", ()); }
                     "menu-save-layout"    => { let _ = app_h.emit("menu-save-layout", ()); }
                     "menu-save-layout-as" => { let _ = app_h.emit("menu-save-layout-as", ()); }
+                    "menu-sync-to-bus"    => { let _ = app_h.emit("menu-sync-to-bus", ()); }
                     "menu-exit"           => { let _ = app_h.emit("menu-exit", ()); }
                     "menu-diagnostics"    => { let _ = app_h.emit("menu-diagnostics", ()); }
                     _ => {}

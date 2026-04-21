@@ -1,4 +1,4 @@
-//! Layout file I/O operations.
+﻿//! Layout file I/O operations.
 //!
 //! Handles loading and saving YAML layout files with atomic write support
 //! and schema validation.
@@ -242,9 +242,19 @@ pub fn write_layout_capture(base_file: &Path, data: &LayoutDirectoryWriteData) -
     let mut manifest = data.manifest.clone();
     manifest.companion_dir = companion_name;
 
+    // Capture existing companion dir path before the atomic swap replaces it.
+    // This lets us preserve CDI files when re-saving without fresh cache entries.
+    let existing_companion = if companion_dir.exists() {
+        Some(companion_dir.clone())
+    } else {
+        None
+    };
+
     // Write base first so the canonical entry file always exists after a successful save.
     write_yaml_file(base_file, &manifest)?;
-    save_directory_atomic(&companion_dir, |staging_dir| write_companion_contents(staging_dir, data))?;
+    save_directory_atomic(&companion_dir, |staging_dir| {
+        write_companion_contents(staging_dir, data, existing_companion.as_deref())
+    })?;
 
     if !base_file.exists() {
         return Err(format!(
@@ -291,7 +301,11 @@ pub fn read_layout_capture(base_file: &Path) -> Result<LayoutDirectoryReadData, 
     })
 }
 
-fn write_companion_contents(root_dir: &Path, data: &LayoutDirectoryWriteData) -> Result<(), String> {
+fn write_companion_contents(
+    root_dir: &Path,
+    data: &LayoutDirectoryWriteData,
+    existing_companion: Option<&Path>,
+) -> Result<(), String> {
     write_yaml_file(&root_dir.join(BOWTIES_FILE), &data.bowties)?;
     write_yaml_file(&root_dir.join(OFFLINE_CHANGES_FILE), &data.offline_changes)?;
     write_yaml_file(
@@ -303,11 +317,13 @@ fn write_companion_contents(root_dir: &Path, data: &LayoutDirectoryWriteData) ->
     std::fs::create_dir_all(&nodes_dir)
         .map_err(|e| format!("Cannot create nodes dir {}: {}", nodes_dir.display(), e))?;
     for snapshot in &data.node_snapshots {
-        let node_path = derive_node_file_path(&nodes_dir, &snapshot.node_id.replace('.', ""));
+        let node_path = derive_node_file_path(&nodes_dir, &snapshot.node_id.to_canonical());
         write_yaml_file(&node_path, snapshot)?;
     }
 
-    // Copy CDI files to layout directory
+    // Copy CDI files to layout directory.
+    // If new CDI files are provided (fresh save from live bus), copy from cache.
+    // Otherwise, preserve existing CDI files from the previous companion dir.
     let cdi_dir = root_dir.join(CDI_DIR);
     if !data.cdi_files.is_empty() {
         std::fs::create_dir_all(&cdi_dir)
@@ -318,6 +334,26 @@ fn write_companion_contents(root_dir: &Path, data: &LayoutDirectoryWriteData) ->
             std::fs::copy(source_path, &dest_path)
                 .map_err(|e| format!("Cannot copy CDI file from {} to {}: {}", 
                     source_path.display(), dest_path.display(), e))?;
+        }
+    } else if let Some(prev) = existing_companion {
+        let prev_cdi = prev.join(CDI_DIR);
+        if prev_cdi.exists() {
+            std::fs::create_dir_all(&cdi_dir)
+                .map_err(|e| format!("Cannot create CDI directory {}: {}", cdi_dir.display(), e))?;
+            let entries = std::fs::read_dir(&prev_cdi)
+                .map_err(|e| format!("Cannot read existing CDI directory {}: {}", prev_cdi.display(), e))?;
+            for entry in entries {
+                let entry = entry.map_err(|e| format!("Failed reading CDI entry: {}", e))?;
+                let source = entry.path();
+                if source.extension().and_then(|x| x.to_str()) == Some("xml") {
+                    if let Some(name) = source.file_name() {
+                        let dest = cdi_dir.join(name);
+                        std::fs::copy(&source, &dest)
+                            .map_err(|e| format!("Cannot copy existing CDI file from {} to {}: {}",
+                                source.display(), dest.display(), e))?;
+                    }
+                }
+            }
         }
     }
 
@@ -391,10 +427,11 @@ mod tests {
         CaptureStatus, CdiReference, NodeSnapshot, SnapshotLeafValue, SnipSnapshot,
     };
     use crate::layout::types::{BowtieMetadata, RoleClassification};
+    use lcc_rs::NodeID;
 
     fn test_node_snapshot(node_id: &str) -> NodeSnapshot {
         let mut snapshot = NodeSnapshot {
-            node_id: node_id.to_string(),
+            node_id: NodeID::from_hex_string(node_id).unwrap(),
             captured_at: "2026-04-05T12:00:00Z".to_string(),
             capture_status: CaptureStatus::Complete,
             missing: Vec::new(),
@@ -494,7 +531,7 @@ mod tests {
         );
         let data = LayoutDirectoryWriteData {
             manifest,
-            node_snapshots: vec![test_node_snapshot("0501010114A2B3")],
+            node_snapshots: vec![test_node_snapshot("050101011402")],
             bowties: LayoutFile::default(),
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
@@ -528,17 +565,17 @@ mod tests {
         );
         let data = LayoutDirectoryWriteData {
             manifest,
-            node_snapshots: vec![test_node_snapshot("0501010114A2B3")],
+            node_snapshots: vec![test_node_snapshot("050101011402")],
             bowties: LayoutFile::default(),
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
         };
 
         write_layout_capture(&base_file, &data).unwrap();
-        let first = std::fs::read_to_string(derive_companion_dir_path(&base_file).unwrap().join("nodes").join("0501010114A2B3.yaml")).unwrap();
+        let first = std::fs::read_to_string(derive_companion_dir_path(&base_file).unwrap().join("nodes").join("050101011402.yaml")).unwrap();
 
         write_layout_capture(&base_file, &data).unwrap();
-        let second = std::fs::read_to_string(derive_companion_dir_path(&base_file).unwrap().join("nodes").join("0501010114A2B3.yaml")).unwrap();
+        let second = std::fs::read_to_string(derive_companion_dir_path(&base_file).unwrap().join("nodes").join("050101011402.yaml")).unwrap();
 
         assert_eq!(first, second);
 
@@ -547,7 +584,7 @@ mod tests {
 
     fn test_node_no_cdi(node_id: &str) -> NodeSnapshot {
         NodeSnapshot {
-            node_id: node_id.to_string(),
+            node_id: NodeID::from_hex_string(node_id).unwrap(),
             captured_at: "2026-04-05T12:00:00Z".to_string(),
             capture_status: CaptureStatus::Partial,
             missing: vec!["configuration tree not available".to_string()],
@@ -593,7 +630,7 @@ mod tests {
 
         assert_eq!(loaded.node_snapshots.len(), 1);
         let snap = &loaded.node_snapshots[0];
-        assert_eq!(snap.node_id, "0201120033CC");
+        assert_eq!(snap.node_id, NodeID::from_hex_string("0201120033CC").unwrap());
         assert_eq!(snap.cdi_ref.fingerprint, "not_supported");
         assert_eq!(snap.capture_status, CaptureStatus::Partial);
         assert!(snap.config.is_empty());
@@ -622,7 +659,7 @@ mod tests {
         let data = LayoutDirectoryWriteData {
             manifest,
             node_snapshots: vec![
-                test_node_snapshot("0501010114A2B3"),
+                test_node_snapshot("050101011402"),
                 test_node_no_cdi("0201120033CC"),
             ],
             bowties: LayoutFile::default(),
@@ -635,11 +672,11 @@ mod tests {
 
         assert_eq!(loaded.node_snapshots.len(), 2);
 
-        let cdi_node = loaded.node_snapshots.iter().find(|n| n.node_id == "0501010114A2B3").unwrap();
+        let cdi_node = loaded.node_snapshots.iter().find(|n| n.node_id == NodeID::from_hex_string("050101011402").unwrap()).unwrap();
         assert_eq!(cdi_node.cdi_ref.fingerprint, "len:123");
         assert!(!cdi_node.config.is_empty());
 
-        let no_cdi_node = loaded.node_snapshots.iter().find(|n| n.node_id == "0201120033CC").unwrap();
+        let no_cdi_node = loaded.node_snapshots.iter().find(|n| n.node_id == NodeID::from_hex_string("0201120033CC").unwrap()).unwrap();
         assert_eq!(no_cdi_node.cdi_ref.fingerprint, "not_supported");
         assert!(no_cdi_node.config.is_empty());
 

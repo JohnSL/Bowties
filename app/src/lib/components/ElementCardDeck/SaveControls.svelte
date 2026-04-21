@@ -63,10 +63,11 @@
   let offlineDraftCount = $derived(layoutStore.isOfflineMode ? offlineChangesStore.draftCount : 0);
   let hasOfflineEdits = $derived(layoutStore.isOfflineMode && offlineDraftCount > 0);
   // T019/T020: Unified dirty state across both config edits and bowtie metadata
-  let hasEdits = $derived(hasConfigEdits || hasMetadataEdits || hasOfflineEdits);
+  // layoutStore.isDirty covers cases like persisted offline changes reverted (need save to update file)
+  let hasEdits = $derived(hasConfigEdits || hasMetadataEdits || hasOfflineEdits || layoutStore.isDirty);
   let pendingEditCount = $derived(
     layoutStore.isOfflineMode
-      ? offlineDraftCount
+      ? offlineDraftCount + (layoutStore.isDirty && offlineDraftCount === 0 ? 1 : 0)
       : dirtyCount + (hasMetadataEdits ? bowtieMetadataStore.editCount : 0)
   );
   let pendingHintText = $derived(

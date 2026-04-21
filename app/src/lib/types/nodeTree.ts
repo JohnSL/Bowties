@@ -184,6 +184,13 @@ export interface LeafConfigNode extends ConfigNodeBase {
    * (address is read-only). Disables the control for the rest of the session.
    */
   readOnly?: boolean;
+  /**
+   * Set to true when a persisted offline change is pending for this leaf.
+   * The `modifiedValue` is set to the planned value so the field shows what
+   * will be written. These leaves are excluded from `countModifiedLeaves` so
+   * they don't trigger the SaveControls dirty indicator.
+   */
+  isOfflinePending?: boolean;
 }
 
 // ─── Event payloads ──────────────────────────────────────────────────────────
@@ -224,7 +231,7 @@ function countModifiedInChildren(children: ConfigNode[]): number {
   let count = 0;
   for (const child of children) {
     if (isLeaf(child)) {
-      if (child.modifiedValue != null) count++;
+      if (child.modifiedValue != null && !child.isOfflinePending) count++;
     } else if (isGroup(child)) {
       count += countModifiedInChildren(child.children);
     }

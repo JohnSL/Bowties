@@ -1,6 +1,6 @@
 //! Application state management for Bowties Tauri application
 
-use lcc_rs::{LccConnection, SNIPData, TransportHandle};
+use lcc_rs::{LccConnection, NodeID, SNIPData, TransportHandle};
 use crate::commands::{ConnectionConfig};
 use crate::events::EventRouter;
 use crate::node_registry::NodeRegistry;
@@ -119,8 +119,8 @@ pub struct ActiveLayoutContext {
     pub pending_offline_change_count: usize,
     /// Node IDs from the captured layout (uppercase hex, no dots).
     /// Populated when the layout is opened; used for bus-match overlap scoring.
-    #[serde(default)]
-    pub layout_node_ids: Vec<String>,
+    #[serde(default, with = "crate::layout::serde_node_id::canonical_vec")]
+    pub layout_node_ids: Vec<NodeID>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

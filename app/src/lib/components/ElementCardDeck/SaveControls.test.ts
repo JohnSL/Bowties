@@ -18,9 +18,30 @@ import type { NodeConfigTree, LeafConfigNode, SegmentNode } from '$lib/types/nod
 
 // ── Hoisted mock references ───────────────────────────────────────────────────
 // vi.hoisted ensures these are available inside vi.mock() factories.
-const { treesRef, metaRef } = vi.hoisted(() => ({
+const { treesRef, metaRef, layoutRef, offlineRef } = vi.hoisted(() => ({
   treesRef: { map: new Map<string, NodeConfigTree>() },
   metaRef: { isDirty: false, editCount: 0, clearAll: vi.fn() },
+  layoutRef: {
+    isOfflineMode: false,
+    hasLayoutFile: false,
+    isConnected: false,
+    isLoaded: false,
+    isDirty: false,
+    markClean: vi.fn(),
+    markDirty: vi.fn(),
+    saveCurrentLayout: vi.fn().mockResolvedValue(undefined) as any,
+    saveLayoutAs: vi.fn().mockResolvedValue(undefined) as any,
+    revertToSaved: vi.fn(),
+  },
+  offlineRef: {
+    draftCount: 0,
+    draftRows: [] as any[],
+    pendingCount: 0,
+    reloadFromBackend: vi.fn().mockResolvedValue(undefined) as any,
+    revertAllPending: vi.fn().mockResolvedValue(undefined) as any,
+    flushPendingToBackend: vi.fn().mockResolvedValue(0) as any,
+    clear: vi.fn(),
+  },
 }));
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
@@ -30,6 +51,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('$lib/stores/nodeTree.svelte', () => ({
   nodeTreeStore: {
     get trees() { return treesRef.map; },
+    clearAllModifiedValues: vi.fn(),
   },
 }));
 
@@ -43,11 +65,11 @@ vi.mock('$lib/api/config', () => ({
 }));
 
 vi.mock('$lib/stores/layout.svelte', () => ({
-  layoutStore: {
-    saveCurrentLayout: vi.fn().mockResolvedValue(undefined),
-    saveLayoutAs: vi.fn().mockResolvedValue(undefined),
-    revertToSaved: vi.fn(),
-  },
+  layoutStore: layoutRef,
+}));
+
+vi.mock('$lib/stores/offlineChanges.svelte', () => ({
+  offlineChangesStore: offlineRef,
 }));
 
 vi.mock('$lib/stores/nodeInfo', () => ({
@@ -91,6 +113,14 @@ beforeEach(() => {
   treesRef.map = new Map();
   metaRef.isDirty = false;
   metaRef.editCount = 0;
+  layoutRef.isOfflineMode = false;
+  layoutRef.hasLayoutFile = false;
+  layoutRef.isConnected = false;
+  layoutRef.isLoaded = false;
+  layoutRef.isDirty = false;
+  offlineRef.draftCount = 0;
+  offlineRef.draftRows = [];
+  offlineRef.pendingCount = 0;
   vi.clearAllMocks();
 });
 
@@ -289,6 +319,303 @@ describe('SaveControls.svelte', () => {
       await fireEvent.click(saveBtn);
       await waitFor(() => screen.getByText(/✓ Saved/i));
       expect(toast.push).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Offline vs online save routing ──────────────────────────────────────────
+
+  describe('offline mode: save routes to onOfflineSave', () => {
+    it('calls onOfflineSave (not writeModifiedValues) when offline with drafts', async () => {
+      const { writeModifiedValues } = await import('$lib/api/config');
+      layoutRef.isOfflineMode = true;
+      layoutRef.hasLayoutFile = true;
+      offlineRef.draftCount = 2;
+      offlineRef.draftRows = [
+        { status: 'pending', nodeId: 'n1' },
+        { status: 'pending', nodeId: 'n1' },
+      ];
+
+      const mockSave = vi.fn().mockResolvedValue(true);
+      render(SaveControls, { props: { onOfflineSave: mockSave, onOfflineSaveAs: vi.fn() } });
+
+      const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
+      await fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(mockSave).toHaveBeenCalled();
+      });
+      expect(writeModifiedValues).not.toHaveBeenCalled();
+    });
+
+    it('shows "unsaved edit" wording (not "unsaved change") in offline mode', async () => {
+      layoutRef.isOfflineMode = true;
+      layoutRef.hasLayoutFile = true;
+      offlineRef.draftCount = 1;
+      offlineRef.draftRows = [{ status: 'pending', nodeId: 'n1' }];
+
+      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+
+      await waitFor(() => {
+        expect(screen.getByText(/1 unsaved edit$/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows plural "unsaved edits" for multiple offline drafts', async () => {
+      layoutRef.isOfflineMode = true;
+      layoutRef.hasLayoutFile = true;
+      offlineRef.draftCount = 3;
+      offlineRef.draftRows = [
+        { status: 'pending', nodeId: 'n1' },
+        { status: 'pending', nodeId: 'n1' },
+        { status: 'pending', nodeId: 'n2' },
+      ];
+
+      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+
+      await waitFor(() => {
+        expect(screen.getByText(/3 unsaved edits/i)).toBeInTheDocument();
+      });
+    });
+
+    it('reloads offline store and clears trees after successful save', async () => {
+      layoutRef.isOfflineMode = true;
+      layoutRef.hasLayoutFile = true;
+      offlineRef.draftCount = 1;
+      offlineRef.draftRows = [{ status: 'pending', nodeId: 'n1' }];
+
+      const mockSave = vi.fn().mockResolvedValue(true);
+      render(SaveControls, { props: { onOfflineSave: mockSave, onOfflineSaveAs: vi.fn() } });
+
+      const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
+      await fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(offlineRef.reloadFromBackend).toHaveBeenCalled();
+        expect(layoutRef.markClean).toHaveBeenCalled();
+      });
+    });
+
+    it('reverts to idle when onOfflineSave returns false (user cancelled)', async () => {
+      layoutRef.isOfflineMode = true;
+      layoutRef.hasLayoutFile = true;
+      offlineRef.draftCount = 1;
+      offlineRef.draftRows = [{ status: 'pending', nodeId: 'n1' }];
+
+      const mockSave = vi.fn().mockResolvedValue(false);
+      render(SaveControls, { props: { onOfflineSave: mockSave, onOfflineSaveAs: vi.fn() } });
+
+      const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
+      await fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(mockSave).toHaveBeenCalled();
+      });
+      // Should not have called post-save cleanup
+      expect(offlineRef.reloadFromBackend).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('online mode: save routes to writeModifiedValues', () => {
+    it('calls writeModifiedValues (not onOfflineSave) when online with config edits', async () => {
+      const { writeModifiedValues } = await import('$lib/api/config');
+      layoutRef.isOfflineMode = false;
+      layoutRef.isConnected = true;
+      treesRef.map.set('node1', makeDirtyTree(2));
+
+      const mockSave = vi.fn();
+      render(SaveControls, { props: { onOfflineSave: mockSave, onOfflineSaveAs: vi.fn() } });
+
+      const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
+      await fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(writeModifiedValues).toHaveBeenCalled();
+      });
+      expect(mockSave).not.toHaveBeenCalled();
+    });
+
+    it('shows "unsaved change" wording (not "unsaved edit") in online mode', async () => {
+      layoutRef.isOfflineMode = false;
+      treesRef.map.set('node1', makeDirtyTree(2));
+
+      render(SaveControls);
+
+      await waitFor(() => {
+        expect(screen.getByText(/2 unsaved changes/i)).toBeInTheDocument();
+      });
+    });
+
+    it('does not count offline drafts in online mode', async () => {
+      layoutRef.isOfflineMode = false;
+      layoutRef.isConnected = true;
+      layoutRef.hasLayoutFile = true;
+      offlineRef.draftCount = 5; // should be ignored
+      treesRef.map.set('node1', makeDirtyTree(1));
+
+      render(SaveControls);
+
+      await waitFor(() => {
+        // Should show 1 (config edit) not 5 (offline drafts)
+        expect(screen.getByText(/1 unsaved change$/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── Online with layout open (key regression scenario) ───────────────────────
+
+  describe('online with layout: config edits detected and routed to hardware', () => {
+    beforeEach(() => {
+      layoutRef.isOfflineMode = false;
+      layoutRef.hasLayoutFile = true;
+      layoutRef.isConnected = true;
+    });
+
+    it('shows Save button when config tree has modifiedValue leaves', async () => {
+      treesRef.map.set('node1', makeDirtyTree(1));
+      render(SaveControls);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
+      });
+    });
+
+    it('hides Save button when no config edits and no offline drafts', () => {
+      render(SaveControls);
+      expect(screen.queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument();
+    });
+
+    it('ignores offline drafts (isOfflineMode is false even with layout open)', async () => {
+      offlineRef.draftCount = 3;
+      offlineRef.draftRows = [
+        { status: 'pending', nodeId: 'n1' },
+        { status: 'pending', nodeId: 'n1' },
+        { status: 'pending', nodeId: 'n2' },
+      ];
+      // No config edits — Save button should NOT appear
+      render(SaveControls);
+      expect(screen.queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument();
+    });
+
+    it('routes Save to writeModifiedValues, not onOfflineSave', async () => {
+      const { writeModifiedValues } = await import('$lib/api/config');
+      treesRef.map.set('node1', makeDirtyTree(1));
+
+      const mockOfflineSave = vi.fn();
+      render(SaveControls, { props: { onOfflineSave: mockOfflineSave, onOfflineSaveAs: vi.fn() } });
+
+      const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
+      await fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(writeModifiedValues).toHaveBeenCalled();
+      });
+      expect(mockOfflineSave).not.toHaveBeenCalled();
+    });
+
+    it('shows "unsaved change" wording (online terminology)', async () => {
+      treesRef.map.set('node1', makeDirtyTree(2));
+      render(SaveControls);
+      await waitFor(() => {
+        expect(screen.getByText(/2 unsaved changes/i)).toBeInTheDocument();
+      });
+    });
+
+    it('counts only config tree dirty leaves for pending count', async () => {
+      offlineRef.draftCount = 10; // should be ignored
+      treesRef.map.set('node1', makeDirtyTree(2));
+      render(SaveControls);
+      await waitFor(() => {
+        expect(screen.getByText(/2 unsaved changes/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── T061: layoutStore.isDirty enables Save (persisted offline revert) ──────
+
+  describe('T061: Save appears when layoutStore.isDirty is set (persisted offline revert)', () => {
+    it('shows Save button when layoutStore.isDirty is true even with no draft edits', async () => {
+      // Simulates: offline mode, user reverted a persisted change so draftCount=0
+      // but layoutStore.isDirty=true (set by the revert button handler)
+      layoutRef.isOfflineMode = true;
+      offlineRef.draftCount = 0;
+      layoutRef.isDirty = true;
+
+      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
+      });
+    });
+
+    it('Save button is hidden when neither drafts nor isDirty', async () => {
+      layoutRef.isOfflineMode = true;
+      offlineRef.draftCount = 0;
+      layoutRef.isDirty = false;
+
+      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument();
+      });
+    });
+
+    it('calls onOfflineSave when Save is clicked with isDirty set', async () => {
+      const mockSave = vi.fn().mockResolvedValue(true);
+      layoutRef.isOfflineMode = true;
+      offlineRef.draftCount = 0;
+      layoutRef.isDirty = true;
+
+      render(SaveControls, { props: { onOfflineSave: mockSave, onOfflineSaveAs: vi.fn() } });
+
+      const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
+      await fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(mockSave).toHaveBeenCalled();
+      });
+    });
+
+    it('markClean is called after successful isDirty save', async () => {
+      const mockSave = vi.fn().mockResolvedValue(true);
+      layoutRef.isOfflineMode = true;
+      offlineRef.draftCount = 0;
+      layoutRef.isDirty = true;
+
+      render(SaveControls, { props: { onOfflineSave: mockSave, onOfflineSaveAs: vi.fn() } });
+
+      const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
+      await fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(layoutRef.markClean).toHaveBeenCalled();
+      });
+    });
+
+    it('shows "1 unsaved edit" when only isDirty is set (no draft count)', async () => {
+      // This is the persisted revert scenario: draftCount=0, isDirty=true
+      // pendingEditCount should be 1 (not 0) so the label is meaningful
+      layoutRef.isOfflineMode = true;
+      offlineRef.draftCount = 0;
+      layoutRef.isDirty = true;
+
+      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+
+      await waitFor(() => {
+        expect(screen.getByText(/1 unsaved edit/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows draftCount only (not draftCount+1) when drafts are present alongside isDirty', async () => {
+      // If there are draft edits AND isDirty, show only draftCount — the dirty
+      // flag is implicit in the drafts themselves, not an extra change to count
+      layoutRef.isOfflineMode = true;
+      offlineRef.draftCount = 3;
+      layoutRef.isDirty = true;
+
+      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+
+      await waitFor(() => {
+        expect(screen.getByText(/3 unsaved edits/i)).toBeInTheDocument();
+      });
     });
   });
 });

@@ -3,7 +3,7 @@
 //! T043j-T043k: Integration tests with real CDI XML samples and malformed XML tests
 
 use lcc_rs::cdi::parser::parse_cdi;
-use lcc_rs::cdi::{DataElement, Cdi};
+use lcc_rs::cdi::DataElement;
 
 // Tower-LCC.xml is a real-world CDI from the archived 003 Miller Columns spec.
 const TOWER_LCC_XML: &str = include_str!("../../specs/archive/003-miller-columns/Tower-LCC.xml");

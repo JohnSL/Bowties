@@ -1,6 +1,7 @@
 //! Node snapshot types for layout directory persistence.
 
 use std::collections::BTreeMap;
+use lcc_rs::NodeID;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,7 +54,8 @@ pub enum CaptureStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeSnapshot {
-    pub node_id: String,
+    #[serde(with = "crate::layout::serde_node_id::canonical")]
+    pub node_id: NodeID,
     pub captured_at: String,
     pub capture_status: CaptureStatus,
     #[serde(default)]
@@ -69,9 +71,6 @@ pub struct NodeSnapshot {
 
 impl NodeSnapshot {
     pub fn validate(&self) -> Result<(), String> {
-        if self.node_id.trim().is_empty() {
-            return Err("nodeId must not be empty".to_string());
-        }
         if self.capture_status == CaptureStatus::Partial && self.missing.is_empty() {
             return Err("partial snapshots must include missing details".to_string());
         }
