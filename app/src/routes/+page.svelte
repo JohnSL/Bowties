@@ -41,7 +41,10 @@
   import { configFocusStore } from '$lib/stores/configFocus.svelte';
   import { setPillSelection } from '$lib/stores/pillSelection';
   import { layoutOpenInProgress, layoutOpenStatusText, failLayoutOpen, resetLayoutOpenPhase } from '$lib/stores/layoutOpenLifecycle';
-  import { openOfflineLayoutWithReplay } from '$lib/orchestration/offlineLayoutOrchestrator';
+  import {
+    clearActiveLayoutWithReset,
+    openOfflineLayoutWithReplay,
+  } from '$lib/orchestration/offlineLayoutOrchestrator';
   import {
     type FailedCdiPreflightNode,
     getUnreadConfigEligibleNodes,
@@ -482,18 +485,15 @@
   }
 
   async function clearActiveLayout() {
-    const activeContext = layoutStore.activeContext;
-
-    if (activeContext?.mode === 'offline_file') {
-      const result = await closeLayout('discard');
-      if (!result.closed) return;
-    } else {
-      await clearRecentLayout().catch((error) => {
+    await clearActiveLayoutWithReset({
+      activeLayoutMode: layoutStore.activeContext?.mode,
+      closeLayout: (decision) => closeLayout(decision),
+      clearRecentLayout,
+      resetLayoutState: () => resetLayoutStateForNoLayout(),
+      onRecentLayoutClearError: (error) => {
         console.warn('[layout] Failed to clear persisted startup layout:', error);
-      });
-    }
-
-    await resetLayoutStateForNoLayout();
+      },
+    });
   }
 
   // Config reading progress state (T063-T067)

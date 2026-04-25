@@ -30,7 +30,7 @@
 
 ### A3. Lifecycle State Model
 
-- [ ] R007 Define a single source of truth for lifecycle transitions (layout open, reload, replay, discard, apply, disconnect). Partial: layout-open transitions now use explicit lifecycle helpers, sync-session auto-trigger state is centralized, and disconnect transitions are now routed through explicit preserve/rehydrate/clear outcomes, but one unified transition owner does not exist yet.
+- [ ] R007 Define a single source of truth for lifecycle transitions (layout open, reload, replay, discard, apply, disconnect). Partial: layout-open and layout-close transitions now use the offline-layout orchestrator, sync-session auto-trigger state is centralized, and disconnect transitions are now routed through explicit preserve/rehydrate/clear outcomes, but one unified transition owner or transition matrix does not exist yet.
 - [x] R008 Make pending-value apply timing deterministic and documented at each lifecycle transition.
 - [x] R009 Add guardrails for ordering-sensitive paths (reload, tree rebuild, post-apply restamp).
 
@@ -43,7 +43,7 @@
 ### A5. Integration With Current Phase 6c/6d Tasks
 
 - [ ] R013 Sequence Phase 6c/6d implementation on top of A1-A4 seams.
-- [ ] R014 Map each task `T047m`-`T047x` to the seam it depends on.
+- [x] R014 Map each task `T047m`-`T047x` to the seam it depends on.
 - [ ] R015 Record any newly discovered orchestration/lifecycle defects as refactor follow-ups here. Partial: four concrete seam defects have now been captured and fixed during regression work: (1) a concurrent discovery enrichment race where late SNIP/PIP completions could overwrite newer discoveries because they rebased onto stale per-event node arrays; (2) a sync-session stale-state gap where already-applied rows were counted but not pruned from the backend cache/front-end pending state during `build_sync_session`; (3) a post-apply snapshot gap where node snapshot baseline values were refreshed but `captured_at` was left stale; and (4) a CDI preflight classification gap where non-downloadable CDI failures were collapsed into the generic missing-CDI prompt instead of surfacing differentiated errors.
 
 ### Current Progress (2026-04-25)
@@ -60,7 +60,19 @@
 - Fixed the CDI preflight classification gap so only `CdiNotRetrieved` opens the download prompt while `CdiUnavailable`, `RetrievalFailed`, and similar failures surface through the existing error banner.
 - Added explicit lifecycle helper functions and transition guardrails in `app/src/lib/stores/layoutOpenLifecycle.ts`.
 - Added focused tests covering these seams in `app/src/lib/stores/layoutOpenLifecycle.test.ts`, `app/src/lib/stores/syncPanel.store.test.ts`, `app/src/lib/components/Sync/SyncPanel.lifecycle.test.ts`, `app/src/lib/orchestration/syncSessionOrchestrator.test.ts`, `app/src/lib/orchestration/discoveryOrchestrator.test.ts`, `app/src/lib/orchestration/configReadOrchestrator.test.ts`, `app/src/lib/orchestration/offlineLayoutOrchestrator.test.ts`, `app/src/lib/orchestration/syncApplyOrchestrator.test.ts`, `app/src/lib/orchestration/unsavedChangesGuard.test.ts`, `app/src/lib/components/ElementCardDeck/SaveControls.test.ts`, `app/src/lib/components/ConfigSidebar/ConfigSidebar.test.ts`, `app/src/lib/components/ElementCardDeck/TreeLeafRow.offline.test.ts`, `app/src/lib/stores/offlineChanges.store.test.ts`, `app/src/routes/page.route.test.ts`, and `app/src-tauri/src/layout/node_snapshot.rs` unit tests.
+- Extracted the route-owned close/discard transition into `app/src/lib/orchestration/offlineLayoutOrchestrator.ts`, so open/close lifecycle decisions are no longer split between `+page.svelte` and the orchestration layer.
 - Remaining lifecycle gap: discard/apply/disconnect/open transitions are improved, but not yet unified under one transition matrix or owner.
+
+### Phase 6c/6d Seam Map
+
+- `T047m`, `T047v`, `T047w`: backend sync persistence seam in `app/src-tauri/src/commands/sync_panel.rs` and snapshot helpers in `app/src-tauri/src/layout/node_snapshot.rs`.
+- `T047n`, `T047q`: component intent and unsaved-state seam in `app/src/lib/components/ElementCardDeck/TreeLeafRow.svelte`, `app/src/lib/components/ElementCardDeck/SaveControls.svelte`, and `app/src/lib/orchestration/unsavedChangesGuard.ts`.
+- `T047o`, `T047t`: saved-vs-working offline state seam in `app/src/lib/stores/offlineChanges.svelte.ts`.
+- `T047p`: disconnect transition seam in `app/src/lib/orchestration/syncSessionOrchestrator.ts` and route wiring in `app/src/routes/+page.svelte`.
+- `T047r`: shared NodeID normalization seam in `app/src/lib/utils/nodeId.ts` and consumers such as `app/src/lib/stores/nodeTree.svelte.ts`.
+- `T047s`: offline layout open/replay seam in `app/src/lib/orchestration/offlineLayoutOrchestrator.ts`, plus route ordering in `app/src/routes/+page.svelte`.
+- `T047u`: post-apply tree reconciliation seam in `app/src/lib/orchestration/syncApplyOrchestrator.ts`.
+- `T047x`: regression coverage spread across `app/src/lib/stores/nodeTree.store.test.ts`, `app/src/lib/stores/offlineChanges.store.test.ts`, `app/src/lib/orchestration/syncApplyOrchestrator.test.ts`, `app/src/lib/stores/syncPanel.store.test.ts`, and backend unit helpers in `app/src-tauri/src/layout/node_snapshot.rs` and `app/src-tauri/src/commands/sync_panel.rs`.
 
 ---
 

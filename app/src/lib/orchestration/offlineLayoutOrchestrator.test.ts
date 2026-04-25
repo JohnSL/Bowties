@@ -31,7 +31,10 @@ vi.mock('$lib/stores/offlineChanges.svelte', () => ({
 
 vi.mock('$lib/stores/layoutOpenLifecycle', () => lifecycleRef);
 
-import { openOfflineLayoutWithReplay } from './offlineLayoutOrchestrator';
+import {
+  clearActiveLayoutWithReset,
+  openOfflineLayoutWithReplay,
+} from './offlineLayoutOrchestrator';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -88,5 +91,59 @@ describe('openOfflineLayoutWithReplay', () => {
 
     expect(onOpened).not.toHaveBeenCalled();
     expect(lifecycleRef.failLayoutOpen).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('clearActiveLayoutWithReset', () => {
+  it('closes offline layouts before resetting local state', async () => {
+    const closeLayout = vi.fn(async () => ({ closed: true }));
+    const clearRecentLayout = vi.fn(async () => {});
+    const resetLayoutState = vi.fn(async () => {});
+
+    const cleared = await clearActiveLayoutWithReset({
+      activeLayoutMode: 'offline_file',
+      closeLayout,
+      clearRecentLayout,
+      resetLayoutState,
+    });
+
+    expect(cleared).toBe(true);
+    expect(closeLayout).toHaveBeenCalledWith('discard');
+    expect(clearRecentLayout).not.toHaveBeenCalled();
+    expect(resetLayoutState).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reset local state when the backend refuses to close an offline layout', async () => {
+    const closeLayout = vi.fn(async () => ({ closed: false, reason: 'cancelled' }));
+    const resetLayoutState = vi.fn(async () => {});
+
+    const cleared = await clearActiveLayoutWithReset({
+      activeLayoutMode: 'offline_file',
+      closeLayout,
+      clearRecentLayout: vi.fn(async () => {}),
+      resetLayoutState,
+    });
+
+    expect(cleared).toBe(false);
+    expect(resetLayoutState).not.toHaveBeenCalled();
+  });
+
+  it('warns but still resets when clearing the recent legacy layout fails', async () => {
+    const warning = vi.fn();
+    const resetLayoutState = vi.fn(async () => {});
+
+    const cleared = await clearActiveLayoutWithReset({
+      activeLayoutMode: 'legacy_file',
+      closeLayout: vi.fn(async () => ({ closed: true })),
+      clearRecentLayout: vi.fn(async () => {
+        throw new Error('disk busy');
+      }),
+      resetLayoutState,
+      onRecentLayoutClearError: warning,
+    });
+
+    expect(cleared).toBe(true);
+    expect(warning).toHaveBeenCalledTimes(1);
+    expect(resetLayoutState).toHaveBeenCalledTimes(1);
   });
 });
