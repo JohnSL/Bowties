@@ -7,9 +7,11 @@
 
 import type { OfflineChangeInput, OfflineChangeRow } from '$lib/api/sync';
 import { listOfflineChanges, replaceOfflineChanges, revertOfflineChange } from '$lib/api/sync';
+import { normalizeNodeId } from '$lib/utils/nodeId';
 
 class OfflineChangesStore {
   private _persistedRows = $state<OfflineChangeRow[]>([]);
+  private _savedRows = $state<OfflineChangeRow[]>([]);
   private _draftRows = $state<OfflineChangeRow[]>([]);
   private _busy = $state<boolean>(false);
 
@@ -23,6 +25,10 @@ class OfflineChangesStore {
 
   get draftRows(): OfflineChangeRow[] {
     return this._draftRows;
+  }
+
+  get savedRows(): OfflineChangeRow[] {
+    return this._savedRows;
   }
 
   get effectiveRows(): OfflineChangeRow[] {
@@ -59,7 +65,8 @@ class OfflineChangesStore {
   }
 
   setRows(rows: OfflineChangeRow[]): void {
-    this._persistedRows = rows;
+    this._persistedRows = [...rows];
+    this._savedRows = [...rows];
     this._draftRows = [];
   }
 
@@ -149,7 +156,7 @@ class OfflineChangesStore {
       (r) =>
         r.kind === 'config' &&
         r.status === 'pending' &&
-        this.normalizeNodeId(r.nodeId) === this.normalizeNodeId(nodeId) &&
+        normalizeNodeId(r.nodeId) === normalizeNodeId(nodeId) &&
         r.space === space &&
         r.offset === offset
     ) ?? null;
@@ -160,7 +167,7 @@ class OfflineChangesStore {
       (r) =>
         r.kind === 'config' &&
         r.status === 'pending' &&
-        this.normalizeNodeId(r.nodeId) === this.normalizeNodeId(nodeId) &&
+        normalizeNodeId(r.nodeId) === normalizeNodeId(nodeId) &&
         r.space === space &&
         r.offset === offset
     ) ?? null;
@@ -190,8 +197,9 @@ class OfflineChangesStore {
 
   /**
    * Revert a single offline change back to its captured baseline.
-   * Removes the change from both draft and persisted rows, and calls
-   * the backend IPC to remove it from the persisted offline-changes file.
+   * Removes the change from the current in-memory working set.
+   * Persisted rows are removed from the backend cache, but remain in the
+   * saved snapshot until the user explicitly saves or discards.
    */
   async revertToBaseline(changeId: string): Promise<boolean> {
     this._busy = true;
@@ -199,11 +207,11 @@ class OfflineChangesStore {
       // Remove from draft rows immediately
       this._draftRows = this._draftRows.filter((r) => r.changeId !== changeId);
 
-      // If persisted, call the backend to remove it and reload
+      // If persisted, remove it from the backend cache and the current working rows.
       const wasPersisted = this._persistedRows.some((r) => r.changeId === changeId);
       if (wasPersisted) {
         await revertOfflineChange(changeId);
-        await this.reloadFromBackend();
+        this._persistedRows = this._persistedRows.filter((r) => r.changeId !== changeId);
       }
       return true;
     } catch {
@@ -215,6 +223,7 @@ class OfflineChangesStore {
 
   clear(): void {
     this._persistedRows = [];
+    this._savedRows = [];
     this._draftRows = [];
     this._busy = false;
   }
@@ -227,7 +236,8 @@ class OfflineChangesStore {
     this._busy = true;
     try {
       const rows = await listOfflineChanges();
-      this._persistedRows = rows;
+      this._persistedRows = [...rows];
+      this._savedRows = [...rows];
       this._draftRows = [];
     } finally {
       this._busy = false;
@@ -236,6 +246,8 @@ class OfflineChangesStore {
 
   async revertAllPending(): Promise<number> {
     const pending = this._draftRows.filter((r) => r.status === 'pending').length;
+    // Restore working rows to the last known saved snapshot.
+    this._persistedRows = [...this._savedRows];
     this._draftRows = [];
     return pending;
   }
@@ -261,13 +273,9 @@ class OfflineChangesStore {
     }
   }
 
-  private normalizeNodeId(nodeId?: string): string {
-    return (nodeId ?? '').replace(/\./g, '').toUpperCase();
-  }
-
   private targetKeyForRow(row: OfflineChangeRow): string {
     if (row.kind === 'config') {
-      return `config:${this.normalizeNodeId(row.nodeId)}:${row.space ?? 0}:${row.offset ?? ''}`;
+      return `config:${normalizeNodeId(row.nodeId)}:${row.space ?? 0}:${row.offset ?? ''}`;
     }
     if (row.kind === 'bowtieMetadata') {
       return `bowtieMetadata:${row.baselineValue}`;

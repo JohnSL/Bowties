@@ -333,6 +333,22 @@ describe('applyOfflinePendingValues', () => {
     }).not.toThrow();
   });
 
+  it('matches canonical row nodeId to dotted tree nodeId', () => {
+    const leaf = makeTestLeaf(['seg:0', 'elem:0'], 0);
+    nodeTreeStore.setTree(NODE_ID, {
+      nodeId: NODE_ID, identity: null,
+      segments: [{ name: 'Config', description: null, origin: 0, space: 253, children: [leaf] }],
+    });
+
+    nodeTreeStore.applyOfflinePendingValues([
+      makePendingRow({ nodeId: '050201000000' }),
+    ]);
+
+    const updated = nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0] as LeafConfigNode;
+    expect(updated.modifiedValue).toEqual({ type: 'int', value: 5 });
+    expect(updated.isOfflinePending).toBe(true);
+  });
+
   it('sets modifiedValue as string for non-numeric plannedValue', () => {
     const leaf = makeTestLeaf(['seg:0', 'elem:0'], 0);
     nodeTreeStore.setTree(NODE_ID, {

@@ -40,12 +40,23 @@
   import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
   import { configFocusStore } from '$lib/stores/configFocus.svelte';
   import { setPillSelection } from '$lib/stores/pillSelection';
-  import { layoutOpenInProgress, layoutOpenStatusText, setLayoutOpenPhase } from '$lib/stores/layoutOpenLifecycle';
+  import { layoutOpenInProgress, layoutOpenStatusText, failLayoutOpen, resetLayoutOpenPhase } from '$lib/stores/layoutOpenLifecycle';
+  import { openOfflineLayoutWithReplay } from '$lib/orchestration/offlineLayoutOrchestrator';
+  import {
+    getUnreadConfigEligibleNodes,
+    partitionNodesByCdiAvailability,
+    pipConfirmsNoCdi,
+    toConfigReadCandidate,
+  } from '$lib/orchestration/configReadOrchestrator';
+  import { handleDiscoveredNode, refreshReinitializedNode } from '$lib/orchestration/discoveryOrchestrator';
+  import { hasUnsavedPromptChanges } from '$lib/orchestration/unsavedChangesGuard';
+  import { disconnectWithOfflineFallback, SyncSessionOrchestrator } from '$lib/orchestration/syncSessionOrchestrator';
   import { installMenuShortcuts } from '../lib/keyboard/menuShortcuts';
   import type { MissingCdiNode } from '$lib/components/CdiDownloadDialog.svelte';
   import SyncPanel from '$lib/components/Sync/SyncPanel.svelte';
   import { syncPanelStore } from '$lib/stores/syncPanel.svelte';
   import OfflineBanner from '$lib/components/Layout/OfflineBanner.svelte';
+  import { formatNodeId, nodeIdStringToBytes } from '$lib/utils/nodeId';
 
   // Active tab state — 'config' (default) or 'bowties'
   let activeTab = $state<'config' | 'bowties'>('config');
@@ -65,10 +76,11 @@
   let errorDialog = $state<{ title: string; message: string } | null>(null);
 
   function promptUnsaved(message: string, proceed: () => void, confirmLabel = 'Discard & Continue'): void {
-    const hasUnsaved =
-      [...nodeTreeStore.trees.values()].some(t => hasModifiedLeaves(t)) ||
-      bowtieMetadataStore.isDirty ||
-      offlineChangesStore.draftCount > 0;
+    const hasUnsaved = hasUnsavedPromptChanges(
+      nodeTreeStore.trees.values(),
+      bowtieMetadataStore.isDirty,
+      offlineChangesStore.draftCount,
+    );
     if (hasUnsaved) {
       unsavedDialog = { message, proceed, confirmLabel };
     } else {
@@ -192,10 +204,8 @@
   // offline tree after disconnect so nodes are not lost from the UI (Bug 4).
   let currentLayoutSnapshots = $state<OfflineNodeSnapshot[]>([]);
 
-  // Discovery settling: wait for a quiet period after last node-discovered event
-  // before triggering sync, so all nodes have time to appear.
-  let discoverySettleTimer: ReturnType<typeof setTimeout> | null = null;
-  let syncTriggered = false;
+  // Sync-session lifecycle state is coordinated in a dedicated orchestrator.
+  const syncSessionOrchestrator = new SyncSessionOrchestrator();
 
   function normalizeLayoutTitle(raw: string | null | undefined): string | null {
     if (!raw) return null;
@@ -212,11 +222,6 @@
     if (!ctx) return null;
     return normalizeLayoutTitle(ctx.layoutId) ?? normalizeLayoutTitle(ctx.rootPath);
   });
-  function canonicalToBytes(nodeId: string): number[] {
-    const clean = nodeId.replace(/\./g, '').toUpperCase();
-    const pairs = clean.match(/.{1,2}/g) ?? [];
-    return pairs.slice(0, 6).map((p) => parseInt(p, 16));
-  }
 
   function parseOfflineValue(value: string): TreeConfigValue {
     if (/^[0-9]+$/.test(value)) {
@@ -317,7 +322,7 @@
 
   async function hydrateOfflineSnapshots(snapshots: OfflineNodeSnapshot[]) {
     const offlineNodes: DiscoveredNode[] = snapshots.map((s, idx) => ({
-      node_id: canonicalToBytes(s.nodeId),
+      node_id: nodeIdStringToBytes(s.nodeId),
       alias: 0x700 + idx,
       snip_data: {
         manufacturer: s.snip.manufacturerName,
@@ -369,11 +374,12 @@
       nodeTreeStore.setTree(tree.nodeId, tree);
       markNodeConfigRead(tree.nodeId);
     }
+  }
 
-    // Apply persisted pending offline changes to show planned values in config fields
-    if (offlineChangesStore.persistedRows.length > 0) {
-      nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows);
-    }
+  function applyPersistedOfflinePendingToTrees(): void {
+    if (!layoutStore.hasLayoutFile) return;
+    if (offlineChangesStore.persistedRows.length === 0) return;
+    nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows);
   }
 
   async function openOfflineLayoutFromDialog() {
@@ -385,27 +391,19 @@
     if (!selected) return;
 
     try {
-      setLayoutOpenPhase('opening_file');
-      const result = await openLayoutFile(selected);
+      const result = await openOfflineLayoutWithReplay({
+        path: selected,
+        openLayout: openLayoutFile,
+        hydrateOfflineSnapshots,
+        applyPersistedOfflinePendingToTrees,
+        onOpened: () => {
+          showConnectionDialog = false;
+        },
+      });
       partialCaptureNodes = new Set(result.partialNodes);
       currentLayoutSnapshots = result.nodeSnapshots;
-
-      setLayoutOpenPhase('hydrating_snapshots');
-      await hydrateOfflineSnapshots(result.nodeSnapshots);
-      layoutStore.setActiveContext({
-        layoutId: result.layoutId,
-        rootPath: selected,
-        mode: 'offline_file',
-        capturedAt: result.capturedAt,
-        pendingOfflineChangeCount: result.pendingOfflineChangeCount,
-      });
-
-      // Load offline changes into store (T033c)
-      setLayoutOpenPhase('replaying_offline_changes');
-      await offlineChangesStore.reloadFromBackend();
-      setLayoutOpenPhase('ready');
     } catch (error) {
-      setLayoutOpenPhase('error');
+      failLayoutOpen();
       errorDialog = {
         title: 'Failed to Load Layout',
         message: String(error ?? 'Unknown error')
@@ -464,6 +462,7 @@
     offlineChangesStore.clear();
 
     layoutStore.reset();
+    syncSessionOrchestrator.resetAutoTrigger();
 
     if (connected && reprobeLiveNodes) {
       await probeForNodes();
@@ -499,20 +498,9 @@
   // Per-node progress state for the redesigned progress modal
   let nodeReadStates = $state<NodeReadState[]>([]);
 
-  // Returns true when PIP has confirmed the node does not support CDI or Memory Configuration
-  function pipConfirmsNoCdi(n: DiscoveredNode): boolean {
-    if (n.pip_status !== 'Complete') return false;
-    if (!n.pip_flags) return false;
-    return !n.pip_flags.cdi && !n.pip_flags.memory_configuration;
-  }
-
   // Reactive count of nodes with SNIP data not yet config-read — drives "Read Remaining" visibility
   let unreadCount = $derived(
-    nodes.filter(n => {
-      if (!n.snip_data) return false;
-      if (pipConfirmsNoCdi(n)) return false;
-      return !$configReadNodesStore.has(formatNodeId(n.node_id));
-    }).length
+    getUnreadConfigEligibleNodes(nodes, $configReadNodesStore).length
   );
 
   // Show CTA panel only on a fresh session where NO nodes have been read yet.
@@ -547,7 +535,10 @@
 
   let selectedUnreadNodeName = $derived(
     selectedUnreadNodeId
-      ? (nodes.find(n => formatNodeId(n.node_id) === selectedUnreadNodeId)?.snip_data?.user_name || selectedUnreadNodeId)
+      ? (() => {
+          const selectedNode = nodes.find((n) => formatNodeId(n.node_id) === selectedUnreadNodeId);
+          return selectedNode ? toConfigReadCandidate(selectedNode).nodeName : selectedUnreadNodeId;
+        })()
       : null
   );
 
@@ -625,32 +616,25 @@
       });
       if (recent && recent.path) {
         try {
-          setLayoutOpenPhase('opening_file');
-          const opened = await openLayoutFile(recent.path);
+          const opened = await openOfflineLayoutWithReplay({
+            path: recent.path,
+            openLayout: openLayoutFile,
+            hydrateOfflineSnapshots,
+            applyPersistedOfflinePendingToTrees,
+            onOpened: () => {
+              showConnectionDialog = false;
+            },
+          });
           partialCaptureNodes = new Set(opened.partialNodes);
           currentLayoutSnapshots = opened.nodeSnapshots;
-
-          setLayoutOpenPhase('hydrating_snapshots');
-          await hydrateOfflineSnapshots(opened.nodeSnapshots);
-          layoutStore.setActiveContext({
-            layoutId: opened.layoutId,
-            rootPath: recent.path,
-            mode: 'offline_file',
-            capturedAt: opened.capturedAt,
-            pendingOfflineChangeCount: opened.pendingOfflineChangeCount,
-          });
-
-          setLayoutOpenPhase('replaying_offline_changes');
-          await offlineChangesStore.reloadFromBackend();
-          setLayoutOpenPhase('ready');
         } catch (error) {
-          setLayoutOpenPhase('error');
+          failLayoutOpen();
           console.warn('[layout] Failed to restore startup layout:', error);
           await clearRecentLayout().catch((clearError) => {
             console.warn('[layout] Failed to clear invalid startup layout:', clearError);
           });
           await resetLayoutStateForNoLayout(false);
-          setLayoutOpenPhase('idle');
+          resetLayoutOpenPhase();
         }
       }
 
@@ -669,9 +653,11 @@
       unlistens.push(await appWindow.onCloseRequested((event) => {
         if (isForceClosing) return;
         const hasUnsaved =
-          [...nodeTreeStore.trees.values()].some(t => hasModifiedLeaves(t)) ||
-          bowtieMetadataStore.isDirty ||
-          offlineChangesStore.draftCount > 0;
+          hasUnsavedPromptChanges(
+            nodeTreeStore.trees.values(),
+            bowtieMetadataStore.isDirty,
+            offlineChangesStore.draftCount,
+          );
         if (hasUnsaved) {
           event.preventDefault();
           unsavedDialog = {
@@ -727,77 +713,28 @@
         if (!connected) return; // ignore stray events after disconnect
         const { nodeId, alias } = event.payload;
 
-        // Parse dotted-hex nodeId back to number[]
-        const nodeIdBytes = nodeId.split('.').map(b => parseInt(b, 16));
-
-        const existingIdx = nodes.findIndex(n => formatNodeId(n.node_id) === nodeId);
-        if (existingIdx >= 0) {
-          const existing = nodes[existingIdx];
-          // True dedup: same node AND same real alias → already fully registered
-          if (existing.alias === alias) return;
-          // Upgrade offline skeleton (or stale alias) with real bus alias
-          nodes = nodes.map((n, i) => i !== existingIdx ? n : {
-            ...n,
-            alias,
-            connection_status: 'Connected' as const,
-            last_seen: new Date().toISOString(),
-          });
-          updateNodeInfo(nodes);
-        } else {
-          // Brand-new node — add skeleton immediately so the UI shows it
-          const skeleton: DiscoveredNode = {
-            node_id: nodeIdBytes,
-            alias,
-            snip_data: null,
-            snip_status: 'Unknown',
-            connection_status: 'Connected',
-            last_verified: null,
-            last_seen: new Date().toISOString(),
-            cdi: null,
-            pip_flags: null,
-            pip_status: 'Unknown',
-          };
-          nodes = [...nodes, skeleton];
-          updateNodeInfo(nodes);
-        }
-
-        try {
-          // Register in backend state so SNIP/CDI cache updates work correctly
-          await registerNode(nodeId, alias);
-
-          // Fetch SNIP + PIP concurrently
-          const [snipResult, pipResult] = await Promise.all([
-            querySnip(alias),
-            queryPip(alias),
-          ]);
-
-          nodes = nodes.map(n => {
-            if (n.alias !== alias) return n;
-            return {
-              ...n,
-              snip_data: snipResult.snip_data ?? n.snip_data, // keep offline fallback
-              snip_status: snipResult.status,
-              pip_flags: pipResult.pip_flags ?? n.pip_flags,
-              pip_status: pipResult.status,
-            };
-          });
-          updateNodeInfo(nodes);
-        } catch (e) {
-          console.warn(`Failed to query node ${nodeId}:`, e);
-        }
+        const result = await handleDiscoveredNode({
+          currentNodes: nodes,
+          nodeId,
+          alias,
+          registerNode,
+          querySnip,
+          queryPip,
+          publishNodes: (nextNodes) => {
+            nodes = nextNodes;
+            updateNodeInfo(nextNodes);
+          },
+        });
+        nodes = result.nodes;
+        if (result.skipped) return;
 
         // Reset the discovery settling timer — wait for 1s of silence after the
         // last node-discovered event before triggering sync.
-        if (!syncTriggered && layoutStore.hasLayoutFile && offlineChangesStore.pendingCount > 0) {
-          if (discoverySettleTimer) clearTimeout(discoverySettleTimer);
-          discoverySettleTimer = setTimeout(() => {
-            discoverySettleTimer = null;
-            if (!syncTriggered) {
-              syncTriggered = true;
-              maybeTriggerSync();
-            }
-          }, 1000);
-        }
+        syncSessionOrchestrator.scheduleAutoSync({
+          hasLayoutFile: layoutStore.hasLayoutFile,
+          pendingCount: offlineChangesStore.pendingCount,
+          triggerSync: () => maybeTriggerSync(),
+        });
       }));
 
       // D15: When a known node sends InitializationComplete (reboot/factory-reset),
@@ -805,29 +742,19 @@
       unlistens.push(await listen<{ nodeId: string; alias: number; timestamp: string }>('lcc-node-reinitialized', async (event) => {
         if (!connected) return;
         const { nodeId, alias } = event.payload;
-        // Only refresh if we already know this node
-        if (!nodes.some(n => formatNodeId(n.node_id) === nodeId)) return;
         console.log(`[D15] Node ${nodeId} reinitialized — refreshing SNIP+PIP`);
-        try {
-          const [snipResult, pipResult] = await Promise.all([
-            querySnip(alias),
-            queryPip(alias),
-          ]);
-          nodes = nodes.map(n => {
-            if (n.alias !== alias) return n;
-            return {
-              ...n,
-              snip_data: snipResult.snip_data,
-              snip_status: snipResult.status,
-              pip_flags: pipResult.pip_flags,
-              pip_status: pipResult.status,
-              cdi: null, // invalidate cached CDI — will be re-fetched on next open
-            };
-          });
-          updateNodeInfo(nodes);
-        } catch (e) {
-          console.warn(`Failed to refresh reinitialized node ${nodeId}:`, e);
-        }
+        const result = await refreshReinitializedNode({
+          currentNodes: nodes,
+          nodeId,
+          alias,
+          querySnip,
+          queryPip,
+          publishNodes: (nextNodes) => {
+            nodes = nextNodes;
+            updateNodeInfo(nextNodes);
+          },
+        });
+        nodes = result.nodes;
       }));
 
       // Now that the lcc-node-discovered listener is registered, probe for existing nodes.
@@ -888,6 +815,7 @@
 
     // Cleanup all listeners on component unmount
     return () => {
+      syncSessionOrchestrator.cancelPendingTrigger();
       unlistens.forEach(u => u());
     };
   });
@@ -898,7 +826,7 @@
     connected = true;
     layoutStore.setConnected(true);
     showConnectionDialog = false;
-    syncTriggered = false;
+    syncSessionOrchestrator.resetAutoTrigger();
     probeForNodes();
   }
 
@@ -907,72 +835,65 @@
    * If so, compute match status and build a sync session, then show the panel.
    */
   async function maybeTriggerSync() {
-    if (!layoutStore.hasLayoutFile) return;
-    if (offlineChangesStore.pendingCount === 0) return;
-    // Block auto-triggers (settle timer) from re-opening a panel the user dismissed.
-    // `forceSyncPanel` resets syncTriggered before calling, so it bypasses this guard.
-    if (syncPanelStore.isDismissed && syncTriggered) return;
-
-    // Compute preliminary match from discovered node IDs
-    const discoveredIds = nodes.map(n => formatNodeId(n.node_id));
-    await syncPanelStore.computeMatch(discoveredIds);
-
-    // If user needs to choose bench mode, show the panel for the mode prompt
-    if (
-      syncPanelStore.matchStatus &&
-      syncPanelStore.matchStatus.classification !== 'likely_same' &&
-      syncPanelStore.syncMode === null
-    ) {
-      syncPanelVisible = true;
-      return; // Wait for mode selection — SyncPanel will call loadSession after
-    }
-
-    // Build and show the sync session
-    await syncPanelStore.loadSession();
-    if (syncPanelStore.session) {
-      const hasContent =
-        syncPanelStore.session.conflictRows.length > 0 ||
-        syncPanelStore.session.cleanRows.length > 0 ||
-        syncPanelStore.session.nodeMissingRows.length > 0;
-      if (hasContent) {
+    await syncSessionOrchestrator.maybeTriggerSync({
+      hasLayoutFile: layoutStore.hasLayoutFile,
+      pendingCount: offlineChangesStore.pendingCount,
+      discoveredNodeIds: nodes.map((node) => formatNodeId(node.node_id)),
+      syncPanelStore,
+      showSyncPanel: () => {
         syncPanelVisible = true;
-      }
-    }
+      },
+    });
   }
 
   /** Re-open the sync panel on demand (e.g. from menu or OfflineBanner button). */
   async function forceSyncPanel() {
-    syncPanelStore.reset();
-    syncTriggered = false;
-    await maybeTriggerSync();
+    await syncSessionOrchestrator.forceSyncPanel({
+      hasLayoutFile: layoutStore.hasLayoutFile,
+      pendingCount: offlineChangesStore.pendingCount,
+      discoveredNodeIds: nodes.map((node) => formatNodeId(node.node_id)),
+      syncPanelStore,
+      showSyncPanel: () => {
+        syncPanelVisible = true;
+      },
+    });
   }
 
   async function disconnect() {
     errorMessage = "";
     connectionLabel = "";
-    try {
-      await invoke("disconnect_lcc");
-      connected = false;
-      layoutStore.setConnected(false);
-      clearConfigReadStatus();
-      syncPanelStore.reset();
-      syncPanelVisible = false;
-      if (discoverySettleTimer) { clearTimeout(discoverySettleTimer); discoverySettleTimer = null; }
-      syncTriggered = false;
-
-      // Re-hydrate from saved snapshots when a layout is open so the node list
-      // is preserved after disconnect instead of going blank (Bug 4).
-      if (layoutStore.hasLayoutFile && currentLayoutSnapshots.length > 0) {
+    await disconnectWithOfflineFallback({
+      disconnect: () => invoke('disconnect_lcc'),
+      afterDisconnect: () => {
+        connected = false;
+        layoutStore.setConnected(false);
+        syncPanelStore.reset();
+        syncPanelVisible = false;
+        syncSessionOrchestrator.resetAutoTrigger();
+      },
+      hasLayoutFile: layoutStore.hasLayoutFile,
+      hasSnapshots: currentLayoutSnapshots.length > 0,
+      rehydrateOffline: async () => {
         nodeTreeStore.reset();
         await hydrateOfflineSnapshots(currentLayoutSnapshots);
-      } else {
+        applyPersistedOfflinePendingToTrees();
+      },
+      preserveLiveState: () => {
+        showConnectionDialog = false;
+      },
+      clearLiveState: () => {
+        clearConfigReadStatus();
         nodes = [];
         updateNodeInfo([]);
         nodeTreeStore.reset();
-      }
-    } catch (e) {
-      errorMessage = `Disconnect failed: ${e}`;
-    }
+      },
+      showConnectionDialog: () => {
+        showConnectionDialog = true;
+      },
+      onError: (message) => {
+        errorMessage = message;
+      },
+    });
   }
 
   /** Fire-and-forget probe — nodes appear via lcc-node-discovered events */
@@ -1014,10 +935,6 @@
     } finally {
       probing = false;
     }
-  }
-
-  function formatNodeId(nodeId: number[]): string {
-    return nodeId.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join('.');
   }
 
   function formatAlias(alias: number): string {
@@ -1062,51 +979,30 @@
 
   /** Read config values for all unread nodes (batch) */
   async function readRemainingNodes() {
-    const readNodes = get(configReadNodesStore);
-    const unread = nodes.filter(n => {
-      if (!n.snip_data) return false;
-      if (pipConfirmsNoCdi(n)) return false;
-      const nodeId = formatNodeId(n.node_id);
-      return !readNodes.has(nodeId);
-    });
+    const unread = getUnreadConfigEligibleNodes(nodes, get(configReadNodesStore));
     if (unread.length === 0) return;
 
     // Phase A: CDI pre-check — check cache for all nodes BEFORE opening any modal.
     // This ensures the download dialog is shown before any config reading begins.
-    const localCdiMissing: MissingCdiNode[] = [];
-    const newNodesWithCdi = new Set<string>();
-    for (const node of unread) {
-      const nodeId = formatNodeId(node.node_id);
-      const nodeName = node.snip_data?.user_name || nodeId;
-      try {
+    const { nodesWithCdi: newNodesWithCdi, missingNodes: localCdiMissing } = await partitionNodesByCdiAvailability(
+      unread,
+      async (nodeId) => {
         const cdiCheck = await getCdiXml(nodeId);
-        if (cdiCheck.xmlContent !== null) {
-          newNodesWithCdi.add(nodeId);
-        } else {
-          localCdiMissing.push({ nodeId, nodeName });
-        }
-      } catch {
-        localCdiMissing.push({ nodeId, nodeName });
-      }
-    }
+        return cdiCheck.xmlContent !== null;
+      },
+    );
     nodesWithCdi = newNodesWithCdi;
 
     if (localCdiMissing.length > 0) {
       // Store ALL unread nodes — handleCdiDownload will read them all after download.
-      pendingConfigNodes = unread.map(n => ({
-        nodeId: formatNodeId(n.node_id),
-        nodeName: n.snip_data?.user_name || formatNodeId(n.node_id),
-      }));
+      pendingConfigNodes = unread.map((node) => toConfigReadCandidate(node));
       cdiMissingNodes = localCdiMissing;
       cdiDownloadDialogVisible = true;
       return;
     }
 
     // Phase B: All nodes have CDI — read config immediately.
-    const allNodes = unread.map(n => ({
-      nodeId: formatNodeId(n.node_id),
-      nodeName: n.snip_data?.user_name || formatNodeId(n.node_id),
-    }));
+    const allNodes = unread.map((node) => toConfigReadCandidate(node));
 
     nodeReadStates = allNodes.map(({ nodeId, nodeName }) => ({
       nodeId,

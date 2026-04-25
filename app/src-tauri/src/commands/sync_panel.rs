@@ -451,36 +451,20 @@ pub async fn set_offline_change(
     Ok(change_id_out)
 }
 
-/// Persist the current in-memory offline changes to disk.
-///
-/// Derives the companion directory from `root_path` and writes
-/// `offline-changes.yaml` atomically via [`crate::layout::io::write_yaml_file`].
-fn persist_offline_changes(
-    changes: &[crate::layout::offline_changes::OfflineChange],
-    root_path: &str,
-) -> Result<(), String> {
-    let base_file = std::path::Path::new(root_path);
-    let companion_dir = crate::layout::io::derive_companion_dir_path(base_file)?;
-    let offline_changes_path = companion_dir.join("offline-changes.yaml");
-    let changes_vec: Vec<_> = changes.to_vec();
-    crate::layout::io::write_yaml_file(&offline_changes_path, &changes_vec)
-}
-
 #[tauri::command]
 pub async fn revert_offline_change(
     change_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
-    // Verify active offline layout and capture root_path
-    let root_path = {
+    // Verify active offline layout
+    {
         let guard = state.active_layout.read().await;
         guard
             .as_ref()
             .cloned()
             .filter(|c| c.mode == ActiveLayoutMode::OfflineFile)
-            .ok_or_else(|| "No offline layout is active".to_string())?
-            .root_path
-    };
+            .ok_or_else(|| "No offline layout is active".to_string())?;
+    }
 
     // Remove from in-memory cache
     let removed = {
@@ -492,12 +476,6 @@ pub async fn revert_offline_change(
 
     if !removed {
         return Err(format!("Change not found: {}", change_id));
-    }
-
-    // Write updated changes to disk so the file stays consistent with in-memory state
-    {
-        let cache = state.offline_changes_cache.read().await;
-        persist_offline_changes(&cache, &root_path)?;
     }
 
     // Update pending count in active layout context

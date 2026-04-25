@@ -11,8 +11,9 @@
  * - Offline change indicators are suppressed while layoutOpenInProgress is true.
  */
 
+import '@testing-library/jest-dom/vitest';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import TreeLeafRow from './TreeLeafRow.svelte';
 import type { LeafConfigNode } from '$lib/types/nodeTree';
 import type { OfflineChangeRow } from '$lib/api/sync';
@@ -33,9 +34,18 @@ function readable<T>(value: T) {
 
 // ─── Mock stores that control offline-row visibility ─────────────────────────
 
-const mockFindDraftConfigChange = vi.fn<() => OfflineChangeRow | null>().mockReturnValue(null);
-const mockFindPersistedConfigChange = vi.fn<() => OfflineChangeRow | null>().mockReturnValue(null);
-const mockRevertToBaseline = vi.fn().mockResolvedValue(true);
+const {
+  mockFindDraftConfigChange,
+  mockFindPersistedConfigChange,
+  mockRevertToBaseline,
+  mockSetLeafModifiedValue,
+} = vi.hoisted(() => ({
+  mockFindDraftConfigChange: vi.fn<() => OfflineChangeRow | null>().mockReturnValue(null),
+  mockFindPersistedConfigChange: vi.fn<() => OfflineChangeRow | null>().mockReturnValue(null),
+  mockRevertToBaseline: vi.fn().mockResolvedValue(true),
+  mockSetLeafModifiedValue: vi.fn(),
+}));
+
 let mockIsBusy = false;
 
 vi.mock('$lib/stores/offlineChanges.svelte', () => ({
@@ -43,19 +53,17 @@ vi.mock('$lib/stores/offlineChanges.svelte', () => ({
     get isBusy() {
       return mockIsBusy;
     },
-    findDraftConfigChange: (...args: unknown[]) => mockFindDraftConfigChange(...args),
-    findPersistedConfigChange: (...args: unknown[]) => mockFindPersistedConfigChange(...args),
-    revertToBaseline: (...args: unknown[]) => mockRevertToBaseline(...args),
+    findDraftConfigChange: mockFindDraftConfigChange,
+    findPersistedConfigChange: mockFindPersistedConfigChange,
+    revertToBaseline: mockRevertToBaseline,
     upsertConfigChange: vi.fn(),
     pendingCount: 0,
   },
 }));
 
-const mockSetLeafModifiedValue = vi.fn();
-
 vi.mock('$lib/stores/nodeTree.svelte', () => ({
   nodeTreeStore: {
-    setLeafModifiedValue: (...args: unknown[]) => mockSetLeafModifiedValue(...args),
+    setLeafModifiedValue: mockSetLeafModifiedValue,
     getTree: vi.fn().mockReturnValue(null),
     trees: new Map(),
     updateLeafValue: vi.fn(),
@@ -216,7 +224,9 @@ describe('draft offline row (unsaved edit)', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: /revert to baseline/i }));
 
-    expect(mockSetLeafModifiedValue).toHaveBeenCalledWith(NODE_ID, ['seg:0', 'elem:0'], null);
+    await waitFor(() => {
+      expect(mockSetLeafModifiedValue).toHaveBeenCalledWith(NODE_ID, ['seg:0', 'elem:0'], null);
+    });
   });
 
   it('revert button is disabled when offlineChangesStore.isBusy is true', () => {
@@ -268,19 +278,21 @@ describe('persisted offline row (pending apply)', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: /revert to baseline/i }));
 
-    expect(mockSetLeafModifiedValue).toHaveBeenCalledWith(NODE_ID, ['seg:0', 'elem:2'], null);
+    await waitFor(() => {
+      expect(mockSetLeafModifiedValue).toHaveBeenCalledWith(NODE_ID, ['seg:0', 'elem:2'], null);
+    });
   });
 
-  it('does NOT call markDirty after persisted revert — no false Save/Discard buttons', async () => {
-    // Bug 1b: previously layoutStore.markDirty() was called here, causing
-    // SaveControls to show "0 unsaved changes" with active Save/Discard buttons.
+  it('marks the layout dirty after persisted revert so save and discard stay available', async () => {
     const { layoutStore } = await import('$lib/stores/layout.svelte');
     mockFindPersistedConfigChange.mockReturnValue(makePersistedRow());
     render(TreeLeafRow, { props: { leaf: makeLeaf(), nodeId: NODE_ID } });
 
     await fireEvent.click(screen.getByRole('button', { name: /revert to baseline/i }));
 
-    expect(layoutStore.markDirty).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(layoutStore.markDirty).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

@@ -293,6 +293,16 @@
     });
   }
 
+  async function revertPendingOfflineChange(changeId: string, markDirty: boolean): Promise<void> {
+    const reverted = await offlineChangesStore.revertToBaseline(changeId);
+    if (!reverted) return;
+
+    nodeTreeStore.setLeafModifiedValue(nodeId, leaf.path, null);
+    if (markDirty) {
+      layoutStore.markDirty();
+    }
+  }
+
   /** Validate a string value and send to Rust tree */
   function handleStringInput(e: Event) {
     const raw = (e.target as HTMLInputElement).value;
@@ -675,10 +685,7 @@
       </span>
       <button
         class="revert-baseline-btn"
-        onclick={() => {
-          offlineChangesStore.revertToBaseline(draftOfflineRow!.changeId);
-          nodeTreeStore.setLeafModifiedValue(nodeId, leaf.path, null);
-        }}
+        onclick={() => void revertPendingOfflineChange(draftOfflineRow!.changeId, false)}
         title="Revert to captured baseline value"
         aria-label="Revert to baseline"
         disabled={offlineChangesStore.isBusy}
@@ -691,10 +698,7 @@
       </span>
       <button
         class="revert-baseline-btn"
-        onclick={() => {
-          offlineChangesStore.revertToBaseline(persistedOfflineRow!.changeId);
-          nodeTreeStore.setLeafModifiedValue(nodeId, leaf.path, null);
-        }}
+        onclick={() => void revertPendingOfflineChange(persistedOfflineRow!.changeId, true)}
         title="Revert to captured baseline value"
         aria-label="Revert to baseline"
         disabled={offlineChangesStore.isBusy}

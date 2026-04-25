@@ -6,13 +6,14 @@
 
 import { writable } from 'svelte/store';
 import type { DiscoveredNode } from '$lib/api/tauri';
+import { formatNodeId } from '$lib/utils/nodeId';
 
 /** Map from nodeId (dotted-hex, e.g. "02.01.57.00.00.01") → full DiscoveredNode */
 export const nodeInfoStore = writable<Map<string, DiscoveredNode>>(new Map());
 
 /** Canonical dotted-hex format used as map key */
 export function formatNodeIdKey(nodeId: number[]): string {
-  return nodeId.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join('.');
+  return formatNodeId(nodeId);
 }
 
 /** Rebuild the store from a fresh node list */

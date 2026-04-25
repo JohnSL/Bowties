@@ -52,6 +52,7 @@ vi.mock('$lib/stores/nodeTree.svelte', () => ({
   nodeTreeStore: {
     get trees() { return treesRef.map; },
     clearAllModifiedValues: vi.fn(),
+    applyOfflinePendingValues: vi.fn(),
   },
 }));
 
@@ -412,6 +413,74 @@ describe('SaveControls.svelte', () => {
       });
       // Should not have called post-save cleanup
       expect(offlineRef.reloadFromBackend).not.toHaveBeenCalled();
+    });
+
+    it('does not show unsaved edits for saved pending rows alone', () => {
+      layoutRef.isOfflineMode = true;
+      layoutRef.hasLayoutFile = true;
+      layoutRef.isDirty = false;
+      offlineRef.draftCount = 0;
+      (offlineRef as any).persistedRows = [{
+        changeId: 'persisted-1',
+        kind: 'config',
+        nodeId: '05.02.01.02.03.00',
+        space: 253,
+        offset: '0x00000000',
+        baselineValue: '1',
+        plannedValue: '2',
+        status: 'pending',
+      }];
+
+      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+
+      expect(screen.queryByText(/unsaved edit/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /discard/i })).not.toBeInTheDocument();
+    });
+
+    it('shows one unsaved edit when the offline layout is dirty without draft rows', async () => {
+      layoutRef.isOfflineMode = true;
+      layoutRef.hasLayoutFile = true;
+      layoutRef.isDirty = true;
+      offlineRef.draftCount = 0;
+
+      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+
+      await waitFor(() => {
+        expect(screen.getByText(/1 unsaved edit$/i)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /discard/i })).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('offline discard replay', () => {
+    it('re-applies persisted pending rows to the tree after offline discard', async () => {
+      const { nodeTreeStore } = await import('$lib/stores/nodeTree.svelte');
+
+      layoutRef.isOfflineMode = true;
+      layoutRef.hasLayoutFile = true;
+      offlineRef.draftCount = 1;
+      offlineRef.draftRows = [{ status: 'pending', nodeId: 'n1' }];
+      (offlineRef as any).persistedRows = [{
+        changeId: 'persisted-1',
+        kind: 'config',
+        nodeId: '05.02.01.02.03.00',
+        space: 253,
+        offset: '0x00000000',
+        baselineValue: '1',
+        plannedValue: '2',
+        status: 'pending',
+      }];
+
+      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+
+      await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: /discard/i })));
+      await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: /revert/i })));
+
+      await waitFor(() => {
+        expect(nodeTreeStore.applyOfflinePendingValues).toHaveBeenCalledWith((offlineRef as any).persistedRows);
+      });
     });
   });
 

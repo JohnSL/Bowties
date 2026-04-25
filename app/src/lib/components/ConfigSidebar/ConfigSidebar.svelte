@@ -12,6 +12,7 @@
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { hasModifiedLeaves, hasModifiedDescendant, isGroup, isLeaf, type ConfigNode } from '$lib/types/nodeTree';
   import type { SegmentInfo } from '$lib/stores/configSidebar';
+  import { resolveNodeDisplayName } from '$lib/utils/nodeDisplayName';
 
   const dispatch = createEventDispatcher<{ readNodeConfig: { nodeId: string } }>();
 
@@ -21,13 +22,18 @@
   let nodeLoadingMap = $state(new Map<string, boolean>());
 
   /** Get display name for a discovered node */
-  function getNodeDisplayName(node: any): string {
-    const snip = node.snip_data;
-    if (!snip) return `Node ${node.node_id}`;
-    if (snip.user_name && snip.user_name.length > 0) return snip.user_name;
-    if (snip.user_description && snip.user_description.length > 0) return snip.user_description;
-    if (snip.manufacturer && snip.model) return `${snip.manufacturer} ${snip.model}`;
-    return `Node`;
+  function getNodeDisplayName(nodeId: string, node: any): string {
+    const baseName = resolveNodeDisplayName(nodeId, node);
+    const duplicates = [...nodes.entries()].filter(([otherNodeId, otherNode]) => (
+      resolveNodeDisplayName(otherNodeId, otherNode) === baseName
+    ));
+
+    if (duplicates.length <= 1) {
+      return baseName;
+    }
+
+    const suffix = nodeId.split('.').slice(-2).join('.');
+    return `${baseName} (${suffix})`;
   }
 
   /** Get secondary detail for disambiguation (manufacturer/model) */
@@ -201,7 +207,7 @@
     </div>
   {:else}
     <nav class="node-list" aria-label="Discovered nodes">
-      {#each [...nodes.entries()].sort((a, b) => getNodeDisplayName(a[1]).localeCompare(getNodeDisplayName(b[1]))) as [nodeId, node]}
+      {#each [...nodes.entries()].sort((a, b) => getNodeDisplayName(a[0], a[1]).localeCompare(getNodeDisplayName(b[0], b[1]))) as [nodeId, node]}
         {@const isExpanded = sidebarState.expandedNodeIds.includes(nodeId)}
         {@const isOffline = isNodeOffline(node)}
         {@const isLoading = nodeLoadingMap.get(nodeId) ?? false}
@@ -215,7 +221,7 @@
         <div class="node-group" class:child-selected={hasSelectedSegment}>
           <NodeEntry
             {nodeId}
-            nodeName={getNodeDisplayName(node)}
+            nodeName={getNodeDisplayName(nodeId, node)}
             nodeDetail={getNodeDetail(node)}
             nodeTooltip={getNodeTooltip(nodeId, node)}
             {isExpanded}
@@ -230,7 +236,7 @@
           />
 
           {#if isExpanded}
-            <div class="segment-list" role="list" aria-label="Segments for {getNodeDisplayName(node)}">
+            <div class="segment-list" role="list" aria-label="Segments for {getNodeDisplayName(nodeId, node)}">
               {#if nodeError}
                 {#if nodeError.includes('CdiUnavailable') || nodeError.includes('CdiNotRetrieved')}
                   {#if isConfigNotRead}

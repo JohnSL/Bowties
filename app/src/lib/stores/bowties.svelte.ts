@@ -19,6 +19,7 @@ import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
 import { layoutStore } from '$lib/stores/layout.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { nodeInfoStore } from '$lib/stores/nodeInfo';
+import { resolveNodeDisplayName as resolveSharedNodeDisplayName } from '$lib/utils/nodeDisplayName';
 
 // ─── Store class ─────────────────────────────────────────────────────────────
 
@@ -420,15 +421,7 @@ function collectEntriesForEventId(eventIdHex: string): { producers: EventSlotEnt
  */
 function resolveNodeDisplayName(nodeId: string): string {
   const nodes = get(nodeInfoStore);
-  const node = nodes.get(nodeId);
-  if (!node?.snip_data) return nodeId;
-  const snip = node.snip_data;
-  if (snip.user_name && snip.user_name.length > 0) return snip.user_name;
-  const mfg = snip.manufacturer?.trim() ?? '';
-  const mdl = snip.model?.trim() ?? '';
-  if (mfg && mdl) return `${mfg} — ${mdl}`;
-  if (mdl) return mdl;
-  return nodeId;
+  return resolveSharedNodeDisplayName(nodeId, nodes.get(nodeId));
 }
 
 /** Singleton editable bowtie preview store. */

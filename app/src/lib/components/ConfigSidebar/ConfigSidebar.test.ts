@@ -43,6 +43,18 @@ const MOCK_NODE = {
   cdi: '<cdi/>',
 };
 
+function makeNode(overrides: Record<string, unknown> = {}) {
+  return {
+    ...MOCK_NODE,
+    pip_status: 'Complete',
+    pip_flags: {
+      cdi: true,
+      memory_configuration: true,
+    },
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   configSidebarStore.reset();
   nodeInfoStore.set(new Map());
@@ -61,6 +73,93 @@ describe('ConfigSidebar.svelte', () => {
     nodeInfoStore.set(new Map([['02.01.57.00.00.01', MOCK_NODE as any]]));
     render(ConfigSidebar);
     expect(screen.getByText('Test Node')).toBeInTheDocument();
+  });
+
+  it('updates from raw node id to friendly name when SNIP data arrives', async () => {
+    const nodeId = '02.01.57.00.00.01';
+    nodeInfoStore.set(new Map([[
+      nodeId,
+      makeNode({
+        snip_data: null,
+        snip_status: 'Unknown',
+      }) as any,
+    ]]));
+
+    render(ConfigSidebar);
+    expect(screen.getByText(nodeId)).toBeInTheDocument();
+
+    nodeInfoStore.set(new Map([[
+      nodeId,
+      makeNode({
+        snip_data: {
+          ...MOCK_NODE.snip_data,
+          user_name: 'East Panel',
+        },
+        snip_status: 'Complete',
+      }) as any,
+    ]]));
+
+    await vi.waitFor(() => {
+      expect(screen.getByText('East Panel')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(nodeId)).not.toBeInTheDocument();
+  });
+
+  it('falls back to manufacturer and model when user name is blank', () => {
+    const nodeId = '02.01.57.00.00.01';
+    nodeInfoStore.set(new Map([[
+      nodeId,
+      makeNode({
+        snip_data: {
+          ...MOCK_NODE.snip_data,
+          user_name: '   ',
+          user_description: 'Panel description',
+          manufacturer: 'RR-CirKits',
+          model: 'Tower-LCC',
+        },
+      }) as any,
+    ]]));
+
+    render(ConfigSidebar);
+
+    expect(screen.getByText('RR-CirKits — Tower-LCC')).toBeInTheDocument();
+    expect(screen.queryByText('Panel description')).not.toBeInTheDocument();
+  });
+
+  it('falls back to node id when no friendly SNIP name is available', () => {
+    const nodeId = '02.01.57.00.00.01';
+    nodeInfoStore.set(new Map([[
+      nodeId,
+      makeNode({
+        snip_data: {
+          ...MOCK_NODE.snip_data,
+          user_name: '',
+          user_description: 'Offline note',
+          manufacturer: '',
+          model: '',
+        },
+      }) as any,
+    ]]));
+
+    render(ConfigSidebar);
+
+    expect(screen.getByText(nodeId)).toBeInTheDocument();
+    expect(screen.queryByText('Offline note')).not.toBeInTheDocument();
+  });
+
+  it('disambiguates duplicate friendly names with the node id suffix', () => {
+    nodeInfoStore.set(new Map([
+      ['02.01.57.00.00.01', makeNode() as any],
+      ['02.01.57.00.00.02', makeNode({
+        node_id: [0x02, 0x01, 0x57, 0x00, 0x00, 0x02],
+        alias: 0x124,
+      }) as any],
+    ]));
+
+    render(ConfigSidebar);
+
+    expect(screen.getByText('Test Node (00.01)')).toBeInTheDocument();
+    expect(screen.getByText('Test Node (00.02)')).toBeInTheDocument();
   });
 
   it('expands a node to show its segments when clicked (FR-002, FR-015)', async () => {
@@ -200,6 +299,47 @@ describe('ConfigSidebar.svelte', () => {
       expect(screen.getByText(/configuration not supported by this node/i)).toBeInTheDocument();
     });
     expect(screen.queryByText(/has not been read from this node yet/i)).not.toBeInTheDocument();
+  });
+
+  it('suppresses the read-config CTA for nodes confirmed to have no CDI support', () => {
+    const nodeId = '02.01.57.00.00.01';
+    nodeInfoStore.set(new Map([[
+      nodeId,
+      makeNode({
+        pip_flags: {
+          cdi: false,
+          memory_configuration: false,
+        },
+      }) as any,
+    ]]));
+
+    render(ConfigSidebar);
+
+    expect(screen.queryByLabelText('Read configuration for Test Node')).not.toBeInTheDocument();
+  });
+
+  it('shows configuration-not-supported for a confirmed CDI-less node', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    (invoke as any).mockRejectedValue('CdiUnavailable: 02.01.57.00.00.01');
+
+    const nodeId = '02.01.57.00.00.01';
+    nodeInfoStore.set(new Map([[
+      nodeId,
+      makeNode({
+        pip_flags: {
+          cdi: false,
+          memory_configuration: false,
+        },
+      }) as any,
+    ]]));
+
+    render(ConfigSidebar);
+    await fireEvent.click(screen.getByText('Test Node'));
+
+    await vi.waitFor(() => {
+      expect(screen.getByText(/configuration not supported by this node/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByLabelText('Read configuration for Test Node')).not.toBeInTheDocument();
   });
 
   // ── Tree reactivity: parent dirty indicators ────────────────────────────────

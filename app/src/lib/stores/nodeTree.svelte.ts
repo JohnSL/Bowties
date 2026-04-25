@@ -19,6 +19,7 @@ import type {
 } from '$lib/types/nodeTree';
 import { isGroup, isLeaf, getChildrenAtPath } from '$lib/types/nodeTree';
 import type { OfflineChangeRow } from '$lib/api/sync';
+import { normalizeNodeId } from '$lib/utils/nodeId';
 
 // ─── Store class ─────────────────────────────────────────────────────────────
 
@@ -239,7 +240,8 @@ class NodeTreeStore {
 
     const next = new Map<string, NodeConfigTree>();
     for (const [nodeId, tree] of this._trees.entries()) {
-      const rows = pendingRows.filter((r) => r.nodeId === nodeId);
+      const normalizedNodeId = normalizeNodeId(nodeId || tree.nodeId);
+      const rows = pendingRows.filter((r) => normalizeNodeId(r.nodeId) === normalizedNodeId);
       if (rows.length === 0) {
         next.set(nodeId, tree);
         continue;

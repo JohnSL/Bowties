@@ -1,10 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { syncPanelStore } from '$lib/stores/syncPanel.svelte';
-  import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
-  import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
-  import { buildOfflineNodeTree } from '$lib/api/layout';
-  import { markNodeConfigRead } from '$lib/stores/configReadStatus';
+  import { reconcileOfflineTreesAfterSyncApply } from '$lib/orchestration/syncApplyOrchestrator';
   import ConflictRow from './ConflictRow.svelte';
   import CleanSummarySection from './CleanSummarySection.svelte';
   import type { SyncMode } from '$lib/api/sync';
@@ -68,33 +65,10 @@
   }
 
   async function handleApply() {
+    const session = syncPanelStore.session;
     const result = await syncPanelStore.applySelected();
     if (result) {
-      // Refresh offline changes list to reflect applied/cleared rows
-      await offlineChangesStore.reloadFromBackend();
-
-      // Rebuild node trees for affected nodes so baselines reflect applied values.
-      // Collect unique nodeIds from rows whose changeId was applied or read-only-cleared.
-      const clearedIds = new Set([...result.applied, ...result.readOnlyCleared]);
-      const allRows = [
-        ...(syncPanelStore.session?.conflictRows ?? []),
-        ...(syncPanelStore.session?.cleanRows ?? []),
-        ...(syncPanelStore.session?.nodeMissingRows ?? []),
-      ];
-      const affectedNodeIds = new Set(
-        allRows
-          .filter(r => r.nodeId && clearedIds.has(r.changeId))
-          .map(r => r.nodeId!.replace(/\./g, '').toUpperCase())
-      );
-      for (const nodeId of affectedNodeIds) {
-        try {
-          const tree = await buildOfflineNodeTree(nodeId);
-          nodeTreeStore.setTree(tree.nodeId, tree);
-          markNodeConfigRead(tree.nodeId);
-        } catch (e) {
-          console.warn(`[sync] Failed to rebuild tree for ${nodeId}:`, e);
-        }
-      }
+      await reconcileOfflineTreesAfterSyncApply(result, session);
 
       if (result.failed.length === 0) {
         syncPanelStore.dismiss();

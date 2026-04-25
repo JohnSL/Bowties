@@ -250,7 +250,7 @@ export function hasModifiedLeaves(tree: NodeConfigTree): boolean {
 function hasModifiedInChildren(children: ConfigNode[]): boolean {
   for (const child of children) {
     if (isLeaf(child)) {
-      if (child.modifiedValue != null) return true;
+      if (child.modifiedValue != null && !child.isOfflinePending) return true;
     } else if (isGroup(child)) {
       if (hasModifiedInChildren(child.children)) return true;
     }
@@ -262,7 +262,7 @@ function hasModifiedInChildren(children: ConfigNode[]): boolean {
 export function hasModifiedDescendant(children: ConfigNode[], path: string[]): boolean {
   for (const child of children) {
     if (isLeaf(child)) {
-      if (child.modifiedValue != null && childIsDescendant(child.path, path)) return true;
+      if (child.modifiedValue != null && !child.isOfflinePending && childIsDescendant(child.path, path)) return true;
     } else if (isGroup(child)) {
       if (hasModifiedDescendant(child.children, path)) return true;
     }

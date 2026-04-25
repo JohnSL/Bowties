@@ -12,6 +12,7 @@
  * Updated for plan-cdiConfigNavigator Steps 4-6.
  */
 
+import '@testing-library/jest-dom/vitest';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import TreeLeafRow from './TreeLeafRow.svelte';
@@ -77,10 +78,13 @@ function makeLeaf(overrides: Partial<LeafConfigNode> = {}): LeafConfigNode {
 function makeBowtie(overrides: Partial<BowtieCard> = {}): BowtieCard {
   return {
     event_id_hex: '05.02.01.02.03.00.00.01',
-    user_names: ['Test Bowtie'],
+    event_id_bytes: [5, 2, 1, 2, 3, 0, 0, 1],
     producers: [],
     consumers: [],
-    ambiguous: [],
+    ambiguous_entries: [],
+    name: 'Test Bowtie',
+    tags: [],
+    state: 'Planning',
     ...overrides,
   };
 }
@@ -237,7 +241,7 @@ describe('TreeLeafRow.svelte', () => {
 
   describe('usedIn cross-reference', () => {
     it('shows navigable link when usedIn is provided', () => {
-      const bowtie = makeBowtie({ user_names: ['Yard Entry'] });
+      const bowtie = makeBowtie({ name: 'Yard Entry' });
       render(TreeLeafRow, {
         props: { leaf: makeLeaf(), usedIn: bowtie },
       });
@@ -518,7 +522,7 @@ describe('TreeLeafRow.svelte', () => {
     it('renders a text input for eventId fields when nodeId is provided', () => {
       const leaf = makeLeaf({
         elementType: 'eventId',
-        value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0] },
+        value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0], hex: '00.00.00.00.00.00.00.00' },
         size: 8,
       });
       render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
@@ -528,7 +532,7 @@ describe('TreeLeafRow.svelte', () => {
     it('calls setModifiedValue with parsed bytes when valid dotted-hex event ID entered', async () => {
       const leaf = makeLeaf({
         elementType: 'eventId',
-        value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0] },
+        value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0], hex: '00.00.00.00.00.00.00.00' },
         size: 8,
         address: 500,
         space: 253,
@@ -546,7 +550,7 @@ describe('TreeLeafRow.svelte', () => {
     it('does not call setModifiedValue for malformed event ID', async () => {
       const leaf = makeLeaf({
         elementType: 'eventId',
-        value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0] },
+        value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0], hex: '00.00.00.00.00.00.00.00' },
         size: 8,
         address: 501,
         space: 253,
@@ -562,7 +566,7 @@ describe('TreeLeafRow.svelte', () => {
     it('does NOT render event ID text input when no nodeId provided', () => {
       const leaf = makeLeaf({
         elementType: 'eventId',
-        value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0] },
+        value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0], hex: '00.00.00.00.00.00.00.00' },
         size: 8,
       });
       // No nodeId — use default empty string

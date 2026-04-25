@@ -12,6 +12,7 @@ import {
   collectEventIdLeaves,
   resolvePillSelectionsForPath,
   countModifiedLeaves,
+  hasModifiedLeaves,
 } from '$lib/types/nodeTree';
 import type {
   NodeConfigTree,
@@ -494,5 +495,42 @@ describe('countModifiedLeaves — isOfflinePending exclusion', () => {
     });
     const tree = makeTree([makeSegment([leaf1, leaf2])]);
     expect(countModifiedLeaves(tree)).toBe(0);
+  });
+});
+
+describe('hasModifiedLeaves — offline pending exclusion', () => {
+  it('returns false when all modified leaves are offline-pending', () => {
+    const leaf1 = makeLeaf({
+      address: 0,
+      path: ['seg:0', 'elem:0'],
+      modifiedValue: { type: 'int', value: 1 },
+      isOfflinePending: true,
+    });
+    const leaf2 = makeLeaf({
+      address: 4,
+      path: ['seg:0', 'elem:1'],
+      modifiedValue: { type: 'int', value: 2 },
+      isOfflinePending: true,
+    });
+    const tree = makeTree([makeSegment([leaf1, leaf2])]);
+
+    expect(hasModifiedLeaves(tree)).toBe(false);
+  });
+
+  it('returns true when a non-offline-pending modified leaf exists', () => {
+    const pendingLeaf = makeLeaf({
+      address: 0,
+      path: ['seg:0', 'elem:0'],
+      modifiedValue: { type: 'int', value: 1 },
+      isOfflinePending: true,
+    });
+    const dirtyLeaf = makeLeaf({
+      address: 4,
+      path: ['seg:0', 'elem:1'],
+      modifiedValue: { type: 'int', value: 2 },
+    });
+    const tree = makeTree([makeSegment([pendingLeaf, dirtyLeaf])]);
+
+    expect(hasModifiedLeaves(tree)).toBe(true);
   });
 });

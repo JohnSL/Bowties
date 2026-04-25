@@ -19,9 +19,9 @@ const mockReplaceOfflineChanges = vi.fn().mockResolvedValue(undefined);
 const mockRevertOfflineChange = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('$lib/api/sync', () => ({
-  listOfflineChanges: (...args: unknown[]) => mockListOfflineChanges(...args),
-  replaceOfflineChanges: (...args: unknown[]) => mockReplaceOfflineChanges(...args),
-  revertOfflineChange: (...args: unknown[]) => mockRevertOfflineChange(...args),
+  listOfflineChanges: mockListOfflineChanges,
+  replaceOfflineChanges: mockReplaceOfflineChanges,
+  revertOfflineChange: mockRevertOfflineChange,
 }));
 
 // ─── Import store AFTER mocks ────────────────────────────────────────────────
@@ -94,12 +94,16 @@ describe('revertToBaseline — persisted changes', () => {
     expect(mockRevertOfflineChange).toHaveBeenCalledWith('persisted-1');
   });
 
-  it('reloads from backend after persisted revert', async () => {
+  it('removes the row from working persisted rows without reloading the saved snapshot', async () => {
     const persistedRow = makeDraftRow({ changeId: 'persisted-1' });
     offlineChangesStore.setRows([persistedRow]);
 
     await offlineChangesStore.revertToBaseline('persisted-1');
-    expect(mockListOfflineChanges).toHaveBeenCalled();
+
+    expect(mockListOfflineChanges).not.toHaveBeenCalled();
+    expect(offlineChangesStore.persistedRows).toHaveLength(0);
+    expect(offlineChangesStore.savedRows).toHaveLength(1);
+    expect(offlineChangesStore.savedRows[0].changeId).toBe('persisted-1');
   });
 });
 
@@ -134,18 +138,16 @@ describe('revertToBaseline — isBusy lifecycle', () => {
   });
 });
 
-describe('revertToBaseline — persisted row does not dirty save state', () => {
+describe('revertToBaseline — persisted row updates working state only', () => {
   it('pendingApplyCount drops to 0 after persisted revert when backend returns empty list', async () => {
     const persistedRow = makeDraftRow({ changeId: 'persisted-dirty' });
     offlineChangesStore.setRows([persistedRow]);
     expect(offlineChangesStore.pendingApplyCount).toBe(1);
 
-    // Backend returns empty list after successful revert
-    mockListOfflineChanges.mockResolvedValueOnce([]);
-
     await offlineChangesStore.revertToBaseline('persisted-dirty');
 
     expect(offlineChangesStore.pendingApplyCount).toBe(0);
+    expect(offlineChangesStore.savedRows).toHaveLength(1);
   });
 
   it('revertToBaseline for a draft row does not call backend IPC (no save needed)', async () => {
@@ -157,5 +159,50 @@ describe('revertToBaseline — persisted row does not dirty save state', () => {
     // Draft reverts never touch the backend — no opportunity to trigger dirty state
     expect(mockRevertOfflineChange).not.toHaveBeenCalled();
     expect(mockReplaceOfflineChanges).not.toHaveBeenCalled();
+  });
+});
+
+describe('revertAllPending — saved vs in-memory layering', () => {
+  it('restores persisted rows to saved snapshot and clears drafts', async () => {
+    const savedRow = makeDraftRow({
+      changeId: 'saved-1',
+      nodeId: '05.02.01.02.03.00',
+      offset: '0x00000010',
+      baselineValue: '10',
+      plannedValue: '20',
+    });
+    offlineChangesStore.setRows([savedRow]);
+
+    offlineChangesStore.upsertConfigChange({
+      nodeId: '05.02.01.02.03.00',
+      space: 253,
+      offset: '0x00000010',
+      baselineValue: '10',
+      plannedValue: '10',
+    });
+
+    expect(offlineChangesStore.draftCount).toBe(1);
+    expect(offlineChangesStore.effectiveRows.length).toBe(0);
+
+    const reverted = await offlineChangesStore.revertAllPending();
+
+    expect(reverted).toBe(1);
+    expect(offlineChangesStore.draftCount).toBe(0);
+    expect(offlineChangesStore.persistedRows).toHaveLength(1);
+    expect(offlineChangesStore.persistedRows[0].changeId).toBe('saved-1');
+    expect(offlineChangesStore.savedRows).toHaveLength(1);
+    expect(offlineChangesStore.savedRows[0].changeId).toBe('saved-1');
+  });
+
+  it('keeps saved snapshot aligned after reloadFromBackend', async () => {
+    const backendRow = makeDraftRow({ changeId: 'backend-1', offset: '0x00000022' });
+    mockListOfflineChanges.mockImplementationOnce(async () => [backendRow]);
+
+    await offlineChangesStore.reloadFromBackend();
+
+    expect(offlineChangesStore.persistedRows).toHaveLength(1);
+    expect(offlineChangesStore.savedRows).toHaveLength(1);
+    expect(offlineChangesStore.persistedRows[0].changeId).toBe('backend-1');
+    expect(offlineChangesStore.savedRows[0].changeId).toBe('backend-1');
   });
 });

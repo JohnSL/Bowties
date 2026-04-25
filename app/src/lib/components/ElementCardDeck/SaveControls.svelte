@@ -220,6 +220,7 @@
     if (layoutStore.isOfflineMode) {
       await offlineChangesStore.revertAllPending();
       nodeTreeStore.clearAllModifiedValues();
+      nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows);
       bowtieMetadataStore.clearAll();
       layoutStore.revertToSaved();
       saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
