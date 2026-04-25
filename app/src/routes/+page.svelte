@@ -469,6 +469,17 @@
     }
   }
 
+  function resetFreshLiveSessionState(): void {
+    if (layoutStore.hasLayoutFile) return;
+
+    nodes = [];
+    updateNodeInfo([]);
+    clearConfigReadStatus();
+    configSidebarStore.reset();
+    nodeTreeStore.reset();
+    nodesWithCdi = new Set();
+  }
+
   async function clearActiveLayout() {
     const activeContext = layoutStore.activeContext;
 
@@ -648,6 +659,10 @@
         }
       });
 
+      if (connected) {
+        resetFreshLiveSessionState();
+      }
+
       // T050: Prompt-to-save guard on app close (FR-024)
       const appWindow = getCurrentWebviewWindow();
       unlistens.push(await appWindow.onCloseRequested((event) => {
@@ -715,6 +730,7 @@
 
         const result = await handleDiscoveredNode({
           currentNodes: nodes,
+          getCurrentNodes: () => nodes,
           nodeId,
           alias,
           registerNode,
@@ -745,6 +761,7 @@
         console.log(`[D15] Node ${nodeId} reinitialized — refreshing SNIP+PIP`);
         const result = await refreshReinitializedNode({
           currentNodes: nodes,
+          getCurrentNodes: () => nodes,
           nodeId,
           alias,
           querySnip,
@@ -827,6 +844,7 @@
     layoutStore.setConnected(true);
     showConnectionDialog = false;
     syncSessionOrchestrator.resetAutoTrigger();
+    resetFreshLiveSessionState();
     probeForNodes();
   }
 

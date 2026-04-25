@@ -66,6 +66,77 @@ function makeNode(overrides: Partial<DiscoveredNode> = {}): DiscoveredNode {
 }
 
 describe('handleDiscoveredNode', () => {
+  it('rebases async discovery enrichment onto the latest published node list', async () => {
+    let liveNodes: DiscoveredNode[] = [];
+    let resolveFirstSnip: ((value: QuerySnipResponse) => void) | null = null;
+    let resolveSecondSnip: ((value: QuerySnipResponse) => void) | null = null;
+
+    const firstSnip = new Promise<QuerySnipResponse>((resolve) => {
+      resolveFirstSnip = resolve;
+    });
+    const secondSnip = new Promise<QuerySnipResponse>((resolve) => {
+      resolveSecondSnip = resolve;
+    });
+
+    const querySnip = vi.fn((alias: number): Promise<QuerySnipResponse> => {
+      if (alias === 0x101) return firstSnip;
+      if (alias === 0x202) return secondSnip;
+      throw new Error(`Unexpected alias ${alias}`);
+    });
+
+    const queryPip = vi.fn(async (alias: number): Promise<QueryPipResponse> => ({
+      alias,
+      pip_flags: makePipFlags(),
+      status: 'Complete',
+    }));
+
+    const publishNodes = vi.fn((nextNodes: DiscoveredNode[]) => {
+      liveNodes = nextNodes;
+    });
+
+    const firstDiscovery = handleDiscoveredNode({
+      currentNodes: liveNodes,
+      getCurrentNodes: () => liveNodes,
+      nodeId: '05.02.01.02.03.01',
+      alias: 0x101,
+      registerNode: vi.fn(async () => {}),
+      querySnip,
+      queryPip,
+      publishNodes,
+      now: () => '2026-04-25T12:00:00.000Z',
+    });
+
+    const secondDiscovery = handleDiscoveredNode({
+      currentNodes: liveNodes,
+      getCurrentNodes: () => liveNodes,
+      nodeId: '05.02.01.02.03.02',
+      alias: 0x202,
+      registerNode: vi.fn(async () => {}),
+      querySnip,
+      queryPip,
+      publishNodes,
+      now: () => '2026-04-25T12:00:01.000Z',
+    });
+
+    resolveSecondSnip?.({
+      alias: 0x202,
+      snip_data: makeSnipData({ user_name: 'Node Two' }),
+      status: 'Complete',
+    });
+    await secondDiscovery;
+
+    resolveFirstSnip?.({
+      alias: 0x101,
+      snip_data: makeSnipData({ user_name: 'Node One' }),
+      status: 'Complete',
+    });
+    await firstDiscovery;
+
+    expect(liveNodes).toHaveLength(2);
+    expect(liveNodes.map((node) => node.alias)).toEqual([0x101, 0x202]);
+    expect(liveNodes.map((node) => node.snip_data?.user_name)).toEqual(['Node One', 'Node Two']);
+  });
+
   it('skips true duplicates without registering or querying again', async () => {
     const registerNode = vi.fn(async () => {});
     const querySnip = vi.fn(async (): Promise<QuerySnipResponse> => ({ alias: 0x123, snip_data: null, status: 'Unknown' }));

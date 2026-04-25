@@ -7,6 +7,7 @@ import { formatNodeId, nodeIdStringToBytes } from '$lib/utils/nodeId';
 
 interface DiscoveryOrchestratorArgs {
   currentNodes: DiscoveredNode[];
+  getCurrentNodes?: () => DiscoveredNode[];
   nodeId: string;
   alias: number;
   registerNode: (nodeId: string, alias: number) => Promise<void>;
@@ -19,6 +20,7 @@ interface DiscoveryOrchestratorArgs {
 
 interface ReinitializedNodeArgs {
   currentNodes: DiscoveredNode[];
+  getCurrentNodes?: () => DiscoveredNode[];
   nodeId: string;
   alias: number;
   querySnip: (alias: number) => Promise<QuerySnipResponse>;
@@ -66,6 +68,19 @@ function updateNodeById(
   return nodes.map((node) => formatNodeId(node.node_id) === nodeId ? updater(node) : node);
 }
 
+function updateOrInsertNodeById(
+  nodes: DiscoveredNode[],
+  nodeId: string,
+  fallbackNode: DiscoveredNode,
+  updater: (node: DiscoveredNode) => DiscoveredNode,
+): DiscoveredNode[] {
+  if (findNodeIndex(nodes, nodeId) >= 0) {
+    return updateNodeById(nodes, nodeId, updater);
+  }
+
+  return [...nodes, updater(fallbackNode)];
+}
+
 function mergeDiscoveryQueries(
   node: DiscoveredNode,
   alias: number,
@@ -101,6 +116,7 @@ function mergeReinitializedQueries(
 
 export async function handleDiscoveredNode({
   currentNodes,
+  getCurrentNodes,
   nodeId,
   alias,
   registerNode,
@@ -140,7 +156,8 @@ export async function handleDiscoveredNode({
       queryPip(alias),
     ]);
 
-    nextNodes = updateNodeById(nextNodes, nodeId, (node) => (
+    const latestNodes = getCurrentNodes ? getCurrentNodes() : nextNodes;
+    nextNodes = updateOrInsertNodeById(latestNodes, nodeId, createSkeletonNode(nodeId, alias, now()), (node) => (
       mergeDiscoveryQueries(node, alias, snipResult, pipResult)
     ));
     publishNodes(nextNodes);
@@ -153,6 +170,7 @@ export async function handleDiscoveredNode({
 
 export async function refreshReinitializedNode({
   currentNodes,
+  getCurrentNodes,
   nodeId,
   alias,
   querySnip,
@@ -170,7 +188,8 @@ export async function refreshReinitializedNode({
       queryPip(alias),
     ]);
 
-    const nextNodes = updateNodeById(currentNodes, nodeId, (node) => (
+    const latestNodes = getCurrentNodes ? getCurrentNodes() : currentNodes;
+    const nextNodes = updateOrInsertNodeById(latestNodes, nodeId, createSkeletonNode(nodeId, alias, new Date().toISOString()), (node) => (
       mergeReinitializedQueries(node, alias, snipResult, pipResult)
     ));
     publishNodes(nextNodes);
