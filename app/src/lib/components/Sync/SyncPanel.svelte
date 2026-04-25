@@ -2,6 +2,10 @@
   import { onMount, onDestroy } from 'svelte';
   import { syncPanelStore } from '$lib/stores/syncPanel.svelte';
   import { reconcileOfflineTreesAfterSyncApply } from '$lib/orchestration/syncApplyOrchestrator';
+  import {
+    applySyncModeChoice,
+    applySyncSelectionAndReconcile,
+  } from '$lib/orchestration/syncPanelViewOrchestrator';
   import ConflictRow from './ConflictRow.svelte';
   import CleanSummarySection from './CleanSummarySection.svelte';
   import type { SyncMode } from '$lib/api/sync';
@@ -45,36 +49,19 @@
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   async function handleModeChoice(mode: SyncMode) {
-    await syncPanelStore.setMode(mode);
-    if (mode === 'bench_other_bus') {
-      // Bench mode — dismiss without syncing
-      syncPanelStore.dismiss();
+    await applySyncModeChoice(syncPanelStore, mode, () => {
       visible = false;
-      return;
-    }
-    // Target bus — proceed to build sync session
-    await syncPanelStore.loadSession();
-    if (!syncPanelStore.session ||
-      (syncPanelStore.session.conflictRows.length === 0 &&
-       syncPanelStore.session.cleanRows.length === 0 &&
-       syncPanelStore.session.nodeMissingRows.length === 0)) {
-      // Nothing to sync
-      syncPanelStore.dismiss();
-      visible = false;
-    }
+    });
   }
 
   async function handleApply() {
-    const session = syncPanelStore.session;
-    const result = await syncPanelStore.applySelected();
-    if (result) {
-      await reconcileOfflineTreesAfterSyncApply(result, session);
-
-      if (result.failed.length === 0) {
-        syncPanelStore.dismiss();
+    await applySyncSelectionAndReconcile(
+      syncPanelStore,
+      reconcileOfflineTreesAfterSyncApply,
+      () => {
         visible = false;
-      }
-    }
+      },
+    );
   }
 
   function handleDismiss() {

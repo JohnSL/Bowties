@@ -2,7 +2,18 @@
 
 *This document describes the current implementation of Bowties, including what's built, what's in progress, and what remains to be implemented. For the aspirational vision, see [docs/design/vision.md](../design/vision.md).*
 
-**Last Updated:** 2026-03-21
+**Last Updated:** 2026-04-25
+
+## Adopted Frontend Pattern
+
+Bowties uses a `Container + Reactive Store + Pure Domain Logic` split for the offline, sync, discovery, and config-read surface.
+
+- Container routes and top-level feature components coordinate wiring, modal visibility, and user intent.
+- Reactive stores own durable UI state and deterministic transitions.
+- Orchestrators own multi-step side effects and lifecycle sequencing.
+- Pure helpers own formatting, normalization, comparison rules, and other logic that should be testable without the UI.
+
+When behavior needs multiple async steps, cache coordination, or lifecycle branching, it should move out of `.svelte` view code and into a store, orchestrator, or pure helper with focused tests.
 
 ## Implementation Status
 

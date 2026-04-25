@@ -84,4 +84,20 @@ describe('SyncPanel lifecycle orchestration', () => {
       );
     });
   });
+
+  it('dismisses immediately for bench mode without loading a session', async () => {
+    syncRef.matchStatus = { classification: 'uncertain', overlapPercent: 42 };
+    syncRef.syncMode = null;
+
+    render(SyncPanel, { visible: true });
+
+    const benchButton = await screen.findByRole('button', { name: /bench \/ other bus/i });
+    await fireEvent.click(benchButton);
+
+    await waitFor(() => {
+      expect(syncRef.setMode).toHaveBeenCalledWith('bench_other_bus');
+      expect(syncRef.loadSession).not.toHaveBeenCalled();
+      expect(syncRef.dismiss).toHaveBeenCalledTimes(1);
+    });
+  });
 });

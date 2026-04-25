@@ -41,7 +41,12 @@ cargo test
 # Frontend
 cd app
 npm test
+
+# Offline/sync/discovery regression gate
+npm run test:refactor-gate
 ```
+
+For changes in the offline layout, sync, discovery, or config-read workflow, run `npm run test:refactor-gate` before opening a PR. Add any narrower route/store/component tests needed for the slice you touched. Use `npm run check` selectively while the broader frontend typecheck baseline is still being cleaned up.
 
 ## Architecture
 
@@ -67,6 +72,17 @@ Frontend (SvelteKit)     IPC     Backend (Tauri/Rust)     Protocol     LCC Netwo
 | Backend | Tauri 2, Rust 2021+ |
 | Protocol | lcc-rs (custom Rust library) |
 | Async runtime | Tokio |
+
+### Frontend architecture pattern
+
+Use `Container + Reactive Store + Pure Domain Logic` for offline/sync/discovery work.
+
+- Route and feature-shell components wire state to the UI and emit user intent.
+- Stores own durable state and deterministic state transitions.
+- Orchestrators own sequencing across async calls, cache refreshes, and lifecycle transitions.
+- Pure helpers own rules that can be tested without rendering.
+
+If a `.svelte` file starts deciding lifecycle branches or coordinating multiple backend calls, that logic should usually move into an orchestrator or store before more features land on top of it.
 
 ## Project principles
 

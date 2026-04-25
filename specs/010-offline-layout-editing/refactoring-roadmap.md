@@ -38,13 +38,13 @@
 
 - [x] R010 Add focused store transition tests for offline replay lifecycle.
 - [x] R011 Add focused store transition tests for sync-session lifecycle.
-- [ ] R012 Require these store tests to pass before further UI behavior changes in this area. Partial: focused tests now exist for the extracted seams, but there is no explicit policy or CI/PR gate recorded yet.
+- [x] R012 Require these store tests to pass before further UI behavior changes in this area.
 
 ### A5. Integration With Current Phase 6c/6d Tasks
 
-- [ ] R013 Sequence Phase 6c/6d implementation on top of A1-A4 seams.
+- [x] R013 Sequence Phase 6c/6d implementation on top of A1-A4 seams.
 - [x] R014 Map each task `T047m`-`T047x` to the seam it depends on.
-- [ ] R015 Record any newly discovered orchestration/lifecycle defects as refactor follow-ups here. Partial: four concrete seam defects have now been captured and fixed during regression work: (1) a concurrent discovery enrichment race where late SNIP/PIP completions could overwrite newer discoveries because they rebased onto stale per-event node arrays; (2) a sync-session stale-state gap where already-applied rows were counted but not pruned from the backend cache/front-end pending state during `build_sync_session`; (3) a post-apply snapshot gap where node snapshot baseline values were refreshed but `captured_at` was left stale; and (4) a CDI preflight classification gap where non-downloadable CDI failures were collapsed into the generic missing-CDI prompt instead of surfacing differentiated errors.
+- [x] R015 Record any newly discovered orchestration/lifecycle defects as refactor follow-ups here.
 
 ### Current Progress (2026-04-25)
 
@@ -61,7 +61,19 @@
 - Added explicit lifecycle helper functions and transition guardrails in `app/src/lib/stores/layoutOpenLifecycle.ts`.
 - Added focused tests covering these seams in `app/src/lib/stores/layoutOpenLifecycle.test.ts`, `app/src/lib/stores/syncPanel.store.test.ts`, `app/src/lib/components/Sync/SyncPanel.lifecycle.test.ts`, `app/src/lib/orchestration/syncSessionOrchestrator.test.ts`, `app/src/lib/orchestration/discoveryOrchestrator.test.ts`, `app/src/lib/orchestration/configReadOrchestrator.test.ts`, `app/src/lib/orchestration/offlineLayoutOrchestrator.test.ts`, `app/src/lib/orchestration/syncApplyOrchestrator.test.ts`, `app/src/lib/orchestration/unsavedChangesGuard.test.ts`, `app/src/lib/components/ElementCardDeck/SaveControls.test.ts`, `app/src/lib/components/ConfigSidebar/ConfigSidebar.test.ts`, `app/src/lib/components/ElementCardDeck/TreeLeafRow.offline.test.ts`, `app/src/lib/stores/offlineChanges.store.test.ts`, `app/src/routes/page.route.test.ts`, and `app/src-tauri/src/layout/node_snapshot.rs` unit tests.
 - Extracted the route-owned close/discard transition into `app/src/lib/orchestration/offlineLayoutOrchestrator.ts`, so open/close lifecycle decisions are no longer split between `+page.svelte` and the orchestration layer.
+- Added an explicit frontend regression gate via `app/package.json`, `.github/workflows/frontend-regression-gate.yml`, and `.github/pull_request_template.md` so offline/sync/discovery UI changes have a documented and automated test requirement.
+- Documented the adopted frontend pattern in `docs/technical/architecture.md` and `docs/project/development.md`.
+- Extracted SyncPanel mode-choice and apply/dismiss workflow branching into `app/src/lib/orchestration/syncPanelViewOrchestrator.ts`, leaving `SyncPanel.svelte` focused on rendering and intent wiring.
+- Moved offline snapshot hydration, no-layout reset, fresh-live reset, and startup restore handling further into `app/src/lib/orchestration/offlineLayoutOrchestrator.ts`, so the route now supplies state hooks instead of owning those lifecycle branches directly.
 - Remaining lifecycle gap: discard/apply/disconnect/open transitions are improved, but not yet unified under one transition matrix or owner.
+
+### Phase 6c/6d Sequencing
+
+- Start with pure/shared rules first: NodeID normalization and display-name fallbacks.
+- Extract lifecycle owners next: offline open/replay, sync-session triggering, disconnect fallback, and layout close/discard.
+- Add owner-level regression tests before changing route wiring.
+- Land backend state corrections after the frontend seams exist: already-applied row pruning and snapshot refresh.
+- Finish with route-level workflow checks only for behavior that crosses component and orchestrator boundaries.
 
 ### Phase 6c/6d Seam Map
 
@@ -106,9 +118,16 @@
 
 ### B5. Architecture Governance
 
-- [ ] F013 Add a short architecture note documenting the adopted pattern: Container + Reactive Store + Pure Domain Logic.
-- [ ] F014 Add PR checklist items that block new business logic in view components without justification.
-- [ ] F015 Reassess this roadmap after each major phase checkpoint and re-prioritize.
+- [x] F013 Add a short architecture note documenting the adopted pattern: Container + Reactive Store + Pure Domain Logic.
+- [x] F014 Add PR checklist items that block new business logic in view components without justification.
+- [x] F015 Reassess this roadmap after each major phase checkpoint and re-prioritize.
+
+### Next Backlog Order
+
+- `F004`-`F006`: unify the remaining lifecycle matrix and add explicit transition coverage.
+- `F010`-`F012`: keep pushing branch-heavy component logic into helpers/orchestrators.
+- `F007`-`F009`: harden backend/frontend API shapes and snapshot-domain boundaries.
+- `F001`-`F003`: reduce broad cross-store reads once lifecycle ownership is more centralized.
 
 ---
 
@@ -117,7 +136,7 @@
 - Last updated: `2026-04-25`
 - Thin-slice refactor started: `Yes`
 - Thin-slice refactor completed: `No`
-- Future backlog reviewed this cycle: `No`
+- Future backlog reviewed this cycle: `Yes`
 
 ## Notes
 

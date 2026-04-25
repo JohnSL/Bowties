@@ -12,7 +12,7 @@
   import { probeNodes as probeNodesApi, querySnip, queryPip, registerNode, refreshAllNodes } from '$lib/api/tauri';
   import { clearRecentLayout, getRecentLayout } from '$lib/api/bowties';
   import { closeLayout, saveLayoutFile, openLayoutFile, buildOfflineNodeTree } from '$lib/api/layout';
-  import type { OfflineNodeSnapshot, SnapshotValueNode } from '$lib/api/layout';
+  import type { OfflineNodeSnapshot } from '$lib/api/layout';
   import { readAllConfigValues, cancelConfigReading, getCdiXml, downloadCdi } from '$lib/api/cdi';
   import { getCdiErrorMessage, isCdiError } from '$lib/types/cdi';
   import type { ViewerStatus } from '$lib/types/cdi';
@@ -24,7 +24,7 @@
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { hasModifiedLeaves, resolvePillSelectionsForPath } from '$lib/types/nodeTree';
-  import type { NodeConfigTree, ConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
+  import type { NodeConfigTree } from '$lib/types/nodeTree';
   import { configReadNodesStore, markNodeConfigRead, clearConfigReadStatus, removeNodesConfigRead } from '$lib/stores/configReadStatus';
   import BowtieCatalogPanel from '$lib/components/Bowtie/BowtieCatalogPanel.svelte';
   import DiscoveryProgressModal from '$lib/components/DiscoveryProgressModal.svelte';
@@ -44,6 +44,10 @@
   import {
     clearActiveLayoutWithReset,
     openOfflineLayoutWithReplay,
+    rehydrateOfflineStateFromSnapshots,
+    resetFreshLiveSessionState as resetFreshLiveSessionStateOrchestrated,
+    resetLayoutStateForNoLayout as resetLayoutStateForNoLayoutOrchestrated,
+    restoreRecentOfflineLayout,
   } from '$lib/orchestration/offlineLayoutOrchestrator';
   import {
     type FailedCdiPreflightNode,
@@ -227,157 +231,27 @@
     return normalizeLayoutTitle(ctx.layoutId) ?? normalizeLayoutTitle(ctx.rootPath);
   });
 
-  function parseOfflineValue(value: string): TreeConfigValue {
-    if (/^[0-9]+$/.test(value)) {
-      return { type: 'int', value: parseInt(value, 10) };
-    }
-    if (/^[0-9]+\.[0-9]+$/.test(value)) {
-      return { type: 'float', value: parseFloat(value) };
-    }
-    if (/^([0-9A-F]{2}\.){7}[0-9A-F]{2}$/i.test(value)) {
-      const bytes = value.split('.').map((b) => parseInt(b, 16));
-      return { type: 'eventId', bytes, hex: value.toUpperCase() };
-    }
-    return { type: 'string', value };
-  }
-
-  function createOfflineLeaf(space: number, address: number, value: string, segIdx: number, leafIdx: number): ConfigNode {
-    const parsed = parseOfflineValue(value);
-    const elementType = parsed.type === 'eventId' ? 'eventId' : parsed.type;
-    return {
-      kind: 'leaf',
-      name: `0x${address.toString(16).toUpperCase().padStart(8, '0')}`,
-      description: null,
-      elementType,
-      address,
-      size: 8,
-      space,
-      path: [`seg:${segIdx}`, `elem:${leafIdx}`],
-      value: parsed,
-      eventRole: null,
-      constraints: null,
-      actionValue: 0,
-      hintSlider: null,
-      hintRadio: false,
-      modifiedValue: null,
-      writeState: null,
-      writeError: null,
-      readOnly: true,
-    };
-  }
-
-  function treeFromSnapshot(snapshot: OfflineNodeSnapshot): NodeConfigTree {
-    const merged = new Map<string, Record<string, string>>();
-
-    const flatten = (
-      node: SnapshotValueNode,
-      path: string[] = []
-    ): Array<{ path: string[]; value: string; space?: number; offset?: string }> => {
-      if (node && typeof node === 'object' && 'value' in node) {
-        const leaf = node as { value: string; space?: number; offset?: string };
-        return [{ path, value: leaf.value, space: leaf.space, offset: leaf.offset }];
-      }
-
-      if (!node || typeof node !== 'object') return [];
-      const out: Array<{ path: string[]; value: string; space?: number; offset?: string }> = [];
-      for (const [k, v] of Object.entries(node as Record<string, SnapshotValueNode>)) {
-        out.push(...flatten(v, [...path, k]));
-      }
-      return out;
-    };
-
-    for (const entry of flatten(snapshot.config ?? {})) {
-      if (entry.space === undefined || !entry.offset) continue;
-      const spaceKey = String(entry.space);
-      const offsets = merged.get(spaceKey) ?? {};
-      offsets[entry.offset.toUpperCase()] = entry.value;
-      merged.set(spaceKey, offsets);
-    }
-
-    const spaces = Array.from(merged.entries());
-    const segments = spaces.map(([spaceKey, offsets], segIdx) => {
-      const space = Number(spaceKey);
-      const children: ConfigNode[] = Object.entries(offsets)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([offset, value], leafIdx) => {
-          const address = Number.parseInt(offset.replace(/^0x/i, ''), 16) || 0;
-          return createOfflineLeaf(space, address, value, segIdx, leafIdx);
-        });
-      return {
-        name: `Space ${space}`,
-        description: null,
-        origin: 0,
-        space,
-        children,
-      };
-    });
-
-    return {
-      nodeId: snapshot.nodeId.match(/.{1,2}/g)?.join('.') ?? snapshot.nodeId,
-      identity: {
-        manufacturer: snapshot.snip.manufacturerName || null,
-        model: snapshot.snip.modelName || null,
-        hardwareVersion: null,
-        softwareVersion: null,
-      },
-      segments,
-    };
-  }
-
   async function hydrateOfflineSnapshots(snapshots: OfflineNodeSnapshot[]) {
-    const offlineNodes: DiscoveredNode[] = snapshots.map((s, idx) => ({
-      node_id: nodeIdStringToBytes(s.nodeId),
-      alias: 0x700 + idx,
-      snip_data: {
-        manufacturer: s.snip.manufacturerName,
-        model: s.snip.modelName,
-        hardware_version: '',
-        software_version: s.cdiRef.version,
-        user_name: s.snip.userName,
-        user_description: s.snip.userDescription,
+    await rehydrateOfflineStateFromSnapshots({
+      snapshots,
+      nodeIdStringToBytes,
+      buildOfflineNodeTree,
+      publishNodes: (offlineNodes) => {
+        nodes = offlineNodes;
+        updateNodeInfo(offlineNodes);
       },
-      snip_status: 'Complete',
-      connection_status: 'Unknown',
-      last_verified: null,
-      last_seen: s.capturedAt,
-      cdi: null,
-      pip_flags: null,
-      pip_status: 'Unknown',
-    }));
-
-    nodes = offlineNodes;
-    updateNodeInfo(offlineNodes);
-
-    clearConfigReadStatus();
-    nodeTreeStore.reset();
-
-    // Build CDI-structured trees in parallel; fall back to flat address-map
-    // if the CDI XML is not available in the local cache.
-    const results = await Promise.allSettled(
-      snapshots.map((s) => buildOfflineNodeTree(s.nodeId))
-    );
-    for (let i = 0; i < snapshots.length; i++) {
-      const snapshot = snapshots[i];
-      const result = results[i];
-      let tree;
-      if (result.status === 'fulfilled') {
-        tree = result.value;
-      } else {
-        const reason = String(result.reason);
-        if (reason.includes('CDI not in cache')) {
-          console.warn(
-            `[offline] CDI not cached for node ${snapshot.nodeId} — falling back to raw address tree`
-          );
-        } else {
-          console.warn(
-            `[offline] Could not build CDI tree for node ${snapshot.nodeId}: ${reason}`
-          );
-        }
-        tree = treeFromSnapshot(snapshot);
-      }
-      nodeTreeStore.setTree(tree.nodeId, tree);
-      markNodeConfigRead(tree.nodeId);
-    }
+      clearConfigReadStatus,
+      resetNodeTrees: () => {
+        nodeTreeStore.reset();
+      },
+      setTree: (nodeId, tree) => {
+        nodeTreeStore.setTree(nodeId, tree);
+      },
+      markNodeConfigRead,
+      onTreeBuildWarning: (message) => {
+        console.warn(message);
+      },
+    });
   }
 
   function applyPersistedOfflinePendingToTrees(): void {
@@ -456,32 +330,57 @@
   }
 
   async function resetLayoutStateForNoLayout(reprobeLiveNodes = true) {
-    partialCaptureNodes = new Set<string>();
-    currentLayoutSnapshots = [];
-    nodes = [];
-    updateNodeInfo([]);
-    clearConfigReadStatus();
-    nodeTreeStore.reset();
-    bowtieMetadataStore.clearAll();
-    offlineChangesStore.clear();
-
-    layoutStore.reset();
-    syncSessionOrchestrator.resetAutoTrigger();
-
-    if (connected && reprobeLiveNodes) {
-      await probeForNodes();
-    }
+    await resetLayoutStateForNoLayoutOrchestrated({
+      connected,
+      reprobeLiveNodes,
+      clearPartialCaptureNodes: () => {
+        partialCaptureNodes = new Set<string>();
+      },
+      clearCurrentLayoutSnapshots: () => {
+        currentLayoutSnapshots = [];
+      },
+      clearNodes: () => {
+        nodes = [];
+        updateNodeInfo([]);
+      },
+      clearConfigReadStatus,
+      resetNodeTrees: () => {
+        nodeTreeStore.reset();
+      },
+      clearMetadata: () => {
+        bowtieMetadataStore.clearAll();
+      },
+      clearOfflineChanges: () => {
+        offlineChangesStore.clear();
+      },
+      resetLayoutStore: () => {
+        layoutStore.reset();
+      },
+      resetSyncSessionAutoTrigger: () => {
+        syncSessionOrchestrator.resetAutoTrigger();
+      },
+      probeForNodes,
+    });
   }
 
   function resetFreshLiveSessionState(): void {
-    if (layoutStore.hasLayoutFile) return;
-
-    nodes = [];
-    updateNodeInfo([]);
-    clearConfigReadStatus();
-    configSidebarStore.reset();
-    nodeTreeStore.reset();
-    nodesWithCdi = new Set();
+    resetFreshLiveSessionStateOrchestrated({
+      hasLayoutFile: layoutStore.hasLayoutFile,
+      clearNodes: () => {
+        nodes = [];
+        updateNodeInfo([]);
+      },
+      clearConfigReadStatus,
+      resetSidebar: () => {
+        configSidebarStore.reset();
+      },
+      resetNodeTrees: () => {
+        nodeTreeStore.reset();
+      },
+      clearNodesWithCdi: () => {
+        nodesWithCdi = new Set();
+      },
+    });
   }
 
   async function clearActiveLayout() {
@@ -622,33 +521,28 @@
       await bowtieCatalogStore.startListening();
 
       // Spec 009 T015: Auto-reopen the most recent layout file on startup
-      const recent = await getRecentLayout().catch((error) => {
-        console.warn('[layout] Failed to read persisted startup layout:', error);
-        return null;
-      });
-      if (recent && recent.path) {
-        try {
-          const opened = await openOfflineLayoutWithReplay({
-            path: recent.path,
-            openLayout: openLayoutFile,
-            hydrateOfflineSnapshots,
-            applyPersistedOfflinePendingToTrees,
-            onOpened: () => {
-              showConnectionDialog = false;
-            },
-          });
+      await restoreRecentOfflineLayout({
+        getRecentLayout,
+        restoreLayout: (path) => openOfflineLayoutWithReplay({
+          path,
+          openLayout: openLayoutFile,
+          hydrateOfflineSnapshots,
+          applyPersistedOfflinePendingToTrees,
+          onOpened: () => {
+            showConnectionDialog = false;
+          },
+        }),
+        clearRecentLayout,
+        resetLayoutStateForNoLayout,
+        resetLayoutOpenPhase,
+        onRestored: (opened) => {
           partialCaptureNodes = new Set(opened.partialNodes);
           currentLayoutSnapshots = opened.nodeSnapshots;
-        } catch (error) {
-          failLayoutOpen();
-          console.warn('[layout] Failed to restore startup layout:', error);
-          await clearRecentLayout().catch((clearError) => {
-            console.warn('[layout] Failed to clear invalid startup layout:', clearError);
-          });
-          await resetLayoutStateForNoLayout(false);
-          resetLayoutOpenPhase();
-        }
-      }
+        },
+        onWarning: (message, error) => {
+          console.warn(message, error);
+        },
+      });
 
       // Spec 007: Start node-tree-updated listener so trees are refreshed
       // automatically as config values and event roles are merged server-side.
