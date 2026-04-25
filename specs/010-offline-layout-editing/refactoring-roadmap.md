@@ -44,17 +44,19 @@
 
 - [ ] R013 Sequence Phase 6c/6d implementation on top of A1-A4 seams.
 - [ ] R014 Map each task `T047m`-`T047x` to the seam it depends on.
-- [ ] R015 Record any newly discovered orchestration/lifecycle defects as refactor follow-ups here.
+- [ ] R015 Record any newly discovered orchestration/lifecycle defects as refactor follow-ups here. Partial: a concurrent discovery enrichment race was identified during regression work; late SNIP/PIP completions could overwrite newer discoveries because they rebased onto stale per-event node arrays. The fix now rebases onto the latest live node list in `app/src/lib/orchestration/discoveryOrchestrator.ts`, and regression coverage exists for the race.
 
-### Current Progress (2026-04-21)
+### Current Progress (2026-04-25)
 
 - Completed the first offline replay orchestration slice by extracting layout open/startup restore hydration and pending-value replay into `app/src/lib/orchestration/offlineLayoutOrchestrator.ts`.
 - Completed the first sync-session orchestration slice by extracting discovery settling, auto-trigger/manual re-open, and disconnect fallback handling into `app/src/lib/orchestration/syncSessionOrchestrator.ts`.
 - Completed the disconnect transition refinement by routing disconnect behavior through explicit `rehydrated_offline` / `preserved_layout` / `cleared_to_connection` outcomes in `app/src/lib/orchestration/syncSessionOrchestrator.ts` and `app/src/routes/+page.svelte`.
 - Completed the first sync apply orchestration slice by extracting post-apply tree rebuild and pending-value restamp into `app/src/lib/orchestration/syncApplyOrchestrator.ts`.
 - Completed the discovery/reinitialization orchestration slice by extracting node upgrade/register/SNIP/PIP enrichment and reinitialized-node refresh into `app/src/lib/orchestration/discoveryOrchestrator.ts`.
+- Added a route-level discovery regression harness in `app/src/routes/page.route.test.ts` covering fresh live discovery, stale config-read carryover, and stale sidebar-selection carryover on no-layout sessions.
+- Fixed the concurrent live-discovery merge race by rebasing async SNIP/PIP completion onto the latest published node list instead of the stale event-local snapshot.
 - Added explicit lifecycle helper functions and transition guardrails in `app/src/lib/stores/layoutOpenLifecycle.ts`.
-- Added focused tests covering these seams in `app/src/lib/stores/layoutOpenLifecycle.test.ts`, `app/src/lib/components/Sync/SyncPanel.lifecycle.test.ts`, `app/src/lib/orchestration/syncSessionOrchestrator.test.ts`, `app/src/lib/orchestration/discoveryOrchestrator.test.ts`, `app/src/lib/components/ElementCardDeck/TreeLeafRow.offline.test.ts`, and `app/src/lib/stores/offlineChanges.store.test.ts`.
+- Added focused tests covering these seams in `app/src/lib/stores/layoutOpenLifecycle.test.ts`, `app/src/lib/components/Sync/SyncPanel.lifecycle.test.ts`, `app/src/lib/orchestration/syncSessionOrchestrator.test.ts`, `app/src/lib/orchestration/discoveryOrchestrator.test.ts`, `app/src/lib/orchestration/configReadOrchestrator.test.ts`, `app/src/lib/orchestration/offlineLayoutOrchestrator.test.ts`, `app/src/lib/orchestration/syncApplyOrchestrator.test.ts`, `app/src/lib/orchestration/unsavedChangesGuard.test.ts`, `app/src/lib/components/ElementCardDeck/SaveControls.test.ts`, `app/src/lib/components/ConfigSidebar/ConfigSidebar.test.ts`, `app/src/lib/components/ElementCardDeck/TreeLeafRow.offline.test.ts`, `app/src/lib/stores/offlineChanges.store.test.ts`, and `app/src/routes/page.route.test.ts`.
 - Remaining lifecycle gap: discard/apply/disconnect/open transitions are improved, but not yet unified under one transition matrix or owner.
 
 ---
@@ -97,7 +99,7 @@
 
 ## Status Snapshot
 
-- Last updated: `2026-04-21`
+- Last updated: `2026-04-25`
 - Thin-slice refactor started: `Yes`
 - Thin-slice refactor completed: `No`
 - Future backlog reviewed this cycle: `No`
