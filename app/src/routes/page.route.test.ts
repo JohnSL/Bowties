@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { clearConfigReadStatus, markNodeConfigRead } from '$lib/stores/configReadStatus';
 import { configSidebarStore } from '$lib/stores/configSidebar';
 import { nodeInfoStore } from '$lib/stores/nodeInfo';
@@ -16,6 +16,8 @@ const {
   registerNodeRef,
   querySnipRef,
   queryPipRef,
+  getCdiXmlRef,
+  readAllConfigValuesRef,
   startListeningRef,
 } = vi.hoisted(() => ({
   eventHandlers: new Map<string, (event: any) => unknown>(),
@@ -40,6 +42,8 @@ const {
       memory_configuration: true,
     },
   })),
+  getCdiXmlRef: vi.fn(async () => ({ xmlContent: '<cdi />' })),
+  readAllConfigValuesRef: vi.fn(async () => ({ failedReads: 0, totalElements: 0 })),
   startListeningRef: vi.fn(async () => {}),
 }));
 
@@ -94,9 +98,9 @@ vi.mock('$lib/api/layout', () => ({
 }));
 
 vi.mock('$lib/api/cdi', () => ({
-  readAllConfigValues: vi.fn(async () => ({ failedReads: 0, totalElements: 0 })),
+  readAllConfigValues: readAllConfigValuesRef,
   cancelConfigReading: vi.fn(async () => {}),
-  getCdiXml: vi.fn(async () => ({ xmlContent: '<cdi />' })),
+  getCdiXml: getCdiXmlRef,
   downloadCdi: vi.fn(async () => ({ success: true })),
 }));
 
@@ -162,6 +166,10 @@ beforeEach(() => {
   bowtieMetadataStore.clearAll();
   offlineChangesStore.clear();
   resetLayoutOpenPhase();
+  getCdiXmlRef.mockReset();
+  getCdiXmlRef.mockImplementation(async () => ({ xmlContent: '<cdi />' }));
+  readAllConfigValuesRef.mockReset();
+  readAllConfigValuesRef.mockImplementation(async () => ({ failedReads: 0, totalElements: 0 }));
 });
 
 describe('+page route discovery CTA', () => {
@@ -244,5 +252,37 @@ describe('+page route discovery CTA', () => {
       expect(screen.getByRole('button', { name: /read node configuration/i })).toBeInTheDocument();
       expect(screen.getByText(/1 unread/i)).toBeInTheDocument();
     });
+  });
+
+  it('shows a CDI error banner instead of the download prompt when preflight fails for another reason', async () => {
+    getCdiXmlRef.mockRejectedValueOnce('RetrievalFailed: timed out');
+
+    render(Page);
+
+    await waitFor(() => {
+      expect(probeNodesRef).toHaveBeenCalledTimes(1);
+    });
+
+    const discovered = eventHandlers.get('lcc-node-discovered');
+    expect(discovered).toBeTypeOf('function');
+
+    await discovered?.({
+      payload: {
+        nodeId: '02.01.57.00.00.01',
+        alias: 0x123,
+        timestamp: '2026-04-25T12:00:00.000Z',
+      },
+    });
+
+    const readButton = await screen.findByRole('button', { name: /read node configuration/i });
+    await fireEvent.click(readButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Cannot read configuration for East Panel: CDI retrieval failed. Check node connection and try again.',
+      );
+    });
+
+    expect(readAllConfigValuesRef).not.toHaveBeenCalled();
   });
 });

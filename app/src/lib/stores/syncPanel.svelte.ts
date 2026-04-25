@@ -18,6 +18,7 @@ import {
   setSyncMode as setSyncModeIpc,
   applySyncChanges,
 } from '$lib/api/sync';
+import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
 
 export type ConflictResolution = 'apply' | 'skip';
 
@@ -197,6 +198,9 @@ class SyncPanelStore {
     this._dismissed = false;
     try {
       this._session = await buildSyncSession();
+      if ((this._session?.alreadyAppliedCount ?? 0) > 0) {
+        await offlineChangesStore.reloadFromBackend();
+      }
     } catch (e) {
       this._error = e instanceof Error ? e.message : String(e);
     } finally {

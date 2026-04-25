@@ -43,6 +43,7 @@
   import { layoutOpenInProgress, layoutOpenStatusText, failLayoutOpen, resetLayoutOpenPhase } from '$lib/stores/layoutOpenLifecycle';
   import { openOfflineLayoutWithReplay } from '$lib/orchestration/offlineLayoutOrchestrator';
   import {
+    type FailedCdiPreflightNode,
     getUnreadConfigEligibleNodes,
     partitionNodesByCdiAvailability,
     pipConfirmsNoCdi,
@@ -995,27 +996,61 @@
 
   // ─── CDI XML Viewer ───────────────────────────────────────────────────────
 
+  function formatCdiPreflightFailureMessage(
+    failedNodes: FailedCdiPreflightNode[],
+    fallbackPrefix: string,
+  ): string {
+    if (failedNodes.length === 0) return fallbackPrefix;
+    if (failedNodes.length === 1) {
+      const [{ nodeName, reason }] = failedNodes;
+      return `${fallbackPrefix} for ${nodeName}: ${reason}`;
+    }
+
+    const details = failedNodes
+      .map(({ nodeName, reason }) => `${nodeName}: ${reason}`)
+      .join(' | ');
+    return `${fallbackPrefix} for ${failedNodes.length} nodes: ${details}`;
+  }
+
   /** Read config values for all unread nodes (batch) */
   async function readRemainingNodes() {
     const unread = getUnreadConfigEligibleNodes(nodes, get(configReadNodesStore));
     if (unread.length === 0) return;
+    errorMessage = '';
 
     // Phase A: CDI pre-check — check cache for all nodes BEFORE opening any modal.
     // This ensures the download dialog is shown before any config reading begins.
-    const { nodesWithCdi: newNodesWithCdi, missingNodes: localCdiMissing } = await partitionNodesByCdiAvailability(
+    const {
+      nodesWithCdi: newNodesWithCdi,
+      missingNodes: localCdiMissing,
+      failedNodes: cdiPreflightFailures,
+    } = await partitionNodesByCdiAvailability(
       unread,
       async (nodeId) => {
         const cdiCheck = await getCdiXml(nodeId);
         return cdiCheck.xmlContent !== null;
       },
     );
-    nodesWithCdi = newNodesWithCdi;
+    nodesWithCdi = new Set([...nodesWithCdi, ...newNodesWithCdi]);
+
+    if (cdiPreflightFailures.length > 0) {
+      errorMessage = formatCdiPreflightFailureMessage(
+        cdiPreflightFailures,
+        'Cannot read configuration',
+      );
+    }
 
     if (localCdiMissing.length > 0) {
-      // Store ALL unread nodes — handleCdiDownload will read them all after download.
-      pendingConfigNodes = unread.map((node) => toConfigReadCandidate(node));
+      const failedNodeIds = new Set(cdiPreflightFailures.map(({ nodeId }) => nodeId));
+      pendingConfigNodes = unread
+        .map((node) => toConfigReadCandidate(node))
+        .filter(({ nodeId }) => !failedNodeIds.has(nodeId));
       cdiMissingNodes = localCdiMissing;
       cdiDownloadDialogVisible = true;
+      return;
+    }
+
+    if (cdiPreflightFailures.length > 0) {
       return;
     }
 
@@ -1093,19 +1128,38 @@
     errorMessage = '';
 
     try {
-      let hasCdi = false;
-      try {
-        const cdiCheck = await getCdiXml(nodeId);
-        hasCdi = cdiCheck.xmlContent !== null;
-        if (hasCdi) nodesWithCdi = new Set([...nodesWithCdi, nodeId]);
-      } catch { /* CDI not available */ }
-      if (!hasCdi) {
+      const {
+        nodesWithCdi: newNodesWithCdi,
+        missingNodes: localCdiMissing,
+        failedNodes: cdiPreflightFailures,
+      } = await partitionNodesByCdiAvailability(
+        [node],
+        async (candidateNodeId) => {
+          const cdiCheck = await getCdiXml(candidateNodeId);
+          return cdiCheck.xmlContent !== null;
+        },
+      );
+
+      nodesWithCdi = new Set([...nodesWithCdi, ...newNodesWithCdi]);
+
+      if (cdiPreflightFailures.length > 0) {
+        discoveryModalVisible = false;
+        nodeReadStates = [];
+        readingRemaining = false;
+        errorMessage = formatCdiPreflightFailureMessage(
+          cdiPreflightFailures,
+          'Cannot read configuration',
+        );
+        return;
+      }
+
+      if (localCdiMissing.length > 0) {
         // CDI not in cache — close the progress modal and show the download dialog
         // for just this node, matching the batch-read behaviour.
         discoveryModalVisible = false;
         nodeReadStates = [];
         readingRemaining = false;
-        cdiMissingNodes = [{ nodeId, nodeName }];
+        cdiMissingNodes = localCdiMissing;
         cdiDownloadDialogVisible = true;
         return;
       }

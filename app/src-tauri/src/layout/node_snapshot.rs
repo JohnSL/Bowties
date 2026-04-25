@@ -183,3 +183,91 @@ pub fn update_snapshot_baseline(
     }
     false
 }
+
+pub fn update_snapshot_baseline_and_capture_time(
+    snapshot: &mut NodeSnapshot,
+    space: u8,
+    offset: &str,
+    new_value: &str,
+    captured_at: &str,
+) -> bool {
+    let updated = update_snapshot_baseline(&mut snapshot.config, space, offset, new_value);
+    if updated {
+        snapshot.captured_at = captured_at.to_string();
+    }
+    updated
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        update_snapshot_baseline_and_capture_time, CdiReference, CaptureStatus, NodeSnapshot,
+        SnapshotLeafValue, SnapshotValueNode, SnipSnapshot,
+    };
+    use lcc_rs::NodeID;
+    use std::collections::BTreeMap;
+
+    fn make_snapshot() -> NodeSnapshot {
+        let mut config = BTreeMap::new();
+        config.insert(
+            "Main".to_string(),
+            SnapshotValueNode::Leaf(SnapshotLeafValue {
+                value: "10".to_string(),
+                space: Some(253),
+                offset: Some("0x00000010".to_string()),
+            }),
+        );
+
+        NodeSnapshot {
+            node_id: NodeID::new([0x05, 0x02, 0x01, 0x02, 0x03, 0x00]),
+            captured_at: "2026-04-20T00:00:00Z".to_string(),
+            capture_status: CaptureStatus::Complete,
+            missing: Vec::new(),
+            snip: SnipSnapshot::default(),
+            cdi_ref: CdiReference {
+                cache_key: "cache".to_string(),
+                version: "1.0".to_string(),
+                fingerprint: "fp".to_string(),
+            },
+            config,
+            producer_identified_events: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn updates_baseline_and_capture_time_when_leaf_matches() {
+        let mut snapshot = make_snapshot();
+
+        let updated = update_snapshot_baseline_and_capture_time(
+            &mut snapshot,
+            253,
+            "0x00000010",
+            "20",
+            "2026-04-25T12:34:56Z",
+        );
+
+        assert!(updated);
+        assert_eq!(snapshot.captured_at, "2026-04-25T12:34:56Z");
+
+        match snapshot.config.get("Main") {
+            Some(SnapshotValueNode::Leaf(leaf)) => assert_eq!(leaf.value, "20"),
+            _ => panic!("expected matching snapshot leaf"),
+        }
+    }
+
+    #[test]
+    fn leaves_capture_time_unchanged_when_no_leaf_matches() {
+        let mut snapshot = make_snapshot();
+
+        let updated = update_snapshot_baseline_and_capture_time(
+            &mut snapshot,
+            253,
+            "0x00000099",
+            "20",
+            "2026-04-25T12:34:56Z",
+        );
+
+        assert!(!updated);
+        assert_eq!(snapshot.captured_at, "2026-04-20T00:00:00Z");
+    }
+}

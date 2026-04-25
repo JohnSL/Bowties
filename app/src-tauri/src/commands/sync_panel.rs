@@ -31,6 +31,15 @@ fn same_change_target(a: &OfflineChange, b: &OfflineChange) -> bool {
         && a.baseline_value == b.baseline_value
 }
 
+fn remove_changes_by_id(
+    cache: &mut Vec<OfflineChange>,
+    cleared_ids: &std::collections::HashSet<String>,
+) -> usize {
+    let initial_len = cache.len();
+    cache.retain(|change| !cleared_ids.contains(&change.change_id));
+    initial_len.saturating_sub(cache.len())
+}
+
 /// Parse a hex offset string like "0x00000120" into a u32 address.
 fn parse_offset(offset: &str) -> Option<u32> {
     let trimmed = offset.strip_prefix("0x").or_else(|| offset.strip_prefix("0X")).unwrap_or(offset);
@@ -661,6 +670,7 @@ pub async fn build_sync_session(
     let mut conflict_rows = Vec::new();
     let mut clean_rows = Vec::new();
     let mut already_applied_count: usize = 0;
+    let mut already_applied_ids = std::collections::HashSet::new();
     let mut node_missing_rows = Vec::new();
 
     // Cache parsed CDIs per node to avoid re-parsing for each change
@@ -810,6 +820,7 @@ pub async fn build_sync_session(
         // Classify the row
         if bus_value == change.planned_value {
             already_applied_count += 1;
+            already_applied_ids.insert(change.change_id.clone());
         } else if bus_value == change.baseline_value {
             clean_rows.push(SyncRow {
                 change_id: change.change_id.clone(),
@@ -833,12 +844,83 @@ pub async fn build_sync_session(
         }
     }
 
+    if !already_applied_ids.is_empty() {
+        let cache_snapshot = {
+            let mut cache = state.offline_changes_cache.write().await;
+            remove_changes_by_id(&mut cache, &already_applied_ids);
+            cache.clone()
+        };
+
+        {
+            let mut guard = state.active_layout.write().await;
+            if let Some(ctx) = &mut *guard {
+                ctx.pending_offline_change_count = cache_snapshot.len();
+            }
+        }
+
+        if let Ok(companion_dir) = crate::layout::io::derive_companion_dir_path(
+            std::path::Path::new(&context.root_path),
+        ) {
+            let changes_path = companion_dir.join("offline-changes.yaml");
+            if let Err(e) = crate::layout::io::write_yaml_file(&changes_path, &cache_snapshot) {
+                eprintln!("[sync] Failed to persist offline-changes.yaml after already-applied clear: {}", e);
+            }
+        }
+    }
+
     Ok(SyncSession {
         conflict_rows,
         clean_rows,
         already_applied_count,
         node_missing_rows,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::remove_changes_by_id;
+    use crate::layout::offline_changes::{OfflineChange, OfflineChangeKind, OfflineChangeStatus};
+    use lcc_rs::NodeID;
+    use std::collections::HashSet;
+
+    fn make_change(change_id: &str) -> OfflineChange {
+        OfflineChange {
+            change_id: change_id.to_string(),
+            kind: OfflineChangeKind::Config,
+            node_id: Some(NodeID::new([0x05, 0x02, 0x01, 0x02, 0x03, 0x00])),
+            space: Some(253),
+            offset: Some("0x00000010".to_string()),
+            baseline_value: "10".to_string(),
+            planned_value: "20".to_string(),
+            status: OfflineChangeStatus::Pending,
+            error: None,
+            updated_at: "2026-04-25T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn removes_only_cleared_change_ids_from_cache() {
+        let mut cache = vec![make_change("row-1"), make_change("row-2"), make_change("row-3")];
+        let cleared_ids = HashSet::from(["row-2".to_string(), "row-3".to_string()]);
+
+        let removed = remove_changes_by_id(&mut cache, &cleared_ids);
+
+        assert_eq!(removed, 2);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache[0].change_id, "row-1");
+    }
+
+    #[test]
+    fn does_not_change_cache_when_no_ids_match() {
+        let mut cache = vec![make_change("row-1")];
+        let cleared_ids = HashSet::from(["row-9".to_string()]);
+
+        let removed = remove_changes_by_id(&mut cache, &cleared_ids);
+
+        assert_eq!(removed, 0);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache[0].change_id, "row-1");
+    }
 }
 
 #[tauri::command]
@@ -1085,6 +1167,7 @@ pub async fn apply_sync_changes(
             let nodes_dir = companion_dir.join("nodes");
             let mut updated_snapshots: std::collections::HashMap<String, crate::layout::node_snapshot::NodeSnapshot> =
                 std::collections::HashMap::new();
+            let applied_at = chrono::Utc::now().to_rfc3339();
 
             for (canonical_nid, space, offset_hex, planned_value) in &applied_config_details {
                 let snapshot = updated_snapshots.entry(canonical_nid.clone()).or_insert_with(|| {
@@ -1112,11 +1195,12 @@ pub async fn apply_sync_changes(
                     }
                 });
 
-                crate::layout::node_snapshot::update_snapshot_baseline(
-                    &mut snapshot.config,
+                crate::layout::node_snapshot::update_snapshot_baseline_and_capture_time(
+                    snapshot,
                     *space,
                     offset_hex,
                     planned_value,
+                    &applied_at,
                 );
             }
 

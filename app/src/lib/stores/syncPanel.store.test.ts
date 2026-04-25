@@ -33,6 +33,14 @@ vi.mock('$lib/api/sync', () => ({
   applySyncChanges: (...args: unknown[]) => mockApplySyncChanges(...args),
 }));
 
+const mockReloadOfflineChanges = vi.fn(async () => {});
+
+vi.mock('$lib/stores/offlineChanges.svelte', () => ({
+  offlineChangesStore: {
+    reloadFromBackend: (...args: unknown[]) => mockReloadOfflineChanges(...args),
+  },
+}));
+
 // ─── Import store AFTER mocks ────────────────────────────────────────────────
 
 const { syncPanelStore } = await import('$lib/stores/syncPanel.svelte');
@@ -145,6 +153,25 @@ describe('loadSession() after dismiss()', () => {
     // _session is set to the empty session object (not null) → isActive = true
     expect(syncPanelStore.session).not.toBeNull();
     expect(syncPanelStore.isActive).toBe(true);
+  });
+
+  it('reloads offline changes after session build when already-applied rows were auto-cleared', async () => {
+    mockBuildSyncSession.mockResolvedValue({
+      ...makeEmptySession(),
+      alreadyAppliedCount: 2,
+    });
+
+    await syncPanelStore.loadSession();
+
+    expect(mockReloadOfflineChanges).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reload offline changes when no already-applied rows were cleared', async () => {
+    mockBuildSyncSession.mockResolvedValue(makeSessionWithCleanRow());
+
+    await syncPanelStore.loadSession();
+
+    expect(mockReloadOfflineChanges).not.toHaveBeenCalled();
   });
 });
 

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DiscoveredNode, ProtocolFlags, SNIPData } from '$lib/api/tauri';
 import {
+  type FailedCdiPreflightNode,
   getUnreadConfigEligibleNodes,
   partitionNodesByCdiAvailability,
   pipConfirmsNoCdi,
@@ -147,15 +148,16 @@ describe('partitionNodesByCdiAvailability', () => {
         nodeName: 'RR-CirKits — Tower-LCC',
       },
     ]);
+    expect(result.failedNodes).toEqual([]);
   });
 
-  it('treats CDI lookup errors as missing CDI for the prompt', async () => {
+  it('treats only CdiNotRetrieved lookup errors as missing CDI for the prompt', async () => {
     const node = makeNode();
 
     const result = await partitionNodesByCdiAvailability(
       [node],
       async () => {
-        throw new Error('cache miss');
+        throw 'CdiNotRetrieved: cache miss';
       },
     );
 
@@ -164,6 +166,28 @@ describe('partitionNodesByCdiAvailability', () => {
       {
         nodeId: '02.01.57.00.00.01',
         nodeName: 'East Panel',
+      },
+    ]);
+    expect(result.failedNodes).toEqual([]);
+  });
+
+  it('returns non-downloadable CDI lookup errors separately', async () => {
+    const node = makeNode();
+
+    const result = await partitionNodesByCdiAvailability(
+      [node],
+      async () => {
+        throw 'RetrievalFailed: timed out';
+      },
+    );
+
+    expect(result.nodesWithCdi).toEqual(new Set());
+    expect(result.missingNodes).toEqual([]);
+    expect(result.failedNodes).toEqual<FailedCdiPreflightNode[]>([
+      {
+        nodeId: '02.01.57.00.00.01',
+        nodeName: 'East Panel',
+        reason: 'CDI retrieval failed. Check node connection and try again.',
       },
     ]);
   });

@@ -1,10 +1,15 @@
 import type { DiscoveredNode } from '$lib/api/tauri';
+import { getCdiErrorMessage, isCdiError } from '$lib/types/cdi';
 import { resolveNodeDisplayName } from '$lib/utils/nodeDisplayName';
 import { formatNodeId } from '$lib/utils/nodeId';
 
 export interface ConfigReadNodeCandidate {
   nodeId: string;
   nodeName: string;
+}
+
+export interface FailedCdiPreflightNode extends ConfigReadNodeCandidate {
+  reason: string;
 }
 
 export function pipConfirmsNoCdi(node: Pick<DiscoveredNode, 'pip_status' | 'pip_flags'>): boolean {
@@ -35,9 +40,14 @@ export function toConfigReadCandidate(node: DiscoveredNode): ConfigReadNodeCandi
 export async function partitionNodesByCdiAvailability(
   nodes: DiscoveredNode[],
   hasCachedCdi: (nodeId: string) => Promise<boolean>,
-): Promise<{ nodesWithCdi: Set<string>; missingNodes: ConfigReadNodeCandidate[] }> {
+): Promise<{
+  nodesWithCdi: Set<string>;
+  missingNodes: ConfigReadNodeCandidate[];
+  failedNodes: FailedCdiPreflightNode[];
+}> {
   const nodesWithCdi = new Set<string>();
   const missingNodes: ConfigReadNodeCandidate[] = [];
+  const failedNodes: FailedCdiPreflightNode[] = [];
 
   for (const node of nodes) {
     const candidate = toConfigReadCandidate(node);
@@ -47,10 +57,17 @@ export async function partitionNodesByCdiAvailability(
       } else {
         missingNodes.push(candidate);
       }
-    } catch {
-      missingNodes.push(candidate);
+    } catch (error) {
+      if (isCdiError(error, 'CdiNotRetrieved')) {
+        missingNodes.push(candidate);
+      } else {
+        failedNodes.push({
+          ...candidate,
+          reason: getCdiErrorMessage(error),
+        });
+      }
     }
   }
 
-  return { nodesWithCdi, missingNodes };
+  return { nodesWithCdi, missingNodes, failedNodes };
 }
