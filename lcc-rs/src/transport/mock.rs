@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 /// Mock transport for testing
+#[derive(Clone)]
 pub struct MockTransport {
     receive_queue: Arc<Mutex<VecDeque<String>>>,
     sent_frames: Arc<Mutex<Vec<String>>>,

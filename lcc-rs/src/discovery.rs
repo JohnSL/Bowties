@@ -2669,13 +2669,29 @@ mod tests {
         let chunk0 = make_cdi_reply_frame(src, dst, 0, b"AB");
         let chunk1 = make_cdi_reply_frame(src, dst, 2, b"C\x00");
 
-        let mut transport = GlobalMockTransport::new();
-        transport.add_receive_frame(chunk0.to_string());
-        transport.add_receive_frame(chunk1.to_string());
+        let transport = GlobalMockTransport::new();
+        let feeder = transport.clone();
         let mut actor = TransportActor::new(Box::new(transport));
         let handle = actor.handle();
 
+        // Inject replies only after the first CDI request is observed. This
+        // still stress-tests the chunk-boundary subscription behavior while
+        // avoiding a startup race where the actor reader can consume queued
+        // replies before read_cdi_with_handle() subscribes.
+        let reply_task = tokio::spawn(async move {
+            let mut feeder = feeder;
+            loop {
+                if !feeder.get_sent_frames().is_empty() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            feeder.add_receive_frame(chunk0.to_string());
+            feeder.add_receive_frame(chunk1.to_string());
+        });
+
         let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000, None).await;
+        reply_task.await.unwrap();
         actor.shutdown().await;
 
         assert!(result.is_ok(), "Multi-chunk CDI read should succeed on multi-thread runtime: {:?}", result);
