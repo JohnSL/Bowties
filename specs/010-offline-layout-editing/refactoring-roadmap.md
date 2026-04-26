@@ -30,7 +30,7 @@
 
 ### A3. Lifecycle State Model
 
-- [ ] R007 Define a single source of truth for lifecycle transitions (layout open, reload, replay, discard, apply, disconnect). Partial: layout-open and layout-close transitions now use the offline-layout orchestrator, sync-session auto-trigger state is centralized, and disconnect transitions are now routed through explicit preserve/rehydrate/clear outcomes, but one unified transition owner or transition matrix does not exist yet.
+- [ ] R007 Define a single source of truth for lifecycle transitions (layout open, reload, replay, discard, apply, disconnect). Partial: layout-open and layout-close transitions now use the offline-layout orchestrator, startup/connect/disconnect rules now share an explicit transition matrix, and sync-session auto-trigger state is centralized, but layout open/apply are not yet unified under the same transition owner.
 - [x] R008 Make pending-value apply timing deterministic and documented at each lifecycle transition.
 - [x] R009 Add guardrails for ordering-sensitive paths (reload, tree rebuild, post-apply restamp).
 
@@ -67,6 +67,7 @@
 - Moved offline snapshot hydration, no-layout reset, fresh-live reset, and startup restore handling further into `app/src/lib/orchestration/offlineLayoutOrchestrator.ts`, so the route now supplies state hooks instead of owning those lifecycle branches directly.
 - Extracted refresh stale-node reconciliation into `app/src/lib/orchestration/discoveryOrchestrator.ts`, so node removal, cached CDI pruning, and stale sidebar-reset decisions are covered at the owner level instead of being inlined in `+page.svelte`.
 - Extracted startup connection/layout bootstrap sequencing into `app/src/lib/orchestration/syncSessionOrchestrator.ts`, so connection-status resolution, recent-layout restore ordering, fresh-live reset, and initial probe timing are no longer split across the route `onMount` flow.
+- Added an explicit lifecycle transition matrix in `app/src/lib/orchestration/lifecycleTransitionMatrix.ts` and wired startup/connect/disconnect helpers through it, with focused matrix coverage added to the frontend regression gate.
 - Remaining lifecycle gap: discard/apply/disconnect/open transitions are improved, but not yet unified under one transition matrix or owner.
 
 ### Phase 6c/6d Sequencing
@@ -104,7 +105,7 @@
 
 - [ ] F004 Consolidate layout open/hydration/reconnect/disconnect transition handling into one orchestrated flow.
 - [ ] F005 Remove duplicate transition logic spread across page-level handlers and store listeners.
-- [ ] F006 Add transition matrix tests covering offline/online mode changes.
+- [x] F006 Add transition matrix tests covering offline/online mode changes.
 
 ### B3. Backend/Frontend Boundary Hardening
 

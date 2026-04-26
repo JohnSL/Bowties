@@ -1,4 +1,12 @@
 import type { SyncSession, LayoutMatchStatus, SyncMode } from '$lib/api/sync';
+import {
+  resolveConnectTransition,
+  resolveDisconnectTransition,
+  resolveStartupTransition,
+  shouldProbeAfterTransition,
+  shouldResetFreshLiveSession,
+  type DisconnectTransition,
+} from './lifecycleTransitionMatrix';
 
 interface SyncPanelLifecycleStore {
   isDismissed: boolean;
@@ -74,25 +82,7 @@ interface DisconnectWithOfflineFallbackArgs {
   onError: (message: string) => void;
 }
 
-export type DisconnectTransition =
-  | 'rehydrated_offline'
-  | 'preserved_layout'
-  | 'cleared_to_connection';
-
-export function resolveDisconnectTransition(
-  hasLayoutFile: boolean,
-  hasSnapshots: boolean,
-): DisconnectTransition {
-  if (hasLayoutFile && hasSnapshots) {
-    return 'rehydrated_offline';
-  }
-
-  if (hasLayoutFile) {
-    return 'preserved_layout';
-  }
-
-  return 'cleared_to_connection';
-}
+export { resolveDisconnectTransition } from './lifecycleTransitionMatrix';
 
 export function hasSyncSessionContent(session: SyncSession | null): boolean {
   return !!session && (
@@ -117,17 +107,21 @@ export function connectLiveSession({
   resetFreshLiveSessionState,
   probeForNodes,
 }: ConnectLiveSessionArgs): void {
+  const transition = resolveConnectTransition(hasLayoutFile);
+
   setConnectionLabel(resolveConnectionLabel(config));
   setConnected(true);
   setLayoutConnected(true);
   hideConnectionDialog();
   resetSyncSessionAutoTrigger();
 
-  if (!hasLayoutFile) {
+  if (shouldResetFreshLiveSession(transition)) {
     resetFreshLiveSessionState();
   }
 
-  void probeForNodes();
+  if (shouldProbeAfterTransition(transition)) {
+    void probeForNodes();
+  }
 }
 
 export async function bootstrapStartupLifecycle({
@@ -161,11 +155,13 @@ export async function bootstrapStartupLifecycle({
   await restoreRecentOfflineLayout();
   startNodeTreeListening();
 
-  if (connected && !hasLayoutFile()) {
+  const transition = resolveStartupTransition(connected, hasLayoutFile());
+
+  if (shouldResetFreshLiveSession(transition)) {
     resetFreshLiveSessionState();
   }
 
-  if (connected) {
+  if (shouldProbeAfterTransition(transition)) {
     await probeForNodes();
   }
 }
