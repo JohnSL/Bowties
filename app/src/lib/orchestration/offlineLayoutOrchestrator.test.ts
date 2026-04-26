@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OfflineNodeSnapshot } from '$lib/api/layout';
+import type { LayoutFile } from '$lib/types/bowtie';
 
 const {
   layoutStoreRef,
@@ -7,6 +8,7 @@ const {
   lifecycleRef,
 } = vi.hoisted(() => ({
   layoutStoreRef: {
+    hydrateOfflineLayout: vi.fn(),
     setActiveContext: vi.fn(),
   },
   offlineChangesStoreRef: {
@@ -48,6 +50,20 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+function makeLayout(overrides: Partial<LayoutFile> = {}): LayoutFile {
+  return {
+    schemaVersion: '1.0',
+    bowties: {
+      '02.01.57.00.02.D9.00.06': {
+        name: 'Offline Bowtie',
+        tags: [],
+      },
+    },
+    roleClassifications: {},
+    ...overrides,
+  };
+}
+
 describe('openOfflineLayoutWithReplay', () => {
   it('calls onOpened after a successful offline layout replay', async () => {
     const onOpened = vi.fn();
@@ -56,6 +72,9 @@ describe('openOfflineLayoutWithReplay', () => {
     const result = {
       layoutId: 'yard-layout',
       capturedAt: '2026-04-25T00:00:00.000Z',
+      layout: makeLayout(),
+      offlineMode: true,
+      nodeCount: 0,
       pendingOfflineChangeCount: 2,
       partialNodes: [],
       nodeSnapshots: [],
@@ -74,7 +93,7 @@ describe('openOfflineLayoutWithReplay', () => {
     expect(offlineChangesStoreRef.reloadFromBackend).toHaveBeenCalledTimes(1);
     expect(applyPersistedOfflinePendingToTrees).toHaveBeenCalledTimes(1);
     expect(onOpened).toHaveBeenCalledTimes(1);
-    expect(layoutStoreRef.setActiveContext).toHaveBeenCalledWith({
+    expect(layoutStoreRef.hydrateOfflineLayout).toHaveBeenCalledWith(makeLayout(), {
       layoutId: 'yard-layout',
       rootPath: 'D:/Layouts/yard.layout.yaml',
       mode: 'offline_file',

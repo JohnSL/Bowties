@@ -26,7 +26,7 @@
 <script lang="ts">
   import ElementPicker from './ElementPicker.svelte';
   import type { ElementSelection, EventIdResolution } from '$lib/types/bowtie';
-  import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
+  import { editableBowtiePreviewStore } from '$lib/stores/bowties.svelte';
   import { isPlaceholderEventId } from '$lib/utils/eventIds';
 
   interface Props {
@@ -72,7 +72,7 @@
     producer: ElementSelection,
     consumer: ElementSelection,
   ): EventIdResolution {
-    const usedInMap = bowtieCatalogStore.usedInMap;
+    const usedInMap = editableBowtiePreviewStore.usedInMap;
     const prodConnected = usedInMap.has(producer.currentEventId) && !isPlaceholderEventId(producer.currentEventId);
     const consConnected = usedInMap.has(consumer.currentEventId) && !isPlaceholderEventId(consumer.currentEventId);
 

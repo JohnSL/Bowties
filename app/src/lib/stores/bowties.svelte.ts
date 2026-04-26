@@ -20,6 +20,8 @@ import { layoutStore } from '$lib/stores/layout.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { nodeInfoStore } from '$lib/stores/nodeInfo';
 import { resolveNodeDisplayName as resolveSharedNodeDisplayName } from '$lib/utils/nodeDisplayName';
+import { isPlaceholderEventId } from '$lib/utils/eventIds';
+import { isWellKnownEvent } from '$lib/utils/formatters';
 
 // ─── Store class ─────────────────────────────────────────────────────────────
 
@@ -204,6 +206,14 @@ export const bowtieCatalogStore = new BowtieCatalogStore();
  * and `collectEntriesForEventId` reads effective values from tree leaves.
  */
 class EditableBowtiePreviewStore {
+  get usedInMap(): Map<string, PreviewBowtieCard> {
+    const map = new Map<string, PreviewBowtieCard>();
+    for (const bowtie of this.preview.bowties) {
+      map.set(bowtie.eventIdHex, bowtie);
+    }
+    return map;
+  }
+
   /**
    * Compute the editable preview by merging catalog, metadata, and tree modifications.
    */
@@ -327,6 +337,35 @@ class EditableBowtiePreviewStore {
       }
     }
 
+    for (const eventIdHex of collectTreeEventIds()) {
+      if (seenEventIds.has(eventIdHex)) continue;
+
+      const meta = bowtieMetadataStore.getMetadata(eventIdHex);
+      const dirtyFields = bowtieMetadataStore.getDirtyFields(eventIdHex);
+      const { producers, consumers } = collectEntriesForEventId(eventIdHex);
+      const totalEntries = producers.length + consumers.length;
+
+      if (totalEntries < 2 && !isWellKnownEvent(eventIdHex)) {
+        continue;
+      }
+
+      seenEventIds.add(eventIdHex);
+
+      previews.push({
+        eventIdHex,
+        eventIdBytes: eventIdHexToBytes(eventIdHex),
+        producers,
+        consumers,
+        ambiguousEntries: [],
+        name: meta?.name,
+        tags: meta?.tags ?? [],
+        state: deriveBowtieState(producers.length, consumers.length),
+        isDirty: dirtyFields.size > 0,
+        dirtyFields,
+        newEntryKeys: new Set<string>(),
+      });
+    }
+
     return {
       bowties: previews,
       hasUnsavedChanges: metadataIsDirty || configIsDirty,
@@ -368,6 +407,26 @@ function isEntryStillActive(entry: import('../api/tauri').EventSlotEntry, eventI
  */
 function eventIdHexToBytes(hex: string): number[] {
   return hex.split('.').map(h => parseInt(h, 16));
+}
+
+function deriveBowtieState(producerCount: number, consumerCount: number): 'active' | 'incomplete' | 'planning' {
+  if (producerCount > 0 && consumerCount > 0) return 'active';
+  if (producerCount > 0 || consumerCount > 0) return 'incomplete';
+  return 'planning';
+}
+
+function collectTreeEventIds(): string[] {
+  const eventIds = new Set<string>();
+
+  for (const tree of nodeTreeStore.trees.values()) {
+    for (const leaf of collectEventIdLeaves(tree)) {
+      const value = effectiveValue(leaf);
+      if (value?.type !== 'eventId' || isPlaceholderEventId(value.hex)) continue;
+      eventIds.add(value.hex);
+    }
+  }
+
+  return Array.from(eventIds).sort();
 }
 
 /**

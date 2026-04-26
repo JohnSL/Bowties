@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { NodeConfigTree } from '$lib/types/nodeTree';
+import type { LayoutFile } from '$lib/types/bowtie';
 
 export interface CaptureSummary {
   capturedAt: string;
@@ -17,6 +18,7 @@ export interface SaveLayoutResult {
 export interface OpenLayoutResult {
   layoutId: string;
   capturedAt: string;
+  layout: LayoutFile;
   offlineMode: boolean;
   nodeCount: number;
   partialNodes: string[];

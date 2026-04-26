@@ -17,10 +17,11 @@ import type { NodeConfigTree, LeafConfigNode, SegmentNode } from '$lib/types/nod
 
 // ── Hoisted refs (must be available inside vi.mock factories) ────────────────
 
-const { loadTreeMock, nodesRef, treesRef } = vi.hoisted(() => ({
+const { loadTreeMock, nodesRef, treesRef, usedInMapRef } = vi.hoisted(() => ({
   loadTreeMock: vi.fn().mockResolvedValue(null),
   nodesRef: { map: new Map<string, any>() },
   treesRef: { map: new Map<string, NodeConfigTree>() },
+  usedInMapRef: { map: new Map<string, any>() },
 }));
 
 // ── Module mocks ─────────────────────────────────────────────────────────────
@@ -40,8 +41,9 @@ vi.mock('$lib/stores/nodeTree.svelte', () => ({
 }));
 
 vi.mock('$lib/stores/bowties.svelte', () => ({
-  bowtieCatalogStore: {
-    get catalog() { return null; },
+  editableBowtiePreviewStore: {
+    get preview() { return { bowties: Array.from(usedInMapRef.map.values()) }; },
+    get usedInMap() { return usedInMapRef.map; },
   },
 }));
 
@@ -93,6 +95,7 @@ const NODE_B = '05.01.01.01.00.00.00.02';
 beforeEach(() => {
   nodesRef.map = new Map();
   treesRef.map = new Map();
+  usedInMapRef.map = new Map();
   vi.clearAllMocks();
   loadTreeMock.mockResolvedValue(null);
 });
@@ -197,5 +200,22 @@ describe('ElementPicker — picker content', () => {
     const slotBtn = screen.getByRole('button', { name: /push button/i });
     expect(slotBtn).toBeDisabled();
     expect(screen.getByText('(placeholder)')).toBeInTheDocument();
+  });
+
+  it('treats slots from offline layout bowties as occupied even without a live catalog', async () => {
+    nodesRef.map.set(NODE_A, makeNodeInfo(NODE_A, 'Button Node'));
+    treesRef.map.set(NODE_A, makeTree(NODE_A, 'Occupied Event'));
+    usedInMapRef.map.set('05.01.01.01.00.00.00.01', { eventIdHex: '05.01.01.01.00.00.00.01' });
+
+    render(ElementPicker);
+
+    const nodeToggle = await screen.findByText('Button Node');
+    const { fireEvent: fe } = await import('@testing-library/svelte');
+    await fe.click(nodeToggle.closest('button')!);
+
+    const segToggle = screen.getByText('Configuration');
+    await fe.click(segToggle.closest('button')!);
+
+    expect(screen.getByRole('button', { name: /occupied event/i })).toBeDisabled();
   });
 });

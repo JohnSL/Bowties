@@ -15,7 +15,7 @@
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
-  import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
+  import { editableBowtiePreviewStore } from '$lib/stores/bowties.svelte';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { nodeInfoStore } from '$lib/stores/nodeInfo';
   import { isPlaceholderEventId } from '$lib/utils/eventIds';
@@ -57,13 +57,12 @@
   // Get all node trees
   let trees = $derived(nodeTreeStore.trees);
 
-  // Build set of connected event IDs from the bowtie catalog for isSlotFree
+  // Build set of connected event IDs from the editable preview so offline layouts
+  // can still reserve slots that already participate in saved bowties.
   let connectedEventIds = $derived.by(() => {
-    const catalog = bowtieCatalogStore.catalog;
     const ids = new Set<string>();
-    if (!catalog) return ids;
-    for (const card of catalog.bowties) {
-      ids.add(card.event_id_hex);
+    for (const bowtie of editableBowtiePreviewStore.preview.bowties) {
+      ids.add(bowtie.eventIdHex);
     }
     return ids;
   });

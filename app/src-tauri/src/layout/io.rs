@@ -687,4 +687,49 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&root);
     }
+
+    #[test]
+    fn resave_without_new_cdi_files_preserves_existing_cdi_directory() {
+        let root = std::env::temp_dir().join("bowties_test_preserve_existing_cdi");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let base_file = root.join("layout.bowties-layout.yaml");
+        let manifest = LayoutManifest::new(
+            "layout".to_string(),
+            "2026-04-05T12:00:00Z".to_string(),
+            "2026-04-05T12:00:00Z".to_string(),
+            "layout.bowties-layout.d".to_string(),
+        );
+
+        let cdi_source = root.join("acme_modelx_1.0.cdi.xml");
+        std::fs::write(&cdi_source, "<cdi version=\"1\"/>").unwrap();
+
+        let initial_data = LayoutDirectoryWriteData {
+            manifest: manifest.clone(),
+            node_snapshots: vec![test_node_snapshot("050101011402")],
+            bowties: LayoutFile::default(),
+            offline_changes: Vec::new(),
+            cdi_files: vec![("acme_modelx_1.0".to_string(), cdi_source)],
+        };
+
+        write_layout_capture(&base_file, &initial_data).unwrap();
+
+        let resave_data = LayoutDirectoryWriteData {
+            manifest,
+            node_snapshots: vec![test_node_snapshot("050101011402")],
+            bowties: LayoutFile::default(),
+            offline_changes: Vec::new(),
+            cdi_files: Vec::new(),
+        };
+
+        write_layout_capture(&base_file, &resave_data).unwrap();
+
+        let companion = derive_companion_dir_path(&base_file).unwrap();
+        let cdi_dest = companion.join("cdi").join("acme_modelx_1.0.xml");
+        assert!(cdi_dest.exists());
+        assert_eq!(std::fs::read_to_string(&cdi_dest).unwrap(), "<cdi version=\"1\"/>");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

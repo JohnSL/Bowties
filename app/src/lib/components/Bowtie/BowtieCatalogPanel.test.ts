@@ -25,6 +25,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 }));
 
 const mockReadComplete = { value: false };
+const mockHasLayoutFile = { value: false };
 const mockPreviewCards: any[] = [];
 
 vi.mock('$lib/stores/bowties.svelte', () => ({
@@ -34,6 +35,12 @@ vi.mock('$lib/stores/bowties.svelte', () => ({
   },
   editableBowtiePreviewStore: {
     get preview() { return { bowties: mockPreviewCards }; },
+  },
+}));
+
+vi.mock('$lib/stores/layout.svelte', () => ({
+  layoutStore: {
+    get hasLayoutFile() { return mockHasLayoutFile.value; },
   },
 }));
 
@@ -77,6 +84,7 @@ vi.mock('$lib/utils/eventIds', () => ({
 
 beforeEach(() => {
   mockReadComplete.value = false;
+  mockHasLayoutFile.value = false;
   mockPreviewCards.length = 0;
 });
 
@@ -172,6 +180,34 @@ describe('BowtieCatalogPanel — not-ready fallback (hasUnreadNodes=false, readC
     });
     expect(screen.queryByRole('button', { name: /read node configuration/i })).toBeNull();
     expect(screen.getByText(/bowties will be available after cdi reads complete/i)).toBeInTheDocument();
+  });
+
+  it('does not show the blocker when an offline layout already has bowties to edit', () => {
+    mockHasLayoutFile.value = true;
+    mockPreviewCards.push({
+      eventIdHex: '01.02.03.04.05.06.07.08',
+      eventIdBytes: [1, 2, 3, 4, 5, 6, 7, 8],
+      producers: [],
+      consumers: [],
+      ambiguousEntries: [],
+      name: 'Offline Bowtie',
+      tags: [],
+      state: 'planning',
+      isDirty: false,
+      dirtyFields: new Set<string>(),
+      newEntryKeys: new Set<string>(),
+    });
+
+    render(BowtieCatalogPanel, {
+      props: {
+        hasUnreadNodes: false,
+        readingConfig: false,
+      },
+    });
+
+    expect(screen.queryByText(/bowties will be available after cdi reads complete/i)).toBeNull();
+    expect(screen.getByRole('list', { name: /bowtie connections/i })).toBeInTheDocument();
+    expect(screen.getByText(/offline bowtie/i)).toBeInTheDocument();
   });
 });
 

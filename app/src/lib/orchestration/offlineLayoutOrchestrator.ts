@@ -381,13 +381,15 @@ export async function openOfflineLayoutWithReplay({
     await hydrateOfflineSnapshots(result.nodeSnapshots);
     finishLayoutHydration();
 
-    layoutStore.setActiveContext({
+    const context = {
       layoutId: result.layoutId,
       rootPath: path,
       mode: 'offline_file',
       capturedAt: result.capturedAt,
       pendingOfflineChangeCount: result.pendingOfflineChangeCount,
-    });
+    } as const;
+
+    layoutStore.hydrateOfflineLayout(result.layout, context);
 
     startOfflineReplay();
     await offlineChangesStore.reloadFromBackend();

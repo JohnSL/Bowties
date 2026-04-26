@@ -10,6 +10,7 @@ use crate::layout::node_snapshot::{
     SnapshotLeafValue, SnipSnapshot,
 };
 use crate::layout::offline_changes::OfflineChange;
+use crate::layout::types::LayoutFile;
 use crate::state::{ActiveLayoutContext, ActiveLayoutMode, AppState};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,6 +36,7 @@ pub struct SaveLayoutResult {
 pub struct OpenLayoutResult {
     pub layout_id: String,
     pub captured_at: String,
+    pub layout: LayoutFile,
     pub offline_mode: bool,
     pub node_count: usize,
     pub partial_nodes: Vec<String>,
@@ -549,6 +551,7 @@ pub async fn open_layout_directory(
     Ok(OpenLayoutResult {
         layout_id: loaded.manifest.layout_id,
         captured_at: loaded.manifest.captured_at,
+        layout: loaded.bowties,
         offline_mode: true,
         node_count: loaded.node_snapshots.len(),
         partial_nodes,

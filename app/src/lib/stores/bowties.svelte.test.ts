@@ -88,6 +88,23 @@ function makeEventIdLeaf(overrides: Partial<LeafConfigNode> = {}): LeafConfigNod
   };
 }
 
+function makePlaceholderLeaf(overrides: Partial<LeafConfigNode> = {}): LeafConfigNode {
+  return {
+    kind: 'leaf',
+    name: 'Placeholder Event ID',
+    description: null,
+    elementType: 'eventId',
+    address: 120,
+    size: 8,
+    space: 253,
+    path: ['seg:0', 'elem:9#1', 'elem:0'],
+    value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 1], hex: '00.00.00.00.00.00.00.01' },
+    eventRole: 'Producer',
+    constraints: null,
+    ...overrides,
+  };
+}
+
 function makeTree(nodeId: string, leaves: LeafConfigNode[]): NodeConfigTree {
   return {
     nodeId,
@@ -275,5 +292,59 @@ describe('EditableBowtiePreviewStore.preview', () => {
     expect(card!.producers.length).toBe(1);
     expect(card!.consumers.length).toBe(2);
     expect(card!.isDirty).toBe(true); // new entry makes it dirty
+  });
+
+  it('derives offline bowties from loaded trees when layout metadata is empty', () => {
+    const producerLeaf = makeEventIdLeaf({
+      path: ['seg:0', 'elem:0#1', 'elem:0'],
+      eventRole: 'Producer',
+    });
+    const consumerLeaf = makeEventIdLeaf({
+      address: 200,
+      path: ['seg:0', 'elem:1#1', 'elem:0'],
+      eventRole: 'Consumer',
+    });
+
+    mockTreesMap.set('02.01.57.00.00.01', makeTree('02.01.57.00.00.01', [producerLeaf, consumerLeaf]));
+
+    const preview = editableBowtiePreviewStore.preview;
+
+    expect(preview.bowties).toHaveLength(1);
+    expect(preview.bowties[0].eventIdHex).toBe(TEST_EVENT_HEX);
+    expect(preview.bowties[0].producers).toHaveLength(1);
+    expect(preview.bowties[0].consumers).toHaveLength(1);
+    expect(preview.bowties[0].state).toBe('active');
+  });
+
+  it('ignores placeholder event IDs when deriving offline bowties from trees', () => {
+    mockTreesMap.set('02.01.57.00.00.01', makeTree('02.01.57.00.00.01', [makePlaceholderLeaf()]));
+
+    const preview = editableBowtiePreviewStore.preview;
+
+    expect(preview.bowties).toHaveLength(0);
+  });
+
+  it('filters out single-entry normal events when deriving offline bowties from trees', () => {
+    mockTreesMap.set('02.01.57.00.00.01', makeTree('02.01.57.00.00.01', [makeEventIdLeaf()]));
+
+    const preview = editableBowtiePreviewStore.preview;
+
+    expect(preview.bowties).toHaveLength(0);
+  });
+
+  it('keeps single-entry well-known events when deriving offline bowties from trees', () => {
+    const wellKnownLeaf = makeEventIdLeaf({
+      value: {
+        type: 'eventId',
+        bytes: [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF],
+        hex: '01.00.00.00.00.00.FF.FF',
+      },
+    });
+    mockTreesMap.set('02.01.57.00.00.01', makeTree('02.01.57.00.00.01', [wellKnownLeaf]));
+
+    const preview = editableBowtiePreviewStore.preview;
+
+    expect(preview.bowties).toHaveLength(1);
+    expect(preview.bowties[0].eventIdHex).toBe('01.00.00.00.00.00.FF.FF');
   });
 });

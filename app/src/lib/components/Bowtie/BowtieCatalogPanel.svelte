@@ -10,6 +10,7 @@
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { editableBowtiePreviewStore } from '$lib/stores/bowties.svelte';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
+  import { layoutStore } from '$lib/stores/layout.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
   import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
@@ -44,6 +45,7 @@
   // Store access
   let catalog = $derived(bowtieCatalogStore.catalog);
   let readComplete = $derived(bowtieCatalogStore.readComplete);
+  let hasLayoutFile = $derived(layoutStore.hasLayoutFile);
   let preview = $derived(editableBowtiePreviewStore.preview);
   let previewCards = $derived(preview.bowties);
 
@@ -383,7 +385,7 @@
         {/if}
       </div>
 
-    {:else if !readComplete}
+    {:else if !readComplete && !hasLayoutFile}
       <div class="not-ready">
         <p>Bowties will be available after CDI reads complete.</p>
         <p class="hint">Discover nodes and read their configuration from the toolbar.</p>

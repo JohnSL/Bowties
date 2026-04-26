@@ -214,6 +214,20 @@ class LayoutStore {
   }
 
   /**
+   * Hydrate the layout store from an opened offline layout directory.
+   * Keeps the loaded layout metadata available to preview/edit flows while
+   * the orchestrator owns the broader open lifecycle.
+   */
+  hydrateOfflineLayout(layout: LayoutFile, context: ActiveLayoutContext): void {
+    this._layout = JSON.parse(JSON.stringify(layout));
+    this._savedLayout = JSON.parse(JSON.stringify(layout));
+    this._path = context.rootPath;
+    this._dirty = false;
+    this._activeContext = context;
+    this._offlineMode = context.mode === 'offline_file';
+  }
+
+  /**
    * Revert in-memory layout to the last saved (or loaded) snapshot.
    * Called as part of the unified Discard flow so metadata edits that were
    * already baked into the layout by _applyToLayout() are rolled back.

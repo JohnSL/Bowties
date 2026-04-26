@@ -54,4 +54,5 @@ These instructions are the always-on implementation contract for Bowties.
 - Prefer existing shared helpers, stores, orchestrators, and backend services over adding parallel variants.
 - Name the owner of each new workflow or lifecycle transition explicitly in code and tests.
 - Update tests and the durable product docs together when intentional behavior changes land.
+- After finishing a code change, check `specs/backlog.md` and update it when the work resolves, changes, or newly reveals a backlog item. Keep that file current as the shared future-work ledger.
 - If a change touches a risky seam such as lifecycle ownership, Node ID normalization, naming fallback, or sync-trigger behavior, keep the change narrow and validate it with the closest focused test.
