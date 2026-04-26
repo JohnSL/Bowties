@@ -50,6 +50,7 @@
   } from '$lib/orchestration/offlineLayoutOrchestrator';
   import {
     createWaitingNodeReadStates,
+    executeConfigReadCandidates,
     getUnreadConfigEligibleNodes,
     pipConfirmsNoCdi,
     resolveConfigReadPreflight,
@@ -66,6 +67,16 @@
     resolvePostDownloadReadNodes,
     updateCdiDownloadNodeStatus,
   } from '$lib/orchestration/cdiDialogOrchestrator';
+  import {
+    applyConfigReadProgressUpdate,
+    beginConfigReadSession,
+    divertConfigReadToDownloadDialog,
+    failConfigReadCancellation,
+    failConfigReadSession,
+    finishConfigReadSession,
+    type ConfigReadSessionPatch,
+    requestConfigReadCancellation,
+  } from '$lib/orchestration/configReadSessionOrchestrator';
   import { handleDiscoveredNode, reconcileRefreshState, refreshReinitializedNode } from '$lib/orchestration/discoveryOrchestrator';
   import { hasUnsavedPromptChanges } from '$lib/orchestration/unsavedChangesGuard';
   import {
@@ -496,6 +507,19 @@
   // Track which nodes have CDI available in cache (populated during discovery/refresh)
   let nodesWithCdi = $state(new Set<string>());
 
+  function applyConfigReadSessionPatch(patch: ConfigReadSessionPatch) {
+    if ('cdiDownloadDialogVisible' in patch) cdiDownloadDialogVisible = patch.cdiDownloadDialogVisible ?? cdiDownloadDialogVisible;
+    if ('cdiMissingNodes' in patch) cdiMissingNodes = patch.cdiMissingNodes ?? cdiMissingNodes;
+    if ('discoveryModalVisible' in patch) discoveryModalVisible = patch.discoveryModalVisible ?? discoveryModalVisible;
+    if ('discoveryPhase' in patch) discoveryPhase = patch.discoveryPhase ?? discoveryPhase;
+    if ('errorMessage' in patch) errorMessage = patch.errorMessage ?? errorMessage;
+    if ('isCancelling' in patch) isCancelling = patch.isCancelling ?? isCancelling;
+    if ('nodeReadStates' in patch) nodeReadStates = patch.nodeReadStates ?? nodeReadStates;
+    if ('pendingConfigNodes' in patch) pendingConfigNodes = patch.pendingConfigNodes ?? pendingConfigNodes;
+    if ('readProgress' in patch) readProgress = patch.readProgress ?? null;
+    if ('readingRemaining' in patch) readingRemaining = patch.readingRemaining ?? readingRemaining;
+  }
+
   // Check connection status on mount
   onMount(() => {
     const unlistens: Array<() => void> = [];
@@ -596,38 +620,9 @@
 
       // T063: Setup config-read-progress event listener
       unlistens.push(await listen<ReadProgressState>('config-read-progress', (event) => {
-        readProgress = event.payload;
-        discoveryPhase = 'reading';
-
-        const payload = event.payload;
-        const idx = payload.currentNodeIndex;
-
-        // Update per-node progress bar states
-        if (nodeReadStates.length > 0) {
-          nodeReadStates = nodeReadStates.map((s, i) => {
-            if (i < idx) return { ...s, status: 'complete' as const, percentage: 100 };
-            if (i === idx) {
-              if (payload.status.type === 'NodeComplete') {
-                return { ...s, status: 'complete' as const, percentage: 100 };
-              }
-              // payload.percentage is per-node local progress (0-100)
-              return { ...s, status: 'reading' as const, percentage: payload.percentage };
-            }
-            return s;
-          });
-        }
-
-        // Close modal immediately on cancellation or completion
-        if (payload.status.type === 'Cancelled') {
-          readProgress = null;
-          isCancelling = false;
-          discoveryModalVisible = false;
-          nodeReadStates = [];
-        } else if (payload.status.type === 'Complete') {
-          readProgress = null;
-          discoveryModalVisible = false;
-          nodeReadStates = [];
-        }
+        applyConfigReadSessionPatch(
+          applyConfigReadProgressUpdate(nodeReadStates, event.payload),
+        );
       }));
 
       // Reactive node discovery: nodes appear one-by-one as VerifiedNode replies arrive.
@@ -907,16 +902,14 @@
   // T066: Cancel button handler for config reading
   async function handleCancelConfigReading() {
     if (isCancelling) return; // Already cancelling
-    
-    isCancelling = true;
+    applyConfigReadSessionPatch(requestConfigReadCancellation());
     
     try {
       await cancelConfigReading();
       console.log('Config reading cancellation requested');
     } catch (e) {
       console.error('Failed to cancel config reading:', e);
-      errorMessage = `Cancel failed: ${e}`;
-      isCancelling = false;
+      applyConfigReadSessionPatch(failConfigReadCancellation(`Cancel failed: ${e}`));
     }
   }
 
@@ -926,7 +919,7 @@
   async function readRemainingNodes() {
     const unread = getUnreadConfigEligibleNodes(nodes, get(configReadNodesStore));
     if (unread.length === 0) return;
-    errorMessage = '';
+    applyConfigReadSessionPatch(beginConfigReadSession());
 
     // Phase A: CDI pre-check — check cache for all nodes BEFORE opening any modal.
     // This ensures the download dialog is shown before any config reading begins.
@@ -941,71 +934,43 @@
     nodesWithCdi = new Set([...nodesWithCdi, ...preflight.nodesWithCdi]);
 
     if (preflight.failureMessage) {
-      errorMessage = preflight.failureMessage;
-    }
-
-    if (preflight.missingNodes.length > 0) {
-      pendingConfigNodes = preflight.pendingNodes;
-      cdiMissingNodes = preflight.missingNodes;
-      cdiDownloadDialogVisible = true;
+      applyConfigReadSessionPatch(failConfigReadSession(preflight.failureMessage));
       return;
     }
 
-    if (preflight.failureMessage) {
+    if (preflight.missingNodes.length > 0) {
+      applyConfigReadSessionPatch(
+        divertConfigReadToDownloadDialog(preflight.pendingNodes, preflight.missingNodes),
+      );
       return;
     }
 
     // Phase B: All nodes have CDI — read config immediately.
     const allNodes = preflight.pendingNodes;
-
-    nodeReadStates = createWaitingNodeReadStates(allNodes);
-
-    readingRemaining = true;
-    discoveryModalVisible = true;
-    discoveryPhase = 'reading';
-    errorMessage = '';
+    applyConfigReadSessionPatch(beginConfigReadSession(createWaitingNodeReadStates(allNodes)));
 
     try {
-      for (let nodeIdx = 0; nodeIdx < allNodes.length; nodeIdx++) {
-        const { nodeId, nodeName } = allNodes[nodeIdx];
-        try {
-          console.log(`Reading config values from ${nodeName}...`);
-          const result = await readAllConfigValues(nodeId, undefined, nodeIdx, allNodes.length);
-          if (result.abortError) {
-            nodeReadStates = nodeReadStates.map((s, i) =>
-              i === nodeIdx ? { ...s, status: 'failed' as const } : s
-            );
-            throw new Error(result.abortError);
+      await executeConfigReadCandidates({
+        nodes: allNodes,
+        markNodeConfigRead,
+        readAllConfigValues: async (nodeId, nodeIndex, totalNodes) => (
+          readAllConfigValues(nodeId, undefined, nodeIndex, totalNodes)
+        ),
+        reloadTree: (nodeId) => nodeTreeStore.refreshTree(nodeId),
+        setNodeReadStates: (states) => {
+          nodeReadStates = states;
+        },
+        warn: (message, error) => {
+          if (error === undefined) {
+            console.warn(message);
+            return;
           }
-          if (result.failedReads === 0) {
-            markNodeConfigRead(nodeId);
-          } else {
-            console.warn(`Config read for ${nodeName}: ${result.failedReads}/${result.totalElements} elements failed — node not marked as read`);
-            nodeReadStates = nodeReadStates.map((s, i) =>
-              i === nodeIdx ? { ...s, status: 'failed' as const } : s
-            );
-          }
-          await nodeTreeStore.refreshTree(nodeId);
-          nodeReadStates = nodeReadStates.map((s, i) =>
-            i === nodeIdx ? { ...s, status: 'complete' as const, percentage: 100 } : s
-          );
-        } catch (e) {
-          console.warn(`Failed to read config values from ${nodeName}:`, e);
-          nodeReadStates = nodeReadStates.map((s, i) =>
-            i === nodeIdx ? { ...s, status: 'failed' as const } : s
-          );
-        }
-      }
-      discoveryModalVisible = false;
-      readProgress = null;
-      isCancelling = false;
-      nodeReadStates = [];
+          console.warn(message, error);
+        },
+      });
+      applyConfigReadSessionPatch(finishConfigReadSession());
     } catch (e) {
-      errorMessage = `Read remaining failed: ${e}`;
-      discoveryModalVisible = false;
-      nodeReadStates = [];
-    } finally {
-      readingRemaining = false;
+      applyConfigReadSessionPatch(failConfigReadSession(`Read remaining failed: ${e}`));
     }
   }
 
@@ -1013,15 +978,10 @@
   async function readSingleNodeConfig(nodeId: string) {
     const node = nodes.find(n => formatNodeId(n.node_id) === nodeId);
     if (!node?.snip_data) return;
-
     const nodeName = node.snip_data.user_name || nodeId;
-    // Init single-node progress state
-    nodeReadStates = [{ nodeId, name: nodeName, percentage: 0, status: 'waiting' }];
-
-    readingRemaining = true;
-    discoveryModalVisible = true;
-    discoveryPhase = 'reading';
-    errorMessage = '';
+    applyConfigReadSessionPatch(beginConfigReadSession([
+      { nodeId, name: nodeName, percentage: 0, status: 'waiting' },
+    ]));
 
     try {
       const preflight = await resolveConfigReadPreflight(
@@ -1036,52 +996,44 @@
       nodesWithCdi = new Set([...nodesWithCdi, ...preflight.nodesWithCdi]);
 
       if (preflight.failureMessage) {
-        discoveryModalVisible = false;
-        nodeReadStates = [];
-        readingRemaining = false;
-        errorMessage = preflight.failureMessage;
+        applyConfigReadSessionPatch(failConfigReadSession(preflight.failureMessage));
         return;
       }
 
       if (preflight.missingNodes.length > 0) {
         // CDI not in cache — close the progress modal and show the download dialog
         // for just this node, matching the batch-read behaviour.
-        discoveryModalVisible = false;
-        nodeReadStates = [];
-        readingRemaining = false;
-        pendingConfigNodes = preflight.pendingNodes;
-        cdiMissingNodes = preflight.missingNodes;
-        cdiDownloadDialogVisible = true;
+        applyConfigReadSessionPatch(
+          divertConfigReadToDownloadDialog(preflight.pendingNodes, preflight.missingNodes),
+        );
         return;
       }
-      const result2 = await readAllConfigValues(nodeId, undefined, 0, 1);
-      if (result2.abortError) {
-        nodeReadStates = nodeReadStates.map((s, i) =>
-          i === 0 ? { ...s, status: 'failed' as const } : s
-        );
-        throw new Error(result2.abortError);
+      applyConfigReadSessionPatch(beginConfigReadSession(createWaitingNodeReadStates(preflight.pendingNodes)));
+      const execution = await executeConfigReadCandidates({
+        nodes: preflight.pendingNodes,
+        markNodeConfigRead,
+        readAllConfigValues: async (candidateNodeId, nodeIndex, totalNodes) => (
+          readAllConfigValues(candidateNodeId, undefined, nodeIndex, totalNodes)
+        ),
+        reloadTree: (candidateNodeId) => nodeTreeStore.refreshTree(candidateNodeId),
+        setNodeReadStates: (states) => {
+          nodeReadStates = states;
+        },
+        warn: (message, error) => {
+          if (error === undefined) {
+            console.warn(message);
+            return;
+          }
+          console.warn(message, error);
+        },
+      });
+      const failure = execution.failures.find((entry) => entry.nodeId === nodeId && entry.status === 'failed');
+      if (failure?.error) {
+        throw new Error(String(failure.error));
       }
-      if (result2.failedReads === 0) {
-        markNodeConfigRead(nodeId);
-      } else {
-        console.warn(`Config read for ${nodeName}: ${result2.failedReads}/${result2.totalElements} elements failed — node not marked as read`);
-        nodeReadStates = nodeReadStates.map((s, i) =>
-          i === 0 ? { ...s, status: 'failed' as const } : s
-        );
-      }
-      // Force tree refresh so the currently visible SegmentView updates
-      await nodeTreeStore.refreshTree(nodeId);
-      // Close immediately — no delay
-      discoveryModalVisible = false;
-      readProgress = null;
-      isCancelling = false;
-      nodeReadStates = [];
+      applyConfigReadSessionPatch(finishConfigReadSession());
     } catch (e) {
-      errorMessage = `Failed to read config for ${nodeName}: ${e}`;
-      discoveryModalVisible = false;
-      nodeReadStates = [];
-    } finally {
-      readingRemaining = false;
+      applyConfigReadSessionPatch(failConfigReadSession(`Failed to read config for ${nodeName}: ${e}`));
     }
   }
 
@@ -1172,61 +1124,34 @@
     if (nodesToRead.length === 0) return;
 
     // Show the progress modal for the config-read phase
-    nodeReadStates = createWaitingNodeReadStates(nodesToRead);
-    readingRemaining = true;
-    discoveryModalVisible = true;
-    discoveryPhase = 'reading';
-    errorMessage = '';
+    applyConfigReadSessionPatch(beginConfigReadSession(createWaitingNodeReadStates(nodesToRead)));
 
     try {
-      // Read config values for nodes that now have CDI
-      for (let i = 0; i < nodesToRead.length; i++) {
-        const { nodeId, nodeName } = nodesToRead[i];
-        try {
+      await executeConfigReadCandidates({
+        nodes: nodesToRead,
+        hasCachedCdi: async (nodeId) => {
           const cdiCheck = await getCdiXml(nodeId);
-          if (cdiCheck.xmlContent !== null) {
-            const result3 = await readAllConfigValues(nodeId, undefined, i, nodesToRead.length);
-            if (result3.abortError) {
-              nodeReadStates = nodeReadStates.map((s, idx) =>
-                idx === i ? { ...s, status: 'failed' as const } : s
-              );
-              throw new Error(result3.abortError);
-            }
-            if (result3.failedReads === 0) {
-              markNodeConfigRead(nodeId);
-            } else {
-              console.warn(`Config read for ${nodeName}: ${result3.failedReads}/${result3.totalElements} elements failed — node not marked as read`);
-              nodeReadStates = nodeReadStates.map((s, idx) =>
-                idx === i ? { ...s, status: 'failed' as const } : s
-              );
-            }
-            await nodeTreeStore.loadTree(nodeId);
-            nodeReadStates = nodeReadStates.map((s, idx) =>
-              idx === i ? { ...s, status: 'complete' as const, percentage: 100 } : s
-            );
-            console.log(`✓ Read config for ${nodeName}`);
-          } else {
-            nodeReadStates = nodeReadStates.map((s, idx) =>
-              idx === i ? { ...s, status: 'no-cdi' as const } : s
-            );
+          return cdiCheck.xmlContent !== null;
+        },
+        markNodeConfigRead,
+        readAllConfigValues: async (nodeId, nodeIndex, totalNodes) => (
+          readAllConfigValues(nodeId, undefined, nodeIndex, totalNodes)
+        ),
+        reloadTree: (nodeId) => nodeTreeStore.loadTree(nodeId),
+        setNodeReadStates: (states) => {
+          nodeReadStates = states;
+        },
+        warn: (message, error) => {
+          if (error === undefined) {
+            console.warn(message);
+            return;
           }
-        } catch (e) {
-          console.warn(`Failed to read config for ${nodeId}:`, e);
-          nodeReadStates = nodeReadStates.map((s, idx) =>
-            idx === i ? { ...s, status: 'failed' as const } : s
-          );
-        }
-      }
-      discoveryModalVisible = false;
-      readProgress = null;
-      isCancelling = false;
-      nodeReadStates = [];
+          console.warn(message, error);
+        },
+      });
+      applyConfigReadSessionPatch(finishConfigReadSession());
     } catch (e) {
-      errorMessage = `Read config after CDI download failed: ${e}`;
-      discoveryModalVisible = false;
-      nodeReadStates = [];
-    } finally {
-      readingRemaining = false;
+      applyConfigReadSessionPatch(failConfigReadSession(`Read config after CDI download failed: ${e}`));
     }
   }
 

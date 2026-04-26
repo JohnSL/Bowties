@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { get } from 'svelte/store';
+import type { CloseLayoutResult, OpenLayoutResult } from '$lib/api/layout';
 import { clearConfigReadStatus, configReadNodesStore, markNodeConfigRead } from '$lib/stores/configReadStatus';
 import { configSidebarStore } from '$lib/stores/configSidebar';
 import { nodeInfoStore } from '$lib/stores/nodeInfo';
@@ -27,19 +28,21 @@ const {
   startListeningRef,
 } = vi.hoisted(() => ({
   eventHandlers: new Map<string, (event: any) => unknown>(),
-  getRecentLayoutRef: vi.fn(async () => null),
+  getRecentLayoutRef: vi.fn<() => Promise<{ path?: string | null } | null>>(async () => null),
   invokeRef: vi.fn(),
-  dialogOpenRef: vi.fn(async () => null),
-  openLayoutFileRef: vi.fn(async () => ({
+  dialogOpenRef: vi.fn<() => Promise<string | null>>(async () => null),
+  openLayoutFileRef: vi.fn<(path: string) => Promise<OpenLayoutResult>>(async () => ({
     layoutId: 'restored-layout',
     capturedAt: '2026-04-25T00:00:00.000Z',
+    offlineMode: true,
+    nodeCount: 0,
     pendingOfflineChangeCount: 0,
     partialNodes: [],
     nodeSnapshots: [],
   })),
-  closeLayoutRef: vi.fn(async () => ({ closed: true })),
+  closeLayoutRef: vi.fn<(decision: 'discard') => Promise<CloseLayoutResult>>(async () => ({ closed: true })),
   probeNodesRef: vi.fn(async () => {}),
-  refreshAllNodesRef: vi.fn(async () => []),
+  refreshAllNodesRef: vi.fn<() => Promise<string[]>>(async () => []),
   registerNodeRef: vi.fn(async () => {}),
   querySnipRef: vi.fn(async () => ({
     status: 'Complete',
@@ -199,6 +202,8 @@ beforeEach(() => {
   openLayoutFileRef.mockImplementation(async () => ({
     layoutId: 'restored-layout',
     capturedAt: '2026-04-25T00:00:00.000Z',
+    offlineMode: true,
+    nodeCount: 0,
     pendingOfflineChangeCount: 0,
     partialNodes: [],
     nodeSnapshots: [],
@@ -247,6 +252,8 @@ describe('+page route discovery CTA', () => {
     openLayoutFileRef.mockResolvedValueOnce({
       layoutId: 'test-layout',
       capturedAt: '2026-04-25T00:00:00.000Z',
+      offlineMode: true,
+      nodeCount: 0,
       pendingOfflineChangeCount: 0,
       partialNodes: [],
       nodeSnapshots: [],
@@ -469,6 +476,8 @@ describe('+page route discovery CTA', () => {
     openLayoutFileRef.mockResolvedValueOnce({
       layoutId: 'yard-layout',
       capturedAt: '2026-04-25T00:00:00.000Z',
+      offlineMode: true,
+      nodeCount: 0,
       pendingOfflineChangeCount: 0,
       partialNodes: [],
       nodeSnapshots: [],

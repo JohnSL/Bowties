@@ -1,5 +1,5 @@
 import type { DiscoveredNode } from '$lib/api/tauri';
-import type { NodeReadState } from '$lib/api/types';
+import type { NodeReadState, ReadAllConfigValuesResponse } from '$lib/api/types';
 import { getCdiErrorMessage, isCdiError } from '$lib/types/cdi';
 import { resolveNodeDisplayName } from '$lib/utils/nodeDisplayName';
 import { formatNodeId } from '$lib/utils/nodeId';
@@ -69,6 +69,111 @@ export function createWaitingNodeReadStates(nodes: ConfigReadNodeCandidate[]): N
     percentage: 0,
     status: 'waiting' as const,
   }));
+}
+
+interface ExecuteConfigReadCandidatesArgs {
+  nodes: ConfigReadNodeCandidate[];
+  hasCachedCdi?: (nodeId: string) => Promise<boolean>;
+  markNodeConfigRead: (nodeId: string) => void;
+  readAllConfigValues: (
+    nodeId: string,
+    nodeIndex: number,
+    totalNodes: number,
+  ) => Promise<ReadAllConfigValuesResponse>;
+  reloadTree: (nodeId: string) => Promise<unknown>;
+  setNodeReadStates: (states: NodeReadState[]) => void;
+  warn: (message: string, error?: unknown) => void;
+}
+
+export interface ConfigReadExecutionFailure {
+  error?: unknown;
+  nodeId: string;
+  nodeName: string;
+  status: 'failed' | 'no-cdi';
+}
+
+export interface ConfigReadExecutionResult {
+  failures: ConfigReadExecutionFailure[];
+  nodeReadStates: NodeReadState[];
+}
+
+function updateNodeReadState(
+  states: NodeReadState[],
+  nodeIndex: number,
+  patch: Partial<NodeReadState>,
+): NodeReadState[] {
+  return states.map((state, index) => (
+    index === nodeIndex ? { ...state, ...patch } : state
+  ));
+}
+
+export async function executeConfigReadCandidates({
+  nodes,
+  hasCachedCdi,
+  markNodeConfigRead,
+  readAllConfigValues,
+  reloadTree,
+  setNodeReadStates,
+  warn,
+}: ExecuteConfigReadCandidatesArgs): Promise<ConfigReadExecutionResult> {
+  let nodeReadStates = createWaitingNodeReadStates(nodes);
+  const failures: ConfigReadExecutionFailure[] = [];
+  setNodeReadStates(nodeReadStates);
+
+  for (let nodeIndex = 0; nodeIndex < nodes.length; nodeIndex++) {
+    const { nodeId, nodeName } = nodes[nodeIndex];
+    try {
+      if (hasCachedCdi) {
+        const hasCdi = await hasCachedCdi(nodeId);
+        if (!hasCdi) {
+          nodeReadStates = updateNodeReadState(nodeReadStates, nodeIndex, { status: 'no-cdi' });
+          failures.push({ nodeId, nodeName, status: 'no-cdi' });
+          setNodeReadStates(nodeReadStates);
+          continue;
+        }
+      }
+
+      const result = await readAllConfigValues(nodeId, nodeIndex, nodes.length);
+      if (result.abortError) {
+        nodeReadStates = updateNodeReadState(nodeReadStates, nodeIndex, { status: 'failed' });
+        failures.push({ error: result.abortError, nodeId, nodeName, status: 'failed' });
+        setNodeReadStates(nodeReadStates);
+        throw new Error(result.abortError);
+      }
+
+      if (result.failedReads === 0) {
+        markNodeConfigRead(nodeId);
+      } else {
+        warn(
+          `Config read for ${nodeName}: ${result.failedReads}/${result.totalElements} elements failed — node not marked as read`,
+        );
+        nodeReadStates = updateNodeReadState(nodeReadStates, nodeIndex, { status: 'failed' });
+        failures.push({
+          error: `${result.failedReads}/${result.totalElements} elements failed`,
+          nodeId,
+          nodeName,
+          status: 'failed',
+        });
+        setNodeReadStates(nodeReadStates);
+      }
+
+      await reloadTree(nodeId);
+      nodeReadStates = updateNodeReadState(nodeReadStates, nodeIndex, {
+        percentage: 100,
+        status: 'complete',
+      });
+      setNodeReadStates(nodeReadStates);
+    } catch (error) {
+      warn(`Failed to read config values from ${nodeName}:`, error);
+      nodeReadStates = updateNodeReadState(nodeReadStates, nodeIndex, { status: 'failed' });
+      if (!failures.some((failure) => failure.nodeId === nodeId && failure.status === 'failed')) {
+        failures.push({ error, nodeId, nodeName, status: 'failed' });
+      }
+      setNodeReadStates(nodeReadStates);
+    }
+  }
+
+  return { failures, nodeReadStates };
 }
 
 export async function partitionNodesByCdiAvailability(

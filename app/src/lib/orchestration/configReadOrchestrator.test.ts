@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { DiscoveredNode, ProtocolFlags, SNIPData } from '$lib/api/tauri';
 import {
   createWaitingNodeReadStates,
+  executeConfigReadCandidates,
   type FailedCdiPreflightNode,
   formatCdiPreflightFailureMessage,
   getUnreadConfigEligibleNodes,
@@ -236,6 +237,105 @@ describe('createWaitingNodeReadStates', () => {
       { nodeId: '02.01.57.00.00.01', name: 'East Panel', percentage: 0, status: 'waiting' },
       { nodeId: '02.01.57.00.00.02', name: 'Yard Node', percentage: 0, status: 'waiting' },
     ]);
+  });
+});
+
+describe('executeConfigReadCandidates', () => {
+  it('marks successful nodes as complete, reloads trees, and records nodes as read', async () => {
+    const setNodeReadStates = vi.fn();
+    const reloadTree = vi.fn(async () => null);
+    const markNodeConfigRead = vi.fn();
+
+    const result = await executeConfigReadCandidates({
+      nodes: [
+        { nodeId: '02.01.57.00.00.01', nodeName: 'East Panel' },
+        { nodeId: '02.01.57.00.00.02', nodeName: 'West Panel' },
+      ],
+      markNodeConfigRead,
+      readAllConfigValues: vi.fn(async (nodeId) => ({
+        abortError: null,
+        durationMs: 10,
+        failedReads: 0,
+        nodeId,
+        successfulReads: 2,
+        totalElements: 2,
+        values: {},
+      })),
+      reloadTree,
+      setNodeReadStates,
+      warn: vi.fn(),
+    });
+
+    expect(result).toEqual({
+      failures: [],
+      nodeReadStates: [
+        { nodeId: '02.01.57.00.00.01', name: 'East Panel', percentage: 100, status: 'complete' },
+        { nodeId: '02.01.57.00.00.02', name: 'West Panel', percentage: 100, status: 'complete' },
+      ],
+    });
+    expect(markNodeConfigRead).toHaveBeenCalledTimes(2);
+    expect(reloadTree).toHaveBeenNthCalledWith(1, '02.01.57.00.00.01');
+    expect(reloadTree).toHaveBeenNthCalledWith(2, '02.01.57.00.00.02');
+    expect(setNodeReadStates).toHaveBeenCalled();
+  });
+
+  it('marks no-cdi and failed nodes without marking them read', async () => {
+    const warn = vi.fn();
+
+    const result = await executeConfigReadCandidates({
+      nodes: [
+        { nodeId: '02.01.57.00.00.01', nodeName: 'East Panel' },
+        { nodeId: '02.01.57.00.00.02', nodeName: 'West Panel' },
+        { nodeId: '02.01.57.00.00.03', nodeName: 'South Panel' },
+      ],
+      hasCachedCdi: vi.fn(async (nodeId) => nodeId !== '02.01.57.00.00.01'),
+      markNodeConfigRead: vi.fn(),
+      readAllConfigValues: vi.fn(async (nodeId) => {
+        if (nodeId === '02.01.57.00.00.02') {
+          return {
+            abortError: 'timed out',
+            durationMs: 10,
+            failedReads: 0,
+            nodeId,
+            successfulReads: 0,
+            totalElements: 2,
+            values: {},
+          };
+        }
+
+        return {
+          abortError: null,
+          durationMs: 10,
+          failedReads: 1,
+          nodeId,
+          successfulReads: 1,
+          totalElements: 2,
+          values: {},
+        };
+      }),
+      reloadTree: vi.fn(async () => null),
+      setNodeReadStates: vi.fn(),
+      warn,
+    });
+
+    expect(result).toEqual({
+      failures: [
+        { nodeId: '02.01.57.00.00.01', nodeName: 'East Panel', status: 'no-cdi' },
+        { error: 'timed out', nodeId: '02.01.57.00.00.02', nodeName: 'West Panel', status: 'failed' },
+        {
+          error: '1/2 elements failed',
+          nodeId: '02.01.57.00.00.03',
+          nodeName: 'South Panel',
+          status: 'failed',
+        },
+      ],
+      nodeReadStates: [
+        { nodeId: '02.01.57.00.00.01', name: 'East Panel', percentage: 0, status: 'no-cdi' },
+        { nodeId: '02.01.57.00.00.02', name: 'West Panel', percentage: 0, status: 'failed' },
+        { nodeId: '02.01.57.00.00.03', name: 'South Panel', percentage: 100, status: 'complete' },
+      ],
+    });
+    expect(warn).toHaveBeenCalled();
   });
 });
 
