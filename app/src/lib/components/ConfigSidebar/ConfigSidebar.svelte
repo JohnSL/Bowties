@@ -10,9 +10,13 @@
   import NodeEntry from './NodeEntry.svelte';
   import SegmentEntry from './SegmentEntry.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
-  import { hasModifiedLeaves, hasModifiedDescendant, isGroup, isLeaf, type ConfigNode } from '$lib/types/nodeTree';
   import type { SegmentInfo } from '$lib/stores/configSidebar';
-  import { resolveNodeDisplayName } from '$lib/utils/nodeDisplayName';
+  import {
+    buildSidebarNodeEntries,
+    getNodePendingState,
+    getSegmentPendingState,
+    shouldShowConfigNotReadBadge,
+  } from './configSidebarPresenter';
 
   const dispatch = createEventDispatcher<{ readNodeConfig: { nodeId: string } }>();
 
@@ -20,91 +24,6 @@
   let nodeSegments = $state(new Map<string, SegmentInfo[]>());
   /** Loading state per nodeId */
   let nodeLoadingMap = $state(new Map<string, boolean>());
-
-  /** Get display name for a discovered node */
-  function getNodeDisplayName(nodeId: string, node: any): string {
-    const baseName = resolveNodeDisplayName(nodeId, node);
-    const duplicates = [...nodes.entries()].filter(([otherNodeId, otherNode]) => (
-      resolveNodeDisplayName(otherNodeId, otherNode) === baseName
-    ));
-
-    if (duplicates.length <= 1) {
-      return baseName;
-    }
-
-    const suffix = nodeId.split('.').slice(-2).join('.');
-    return `${baseName} (${suffix})`;
-  }
-
-  /** Get secondary detail for disambiguation (manufacturer/model) */
-  function getNodeDetail(node: any): string | null {
-    const snip = node.snip_data;
-    if (!snip) return null;
-    if (snip.user_name && snip.manufacturer && snip.model) {
-      return `${snip.manufacturer} ${snip.model}`;
-    }
-    return null;
-  }
-
-  /** Build multi-line hover tooltip with full SNIP details */
-  function getNodeTooltip(nodeId: string, node: any): string {
-    const parts: string[] = [`Node ID: ${nodeId}`];
-    if (node.alias != null) {
-      parts.push(`Alias: 0x${node.alias.toString(16).toUpperCase().padStart(3, '0')}`);
-    }
-    const snip = node.snip_data;
-    if (snip) {
-      if (snip.manufacturer)     parts.push(`Manufacturer: ${snip.manufacturer}`);
-      if (snip.model)            parts.push(`Model: ${snip.model}`);
-      if (snip.hardware_version) parts.push(`Hardware: ${snip.hardware_version}`);
-      if (snip.software_version) parts.push(`Software: ${snip.software_version}`);
-      if (snip.user_name)        parts.push(`User Name: ${snip.user_name}`);
-      if (snip.user_description) parts.push(`Description: ${snip.user_description}`);
-    }
-    return parts.join('\n');
-  }
-
-  /** Check whether a node is offline */
-  function isNodeOffline(node: any): boolean {
-    return node.connection_status === 'NotResponding';
-  }
-
-  function canonicalNodeId(nodeId: string): string {
-    return nodeId.replace(/\./g, '').toUpperCase();
-  }
-
-  function offsetFromAddress(address: number): string {
-    return `0x${address.toString(16).toUpperCase().padStart(8, '0')}`;
-  }
-
-  function hasPendingApplyInChildren(nodeId: string, children: ConfigNode[]): boolean {
-    for (const child of children) {
-      if (isLeaf(child)) {
-        if (offlineChangesStore.hasPersistedConfigChange(nodeId, child.space, offsetFromAddress(child.address))) {
-          return true;
-        }
-        continue;
-      }
-      if (isGroup(child) && hasPendingApplyInChildren(nodeId, child.children)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  function hasPendingApplyForNode(nodeId: string): boolean {
-    const canonical = canonicalNodeId(nodeId);
-    return offlineChangesStore.persistedRows.some(
-      (r) => r.kind === 'config' && r.status === 'pending' && canonicalNodeId(r.nodeId ?? '') === canonical
-    );
-  }
-
-  /** Returns true when PIP has confirmed this node doesn't support CDI */
-  function pipConfirmsNoCdi(node: any): boolean {
-    if (node.pip_status !== 'Complete') return false;
-    if (!node.pip_flags) return false;
-    return !node.pip_flags.cdi && !node.pip_flags.memory_configuration;
-  }
 
   /** Load a node's config tree and populate nodeSegments from it. */
   async function loadSegmentsForNode(nodeId: string): Promise<void> {
@@ -193,8 +112,10 @@
   }
 
   let nodes = $derived($nodeInfoStore);
+  let nodeEntries = $derived(buildSidebarNodeEntries(nodes));
   let sidebarState = $derived($configSidebarStore);
   let configReadNodes = $derived($configReadNodesStore);
+  let persistedRows = $derived(offlineChangesStore.persistedRows);
 
   // Subscribe to tree changes to enable reactive updates on hasPendingEdits
   let trees = $derived(nodeTreeStore.trees);
@@ -207,36 +128,43 @@
     </div>
   {:else}
     <nav class="node-list" aria-label="Discovered nodes">
-      {#each [...nodes.entries()].sort((a, b) => getNodeDisplayName(a[0], a[1]).localeCompare(getNodeDisplayName(b[0], b[1]))) as [nodeId, node]}
+      {#each nodeEntries as entry (entry.nodeId)}
+        {@const { nodeId, node } = entry}
         {@const isExpanded = sidebarState.expandedNodeIds.includes(nodeId)}
-        {@const isOffline = isNodeOffline(node)}
         {@const isLoading = nodeLoadingMap.get(nodeId) ?? false}
         {@const segments = nodeSegments.get(nodeId) ?? []}
         {@const nodeError = sidebarState.nodeErrors[nodeId] ?? null}
         {@const hasSelectedSegment = sidebarState.selectedSegment?.nodeId === nodeId}
-        {@const showConfigReadBadge = !layoutStore.isOfflineMode && !$layoutOpenInProgress}
-        {@const isConfigNotRead = showConfigReadBadge && node.snip_data !== null && !pipConfirmsNoCdi(node) && !configReadNodes.has(nodeId)}
         {@const isNodeSelected = sidebarState.selectedNodeId === nodeId && !hasSelectedSegment}
+        {@const tree = nodeTreeStore.getTree(nodeId)}
+        {@const nodePending = getNodePendingState(nodeId, tree, $layoutOpenInProgress, persistedRows)}
+        {@const isConfigNotRead = shouldShowConfigNotReadBadge({
+          configReadNodes,
+          layoutIsOfflineMode: layoutStore.isOfflineMode,
+          layoutOpenInProgress: $layoutOpenInProgress,
+          node,
+          nodeId,
+        })}
 
         <div class="node-group" class:child-selected={hasSelectedSegment}>
           <NodeEntry
             {nodeId}
-            nodeName={getNodeDisplayName(nodeId, node)}
-            nodeDetail={getNodeDetail(node)}
-            nodeTooltip={getNodeTooltip(nodeId, node)}
+            nodeName={entry.nodeName}
+            nodeDetail={entry.nodeDetail}
+            nodeTooltip={entry.nodeTooltip}
             {isExpanded}
-            {isOffline}
+            isOffline={entry.isOffline}
             {isLoading}
             configNotRead={isConfigNotRead}
             isSelected={isNodeSelected}
-            hasPendingEdits={!$layoutOpenInProgress && (() => { const t = nodeTreeStore.getTree(nodeId); return t ? hasModifiedLeaves(t) : false; })()}
-            hasPendingApply={!$layoutOpenInProgress && hasPendingApplyForNode(nodeId)}
+            hasPendingEdits={nodePending.hasPendingEdits}
+            hasPendingApply={nodePending.hasPendingApply}
             on:toggle={() => handleNodeToggle(nodeId, node, isExpanded)}
             on:readConfig={() => dispatch('readNodeConfig', { nodeId })}
           />
 
           {#if isExpanded}
-            <div class="segment-list" role="list" aria-label="Segments for {getNodeDisplayName(nodeId, node)}">
+            <div class="segment-list" role="list" aria-label="Segments for {entry.nodeName}">
               {#if nodeError}
                 {#if nodeError.includes('CdiUnavailable') || nodeError.includes('CdiNotRetrieved')}
                   {#if isConfigNotRead}
@@ -255,6 +183,7 @@
                 <p class="segment-empty">No segments available</p>
               {:else}
                 {#each segments as seg}
+                  {@const segmentPending = getSegmentPendingState(nodeId, tree, seg.origin, $layoutOpenInProgress, persistedRows)}
                   {@const isSelected =
                     sidebarState.selectedSegment?.nodeId === nodeId &&
                     sidebarState.selectedSegment?.segmentId === seg.segmentId}
@@ -263,8 +192,8 @@
                     segmentName={seg.segmentName}
                     description={seg.description}
                     {isSelected}
-                    hasPendingEdits={!$layoutOpenInProgress && (() => { const t = nodeTreeStore.getTree(nodeId); if (!t) return false; const ts = t.segments.find(s => s.origin === seg.origin); return ts ? hasModifiedDescendant(ts.children, []) : false; })()}
-                    hasPendingApply={!$layoutOpenInProgress && (() => { const t = nodeTreeStore.getTree(nodeId); if (!t) return false; const ts = t.segments.find(s => s.origin === seg.origin); return ts ? hasPendingApplyInChildren(nodeId, ts.children) : false; })()}
+                    hasPendingEdits={segmentPending.hasPendingEdits}
+                    hasPendingApply={segmentPending.hasPendingApply}
                     on:select={() => handleSegmentSelect(nodeId, seg)}
                   />
                 {/each}

@@ -1,4 +1,5 @@
 import type { DiscoveredNode } from '$lib/api/tauri';
+import type { NodeReadState } from '$lib/api/types';
 import { getCdiErrorMessage, isCdiError } from '$lib/types/cdi';
 import { resolveNodeDisplayName } from '$lib/utils/nodeDisplayName';
 import { formatNodeId } from '$lib/utils/nodeId';
@@ -10,6 +11,14 @@ export interface ConfigReadNodeCandidate {
 
 export interface FailedCdiPreflightNode extends ConfigReadNodeCandidate {
   reason: string;
+}
+
+export interface ConfigReadPreflightResolution {
+  failureMessage: string | null;
+  failedNodeIds: Set<string>;
+  missingNodes: ConfigReadNodeCandidate[];
+  nodesWithCdi: Set<string>;
+  pendingNodes: ConfigReadNodeCandidate[];
 }
 
 export function pipConfirmsNoCdi(node: Pick<DiscoveredNode, 'pip_status' | 'pip_flags'>): boolean {
@@ -35,6 +44,31 @@ export function toConfigReadCandidate(node: DiscoveredNode): ConfigReadNodeCandi
     nodeId,
     nodeName: resolveNodeDisplayName(nodeId, node),
   };
+}
+
+export function formatCdiPreflightFailureMessage(
+  failedNodes: FailedCdiPreflightNode[],
+  fallbackPrefix: string,
+): string {
+  if (failedNodes.length === 0) return fallbackPrefix;
+  if (failedNodes.length === 1) {
+    const [{ nodeName, reason }] = failedNodes;
+    return `${fallbackPrefix} for ${nodeName}: ${reason}`;
+  }
+
+  const details = failedNodes
+    .map(({ nodeName, reason }) => `${nodeName}: ${reason}`)
+    .join(' | ');
+  return `${fallbackPrefix} for ${failedNodes.length} nodes: ${details}`;
+}
+
+export function createWaitingNodeReadStates(nodes: ConfigReadNodeCandidate[]): NodeReadState[] {
+  return nodes.map(({ nodeId, nodeName }) => ({
+    nodeId,
+    name: nodeName,
+    percentage: 0,
+    status: 'waiting' as const,
+  }));
 }
 
 export async function partitionNodesByCdiAvailability(
@@ -70,4 +104,29 @@ export async function partitionNodesByCdiAvailability(
   }
 
   return { nodesWithCdi, missingNodes, failedNodes };
+}
+
+export async function resolveConfigReadPreflight(
+  nodes: DiscoveredNode[],
+  hasCachedCdi: (nodeId: string) => Promise<boolean>,
+  prefix: string,
+): Promise<ConfigReadPreflightResolution> {
+  const { nodesWithCdi, missingNodes, failedNodes } = await partitionNodesByCdiAvailability(
+    nodes,
+    hasCachedCdi,
+  );
+
+  const failedNodeIds = new Set(failedNodes.map(({ nodeId }) => nodeId));
+
+  return {
+    failureMessage: failedNodes.length > 0
+      ? formatCdiPreflightFailureMessage(failedNodes, prefix)
+      : null,
+    failedNodeIds,
+    missingNodes,
+    nodesWithCdi,
+    pendingNodes: nodes
+      .map((node) => toConfigReadCandidate(node))
+      .filter(({ nodeId }) => !failedNodeIds.has(nodeId)),
+  };
 }

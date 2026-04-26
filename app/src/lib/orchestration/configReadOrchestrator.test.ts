@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DiscoveredNode, ProtocolFlags, SNIPData } from '$lib/api/tauri';
 import {
+  createWaitingNodeReadStates,
   type FailedCdiPreflightNode,
+  formatCdiPreflightFailureMessage,
   getUnreadConfigEligibleNodes,
   partitionNodesByCdiAvailability,
   pipConfirmsNoCdi,
+  resolveConfigReadPreflight,
   toConfigReadCandidate,
 } from './configReadOrchestrator';
 
@@ -189,6 +192,104 @@ describe('partitionNodesByCdiAvailability', () => {
         nodeName: 'East Panel',
         reason: 'CDI retrieval failed. Check node connection and try again.',
       },
+    ]);
+  });
+});
+
+describe('formatCdiPreflightFailureMessage', () => {
+  it('formats a specific message for a single failed node', () => {
+    expect(formatCdiPreflightFailureMessage([
+      {
+        nodeId: '02.01.57.00.00.01',
+        nodeName: 'East Panel',
+        reason: 'CDI retrieval failed. Check node connection and try again.',
+      },
+    ], 'Cannot read configuration')).toBe(
+      'Cannot read configuration for East Panel: CDI retrieval failed. Check node connection and try again.',
+    );
+  });
+
+  it('formats node-specific details for multiple failures', () => {
+    expect(formatCdiPreflightFailureMessage([
+      {
+        nodeId: '02.01.57.00.00.01',
+        nodeName: 'East Panel',
+        reason: 'CDI retrieval failed. Check node connection and try again.',
+      },
+      {
+        nodeId: '02.01.57.00.00.02',
+        nodeName: 'West Panel',
+        reason: 'Configuration not supported by this node.',
+      },
+    ], 'Cannot read configuration')).toBe(
+      'Cannot read configuration for 2 nodes: East Panel: CDI retrieval failed. Check node connection and try again. | West Panel: Configuration not supported by this node.',
+    );
+  });
+});
+
+describe('createWaitingNodeReadStates', () => {
+  it('builds waiting progress entries from node candidates', () => {
+    expect(createWaitingNodeReadStates([
+      { nodeId: '02.01.57.00.00.01', nodeName: 'East Panel' },
+      { nodeId: '02.01.57.00.00.02', nodeName: 'Yard Node' },
+    ])).toEqual([
+      { nodeId: '02.01.57.00.00.01', name: 'East Panel', percentage: 0, status: 'waiting' },
+      { nodeId: '02.01.57.00.00.02', name: 'Yard Node', percentage: 0, status: 'waiting' },
+    ]);
+  });
+});
+
+describe('resolveConfigReadPreflight', () => {
+  it('returns pending nodes without failures when all candidates can proceed', async () => {
+    const node = makeNode();
+
+    const result = await resolveConfigReadPreflight(
+      [node],
+      async () => true,
+      'Cannot read configuration',
+    );
+
+    expect(result.failureMessage).toBeNull();
+    expect(result.failedNodeIds).toEqual(new Set());
+    expect(result.nodesWithCdi).toEqual(new Set(['02.01.57.00.00.01']));
+    expect(result.missingNodes).toEqual([]);
+    expect(result.pendingNodes).toEqual([
+      { nodeId: '02.01.57.00.00.01', nodeName: 'East Panel' },
+    ]);
+  });
+
+  it('drops failed nodes from the pending set while preserving missing CDI prompts', async () => {
+    const okNode = makeNode();
+    const missingNode = makeNode({
+      node_id: [0x02, 0x01, 0x57, 0x00, 0x00, 0x02],
+      snip_data: makeSnipData({ user_name: 'West Panel' }),
+    });
+    const failedNode = makeNode({
+      node_id: [0x02, 0x01, 0x57, 0x00, 0x00, 0x03],
+      snip_data: makeSnipData({ user_name: 'South Panel' }),
+    });
+
+    const result = await resolveConfigReadPreflight(
+      [okNode, missingNode, failedNode],
+      async (nodeId) => {
+        if (nodeId === '02.01.57.00.00.01') return true;
+        if (nodeId === '02.01.57.00.00.02') return false;
+        throw 'RetrievalFailed: timed out';
+      },
+      'Cannot read configuration',
+    );
+
+    expect(result.failureMessage).toBe(
+      'Cannot read configuration for South Panel: CDI retrieval failed. Check node connection and try again.',
+    );
+    expect(result.failedNodeIds).toEqual(new Set(['02.01.57.00.00.03']));
+    expect(result.nodesWithCdi).toEqual(new Set(['02.01.57.00.00.01']));
+    expect(result.missingNodes).toEqual([
+      { nodeId: '02.01.57.00.00.02', nodeName: 'West Panel' },
+    ]);
+    expect(result.pendingNodes).toEqual([
+      { nodeId: '02.01.57.00.00.01', nodeName: 'East Panel' },
+      { nodeId: '02.01.57.00.00.02', nodeName: 'West Panel' },
     ]);
   });
 });
