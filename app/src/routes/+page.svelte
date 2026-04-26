@@ -14,7 +14,6 @@
   import { closeLayout, saveLayoutFile, openLayoutFile, buildOfflineNodeTree } from '$lib/api/layout';
   import type { OfflineNodeSnapshot } from '$lib/api/layout';
   import { readAllConfigValues, cancelConfigReading, getCdiXml, downloadCdi } from '$lib/api/cdi';
-  import { getCdiErrorMessage, isCdiError } from '$lib/types/cdi';
   import type { ViewerStatus } from '$lib/types/cdi';
   import type { DiscoveredNode } from '$lib/api/tauri';
   import type { ReadProgressState, NodeReadState } from '$lib/api/types';
@@ -51,14 +50,22 @@
   } from '$lib/orchestration/offlineLayoutOrchestrator';
   import {
     createWaitingNodeReadStates,
-    type FailedCdiPreflightNode,
-    formatCdiPreflightFailureMessage,
     getUnreadConfigEligibleNodes,
-    partitionNodesByCdiAvailability,
     pipConfirmsNoCdi,
     resolveConfigReadPreflight,
     toConfigReadCandidate,
   } from '$lib/orchestration/configReadOrchestrator';
+  import {
+    createCancelledCdiDownloadState,
+    createClosedCdiRedownloadState,
+    createClosedCdiViewerState,
+    createOpenCdiRedownloadState,
+    createOpeningCdiViewerState,
+    createWaitingCdiDownloadNodes,
+    loadCdiViewerState,
+    resolvePostDownloadReadNodes,
+    updateCdiDownloadNodeStatus,
+  } from '$lib/orchestration/cdiDialogOrchestrator';
   import { handleDiscoveredNode, reconcileRefreshState, refreshReinitializedNode } from '$lib/orchestration/discoveryOrchestrator';
   import { hasUnsavedPromptChanges } from '$lib/orchestration/unsavedChangesGuard';
   import {
@@ -1079,64 +1086,50 @@
   }
 
   async function openCdiViewer(nodeId: string) {
-    viewerVisible = true;
-    viewerNodeId = nodeId;
-    viewerXmlContent = null;
-    viewerStatus = 'loading';
-    viewerErrorMessage = 'Checking cache…';
+    const viewerState = createOpeningCdiViewerState(nodeId);
+    viewerVisible = viewerState.visible;
+    viewerNodeId = viewerState.nodeId;
+    viewerXmlContent = viewerState.xmlContent;
+    viewerStatus = viewerState.status;
+    viewerErrorMessage = viewerState.errorMessage;
 
-    try {
-      let response;
-      try {
-        response = await getCdiXml(nodeId);
-      } catch (cacheError: any) {
-        if (isCdiError(cacheError, 'CdiNotRetrieved')) {
-          viewerErrorMessage = 'Downloading CDI from node…';
-          response = await downloadCdi(nodeId);
-        } else {
-          throw cacheError;
-        }
-      }
-
-      if (response.xmlContent) {
-        viewerXmlContent = response.xmlContent;
-        viewerStatus = 'success';
-        viewerErrorMessage = null;
-      } else {
-        viewerStatus = 'error';
-        viewerErrorMessage = 'No CDI data available for this node.';
-      }
-    } catch (err) {
-      viewerStatus = 'error';
-      viewerErrorMessage = getCdiErrorMessage(err);
-    }
+    const loadedState = await loadCdiViewerState(nodeId, getCdiXml, downloadCdi);
+    viewerXmlContent = loadedState.xmlContent;
+    viewerStatus = loadedState.status;
+    viewerErrorMessage = loadedState.errorMessage;
   }
 
   function openCdiRedownload(nodeId: string) {
-    const node = nodes.find(n => formatNodeId(n.node_id) === nodeId);
-    cdiRedownloadNodeId = nodeId;
-    cdiRedownloadNodeName = node?.snip_data?.user_name || nodeId;
-    cdiRedownloadVisible = true;
+    const nextState = createOpenCdiRedownloadState(
+      nodeId,
+      nodes.map((node) => toConfigReadCandidate(node)),
+    );
+    cdiRedownloadNodeId = nextState.nodeId;
+    cdiRedownloadNodeName = nextState.nodeName;
+    cdiRedownloadVisible = nextState.visible;
   }
 
   function closeCdiRedownload() {
-    cdiRedownloadVisible = false;
-    cdiRedownloadNodeId = null;
-    cdiRedownloadNodeName = null;
+    const nextState = createClosedCdiRedownloadState();
+    cdiRedownloadVisible = nextState.visible;
+    cdiRedownloadNodeId = nextState.nodeId;
+    cdiRedownloadNodeName = nextState.nodeName;
   }
 
   function closeCdiViewer() {
-    viewerVisible = false;
-    viewerNodeId = null;
-    viewerXmlContent = null;
-    viewerStatus = 'idle';
-    viewerErrorMessage = null;
+    const nextState = createClosedCdiViewerState();
+    viewerVisible = nextState.visible;
+    viewerNodeId = nextState.nodeId;
+    viewerXmlContent = nextState.xmlContent;
+    viewerStatus = nextState.status;
+    viewerErrorMessage = nextState.errorMessage;
   }
 
   function handleCdiDownloadCancel() {
-    cdiDownloadDialogVisible = false;
-    cdiMissingNodes = [];
-    pendingConfigNodes = [];
+    const nextState = createCancelledCdiDownloadState();
+    cdiDownloadDialogVisible = nextState.cdiDownloadDialogVisible;
+    cdiMissingNodes = nextState.cdiMissingNodes;
+    pendingConfigNodes = nextState.pendingConfigNodes;
   }
 
   async function handleCdiDownload() {
@@ -1145,25 +1138,19 @@
     const nodesToDownload = [...cdiMissingNodes];
 
     // Mark all nodes as waiting before we start
-    cdiMissingNodes = nodesToDownload.map(n => ({ ...n, downloadStatus: 'waiting' as const }));
+    cdiMissingNodes = createWaitingCdiDownloadNodes(nodesToDownload);
 
     for (let i = 0; i < nodesToDownload.length; i++) {
       const { nodeId, nodeName } = nodesToDownload[i];
-      cdiMissingNodes = cdiMissingNodes.map((n, idx) =>
-        idx === i ? { ...n, downloadStatus: 'downloading' as const } : n
-      );
+      cdiMissingNodes = updateCdiDownloadNodeStatus(cdiMissingNodes, i, 'downloading');
       try {
         await downloadCdi(nodeId);
         console.log(`Downloaded CDI for ${nodeName}`);
         nodesWithCdi = new Set([...nodesWithCdi, nodeId]);
-        cdiMissingNodes = cdiMissingNodes.map((n, idx) =>
-          idx === i ? { ...n, downloadStatus: 'done' as const } : n
-        );
+        cdiMissingNodes = updateCdiDownloadNodeStatus(cdiMissingNodes, i, 'done');
       } catch (e) {
         console.warn(`Failed to download CDI for ${nodeName}:`, e);
-        cdiMissingNodes = cdiMissingNodes.map((n, idx) =>
-          idx === i ? { ...n, downloadStatus: 'failed' as const } : n
-        );
+        cdiMissingNodes = updateCdiDownloadNodeStatus(cdiMissingNodes, i, 'failed');
       }
       cdiDownloadedCount = i + 1;
     }
@@ -1174,8 +1161,11 @@
     // Read config for ALL pending nodes that now have CDI (pre-existing + newly downloaded).
     // pendingConfigNodes contains all unread nodes from the original batch; fall back to
     // just the downloaded nodes when triggered from a single-node flow.
-    const allPending = pendingConfigNodes.length > 0 ? pendingConfigNodes : nodesToDownload;
-    const nodesToRead = allPending.filter(n => nodesWithCdi.has(n.nodeId));
+    const nodesToRead = resolvePostDownloadReadNodes({
+      nodesToDownload,
+      nodesWithCdi,
+      pendingConfigNodes,
+    });
     cdiMissingNodes = [];
     pendingConfigNodes = [];
 
