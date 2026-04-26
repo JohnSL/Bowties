@@ -68,6 +68,9 @@
 - Extracted refresh stale-node reconciliation into `app/src/lib/orchestration/discoveryOrchestrator.ts`, so node removal, cached CDI pruning, and stale sidebar-reset decisions are covered at the owner level instead of being inlined in `+page.svelte`.
 - Extracted startup connection/layout bootstrap sequencing into `app/src/lib/orchestration/syncSessionOrchestrator.ts`, so connection-status resolution, recent-layout restore ordering, fresh-live reset, and initial probe timing are no longer split across the route `onMount` flow.
 - Added an explicit lifecycle transition matrix in `app/src/lib/orchestration/lifecycleTransitionMatrix.ts` and wired startup/connect/disconnect helpers through it, with focused matrix coverage added to the frontend regression gate.
+- Extracted config-read CDI preflight resolution and waiting-state setup into `app/src/lib/orchestration/configReadOrchestrator.ts`, so batch reads, single-node reads, and post-download reads now share the same owner-level branch logic instead of duplicating it in `app/src/routes/+page.svelte`.
+- Extracted `ConfigSidebar.svelte` node naming, tooltip, unread-badge, and pending-state derivation into `app/src/lib/components/ConfigSidebar/configSidebarPresenter.ts`, keeping the component closer to render-and-intent wiring.
+- Extracted `SaveControls.svelte` dirty-count, pending-label, and discard-count derivation into `app/src/lib/components/ElementCardDeck/saveControlsPresenter.ts` and added focused presenter coverage to the frontend regression gate.
 - Remaining lifecycle gap: discard/apply/disconnect/open transitions are improved, but not yet unified under one transition matrix or owner.
 
 ### Phase 6c/6d Sequencing

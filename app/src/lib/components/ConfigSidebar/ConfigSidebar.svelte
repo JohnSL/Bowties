@@ -136,7 +136,7 @@
         {@const nodeError = sidebarState.nodeErrors[nodeId] ?? null}
         {@const hasSelectedSegment = sidebarState.selectedSegment?.nodeId === nodeId}
         {@const isNodeSelected = sidebarState.selectedNodeId === nodeId && !hasSelectedSegment}
-        {@const tree = nodeTreeStore.getTree(nodeId)}
+        {@const tree = nodeTreeStore.getTree(nodeId) ?? null}
         {@const nodePending = getNodePendingState(nodeId, tree, $layoutOpenInProgress, persistedRows)}
         {@const isConfigNotRead = shouldShowConfigNotReadBadge({
           configReadNodes,

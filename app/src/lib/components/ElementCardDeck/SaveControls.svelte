@@ -11,7 +11,6 @@
    * Spec: 007-edit-node-config.
    */
   import type { SaveProgress, SaveState } from '$lib/types/nodeTree';
-  import { countModifiedLeaves } from '$lib/types/nodeTree';
   import { writeModifiedValues, discardModifiedValues } from '$lib/api/config';
   import { toast } from '@zerodevx/svelte-toast';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
@@ -20,6 +19,7 @@
   import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
   import { updateNodeSnipField } from '$lib/stores/nodeInfo';
   import DiscardConfirmDialog from '$lib/components/DiscardConfirmDialog.svelte';
+  import { deriveSaveControlsViewState } from './saveControlsPresenter';
 
   interface Props {
     /**
@@ -33,11 +33,15 @@
      * Optional offline-save handler provided by the page route.
      * Returns true when a save was performed, false when user cancelled.
      */
-    onOfflineSave: () => Promise<boolean>;
-    onOfflineSaveAs: () => Promise<boolean>;
+    onOfflineSave?: () => Promise<boolean>;
+    onOfflineSaveAs?: () => Promise<boolean>;
   }
 
-  let { toolbar = false, onOfflineSave, onOfflineSaveAs }: Props = $props();
+  let {
+    toolbar = false,
+    onOfflineSave = async () => false,
+    onOfflineSaveAs = async () => false,
+  }: Props = $props();
 
   // ── Reactive state ──────────────────────────────────────────────────────────
 
@@ -49,49 +53,16 @@
     currentFieldLabel: null,
   });
 
-  // Derive dirty count from the tree's modifiedValue leaves
-  let dirtyCount = $derived.by(() => {
-    let count = 0;
-    for (const tree of nodeTreeStore.trees.values()) {
-      count += countModifiedLeaves(tree);
-    }
-    return count;
-  });
-
-  let hasConfigEdits = $derived(dirtyCount > 0);
-  let hasMetadataEdits = $derived(bowtieMetadataStore.isDirty);
-  let offlineDraftCount = $derived(layoutStore.isOfflineMode ? offlineChangesStore.draftCount : 0);
-  let hasOfflineEdits = $derived(layoutStore.isOfflineMode && offlineDraftCount > 0);
-  // T019/T020: Unified dirty state across both config edits and bowtie metadata
-  // layoutStore.isDirty covers cases like persisted offline changes reverted (need save to update file)
-  let hasEdits = $derived(hasConfigEdits || hasMetadataEdits || hasOfflineEdits || layoutStore.isDirty);
-  let pendingEditCount = $derived(
-    layoutStore.isOfflineMode
-      ? offlineDraftCount + (layoutStore.isDirty && offlineDraftCount === 0 ? 1 : 0)
-      : dirtyCount + (hasMetadataEdits ? bowtieMetadataStore.editCount : 0)
-  );
-  let pendingHintText = $derived(
-    `${pendingEditCount} ${layoutStore.isOfflineMode ? 'unsaved edit' : 'unsaved change'}${pendingEditCount === 1 ? '' : 's'}`
-  );
-  let canSave = $derived(hasEdits && saveProgress.state !== 'saving');
-  let isSaving = $derived(saveProgress.state === 'saving');
-  // Count distinct nodes with modified leaves for discard confirmation
-  let dirtyNodeCount = $derived.by(() => {
-    const nodeIds = new Set<string>();
-    for (const [nodeId, tree] of nodeTreeStore.trees) {
-      if (countModifiedLeaves(tree) > 0) nodeIds.add(nodeId);
-    }
-    return nodeIds.size;
-  });
-
-  let offlineDirtyNodeCount = $derived.by(() => {
-    const nodeIds = new Set(
-      offlineChangesStore.draftRows
-        .filter((r) => r.status === 'pending' && r.nodeId)
-        .map((r) => r.nodeId as string)
-    );
-    return nodeIds.size;
-  });
+  let viewState = $derived(deriveSaveControlsViewState({
+    bowtieMetadataEditCount: bowtieMetadataStore.editCount,
+    bowtieMetadataIsDirty: bowtieMetadataStore.isDirty,
+    layoutIsDirty: layoutStore.isDirty,
+    layoutIsOfflineMode: layoutStore.isOfflineMode,
+    offlineDraftCount: offlineChangesStore.draftCount,
+    offlineDraftRows: offlineChangesStore.draftRows,
+    saveProgressState: saveProgress.state,
+    trees: nodeTreeStore.trees,
+  }));
 
   // Whether the discard confirmation dialog is open.
   let showDiscardDialog = $state(false);
@@ -140,14 +111,14 @@
       return;
     }
 
-    const hasNodeEdits = hasConfigEdits;
+    const hasNodeEdits = viewState.hasConfigEdits;
     const hasYamlEdits = bowtieMetadataStore.isDirty;
 
     if (!hasNodeEdits && !hasYamlEdits) return;
 
     saveProgress = {
       state: 'saving',
-      total: dirtyCount + (hasYamlEdits ? 1 : 0),
+      total: viewState.dirtyCount + (hasYamlEdits ? 1 : 0),
       completed: 0,
       failed: 0,
       currentFieldLabel: hasNodeEdits ? 'Writing configuration…' : 'Layout metadata',
@@ -175,8 +146,8 @@
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error('[SaveControls] writeModifiedValues failed:', msg);
-        failCount += dirtyCount;
-        saveProgress = { ...saveProgress, failed: dirtyCount };
+        failCount += viewState.dirtyCount;
+        saveProgress = { ...saveProgress, failed: viewState.dirtyCount };
       }
     }
 
@@ -254,7 +225,7 @@
   }
 </script>
 
-{#if hasEdits || isSaving || saveProgress.state === 'completed' || saveProgress.state === 'partial-failure'}
+{#if viewState.hasEdits || viewState.isSaving || saveProgress.state === 'completed' || saveProgress.state === 'partial-failure'}
 <div
   class="save-controls"
   class:save-controls--toolbar={toolbar}
@@ -262,7 +233,7 @@
   aria-label="Configuration save controls"
 >
 
-  {#if isSaving}
+  {#if viewState.isSaving}
   <span class="save-progress" role="status" aria-live="polite">
     {#if saveProgress.currentFieldLabel}
       Writing "{saveProgress.currentFieldLabel}"…
@@ -282,25 +253,25 @@
     ⚠ {saveProgress.completed} saved, {saveProgress.failed} failed
   </span>
 
-{:else if hasEdits}
+{:else if viewState.hasEdits}
   <!-- Idle with pending edits -->
   <span class="pending-hint" role="status">
-    {pendingHintText}
+    {viewState.pendingHintText}
   </span>
 {/if}
 
 <button
   class="save-btn"
-  disabled={!canSave}
+  disabled={!viewState.canSave}
   onclick={handleSave}
-  aria-busy={isSaving}
+  aria-busy={viewState.isSaving}
 >
-  {isSaving ? 'Saving…' : 'Save'}
+  {viewState.isSaving ? 'Saving…' : 'Save'}
 </button>
 
 <button
   class="discard-btn"
-  disabled={isSaving || !hasEdits}
+  disabled={viewState.isSaving || !viewState.hasEdits}
   onclick={handleDiscard}
   aria-label="Discard pending changes"
 >
@@ -312,8 +283,8 @@
 
 {#if showDiscardDialog}
   <DiscardConfirmDialog
-    fieldCount={layoutStore.isOfflineMode ? offlineDraftCount : dirtyCount}
-    nodeCount={layoutStore.isOfflineMode ? offlineDirtyNodeCount : dirtyNodeCount}
+    fieldCount={viewState.discardFieldCount}
+    nodeCount={viewState.discardNodeCount}
     onConfirm={handleConfirmDiscard}
     onCancel={handleCancelDiscard}
   />
