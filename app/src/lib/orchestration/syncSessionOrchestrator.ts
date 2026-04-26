@@ -24,6 +24,44 @@ interface ScheduleAutoSyncArgs {
   triggerSync: () => Promise<void> | void;
 }
 
+interface ConnectionConfig {
+  name?: string | null;
+  host?: string | null;
+  port?: string | number | null;
+  serialPort?: string | null;
+}
+
+interface ConnectLiveSessionArgs {
+  config: ConnectionConfig;
+  hasLayoutFile: boolean;
+  setConnectionLabel: (label: string) => void;
+  setConnected: (connected: boolean) => void;
+  setLayoutConnected: (connected: boolean) => void;
+  hideConnectionDialog: () => void;
+  resetSyncSessionAutoTrigger: () => void;
+  resetFreshLiveSessionState: () => void;
+  probeForNodes: () => Promise<void> | void;
+}
+
+interface StartupConnectionStatus {
+  connected: boolean;
+  config?: ConnectionConfig | null;
+}
+
+interface BootstrapStartupLifecycleArgs {
+  getConnectionStatus: () => Promise<StartupConnectionStatus>;
+  setConnected: (connected: boolean) => void;
+  setLayoutConnected: (connected: boolean) => void;
+  setConnectionLabel: (label: string) => void;
+  onConnectionStatusError?: (error: unknown) => void;
+  startBowtieListening: () => Promise<void>;
+  restoreRecentOfflineLayout: () => Promise<boolean>;
+  startNodeTreeListening: () => void;
+  hasLayoutFile: () => boolean;
+  resetFreshLiveSessionState: () => void;
+  probeForNodes: () => Promise<void> | void;
+}
+
 interface DisconnectWithOfflineFallbackArgs {
   disconnect: () => Promise<void>;
   afterDisconnect: () => void;
@@ -62,6 +100,74 @@ export function hasSyncSessionContent(session: SyncSession | null): boolean {
     session.cleanRows.length > 0 ||
     session.nodeMissingRows.length > 0
   );
+}
+
+export function resolveConnectionLabel(config: ConnectionConfig): string {
+  return config.name ?? (config.host ? `${config.host}:${config.port}` : config.serialPort ?? 'LCC');
+}
+
+export function connectLiveSession({
+  config,
+  hasLayoutFile,
+  setConnectionLabel,
+  setConnected,
+  setLayoutConnected,
+  hideConnectionDialog,
+  resetSyncSessionAutoTrigger,
+  resetFreshLiveSessionState,
+  probeForNodes,
+}: ConnectLiveSessionArgs): void {
+  setConnectionLabel(resolveConnectionLabel(config));
+  setConnected(true);
+  setLayoutConnected(true);
+  hideConnectionDialog();
+  resetSyncSessionAutoTrigger();
+
+  if (!hasLayoutFile) {
+    resetFreshLiveSessionState();
+  }
+
+  void probeForNodes();
+}
+
+export async function bootstrapStartupLifecycle({
+  getConnectionStatus,
+  setConnected,
+  setLayoutConnected,
+  setConnectionLabel,
+  onConnectionStatusError,
+  startBowtieListening,
+  restoreRecentOfflineLayout,
+  startNodeTreeListening,
+  hasLayoutFile,
+  resetFreshLiveSessionState,
+  probeForNodes,
+}: BootstrapStartupLifecycleArgs): Promise<void> {
+  let connected = false;
+
+  try {
+    const status = await getConnectionStatus();
+    connected = status.connected;
+    setConnected(connected);
+    setLayoutConnected(connected);
+    if (connected && status.config) {
+      setConnectionLabel(resolveConnectionLabel(status.config));
+    }
+  } catch (error) {
+    onConnectionStatusError?.(error);
+  }
+
+  await startBowtieListening();
+  await restoreRecentOfflineLayout();
+  startNodeTreeListening();
+
+  if (connected && !hasLayoutFile()) {
+    resetFreshLiveSessionState();
+  }
+
+  if (connected) {
+    await probeForNodes();
+  }
 }
 
 export class SyncSessionOrchestrator {

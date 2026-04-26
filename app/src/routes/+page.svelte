@@ -56,9 +56,14 @@
     pipConfirmsNoCdi,
     toConfigReadCandidate,
   } from '$lib/orchestration/configReadOrchestrator';
-  import { handleDiscoveredNode, refreshReinitializedNode } from '$lib/orchestration/discoveryOrchestrator';
+  import { handleDiscoveredNode, reconcileRefreshState, refreshReinitializedNode } from '$lib/orchestration/discoveryOrchestrator';
   import { hasUnsavedPromptChanges } from '$lib/orchestration/unsavedChangesGuard';
-  import { disconnectWithOfflineFallback, SyncSessionOrchestrator } from '$lib/orchestration/syncSessionOrchestrator';
+  import {
+    bootstrapStartupLifecycle,
+    connectLiveSession,
+    disconnectWithOfflineFallback,
+    SyncSessionOrchestrator,
+  } from '$lib/orchestration/syncSessionOrchestrator';
   import { installMenuShortcuts } from '../lib/keyboard/menuShortcuts';
   import type { MissingCdiNode } from '$lib/components/CdiDownloadDialog.svelte';
   import SyncPanel from '$lib/components/Sync/SyncPanel.svelte';
@@ -502,61 +507,62 @@
     );
 
     (async () => {
-      try {
-        const status = await invoke("get_connection_status");
-        connected = (status as any).connected;
-        layoutStore.setConnected(connected);
-        if (connected && (status as any).config) {
-          const cfg = (status as any).config;
-          connectionLabel = cfg.name ?? (cfg.host ? `${cfg.host}:${cfg.port}` : cfg.serialPort ?? 'LCC');
-        }
-      } catch (e) {
-        console.error("Failed to get connection status:", e);
-      }
-
-      // Feature 006: Start bowties store listener so cdi-read-complete is captured
-      // regardless of whether the user has visited the Bowties page.
-      // Must be awaited so the listener is registered before checkAndReopenRecent()
-      // triggers buildBowtieCatalog which immediately emits cdi-read-complete.
-      await bowtieCatalogStore.startListening();
-
-      // Spec 009 T015: Auto-reopen the most recent layout file on startup
-      await restoreRecentOfflineLayout({
-        getRecentLayout,
-        restoreLayout: (path) => openOfflineLayoutWithReplay({
-          path,
-          openLayout: openLayoutFile,
-          hydrateOfflineSnapshots,
-          applyPersistedOfflinePendingToTrees,
-          onOpened: () => {
-            showConnectionDialog = false;
+      await bootstrapStartupLifecycle({
+        getConnectionStatus: async () => await invoke('get_connection_status') as {
+          connected: boolean;
+          config?: { name?: string | null; host?: string | null; port?: string | number | null; serialPort?: string | null } | null;
+        },
+        setConnected: (value) => {
+          connected = value;
+        },
+        setLayoutConnected: (value) => {
+          layoutStore.setConnected(value);
+        },
+        setConnectionLabel: (label) => {
+          connectionLabel = label;
+        },
+        onConnectionStatusError: (error) => {
+          console.error('Failed to get connection status:', error);
+        },
+        // Feature 006: Start bowties store listener so cdi-read-complete is captured
+        // regardless of whether the user has visited the Bowties page.
+        // Must be awaited so the listener is registered before layout restore work.
+        startBowtieListening: () => bowtieCatalogStore.startListening(),
+        // Spec 009 T015: Auto-reopen the most recent layout file on startup.
+        restoreRecentOfflineLayout: () => restoreRecentOfflineLayout({
+          getRecentLayout,
+          restoreLayout: (path) => openOfflineLayoutWithReplay({
+            path,
+            openLayout: openLayoutFile,
+            hydrateOfflineSnapshots,
+            applyPersistedOfflinePendingToTrees,
+            onOpened: () => {
+              showConnectionDialog = false;
+            },
+          }),
+          clearRecentLayout,
+          resetLayoutStateForNoLayout,
+          resetLayoutOpenPhase,
+          onRestored: (opened) => {
+            partialCaptureNodes = new Set(opened.partialNodes);
+            currentLayoutSnapshots = opened.nodeSnapshots;
+          },
+          onWarning: (message, error) => {
+            console.warn(message, error);
           },
         }),
-        clearRecentLayout,
-        resetLayoutStateForNoLayout,
-        resetLayoutOpenPhase,
-        onRestored: (opened) => {
-          partialCaptureNodes = new Set(opened.partialNodes);
-          currentLayoutSnapshots = opened.nodeSnapshots;
+        // Spec 007: Refresh trees as config values and event roles merge server-side.
+        startNodeTreeListening: () => {
+          nodeTreeStore.startListening((_nodeId) => {
+            if (layoutStore.hasLayoutFile) {
+              nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows);
+            }
+          });
         },
-        onWarning: (message, error) => {
-          console.warn(message, error);
-        },
+        hasLayoutFile: () => layoutStore.hasLayoutFile,
+        resetFreshLiveSessionState,
+        probeForNodes,
       });
-
-      // Spec 007: Start node-tree-updated listener so trees are refreshed
-      // automatically as config values and event roles are merged server-side.
-      // The callback applies pending offline values to each freshly-loaded tree
-      // so the planned value is visible in the config field.
-      nodeTreeStore.startListening((nodeId) => {
-        if (layoutStore.hasLayoutFile) {
-          nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows);
-        }
-      });
-
-      if (connected) {
-        resetFreshLiveSessionState();
-      }
 
       // T050: Prompt-to-save guard on app close (FR-024)
       const appWindow = getCurrentWebviewWindow();
@@ -669,11 +675,6 @@
         nodes = result.nodes;
       }));
 
-      // Now that the lcc-node-discovered listener is registered, probe for existing nodes.
-      // Doing this after listener setup avoids a race where VerifiedNode replies arrive
-      // before the frontend listener is ready and get silently dropped.
-      if (connected) probeForNodes();
-
       // Native menu event listeners — relay OS menu clicks to handler functions
       unlistens.push(await listen('menu-disconnect',     () => disconnect()));
       unlistens.push(await listen('menu-refresh',        () => { if (connected) handleRefresh(); }));
@@ -733,14 +734,29 @@
   });
 
   function handleConnected(e: CustomEvent<{ config: any }>) {
-    const cfg = e.detail.config;
-    connectionLabel = cfg.name ?? (cfg.host ? `${cfg.host}:${cfg.port}` : cfg.serialPort ?? 'LCC');
-    connected = true;
-    layoutStore.setConnected(true);
-    showConnectionDialog = false;
-    syncSessionOrchestrator.resetAutoTrigger();
-    resetFreshLiveSessionState();
-    probeForNodes();
+    connectLiveSession({
+      config: e.detail.config,
+      hasLayoutFile: layoutStore.hasLayoutFile,
+      setConnectionLabel: (label) => {
+        connectionLabel = label;
+      },
+      setConnected: (value) => {
+        connected = value;
+      },
+      setLayoutConnected: (value) => {
+        layoutStore.setConnected(value);
+      },
+      hideConnectionDialog: () => {
+        showConnectionDialog = false;
+      },
+      resetSyncSessionAutoTrigger: () => {
+        syncSessionOrchestrator.resetAutoTrigger();
+      },
+      resetFreshLiveSessionState: () => {
+        resetFreshLiveSessionState();
+      },
+      probeForNodes,
+    });
   }
 
   /**
@@ -829,16 +845,22 @@
     try {
       const staleIds = await refreshAllNodes();
       if (staleIds.length > 0) {
-        nodes = nodes.filter(n => !staleIds.includes(formatNodeId(n.node_id)));
-        updateNodeInfo(nodes);
-        // Only clean up state for nodes that actually left — preserve config read
-        // status and CDI data for nodes that are still present.
-        removeNodesConfigRead(staleIds);
-        nodesWithCdi = new Set([...nodesWithCdi].filter(id => !staleIds.includes(id)));
-        // Reset the sidebar only if the currently selected node was removed.
         const sidebarState = get(configSidebarStore);
         const selectedId = sidebarState.selectedSegment?.nodeId ?? sidebarState.selectedNodeId;
-        if (selectedId && staleIds.includes(selectedId)) {
+        const refreshed = reconcileRefreshState({
+          currentNodes: nodes,
+          staleNodeIds: staleIds,
+          selectedNodeId: selectedId,
+          nodesWithCdi,
+        });
+
+        nodes = refreshed.nodes;
+        updateNodeInfo(refreshed.nodes);
+        // Only clean up state for nodes that actually left — preserve config read
+        // status and CDI data for nodes that are still present.
+        removeNodesConfigRead(refreshed.removedNodeIds);
+        nodesWithCdi = refreshed.nodesWithCdi;
+        if (refreshed.shouldResetSidebar) {
           configSidebarStore.reset();
         }
       }

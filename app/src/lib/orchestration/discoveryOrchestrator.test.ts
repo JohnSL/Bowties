@@ -8,6 +8,7 @@ import type {
 } from '$lib/api/tauri';
 import {
   handleDiscoveredNode,
+  reconcileRefreshState,
   refreshReinitializedNode,
 } from './discoveryOrchestrator';
 
@@ -312,6 +313,44 @@ describe('handleDiscoveredNode', () => {
     });
     expect(publishNodes).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith('Failed to query node 05.02.01.02.03.00:', error);
+  });
+});
+
+describe('reconcileRefreshState', () => {
+  it('removes stale nodes, prunes cached CDI ids, and resets the sidebar when the selected node disappeared', () => {
+    const retained = makeNode({
+      node_id: [0x05, 0x02, 0x01, 0x02, 0x03, 0x01],
+      alias: 0x702,
+      snip_data: makeSnipData({ user_name: 'Retained Node' }),
+    });
+
+    const result = reconcileRefreshState({
+      currentNodes: [makeNode(), retained],
+      staleNodeIds: ['05.02.01.02.03.00'],
+      selectedNodeId: '05.02.01.02.03.00',
+      nodesWithCdi: ['05.02.01.02.03.00', '05.02.01.02.03.01'],
+    });
+
+    expect(result.removedNodeIds).toEqual(['05.02.01.02.03.00']);
+    expect(result.nodes).toEqual([retained]);
+    expect([...result.nodesWithCdi]).toEqual(['05.02.01.02.03.01']);
+    expect(result.shouldResetSidebar).toBe(true);
+  });
+
+  it('leaves state unchanged when refresh reports no stale nodes', () => {
+    const currentNodes = [makeNode()];
+
+    const result = reconcileRefreshState({
+      currentNodes,
+      staleNodeIds: [],
+      selectedNodeId: '05.02.01.02.03.00',
+      nodesWithCdi: ['05.02.01.02.03.00'],
+    });
+
+    expect(result.nodes).toBe(currentNodes);
+    expect(result.removedNodeIds).toEqual([]);
+    expect([...result.nodesWithCdi]).toEqual(['05.02.01.02.03.00']);
+    expect(result.shouldResetSidebar).toBe(false);
   });
 });
 

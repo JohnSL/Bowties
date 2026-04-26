@@ -34,6 +34,20 @@ interface DiscoveryUpdateResult {
   skipped: boolean;
 }
 
+interface ReconcileRefreshArgs {
+  currentNodes: DiscoveredNode[];
+  staleNodeIds: string[];
+  selectedNodeId?: string | null;
+  nodesWithCdi?: Iterable<string>;
+}
+
+interface ReconcileRefreshResult {
+  nodes: DiscoveredNode[];
+  removedNodeIds: string[];
+  nodesWithCdi: Set<string>;
+  shouldResetSidebar: boolean;
+}
+
 function isDiscoveryComplete(node: DiscoveredNode): boolean {
   return node.snip_status === 'Complete' &&
     node.snip_data !== null &&
@@ -111,6 +125,31 @@ function mergeReinitializedQueries(
     pip_flags: pipResult.pip_flags,
     pip_status: pipResult.status,
     cdi: null,
+  };
+}
+
+export function reconcileRefreshState({
+  currentNodes,
+  staleNodeIds,
+  selectedNodeId = null,
+  nodesWithCdi = [],
+}: ReconcileRefreshArgs): ReconcileRefreshResult {
+  if (staleNodeIds.length === 0) {
+    return {
+      nodes: currentNodes,
+      removedNodeIds: [],
+      nodesWithCdi: new Set(nodesWithCdi),
+      shouldResetSidebar: false,
+    };
+  }
+
+  const staleSet = new Set(staleNodeIds);
+
+  return {
+    nodes: currentNodes.filter((node) => !staleSet.has(formatNodeId(node.node_id))),
+    removedNodeIds: staleNodeIds,
+    nodesWithCdi: new Set([...nodesWithCdi].filter((nodeId) => !staleSet.has(nodeId))),
+    shouldResetSidebar: !!selectedNodeId && staleSet.has(selectedNodeId),
   };
 }
 

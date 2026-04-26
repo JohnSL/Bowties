@@ -65,6 +65,8 @@
 - Documented the adopted frontend pattern in `docs/technical/architecture.md` and `docs/project/development.md`.
 - Extracted SyncPanel mode-choice and apply/dismiss workflow branching into `app/src/lib/orchestration/syncPanelViewOrchestrator.ts`, leaving `SyncPanel.svelte` focused on rendering and intent wiring.
 - Moved offline snapshot hydration, no-layout reset, fresh-live reset, and startup restore handling further into `app/src/lib/orchestration/offlineLayoutOrchestrator.ts`, so the route now supplies state hooks instead of owning those lifecycle branches directly.
+- Extracted refresh stale-node reconciliation into `app/src/lib/orchestration/discoveryOrchestrator.ts`, so node removal, cached CDI pruning, and stale sidebar-reset decisions are covered at the owner level instead of being inlined in `+page.svelte`.
+- Extracted startup connection/layout bootstrap sequencing into `app/src/lib/orchestration/syncSessionOrchestrator.ts`, so connection-status resolution, recent-layout restore ordering, fresh-live reset, and initial probe timing are no longer split across the route `onMount` flow.
 - Remaining lifecycle gap: discard/apply/disconnect/open transitions are improved, but not yet unified under one transition matrix or owner.
 
 ### Phase 6c/6d Sequencing

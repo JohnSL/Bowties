@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { clearConfigReadStatus, markNodeConfigRead } from '$lib/stores/configReadStatus';
+import { get } from 'svelte/store';
+import { clearConfigReadStatus, configReadNodesStore, markNodeConfigRead } from '$lib/stores/configReadStatus';
 import { configSidebarStore } from '$lib/stores/configSidebar';
 import { nodeInfoStore } from '$lib/stores/nodeInfo';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
@@ -11,8 +12,11 @@ import { resetLayoutOpenPhase } from '$lib/stores/layoutOpenLifecycle';
 
 const {
   eventHandlers,
+  getRecentLayoutRef,
   invokeRef,
+  openLayoutFileRef,
   probeNodesRef,
+  refreshAllNodesRef,
   registerNodeRef,
   querySnipRef,
   queryPipRef,
@@ -21,8 +25,17 @@ const {
   startListeningRef,
 } = vi.hoisted(() => ({
   eventHandlers: new Map<string, (event: any) => unknown>(),
+  getRecentLayoutRef: vi.fn(async () => null),
   invokeRef: vi.fn(),
+  openLayoutFileRef: vi.fn(async () => ({
+    layoutId: 'restored-layout',
+    capturedAt: '2026-04-25T00:00:00.000Z',
+    pendingOfflineChangeCount: 0,
+    partialNodes: [],
+    nodeSnapshots: [],
+  })),
   probeNodesRef: vi.fn(async () => {}),
+  refreshAllNodesRef: vi.fn(async () => []),
   registerNodeRef: vi.fn(async () => {}),
   querySnipRef: vi.fn(async () => ({
     status: 'Complete',
@@ -77,21 +90,18 @@ vi.mock('$lib/api/tauri', () => ({
   registerNode: registerNodeRef,
   querySnip: querySnipRef,
   queryPip: queryPipRef,
-  refreshAllNodes: vi.fn(async () => []),
+  refreshAllNodes: refreshAllNodesRef,
 }));
 
 vi.mock('$lib/api/bowties', () => ({
-  getRecentLayout: vi.fn(async () => null),
+  getRecentLayout: getRecentLayoutRef,
   clearRecentLayout: vi.fn(async () => {}),
 }));
 
 vi.mock('$lib/api/layout', () => ({
   closeLayout: vi.fn(async () => {}),
   saveLayoutFile: vi.fn(async () => ({ warnings: [] })),
-  openLayoutFile: vi.fn(async () => ({
-    partialNodes: [],
-    nodeSnapshots: [],
-  })),
+  openLayoutFile: openLayoutFileRef,
   buildOfflineNodeTree: vi.fn(async () => {
     throw new Error('not needed in route discovery test');
   }),
@@ -155,6 +165,9 @@ beforeEach(() => {
         config: { name: 'Bench Bus' },
       };
     }
+    if (command === 'list_offline_changes') {
+      return [];
+    }
     return null;
   });
 
@@ -170,6 +183,18 @@ beforeEach(() => {
   getCdiXmlRef.mockImplementation(async () => ({ xmlContent: '<cdi />' }));
   readAllConfigValuesRef.mockReset();
   readAllConfigValuesRef.mockImplementation(async () => ({ failedReads: 0, totalElements: 0 }));
+  refreshAllNodesRef.mockReset();
+  refreshAllNodesRef.mockImplementation(async () => []);
+  getRecentLayoutRef.mockReset();
+  getRecentLayoutRef.mockImplementation(async () => null);
+  openLayoutFileRef.mockReset();
+  openLayoutFileRef.mockImplementation(async () => ({
+    layoutId: 'restored-layout',
+    capturedAt: '2026-04-25T00:00:00.000Z',
+    pendingOfflineChangeCount: 0,
+    partialNodes: [],
+    nodeSnapshots: [],
+  }));
 });
 
 describe('+page route discovery CTA', () => {
@@ -284,5 +309,64 @@ describe('+page route discovery CTA', () => {
     });
 
     expect(readAllConfigValuesRef).not.toHaveBeenCalled();
+  });
+
+  it('restores the recent layout during startup before probing the live bus', async () => {
+    getRecentLayoutRef.mockResolvedValueOnce({ path: 'D:/Layouts/yard.layout.yaml' });
+    openLayoutFileRef.mockResolvedValueOnce({
+      layoutId: 'yard-layout',
+      capturedAt: '2026-04-25T00:00:00.000Z',
+      pendingOfflineChangeCount: 0,
+      partialNodes: [],
+      nodeSnapshots: [],
+    });
+
+    render(Page);
+
+    await waitFor(() => {
+      expect(layoutStore.activeContext?.rootPath).toBe('D:/Layouts/yard.layout.yaml');
+      expect(probeNodesRef).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('clears stale node state on refresh when the selected node disappears', async () => {
+    refreshAllNodesRef.mockResolvedValueOnce(['02.01.57.00.00.01']);
+
+    render(Page);
+
+    await waitFor(() => {
+      expect(probeNodesRef).toHaveBeenCalledTimes(1);
+    });
+
+    const discovered = eventHandlers.get('lcc-node-discovered');
+    expect(discovered).toBeTypeOf('function');
+
+    await discovered?.({
+      payload: {
+        nodeId: '02.01.57.00.00.01',
+        alias: 0x123,
+        timestamp: '2026-04-25T12:00:00.000Z',
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('East Panel')).toBeInTheDocument();
+    });
+
+    markNodeConfigRead('02.01.57.00.00.01');
+    configSidebarStore.setSelectedNode('02.01.57.00.00.01');
+
+    const refresh = eventHandlers.get('menu-refresh');
+    expect(refresh).toBeTypeOf('function');
+    await refresh?.({});
+
+    await waitFor(() => {
+      expect(screen.queryByText('East Panel')).not.toBeInTheDocument();
+    });
+
+    const sidebarState = get(configSidebarStore);
+    expect(sidebarState.selectedNodeId).toBe(null);
+    expect(sidebarState.selectedSegment).toBe(null);
+    expect(get(configReadNodesStore).has('02.01.57.00.00.01')).toBe(false);
   });
 });

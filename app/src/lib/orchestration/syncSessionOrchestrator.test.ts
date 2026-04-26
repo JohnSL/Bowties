@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  bootstrapStartupLifecycle,
+  connectLiveSession,
   disconnectWithOfflineFallback,
   hasSyncSessionContent,
+  resolveConnectionLabel,
   resolveDisconnectTransition,
   SyncSessionOrchestrator,
 } from './syncSessionOrchestrator';
@@ -24,6 +27,168 @@ describe('hasSyncSessionContent', () => {
     expect(hasSyncSessionContent({ conflictRows: [], cleanRows: [{} as any], alreadyAppliedCount: 0, nodeMissingRows: [] })).toBe(true);
     expect(hasSyncSessionContent({ conflictRows: [], cleanRows: [], alreadyAppliedCount: 0, nodeMissingRows: [{} as any] })).toBe(true);
     expect(hasSyncSessionContent({ conflictRows: [], cleanRows: [], alreadyAppliedCount: 0, nodeMissingRows: [] })).toBe(false);
+  });
+});
+
+describe('connectLiveSession', () => {
+  it('formats the visible label from name, host, serial port, or the default fallback', () => {
+    expect(resolveConnectionLabel({ name: 'Bench Bus', host: 'ignored', port: 12021 })).toBe('Bench Bus');
+    expect(resolveConnectionLabel({ host: '127.0.0.1', port: 12021 })).toBe('127.0.0.1:12021');
+    expect(resolveConnectionLabel({ serialPort: 'COM4' })).toBe('COM4');
+    expect(resolveConnectionLabel({})).toBe('LCC');
+  });
+
+  it('resets the fresh live session before probing when no layout file is active', () => {
+    const setConnectionLabel = vi.fn();
+    const setConnected = vi.fn();
+    const setLayoutConnected = vi.fn();
+    const hideConnectionDialog = vi.fn();
+    const resetSyncSessionAutoTrigger = vi.fn();
+    const resetFreshLiveSessionState = vi.fn();
+    const probeForNodes = vi.fn(async () => {});
+
+    connectLiveSession({
+      config: { name: 'Bench Bus' },
+      hasLayoutFile: false,
+      setConnectionLabel,
+      setConnected,
+      setLayoutConnected,
+      hideConnectionDialog,
+      resetSyncSessionAutoTrigger,
+      resetFreshLiveSessionState,
+      probeForNodes,
+    });
+
+    expect(setConnectionLabel).toHaveBeenCalledWith('Bench Bus');
+    expect(setConnected).toHaveBeenCalledWith(true);
+    expect(setLayoutConnected).toHaveBeenCalledWith(true);
+    expect(hideConnectionDialog).toHaveBeenCalledTimes(1);
+    expect(resetSyncSessionAutoTrigger).toHaveBeenCalledTimes(1);
+    expect(resetFreshLiveSessionState).toHaveBeenCalledTimes(1);
+    expect(probeForNodes).toHaveBeenCalledTimes(1);
+    expect(resetFreshLiveSessionState.mock.invocationCallOrder[0]).toBeLessThan(
+      probeForNodes.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('preserves existing layout state on connect when a layout file is already active', () => {
+    const resetFreshLiveSessionState = vi.fn();
+    const probeForNodes = vi.fn(async () => {});
+
+    connectLiveSession({
+      config: { host: 'localhost', port: 12021 },
+      hasLayoutFile: true,
+      setConnectionLabel: vi.fn(),
+      setConnected: vi.fn(),
+      setLayoutConnected: vi.fn(),
+      hideConnectionDialog: vi.fn(),
+      resetSyncSessionAutoTrigger: vi.fn(),
+      resetFreshLiveSessionState,
+      probeForNodes,
+    });
+
+    expect(resetFreshLiveSessionState).not.toHaveBeenCalled();
+    expect(probeForNodes).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('bootstrapStartupLifecycle', () => {
+  it('boots a connected fresh live session by resetting transient state and probing after listeners are ready', async () => {
+    const calls: string[] = [];
+    const resetFreshLiveSessionState = vi.fn(() => {
+      calls.push('resetFresh');
+    });
+    const probeForNodes = vi.fn(async () => {
+      calls.push('probe');
+    });
+
+    await bootstrapStartupLifecycle({
+      getConnectionStatus: vi.fn(async () => ({ connected: true, config: { name: 'Bench Bus' } })),
+      setConnected: vi.fn((value: boolean) => {
+        calls.push(`connected:${value}`);
+      }),
+      setLayoutConnected: vi.fn((value: boolean) => {
+        calls.push(`layoutConnected:${value}`);
+      }),
+      setConnectionLabel: vi.fn((label: string) => {
+        calls.push(`label:${label}`);
+      }),
+      startBowtieListening: vi.fn(async () => {
+        calls.push('bowties');
+      }),
+      restoreRecentOfflineLayout: vi.fn(async () => {
+        calls.push('restore');
+        return false;
+      }),
+      startNodeTreeListening: vi.fn(() => {
+        calls.push('trees');
+      }),
+      hasLayoutFile: vi.fn(() => false),
+      resetFreshLiveSessionState,
+      probeForNodes,
+    });
+
+    expect(calls).toEqual([
+      'connected:true',
+      'layoutConnected:true',
+      'label:Bench Bus',
+      'bowties',
+      'restore',
+      'trees',
+      'resetFresh',
+      'probe',
+    ]);
+  });
+
+  it('preserves startup layout state when the restore activates a layout file', async () => {
+    const resetFreshLiveSessionState = vi.fn();
+    const probeForNodes = vi.fn(async () => {});
+
+    await bootstrapStartupLifecycle({
+      getConnectionStatus: vi.fn(async () => ({ connected: true, config: { host: '127.0.0.1', port: 12021 } })),
+      setConnected: vi.fn(),
+      setLayoutConnected: vi.fn(),
+      setConnectionLabel: vi.fn(),
+      startBowtieListening: vi.fn(async () => {}),
+      restoreRecentOfflineLayout: vi.fn(async () => true),
+      startNodeTreeListening: vi.fn(),
+      hasLayoutFile: vi.fn(() => true),
+      resetFreshLiveSessionState,
+      probeForNodes,
+    });
+
+    expect(resetFreshLiveSessionState).not.toHaveBeenCalled();
+    expect(probeForNodes).toHaveBeenCalledTimes(1);
+  });
+
+  it('continues startup when connection status lookup fails', async () => {
+    const onConnectionStatusError = vi.fn();
+    const startBowtieListening = vi.fn(async () => {});
+    const restoreRecentOfflineLayout = vi.fn(async () => false);
+    const startNodeTreeListening = vi.fn();
+    const probeForNodes = vi.fn(async () => {});
+
+    await bootstrapStartupLifecycle({
+      getConnectionStatus: vi.fn(async () => {
+        throw new Error('status unavailable');
+      }),
+      setConnected: vi.fn(),
+      setLayoutConnected: vi.fn(),
+      setConnectionLabel: vi.fn(),
+      onConnectionStatusError,
+      startBowtieListening,
+      restoreRecentOfflineLayout,
+      startNodeTreeListening,
+      hasLayoutFile: vi.fn(() => false),
+      resetFreshLiveSessionState: vi.fn(),
+      probeForNodes,
+    });
+
+    expect(onConnectionStatusError).toHaveBeenCalledTimes(1);
+    expect(startBowtieListening).toHaveBeenCalledTimes(1);
+    expect(restoreRecentOfflineLayout).toHaveBeenCalledTimes(1);
+    expect(startNodeTreeListening).toHaveBeenCalledTimes(1);
+    expect(probeForNodes).not.toHaveBeenCalled();
   });
 });
 
