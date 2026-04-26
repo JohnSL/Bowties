@@ -1,5 +1,7 @@
 # Finish Proxy Migration Plan
 
+> **Status: Historical — implemented.** The Node Proxy migration is complete. Retain as implementation history.
+
 ## Status Quo
 
 The Node Proxy actor architecture is in place and working. Every Tauri command

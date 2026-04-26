@@ -1,5 +1,7 @@
 # Bowties - Product Vision
 
+> **Status: Active aspirational design input.** This is the North Star product vision — it describes goals and experience to build toward, not current behavior. For current implemented behavior, see `product/`. For current architecture, see `product/architecture/`.
+
 *This document represents the North Star for Bowties. It describes the aspirational goals and user experience we're building toward, not necessarily what's currently implemented. See [docs/technical/architecture.md](../technical/architecture.md) for current implementation status.*
 
 ## Overview

@@ -1,5 +1,7 @@
 # Design: Bowties MVP — Connection-First LCC Configuration
 
+> **Status: Migrated.** The core bowties mental model from this document is now documented in `product/user-experience/bowties-model.md`. Some MVP details (drag-to-connect, freeform canvas) remain aspirational. Retain this file as design input for extended bowties UX work.
+
 **Executive Summary:** A desktop tool that separates two distinct workflows behind two tabs — **Configuration** (inspect and edit a node's physical elements) and **Bowties** (create, view, and manage producer-consumer connections). Event IDs are entirely hidden from users; the app handles slot assignment automatically. The Bowties tab is the primary creative workspace; it starts empty and grows as the user builds their layout logic intentionally. This is an MVP: functional, clean, and dramatically simpler than JMRI, designed to be extended later.
 
 ---

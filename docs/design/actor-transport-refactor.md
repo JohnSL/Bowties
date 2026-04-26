@@ -1,5 +1,7 @@
 # Design: Actor-Based Transport Refactor
 
+> **Status: Historical — implemented.** The actor-based transport and Node Proxy architecture is in place. Current durable architecture is documented in `product/architecture/`. This file is retained as implementation history.
+
 ## Current Architecture (as of v0.1.7)
 
 ```

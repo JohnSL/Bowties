@@ -1,5 +1,7 @@
 # Node Proxy Implementation Plan
 
+> **Status: Historical — implemented.** The Node Proxy actor architecture is in place. See `proxy-migration-finish-plan.md` for finish notes. Retain as implementation history.
+
 ## Problem
 
 Per-node state is scattered across 5+ independent keyed collections in the Tauri backend:

@@ -1,5 +1,7 @@
 # Logic & Automation Builder for Board-Specific Configuration
 
+> **Status: Future design input — not yet implemented.** This describes an aspirational logic/automation layer beyond the current bowtie connection model. Do not treat this as current product architecture. Revisit when the core bowties model is stable and this becomes a planned feature.
+
 **What:** A high-level rule-based interface that lets users configure layout behavior using state-driven logic ("WHEN turnout closed THEN signal red") instead of low-level Event ID mapping. The system understands board-specific semantics through extensible device profiles and compiles rules to appropriate outputs - event mappings for simple nodes, structured logic for sophisticated nodes like Tower LCC +Q.
 
 **Who:** Hobbyists who think in railroad operations terms, not protocol engineers. Solves the frustrated Signal-32 user's problem: "I just want to control signals based on turnout position" without needing to understand Event IDs.

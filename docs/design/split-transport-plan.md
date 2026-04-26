@@ -1,5 +1,7 @@
 # Split-Transport Implementation Plan
 
+> **Status: Active design input — implementation status uncertain.** This plan addresses a real transport lock-contention issue. Review current `TransportActor` implementation before acting on this plan to verify whether the split has already been applied.
+
 ## Problem
 
 Reader and writer loops in `TransportActor` share `Arc<tokio::sync::Mutex<Box<dyn LccTransport>>>`. Reader holds the mutex during 1ms timeout polls, blocking the writer from sending. This adds ~1-2ms to every round-trip and causes the measured performance regression.

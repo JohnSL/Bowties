@@ -1,5 +1,7 @@
 # User Workflows
 
+> **Status: Active aspirational design input.** These workflows are aspirational user journeys, not current step-by-step behavior. Current implemented workflows are documented in `product/user-stories/`. Use this file to guide UX and feature direction, not as a reference for how the app works today.
+
 *These workflows represent aspirational user journeys that demonstrate the intended user experience. They guide feature development and UX design decisions.*
 
 ## Workflow 1: Understanding Existing Configuration

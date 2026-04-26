@@ -1,5 +1,7 @@
 # PCER Implementation Reference
 
+> **Status: Historical — implemented.** PCER (event transport) is implemented in `lcc-rs`. Retain as implementation reference for the lcc-rs event transport layer.
+
 Implementation notes for adding ProducerConsumerEventReport (event transport) to lcc-rs.
 
 ## Protocol
