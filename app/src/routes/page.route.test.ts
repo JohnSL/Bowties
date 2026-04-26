@@ -14,7 +14,9 @@ const {
   eventHandlers,
   getRecentLayoutRef,
   invokeRef,
+  dialogOpenRef,
   openLayoutFileRef,
+  closeLayoutRef,
   probeNodesRef,
   refreshAllNodesRef,
   registerNodeRef,
@@ -27,6 +29,7 @@ const {
   eventHandlers: new Map<string, (event: any) => unknown>(),
   getRecentLayoutRef: vi.fn(async () => null),
   invokeRef: vi.fn(),
+  dialogOpenRef: vi.fn(async () => null),
   openLayoutFileRef: vi.fn(async () => ({
     layoutId: 'restored-layout',
     capturedAt: '2026-04-25T00:00:00.000Z',
@@ -34,6 +37,7 @@ const {
     partialNodes: [],
     nodeSnapshots: [],
   })),
+  closeLayoutRef: vi.fn(async () => ({ closed: true })),
   probeNodesRef: vi.fn(async () => {}),
   refreshAllNodesRef: vi.fn(async () => []),
   registerNodeRef: vi.fn(async () => {}),
@@ -72,7 +76,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 }));
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
-  open: vi.fn(async () => null),
+  open: dialogOpenRef,
   save: vi.fn(async () => null),
 }));
 
@@ -99,7 +103,7 @@ vi.mock('$lib/api/bowties', () => ({
 }));
 
 vi.mock('$lib/api/layout', () => ({
-  closeLayout: vi.fn(async () => {}),
+  closeLayout: closeLayoutRef,
   saveLayoutFile: vi.fn(async () => ({ warnings: [] })),
   openLayoutFile: openLayoutFileRef,
   buildOfflineNodeTree: vi.fn(async () => {
@@ -146,7 +150,7 @@ vi.mock('$lib/components/ErrorDialog.svelte', async () => await import('$lib/tes
 
 vi.mock('$lib/components/Layout/MissingCaptureBadge.svelte', async () => await import('$lib/test/StubComponent.svelte'));
 
-vi.mock('$lib/ConnectionManager.svelte', async () => await import('$lib/test/StubComponent.svelte'));
+vi.mock('$lib/ConnectionManager.svelte', async () => await import('$lib/test/ConnectionManagerStub.svelte'));
 
 vi.mock('$lib/components/Sync/SyncPanel.svelte', async () => await import('$lib/test/StubComponent.svelte'));
 
@@ -181,6 +185,10 @@ beforeEach(() => {
   resetLayoutOpenPhase();
   getCdiXmlRef.mockReset();
   getCdiXmlRef.mockImplementation(async () => ({ xmlContent: '<cdi />' }));
+  dialogOpenRef.mockReset();
+  dialogOpenRef.mockImplementation(async () => null);
+  closeLayoutRef.mockReset();
+  closeLayoutRef.mockImplementation(async () => ({ closed: true }));
   readAllConfigValuesRef.mockReset();
   readAllConfigValuesRef.mockImplementation(async () => ({ failedReads: 0, totalElements: 0 }));
   refreshAllNodesRef.mockReset();
@@ -197,7 +205,152 @@ beforeEach(() => {
   }));
 });
 
+function makeJmriSnipData() {
+  return {
+    user_name: 'JMRI',
+    user_description: '',
+    manufacturer: 'JMRI',
+    model: 'LccPro',
+    hardware_version: '',
+    software_version: '5.11.6',
+  };
+}
+
+async function discoverJmriNode(): Promise<void> {
+  const discovered = eventHandlers.get('lcc-node-discovered');
+  expect(discovered).toBeTypeOf('function');
+
+  await discovered?.({
+    payload: {
+      nodeId: '09.00.99.05.01.C1',
+      alias: 0x345,
+      timestamp: '2026-04-25T12:00:00.000Z',
+    },
+  });
+}
+
 describe('+page route discovery CTA', () => {
+  it('keeps a new JMRI node CDI-less after open, close, and connect', async () => {
+    invokeRef.mockImplementation(async (command: string) => {
+      if (command === 'get_connection_status') {
+        return {
+          connected: false,
+          config: null,
+        };
+      }
+      if (command === 'list_offline_changes') {
+        return [];
+      }
+      return null;
+    });
+    dialogOpenRef.mockResolvedValueOnce('D:/Layouts/Test2.layout');
+    openLayoutFileRef.mockResolvedValueOnce({
+      layoutId: 'test-layout',
+      capturedAt: '2026-04-25T00:00:00.000Z',
+      pendingOfflineChangeCount: 0,
+      partialNodes: [],
+      nodeSnapshots: [],
+    });
+    querySnipRef.mockResolvedValueOnce({
+      status: 'Complete',
+      snip_data: makeJmriSnipData(),
+    });
+    queryPipRef.mockResolvedValueOnce({
+      status: 'Complete',
+      pip_flags: {
+        cdi: false,
+        memory_configuration: false,
+      },
+    });
+
+    render(Page);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('connect-manager-button')).toBeInTheDocument();
+    });
+
+    const openLayout = eventHandlers.get('menu-open-layout');
+    expect(openLayout).toBeTypeOf('function');
+    await openLayout?.({});
+
+    await waitFor(() => {
+      expect(layoutStore.activeContext?.rootPath).toBe('D:/Layouts/Test2.layout');
+    });
+
+    const closeLayout = eventHandlers.get('menu-close-layout');
+    expect(closeLayout).toBeTypeOf('function');
+    await closeLayout?.({});
+
+    await waitFor(() => {
+      expect(layoutStore.activeContext).toBe(null);
+      expect(screen.getByTestId('connect-manager-button')).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByTestId('connect-manager-button'));
+
+    await waitFor(() => {
+      expect(probeNodesRef).toHaveBeenCalledTimes(1);
+    });
+
+    await discoverJmriNode();
+
+    await waitFor(() => {
+      expect(screen.getByText('JMRI')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/1 unread/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /read node configuration/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /read configuration/i })).not.toBeInTheDocument();
+  });
+
+  it('keeps a direct-connect JMRI node CDI-less', async () => {
+    invokeRef.mockImplementation(async (command: string) => {
+      if (command === 'get_connection_status') {
+        return {
+          connected: false,
+          config: null,
+        };
+      }
+      if (command === 'list_offline_changes') {
+        return [];
+      }
+      return null;
+    });
+    querySnipRef.mockResolvedValueOnce({
+      status: 'Complete',
+      snip_data: makeJmriSnipData(),
+    });
+    queryPipRef.mockResolvedValueOnce({
+      status: 'Complete',
+      pip_flags: {
+        cdi: false,
+        memory_configuration: false,
+      },
+    });
+
+    render(Page);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('connect-manager-button')).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByTestId('connect-manager-button'));
+
+    await waitFor(() => {
+      expect(probeNodesRef).toHaveBeenCalledTimes(1);
+    });
+
+    await discoverJmriNode();
+
+    await waitFor(() => {
+      expect(screen.getByText('JMRI')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/1 unread/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /read node configuration/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /read configuration/i })).not.toBeInTheDocument();
+  });
+
   it('shows the fresh-session config CTA and friendly name after live discovery', async () => {
     render(Page);
 

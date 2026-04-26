@@ -552,6 +552,14 @@ impl NodeProxyHandle {
             .map_err(|_| "NodeProxy actor stopped".to_string())
     }
 
+    /// Update the destination alias used for subsequent addressed traffic.
+    pub async fn update_alias(&self, alias: u16) -> Result<(), String> {
+        self.tx
+            .send(ProxyMessage::UpdateAlias { alias })
+            .await
+            .map_err(|_| "NodeProxy actor stopped".to_string())
+    }
+
     /// Update PIP flags in the proxy's cache.
     pub async fn update_pip(
         &self,

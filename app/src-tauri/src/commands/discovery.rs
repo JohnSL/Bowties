@@ -347,11 +347,22 @@ pub async fn query_pip_single(
     let _node_alias = NodeAlias::new(alias).map_err(|e| format!("Invalid alias: {}", e))?;
 
     let proxy = state.node_registry.get_by_alias(alias).await
-        .ok_or_else(|| format!("No node registered with alias 0x{:03X}", alias))?;
+        .ok_or_else(|| {
+            eprintln!("[PIP] lookup failed for alias=0x{:03X}", alias);
+            format!("No node registered with alias 0x{:03X}", alias)
+        })?;
 
     eprintln!("[PIP] alias=0x{:03X}  node_id={}", alias, proxy.node_id);
 
     let (pip_flags, status) = proxy.query_pip().await?;
+
+    eprintln!(
+        "[PIP] alias=0x{:03X} status={:?} cdi={:?} memory_configuration={:?}",
+        alias,
+        status,
+        pip_flags.as_ref().map(|flags| flags.cdi),
+        pip_flags.as_ref().map(|flags| flags.memory_configuration),
+    );
 
     Ok(QueryPipResponse { alias, pip_flags, status })
 }

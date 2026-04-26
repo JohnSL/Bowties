@@ -42,6 +42,18 @@ impl NodeRegistry {
         {
             let proxies = self.proxies.read().await;
             if let Some(handle) = proxies.get(&node_id) {
+                if let Ok(snapshot) = handle.get_snapshot().await {
+                    let current_alias = snapshot.alias.value();
+                    if current_alias != alias {
+                        eprintln!(
+                            "[node-registry] updating alias for {} from 0x{:03X} to 0x{:03X}",
+                            node_id,
+                            current_alias,
+                            alias,
+                        );
+                        let _ = handle.update_alias(alias).await;
+                    }
+                }
                 return Ok(handle.clone());
             }
         }
@@ -50,6 +62,18 @@ impl NodeRegistry {
         let mut proxies = self.proxies.write().await;
         // Double-check after acquiring write lock
         if let Some(handle) = proxies.get(&node_id) {
+            if let Ok(snapshot) = handle.get_snapshot().await {
+                let current_alias = snapshot.alias.value();
+                if current_alias != alias {
+                    eprintln!(
+                        "[node-registry] updating alias for {} from 0x{:03X} to 0x{:03X}",
+                        node_id,
+                        current_alias,
+                        alias,
+                    );
+                    let _ = handle.update_alias(alias).await;
+                }
+            }
             return Ok(handle.clone());
         }
 
@@ -71,12 +95,16 @@ impl NodeRegistry {
 
     /// Look up an existing proxy by alias. Returns None if not registered.
     pub async fn get_by_alias(&self, alias: u16) -> Option<NodeProxyHandle> {
-        self.proxies
-            .read()
-            .await
-            .values()
-            .find(|h| h.alias == alias)
-            .cloned()
+        let handles: Vec<NodeProxyHandle> = self.proxies.read().await.values().cloned().collect();
+        for handle in handles {
+            if let Ok(snapshot) = handle.get_snapshot().await {
+                if snapshot.alias.value() == alias {
+                    return Some(handle);
+                }
+            }
+        }
+
+        None
     }
 
     /// Return snapshot of all node proxies' cached DiscoveredNode data.
