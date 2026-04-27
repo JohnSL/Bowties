@@ -2,7 +2,7 @@
 
 **Visual LCC/OpenLCB Configuration Tool for Model Railroads**
 
-Bowties transforms complex LCC (Layout Command Control) event configuration into simple visual workflows. Understand your existing layout at a glance and navigate node configuration—no protocol expertise required.
+Bowties transforms complex LCC (Layout Command Control) event configuration into simple visual workflows. Understand your existing layout at a glance, capture it for offline work, and navigate node configuration without needing protocol expertise.
 
 ## Getting started
 
@@ -17,6 +17,8 @@ Bowties transforms complex LCC (Layout Command Control) event configuration into
 - **Discovers** every node on the network and shows manufacturer, model, and status
 - **Displays** full node configuration using a sidebar and card-based CDI browser — read and write any setting
 - **Maps** event producer/consumer relationships across all nodes in the Bowties view
+- **Captures** the current layout so you can reopen it offline, browse saved node data, and plan changes away from the bus
+- **Syncs** pending offline changes back to the bus with conflict review when you reconnect
 - **Links** events between nodes: click **+ New Connection**, pick a producer and a consumer, and Bowties writes the matching event ID to the node
 
 ## Supported hardware

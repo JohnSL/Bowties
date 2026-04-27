@@ -1,6 +1,6 @@
 # Using Bowties
 
-This guide walks you through connecting Bowties to your LCC layout, exploring your network, and viewing and editing node configuration.
+This guide walks you through connecting Bowties to your LCC layout, exploring your network, viewing and editing node configuration, and working with saved layouts offline.
 
 ## Connecting to your layout
 
@@ -47,6 +47,26 @@ Before you can view configuration or the Bowties event map, click **Read Node Co
 Once complete, you can click into any node to view or edit its configuration, or switch to the Bowties view.
 
 > **Note:** Configuration is cached after the first read, so subsequent launches are much faster.
+
+## Saving a layout for offline work
+
+Once discovery and configuration reads have finished, save the current layout so you can reopen it later without a live bus connection.
+
+1. Click **Save Layout**.
+2. Choose the `.layout` file you want Bowties to use.
+3. Bowties writes the layout plus its companion directory, including captured node snapshots and any pending offline changes.
+
+Later, you can reopen that layout while disconnected and continue browsing or planning changes.
+
+---
+
+## Opening a saved layout offline
+
+1. Open the saved layout file.
+2. Bowties restores the captured nodes, configuration data, and Bowties view from disk.
+3. If no live bus is connected, you stay in offline mode and can keep browsing the saved layout.
+
+While offline, edits are tracked as pending layout changes. They do not write to physical nodes until you reconnect and sync them.
 
 ---
 
@@ -111,9 +131,26 @@ You can also start a connection from the Configuration View: click **→ New Con
 
 ## Saving your work
 
-Configuration is written directly to node hardware each time you click Apply — there is no separate save step. The CDI cache is stored on disk automatically and persists between sessions.
+When you are connected to the live bus, clicking **Apply** writes that field directly to the node hardware.
+
+When you are working in a saved layout, offline edits stay pending in the layout until you click **Save Layout**. **Discard** throws away unsaved offline edits and restores the last saved layout state.
+
+If you later reconnect with a layout that still has pending offline changes, Bowties opens the **Sync Offline Changes** flow so you can review and apply them safely.
 
 Connection settings (host, port, adapter) are saved automatically and restored the next time you launch Bowties.
+
+---
+
+## Syncing offline changes back to the bus
+
+When a saved layout with pending offline changes is open and you reconnect to the bus, Bowties compares the planned values in the layout with the current live values.
+
+- **Conflicts** require you to choose whether to apply the offline value or skip it.
+- **Clean changes** are ready to apply and are selected by default.
+- **Already applied** changes are cleared automatically and reported as a count.
+- **Missing nodes** stay pending in the layout until those nodes are present again.
+
+If Bowties is not confident the connected bus matches the saved layout, it asks whether this is the **Target layout bus** or a **Bench / other bus** before showing apply choices.
 
 ---
 
