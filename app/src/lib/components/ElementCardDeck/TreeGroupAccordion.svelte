@@ -152,6 +152,7 @@
         selected={selectedInstanceIndex}
         onSelect={handlePillSelect}
         dirtyValues={suppressTransientIndicators ? new Set<number>() : dirtyInstances}
+        pendingValues={suppressTransientIndicators ? new Set<number>() : pendingApplyInstances}
       />
     </div>
 

@@ -1,6 +1,6 @@
 import type { DiscoveredNode } from '$lib/api/tauri';
 import type { OfflineChangeRow } from '$lib/api/sync';
-import { pipConfirmsNoCdi } from '$lib/orchestration/configReadOrchestrator';
+import { pipConfirmsConfigReadable } from '$lib/orchestration/configReadOrchestrator';
 import {
   hasModifiedDescendant,
   hasModifiedLeaves,
@@ -65,7 +65,7 @@ export function shouldShowConfigNotReadBadge(args: {
   return !layoutIsOfflineMode
     && !layoutOpenInProgress
     && node.snip_data !== null
-    && !pipConfirmsNoCdi(node)
+    && pipConfirmsConfigReadable(node)
     && !configReadNodes.has(nodeId);
 }
 

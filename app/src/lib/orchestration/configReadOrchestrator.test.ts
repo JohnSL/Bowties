@@ -108,6 +108,15 @@ describe('getUnreadConfigEligibleNodes', () => {
     });
   });
 
+  it('waits for confirmed CDI support before marking a node unread-eligible', () => {
+    const unread = getUnreadConfigEligibleNodes(
+      [makeNode({ pip_status: 'Unknown', pip_flags: null })],
+      new Set(),
+    );
+
+    expect(unread).toHaveLength(0);
+  });
+
   it('requires SNIP data before a node becomes eligible for config reading', () => {
     const unread = getUnreadConfigEligibleNodes(
       [makeNode({ snip_data: null, snip_status: 'Unknown' })],

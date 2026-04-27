@@ -161,6 +161,14 @@ vi.mock('$lib/components/Layout/OfflineBanner.svelte', async () => await import(
 
 import Page from './+page.svelte';
 
+function makeOfflineLayout() {
+  return {
+    schemaVersion: '1.0',
+    bowties: {},
+    roleClassifications: {},
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   eventHandlers.clear();
@@ -202,6 +210,7 @@ beforeEach(() => {
   openLayoutFileRef.mockImplementation(async () => ({
     layoutId: 'restored-layout',
     capturedAt: '2026-04-25T00:00:00.000Z',
+    layout: makeOfflineLayout(),
     offlineMode: true,
     nodeCount: 0,
     pendingOfflineChangeCount: 0,
@@ -252,6 +261,7 @@ describe('+page route discovery CTA', () => {
     openLayoutFileRef.mockResolvedValueOnce({
       layoutId: 'test-layout',
       capturedAt: '2026-04-25T00:00:00.000Z',
+      layout: makeOfflineLayout(),
       offlineMode: true,
       nodeCount: 0,
       pendingOfflineChangeCount: 0,
@@ -476,6 +486,7 @@ describe('+page route discovery CTA', () => {
     openLayoutFileRef.mockResolvedValueOnce({
       layoutId: 'yard-layout',
       capturedAt: '2026-04-25T00:00:00.000Z',
+      layout: makeOfflineLayout(),
       offlineMode: true,
       nodeCount: 0,
       pendingOfflineChangeCount: 0,

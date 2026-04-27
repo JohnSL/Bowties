@@ -16,9 +16,21 @@
   class:cr-resolved={resolution !== undefined}
 >
   <div class="cr-header">
-    {#if row.nodeId}
-      <span class="cr-node">{row.nodeId}</span>
-    {/if}
+    <div class="cr-heading">
+      {#if row.fieldLabel}
+        <span class="cr-field">{row.fieldLabel}</span>
+      {/if}
+      {#if row.nodeName || row.nodeId}
+        <span class="cr-node-line">
+          {#if row.nodeName}
+            <span class="cr-node-name">{row.nodeName}</span>
+          {/if}
+          {#if row.nodeId}
+            <span class="cr-node">{row.nodeId}</span>
+          {/if}
+        </span>
+      {/if}
+    </div>
     {#if resolution}
       <span class="cr-badge" class:cr-badge-apply={resolution === 'apply'} class:cr-badge-skip={resolution === 'skip'}>
         {resolution === 'apply' ? 'Will apply' : 'Skipped'}
@@ -78,9 +90,35 @@
 
   .cr-header {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     gap: 8px;
+  }
+
+  .cr-heading {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .cr-field {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1f2937;
+    word-break: break-word;
+  }
+
+  .cr-node-line {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: baseline;
+  }
+
+  .cr-node-name {
+    font-size: 12px;
+    color: #4b5563;
   }
 
   .cr-node {

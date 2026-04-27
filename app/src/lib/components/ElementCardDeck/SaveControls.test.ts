@@ -396,6 +396,35 @@ describe('SaveControls.svelte', () => {
       });
     });
 
+    it('re-applies persisted pending rows to the tree after successful offline save', async () => {
+      const { nodeTreeStore } = await import('$lib/stores/nodeTree.svelte');
+
+      layoutRef.isOfflineMode = true;
+      layoutRef.hasLayoutFile = true;
+      offlineRef.draftCount = 1;
+      offlineRef.draftRows = [{ status: 'pending', nodeId: 'n1' }];
+      (offlineRef as any).persistedRows = [{
+        changeId: 'persisted-1',
+        kind: 'config',
+        nodeId: '05.02.01.02.03.00',
+        space: 253,
+        offset: '0x00000000',
+        baselineValue: '1',
+        plannedValue: '2',
+        status: 'pending',
+      }];
+
+      const mockSave = vi.fn().mockResolvedValue(true);
+      render(SaveControls, { props: { onOfflineSave: mockSave, onOfflineSaveAs: vi.fn() } });
+
+      const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
+      await fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(nodeTreeStore.applyOfflinePendingValues).toHaveBeenCalledWith((offlineRef as any).persistedRows);
+      });
+    });
+
     it('reverts to idle when onOfflineSave returns false (user cancelled)', async () => {
       layoutRef.isOfflineMode = true;
       layoutRef.hasLayoutFile = true;

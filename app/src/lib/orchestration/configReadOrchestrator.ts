@@ -27,13 +27,19 @@ export function pipConfirmsNoCdi(node: Pick<DiscoveredNode, 'pip_status' | 'pip_
   return !node.pip_flags.cdi && !node.pip_flags.memory_configuration;
 }
 
+export function pipConfirmsConfigReadable(node: Pick<DiscoveredNode, 'pip_status' | 'pip_flags'>): boolean {
+  if (node.pip_status !== 'Complete') return false;
+  if (!node.pip_flags) return false;
+  return !!(node.pip_flags.cdi || node.pip_flags.memory_configuration);
+}
+
 export function getUnreadConfigEligibleNodes(
   nodes: DiscoveredNode[],
   readNodeIds: Set<string>,
 ): DiscoveredNode[] {
   return nodes.filter((node) => {
     if (!node.snip_data) return false;
-    if (pipConfirmsNoCdi(node)) return false;
+    if (!pipConfirmsConfigReadable(node)) return false;
     return !readNodeIds.has(formatNodeId(node.node_id));
   });
 }

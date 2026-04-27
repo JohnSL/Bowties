@@ -43,9 +43,9 @@
     padding: 8px 12px;
     margin: 8px;
     border-radius: 8px;
-    background: #fff7ed;
-    border: 1px solid #fdba74;
-    color: #7c2d12;
+    background: #f0fdfa;
+    border: 1px solid rgba(15, 118, 110, 0.3);
+    color: #134e4a;
     font-size: 13px;
   }
 
@@ -55,14 +55,14 @@
 
   .pending-badge {
     font-weight: 500;
-    background: #fed7aa;
+    background: rgba(15, 118, 110, 0.14);
     padding: 2px 6px;
     border-radius: 4px;
   }
 
   .sync-btn {
     cursor: pointer;
-    background: #c2410c;
+    background: #0f766e;
     color: #fff;
     border: none;
     border-radius: 4px;
@@ -72,6 +72,6 @@
   }
 
   .sync-btn:hover {
-    background: #9a3412;
+    background: #115e59;
   }
 </style>

@@ -192,7 +192,15 @@
                 <div class="sp-missing-list">
                   {#each syncPanelStore.nodeMissingRows as row (row.changeId)}
                     <div class="sp-missing-row">
-                      <span class="sp-missing-node">{row.nodeId ?? 'Unknown'}</span>
+                      <div class="sp-missing-detail">
+                        {#if row.fieldLabel}
+                          <span class="sp-missing-field">{row.fieldLabel}</span>
+                        {/if}
+                        <span class="sp-missing-node">{row.nodeName ?? row.nodeId ?? 'Unknown'}</span>
+                        {#if row.nodeId && row.nodeName}
+                          <span class="sp-missing-node-id">{row.nodeId}</span>
+                        {/if}
+                      </div>
                       <span class="sp-missing-label">Not on bus</span>
                     </div>
                   {/each}
@@ -487,22 +495,41 @@
 
   .sp-missing-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
-    padding: 6px 10px;
+    gap: 12px;
+    padding: 8px 10px;
     background: #f9fafb;
     border-radius: 4px;
     font-size: 12px;
   }
 
+  .sp-missing-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .sp-missing-field {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1f2937;
+    word-break: break-word;
+  }
+
   .sp-missing-node {
     color: #374151;
+  }
+
+  .sp-missing-node-id {
+    font-size: 11px;
     font-family: monospace;
+    color: #b91c1c;
   }
 
   .sp-missing-label {
     color: #9ca3af;
-    font-style: italic;
   }
 
   /* ─── Apply result ────────────────────────────────────── */
@@ -511,8 +538,8 @@
     flex-direction: column;
     gap: 4px;
     padding: 10px 12px;
-    background: #f8fafc;
-    border-radius: 6px;
+    font-size: 12px;
+    color: #991b1b;
   }
 
   .sp-result-ok {

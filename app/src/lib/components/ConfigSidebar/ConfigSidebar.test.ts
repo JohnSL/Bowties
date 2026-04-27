@@ -272,7 +272,7 @@ describe('ConfigSidebar.svelte', () => {
     (invoke as any).mockRejectedValue('CdiNotRetrieved: no cache entry');
 
     const nodeId = '02.01.57.00.00.01';
-    nodeInfoStore.set(new Map([[nodeId, MOCK_NODE as any]]));
+    nodeInfoStore.set(new Map([[nodeId, makeNode() as any]]));
 
     render(ConfigSidebar);
     await fireEvent.click(screen.getByText('Test Node'));

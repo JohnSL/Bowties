@@ -124,6 +124,16 @@ describe('shouldShowConfigNotReadBadge', () => {
       nodeId: '02.01.57.00.00.01',
     })).toBe(true);
   });
+
+  it('suppresses the badge until CDI support is confirmed by PIP', () => {
+    expect(shouldShowConfigNotReadBadge({
+      configReadNodes: new Set(),
+      layoutIsOfflineMode: false,
+      layoutOpenInProgress: false,
+      node: makeNode({ pip_status: 'Unknown', pip_flags: null }),
+      nodeId: '02.01.57.00.00.01',
+    })).toBe(false);
+  });
 });
 
 describe('pending state helpers', () => {

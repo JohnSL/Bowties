@@ -83,26 +83,36 @@ fn string_to_config_value(s: &str, leaf: &LeafNode) -> Option<ConfigValue> {
 struct FieldMeta {
     leaf_type: LeafType,
     size: u32,
+    field_label: String,
 }
 
-/// Resolve CDI XML for a node from the layout companion directory.
-///
-/// Loads the node snapshot YAML to get the CDI reference, then reads the
-/// cached CDI file.  Returns the parsed CDI or an error.
-fn resolve_layout_cdi(
+#[derive(Debug, Clone)]
+struct LayoutNodeResources {
+    snapshot: crate::layout::node_snapshot::NodeSnapshot,
+    cdi: lcc_rs::cdi::Cdi,
+}
+
+fn load_layout_snapshot(
     canonical_node_id: &str,
     root_path: &str,
-    app: &tauri::AppHandle,
-) -> Result<lcc_rs::cdi::Cdi, String> {
+) -> Result<crate::layout::node_snapshot::NodeSnapshot, String> {
     let base_file = std::path::Path::new(root_path);
     let companion_dir = crate::layout::io::derive_companion_dir_path(base_file)?;
     let snapshot_path = companion_dir
         .join("nodes")
         .join(format!("{}.yaml", canonical_node_id.to_uppercase()));
 
-    let snapshot: crate::layout::node_snapshot::NodeSnapshot =
-        crate::layout::io::read_yaml_file(&snapshot_path)
-            .map_err(|e| format!("Cannot load snapshot {}: {}", snapshot_path.display(), e))?;
+    crate::layout::io::read_yaml_file(&snapshot_path)
+        .map_err(|e| format!("Cannot load snapshot {}: {}", snapshot_path.display(), e))
+}
+
+fn resolve_layout_cdi_from_snapshot(
+    snapshot: &crate::layout::node_snapshot::NodeSnapshot,
+    root_path: &str,
+    app: &tauri::AppHandle,
+) -> Result<lcc_rs::cdi::Cdi, String> {
+    let base_file = std::path::Path::new(root_path);
+    let companion_dir = crate::layout::io::derive_companion_dir_path(base_file)?;
 
     // Build the CDI cache path from snapshot SNIP metadata
     let sanitize = |s: &str| -> String {
@@ -135,7 +145,7 @@ fn resolve_layout_cdi(
         } else {
             return Err(format!(
                 "CDI not found for node {} (tried {} and {})",
-                canonical_node_id,
+                snapshot.node_id.to_canonical(),
                 cdi_path.display(),
                 companion_dir.join("cdi").join(&cdi_filename).display()
             ));
@@ -143,7 +153,134 @@ fn resolve_layout_cdi(
     };
 
     lcc_rs::cdi::parser::parse_cdi(&xml)
-        .map_err(|e| format!("Cannot parse CDI for {}: {}", canonical_node_id, e))
+        .map_err(|e| format!("Cannot parse CDI for {}: {}", snapshot.node_id.to_canonical(), e))
+}
+
+/// Resolve CDI XML for a node from the layout companion directory.
+///
+/// Loads the node snapshot YAML to get the CDI reference, then reads the
+/// cached CDI file.  Returns the parsed CDI or an error.
+fn resolve_layout_cdi(
+    canonical_node_id: &str,
+    root_path: &str,
+    app: &tauri::AppHandle,
+) -> Result<lcc_rs::cdi::Cdi, String> {
+    let snapshot = load_layout_snapshot(canonical_node_id, root_path)?;
+    resolve_layout_cdi_from_snapshot(&snapshot, root_path, app)
+}
+
+fn load_layout_node_resources(
+    canonical_node_id: &str,
+    root_path: &str,
+    app: &tauri::AppHandle,
+) -> Result<LayoutNodeResources, String> {
+    let snapshot = load_layout_snapshot(canonical_node_id, root_path)?;
+    let cdi = resolve_layout_cdi_from_snapshot(&snapshot, root_path, app)?;
+    Ok(LayoutNodeResources { snapshot, cdi })
+}
+
+fn format_sync_node_id(opt: &Option<NodeID>) -> Option<String> {
+    opt.as_ref().map(|id| id.to_hex_string())
+}
+
+fn resolve_snapshot_node_name(
+    snapshot: &crate::layout::node_snapshot::NodeSnapshot,
+    node_id: &NodeID,
+) -> String {
+    let user_name = snapshot.snip.user_name.trim();
+    if user_name.is_empty() {
+        node_id.to_hex_string()
+    } else {
+        user_name.to_string()
+    }
+}
+
+fn find_snapshot_field_label(
+    snapshot: &crate::layout::node_snapshot::NodeSnapshot,
+    space: u8,
+    offset: &str,
+) -> Option<String> {
+    snapshot
+        .flattened_config_entries()
+        .into_iter()
+        .find(|entry| {
+            entry.leaf.space == Some(space)
+                && entry
+                    .leaf
+                    .offset
+                    .as_deref()
+                    .is_some_and(|leaf_offset| leaf_offset.eq_ignore_ascii_case(offset))
+        })
+        .map(|entry| entry.path.join("."))
+}
+
+fn fallback_field_label(space: Option<u8>, offset: Option<&str>) -> Option<String> {
+    match (space, offset) {
+        (Some(space), Some(offset)) => Some(format!("Space {} @ {}", space, offset)),
+        _ => None,
+    }
+}
+
+fn build_sync_row(
+    change: &OfflineChange,
+    node_name: Option<String>,
+    field_label: Option<String>,
+    bus_value: Option<String>,
+    error: Option<String>,
+) -> SyncRow {
+    SyncRow {
+        change_id: change.change_id.clone(),
+        node_id: format_sync_node_id(&change.node_id),
+        node_name,
+        field_label,
+        baseline_value: change.baseline_value.clone(),
+        planned_value: change.planned_value.clone(),
+        bus_value,
+        resolution: "unresolved".to_string(),
+        error,
+    }
+}
+
+fn join_label_path(path: &[String], leaf_name: String) -> String {
+    let mut parts = path.to_vec();
+    parts.push(leaf_name);
+    parts.join(".")
+}
+
+fn group_label(group: &lcc_rs::cdi::Group, index: usize, instance: Option<u32>) -> String {
+    let base = group
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("Group {}", index));
+    match instance {
+        Some(instance) => format!("{}({})", base, instance),
+        None => base,
+    }
+}
+
+fn int_label(element: &lcc_rs::cdi::IntElement, index: usize) -> String {
+    element.name.clone().unwrap_or_else(|| format!("Int {}", index))
+}
+
+fn string_label(element: &lcc_rs::cdi::StringElement, index: usize) -> String {
+    element
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("String {}", index))
+}
+
+fn event_id_label(element: &lcc_rs::cdi::EventIdElement, index: usize) -> String {
+    element
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("EventId {}", index))
+}
+
+fn float_label(element: &lcc_rs::cdi::FloatElement, index: usize) -> String {
+    element
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("Float {}", index))
 }
 
 /// Walk parsed CDI elements recursively to find a leaf at the given absolute
@@ -153,7 +290,19 @@ fn find_field_meta_in_cdi(cdi: &lcc_rs::cdi::Cdi, space: u8, address: u32) -> Op
         if segment.space != space {
             continue;
         }
-        if let Some(meta) = walk_elements_for_meta(&segment.elements, segment.origin as i32, 0, space, address) {
+        let mut path = vec![
+            segment
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("Space {}", segment.space)),
+        ];
+        if let Some(meta) = walk_elements_for_meta(
+            &segment.elements,
+            segment.origin as i32,
+            0,
+            address,
+            &mut path,
+        ) {
             return Some(meta);
         }
     }
@@ -166,14 +315,14 @@ fn walk_elements_for_meta(
     elements: &[lcc_rs::cdi::DataElement],
     segment_origin: i32,
     base_offset: i32,
-    target_space: u8,
     target_address: u32,
+    path: &mut Vec<String>,
 ) -> Option<FieldMeta> {
     use lcc_rs::cdi::DataElement;
 
     let mut cursor: i32 = 0;
 
-    for element in elements {
+    for (index, element) in elements.iter().enumerate() {
         match element {
             DataElement::Group(g) => {
                 cursor += g.offset;
@@ -183,11 +332,17 @@ fn walk_elements_for_meta(
 
                 for instance in 0..effective_replication {
                     let instance_base = group_start + instance as i32 * stride;
+                    path.push(group_label(g, index, if effective_replication > 1 { Some(instance) } else { None }));
                     if let Some(meta) = walk_elements_for_meta(
-                        &g.elements, segment_origin, instance_base, target_space, target_address
+                        &g.elements,
+                        segment_origin,
+                        instance_base,
+                        target_address,
+                        path,
                     ) {
                         return Some(meta);
                     }
+                    let _ = path.pop();
                 }
                 cursor += effective_replication as i32 * stride;
             }
@@ -195,7 +350,11 @@ fn walk_elements_for_meta(
                 cursor += e.offset;
                 let abs = (segment_origin + base_offset + cursor) as u32;
                 if abs == target_address {
-                    return Some(FieldMeta { leaf_type: LeafType::Int, size: e.size as u32 });
+                    return Some(FieldMeta {
+                        leaf_type: LeafType::Int,
+                        size: e.size as u32,
+                        field_label: join_label_path(path, int_label(e, index)),
+                    });
                 }
                 cursor += e.size as i32;
             }
@@ -203,7 +362,11 @@ fn walk_elements_for_meta(
                 cursor += e.offset;
                 let abs = (segment_origin + base_offset + cursor) as u32;
                 if abs == target_address {
-                    return Some(FieldMeta { leaf_type: LeafType::String, size: e.size as u32 });
+                    return Some(FieldMeta {
+                        leaf_type: LeafType::String,
+                        size: e.size as u32,
+                        field_label: join_label_path(path, string_label(e, index)),
+                    });
                 }
                 cursor += e.size as i32;
             }
@@ -211,7 +374,11 @@ fn walk_elements_for_meta(
                 cursor += e.offset;
                 let abs = (segment_origin + base_offset + cursor) as u32;
                 if abs == target_address {
-                    return Some(FieldMeta { leaf_type: LeafType::EventId, size: 8 });
+                    return Some(FieldMeta {
+                        leaf_type: LeafType::EventId,
+                        size: 8,
+                        field_label: join_label_path(path, event_id_label(e, index)),
+                    });
                 }
                 cursor += 8;
             }
@@ -219,7 +386,11 @@ fn walk_elements_for_meta(
                 cursor += e.offset;
                 let abs = (segment_origin + base_offset + cursor) as u32;
                 if abs == target_address {
-                    return Some(FieldMeta { leaf_type: LeafType::Float, size: e.size as u32 });
+                    return Some(FieldMeta {
+                        leaf_type: LeafType::Float,
+                        size: e.size as u32,
+                        field_label: join_label_path(path, float_label(e, index)),
+                    });
                 }
                 cursor += e.size as i32;
             }
@@ -358,6 +529,8 @@ pub struct LayoutMatchStatus {
 pub struct SyncRow {
     pub change_id: String,
     pub node_id: Option<String>,
+    pub node_name: Option<String>,
+    pub field_label: Option<String>,
     pub baseline_value: String,
     pub planned_value: String,
     pub bus_value: Option<String>,
@@ -673,54 +846,60 @@ pub async fn build_sync_session(
     let mut already_applied_ids = std::collections::HashSet::new();
     let mut node_missing_rows = Vec::new();
 
-    // Cache parsed CDIs per node to avoid re-parsing for each change
-    let mut cdi_cache: std::collections::HashMap<String, lcc_rs::cdi::Cdi> = std::collections::HashMap::new();
+    // Cache snapshot + parsed CDI per node to avoid reloading for each change.
+    let mut node_resources_cache: std::collections::HashMap<String, LayoutNodeResources> = std::collections::HashMap::new();
 
     for change in pending {
         // Only config changes go through bus comparison; bowtie metadata
         // changes are always clean (they don't live on the bus).
         if change.kind != OfflineChangeKind::Config {
-            clean_rows.push(SyncRow {
-                change_id: change.change_id.clone(),
-                node_id: opt_node_id_to_canonical(&change.node_id),
-                baseline_value: change.baseline_value.clone(),
-                planned_value: change.planned_value.clone(),
-                bus_value: None,
-                resolution: "unresolved".to_string(),
-                error: None,
-            });
+            clean_rows.push(build_sync_row(change, None, None, None, None));
             continue;
         }
 
         let parsed_node_id = match &change.node_id {
             Some(id) => *id,
             None => {
-                node_missing_rows.push(SyncRow {
-                    change_id: change.change_id.clone(),
-                    node_id: None,
-                    baseline_value: change.baseline_value.clone(),
-                    planned_value: change.planned_value.clone(),
-                    bus_value: None,
-                    resolution: "unresolved".to_string(),
-                    error: Some("No node ID".to_string()),
-                });
+                node_missing_rows.push(build_sync_row(
+                    change,
+                    None,
+                    fallback_field_label(change.space, change.offset.as_deref()),
+                    None,
+                    Some("No node ID".to_string()),
+                ));
                 continue;
             }
+        };
+
+        let canonical = parsed_node_id.to_canonical();
+        if !node_resources_cache.contains_key(&canonical) {
+            if let Ok(resources) = load_layout_node_resources(&canonical, &context.root_path, &app) {
+                node_resources_cache.insert(canonical.clone(), resources);
+            }
+        }
+        let resources = node_resources_cache.get(&canonical);
+        let node_name = resources
+            .map(|res| resolve_snapshot_node_name(&res.snapshot, &parsed_node_id))
+            .or_else(|| Some(parsed_node_id.to_hex_string()));
+        let field_label = if let (Some(space), Some(offset)) = (change.space, change.offset.as_deref()) {
+            resources
+                .and_then(|res| {
+                    find_snapshot_field_label(&res.snapshot, space, offset).or_else(|| {
+                        parse_offset(offset).and_then(|address| {
+                            find_field_meta_in_cdi(&res.cdi, space, address).map(|meta| meta.field_label)
+                        })
+                    })
+                })
+                .or_else(|| fallback_field_label(change.space, change.offset.as_deref()))
+        } else {
+            fallback_field_label(change.space, change.offset.as_deref())
         };
 
         // Try to find this node on the bus via the node registry
         let proxy = match state.node_registry.get(&parsed_node_id).await {
             Some(p) => p,
             None => {
-                node_missing_rows.push(SyncRow {
-                    change_id: change.change_id.clone(),
-                    node_id: opt_node_id_to_canonical(&change.node_id),
-                    baseline_value: change.baseline_value.clone(),
-                    planned_value: change.planned_value.clone(),
-                    bus_value: None,
-                    resolution: "unresolved".to_string(),
-                    error: None,
-                });
+                node_missing_rows.push(build_sync_row(change, node_name, field_label, None, None));
                 continue;
             }
         };
@@ -733,28 +912,17 @@ pub async fn build_sync_session(
             .and_then(parse_offset)
             .unwrap_or(0);
 
-        // Resolve CDI from layout for this node (cached per node)
-        let canonical = parsed_node_id.to_canonical();
-        let cdi = if let Some(c) = cdi_cache.get(&canonical) {
-            c
-        } else {
-            match resolve_layout_cdi(&canonical, &context.root_path, &app) {
-                Ok(c) => {
-                    cdi_cache.insert(canonical.clone(), c);
-                    cdi_cache.get(&canonical).unwrap()
-                }
-                Err(e) => {
-                    node_missing_rows.push(SyncRow {
-                        change_id: change.change_id.clone(),
-                        node_id: opt_node_id_to_canonical(&change.node_id),
-                        baseline_value: change.baseline_value.clone(),
-                        planned_value: change.planned_value.clone(),
-                        bus_value: None,
-                        resolution: "unresolved".to_string(),
-                        error: Some(format!("CDI unavailable: {}", e)),
-                    });
-                    continue;
-                }
+        let cdi = match resources {
+            Some(resources) => &resources.cdi,
+            None => {
+                node_missing_rows.push(build_sync_row(
+                    change,
+                    node_name,
+                    field_label,
+                    None,
+                    Some("CDI unavailable for sync row".to_string()),
+                ));
+                continue;
             }
         };
 
@@ -762,18 +930,16 @@ pub async fn build_sync_session(
         let meta = match find_field_meta_in_cdi(cdi, space, address) {
             Some(m) => m,
             None => {
-                node_missing_rows.push(SyncRow {
-                    change_id: change.change_id.clone(),
-                    node_id: opt_node_id_to_canonical(&change.node_id),
-                    baseline_value: change.baseline_value.clone(),
-                    planned_value: change.planned_value.clone(),
-                    bus_value: None,
-                    resolution: "unresolved".to_string(),
-                    error: Some(format!(
+                node_missing_rows.push(build_sync_row(
+                    change,
+                    node_name,
+                    field_label,
+                    None,
+                    Some(format!(
                         "Field not found in CDI at space={} address={:#010x}",
                         space, address
                     )),
-                });
+                ));
                 continue;
             }
         };
@@ -788,15 +954,13 @@ pub async fn build_sync_session(
         let raw = match raw {
             Ok(data) => data,
             Err(e) => {
-                node_missing_rows.push(SyncRow {
-                    change_id: change.change_id.clone(),
-                    node_id: opt_node_id_to_canonical(&change.node_id),
-                    baseline_value: change.baseline_value.clone(),
-                    planned_value: change.planned_value.clone(),
-                    bus_value: None,
-                    resolution: "unresolved".to_string(),
-                    error: Some(format!("Read failed: {}", e)),
-                });
+                node_missing_rows.push(build_sync_row(
+                    change,
+                    node_name,
+                    field_label,
+                    None,
+                    Some(format!("Read failed: {}", e)),
+                ));
                 continue;
             }
         };
@@ -804,15 +968,13 @@ pub async fn build_sync_session(
         let bus_value = match raw_bytes_to_value_string(&meta, &raw) {
             Some(v) => v,
             None => {
-                node_missing_rows.push(SyncRow {
-                    change_id: change.change_id.clone(),
-                    node_id: opt_node_id_to_canonical(&change.node_id),
-                    baseline_value: change.baseline_value.clone(),
-                    planned_value: change.planned_value.clone(),
-                    bus_value: None,
-                    resolution: "unresolved".to_string(),
-                    error: Some("Cannot parse bus value".to_string()),
-                });
+                node_missing_rows.push(build_sync_row(
+                    change,
+                    node_name,
+                    field_label,
+                    None,
+                    Some("Cannot parse bus value".to_string()),
+                ));
                 continue;
             }
         };
@@ -822,25 +984,21 @@ pub async fn build_sync_session(
             already_applied_count += 1;
             already_applied_ids.insert(change.change_id.clone());
         } else if bus_value == change.baseline_value {
-            clean_rows.push(SyncRow {
-                change_id: change.change_id.clone(),
-                node_id: opt_node_id_to_canonical(&change.node_id),
-                baseline_value: change.baseline_value.clone(),
-                planned_value: change.planned_value.clone(),
-                bus_value: Some(bus_value),
-                resolution: "unresolved".to_string(),
-                error: None,
-            });
+            clean_rows.push(build_sync_row(
+                change,
+                node_name,
+                Some(field_label.unwrap_or_else(|| meta.field_label.clone())),
+                Some(bus_value),
+                None,
+            ));
         } else {
-            conflict_rows.push(SyncRow {
-                change_id: change.change_id.clone(),
-                node_id: opt_node_id_to_canonical(&change.node_id),
-                baseline_value: change.baseline_value.clone(),
-                planned_value: change.planned_value.clone(),
-                bus_value: Some(bus_value),
-                resolution: "unresolved".to_string(),
-                error: None,
-            });
+            conflict_rows.push(build_sync_row(
+                change,
+                node_name,
+                Some(field_label.unwrap_or_else(|| meta.field_label.clone())),
+                Some(bus_value),
+                None,
+            ));
         }
     }
 
@@ -878,9 +1036,12 @@ pub async fn build_sync_session(
 
 #[cfg(test)]
 mod tests {
-    use super::remove_changes_by_id;
+    use super::{find_field_meta_in_cdi, find_snapshot_field_label, remove_changes_by_id};
+    use crate::layout::node_snapshot::{NodeSnapshot, SnapshotLeafValue};
     use crate::layout::offline_changes::{OfflineChange, OfflineChangeKind, OfflineChangeStatus};
+    use crate::layout::node_snapshot::{CdiReference, CaptureStatus, SnipSnapshot};
     use lcc_rs::NodeID;
+    use lcc_rs::cdi::{Cdi, DataElement, EventIdElement, Group, Segment};
     use std::collections::HashSet;
 
     fn make_change(change_id: &str) -> OfflineChange {
@@ -920,6 +1081,82 @@ mod tests {
         assert_eq!(removed, 0);
         assert_eq!(cache.len(), 1);
         assert_eq!(cache[0].change_id, "row-1");
+    }
+
+    #[test]
+    fn finds_snapshot_field_label_from_saved_path_tree() {
+        let mut snapshot = NodeSnapshot {
+            node_id: NodeID::new([0x02, 0x01, 0x57, 0x00, 0x02, 0xD9]),
+            captured_at: "2026-04-26T00:00:00Z".to_string(),
+            capture_status: CaptureStatus::Complete,
+            missing: Vec::new(),
+            snip: SnipSnapshot::default(),
+            cdi_ref: CdiReference {
+                cache_key: "cache".to_string(),
+                version: "1.0".to_string(),
+                fingerprint: "fp".to_string(),
+            },
+            config: Default::default(),
+            producer_identified_events: Vec::new(),
+        };
+
+        snapshot.add_config_leaf(
+            &[
+                "Port I/O".to_string(),
+                "Line(2)".to_string(),
+                "Event(0)".to_string(),
+                "Indicator".to_string(),
+            ],
+            SnapshotLeafValue {
+                value: "02.01.57.00.02.D9.02.66".to_string(),
+                space: Some(253),
+                offset: Some("0x00000010".to_string()),
+            },
+        );
+
+        assert_eq!(
+            find_snapshot_field_label(&snapshot, 253, "0x00000010").as_deref(),
+            Some("Port I/O.Line(2).Event(0).Indicator")
+        );
+    }
+
+    #[test]
+    fn finds_cdi_field_label_for_replicated_event_path() {
+        let cdi = Cdi {
+            identification: None,
+            acdi: None,
+            segments: vec![Segment {
+                name: Some("Port I/O".to_string()),
+                description: None,
+                space: 253,
+                origin: 0,
+                elements: vec![DataElement::Group(Group {
+                    name: Some("Line".to_string()),
+                    description: None,
+                    offset: 0,
+                    replication: 3,
+                    repname: Vec::new(),
+                    elements: vec![DataElement::Group(Group {
+                        name: Some("Event".to_string()),
+                        description: None,
+                        offset: 0,
+                        replication: 2,
+                        repname: Vec::new(),
+                        elements: vec![DataElement::EventId(EventIdElement {
+                            name: Some("Indicator".to_string()),
+                            description: None,
+                            offset: 0,
+                        })],
+                        hints: None,
+                    })],
+                    hints: None,
+                })],
+            }],
+        };
+
+        let meta = find_field_meta_in_cdi(&cdi, 253, 32).expect("expected field metadata");
+
+        assert_eq!(meta.field_label, "Port I/O.Line(2).Event(0).Indicator");
     }
 }
 

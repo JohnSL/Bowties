@@ -50,8 +50,18 @@
               onchange={() => syncPanelStore.toggleCleanRow(row.changeId)}
             />
             <span class="cs-row-detail">
-              {#if row.nodeId}
-                <span class="cs-row-node">{row.nodeId}</span>
+              {#if row.fieldLabel}
+                <span class="cs-row-field">{row.fieldLabel}</span>
+              {/if}
+              {#if row.nodeName || row.nodeId}
+                <span class="cs-row-node">
+                  {#if row.nodeName}
+                    <span class="cs-row-node-name">{row.nodeName}</span>
+                  {/if}
+                  {#if row.nodeId}
+                    <span class="cs-row-node-id">{row.nodeId}</span>
+                  {/if}
+                </span>
               {/if}
               <span class="cs-row-value">{row.baselineValue} → {row.plannedValue}</span>
             </span>
@@ -176,10 +186,24 @@
     min-width: 0;
   }
 
+  .cs-row-field {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1f2937;
+    word-break: break-word;
+  }
+
   .cs-row-node {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: baseline;
     font-size: 11px;
-    font-family: monospace;
     color: #9ca3af;
+  }
+
+  .cs-row-node-id {
+    font-family: monospace;
   }
 
   .cs-row-value {

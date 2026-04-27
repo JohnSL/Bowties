@@ -108,7 +108,7 @@
 
   // ── Derived values ─────────────────────────────────────────────────────────
 
-  let isDirty = $derived(leaf.modifiedValue != null);
+  let isDirty = $derived(leaf.modifiedValue != null && !leaf.isOfflinePending);
   let draftOfflineRow = $derived.by(() => {
     if (!layoutStore.isOfflineMode || !nodeId) return null;
     return offlineChangesStore.findDraftConfigChange(nodeId, leaf.space, leafOffsetKey());

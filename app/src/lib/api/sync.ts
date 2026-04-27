@@ -47,6 +47,8 @@ export interface LayoutMatchStatus {
 export interface SyncRow {
   changeId: string;
   nodeId?: string;
+  nodeName?: string;
+  fieldLabel?: string;
   baselineValue: string;
   plannedValue: string;
   busValue?: string;

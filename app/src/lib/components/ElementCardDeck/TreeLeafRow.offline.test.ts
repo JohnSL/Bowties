@@ -254,6 +254,23 @@ describe('persisted offline row (pending apply)', () => {
     expect(screen.getByText(/Bus: 3 \| Pending: 7/)).toBeInTheDocument();
   });
 
+  it('renders persisted offline pending rows with the pending style instead of the dirty style', () => {
+    mockFindPersistedConfigChange.mockReturnValue(makePersistedRow());
+    render(TreeLeafRow, {
+      props: {
+        leaf: makeLeaf({
+          modifiedValue: { type: 'int', value: 7 },
+          isOfflinePending: true,
+        }),
+        nodeId: NODE_ID,
+      },
+    });
+
+    const row = screen.getByRole('listitem');
+    expect(row).toHaveClass('offline-pending');
+    expect(row).not.toHaveClass('dirty');
+  });
+
   it('shows a "Revert" button for the persisted row', () => {
     mockFindPersistedConfigChange.mockReturnValue(makePersistedRow());
     render(TreeLeafRow, { props: { leaf: makeLeaf(), nodeId: NODE_ID } });

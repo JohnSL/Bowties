@@ -33,6 +33,11 @@
    * When non-empty an amber dot is shown beside those items in the dropdown.
    */
   export let dirtyValues: Set<number> = new Set();
+  /**
+   * Set of item values that are saved offline and still pending apply to the node.
+   * When non-empty a teal dot is shown beside those items.
+   */
+  export let pendingValues: Set<number> = new Set();
 
   // ── Unique instance ID for mutual-exclusion ──
   let instanceId = `pill-${Math.random().toString(36).slice(2, 9)}`;
@@ -48,6 +53,8 @@
   let dropdownStyle = '';
 
   $: selectedItem = items.find((i) => i.value === selected) ?? items[0];
+  $: selectedIsDirty = selectedItem ? dirtyValues.has(selectedItem.value) : false;
+  $: selectedIsPending = selectedItem ? pendingValues.has(selectedItem.value) : false;
   $: filteredItems = searchText
     ? items.filter(
         (i) =>
@@ -192,6 +199,8 @@
   <button
     class="pill-button"
     class:active={open}
+    class:dirty={selectedIsDirty}
+    class:pending={selectedIsPending}
     bind:this={buttonEl}
     on:click|stopPropagation={toggle}
     aria-haspopup="listbox"
@@ -199,6 +208,12 @@
     title={selectedItem?.description ?? selectedItem?.label ?? ''}
   >
     <span class="pill-label">{selectedItem?.label ?? '—'}</span>
+    {#if selectedIsDirty}
+      <span class="pill-status-dot pill-status-dot--dirty" title="Unsaved changes" aria-label="Unsaved changes"></span>
+    {/if}
+    {#if selectedIsPending}
+      <span class="pill-status-dot pill-status-dot--pending" title="Saved in layout, pending apply to node" aria-label="Saved in layout, pending apply to node"></span>
+    {/if}
     <svg class="pill-chevron" aria-hidden="true" viewBox="0 0 12 12" width="12" height="12">
       <path d={open ? 'M2.5 7.5 6 4l3.5 3.5' : 'M2.5 4.5 6 8l3.5-3.5'} fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
@@ -238,6 +253,9 @@
             {/if}
             {#if dirtyValues.has(item.value)}
               <span class="option-dirty-dot" title="Unsaved changes" aria-label="Unsaved changes"></span>
+            {/if}
+            {#if pendingValues.has(item.value)}
+              <span class="option-pending-dot" title="Saved in layout, pending apply to node" aria-label="Saved in layout, pending apply to node"></span>
             {/if}
             {#if item.value === selected}
               <svg class="option-check" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
@@ -285,6 +303,14 @@
     transition: background-color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
   }
 
+  .pill-button.dirty {
+    box-shadow: 0 0 0 1px rgba(202, 133, 0, 0.35), 0 1px 2px rgba(0,0,0,0.12);
+  }
+
+  .pill-button.pending {
+    box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.35), 0 1px 2px rgba(0,0,0,0.12);
+  }
+
   .pill-button:hover {
     background: #106ebe;                           /* colorBrandBackgroundHover */
     box-shadow: 0 2px 4px rgba(0,0,0,0.16);        /* slightly deeper on hover */
@@ -305,6 +331,22 @@
   .pill-label {
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .pill-status-dot {
+    flex-shrink: 0;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,0.9);
+  }
+
+  .pill-status-dot--dirty {
+    background: #ca8500;
+  }
+
+  .pill-status-dot--pending {
+    background: #0f766e;
   }
 
   .pill-chevron {
@@ -429,6 +471,23 @@
 
   /* When both checkmark and dirty dot would show (selected + dirty), shift dot left */
   .pill-option.selected .option-dirty-dot {
+    right: 28px;
+  }
+
+  .option-pending-dot {
+    position: absolute;
+    right: 8px;
+    top: 6px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #0f766e;
+    border: 1.5px solid #fff;
+    box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.35);
+    flex-shrink: 0;
+  }
+
+  .pill-option.selected .option-pending-dot {
     right: 28px;
   }
 

@@ -50,6 +50,13 @@ describe('PillSelector.svelte', () => {
       const btn = screen.getByRole('button');
       expect(btn).toHaveAttribute('aria-haspopup', 'listbox');
     });
+
+    it('shows a pending badge on the selected pill when the selected value is pending apply', () => {
+      const items = makeItems(3);
+      render(PillSelector, { props: { items, selected: 1, pendingValues: new Set([1]) } });
+
+      expect(screen.getByRole('button')).toHaveClass('pending');
+    });
   });
 
   describe('dropdown behavior', () => {
@@ -128,6 +135,14 @@ describe('PillSelector.svelte', () => {
       const options = screen.getAllByRole('option');
       expect(options[1]).toHaveAttribute('aria-selected', 'true');
       expect(options[0]).toHaveAttribute('aria-selected', 'false');
+    });
+
+    it('shows pending badges in the dropdown for pending values', async () => {
+      const items = makeItems(3);
+      render(PillSelector, { props: { items, selected: 0, pendingValues: new Set([2]) } });
+
+      await fireEvent.click(screen.getByRole('button'));
+      expect(screen.getByLabelText('Saved in layout, pending apply to node')).toBeInTheDocument();
     });
   });
 

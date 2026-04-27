@@ -67,6 +67,11 @@
   // Whether the discard confirmation dialog is open.
   let showDiscardDialog = $state(false);
 
+  function reapplyPersistedOfflinePendingValues(): void {
+    nodeTreeStore.clearAllModifiedValues();
+    nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows);
+  }
+
   // ── Save handler ────────────────────────────────────────────────────────────
 
   async function handleSave() {
@@ -84,7 +89,7 @@
         const saved = await onOfflineSave();
         if (saved) {
           await offlineChangesStore.reloadFromBackend();
-          nodeTreeStore.clearAllModifiedValues();
+          reapplyPersistedOfflinePendingValues();
           bowtieMetadataStore.clearAll();
           layoutStore.markClean();
           saveProgress = { ...saveProgress, state: 'completed', currentFieldLabel: null, completed: localPending };
@@ -190,8 +195,7 @@
 
     if (layoutStore.isOfflineMode) {
       await offlineChangesStore.revertAllPending();
-      nodeTreeStore.clearAllModifiedValues();
-      nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows);
+      reapplyPersistedOfflinePendingValues();
       bowtieMetadataStore.clearAll();
       layoutStore.revertToSaved();
       saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
@@ -218,7 +222,7 @@
     const saved = await onOfflineSaveAs();
     if (saved) {
       await offlineChangesStore.reloadFromBackend();
-      nodeTreeStore.clearAllModifiedValues();
+      reapplyPersistedOfflinePendingValues();
       bowtieMetadataStore.clearAll();
       layoutStore.markClean();
     }
