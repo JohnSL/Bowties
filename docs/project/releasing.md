@@ -2,12 +2,12 @@
 
 This document describes how to cut a new Bowties release. The process has two separate operations:
 
-1. **Prepare the release locally**: confirm the version bump, review user-facing docs, run validation, push the commit, and push the tag.
-2. **Publish the draft release publicly**: review the GitHub Actions artifacts, finalize release notes, and publish the draft release as the latest public release.
+1. **Prepare the release locally**: confirm the version bump, review user-facing docs, run validation, and push the release-preparation commit.
+2. **Publish the release**: create and push the release tag from the current synced version, then prepare end-user release notes markdown for the GitHub draft release.
 
-GitHub Actions handles the packaged builds after the tag is pushed. The local preparation work and the public release publication are separate steps on purpose.
+GitHub Actions handles the packaged builds after the tag is pushed. The local preparation work and the later publication handoff are separate steps on purpose.
 
-If you are using Copilot inside this repository, the shared prompts `/release-prepare` and `/release-publish` follow this same workflow. `/release-prepare` reads the current synced version from the repo, asks for the target version, and then walks the local preparation steps. `/release-publish` handles the later draft-release publication step.
+If you are using Copilot inside this repository, the shared skills `/release-prepare` and `/release-publish` follow this same workflow. `/release-prepare` reads the current synced version from the repo, asks for the target version, and then walks the local preparation steps. `/release-publish` reads the current synced version from the repo, creates and pushes the release tag, and then prepares end-user release notes markdown.
 
 ## Version number locations
 
@@ -120,16 +120,31 @@ Only stage the files that actually changed. The command above is the full set of
 git push
 ```
 
-### 7. Create and push the tag
+Stop here. Tagging is part of the publish step so it always uses the current synced version from the already-prepared files.
 
-The tag name **must** start with `v` to trigger the release workflow:
+## Part 2: Publish the release
+
+### 1. Confirm the current synced version
+
+Before creating the tag, confirm again that these four files still agree on the same version:
+
+- `app/src-tauri/tauri.conf.json`
+- `app/package.json`
+- `app/src-tauri/Cargo.toml`
+- `lcc-rs/Cargo.toml`
+
+The publish step should derive the tag name from those files, not from memory.
+
+### 2. Create and push the tag
+
+The tag name **must** start with `v` to trigger the release workflow. If the current synced version is `0.2.0`, the tag is `v0.2.0`:
 
 ```powershell
 git tag v0.2.0
 git push origin v0.2.0
 ```
 
-### 8. Monitor the build
+### 3. Monitor the build
 
 Go to the **[Actions](https://github.com/JohnSL/Bowties/actions)** tab in GitHub. The **Release** workflow will:
 
@@ -138,31 +153,49 @@ Go to the **[Actions](https://github.com/JohnSL/Bowties/actions)** tab in GitHub
 - build the Linux `.deb` package for ARM64
 - create a **draft** GitHub Release with all artifacts attached
 
-## Part 2: Publish the draft release
+### 4. Prepare end-user release notes markdown
 
-Once GitHub Actions finishes successfully, publish the draft release as a public release.
+Write release notes for end users. They should explain what changed from the user's point of view and should not require knowledge of the implementation.
 
-### GitHub UI path
+Use this structure:
+
+```md
+## Summary
+
+One or two sentences about what this release gives users.
+
+## What's new
+
+- User-visible change
+- User-visible change
+
+## Install and compatibility notes
+
+- Platform, installer, or upgrade note when relevant
+
+## Documentation
+
+- User-facing doc updates or guidance changes when relevant
+
+## Notes
+
+- Optional user-relevant limitation or caution
+```
+
+Rules:
+
+- focus on user-visible behavior, not implementation details
+- do not mention file names, functions, or internal refactors
+- omit empty sections if they add no value
+
+### 5. Paste the markdown into the draft release and publish it manually
 
 1. Navigate to **Releases** in GitHub.
 2. Open the draft release created by the workflow.
 3. Review the attached artifacts and confirm they match the expected release version.
-4. Write or edit the release notes.
+4. Paste the prepared release notes markdown into the release notes editor.
 5. Mark the release as the latest public release if GitHub has not already done so.
 6. Click **Publish release**.
-
-### GitHub CLI path
-
-If `gh` is installed and authenticated, you may use GitHub CLI to inspect and edit the draft release instead of using the browser.
-
-At minimum, confirm:
-
-- the draft release exists for `vX.Y.Z`
-- the artifacts finished uploading
-- the release notes are complete
-- the release is published publicly and marked as latest
-
-If `gh` is not available or not authenticated, use the GitHub UI path above.
 
 ## Release notes checklist
 
@@ -188,4 +221,4 @@ macOS builds are not currently included in the workflow.
 
 ## Hotfix releases
 
-For a patch release such as `0.2.1`, follow the same process on the relevant branch. If the fix is on `main`, increment the patch version, repeat the documentation review, rerun validation, and tag from `main`.
+For a patch release such as `0.2.1`, follow the same process on the relevant branch. If the fix is on `main`, increment the patch version, repeat the documentation review, rerun validation, push the release-preparation commit, and then tag from `main` during the publish step.

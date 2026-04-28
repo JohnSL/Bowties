@@ -28,8 +28,8 @@
 * Dynamic SNIP & Config
   * If you modify SNIP information from LccPro, for example, the updates should appear right away
   * Same for if you save config from another app. The changes should appear immediately
-* Release workflow CLI standardization
-  * Root cause: the new `/release-publish` workflow can prepare the publication handoff today, but the exact `gh release` publication path is still environment-dependent because it relies on GitHub CLI availability and authentication.
+* Release workflow publication polish
+  * Root cause: the new skill-based `/release-publish` workflow now owns tag creation and release-notes generation, but the final GitHub draft-release publication step is still a manual paste-and-publish handoff.
   * Follow-up:
-    1. Validate the exact Bowties `gh release` publish/latest flow against a non-production draft release.
-    2. Once verified, encode the exact commands in the release publication workflow and keep `docs/project/releasing.md` aligned.
+    1. Validate that the generated end-user markdown is consistently good enough to paste directly into the GitHub draft release without manual rewriting.
+    2. If the manual publication step becomes a recurring pain point, decide later whether to add a verified GitHub CLI path without regressing the simpler manual workflow.
