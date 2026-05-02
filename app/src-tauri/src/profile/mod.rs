@@ -13,7 +13,20 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::node_tree::{ConfigNode, ConnectorProfile, ConnectorSlot, LeafType, NodeConfigTree, SupportedDaughterboard};
+use crate::node_tree::{
+    ConfigNode,
+    ConnectorConstraint,
+    ConnectorConstraintEffect,
+    ConnectorProfile,
+    ConnectorScalarValue,
+    ConnectorSlot,
+    EmptyConnectorBehavior as NodeTreeEmptyConnectorBehavior,
+    EmptyConnectorConstraintEffect,
+    LeafType,
+    NodeConfigTree,
+    SlotSupportedDaughterboard,
+    SupportedDaughterboard,
+};
 
 pub use types::{
     StructureProfile,
@@ -38,7 +51,7 @@ pub use types::{
     DaughterboardMetadata,
 };
 pub use loader::{load_profile, load_shared_daughterboards};
-pub use resolver::{DaughterboardReferenceSet, ProfilePathMap, referenced_daughterboard_ids, resolve_profile_paths};
+pub use resolver::{DaughterboardReferenceSet, ProfilePathMap, referenced_daughterboard_ids, resolve_named_path, resolve_profile_paths};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cache types
@@ -143,10 +156,13 @@ pub fn build_connector_profile(
     node_id: &str,
     profile: &StructureProfile,
     library: Option<&SharedDaughterboardLibrary>,
+    cdi: &lcc_rs::cdi::Cdi,
 ) -> Option<ConnectorProfile> {
     if profile.connector_slots.is_empty() {
         return None;
     }
+
+    let carrier_key = make_profile_key(&profile.node_type.manufacturer, &profile.node_type.model);
 
     let supported_daughterboards = referenced_daughterboard_ids(profile)
         .into_iter()
@@ -177,7 +193,7 @@ pub fn build_connector_profile(
 
     Some(ConnectorProfile {
         node_id: node_id.to_string(),
-        carrier_key: make_profile_key(&profile.node_type.manufacturer, &profile.node_type.model),
+        carrier_key: carrier_key.clone(),
         slots: profile
             .connector_slots
             .iter()
@@ -188,10 +204,114 @@ pub fn build_connector_profile(
                 allow_none_installed: slot.allow_none_installed,
                 supported_daughterboard_ids: slot.supported_daughterboard_ids.clone(),
                 affected_paths: slot.affected_paths.clone(),
+                resolved_affected_paths: slot
+                    .affected_paths
+                    .iter()
+                    .filter_map(|path| resolver::resolve_named_path(path, cdi).ok())
+                    .collect(),
+                base_behavior_when_empty: slot.base_behavior_when_empty.as_ref().map(map_empty_behavior),
+                supported_daughterboard_constraints: slot
+                    .supported_daughterboard_ids
+                    .iter()
+                    .map(|daughterboard_id| SlotSupportedDaughterboard {
+                        daughterboard_id: daughterboard_id.clone(),
+                        validity_rules: collect_validity_rules(
+                            profile,
+                            library,
+                            &carrier_key,
+                            &slot.slot_id,
+                            daughterboard_id,
+                            cdi,
+                        ),
+                    })
+                    .collect(),
             })
             .collect(),
         supported_daughterboards,
     })
+}
+
+fn collect_validity_rules(
+    profile: &StructureProfile,
+    library: Option<&SharedDaughterboardLibrary>,
+    carrier_key: &str,
+    slot_id: &str,
+    daughterboard_id: &str,
+    cdi: &lcc_rs::cdi::Cdi,
+) -> Vec<ConnectorConstraint> {
+    let mut rules = Vec::new();
+
+    if let Some(shared_definition) = library
+        .and_then(|shared_library| {
+            shared_library
+                .daughterboards
+                .iter()
+                .find(|candidate| candidate.daughterboard_id == daughterboard_id)
+        })
+    {
+        for rule in &shared_definition.validity_rules {
+            if let Some(mapped) = map_constraint_rule(rule, cdi) {
+                rules.push(mapped);
+            }
+        }
+    }
+
+    for override_rule in profile.carrier_overrides.iter().filter(|candidate| {
+        candidate.daughterboard_id == daughterboard_id
+            && candidate.carrier_key.trim().eq_ignore_ascii_case(carrier_key)
+            && candidate.slot_id.as_deref().map(|value| value == slot_id).unwrap_or(true)
+    }) {
+        for rule in &override_rule.override_validity_rules {
+            if let Some(mapped) = map_constraint_rule(rule, cdi) {
+                rules.push(mapped);
+            }
+        }
+    }
+
+    rules
+}
+
+fn map_constraint_rule(
+    rule: &ConnectorConstraintRule,
+    cdi: &lcc_rs::cdi::Cdi,
+) -> Option<ConnectorConstraint> {
+    let resolved_path = resolver::resolve_named_path(&rule.target_path, cdi).ok()?;
+    Some(ConnectorConstraint {
+        target_path: rule.target_path.clone(),
+        resolved_path,
+        effect: map_constraint_effect(rule.constraint_type),
+        allowed_values: rule.allowed_values.iter().cloned().map(map_scalar_value).collect(),
+        denied_values: rule.denied_values.iter().cloned().map(map_scalar_value).collect(),
+        explanation: rule.explanation.clone(),
+    })
+}
+
+fn map_constraint_effect(effect: ConnectorConstraintType) -> ConnectorConstraintEffect {
+    match effect {
+        ConnectorConstraintType::AllowValues => ConnectorConstraintEffect::AllowValues,
+        ConnectorConstraintType::DenyValues => ConnectorConstraintEffect::DenyValues,
+        ConnectorConstraintType::ShowSection => ConnectorConstraintEffect::Show,
+        ConnectorConstraintType::HideSection => ConnectorConstraintEffect::Hide,
+        ConnectorConstraintType::ReadOnly => ConnectorConstraintEffect::ReadOnly,
+    }
+}
+
+fn map_scalar_value(value: ProfileScalarValue) -> ConnectorScalarValue {
+    match value {
+        ProfileScalarValue::String(value) => ConnectorScalarValue::String(value),
+        ProfileScalarValue::Integer(value) => ConnectorScalarValue::Integer(value),
+    }
+}
+
+fn map_empty_behavior(value: &EmptyConnectorBehavior) -> NodeTreeEmptyConnectorBehavior {
+    NodeTreeEmptyConnectorBehavior {
+        effect: match value.effect {
+            EmptyConnectorEffect::HideDependent => EmptyConnectorConstraintEffect::Hide,
+            EmptyConnectorEffect::DisableDependent => EmptyConnectorConstraintEffect::Disable,
+            EmptyConnectorEffect::AllowSubset => EmptyConnectorConstraintEffect::AllowValues,
+        },
+        allowed_values: value.allowed_values.iter().cloned().map(map_scalar_value).collect(),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -576,5 +696,91 @@ mod tests {
         assert_eq!(report.event_roles_applied, 0);
         assert_eq!(report.warnings.len(), 1, "Should have one warning for matched-but-no-eventid");
         assert!(report.warnings[0].contains("TestSeg/Settings"));
+    }
+
+    #[test]
+    fn build_connector_profile_keeps_shared_leaf_validity_rules() {
+        let cdi = parse_cdi(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Port I/O</name>
+                    <group replication="8">
+                        <name>Line</name>
+                        <repname>Line</repname>
+                        <int size="1"><name>Output Function</name></int>
+                    </group>
+                </segment>
+            </cdi>"#,
+        )
+        .expect("CDI parse should succeed");
+
+        let profile = StructureProfile {
+            schema_version: "1.0".to_string(),
+            node_type: types::ProfileNodeType {
+                manufacturer: "RR-CirKits".to_string(),
+                model: "Tower-LCC".to_string(),
+            },
+            firmware_version_range: None,
+            event_roles: vec![],
+            relevance_rules: vec![],
+            connector_slots: vec![types::ConnectorSlotDefinition {
+                slot_id: "connector-a".to_string(),
+                label: "Connector A".to_string(),
+                order: 0,
+                allow_none_installed: true,
+                supported_daughterboard_ids: vec!["BOD4".to_string()],
+                affected_paths: vec!["Port I/O/Line#1".to_string()],
+                base_behavior_when_empty: None,
+            }],
+            daughterboard_references: vec![],
+            carrier_overrides: vec![],
+        };
+
+        let library = types::SharedDaughterboardLibrary {
+            schema_version: "1.0".to_string(),
+            manufacturer: "RR-CirKits".to_string(),
+            daughterboards: vec![types::DaughterboardDefinition {
+                daughterboard_id: "BOD4".to_string(),
+                display_name: "BOD4".to_string(),
+                kind: Some("detection".to_string()),
+                validity_rules: vec![types::ConnectorConstraintRule {
+                    target_path: "Port I/O/Line/Output Function".to_string(),
+                    constraint_type: types::ConnectorConstraintType::AllowValues,
+                    allowed_values: vec![types::ProfileScalarValue::Integer(0)],
+                    denied_values: vec![],
+                    explanation: Some("Input-only board".to_string()),
+                }],
+                repair_rules: vec![],
+                defaults_when_selected: std::collections::BTreeMap::new(),
+                metadata: None,
+            }],
+        };
+
+        let connector_profile = build_connector_profile(
+            "05.02.01.02.03.00.00.01",
+            &profile,
+            Some(&library),
+            &cdi,
+        )
+        .expect("connector profile should be built");
+
+        let slot = connector_profile
+            .slots
+            .iter()
+            .find(|candidate| candidate.slot_id == "connector-a")
+            .expect("slot should be present");
+
+        assert_eq!(
+            slot.resolved_affected_paths,
+            vec![vec!["seg:0".to_string(), "elem:0#1".to_string()]]
+        );
+
+        let rules = &slot.supported_daughterboard_constraints[0].validity_rules;
+        assert_eq!(rules.len(), 1, "shared leaf rule should be preserved");
+        assert_eq!(
+            rules[0].resolved_path,
+            vec!["seg:0".to_string(), "elem:0".to_string(), "elem:0".to_string()]
+        );
+        assert_eq!(rules[0].allowed_values, vec![ConnectorScalarValue::Integer(0)]);
     }
 }

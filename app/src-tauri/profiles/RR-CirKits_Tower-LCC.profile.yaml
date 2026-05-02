@@ -63,6 +63,8 @@ eventRoles:
 relevanceRules: []
 
 connectorSlots:
+  # The Tower-LCC Port I/O segment exposes 16 replicated lines. The profile
+  # splits those lines evenly across the board's two daughterboard connectors.
   - slotId: "connector-a"
     label: "Connector A"
     order: 0
@@ -85,7 +87,14 @@ connectorSlots:
       - "Sampled I/O Splitter Pair"
       - "I/O Test-SM"
     affectedPaths:
-      - "Port I/O/Line"
+      - "Port I/O/Line#1"
+      - "Port I/O/Line#2"
+      - "Port I/O/Line#3"
+      - "Port I/O/Line#4"
+      - "Port I/O/Line#5"
+      - "Port I/O/Line#6"
+      - "Port I/O/Line#7"
+      - "Port I/O/Line#8"
   - slotId: "connector-b"
     label: "Connector B"
     order: 1
@@ -108,7 +117,14 @@ connectorSlots:
       - "Sampled I/O Splitter Pair"
       - "I/O Test-SM"
     affectedPaths:
-      - "Port I/O/Line"
+      - "Port I/O/Line#9"
+      - "Port I/O/Line#10"
+      - "Port I/O/Line#11"
+      - "Port I/O/Line#12"
+      - "Port I/O/Line#13"
+      - "Port I/O/Line#14"
+      - "Port I/O/Line#15"
+      - "Port I/O/Line#16"
 
 daughterboardReferences:
   - "BOD4"

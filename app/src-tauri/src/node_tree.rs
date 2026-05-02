@@ -53,6 +53,62 @@ pub struct ConnectorProfile {
     pub supported_daughterboards: Vec<SupportedDaughterboard>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ConnectorScalarValue {
+    String(String),
+    Integer(i64),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConnectorConstraintEffect {
+    Show,
+    Hide,
+    Disable,
+    AllowValues,
+    DenyValues,
+    ReadOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EmptyConnectorConstraintEffect {
+    Hide,
+    Disable,
+    AllowValues,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorConstraint {
+    pub target_path: String,
+    pub resolved_path: Vec<String>,
+    pub effect: ConnectorConstraintEffect,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_values: Vec<ConnectorScalarValue>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub denied_values: Vec<ConnectorScalarValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmptyConnectorBehavior {
+    pub effect: EmptyConnectorConstraintEffect,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_values: Vec<ConnectorScalarValue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotSupportedDaughterboard {
+    pub daughterboard_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validity_rules: Vec<ConnectorConstraint>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectorSlot {
@@ -62,6 +118,12 @@ pub struct ConnectorSlot {
     pub allow_none_installed: bool,
     pub supported_daughterboard_ids: Vec<String>,
     pub affected_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resolved_affected_paths: Vec<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_behavior_when_empty: Option<EmptyConnectorBehavior>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_daughterboard_constraints: Vec<SlotSupportedDaughterboard>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -732,6 +732,7 @@ pub async fn build_offline_node_tree(
                     &dotted_id,
                     &profile,
                     shared_daughterboards.as_ref(),
+                    &cdi,
                 );
                 eprintln!(
                     "[offline profile] {} - {} event roles, {} rules applied, {} warnings",

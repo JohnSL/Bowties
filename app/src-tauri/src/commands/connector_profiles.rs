@@ -14,6 +14,41 @@ pub struct ConnectorSlotView {
     pub allow_none_installed: bool,
     pub supported_daughterboard_ids: Vec<String>,
     pub affected_paths: Vec<String>,
+    pub resolved_affected_paths: Vec<Vec<String>>,
+    pub base_behavior_when_empty: Option<EmptyConnectorBehaviorView>,
+    pub supported_daughterboard_constraints: Vec<SlotSupportedDaughterboardView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ConnectorScalarValueView {
+    String(String),
+    Integer(i64),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmptyConnectorBehaviorView {
+    pub effect: FilterEffect,
+    pub allowed_values: Vec<ConnectorScalarValueView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorConstraintView {
+    pub target_path: String,
+    pub resolved_path: Vec<String>,
+    pub effect: FilterEffect,
+    pub allowed_values: Vec<ConnectorScalarValueView>,
+    pub denied_values: Vec<ConnectorScalarValueView>,
+    pub explanation: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotSupportedDaughterboardView {
+    pub daughterboard_id: String,
+    pub validity_rules: Vec<ConnectorConstraintView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +110,7 @@ pub enum FilterEffect {
     Disable,
     AllowValues,
     DenyValues,
+    ReadOnly,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,6 +152,64 @@ impl From<crate::node_tree::ConnectorSlot> for ConnectorSlotView {
             allow_none_installed: value.allow_none_installed,
             supported_daughterboard_ids: value.supported_daughterboard_ids,
             affected_paths: value.affected_paths,
+            resolved_affected_paths: value.resolved_affected_paths,
+            base_behavior_when_empty: value.base_behavior_when_empty.map(EmptyConnectorBehaviorView::from),
+            supported_daughterboard_constraints: value
+                .supported_daughterboard_constraints
+                .into_iter()
+                .map(SlotSupportedDaughterboardView::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<crate::node_tree::ConnectorScalarValue> for ConnectorScalarValueView {
+    fn from(value: crate::node_tree::ConnectorScalarValue) -> Self {
+        match value {
+            crate::node_tree::ConnectorScalarValue::String(value) => Self::String(value),
+            crate::node_tree::ConnectorScalarValue::Integer(value) => Self::Integer(value),
+        }
+    }
+}
+
+impl From<crate::node_tree::EmptyConnectorBehavior> for EmptyConnectorBehaviorView {
+    fn from(value: crate::node_tree::EmptyConnectorBehavior) -> Self {
+        Self {
+            effect: match value.effect {
+                crate::node_tree::EmptyConnectorConstraintEffect::Hide => FilterEffect::Hide,
+                crate::node_tree::EmptyConnectorConstraintEffect::Disable => FilterEffect::Disable,
+                crate::node_tree::EmptyConnectorConstraintEffect::AllowValues => FilterEffect::AllowValues,
+            },
+            allowed_values: value.allowed_values.into_iter().map(ConnectorScalarValueView::from).collect(),
+        }
+    }
+}
+
+impl From<crate::node_tree::ConnectorConstraint> for ConnectorConstraintView {
+    fn from(value: crate::node_tree::ConnectorConstraint) -> Self {
+        Self {
+            target_path: value.target_path,
+            resolved_path: value.resolved_path,
+            effect: match value.effect {
+                crate::node_tree::ConnectorConstraintEffect::Show => FilterEffect::Show,
+                crate::node_tree::ConnectorConstraintEffect::Hide => FilterEffect::Hide,
+                crate::node_tree::ConnectorConstraintEffect::Disable => FilterEffect::Disable,
+                crate::node_tree::ConnectorConstraintEffect::AllowValues => FilterEffect::AllowValues,
+                crate::node_tree::ConnectorConstraintEffect::DenyValues => FilterEffect::DenyValues,
+                crate::node_tree::ConnectorConstraintEffect::ReadOnly => FilterEffect::ReadOnly,
+            },
+            allowed_values: value.allowed_values.into_iter().map(ConnectorScalarValueView::from).collect(),
+            denied_values: value.denied_values.into_iter().map(ConnectorScalarValueView::from).collect(),
+            explanation: value.explanation,
+        }
+    }
+}
+
+impl From<crate::node_tree::SlotSupportedDaughterboard> for SlotSupportedDaughterboardView {
+    fn from(value: crate::node_tree::SlotSupportedDaughterboard) -> Self {
+        Self {
+            daughterboard_id: value.daughterboard_id,
+            validity_rules: value.validity_rules.into_iter().map(ConnectorConstraintView::from).collect(),
         }
     }
 }
@@ -350,6 +444,9 @@ mod tests {
                     allow_none_installed: true,
                     supported_daughterboard_ids: vec!["BOD4-CP".to_string()],
                     affected_paths: vec!["Port I/O/Line".to_string()],
+                    resolved_affected_paths: vec![],
+                    base_behavior_when_empty: None,
+                    supported_daughterboard_constraints: vec![],
                 },
                 ConnectorSlotView {
                     slot_id: "connector-b".to_string(),
@@ -358,6 +455,9 @@ mod tests {
                     allow_none_installed: true,
                     supported_daughterboard_ids: vec!["FOB-A".to_string()],
                     affected_paths: vec!["Port I/O/Line".to_string()],
+                    resolved_affected_paths: vec![],
+                    base_behavior_when_empty: None,
+                    supported_daughterboard_constraints: vec![],
                 },
             ],
             supported_daughterboards: vec![],
@@ -411,6 +511,9 @@ mod tests {
                 allow_none_installed: true,
                 supported_daughterboard_ids: vec!["BOD4-CP".to_string()],
                 affected_paths: vec!["Port I/O/Line".to_string()],
+                resolved_affected_paths: vec![vec!["seg:2".to_string(), "elem:0#1".to_string()]],
+                base_behavior_when_empty: None,
+                supported_daughterboard_constraints: vec![],
             }],
             supported_daughterboards: vec![crate::node_tree::SupportedDaughterboard {
                 daughterboard_id: "BOD4-CP".to_string(),

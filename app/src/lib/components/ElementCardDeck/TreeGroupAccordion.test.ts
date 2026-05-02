@@ -18,6 +18,7 @@ import { get } from 'svelte/store';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import TreeGroupAccordion from './TreeGroupAccordion.svelte';
 import type { GroupConfigNode, LeafConfigNode, ConfigNode } from '$lib/types/nodeTree';
+import type { ConnectorProfileView, ConnectorSelectionDocument } from '$lib/types/connectorProfile';
 import { groupReplicatedChildren, getInstanceDisplayName } from '$lib/types/nodeTree';
 import { pillSelections, setPillSelection } from '$lib/stores/pillSelection';
 
@@ -66,6 +67,53 @@ function makeGroup(
     children,
     displayName: null,
     ...overrides,
+  };
+}
+
+function makeConnectorProfile(): ConnectorProfileView {
+  return {
+    nodeId: '02.01.00.00.00.01',
+    carrierKey: 'rr-cirkits::tower-lcc',
+    slots: [
+      {
+        slotId: 'connector-a',
+        label: 'Connector A',
+        order: 0,
+        allowNoneInstalled: true,
+        supportedDaughterboardIds: ['BOD4'],
+        affectedPaths: ['Port I/O/Line#1'],
+        resolvedAffectedPaths: [['seg:0', 'elem:0#1']],
+        supportedDaughterboardConstraints: [
+          {
+            daughterboardId: 'BOD4',
+            validityRules: [
+              {
+                targetPath: 'Port I/O/Line/Output Function',
+                resolvedPath: ['seg:0', 'elem:0', 'elem:1'],
+                effect: 'allowValues',
+                allowedValues: [0, 9, 10],
+              },
+              {
+                targetPath: 'Port I/O/Line/Producer Events',
+                resolvedPath: ['seg:0', 'elem:0', 'elem:5'],
+                effect: 'hide',
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    supportedDaughterboards: [{ daughterboardId: 'BOD4', displayName: 'BOD4' }],
+  };
+}
+
+function makeConnectorDocument(): ConnectorSelectionDocument {
+  return {
+    nodeId: '02.01.00.00.00.01',
+    carrierKey: 'rr-cirkits::tower-lcc',
+    slotSelections: [
+      { slotId: 'connector-a', selectedDaughterboardId: 'BOD4', status: 'selected' },
+    ],
   };
 }
 
@@ -280,6 +328,76 @@ describe('TreeGroupAccordion.svelte', () => {
       expect(screen.getByText('Channel 1')).toBeInTheDocument();
       // Nested leaf visible without any clicks
       expect(screen.getByText('Nested Value')).toBeInTheDocument();
+    });
+  });
+
+  describe('connector-governed filtering', () => {
+    it('hides governed child groups when the selected daughterboard hides that target', () => {
+      const governedLeaf = makeLeaf({
+        name: 'Command',
+        path: ['seg:0', 'elem:0#1', 'elem:5', 'elem:0'],
+      });
+      const hiddenGroup = makeGroup([governedLeaf], {
+        instanceLabel: 'Producer Events',
+        path: ['seg:0', 'elem:0#1', 'elem:5'],
+      });
+      const lineGroup = makeGroup([hiddenGroup], {
+        instanceLabel: 'Line 1',
+        path: ['seg:0', 'elem:0#1'],
+      });
+
+      render(TreeGroupAccordion, {
+        props: {
+          group: lineGroup,
+          nodeId: '02.01.00.00.00.01',
+          connectorProfile: makeConnectorProfile(),
+          connectorDocument: makeConnectorDocument(),
+        },
+      });
+
+      expect(screen.queryByText('Producer Events')).not.toBeInTheDocument();
+      expect(screen.queryByText('Command')).not.toBeInTheDocument();
+    });
+
+    it('narrows enum options for governed leaves to the selected daughterboard subset', () => {
+      const governedLeaf = makeLeaf({
+        name: 'Output Function',
+        path: ['seg:0', 'elem:0#1', 'elem:1'],
+        value: { type: 'int', value: 0 },
+        constraints: {
+          min: 0,
+          max: 10,
+          defaultValue: null,
+          mapEntries: [
+            { value: 0, label: 'No Function' },
+            { value: 1, label: 'Steady Active Hi' },
+            { value: 2, label: 'Steady Active Lo' },
+            { value: 9, label: 'Sample Steady Active Hi' },
+            { value: 10, label: 'Sample Steady Active Lo' },
+          ],
+        },
+      });
+      const lineGroup = makeGroup([governedLeaf], {
+        instanceLabel: 'Line 1',
+        path: ['seg:0', 'elem:0#1'],
+      });
+
+      render(TreeGroupAccordion, {
+        props: {
+          group: lineGroup,
+          nodeId: '02.01.00.00.00.01',
+          connectorProfile: makeConnectorProfile(),
+          connectorDocument: makeConnectorDocument(),
+        },
+      });
+
+      const options = screen.getAllByRole('option').map((option) => option.textContent);
+      expect(options).toEqual([
+        'No Function',
+        'Sample Steady Active Hi',
+        'Sample Steady Active Lo',
+      ]);
+      expect(screen.queryByRole('option', { name: 'Steady Active Hi' })).not.toBeInTheDocument();
     });
   });
 

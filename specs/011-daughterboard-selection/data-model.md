@@ -40,7 +40,7 @@ Defines one hardware attachment point on a carrier board.
 | `allowNoneInstalled` | boolean | Enables explicit unpopulated state |
 | `supportedDaughterboardIds` | array of string | Allowed reusable daughterboards for this slot |
 | `affectedPaths` | array of profile/CDI path refs | Lines/groups/sections governed by the slot |
-| `baseBehaviorWhenEmpty` | enum/object | Optional rule for "None installed" behavior |
+| `baseBehaviorWhenEmpty` | enum/object | Optional rule for "None installed" behavior; when omitted, empty slots add no extra constraints |
 
 **Relationships**
 

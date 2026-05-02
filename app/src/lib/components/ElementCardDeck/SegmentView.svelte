@@ -17,11 +17,12 @@
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { nodeInfoStore } from '$lib/stores/nodeInfo';
-  import type { SegmentNode, ConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
-  import { isGroup, isLeaf, groupReplicatedChildren } from '$lib/types/nodeTree';
+  import type { SegmentNode, TreeConfigValue } from '$lib/types/nodeTree';
+  import { groupReplicatedChildren } from '$lib/types/nodeTree';
   import TreeGroupAccordion from './TreeGroupAccordion.svelte';
   import TreeLeafRow from './TreeLeafRow.svelte';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
+  import { evaluateConnectorConstraintsForPath } from '$lib/utils/connectorConstraints';
   import { buildSegmentConnectorSlotSelectors } from '$lib/utils/connectorSlotSelectors';
 
   interface Props {
@@ -41,37 +42,39 @@
   let selectedSegment = $derived($configSidebarStore.selectedSegment);
   let configReadNodes = $derived($configReadNodesStore);
 
-  // Cross-reference lookup for event ID → bowtie card
   let nodeSlotMap = $derived(bowtieCatalogStore.effectiveNodeSlotMap);
-
-  // Access trees reactively so segment derivation re-runs when tree data changes
-  // (e.g. after node-tree-updated event merges config values)
   let trees = $derived(nodeTreeStore.trees);
+  let connectorRevision = $derived(connectorSelectionsStore.revision);
 
-  /**
-   * Derive the SegmentNode from the tree store whenever the selection or tree changes.
-   * The segment index is encoded in segmentPath as "seg:N".
-   */
   let segment = $derived(deriveSegment(selectedSegment, trees));
-
-  /** Whether the tree for the selected node is still loading */
   let isLoading = $derived(selectedSegment ? nodeTreeStore.isNodeLoading(selectedSegment.nodeId) : false);
-
-  /** Error from tree loading */
   let loadError = $derived(selectedSegment ? nodeTreeStore.getError(selectedSegment.nodeId) ?? null : null);
 
   let selectedTree = $derived(selectedSegment ? nodeTreeStore.getTree(selectedSegment.nodeId) : null);
-  let connectorProfile = $derived(
-    selectedSegment
-      ? connectorSelectionsStore.getProfile(selectedSegment.nodeId) ?? selectedTree?.connectorProfile ?? null
-      : null,
-  );
-  let connectorDocument = $derived(
-    selectedSegment ? connectorSelectionsStore.getDocument(selectedSegment.nodeId) : null,
-  );
-  let connectorError = $derived(
-    selectedSegment ? connectorSelectionsStore.getError(selectedSegment.nodeId) : null,
-  );
+  let connectorProfile = $derived.by(() => {
+    connectorRevision;
+    if (!selectedSegment) {
+      return null;
+    }
+
+    return connectorSelectionsStore.getProfile(selectedSegment.nodeId) ?? selectedTree?.connectorProfile ?? null;
+  });
+  let connectorDocument = $derived.by(() => {
+    connectorRevision;
+    if (!selectedSegment) {
+      return null;
+    }
+
+    return connectorSelectionsStore.getDocument(selectedSegment.nodeId);
+  });
+  let connectorError = $derived.by(() => {
+    connectorRevision;
+    if (!selectedSegment) {
+      return null;
+    }
+
+    return connectorSelectionsStore.getError(selectedSegment.nodeId);
+  });
   let connectorSelectors = $derived(
     segment
       ? buildSegmentConnectorSlotSelectors(connectorProfile, connectorDocument, segment.name)
@@ -83,42 +86,42 @@
       : false,
   );
 
-  /** Whether the selected node is offline — disables all inputs (FR-007) */
   let isNodeOffline = $derived(
     selectedSegment
       ? ($nodeInfoStore.get(selectedSegment.nodeId)?.connection_status === 'NotResponding')
-      : false
+      : false,
   );
 
   function deriveSegment(
     sel: { nodeId: string; segmentId: string } | null,
-    _trees: Map<string, any>,  // reactive dependency; value used via nodeTreeStore
+    _trees: Map<string, any>,
   ): SegmentNode | null {
     if (!sel) return null;
     const tree = nodeTreeStore.getTree(sel.nodeId);
     if (!tree) return null;
 
-    // Parse "seg:N" from segmentId
     const match = sel.segmentId.match(/^seg:(\d+)$/);
     if (!match) return null;
     const idx = parseInt(match[1], 10);
     return tree.segments[idx] ?? null;
   }
 
-  /** Format a TreeConfigValue for inline display */
   function formatTreeValue(v: TreeConfigValue | null): string {
     if (v === null) return '—';
     switch (v.type) {
-      case 'int':     return String(v.value);
-      case 'string':  return v.value || '(empty)';
-      case 'float':   return v.value.toFixed(4);
-      case 'eventId': return v.bytes.every((b: number) => b === 0)
-        ? '(free)'
-        : v.bytes.map((b: number) => b.toString(16).padStart(2, '0')).join('.');
+      case 'int':
+        return String(v.value);
+      case 'string':
+        return v.value || '(empty)';
+      case 'float':
+        return v.value.toFixed(4);
+      case 'eventId':
+        return v.bytes.every((b: number) => b === 0)
+          ? '(free)'
+          : v.bytes.map((b: number) => b.toString(16).padStart(2, '0')).join('.');
     }
   }
 
-  /** Get the BowtieCard cross-reference for a leaf's path */
   function getUsedIn(nodeId: string, leaf: { path: string[] }) {
     return nodeSlotMap.get(`${nodeId}:${leaf.path.join('/')}`);
   }
@@ -132,6 +135,10 @@
     onchangeConnectorSelection?.(event);
     dispatch('changeConnectorSelection', detail);
   }
+
+  function connectorConstraintForPath(path: string[]) {
+    return evaluateConnectorConstraintsForPath(connectorProfile, connectorDocument, path);
+  }
 </script>
 
 <div class="segment-view">
@@ -142,100 +149,119 @@
 
   {:else if segment}
     {@const nodeId = selectedSegment.nodeId}
-    {@const groupedChildren = groupReplicatedChildren(segment.children)}
-    <div class="segment-content">
-      <h2 class="segment-heading">{segment.name}</h2>
-      {#if segment.description}
-        <p class="segment-description">{segment.description}</p>
-      {/if}
-      {#if connectorError}
-        <div class="load-error" role="alert">{connectorError}</div>
-      {:else if connectorSelectors.length > 0}
-        <section class="connector-section" aria-label="Connector daughterboards for {segment.name}">
-          <h3 class="connector-heading">Connector daughterboards</h3>
-          <div class="connector-selector-list" role="group" aria-label="Connector daughterboards for {segment.name}">
-            {#each connectorSelectors as selector (selector.slotId)}
-              <ConnectorSlotSelector
-                {selector}
-                disabled={!connectorControlsEnabled || isNodeOffline}
-                on:change={(event) => emitConnectorSelection({
-                  nodeId,
-                  slotId: event.detail.slotId,
-                  selectedDaughterboardId: event.detail.selectedDaughterboardId,
-                })}
-              />
-            {/each}
-          </div>
-          {#if !connectorControlsEnabled}
-            <p class="connector-hint">Read this node configuration online or open a layout to edit connector selections.</p>
-          {/if}
-        </section>
-      {/if}
-      {#each groupedChildren as item, idx (idx)}
-        {#if item.type === 'leaf'}
-          <!-- Direct leaf field at segment level (e.g. User Info fields) -->
-          <div class="segment-leaf">
-            <TreeLeafRow leaf={item.node} usedIn={getUsedIn(nodeId, item.node)} depth={0} {nodeId} segmentOrigin={segment.origin} segmentName={segment.name} {isNodeOffline} />
-          </div>
-        {:else if item.type === 'replicatedSet'}
-          <!-- Replicated group → pill-selectable section -->
-          <TreeGroupAccordion
-            group={item.instances[0]}
-            {nodeId}
-            depth={0}
-            siblings={item.instances}
-            segmentOrigin={segment.origin}
-            segmentName={segment.name}
-            {isNodeOffline}
-          />
-        {:else if item.type === 'group'}
-          {#if item.node.replicationCount > 1}
-            <!-- Single replicated instance (shouldn't normally happen after grouping) -->
-            <TreeGroupAccordion group={item.node} {nodeId} depth={0} segmentOrigin={segment.origin} segmentName={segment.name} {isNodeOffline} />
-          {:else}
-            <!-- Non-replicated group → section header with children -->
-            {@const innerGrouped = groupReplicatedChildren(item.node.children)}
-            {@const groupEffectiveOffline = isNodeOffline || !!item.node.readOnly}
-            <section class="group-section">
-              {#if item.node.hasName !== false}
-                <div class="group-header">
-                  <span class="group-name">{item.node.instanceLabel}</span>
-                  {#if item.node.description}
-                    <p class="group-description">{item.node.description}</p>
-                  {/if}
-                </div>
-              {/if}
-
-              {#each innerGrouped as inner, innerIdx (innerIdx)}
-                {#if inner.type === 'leaf'}
-                  <TreeLeafRow leaf={inner.node} usedIn={getUsedIn(nodeId, inner.node)} depth={1} {nodeId} segmentOrigin={segment.origin} segmentName={segment.name} isNodeOffline={groupEffectiveOffline} />
-                {:else if inner.type === 'replicatedSet'}
-                  <TreeGroupAccordion
-                    group={inner.instances[0]}
-                    {nodeId}
-                    depth={1}
-                    siblings={inner.instances}
-                    segmentOrigin={segment.origin}
-                    segmentName={segment.name}
-                    isNodeOffline={groupEffectiveOffline}
-                  />
-                {:else if inner.type === 'group'}
-                  <TreeGroupAccordion
-                    group={inner.node}
-                    {nodeId}
-                    depth={1}
-                    segmentOrigin={segment.origin}
-                    segmentName={segment.name}
-                    isNodeOffline={groupEffectiveOffline}
-                  />
-                {/if}
-              {/each}
-            </section>
-          {/if}
+    {#key `${nodeId}:${connectorRevision}`}
+      {@const groupedChildren = groupReplicatedChildren(segment.children)}
+      <div class="segment-content">
+        <h2 class="segment-heading">{segment.name}</h2>
+        {#if segment.description}
+          <p class="segment-description">{segment.description}</p>
         {/if}
-      {/each}
+        {#if connectorError}
+          <div class="load-error" role="alert">{connectorError}</div>
+        {:else if connectorSelectors.length > 0}
+          <section class="connector-section" aria-label="Connector daughterboards for {segment.name}">
+            <h3 class="connector-heading">Connector daughterboards</h3>
+            <div class="connector-selector-list" role="group" aria-label="Connector daughterboards for {segment.name}">
+              {#each connectorSelectors as selector (selector.slotId)}
+                <ConnectorSlotSelector
+                  {selector}
+                  disabled={!connectorControlsEnabled || isNodeOffline}
+                  on:change={(event) => emitConnectorSelection({
+                    nodeId,
+                    slotId: event.detail.slotId,
+                    selectedDaughterboardId: event.detail.selectedDaughterboardId,
+                  })}
+                />
+              {/each}
+            </div>
+            {#if !connectorControlsEnabled}
+              <p class="connector-hint">Read this node configuration online or open a layout to edit connector selections.</p>
+            {/if}
+          </section>
+        {/if}
+        {#each groupedChildren as item, idx (idx)}
+          {#if item.type === 'leaf'}
+            {@const leafConstraint = connectorConstraintForPath(item.node.path)}
+            {#if !leafConstraint.hidden}
+              <div class="segment-leaf">
+                <TreeLeafRow leaf={item.node} usedIn={getUsedIn(nodeId, item.node)} depth={0} {nodeId} segmentOrigin={segment.origin} segmentName={segment.name} {isNodeOffline} connectorConstraintState={leafConstraint} />
+              </div>
+            {/if}
+          {:else if item.type === 'replicatedSet'}
+            {@const replicatedConstraint = connectorConstraintForPath(item.instances[0].path)}
+            {#if !replicatedConstraint.hidden}
+              <TreeGroupAccordion
+                group={item.instances[0]}
+                {nodeId}
+                depth={0}
+                siblings={item.instances}
+                segmentOrigin={segment.origin}
+                segmentName={segment.name}
+                {isNodeOffline}
+                {connectorProfile}
+                {connectorDocument}
+              />
+            {/if}
+          {:else if item.type === 'group'}
+            {@const groupConstraint = connectorConstraintForPath(item.node.path)}
+            {#if !groupConstraint.hidden && item.node.replicationCount > 1}
+              <TreeGroupAccordion group={item.node} {nodeId} depth={0} segmentOrigin={segment.origin} segmentName={segment.name} {isNodeOffline} {connectorProfile} {connectorDocument} />
+            {:else if !groupConstraint.hidden}
+              {@const innerGrouped = groupReplicatedChildren(item.node.children)}
+              {@const groupEffectiveOffline = isNodeOffline || !!item.node.readOnly}
+              <section class="group-section">
+                {#if item.node.hasName !== false}
+                  <div class="group-header">
+                    <span class="group-name">{item.node.instanceLabel}</span>
+                    {#if item.node.description}
+                      <p class="group-description">{item.node.description}</p>
+                    {/if}
+                  </div>
+                {/if}
 
-    </div>
+                {#each innerGrouped as inner, innerIdx (innerIdx)}
+                  {#if inner.type === 'leaf'}
+                    {@const innerLeafConstraint = connectorConstraintForPath(inner.node.path)}
+                    {#if !innerLeafConstraint.hidden}
+                      <TreeLeafRow leaf={inner.node} usedIn={getUsedIn(nodeId, inner.node)} depth={1} {nodeId} segmentOrigin={segment.origin} segmentName={segment.name} isNodeOffline={groupEffectiveOffline} connectorConstraintState={innerLeafConstraint} />
+                    {/if}
+                  {:else if inner.type === 'replicatedSet'}
+                    {@const innerReplicatedConstraint = connectorConstraintForPath(inner.instances[0].path)}
+                    {#if !innerReplicatedConstraint.hidden}
+                      <TreeGroupAccordion
+                        group={inner.instances[0]}
+                        {nodeId}
+                        depth={1}
+                        siblings={inner.instances}
+                        segmentOrigin={segment.origin}
+                        segmentName={segment.name}
+                        isNodeOffline={groupEffectiveOffline}
+                        {connectorProfile}
+                        {connectorDocument}
+                      />
+                    {/if}
+                  {:else if inner.type === 'group'}
+                    {@const innerGroupConstraint = connectorConstraintForPath(inner.node.path)}
+                    {#if !innerGroupConstraint.hidden}
+                      <TreeGroupAccordion
+                        group={inner.node}
+                        {nodeId}
+                        depth={1}
+                        segmentOrigin={segment.origin}
+                        segmentName={segment.name}
+                        isNodeOffline={groupEffectiveOffline}
+                        {connectorProfile}
+                        {connectorDocument}
+                      />
+                    {/if}
+                  {/if}
+                {/each}
+              </section>
+            {/if}
+          {/if}
+        {/each}
+      </div>
+    {/key}
 
   {:else if isLoading}
     <!-- Initial load — segment not yet available -->

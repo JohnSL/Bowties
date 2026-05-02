@@ -1517,6 +1517,7 @@ pub async fn get_node_tree(
                     &node_id,
                     &profile,
                     shared_daughterboards.as_ref(),
+                    &cdi,
                 );
                 eprintln!(
                     "[profile] {} — {} event roles, {} rules applied, {} warnings",

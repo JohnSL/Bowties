@@ -96,6 +96,7 @@ class ConnectorSelectionsStore {
   private _documents = $state<Map<string, ConnectorSelectionDocument>>(new Map());
   private _loading = $state<Set<string>>(new Set());
   private _errors = $state<Map<string, string>>(new Map());
+  revision = $state(0);
 
   get profiles(): Map<string, ConnectorProfileView> {
     return this._profiles;
@@ -136,6 +137,7 @@ class ConnectorSelectionsStore {
     }
 
     this._documents = nextDocuments;
+    this.revision += 1;
   }
 
   reset(): void {
@@ -143,6 +145,7 @@ class ConnectorSelectionsStore {
     this._documents = new Map();
     this._loading = new Set();
     this._errors = new Map();
+    this.revision += 1;
   }
 
   async loadNode(
@@ -154,9 +157,13 @@ class ConnectorSelectionsStore {
       return this._documents.get(nodeKey) ?? null;
     }
 
-    this._loading = new Set([...this._loading, nodeKey]);
-    this._errors = new Map(this._errors);
-    this._errors.delete(nodeKey);
+    const nextLoading = new Set(this._loading);
+    nextLoading.add(nodeKey);
+    this._loading = nextLoading;
+
+    const nextErrors = new Map(this._errors);
+    nextErrors.delete(nodeKey);
+    this._errors = nextErrors;
 
     try {
       const profile = profileOverride ?? await getConnectorProfile(nodeId);
@@ -169,29 +176,35 @@ class ConnectorSelectionsStore {
         ? reconcileDocumentWithProfile(profile, existingDocument ?? layoutDocument ?? createDefaultDocument(profile))
         : null;
 
-      this._profiles = new Map(this._profiles);
+      const nextProfiles = new Map(this._profiles);
       if (profile) {
-        this._profiles.set(nodeKey, profile);
+        nextProfiles.set(nodeKey, profile);
       } else {
-        this._profiles.delete(nodeKey);
+        nextProfiles.delete(nodeKey);
       }
+      this._profiles = nextProfiles;
 
-      this._documents = new Map(this._documents);
+      const nextDocuments = new Map(this._documents);
       if (document) {
-        this._documents.set(nodeKey, document);
+        nextDocuments.set(nodeKey, document);
       } else {
-        this._documents.delete(nodeKey);
+        nextDocuments.delete(nodeKey);
       }
+      this._documents = nextDocuments;
+      this.revision += 1;
 
       return document;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this._errors = new Map(this._errors);
-      this._errors.set(nodeKey, message);
+      const failedErrors = new Map(this._errors);
+      failedErrors.set(nodeKey, message);
+      this._errors = failedErrors;
+      this.revision += 1;
       return null;
     } finally {
-      this._loading = new Set(this._loading);
-      this._loading.delete(nodeKey);
+      const settledLoading = new Set(this._loading);
+      settledLoading.delete(nodeKey);
+      this._loading = settledLoading;
     }
   }
 
@@ -202,8 +215,10 @@ class ConnectorSelectionsStore {
     };
     const nodeKey = normalizeNodeId(saved.nodeId);
 
-    this._documents = new Map(this._documents);
-    this._documents.set(nodeKey, saved);
+    const nextDocuments = new Map(this._documents);
+    nextDocuments.set(nodeKey, saved);
+    this._documents = nextDocuments;
+    this.revision += 1;
     layoutStore.upsertConnectorSelections(saved.nodeId, toLayoutSelectionSet(saved));
     return saved;
   }

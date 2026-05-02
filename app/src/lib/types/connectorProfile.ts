@@ -1,11 +1,35 @@
 export type ConnectorSelectionStatus = 'selected' | 'none' | 'unknown';
 
+export type ConnectorConstraintScalar = string | number;
+
 export type ConnectorConstraintEffect =
   | 'show'
   | 'hide'
   | 'disable'
   | 'allowValues'
-  | 'denyValues';
+  | 'denyValues'
+  | 'readOnly';
+
+export type EmptyConnectorEffect = 'hide' | 'disable' | 'allowValues';
+
+export interface EmptyConnectorBehaviorView {
+  effect: EmptyConnectorEffect;
+  allowedValues?: ConnectorConstraintScalar[];
+}
+
+export interface ConnectorConstraintRuleView {
+  targetPath: string;
+  resolvedPath: string[];
+  effect: ConnectorConstraintEffect;
+  allowedValues?: ConnectorConstraintScalar[];
+  deniedValues?: ConnectorConstraintScalar[];
+  explanation?: string;
+}
+
+export interface SlotSupportedDaughterboardView {
+  daughterboardId: string;
+  validityRules?: ConnectorConstraintRuleView[];
+}
 
 export interface ConnectorSlotView {
   slotId: string;
@@ -14,6 +38,9 @@ export interface ConnectorSlotView {
   allowNoneInstalled: boolean;
   supportedDaughterboardIds: string[];
   affectedPaths: string[];
+  resolvedAffectedPaths?: string[][];
+  baseBehaviorWhenEmpty?: EmptyConnectorBehaviorView;
+  supportedDaughterboardConstraints?: SlotSupportedDaughterboardView[];
 }
 
 export interface DaughterboardView {
@@ -21,6 +48,7 @@ export interface DaughterboardView {
   displayName: string;
   kind?: string;
   description?: string;
+  validityRules?: ConnectorConstraintRuleView[];
 }
 
 export interface ConnectorProfileView {

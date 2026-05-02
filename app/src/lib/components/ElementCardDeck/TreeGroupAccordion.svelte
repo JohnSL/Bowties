@@ -15,6 +15,7 @@
    * Spec: plan-cdiConfigNavigator.
    */
   import type { GroupConfigNode, ConfigNode, GroupedChild } from '$lib/types/nodeTree';
+  import type { ConnectorProfileView, ConnectorSelectionDocument } from '$lib/types/connectorProfile';
   import { isGroup, isLeaf, hasModifiedDescendant, groupReplicatedChildren, getInstanceDisplayName } from '$lib/types/nodeTree';
   import PillSelector from '$lib/components/PillSelector/PillSelector.svelte';
 
@@ -24,6 +25,7 @@
   import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
   import { layoutOpenInProgress } from '$lib/stores/layoutOpenLifecycle';
   import { pillSelections, setPillSelection, makePillKey } from '$lib/stores/pillSelection';
+  import { evaluateConnectorConstraintsForPath } from '$lib/utils/connectorConstraints';
 
   /** The group node from the unified tree */
   export let group: GroupConfigNode;
@@ -38,6 +40,8 @@
   export let siblings: GroupConfigNode[] = [];
   /** Whether the parent node is offline — disables all inputs (FR-007, T050) */
   export let isNodeOffline: boolean = false;
+  export let connectorProfile: ConnectorProfileView | null = null;
+  export let connectorDocument: ConnectorSelectionDocument | null = null;
   /** Segment origin address — forwarded to TreeLeafRow for save context */
   export let segmentOrigin: number = 0;
   /** Segment display name — forwarded to TreeLeafRow for progress labels */
@@ -136,6 +140,10 @@
   function handlePillSelect(value: number) {
     if (pillKey) setPillSelection(pillKey, value);
   }
+
+  function connectorConstraintForPath(path: string[]) {
+    return evaluateConnectorConstraintsForPath(connectorProfile, connectorDocument, path);
+  }
 </script>
 
 {#if pillMode}
@@ -163,26 +171,39 @@
 
       {#each groupedChildren as item}
         {#if item.type === 'leaf'}
-          <TreeLeafRow leaf={item.node} usedIn={getUsedIn(item.node)} {depth} {nodeId} {segmentOrigin} {segmentName} {isNodeOffline} />
+          {@const leafConstraint = connectorConstraintForPath(item.node.path)}
+          {#if !leafConstraint.hidden}
+            <TreeLeafRow leaf={item.node} usedIn={getUsedIn(item.node)} {depth} {nodeId} {segmentOrigin} {segmentName} {isNodeOffline} connectorConstraintState={leafConstraint} />
+          {/if}
         {:else if item.type === 'group'}
-          <svelte:self
-            group={item.node}
-            {nodeId}
-            depth={depth + 1}
-            {segmentOrigin}
-            {segmentName}
-            {isNodeOffline}
-          />
+          {@const groupConstraint = connectorConstraintForPath(item.node.path)}
+          {#if !groupConstraint.hidden}
+            <svelte:self
+              group={item.node}
+              {nodeId}
+              depth={depth + 1}
+              {segmentOrigin}
+              {segmentName}
+              {isNodeOffline}
+              {connectorProfile}
+              {connectorDocument}
+            />
+          {/if}
         {:else if item.type === 'replicatedSet'}
-          <svelte:self
-            group={item.instances[0]}
-            {nodeId}
-            depth={depth + 1}
-            siblings={item.instances}
-            {segmentOrigin}
-            {segmentName}
-            {isNodeOffline}
-          />
+          {@const replicatedConstraint = connectorConstraintForPath(item.instances[0].path)}
+          {#if !replicatedConstraint.hidden}
+            <svelte:self
+              group={item.instances[0]}
+              {nodeId}
+              depth={depth + 1}
+              siblings={item.instances}
+              {segmentOrigin}
+              {segmentName}
+              {isNodeOffline}
+              {connectorProfile}
+              {connectorDocument}
+            />
+          {/if}
         {/if}
       {/each}
     </div>
@@ -218,26 +239,39 @@
     {#if !collapsed}
       {#each groupedChildren as item}
         {#if item.type === 'leaf'}
-          <TreeLeafRow leaf={item.node} usedIn={getUsedIn(item.node)} {depth} {nodeId} {segmentOrigin} {segmentName} isNodeOffline={isEffectivelyReadOnly} />
+          {@const leafConstraint = connectorConstraintForPath(item.node.path)}
+          {#if !leafConstraint.hidden}
+            <TreeLeafRow leaf={item.node} usedIn={getUsedIn(item.node)} {depth} {nodeId} {segmentOrigin} {segmentName} isNodeOffline={isEffectivelyReadOnly} connectorConstraintState={leafConstraint} />
+          {/if}
         {:else if item.type === 'group'}
-          <svelte:self
-            group={item.node}
-            {nodeId}
-            depth={depth + 1}
-            {segmentOrigin}
-            {segmentName}
-            isNodeOffline={isEffectivelyReadOnly}
-          />
+          {@const groupConstraint = connectorConstraintForPath(item.node.path)}
+          {#if !groupConstraint.hidden}
+            <svelte:self
+              group={item.node}
+              {nodeId}
+              depth={depth + 1}
+              {segmentOrigin}
+              {segmentName}
+              isNodeOffline={isEffectivelyReadOnly}
+              {connectorProfile}
+              {connectorDocument}
+            />
+          {/if}
         {:else if item.type === 'replicatedSet'}
-          <svelte:self
-            group={item.instances[0]}
-            {nodeId}
-            depth={depth + 1}
-            siblings={item.instances}
-            {segmentOrigin}
-            {segmentName}
-            isNodeOffline={isEffectivelyReadOnly}
-          />
+          {@const replicatedConstraint = connectorConstraintForPath(item.instances[0].path)}
+          {#if !replicatedConstraint.hidden}
+            <svelte:self
+              group={item.instances[0]}
+              {nodeId}
+              depth={depth + 1}
+              siblings={item.instances}
+              {segmentOrigin}
+              {segmentName}
+              isNodeOffline={isEffectivelyReadOnly}
+              {connectorProfile}
+              {connectorDocument}
+            />
+          {/if}
         {/if}
       {/each}
     {/if}

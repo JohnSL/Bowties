@@ -24,6 +24,8 @@
   import { parseEventIdHex, formatEventIdHex } from '$lib/utils/serialize';
   import { isPlaceholderEventId } from '$lib/utils/eventIds';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
+  import type { ConnectorConstraintState } from '$lib/utils/connectorConstraints';
+  import { filterAllowedMapEntries } from '$lib/utils/connectorConstraints';
   import { untrack } from 'svelte';
 
   let {
@@ -34,6 +36,7 @@
     segmentOrigin = 0,
     segmentName = '',
     isNodeOffline = false,
+    connectorConstraintState = null,
   }: {
     leaf: LeafConfigNode;
     depth?: number;
@@ -45,6 +48,7 @@
     segmentName?: string;
     /** When true, all editable inputs are disabled (node is offline per FR-007, T050) */
     isNodeOffline?: boolean;
+    connectorConstraintState?: ConnectorConstraintState | null;
   } = $props();
 
   const DESC_TRUNCATE_THRESHOLD = 120;
@@ -147,7 +151,15 @@
   let hasWriteError = $derived(leaf.writeState === 'error');
   /** True when input should be disabled: either saving, node is offline (FR-007), or
    * the device rejected a write for this field with 0x1083 (runtime read-only) */
-  let isDisabled = $derived(isWriting || isNodeOffline || !!leaf.readOnly);
+  let connectorManagedMapEntries = $derived(filterAllowedMapEntries(leaf.constraints?.mapEntries, connectorConstraintState));
+
+  let isDisabled = $derived(
+    isWriting
+    || isNodeOffline
+    || !!leaf.readOnly
+    || !!connectorConstraintState?.disabled
+    || !!connectorConstraintState?.readOnly,
+  );
 
   /** Whether this leaf type supports inline editing */
   let isEditable = $derived(
@@ -160,7 +172,7 @@
   let isSelectEditable = $derived(
     nodeId.length > 0 &&
     leaf.elementType === 'int' &&
-    !!(leaf.constraints?.mapEntries?.length) &&
+    !!connectorManagedMapEntries.length &&
     !leaf.hintRadio
   );
 
@@ -177,7 +189,7 @@
     nodeId.length > 0 &&
     leaf.elementType === 'int' &&
     !!leaf.hintRadio &&
-    !!(leaf.constraints?.mapEntries?.length)
+    !!connectorManagedMapEntries.length
   );
 
   /** Whether this leaf is an action element */
@@ -569,10 +581,10 @@
         aria-label={leaf.name}
         onchange={handleSelectChange}
       >
-        {#if !leaf.constraints.mapEntries.some((e: TreeMapEntry) => e.value === inputSelect)}
+        {#if !connectorManagedMapEntries.some((e: TreeMapEntry) => e.value === inputSelect)}
           <option value={inputSelect} disabled>(Reserved: {inputSelect})</option>
         {/if}
-        {#each leaf.constraints.mapEntries as entry}
+        {#each connectorManagedMapEntries as entry}
           <option value={entry.value}>{entry.label}</option>
         {/each}
       </select>
@@ -598,7 +610,7 @@
     {:else if isRadioEditable && leaf.constraints?.mapEntries}
       <!-- Radio hint: radio buttons for int with map entries -->
       <div class="field-radio-group" role="radiogroup" aria-label={leaf.name}>
-        {#each leaf.constraints.mapEntries as entry}
+        {#each connectorManagedMapEntries as entry}
           <label class="field-radio-label">
             <input
               type="radio"

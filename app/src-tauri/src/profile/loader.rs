@@ -314,6 +314,32 @@ notValid: [unclosed bracket
     }
 
     #[test]
+    fn bundled_shared_daughterboard_library_parses_phase_four_rules() {
+        let library: SharedDaughterboardLibrary = serde_yaml_ng::from_str(include_str!("../../profiles/RR-CirKits.shared-daughterboards.yaml"))
+            .expect("bundled shared daughterboard YAML must parse");
+
+        let bod4 = library
+            .daughterboards
+            .iter()
+            .find(|candidate| candidate.daughterboard_id == "BOD4")
+            .expect("BOD4 definition should exist");
+
+        assert!(!bod4.validity_rules.is_empty(), "BOD4 should carry reusable constraint rules");
+    }
+
+    #[test]
+    fn bundled_tower_profile_parses_connector_line_ranges() {
+        let profile: StructureProfile = serde_yaml_ng::from_str(include_str!("../../profiles/RR-CirKits_Tower-LCC.profile.yaml"))
+            .expect("bundled Tower-LCC profile YAML must parse");
+
+        assert_eq!(profile.connector_slots.len(), 2);
+        assert_eq!(profile.connector_slots[0].affected_paths.len(), 8);
+        assert_eq!(profile.connector_slots[1].affected_paths.len(), 8);
+        assert!(profile.connector_slots[0].base_behavior_when_empty.is_none());
+        assert!(profile.connector_slots[1].base_behavior_when_empty.is_none());
+    }
+
+    #[test]
     fn load_profile_returns_none_for_missing_file() {
         // Verify that a nonexistent path returns an error from tokio::fs
         let path = std::path::PathBuf::from("/nonexistent/path/doesNotExist.profile.yaml");

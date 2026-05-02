@@ -53,7 +53,8 @@ As an operator, I want each line's available settings to reflect the installed d
 
 1. **Given** a connector slot is assigned a daughterboard that limits valid line modes, **When** the user edits a line attached to that connector, **Then** Bowties shows only the settings, sections, and choices allowed for that daughterboard.
 2. **Given** two connectors on the same node use different daughterboard types, **When** the user switches between lines served by those connectors, **Then** each line reflects the rules for its own connector rather than a node-wide average of all possibilities.
-3. **Given** a connector slot is set to "None installed", **When** the user opens a line associated with that connector, **Then** Bowties hides or disables daughterboard-dependent options and shows only behavior valid for an unpopulated connector.
+3. **Given** a connector slot is set to "None installed" and the profile does not author an empty-slot rule, **When** the user opens a line associated with that connector, **Then** Bowties applies no daughterboard-specific constraints and leaves the base carrier-board options available.
+4. **Given** a connector slot is set to "None installed" and the profile explicitly authors an empty-slot rule, **When** the user opens a line associated with that connector, **Then** Bowties applies that authored hide, disable, or allow-subset behavior for the affected lines.
 
 ---
 
@@ -87,7 +88,8 @@ As an operator working with a board that does not use daughterboards, I want Bow
 ### Edge Cases
 
 - A supported board profile defines multiple connector slots, and both slots use the same daughterboard type.
-- A connector slot is left unpopulated, and its dependent lines must not expose options that require installed daughterboard hardware.
+- A connector slot is left unpopulated, and the profile omits any empty-slot rule so governed lines retain the carrier board's base options.
+- A connector slot is left unpopulated, and the profile explicitly authors an empty-slot rule for that slot.
 - A previously saved configuration references line settings that are incompatible with the newly selected daughterboard.
 - Changing one connector selection makes multiple fields across one or more affected lines incompatible, and Bowties must stage all required compatible follow-up changes together.
 - A board profile no longer recognizes a previously selected daughterboard type because the profile was updated or replaced.
@@ -105,7 +107,8 @@ As an operator working with a board that does not use daughterboards, I want Bow
 - **FR-005**: A board profile MUST be able to declare which lines, groups, or configuration sections are governed by each connector slot.
 - **FR-006**: A board profile MUST be able to declare which settings, modes, or options are valid for each supported daughterboard type on a connector slot.
 - **FR-007**: When a connector slot has an installed daughterboard selection, the system MUST show only the settings, modes, and options that are valid for that daughterboard for the affected lines or sections.
-- **FR-008**: When a connector slot is set to "None installed", the system MUST suppress or disable daughterboard-dependent settings for the affected lines and preserve only behavior that is valid with no daughterboard present.
+- **FR-008**: When a connector slot is set to "None installed" and the profile does not author `baseBehaviorWhenEmpty`, the system MUST apply no additional daughterboard-specific constraints for that slot.
+- **FR-008a**: When a connector slot is set to "None installed" and the profile authors `baseBehaviorWhenEmpty`, the system MUST apply only that authored empty-slot behavior for the affected lines or sections.
 - **FR-009**: When different connector slots on the same node have different daughterboard selections, the system MUST apply each slot's constraints independently so affected lines reflect only the rules for their own connector slot.
 - **FR-010**: When a connector daughterboard selection makes an existing line setting invalid, the system MUST automatically stage a compatible replacement or reset for that setting before apply.
 - **FR-011**: The system MUST show users the staged compatible replacements or resets caused by a connector daughterboard change before those changes are applied to the node.

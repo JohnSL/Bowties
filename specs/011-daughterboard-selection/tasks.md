@@ -64,20 +64,20 @@
 
 **Goal**: Filter each affected line, group, and field so the UI shows only options valid for the selected daughterboard on that connector slot.
 
-**Independent Test**: Select a daughterboard that supports only a subset of line modes, open a governed line, and confirm unsupported sections/options are hidden or disabled while supported options remain available.
+**Independent Test**: Select a daughterboard that supports only a subset of line modes, open a governed line, and confirm unsupported sections/options are hidden or narrowed appropriately. Then set the slot to `None installed` and confirm the governed line returns to the base carrier-board options unless the profile explicitly authors empty-slot behavior.
 
 ### Tests for User Story 2
 
-- [ ] T020 [P] [US2] Add pure constraint-evaluation tests for connector filtering rules in `app/src/lib/utils/connectorConstraints.test.ts`
-- [ ] T021 [P] [US2] Add UI tests for connector-governed filtering behavior in `app/src/lib/components/ElementCardDeck/ElementCardDeck.test.ts` and `app/src/lib/components/ElementCardDeck/TreeGroupAccordion.test.ts`
+- [X] T020 [P] [US2] Add pure constraint-evaluation tests for connector filtering rules, including default `None installed` no-op behavior and explicit empty-slot overrides, in `app/src/lib/utils/connectorConstraints.test.ts`
+- [X] T021 [P] [US2] Add UI tests for connector-governed filtering behavior and live line refresh in `app/src/lib/components/ElementCardDeck/SegmentView.test.ts` and `app/src/lib/components/ElementCardDeck/TreeGroupAccordion.test.ts`
 
 ### Implementation for User Story 2
 
-- [ ] T022 [US2] Implement frontend constraint-evaluation helpers for slot selections and daughterboard rules in `app/src/lib/utils/connectorConstraints.ts` and `app/src/lib/types/connectorProfile.ts`
-- [ ] T023 [US2] Extend backend payloads with resolved connector-governed target metadata, reusable daughterboard references, and repair-rule inputs needed by frontend evaluation in `app/src-tauri/src/profile/mod.rs`, `app/src-tauri/src/node_tree.rs`, and `app/src-tauri/src/commands/cdi.rs`
-- [ ] T024 [US2] Apply connector-based filtering and option narrowing in `app/src/lib/stores/nodeTree.svelte.ts`, `app/src/lib/stores/configFocus.svelte.ts`, and `app/src/lib/stores/configSidebar.ts`
-- [ ] T025 [US2] Update config rendering to hide, disable, and narrow governed sections and fields in `app/src/lib/components/ElementCardDeck/ElementCardDeck.svelte`, `app/src/lib/components/ElementCardDeck/TreeGroupAccordion.svelte`, `app/src/lib/components/ElementCardDeck/TreeLeafRow.svelte`, and `app/src/lib/components/ElementCardDeck/FieldRow.svelte`
-- [ ] T026 [US2] Populate the shared reusable RR-CirKits daughterboard definitions in `app/src-tauri/profiles/RR-CirKits.shared-daughterboards.yaml` and add only carrier-specific overrides in `app/src-tauri/profiles/RR-CirKits_Tower-LCC.profile.yaml`, `app/src-tauri/profiles/RR-CirKits_Signal-LCC-P.profile.yaml`, `app/src-tauri/profiles/RR-CirKits_Signal-LCC-S.profile.yaml`, and `app/src-tauri/profiles/RR-CirKits_Signal-LCC-32H.profile.yaml`
+- [X] T022 [US2] Implement frontend constraint-evaluation helpers for slot selections and daughterboard rules in `app/src/lib/utils/connectorConstraints.ts` and `app/src/lib/types/connectorProfile.ts`
+- [X] T023 [US2] Extend backend payloads with resolved connector-governed target metadata, reusable daughterboard references, and repair-rule inputs needed by frontend evaluation in `app/src-tauri/src/profile/mod.rs`, `app/src-tauri/src/node_tree.rs`, and `app/src-tauri/src/commands/cdi.rs`
+- [X] T024 [US2] Thread connector-based filtering inputs and option narrowing through the active segment render flow in `app/src/lib/components/ElementCardDeck/SegmentView.svelte`, `app/src/lib/components/ElementCardDeck/TreeGroupAccordion.svelte`, and `app/src/lib/components/ElementCardDeck/TreeLeafRow.svelte`
+- [X] T025 [US2] Update config rendering to hide, disable, and narrow governed sections and fields in `app/src/lib/components/ElementCardDeck/SegmentView.svelte`, `app/src/lib/components/ElementCardDeck/TreeGroupAccordion.svelte`, and `app/src/lib/components/ElementCardDeck/TreeLeafRow.svelte`
+- [X] T026 [US2] Populate the shared reusable RR-CirKits daughterboard definitions in `app/src-tauri/profiles/RR-CirKits.shared-daughterboards.yaml` and land Tower-LCC-specific slot mappings in `app/src-tauri/profiles/RR-CirKits_Tower-LCC.profile.yaml` while leaving Signal carrier overrides empty until concrete path evidence exists
 
 **Checkpoint**: Connector selections actively constrain the visible configuration choices for governed lines while unaffected nodes and sections remain unchanged.
 

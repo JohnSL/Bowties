@@ -39,6 +39,8 @@ cargo test
 1. Select one compatible daughterboard for slot A and a different compatible daughterboard for slot B.
 2. Confirm each slot selection is tracked independently.
 3. Confirm affected lines/sections immediately narrow to valid options for their own slot.
+4. Set one slot back to `None installed`.
+5. Confirm the affected lines immediately return to the base carrier-board options unless that profile explicitly authors empty-slot behavior.
 
 ### 4. Trigger staged compatibility repairs
 

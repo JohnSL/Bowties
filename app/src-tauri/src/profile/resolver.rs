@@ -93,6 +93,10 @@ pub fn resolve_profile_paths(profile: &StructureProfile, cdi: &Cdi) -> ProfilePa
     map
 }
 
+pub fn resolve_named_path(profile_path: &str, cdi: &Cdi) -> Result<Vec<String>, String> {
+    resolve_one_path(profile_path, cdi)
+}
+
 pub fn referenced_daughterboard_ids(profile: &StructureProfile) -> DaughterboardReferenceSet {
     let mut ids = BTreeSet::new();
 
@@ -145,16 +149,23 @@ fn resolve_one_path(profile_path: &str, cdi: &Cdi) -> Result<Vec<String>, String
 
     // ── Step 2: match groups one at a time from the remaining path ──────────
     while !remaining.is_empty() {
-        let (elem_idx, group, next_remaining) =
-            find_group_prefix(remaining, elements).ok_or_else(|| {
-                format!(
-                    "no group name matches the start of remaining path '{}'",
-                    remaining
-                )
-            })?;
-        path.push(format!("elem:{}", elem_idx));
-        elements = &group.elements;
-        remaining = next_remaining;
+        if let Some((path_step, group, next_remaining)) = find_group_prefix(remaining, elements) {
+            path.push(path_step);
+            elements = &group.elements;
+            remaining = next_remaining;
+            continue;
+        }
+
+        if let Some(path_step) = find_leaf_step(remaining, elements) {
+            path.push(path_step);
+            remaining = "";
+            continue;
+        }
+
+        return Err(format!(
+            "no group or leaf name matches the start of remaining path '{}'",
+            remaining
+        ));
     }
 
     Ok(path)
@@ -192,11 +203,11 @@ fn find_segment_prefix<'a>(path: &'a str, cdi: &Cdi) -> Option<(usize, &'a str)>
 /// Find the group element whose name (plus optional `#N` ordinal suffix) is
 /// the **longest** prefix of `remaining` that is followed by `/` or end.
 ///
-/// Returns `(element_index, &Group, remaining_path_after_separator)`.
+/// Returns `(path_step, &Group, remaining_path_after_separator)`.
 fn find_group_prefix<'a, 'e>(
     remaining: &'a str,
     elements: &'e [DataElement],
-) -> Option<(usize, &'e lcc_rs::cdi::Group, &'a str)> {
+) -> Option<(String, &'e lcc_rs::cdi::Group, &'a str)> {
     let mut split_positions: Vec<usize> =
         remaining.match_indices('/').map(|(i, _)| i).collect();
     split_positions.push(remaining.len());
@@ -215,7 +226,7 @@ fn find_group_prefix<'a, 'e>(
         for (i, elem) in elements.iter().enumerate() {
             if let DataElement::Group(g) = elem {
                 if g.name.as_deref().unwrap_or("") == candidate {
-                    return Some((i, g, next_remaining));
+                    return Some((format!("elem:{}", i), g, next_remaining));
                 }
             }
         }
@@ -228,19 +239,66 @@ fn find_group_prefix<'a, 'e>(
         if base_name == candidate {
             continue;
         }
-        let mut count = 0usize;
-        for (i, elem) in elements.iter().enumerate() {
-            if let DataElement::Group(g) = elem {
-                if g.name.as_deref().unwrap_or("") == base_name {
-                    count += 1;
-                    if count == ordinal {
-                        return Some((i, g, next_remaining));
-                    }
-                }
+        let matching_groups: Vec<(usize, &'e lcc_rs::cdi::Group)> = elements
+            .iter()
+            .enumerate()
+            .filter_map(|(i, elem)| match elem {
+                DataElement::Group(g) if g.name.as_deref().unwrap_or("") == base_name => Some((i, g)),
+                _ => None,
+            })
+            .collect();
+
+        if matching_groups.len() == 1 {
+            let (index, group) = matching_groups[0];
+            let replication = usize::try_from(group.replication).unwrap_or(0);
+            if replication > 1 && ordinal <= replication {
+                return Some((format!("elem:{}#{}", index, ordinal), group, next_remaining));
             }
+        }
+
+        if ordinal <= matching_groups.len() {
+            let (index, group) = matching_groups[ordinal - 1];
+            return Some((format!("elem:{}", index), group, next_remaining));
         }
     }
     None
+}
+
+fn find_leaf_step(remaining: &str, elements: &[DataElement]) -> Option<String> {
+    if remaining.contains('/') {
+        return None;
+    }
+
+    for (i, elem) in elements.iter().enumerate() {
+        if element_name(elem) == Some(remaining) {
+            return Some(format!("elem:{}", i));
+        }
+    }
+
+    let (base_name, ordinal) = parse_name_ordinal(remaining);
+    if base_name == remaining {
+        return None;
+    }
+
+    let matching_elements: Vec<usize> = elements
+        .iter()
+        .enumerate()
+        .filter_map(|(i, elem)| (element_name(elem) == Some(base_name)).then_some(i))
+        .collect();
+
+    matching_elements.get(ordinal - 1).map(|index| format!("elem:{}", index))
+}
+
+fn element_name(element: &DataElement) -> Option<&str> {
+    match element {
+        DataElement::Group(group) => group.name.as_deref(),
+        DataElement::Int(element) => element.name.as_deref(),
+        DataElement::String(element) => element.name.as_deref(),
+        DataElement::EventId(element) => element.name.as_deref(),
+        DataElement::Float(element) => element.name.as_deref(),
+        DataElement::Action(element) => element.name.as_deref(),
+        DataElement::Blob(element) => element.name.as_deref(),
+    }
 }
 
 /// Parse a name component into `(base_name, ordinal)`.
@@ -251,8 +309,13 @@ fn find_group_prefix<'a, 'e>(
 fn parse_name_ordinal(s: &str) -> (&str, usize) {
     if let Some(hash_pos) = s.rfind('#') {
         let base = &s[..hash_pos];
-        let ord: usize = s[hash_pos + 1..].parse().unwrap_or(1);
-        (base, ord.max(1))
+        let suffix = &s[hash_pos + 1..];
+        if !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()) {
+            let ord: usize = suffix.parse().unwrap_or(1);
+            (base, ord.max(1))
+        } else {
+            (s, 1)
+        }
     } else {
         (s, 1)
     }
@@ -486,12 +549,55 @@ mod tests {
         );
     }
 
+    #[test]
+    fn resolve_named_path_preserves_replicated_instance_ordinals() {
+        let cdi = make_test_cdi();
+
+        let resolved = resolve_named_path("Port I/O/Line#7", &cdi).expect("replicated instance should resolve");
+
+        assert_eq!(resolved, vec!["seg:0".to_string(), "elem:0#7".to_string()]);
+    }
+
+    #[test]
+    fn resolve_named_path_preserves_first_replicated_instance_ordinal() {
+        let cdi = make_test_cdi();
+
+        let resolved = resolve_named_path("Port I/O/Line#1", &cdi)
+            .expect("first replicated instance should resolve");
+
+        assert_eq!(resolved, vec!["seg:0".to_string(), "elem:0#1".to_string()]);
+    }
+
+    #[test]
+    fn resolve_named_path_supports_leaf_targets_with_replicated_instances() {
+        let cdi = make_test_cdi();
+
+        let resolved = resolve_named_path("Port I/O/Line#7/Output Function", &cdi)
+            .expect("replicated leaf path should resolve");
+
+        assert_eq!(
+            resolved,
+            vec![
+                "seg:0".to_string(),
+                "elem:0#7".to_string(),
+                "elem:0".to_string(),
+            ]
+        );
+    }
+
     // ── parse_name_ordinal ────────────────────────────────────────────────────
 
     #[test]
     fn parse_name_ordinal_no_suffix_gives_ordinal_one() {
         let (base, ord) = parse_name_ordinal("Event");
         assert_eq!(base, "Event");
+        assert_eq!(ord, 1);
+    }
+
+    #[test]
+    fn parse_name_ordinal_ignores_non_numeric_suffixes() {
+        let (base, ord) = parse_name_ordinal("Line#7/Output Function");
+        assert_eq!(base, "Line#7/Output Function");
         assert_eq!(ord, 1);
     }
 
@@ -504,9 +610,9 @@ mod tests {
 
     #[test]
     fn parse_name_ordinal_invalid_suffix_defaults_to_one() {
-        // Non-numeric suffix → parse fails → ordinal defaults to 1 (max(1, 0) = 1)
+        // Non-numeric suffixes are treated as part of the name, not as ordinals.
         let (base, ord) = parse_name_ordinal("Event#x");
-        assert_eq!(base, "Event");
+        assert_eq!(base, "Event#x");
         assert_eq!(ord, 1);
     }
 
