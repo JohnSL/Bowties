@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bowties/specs/011-daughterboard-selection/structure-profile.schema.json",
+  "title": "Extended Structure Profile",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "nodeType"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string"
+    },
+    "nodeType": {
+      "type": "object",
+      "required": ["manufacturer", "model"],
+      "properties": {
+        "manufacturer": { "type": "string" },
+        "model": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "firmwareVersionRange": {
+      "type": ["object", "null"],
+      "properties": {
+        "min": { "type": ["string", "null"] },
+        "max": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "eventRoles": {
+      "type": "array"
+    },
+    "relevanceRules": {
+      "type": "array"
+    },
+    "connectorSlots": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/connectorSlot" }
+    },
+    "daughterboardReferences": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "carrierOverrides": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/carrierOverride" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "connectorSlot": {
+      "type": "object",
+      "required": [
+        "slotId",
+        "label",
+        "order",
+        "allowNoneInstalled",
+        "supportedDaughterboardIds",
+        "affectedPaths"
+      ],
+      "properties": {
+        "slotId": { "type": "string" },
+        "label": { "type": "string" },
+        "order": { "type": "integer", "minimum": 0 },
+        "allowNoneInstalled": { "type": "boolean" },
+        "supportedDaughterboardIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "affectedPaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "baseBehaviorWhenEmpty": {
+          "$ref": "#/$defs/emptyBehavior"
+        }
+      },
+      "additionalProperties": false
+    },
+    "emptyBehavior": {
+      "type": "object",
+      "properties": {
+        "effect": {
+          "type": "string",
+          "enum": ["hideDependent", "disableDependent", "allowSubset"]
+        },
+        "allowedValues": {
+          "type": "array",
+          "items": { "type": ["string", "integer"] }
+        }
+      },
+      "additionalProperties": false
+    },
+    "carrierOverride": {
+      "type": "object",
+      "required": ["carrierKey", "daughterboardId"],
+      "properties": {
+        "carrierKey": { "type": "string" },
+        "slotId": { "type": "string" },
+        "daughterboardId": { "type": "string" },
+        "overrideValidityRules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/constraintRule" }
+        },
+        "overrideRepairRules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/repairRule" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "constraintRule": {
+      "type": "object",
+      "required": ["targetPath", "constraintType"],
+      "properties": {
+        "targetPath": { "type": "string" },
+        "constraintType": {
+          "type": "string",
+          "enum": ["allowValues", "denyValues", "showSection", "hideSection", "readOnly"]
+        },
+        "allowedValues": {
+          "type": "array",
+          "items": { "type": ["string", "integer"] }
+        },
+        "deniedValues": {
+          "type": "array",
+          "items": { "type": ["string", "integer"] }
+        },
+        "explanation": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "repairRule": {
+      "type": "object",
+      "required": ["targetPath", "replacementStrategy"],
+      "properties": {
+        "targetPath": { "type": "string" },
+        "replacementStrategy": {
+          "type": "string",
+          "enum": ["setExplicit", "resetDefault", "clearEmpty"]
+        },
+        "replacementValue": {
+          "type": ["string", "integer", "number", "boolean", "null"]
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
