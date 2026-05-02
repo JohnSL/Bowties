@@ -55,6 +55,7 @@ function makeProfile(): ConnectorProfileView {
             targetPath: 'Port I/O/Line/Output Function',
             resolvedPath: ['seg:2', 'elem:0', 'elem:1'],
             effect: 'allowValues',
+            lineOrdinals: [1],
             allowedValues: [0, 9, 10],
             explanation: 'Detector boards only allow sample output modes.',
           },
@@ -134,6 +135,28 @@ describe('evaluateConnectorConstraintsForPath', () => {
 
     expect(lineNineOutput.slotId).toBe('connector-b');
     expect(lineNineOutput.allowedValues).toBeNull();
+  });
+
+  it('applies slot-relative line ordinal rules only to the matching affected line', () => {
+    const profile = makeProfile();
+    const document = makeSelections([
+      { slotId: 'connector-a', selectedDaughterboardId: 'BOD4', status: 'selected' },
+      { slotId: 'connector-b', selectedDaughterboardId: undefined, status: 'none' },
+    ]);
+
+    const lineOneOutput = evaluateConnectorConstraintsForPath(
+      profile,
+      document,
+      ['seg:2', 'elem:0#1', 'elem:1'],
+    );
+    const lineTwoOutput = evaluateConnectorConstraintsForPath(
+      profile,
+      document,
+      ['seg:2', 'elem:0#2', 'elem:1'],
+    );
+
+    expect(lineOneOutput.allowedValues).toEqual([0, 9, 10]);
+    expect(lineTwoOutput.allowedValues).toBeNull();
   });
 
   it('applies no additional constraints when no daughterboard is installed and no empty behavior is authored', () => {

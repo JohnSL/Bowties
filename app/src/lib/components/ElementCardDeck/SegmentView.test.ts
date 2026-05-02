@@ -214,7 +214,7 @@ describe('SegmentView connector selectors', () => {
                     targetPath: 'Port I/O/Line/Input Function',
                     resolvedPath: ['seg:0', 'elem:0', 'elem:1'],
                     effect: 'allowValues',
-                    allowedValues: [0, 5, 6, 7, 8],
+                    allowedValues: [2],
                   },
                 ],
               },
@@ -285,7 +285,7 @@ describe('SegmentView connector selectors', () => {
                       size: 1,
                       space: 253,
                       path: ['seg:0', 'elem:0#1', 'elem:1'],
-                      value: { type: 'int', value: 0 },
+                      value: { type: 'int', value: 1 },
                       modifiedValue: null,
                       writeState: null,
                       writeError: null,
@@ -296,7 +296,7 @@ describe('SegmentView connector selectors', () => {
                         defaultValue: null,
                         mapEntries: [
                           { value: 0, label: 'Disabled' },
-                          { value: 1, label: 'Active Hi' },
+                          { value: 2, label: 'Active Lo' },
                           { value: 5, label: 'Sample Hi' },
                         ],
                       },
@@ -334,14 +334,16 @@ describe('SegmentView connector selectors', () => {
     const inputSelect = () => screen.getByLabelText('Input Function');
 
     expect(within(outputSelect()).getByRole('option', { name: 'Steady Active Hi' })).toBeInTheDocument();
-    expect(within(inputSelect()).getByRole('option', { name: 'Active Hi' })).toBeInTheDocument();
+    expect(within(inputSelect()).getByRole('option', { name: 'Active Lo' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /incompatible with selected daughterboard/i })).not.toBeInTheDocument();
 
     await connectorSelectionsStore.updateSlotSelection(NODE_ID, 'connector-a', 'BOD-8-SM');
 
     await waitFor(() => {
       expect(within(outputSelect()).queryByRole('option', { name: 'Steady Active Hi' })).not.toBeInTheDocument();
-      expect(within(inputSelect()).getByRole('option', { name: 'Sample Hi' })).toBeInTheDocument();
-      expect(within(inputSelect()).queryByRole('option', { name: 'Active Hi' })).not.toBeInTheDocument();
+      expect(within(inputSelect()).getByRole('option', { name: 'Active Lo' })).toBeInTheDocument();
+      expect(within(inputSelect()).queryByRole('option', { name: 'Sample Hi' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('option', { name: /incompatible with selected daughterboard/i })).not.toBeInTheDocument();
     });
   });
 });

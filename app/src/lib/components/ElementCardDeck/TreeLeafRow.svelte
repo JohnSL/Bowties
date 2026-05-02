@@ -235,6 +235,34 @@
     displayValue?.type === 'int' ? displayValue.value : (leaf.value?.type === 'int' ? leaf.value.value : 0)
   );
 
+  let currentUnfilteredMapEntry = $derived(
+    leaf.constraints?.mapEntries?.find((entry: TreeMapEntry) => entry.value === inputSelect) ?? null,
+  );
+
+  let currentValueCompatibilityMessage = $derived.by(() => {
+    if (connectorManagedMapEntries.some((entry: TreeMapEntry) => entry.value === inputSelect)) {
+      return null;
+    }
+
+    if (currentUnfilteredMapEntry && connectorConstraintState?.slotId) {
+      return 'Current value is incompatible with selected daughterboard';
+    }
+
+    return null;
+  });
+
+  let currentSelectFallbackLabel = $derived.by(() => {
+    if (connectorManagedMapEntries.some((entry: TreeMapEntry) => entry.value === inputSelect)) {
+      return null;
+    }
+
+    if (currentUnfilteredMapEntry) {
+      return currentUnfilteredMapEntry.label;
+    }
+
+    return `(Reserved: ${inputSelect})`;
+  });
+
   /** Dotted-hex string for event ID text input */
   let inputEventId = $derived(
     displayValue?.type === 'eventId'
@@ -581,13 +609,16 @@
         aria-label={leaf.name}
         onchange={handleSelectChange}
       >
-        {#if !connectorManagedMapEntries.some((e: TreeMapEntry) => e.value === inputSelect)}
-          <option value={inputSelect} disabled>(Reserved: {inputSelect})</option>
+        {#if currentSelectFallbackLabel}
+          <option value={inputSelect} disabled>{currentSelectFallbackLabel}</option>
         {/if}
         {#each connectorManagedMapEntries as entry}
           <option value={entry.value}>{entry.label}</option>
         {/each}
       </select>
+      {#if currentValueCompatibilityMessage}
+        <span class="compatibility-msg" role="status">{currentValueCompatibilityMessage}</span>
+      {/if}
     {:else if isSliderEditable && leaf.hintSlider}
       <!-- Slider hint: range input for int without map entries -->
       <div class="field-slider-wrap">
@@ -1021,6 +1052,17 @@
     font-size: 11px;
     color: #ca5010;                                /* colorPaletteOrangeForeground1 */
     margin-top: 2px;
+  }
+
+  .compatibility-msg {
+    color: #8a3707;
+    background: #fff4ce;
+    border: 1px solid #f9d67a;
+    border-radius: 10px;
+    padding: 1px 8px;
+    font-size: 11px;
+    line-height: 1.5;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
   }
 
   .field-desc {

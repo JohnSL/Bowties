@@ -360,11 +360,10 @@ describe('resolvePillSelectionsForPath', () => {
     expect(result.get('nodeId:seg:0/elem:0#2/elem:1#1')).toBe(2);
   });
 
-  it('multi-wrapper siblings (two event sets) — emits outer AND inner pill entries', () => {
+  it('multi-wrapper siblings (two event sets) remain separate replicated groups', () => {
     // Simulates: consumer events (elem:0) and producer events (elem:1) both named
-    // "Event" at the same segment level.  groupReplicatedChildren groups them into
-    // a single replicatedSet where the outer pill selects between the two sets and
-    // the inner pill selects the instance within the chosen set.
+    // "Event" at the same segment level. They must remain separate wrappers so
+    // connector rules can hide one event set without hiding the other.
     function makeEventInst(wrapperIdx: number, instNum: number): GroupConfigNode {
       return makeGroup([], {
         name: 'Event', instance: instNum, instanceLabel: `Event ${instNum}`,
@@ -388,11 +387,10 @@ describe('resolvePillSelectionsForPath', () => {
 
     // Navigate to producer wrapper (elem:1), instance 5
     const result = resolvePillSelectionsForPath(nodeId, seg, ['seg:0', 'elem:1#5']);
-    expect(result.size).toBe(2);
-    // Outer pill: first sibling = wrapperCons (path 'seg:0/elem:0') → index 1 selects producer set
-    expect(result.get('nodeId:seg:0/elem:0')).toBe(1);
-    // Inner pill: first producer inst (path 'seg:0/elem:1#1') → index 4 selects instance 5
+    expect(result.size).toBe(1);
+    // Only the producer wrapper's own pill should be selected.
     expect(result.get('nodeId:seg:0/elem:1#1')).toBe(4);
+    expect(result.has('nodeId:seg:0/elem:0')).toBe(false);
   });
 
   it('spacer before target — path-based lookup finds elem:1 wrapper at children[0]', () => {

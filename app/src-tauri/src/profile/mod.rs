@@ -280,6 +280,7 @@ fn map_constraint_rule(
         target_path: rule.target_path.clone(),
         resolved_path,
         effect: map_constraint_effect(rule.constraint_type),
+        line_ordinals: rule.line_ordinals.clone(),
         allowed_values: rule.allowed_values.iter().cloned().map(map_scalar_value).collect(),
         denied_values: rule.denied_values.iter().cloned().map(map_scalar_value).collect(),
         explanation: rule.explanation.clone(),
@@ -746,6 +747,7 @@ mod tests {
                 validity_rules: vec![types::ConnectorConstraintRule {
                     target_path: "Port I/O/Line/Output Function".to_string(),
                     constraint_type: types::ConnectorConstraintType::AllowValues,
+                    line_ordinals: vec![1, 2, 3, 4],
                     allowed_values: vec![types::ProfileScalarValue::Integer(0)],
                     denied_values: vec![],
                     explanation: Some("Input-only board".to_string()),
@@ -781,6 +783,7 @@ mod tests {
             rules[0].resolved_path,
             vec!["seg:0".to_string(), "elem:0".to_string(), "elem:0".to_string()]
         );
+        assert_eq!(rules[0].line_ordinals, vec![1, 2, 3, 4]);
         assert_eq!(rules[0].allowed_values, vec![ConnectorScalarValue::Integer(0)]);
     }
 }

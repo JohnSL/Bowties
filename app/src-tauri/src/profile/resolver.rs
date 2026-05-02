@@ -494,6 +494,7 @@ mod tests {
                 override_validity_rules: vec![crate::profile::types::ConnectorConstraintRule {
                     target_path: "Port I/O/Line/Event#1".to_string(),
                     constraint_type: crate::profile::types::ConnectorConstraintType::HideSection,
+                    line_ordinals: vec![],
                     allowed_values: vec![],
                     denied_values: vec![],
                     explanation: None,

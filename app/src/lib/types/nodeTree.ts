@@ -529,7 +529,8 @@ export type GroupedChild =
  * Scans `children` in order:
  * - Leaf nodes pass through as `{ type: 'leaf' }`
  * - Non-replicated groups pass through as `{ type: 'group' }`
- * - Consecutive groups sharing the same `replicationOf` value (and replicationCount > 1)
+ * - Consecutive groups sharing the same `replicationOf` value and originating
+ *   CDI group step (and replicationCount > 1)
  *   are merged into `{ type: 'replicatedSet', instances: [...] }`
  */
 export function groupReplicatedChildren(children: ConfigNode[]): GroupedChild[] {
@@ -543,12 +544,13 @@ export function groupReplicatedChildren(children: ConfigNode[]): GroupedChild[] 
       result.push({ type: 'leaf', node: child });
       i++;
     } else if (isGroup(child) && child.replicationCount > 1) {
-      // Collect all consecutive siblings with same replicationOf
+      // Collect consecutive siblings that represent instances of the same CDI group.
       const instances: GroupConfigNode[] = [child];
+      const siblingKey = replicatedSiblingKey(child);
       let j = i + 1;
       while (j < children.length) {
         const next = children[j];
-        if (isGroup(next) && next.replicationOf === child.replicationOf) {
+        if (isGroup(next) && replicatedSiblingKey(next) === siblingKey) {
           instances.push(next);
           j++;
         } else {
@@ -594,12 +596,13 @@ function parseSegIndex(key: string): number | null {
 function findWrapperSiblings(children: ConfigNode[], wrapper: GroupConfigNode): GroupConfigNode[] {
   const idx = children.findIndex(c => c === wrapper);
   if (idx === -1) return [wrapper];
+  const siblingKey = replicatedSiblingKey(wrapper);
 
   // Walk backwards to find the start of the contiguous block
   let start = idx;
   while (start > 0) {
     const prev = children[start - 1];
-    if (isGroup(prev) && prev.replicationOf === wrapper.replicationOf && prev.replicationCount > 1) {
+    if (isGroup(prev) && prev.replicationCount > 1 && replicatedSiblingKey(prev) === siblingKey) {
       start--;
     } else {
       break;
@@ -611,7 +614,7 @@ function findWrapperSiblings(children: ConfigNode[], wrapper: GroupConfigNode): 
   let i = start;
   while (i < children.length) {
     const c = children[i];
-    if (isGroup(c) && c.replicationOf === wrapper.replicationOf && c.replicationCount > 1) {
+    if (isGroup(c) && c.replicationCount > 1 && replicatedSiblingKey(c) === siblingKey) {
       siblings.push(c as GroupConfigNode);
       i++;
     } else {
@@ -619,6 +622,12 @@ function findWrapperSiblings(children: ConfigNode[], wrapper: GroupConfigNode): 
     }
   }
   return siblings;
+}
+
+function replicatedSiblingKey(group: GroupConfigNode): string {
+  const finalStep = group.path.at(-1) ?? '';
+  const normalizedStep = finalStep.replace(/#\d+$/, '');
+  return `${group.replicationOf}:${normalizedStep}`;
 }
 
 /**

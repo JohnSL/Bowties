@@ -359,6 +359,77 @@ describe('TreeGroupAccordion.svelte', () => {
       expect(screen.queryByText('Command')).not.toBeInTheDocument();
     });
 
+    it('hides only the targeted event wrapper and leaves the other event wrapper visible', () => {
+      const lineGroup = makeGroup([
+        makeGroup([], {
+          instance: 0,
+          instanceLabel: 'Event',
+          displayName: 'Consumer Events',
+          replicationOf: 'Event',
+          replicationCount: 6,
+          path: ['seg:0', 'elem:0#1', 'elem:5'],
+        }),
+        makeGroup([], {
+          instance: 0,
+          instanceLabel: 'Event',
+          displayName: 'Producer Events',
+          replicationOf: 'Event',
+          replicationCount: 6,
+          path: ['seg:0', 'elem:0#1', 'elem:6'],
+        }),
+      ], {
+        instanceLabel: 'Line 1',
+        path: ['seg:0', 'elem:0#1'],
+      });
+
+      const connectorProfile: ConnectorProfileView = {
+        nodeId: '02.01.00.00.00.01',
+        carrierKey: 'rr-cirkits::tower-lcc',
+        slots: [
+          {
+            slotId: 'connector-a',
+            label: 'Connector A',
+            order: 0,
+            allowNoneInstalled: true,
+            supportedDaughterboardIds: ['BOD-8-SM'],
+            affectedPaths: ['Port I/O/Line#1'],
+            resolvedAffectedPaths: [['seg:0', 'elem:0#1']],
+            supportedDaughterboardConstraints: [
+              {
+                daughterboardId: 'BOD-8-SM',
+                validityRules: [
+                  {
+                    targetPath: 'Port I/O/Line/Event#1',
+                    resolvedPath: ['seg:0', 'elem:0', 'elem:5'],
+                    effect: 'hide',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        supportedDaughterboards: [{ daughterboardId: 'BOD-8-SM', displayName: 'BOD-8-SM' }],
+      };
+
+      render(TreeGroupAccordion, {
+        props: {
+          group: lineGroup,
+          nodeId: '02.01.00.00.00.01',
+          connectorProfile,
+          connectorDocument: {
+            nodeId: '02.01.00.00.00.01',
+            carrierKey: 'rr-cirkits::tower-lcc',
+            slotSelections: [
+              { slotId: 'connector-a', selectedDaughterboardId: 'BOD-8-SM', status: 'selected' },
+            ],
+          },
+        },
+      });
+
+      expect(screen.queryByText('Consumer Events')).not.toBeInTheDocument();
+      expect(screen.getByText('Producer Events')).toBeInTheDocument();
+    });
+
     it('narrows enum options for governed leaves to the selected daughterboard subset', () => {
       const governedLeaf = makeLeaf({
         name: 'Output Function',
@@ -561,6 +632,30 @@ describe('groupReplicatedChildren', () => {
     expect(result[0].type).toBe('leaf');
     expect(result[1].type).toBe('replicatedSet');
     expect(result[2].type).toBe('leaf');
+  });
+
+  it('does not merge distinct replicated wrappers that share the same name', () => {
+    const consumerWrapper = makeGroup([], {
+      instance: 0,
+      instanceLabel: 'Event',
+      displayName: 'Consumer Events',
+      replicationOf: 'Event',
+      replicationCount: 6,
+      path: ['seg:0', 'elem:5'],
+    });
+    const producerWrapper = makeGroup([], {
+      instance: 0,
+      instanceLabel: 'Event',
+      displayName: 'Producer Events',
+      replicationOf: 'Event',
+      replicationCount: 6,
+      path: ['seg:0', 'elem:6'],
+    });
+
+    const result = groupReplicatedChildren([consumerWrapper, producerWrapper]);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ type: 'group', node: consumerWrapper });
+    expect(result[1]).toEqual({ type: 'group', node: producerWrapper });
   });
 });
 

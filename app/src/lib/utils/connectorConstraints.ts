@@ -36,10 +36,12 @@ export function evaluateConnectorConstraintsForPath(
     return initialState;
   }
 
-  const slot = findSlotForPath(profile.slots, path);
-  if (!slot) {
+  const slotMatch = findSlotForPath(profile.slots, path);
+  if (!slotMatch) {
     return initialState;
   }
+
+  const { slot, affectedPathOrdinal } = slotMatch;
 
   const selection = document?.slotSelections.find((candidate) => candidate.slotId === slot.slotId);
   const selectedDaughterboardId = selection?.selectedDaughterboardId;
@@ -68,7 +70,7 @@ export function evaluateConnectorConstraintsForPath(
   const normalizedPath = stripInstanceSteps(path);
 
   for (const rule of validityRules) {
-    if (!ruleMatchesPath(rule, normalizedPath)) {
+    if (!ruleMatchesPath(rule, normalizedPath, affectedPathOrdinal)) {
       continue;
     }
 
@@ -90,11 +92,19 @@ export function filterAllowedMapEntries(
   return entries.filter((entry) => allowed.has(entry.value) || allowed.has(entry.label));
 }
 
-function findSlotForPath(slots: ConnectorSlotView[], path: string[]): ConnectorSlotView | null {
+interface SlotPathMatch {
+  slot: ConnectorSlotView;
+  affectedPathOrdinal: number;
+}
+
+function findSlotForPath(slots: ConnectorSlotView[], path: string[]): SlotPathMatch | null {
   for (const slot of slots) {
-    for (const affectedPath of slot.resolvedAffectedPaths ?? []) {
+    for (const [index, affectedPath] of (slot.resolvedAffectedPaths ?? []).entries()) {
       if (isPathPrefix(affectedPath, path)) {
-        return slot;
+        return {
+          slot,
+          affectedPathOrdinal: index + 1,
+        };
       }
     }
   }
@@ -121,7 +131,15 @@ function stripInstanceSteps(path: string[]): string[] {
   });
 }
 
-function ruleMatchesPath(rule: ConnectorConstraintRuleView, normalizedPath: string[]): boolean {
+function ruleMatchesPath(
+  rule: ConnectorConstraintRuleView,
+  normalizedPath: string[],
+  affectedPathOrdinal: number,
+): boolean {
+  if (rule.lineOrdinals?.length && !rule.lineOrdinals.includes(affectedPathOrdinal)) {
+    return false;
+  }
+
   return isPathPrefix(rule.resolvedPath, normalizedPath);
 }
 

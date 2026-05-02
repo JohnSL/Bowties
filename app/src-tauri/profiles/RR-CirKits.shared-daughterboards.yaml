@@ -3,44 +3,52 @@ manufacturer: "RR-CirKits"
 daughterboards:
   - daughterboardId: "BOD4"
     displayName: "BOD4"
-    kind: "detection"
+    kind: "mixed-io"
     validityRules:
       - targetPath: "Port I/O/Line/Output Function"
+        lineOrdinals: [1, 2, 3, 4]
         constraintType: allowValues
         allowedValues: [0]
-        explanation: "Occupancy detector boards do not drive Tower-LCC output functions."
+        explanation: "BOD4 local lines 1-4 are detector outputs, so those governed Tower-LCC lines do not drive output functions."
       - targetPath: "Port I/O/Line/Input Function"
+        lineOrdinals: [1, 2, 3, 4]
         constraintType: allowValues
-        allowedValues: [0, 5, 6, 7, 8]
-        explanation: "Occupancy detector boards only use sampled Tower-LCC input modes."
+        allowedValues: [2]
+        explanation: "The BOD-4 detector outputs are low during detection, so local lines 1-4 must use Active Lo input mode."
       - targetPath: "Port I/O/Line/Delay"
+        lineOrdinals: [1, 2, 3, 4]
         constraintType: hideSection
-        explanation: "Delay timing is not used when the daughterboard is input-only."
+        explanation: "Delay timing is not used on the BOD4 detector lines."
       - targetPath: "Port I/O/Line/Event#1"
+        lineOrdinals: [1, 2, 3, 4]
         constraintType: hideSection
-        explanation: "Consumer output events do not apply to detector daughterboards."
+        explanation: "Consumer output events do not apply to the BOD4 detector lines."
     metadata:
-      notes: "4-block occupancy detector daughterboard."
+      notes: "4-block occupancy detector plus 4 additional logic-level I/O lines. The shared rules constrain only the detector half of the connector (local lines 1-4)."
   - daughterboardId: "BOD4-CP"
     displayName: "BOD4-CP"
-    kind: "detection"
+    kind: "mixed-io"
     validityRules:
       - targetPath: "Port I/O/Line/Output Function"
+        lineOrdinals: [1, 2, 3, 4]
         constraintType: allowValues
         allowedValues: [0]
-        explanation: "Occupancy detector boards do not drive Tower-LCC output functions."
+        explanation: "BOD4-CP local lines 1-4 are occupancy detector outputs, so those lines do not drive output functions."
       - targetPath: "Port I/O/Line/Input Function"
+        lineOrdinals: [1, 2, 3, 4]
         constraintType: allowValues
-        allowedValues: [0, 5, 6, 7, 8]
-        explanation: "Occupancy detector boards only use sampled Tower-LCC input modes."
+        allowedValues: [2]
+        explanation: "The BOD4-CP detector half uses active-low occupancy outputs on local lines 1-4."
       - targetPath: "Port I/O/Line/Delay"
+        lineOrdinals: [1, 2, 3, 4]
         constraintType: hideSection
-        explanation: "Delay timing is not used when the daughterboard is input-only."
+        explanation: "Delay timing is not used on the BOD4-CP detector lines."
       - targetPath: "Port I/O/Line/Event#1"
+        lineOrdinals: [1, 2, 3, 4]
         constraintType: hideSection
-        explanation: "Consumer output events do not apply to detector daughterboards."
+        explanation: "Consumer output events do not apply to the BOD4-CP detector lines."
     metadata:
-      notes: "4-block detector with crossing and turnout feedback support."
+      notes: "4-block control-point board with 4 detection blocks plus a separate mixed sample/output half. Shared rules constrain the detector half (local lines 1-4) and leave local lines 5-8 available for the board's sampled/output use cases."
   - daughterboardId: "BOD-8-SM"
     displayName: "BOD-8-SM"
     kind: "detection"
@@ -51,8 +59,8 @@ daughterboards:
         explanation: "Occupancy detector boards do not drive Tower-LCC output functions."
       - targetPath: "Port I/O/Line/Input Function"
         constraintType: allowValues
-        allowedValues: [0, 5, 6, 7, 8]
-        explanation: "Occupancy detector boards only use sampled Tower-LCC input modes."
+        allowedValues: [2]
+        explanation: "BOD-8 outputs are low during detection, so governed Tower-LCC lines must use Active Lo input mode."
       - targetPath: "Port I/O/Line/Delay"
         constraintType: hideSection
         explanation: "Delay timing is not used when the daughterboard is input-only."
@@ -60,7 +68,7 @@ daughterboards:
         constraintType: hideSection
         explanation: "Consumer output events do not apply to detector daughterboards."
     metadata:
-      notes: "8-block surface-mount occupancy detector daughterboard."
+      notes: "8-block surface-mount occupancy detector daughterboard. Existing Tower-LCC recipe evidence and RR-CirKits detector manuals describe detector outputs as active-low during occupancy."
   - daughterboardId: "FOB-A"
     displayName: "FOB-A"
     kind: "input"

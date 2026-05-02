@@ -325,6 +325,53 @@ notValid: [unclosed bracket
             .expect("BOD4 definition should exist");
 
         assert!(!bod4.validity_rules.is_empty(), "BOD4 should carry reusable constraint rules");
+
+        let bod4_input_rule = bod4
+            .validity_rules
+            .iter()
+            .find(|rule| rule.target_path == "Port I/O/Line/Input Function")
+            .expect("BOD4 should constrain Input Function");
+
+        assert_eq!(bod4_input_rule.line_ordinals, vec![1, 2, 3, 4]);
+        assert_eq!(
+            bod4_input_rule.allowed_values,
+            vec![crate::profile::ProfileScalarValue::Integer(2)]
+        );
+
+        let bod4_cp = library
+            .daughterboards
+            .iter()
+            .find(|candidate| candidate.daughterboard_id == "BOD4-CP")
+            .expect("BOD4-CP definition should exist");
+
+        let bod4_cp_input_rule = bod4_cp
+            .validity_rules
+            .iter()
+            .find(|rule| rule.target_path == "Port I/O/Line/Input Function")
+            .expect("BOD4-CP should constrain detector input lines");
+
+        assert_eq!(bod4_cp_input_rule.line_ordinals, vec![1, 2, 3, 4]);
+        assert_eq!(
+            bod4_cp_input_rule.allowed_values,
+            vec![crate::profile::ProfileScalarValue::Integer(2)]
+        );
+
+        let bod8 = library
+            .daughterboards
+            .iter()
+            .find(|candidate| candidate.daughterboard_id == "BOD-8-SM")
+            .expect("BOD-8-SM definition should exist");
+
+        let input_rule = bod8
+            .validity_rules
+            .iter()
+            .find(|rule| rule.target_path == "Port I/O/Line/Input Function")
+            .expect("BOD-8-SM should constrain Input Function");
+
+        assert_eq!(
+            input_rule.allowed_values,
+            vec![crate::profile::ProfileScalarValue::Integer(2)]
+        );
     }
 
     #[test]

@@ -121,6 +121,11 @@
       "required": ["targetPath", "constraintType"],
       "properties": {
         "targetPath": { "type": "string" },
+        "lineOrdinals": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "uniqueItems": true
+        },
         "constraintType": {
           "type": "string",
           "enum": ["allowValues", "denyValues", "showSection", "hideSection", "readOnly"]

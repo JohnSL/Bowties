@@ -1046,5 +1046,46 @@ describe('T043: reserved value option in dropdown select', () => {
     render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
     expect(screen.queryByRole('option', { name: /reserved/i })).not.toBeInTheDocument();
   });
+
+  it('shows the filtered-out current enum label when connector rules make the current value incompatible', () => {
+    const leaf = makeLeaf({
+      name: 'Input Function',
+      elementType: 'int',
+      value: { type: 'int', value: 1 },
+      size: 1,
+      constraints: {
+        min: 0, max: 8, defaultValue: null,
+        mapEntries: [
+          { value: 0, label: 'Disabled' },
+          { value: 1, label: 'Active Hi' },
+          { value: 5, label: 'Sample Hi' },
+        ],
+      },
+    });
+
+    render(TreeLeafRow, {
+      props: {
+        leaf,
+        nodeId: NODE_ID,
+        connectorConstraintState: {
+          slotId: 'connector-a',
+          hidden: false,
+          disabled: false,
+          readOnly: false,
+          allowedValues: [0, 5],
+          deniedValues: [],
+          explanations: [],
+        },
+      },
+    });
+
+    const incompatibleOpt = screen.getByRole('option', { name: 'Active Hi' });
+    expect(incompatibleOpt).toBeInTheDocument();
+    expect(incompatibleOpt).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Input Function' })).toHaveValue('1');
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Current value is incompatible with selected daughterboard',
+    );
+  });
 });
 

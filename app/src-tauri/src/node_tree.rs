@@ -86,6 +86,8 @@ pub struct ConnectorConstraint {
     pub resolved_path: Vec<String>,
     pub effect: ConnectorConstraintEffect,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub line_ordinals: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_values: Vec<ConnectorScalarValue>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub denied_values: Vec<ConnectorScalarValue>,

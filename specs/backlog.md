@@ -38,3 +38,8 @@
   * Follow-up:
     1. Acquire concrete Signal-LCC CDI or manual path evidence for aux-port-governed sections and line modes.
     2. Author Signal-LCC affected paths and any carrier-specific overrides once those concrete paths are verified.
+* Mixed-use BOD4-CP sampled/output half constraints
+  * Root cause: Connector rules now support slot-relative `lineOrdinals`, so Bowties can constrain the detector half of BOD4/BOD4-CP accurately. The remaining gap is richer cross-field modeling for the BOD4-CP sampled/output half (local lines 5-8), where the manual allows multiple valid steady, pulse, and sample combinations depending on the attached device.
+  * Follow-up:
+    1. Capture concrete Tower-LCC-compatible mappings for the BOD4-CP local lines 5-8 output modes and corresponding sampled input modes.
+    2. Extend repair/constraint authoring if needed so Bowties can express output-function and input-function combinations for the BOD4-CP shared lines without hiding valid steady-output use cases.

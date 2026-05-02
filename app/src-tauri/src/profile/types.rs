@@ -225,6 +225,8 @@ pub struct ConnectorConstraintRule {
     pub target_path: String,
     pub constraint_type: ConnectorConstraintType,
     #[serde(default)]
+    pub line_ordinals: Vec<u32>,
+    #[serde(default)]
     pub allowed_values: Vec<ProfileScalarValue>,
     #[serde(default)]
     pub denied_values: Vec<ProfileScalarValue>,
@@ -343,6 +345,7 @@ mod tests {
                 override_validity_rules: vec![ConnectorConstraintRule {
                     target_path: "Port I/O/Line/Event#1".to_string(),
                     constraint_type: ConnectorConstraintType::HideSection,
+                    line_ordinals: vec![1, 2, 3, 4],
                     allowed_values: vec![],
                     denied_values: vec![],
                     explanation: Some("Hidden when card selected".to_string()),
@@ -364,6 +367,7 @@ mod tests {
         assert_eq!(parsed.daughterboard_references, vec!["db-8in"]);
         assert_eq!(parsed.carrier_overrides.len(), 1);
         assert_eq!(parsed.carrier_overrides[0].override_repair_rules.len(), 1);
+        assert_eq!(parsed.carrier_overrides[0].override_validity_rules[0].line_ordinals, vec![1, 2, 3, 4]);
         assert_eq!(parsed.connector_slots[0].base_behavior_when_empty.as_ref().map(|behavior| behavior.effect), Some(EmptyConnectorEffect::HideDependent));
     }
 }

@@ -21,6 +21,7 @@ export interface ConnectorConstraintRuleView {
   targetPath: string;
   resolvedPath: string[];
   effect: ConnectorConstraintEffect;
+  lineOrdinals?: number[];
   allowedValues?: ConnectorConstraintScalar[];
   deniedValues?: ConnectorConstraintScalar[];
   explanation?: string;
