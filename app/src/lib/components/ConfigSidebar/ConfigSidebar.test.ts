@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import { nodeInfoStore } from '$lib/stores/nodeInfo';
 import { configSidebarStore } from '$lib/stores/configSidebar';
+import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { clearConfigReadStatus, markNodeConfigRead } from '$lib/stores/configReadStatus';
 import ConfigSidebar from './ConfigSidebar.svelte';
@@ -57,6 +58,7 @@ function makeNode(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   configSidebarStore.reset();
+  connectorSelectionsStore.reset();
   nodeInfoStore.set(new Map());
   nodeTreeStore.reset();
   clearConfigReadStatus();
@@ -451,5 +453,55 @@ describe('ConfigSidebar.svelte', () => {
         expect(nodeEntry.querySelector('.pending-edits-dot')).not.toBeInTheDocument();
       });
     });
+  });
+
+  it('keeps connector slot selectors out of the sidebar when a modular node is expanded', async () => {
+    const nodeId = '02.01.57.00.00.01';
+    nodeInfoStore.set(new Map([[nodeId, MOCK_NODE as any]]));
+    nodeTreeStore.setTree(nodeId, {
+      nodeId,
+      identity: null,
+      connectorProfile: {
+        nodeId,
+        carrierKey: 'rr-cirkits::tower-lcc',
+        slots: [
+          {
+            slotId: 'connector-a',
+            label: 'Connector A',
+            order: 0,
+            allowNoneInstalled: true,
+            supportedDaughterboardIds: ['BOD4-CP'],
+            affectedPaths: ['Port I/O/Line'],
+          },
+        ],
+        supportedDaughterboards: [
+          {
+            daughterboardId: 'BOD4-CP',
+            displayName: 'BOD4-CP',
+            description: 'Detector board',
+          },
+        ],
+      },
+      segments: [],
+    } as any);
+    connectorSelectionsStore.hydrateFromLayout({
+      connectorSelections: {
+        '020157000001': {
+          carrierKey: 'rr-cirkits::tower-lcc',
+          slotSelections: {
+            'connector-a': {
+              selectedDaughterboardId: 'BOD4-CP',
+              status: 'selected',
+            },
+          },
+        },
+      },
+    });
+    configSidebarStore.toggleNodeExpanded(nodeId);
+
+    render(ConfigSidebar);
+
+    expect(screen.queryByLabelText('Connector daughterboards for Test Node')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Connector A')).not.toBeInTheDocument();
   });
 });

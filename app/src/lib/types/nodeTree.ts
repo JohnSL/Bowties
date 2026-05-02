@@ -7,6 +7,8 @@
  * Spec: 007-unified-node-tree, Phase 3.
  */
 
+import type { ConnectorProfileView } from '$lib/types/connectorProfile';
+
 // ─── Existing type re-used from tauri.ts ─────────────────────────────────────
 
 /** Event role classification — matches `lcc_rs::cdi::EventRole`. */
@@ -30,6 +32,8 @@ export interface NodeConfigTree {
   nodeId: string;
   /** Optional identification from CDI `<identification>` element */
   identity: Identification | null;
+  /** Optional connector daughterboard profile for supported modular boards. */
+  connectorProfile?: ConnectorProfileView | null;
   /** Top-level segments mirroring CDI `<segment>` elements */
   segments: SegmentNode[];
 }

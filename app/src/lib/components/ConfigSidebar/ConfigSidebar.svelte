@@ -18,7 +18,9 @@
     shouldShowConfigNotReadBadge,
   } from './configSidebarPresenter';
 
-  const dispatch = createEventDispatcher<{ readNodeConfig: { nodeId: string } }>();
+  const dispatch = createEventDispatcher<{
+    readNodeConfig: { nodeId: string };
+  }>();
 
   /** Cached segments per nodeId — loaded on first expansion */
   let nodeSegments = $state(new Map<string, SegmentInfo[]>());

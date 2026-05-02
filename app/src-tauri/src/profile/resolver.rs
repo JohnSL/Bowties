@@ -4,7 +4,7 @@
 //! to index-based tree path prefixes (e.g., `["seg:1", "elem:2", "elem:5"]`)
 //! that can be matched against [`crate::node_tree::GroupNode::path`].
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use lcc_rs::cdi::{Cdi, DataElement};
 
@@ -15,6 +15,9 @@ use crate::profile::types::StructureProfile;
 /// Key:   profile group path, e.g. `"Port I/O/Line/Event#1"`
 /// Value: path prefix without instance suffixes, e.g. `["seg:1", "elem:0", "elem:3"]`
 pub type ProfilePathMap = HashMap<String, Vec<String>>;
+
+/// Deterministic set of reusable daughterboard IDs referenced by a profile.
+pub type DaughterboardReferenceSet = Vec<String>;
 
 /// Resolve all paths declared in a profile against the parsed CDI.
 ///
@@ -47,7 +50,67 @@ pub fn resolve_profile_paths(profile: &StructureProfile, cdi: &Cdi) -> ProfilePa
         }
     }
 
+    for slot in &profile.connector_slots {
+        for affected_path in &slot.affected_paths {
+            match resolve_one_path(affected_path, cdi) {
+                Ok(path) => {
+                    map.insert(affected_path.clone(), path);
+                }
+                Err(e) => eprintln!(
+                    "[profile] Could not resolve connector slot path '{}' (slot {}): {}",
+                    affected_path, slot.slot_id, e
+                ),
+            }
+        }
+    }
+
+    for override_rule in &profile.carrier_overrides {
+        for validity_rule in &override_rule.override_validity_rules {
+            match resolve_one_path(&validity_rule.target_path, cdi) {
+                Ok(path) => {
+                    map.insert(validity_rule.target_path.clone(), path);
+                }
+                Err(e) => eprintln!(
+                    "[profile] Could not resolve override validity path '{}' (daughterboard {}): {}",
+                    validity_rule.target_path, override_rule.daughterboard_id, e
+                ),
+            }
+        }
+
+        for repair_rule in &override_rule.override_repair_rules {
+            match resolve_one_path(&repair_rule.target_path, cdi) {
+                Ok(path) => {
+                    map.insert(repair_rule.target_path.clone(), path);
+                }
+                Err(e) => eprintln!(
+                    "[profile] Could not resolve override repair path '{}' (daughterboard {}): {}",
+                    repair_rule.target_path, override_rule.daughterboard_id, e
+                ),
+            }
+        }
+    }
+
     map
+}
+
+pub fn referenced_daughterboard_ids(profile: &StructureProfile) -> DaughterboardReferenceSet {
+    let mut ids = BTreeSet::new();
+
+    for reference in &profile.daughterboard_references {
+        ids.insert(reference.clone());
+    }
+
+    for slot in &profile.connector_slots {
+        for daughterboard_id in &slot.supported_daughterboard_ids {
+            ids.insert(daughterboard_id.clone());
+        }
+    }
+
+    for override_rule in &profile.carrier_overrides {
+        ids.insert(override_rule.daughterboard_id.clone());
+    }
+
+    ids.into_iter().collect()
 }
 
 /// Parse a name-based profile path and walk the CDI by name+ordinal to produce
@@ -311,6 +374,9 @@ mod tests {
                 label: None,
             }],
             relevance_rules: vec![],
+            connector_slots: vec![],
+            daughterboard_references: vec![],
+            carrier_overrides: vec![],
         };
 
         let map = resolve_profile_paths(&profile, &cdi);
@@ -334,6 +400,90 @@ mod tests {
         assert_eq!(resolved_2, vec!["seg:0", "elem:0", "elem:2"]);
         // They must differ
         assert_ne!(resolved_1, resolved_2);
+    }
+
+    #[test]
+    fn resolve_profile_paths_includes_connector_targets_and_overrides() {
+        let cdi = make_test_cdi();
+        let profile = StructureProfile {
+            schema_version: "1.0".to_string(),
+            node_type: crate::profile::types::ProfileNodeType {
+                manufacturer: "Test".to_string(),
+                model: "Test".to_string(),
+            },
+            firmware_version_range: None,
+            event_roles: vec![],
+            relevance_rules: vec![],
+            connector_slots: vec![crate::profile::types::ConnectorSlotDefinition {
+                slot_id: "serial-a".to_string(),
+                label: "Serial A".to_string(),
+                order: 0,
+                allow_none_installed: true,
+                supported_daughterboard_ids: vec!["db-8in".to_string()],
+                affected_paths: vec!["Port I/O/Line/Event#2".to_string()],
+                base_behavior_when_empty: None,
+            }],
+            daughterboard_references: vec!["db-4io".to_string()],
+            carrier_overrides: vec![crate::profile::types::CarrierOverrideRule {
+                carrier_key: "test::test".to_string(),
+                slot_id: Some("serial-a".to_string()),
+                daughterboard_id: "db-8in".to_string(),
+                override_validity_rules: vec![crate::profile::types::ConnectorConstraintRule {
+                    target_path: "Port I/O/Line/Event#1".to_string(),
+                    constraint_type: crate::profile::types::ConnectorConstraintType::HideSection,
+                    allowed_values: vec![],
+                    denied_values: vec![],
+                    explanation: None,
+                }],
+                override_repair_rules: vec![crate::profile::types::RepairRule {
+                    target_path: "Port I/O/Line/Event#2".to_string(),
+                    replacement_strategy: crate::profile::types::RepairStrategy::ClearEmpty,
+                    replacement_value: None,
+                    priority: Some(1),
+                }],
+            }],
+        };
+
+        let map = resolve_profile_paths(&profile, &cdi);
+
+        assert_eq!(map.get("Port I/O/Line/Event#1"), Some(&vec!["seg:0".to_string(), "elem:0".to_string(), "elem:1".to_string()]));
+        assert_eq!(map.get("Port I/O/Line/Event#2"), Some(&vec!["seg:0".to_string(), "elem:0".to_string(), "elem:2".to_string()]));
+    }
+
+    #[test]
+    fn referenced_daughterboard_ids_collects_all_profile_references() {
+        let profile = StructureProfile {
+            schema_version: "1.0".to_string(),
+            node_type: crate::profile::types::ProfileNodeType {
+                manufacturer: "Test".to_string(),
+                model: "Test".to_string(),
+            },
+            firmware_version_range: None,
+            event_roles: vec![],
+            relevance_rules: vec![],
+            connector_slots: vec![crate::profile::types::ConnectorSlotDefinition {
+                slot_id: "serial-a".to_string(),
+                label: "Serial A".to_string(),
+                order: 0,
+                allow_none_installed: true,
+                supported_daughterboard_ids: vec!["db-8in".to_string(), "db-4io".to_string()],
+                affected_paths: vec![],
+                base_behavior_when_empty: None,
+            }],
+            daughterboard_references: vec!["db-relay".to_string(), "db-8in".to_string()],
+            carrier_overrides: vec![crate::profile::types::CarrierOverrideRule {
+                carrier_key: "test::test".to_string(),
+                slot_id: None,
+                daughterboard_id: "db-relay".to_string(),
+                override_validity_rules: vec![],
+                override_repair_rules: vec![],
+            }],
+        };
+
+        assert_eq!(
+            referenced_daughterboard_ids(&profile),
+            vec!["db-4io".to_string(), "db-8in".to_string(), "db-relay".to_string()]
+        );
     }
 
     // ── parse_name_ordinal ────────────────────────────────────────────────────

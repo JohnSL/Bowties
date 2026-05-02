@@ -61,3 +61,71 @@ eventRoles:
 
 # Relevance rules are populated in T024 (Phase 4 / US2).
 relevanceRules: []
+
+connectorSlots:
+  - slotId: "connector-a"
+    label: "Connector A"
+    order: 0
+    allowNoneInstalled: true
+    supportedDaughterboardIds:
+      - "BOD4"
+      - "BOD4-CP"
+      - "BOD-8-SM"
+      - "FOB-A"
+      - "FOB-C"
+      - "BOB-S"
+      - "OI-IB-8"
+      - "OI-OB-8"
+      - "RB-2"
+      - "RB-4"
+      - "SMD-8"
+      - "SCSD-8"
+      - "Isolator-8"
+      - "MSS I/OAdapter"
+      - "Sampled I/O Splitter Pair"
+      - "I/O Test-SM"
+    affectedPaths:
+      - "Port I/O/Line"
+  - slotId: "connector-b"
+    label: "Connector B"
+    order: 1
+    allowNoneInstalled: true
+    supportedDaughterboardIds:
+      - "BOD4"
+      - "BOD4-CP"
+      - "BOD-8-SM"
+      - "FOB-A"
+      - "FOB-C"
+      - "BOB-S"
+      - "OI-IB-8"
+      - "OI-OB-8"
+      - "RB-2"
+      - "RB-4"
+      - "SMD-8"
+      - "SCSD-8"
+      - "Isolator-8"
+      - "MSS I/OAdapter"
+      - "Sampled I/O Splitter Pair"
+      - "I/O Test-SM"
+    affectedPaths:
+      - "Port I/O/Line"
+
+daughterboardReferences:
+  - "BOD4"
+  - "BOD4-CP"
+  - "BOD-8-SM"
+  - "FOB-A"
+  - "FOB-C"
+  - "BOB-S"
+  - "OI-IB-8"
+  - "OI-OB-8"
+  - "RB-2"
+  - "RB-4"
+  - "SMD-8"
+  - "SCSD-8"
+  - "Isolator-8"
+  - "MSS I/OAdapter"
+  - "Sampled I/O Splitter Pair"
+  - "I/O Test-SM"
+
+carrierOverrides: []

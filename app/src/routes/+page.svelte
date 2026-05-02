@@ -21,6 +21,7 @@
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
+  import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { hasModifiedLeaves, resolvePillSelectionsForPath } from '$lib/types/nodeTree';
   import type { NodeConfigTree } from '$lib/types/nodeTree';
@@ -300,6 +301,9 @@
         openLayout: openLayoutFile,
         hydrateOfflineSnapshots,
         applyPersistedOfflinePendingToTrees,
+        hydrateConnectorSelections: (layout) => {
+          connectorSelectionsStore.hydrateFromLayout(layout);
+        },
         onOpened: () => {
           showConnectionDialog = false;
         },
@@ -335,7 +339,7 @@
         await offlineChangesStore.flushPendingToBackend();
       }
 
-      const result = await saveLayoutFile(targetPath, true);
+      const result = await saveLayoutFile(targetPath, true, layoutStore.layout);
       partialCaptureNodes = new Set(result.warnings);
       const contextLayoutId = normalizeLayoutTitle(targetPath) ?? 'layout';
       layoutStore.setActiveContext({
@@ -381,6 +385,7 @@
       },
       resetLayoutStore: () => {
         layoutStore.reset();
+        connectorSelectionsStore.reset();
       },
       resetSyncSessionAutoTrigger: () => {
         syncSessionOrchestrator.resetAutoTrigger();
@@ -406,7 +411,9 @@
       clearNodesWithCdi: () => {
         nodesWithCdi = new Set();
       },
+      
     });
+    connectorSelectionsStore.reset();
   }
 
   async function clearActiveLayout() {
@@ -570,6 +577,9 @@
             openLayout: openLayoutFile,
             hydrateOfflineSnapshots,
             applyPersistedOfflinePendingToTrees,
+            hydrateConnectorSelections: (layout) => {
+              connectorSelectionsStore.hydrateFromLayout(layout);
+            },
             onOpened: () => {
               showConnectionDialog = false;
             },
@@ -1225,6 +1235,57 @@
     syncMenuState(conn, busy, canViewCdi, canRedownloadCdi, canOpenLayout, canCloseLayout, canSaveLayout, canSaveLayoutAs, canSyncToBus);
   });
 
+  $effect(() => {
+    const selectedNodeId = selectedNodeIdAny;
+    const trees = nodeTreeStore.trees;
+
+    if (!selectedNodeId) {
+      return;
+    }
+
+    const selectedTree = trees.get(selectedNodeId);
+    if (!selectedTree?.connectorProfile) {
+      return;
+    }
+
+    const cachedProfile = connectorSelectionsStore.getProfile(selectedNodeId);
+    const cachedDocument = connectorSelectionsStore.getDocument(selectedNodeId);
+    if (
+      cachedProfile?.carrierKey === selectedTree.connectorProfile.carrierKey
+      && cachedDocument
+    ) {
+      return;
+    }
+
+    void connectorSelectionsStore.loadNode(selectedNodeId, selectedTree.connectorProfile);
+  });
+
+  async function handleConnectorSelectionChange(detail: {
+    nodeId: string;
+    slotId: string;
+    selectedDaughterboardId: string | null;
+  }): Promise<void> {
+    try {
+      const saved = await connectorSelectionsStore.updateSlotSelection(
+        detail.nodeId,
+        detail.slotId,
+        detail.selectedDaughterboardId,
+      );
+
+      if (!saved) {
+        errorDialog = {
+          title: 'Failed to Update Connector Selection',
+          message: 'The selected node does not have a connector profile loaded yet.',
+        };
+      }
+    } catch (error) {
+      errorDialog = {
+        title: 'Failed to Save Connector Selection',
+        message: String(error ?? 'Unknown error'),
+      };
+    }
+  }
+
   // Dynamic window title — reflects current layout file name and dirty state.
   // Using $derived (not computed inside $effect) so Svelte 5 reliably tracks
   // all reactive dependencies: _layout, _path, _dirty, and the SvelteMap edits.
@@ -1386,7 +1447,9 @@
     {:else}
       <!-- FR-001: two-panel layout — fixed sidebar + scrollable main area -->
       <div class="config-layout">
-        <ConfigSidebar on:readNodeConfig={(e) => readSingleNodeConfig(e.detail.nodeId)} />
+        <ConfigSidebar
+          on:readNodeConfig={(e) => readSingleNodeConfig(e.detail.nodeId)}
+        />
         <div class="config-main">
           {#if showConfigCta}
             <div class="config-cta-panel">
@@ -1409,7 +1472,7 @@
           {:else if selectedUnreadNodeId}
             <div class="config-cta-panel">
               <h2 class="cta-title">{selectedUnreadNodeName}</h2>
-              {#if partialCaptureNodes.has(selectedUnreadNodeId!)}
+              {#if partialCaptureNodes.has(selectedUnreadNodeId)}
                 <MissingCaptureBadge text="(Not captured)" />
               {/if}
               <p class="cta-desc">
@@ -1417,7 +1480,7 @@
               </p>
               <button
                 class="cta-btn"
-                onclick={() => readSingleNodeConfig(selectedUnreadNodeId!)}
+                onclick={() => readSingleNodeConfig(selectedUnreadNodeId)}
                 disabled={readingRemaining}
               >
                 Read Configuration
@@ -1430,7 +1493,7 @@
                 <span>Some values for this node were not captured and remain read-only offline.</span>
               </div>
             {/if}
-            <SegmentView />
+            <SegmentView on:changeConnectorSelection={(e) => handleConnectorSelectionChange(e.detail)} />
           {/if}
         </div>
       </div>
@@ -1505,7 +1568,11 @@
         >Cancel</button>
         <button
           class="unsaved-btn unsaved-btn-danger"
-          onclick={() => { const proceed = unsavedDialog!.proceed; unsavedDialog = null; proceed(); }}
+          onclick={() => {
+            const proceed = unsavedDialog?.proceed;
+            unsavedDialog = null;
+            proceed?.();
+          }}
         >{unsavedDialog.confirmLabel}</button>
       </div>
     </div>

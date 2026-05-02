@@ -117,13 +117,13 @@
     }
 
     const hasNodeEdits = viewState.hasConfigEdits;
-    const hasYamlEdits = bowtieMetadataStore.isDirty;
+    const hasLayoutMetadataEdits = bowtieMetadataStore.isDirty || layoutStore.isDirty;
 
-    if (!hasNodeEdits && !hasYamlEdits) return;
+    if (!hasNodeEdits && !hasLayoutMetadataEdits) return;
 
     saveProgress = {
       state: 'saving',
-      total: viewState.dirtyCount + (hasYamlEdits ? 1 : 0),
+      total: viewState.dirtyCount + (hasLayoutMetadataEdits ? 1 : 0),
       completed: 0,
       failed: 0,
       currentFieldLabel: hasNodeEdits ? 'Writing configuration…' : 'Layout metadata',
@@ -158,12 +158,13 @@
 
     // T019: After node writes, save bowtie metadata to YAML layout file
     let yamlSaveOk = true;
-    if (bowtieMetadataStore.isDirty) {
+    if (hasLayoutMetadataEdits) {
       saveProgress = { ...saveProgress, currentFieldLabel: 'Layout metadata' };
       try {
         const saved = await onOfflineSave();
         if (saved) {
           bowtieMetadataStore.clearAll();
+          layoutStore.markClean();
         } else {
           yamlSaveOk = false;
         }

@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::node_tree::{ConfigNode, LeafType, NodeConfigTree};
+use crate::node_tree::{ConfigNode, ConnectorProfile, ConnectorSlot, LeafType, NodeConfigTree, SupportedDaughterboard};
 
 pub use types::{
     StructureProfile,
@@ -24,9 +24,21 @@ pub use types::{
     RelevanceRule,
     RelevanceCondition,
     RelevanceAnnotation,
+    ConnectorSlotDefinition,
+    EmptyConnectorBehavior,
+    EmptyConnectorEffect,
+    CarrierOverrideRule,
+    ConnectorConstraintRule,
+    ConnectorConstraintType,
+    RepairRule,
+    RepairStrategy,
+    ProfileScalarValue,
+    SharedDaughterboardLibrary,
+    DaughterboardDefinition,
+    DaughterboardMetadata,
 };
-pub use loader::load_profile;
-pub use resolver::{ProfilePathMap, resolve_profile_paths};
+pub use loader::{load_profile, load_shared_daughterboards};
+pub use resolver::{DaughterboardReferenceSet, ProfilePathMap, referenced_daughterboard_ids, resolve_profile_paths};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cache types
@@ -125,6 +137,61 @@ pub fn annotate_tree(
     // Phase 4 will annotate GroupNodes with RelevanceAnnotation here.
 
     report
+}
+
+pub fn build_connector_profile(
+    node_id: &str,
+    profile: &StructureProfile,
+    library: Option<&SharedDaughterboardLibrary>,
+) -> Option<ConnectorProfile> {
+    if profile.connector_slots.is_empty() {
+        return None;
+    }
+
+    let supported_daughterboards = referenced_daughterboard_ids(profile)
+        .into_iter()
+        .map(|daughterboard_id| {
+            let shared = library
+                .and_then(|shared_library| {
+                    shared_library
+                        .daughterboards
+                        .iter()
+                        .find(|candidate| candidate.daughterboard_id == daughterboard_id)
+                });
+
+            SupportedDaughterboard {
+                daughterboard_id: daughterboard_id.clone(),
+                display_name: shared
+                    .map(|candidate| candidate.display_name.clone())
+                    .unwrap_or_else(|| daughterboard_id.clone()),
+                kind: shared.and_then(|candidate| candidate.kind.clone()),
+                description: shared.and_then(|candidate| {
+                    candidate
+                        .metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.notes.clone())
+                }),
+            }
+        })
+        .collect();
+
+    Some(ConnectorProfile {
+        node_id: node_id.to_string(),
+        carrier_key: make_profile_key(&profile.node_type.manufacturer, &profile.node_type.model),
+        slots: profile
+            .connector_slots
+            .iter()
+            .map(|slot| ConnectorSlot {
+                slot_id: slot.slot_id.clone(),
+                label: slot.label.clone(),
+                order: slot.order,
+                allow_none_installed: slot.allow_none_installed,
+                supported_daughterboard_ids: slot.supported_daughterboard_ids.clone(),
+                affected_paths: slot.affected_paths.clone(),
+            })
+            .collect(),
+        supported_daughterboards,
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -286,6 +353,9 @@ mod tests {
                 },
             ],
             relevance_rules: vec![],
+            connector_slots: vec![],
+            daughterboard_references: vec![],
+            carrier_overrides: vec![],
         };
 
         let report = annotate_tree(&mut tree, &profile, &cdi);
@@ -351,6 +421,9 @@ mod tests {
                 },
             ],
             relevance_rules: vec![],
+            connector_slots: vec![],
+            daughterboard_references: vec![],
+            carrier_overrides: vec![],
         };
 
         let report = annotate_tree(&mut tree, &profile, &cdi);
@@ -403,6 +476,9 @@ mod tests {
                 label: None,
             }],
             relevance_rules: vec![],
+            connector_slots: vec![],
+            daughterboard_references: vec![],
+            carrier_overrides: vec![],
         };
 
         let report = annotate_tree(&mut tree, &profile, &cdi);
@@ -449,6 +525,9 @@ mod tests {
                 label: None,
             }],
             relevance_rules: vec![],
+            connector_slots: vec![],
+            daughterboard_references: vec![],
+            carrier_overrides: vec![],
         };
 
         let report = annotate_tree(&mut tree, &profile, &cdi);
@@ -487,6 +566,9 @@ mod tests {
                 label: None,
             }],
             relevance_rules: vec![],
+            connector_slots: vec![],
+            daughterboard_references: vec![],
+            carrier_overrides: vec![],
         };
 
         let report = annotate_tree(&mut tree, &profile, &cdi);

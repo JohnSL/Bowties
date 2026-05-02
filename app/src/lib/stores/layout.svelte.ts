@@ -8,7 +8,8 @@
 
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { loadLayout, saveLayout, getRecentLayout, setRecentLayout, buildBowtieCatalog } from '$lib/api/bowties';
-import type { LayoutFile } from '$lib/types/bowtie';
+import type { LayoutConnectorSelections, LayoutFile, LayoutNodeHardwareSelectionSet } from '$lib/types/bowtie';
+import { normalizeNodeId } from '$lib/utils/nodeId';
 import { OFFLINE_LAYOUT_DEFAULT_FILENAME, offlineLayoutDialogFilter } from '$lib/constants/layoutFiles';
 
 export type ActiveLayoutMode = 'legacy_file' | 'offline_file';
@@ -213,6 +214,50 @@ class LayoutStore {
     this._dirty = true;
   }
 
+  /** Lookup connector selections for a node from the active layout metadata. */
+  getConnectorSelections(nodeId: string): LayoutNodeHardwareSelectionSet | null {
+    if (!this._layout) {
+      return null;
+    }
+
+    return this._layout.connectorSelections[normalizeNodeId(nodeId)] ?? null;
+  }
+
+  /** Replace connector selection metadata for the loaded layout. */
+  replaceConnectorSelections(connectorSelections: LayoutConnectorSelections): void {
+    if (!this._layout) {
+      this.newLayout();
+    }
+    if (!this._layout) {
+      return;
+    }
+
+    this._layout = {
+      ...this._layout,
+      connectorSelections: JSON.parse(JSON.stringify(connectorSelections)),
+    };
+    this._dirty = true;
+  }
+
+  /** Upsert connector selection metadata for one node into the active layout. */
+  upsertConnectorSelections(nodeId: string, selections: LayoutNodeHardwareSelectionSet): void {
+    if (!this._layout) {
+      this.newLayout();
+    }
+    if (!this._layout) {
+      return;
+    }
+
+    this._layout = {
+      ...this._layout,
+      connectorSelections: {
+        ...this._layout.connectorSelections,
+        [normalizeNodeId(nodeId)]: JSON.parse(JSON.stringify(selections)),
+      },
+    };
+    this._dirty = true;
+  }
+
   /**
    * Hydrate the layout store from an opened offline layout directory.
    * Keeps the loaded layout metadata available to preview/edit flows while
@@ -261,6 +306,7 @@ class LayoutStore {
       schemaVersion: '1.0',
       bowties: {},
       roleClassifications: {},
+      connectorSelections: {},
     };
     this._savedLayout = JSON.parse(JSON.stringify(this._layout));
     this._path = null;

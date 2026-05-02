@@ -66,6 +66,22 @@ pub struct NewLayoutResult {
     pub created_at: String,
 }
 
+fn merge_saved_layout_metadata(
+    previous: Option<&crate::layout::types::LayoutFile>,
+    provided: Option<crate::layout::types::LayoutFile>,
+) -> crate::layout::types::LayoutFile {
+    let mut layout = previous.cloned().unwrap_or_default();
+
+    if let Some(provided_layout) = provided {
+        layout.schema_version = provided_layout.schema_version;
+        layout.bowties = provided_layout.bowties;
+        layout.role_classifications = provided_layout.role_classifications;
+        layout.connector_selections = provided_layout.connector_selections;
+    }
+
+    layout
+}
+
 fn canonical_node_id(node_id_dotted_hex: &str) -> String {
     node_id_dotted_hex.replace('.', "").to_uppercase()
 }
@@ -329,6 +345,7 @@ pub async fn capture_layout_snapshot(
 pub async fn save_layout_directory(
     path: String,
     overwrite: bool,
+    layout: Option<crate::layout::types::LayoutFile>,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<SaveLayoutResult, String> {
@@ -409,13 +426,12 @@ pub async fn save_layout_directory(
         .to_string();
     let companion_dir = crate::layout::io::derive_companion_dir_name(target)?;
 
-    let mut bowties = crate::layout::types::LayoutFile::default();
+    let mut bowties = merge_saved_layout_metadata(previous.as_ref().map(|loaded| &loaded.bowties), layout);
     let mut offline_changes = Vec::<OfflineChange>::new();
 
     if let Some(prev) = previous {
         layout_id = prev.manifest.layout_id;
         manifest_captured_at = prev.manifest.captured_at;
-        bowties = prev.bowties;
         offline_changes = prev.offline_changes;
     }
 
@@ -443,6 +459,7 @@ pub async fn save_layout_directory(
             }
         }
     }
+    bowties.validate()?;
 
     let manifest = LayoutManifest::new(
         layout_id.clone(),
@@ -502,6 +519,48 @@ pub async fn save_layout_directory(
         cdi_files_copied: cdi_files_count,
         warnings: partial_nodes,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_saved_layout_metadata;
+
+    #[test]
+    fn merge_saved_layout_metadata_prefers_provided_connector_selections() {
+        let mut previous = crate::layout::types::LayoutFile::default();
+        previous.connector_selections.insert(
+            "020157000001".to_string(),
+            crate::layout::types::NodeHardwareSelectionSet {
+                carrier_key: "old-carrier".to_string(),
+                slot_selections: std::collections::BTreeMap::new(),
+                updated_at: Some("2026-01-01T00:00:00Z".to_string()),
+            },
+        );
+
+        let mut provided = crate::layout::types::LayoutFile::default();
+        let mut slot_selections = std::collections::BTreeMap::new();
+        slot_selections.insert(
+            "connector-a".to_string(),
+            crate::layout::types::ConnectorSelectionRecord {
+                selected_daughterboard_id: Some("BOD4-CP".to_string()),
+                status: crate::layout::types::ConnectorSelectionStatus::Selected,
+                source_profile_version: None,
+            },
+        );
+        provided.connector_selections.insert(
+            "020157000001".to_string(),
+            crate::layout::types::NodeHardwareSelectionSet {
+                carrier_key: "rr-cirkits::tower-lcc".to_string(),
+                slot_selections,
+                updated_at: Some("2026-05-02T12:00:00Z".to_string()),
+            },
+        );
+
+        let merged = merge_saved_layout_metadata(Some(&previous), Some(provided));
+        let stored = merged.connector_selections.get("020157000001").unwrap();
+        assert_eq!(stored.carrier_key, "rr-cirkits::tower-lcc");
+        assert_eq!(stored.slot_selections.get("connector-a").unwrap().selected_daughterboard_id.as_deref(), Some("BOD4-CP"));
+    }
 }
 
 #[tauri::command]
@@ -668,6 +727,12 @@ pub async fn build_offline_node_tree(
         if !manufacturer.is_empty() || !model.is_empty() {
             if let Some(profile) = crate::profile::load_profile(manufacturer, model, &cdi, &app, &state.profiles).await {
                 let report = crate::profile::annotate_tree(&mut tree, &profile, &cdi);
+                let shared_daughterboards = crate::profile::load_shared_daughterboards(&app).await;
+                tree.connector_profile = crate::profile::build_connector_profile(
+                    &dotted_id,
+                    &profile,
+                    shared_daughterboards.as_ref(),
+                );
                 eprintln!(
                     "[offline profile] {} - {} event roles, {} rules applied, {} warnings",
                     node_id,

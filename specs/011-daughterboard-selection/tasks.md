@@ -11,9 +11,9 @@
 
 **Purpose**: Establish the shared connector-daughterboard surfaces used by all stories.
 
-- [ ] T001 Create shared connector daughterboard frontend types in `app/src/lib/types/connectorProfile.ts`
-- [ ] T002 [P] Create frontend IPC wrappers for connector profile and selection operations in `app/src/lib/api/connectorProfiles.ts`
-- [ ] T003 [P] Create backend command module scaffold for connector daughterboard operations in `app/src-tauri/src/commands/connector_profiles.rs`
+- [X] T001 Create shared connector daughterboard frontend types in `app/src/lib/types/connectorProfile.ts`
+- [X] T002 [P] Create frontend IPC wrappers for connector profile and selection operations in `app/src/lib/api/connectorProfiles.ts`
+- [X] T003 [P] Create backend command module scaffold for connector daughterboard operations in `app/src-tauri/src/commands/connector_profiles.rs`
 
 ---
 
@@ -23,13 +23,13 @@
 
 **⚠️ CRITICAL**: No user story work should begin until this phase is complete.
 
-- [ ] T004 [P] Extend the structure-profile schema for connector slots, reusable daughterboards, overrides, and repair rules in `specs/011-daughterboard-selection/contracts/structure-profile.schema.json` and `app/src-tauri/src/profile/types.rs`
-- [ ] T005 [P] Extend backend profile resolution scaffolding for connector-slot paths, reusable daughterboard references, and carrier overrides in `app/src-tauri/src/profile/resolver.rs` and `app/src-tauri/src/profile/mod.rs`
-- [ ] T006 [P] Create the shared reusable RR-CirKits daughterboard definition source in `app/src-tauri/profiles/RR-CirKits.shared-daughterboards.yaml` and add loader support in `app/src-tauri/src/profile/loader.rs` and `app/src-tauri/src/profile/mod.rs`
-- [ ] T007 [P] Extend layout persistence types for per-node connector selections in `app/src-tauri/src/layout/types.rs` and `app/src/lib/api/layout.ts`
-- [ ] T008 Register connector daughterboard commands in `app/src-tauri/src/commands/mod.rs`, `app/src-tauri/src/main.rs`, and `app/src-tauri/src/commands/connector_profiles.rs`
-- [ ] T009 [P] Add initial RR-CirKits Tower and Signal carrier profile fixture files in `app/src-tauri/profiles/RR-CirKits_Tower-LCC.profile.yaml`, `app/src-tauri/profiles/RR-CirKits_Signal-LCC-P.profile.yaml`, `app/src-tauri/profiles/RR-CirKits_Signal-LCC-S.profile.yaml`, and `app/src-tauri/profiles/RR-CirKits_Signal-LCC-32H.profile.yaml`
-- [ ] T010 [P] Add foundational Rust coverage for extended profile parsing and layout metadata round-trip in `app/src-tauri/src/profile/types.rs`, `app/src-tauri/src/profile/loader.rs`, and `app/src-tauri/src/layout/types.rs`
+- [X] T004 [P] Extend the structure-profile schema for connector slots, reusable daughterboards, overrides, and repair rules in `specs/011-daughterboard-selection/contracts/structure-profile.schema.json` and `app/src-tauri/src/profile/types.rs`
+- [X] T005 [P] Extend backend profile resolution scaffolding for connector-slot paths, reusable daughterboard references, and carrier overrides in `app/src-tauri/src/profile/resolver.rs` and `app/src-tauri/src/profile/mod.rs`
+- [X] T006 [P] Create the shared reusable RR-CirKits daughterboard definition source in `app/src-tauri/profiles/RR-CirKits.shared-daughterboards.yaml` and add loader support in `app/src-tauri/src/profile/loader.rs` and `app/src-tauri/src/profile/mod.rs`
+- [X] T007 [P] Extend layout persistence types for per-node connector selections in `app/src-tauri/src/layout/types.rs` and `app/src/lib/api/layout.ts`
+- [X] T008 Register connector daughterboard commands in `app/src-tauri/src/commands/mod.rs`, `app/src-tauri/src/main.rs`, and `app/src-tauri/src/commands/connector_profiles.rs`
+- [X] T009 [P] Add initial RR-CirKits Tower and Signal carrier profile fixture files in `app/src-tauri/profiles/RR-CirKits_Tower-LCC.profile.yaml`, `app/src-tauri/profiles/RR-CirKits_Signal-LCC-P.profile.yaml`, `app/src-tauri/profiles/RR-CirKits_Signal-LCC-S.profile.yaml`, and `app/src-tauri/profiles/RR-CirKits_Signal-LCC-32H.profile.yaml`
+- [X] T010 [P] Add foundational Rust coverage for extended profile parsing and layout metadata round-trip in `app/src-tauri/src/profile/types.rs`, `app/src-tauri/src/profile/loader.rs`, and `app/src-tauri/src/layout/types.rs`
 
 **Checkpoint**: Schema, persistence, command registration, and fixture carrier profiles are ready for story work.
 
@@ -43,18 +43,18 @@
 
 ### Tests for User Story 1
 
-- [ ] T011 [P] [US1] Add backend command tests for connector profile loading and connector-selection persistence in `app/src-tauri/src/commands/connector_profiles.rs`
-- [ ] T012 [P] [US1] Add store and layout orchestration tests for connector-selection load/save behavior in `app/src/lib/stores/layout.svelte.test.ts` and `app/src/lib/orchestration/offlineLayoutOrchestrator.test.ts`
-- [ ] T013 [P] [US1] Add ConfigSidebar rendering tests for connector slot selectors in `app/src/lib/components/ConfigSidebar/ConfigSidebar.test.ts` and `app/src/lib/components/ConfigSidebar/configSidebarPresenter.test.ts`
+- [X] T011 [P] [US1] Add backend command tests for connector profile loading and connector-selection persistence in `app/src-tauri/src/commands/connector_profiles.rs`
+- [X] T012 [P] [US1] Add store and layout orchestration tests for connector-selection load/save behavior in `app/src/lib/stores/layout.svelte.test.ts` and `app/src/lib/orchestration/offlineLayoutOrchestrator.test.ts`
+- [X] T013 [P] [US1] Add ConfigSidebar rendering tests for connector slot selectors in `app/src/lib/components/ConfigSidebar/ConfigSidebar.test.ts` and `app/src/lib/components/ConfigSidebar/configSidebarPresenter.test.ts`
 
 ### Implementation for User Story 1
 
-- [ ] T014 [US1] Implement connector-slot profile loading and node payload assembly in `app/src-tauri/src/profile/mod.rs`, `app/src-tauri/src/profile/resolver.rs`, `app/src-tauri/src/commands/cdi.rs`, and `app/src-tauri/src/node_tree.rs`
-- [ ] T015 [US1] Implement saved layout/project persistence for per-node connector selections in `app/src-tauri/src/layout/types.rs`, `app/src-tauri/src/commands/connector_profiles.rs`, and `app/src/lib/api/connectorProfiles.ts`
-- [ ] T016 [US1] Implement connector-selection store and layout rehydrate/save flow in `app/src/lib/stores/connectorSelections.svelte.ts`, `app/src/lib/stores/layout.svelte.ts`, and `app/src/lib/orchestration/offlineLayoutOrchestrator.ts`
-- [ ] T017 [US1] Implement connector-slot presenter logic and selector UI in `app/src/lib/components/ConfigSidebar/configSidebarPresenter.ts`, `app/src/lib/components/ConfigSidebar/ConfigSidebar.svelte`, and `app/src/lib/components/ConfigSidebar/ConnectorSlotSelector.svelte`
-- [ ] T018 [US1] Wire active-node connector selection loading into the configuration workflow in `app/src/routes/+page.svelte`, `app/src/lib/stores/configSidebar.ts`, and `app/src/lib/stores/nodeTree.svelte.ts`
-- [ ] T019 [US1] Author connector-slot declarations and supported daughterboard references for the initial RR-CirKits Tower and Signal carrier boards in `app/src-tauri/profiles/RR-CirKits_Tower-LCC.profile.yaml`, `app/src-tauri/profiles/RR-CirKits_Signal-LCC-P.profile.yaml`, `app/src-tauri/profiles/RR-CirKits_Signal-LCC-S.profile.yaml`, and `app/src-tauri/profiles/RR-CirKits_Signal-LCC-32H.profile.yaml`
+- [X] T014 [US1] Implement connector-slot profile loading and node payload assembly in `app/src-tauri/src/profile/mod.rs`, `app/src-tauri/src/profile/resolver.rs`, `app/src-tauri/src/commands/cdi.rs`, and `app/src-tauri/src/node_tree.rs`
+- [X] T015 [US1] Implement saved layout/project persistence for per-node connector selections in `app/src-tauri/src/layout/types.rs`, `app/src-tauri/src/commands/connector_profiles.rs`, and `app/src/lib/api/connectorProfiles.ts`
+- [X] T016 [US1] Implement connector-selection store and layout rehydrate/save flow in `app/src/lib/stores/connectorSelections.svelte.ts`, `app/src/lib/stores/layout.svelte.ts`, and `app/src/lib/orchestration/offlineLayoutOrchestrator.ts`
+- [X] T017 [US1] Implement connector-slot presenter logic and selector UI in `app/src/lib/components/ConfigSidebar/configSidebarPresenter.ts`, `app/src/lib/components/ConfigSidebar/ConfigSidebar.svelte`, and `app/src/lib/components/ConfigSidebar/ConnectorSlotSelector.svelte`
+- [X] T018 [US1] Wire active-node connector selection loading into the configuration workflow in `app/src/routes/+page.svelte`, `app/src/lib/stores/configSidebar.ts`, and `app/src/lib/stores/nodeTree.svelte.ts`
+- [X] T019 [US1] Author connector-slot declarations and supported daughterboard references for the initial RR-CirKits Tower and Signal carrier boards in `app/src-tauri/profiles/RR-CirKits_Tower-LCC.profile.yaml`, `app/src-tauri/profiles/RR-CirKits_Signal-LCC-P.profile.yaml`, `app/src-tauri/profiles/RR-CirKits_Signal-LCC-S.profile.yaml`, and `app/src-tauri/profiles/RR-CirKits_Signal-LCC-32H.profile.yaml`
 
 **Checkpoint**: Connector slots can be selected per supported node and selections persist with the saved layout/project context.
 

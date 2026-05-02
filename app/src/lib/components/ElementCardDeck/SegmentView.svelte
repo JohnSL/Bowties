@@ -9,7 +9,12 @@
    * Updated for plan-cdiConfigNavigator: uses groupReplicatedChildren
    * to collapse sibling replicated groups into pill-selectable sections.
    */
+  import { createEventDispatcher } from 'svelte';
   import { configSidebarStore } from '$lib/stores/configSidebar';
+  import { configReadNodesStore } from '$lib/stores/configReadStatus';
+  import ConnectorSlotSelector from '$lib/components/ConfigSidebar/ConnectorSlotSelector.svelte';
+  import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
+  import { layoutStore } from '$lib/stores/layout.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { nodeInfoStore } from '$lib/stores/nodeInfo';
   import type { SegmentNode, ConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
@@ -17,8 +22,24 @@
   import TreeGroupAccordion from './TreeGroupAccordion.svelte';
   import TreeLeafRow from './TreeLeafRow.svelte';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
+  import { buildSegmentConnectorSlotSelectors } from '$lib/utils/connectorSlotSelectors';
+
+  interface Props {
+    onchangeConnectorSelection?: (event: CustomEvent<{
+      nodeId: string;
+      slotId: string;
+      selectedDaughterboardId: string | null;
+    }>) => void;
+  }
+
+  let { onchangeConnectorSelection }: Props = $props();
+
+  const dispatch = createEventDispatcher<{
+    changeConnectorSelection: { nodeId: string; slotId: string; selectedDaughterboardId: string | null };
+  }>();
 
   let selectedSegment = $derived($configSidebarStore.selectedSegment);
+  let configReadNodes = $derived($configReadNodesStore);
 
   // Cross-reference lookup for event ID → bowtie card
   let nodeSlotMap = $derived(bowtieCatalogStore.effectiveNodeSlotMap);
@@ -38,6 +59,29 @@
 
   /** Error from tree loading */
   let loadError = $derived(selectedSegment ? nodeTreeStore.getError(selectedSegment.nodeId) ?? null : null);
+
+  let selectedTree = $derived(selectedSegment ? nodeTreeStore.getTree(selectedSegment.nodeId) : null);
+  let connectorProfile = $derived(
+    selectedSegment
+      ? connectorSelectionsStore.getProfile(selectedSegment.nodeId) ?? selectedTree?.connectorProfile ?? null
+      : null,
+  );
+  let connectorDocument = $derived(
+    selectedSegment ? connectorSelectionsStore.getDocument(selectedSegment.nodeId) : null,
+  );
+  let connectorError = $derived(
+    selectedSegment ? connectorSelectionsStore.getError(selectedSegment.nodeId) : null,
+  );
+  let connectorSelectors = $derived(
+    segment
+      ? buildSegmentConnectorSlotSelectors(connectorProfile, connectorDocument, segment.name)
+      : [],
+  );
+  let connectorControlsEnabled = $derived(
+    selectedSegment
+      ? layoutStore.hasLayoutFile || configReadNodes.has(selectedSegment.nodeId)
+      : false,
+  );
 
   /** Whether the selected node is offline — disables all inputs (FR-007) */
   let isNodeOffline = $derived(
@@ -78,6 +122,16 @@
   function getUsedIn(nodeId: string, leaf: { path: string[] }) {
     return nodeSlotMap.get(`${nodeId}:${leaf.path.join('/')}`);
   }
+
+  function emitConnectorSelection(detail: {
+    nodeId: string;
+    slotId: string;
+    selectedDaughterboardId: string | null;
+  }): void {
+    const event = new CustomEvent('changeConnectorSelection', { detail });
+    onchangeConnectorSelection?.(event);
+    dispatch('changeConnectorSelection', detail);
+  }
 </script>
 
 <div class="segment-view">
@@ -90,10 +144,32 @@
     {@const nodeId = selectedSegment.nodeId}
     {@const groupedChildren = groupReplicatedChildren(segment.children)}
     <div class="segment-content">
-
       <h2 class="segment-heading">{segment.name}</h2>
       {#if segment.description}
         <p class="segment-description">{segment.description}</p>
+      {/if}
+      {#if connectorError}
+        <div class="load-error" role="alert">{connectorError}</div>
+      {:else if connectorSelectors.length > 0}
+        <section class="connector-section" aria-label="Connector daughterboards for {segment.name}">
+          <h3 class="connector-heading">Connector daughterboards</h3>
+          <div class="connector-selector-list" role="group" aria-label="Connector daughterboards for {segment.name}">
+            {#each connectorSelectors as selector (selector.slotId)}
+              <ConnectorSlotSelector
+                {selector}
+                disabled={!connectorControlsEnabled || isNodeOffline}
+                on:change={(event) => emitConnectorSelection({
+                  nodeId,
+                  slotId: event.detail.slotId,
+                  selectedDaughterboardId: event.detail.selectedDaughterboardId,
+                })}
+              />
+            {/each}
+          </div>
+          {#if !connectorControlsEnabled}
+            <p class="connector-hint">Read this node configuration online or open a layout to edit connector selections.</p>
+          {/if}
+        </section>
       {/if}
       {#each groupedChildren as item, idx (idx)}
         {#if item.type === 'leaf'}
@@ -245,6 +321,38 @@
     color: #605e5c;                                /* colorNeutralForeground2 */
     line-height: 1.5;
     white-space: pre-wrap;                         /* preserve newlines from CDI descriptions */
+  }
+
+  .connector-section {
+    margin: 0 0 16px;
+    padding: 12px 14px;
+    background: #f5f5f4;
+    border-radius: 6px;
+  }
+
+  .connector-heading {
+    margin: 0 0 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #323130;
+  }
+
+  .connector-selector-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 8px;
+    align-items: start;
+  }
+
+  .connector-selector-list :global(.connector-slot-selector) {
+    padding: 0;
+  }
+
+  .connector-hint {
+    margin: 10px 0 0;
+    font-size: 12px;
+    color: #605e5c;
+    line-height: 1.4;
   }
 
   .segment-leaf {

@@ -5,6 +5,7 @@ import type { LayoutFile } from '$lib/types/bowtie';
 const {
   layoutStoreRef,
   offlineChangesStoreRef,
+  connectorSelectionsStoreRef,
   lifecycleRef,
 } = vi.hoisted(() => ({
   layoutStoreRef: {
@@ -13,6 +14,9 @@ const {
   },
   offlineChangesStoreRef: {
     reloadFromBackend: vi.fn(async () => {}),
+  },
+  connectorSelectionsStoreRef: {
+    hydrateFromLayout: vi.fn(),
   },
   lifecycleRef: {
     startLayoutOpen: vi.fn(),
@@ -30,6 +34,10 @@ vi.mock('$lib/stores/layout.svelte', () => ({
 
 vi.mock('$lib/stores/offlineChanges.svelte', () => ({
   offlineChangesStore: offlineChangesStoreRef,
+}));
+
+vi.mock('$lib/stores/connectorSelections.svelte', () => ({
+  connectorSelectionsStore: connectorSelectionsStoreRef,
 }));
 
 vi.mock('$lib/stores/layoutOpenLifecycle', () => lifecycleRef);
@@ -60,6 +68,7 @@ function makeLayout(overrides: Partial<LayoutFile> = {}): LayoutFile {
       },
     },
     roleClassifications: {},
+    connectorSelections: {},
     ...overrides,
   };
 }
@@ -85,6 +94,7 @@ describe('openOfflineLayoutWithReplay', () => {
       openLayout: vi.fn(async () => result),
       hydrateOfflineSnapshots,
       applyPersistedOfflinePendingToTrees,
+      hydrateConnectorSelections: connectorSelectionsStoreRef.hydrateFromLayout,
       onOpened,
     });
 
@@ -100,6 +110,7 @@ describe('openOfflineLayoutWithReplay', () => {
       capturedAt: '2026-04-25T00:00:00.000Z',
       pendingOfflineChangeCount: 2,
     });
+    expect(connectorSelectionsStoreRef.hydrateFromLayout).toHaveBeenCalledWith(makeLayout());
   });
 
   it('does not call onOpened when the layout open fails', async () => {

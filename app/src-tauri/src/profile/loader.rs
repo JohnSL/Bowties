@@ -6,8 +6,10 @@
 
 use tauri::Manager;
 
-use super::types::StructureProfile;
+use super::types::{SharedDaughterboardLibrary, StructureProfile};
 use super::{ProfileCache, make_profile_key};
+
+const SHARED_DAUGHTERBOARD_LIBRARY_FILENAME: &str = "RR-CirKits.shared-daughterboards.yaml";
 
 /// Load a structure profile for the given manufacturer + model.
 ///
@@ -72,6 +74,53 @@ pub async fn load_profile(
     // No file found.
     cache.write().await.insert(key, None);
     None
+}
+
+pub async fn load_shared_daughterboards(
+    app_handle: &tauri::AppHandle,
+) -> Option<SharedDaughterboardLibrary> {
+    let resource_path = app_handle
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|d| d.join("profiles").join(SHARED_DAUGHTERBOARD_LIBRARY_FILENAME));
+
+    let path = match resource_path {
+        Some(path) => path,
+        None => return None,
+    };
+
+    if !path.exists() {
+        eprintln!(
+            "[profile] Shared daughterboard library not found: {}",
+            path.display()
+        );
+        return None;
+    }
+
+    let content = match tokio::fs::read_to_string(&path).await {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!(
+                "[profile] Failed to read shared daughterboard library '{}': {}",
+                path.display(),
+                e
+            );
+            return None;
+        }
+    };
+
+    match serde_yaml_ng::from_str::<SharedDaughterboardLibrary>(&content) {
+        Ok(library) => Some(library),
+        Err(e) => {
+            eprintln!(
+                "[profile] Failed to parse shared daughterboard library '{}': {}",
+                path.display(),
+                e
+            );
+            None
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -181,6 +230,87 @@ notValid: [unclosed bracket
     fn load_profile_returns_none_for_invalid_yaml() {
         let result = serde_yaml_ng::from_str::<StructureProfile>(INVALID_YAML);
         assert!(result.is_err(), "invalid YAML must fail to parse");
+    }
+
+    #[test]
+    fn load_profile_parses_connector_metadata() {
+        let connector_yaml = concat!(
+            "schemaVersion: \"1.0\"\n",
+            "nodeType:\n",
+            "  manufacturer: \"RR-CirKits\"\n",
+            "  model: \"Tower-LCC\"\n",
+            "eventRoles: []\n",
+            "relevanceRules: []\n",
+            "connectorSlots:\n",
+            "  - slotId: \"serial-a\"\n",
+            "    label: \"Serial A\"\n",
+            "    order: 0\n",
+            "    allowNoneInstalled: true\n",
+            "    supportedDaughterboardIds: [\"db-8in\", \"db-4io\"]\n",
+            "    affectedPaths: [\"Port I/O/Line\"]\n",
+            "    baseBehaviorWhenEmpty:\n",
+            "      effect: hideDependent\n",
+            "daughterboardReferences: [\"db-8in\", \"db-4io\"]\n",
+            "carrierOverrides:\n",
+            "  - carrierKey: \"rr-cirkits::tower-lcc\"\n",
+            "    slotId: \"serial-a\"\n",
+            "    daughterboardId: \"db-8in\"\n",
+            "    overrideValidityRules:\n",
+            "      - targetPath: \"Port I/O/Line/Mode\"\n",
+            "        constraintType: allowValues\n",
+            "        allowedValues: [\"occupancy\", \"sensor\"]\n",
+            "    overrideRepairRules:\n",
+            "      - targetPath: \"Port I/O/Line/Mode\"\n",
+            "        replacementStrategy: setExplicit\n",
+            "        replacementValue: \"occupancy\"\n",
+            "        priority: 1\n",
+        );
+
+        let profile: StructureProfile =
+            serde_yaml_ng::from_str(connector_yaml).expect("connector YAML must parse");
+
+        assert_eq!(profile.connector_slots.len(), 1);
+        assert_eq!(profile.connector_slots[0].slot_id, "serial-a");
+        assert_eq!(profile.connector_slots[0].supported_daughterboard_ids.len(), 2);
+        assert_eq!(profile.daughterboard_references, vec!["db-8in", "db-4io"]);
+        assert_eq!(profile.carrier_overrides.len(), 1);
+        assert_eq!(profile.carrier_overrides[0].daughterboard_id, "db-8in");
+        assert_eq!(profile.carrier_overrides[0].override_validity_rules.len(), 1);
+        assert_eq!(profile.carrier_overrides[0].override_repair_rules.len(), 1);
+    }
+
+    #[test]
+    fn load_shared_daughterboard_library_parses_valid_yaml() {
+        let shared_daughterboard_yaml = concat!(
+            "schemaVersion: \"1.0\"\n",
+            "manufacturer: \"RR-CirKits\"\n",
+            "daughterboards:\n",
+            "  - daughterboardId: \"db-8in\"\n",
+            "    displayName: \"8 Input Detector\"\n",
+            "    kind: \"detector\"\n",
+            "    validityRules:\n",
+            "      - targetPath: \"Port I/O/Line/Event#1\"\n",
+            "        constraintType: hideSection\n",
+            "    repairRules:\n",
+            "      - targetPath: \"Port I/O/Line/Event#2\"\n",
+            "        replacementStrategy: clearEmpty\n",
+            "    defaultsWhenSelected:\n",
+            "      mode: \"occupancy\"\n",
+            "    metadata:\n",
+            "      manualCitations: [\"RR-CirKits Manual p.12\"]\n",
+            "      manufacturerTags: [\"rr-cirkits\", \"tower\"]\n",
+            "      notes: \"Initial scaffold entry\"\n",
+        );
+
+        let library: SharedDaughterboardLibrary = serde_yaml_ng::from_str(shared_daughterboard_yaml)
+            .expect("shared daughterboard YAML must parse");
+
+        assert_eq!(library.schema_version, "1.0");
+        assert_eq!(library.manufacturer, "RR-CirKits");
+        assert_eq!(library.daughterboards.len(), 1);
+        assert_eq!(library.daughterboards[0].daughterboard_id, "db-8in");
+        assert_eq!(library.daughterboards[0].repair_rules.len(), 1);
+        assert_eq!(library.daughterboards[0].defaults_when_selected.get("mode"), Some(&serde_json::Value::String("occupancy".to_string())));
     }
 
     #[test]

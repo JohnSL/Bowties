@@ -1,0 +1,83 @@
+schemaVersion: "1.0"
+manufacturer: "RR-CirKits"
+daughterboards:
+	- daughterboardId: "BOD4"
+		displayName: "BOD4"
+		kind: "detection"
+		metadata:
+			notes: "4-block occupancy detector daughterboard."
+	- daughterboardId: "BOD4-CP"
+		displayName: "BOD4-CP"
+		kind: "detection"
+		metadata:
+			notes: "4-block detector with crossing and turnout feedback support."
+	- daughterboardId: "BOD-8-SM"
+		displayName: "BOD-8-SM"
+		kind: "detection"
+		metadata:
+			notes: "8-block surface-mount occupancy detector daughterboard."
+	- daughterboardId: "FOB-A"
+		displayName: "FOB-A"
+		kind: "input"
+		metadata:
+			notes: "Aux-port input board for discrete detectors and contacts."
+	- daughterboardId: "FOB-C"
+		displayName: "FOB-C"
+		kind: "input"
+		metadata:
+			notes: "Aux-port contact input board."
+	- daughterboardId: "BOB-S"
+		displayName: "BOB-S"
+		kind: "breakout"
+		metadata:
+			notes: "Signal-oriented aux-port breakout board."
+	- daughterboardId: "OI-IB-8"
+		displayName: "OI-IB-8"
+		kind: "input"
+		metadata:
+			notes: "8-bit input expander for RR-CirKits aux-port carriers."
+	- daughterboardId: "OI-OB-8"
+		displayName: "OI-OB-8"
+		kind: "output"
+		metadata:
+			notes: "8-bit output expander for RR-CirKits aux-port carriers."
+	- daughterboardId: "RB-2"
+		displayName: "RB-2"
+		kind: "relay"
+		metadata:
+			notes: "2-relay daughterboard for isolated output switching."
+	- daughterboardId: "RB-4"
+		displayName: "RB-4"
+		kind: "relay"
+		metadata:
+			notes: "4-relay daughterboard for isolated output switching."
+	- daughterboardId: "SMD-8"
+		displayName: "SMD-8"
+		kind: "signal"
+		metadata:
+			notes: "8-output signal driver daughterboard."
+	- daughterboardId: "SCSD-8"
+		displayName: "SCSD-8"
+		kind: "signal"
+		metadata:
+			notes: "Common-anode signal driver daughterboard."
+	- daughterboardId: "Isolator-8"
+		displayName: "Isolator-8"
+		kind: "isolation"
+		metadata:
+			notes: "8-channel galvanic isolation daughterboard."
+	- daughterboardId: "MSS I/OAdapter"
+		displayName: "MSS I/OAdapter"
+		kind: "adapter"
+		metadata:
+			notes: "Adapter board for MSS signal wiring on RR-CirKits carriers."
+	- daughterboardId: "Sampled I/O Splitter Pair"
+		displayName: "Sampled I/O Splitter Pair"
+		kind: "adapter"
+		metadata:
+			notes: "Splits one aux-port connection across paired sampled-I/O modules."
+	- daughterboardId: "I/O Test-SM"
+		displayName: "I/O Test-SM"
+		kind: "test"
+		metadata:
+			notes: "Aux-port loopback and diagnostics daughterboard."

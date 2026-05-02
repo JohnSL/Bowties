@@ -4,6 +4,9 @@
 //! and the `RelevanceAnnotation` that is attached to `GroupNode`s after annotation.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+pub type DaughterboardId = String;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // StructureProfile — root deserialization target
@@ -30,6 +33,18 @@ pub struct StructureProfile {
     /// Conditional relevance rules.
     #[serde(default)]
     pub relevance_rules: Vec<RelevanceRule>,
+
+    /// Connector-slot declarations for modular carrier boards.
+    #[serde(default)]
+    pub connector_slots: Vec<ConnectorSlotDefinition>,
+
+    /// Reusable daughterboard definitions referenced by this carrier profile.
+    #[serde(default)]
+    pub daughterboard_references: Vec<DaughterboardId>,
+
+    /// Optional carrier-specific daughterboard refinements.
+    #[serde(default)]
+    pub carrier_overrides: Vec<CarrierOverrideRule>,
 }
 
 /// Manufacturer + model identification block within a profile.
@@ -156,4 +171,199 @@ pub struct RelevanceAnnotation {
 
     /// User-facing explanation rendered verbatim in the UI banner.
     pub explanation: String,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Connector daughterboard metadata
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorSlotDefinition {
+    pub slot_id: String,
+    pub label: String,
+    pub order: u32,
+    pub allow_none_installed: bool,
+    pub supported_daughterboard_ids: Vec<DaughterboardId>,
+    pub affected_paths: Vec<String>,
+    #[serde(default)]
+    pub base_behavior_when_empty: Option<EmptyConnectorBehavior>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmptyConnectorBehavior {
+    pub effect: EmptyConnectorEffect,
+    #[serde(default)]
+    pub allowed_values: Vec<ProfileScalarValue>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EmptyConnectorEffect {
+    HideDependent,
+    DisableDependent,
+    AllowSubset,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CarrierOverrideRule {
+    pub carrier_key: String,
+    #[serde(default)]
+    pub slot_id: Option<String>,
+    pub daughterboard_id: DaughterboardId,
+    #[serde(default)]
+    pub override_validity_rules: Vec<ConnectorConstraintRule>,
+    #[serde(default)]
+    pub override_repair_rules: Vec<RepairRule>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorConstraintRule {
+    pub target_path: String,
+    pub constraint_type: ConnectorConstraintType,
+    #[serde(default)]
+    pub allowed_values: Vec<ProfileScalarValue>,
+    #[serde(default)]
+    pub denied_values: Vec<ProfileScalarValue>,
+    #[serde(default)]
+    pub explanation: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConnectorConstraintType {
+    AllowValues,
+    DenyValues,
+    ShowSection,
+    HideSection,
+    ReadOnly,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepairRule {
+    pub target_path: String,
+    pub replacement_strategy: RepairStrategy,
+    #[serde(default)]
+    pub replacement_value: Option<serde_json::Value>,
+    #[serde(default)]
+    pub priority: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RepairStrategy {
+    SetExplicit,
+    ResetDefault,
+    ClearEmpty,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum ProfileScalarValue {
+    String(String),
+    Integer(i64),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedDaughterboardLibrary {
+    pub schema_version: String,
+    pub manufacturer: String,
+    #[serde(default)]
+    pub daughterboards: Vec<DaughterboardDefinition>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DaughterboardDefinition {
+    pub daughterboard_id: DaughterboardId,
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub validity_rules: Vec<ConnectorConstraintRule>,
+    #[serde(default)]
+    pub repair_rules: Vec<RepairRule>,
+    #[serde(default)]
+    pub defaults_when_selected: BTreeMap<String, serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<DaughterboardMetadata>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DaughterboardMetadata {
+    #[serde(default)]
+    pub manual_citations: Vec<String>,
+    #[serde(default)]
+    pub manufacturer_tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connector_profile_types_roundtrip() {
+        let profile = StructureProfile {
+            schema_version: "1.0".to_string(),
+            node_type: ProfileNodeType {
+                manufacturer: "RR-CirKits".to_string(),
+                model: "Tower-LCC".to_string(),
+            },
+            firmware_version_range: Some(FirmwareVersionRange {
+                min: Some("1.0.0".to_string()),
+                max: None,
+            }),
+            event_roles: vec![],
+            relevance_rules: vec![],
+            connector_slots: vec![ConnectorSlotDefinition {
+                slot_id: "serial-a".to_string(),
+                label: "Serial A".to_string(),
+                order: 0,
+                allow_none_installed: true,
+                supported_daughterboard_ids: vec!["db-8in".to_string()],
+                affected_paths: vec!["Port I/O/Line/Event#1".to_string()],
+                base_behavior_when_empty: Some(EmptyConnectorBehavior {
+                    effect: EmptyConnectorEffect::HideDependent,
+                    allowed_values: vec![],
+                }),
+            }],
+            daughterboard_references: vec!["db-8in".to_string()],
+            carrier_overrides: vec![CarrierOverrideRule {
+                carrier_key: "rr-cirkits::tower-lcc".to_string(),
+                slot_id: Some("serial-a".to_string()),
+                daughterboard_id: "db-8in".to_string(),
+                override_validity_rules: vec![ConnectorConstraintRule {
+                    target_path: "Port I/O/Line/Event#1".to_string(),
+                    constraint_type: ConnectorConstraintType::HideSection,
+                    allowed_values: vec![],
+                    denied_values: vec![],
+                    explanation: Some("Hidden when card selected".to_string()),
+                }],
+                override_repair_rules: vec![RepairRule {
+                    target_path: "Port I/O/Line/Event#2".to_string(),
+                    replacement_strategy: RepairStrategy::SetExplicit,
+                    replacement_value: Some(serde_json::Value::String("occupancy".to_string())),
+                    priority: Some(1),
+                }],
+            }],
+        };
+
+        let yaml = serde_yaml_ng::to_string(&profile).expect("profile should serialize");
+        let parsed: StructureProfile =
+            serde_yaml_ng::from_str(&yaml).expect("profile should deserialize");
+
+        assert_eq!(parsed.connector_slots.len(), 1);
+        assert_eq!(parsed.daughterboard_references, vec!["db-8in"]);
+        assert_eq!(parsed.carrier_overrides.len(), 1);
+        assert_eq!(parsed.carrier_overrides[0].override_repair_rules.len(), 1);
+        assert_eq!(parsed.connector_slots[0].base_behavior_when_empty.as_ref().map(|behavior| behavior.effect), Some(EmptyConnectorEffect::HideDependent));
+    }
 }

@@ -36,8 +36,43 @@ pub struct NodeConfigTree {
     pub node_id: String,
     /// Optional identification from CDI `<identification>` element
     pub identity: Option<Identification>,
+    /// Optional connector daughterboard profile for supported modular boards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connector_profile: Option<ConnectorProfile>,
     /// Top-level segments mirroring CDI `<segment>` elements
     pub segments: Vec<SegmentNode>,
+}
+
+/// Profile-authored connector-slot metadata attached to a node tree payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorProfile {
+    pub node_id: String,
+    pub carrier_key: String,
+    pub slots: Vec<ConnectorSlot>,
+    pub supported_daughterboards: Vec<SupportedDaughterboard>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorSlot {
+    pub slot_id: String,
+    pub label: String,
+    pub order: u32,
+    pub allow_none_installed: bool,
+    pub supported_daughterboard_ids: Vec<String>,
+    pub affected_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SupportedDaughterboard {
+    pub daughterboard_id: String,
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// One CDI segment — a contiguous memory space.
@@ -268,6 +303,7 @@ pub fn build_node_config_tree(node_id: &str, cdi: &Cdi) -> NodeConfigTree {
     NodeConfigTree {
         node_id: node_id.to_string(),
         identity: cdi.identification.clone(),
+        connector_profile: None,
         segments,
     }
 }

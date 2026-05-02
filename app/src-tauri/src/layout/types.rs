@@ -29,6 +29,8 @@ pub struct LayoutFile {
     pub bowties: BTreeMap<String, BowtieMetadata>,
     #[serde(default)]
     pub role_classifications: BTreeMap<String, RoleClassification>,
+    #[serde(default)]
+    pub connector_selections: BTreeMap<String, NodeHardwareSelectionSet>,
 }
 
 impl Default for LayoutFile {
@@ -37,8 +39,39 @@ impl Default for LayoutFile {
             schema_version: SCHEMA_VERSION.to_string(),
             bowties: BTreeMap::new(),
             role_classifications: BTreeMap::new(),
+            connector_selections: BTreeMap::new(),
         }
     }
+}
+
+/// Saved per-node connector daughterboard assumptions for one layout context.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeHardwareSelectionSet {
+    pub carrier_key: String,
+    #[serde(default)]
+    pub slot_selections: BTreeMap<String, ConnectorSelectionRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+/// One persisted connector selection for a specific slot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorSelectionRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_daughterboard_id: Option<String>,
+    pub status: ConnectorSelectionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_profile_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorSelectionStatus {
+    Selected,
+    None,
+    Unknown,
 }
 
 /// Metadata for a single bowtie, stored in layout YAML.
@@ -110,6 +143,19 @@ impl LayoutFile {
                     "Invalid role '{}' for classification '{}': must be 'Producer' or 'Consumer'",
                     rc.role, key
                 ));
+            }
+        }
+
+        for (node_id, selections) in &self.connector_selections {
+            for (slot_id, selection) in &selections.slot_selections {
+                if selection.status == ConnectorSelectionStatus::Selected
+                    && selection.selected_daughterboard_id.is_none()
+                {
+                    return Err(format!(
+                        "Invalid connector selection for node '{}' slot '{}': selected status requires selectedDaughterboardId",
+                        node_id, slot_id
+                    ));
+                }
             }
         }
 
@@ -187,5 +233,42 @@ mod tests {
         assert!(parsed.validate().is_ok());
         assert_eq!(parsed.bowties.len(), 1);
         assert_eq!(parsed.role_classifications.len(), 1);
+    }
+
+    #[test]
+    fn connector_selection_roundtrip() {
+        let mut layout = LayoutFile::default();
+        let mut slot_selections = BTreeMap::new();
+        slot_selections.insert(
+            "serial-a".to_string(),
+            ConnectorSelectionRecord {
+                selected_daughterboard_id: Some("db-8in".to_string()),
+                status: ConnectorSelectionStatus::Selected,
+                source_profile_version: Some("1.0".to_string()),
+            },
+        );
+        layout.connector_selections.insert(
+            "0501010112345678".to_string(),
+            NodeHardwareSelectionSet {
+                carrier_key: "rr-cirkits::tower-lcc".to_string(),
+                slot_selections,
+                updated_at: Some("2026-05-02T10:30:00Z".to_string()),
+            },
+        );
+
+        assert!(layout.validate().is_ok());
+
+        let yaml = serde_yaml_ng::to_string(&layout).unwrap();
+        let parsed: LayoutFile = serde_yaml_ng::from_str(&yaml).unwrap();
+
+        assert!(parsed.validate().is_ok());
+        assert_eq!(parsed.connector_selections.len(), 1);
+        let node = parsed.connector_selections.get("0501010112345678").unwrap();
+        assert_eq!(node.carrier_key, "rr-cirkits::tower-lcc");
+        assert_eq!(node.slot_selections.len(), 1);
+        assert_eq!(
+            node.slot_selections.get("serial-a").unwrap().selected_daughterboard_id.as_deref(),
+            Some("db-8in")
+        );
     }
 }
