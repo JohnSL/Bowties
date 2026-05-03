@@ -100,6 +100,28 @@ describe('connector selection metadata', () => {
     });
     expect(layoutStore.layout?.connectorSelections).toHaveProperty('050201020300');
   });
+
+  it('clears dirty state when connector selection round-trips back to saved snapshot', () => {
+    layoutStore.newLayout();
+
+    layoutStore.upsertConnectorSelections('05.02.01.02.03.00', {
+      carrierKey: 'rr-cirkits::tower-lcc',
+      slotSelections: {
+        'connector-a': {
+          selectedDaughterboardId: 'BOD4-CP',
+          status: 'selected',
+        },
+      },
+      updatedAt: '2026-05-02T12:00:00Z',
+    });
+
+    expect(layoutStore.isDirty).toBe(true);
+
+    layoutStore.removeConnectorSelections('05.02.01.02.03.00');
+
+    expect(layoutStore.isDirty).toBe(false);
+    expect(layoutStore.layout?.connectorSelections).toEqual({});
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════

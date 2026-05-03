@@ -14,12 +14,13 @@
   import { writeModifiedValues, discardModifiedValues } from '$lib/api/config';
   import { toast } from '@zerodevx/svelte-toast';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
+  import { changeTrackerStore } from '$lib/stores/changeTracker.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
+  import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
   import { updateNodeSnipField } from '$lib/stores/nodeInfo';
   import DiscardConfirmDialog from '$lib/components/DiscardConfirmDialog.svelte';
-  import { deriveSaveControlsViewState } from './saveControlsPresenter';
 
   interface Props {
     /**
@@ -53,16 +54,8 @@
     currentFieldLabel: null,
   });
 
-  let viewState = $derived(deriveSaveControlsViewState({
-    bowtieMetadataEditCount: bowtieMetadataStore.editCount,
-    bowtieMetadataIsDirty: bowtieMetadataStore.isDirty,
-    layoutIsDirty: layoutStore.isDirty,
-    layoutIsOfflineMode: layoutStore.isOfflineMode,
-    offlineDraftCount: offlineChangesStore.draftCount,
-    offlineDraftRows: offlineChangesStore.draftRows,
-    saveProgressState: saveProgress.state,
-    trees: nodeTreeStore.trees,
-  }));
+  let changeTrackerSnapshot = $derived(changeTrackerStore.deriveSnapshot(saveProgress.state));
+  let viewState = $derived(changeTrackerSnapshot.saveControls);
 
   // Whether the discard confirmation dialog is open.
   let showDiscardDialog = $state(false);
@@ -70,6 +63,11 @@
   function reapplyPersistedOfflinePendingValues(): void {
     nodeTreeStore.clearAllModifiedValues();
     nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows);
+  }
+
+  function rehydrateConnectorSelectionsFromLayout(): void {
+    const layout = layoutStore.layout;
+    connectorSelectionsStore.hydrateFromLayout(layout);
   }
 
   // ── Save handler ────────────────────────────────────────────────────────────
@@ -199,6 +197,7 @@
       reapplyPersistedOfflinePendingValues();
       bowtieMetadataStore.clearAll();
       layoutStore.revertToSaved();
+      rehydrateConnectorSelectionsFromLayout();
       saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
       return;
     }
@@ -206,6 +205,7 @@
     await discardModifiedValues();
     bowtieMetadataStore.clearAll();
     layoutStore.revertToSaved();
+    rehydrateConnectorSelectionsFromLayout();
     saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
   }
 

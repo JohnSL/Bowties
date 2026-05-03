@@ -18,10 +18,11 @@ import type { NodeConfigTree, LeafConfigNode, SegmentNode } from '$lib/types/nod
 
 // ── Hoisted mock references ───────────────────────────────────────────────────
 // vi.hoisted ensures these are available inside vi.mock() factories.
-const { treesRef, metaRef, layoutRef, offlineRef } = vi.hoisted(() => ({
+const { treesRef, metaRef, layoutRef, offlineRef, connectorSelectionsRef } = vi.hoisted(() => ({
   treesRef: { map: new Map<string, NodeConfigTree>() },
   metaRef: { isDirty: false, editCount: 0, clearAll: vi.fn() },
   layoutRef: {
+    layout: null as any,
     isOfflineMode: false,
     hasLayoutFile: false,
     isConnected: false,
@@ -41,6 +42,9 @@ const { treesRef, metaRef, layoutRef, offlineRef } = vi.hoisted(() => ({
     revertAllPending: vi.fn().mockResolvedValue(undefined) as any,
     flushPendingToBackend: vi.fn().mockResolvedValue(0) as any,
     clear: vi.fn(),
+  },
+  connectorSelectionsRef: {
+    hydrateFromLayout: vi.fn(),
   },
 }));
 
@@ -67,6 +71,10 @@ vi.mock('$lib/api/config', () => ({
 
 vi.mock('$lib/stores/layout.svelte', () => ({
   layoutStore: layoutRef,
+}));
+
+vi.mock('$lib/stores/connectorSelections.svelte', () => ({
+  connectorSelectionsStore: connectorSelectionsRef,
 }));
 
 vi.mock('$lib/stores/offlineChanges.svelte', () => ({
@@ -115,6 +123,7 @@ beforeEach(() => {
   metaRef.isDirty = false;
   metaRef.editCount = 0;
   layoutRef.isOfflineMode = false;
+  layoutRef.layout = null;
   layoutRef.hasLayoutFile = false;
   layoutRef.isConnected = false;
   layoutRef.isLoaded = false;
@@ -122,6 +131,7 @@ beforeEach(() => {
   offlineRef.draftCount = 0;
   offlineRef.draftRows = [];
   offlineRef.pendingCount = 0;
+  connectorSelectionsRef.hydrateFromLayout.mockReset();
   vi.clearAllMocks();
 });
 
@@ -157,6 +167,23 @@ describe('SaveControls.svelte', () => {
       render(SaveControls);
       await waitFor(() => {
         expect(screen.getByText(/3 unsaved changes/i)).toBeInTheDocument();
+      });
+    });
+
+    it('keeps pending hint and discard dialog counts aligned for layout-only dirty state', async () => {
+      layoutRef.isOfflineMode = true;
+      layoutRef.isDirty = true;
+      render(SaveControls);
+
+      await waitFor(() => {
+        expect(screen.getByText(/1 unsaved edit/i)).toBeInTheDocument();
+      });
+
+      await fireEvent.click(screen.getByRole('button', { name: /discard/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/1 unsaved change/i)).toBeInTheDocument();
+        expect(screen.getByText(/1 node/i)).toBeInTheDocument();
       });
     });
 
@@ -226,12 +253,19 @@ describe('SaveControls.svelte', () => {
     it('calls discardModifiedValues when Revert is clicked', async () => {
       const { discardModifiedValues } = await import('$lib/api/config');
       treesRef.map.set('node1', makeDirtyTree(1));
+      layoutRef.layout = {
+        schemaVersion: '1.0',
+        bowties: {},
+        roleClassifications: {},
+        connectorSelections: {},
+      };
       render(SaveControls);
       await waitFor(() => screen.getByRole('button', { name: /discard/i }));
       await fireEvent.click(screen.getByRole('button', { name: /discard/i }));
       const revertBtn = await waitFor(() => screen.getByRole('button', { name: /revert/i }));
       await fireEvent.click(revertBtn);
       expect(discardModifiedValues).toHaveBeenCalled();
+      expect(connectorSelectionsRef.hydrateFromLayout).toHaveBeenCalledWith(layoutRef.layout);
     });
 
     it('closes dialog without discarding when Cancel is clicked', async () => {

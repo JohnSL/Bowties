@@ -32,6 +32,12 @@ function toLayoutSelectionSet(document: ConnectorSelectionDocument): LayoutNodeH
   };
 }
 
+function hasPersistedConnectorSelection(document: ConnectorSelectionDocument): boolean {
+  return document.slotSelections.some((selection) => (
+    !!selection.selectedDaughterboardId || selection.status !== 'none'
+  ));
+}
+
 function fromLayoutSelectionSet(
   nodeId: string,
   selectionSet: LayoutNodeHardwareSelectionSet,
@@ -219,7 +225,13 @@ class ConnectorSelectionsStore {
     nextDocuments.set(nodeKey, saved);
     this._documents = nextDocuments;
     this.revision += 1;
-    layoutStore.upsertConnectorSelections(saved.nodeId, toLayoutSelectionSet(saved));
+
+    if (hasPersistedConnectorSelection(saved)) {
+      layoutStore.upsertConnectorSelections(saved.nodeId, toLayoutSelectionSet(saved));
+    } else {
+      layoutStore.removeConnectorSelections(saved.nodeId);
+    }
+
     return saved;
   }
 

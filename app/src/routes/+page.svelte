@@ -79,7 +79,7 @@
     requestConfigReadCancellation,
   } from '$lib/orchestration/configReadSessionOrchestrator';
   import { handleDiscoveredNode, reconcileRefreshState, refreshReinitializedNode } from '$lib/orchestration/discoveryOrchestrator';
-  import { hasUnsavedPromptChanges } from '$lib/orchestration/unsavedChangesGuard';
+  import { changeTrackerStore } from '$lib/stores/changeTracker.svelte';
   import {
     bootstrapStartupLifecycle,
     connectLiveSession,
@@ -111,11 +111,7 @@
   let errorDialog = $state<{ title: string; message: string } | null>(null);
 
   function promptUnsaved(message: string, proceed: () => void, confirmLabel = 'Discard & Continue'): void {
-    const hasUnsaved = hasUnsavedPromptChanges(
-      nodeTreeStore.trees.values(),
-      bowtieMetadataStore.isDirty,
-      offlineChangesStore.draftCount,
-    );
+    const hasUnsaved = changeTrackerStore.deriveSnapshot('idle').hasUnsavedChanges;
     if (hasUnsaved) {
       unsavedDialog = { message, proceed, confirmLabel };
     } else {
@@ -613,11 +609,7 @@
       unlistens.push(await appWindow.onCloseRequested((event) => {
         if (isForceClosing) return;
         const hasUnsaved =
-          hasUnsavedPromptChanges(
-            nodeTreeStore.trees.values(),
-            bowtieMetadataStore.isDirty,
-            offlineChangesStore.draftCount,
-          );
+          changeTrackerStore.deriveSnapshot('idle').hasUnsavedChanges;
         if (hasUnsaved) {
           event.preventDefault();
           unsavedDialog = {

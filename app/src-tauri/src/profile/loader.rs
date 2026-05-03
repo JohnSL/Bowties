@@ -338,6 +338,24 @@ notValid: [unclosed bracket
             vec![crate::profile::ProfileScalarValue::Integer(2)]
         );
 
+        let bod4_producer_trigger_rule = bod4
+            .validity_rules
+            .iter()
+            .find(|rule| rule.target_path == "Port I/O/Line/Event#2/Upon this action")
+            .expect("BOD4 should constrain producer trigger actions");
+
+        assert_eq!(bod4_producer_trigger_rule.line_ordinals, vec![1, 2, 3, 4]);
+        assert_eq!(
+            bod4_producer_trigger_rule.allowed_values,
+            vec![
+                crate::profile::ProfileScalarValue::Integer(0),
+                crate::profile::ProfileScalarValue::Integer(5),
+                crate::profile::ProfileScalarValue::Integer(6),
+                crate::profile::ProfileScalarValue::Integer(7),
+                crate::profile::ProfileScalarValue::Integer(8),
+            ]
+        );
+
         let bod4_cp = library
             .daughterboards
             .iter()
@@ -371,6 +389,36 @@ notValid: [unclosed bracket
         assert_eq!(
             input_rule.allowed_values,
             vec![crate::profile::ProfileScalarValue::Integer(2)]
+        );
+        assert!(
+            bod8
+                .validity_rules
+                .iter()
+                .all(|rule| rule.target_path != "Port I/O/Line/Delay"),
+            "BOD-8-SM should not hide the Delay section because Tower-LCC uses it for input debounce"
+        );
+
+        let oi_ob_8 = library
+            .daughterboards
+            .iter()
+            .find(|candidate| candidate.daughterboard_id == "OI-OB-8")
+            .expect("OI-OB-8 definition should exist");
+
+        let output_producer_trigger_rule = oi_ob_8
+            .validity_rules
+            .iter()
+            .find(|rule| rule.target_path == "Port I/O/Line/Event#2/Upon this action")
+            .expect("OI-OB-8 should constrain output producer trigger actions");
+
+        assert_eq!(
+            output_producer_trigger_rule.allowed_values,
+            vec![
+                crate::profile::ProfileScalarValue::Integer(0),
+                crate::profile::ProfileScalarValue::Integer(1),
+                crate::profile::ProfileScalarValue::Integer(2),
+                crate::profile::ProfileScalarValue::Integer(3),
+                crate::profile::ProfileScalarValue::Integer(4),
+            ]
         );
     }
 

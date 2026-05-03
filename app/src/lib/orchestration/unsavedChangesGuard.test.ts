@@ -35,14 +35,18 @@ function makeTree(modifiedValue: LeafConfigNode['modifiedValue']): NodeConfigTre
 
 describe('hasUnsavedPromptChanges', () => {
   it('does not treat saved pending-sync state as unsaved when draftCount is zero', () => {
-    expect(hasUnsavedPromptChanges([makeTree(null)], false, 0)).toBe(false);
+    expect(hasUnsavedPromptChanges([makeTree(null)], false, 0, false)).toBe(false);
   });
 
   it('treats draft offline edits as unsaved', () => {
-    expect(hasUnsavedPromptChanges([makeTree(null)], false, 1)).toBe(true);
+    expect(hasUnsavedPromptChanges([makeTree(null)], false, 1, false)).toBe(true);
   });
 
   it('treats modified tree values as unsaved', () => {
-    expect(hasUnsavedPromptChanges([makeTree({ type: 'int', value: 2 })], false, 0)).toBe(true);
+    expect(hasUnsavedPromptChanges([makeTree({ type: 'int', value: 2 })], false, 0, false)).toBe(true);
+  });
+
+  it('treats dirty in-memory layout metadata as unsaved', () => {
+    expect(hasUnsavedPromptChanges([makeTree(null)], false, 0, true)).toBe(true);
   });
 });

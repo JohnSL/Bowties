@@ -15,10 +15,11 @@ daughterboards:
         constraintType: allowValues
         allowedValues: [2]
         explanation: "The BOD-4 detector outputs are low during detection, so local lines 1-4 must use Active Lo input mode."
-      - targetPath: "Port I/O/Line/Delay"
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
         lineOrdinals: [1, 2, 3, 4]
-        constraintType: hideSection
-        explanation: "Delay timing is not used on the BOD4 detector lines."
+        constraintType: allowValues
+        allowedValues: [0, 5, 6, 7, 8]
+        explanation: "BOD4 detector lines can only send producer indications from input transitions or gated input transitions."
       - targetPath: "Port I/O/Line/Event#1"
         lineOrdinals: [1, 2, 3, 4]
         constraintType: hideSection
@@ -39,10 +40,11 @@ daughterboards:
         constraintType: allowValues
         allowedValues: [2]
         explanation: "The BOD4-CP detector half uses active-low occupancy outputs on local lines 1-4."
-      - targetPath: "Port I/O/Line/Delay"
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
         lineOrdinals: [1, 2, 3, 4]
-        constraintType: hideSection
-        explanation: "Delay timing is not used on the BOD4-CP detector lines."
+        constraintType: allowValues
+        allowedValues: [0, 5, 6, 7, 8]
+        explanation: "BOD4-CP detector lines can only send producer indications from input transitions or gated input transitions."
       - targetPath: "Port I/O/Line/Event#1"
         lineOrdinals: [1, 2, 3, 4]
         constraintType: hideSection
@@ -61,9 +63,10 @@ daughterboards:
         constraintType: allowValues
         allowedValues: [2]
         explanation: "BOD-8 outputs are low during detection, so governed Tower-LCC lines must use Active Lo input mode."
-      - targetPath: "Port I/O/Line/Delay"
-        constraintType: hideSection
-        explanation: "Delay timing is not used when the daughterboard is input-only."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 5, 6, 7, 8]
+        explanation: "Detector daughterboards can only send producer indications from input transitions or gated input transitions."
       - targetPath: "Port I/O/Line/Event#1"
         constraintType: hideSection
         explanation: "Consumer output events do not apply to detector daughterboards."
@@ -81,9 +84,10 @@ daughterboards:
         constraintType: allowValues
         allowedValues: [0, 1, 2, 3, 4, 5, 6, 7, 8]
         explanation: "Input daughterboards are limited to Tower-LCC input modes."
-      - targetPath: "Port I/O/Line/Delay"
-        constraintType: hideSection
-        explanation: "Delay timing is not used when the daughterboard is input-only."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 5, 6, 7, 8]
+        explanation: "Input daughterboards can only send producer indications from input transitions or gated input transitions."
       - targetPath: "Port I/O/Line/Event#1"
         constraintType: hideSection
         explanation: "Consumer output events do not apply to input daughterboards."
@@ -101,9 +105,10 @@ daughterboards:
         constraintType: allowValues
         allowedValues: [0, 1, 2, 3, 4, 5, 6, 7, 8]
         explanation: "Input daughterboards are limited to Tower-LCC input modes."
-      - targetPath: "Port I/O/Line/Delay"
-        constraintType: hideSection
-        explanation: "Delay timing is not used when the daughterboard is input-only."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 5, 6, 7, 8]
+        explanation: "Input daughterboards can only send producer indications from input transitions or gated input transitions."
       - targetPath: "Port I/O/Line/Event#1"
         constraintType: hideSection
         explanation: "Consumer output events do not apply to input daughterboards."
@@ -117,9 +122,10 @@ daughterboards:
         constraintType: allowValues
         allowedValues: [0]
         explanation: "Signal breakout boards do not expose Tower-LCC input modes."
-      - targetPath: "Port I/O/Line/Event#2"
-        constraintType: hideSection
-        explanation: "Producer input events do not apply to output-only daughterboards."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 1, 2, 3, 4]
+        explanation: "Output-only daughterboards can only send producer indications from output-state or output-function changes."
     metadata:
       notes: "Signal-oriented aux-port breakout board."
   - daughterboardId: "OI-IB-8"
@@ -134,9 +140,10 @@ daughterboards:
         constraintType: allowValues
         allowedValues: [0, 1, 2, 3, 4, 5, 6, 7, 8]
         explanation: "Input daughterboards are limited to Tower-LCC input modes."
-      - targetPath: "Port I/O/Line/Delay"
-        constraintType: hideSection
-        explanation: "Delay timing is not used when the daughterboard is input-only."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 5, 6, 7, 8]
+        explanation: "Input daughterboards can only send producer indications from input transitions or gated input transitions."
       - targetPath: "Port I/O/Line/Event#1"
         constraintType: hideSection
         explanation: "Consumer output events do not apply to input daughterboards."
@@ -150,9 +157,10 @@ daughterboards:
         constraintType: allowValues
         allowedValues: [0]
         explanation: "Output daughterboards leave Tower-LCC input modes disabled."
-      - targetPath: "Port I/O/Line/Event#2"
-        constraintType: hideSection
-        explanation: "Producer input events do not apply to output-only daughterboards."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 1, 2, 3, 4]
+        explanation: "Output-only daughterboards can only send producer indications from output-state or output-function changes."
     metadata:
       notes: "8-bit output expander for RR-CirKits aux-port carriers."
   - daughterboardId: "RB-2"
@@ -163,9 +171,10 @@ daughterboards:
         constraintType: allowValues
         allowedValues: [0]
         explanation: "Relay daughterboards leave Tower-LCC input modes disabled."
-      - targetPath: "Port I/O/Line/Event#2"
-        constraintType: hideSection
-        explanation: "Producer input events do not apply to output-only daughterboards."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 1, 2, 3, 4]
+        explanation: "Output-only daughterboards can only send producer indications from output-state or output-function changes."
     metadata:
       notes: "2-relay daughterboard for isolated output switching."
   - daughterboardId: "RB-4"
@@ -176,9 +185,10 @@ daughterboards:
         constraintType: allowValues
         allowedValues: [0]
         explanation: "Relay daughterboards leave Tower-LCC input modes disabled."
-      - targetPath: "Port I/O/Line/Event#2"
-        constraintType: hideSection
-        explanation: "Producer input events do not apply to output-only daughterboards."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 1, 2, 3, 4]
+        explanation: "Output-only daughterboards can only send producer indications from output-state or output-function changes."
     metadata:
       notes: "4-relay daughterboard for isolated output switching."
   - daughterboardId: "SMD-8"
@@ -189,9 +199,10 @@ daughterboards:
         constraintType: allowValues
         allowedValues: [0]
         explanation: "Signal driver boards leave Tower-LCC input modes disabled."
-      - targetPath: "Port I/O/Line/Event#2"
-        constraintType: hideSection
-        explanation: "Producer input events do not apply to output-only daughterboards."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 1, 2, 3, 4]
+        explanation: "Output-only daughterboards can only send producer indications from output-state or output-function changes."
     metadata:
       notes: "8-output signal driver daughterboard."
   - daughterboardId: "SCSD-8"
@@ -202,9 +213,10 @@ daughterboards:
         constraintType: allowValues
         allowedValues: [0]
         explanation: "Signal driver boards leave Tower-LCC input modes disabled."
-      - targetPath: "Port I/O/Line/Event#2"
-        constraintType: hideSection
-        explanation: "Producer input events do not apply to output-only daughterboards."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 1, 2, 3, 4]
+        explanation: "Output-only daughterboards can only send producer indications from output-state or output-function changes."
     metadata:
       notes: "Common-anode signal driver daughterboard."
   - daughterboardId: "Isolator-8"
@@ -219,9 +231,10 @@ daughterboards:
         constraintType: allowValues
         allowedValues: [0, 1, 2, 3, 4, 5, 6, 7, 8]
         explanation: "Isolation daughterboards are limited to Tower-LCC input modes."
-      - targetPath: "Port I/O/Line/Delay"
-        constraintType: hideSection
-        explanation: "Delay timing is not used when the daughterboard is input-only."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 5, 6, 7, 8]
+        explanation: "Input daughterboards can only send producer indications from input transitions or gated input transitions."
       - targetPath: "Port I/O/Line/Event#1"
         constraintType: hideSection
         explanation: "Consumer output events do not apply to input daughterboards."
@@ -235,9 +248,10 @@ daughterboards:
         constraintType: allowValues
         allowedValues: [0]
         explanation: "Adapter boards leave Tower-LCC input modes disabled."
-      - targetPath: "Port I/O/Line/Event#2"
-        constraintType: hideSection
-        explanation: "Producer input events do not apply to output-only daughterboards."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 1, 2, 3, 4]
+        explanation: "Output-only daughterboards can only send producer indications from output-state or output-function changes."
     metadata:
       notes: "Adapter board for MSS signal wiring on RR-CirKits carriers."
   - daughterboardId: "Sampled I/O Splitter Pair"
@@ -248,9 +262,10 @@ daughterboards:
         constraintType: allowValues
         allowedValues: [0]
         explanation: "Splitter pairs leave Tower-LCC input modes disabled."
-      - targetPath: "Port I/O/Line/Event#2"
-        constraintType: hideSection
-        explanation: "Producer input events do not apply to output-only daughterboards."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 1, 2, 3, 4]
+        explanation: "Output-only daughterboards can only send producer indications from output-state or output-function changes."
     metadata:
       notes: "Splits one aux-port connection across paired sampled-I/O modules."
   - daughterboardId: "I/O Test-SM"

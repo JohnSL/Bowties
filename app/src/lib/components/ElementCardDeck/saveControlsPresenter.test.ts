@@ -59,7 +59,7 @@ describe('deriveSaveControlsViewState', () => {
     expect(state.dirtyNodeCount).toBe(2);
     expect(state.pendingEditCount).toBe(5);
     expect(state.pendingHintText).toBe('5 unsaved changes');
-    expect(state.discardFieldCount).toBe(3);
+    expect(state.discardFieldCount).toBe(5);
     expect(state.discardNodeCount).toBe(2);
     expect(state.canSave).toBe(true);
   });
@@ -91,6 +91,8 @@ describe('deriveSaveControlsViewState', () => {
 
     expect(dirtyOnlyState.pendingEditCount).toBe(1);
     expect(dirtyOnlyState.pendingHintText).toBe('1 unsaved edit');
+    expect(dirtyOnlyState.discardFieldCount).toBe(1);
+    expect(dirtyOnlyState.discardNodeCount).toBe(1);
 
     const draftState = makeState({
       layoutIsDirty: true,
@@ -104,6 +106,18 @@ describe('deriveSaveControlsViewState', () => {
     expect(draftState.discardFieldCount).toBe(2);
     expect(draftState.discardNodeCount).toBe(2);
     expect(draftState.offlineDirtyNodeCount).toBe(2);
+  });
+
+  it('counts layout-only dirty state in online pending and discard totals', () => {
+    const state = makeState({
+      layoutIsDirty: true,
+      layoutIsOfflineMode: false,
+    });
+
+    expect(state.pendingEditCount).toBe(1);
+    expect(state.pendingHintText).toBe('1 unsaved change');
+    expect(state.discardFieldCount).toBe(1);
+    expect(state.discardNodeCount).toBe(1);
   });
 
   it('disables saving while a save is already in progress', () => {

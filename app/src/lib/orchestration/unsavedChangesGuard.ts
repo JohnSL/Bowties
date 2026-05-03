@@ -4,6 +4,7 @@ export function hasUnsavedPromptChanges(
   trees: Iterable<NodeConfigTree>,
   bowtieMetadataDirty: boolean,
   draftCount: number,
+  layoutDirty: boolean,
 ): boolean {
-  return [...trees].some((tree) => hasModifiedLeaves(tree)) || bowtieMetadataDirty || draftCount > 0;
+  return [...trees].some((tree) => hasModifiedLeaves(tree)) || bowtieMetadataDirty || draftCount > 0 || layoutDirty;
 }

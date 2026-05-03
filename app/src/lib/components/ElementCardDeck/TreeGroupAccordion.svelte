@@ -42,6 +42,7 @@
   export let isNodeOffline: boolean = false;
   export let connectorProfile: ConnectorProfileView | null = null;
   export let connectorDocument: ConnectorSelectionDocument | null = null;
+  export let focusedConnectorSlotId: string | null = null;
   /** Segment origin address — forwarded to TreeLeafRow for save context */
   export let segmentOrigin: number = 0;
   /** Segment display name — forwarded to TreeLeafRow for progress labels */
@@ -53,11 +54,13 @@
   $: pillKey = siblings.length > 1 ? makePillKey(nodeId, siblings[0]) : '';
   $: selectedInstanceIndex = pillKey ? ($pillSelections.get(pillKey) ?? 0) : 0;
 
-  $: pillMode = siblings.length > 1;
-  $: activeGroup = pillMode ? (siblings[selectedInstanceIndex] ?? siblings[0]) : group;
+  $: visibleSiblings = filterSiblingsForFocusedConnector(siblings, focusedConnectorSlotId, connectorProfile);
+  $: clampedSelectedInstanceIndex = Math.min(selectedInstanceIndex, Math.max(visibleSiblings.length - 1, 0));
+  $: pillMode = visibleSiblings.length > 1;
+  $: activeGroup = pillMode ? (visibleSiblings[clampedSelectedInstanceIndex] ?? visibleSiblings[0]) : (visibleSiblings[0] ?? group);
 
   // Build pill items from siblings
-  $: pillItems = siblings.map((s, idx): PillItem => ({
+  $: pillItems = visibleSiblings.map((s, idx): PillItem => ({
     value: idx,
     label: s.displayName ?? getInstanceDisplayName(s),
     description: s.instanceLabel,
@@ -111,9 +114,9 @@
     return result;
   }
 
-  $: dirtyInstances = computeDirtyInstances(siblings);
+  $: dirtyInstances = computeDirtyInstances(visibleSiblings);
   $: hasDirtyInstances = dirtyInstances.size > 0;
-  $: pendingApplyInstances = computePendingApplyInstances(siblings);
+  $: pendingApplyInstances = computePendingApplyInstances(visibleSiblings);
   $: hasPendingApplyInstances = pendingApplyInstances.size > 0;
   $: activeGroupHasDirty = hasModifiedDescendant(activeGroup.children, []);
   $: activeGroupHasPendingApply = hasPendingApplyInChildren(activeGroup.children);
@@ -139,6 +142,49 @@
 
   function handlePillSelect(value: number) {
     if (pillKey) setPillSelection(pillKey, value);
+  }
+
+  function filterSiblingsForFocusedConnector(
+    nextSiblings: GroupConfigNode[],
+    focusedSlotId: string | null,
+    profile: ConnectorProfileView | null,
+  ): GroupConfigNode[] {
+    if (nextSiblings.length < 2 || !focusedSlotId) {
+      return nextSiblings;
+    }
+
+    const slotBySibling = nextSiblings.map((sibling) => findConnectorSlotIdForPath(sibling.path, profile));
+
+    if (!slotBySibling.some((slotId) => !!slotId)) {
+      return nextSiblings;
+    }
+
+    const filtered = nextSiblings.filter((_, idx) => slotBySibling[idx] === focusedSlotId);
+    return filtered.length > 0 ? filtered : nextSiblings;
+  }
+
+  function findConnectorSlotIdForPath(path: string[], profile: ConnectorProfileView | null): string | null {
+    if (!profile) {
+      return null;
+    }
+
+    for (const slot of profile.slots) {
+      for (const affectedPath of (slot.resolvedAffectedPaths ?? [])) {
+        if (isPathPrefix(affectedPath, path)) {
+          return slot.slotId;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function isPathPrefix(prefix: string[], fullPath: string[]): boolean {
+    if (prefix.length > fullPath.length) {
+      return false;
+    }
+
+    return prefix.every((step, index) => fullPath[index] === step);
   }
 
   function connectorConstraintForPath(path: string[]) {
@@ -187,6 +233,7 @@
               {isNodeOffline}
               {connectorProfile}
               {connectorDocument}
+              {focusedConnectorSlotId}
             />
           {/if}
         {:else if item.type === 'replicatedSet'}
@@ -202,6 +249,7 @@
               {isNodeOffline}
               {connectorProfile}
               {connectorDocument}
+              {focusedConnectorSlotId}
             />
           {/if}
         {/if}
@@ -255,6 +303,7 @@
               isNodeOffline={isEffectivelyReadOnly}
               {connectorProfile}
               {connectorDocument}
+              {focusedConnectorSlotId}
             />
           {/if}
         {:else if item.type === 'replicatedSet'}
@@ -270,6 +319,7 @@
               isNodeOffline={isEffectivelyReadOnly}
               {connectorProfile}
               {connectorDocument}
+              {focusedConnectorSlotId}
             />
           {/if}
         {/if}

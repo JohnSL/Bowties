@@ -16,6 +16,18 @@ const OUTPUT_FUNCTION_OPTIONS: TreeMapEntry[] = [
   { value: 10, label: 'Sample Steady Active Lo' },
 ];
 
+const PRODUCER_TRIGGER_OPTIONS: TreeMapEntry[] = [
+  { value: 0, label: 'None' },
+  { value: 1, label: 'Output State On command' },
+  { value: 2, label: 'Output State Off command' },
+  { value: 3, label: 'Output On (Function hi)' },
+  { value: 4, label: 'Output Off (Function lo)' },
+  { value: 5, label: 'Input On' },
+  { value: 6, label: 'Input Off' },
+  { value: 7, label: 'Gated On (Non Veto Input)' },
+  { value: 8, label: 'Gated Off (Non Veto Input)' },
+];
+
 function makeProfile(): ConnectorProfileView {
   return {
     nodeId: '05.02.01.02.03.00',
@@ -26,7 +38,7 @@ function makeProfile(): ConnectorProfileView {
         label: 'Connector A',
         order: 0,
         allowNoneInstalled: true,
-        supportedDaughterboardIds: ['BOD4', 'FOB-A'],
+        supportedDaughterboardIds: ['BOD4', 'FOB-A', 'OI-OB-8'],
         affectedPaths: ['Port I/O/Line#1', 'Port I/O/Line#2'],
         resolvedAffectedPaths: [
           ['seg:2', 'elem:0#1'],
@@ -38,7 +50,7 @@ function makeProfile(): ConnectorProfileView {
         label: 'Connector B',
         order: 1,
         allowNoneInstalled: true,
-        supportedDaughterboardIds: ['BOD4', 'FOB-A'],
+        supportedDaughterboardIds: ['BOD4', 'FOB-A', 'OI-OB-8'],
         affectedPaths: ['Port I/O/Line#9', 'Port I/O/Line#10'],
         resolvedAffectedPaths: [
           ['seg:2', 'elem:0#9'],
@@ -56,14 +68,22 @@ function makeProfile(): ConnectorProfileView {
             resolvedPath: ['seg:2', 'elem:0', 'elem:1'],
             effect: 'allowValues',
             lineOrdinals: [1],
-            allowedValues: [0, 9, 10],
-            explanation: 'Detector boards only allow sample output modes.',
+            allowedValues: [0],
+            explanation: 'Detector boards do not drive Tower-LCC output functions.',
           },
           {
-            targetPath: 'Port I/O/Line/Event#2',
-            resolvedPath: ['seg:2', 'elem:0', 'elem:5'],
+            targetPath: 'Port I/O/Line/Event#2/Upon this action',
+            resolvedPath: ['seg:2', 'elem:0', 'elem:5', 'elem:0'],
+            effect: 'allowValues',
+            lineOrdinals: [1],
+            allowedValues: [0, 5, 6, 7, 8],
+            explanation: 'Detector lines can only send producer indications from input transitions.',
+          },
+          {
+            targetPath: 'Port I/O/Line/Event#1',
+            resolvedPath: ['seg:2', 'elem:0', 'elem:4'],
             effect: 'hide',
-            explanation: 'Detector boards do not emit producer events for governed lines.',
+            explanation: 'Consumer output events do not apply to detector lines.',
           },
         ],
       },
@@ -76,6 +96,30 @@ function makeProfile(): ConnectorProfileView {
             resolvedPath: ['seg:2', 'elem:0', 'elem:2'],
             effect: 'allowValues',
             allowedValues: [0, 1, 2, 5, 6],
+          },
+          {
+            targetPath: 'Port I/O/Line/Event#2/Upon this action',
+            resolvedPath: ['seg:2', 'elem:0', 'elem:5', 'elem:0'],
+            effect: 'allowValues',
+            allowedValues: [0, 5, 6, 7, 8],
+          },
+        ],
+      },
+      {
+        daughterboardId: 'OI-OB-8',
+        displayName: 'OI-OB-8',
+        validityRules: [
+          {
+            targetPath: 'Port I/O/Line/Input Function',
+            resolvedPath: ['seg:2', 'elem:0', 'elem:2'],
+            effect: 'allowValues',
+            allowedValues: [0],
+          },
+          {
+            targetPath: 'Port I/O/Line/Event#2/Upon this action',
+            resolvedPath: ['seg:2', 'elem:0', 'elem:5', 'elem:0'],
+            effect: 'allowValues',
+            allowedValues: [0, 1, 2, 3, 4],
           },
         ],
       },
@@ -131,7 +175,7 @@ describe('evaluateConnectorConstraintsForPath', () => {
     expect(lineOneOutput.slotId).toBe('connector-a');
     expect(lineOneOutput.hidden).toBe(false);
     expect(lineOneOutput.disabled).toBe(false);
-    expect(lineOneOutput.allowedValues).toEqual([0, 9, 10]);
+    expect(lineOneOutput.allowedValues).toEqual([0]);
 
     expect(lineNineOutput.slotId).toBe('connector-b');
     expect(lineNineOutput.allowedValues).toBeNull();
@@ -155,7 +199,7 @@ describe('evaluateConnectorConstraintsForPath', () => {
       ['seg:2', 'elem:0#2', 'elem:1'],
     );
 
-    expect(lineOneOutput.allowedValues).toEqual([0, 9, 10]);
+    expect(lineOneOutput.allowedValues).toEqual([0]);
     expect(lineTwoOutput.allowedValues).toBeNull();
   });
 
@@ -207,13 +251,59 @@ describe('evaluateConnectorConstraintsForPath', () => {
     const state = evaluateConnectorConstraintsForPath(
       profile,
       document,
-      ['seg:2', 'elem:0#1', 'elem:5'],
+      ['seg:2', 'elem:0#1', 'elem:4'],
     );
 
     expect(state.hidden).toBe(true);
     expect(state.explanations).toContain(
-      'Detector boards do not emit producer events for governed lines.',
+      'Consumer output events do not apply to detector lines.',
     );
+  });
+
+  it('filters input-only producer trigger actions without hiding the indicator field', () => {
+    const profile = makeProfile();
+    const document = makeSelections([
+      { slotId: 'connector-a', selectedDaughterboardId: 'BOD4', status: 'selected' },
+      { slotId: 'connector-b', selectedDaughterboardId: undefined, status: 'none' },
+    ]);
+
+    const triggerState = evaluateConnectorConstraintsForPath(
+      profile,
+      document,
+      ['seg:2', 'elem:0#1', 'elem:5', 'elem:0'],
+    );
+    const indicatorState = evaluateConnectorConstraintsForPath(
+      profile,
+      document,
+      ['seg:2', 'elem:0#1', 'elem:5', 'elem:1'],
+    );
+
+    expect(triggerState.allowedValues).toEqual([0, 5, 6, 7, 8]);
+    expect(indicatorState.hidden).toBe(false);
+    expect(indicatorState.allowedValues).toBeNull();
+  });
+
+  it('filters output-only producer trigger actions without hiding the indicator field', () => {
+    const profile = makeProfile();
+    const document = makeSelections([
+      { slotId: 'connector-a', selectedDaughterboardId: undefined, status: 'none' },
+      { slotId: 'connector-b', selectedDaughterboardId: 'OI-OB-8', status: 'selected' },
+    ]);
+
+    const triggerState = evaluateConnectorConstraintsForPath(
+      profile,
+      document,
+      ['seg:2', 'elem:0#9', 'elem:5', 'elem:0'],
+    );
+    const indicatorState = evaluateConnectorConstraintsForPath(
+      profile,
+      document,
+      ['seg:2', 'elem:0#9', 'elem:5', 'elem:1'],
+    );
+
+    expect(triggerState.allowedValues).toEqual([0, 1, 2, 3, 4]);
+    expect(indicatorState.hidden).toBe(false);
+    expect(indicatorState.allowedValues).toBeNull();
   });
 });
 
@@ -233,8 +323,50 @@ describe('filterAllowedMapEntries', () => {
 
     expect(filterAllowedMapEntries(OUTPUT_FUNCTION_OPTIONS, state)).toEqual([
       { value: 0, label: 'No Function' },
-      { value: 9, label: 'Sample Steady Active Hi' },
-      { value: 10, label: 'Sample Steady Active Lo' },
+    ]);
+  });
+
+  it('narrows producer-trigger options to the input-driven values for detector boards', () => {
+    const profile = makeProfile();
+    const document = makeSelections([
+      { slotId: 'connector-a', selectedDaughterboardId: 'BOD4', status: 'selected' },
+      { slotId: 'connector-b', selectedDaughterboardId: undefined, status: 'none' },
+    ]);
+
+    const state = evaluateConnectorConstraintsForPath(
+      profile,
+      document,
+      ['seg:2', 'elem:0#1', 'elem:5', 'elem:0'],
+    );
+
+    expect(filterAllowedMapEntries(PRODUCER_TRIGGER_OPTIONS, state)).toEqual([
+      { value: 0, label: 'None' },
+      { value: 5, label: 'Input On' },
+      { value: 6, label: 'Input Off' },
+      { value: 7, label: 'Gated On (Non Veto Input)' },
+      { value: 8, label: 'Gated Off (Non Veto Input)' },
+    ]);
+  });
+
+  it('narrows producer-trigger options to the output-driven values for output-only boards', () => {
+    const profile = makeProfile();
+    const document = makeSelections([
+      { slotId: 'connector-a', selectedDaughterboardId: undefined, status: 'none' },
+      { slotId: 'connector-b', selectedDaughterboardId: 'OI-OB-8', status: 'selected' },
+    ]);
+
+    const state = evaluateConnectorConstraintsForPath(
+      profile,
+      document,
+      ['seg:2', 'elem:0#9', 'elem:5', 'elem:0'],
+    );
+
+    expect(filterAllowedMapEntries(PRODUCER_TRIGGER_OPTIONS, state)).toEqual([
+      { value: 0, label: 'None' },
+      { value: 1, label: 'Output State On command' },
+      { value: 2, label: 'Output State Off command' },
+      { value: 3, label: 'Output On (Function hi)' },
+      { value: 4, label: 'Output Off (Function lo)' },
     ]);
   });
 });

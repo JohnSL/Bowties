@@ -130,6 +130,12 @@
 - [ ] T035 [P] Document connector-slot profile authoring and saved hardware-selection behavior in `docs/technical/profile-extraction-guide.md` and `docs/user/using.md`
 - [ ] T036 [P] Add quickstart-aligned regression coverage for one Tower carrier and one Signal carrier in `app/src/lib/components/ConfigSidebar/ConfigSidebar.test.ts`, `app/src/lib/components/ElementCardDeck/ElementCardDeck.test.ts`, and `app/src-tauri/src/profile/mod.rs`
 - [ ] T037 Run the feature quickstart validation and update follow-up work in `specs/011-daughterboard-selection/quickstart.md` and `specs/backlog.md`
+- [X] T038 [P] [US1/US2] Harden online-without-layout connector behavior by surfacing a session-only connector-selection hint and treating dirty in-memory layout metadata as unsaved changes in `app/src/lib/components/ElementCardDeck/SegmentView.svelte`, `app/src/lib/orchestration/unsavedChangesGuard.ts`, and `app/src/routes/+page.svelte`
+- [X] T039 [P] [US1/US2] Keep Save/Discard pending counters and discard dialog totals consistent for connector metadata edits, and clear layout dirty state when connector selections round-trip back to "None installed" in `app/src/lib/components/ElementCardDeck/saveControlsPresenter.ts`, `app/src/lib/stores/connectorSelections.svelte.ts`, and `app/src/lib/stores/layout.svelte.ts`
+- [X] T040 [P] [US1/US2] Centralize frontend change-tracker aggregation in a shared store and migrate SaveControls plus route unsaved-change guards to consume it in `app/src/lib/stores/changeTracker.svelte.ts`, `app/src/lib/components/ElementCardDeck/SaveControls.svelte`, and `app/src/routes/+page.svelte`
+- [X] T041 [P] [US1/US2] Introduce a single exported change-tracker snapshot type and migrate SaveControls plus unsaved-route prompts to snapshot-derived fields in `app/src/lib/stores/changeTracker.svelte.ts`, `app/src/lib/components/ElementCardDeck/SaveControls.svelte`, and `app/src/routes/+page.svelte`
+- [X] T042 [P] [US2] Add a top-level connector pill selector and scope segment rendering to the active connector slot while showing only the active connector daughterboard control in `app/src/lib/components/ElementCardDeck/SegmentView.svelte` and `app/src/lib/stores/connectorSlotFocus.svelte.ts`
+- [X] T043 [P] [US2] Filter replicated Line pill options to show only lines governed by the active connector slot in `app/src/lib/components/ElementCardDeck/TreeGroupAccordion.svelte` and `app/src/lib/components/ElementCardDeck/SegmentView.test.ts`
 
 ---
 
@@ -202,5 +208,5 @@ Task: T017 Implement connector-slot presenter logic and selector UI in app/src/l
 - **US2**: 7 tasks
 - **US3**: 6 tasks
 - **US4**: 2 tasks
-- **Polish**: 3 tasks
-- **Total**: 37 tasks
+- **Polish**: 9 tasks
+- **Total**: 43 tasks

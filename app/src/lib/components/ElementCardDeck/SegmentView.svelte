@@ -12,7 +12,7 @@
   import { createEventDispatcher } from 'svelte';
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import { configReadNodesStore } from '$lib/stores/configReadStatus';
-  import ConnectorSlotSelector from '$lib/components/ConfigSidebar/ConnectorSlotSelector.svelte';
+  import { connectorSlotFocusStore } from '$lib/stores/connectorSlotFocus.svelte';
   import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
@@ -80,11 +80,59 @@
       ? buildSegmentConnectorSlotSelectors(connectorProfile, connectorDocument, segment.name)
       : [],
   );
+  let focusedConnectorSlotId = $state<string | null>(null);
+  let activeConnectorSelector = $derived.by(() => {
+    if (!connectorSelectors.length) {
+      return null;
+    }
+
+    return connectorSelectors.find((selector) => selector.slotId === focusedConnectorSlotId)
+      ?? connectorSelectors[0];
+  });
+  let activeConnectorDescription = $derived.by(() => {
+    if (!activeConnectorSelector?.selectedDaughterboardId) {
+      return null;
+    }
+
+    const selectedOption = activeConnectorSelector.options.find((option) => (
+      option.value === activeConnectorSelector.selectedDaughterboardId
+    ));
+    return selectedOption?.description ?? null;
+  });
   let connectorControlsEnabled = $derived(
     selectedSegment
       ? layoutStore.hasLayoutFile || configReadNodes.has(selectedSegment.nodeId)
       : false,
   );
+  let hasSelectedConnectorDaughterboard = $derived(
+    connectorDocument
+      ? connectorDocument.slotSelections.some((selection) => !!selection.selectedDaughterboardId)
+      : false,
+  );
+  let showConnectorSessionOnlyHint = $derived(
+    hasSelectedConnectorDaughterboard &&
+    !layoutStore.hasLayoutFile &&
+    !layoutStore.isOfflineMode &&
+    layoutStore.isConnected,
+  );
+
+  $effect(() => {
+    if (!selectedSegment || !connectorSelectors.length) {
+      focusedConnectorSlotId = null;
+      return;
+    }
+
+    const nodeId = selectedSegment.nodeId;
+    const savedFocus = connectorSlotFocusStore.getFocusedSlot(nodeId);
+    const nextFocus = savedFocus && connectorSelectors.some((selector) => selector.slotId === savedFocus)
+      ? savedFocus
+      : connectorSelectors[0].slotId;
+
+    focusedConnectorSlotId = nextFocus;
+    if (savedFocus !== nextFocus) {
+      connectorSlotFocusStore.setFocusedSlot(nodeId, nextFocus);
+    }
+  });
 
   let isNodeOffline = $derived(
     selectedSegment
@@ -139,6 +187,40 @@
   function connectorConstraintForPath(path: string[]) {
     return evaluateConnectorConstraintsForPath(connectorProfile, connectorDocument, path);
   }
+
+  function isVisibleForFocusedConnector(slotId: string | null): boolean {
+    if (!connectorSelectors.length || connectorSelectors.length === 1 || !focusedConnectorSlotId) {
+      return true;
+    }
+
+    if (!slotId) {
+      return true;
+    }
+
+    return slotId === focusedConnectorSlotId;
+  }
+
+  function focusConnector(slotId: string): void {
+    if (!selectedSegment) {
+      return;
+    }
+
+    focusedConnectorSlotId = slotId;
+    connectorSlotFocusStore.setFocusedSlot(selectedSegment.nodeId, slotId);
+  }
+
+  function handleActiveConnectorSelectionChange(event: Event): void {
+    if (!activeConnectorSelector) {
+      return;
+    }
+
+    const target = event.currentTarget as HTMLSelectElement;
+    emitConnectorSelection({
+      nodeId: selectedSegment?.nodeId ?? '',
+      slotId: activeConnectorSelector.slotId,
+      selectedDaughterboardId: target.value || null,
+    });
+  }
 </script>
 
 <div class="segment-view">
@@ -160,36 +242,59 @@
           <div class="load-error" role="alert">{connectorError}</div>
         {:else if connectorSelectors.length > 0}
           <section class="connector-section" aria-label="Connector daughterboards for {segment.name}">
-            <h3 class="connector-heading">Connector daughterboards</h3>
-            <div class="connector-selector-list" role="group" aria-label="Connector daughterboards for {segment.name}">
-              {#each connectorSelectors as selector (selector.slotId)}
-                <ConnectorSlotSelector
-                  {selector}
+            <div class="connector-controls-row" role="group" aria-label="Connector daughterboards for {segment.name}">
+              {#if connectorSelectors.length > 1}
+                <div class="connector-slot-tabs" role="tablist" aria-label="Connector slots for {segment.name}">
+                  {#each connectorSelectors as selector (selector.slotId)}
+                    <button
+                      class="connector-slot-tab"
+                      class:connector-slot-tab--active={selector.slotId === focusedConnectorSlotId}
+                      type="button"
+                      role="tab"
+                      aria-selected={selector.slotId === focusedConnectorSlotId}
+                      onclick={() => focusConnector(selector.slotId)}
+                    >
+                      {selector.label}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+              <span class="connector-inline-label">Daughter board:</span>
+              {#if activeConnectorSelector}
+                <select
+                  class="connector-inline-select"
+                  aria-label="Daughter board for {activeConnectorSelector.label}"
+                  value={activeConnectorSelector.selectedDaughterboardId ?? ''}
                   disabled={!connectorControlsEnabled || isNodeOffline}
-                  on:change={(event) => emitConnectorSelection({
-                    nodeId,
-                    slotId: event.detail.slotId,
-                    selectedDaughterboardId: event.detail.selectedDaughterboardId,
-                  })}
-                />
-              {/each}
+                  onchange={handleActiveConnectorSelectionChange}
+                >
+                  {#each activeConnectorSelector.options as option (option.value || option.label)}
+                    <option value={option.value}>{option.label}</option>
+                  {/each}
+                </select>
+              {/if}
             </div>
+            {#if activeConnectorDescription}
+              <p class="connector-description">{activeConnectorDescription}</p>
+            {/if}
             {#if !connectorControlsEnabled}
               <p class="connector-hint">Read this node configuration online or open a layout to edit connector selections.</p>
+            {:else if showConnectorSessionOnlyHint}
+              <p class="connector-hint">Connector selections are session-only until you save a layout file.</p>
             {/if}
           </section>
         {/if}
         {#each groupedChildren as item, idx (idx)}
           {#if item.type === 'leaf'}
             {@const leafConstraint = connectorConstraintForPath(item.node.path)}
-            {#if !leafConstraint.hidden}
+            {#if !leafConstraint.hidden && isVisibleForFocusedConnector(leafConstraint.slotId)}
               <div class="segment-leaf">
                 <TreeLeafRow leaf={item.node} usedIn={getUsedIn(nodeId, item.node)} depth={0} {nodeId} segmentOrigin={segment.origin} segmentName={segment.name} {isNodeOffline} connectorConstraintState={leafConstraint} />
               </div>
             {/if}
           {:else if item.type === 'replicatedSet'}
             {@const replicatedConstraint = connectorConstraintForPath(item.instances[0].path)}
-            {#if !replicatedConstraint.hidden}
+            {#if !replicatedConstraint.hidden && isVisibleForFocusedConnector(replicatedConstraint.slotId)}
               <TreeGroupAccordion
                 group={item.instances[0]}
                 {nodeId}
@@ -200,13 +305,14 @@
                 {isNodeOffline}
                 {connectorProfile}
                 {connectorDocument}
+                {focusedConnectorSlotId}
               />
             {/if}
           {:else if item.type === 'group'}
             {@const groupConstraint = connectorConstraintForPath(item.node.path)}
-            {#if !groupConstraint.hidden && item.node.replicationCount > 1}
-              <TreeGroupAccordion group={item.node} {nodeId} depth={0} segmentOrigin={segment.origin} segmentName={segment.name} {isNodeOffline} {connectorProfile} {connectorDocument} />
-            {:else if !groupConstraint.hidden}
+            {#if !groupConstraint.hidden && item.node.replicationCount > 1 && isVisibleForFocusedConnector(groupConstraint.slotId)}
+              <TreeGroupAccordion group={item.node} {nodeId} depth={0} segmentOrigin={segment.origin} segmentName={segment.name} {isNodeOffline} {connectorProfile} {connectorDocument} {focusedConnectorSlotId} />
+            {:else if !groupConstraint.hidden && isVisibleForFocusedConnector(groupConstraint.slotId)}
               {@const innerGrouped = groupReplicatedChildren(item.node.children)}
               {@const groupEffectiveOffline = isNodeOffline || !!item.node.readOnly}
               <section class="group-section">
@@ -222,12 +328,12 @@
                 {#each innerGrouped as inner, innerIdx (innerIdx)}
                   {#if inner.type === 'leaf'}
                     {@const innerLeafConstraint = connectorConstraintForPath(inner.node.path)}
-                    {#if !innerLeafConstraint.hidden}
+                    {#if !innerLeafConstraint.hidden && isVisibleForFocusedConnector(innerLeafConstraint.slotId)}
                       <TreeLeafRow leaf={inner.node} usedIn={getUsedIn(nodeId, inner.node)} depth={1} {nodeId} segmentOrigin={segment.origin} segmentName={segment.name} isNodeOffline={groupEffectiveOffline} connectorConstraintState={innerLeafConstraint} />
                     {/if}
                   {:else if inner.type === 'replicatedSet'}
                     {@const innerReplicatedConstraint = connectorConstraintForPath(inner.instances[0].path)}
-                    {#if !innerReplicatedConstraint.hidden}
+                    {#if !innerReplicatedConstraint.hidden && isVisibleForFocusedConnector(innerReplicatedConstraint.slotId)}
                       <TreeGroupAccordion
                         group={inner.instances[0]}
                         {nodeId}
@@ -238,11 +344,12 @@
                         isNodeOffline={groupEffectiveOffline}
                         {connectorProfile}
                         {connectorDocument}
+                        {focusedConnectorSlotId}
                       />
                     {/if}
                   {:else if inner.type === 'group'}
                     {@const innerGroupConstraint = connectorConstraintForPath(inner.node.path)}
-                    {#if !innerGroupConstraint.hidden}
+                    {#if !innerGroupConstraint.hidden && isVisibleForFocusedConnector(innerGroupConstraint.slotId)}
                       <TreeGroupAccordion
                         group={inner.node}
                         {nodeId}
@@ -252,6 +359,7 @@
                         isNodeOffline={groupEffectiveOffline}
                         {connectorProfile}
                         {connectorDocument}
+                        {focusedConnectorSlotId}
                       />
                     {/if}
                   {/if}
@@ -356,22 +464,66 @@
     border-radius: 6px;
   }
 
-  .connector-heading {
+  .connector-controls-row {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
     margin: 0 0 10px;
-    font-size: 13px;
+    flex-wrap: wrap;
+  }
+
+  .connector-inline-label {
+    font-size: 12px;
+    color: #605e5c;
     font-weight: 600;
-    color: #323130;
+    white-space: nowrap;
   }
 
-  .connector-selector-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 8px;
-    align-items: start;
+  .connector-inline-select {
+    min-width: 220px;
+    max-width: 360px;
+    width: 100%;
+    font-size: 12px;
+    padding: 6px 8px;
+    border: 1px solid var(--border-color, #c9c9c9);
+    border-radius: 6px;
+    background: var(--surface-color, #fff);
+    color: var(--text-primary, #222);
   }
 
-  .connector-selector-list :global(.connector-slot-selector) {
-    padding: 0;
+  .connector-slot-tabs {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    padding: 4px;
+    background: #edebe9;
+    border-radius: 999px;
+  }
+
+  .connector-slot-tab {
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: #605e5c;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+
+  .connector-slot-tab--active {
+    background: #ffffff;
+    color: #0078d4;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  }
+
+  .connector-description {
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: #605e5c;
+    line-height: 1.4;
   }
 
   .connector-hint {

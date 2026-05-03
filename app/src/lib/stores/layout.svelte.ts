@@ -236,7 +236,7 @@ class LayoutStore {
       ...this._layout,
       connectorSelections: JSON.parse(JSON.stringify(connectorSelections)),
     };
-    this._dirty = true;
+    this.recomputeDirtyFromSaved();
   }
 
   /** Upsert connector selection metadata for one node into the active layout. */
@@ -255,7 +255,28 @@ class LayoutStore {
         [normalizeNodeId(nodeId)]: JSON.parse(JSON.stringify(selections)),
       },
     };
-    this._dirty = true;
+    this.recomputeDirtyFromSaved();
+  }
+
+  /** Remove connector selection metadata for one node from the active layout. */
+  removeConnectorSelections(nodeId: string): void {
+    if (!this._layout) {
+      return;
+    }
+
+    const normalizedNodeId = normalizeNodeId(nodeId);
+    if (!(normalizedNodeId in this._layout.connectorSelections)) {
+      return;
+    }
+
+    const nextConnectorSelections = { ...this._layout.connectorSelections };
+    delete nextConnectorSelections[normalizedNodeId];
+
+    this._layout = {
+      ...this._layout,
+      connectorSelections: nextConnectorSelections,
+    };
+    this.recomputeDirtyFromSaved();
   }
 
   /**
@@ -340,6 +361,15 @@ class LayoutStore {
   setActiveContext(context: ActiveLayoutContext | null): void {
     this._activeContext = context;
     this._offlineMode = context?.mode === 'offline_file';
+  }
+
+  private recomputeDirtyFromSaved(): void {
+    if (!this._layout || !this._savedLayout) {
+      this._dirty = !!this._layout;
+      return;
+    }
+
+    this._dirty = JSON.stringify(this._layout) !== JSON.stringify(this._savedLayout);
   }
 
   // ── Recent layout auto-reopen ─────────────────────────────────────────────

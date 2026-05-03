@@ -57,20 +57,27 @@ export function deriveSaveControlsViewState(args: {
 
   const hasConfigEdits = dirtyCount > 0;
   const hasMetadataEdits = bowtieMetadataIsDirty;
+  const metadataEditCount = hasMetadataEdits ? Math.max(1, bowtieMetadataEditCount) : 0;
+  const hasLayoutOnlyEdits = layoutIsDirty && !hasMetadataEdits && offlineDraftCount === 0;
+  const layoutOnlyEditCount = hasLayoutOnlyEdits ? 1 : 0;
   const hasOfflineEdits = layoutIsOfflineMode && offlineDraftCount > 0;
   const hasEdits = hasConfigEdits || hasMetadataEdits || hasOfflineEdits || layoutIsDirty;
   const pendingEditCount = layoutIsOfflineMode
-    ? offlineDraftCount + (layoutIsDirty && offlineDraftCount === 0 ? 1 : 0)
-    : dirtyCount + (hasMetadataEdits ? bowtieMetadataEditCount : 0);
+    ? offlineDraftCount + metadataEditCount + layoutOnlyEditCount
+    : dirtyCount + metadataEditCount + layoutOnlyEditCount;
   const pendingHintText = `${pendingEditCount} ${layoutIsOfflineMode ? 'unsaved edit' : 'unsaved change'}${pendingEditCount === 1 ? '' : 's'}`;
   const isSaving = saveProgressState === 'saving';
+  const baseDiscardFieldCount = layoutIsOfflineMode ? offlineDraftCount : dirtyCount;
+  const baseDiscardNodeCount = layoutIsOfflineMode ? offlineDirtyNodeCount : dirtyNodeIds.size;
+  const discardFieldCount = baseDiscardFieldCount + metadataEditCount + layoutOnlyEditCount;
+  const discardNodeCount = discardFieldCount > 0 ? Math.max(1, baseDiscardNodeCount) : 0;
 
   return {
     canSave: hasEdits && !isSaving,
     dirtyCount,
     dirtyNodeCount: dirtyNodeIds.size,
-    discardFieldCount: layoutIsOfflineMode ? offlineDraftCount : dirtyCount,
-    discardNodeCount: layoutIsOfflineMode ? offlineDirtyNodeCount : dirtyNodeIds.size,
+    discardFieldCount,
+    discardNodeCount,
     hasConfigEdits,
     hasEdits,
     hasMetadataEdits,
