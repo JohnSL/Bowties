@@ -24,6 +24,38 @@ daughterboards:
         lineOrdinals: [1, 2, 3, 4]
         constraintType: hideSection
         explanation: "Consumer output events do not apply to the BOD4 detector lines."
+    constraintVariants:
+      - variantId: "tower-lcc-c7"
+        replaceBaseValidityRules: true
+        validityRules:
+          - targetPath: "Port I/O/Line/Output Function"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: allowValues
+            allowedValues: [0]
+            explanation: "BOD4 local lines 1-4 are detector outputs, so those governed Tower-LCC lines do not drive output functions."
+          - targetPath: "Port I/O/Line/Input Function"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: allowValues
+            allowedValues: [1]
+            explanation: "The rev-C7 Tower-LCC CDI splits detector polarity from input mode, so BOD4 local lines 1-4 must use Normal input mode."
+          - targetPath: "Port I/O/Line/Receiving the configured Command (C) event(s) will drive or pulse the line:"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: hideSection
+            explanation: "BOD4 detector lines do not drive commanded outputs, so the command-drive polarity setting is irrelevant."
+          - targetPath: "Port I/O/Line/The configured Indication (P) event(s) will be sent when the line is driven:"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: allowValues
+            allowedValues: [0]
+            explanation: "BOD4 detector outputs are active low, so the producer indication polarity for local lines 1-4 must stay Low (0V)."
+          - targetPath: "Port I/O/Line/Event#2/Upon this action"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: allowValues
+            allowedValues: [0, 5, 6, 7, 8]
+            explanation: "BOD4 detector lines can only send producer indications from input transitions or gated input transitions."
+          - targetPath: "Port I/O/Line/Event#1"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: hideSection
+            explanation: "Consumer output events do not apply to the BOD4 detector lines."
     metadata:
       notes: "4-block occupancy detector plus 4 additional logic-level I/O lines. The shared rules constrain only the detector half of the connector (local lines 1-4)."
   - daughterboardId: "BOD4-CP"
@@ -49,6 +81,38 @@ daughterboards:
         lineOrdinals: [1, 2, 3, 4]
         constraintType: hideSection
         explanation: "Consumer output events do not apply to the BOD4-CP detector lines."
+    constraintVariants:
+      - variantId: "tower-lcc-c7"
+        replaceBaseValidityRules: true
+        validityRules:
+          - targetPath: "Port I/O/Line/Output Function"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: allowValues
+            allowedValues: [0]
+            explanation: "BOD4-CP local lines 1-4 are occupancy detector outputs, so those lines do not drive output functions."
+          - targetPath: "Port I/O/Line/Input Function"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: allowValues
+            allowedValues: [1]
+            explanation: "The rev-C7 Tower-LCC CDI splits detector polarity from input mode, so BOD4-CP local lines 1-4 must use Normal input mode."
+          - targetPath: "Port I/O/Line/Receiving the configured Command (C) event(s) will drive or pulse the line:"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: hideSection
+            explanation: "BOD4-CP detector lines do not drive commanded outputs, so the command-drive polarity setting is irrelevant."
+          - targetPath: "Port I/O/Line/The configured Indication (P) event(s) will be sent when the line is driven:"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: allowValues
+            allowedValues: [0]
+            explanation: "BOD4-CP detector outputs are active low, so the producer indication polarity for local lines 1-4 must stay Low (0V)."
+          - targetPath: "Port I/O/Line/Event#2/Upon this action"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: allowValues
+            allowedValues: [0, 5, 6, 7, 8]
+            explanation: "BOD4-CP detector lines can only send producer indications from input transitions or gated input transitions."
+          - targetPath: "Port I/O/Line/Event#1"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: hideSection
+            explanation: "Consumer output events do not apply to the BOD4-CP detector lines."
     metadata:
       notes: "4-block control-point board with 4 detection blocks plus a separate mixed sample/output half. Shared rules constrain the detector half (local lines 1-4) and leave local lines 5-8 available for the board's sampled/output use cases."
   - daughterboardId: "BOD-8-SM"
@@ -70,6 +134,32 @@ daughterboards:
       - targetPath: "Port I/O/Line/Event#1"
         constraintType: hideSection
         explanation: "Consumer output events do not apply to detector daughterboards."
+    constraintVariants:
+      - variantId: "tower-lcc-c7"
+        replaceBaseValidityRules: true
+        validityRules:
+          - targetPath: "Port I/O/Line/Output Function"
+            constraintType: allowValues
+            allowedValues: [0]
+            explanation: "Occupancy detector boards do not drive Tower-LCC output functions."
+          - targetPath: "Port I/O/Line/Input Function"
+            constraintType: allowValues
+            allowedValues: [1]
+            explanation: "The rev-C7 Tower-LCC CDI splits detector polarity from input mode, so BOD-8-SM lines must use Normal input mode."
+          - targetPath: "Port I/O/Line/Receiving the configured Command (C) event(s) will drive or pulse the line:"
+            constraintType: hideSection
+            explanation: "BOD-8-SM detector lines do not drive commanded outputs, so the command-drive polarity setting is irrelevant."
+          - targetPath: "Port I/O/Line/The configured Indication (P) event(s) will be sent when the line is driven:"
+            constraintType: allowValues
+            allowedValues: [0]
+            explanation: "BOD-8-SM detector outputs are active low, so the producer indication polarity must stay Low (0V)."
+          - targetPath: "Port I/O/Line/Event#2/Upon this action"
+            constraintType: allowValues
+            allowedValues: [0, 5, 6, 7, 8]
+            explanation: "Detector daughterboards can only send producer indications from input transitions or gated input transitions."
+          - targetPath: "Port I/O/Line/Event#1"
+            constraintType: hideSection
+            explanation: "Consumer output events do not apply to detector daughterboards."
     metadata:
       notes: "8-block surface-mount occupancy detector daughterboard. Existing Tower-LCC recipe evidence and RR-CirKits detector manuals describe detector outputs as active-low during occupancy."
   - daughterboardId: "FOB-A"

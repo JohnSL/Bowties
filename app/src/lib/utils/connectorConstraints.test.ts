@@ -80,6 +80,13 @@ function makeProfile(): ConnectorProfileView {
             explanation: 'Detector lines can only send producer indications from input transitions.',
           },
           {
+            targetPath: 'Port I/O/Line/Receiving the configured Command (C) event(s) will drive or pulse the line:',
+            resolvedPath: ['seg:2', 'elem:0', 'elem:6'],
+            effect: 'hide',
+            lineOrdinals: [1],
+            explanation: 'Detector lines do not drive commanded outputs, so the command-drive polarity setting is irrelevant.',
+          },
+          {
             targetPath: 'Port I/O/Line/Event#1',
             resolvedPath: ['seg:2', 'elem:0', 'elem:4'],
             effect: 'hide',
@@ -281,6 +288,25 @@ describe('evaluateConnectorConstraintsForPath', () => {
     expect(triggerState.allowedValues).toEqual([0, 5, 6, 7, 8]);
     expect(indicatorState.hidden).toBe(false);
     expect(indicatorState.allowedValues).toBeNull();
+  });
+
+  it('hides the command-drive polarity field for detector lines', () => {
+    const profile = makeProfile();
+    const document = makeSelections([
+      { slotId: 'connector-a', selectedDaughterboardId: 'BOD4', status: 'selected' },
+      { slotId: 'connector-b', selectedDaughterboardId: undefined, status: 'none' },
+    ]);
+
+    const state = evaluateConnectorConstraintsForPath(
+      profile,
+      document,
+      ['seg:2', 'elem:0#1', 'elem:6'],
+    );
+
+    expect(state.hidden).toBe(true);
+    expect(state.explanations).toContain(
+      'Detector lines do not drive commanded outputs, so the command-drive polarity setting is irrelevant.',
+    );
   });
 
   it('filters output-only producer trigger actions without hiding the indicator field', () => {

@@ -18,6 +18,10 @@ const SHARED_DAUGHTERBOARD_LIBRARY_FILENAME: &str = "RR-CirKits.shared-daughterb
 /// On Windows `resource_dir()` resolves to the directory containing the
 /// executable, so profiles are user-editable without touching AppData.
 ///
+/// In debug builds, Bowties first checks the source-tree `profiles/` directory
+/// under `app/src-tauri` so profile edits are visible immediately during local
+/// development even when the copied runtime resources are stale.
+///
 /// Returns `None` (with a `eprintln!` warning) if:
 /// - no file is found at the expected location
 /// - the file is found but YAML parsing fails (FR-006)
@@ -25,8 +29,7 @@ const SHARED_DAUGHTERBOARD_LIBRARY_FILENAME: &str = "RR-CirKits.shared-daughterb
 /// The result (including `None`) is cached in `cache` to avoid re-scanning on
 /// subsequent calls for the same node type.
 ///
-/// The `_cdi` parameter is reserved for future use (e.g., path pre-resolution
-/// during load).  It is not consumed in the current implementation.
+/// The `_cdi` parameter is reserved for future use.
 pub async fn load_profile(
     manufacturer: &str,
     model: &str,
@@ -44,48 +47,25 @@ pub async fn load_profile(
         }
     }
 
-    // Construct the profile filename from manufacturer + model.
     let filename = make_profile_filename(manufacturer, model);
 
-    // ── Bundled / user-editable profile ────────────────────────────────────
-    let resource_path = app_handle
-        .path()
-        .resource_dir()
-        .ok()
-        .map(|d| d.join("profiles").join(&filename));
+    let search_dirs = profile_search_dirs(app_handle);
+    let Some(path) = find_existing_profile_path(&search_dirs, &filename) else {
+        cache.write().await.insert(key, None);
+        return None;
+    };
 
-    if let Some(ref p) = resource_path {
-        if p.exists() {
-            eprintln!("[profile] Loading: {}", p.display());
-            match try_load_from_path(p, manufacturer, model).await {
-                Some(profile) => {
-                    cache.write().await.insert(key, Some(profile.clone()));
-                    return Some(profile);
-                }
-                None => {
-                    // Parse failed — cache None so we don't retry repeatedly.
-                    cache.write().await.insert(key, None);
-                    return None;
-                }
-            }
-        }
-    }
-
-    // No file found.
-    cache.write().await.insert(key, None);
-    None
+    eprintln!("[profile] Loading: {}", path.display());
+    let profile = try_load_from_path(&path, manufacturer, model).await;
+    cache.write().await.insert(key, profile.clone());
+    profile
 }
 
 pub async fn load_shared_daughterboards(
     app_handle: &tauri::AppHandle,
 ) -> Option<SharedDaughterboardLibrary> {
-    let resource_path = app_handle
-        .path()
-        .resource_dir()
-        .ok()
-        .map(|d| d.join("profiles").join(SHARED_DAUGHTERBOARD_LIBRARY_FILENAME));
-
-    let path = match resource_path {
+    let search_dirs = profile_search_dirs(app_handle);
+    let path = match find_existing_profile_path(&search_dirs, SHARED_DAUGHTERBOARD_LIBRARY_FILENAME) {
         Some(path) => path,
         None => return None,
     };
@@ -121,6 +101,55 @@ pub async fn load_shared_daughterboards(
             None
         }
     }
+}
+
+fn profile_search_dirs(app_handle: &tauri::AppHandle) -> Vec<std::path::PathBuf> {
+    let resource_dir = app_handle
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|dir| dir.join("profiles"));
+
+    merge_profile_search_dirs(debug_source_profiles_dir(), resource_dir)
+}
+
+fn merge_profile_search_dirs(
+    debug_source_dir: Option<std::path::PathBuf>,
+    resource_dir: Option<std::path::PathBuf>,
+) -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+
+    if let Some(path) = debug_source_dir.filter(|candidate| candidate.exists()) {
+        dirs.push(path);
+    }
+
+    if let Some(path) = resource_dir.filter(|candidate| candidate.exists()) {
+        if !dirs.iter().any(|candidate| candidate == &path) {
+            dirs.push(path);
+        }
+    }
+
+    dirs
+}
+
+fn find_existing_profile_path(
+    search_dirs: &[std::path::PathBuf],
+    file_name: &str,
+) -> Option<std::path::PathBuf> {
+    search_dirs
+        .iter()
+        .map(|dir| dir.join(file_name))
+        .find(|candidate| candidate.exists())
+}
+
+#[cfg(debug_assertions)]
+fn debug_source_profiles_dir() -> Option<std::path::PathBuf> {
+    Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("profiles"))
+}
+
+#[cfg(not(debug_assertions))]
+fn debug_source_profiles_dir() -> Option<std::path::PathBuf> {
+    None
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -291,6 +320,13 @@ notValid: [unclosed bracket
             "    validityRules:\n",
             "      - targetPath: \"Port I/O/Line/Event#1\"\n",
             "        constraintType: hideSection\n",
+            "    constraintVariants:\n",
+            "      - variantId: \"tower-lcc-c7\"\n",
+            "        replaceBaseValidityRules: true\n",
+            "        validityRules:\n",
+            "          - targetPath: \"Port I/O/Line/Input Function\"\n",
+            "            constraintType: allowValues\n",
+            "            allowedValues: [1]\n",
             "    repairRules:\n",
             "      - targetPath: \"Port I/O/Line/Event#2\"\n",
             "        replacementStrategy: clearEmpty\n",
@@ -309,6 +345,7 @@ notValid: [unclosed bracket
         assert_eq!(library.manufacturer, "RR-CirKits");
         assert_eq!(library.daughterboards.len(), 1);
         assert_eq!(library.daughterboards[0].daughterboard_id, "db-8in");
+        assert_eq!(library.daughterboards[0].constraint_variants.len(), 1);
         assert_eq!(library.daughterboards[0].repair_rules.len(), 1);
         assert_eq!(library.daughterboards[0].defaults_when_selected.get("mode"), Some(&serde_json::Value::String("occupancy".to_string())));
     }
@@ -374,6 +411,30 @@ notValid: [unclosed bracket
             vec![crate::profile::ProfileScalarValue::Integer(2)]
         );
 
+        let bod4_c7_variant = bod4
+            .constraint_variants
+            .iter()
+            .find(|variant| variant.variant_id == "tower-lcc-c7")
+            .expect("BOD4 should define a Tower-LCC C7 variant");
+
+        let bod4_c7_command_drive_rule = bod4_c7_variant
+            .validity_rules
+            .iter()
+            .find(|rule| {
+                rule.target_path
+                    == "Port I/O/Line/Receiving the configured Command (C) event(s) will drive or pulse the line:"
+            })
+            .expect("BOD4 C7 variant should hide command-drive polarity on detector lines");
+
+        assert_eq!(
+            bod4_c7_command_drive_rule.line_ordinals,
+            vec![1, 2, 3, 4]
+        );
+        assert_eq!(
+            bod4_c7_command_drive_rule.constraint_type,
+            crate::profile::types::ConnectorConstraintType::HideSection
+        );
+
         let bod8 = library
             .daughterboards
             .iter()
@@ -428,6 +489,7 @@ notValid: [unclosed bracket
             .expect("bundled Tower-LCC profile YAML must parse");
 
         assert_eq!(profile.connector_slots.len(), 2);
+        assert_eq!(profile.connector_constraint_variants.len(), 2);
         assert_eq!(profile.connector_slots[0].affected_paths.len(), 8);
         assert_eq!(profile.connector_slots[1].affected_paths.len(), 8);
         assert!(profile.connector_slots[0].base_behavior_when_empty.is_none());
@@ -451,5 +513,24 @@ notValid: [unclosed bracket
     fn make_profile_filename_replaces_colon() {
         let name = make_profile_filename("Mfr:Test", "Model/X");
         assert_eq!(name, "Mfr_Test_Model_X.profile.yaml");
+    }
+
+    #[test]
+    fn merge_profile_search_dirs_prefers_source_then_resource() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "bowties-profile-loader-test-{}",
+            std::process::id()
+        ));
+        let source = temp_root.join("source");
+        let resource = temp_root.join("resource");
+
+        std::fs::create_dir_all(&source).expect("source dir should be created");
+        std::fs::create_dir_all(&resource).expect("resource dir should be created");
+
+        let dirs = merge_profile_search_dirs(Some(source.clone()), Some(resource.clone()));
+
+        assert_eq!(dirs, vec![source, resource]);
+
+        let _ = std::fs::remove_dir_all(&temp_root);
     }
 }

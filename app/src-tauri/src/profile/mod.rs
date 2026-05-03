@@ -27,11 +27,15 @@ use crate::node_tree::{
     SlotSupportedDaughterboard,
     SupportedDaughterboard,
 };
+use lcc_rs::cdi::DataElement;
 
 pub use types::{
     StructureProfile,
     ProfileNodeType,
     FirmwareVersionRange,
+    ConnectorConstraintVariant,
+    ConnectorCdiSignature,
+    ConnectorCdiEnumCount,
     EventRoleDecl,
     ProfileEventRole,
     RelevanceRule,
@@ -48,6 +52,7 @@ pub use types::{
     ProfileScalarValue,
     SharedDaughterboardLibrary,
     DaughterboardDefinition,
+    DaughterboardConstraintVariant,
     DaughterboardMetadata,
 };
 pub use loader::{load_profile, load_shared_daughterboards};
@@ -158,9 +163,42 @@ pub fn build_connector_profile(
     library: Option<&SharedDaughterboardLibrary>,
     cdi: &lcc_rs::cdi::Cdi,
 ) -> Option<ConnectorProfile> {
+    build_connector_profile_with_diagnostics(node_id, profile, library, cdi).profile
+}
+
+pub struct ConnectorProfileBuildOutcome {
+    pub profile: Option<ConnectorProfile>,
+    pub warning: Option<String>,
+}
+
+pub fn build_connector_profile_with_diagnostics(
+    node_id: &str,
+    profile: &StructureProfile,
+    library: Option<&SharedDaughterboardLibrary>,
+    cdi: &lcc_rs::cdi::Cdi,
+) -> ConnectorProfileBuildOutcome {
     if profile.connector_slots.is_empty() {
-        return None;
+        return ConnectorProfileBuildOutcome {
+            profile: None,
+            warning: None,
+        };
     }
+
+    let active_variant_id = match match_connector_constraint_variant(
+        &profile.connector_constraint_variants,
+        cdi,
+    ) {
+        Ok(variant_id) => variant_id,
+        Err(reason) => {
+            return ConnectorProfileBuildOutcome {
+                profile: None,
+                warning: Some(format!(
+                    "Daughterboard constraints are unavailable for this node because its CDI does not match any declared connector settings variant ({}). Bowties is falling back to no daughterboard-specific filtering.",
+                    reason
+                )),
+            };
+        }
+    };
 
     let carrier_key = make_profile_key(&profile.node_type.manufacturer, &profile.node_type.model);
 
@@ -191,44 +229,176 @@ pub fn build_connector_profile(
         })
         .collect();
 
-    Some(ConnectorProfile {
-        node_id: node_id.to_string(),
-        carrier_key: carrier_key.clone(),
-        slots: profile
-            .connector_slots
-            .iter()
-            .map(|slot| ConnectorSlot {
-                slot_id: slot.slot_id.clone(),
-                label: slot.label.clone(),
-                order: slot.order,
-                allow_none_installed: slot.allow_none_installed,
-                supported_daughterboard_ids: slot.supported_daughterboard_ids.clone(),
-                affected_paths: slot.affected_paths.clone(),
-                resolved_affected_paths: slot
-                    .affected_paths
-                    .iter()
-                    .filter_map(|path| resolver::resolve_named_path(path, cdi).ok())
-                    .collect(),
-                base_behavior_when_empty: slot.base_behavior_when_empty.as_ref().map(map_empty_behavior),
-                supported_daughterboard_constraints: slot
-                    .supported_daughterboard_ids
-                    .iter()
-                    .map(|daughterboard_id| SlotSupportedDaughterboard {
-                        daughterboard_id: daughterboard_id.clone(),
-                        validity_rules: collect_validity_rules(
-                            profile,
-                            library,
-                            &carrier_key,
-                            &slot.slot_id,
-                            daughterboard_id,
-                            cdi,
-                        ),
-                    })
-                    .collect(),
-            })
-            .collect(),
-        supported_daughterboards,
-    })
+    ConnectorProfileBuildOutcome {
+        profile: Some(ConnectorProfile {
+            node_id: node_id.to_string(),
+            carrier_key: carrier_key.clone(),
+            slots: profile
+                .connector_slots
+                .iter()
+                .map(|slot| ConnectorSlot {
+                    slot_id: slot.slot_id.clone(),
+                    label: slot.label.clone(),
+                    order: slot.order,
+                    allow_none_installed: slot.allow_none_installed,
+                    supported_daughterboard_ids: slot.supported_daughterboard_ids.clone(),
+                    affected_paths: slot.affected_paths.clone(),
+                    resolved_affected_paths: slot
+                        .affected_paths
+                        .iter()
+                        .filter_map(|path| resolver::resolve_named_path(path, cdi).ok())
+                        .collect(),
+                    base_behavior_when_empty: slot.base_behavior_when_empty.as_ref().map(map_empty_behavior),
+                    supported_daughterboard_constraints: slot
+                        .supported_daughterboard_ids
+                        .iter()
+                        .map(|daughterboard_id| SlotSupportedDaughterboard {
+                            daughterboard_id: daughterboard_id.clone(),
+                            validity_rules: collect_validity_rules(
+                                profile,
+                                library,
+                                &carrier_key,
+                                &slot.slot_id,
+                                daughterboard_id,
+                                active_variant_id.as_deref(),
+                                cdi,
+                            ),
+                        })
+                        .collect(),
+                })
+                .collect(),
+            supported_daughterboards,
+        }),
+        warning: None,
+    }
+}
+
+fn validate_connector_cdi_signature(
+    signature: &types::ConnectorCdiSignature,
+    cdi: &lcc_rs::cdi::Cdi,
+) -> Result<(), String> {
+    let mut mismatches = Vec::new();
+
+    for path in &signature.required_paths {
+        if let Err(error) = resolve_named_data_element(path, cdi) {
+            mismatches.push(format!("missing '{}': {}", path, error));
+        }
+    }
+
+    for count_rule in &signature.enum_entry_counts {
+        match resolve_named_data_element(&count_rule.path, cdi) {
+            Ok(DataElement::Int(int_element)) => {
+                let actual_count = int_element
+                    .map
+                    .as_ref()
+                    .map(|value_map| value_map.entries.len())
+                    .unwrap_or(0);
+                if actual_count != count_rule.count {
+                    mismatches.push(format!(
+                        "'{}' has {} enum values (expected {})",
+                        count_rule.path, actual_count, count_rule.count
+                    ));
+                }
+            }
+            Ok(_) => mismatches.push(format!(
+                "'{}' is not an integer enum field",
+                count_rule.path
+            )),
+            Err(error) => mismatches.push(format!("missing '{}': {}", count_rule.path, error)),
+        }
+    }
+
+    if mismatches.is_empty() {
+        Ok(())
+    } else {
+        Err(mismatches.join("; "))
+    }
+}
+
+fn match_connector_constraint_variant(
+    variants: &[types::ConnectorConstraintVariant],
+    cdi: &lcc_rs::cdi::Cdi,
+) -> Result<Option<String>, String> {
+    if variants.is_empty() {
+        return Ok(None);
+    }
+
+    let mut matched_variant_ids = Vec::new();
+    let mut mismatches = Vec::new();
+
+    for variant in variants {
+        match validate_connector_cdi_signature(&variant.cdi_signature, cdi) {
+            Ok(()) => matched_variant_ids.push(variant.variant_id.clone()),
+            Err(reason) => mismatches.push(format!("{}: {}", variant.variant_id, reason)),
+        }
+    }
+
+    match matched_variant_ids.len() {
+        0 => Err(mismatches.join("; ")),
+        1 => Ok(matched_variant_ids.into_iter().next()),
+        _ => Err(format!(
+            "multiple connector variants matched the connected CDI ({})",
+            matched_variant_ids.join(", ")
+        )),
+    }
+}
+
+fn resolve_named_data_element<'a>(
+    path: &str,
+    cdi: &'a lcc_rs::cdi::Cdi,
+) -> Result<&'a DataElement, String> {
+    let resolved_path = resolver::resolve_named_path(path, cdi)?;
+    let (first_step, remaining_steps) = resolved_path
+        .split_first()
+        .ok_or_else(|| format!("resolved path for '{}' is empty", path))?;
+    let seg_idx = parse_segment_step(first_step)?;
+    let mut elements = &cdi
+        .segments
+        .get(seg_idx)
+        .ok_or_else(|| format!("segment index {} out of range for '{}'", seg_idx, path))?
+        .elements;
+
+    for (index, step) in remaining_steps.iter().enumerate() {
+        let elem_idx = parse_element_step(step)?;
+        let element = elements
+            .get(elem_idx)
+            .ok_or_else(|| format!("element index {} out of range for '{}'", elem_idx, path))?;
+
+        if index == remaining_steps.len() - 1 {
+            return Ok(element);
+        }
+
+        match element {
+            DataElement::Group(group) => {
+                elements = &group.elements;
+            }
+            _ => {
+                return Err(format!(
+                    "'{}' traverses through non-group element '{}'",
+                    path, step
+                ));
+            }
+        }
+    }
+
+    Err(format!("'{}' resolved to a segment, not an element", path))
+}
+
+fn parse_segment_step(step: &str) -> Result<usize, String> {
+    step.strip_prefix("seg:")
+        .ok_or_else(|| format!("invalid segment step '{}'", step))?
+        .parse::<usize>()
+        .map_err(|error| format!("invalid segment index '{}': {}", step, error))
+}
+
+fn parse_element_step(step: &str) -> Result<usize, String> {
+    let raw = step
+        .strip_prefix("elem:")
+        .ok_or_else(|| format!("invalid element step '{}'", step))?;
+    let index_text = raw.split('#').next().unwrap_or(raw);
+    index_text
+        .parse::<usize>()
+        .map_err(|error| format!("invalid element index '{}': {}", step, error))
 }
 
 fn collect_validity_rules(
@@ -237,9 +407,20 @@ fn collect_validity_rules(
     carrier_key: &str,
     slot_id: &str,
     daughterboard_id: &str,
+    active_variant_id: Option<&str>,
     cdi: &lcc_rs::cdi::Cdi,
 ) -> Vec<ConnectorConstraint> {
     let mut rules = Vec::new();
+
+    let matching_overrides: Vec<_> = profile
+        .carrier_overrides
+        .iter()
+        .filter(|candidate| {
+            candidate.daughterboard_id == daughterboard_id
+                && candidate.carrier_key.trim().eq_ignore_ascii_case(carrier_key)
+                && candidate.slot_id.as_deref().map(|value| value == slot_id).unwrap_or(true)
+        })
+        .collect();
 
     if let Some(shared_definition) = library
         .and_then(|shared_library| {
@@ -249,18 +430,39 @@ fn collect_validity_rules(
                 .find(|candidate| candidate.daughterboard_id == daughterboard_id)
         })
     {
-        for rule in &shared_definition.validity_rules {
-            if let Some(mapped) = map_constraint_rule(rule, cdi) {
-                rules.push(mapped);
+        let matched_shared_variant = active_variant_id.and_then(|variant_id| {
+            shared_definition
+                .constraint_variants
+                .iter()
+                .find(|candidate| candidate.variant_id == variant_id)
+        });
+        let replace_shared_via_override = matching_overrides
+            .iter()
+            .any(|candidate| candidate.replace_shared_validity_rules);
+        let replace_base_via_variant = matched_shared_variant
+            .map(|candidate| candidate.replace_base_validity_rules)
+            .unwrap_or(false);
+
+        if !replace_shared_via_override && !replace_base_via_variant {
+            for rule in &shared_definition.validity_rules {
+                if let Some(mapped) = map_constraint_rule(rule, cdi) {
+                    rules.push(mapped);
+                }
+            }
+        }
+
+        if !replace_shared_via_override {
+            if let Some(shared_variant) = matched_shared_variant {
+                for rule in &shared_variant.validity_rules {
+                    if let Some(mapped) = map_constraint_rule(rule, cdi) {
+                        rules.push(mapped);
+                    }
+                }
             }
         }
     }
 
-    for override_rule in profile.carrier_overrides.iter().filter(|candidate| {
-        candidate.daughterboard_id == daughterboard_id
-            && candidate.carrier_key.trim().eq_ignore_ascii_case(carrier_key)
-            && candidate.slot_id.as_deref().map(|value| value == slot_id).unwrap_or(true)
-    }) {
+    for override_rule in matching_overrides {
         for rule in &override_rule.override_validity_rules {
             if let Some(mapped) = map_constraint_rule(rule, cdi) {
                 rules.push(mapped);
@@ -475,6 +677,7 @@ mod tests {
             ],
             relevance_rules: vec![],
             connector_slots: vec![],
+            connector_constraint_variants: vec![],
             daughterboard_references: vec![],
             carrier_overrides: vec![],
         };
@@ -543,6 +746,7 @@ mod tests {
             ],
             relevance_rules: vec![],
             connector_slots: vec![],
+            connector_constraint_variants: vec![],
             daughterboard_references: vec![],
             carrier_overrides: vec![],
         };
@@ -598,6 +802,7 @@ mod tests {
             }],
             relevance_rules: vec![],
             connector_slots: vec![],
+            connector_constraint_variants: vec![],
             daughterboard_references: vec![],
             carrier_overrides: vec![],
         };
@@ -647,6 +852,7 @@ mod tests {
             }],
             relevance_rules: vec![],
             connector_slots: vec![],
+            connector_constraint_variants: vec![],
             daughterboard_references: vec![],
             carrier_overrides: vec![],
         };
@@ -688,6 +894,7 @@ mod tests {
             }],
             relevance_rules: vec![],
             connector_slots: vec![],
+            connector_constraint_variants: vec![],
             daughterboard_references: vec![],
             carrier_overrides: vec![],
         };
@@ -733,6 +940,7 @@ mod tests {
                 affected_paths: vec!["Port I/O/Line#1".to_string()],
                 base_behavior_when_empty: None,
             }],
+            connector_constraint_variants: vec![],
             daughterboard_references: vec![],
             carrier_overrides: vec![],
         };
@@ -754,6 +962,7 @@ mod tests {
                 }],
                 repair_rules: vec![],
                 defaults_when_selected: std::collections::BTreeMap::new(),
+                constraint_variants: vec![],
                 metadata: None,
             }],
         };
@@ -785,5 +994,185 @@ mod tests {
         );
         assert_eq!(rules[0].line_ordinals, vec![1, 2, 3, 4]);
         assert_eq!(rules[0].allowed_values, vec![ConnectorScalarValue::Integer(0)]);
+    }
+
+    #[test]
+    fn build_connector_profile_disables_constraints_when_no_connector_variant_matches() {
+        let cdi = parse_cdi(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Port I/O</name>
+                    <group replication="8">
+                        <name>Line</name>
+                        <repname>Line</repname>
+                        <int size="1">
+                            <name>Output Function</name>
+                            <map>
+                                <relation><property>0</property><value>None</value></relation>
+                                <relation><property>1</property><value>Steady</value></relation>
+                                <relation><property>2</property><value>Pulse</value></relation>
+                                <relation><property>3</property><value>Blink A</value></relation>
+                                <relation><property>4</property><value>Blink B</value></relation>
+                            </map>
+                        </int>
+                        <int size="1">
+                            <name>Input Function</name>
+                            <map>
+                                <relation><property>0</property><value>None</value></relation>
+                                <relation><property>1</property><value>Normal</value></relation>
+                                <relation><property>2</property><value>Alternating</value></relation>
+                            </map>
+                        </int>
+                    </group>
+                </segment>
+            </cdi>"#,
+        )
+        .expect("CDI parse should succeed");
+
+        let profile = StructureProfile {
+            schema_version: "1.0".to_string(),
+            node_type: types::ProfileNodeType {
+                manufacturer: "RR-CirKits".to_string(),
+                model: "Tower-LCC".to_string(),
+            },
+            firmware_version_range: None,
+            event_roles: vec![],
+            relevance_rules: vec![],
+            connector_slots: vec![types::ConnectorSlotDefinition {
+                slot_id: "connector-a".to_string(),
+                label: "Connector A".to_string(),
+                order: 0,
+                allow_none_installed: true,
+                supported_daughterboard_ids: vec!["BOD4".to_string()],
+                affected_paths: vec!["Port I/O/Line#1".to_string()],
+                base_behavior_when_empty: None,
+            }],
+            connector_constraint_variants: vec![types::ConnectorConstraintVariant {
+                variant_id: "tower-lcc-legacy".to_string(),
+                cdi_signature: types::ConnectorCdiSignature {
+                    required_paths: vec!["Port I/O/Line/Output Function".to_string()],
+                    enum_entry_counts: vec![
+                        types::ConnectorCdiEnumCount {
+                            path: "Port I/O/Line/Output Function".to_string(),
+                            count: 17,
+                        },
+                        types::ConnectorCdiEnumCount {
+                            path: "Port I/O/Line/Input Function".to_string(),
+                            count: 9,
+                        },
+                    ],
+                },
+            }],
+            daughterboard_references: vec![],
+            carrier_overrides: vec![],
+        };
+
+        let outcome = build_connector_profile_with_diagnostics(
+            "05.02.01.02.03.00.00.01",
+            &profile,
+            None,
+            &cdi,
+        );
+
+        assert!(outcome.profile.is_none());
+        assert!(
+            outcome.warning.as_deref().unwrap_or_default().contains(
+                "falling back to no daughterboard-specific filtering"
+            )
+        );
+    }
+
+    #[test]
+    fn build_connector_profile_applies_variant_shared_validity_rules() {
+        let cdi = parse_cdi(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Port I/O</name>
+                    <group replication="8">
+                        <name>Line</name>
+                        <repname>Line</repname>
+                        <int size="1"><name>Input Function</name></int>
+                    </group>
+                </segment>
+            </cdi>"#,
+        )
+        .expect("CDI parse should succeed");
+
+        let profile = StructureProfile {
+            schema_version: "1.0".to_string(),
+            node_type: types::ProfileNodeType {
+                manufacturer: "RR-CirKits".to_string(),
+                model: "Tower-LCC".to_string(),
+            },
+            firmware_version_range: None,
+            event_roles: vec![],
+            relevance_rules: vec![],
+            connector_slots: vec![types::ConnectorSlotDefinition {
+                slot_id: "connector-a".to_string(),
+                label: "Connector A".to_string(),
+                order: 0,
+                allow_none_installed: true,
+                supported_daughterboard_ids: vec!["BOD4".to_string()],
+                affected_paths: vec!["Port I/O/Line#1".to_string()],
+                base_behavior_when_empty: None,
+            }],
+            connector_constraint_variants: vec![types::ConnectorConstraintVariant {
+                variant_id: "tower-lcc-c7".to_string(),
+                cdi_signature: types::ConnectorCdiSignature {
+                    required_paths: vec!["Port I/O/Line/Input Function".to_string()],
+                    enum_entry_counts: vec![types::ConnectorCdiEnumCount {
+                        path: "Port I/O/Line/Input Function".to_string(),
+                        count: 0,
+                    }],
+                },
+            }],
+            daughterboard_references: vec![],
+            carrier_overrides: vec![],
+        };
+
+        let library = types::SharedDaughterboardLibrary {
+            schema_version: "1.0".to_string(),
+            manufacturer: "RR-CirKits".to_string(),
+            daughterboards: vec![types::DaughterboardDefinition {
+                daughterboard_id: "BOD4".to_string(),
+                display_name: "BOD4".to_string(),
+                kind: Some("detection".to_string()),
+                validity_rules: vec![types::ConnectorConstraintRule {
+                    target_path: "Port I/O/Line/Input Function".to_string(),
+                    constraint_type: types::ConnectorConstraintType::AllowValues,
+                    line_ordinals: vec![1, 2, 3, 4],
+                    allowed_values: vec![types::ProfileScalarValue::Integer(2)],
+                    denied_values: vec![],
+                    explanation: Some("Legacy detector mode".to_string()),
+                }],
+                repair_rules: vec![],
+                defaults_when_selected: std::collections::BTreeMap::new(),
+                constraint_variants: vec![types::DaughterboardConstraintVariant {
+                    variant_id: "tower-lcc-c7".to_string(),
+                    replace_base_validity_rules: true,
+                    validity_rules: vec![types::ConnectorConstraintRule {
+                        target_path: "Port I/O/Line/Input Function".to_string(),
+                        constraint_type: types::ConnectorConstraintType::AllowValues,
+                        line_ordinals: vec![1, 2, 3, 4],
+                        allowed_values: vec![types::ProfileScalarValue::Integer(1)],
+                        denied_values: vec![],
+                        explanation: Some("C7 detector lines use Normal input mode".to_string()),
+                    }],
+                }],
+                metadata: None,
+            }],
+        };
+
+        let connector_profile = build_connector_profile(
+            "05.02.01.02.03.00.00.01",
+            &profile,
+            Some(&library),
+            &cdi,
+        )
+        .expect("connector profile should be built");
+
+        let rules = &connector_profile.slots[0].supported_daughterboard_constraints[0].validity_rules;
+        assert_eq!(rules.len(), 1, "variant rules should replace base rules");
+        assert_eq!(rules[0].allowed_values, vec![ConnectorScalarValue::Integer(1)]);
     }
 }

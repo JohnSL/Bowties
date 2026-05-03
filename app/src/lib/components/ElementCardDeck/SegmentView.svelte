@@ -73,7 +73,9 @@
       return null;
     }
 
-    return connectorSelectionsStore.getError(selectedSegment.nodeId);
+    return connectorSelectionsStore.getError(selectedSegment.nodeId)
+      ?? selectedTree?.connectorProfileWarning
+      ?? null;
   });
   let connectorSelectors = $derived(
     segment

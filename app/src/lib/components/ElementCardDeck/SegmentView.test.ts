@@ -392,6 +392,32 @@ describe('SegmentView connector selectors', () => {
     expect(layoutStore.getConnectorSelections(NODE_ID)).toBeNull();
   });
 
+  it('shows a warning when connector filtering is disabled because the CDI shape does not match', () => {
+    nodeTreeStore.setTree(NODE_ID, {
+      nodeId: NODE_ID,
+      identity: null,
+      connectorProfile: null,
+      connectorProfileWarning: 'Daughterboard constraints are unavailable for this node because its CDI does not match the expected connector settings layout (\'Port I/O/Line/Input Function\' has 3 enum values (expected 9)). Bowties is falling back to no daughterboard-specific filtering.',
+      segments: [
+        {
+          name: 'Port I/O',
+          description: 'Port settings',
+          origin: 0,
+          space: 253,
+          children: [],
+        },
+      ],
+    } as any);
+    configSidebarStore.selectSegment(NODE_ID, 'seg:0', 'Port I/O');
+
+    render(SegmentView);
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'falling back to no daughterboard-specific filtering',
+    );
+    expect(screen.queryByText('Connector daughterboards')).not.toBeInTheDocument();
+  });
+
   it('hides segment-level governed groups when the selected daughterboard marks them unavailable', async () => {
     nodeTreeStore.setTree(NODE_ID, {
       nodeId: NODE_ID,

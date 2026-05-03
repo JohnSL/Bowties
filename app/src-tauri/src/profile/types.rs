@@ -38,6 +38,11 @@ pub struct StructureProfile {
     #[serde(default)]
     pub connector_slots: Vec<ConnectorSlotDefinition>,
 
+    /// Optional connector CDI variants used to select daughterboard
+    /// constraint variants for the connected node.
+    #[serde(default)]
+    pub connector_constraint_variants: Vec<ConnectorConstraintVariant>,
+
     /// Reusable daughterboard definitions referenced by this carrier profile.
     #[serde(default)]
     pub daughterboard_references: Vec<DaughterboardId>,
@@ -61,6 +66,29 @@ pub struct ProfileNodeType {
 pub struct FirmwareVersionRange {
     pub min: Option<String>,
     pub max: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorCdiSignature {
+    #[serde(default)]
+    pub required_paths: Vec<String>,
+    #[serde(default)]
+    pub enum_entry_counts: Vec<ConnectorCdiEnumCount>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorConstraintVariant {
+    pub variant_id: String,
+    pub cdi_signature: ConnectorCdiSignature,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorCdiEnumCount {
+    pub path: String,
+    pub count: usize,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -214,6 +242,8 @@ pub struct CarrierOverrideRule {
     pub slot_id: Option<String>,
     pub daughterboard_id: DaughterboardId,
     #[serde(default)]
+    pub replace_shared_validity_rules: bool,
+    #[serde(default)]
     pub override_validity_rules: Vec<ConnectorConstraintRule>,
     #[serde(default)]
     pub override_repair_rules: Vec<RepairRule>,
@@ -292,8 +322,20 @@ pub struct DaughterboardDefinition {
     pub repair_rules: Vec<RepairRule>,
     #[serde(default)]
     pub defaults_when_selected: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub constraint_variants: Vec<DaughterboardConstraintVariant>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<DaughterboardMetadata>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DaughterboardConstraintVariant {
+    pub variant_id: String,
+    #[serde(default)]
+    pub replace_base_validity_rules: bool,
+    #[serde(default)]
+    pub validity_rules: Vec<ConnectorConstraintRule>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -337,11 +379,22 @@ mod tests {
                     allowed_values: vec![],
                 }),
             }],
+            connector_constraint_variants: vec![ConnectorConstraintVariant {
+                variant_id: "tower-lcc-legacy".to_string(),
+                cdi_signature: ConnectorCdiSignature {
+                    required_paths: vec!["Port I/O/Line/Output Function".to_string()],
+                    enum_entry_counts: vec![ConnectorCdiEnumCount {
+                        path: "Port I/O/Line/Output Function".to_string(),
+                        count: 17,
+                    }],
+                },
+            }],
             daughterboard_references: vec!["db-8in".to_string()],
             carrier_overrides: vec![CarrierOverrideRule {
                 carrier_key: "rr-cirkits::tower-lcc".to_string(),
                 slot_id: Some("serial-a".to_string()),
                 daughterboard_id: "db-8in".to_string(),
+                replace_shared_validity_rules: true,
                 override_validity_rules: vec![ConnectorConstraintRule {
                     target_path: "Port I/O/Line/Event#1".to_string(),
                     constraint_type: ConnectorConstraintType::HideSection,
@@ -364,8 +417,17 @@ mod tests {
             serde_yaml_ng::from_str(&yaml).expect("profile should deserialize");
 
         assert_eq!(parsed.connector_slots.len(), 1);
+        assert_eq!(
+            parsed
+                .connector_constraint_variants[0]
+                .cdi_signature
+                .enum_entry_counts[0]
+                .count,
+            17
+        );
         assert_eq!(parsed.daughterboard_references, vec!["db-8in"]);
         assert_eq!(parsed.carrier_overrides.len(), 1);
+        assert!(parsed.carrier_overrides[0].replace_shared_validity_rules);
         assert_eq!(parsed.carrier_overrides[0].override_repair_rules.len(), 1);
         assert_eq!(parsed.carrier_overrides[0].override_validity_rules[0].line_ordinals, vec![1, 2, 3, 4]);
         assert_eq!(parsed.connector_slots[0].base_behavior_when_empty.as_ref().map(|behavior| behavior.effect), Some(EmptyConnectorEffect::HideDependent));

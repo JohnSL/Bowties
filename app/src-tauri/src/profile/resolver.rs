@@ -438,6 +438,7 @@ mod tests {
             }],
             relevance_rules: vec![],
             connector_slots: vec![],
+            connector_constraint_variants: vec![],
             daughterboard_references: vec![],
             carrier_overrides: vec![],
         };
@@ -486,11 +487,13 @@ mod tests {
                 affected_paths: vec!["Port I/O/Line/Event#2".to_string()],
                 base_behavior_when_empty: None,
             }],
+            connector_constraint_variants: vec![],
             daughterboard_references: vec!["db-4io".to_string()],
             carrier_overrides: vec![crate::profile::types::CarrierOverrideRule {
                 carrier_key: "test::test".to_string(),
                 slot_id: Some("serial-a".to_string()),
                 daughterboard_id: "db-8in".to_string(),
+                replace_shared_validity_rules: false,
                 override_validity_rules: vec![crate::profile::types::ConnectorConstraintRule {
                     target_path: "Port I/O/Line/Event#1".to_string(),
                     constraint_type: crate::profile::types::ConnectorConstraintType::HideSection,
@@ -534,11 +537,13 @@ mod tests {
                 affected_paths: vec![],
                 base_behavior_when_empty: None,
             }],
+            connector_constraint_variants: vec![],
             daughterboard_references: vec!["db-relay".to_string(), "db-8in".to_string()],
             carrier_overrides: vec![crate::profile::types::CarrierOverrideRule {
                 carrier_key: "test::test".to_string(),
                 slot_id: None,
                 daughterboard_id: "db-relay".to_string(),
+                replace_shared_validity_rules: false,
                 override_validity_rules: vec![],
                 override_repair_rules: vec![],
             }],

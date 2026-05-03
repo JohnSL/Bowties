@@ -728,12 +728,14 @@ pub async fn build_offline_node_tree(
             if let Some(profile) = crate::profile::load_profile(manufacturer, model, &cdi, &app, &state.profiles).await {
                 let report = crate::profile::annotate_tree(&mut tree, &profile, &cdi);
                 let shared_daughterboards = crate::profile::load_shared_daughterboards(&app).await;
-                tree.connector_profile = crate::profile::build_connector_profile(
+                let connector_profile_outcome = crate::profile::build_connector_profile_with_diagnostics(
                     &dotted_id,
                     &profile,
                     shared_daughterboards.as_ref(),
                     &cdi,
                 );
+                tree.connector_profile = connector_profile_outcome.profile;
+                tree.connector_profile_warning = connector_profile_outcome.warning;
                 eprintln!(
                     "[offline profile] {} - {} event roles, {} rules applied, {} warnings",
                     node_id,

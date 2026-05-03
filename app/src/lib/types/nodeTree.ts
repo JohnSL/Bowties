@@ -34,6 +34,8 @@ export interface NodeConfigTree {
   identity: Identification | null;
   /** Optional connector daughterboard profile for supported modular boards. */
   connectorProfile?: ConnectorProfileView | null;
+  /** Optional warning when connector filtering is disabled for safety. */
+  connectorProfileWarning?: string | null;
   /** Top-level segments mirroring CDI `<segment>` elements */
   segments: SegmentNode[];
 }

@@ -39,6 +39,9 @@ pub struct NodeConfigTree {
     /// Optional connector daughterboard profile for supported modular boards.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connector_profile: Option<ConnectorProfile>,
+    /// Optional warning when connector filtering is disabled for safety.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connector_profile_warning: Option<String>,
     /// Top-level segments mirroring CDI `<segment>` elements
     pub segments: Vec<SegmentNode>,
 }
@@ -368,6 +371,7 @@ pub fn build_node_config_tree(node_id: &str, cdi: &Cdi) -> NodeConfigTree {
         node_id: node_id.to_string(),
         identity: cdi.identification.clone(),
         connector_profile: None,
+        connector_profile_warning: None,
         segments,
     }
 }

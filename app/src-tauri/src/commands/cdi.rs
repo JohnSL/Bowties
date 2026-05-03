@@ -1513,12 +1513,14 @@ pub async fn get_node_tree(
             ).await {
                 let report = crate::profile::annotate_tree(&mut tree, &profile, &cdi);
                 let shared_daughterboards = crate::profile::load_shared_daughterboards(&app_handle).await;
-                tree.connector_profile = crate::profile::build_connector_profile(
+                let connector_profile_outcome = crate::profile::build_connector_profile_with_diagnostics(
                     &node_id,
                     &profile,
                     shared_daughterboards.as_ref(),
                     &cdi,
                 );
+                tree.connector_profile = connector_profile_outcome.profile;
+                tree.connector_profile_warning = connector_profile_outcome.warning;
                 eprintln!(
                     "[profile] {} — {} event roles, {} rules applied, {} warnings",
                     node_id,

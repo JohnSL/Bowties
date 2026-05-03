@@ -62,6 +62,30 @@ eventRoles:
 # Relevance rules are populated in T024 (Phase 4 / US2).
 relevanceRules: []
 
+connectorConstraintVariants:
+  - variantId: "tower-lcc-legacy"
+    cdiSignature:
+      requiredPaths:
+        - "Port I/O/Line/Output Function"
+        - "Port I/O/Line/Input Function"
+      enumEntryCounts:
+        - path: "Port I/O/Line/Output Function"
+          count: 17
+        - path: "Port I/O/Line/Input Function"
+          count: 9
+  - variantId: "tower-lcc-c7"
+    cdiSignature:
+      requiredPaths:
+        - "Port I/O/Line/Output Function"
+        - "Port I/O/Line/Receiving the configured Command (C) event(s) will drive or pulse the line:"
+        - "Port I/O/Line/Input Function"
+        - "Port I/O/Line/The configured Indication (P) event(s) will be sent when the line is driven:"
+      enumEntryCounts:
+        - path: "Port I/O/Line/Output Function"
+          count: 5
+        - path: "Port I/O/Line/Input Function"
+          count: 3
+
 connectorSlots:
   # The Tower-LCC Port I/O segment exposes 16 replicated lines. The profile
   # splits those lines evenly across the board's two daughterboard connectors.
