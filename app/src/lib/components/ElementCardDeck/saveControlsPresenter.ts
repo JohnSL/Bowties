@@ -2,7 +2,9 @@ import type { OfflineChangeRow } from '$lib/api/sync';
 import { countModifiedLeaves, type NodeConfigTree, type SaveProgress } from '$lib/types/nodeTree';
 
 export interface SaveControlsViewState {
+  autoRepairCount: number;
   canSave: boolean;
+  connectorWarningCount: number;
   dirtyCount: number;
   dirtyNodeCount: number;
   discardFieldCount: number;
@@ -15,11 +17,14 @@ export interface SaveControlsViewState {
   offlineDirtyNodeCount: number;
   pendingEditCount: number;
   pendingHintText: string;
+  repairSummaryText: string | null;
 }
 
 export function deriveSaveControlsViewState(args: {
+  autoRepairCount: number;
   bowtieMetadataEditCount: number;
   bowtieMetadataIsDirty: boolean;
+  connectorWarningCount: number;
   layoutIsDirty: boolean;
   layoutIsOfflineMode: boolean;
   offlineDraftCount: number;
@@ -28,8 +33,10 @@ export function deriveSaveControlsViewState(args: {
   trees: Map<string, NodeConfigTree>;
 }): SaveControlsViewState {
   const {
+    autoRepairCount,
     bowtieMetadataEditCount,
     bowtieMetadataIsDirty,
+    connectorWarningCount,
     layoutIsDirty,
     layoutIsOfflineMode,
     offlineDraftCount,
@@ -66,6 +73,9 @@ export function deriveSaveControlsViewState(args: {
     ? offlineDraftCount + metadataEditCount + layoutOnlyEditCount
     : dirtyCount + metadataEditCount + layoutOnlyEditCount;
   const pendingHintText = `${pendingEditCount} ${layoutIsOfflineMode ? 'unsaved edit' : 'unsaved change'}${pendingEditCount === 1 ? '' : 's'}`;
+  const repairSummaryText = autoRepairCount > 0
+    ? `${autoRepairCount} auto-staged compatibility repair${autoRepairCount === 1 ? '' : 's'}`
+    : null;
   const isSaving = saveProgressState === 'saving';
   const baseDiscardFieldCount = layoutIsOfflineMode ? offlineDraftCount : dirtyCount;
   const baseDiscardNodeCount = layoutIsOfflineMode ? offlineDirtyNodeCount : dirtyNodeIds.size;
@@ -73,7 +83,9 @@ export function deriveSaveControlsViewState(args: {
   const discardNodeCount = discardFieldCount > 0 ? Math.max(1, baseDiscardNodeCount) : 0;
 
   return {
+    autoRepairCount,
     canSave: hasEdits && !isSaving,
+    connectorWarningCount,
     dirtyCount,
     dirtyNodeCount: dirtyNodeIds.size,
     discardFieldCount,
@@ -86,5 +98,6 @@ export function deriveSaveControlsViewState(args: {
     offlineDirtyNodeCount,
     pendingEditCount,
     pendingHintText,
+    repairSummaryText,
   };
 }

@@ -12,7 +12,7 @@ const {
   markNodeConfigReadRef: vi.fn(),
   nodeTreeStoreRef: {
     setTree: vi.fn(),
-    applyOfflinePendingValues: vi.fn(),
+    restampOfflinePendingValues: vi.fn(),
   },
   offlineChangesStoreRef: {
     persistedRows: [] as Array<{ changeId: string; nodeId?: string; plannedValue: string; baselineValue: string; status: string; kind: string; space?: number; offset?: string }>,
@@ -99,7 +99,7 @@ describe('reconcileOfflineTreesAfterSyncApply', () => {
     expect(buildOfflineNodeTreeRef).toHaveBeenCalledWith('050201020300');
     expect(nodeTreeStoreRef.setTree).toHaveBeenCalledWith('05.02.01.02.03.00', makeTree('05.02.01.02.03.00'));
     expect(markNodeConfigReadRef).toHaveBeenCalledWith('05.02.01.02.03.00');
-    expect(nodeTreeStoreRef.applyOfflinePendingValues).toHaveBeenCalledWith(offlineChangesStoreRef.persistedRows);
+    expect(nodeTreeStoreRef.restampOfflinePendingValues).toHaveBeenCalledWith(offlineChangesStoreRef.persistedRows);
   });
 
   it('keeps restamping pending values even if rebuilding one affected node fails', async () => {
@@ -131,7 +131,7 @@ describe('reconcileOfflineTreesAfterSyncApply', () => {
 
     expect(nodeTreeStoreRef.setTree).not.toHaveBeenCalled();
     expect(markNodeConfigReadRef).not.toHaveBeenCalled();
-    expect(nodeTreeStoreRef.applyOfflinePendingValues).toHaveBeenCalledWith(offlineChangesStoreRef.persistedRows);
+    expect(nodeTreeStoreRef.restampOfflinePendingValues).toHaveBeenCalledWith(offlineChangesStoreRef.persistedRows);
     expect(warnRef).toHaveBeenCalled();
 
     warnRef.mockRestore();

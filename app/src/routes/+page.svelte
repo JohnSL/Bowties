@@ -58,6 +58,10 @@
     toConfigReadCandidate,
   } from '$lib/orchestration/configReadOrchestrator';
   import {
+    applyConnectorSelectionChange,
+    recomputeConnectorCompatibility,
+  } from '$lib/orchestration/connectorSelectionOrchestrator';
+  import {
     createCancelledCdiDownloadState,
     createClosedCdiRedownloadState,
     createClosedCdiViewerState,
@@ -280,7 +284,7 @@
   function applyPersistedOfflinePendingToTrees(): void {
     if (!layoutStore.hasLayoutFile) return;
     if (offlineChangesStore.persistedRows.length === 0) return;
-    nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows);
+    nodeTreeStore.restampOfflinePendingValues(offlineChangesStore.persistedRows);
   }
 
   async function openOfflineLayoutFromDialog() {
@@ -595,7 +599,7 @@
         startNodeTreeListening: () => {
           nodeTreeStore.startListening((_nodeId) => {
             if (layoutStore.hasLayoutFile) {
-              nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows);
+              nodeTreeStore.restampOfflinePendingValues(offlineChangesStore.persistedRows);
             }
           });
         },
@@ -959,6 +963,7 @@
           readAllConfigValues(nodeId, undefined, nodeIndex, totalNodes)
         ),
         reloadTree: (nodeId) => nodeTreeStore.refreshTree(nodeId),
+        afterReloadTree: (nodeId) => recomputeConnectorCompatibility(nodeId),
         setNodeReadStates: (states) => {
           nodeReadStates = states;
         },
@@ -1018,6 +1023,7 @@
           readAllConfigValues(candidateNodeId, undefined, nodeIndex, totalNodes)
         ),
         reloadTree: (candidateNodeId) => nodeTreeStore.refreshTree(candidateNodeId),
+        afterReloadTree: (candidateNodeId) => recomputeConnectorCompatibility(candidateNodeId),
         setNodeReadStates: (states) => {
           nodeReadStates = states;
         },
@@ -1140,6 +1146,7 @@
           readAllConfigValues(nodeId, undefined, nodeIndex, totalNodes)
         ),
         reloadTree: (nodeId) => nodeTreeStore.loadTree(nodeId),
+        afterReloadTree: (nodeId) => recomputeConnectorCompatibility(nodeId),
         setNodeReadStates: (states) => {
           nodeReadStates = states;
         },
@@ -1258,11 +1265,7 @@
     selectedDaughterboardId: string | null;
   }): Promise<void> {
     try {
-      const saved = await connectorSelectionsStore.updateSlotSelection(
-        detail.nodeId,
-        detail.slotId,
-        detail.selectedDaughterboardId,
-      );
+      const saved = await applyConnectorSelectionChange(detail);
 
       if (!saved) {
         errorDialog = {

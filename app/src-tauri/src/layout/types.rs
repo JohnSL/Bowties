@@ -271,4 +271,38 @@ mod tests {
             Some("db-8in")
         );
     }
+
+    #[test]
+    fn connector_selection_preserves_unknown_daughterboard_records() {
+        let mut layout = LayoutFile::default();
+        let mut slot_selections = BTreeMap::new();
+        slot_selections.insert(
+            "serial-a".to_string(),
+            ConnectorSelectionRecord {
+                selected_daughterboard_id: Some("legacy-aux-card".to_string()),
+                status: ConnectorSelectionStatus::Unknown,
+                source_profile_version: Some("2026-04-30".to_string()),
+            },
+        );
+        layout.connector_selections.insert(
+            "0501010112345678".to_string(),
+            NodeHardwareSelectionSet {
+                carrier_key: "rr-cirkits::tower-lcc".to_string(),
+                slot_selections,
+                updated_at: Some("2026-05-02T10:30:00Z".to_string()),
+            },
+        );
+
+        assert!(layout.validate().is_ok());
+
+        let yaml = serde_yaml_ng::to_string(&layout).unwrap();
+        let parsed: LayoutFile = serde_yaml_ng::from_str(&yaml).unwrap();
+
+        assert!(parsed.validate().is_ok());
+        let restored = parsed.connector_selections.get("0501010112345678").unwrap();
+        let selection = restored.slot_selections.get("serial-a").unwrap();
+        assert_eq!(selection.status, ConnectorSelectionStatus::Unknown);
+        assert_eq!(selection.selected_daughterboard_id.as_deref(), Some("legacy-aux-card"));
+        assert_eq!(selection.source_profile_version.as_deref(), Some("2026-04-30"));
+    }
 }

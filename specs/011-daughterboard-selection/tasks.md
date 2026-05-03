@@ -91,15 +91,15 @@
 
 ### Tests for User Story 3
 
-- [ ] T027 [P] [US3] Add orchestrator and store tests for auto-staged compatibility repairs in `app/src/lib/orchestration/syncApplyOrchestrator.test.ts`, `app/src/lib/stores/offlineChanges.store.test.ts`, and `app/src/lib/stores/nodeTree.store.test.ts`
-- [ ] T028 [P] [US3] Add Rust tests for repair-rule selection and unknown daughterboard preservation in `app/src-tauri/src/profile/mod.rs` and `app/src-tauri/src/layout/types.rs`
+- [X] T027 [P] [US3] Add orchestrator and store tests for auto-staged compatibility repairs in `app/src/lib/orchestration/syncApplyOrchestrator.test.ts`, `app/src/lib/stores/offlineChanges.store.test.ts`, and `app/src/lib/stores/nodeTree.store.test.ts`
+- [X] T028 [P] [US3] Add Rust tests for repair-rule selection and unknown daughterboard preservation in `app/src-tauri/src/profile/mod.rs` and `app/src-tauri/src/layout/types.rs`
 
 ### Implementation for User Story 3
 
-- [ ] T029 [US3] Implement backend validation helpers for connector selections, unknown-daughterboard preservation, and resolved repair metadata exposure in `app/src-tauri/src/profile/mod.rs`, `app/src-tauri/src/profile/resolver.rs`, and `app/src-tauri/src/commands/connector_profiles.rs`
-- [ ] T030 [US3] Implement frontend connector-selection orchestration to compute compatibility previews and stage generated config changes in `app/src/lib/orchestration/connectorSelectionOrchestrator.ts`, `app/src/lib/stores/connectorSelections.svelte.ts`, and `app/src/lib/stores/offlineChanges.svelte.ts`
-- [ ] T031 [US3] Integrate auto-staged repairs into pending tree values and sync/apply flows in `app/src/lib/orchestration/syncApplyOrchestrator.ts`, `app/src/lib/orchestration/configReadOrchestrator.ts`, and `app/src/lib/stores/nodeTree.svelte.ts`
-- [ ] T032 [US3] Surface staged repair summaries and unknown daughterboard warnings in `app/src/lib/components/ConfigSidebar/ConfigSidebar.svelte`, `app/src/lib/components/ElementCardDeck/SaveControls.svelte`, and `app/src/lib/components/ElementCardDeck/saveControlsPresenter.ts`
+- [X] T029 [US3] Implement backend validation helpers for connector selections, unknown-daughterboard preservation, and resolved repair metadata exposure in `app/src-tauri/src/profile/mod.rs`, `app/src-tauri/src/profile/resolver.rs`, and `app/src-tauri/src/commands/connector_profiles.rs`
+- [X] T030 [US3] Implement frontend connector-selection orchestration to compute compatibility previews and stage generated config changes in `app/src/lib/orchestration/connectorSelectionOrchestrator.ts`, `app/src/lib/stores/connectorSelections.svelte.ts`, and `app/src/lib/stores/offlineChanges.svelte.ts`
+- [X] T031 [US3] Integrate auto-staged repairs into pending tree values and sync/apply flows in `app/src/lib/orchestration/syncApplyOrchestrator.ts`, `app/src/lib/orchestration/configReadOrchestrator.ts`, and `app/src/lib/stores/nodeTree.svelte.ts`
+- [X] T032 [US3] Surface staged repair summaries and unknown daughterboard warnings in `app/src/lib/components/ConfigSidebar/ConfigSidebar.svelte`, `app/src/lib/components/ElementCardDeck/SaveControls.svelte`, and `app/src/lib/components/ElementCardDeck/saveControlsPresenter.ts`
 
 **Checkpoint**: Connector changes automatically stage compatible follow-up edits and show them before apply without requiring manual repair knowledge.
 

@@ -206,3 +206,47 @@ describe('revertAllPending — saved vs in-memory layering', () => {
     expect(offlineChangesStore.savedRows[0].changeId).toBe('backend-1');
   });
 });
+
+describe('replaceConnectorGeneratedConfigChanges', () => {
+  it('stages generated connector repairs as draft config rows', () => {
+    offlineChangesStore.replaceConnectorGeneratedConfigChanges('05.02.01.02.03.00', [
+      {
+        targetPath: 'Port I/O/Line/Input Function',
+        space: 253,
+        offset: '0x00000000',
+        baselineValue: '3',
+        plannedValue: '1',
+        reason: 'Auto-staged repair',
+        originSlotId: 'connector-a',
+      },
+    ]);
+
+    expect(offlineChangesStore.draftRows).toHaveLength(1);
+    expect(offlineChangesStore.draftRows[0]).toMatchObject({
+      kind: 'config',
+      nodeId: '05.02.01.02.03.00',
+      space: 253,
+      offset: '0x00000000',
+      baselineValue: '3',
+      plannedValue: '1',
+    });
+  });
+
+  it('clears previously generated targets that are no longer in the recomputed repair set', () => {
+    offlineChangesStore.replaceConnectorGeneratedConfigChanges('05.02.01.02.03.00', [
+      {
+        targetPath: 'Port I/O/Line/Input Function',
+        space: 253,
+        offset: '0x00000000',
+        baselineValue: '3',
+        plannedValue: '1',
+        reason: 'Auto-staged repair',
+        originSlotId: 'connector-a',
+      },
+    ]);
+
+    offlineChangesStore.replaceConnectorGeneratedConfigChanges('05.02.01.02.03.00', []);
+
+    expect(offlineChangesStore.effectiveRows).toHaveLength(0);
+  });
+});

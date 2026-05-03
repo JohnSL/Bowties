@@ -8,11 +8,13 @@
 import type { OfflineChangeInput, OfflineChangeRow } from '$lib/api/sync';
 import { listOfflineChanges, replaceOfflineChanges, revertOfflineChange } from '$lib/api/sync';
 import { normalizeNodeId } from '$lib/utils/nodeId';
+import type { StagedRepair } from '$lib/types/connectorProfile';
 
 class OfflineChangesStore {
   private _persistedRows = $state<OfflineChangeRow[]>([]);
   private _savedRows = $state<OfflineChangeRow[]>([]);
   private _draftRows = $state<OfflineChangeRow[]>([]);
+  private _connectorGeneratedTargets = $state<Map<string, Set<string>>>(new Map());
   private _busy = $state<boolean>(false);
 
   get rows(): OfflineChangeRow[] {
@@ -225,7 +227,63 @@ class OfflineChangesStore {
     this._persistedRows = [];
     this._savedRows = [];
     this._draftRows = [];
+    this._connectorGeneratedTargets = new Map();
     this._busy = false;
+  }
+
+  replaceConnectorGeneratedConfigChanges(nodeId: string, repairs: StagedRepair[]): void {
+    const nodeKey = normalizeNodeId(nodeId);
+    const previousTargets = new Set(this._connectorGeneratedTargets.get(nodeKey) ?? []);
+    const nextTargets = new Set<string>();
+
+    for (const repair of repairs) {
+      if (repair.space == null || !repair.offset) {
+        continue;
+      }
+
+      const targetKey = this.connectorGeneratedTargetKey(nodeId, repair.space, repair.offset);
+      nextTargets.add(targetKey);
+      this.upsertConfigChange({
+        nodeId,
+        space: repair.space,
+        offset: repair.offset,
+        baselineValue: repair.baselineValue,
+        plannedValue: repair.plannedValue,
+      });
+    }
+
+    for (const targetKey of previousTargets) {
+      if (nextTargets.has(targetKey)) {
+        continue;
+      }
+
+      const parsed = this.parseConnectorGeneratedTargetKey(targetKey);
+      if (!parsed) {
+        continue;
+      }
+
+      const existing = this.findDraftConfigChange(parsed.nodeId, parsed.space, parsed.offset)
+        ?? this.findPersistedConfigChange(parsed.nodeId, parsed.space, parsed.offset);
+      if (!existing) {
+        continue;
+      }
+
+      this.upsertConfigChange({
+        nodeId: parsed.nodeId,
+        space: parsed.space,
+        offset: parsed.offset,
+        baselineValue: existing.baselineValue,
+        plannedValue: existing.baselineValue,
+      });
+    }
+
+    const nextMap = new Map(this._connectorGeneratedTargets);
+    if (nextTargets.size > 0) {
+      nextMap.set(nodeKey, nextTargets);
+    } else {
+      nextMap.delete(nodeKey);
+    }
+    this._connectorGeneratedTargets = nextMap;
   }
 
   setBusy(value: boolean): void {
@@ -286,6 +344,32 @@ class OfflineChangesStore {
   private removeDraftByTarget(row: OfflineChangeRow): void {
     const key = this.targetKeyForRow(row);
     this._draftRows = this._draftRows.filter((r) => this.targetKeyForRow(r) !== key);
+  }
+
+  private connectorGeneratedTargetKey(nodeId: string, space: number, offset: string): string {
+    return `${normalizeNodeId(nodeId)}:${space}:${offset}`;
+  }
+
+  private parseConnectorGeneratedTargetKey(targetKey: string): {
+    nodeId: string;
+    space: number;
+    offset: string;
+  } | null {
+    const [nodeId, spaceText, ...offsetParts] = targetKey.split(':');
+    if (!nodeId || !spaceText || offsetParts.length === 0) {
+      return null;
+    }
+
+    const space = Number.parseInt(spaceText, 10);
+    if (Number.isNaN(space)) {
+      return null;
+    }
+
+    return {
+      nodeId,
+      space,
+      offset: offsetParts.join(':'),
+    };
   }
 }
 

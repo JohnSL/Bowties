@@ -284,6 +284,21 @@ function makePendingRow(overrides: Partial<OfflineChangeRow> = {}): OfflineChang
 }
 
 describe('applyOfflinePendingValues', () => {
+  it('finds a leaf by space and address', () => {
+    const leafA = makeTestLeaf(['seg:0', 'elem:0'], 0);
+    const leafB = { ...makeTestLeaf(['seg:1', 'elem:0'], 0), space: 251 };
+    nodeTreeStore.setTree(NODE_ID, {
+      nodeId: NODE_ID, identity: null,
+      segments: [
+        { name: 'Config', description: null, origin: 0, space: 253, children: [leafA] },
+        { name: 'Acdi', description: null, origin: 0, space: 251, children: [leafB] },
+      ],
+    });
+
+    expect(nodeTreeStore.getLeafByLocation(NODE_ID, 251, 0)?.path).toEqual(['seg:1', 'elem:0']);
+    expect(nodeTreeStore.getLeafByLocation(NODE_ID, 253, 0)?.path).toEqual(['seg:0', 'elem:0']);
+  });
+
   it('sets modifiedValue and isOfflinePending on a matching leaf (int)', () => {
     const leaf = makeTestLeaf(['seg:0', 'elem:0'], 0);
     nodeTreeStore.setTree(NODE_ID, {
@@ -361,6 +376,23 @@ describe('applyOfflinePendingValues', () => {
     const updated = nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0] as LeafConfigNode;
     expect(updated.modifiedValue).toEqual({ type: 'string', value: 'Hello' });
     expect(updated.isOfflinePending).toBe(true);
+  });
+
+  it('clears stale pending markers before restamping the current rows', () => {
+    const leaf = makeTestLeaf(['seg:0', 'elem:0'], 0);
+    nodeTreeStore.setTree(NODE_ID, {
+      nodeId: NODE_ID, identity: null,
+      segments: [{ name: 'Config', description: null, origin: 0, space: 253, children: [leaf] }],
+    });
+
+    nodeTreeStore.applyOfflinePendingValues([makePendingRow({ plannedValue: '5' })]);
+    expect(nodeTreeStore.getLeafByLocation(NODE_ID, 253, 0)?.modifiedValue).toEqual({ type: 'int', value: 5 });
+
+    nodeTreeStore.restampOfflinePendingValues([]);
+
+    const updated = nodeTreeStore.getLeafByLocation(NODE_ID, 253, 0)!;
+    expect(updated.modifiedValue).toBeNull();
+    expect(updated.isOfflinePending).toBeFalsy();
   });
 });
 

@@ -18,7 +18,10 @@ use crate::node_tree::{
     ConnectorConstraint,
     ConnectorConstraintEffect,
     ConnectorProfile,
+    ConnectorRepairRule,
+    ConnectorRepairStrategy,
     ConnectorScalarValue,
+    ConnectorSelectedDefault,
     ConnectorSlot,
     EmptyConnectorBehavior as NodeTreeEmptyConnectorBehavior,
     EmptyConnectorConstraintEffect,
@@ -263,6 +266,19 @@ pub fn build_connector_profile_with_diagnostics(
                                 active_variant_id.as_deref(),
                                 cdi,
                             ),
+                            repair_rules: collect_repair_rules(
+                                profile,
+                                library,
+                                &carrier_key,
+                                &slot.slot_id,
+                                daughterboard_id,
+                                cdi,
+                            ),
+                            defaults_when_selected: collect_selected_defaults(
+                                library,
+                                daughterboard_id,
+                                cdi,
+                            ),
                         })
                         .collect(),
                 })
@@ -487,6 +503,98 @@ fn map_constraint_rule(
         denied_values: rule.denied_values.iter().cloned().map(map_scalar_value).collect(),
         explanation: rule.explanation.clone(),
     })
+}
+
+fn collect_repair_rules(
+    profile: &StructureProfile,
+    library: Option<&SharedDaughterboardLibrary>,
+    carrier_key: &str,
+    slot_id: &str,
+    daughterboard_id: &str,
+    cdi: &lcc_rs::cdi::Cdi,
+) -> Vec<ConnectorRepairRule> {
+    let mut rules = Vec::new();
+
+    if let Some(shared_definition) = library
+        .and_then(|shared_library| {
+            shared_library
+                .daughterboards
+                .iter()
+                .find(|candidate| candidate.daughterboard_id == daughterboard_id)
+        })
+    {
+        for rule in &shared_definition.repair_rules {
+            if let Some(mapped) = map_repair_rule(rule, cdi) {
+                rules.push(mapped);
+            }
+        }
+    }
+
+    for override_rule in profile.carrier_overrides.iter().filter(|candidate| {
+        candidate.daughterboard_id == daughterboard_id
+            && candidate.carrier_key.trim().eq_ignore_ascii_case(carrier_key)
+            && candidate.slot_id.as_deref().map(|value| value == slot_id).unwrap_or(true)
+    }) {
+        for rule in &override_rule.override_repair_rules {
+            if let Some(mapped) = map_repair_rule(rule, cdi) {
+                rules.push(mapped);
+            }
+        }
+    }
+
+    rules.sort_by_key(|rule| rule.priority.unwrap_or(u32::MAX));
+    rules
+}
+
+fn collect_selected_defaults(
+    library: Option<&SharedDaughterboardLibrary>,
+    daughterboard_id: &str,
+    cdi: &lcc_rs::cdi::Cdi,
+) -> Vec<ConnectorSelectedDefault> {
+    let mut defaults = Vec::new();
+
+    if let Some(shared_definition) = library
+        .and_then(|shared_library| {
+            shared_library
+                .daughterboards
+                .iter()
+                .find(|candidate| candidate.daughterboard_id == daughterboard_id)
+        })
+    {
+        for (target_path, value) in &shared_definition.defaults_when_selected {
+            if let Ok(resolved_path) = resolver::resolve_named_path(target_path, cdi) {
+                defaults.push(ConnectorSelectedDefault {
+                    target_path: target_path.clone(),
+                    resolved_path,
+                    value: value.clone(),
+                });
+            }
+        }
+    }
+
+    defaults
+}
+
+fn map_repair_rule(
+    rule: &RepairRule,
+    cdi: &lcc_rs::cdi::Cdi,
+) -> Option<ConnectorRepairRule> {
+    let resolved_path = resolver::resolve_named_path(&rule.target_path, cdi).ok()?;
+    Some(ConnectorRepairRule {
+        target_path: rule.target_path.clone(),
+        resolved_path,
+        replacement_strategy: map_repair_strategy(rule.replacement_strategy),
+        replacement_value: rule.replacement_value.clone(),
+        priority: rule.priority,
+    })
+}
+
+fn map_repair_strategy(strategy: RepairStrategy) -> ConnectorRepairStrategy {
+    match strategy {
+        RepairStrategy::SetExplicit => ConnectorRepairStrategy::SetExplicit,
+        RepairStrategy::ResetDefault => ConnectorRepairStrategy::ResetDefault,
+        RepairStrategy::ClearEmpty => ConnectorRepairStrategy::ClearEmpty,
+    }
 }
 
 fn map_constraint_effect(effect: ConnectorConstraintType) -> ConnectorConstraintEffect {
@@ -1174,5 +1282,112 @@ mod tests {
         let rules = &connector_profile.slots[0].supported_daughterboard_constraints[0].validity_rules;
         assert_eq!(rules.len(), 1, "variant rules should replace base rules");
         assert_eq!(rules[0].allowed_values, vec![ConnectorScalarValue::Integer(1)]);
+    }
+
+    #[test]
+    fn build_connector_profile_includes_slot_repair_rules_and_selected_defaults() {
+        let cdi = parse_cdi(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Port I/O</name>
+                    <group replication="8">
+                        <name>Line</name>
+                        <repname>Line</repname>
+                        <int size="1"><name>Input Function</name></int>
+                    </group>
+                </segment>
+            </cdi>"#,
+        )
+        .expect("CDI parse should succeed");
+
+        let profile = StructureProfile {
+            schema_version: "1.0".to_string(),
+            node_type: types::ProfileNodeType {
+                manufacturer: "RR-CirKits".to_string(),
+                model: "Tower-LCC".to_string(),
+            },
+            firmware_version_range: None,
+            event_roles: vec![],
+            relevance_rules: vec![],
+            connector_slots: vec![types::ConnectorSlotDefinition {
+                slot_id: "connector-a".to_string(),
+                label: "Connector A".to_string(),
+                order: 0,
+                allow_none_installed: true,
+                supported_daughterboard_ids: vec!["BOD4-CP".to_string()],
+                affected_paths: vec!["Port I/O/Line#1".to_string()],
+                base_behavior_when_empty: None,
+            }],
+            connector_constraint_variants: vec![types::ConnectorConstraintVariant {
+                variant_id: "tower-lcc-c7".to_string(),
+                cdi_signature: types::ConnectorCdiSignature {
+                    required_paths: vec!["Port I/O/Line/Input Function".to_string()],
+                    enum_entry_counts: vec![types::ConnectorCdiEnumCount {
+                        path: "Port I/O/Line/Input Function".to_string(),
+                        count: 0,
+                    }],
+                },
+            }],
+            daughterboard_references: vec![],
+            carrier_overrides: vec![types::CarrierOverrideRule {
+                carrier_key: make_profile_key("RR-CirKits", "Tower-LCC"),
+                slot_id: Some("connector-a".to_string()),
+                daughterboard_id: "BOD4-CP".to_string(),
+                replace_shared_validity_rules: false,
+                override_validity_rules: vec![],
+                override_repair_rules: vec![types::RepairRule {
+                    target_path: "Port I/O/Line/Input Function".to_string(),
+                    replacement_strategy: types::RepairStrategy::ClearEmpty,
+                    replacement_value: None,
+                    priority: Some(2),
+                }],
+            }],
+        };
+
+        let library = types::SharedDaughterboardLibrary {
+            schema_version: "1.0".to_string(),
+            manufacturer: "RR-CirKits".to_string(),
+            daughterboards: vec![types::DaughterboardDefinition {
+                daughterboard_id: "BOD4-CP".to_string(),
+                display_name: "BOD4-CP".to_string(),
+                kind: Some("detection".to_string()),
+                validity_rules: vec![],
+                repair_rules: vec![types::RepairRule {
+                    target_path: "Port I/O/Line/Input Function".to_string(),
+                    replacement_strategy: types::RepairStrategy::SetExplicit,
+                    replacement_value: Some(serde_json::json!(2)),
+                    priority: Some(5),
+                }],
+                defaults_when_selected: std::collections::BTreeMap::from([(
+                    "Port I/O/Line/Input Function".to_string(),
+                    serde_json::json!(1),
+                )]),
+                constraint_variants: vec![],
+                metadata: None,
+            }],
+        };
+
+        let connector_profile = build_connector_profile(
+            "05.02.01.02.03.00.00.01",
+            &profile,
+            Some(&library),
+            &cdi,
+        )
+        .expect("connector profile should be built");
+
+        let slot_rules = &connector_profile.slots[0].supported_daughterboard_constraints[0];
+        assert_eq!(slot_rules.repair_rules.len(), 2);
+        assert_eq!(slot_rules.repair_rules[0].replacement_strategy, ConnectorRepairStrategy::ClearEmpty);
+        assert_eq!(slot_rules.repair_rules[0].priority, Some(2));
+        assert_eq!(slot_rules.repair_rules[1].replacement_strategy, ConnectorRepairStrategy::SetExplicit);
+        assert_eq!(slot_rules.repair_rules[1].replacement_value, Some(serde_json::json!(2)));
+        assert_eq!(slot_rules.defaults_when_selected.len(), 1);
+        assert_eq!(slot_rules.defaults_when_selected[0].target_path, "Port I/O/Line/Input Function");
+        assert_eq!(slot_rules.defaults_when_selected[0].resolved_path, vec![
+            "seg:0".to_string(),
+            "elem:0".to_string(),
+            "elem:0".to_string(),
+        ]);
+        assert_eq!(slot_rules.defaults_when_selected[0].value, serde_json::json!(1));
     }
 }

@@ -202,6 +202,26 @@ describe('draft offline row (unsaved edit)', () => {
     expect(screen.getByText(/Unsaved offline edit: 3 -> 7/)).toBeInTheDocument();
   });
 
+  it('shows map labels in the draft annotation when map entries exist', () => {
+    mockFindDraftConfigChange.mockReturnValue(makeDraftRow({ baselineValue: '0', plannedValue: '3' }));
+    render(TreeLeafRow, {
+      props: {
+        leaf: makeLeaf({
+          name: 'Bus',
+          constraints: {
+            mapEntries: [
+              { value: 0, label: 'Main' },
+              { value: 3, label: 'Yard' },
+            ],
+          },
+        }),
+        nodeId: NODE_ID,
+      },
+    });
+
+    expect(screen.getByText(/Unsaved offline edit: Main -> Yard/)).toBeInTheDocument();
+  });
+
   it('shows a "Revert" button for the draft row', () => {
     mockFindDraftConfigChange.mockReturnValue(makeDraftRow());
     render(TreeLeafRow, { props: { leaf: makeLeaf(), nodeId: NODE_ID } });
@@ -252,6 +272,28 @@ describe('persisted offline row (pending apply)', () => {
     );
     render(TreeLeafRow, { props: { leaf: makeLeaf(), nodeId: NODE_ID } });
     expect(screen.getByText(/Bus: 3 \| Pending: 7/)).toBeInTheDocument();
+  });
+
+  it('shows map labels in the persisted annotation when map entries exist', () => {
+    mockFindPersistedConfigChange.mockReturnValue(
+      makePersistedRow({ baselineValue: '0', plannedValue: '3' }),
+    );
+    render(TreeLeafRow, {
+      props: {
+        leaf: makeLeaf({
+          name: 'Bus',
+          constraints: {
+            mapEntries: [
+              { value: 0, label: 'Main' },
+              { value: 3, label: 'Yard' },
+            ],
+          },
+        }),
+        nodeId: NODE_ID,
+      },
+    });
+
+    expect(screen.getByText(/Bus: Main \| Pending: Yard/)).toBeInTheDocument();
   });
 
   it('renders persisted offline pending rows with the pending style instead of the dirty style', () => {

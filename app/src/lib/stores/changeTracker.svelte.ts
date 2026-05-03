@@ -1,4 +1,5 @@
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
+import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
 import { layoutStore } from '$lib/stores/layout.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
@@ -15,8 +16,10 @@ export interface ChangeTrackerSnapshot {
 class ChangeTrackerStore {
   deriveSnapshot(saveProgressState: SaveProgress['state']): ChangeTrackerSnapshot {
     const saveControls = deriveSaveControlsViewState({
+      autoRepairCount: connectorSelectionsStore.totalStagedRepairCount,
       bowtieMetadataEditCount: bowtieMetadataStore.editCount,
       bowtieMetadataIsDirty: bowtieMetadataStore.isDirty,
+      connectorWarningCount: connectorSelectionsStore.totalWarningCount,
       layoutIsDirty: layoutStore.isDirty,
       layoutIsOfflineMode: layoutStore.isOfflineMode,
       offlineDraftCount: offlineChangesStore.draftCount,

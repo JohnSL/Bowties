@@ -27,9 +27,27 @@ export interface ConnectorConstraintRuleView {
   explanation?: string;
 }
 
+export type ConnectorRepairStrategy = 'setExplicit' | 'resetDefault' | 'clearEmpty';
+
+export interface ConnectorRepairRuleView {
+  targetPath: string;
+  resolvedPath: string[];
+  replacementStrategy: ConnectorRepairStrategy;
+  replacementValue?: unknown;
+  priority?: number;
+}
+
+export interface ConnectorSelectedDefaultView {
+  targetPath: string;
+  resolvedPath: string[];
+  value: unknown;
+}
+
 export interface SlotSupportedDaughterboardView {
   daughterboardId: string;
   validityRules?: ConnectorConstraintRuleView[];
+  repairRules?: ConnectorRepairRuleView[];
+  defaultsWhenSelected?: ConnectorSelectedDefaultView[];
 }
 
 export interface ConnectorSlotView {

@@ -101,6 +101,19 @@ class NodeTreeStore {
     return null;
   }
 
+  /** Find a leaf by space and address across a node's tree. */
+  getLeafByLocation(nodeId: string, space: number, address: number): LeafConfigNode | null {
+    const tree = this._trees.get(nodeId);
+    if (!tree) return null;
+
+    for (const seg of tree.segments) {
+      const found = findLeafInChildrenByLocation(seg.children, space, address);
+      if (found) return found;
+    }
+
+    return null;
+  }
+
   // ── Tree loading ──────────────────────────────────────────────────────────
 
   /**
@@ -262,6 +275,12 @@ class NodeTreeStore {
     this._trees = next;
   }
 
+  /** Rebuild pending offline markers from the provided rows, clearing stale markers first. */
+  restampOfflinePendingValues(offlineRows: OfflineChangeRow[]): void {
+    this.clearAllModifiedValues();
+    this.applyOfflinePendingValues(offlineRows);
+  }
+
   // ── Listener lifecycle ────────────────────────────────────────────────────
 
   /**
@@ -324,6 +343,21 @@ function findLeafInChildren(
     if (isLeaf(child) && child.address === address) return child;
     if (isGroup(child)) {
       const found = findLeafInChildren(child.children, address);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function findLeafInChildrenByLocation(
+  children: ConfigNode[],
+  space: number,
+  address: number,
+): LeafConfigNode | null {
+  for (const child of children) {
+    if (isLeaf(child) && child.space === space && child.address === address) return child;
+    if (isGroup(child)) {
+      const found = findLeafInChildrenByLocation(child.children, space, address);
       if (found) return found;
     }
   }

@@ -61,8 +61,7 @@
   let showDiscardDialog = $state(false);
 
   function reapplyPersistedOfflinePendingValues(): void {
-    nodeTreeStore.clearAllModifiedValues();
-    nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows);
+    nodeTreeStore.restampOfflinePendingValues(offlineChangesStore.persistedRows);
   }
 
   function rehydrateConnectorSelectionsFromLayout(): void {
@@ -260,9 +259,15 @@
 
 {:else if viewState.hasEdits}
   <!-- Idle with pending edits -->
-  <span class="pending-hint" role="status">
-    {viewState.pendingHintText}
-  </span>
+  <div class="pending-summary" role="status">
+    <span class="pending-hint">{viewState.pendingHintText}</span>
+    {#if viewState.repairSummaryText}
+      <span class="repair-summary">{viewState.repairSummaryText}</span>
+    {/if}
+    {#if viewState.connectorWarningCount > 0}
+      <span class="repair-warning">{viewState.connectorWarningCount} connector warning{viewState.connectorWarningCount === 1 ? '' : 's'}</span>
+    {/if}
+  </div>
 {/if}
 
 <button
@@ -331,6 +336,22 @@
     flex: 1;
     color: #835b00;                                /* amber: unsaved changes */
     font-style: italic;
+  }
+
+  .pending-summary {
+    flex: 1;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .repair-summary {
+    color: #605e5c;
+  }
+
+  .repair-warning {
+    color: #ca5010;
   }
 
   .save-progress {

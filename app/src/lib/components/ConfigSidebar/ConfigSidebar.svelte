@@ -3,6 +3,7 @@
   import { get } from 'svelte/store';
   import { nodeInfoStore } from '$lib/stores/nodeInfo';
   import { configSidebarStore } from '$lib/stores/configSidebar';
+  import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
   import { configReadNodesStore } from '$lib/stores/configReadStatus';
   import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
@@ -118,6 +119,7 @@
   let sidebarState = $derived($configSidebarStore);
   let configReadNodes = $derived($configReadNodesStore);
   let persistedRows = $derived(offlineChangesStore.persistedRows);
+  let connectorRevision = $derived(connectorSelectionsStore.revision);
 
   // Subscribe to tree changes to enable reactive updates on hasPendingEdits
   let trees = $derived(nodeTreeStore.trees);
@@ -140,6 +142,8 @@
         {@const isNodeSelected = sidebarState.selectedNodeId === nodeId && !hasSelectedSegment}
         {@const tree = nodeTreeStore.getTree(nodeId) ?? null}
         {@const nodePending = getNodePendingState(nodeId, tree, $layoutOpenInProgress, persistedRows)}
+        {@const connectorWarnings = connectorRevision >= 0 ? connectorSelectionsStore.getWarnings(nodeId) : []}
+        {@const stagedRepairCount = connectorRevision >= 0 ? connectorSelectionsStore.getStagedRepairs(nodeId).length : 0}
         {@const isConfigNotRead = shouldShowConfigNotReadBadge({
           configReadNodes,
           layoutIsOfflineMode: layoutStore.isOfflineMode,
@@ -167,6 +171,16 @@
 
           {#if isExpanded}
             <div class="segment-list" role="list" aria-label="Segments for {entry.nodeName}">
+              {#if connectorWarnings.length > 0 || stagedRepairCount > 0}
+                <div class="connector-status" role="status">
+                  {#each connectorWarnings as warning}
+                    <p class="connector-warning">{warning}</p>
+                  {/each}
+                  {#if stagedRepairCount > 0}
+                    <p class="connector-repair-summary">{stagedRepairCount} auto-staged compatibility repair{stagedRepairCount === 1 ? '' : 's'}</p>
+                  {/if}
+                </div>
+              {/if}
               {#if nodeError}
                 {#if nodeError.includes('CdiUnavailable') || nodeError.includes('CdiNotRetrieved')}
                   {#if isConfigNotRead}
@@ -250,6 +264,25 @@
   .segment-list {
     background-color: var(--segment-list-bg, #f5f5f5);
     border-bottom: 1px solid var(--border-color, #eee);
+  }
+
+  .connector-status {
+    padding: 8px 12px 4px 40px;
+  }
+
+  .connector-warning,
+  .connector-repair-summary {
+    margin: 0 0 4px;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .connector-warning {
+    color: var(--error-color, #c62828);
+  }
+
+  .connector-repair-summary {
+    color: var(--text-secondary, #666);
   }
 
   .segment-error {

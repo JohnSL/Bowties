@@ -110,6 +110,11 @@
     return null;
   }
 
+  function formatOfflineStoredValue(raw: string): string {
+    const parsed = parseOfflinePlannedValue(raw);
+    return parsed ? formatValue(parsed) : raw;
+  }
+
   // ── Derived values ─────────────────────────────────────────────────────────
 
   let isDirty = $derived(leaf.modifiedValue != null && !leaf.isOfflinePending);
@@ -724,7 +729,7 @@
 
     {#if !suppressTransientIndicators && draftOfflineRow}
       <span class="offline-change-msg" role="status">
-        Unsaved offline edit: {draftOfflineRow.baselineValue} -> {draftOfflineRow.plannedValue}
+        Unsaved offline edit: {formatOfflineStoredValue(draftOfflineRow.baselineValue)} -> {formatOfflineStoredValue(draftOfflineRow.plannedValue)}
       </span>
       <button
         class="revert-baseline-btn"
@@ -737,7 +742,7 @@
 
     {#if !suppressTransientIndicators && persistedOfflineRow}
       <span class="offline-pending-msg" role="status">
-        Bus: {persistedOfflineRow.baselineValue} | Pending: {persistedOfflineRow.plannedValue}
+        Bus: {formatOfflineStoredValue(persistedOfflineRow.baselineValue)} | Pending: {formatOfflineStoredValue(persistedOfflineRow.plannedValue)}
       </span>
       <button
         class="revert-baseline-btn"

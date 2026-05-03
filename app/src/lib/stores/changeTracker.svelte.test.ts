@@ -4,6 +4,7 @@ import type { NodeConfigTree } from '$lib/types/nodeTree';
 const {
   treesRef,
   bowtieRef,
+  connectorRef,
   layoutRef,
   offlineRef,
   presenterRef,
@@ -11,14 +12,17 @@ const {
 } = vi.hoisted(() => ({
   treesRef: { map: new Map<string, NodeConfigTree>() },
   bowtieRef: { editCount: 0, isDirty: false },
+  connectorRef: { totalStagedRepairCount: 0, totalWarningCount: 0 },
   layoutRef: { isDirty: false, isOfflineMode: false },
   offlineRef: { draftCount: 0, draftRows: [] as any[] },
   presenterRef: {
     deriveSaveControlsViewState: vi.fn().mockReturnValue({
+      autoRepairCount: 0,
       hasEdits: false,
       pendingEditCount: 0,
       pendingHintText: '0 unsaved changes',
       canSave: false,
+      connectorWarningCount: 0,
       dirtyCount: 0,
       dirtyNodeCount: 0,
       discardFieldCount: 0,
@@ -28,6 +32,7 @@ const {
       hasOfflineEdits: false,
       isSaving: false,
       offlineDirtyNodeCount: 0,
+      repairSummaryText: null,
     }),
   },
   unsavedRef: {
@@ -45,6 +50,10 @@ vi.mock('$lib/stores/nodeTree.svelte', () => ({
 
 vi.mock('$lib/stores/bowtieMetadata.svelte', () => ({
   bowtieMetadataStore: bowtieRef,
+}));
+
+vi.mock('$lib/stores/connectorSelections.svelte', () => ({
+  connectorSelectionsStore: connectorRef,
 }));
 
 vi.mock('$lib/stores/layout.svelte', () => ({
@@ -70,6 +79,8 @@ describe('changeTrackerStore', () => {
     treesRef.map = new Map();
     bowtieRef.editCount = 0;
     bowtieRef.isDirty = false;
+    connectorRef.totalStagedRepairCount = 0;
+    connectorRef.totalWarningCount = 0;
     layoutRef.isDirty = false;
     layoutRef.isOfflineMode = false;
     offlineRef.draftCount = 0;
@@ -91,10 +102,12 @@ describe('changeTrackerStore', () => {
     const snapshot = changeTrackerStore.deriveSnapshot('idle');
 
     expect(snapshot.saveControls).toEqual({
+      autoRepairCount: 0,
       hasEdits: false,
       pendingEditCount: 0,
       pendingHintText: '0 unsaved changes',
       canSave: false,
+      connectorWarningCount: 0,
       dirtyCount: 0,
       dirtyNodeCount: 0,
       discardFieldCount: 0,
@@ -104,11 +117,14 @@ describe('changeTrackerStore', () => {
       hasOfflineEdits: false,
       isSaving: false,
       offlineDirtyNodeCount: 0,
+      repairSummaryText: null,
     });
 
     expect(presenterRef.deriveSaveControlsViewState).toHaveBeenCalledWith({
+      autoRepairCount: 0,
       bowtieMetadataEditCount: 2,
       bowtieMetadataIsDirty: true,
+      connectorWarningCount: 0,
       layoutIsDirty: true,
       layoutIsOfflineMode: true,
       offlineDraftCount: 3,

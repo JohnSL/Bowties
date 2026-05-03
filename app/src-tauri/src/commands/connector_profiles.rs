@@ -47,9 +47,37 @@ pub struct ConnectorConstraintView {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ConnectorRepairRuleView {
+    pub target_path: String,
+    pub resolved_path: Vec<String>,
+    pub replacement_strategy: ConnectorRepairStrategyView,
+    pub replacement_value: Option<serde_json::Value>,
+    pub priority: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConnectorRepairStrategyView {
+    SetExplicit,
+    ResetDefault,
+    ClearEmpty,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorSelectedDefaultView {
+    pub target_path: String,
+    pub resolved_path: Vec<String>,
+    pub value: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SlotSupportedDaughterboardView {
     pub daughterboard_id: String,
     pub validity_rules: Vec<ConnectorConstraintView>,
+    pub repair_rules: Vec<ConnectorRepairRuleView>,
+    pub defaults_when_selected: Vec<ConnectorSelectedDefaultView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,6 +240,38 @@ impl From<crate::node_tree::SlotSupportedDaughterboard> for SlotSupportedDaughte
         Self {
             daughterboard_id: value.daughterboard_id,
             validity_rules: value.validity_rules.into_iter().map(ConnectorConstraintView::from).collect(),
+            repair_rules: value.repair_rules.into_iter().map(ConnectorRepairRuleView::from).collect(),
+            defaults_when_selected: value
+                .defaults_when_selected
+                .into_iter()
+                .map(ConnectorSelectedDefaultView::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<crate::node_tree::ConnectorRepairRule> for ConnectorRepairRuleView {
+    fn from(value: crate::node_tree::ConnectorRepairRule) -> Self {
+        Self {
+            target_path: value.target_path,
+            resolved_path: value.resolved_path,
+            replacement_strategy: match value.replacement_strategy {
+                crate::node_tree::ConnectorRepairStrategy::SetExplicit => ConnectorRepairStrategyView::SetExplicit,
+                crate::node_tree::ConnectorRepairStrategy::ResetDefault => ConnectorRepairStrategyView::ResetDefault,
+                crate::node_tree::ConnectorRepairStrategy::ClearEmpty => ConnectorRepairStrategyView::ClearEmpty,
+            },
+            replacement_value: value.replacement_value,
+            priority: value.priority,
+        }
+    }
+}
+
+impl From<crate::node_tree::ConnectorSelectedDefault> for ConnectorSelectedDefaultView {
+    fn from(value: crate::node_tree::ConnectorSelectedDefault) -> Self {
+        Self {
+            target_path: value.target_path,
+            resolved_path: value.resolved_path,
+            value: value.value,
         }
     }
 }

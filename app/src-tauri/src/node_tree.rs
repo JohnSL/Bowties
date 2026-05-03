@@ -98,6 +98,34 @@ pub struct ConnectorConstraint {
     pub explanation: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConnectorRepairStrategy {
+    SetExplicit,
+    ResetDefault,
+    ClearEmpty,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorRepairRule {
+    pub target_path: String,
+    pub resolved_path: Vec<String>,
+    pub replacement_strategy: ConnectorRepairStrategy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replacement_value: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorSelectedDefault {
+    pub target_path: String,
+    pub resolved_path: Vec<String>,
+    pub value: serde_json::Value,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmptyConnectorBehavior {
@@ -112,6 +140,10 @@ pub struct SlotSupportedDaughterboard {
     pub daughterboard_id: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub validity_rules: Vec<ConnectorConstraint>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repair_rules: Vec<ConnectorRepairRule>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub defaults_when_selected: Vec<ConnectorSelectedDefault>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

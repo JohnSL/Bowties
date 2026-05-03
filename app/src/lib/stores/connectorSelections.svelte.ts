@@ -12,6 +12,7 @@ import type {
   ConnectorSelection,
   ConnectorSelectionDocument,
   ConnectorSelectionStatus,
+  StagedRepair,
 } from '$lib/types/connectorProfile';
 import { normalizeNodeId } from '$lib/utils/nodeId';
 
@@ -97,11 +98,45 @@ function reconcileDocumentWithProfile(
   };
 }
 
+function deriveUnknownSelectionWarnings(
+  profile: ConnectorProfileView | null,
+  document: ConnectorSelectionDocument | null,
+): string[] {
+  if (!profile || !document) {
+    return [];
+  }
+
+  const slotMap = new Map(profile.slots.map((slot) => [slot.slotId, slot]));
+  return document.slotSelections.flatMap((selection) => {
+    if (selection.status !== 'unknown' && selection.status !== 'selected') {
+      return [];
+    }
+
+    const slot = slotMap.get(selection.slotId);
+    if (!slot) {
+      return [];
+    }
+
+    const selectedId = selection.selectedDaughterboardId;
+    if (!selectedId) {
+      return [];
+    }
+
+    if (selection.status === 'selected' && slot.supportedDaughterboardIds.includes(selectedId)) {
+      return [];
+    }
+
+    return [`${slot.label} preserves unknown daughterboard "${selectedId}" from saved layout metadata.`];
+  });
+}
+
 class ConnectorSelectionsStore {
   private _profiles = $state<Map<string, ConnectorProfileView>>(new Map());
   private _documents = $state<Map<string, ConnectorSelectionDocument>>(new Map());
   private _loading = $state<Set<string>>(new Set());
   private _errors = $state<Map<string, string>>(new Map());
+  private _previewWarnings = $state<Map<string, string[]>>(new Map());
+  private _stagedRepairs = $state<Map<string, StagedRepair[]>>(new Map());
   revision = $state(0);
 
   get profiles(): Map<string, ConnectorProfileView> {
@@ -114,6 +149,36 @@ class ConnectorSelectionsStore {
 
   get errors(): Map<string, string> {
     return this._errors;
+  }
+
+  get totalStagedRepairCount(): number {
+    let total = 0;
+    for (const repairs of this._stagedRepairs.values()) {
+      total += repairs.length;
+    }
+    return total;
+  }
+
+  get totalWarningCount(): number {
+    let total = 0;
+    for (const nodeId of new Set([...this._profiles.keys(), ...this._previewWarnings.keys()])) {
+      total += this.getWarnings(nodeId).length;
+    }
+    return total;
+  }
+
+  getStagedRepairs(nodeId: string): StagedRepair[] {
+    return this._stagedRepairs.get(normalizeNodeId(nodeId)) ?? [];
+  }
+
+  getWarnings(nodeId: string): string[] {
+    const nodeKey = normalizeNodeId(nodeId);
+    const previewWarnings = this._previewWarnings.get(nodeKey) ?? [];
+    const unknownWarnings = deriveUnknownSelectionWarnings(
+      this._profiles.get(nodeKey) ?? null,
+      this._documents.get(nodeKey) ?? null,
+    );
+    return [...unknownWarnings, ...previewWarnings];
   }
 
   getProfile(nodeId: string): ConnectorProfileView | null {
@@ -143,6 +208,8 @@ class ConnectorSelectionsStore {
     }
 
     this._documents = nextDocuments;
+    this._previewWarnings = new Map();
+    this._stagedRepairs = new Map();
     this.revision += 1;
   }
 
@@ -151,6 +218,30 @@ class ConnectorSelectionsStore {
     this._documents = new Map();
     this._loading = new Set();
     this._errors = new Map();
+    this._previewWarnings = new Map();
+    this._stagedRepairs = new Map();
+    this.revision += 1;
+  }
+
+  setCompatibilityPreview(nodeId: string, repairs: StagedRepair[], warnings: string[]): void {
+    const nodeKey = normalizeNodeId(nodeId);
+
+    const nextRepairs = new Map(this._stagedRepairs);
+    if (repairs.length > 0) {
+      nextRepairs.set(nodeKey, [...repairs]);
+    } else {
+      nextRepairs.delete(nodeKey);
+    }
+
+    const nextWarnings = new Map(this._previewWarnings);
+    if (warnings.length > 0) {
+      nextWarnings.set(nodeKey, [...warnings]);
+    } else {
+      nextWarnings.delete(nodeKey);
+    }
+
+    this._stagedRepairs = nextRepairs;
+    this._previewWarnings = nextWarnings;
     this.revision += 1;
   }
 

@@ -32,5 +32,5 @@ export async function reconcileOfflineTreesAfterSyncApply(
     }
   }
 
-  nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows);
+  nodeTreeStore.restampOfflinePendingValues(offlineChangesStore.persistedRows);
 }

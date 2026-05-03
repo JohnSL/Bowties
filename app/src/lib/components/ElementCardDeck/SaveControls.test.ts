@@ -45,6 +45,8 @@ const { treesRef, metaRef, layoutRef, offlineRef, connectorSelectionsRef } = vi.
   },
   connectorSelectionsRef: {
     hydrateFromLayout: vi.fn(),
+    totalStagedRepairCount: 0,
+    totalWarningCount: 0,
   },
 }));
 
@@ -56,7 +58,7 @@ vi.mock('$lib/stores/nodeTree.svelte', () => ({
   nodeTreeStore: {
     get trees() { return treesRef.map; },
     clearAllModifiedValues: vi.fn(),
-    applyOfflinePendingValues: vi.fn(),
+    restampOfflinePendingValues: vi.fn(),
   },
 }));
 
@@ -132,6 +134,8 @@ beforeEach(() => {
   offlineRef.draftRows = [];
   offlineRef.pendingCount = 0;
   connectorSelectionsRef.hydrateFromLayout.mockReset();
+  connectorSelectionsRef.totalStagedRepairCount = 0;
+  connectorSelectionsRef.totalWarningCount = 0;
   vi.clearAllMocks();
 });
 
@@ -455,7 +459,7 @@ describe('SaveControls.svelte', () => {
       await fireEvent.click(saveBtn);
 
       await waitFor(() => {
-        expect(nodeTreeStore.applyOfflinePendingValues).toHaveBeenCalledWith((offlineRef as any).persistedRows);
+        expect(nodeTreeStore.restampOfflinePendingValues).toHaveBeenCalledWith((offlineRef as any).persistedRows);
       });
     });
 
@@ -542,7 +546,7 @@ describe('SaveControls.svelte', () => {
       await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: /revert/i })));
 
       await waitFor(() => {
-        expect(nodeTreeStore.applyOfflinePendingValues).toHaveBeenCalledWith((offlineRef as any).persistedRows);
+        expect(nodeTreeStore.restampOfflinePendingValues).toHaveBeenCalledWith((offlineRef as any).persistedRows);
       });
     });
   });
