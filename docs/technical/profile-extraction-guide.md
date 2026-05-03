@@ -8,6 +8,16 @@ A **node profile** is a set of structured JSON files that describe everything ab
 
 The extraction process takes two inputs — a node's **CDI XML** and its **PDF manual** — runs them through profile-0 to create a manual outline, then each subsequent profile reads only the JSON file from the previous profile (which contains file references). Outputs are saved to `profiles/<node-name>/` and include seven JSON files.
 
+## Connector Daughterboard Authoring
+
+Bowties now supports connector daughterboard metadata as part of the shipped structure-profile model for supported carrier boards.
+
+- Reusable daughterboard definitions live in the shared library at `app/src-tauri/profiles/RR-CirKits.shared-daughterboards.yaml`.
+- Carrier profiles declare connector-slot topology in their own `.profile.yaml` files using `connectorSlots`, `daughterboardReferences`, optional `carrierOverrides`, and optional `connectorConstraintVariants`.
+- Author `affectedPaths` only when you have concrete CDI or manual evidence for the governed sections or fields. An empty `affectedPaths` list is valid and means the slot can still be selected and persisted, but it does not drive filtering yet.
+- Per-node installed daughterboard choices are not authored in the profile. They are user-managed hardware assumptions stored with the saved layout or project metadata.
+- When connector rules invalidate current values, Bowties stages compatible follow-up edits from the profile-authored repair rules instead of hardcoding carrier logic in the frontend.
+
 ## Prerequisites
 
 - VS Code with GitHub Copilot (or access to any capable LLM)

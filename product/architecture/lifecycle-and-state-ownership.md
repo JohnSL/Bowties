@@ -170,6 +170,7 @@ idle → opening_file → hydrating_snapshots → replaying_offline_changes → 
 | Offline change rows (persisted + draft) | `offlineChanges.svelte.ts` | Store |
 | Sync panel session and resolutions | `syncPanel.svelte.ts` | Store |
 | Node tree | `nodeTree.svelte.ts` | Store |
+| Connector selection profiles, documents, warnings, and staged repairs | `connectorSelections.svelte.ts` | Store |
 | Node SNIP/PIP info | `nodeInfo.ts` | Store |
 | Config read status per node | `configReadStatus.ts` | Store |
 | Config sidebar selection | `configSidebar.ts` | Store |
@@ -202,6 +203,23 @@ The sync panel must not re-open automatically after the user dismisses it. `isDi
 ### Post-Apply Snapshot Refresh
 
 After `syncApplyOrchestrator.ts` completes, it must refresh offline changes from the backend and rebuild the affected trees — not use the stale in-memory state. The backend prunes already-applied rows from `offline-changes.yaml` before returning the apply result.
+
+### Connector Selection Fallback For Non-Modular Nodes
+
+Connector selection state is only valid while the active node tree carries a backend-resolved `connectorProfile`.
+
+Rule:
+
+- `commands/cdi.rs` and `profile/mod.rs` decide whether a node is modular by attaching or omitting `connectorProfile` on the authoritative node tree.
+- `+page.svelte` may trigger connector selection loading or cleanup when the selected tree changes, but it must not invent connector behavior on its own.
+- `connectorSelections.svelte.ts` owns the deterministic cleanup of cached connector documents, warnings, and staged repairs when the active node has no connector metadata.
+
+Protected tests:
+
+- `app/src/routes/page.route.test.ts`
+- `app/src/lib/stores/nodeTree.store.test.ts`
+- `app/src/lib/components/ConfigSidebar/ConfigSidebar.test.ts`
+- `app/src-tauri/src/commands/cdi.rs`
 
 ---
 

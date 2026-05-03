@@ -74,3 +74,9 @@ cargo test
 - Valid choices narrow by connector slot and selected daughterboard.
 - Bowties stages compatible follow-up config edits automatically when a selection invalidates existing values.
 - Unsupported nodes keep the pre-feature experience.
+
+## Validation Notes
+
+- 2026-05-03 automated validation completed with `npm run check`, `npm test`, and `cargo test` from the current branch.
+- The shipped Tower-LCC profiles currently provide executable connector filtering and repair behavior.
+- The shipped Signal-LCC carrier profiles currently validate selector and persistence behavior, but they intentionally keep `affectedPaths` empty until concrete aux-port CDI/manual evidence is captured.

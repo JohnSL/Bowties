@@ -1390,4 +1390,114 @@ mod tests {
         ]);
         assert_eq!(slot_rules.defaults_when_selected[0].value, serde_json::json!(1));
     }
+
+    #[test]
+    fn bundled_tower_profile_builds_quickstart_connector_slots() {
+        let cdi = parse_cdi(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Port I/O</name>
+                    <group replication="16">
+                        <name>Line</name>
+                        <repname>Line</repname>
+                        <int size="1">
+                            <name>Output Function</name>
+                            <map>
+                                <relation><property>0</property><value>None</value></relation>
+                                <relation><property>1</property><value>Mode 1</value></relation>
+                                <relation><property>2</property><value>Mode 2</value></relation>
+                                <relation><property>3</property><value>Mode 3</value></relation>
+                                <relation><property>4</property><value>Mode 4</value></relation>
+                                <relation><property>5</property><value>Mode 5</value></relation>
+                                <relation><property>6</property><value>Mode 6</value></relation>
+                                <relation><property>7</property><value>Mode 7</value></relation>
+                                <relation><property>8</property><value>Mode 8</value></relation>
+                                <relation><property>9</property><value>Mode 9</value></relation>
+                                <relation><property>10</property><value>Mode 10</value></relation>
+                                <relation><property>11</property><value>Mode 11</value></relation>
+                                <relation><property>12</property><value>Mode 12</value></relation>
+                                <relation><property>13</property><value>Mode 13</value></relation>
+                                <relation><property>14</property><value>Mode 14</value></relation>
+                                <relation><property>15</property><value>Mode 15</value></relation>
+                                <relation><property>16</property><value>Mode 16</value></relation>
+                            </map>
+                        </int>
+                        <int size="1">
+                            <name>Input Function</name>
+                            <map>
+                                <relation><property>0</property><value>Mode 0</value></relation>
+                                <relation><property>1</property><value>Mode 1</value></relation>
+                                <relation><property>2</property><value>Mode 2</value></relation>
+                                <relation><property>3</property><value>Mode 3</value></relation>
+                                <relation><property>4</property><value>Mode 4</value></relation>
+                                <relation><property>5</property><value>Mode 5</value></relation>
+                                <relation><property>6</property><value>Mode 6</value></relation>
+                                <relation><property>7</property><value>Mode 7</value></relation>
+                                <relation><property>8</property><value>Mode 8</value></relation>
+                            </map>
+                        </int>
+                    </group>
+                </segment>
+            </cdi>"#,
+        )
+        .expect("CDI parse should succeed");
+
+        let profile: StructureProfile = serde_yaml_ng::from_str(include_str!("../../profiles/RR-CirKits_Tower-LCC.profile.yaml"))
+            .expect("bundled Tower-LCC profile should parse");
+        let library: types::SharedDaughterboardLibrary = serde_yaml_ng::from_str(include_str!("../../profiles/RR-CirKits.shared-daughterboards.yaml"))
+            .expect("bundled shared daughterboard library should parse");
+
+        let connector_profile = build_connector_profile(
+            "05.02.01.02.03.00.00.01",
+            &profile,
+            Some(&library),
+            &cdi,
+        )
+        .expect("Tower-LCC connector profile should be built");
+
+        assert_eq!(connector_profile.slots.len(), 2);
+        assert_eq!(connector_profile.slots[0].resolved_affected_paths.len(), 8);
+        assert_eq!(connector_profile.slots[1].resolved_affected_paths.len(), 8);
+        assert!(connector_profile
+            .supported_daughterboards
+            .iter()
+            .any(|candidate| candidate.daughterboard_id == "BOD4"));
+    }
+
+    #[test]
+    fn bundled_signal_profile_builds_aux_port_slot_without_governed_paths() {
+        let cdi = parse_cdi(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Signals</name>
+                    <group>
+                        <name>Mast</name>
+                        <int size="1"><name>Aspect</name></int>
+                    </group>
+                </segment>
+            </cdi>"#,
+        )
+        .expect("CDI parse should succeed");
+
+        let profile: StructureProfile = serde_yaml_ng::from_str(include_str!("../../profiles/RR-CirKits_Signal-LCC-P.profile.yaml"))
+            .expect("bundled Signal-LCC-P profile should parse");
+        let library: types::SharedDaughterboardLibrary = serde_yaml_ng::from_str(include_str!("../../profiles/RR-CirKits.shared-daughterboards.yaml"))
+            .expect("bundled shared daughterboard library should parse");
+
+        let connector_profile = build_connector_profile(
+            "05.02.01.02.03.00.00.02",
+            &profile,
+            Some(&library),
+            &cdi,
+        )
+        .expect("Signal-LCC-P connector profile should be built");
+
+        assert_eq!(connector_profile.slots.len(), 1);
+        assert_eq!(connector_profile.slots[0].slot_id, "aux-port");
+        assert!(connector_profile.slots[0].resolved_affected_paths.is_empty());
+        assert!(connector_profile
+            .supported_daughterboards
+            .iter()
+            .any(|candidate| candidate.daughterboard_id == "SMD-8"));
+    }
 }

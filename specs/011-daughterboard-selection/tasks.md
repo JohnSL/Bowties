@@ -113,11 +113,11 @@
 
 ### Tests for User Story 4
 
-- [ ] T033 [P] [US4] Add regression tests for nodes without connector-slot metadata in `app/src/lib/components/ConfigSidebar/ConfigSidebar.test.ts`, `app/src/lib/stores/nodeTree.store.test.ts`, and `app/src-tauri/src/commands/cdi.rs`
+- [X] T033 [P] [US4] Add regression tests for nodes without connector-slot metadata in `app/src/lib/components/ConfigSidebar/ConfigSidebar.test.ts`, `app/src/lib/stores/nodeTree.store.test.ts`, and `app/src-tauri/src/commands/cdi.rs`
 
 ### Implementation for User Story 4
 
-- [ ] T034 [US4] Guard backend and frontend connector flows so non-modular nodes keep pre-feature behavior in `app/src-tauri/src/commands/cdi.rs`, `app/src-tauri/src/profile/mod.rs`, `app/src/lib/components/ConfigSidebar/configSidebarPresenter.ts`, and `app/src/lib/stores/connectorSelections.svelte.ts`
+- [X] T034 [US4] Guard backend and frontend connector flows so non-modular nodes keep pre-feature behavior in `app/src-tauri/src/commands/cdi.rs`, `app/src-tauri/src/profile/mod.rs`, `app/src/lib/components/ConfigSidebar/configSidebarPresenter.ts`, and `app/src/lib/stores/connectorSelections.svelte.ts`
 
 **Checkpoint**: Nodes without connector metadata remain unchanged while modular nodes keep the new behavior.
 
@@ -127,9 +127,9 @@
 
 **Purpose**: Final docs, validation, and shared cleanup across the completed stories.
 
-- [ ] T035 [P] Document connector-slot profile authoring and saved hardware-selection behavior in `docs/technical/profile-extraction-guide.md` and `docs/user/using.md`
-- [ ] T036 [P] Add quickstart-aligned regression coverage for one Tower carrier and one Signal carrier in `app/src/lib/components/ConfigSidebar/ConfigSidebar.test.ts`, `app/src/lib/components/ElementCardDeck/ElementCardDeck.test.ts`, and `app/src-tauri/src/profile/mod.rs`
-- [ ] T037 Run the feature quickstart validation and update follow-up work in `specs/011-daughterboard-selection/quickstart.md` and `specs/backlog.md`
+- [X] T035 [P] Document connector-slot profile authoring and saved hardware-selection behavior in `docs/technical/profile-extraction-guide.md` and `docs/user/using.md`
+- [X] T036 [P] Add quickstart-aligned regression coverage for one Tower carrier and one Signal carrier in `app/src/lib/components/ConfigSidebar/ConfigSidebar.test.ts`, `app/src/lib/components/ElementCardDeck/ElementCardDeck.test.ts`, and `app/src-tauri/src/profile/mod.rs`
+- [X] T037 Run the feature quickstart validation and update follow-up work in `specs/011-daughterboard-selection/quickstart.md` and `specs/backlog.md`
 - [X] T038 [P] [US1/US2] Harden online-without-layout connector behavior by surfacing a session-only connector-selection hint and treating dirty in-memory layout metadata as unsaved changes in `app/src/lib/components/ElementCardDeck/SegmentView.svelte`, `app/src/lib/orchestration/unsavedChangesGuard.ts`, and `app/src/routes/+page.svelte`
 - [X] T039 [P] [US1/US2] Keep Save/Discard pending counters and discard dialog totals consistent for connector metadata edits, and clear layout dirty state when connector selections round-trip back to "None installed" in `app/src/lib/components/ElementCardDeck/saveControlsPresenter.ts`, `app/src/lib/stores/connectorSelections.svelte.ts`, and `app/src/lib/stores/layout.svelte.ts`
 - [X] T040 [P] [US1/US2] Centralize frontend change-tracker aggregation in a shared store and migrate SaveControls plus route unsaved-change guards to consume it in `app/src/lib/stores/changeTracker.svelte.ts`, `app/src/lib/components/ElementCardDeck/SaveControls.svelte`, and `app/src/routes/+page.svelte`

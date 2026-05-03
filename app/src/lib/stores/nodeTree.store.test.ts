@@ -101,6 +101,27 @@ describe('nodeTreeStore — node-tree-updated', () => {
   });
 });
 
+describe('loadTree without connector metadata', () => {
+  it('preserves a null connectorProfile for non-modular nodes', async () => {
+    (invoke as any).mockResolvedValueOnce({
+      nodeId: NODE_ID,
+      identity: null,
+      connectorProfile: null,
+      connectorProfileWarning: null,
+      segments: [
+        { name: 'Config', description: null, origin: 0, space: 253, children: [] },
+      ],
+    });
+
+    const tree = await nodeTreeStore.loadTree(NODE_ID);
+
+    expect(invoke).toHaveBeenCalledWith('get_node_tree', { nodeId: NODE_ID });
+    expect(tree?.connectorProfile ?? null).toBe(null);
+    expect(tree?.connectorProfileWarning ?? null).toBe(null);
+    expect(nodeTreeStore.getSegments(NODE_ID)).toHaveLength(1);
+  });
+});
+
 // ─── Step 1: CDI-index vs array-index (findLeafByPathInChildren) ─────────────
 //
 // Tested indirectly via updateLeafValue, which calls findLeafByPath →

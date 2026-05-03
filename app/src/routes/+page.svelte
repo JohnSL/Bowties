@@ -1243,20 +1243,34 @@
     }
 
     const selectedTree = trees.get(selectedNodeId);
-    if (!selectedTree?.connectorProfile) {
+    if (!selectedTree) {
       return;
     }
 
+    const selectedConnectorProfile = selectedTree.connectorProfile ?? null;
+
     const cachedProfile = connectorSelectionsStore.getProfile(selectedNodeId);
     const cachedDocument = connectorSelectionsStore.getDocument(selectedNodeId);
+    if (!selectedConnectorProfile) {
+      if (
+        cachedProfile
+        || cachedDocument
+        || connectorSelectionsStore.getWarnings(selectedNodeId).length > 0
+        || connectorSelectionsStore.getStagedRepairs(selectedNodeId).length > 0
+      ) {
+        void connectorSelectionsStore.loadNode(selectedNodeId, null);
+      }
+      return;
+    }
+
     if (
-      cachedProfile?.carrierKey === selectedTree.connectorProfile.carrierKey
+      cachedProfile?.carrierKey === selectedConnectorProfile.carrierKey
       && cachedDocument
     ) {
       return;
     }
 
-    void connectorSelectionsStore.loadNode(selectedNodeId, selectedTree.connectorProfile);
+    void connectorSelectionsStore.loadNode(selectedNodeId, selectedConnectorProfile);
   });
 
   async function handleConnectorSelectionChange(detail: {

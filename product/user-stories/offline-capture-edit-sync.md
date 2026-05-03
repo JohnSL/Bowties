@@ -65,12 +65,15 @@ A user edits supported configuration and bowtie-related state while offline and 
 - The product distinguishes current offline pending changes from the baseline state.
 - Save and discard apply to the current layout-backed offline changes model.
 - Reverting a planned offline change participates in the same current save/discard lifecycle instead of being auto-written separately.
+- Connector daughterboard selections for supported carrier boards are stored as layout-backed hardware assumptions and reopen with the saved layout.
+- When a connector selection invalidates current configuration, Bowties stages compatible follow-up config edits into the same pending-change workflow instead of writing anything immediately.
 
 ### What The User Gets
 
 - the ability to prepare configuration and connection changes away from the bus
 - visible pending-change state while offline
 - durable saved offline changes that are restored when the layout is reopened
+- durable per-node connector hardware selections that stay aligned with the saved layout context
 
 ## Current User Story 4: Reconnect And Sync Pending Offline Changes
 

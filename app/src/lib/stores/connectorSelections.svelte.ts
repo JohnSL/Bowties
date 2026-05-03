@@ -245,9 +245,27 @@ class ConnectorSelectionsStore {
     this.revision += 1;
   }
 
+  private clearNodeState(nodeKey: string): void {
+    const nextProfiles = new Map(this._profiles);
+    nextProfiles.delete(nodeKey);
+    this._profiles = nextProfiles;
+
+    const nextDocuments = new Map(this._documents);
+    nextDocuments.delete(nodeKey);
+    this._documents = nextDocuments;
+
+    const nextWarnings = new Map(this._previewWarnings);
+    nextWarnings.delete(nodeKey);
+    this._previewWarnings = nextWarnings;
+
+    const nextRepairs = new Map(this._stagedRepairs);
+    nextRepairs.delete(nodeKey);
+    this._stagedRepairs = nextRepairs;
+  }
+
   async loadNode(
     nodeId: string,
-    profileOverride: ConnectorProfileView | null = null,
+    profileOverride: ConnectorProfileView | null | undefined = undefined,
   ): Promise<ConnectorSelectionDocument | null> {
     const nodeKey = normalizeNodeId(nodeId);
     if (this._loading.has(nodeKey)) {
@@ -263,7 +281,9 @@ class ConnectorSelectionsStore {
     this._errors = nextErrors;
 
     try {
-      const profile = profileOverride ?? await getConnectorProfile(nodeId);
+      const profile = profileOverride !== undefined
+        ? profileOverride
+        : await getConnectorProfile(nodeId);
       const layoutSelectionSet = layoutStore.getConnectorSelections(nodeId);
       const layoutDocument = layoutSelectionSet
         ? fromLayoutSelectionSet(nodeId, layoutSelectionSet)
@@ -273,21 +293,17 @@ class ConnectorSelectionsStore {
         ? reconcileDocumentWithProfile(profile, existingDocument ?? layoutDocument ?? createDefaultDocument(profile))
         : null;
 
-      const nextProfiles = new Map(this._profiles);
-      if (profile) {
+      if (profile && document) {
+        const nextProfiles = new Map(this._profiles);
         nextProfiles.set(nodeKey, profile);
-      } else {
-        nextProfiles.delete(nodeKey);
-      }
-      this._profiles = nextProfiles;
+        this._profiles = nextProfiles;
 
-      const nextDocuments = new Map(this._documents);
-      if (document) {
+        const nextDocuments = new Map(this._documents);
         nextDocuments.set(nodeKey, document);
+        this._documents = nextDocuments;
       } else {
-        nextDocuments.delete(nodeKey);
+        this.clearNodeState(nodeKey);
       }
-      this._documents = nextDocuments;
       this.revision += 1;
 
       return document;

@@ -125,6 +125,7 @@ High-risk seams that should usually get explicit regression tests include:
 
 - discovery naming and SNIP/PIP enrichment
 - CDI gating and download prompts
+- connector daughterboard selection persistence, non-modular fallback cleanup, and carrier-fixture drift between the shipped profiles and frontend rendering
 - connect-dialog and layout-open interaction
 - offline pending-change save, discard, replay, and apply flows
 - sync session auto-trigger, dismissal, and reopen behavior

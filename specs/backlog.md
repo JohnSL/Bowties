@@ -34,7 +34,7 @@
     1. Validate that the generated end-user markdown is consistently good enough to paste directly into the GitHub draft release without manual rewriting.
     2. If the manual publication step becomes a recurring pain point, decide later whether to add a verified GitHub CLI path without regressing the simpler manual workflow.
 * Connector daughterboard Signal-LCC authoring evidence
-  * Root cause: Phase 4 added executable Tower-LCC connector filtering based on concrete CDI path evidence in the repo, but the current workspace does not contain equivalent Signal-LCC CDI/manual path evidence for aux-port-governed sections.
+  * Root cause: The current implementation ships Signal-LCC aux-port selection and persistence support, but the workspace still does not contain equivalent Signal-LCC CDI/manual path evidence for aux-port-governed sections, so those profiles intentionally leave `affectedPaths` empty.
   * Follow-up:
     1. Acquire concrete Signal-LCC CDI or manual path evidence for aux-port-governed sections and line modes.
     2. Author Signal-LCC affected paths and any carrier-specific overrides once those concrete paths are verified.

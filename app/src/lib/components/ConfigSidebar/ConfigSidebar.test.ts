@@ -504,4 +504,67 @@ describe('ConfigSidebar.svelte', () => {
     expect(screen.queryByLabelText('Connector daughterboards for Test Node')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Connector A')).not.toBeInTheDocument();
   });
+
+  it('keeps Signal-LCC aux-port selectors out of the sidebar when a supported signal carrier is expanded', () => {
+    const nodeId = '02.01.57.00.00.02';
+    nodeInfoStore.set(new Map([[nodeId, makeNode({
+      node_id: [0x02, 0x01, 0x57, 0x00, 0x00, 0x02],
+      snip_data: {
+        ...MOCK_NODE.snip_data,
+        manufacturer: 'RR-CirKits',
+        model: 'Signal-LCC-P',
+        user_name: 'Signal Node',
+      },
+    }) as any]]));
+    nodeTreeStore.setTree(nodeId, {
+      nodeId,
+      identity: null,
+      connectorProfile: {
+        nodeId,
+        carrierKey: 'rr-cirkits::signal-lcc-p',
+        slots: [
+          {
+            slotId: 'aux-port',
+            label: 'Aux Port',
+            order: 0,
+            allowNoneInstalled: true,
+            supportedDaughterboardIds: ['SMD-8'],
+            affectedPaths: [],
+          },
+        ],
+        supportedDaughterboards: [
+          {
+            daughterboardId: 'SMD-8',
+            displayName: 'SMD-8',
+            description: 'Signal mast driver',
+          },
+        ],
+      },
+      segments: [],
+    } as any);
+    configSidebarStore.toggleNodeExpanded(nodeId);
+
+    render(ConfigSidebar);
+
+    expect(screen.queryByLabelText('Connector daughterboards for Signal Node')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Aux Port')).not.toBeInTheDocument();
+  });
+
+  it('does not render connector status for non-modular nodes', () => {
+    const nodeId = '02.01.57.00.00.01';
+    nodeInfoStore.set(new Map([[nodeId, MOCK_NODE as any]]));
+    nodeTreeStore.setTree(nodeId, {
+      nodeId,
+      identity: null,
+      connectorProfile: null,
+      connectorProfileWarning: null,
+      segments: [],
+    } as any);
+    configSidebarStore.toggleNodeExpanded(nodeId);
+
+    const { container } = render(ConfigSidebar);
+
+    expect(screen.getByText('No segments available')).toBeInTheDocument();
+    expect(container.querySelector('.connector-status')).toBeNull();
+  });
 });

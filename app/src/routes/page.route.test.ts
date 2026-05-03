@@ -8,6 +8,7 @@ import { nodeInfoStore } from '$lib/stores/nodeInfo';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { layoutStore } from '$lib/stores/layout.svelte';
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
+import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
 import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
 import { resetLayoutOpenPhase } from '$lib/stores/layoutOpenLifecycle';
 
@@ -190,6 +191,7 @@ beforeEach(() => {
   configSidebarStore.reset();
   nodeInfoStore.set(new Map());
   nodeTreeStore.reset();
+  connectorSelectionsStore.reset();
   layoutStore.reset();
   bowtieMetadataStore.clearAll();
   offlineChangesStore.clear();
@@ -541,5 +543,67 @@ describe('+page route discovery CTA', () => {
     expect(sidebarState.selectedNodeId).toBe(null);
     expect(sidebarState.selectedSegment).toBe(null);
     expect(get(configReadNodesStore).has('02.01.57.00.00.01')).toBe(false);
+  });
+
+  it('clears stale connector state when the selected node has no connector profile', async () => {
+    const nodeId = '02.01.57.00.00.01';
+    const connectorProfile = {
+      nodeId,
+      carrierKey: 'rr-cirkits::tower-lcc',
+      slots: [
+        {
+          slotId: 'connector-a',
+          label: 'Connector A',
+          order: 0,
+          allowNoneInstalled: true,
+          supportedDaughterboardIds: ['BOD4-CP'],
+          affectedPaths: ['Port I/O/Line'],
+          resolvedAffectedPaths: [['seg:0', 'elem:0']],
+          baseBehaviorWhenEmpty: null,
+          supportedDaughterboardConstraints: [],
+        },
+      ],
+      supportedDaughterboards: [
+        {
+          daughterboardId: 'BOD4-CP',
+          displayName: 'BOD4-CP',
+          kind: 'detection',
+          description: 'Detector board',
+        },
+      ],
+    };
+
+    await connectorSelectionsStore.loadNode(nodeId, connectorProfile as any);
+    connectorSelectionsStore.setCompatibilityPreview(nodeId, [{
+      targetPath: 'Port I/O/Line/Input Function',
+      space: 253,
+      offset: '0x00000000',
+      baselineValue: '1',
+      plannedValue: '0',
+      reason: 'Reset invalid detector mode',
+      originSlotId: 'connector-a',
+    }], ['Connector A requires a supported daughterboard.']);
+
+    expect(connectorSelectionsStore.getProfile(nodeId)?.carrierKey).toBe('rr-cirkits::tower-lcc');
+    expect(connectorSelectionsStore.getDocument(nodeId)).not.toBe(null);
+    expect(connectorSelectionsStore.getWarnings(nodeId)).toEqual(['Connector A requires a supported daughterboard.']);
+    expect(connectorSelectionsStore.getStagedRepairs(nodeId)).toHaveLength(1);
+
+    render(Page);
+
+    nodeTreeStore.setTree(nodeId, {
+      nodeId,
+      identity: null,
+      connectorProfile: null,
+      segments: [],
+    });
+    configSidebarStore.setSelectedNode(nodeId);
+
+    await waitFor(() => {
+      expect(connectorSelectionsStore.getProfile(nodeId)).toBe(null);
+      expect(connectorSelectionsStore.getDocument(nodeId)).toBe(null);
+      expect(connectorSelectionsStore.getWarnings(nodeId)).toEqual([]);
+      expect(connectorSelectionsStore.getStagedRepairs(nodeId)).toEqual([]);
+    });
   });
 });
