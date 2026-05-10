@@ -36,8 +36,112 @@ pub struct NodeConfigTree {
     pub node_id: String,
     /// Optional identification from CDI `<identification>` element
     pub identity: Option<Identification>,
+    /// Optional connector daughterboard profile for supported modular boards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connector_profile: Option<ConnectorProfile>,
+    /// Optional warning when connector filtering is disabled for safety.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connector_profile_warning: Option<String>,
     /// Top-level segments mirroring CDI `<segment>` elements
     pub segments: Vec<SegmentNode>,
+}
+
+/// Profile-authored connector-slot metadata attached to a node tree payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorProfile {
+    pub node_id: String,
+    pub carrier_key: String,
+    pub slots: Vec<ConnectorSlot>,
+    pub supported_daughterboards: Vec<SupportedDaughterboard>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ConnectorScalarValue {
+    String(String),
+    Integer(i64),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConnectorConstraintEffect {
+    Show,
+    Hide,
+    Disable,
+    AllowValues,
+    DenyValues,
+    ReadOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EmptyConnectorConstraintEffect {
+    Hide,
+    Disable,
+    AllowValues,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorConstraint {
+    pub target_path: String,
+    pub resolved_path: Vec<String>,
+    pub effect: ConnectorConstraintEffect,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub line_ordinals: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_values: Vec<ConnectorScalarValue>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_value_labels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub denied_values: Vec<ConnectorScalarValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmptyConnectorBehavior {
+    pub effect: EmptyConnectorConstraintEffect,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_values: Vec<ConnectorScalarValue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotSupportedDaughterboard {
+    pub daughterboard_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validity_rules: Vec<ConnectorConstraint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorSlot {
+    pub slot_id: String,
+    pub label: String,
+    pub order: u32,
+    pub allow_none_installed: bool,
+    pub supported_daughterboard_ids: Vec<String>,
+    pub affected_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resolved_affected_paths: Vec<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_behavior_when_empty: Option<EmptyConnectorBehavior>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_daughterboard_constraints: Vec<SlotSupportedDaughterboard>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SupportedDaughterboard {
+    pub daughterboard_id: String,
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// One CDI segment — a contiguous memory space.
@@ -268,6 +372,8 @@ pub fn build_node_config_tree(node_id: &str, cdi: &Cdi) -> NodeConfigTree {
     NodeConfigTree {
         node_id: node_id.to_string(),
         identity: cdi.identification.clone(),
+        connector_profile: None,
+        connector_profile_warning: None,
         segments,
     }
 }

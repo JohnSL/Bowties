@@ -2,6 +2,8 @@ import { invoke } from '@tauri-apps/api/core';
 import type { NodeConfigTree } from '$lib/types/nodeTree';
 import type { LayoutFile } from '$lib/types/bowtie';
 
+export type { LayoutConnectorSelections } from '$lib/types/bowtie';
+
 export interface CaptureSummary {
   capturedAt: string;
   nodeCount: number;
@@ -74,15 +76,20 @@ export async function captureLayoutSnapshot(includeProducerEvents = true): Promi
   return invoke<CaptureSummary>('capture_layout_snapshot', { includeProducerEvents });
 }
 
-export async function saveLayoutDirectory(path: string, overwrite = true): Promise<SaveLayoutResult> {
-  return invoke<SaveLayoutResult>('save_layout_directory', { path, overwrite });
+export async function saveLayoutDirectory(
+  path: string,
+  overwrite = true,
+  layout?: LayoutFile | null,
+): Promise<SaveLayoutResult> {
+  return invoke<SaveLayoutResult>('save_layout_directory', { path, overwrite, layout });
 }
 
 export async function saveLayoutFile(
   path: string,
   overwrite = true,
+  layout?: LayoutFile | null,
 ): Promise<SaveLayoutResult> {
-  return invoke<SaveLayoutResult>('save_layout_directory', { path, overwrite });
+  return invoke<SaveLayoutResult>('save_layout_directory', { path, overwrite, layout });
 }
 
 export async function openLayoutDirectory(path: string): Promise<OpenLayoutResult> {

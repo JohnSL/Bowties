@@ -15,7 +15,9 @@
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
   import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
-  import { setModifiedValue } from '$lib/api/config';
+  import { configEditor } from '$lib/stores/configEditor.svelte';
+  import { flushDraftToBackend } from '$lib/orchestration/configDraftOrchestrator';
+  import { editKeyForLeaf } from '$lib/utils/editKey';
   import BowtieCard from '$lib/components/Bowtie/BowtieCard.svelte';
   import EmptyState from '$lib/components/Bowtie/EmptyState.svelte';
   import NewConnectionDialog from '$lib/components/Bowtie/NewConnectionDialog.svelte';
@@ -204,53 +206,13 @@
       hex: eventIdHex,
     };
 
-    if (layoutStore.isOfflineMode) {
-      applyOfflineLeafChange(element.nodeId, leaf, newValue);
-      return;
+    const key = editKeyForLeaf(element.nodeId, element.space, element.address);
+    configEditor.applyEdit(key, newValue);
+
+    // Online: mirror to backend
+    if (!layoutStore.isOfflineMode) {
+      flushDraftToBackend(key);
     }
-
-    setModifiedValue(element.nodeId, element.address, element.space, newValue).catch((err) => {
-      console.error(`[BowtieCatalogPanel] setModifiedValue failed for node ${element.nodeId}:`, err);
-    });
-  }
-
-  function offsetKeyForLeaf(address: number): string {
-    return `0x${address.toString(16).toUpperCase().padStart(8, '0')}`;
-  }
-
-  function valueToOfflineString(value: { type: 'string'; value: string } | { type: 'int'; value: number } | { type: 'float'; value: number } | { type: 'eventId'; bytes: number[]; hex?: string }): string {
-    switch (value.type) {
-      case 'string':
-        return value.value;
-      case 'int':
-        return String(value.value);
-      case 'float':
-        return String(value.value);
-      case 'eventId':
-        return value.hex ?? value.bytes.map((byte) => byte.toString(16).toUpperCase().padStart(2, '0')).join('.');
-    }
-  }
-
-  function applyOfflineLeafChange(
-    nodeId: string,
-    leaf: { address: number; space: number; path: string[]; value: { type: 'string'; value: string } | { type: 'int'; value: number } | { type: 'float'; value: number } | { type: 'eventId'; bytes: number[]; hex?: string } | null },
-    newValue: { type: 'string'; value: string } | { type: 'int'; value: number } | { type: 'float'; value: number } | { type: 'eventId'; bytes: number[]; hex?: string },
-  ): void {
-    const offset = offsetKeyForLeaf(leaf.address);
-    const existingDraft = offlineChangesStore.findDraftConfigChange(nodeId, leaf.space, offset);
-    const existingPersisted = offlineChangesStore.findPersistedConfigChange(nodeId, leaf.space, offset);
-    const baselineValue = existingDraft?.baselineValue ?? existingPersisted?.baselineValue ?? (leaf.value ? valueToOfflineString(leaf.value) : '');
-
-    offlineChangesStore.upsertConfigChange({
-      nodeId,
-      space: leaf.space,
-      offset,
-      baselineValue,
-      plannedValue: valueToOfflineString(newValue),
-    });
-
-    const nextDraft = offlineChangesStore.findDraftConfigChange(nodeId, leaf.space, offset);
-    nodeTreeStore.setLeafModifiedValue(nodeId, leaf.path, nextDraft ? newValue : null);
   }
 
   // ── T030: Add element ──────────────────────────────────────────────────
@@ -335,14 +297,12 @@
       hex: newEventIdHex,
     };
 
-    if (layoutStore.isOfflineMode) {
-      applyOfflineLeafChange(entry.node_id, leaf, newValue);
-      return;
-    }
+    const key = editKeyForLeaf(entry.node_id, leaf.space, leaf.address);
+    configEditor.applyEdit(key, newValue);
 
-    setModifiedValue(entry.node_id, leaf.address, leaf.space, newValue).catch((err) => {
-      console.error(`[BowtieCatalogPanel] setModifiedValue failed for node ${entry.node_id}:`, err);
-    });
+    if (!layoutStore.isOfflineMode) {
+      flushDraftToBackend(key);
+    }
   }
 
   // ── T032: Delete confirmation ──────────────────────────────────────────

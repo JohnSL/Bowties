@@ -10,9 +10,8 @@ import {
   findLeafByAddress,
   countLeaves,
   collectEventIdLeaves,
+  groupReplicatedChildren,
   resolvePillSelectionsForPath,
-  countModifiedLeaves,
-  hasModifiedLeaves,
 } from '$lib/types/nodeTree';
 import type {
   NodeConfigTree,
@@ -360,11 +359,10 @@ describe('resolvePillSelectionsForPath', () => {
     expect(result.get('nodeId:seg:0/elem:0#2/elem:1#1')).toBe(2);
   });
 
-  it('multi-wrapper siblings (two event sets) — emits outer AND inner pill entries', () => {
+  it('multi-wrapper siblings (two event sets) remain separate replicated groups', () => {
     // Simulates: consumer events (elem:0) and producer events (elem:1) both named
-    // "Event" at the same segment level.  groupReplicatedChildren groups them into
-    // a single replicatedSet where the outer pill selects between the two sets and
-    // the inner pill selects the instance within the chosen set.
+    // "Event" at the same segment level. They must remain separate wrappers so
+    // connector rules can hide one event set without hiding the other.
     function makeEventInst(wrapperIdx: number, instNum: number): GroupConfigNode {
       return makeGroup([], {
         name: 'Event', instance: instNum, instanceLabel: `Event ${instNum}`,
@@ -388,11 +386,10 @@ describe('resolvePillSelectionsForPath', () => {
 
     // Navigate to producer wrapper (elem:1), instance 5
     const result = resolvePillSelectionsForPath(nodeId, seg, ['seg:0', 'elem:1#5']);
-    expect(result.size).toBe(2);
-    // Outer pill: first sibling = wrapperCons (path 'seg:0/elem:0') → index 1 selects producer set
-    expect(result.get('nodeId:seg:0/elem:0')).toBe(1);
-    // Inner pill: first producer inst (path 'seg:0/elem:1#1') → index 4 selects instance 5
+    expect(result.size).toBe(1);
+    // Only the producer wrapper's own pill should be selected.
     expect(result.get('nodeId:seg:0/elem:1#1')).toBe(4);
+    expect(result.has('nodeId:seg:0/elem:0')).toBe(false);
   });
 
   it('spacer before target — path-based lookup finds elem:1 wrapper at children[0]', () => {
@@ -446,91 +443,68 @@ describe('resolvePillSelectionsForPath', () => {
   });
 });
 
-// ─── countModifiedLeaves — isOfflinePending exclusion ────────────────────────
-
-describe('countModifiedLeaves — isOfflinePending exclusion', () => {
-  it('counts leaves with modifiedValue and no isOfflinePending', () => {
-    const leaf = makeLeaf({ modifiedValue: { type: 'int', value: 5 } });
-    const tree = makeTree([makeSegment([leaf])]);
-    expect(countModifiedLeaves(tree)).toBe(1);
-  });
-
-  it('excludes leaves where isOfflinePending is true', () => {
-    const leaf = makeLeaf({
-      modifiedValue: { type: 'int', value: 5 },
-      isOfflinePending: true,
-    });
-    const tree = makeTree([makeSegment([leaf])]);
-    expect(countModifiedLeaves(tree)).toBe(0);
-  });
-
-  it('counts dirty leaves but skips offline-pending leaves in the same tree', () => {
-    const pendingLeaf = makeLeaf({
-      address: 0,
+describe('groupReplicatedChildren — wrapper group handling', () => {
+  it('single wrapper (instance=0, replicationCount>1) is classified as group, not replicatedSet', () => {
+    // Rust backend produces: segment.children = [wrapperGroup]
+    const wrapper = makeGroup([], {
+      name: 'Channel',
+      instance: 0,
+      instanceLabel: 'Channel',
+      replicationOf: 'Channel',
+      replicationCount: 3,
       path: ['seg:0', 'elem:0'],
-      modifiedValue: { type: 'int', value: 5 },
-      isOfflinePending: true,
     });
-    const dirtyLeaf = makeLeaf({
-      address: 4,
-      path: ['seg:0', 'elem:1'],
-      modifiedValue: { type: 'int', value: 99 },
-    });
-    const tree = makeTree([makeSegment([pendingLeaf, dirtyLeaf])]);
-    expect(countModifiedLeaves(tree)).toBe(1);
+
+    const result = groupReplicatedChildren([wrapper]);
+
+    // Wrapper alone should be classified as 'group' (not replicatedSet)
+    expect(result).toHaveLength(1);
+    expect(result[0].type).toBe('group');
   });
 
-  it('returns 0 when all modified leaves are offline-pending', () => {
-    const leaf1 = makeLeaf({
-      address: 0,
-      path: ['seg:0', 'elem:0'],
-      modifiedValue: { type: 'int', value: 1 },
-      isOfflinePending: true,
+  it('wrapper children (instance=1,2,3) are grouped into a replicatedSet', () => {
+    // The instances inside the wrapper
+    const inst1 = makeGroup([makeLeaf({ name: 'F1' })], {
+      instance: 1, instanceLabel: 'Ch 1', replicationOf: 'Channel',
+      replicationCount: 3, path: ['seg:0', 'elem:0#1'],
     });
-    const leaf2 = makeLeaf({
-      address: 4,
-      path: ['seg:0', 'elem:1'],
-      modifiedValue: { type: 'int', value: 2 },
-      isOfflinePending: true,
+    const inst2 = makeGroup([makeLeaf({ name: 'F2' })], {
+      instance: 2, instanceLabel: 'Ch 2', replicationOf: 'Channel',
+      replicationCount: 3, path: ['seg:0', 'elem:0#2'],
     });
-    const tree = makeTree([makeSegment([leaf1, leaf2])]);
-    expect(countModifiedLeaves(tree)).toBe(0);
-  });
-});
+    const inst3 = makeGroup([makeLeaf({ name: 'F3' })], {
+      instance: 3, instanceLabel: 'Ch 3', replicationOf: 'Channel',
+      replicationCount: 3, path: ['seg:0', 'elem:0#3'],
+    });
 
-describe('hasModifiedLeaves — offline pending exclusion', () => {
-  it('returns false when all modified leaves are offline-pending', () => {
-    const leaf1 = makeLeaf({
-      address: 0,
-      path: ['seg:0', 'elem:0'],
-      modifiedValue: { type: 'int', value: 1 },
-      isOfflinePending: true,
-    });
-    const leaf2 = makeLeaf({
-      address: 4,
-      path: ['seg:0', 'elem:1'],
-      modifiedValue: { type: 'int', value: 2 },
-      isOfflinePending: true,
-    });
-    const tree = makeTree([makeSegment([leaf1, leaf2])]);
+    // When called on the wrapper's children, produces a replicatedSet
+    const result = groupReplicatedChildren([inst1, inst2, inst3]);
 
-    expect(hasModifiedLeaves(tree)).toBe(false);
+    expect(result).toHaveLength(1);
+    expect(result[0].type).toBe('replicatedSet');
+    if (result[0].type === 'replicatedSet') {
+      expect(result[0].instances).toHaveLength(3);
+      expect(result[0].templateName).toBe('Channel');
+    }
   });
 
-  it('returns true when a non-offline-pending modified leaf exists', () => {
-    const pendingLeaf = makeLeaf({
-      address: 0,
-      path: ['seg:0', 'elem:0'],
-      modifiedValue: { type: 'int', value: 1 },
-      isOfflinePending: true,
+  it('two wrappers with same replicationOf at different element positions remain separate groups', () => {
+    // CDI with consumer events + producer events, both named "Event"
+    const wrapper1 = makeGroup([], {
+      name: 'Event', instance: 0, instanceLabel: 'Event',
+      replicationOf: 'Event', replicationCount: 8, path: ['seg:0', 'elem:0'],
     });
-    const dirtyLeaf = makeLeaf({
-      address: 4,
-      path: ['seg:0', 'elem:1'],
-      modifiedValue: { type: 'int', value: 2 },
+    const wrapper2 = makeGroup([], {
+      name: 'Event', instance: 0, instanceLabel: 'Event',
+      replicationOf: 'Event', replicationCount: 8, path: ['seg:0', 'elem:1'],
     });
-    const tree = makeTree([makeSegment([pendingLeaf, dirtyLeaf])]);
 
-    expect(hasModifiedLeaves(tree)).toBe(true);
+    const result = groupReplicatedChildren([wrapper1, wrapper2]);
+
+    // Two wrappers at different element positions remain separate groups
+    // so connector rules can hide one event set without hiding the other
+    expect(result).toHaveLength(2);
+    expect(result[0].type).toBe('group');
+    expect(result[1].type).toBe('group');
   });
 });

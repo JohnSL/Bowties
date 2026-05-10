@@ -1511,7 +1511,14 @@ pub async fn get_node_tree(
                 &app_handle,
                 &state.profiles,
             ).await {
-                let report = crate::profile::annotate_tree(&mut tree, &profile, &cdi);
+                let shared_daughterboards = crate::profile::load_shared_daughterboards(&app_handle).await;
+                let report = apply_profile_metadata_to_tree(
+                    &mut tree,
+                    &node_id,
+                    &profile,
+                    shared_daughterboards.as_ref(),
+                    &cdi,
+                );
                 eprintln!(
                     "[profile] {} — {} event roles, {} rules applied, {} warnings",
                     node_id,
@@ -1529,6 +1536,25 @@ pub async fn get_node_tree(
     }
 
     Ok(tree)
+}
+
+fn apply_profile_metadata_to_tree(
+    tree: &mut crate::node_tree::NodeConfigTree,
+    node_id: &str,
+    profile: &crate::profile::StructureProfile,
+    shared_daughterboards: Option<&crate::profile::SharedDaughterboardLibrary>,
+    cdi: &lcc_rs::cdi::Cdi,
+) -> crate::profile::AnnotationReport {
+    let report = crate::profile::annotate_tree(tree, profile, cdi);
+    let connector_profile_outcome = crate::profile::build_connector_profile_with_diagnostics(
+        node_id,
+        profile,
+        shared_daughterboards,
+        cdi,
+    );
+    tree.connector_profile = connector_profile_outcome.profile;
+    tree.connector_profile_warning = connector_profile_outcome.warning;
+    report
 }
 
 /// A single memory-read unit produced by [`build_read_plan`].
@@ -4132,6 +4158,65 @@ mod read_plan_tests {
 // ============================================================================
 // Tests for fill_short_reply (short memory config reply continuation)
 // ============================================================================
+#[cfg(test)]
+mod profile_metadata_tests {
+    use super::*;
+
+    fn make_non_modular_cdi() -> lcc_rs::cdi::Cdi {
+        use lcc_rs::cdi::{DataElement, IntElement, Segment};
+
+        lcc_rs::cdi::Cdi {
+            identification: None,
+            acdi: None,
+            segments: vec![Segment {
+                name: Some("Config".to_string()),
+                description: None,
+                space: 0xFD,
+                origin: 0,
+                elements: vec![DataElement::Int(IntElement {
+                    name: Some("Mode".to_string()),
+                    description: None,
+                    size: 1,
+                    offset: 0,
+                    min: None,
+                    max: None,
+                    default: None,
+                    map: None,
+                    hints: None,
+                })],
+            }],
+        }
+    }
+
+    #[test]
+    fn apply_profile_metadata_keeps_connector_profile_empty_for_non_modular_profiles() {
+        let cdi = make_non_modular_cdi();
+        let mut tree = crate::node_tree::build_node_config_tree("05.02.01.02.03.00", &cdi);
+        let profile = crate::profile::StructureProfile {
+            schema_version: "1.0".to_string(),
+            node_type: crate::profile::ProfileNodeType {
+                manufacturer: "RR-CirKits".to_string(),
+                model: "Tower-LCC".to_string(),
+            },
+            firmware_version_range: None,
+            event_roles: vec![],
+            relevance_rules: vec![],
+            connector_slots: vec![],
+            connector_constraint_variants: vec![],
+            daughterboard_references: vec![],
+            carrier_overrides: vec![],
+        };
+
+        let report = apply_profile_metadata_to_tree(&mut tree, "05.02.01.02.03.00", &profile, None, &cdi);
+
+        assert_eq!(report.event_roles_applied, 0);
+        assert_eq!(report.rules_applied, 0);
+        assert!(tree.connector_profile.is_none());
+        assert!(tree.connector_profile_warning.is_none());
+        assert_eq!(tree.segments.len(), 1);
+    }
+}
+
 #[cfg(test)]
 mod fill_short_reply_tests {
     use super::*;

@@ -9,8 +9,9 @@ description: "Use when editing Bowties frontend stores. Stores own durable front
 - Stores own durable frontend state, derived state, and deterministic transitions.
 - Keep store APIs explicit and predictable so routes, components, and orchestrators can depend on them safely.
 - Do not spread the same state transition logic across multiple stores or duplicate normalization rules inside store methods.
+- When touching a store that currently owns workflow or presentation concerns, move that logic toward the correct layer instead of deepening the overlap.
 - Keep workflow sequencing in orchestrators unless a store is the clearly documented owner of that transition.
 - Apply SOLID by giving each store one coherent state ownership role.
 - Apply DRY by centralizing transition helpers and normalization rules in one place.
 - Apply YAGNI by avoiding overly generic store frameworks or abstractions that do not reduce current complexity.
-- Apply TDD by adding or updating focused store tests for state transitions and regression cases.
+- Apply TDD by adding or updating focused store tests for state transitions and regression cases, and add missing tests when a touched store already lacked coverage for the seam being changed.

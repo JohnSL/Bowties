@@ -85,4 +85,21 @@ describe('ElementCardDeck.svelte', () => {
     configSidebarStore.subscribe(s => (state = s))();
     expect(state.cardDeck?.expandedCardIds).toHaveLength(0);
   });
+
+  it.each([
+    ['Tower-LCC', 'Port I/O', 'Line 1'],
+    ['Signal-LCC-P', 'Signals', 'Mast 1'],
+  ])('renders the card deck for the %s quickstart carrier path', (_model, segmentName, firstCardTitle) => {
+    configSidebarStore.selectSegment('02.01.57.00.00.01', 'seg:0', segmentName);
+    configSidebarStore.setCards('02.01.57.00.00.01', 'seg:0', [
+      makeCard('0', firstCardTitle),
+      makeCard('1', 'Line 2'),
+    ]);
+
+    render(ElementCardDeck, { props: { nodeId: '02.01.57.00.00.01' } });
+
+    expect(screen.getByText(segmentName)).toBeInTheDocument();
+    expect(screen.getByText(firstCardTitle)).toBeInTheDocument();
+    expect(screen.getByText('2 items')).toBeInTheDocument();
+  });
 });

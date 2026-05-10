@@ -14,8 +14,10 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { get } from 'svelte/store';
 import { type BowtieCatalog, type BowtieCard, type CdiReadCompletePayload, type EventSlotEntry } from '../api/tauri';
 import type { PreviewBowtieCard, EditableBowtiePreview } from '$lib/types/bowtie';
-import { buildElementLabel, collectEventIdLeaves, effectiveValue, findLeafByPath, hasModifiedLeaves } from '$lib/types/nodeTree';
+import { buildElementLabel, collectEventIdLeaves, findLeafByPath } from '$lib/types/nodeTree';
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
+import { configChangesStore } from '$lib/stores/configChanges.svelte';
+import { editKeyForLeaf } from '$lib/utils/editKey';
 import { layoutStore } from '$lib/stores/layout.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { nodeInfoStore } from '$lib/stores/nodeInfo';
@@ -105,7 +107,8 @@ class BowtieCatalogStore {
     // present (committed entry wins), add an entry for the leaf's path.
     for (const [nodeId, tree] of nodeTreeStore.trees) {
       for (const leaf of collectEventIdLeaves(tree)) {
-        const val = effectiveValue(leaf);
+        const editKey = editKeyForLeaf(nodeId, leaf.space, leaf.address);
+        const val = configChangesStore.visibleValue(editKey) ?? leaf.value;
         if (val?.type !== 'eventId') continue;
         const key = `${nodeId}:${leaf.path.join('/')}`;
         if (map.has(key)) continue;
@@ -220,10 +223,10 @@ class EditableBowtiePreviewStore {
   get preview(): EditableBowtiePreview {
     const catalog = bowtieCatalogStore.catalog;
     const metadataIsDirty = bowtieMetadataStore.isDirty;
-    // Check whether any tree has modified leaves (replaces pendingEditsStore.hasPendingEdits)
+    // Check whether any tree has config drafts
     let configIsDirty = false;
-    for (const tree of nodeTreeStore.trees.values()) {
-      if (hasModifiedLeaves(tree)) { configIsDirty = true; break; }
+    for (const nodeId of nodeTreeStore.trees.keys()) {
+      if (configChangesStore.hasDraftsForNode(nodeId)) { configIsDirty = true; break; }
     }
     const layout = layoutStore.layout;
 
@@ -396,7 +399,8 @@ function isEntryStillActive(entry: import('../api/tauri').EventSlotEntry, eventI
   if (!tree) return true;
   const leaf = findLeafByPath(tree, entry.element_path);
   if (!leaf) return true;
-  const val = effectiveValue(leaf);
+  const key = editKeyForLeaf(entry.node_id, leaf.space, leaf.address);
+  const val = configChangesStore.visibleValue(key) ?? leaf.value;
   if (val?.type !== 'eventId') return false;
   return val.hex === eventIdHex;
 }
@@ -420,7 +424,8 @@ function collectTreeEventIds(): string[] {
 
   for (const tree of nodeTreeStore.trees.values()) {
     for (const leaf of collectEventIdLeaves(tree)) {
-      const value = effectiveValue(leaf);
+      const key = editKeyForLeaf(tree.nodeId, leaf.space, leaf.address);
+      const value = configChangesStore.visibleValue(key) ?? leaf.value;
       if (value?.type !== 'eventId' || isPlaceholderEventId(value.hex)) continue;
       eventIds.add(value.hex);
     }
@@ -443,7 +448,8 @@ function collectEntriesForEventId(eventIdHex: string): { producers: EventSlotEnt
   for (const [nodeId, tree] of nodeTreeStore.trees) {
     const leaves = collectEventIdLeaves(tree);
     for (const leaf of leaves) {
-      const val = effectiveValue(leaf);
+      const key = editKeyForLeaf(nodeId, leaf.space, leaf.address);
+      const val = configChangesStore.visibleValue(key) ?? leaf.value;
       if (val?.type !== 'eventId' || val.hex !== eventIdHex) continue;
 
       // Prefer the JS-side role classification (set when the user picks a slot

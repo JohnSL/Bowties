@@ -21,8 +21,9 @@
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
+  import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
-  import { hasModifiedLeaves, resolvePillSelectionsForPath } from '$lib/types/nodeTree';
+  import { resolvePillSelectionsForPath } from '$lib/types/nodeTree';
   import type { NodeConfigTree } from '$lib/types/nodeTree';
   import { configReadNodesStore, markNodeConfigRead, clearConfigReadStatus, removeNodesConfigRead } from '$lib/stores/configReadStatus';
   import BowtieCatalogPanel from '$lib/components/Bowtie/BowtieCatalogPanel.svelte';
@@ -57,6 +58,10 @@
     toConfigReadCandidate,
   } from '$lib/orchestration/configReadOrchestrator';
   import {
+    applyConnectorSelectionChange,
+    recomputeConnectorCompatibility,
+  } from '$lib/orchestration/connectorSelectionOrchestrator';
+  import {
     createCancelledCdiDownloadState,
     createClosedCdiRedownloadState,
     createClosedCdiViewerState,
@@ -79,6 +84,7 @@
   } from '$lib/orchestration/configReadSessionOrchestrator';
   import { handleDiscoveredNode, reconcileRefreshState, refreshReinitializedNode } from '$lib/orchestration/discoveryOrchestrator';
   import { hasUnsavedPromptChanges } from '$lib/orchestration/unsavedChangesGuard';
+  import { configChangesStore } from '$lib/stores/configChanges.svelte';
   import {
     bootstrapStartupLifecycle,
     connectLiveSession,
@@ -111,9 +117,11 @@
 
   function promptUnsaved(message: string, proceed: () => void, confirmLabel = 'Discard & Continue'): void {
     const hasUnsaved = hasUnsavedPromptChanges(
-      nodeTreeStore.trees.values(),
+      nodeTreeStore.trees.keys(),
       bowtieMetadataStore.isDirty,
       offlineChangesStore.draftCount,
+      layoutStore.isDirty,
+      offlineChangesStore.revertedPersistedCount,
     );
     if (hasUnsaved) {
       unsavedDialog = { message, proceed, confirmLabel };
@@ -141,7 +149,7 @@
     const metaDirty = bowtieMetadataStore.isDirty;
     const offlineActive = !!layoutStore.activeContext && layoutStore.hasLayoutFile;
     const hasInMemoryEdits =
-      [...nodeTreeStore.trees.values()].some(t => hasModifiedLeaves(t)) ||
+      configChangesStore.draftEntries().length > 0 ||
       bowtieMetadataStore.isDirty ||
       offlineChangesStore.draftCount > 0 ||
       layoutStore.isDirty;
@@ -280,12 +288,6 @@
     });
   }
 
-  function applyPersistedOfflinePendingToTrees(): void {
-    if (!layoutStore.hasLayoutFile) return;
-    if (offlineChangesStore.persistedRows.length === 0) return;
-    nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows);
-  }
-
   async function openOfflineLayoutFromDialog() {
     const selected = await open({
       title: 'Open Layout',
@@ -299,7 +301,9 @@
         path: selected,
         openLayout: openLayoutFile,
         hydrateOfflineSnapshots,
-        applyPersistedOfflinePendingToTrees,
+        hydrateConnectorSelections: (layout) => {
+          connectorSelectionsStore.hydrateFromLayout(layout);
+        },
         onOpened: () => {
           showConnectionDialog = false;
         },
@@ -335,7 +339,7 @@
         await offlineChangesStore.flushPendingToBackend();
       }
 
-      const result = await saveLayoutFile(targetPath, true);
+      const result = await saveLayoutFile(targetPath, true, layoutStore.layout);
       partialCaptureNodes = new Set(result.warnings);
       const contextLayoutId = normalizeLayoutTitle(targetPath) ?? 'layout';
       layoutStore.setActiveContext({
@@ -381,6 +385,7 @@
       },
       resetLayoutStore: () => {
         layoutStore.reset();
+        connectorSelectionsStore.reset();
       },
       resetSyncSessionAutoTrigger: () => {
         syncSessionOrchestrator.resetAutoTrigger();
@@ -406,7 +411,9 @@
       clearNodesWithCdi: () => {
         nodesWithCdi = new Set();
       },
+      
     });
+    connectorSelectionsStore.reset();
   }
 
   async function clearActiveLayout() {
@@ -569,7 +576,9 @@
             path,
             openLayout: openLayoutFile,
             hydrateOfflineSnapshots,
-            applyPersistedOfflinePendingToTrees,
+            hydrateConnectorSelections: (layout) => {
+              connectorSelectionsStore.hydrateFromLayout(layout);
+            },
             onOpened: () => {
               showConnectionDialog = false;
             },
@@ -588,9 +597,9 @@
         // Spec 007: Refresh trees as config values and event roles merge server-side.
         startNodeTreeListening: () => {
           nodeTreeStore.startListening((_nodeId) => {
-            if (layoutStore.hasLayoutFile) {
-              nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows);
-            }
+            // After edit layer refactor: draft reconciliation replaces restamp.
+            configChangesStore.pruneResolvedDraftsForNode(_nodeId);
+            void recomputeConnectorCompatibility(_nodeId);
           });
         },
         hasLayoutFile: () => layoutStore.hasLayoutFile,
@@ -604,9 +613,11 @@
         if (isForceClosing) return;
         const hasUnsaved =
           hasUnsavedPromptChanges(
-            nodeTreeStore.trees.values(),
+            nodeTreeStore.trees.keys(),
             bowtieMetadataStore.isDirty,
             offlineChangesStore.draftCount,
+            layoutStore.isDirty,
+            offlineChangesStore.revertedPersistedCount,
           );
         if (hasUnsaved) {
           event.preventDefault();
@@ -810,7 +821,6 @@
       rehydrateOffline: async () => {
         nodeTreeStore.reset();
         await hydrateOfflineSnapshots(currentLayoutSnapshots);
-        applyPersistedOfflinePendingToTrees();
       },
       preserveLiveState: () => {
         showConnectionDialog = false;
@@ -957,6 +967,7 @@
           readAllConfigValues(nodeId, undefined, nodeIndex, totalNodes)
         ),
         reloadTree: (nodeId) => nodeTreeStore.refreshTree(nodeId),
+        afterReloadTree: (nodeId) => recomputeConnectorCompatibility(nodeId),
         setNodeReadStates: (states) => {
           nodeReadStates = states;
         },
@@ -1016,6 +1027,7 @@
           readAllConfigValues(candidateNodeId, undefined, nodeIndex, totalNodes)
         ),
         reloadTree: (candidateNodeId) => nodeTreeStore.refreshTree(candidateNodeId),
+        afterReloadTree: (candidateNodeId) => recomputeConnectorCompatibility(candidateNodeId),
         setNodeReadStates: (states) => {
           nodeReadStates = states;
         },
@@ -1138,6 +1150,7 @@
           readAllConfigValues(nodeId, undefined, nodeIndex, totalNodes)
         ),
         reloadTree: (nodeId) => nodeTreeStore.loadTree(nodeId),
+        afterReloadTree: (nodeId) => recomputeConnectorCompatibility(nodeId),
         setNodeReadStates: (states) => {
           nodeReadStates = states;
         },
@@ -1212,7 +1225,7 @@
     const offlineActive = !!layoutStore.activeContext && layoutStore.hasLayoutFile;
     const canCloseLayout = !!layoutStore.activeContext;
     const hasInMemoryEdits =
-      [...nodeTreeStore.trees.values()].some(t => hasModifiedLeaves(t)) ||
+      configChangesStore.draftEntries().length > 0 ||
       bowtieMetadataStore.isDirty ||
       offlineChangesStore.draftCount > 0 ||
       layoutStore.isDirty;
@@ -1224,6 +1237,66 @@
 
     syncMenuState(conn, busy, canViewCdi, canRedownloadCdi, canOpenLayout, canCloseLayout, canSaveLayout, canSaveLayoutAs, canSyncToBus);
   });
+
+  $effect(() => {
+    const selectedNodeId = selectedNodeIdAny;
+    const trees = nodeTreeStore.trees;
+
+    if (!selectedNodeId) {
+      return;
+    }
+
+    const selectedTree = trees.get(selectedNodeId);
+    if (!selectedTree) {
+      return;
+    }
+
+    const selectedConnectorProfile = selectedTree.connectorProfile ?? null;
+
+    const cachedProfile = connectorSelectionsStore.getProfile(selectedNodeId);
+    const cachedDocument = connectorSelectionsStore.getDocument(selectedNodeId);
+    if (!selectedConnectorProfile) {
+      if (
+        cachedProfile
+        || cachedDocument
+        || connectorSelectionsStore.getWarnings(selectedNodeId).length > 0
+      ) {
+        void connectorSelectionsStore.loadNode(selectedNodeId, null);
+      }
+      return;
+    }
+
+    if (
+      cachedProfile?.carrierKey === selectedConnectorProfile.carrierKey
+      && cachedDocument
+    ) {
+      return;
+    }
+
+    void connectorSelectionsStore.loadNode(selectedNodeId, selectedConnectorProfile);
+  });
+
+  async function handleConnectorSelectionChange(detail: {
+    nodeId: string;
+    slotId: string;
+    selectedDaughterboardId: string | null;
+  }): Promise<void> {
+    try {
+      const saved = await applyConnectorSelectionChange(detail);
+
+      if (!saved) {
+        errorDialog = {
+          title: 'Failed to Update Connector Selection',
+          message: 'The selected node does not have a connector profile loaded yet.',
+        };
+      }
+    } catch (error) {
+      errorDialog = {
+        title: 'Failed to Save Connector Selection',
+        message: String(error ?? 'Unknown error'),
+      };
+    }
+  }
 
   // Dynamic window title — reflects current layout file name and dirty state.
   // Using $derived (not computed inside $effect) so Svelte 5 reliably tracks
@@ -1386,7 +1459,9 @@
     {:else}
       <!-- FR-001: two-panel layout — fixed sidebar + scrollable main area -->
       <div class="config-layout">
-        <ConfigSidebar on:readNodeConfig={(e) => readSingleNodeConfig(e.detail.nodeId)} />
+        <ConfigSidebar
+          on:readNodeConfig={(e) => readSingleNodeConfig(e.detail.nodeId)}
+        />
         <div class="config-main">
           {#if showConfigCta}
             <div class="config-cta-panel">
@@ -1409,7 +1484,7 @@
           {:else if selectedUnreadNodeId}
             <div class="config-cta-panel">
               <h2 class="cta-title">{selectedUnreadNodeName}</h2>
-              {#if partialCaptureNodes.has(selectedUnreadNodeId!)}
+              {#if partialCaptureNodes.has(selectedUnreadNodeId)}
                 <MissingCaptureBadge text="(Not captured)" />
               {/if}
               <p class="cta-desc">
@@ -1417,7 +1492,7 @@
               </p>
               <button
                 class="cta-btn"
-                onclick={() => readSingleNodeConfig(selectedUnreadNodeId!)}
+                onclick={() => readSingleNodeConfig(selectedUnreadNodeId)}
                 disabled={readingRemaining}
               >
                 Read Configuration
@@ -1430,7 +1505,7 @@
                 <span>Some values for this node were not captured and remain read-only offline.</span>
               </div>
             {/if}
-            <SegmentView />
+            <SegmentView on:changeConnectorSelection={(e) => handleConnectorSelectionChange(e.detail)} />
           {/if}
         </div>
       </div>
@@ -1505,7 +1580,11 @@
         >Cancel</button>
         <button
           class="unsaved-btn unsaved-btn-danger"
-          onclick={() => { const proceed = unsavedDialog!.proceed; unsavedDialog = null; proceed(); }}
+          onclick={() => {
+            const proceed = unsavedDialog?.proceed;
+            unsavedDialog = null;
+            proceed?.();
+          }}
         >{unsavedDialog.confirmLabel}</button>
       </div>
     </div>

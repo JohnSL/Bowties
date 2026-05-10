@@ -4,7 +4,7 @@
 //! to index-based tree path prefixes (e.g., `["seg:1", "elem:2", "elem:5"]`)
 //! that can be matched against [`crate::node_tree::GroupNode::path`].
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use lcc_rs::cdi::{Cdi, DataElement};
 
@@ -15,6 +15,9 @@ use crate::profile::types::StructureProfile;
 /// Key:   profile group path, e.g. `"Port I/O/Line/Event#1"`
 /// Value: path prefix without instance suffixes, e.g. `["seg:1", "elem:0", "elem:3"]`
 pub type ProfilePathMap = HashMap<String, Vec<String>>;
+
+/// Deterministic set of reusable daughterboard IDs referenced by a profile.
+pub type DaughterboardReferenceSet = Vec<String>;
 
 /// Resolve all paths declared in a profile against the parsed CDI.
 ///
@@ -47,7 +50,60 @@ pub fn resolve_profile_paths(profile: &StructureProfile, cdi: &Cdi) -> ProfilePa
         }
     }
 
+    for slot in &profile.connector_slots {
+        for affected_path in &slot.affected_paths {
+            match resolve_one_path(affected_path, cdi) {
+                Ok(path) => {
+                    map.insert(affected_path.clone(), path);
+                }
+                Err(e) => eprintln!(
+                    "[profile] Could not resolve connector slot path '{}' (slot {}): {}",
+                    affected_path, slot.slot_id, e
+                ),
+            }
+        }
+    }
+
+    for override_rule in &profile.carrier_overrides {
+        for validity_rule in &override_rule.override_validity_rules {
+            match resolve_one_path(&validity_rule.target_path, cdi) {
+                Ok(path) => {
+                    map.insert(validity_rule.target_path.clone(), path);
+                }
+                Err(e) => eprintln!(
+                    "[profile] Could not resolve override validity path '{}' (daughterboard {}): {}",
+                    validity_rule.target_path, override_rule.daughterboard_id, e
+                ),
+            }
+        }
+
+    }
+
     map
+}
+
+pub fn resolve_named_path(profile_path: &str, cdi: &Cdi) -> Result<Vec<String>, String> {
+    resolve_one_path(profile_path, cdi)
+}
+
+pub fn referenced_daughterboard_ids(profile: &StructureProfile) -> DaughterboardReferenceSet {
+    let mut ids = BTreeSet::new();
+
+    for reference in &profile.daughterboard_references {
+        ids.insert(reference.clone());
+    }
+
+    for slot in &profile.connector_slots {
+        for daughterboard_id in &slot.supported_daughterboard_ids {
+            ids.insert(daughterboard_id.clone());
+        }
+    }
+
+    for override_rule in &profile.carrier_overrides {
+        ids.insert(override_rule.daughterboard_id.clone());
+    }
+
+    ids.into_iter().collect()
 }
 
 /// Parse a name-based profile path and walk the CDI by name+ordinal to produce
@@ -82,16 +138,23 @@ fn resolve_one_path(profile_path: &str, cdi: &Cdi) -> Result<Vec<String>, String
 
     // ── Step 2: match groups one at a time from the remaining path ──────────
     while !remaining.is_empty() {
-        let (elem_idx, group, next_remaining) =
-            find_group_prefix(remaining, elements).ok_or_else(|| {
-                format!(
-                    "no group name matches the start of remaining path '{}'",
-                    remaining
-                )
-            })?;
-        path.push(format!("elem:{}", elem_idx));
-        elements = &group.elements;
-        remaining = next_remaining;
+        if let Some((path_step, group, next_remaining)) = find_group_prefix(remaining, elements) {
+            path.push(path_step);
+            elements = &group.elements;
+            remaining = next_remaining;
+            continue;
+        }
+
+        if let Some(path_step) = find_leaf_step(remaining, elements) {
+            path.push(path_step);
+            remaining = "";
+            continue;
+        }
+
+        return Err(format!(
+            "no group or leaf name matches the start of remaining path '{}'",
+            remaining
+        ));
     }
 
     Ok(path)
@@ -129,11 +192,11 @@ fn find_segment_prefix<'a>(path: &'a str, cdi: &Cdi) -> Option<(usize, &'a str)>
 /// Find the group element whose name (plus optional `#N` ordinal suffix) is
 /// the **longest** prefix of `remaining` that is followed by `/` or end.
 ///
-/// Returns `(element_index, &Group, remaining_path_after_separator)`.
+/// Returns `(path_step, &Group, remaining_path_after_separator)`.
 fn find_group_prefix<'a, 'e>(
     remaining: &'a str,
     elements: &'e [DataElement],
-) -> Option<(usize, &'e lcc_rs::cdi::Group, &'a str)> {
+) -> Option<(String, &'e lcc_rs::cdi::Group, &'a str)> {
     let mut split_positions: Vec<usize> =
         remaining.match_indices('/').map(|(i, _)| i).collect();
     split_positions.push(remaining.len());
@@ -152,7 +215,7 @@ fn find_group_prefix<'a, 'e>(
         for (i, elem) in elements.iter().enumerate() {
             if let DataElement::Group(g) = elem {
                 if g.name.as_deref().unwrap_or("") == candidate {
-                    return Some((i, g, next_remaining));
+                    return Some((format!("elem:{}", i), g, next_remaining));
                 }
             }
         }
@@ -165,19 +228,66 @@ fn find_group_prefix<'a, 'e>(
         if base_name == candidate {
             continue;
         }
-        let mut count = 0usize;
-        for (i, elem) in elements.iter().enumerate() {
-            if let DataElement::Group(g) = elem {
-                if g.name.as_deref().unwrap_or("") == base_name {
-                    count += 1;
-                    if count == ordinal {
-                        return Some((i, g, next_remaining));
-                    }
-                }
+        let matching_groups: Vec<(usize, &'e lcc_rs::cdi::Group)> = elements
+            .iter()
+            .enumerate()
+            .filter_map(|(i, elem)| match elem {
+                DataElement::Group(g) if g.name.as_deref().unwrap_or("") == base_name => Some((i, g)),
+                _ => None,
+            })
+            .collect();
+
+        if matching_groups.len() == 1 {
+            let (index, group) = matching_groups[0];
+            let replication = usize::try_from(group.replication).unwrap_or(0);
+            if replication > 1 && ordinal <= replication {
+                return Some((format!("elem:{}#{}", index, ordinal), group, next_remaining));
             }
+        }
+
+        if ordinal <= matching_groups.len() {
+            let (index, group) = matching_groups[ordinal - 1];
+            return Some((format!("elem:{}", index), group, next_remaining));
         }
     }
     None
+}
+
+fn find_leaf_step(remaining: &str, elements: &[DataElement]) -> Option<String> {
+    if remaining.contains('/') {
+        return None;
+    }
+
+    for (i, elem) in elements.iter().enumerate() {
+        if element_name(elem) == Some(remaining) {
+            return Some(format!("elem:{}", i));
+        }
+    }
+
+    let (base_name, ordinal) = parse_name_ordinal(remaining);
+    if base_name == remaining {
+        return None;
+    }
+
+    let matching_elements: Vec<usize> = elements
+        .iter()
+        .enumerate()
+        .filter_map(|(i, elem)| (element_name(elem) == Some(base_name)).then_some(i))
+        .collect();
+
+    matching_elements.get(ordinal - 1).map(|index| format!("elem:{}", index))
+}
+
+fn element_name(element: &DataElement) -> Option<&str> {
+    match element {
+        DataElement::Group(group) => group.name.as_deref(),
+        DataElement::Int(element) => element.name.as_deref(),
+        DataElement::String(element) => element.name.as_deref(),
+        DataElement::EventId(element) => element.name.as_deref(),
+        DataElement::Float(element) => element.name.as_deref(),
+        DataElement::Action(element) => element.name.as_deref(),
+        DataElement::Blob(element) => element.name.as_deref(),
+    }
 }
 
 /// Parse a name component into `(base_name, ordinal)`.
@@ -188,8 +298,13 @@ fn find_group_prefix<'a, 'e>(
 fn parse_name_ordinal(s: &str) -> (&str, usize) {
     if let Some(hash_pos) = s.rfind('#') {
         let base = &s[..hash_pos];
-        let ord: usize = s[hash_pos + 1..].parse().unwrap_or(1);
-        (base, ord.max(1))
+        let suffix = &s[hash_pos + 1..];
+        if !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()) {
+            let ord: usize = suffix.parse().unwrap_or(1);
+            (base, ord.max(1))
+        } else {
+            (s, 1)
+        }
     } else {
         (s, 1)
     }
@@ -311,6 +426,10 @@ mod tests {
                 label: None,
             }],
             relevance_rules: vec![],
+            connector_slots: vec![],
+            connector_constraint_variants: vec![],
+            daughterboard_references: vec![],
+            carrier_overrides: vec![],
         };
 
         let map = resolve_profile_paths(&profile, &cdi);
@@ -336,12 +455,137 @@ mod tests {
         assert_ne!(resolved_1, resolved_2);
     }
 
+    #[test]
+    fn resolve_profile_paths_includes_connector_targets_and_overrides() {
+        let cdi = make_test_cdi();
+        let profile = StructureProfile {
+            schema_version: "1.0".to_string(),
+            node_type: crate::profile::types::ProfileNodeType {
+                manufacturer: "Test".to_string(),
+                model: "Test".to_string(),
+            },
+            firmware_version_range: None,
+            event_roles: vec![],
+            relevance_rules: vec![],
+            connector_slots: vec![crate::profile::types::ConnectorSlotDefinition {
+                slot_id: "serial-a".to_string(),
+                label: "Serial A".to_string(),
+                order: 0,
+                allow_none_installed: true,
+                supported_daughterboard_ids: vec!["db-8in".to_string()],
+                affected_paths: vec!["Port I/O/Line/Event#2".to_string()],
+                base_behavior_when_empty: None,
+            }],
+            connector_constraint_variants: vec![],
+            daughterboard_references: vec!["db-4io".to_string()],
+            carrier_overrides: vec![crate::profile::types::CarrierOverrideRule {
+                carrier_key: "test::test".to_string(),
+                slot_id: Some("serial-a".to_string()),
+                daughterboard_id: "db-8in".to_string(),
+                replace_shared_validity_rules: false,
+                override_validity_rules: vec![crate::profile::types::ConnectorConstraintRule {
+                    target_path: "Port I/O/Line/Event#1".to_string(),
+                    constraint_type: crate::profile::types::ConnectorConstraintType::HideSection,
+                    line_ordinals: vec![],
+                    allowed_values: vec![],
+                    allowed_value_labels: vec![],
+                    denied_values: vec![],
+                    explanation: None,
+                }],
+            }],
+        };
+
+        let map = resolve_profile_paths(&profile, &cdi);
+
+        assert_eq!(map.get("Port I/O/Line/Event#1"), Some(&vec!["seg:0".to_string(), "elem:0".to_string(), "elem:1".to_string()]));
+    }
+
+    #[test]
+    fn referenced_daughterboard_ids_collects_all_profile_references() {
+        let profile = StructureProfile {
+            schema_version: "1.0".to_string(),
+            node_type: crate::profile::types::ProfileNodeType {
+                manufacturer: "Test".to_string(),
+                model: "Test".to_string(),
+            },
+            firmware_version_range: None,
+            event_roles: vec![],
+            relevance_rules: vec![],
+            connector_slots: vec![crate::profile::types::ConnectorSlotDefinition {
+                slot_id: "serial-a".to_string(),
+                label: "Serial A".to_string(),
+                order: 0,
+                allow_none_installed: true,
+                supported_daughterboard_ids: vec!["db-8in".to_string(), "db-4io".to_string()],
+                affected_paths: vec![],
+                base_behavior_when_empty: None,
+            }],
+            connector_constraint_variants: vec![],
+            daughterboard_references: vec!["db-relay".to_string(), "db-8in".to_string()],
+            carrier_overrides: vec![crate::profile::types::CarrierOverrideRule {
+                carrier_key: "test::test".to_string(),
+                slot_id: None,
+                daughterboard_id: "db-relay".to_string(),
+                replace_shared_validity_rules: false,
+                override_validity_rules: vec![],
+            }],
+        };
+
+        assert_eq!(
+            referenced_daughterboard_ids(&profile),
+            vec!["db-4io".to_string(), "db-8in".to_string(), "db-relay".to_string()]
+        );
+    }
+
+    #[test]
+    fn resolve_named_path_preserves_replicated_instance_ordinals() {
+        let cdi = make_test_cdi();
+
+        let resolved = resolve_named_path("Port I/O/Line#7", &cdi).expect("replicated instance should resolve");
+
+        assert_eq!(resolved, vec!["seg:0".to_string(), "elem:0#7".to_string()]);
+    }
+
+    #[test]
+    fn resolve_named_path_preserves_first_replicated_instance_ordinal() {
+        let cdi = make_test_cdi();
+
+        let resolved = resolve_named_path("Port I/O/Line#1", &cdi)
+            .expect("first replicated instance should resolve");
+
+        assert_eq!(resolved, vec!["seg:0".to_string(), "elem:0#1".to_string()]);
+    }
+
+    #[test]
+    fn resolve_named_path_supports_leaf_targets_with_replicated_instances() {
+        let cdi = make_test_cdi();
+
+        let resolved = resolve_named_path("Port I/O/Line#7/Output Function", &cdi)
+            .expect("replicated leaf path should resolve");
+
+        assert_eq!(
+            resolved,
+            vec![
+                "seg:0".to_string(),
+                "elem:0#7".to_string(),
+                "elem:0".to_string(),
+            ]
+        );
+    }
+
     // ── parse_name_ordinal ────────────────────────────────────────────────────
 
     #[test]
     fn parse_name_ordinal_no_suffix_gives_ordinal_one() {
         let (base, ord) = parse_name_ordinal("Event");
         assert_eq!(base, "Event");
+        assert_eq!(ord, 1);
+    }
+
+    #[test]
+    fn parse_name_ordinal_ignores_non_numeric_suffixes() {
+        let (base, ord) = parse_name_ordinal("Line#7/Output Function");
+        assert_eq!(base, "Line#7/Output Function");
         assert_eq!(ord, 1);
     }
 
@@ -354,9 +598,9 @@ mod tests {
 
     #[test]
     fn parse_name_ordinal_invalid_suffix_defaults_to_one() {
-        // Non-numeric suffix → parse fails → ordinal defaults to 1 (max(1, 0) = 1)
+        // Non-numeric suffixes are treated as part of the name, not as ordinals.
         let (base, ord) = parse_name_ordinal("Event#x");
-        assert_eq!(base, "Event");
+        assert_eq!(base, "Event#x");
         assert_eq!(ord, 1);
     }
 

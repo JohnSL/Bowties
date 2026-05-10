@@ -19,7 +19,6 @@ import BowtieCatalogPanel from './BowtieCatalogPanel.svelte';
 const {
   mockSetModifiedValue,
   mockTreeByNodeId,
-  mockSetLeafModifiedValue,
   mockDraftConfigChange,
   mockUpsertConfigChange,
 } = vi.hoisted(() => {
@@ -27,7 +26,6 @@ const {
   return {
     mockSetModifiedValue: vi.fn(),
     mockTreeByNodeId: new Map<string, any>(),
-    mockSetLeafModifiedValue: vi.fn(),
     mockDraftConfigChange: draftConfigChange,
     mockUpsertConfigChange: vi.fn((change) => {
       draftConfigChange.value = {
@@ -88,7 +86,6 @@ vi.mock('$lib/stores/nodeTree.svelte', () => ({
   nodeTreeStore: {
     get trees() { return new Map(); },
     getTree: (nodeId: string) => mockTreeByNodeId.get(nodeId),
-    setLeafModifiedValue: mockSetLeafModifiedValue,
   },
 }));
 
@@ -109,6 +106,17 @@ vi.mock('$lib/stores/bowtieFocus.svelte', () => ({
 
 vi.mock('$lib/api/config', () => ({
   setModifiedValue: mockSetModifiedValue,
+}));
+
+const mockApplyEdit = vi.fn();
+vi.mock('$lib/stores/configEditor.svelte', () => ({
+  configEditor: {
+    applyEdit: (...args: unknown[]) => mockApplyEdit(...args),
+  },
+}));
+
+vi.mock('$lib/orchestration/configDraftOrchestrator', () => ({
+  flushDraftToBackend: vi.fn(),
 }));
 
 vi.mock('$lib/utils/eventIds', () => ({
@@ -388,22 +396,13 @@ describe('BowtieCatalogPanel — catalog content (readComplete=true, hasUnreadNo
 
     await fireEvent.click(screen.getByRole('button', { name: /^remove$/i }));
 
-    expect(mockUpsertConfigChange).toHaveBeenCalledWith({
-      nodeId,
-      space: 253,
-      offset: '0x00000201',
-      baselineValue: '05.01.01.01.00.00.00.02',
-      plannedValue: '00.00.00.00.00.00.00.00',
-    });
-    expect(mockSetLeafModifiedValue).toHaveBeenCalledWith(
-      nodeId,
-      ['seg:0', 'elem:2'],
-      {
-        type: 'eventId',
-        bytes: [0, 0, 0, 0, 0, 0, 0, 0],
-        hex: '00.00.00.00.00.00.00.00',
-      },
-    );
+    // After refactor: remove goes through configEditor.applyEdit + flushDraftToBackend
+    expect(mockApplyEdit).toHaveBeenCalled();
+    const [key, value] = mockApplyEdit.mock.calls[0];
+    expect(key).toContain(nodeId.replace(/\./g, '').toUpperCase());
+    expect(value.type).toBe('eventId');
+    expect(value.hex).toBe('00.00.00.00.00.00.00.00');
+    // Should NOT use the old setModifiedValue IPC directly
     expect(mockSetModifiedValue).not.toHaveBeenCalled();
   });
 });

@@ -11,6 +11,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { OfflineChangeRow } from '$lib/api/sync';
+import type { LeafConfigNode } from '$lib/types/nodeTree';
 
 // ─── Mock backend IPC ─────────────────────────────────────────────────────────
 
@@ -40,6 +41,32 @@ function makeDraftRow(overrides: Partial<OfflineChangeRow> = {}): OfflineChangeR
     baselineValue: '0',
     plannedValue: '42',
     status: 'pending',
+    ...overrides,
+  };
+}
+
+function makeLeaf(overrides: Partial<LeafConfigNode> = {}): LeafConfigNode {
+  return {
+    kind: 'leaf',
+    name: 'Input Function',
+    description: null,
+    elementType: 'int',
+    address: 0,
+    size: 1,
+    space: 253,
+    path: ['seg:0', 'elem:0#1', 'elem:0'],
+    value: { type: 'int', value: 3 },
+    eventRole: null,
+    constraints: {
+      min: 0,
+      max: 8,
+      defaultValue: null,
+      mapEntries: [
+        { value: 1, label: 'Normal' },
+        { value: 3, label: 'Alt Action Hi' },
+        { value: 5, label: 'Sample Hi' },
+      ],
+    },
     ...overrides,
   };
 }
@@ -181,11 +208,16 @@ describe('revertAllPending — saved vs in-memory layering', () => {
       plannedValue: '10',
     });
 
-    expect(offlineChangesStore.draftCount).toBe(1);
-    expect(offlineChangesStore.effectiveRows.length).toBe(0);
+    // Upserting planned===baseline with a persisted row creates a cancellation
+    // draft that suppresses the persisted row in effectiveRows.
+    // Cancellation drafts are not user-visible changes, so draftCount stays 0.
+    expect(offlineChangesStore.draftCount).toBe(0);
+    expect(offlineChangesStore.effectiveRows).toHaveLength(0);
 
     const reverted = await offlineChangesStore.revertAllPending();
 
+    // After revert, the cancellation draft is cleared and the persisted row
+    // is restored from the saved snapshot.
     expect(reverted).toBe(1);
     expect(offlineChangesStore.draftCount).toBe(0);
     expect(offlineChangesStore.persistedRows).toHaveLength(1);
@@ -204,5 +236,349 @@ describe('revertAllPending — saved vs in-memory layering', () => {
     expect(offlineChangesStore.savedRows).toHaveLength(1);
     expect(offlineChangesStore.persistedRows[0].changeId).toBe('backend-1');
     expect(offlineChangesStore.savedRows[0].changeId).toBe('backend-1');
+  });
+});
+
+describe('applyConnectorCompatibilityConfigChanges', () => {
+  it('stages generated connector repairs as draft config rows', () => {
+    offlineChangesStore.applyConnectorCompatibilityConfigChanges('05.02.01.02.03.00', [
+      {
+        targetPath: 'Port I/O/Line/Input Function',
+        space: 253,
+        offset: '0x00000000',
+        baselineValue: '3',
+        plannedValue: '1',
+        reason: 'Auto-staged repair',
+        originSlotId: 'connector-a',
+      },
+    ]);
+
+    expect(offlineChangesStore.draftRows).toHaveLength(1);
+    expect(offlineChangesStore.draftRows[0]).toMatchObject({
+      kind: 'config',
+      nodeId: '05.02.01.02.03.00',
+      space: 253,
+      offset: '0x00000000',
+      baselineValue: '3',
+      plannedValue: '1',
+    });
+  });
+
+  it('finds the effective config row after layering a draft over a persisted row', () => {
+    offlineChangesStore.setRows([
+      makeDraftRow({
+        changeId: 'persisted-1',
+        offset: '0x00000000',
+        baselineValue: '0',
+        plannedValue: '3',
+      }),
+    ]);
+
+    offlineChangesStore.applyConnectorCompatibilityConfigChanges('05.02.01.02.03.00', [
+      {
+        targetPath: 'Port I/O/Line/Input Function',
+        space: 253,
+        offset: '0x00000000',
+        baselineValue: '0',
+        plannedValue: '1',
+        reason: 'Auto-staged repair',
+        originSlotId: 'connector-a',
+      },
+    ]);
+
+    expect(
+      offlineChangesStore.findEffectiveConfigChange('05.02.01.02.03.00', 253, '0x00000000'),
+    ).toMatchObject({
+      baselineValue: '0',
+      plannedValue: '1',
+    });
+  });
+
+  it('retains previously generated target corrections when the next recompute emits no new repair for that target', () => {
+    offlineChangesStore.applyConnectorCompatibilityConfigChanges('05.02.01.02.03.00', [
+      {
+        targetPath: 'Port I/O/Line/Input Function',
+        space: 253,
+        offset: '0x00000000',
+        baselineValue: '3',
+        plannedValue: '1',
+        reason: 'Auto-staged repair',
+        originSlotId: 'connector-a',
+      },
+    ]);
+
+    offlineChangesStore.applyConnectorCompatibilityConfigChanges('05.02.01.02.03.00', []);
+
+    expect(offlineChangesStore.effectiveRows).toMatchObject([
+      {
+        nodeId: '05.02.01.02.03.00',
+        space: 253,
+        offset: '0x00000000',
+        plannedValue: '1',
+      },
+    ]);
+  });
+
+  it('keeps the persisted baseline when layering a generated correction over a persisted pending change', () => {
+    offlineChangesStore.setRows([
+      makeDraftRow({
+        changeId: 'persisted-1',
+        offset: '0x00000000',
+        baselineValue: '0',
+        plannedValue: '3',
+      }),
+    ]);
+
+    offlineChangesStore.applyConnectorCompatibilityConfigChanges('05.02.01.02.03.00', [
+      {
+        targetPath: 'Port I/O/Line/Input Function',
+        space: 253,
+        offset: '0x00000000',
+        baselineValue: '0',
+        plannedValue: '1',
+        reason: 'Auto-staged repair',
+        originSlotId: 'connector-a',
+      },
+    ]);
+
+    expect(offlineChangesStore.draftRows).toHaveLength(1);
+    expect(offlineChangesStore.draftRows[0]).toMatchObject({
+      changeId: expect.not.stringContaining('persisted-1'),
+      baselineValue: '0',
+      plannedValue: '1',
+    });
+  });
+
+  it('reverting a draft layered over a persisted row keeps the persisted row intact', async () => {
+    offlineChangesStore.setRows([
+      makeDraftRow({
+        changeId: 'persisted-1',
+        offset: '0x00000000',
+        baselineValue: '0',
+        plannedValue: '3',
+      }),
+    ]);
+
+    offlineChangesStore.applyConnectorCompatibilityConfigChanges('05.02.01.02.03.00', [
+      {
+        targetPath: 'Port I/O/Line/Input Function',
+        space: 253,
+        offset: '0x00000000',
+        baselineValue: '0',
+        plannedValue: '1',
+        reason: 'Auto-staged repair',
+        originSlotId: 'connector-a',
+      },
+    ]);
+
+    const draftId = offlineChangesStore.draftRows[0]?.changeId;
+    expect(draftId).toBeTruthy();
+
+    await offlineChangesStore.revertToBaseline(draftId!);
+
+    expect(mockRevertOfflineChange).not.toHaveBeenCalled();
+    expect(offlineChangesStore.draftRows).toHaveLength(0);
+    expect(offlineChangesStore.persistedRows).toHaveLength(1);
+    expect(offlineChangesStore.effectiveRows).toMatchObject([
+      {
+        changeId: 'persisted-1',
+        baselineValue: '0',
+        plannedValue: '3',
+      },
+    ]);
+  });
+
+  it('preserves the connector-corrected effective value when switching boards no longer emits a new repair', () => {
+    offlineChangesStore.setRows([
+      makeDraftRow({
+        changeId: 'persisted-1',
+        offset: '0x00000000',
+        baselineValue: '0',
+        plannedValue: '3',
+      }),
+    ]);
+
+    offlineChangesStore.applyConnectorCompatibilityConfigChanges('05.02.01.02.03.00', [
+      {
+        targetPath: 'Port I/O/Line/Input Function',
+        space: 253,
+        offset: '0x00000000',
+        baselineValue: '0',
+        plannedValue: '1',
+        reason: 'Auto-staged repair',
+        originSlotId: 'connector-a',
+      },
+    ]);
+
+    offlineChangesStore.applyConnectorCompatibilityConfigChanges('05.02.01.02.03.00', []);
+
+    expect(offlineChangesStore.draftRows).toHaveLength(1);
+    expect(offlineChangesStore.effectiveRows).toMatchObject([
+      {
+        changeId: expect.not.stringContaining('persisted-1'),
+        baselineValue: '0',
+        plannedValue: '1',
+      },
+    ]);
+  });
+
+  it('keeps a user override when connector-generated repairs are later cleared', () => {
+    offlineChangesStore.applyConnectorCompatibilityConfigChanges('05.02.01.02.03.00', [
+      {
+        targetPath: 'Port I/O/Line/Input Function',
+        space: 253,
+        offset: '0x00000000',
+        baselineValue: '0',
+        plannedValue: '1',
+        reason: 'Auto-staged repair',
+        originSlotId: 'connector-a',
+      },
+    ]);
+
+    offlineChangesStore.upsertConfigChange({
+      nodeId: '05.02.01.02.03.00',
+      space: 253,
+      offset: '0x00000000',
+      baselineValue: '0',
+      plannedValue: '2',
+    });
+
+    offlineChangesStore.applyConnectorCompatibilityConfigChanges('05.02.01.02.03.00', []);
+
+    expect(offlineChangesStore.draftRows).toHaveLength(1);
+    expect(offlineChangesStore.effectiveRows).toMatchObject([
+      {
+        baselineValue: '0',
+        plannedValue: '2',
+      },
+    ]);
+  });
+});
+
+describe('resolveEffectiveCurrentValue', () => {
+  it('prefers the effective pending row value over the leaf value', () => {
+    const leaf = makeLeaf();
+    offlineChangesStore.setRows([
+      makeDraftRow({
+        changeId: 'persisted-1',
+        offset: '0x00000000',
+        baselineValue: '3',
+        plannedValue: '1',
+      }),
+    ]);
+
+    offlineChangesStore.upsertConfigChange({
+      nodeId: '05.02.01.02.03.00',
+      space: 253,
+      offset: '0x00000000',
+      baselineValue: '3',
+      plannedValue: '5',
+    });
+
+    expect(
+      offlineChangesStore.resolveEffectiveCurrentValue('05.02.01.02.03.00', leaf),
+    ).toEqual({ type: 'int', value: 5 });
+  });
+});
+
+describe('upsertConfigChange — cancellation draft', () => {
+  it('creates a cancellation draft when plannedValue equals baselineValue and a persisted row exists', () => {
+    offlineChangesStore.setRows([
+      makeDraftRow({
+        changeId: 'persisted-1',
+        offset: '0x00000000',
+        baselineValue: '0',
+        plannedValue: '42',
+      }),
+    ]);
+
+    expect(offlineChangesStore.effectiveRows).toHaveLength(1);
+
+    offlineChangesStore.upsertConfigChange({
+      nodeId: '05.02.01.02.03.00',
+      space: 253,
+      offset: '0x00000000',
+      baselineValue: '0',
+      plannedValue: '0',
+    });
+
+    expect(offlineChangesStore.effectiveRows).toHaveLength(0);
+    expect(offlineChangesStore.draftRows).toHaveLength(1);
+    expect(offlineChangesStore.draftRows[0]).toMatchObject({
+      baselineValue: '0',
+      plannedValue: '0',
+    });
+    // Cancellation drafts suppress the persisted row but are not counted
+    // as user-visible changes — draftCount excludes planned===baseline rows.
+    expect(offlineChangesStore.draftCount).toBe(0);
+  });
+
+  it('does not create a draft when plannedValue equals baselineValue and no persisted row exists', () => {
+    offlineChangesStore.upsertConfigChange({
+      nodeId: '05.02.01.02.03.00',
+      space: 253,
+      offset: '0x00000000',
+      baselineValue: '0',
+      plannedValue: '0',
+    });
+
+    expect(offlineChangesStore.effectiveRows).toHaveLength(0);
+    expect(offlineChangesStore.draftRows).toHaveLength(0);
+  });
+});
+
+describe('clearDraftConfigChanges', () => {
+  it('removes draft rows matching the specified locations', () => {
+    offlineChangesStore.upsertRow(makeDraftRow({
+      changeId: 'draft-a',
+      offset: '0x00000000',
+      baselineValue: '0',
+      plannedValue: '1',
+    }));
+    offlineChangesStore.upsertRow(makeDraftRow({
+      changeId: 'draft-b',
+      offset: '0x00000010',
+      baselineValue: '0',
+      plannedValue: '2',
+    }));
+
+    expect(offlineChangesStore.draftRows).toHaveLength(2);
+
+    offlineChangesStore.clearDraftConfigChanges('05.02.01.02.03.00', [
+      { space: 253, offset: '0x00000000' },
+    ]);
+
+    expect(offlineChangesStore.draftRows).toHaveLength(1);
+    expect(offlineChangesStore.draftRows[0].changeId).toBe('draft-b');
+  });
+
+  it('does not remove persisted rows', () => {
+    offlineChangesStore.setRows([
+      makeDraftRow({
+        changeId: 'persisted-1',
+        offset: '0x00000000',
+        baselineValue: '0',
+        plannedValue: '1',
+      }),
+    ]);
+
+    offlineChangesStore.clearDraftConfigChanges('05.02.01.02.03.00', [
+      { space: 253, offset: '0x00000000' },
+    ]);
+
+    expect(offlineChangesStore.persistedRows).toHaveLength(1);
+  });
+
+  it('is a no-op when no matching draft locations exist', () => {
+    offlineChangesStore.upsertRow(makeDraftRow({
+      changeId: 'draft-a',
+      offset: '0x00000000',
+    }));
+
+    offlineChangesStore.clearDraftConfigChanges('05.02.01.02.03.00', [
+      { space: 253, offset: '0x00000099' },
+    ]);
+
+    expect(offlineChangesStore.draftRows).toHaveLength(1);
   });
 });

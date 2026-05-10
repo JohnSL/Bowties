@@ -5,6 +5,7 @@
  */
 
 import type { ConfigValue } from '$lib/api/types';
+import type { TreeConfigValue, TreeMapEntry } from '$lib/types/nodeTree';
 
 /**
  * Format a configuration value for display (T038)
@@ -110,4 +111,47 @@ const WELL_KNOWN_EVENT_HEX_SET = new Set<string>([
  */
 export function isWellKnownEvent(hex: string): boolean {
   return WELL_KNOWN_EVENT_HEX_SET.has(hex);
+}
+
+// ─── TreeConfigValue formatter ────────────────────────────────────────────────
+
+/**
+ * Format a TreeConfigValue for display, resolving int values to their map-entry
+ * labels when available.
+ *
+ * Used by annotations and dirty indicators in the config editor UI.
+ *
+ * @param value - TreeConfigValue to format, or null for an empty string.
+ * @param mapEntries - Optional map entries from LeafConstraints. When provided
+ *   and the value is an int, the matching label is returned instead of the
+ *   raw number (e.g. "Steady" instead of "1").
+ *
+ * @example
+ * formatTreeConfigValue({ type: 'int', value: 1 }, [{ value: 1, label: 'Steady' }]) // "Steady"
+ * formatTreeConfigValue({ type: 'int', value: 5 }, [{ value: 1, label: 'Steady' }]) // "5"
+ * formatTreeConfigValue({ type: 'string', value: 'Tower LCC' })                     // "Tower LCC"
+ * formatTreeConfigValue({ type: 'eventId', bytes: [...], hex: '05.01...' })          // "05.01..."
+ * formatTreeConfigValue({ type: 'float', value: 1.5 })                              // "1.50"
+ * formatTreeConfigValue(null)                                                        // ""
+ */
+export function formatTreeConfigValue(
+  value: TreeConfigValue | null,
+  mapEntries?: TreeMapEntry[] | null,
+): string {
+  if (value === null || value === undefined) return '';
+  switch (value.type) {
+    case 'int': {
+      if (mapEntries && mapEntries.length > 0) {
+        const entry = mapEntries.find((e) => e.value === value.value);
+        if (entry) return entry.label;
+      }
+      return String(value.value);
+    }
+    case 'string':
+      return value.value;
+    case 'eventId':
+      return value.hex;
+    case 'float':
+      return value.value.toFixed(2);
+  }
 }

@@ -18,10 +18,12 @@ import type { NodeConfigTree, LeafConfigNode, SegmentNode } from '$lib/types/nod
 
 // ── Hoisted mock references ───────────────────────────────────────────────────
 // vi.hoisted ensures these are available inside vi.mock() factories.
-const { treesRef, metaRef, layoutRef, offlineRef } = vi.hoisted(() => ({
+const { treesRef, metaRef, layoutRef, offlineRef, configChangesRef, connectorSelectionsRef } = vi.hoisted(() => ({
   treesRef: { map: new Map<string, NodeConfigTree>() },
+  configChangesRef: { draftCount: 0, hasDraftsForNode: false },
   metaRef: { isDirty: false, editCount: 0, clearAll: vi.fn() },
   layoutRef: {
+    layout: null as any,
     isOfflineMode: false,
     hasLayoutFile: false,
     isConnected: false,
@@ -37,10 +39,16 @@ const { treesRef, metaRef, layoutRef, offlineRef } = vi.hoisted(() => ({
     draftCount: 0,
     draftRows: [] as any[],
     pendingCount: 0,
+    revertedPersistedCount: 0,
+    get effectiveRows() { return (this as any).persistedRows ?? []; },
     reloadFromBackend: vi.fn().mockResolvedValue(undefined) as any,
     revertAllPending: vi.fn().mockResolvedValue(undefined) as any,
     flushPendingToBackend: vi.fn().mockResolvedValue(0) as any,
     clear: vi.fn(),
+  },
+  connectorSelectionsRef: {
+    hydrateFromLayout: vi.fn(),
+    totalWarningCount: 0,
   },
 }));
 
@@ -51,9 +59,20 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('$lib/stores/nodeTree.svelte', () => ({
   nodeTreeStore: {
     get trees() { return treesRef.map; },
-    clearAllModifiedValues: vi.fn(),
-    applyOfflinePendingValues: vi.fn(),
   },
+}));
+
+vi.mock('$lib/stores/configChanges.svelte', () => ({
+  configChangesStore: {
+    draftEntries: () => Array.from({ length: configChangesRef.draftCount }, (_, i) => ({ key: `k${i}`, value: { type: 'int', value: i } })),
+    clearAllDrafts: vi.fn(),
+    hasDraftsForNode: () => configChangesRef.hasDraftsForNode,
+  },
+}));
+
+vi.mock('$lib/orchestration/configDraftOrchestrator', () => ({
+  stageDraftsForOfflineSave: vi.fn(),
+  discardAllConfigDrafts: vi.fn(),
 }));
 
 vi.mock('$lib/stores/bowtieMetadata.svelte', () => ({
@@ -67,6 +86,10 @@ vi.mock('$lib/api/config', () => ({
 
 vi.mock('$lib/stores/layout.svelte', () => ({
   layoutStore: layoutRef,
+}));
+
+vi.mock('$lib/stores/connectorSelections.svelte', () => ({
+  connectorSelectionsStore: connectorSelectionsRef,
 }));
 
 vi.mock('$lib/stores/offlineChanges.svelte', () => ({
@@ -84,8 +107,13 @@ vi.mock('@zerodevx/svelte-toast', () => ({
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Build a minimal NodeConfigTree with `count` leaves that each have a modifiedValue. */
+/** Build a minimal NodeConfigTree with `count` leaves. Also sets configChangesRef
+ * so the presenter sees matching draft counts. */
 function makeDirtyTree(count = 1): NodeConfigTree {
+  // Update the config changes mock to reflect dirty state.
+  configChangesRef.draftCount += count;
+  configChangesRef.hasDraftsForNode = true;
+
   const leaves: LeafConfigNode[] = Array.from({ length: count }, (_, i) => ({
     kind: 'leaf' as const,
     name: `Field ${i}`,
@@ -112,9 +140,12 @@ function makeDirtyTree(count = 1): NodeConfigTree {
 
 beforeEach(() => {
   treesRef.map = new Map();
+  configChangesRef.draftCount = 0;
+  configChangesRef.hasDraftsForNode = false;
   metaRef.isDirty = false;
   metaRef.editCount = 0;
   layoutRef.isOfflineMode = false;
+  layoutRef.layout = null;
   layoutRef.hasLayoutFile = false;
   layoutRef.isConnected = false;
   layoutRef.isLoaded = false;
@@ -122,6 +153,9 @@ beforeEach(() => {
   offlineRef.draftCount = 0;
   offlineRef.draftRows = [];
   offlineRef.pendingCount = 0;
+  offlineRef.revertedPersistedCount = 0;
+  connectorSelectionsRef.hydrateFromLayout.mockReset();
+  connectorSelectionsRef.totalWarningCount = 0;
   vi.clearAllMocks();
 });
 
@@ -157,6 +191,23 @@ describe('SaveControls.svelte', () => {
       render(SaveControls);
       await waitFor(() => {
         expect(screen.getByText(/3 unsaved changes/i)).toBeInTheDocument();
+      });
+    });
+
+    it('keeps pending hint and discard dialog counts aligned for layout-only dirty state', async () => {
+      layoutRef.isOfflineMode = true;
+      layoutRef.isDirty = true;
+      render(SaveControls);
+
+      await waitFor(() => {
+        expect(screen.getByText(/1 unsaved edit/i)).toBeInTheDocument();
+      });
+
+      await fireEvent.click(screen.getByRole('button', { name: /discard/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/1 unsaved change/i)).toBeInTheDocument();
+        expect(screen.getByText(/1 node/i)).toBeInTheDocument();
       });
     });
 
@@ -226,12 +277,36 @@ describe('SaveControls.svelte', () => {
     it('calls discardModifiedValues when Revert is clicked', async () => {
       const { discardModifiedValues } = await import('$lib/api/config');
       treesRef.map.set('node1', makeDirtyTree(1));
+      layoutRef.layout = {
+        schemaVersion: '1.0',
+        bowties: {},
+        roleClassifications: {},
+        connectorSelections: {},
+      };
       render(SaveControls);
       await waitFor(() => screen.getByRole('button', { name: /discard/i }));
       await fireEvent.click(screen.getByRole('button', { name: /discard/i }));
       const revertBtn = await waitFor(() => screen.getByRole('button', { name: /revert/i }));
       await fireEvent.click(revertBtn);
       expect(discardModifiedValues).toHaveBeenCalled();
+      expect(connectorSelectionsRef.hydrateFromLayout).toHaveBeenCalledWith(layoutRef.layout);
+    });
+
+    it('clears config drafts during online discard', async () => {
+      const { discardAllConfigDrafts } = await import('$lib/orchestration/configDraftOrchestrator');
+      treesRef.map.set('node1', makeDirtyTree(1));
+      layoutRef.layout = {
+        schemaVersion: '1.0',
+        bowties: {},
+        roleClassifications: {},
+        connectorSelections: {},
+      };
+      render(SaveControls);
+      await waitFor(() => screen.getByRole('button', { name: /discard/i }));
+      await fireEvent.click(screen.getByRole('button', { name: /discard/i }));
+      const revertBtn = await waitFor(() => screen.getByRole('button', { name: /revert/i }));
+      await fireEvent.click(revertBtn);
+      expect(discardAllConfigDrafts).toHaveBeenCalled();
     });
 
     it('closes dialog without discarding when Cancel is clicked', async () => {
@@ -330,6 +405,7 @@ describe('SaveControls.svelte', () => {
       const { writeModifiedValues } = await import('$lib/api/config');
       layoutRef.isOfflineMode = true;
       layoutRef.hasLayoutFile = true;
+      configChangesRef.draftCount = 2;
       offlineRef.draftCount = 2;
       offlineRef.draftRows = [
         { status: 'pending', nodeId: 'n1' },
@@ -351,6 +427,7 @@ describe('SaveControls.svelte', () => {
     it('shows "unsaved edit" wording (not "unsaved change") in offline mode', async () => {
       layoutRef.isOfflineMode = true;
       layoutRef.hasLayoutFile = true;
+      configChangesRef.draftCount = 1;
       offlineRef.draftCount = 1;
       offlineRef.draftRows = [{ status: 'pending', nodeId: 'n1' }];
 
@@ -364,6 +441,7 @@ describe('SaveControls.svelte', () => {
     it('shows plural "unsaved edits" for multiple offline drafts', async () => {
       layoutRef.isOfflineMode = true;
       layoutRef.hasLayoutFile = true;
+      configChangesRef.draftCount = 3;
       offlineRef.draftCount = 3;
       offlineRef.draftRows = [
         { status: 'pending', nodeId: 'n1' },
@@ -381,6 +459,7 @@ describe('SaveControls.svelte', () => {
     it('reloads offline store and clears trees after successful save', async () => {
       layoutRef.isOfflineMode = true;
       layoutRef.hasLayoutFile = true;
+      configChangesRef.draftCount = 1;
       offlineRef.draftCount = 1;
       offlineRef.draftRows = [{ status: 'pending', nodeId: 'n1' }];
 
@@ -401,6 +480,7 @@ describe('SaveControls.svelte', () => {
 
       layoutRef.isOfflineMode = true;
       layoutRef.hasLayoutFile = true;
+      configChangesRef.draftCount = 1;
       offlineRef.draftCount = 1;
       offlineRef.draftRows = [{ status: 'pending', nodeId: 'n1' }];
       (offlineRef as any).persistedRows = [{
@@ -420,14 +500,16 @@ describe('SaveControls.svelte', () => {
       const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
       await fireEvent.click(saveBtn);
 
-      await waitFor(() => {
-        expect(nodeTreeStore.applyOfflinePendingValues).toHaveBeenCalledWith((offlineRef as any).persistedRows);
+      await waitFor(async () => {
+        const { configChangesStore } = await import('$lib/stores/configChanges.svelte');
+        expect(configChangesStore.clearAllDrafts).toHaveBeenCalled();
       });
     });
 
     it('reverts to idle when onOfflineSave returns false (user cancelled)', async () => {
       layoutRef.isOfflineMode = true;
       layoutRef.hasLayoutFile = true;
+      configChangesRef.draftCount = 1;
       offlineRef.draftCount = 1;
       offlineRef.draftRows = [{ status: 'pending', nodeId: 'n1' }];
 
@@ -489,6 +571,7 @@ describe('SaveControls.svelte', () => {
 
       layoutRef.isOfflineMode = true;
       layoutRef.hasLayoutFile = true;
+      configChangesRef.draftCount = 1;
       offlineRef.draftCount = 1;
       offlineRef.draftRows = [{ status: 'pending', nodeId: 'n1' }];
       (offlineRef as any).persistedRows = [{
@@ -507,8 +590,9 @@ describe('SaveControls.svelte', () => {
       await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: /discard/i })));
       await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: /revert/i })));
 
-      await waitFor(() => {
-        expect(nodeTreeStore.applyOfflinePendingValues).toHaveBeenCalledWith((offlineRef as any).persistedRows);
+      await waitFor(async () => {
+        const { discardAllConfigDrafts } = await import('$lib/orchestration/configDraftOrchestrator');
+        expect(discardAllConfigDrafts).toHaveBeenCalled();
       });
     });
   });
@@ -625,6 +709,39 @@ describe('SaveControls.svelte', () => {
         expect(screen.getByText(/2 unsaved changes/i)).toBeInTheDocument();
       });
     });
+
+    it('clears config drafts after successful online save', async () => {
+      const { writeModifiedValues } = await import('$lib/api/config');
+      const { configChangesStore } = await import('$lib/stores/configChanges.svelte');
+      (writeModifiedValues as ReturnType<typeof vi.fn>).mockResolvedValue({ succeeded: 1, failed: 0, readOnlyRejected: 0 });
+      treesRef.map.set('node1', makeDirtyTree(1));
+
+      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+
+      const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
+      await fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(configChangesStore.clearAllDrafts).toHaveBeenCalled();
+      });
+    });
+
+    it('does not clear config drafts when online save has failures', async () => {
+      const { writeModifiedValues } = await import('$lib/api/config');
+      const { configChangesStore } = await import('$lib/stores/configChanges.svelte');
+      (writeModifiedValues as ReturnType<typeof vi.fn>).mockResolvedValue({ succeeded: 0, failed: 1, readOnlyRejected: 0 });
+      treesRef.map.set('node1', makeDirtyTree(1));
+
+      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+
+      const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
+      await fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(writeModifiedValues).toHaveBeenCalled();
+      });
+      expect(configChangesStore.clearAllDrafts).not.toHaveBeenCalled();
+    });
   });
 
   // ── T061: layoutStore.isDirty enables Save (persisted offline revert) ──────
@@ -702,17 +819,17 @@ describe('SaveControls.svelte', () => {
       });
     });
 
-    it('shows draftCount only (not draftCount+1) when drafts are present alongside isDirty', async () => {
-      // If there are draft edits AND isDirty, show only draftCount — the dirty
-      // flag is implicit in the drafts themselves, not an extra change to count
+    it('counts only config drafts and layout dirty in offline pending total', async () => {
+      // Offline draft rows in offlineChangesStore are persistence staging;
+      // the pending count uses configDraftCount (display layer) + layout dirty.
       layoutRef.isOfflineMode = true;
-      offlineRef.draftCount = 3;
+      configChangesRef.draftCount = 3;
       layoutRef.isDirty = true;
 
       render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
 
       await waitFor(() => {
-        expect(screen.getByText(/3 unsaved edits/i)).toBeInTheDocument();
+        expect(screen.getByText(/4 unsaved edits/i)).toBeInTheDocument();
       });
     });
   });

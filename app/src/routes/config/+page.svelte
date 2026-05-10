@@ -4,7 +4,7 @@
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import { nodeInfoStore, updateNodeInfo } from '$lib/stores/nodeInfo';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
-  import { hasModifiedLeaves } from '$lib/types/nodeTree';
+  import { configChangesStore } from '$lib/stores/configChanges.svelte';
   import { listen } from '@tauri-apps/api/event';
   import { invoke } from '@tauri-apps/api/core';
   import { onMount, onDestroy } from 'svelte';
@@ -16,7 +16,7 @@
 
   // FR-026: Warn before navigating away from the page when there are unsaved edits.
   beforeNavigate(({ cancel }) => {
-    const hasModified = [...nodeTreeStore.trees.values()].some(t => hasModifiedLeaves(t));
+    const hasModified = configChangesStore.draftEntries().length > 0;
     if (hasModified) {
       const ok = window.confirm(
         'You have unsaved configuration changes.\n\nIf you leave this page, your changes will be lost.\n\nDo you want to leave?'

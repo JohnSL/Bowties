@@ -8,7 +8,8 @@
 
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { loadLayout, saveLayout, getRecentLayout, setRecentLayout, buildBowtieCatalog } from '$lib/api/bowties';
-import type { LayoutFile } from '$lib/types/bowtie';
+import type { LayoutConnectorSelections, LayoutFile, LayoutNodeHardwareSelectionSet } from '$lib/types/bowtie';
+import { normalizeNodeId } from '$lib/utils/nodeId';
 import { OFFLINE_LAYOUT_DEFAULT_FILENAME, offlineLayoutDialogFilter } from '$lib/constants/layoutFiles';
 
 export type ActiveLayoutMode = 'legacy_file' | 'offline_file';
@@ -213,6 +214,71 @@ class LayoutStore {
     this._dirty = true;
   }
 
+  /** Lookup connector selections for a node from the active layout metadata. */
+  getConnectorSelections(nodeId: string): LayoutNodeHardwareSelectionSet | null {
+    if (!this._layout) {
+      return null;
+    }
+
+    return this._layout.connectorSelections[normalizeNodeId(nodeId)] ?? null;
+  }
+
+  /** Replace connector selection metadata for the loaded layout. */
+  replaceConnectorSelections(connectorSelections: LayoutConnectorSelections): void {
+    if (!this._layout) {
+      this.newLayout();
+    }
+    if (!this._layout) {
+      return;
+    }
+
+    this._layout = {
+      ...this._layout,
+      connectorSelections: JSON.parse(JSON.stringify(connectorSelections)),
+    };
+    this.recomputeDirtyFromSaved();
+  }
+
+  /** Upsert connector selection metadata for one node into the active layout. */
+  upsertConnectorSelections(nodeId: string, selections: LayoutNodeHardwareSelectionSet): void {
+    if (!this._layout) {
+      this.newLayout();
+    }
+    if (!this._layout) {
+      return;
+    }
+
+    this._layout = {
+      ...this._layout,
+      connectorSelections: {
+        ...this._layout.connectorSelections,
+        [normalizeNodeId(nodeId)]: JSON.parse(JSON.stringify(selections)),
+      },
+    };
+    this.recomputeDirtyFromSaved();
+  }
+
+  /** Remove connector selection metadata for one node from the active layout. */
+  removeConnectorSelections(nodeId: string): void {
+    if (!this._layout) {
+      return;
+    }
+
+    const normalizedNodeId = normalizeNodeId(nodeId);
+    if (!(normalizedNodeId in this._layout.connectorSelections)) {
+      return;
+    }
+
+    const nextConnectorSelections = { ...this._layout.connectorSelections };
+    delete nextConnectorSelections[normalizedNodeId];
+
+    this._layout = {
+      ...this._layout,
+      connectorSelections: nextConnectorSelections,
+    };
+    this.recomputeDirtyFromSaved();
+  }
+
   /**
    * Hydrate the layout store from an opened offline layout directory.
    * Keeps the loaded layout metadata available to preview/edit flows while
@@ -261,6 +327,7 @@ class LayoutStore {
       schemaVersion: '1.0',
       bowties: {},
       roleClassifications: {},
+      connectorSelections: {},
     };
     this._savedLayout = JSON.parse(JSON.stringify(this._layout));
     this._path = null;
@@ -294,6 +361,15 @@ class LayoutStore {
   setActiveContext(context: ActiveLayoutContext | null): void {
     this._activeContext = context;
     this._offlineMode = context?.mode === 'offline_file';
+  }
+
+  private recomputeDirtyFromSaved(): void {
+    if (!this._layout || !this._savedLayout) {
+      this._dirty = !!this._layout;
+      return;
+    }
+
+    this._dirty = JSON.stringify(this._layout) !== JSON.stringify(this._savedLayout);
   }
 
   // ── Recent layout auto-reopen ─────────────────────────────────────────────

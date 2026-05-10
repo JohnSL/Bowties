@@ -2,7 +2,9 @@
  * Event ID utilities — generation of fresh unique event IDs for a node.
  */
 
-import { collectEventIdLeaves, effectiveValue } from '$lib/types/nodeTree';
+import { collectEventIdLeaves } from '$lib/types/nodeTree';
+import { configChangesStore } from '$lib/stores/configChanges.svelte';
+import { editKeyForLeaf } from '$lib/utils/editKey';
 
 /**
  * Returns true when an event ID hex string is a reserved leading-zero placeholder.
@@ -23,7 +25,7 @@ import type { NodeConfigTree } from '$lib/types/nodeTree';
  *
  * Algorithm:
  *  1. Parse nodeId (dotted-hex "XX.XX.XX.XX.XX.XX") → 6 nodeBytes
- *  2. Walk all eventId leaves via collectEventIdLeaves, extracting effective values
+ *  2. Walk all eventId leaves via collectEventIdLeaves, extracting visible values
  *  3. Collect 16-bit counters (bytes[6]<<8 | bytes[7]) of IDs whose first 6 bytes match nodeBytes
  *  4. New counter = max + 1; if > 0xFFFF, scan backwards for first unused
  *  5. Return [...nodeBytes, counter >> 8, counter & 0xFF] as dotted-hex
@@ -35,7 +37,8 @@ export function generateFreshEventIdForNode(nodeId: string, tree: NodeConfigTree
   const usedCounters = new Set<number>();
 
   for (const leaf of leaves) {
-    const val = effectiveValue(leaf);
+    const key = editKeyForLeaf(nodeId, leaf.space, leaf.address);
+    const val = configChangesStore.visibleValue(key) ?? leaf.value;
     if (val?.type !== 'eventId') continue;
     const bytes = val.bytes;
     if (bytes.length >= 8 && nodeBytes.every((b, i) => b === bytes[i])) {

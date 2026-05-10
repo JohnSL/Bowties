@@ -287,14 +287,18 @@ impl NodeProxy {
 
                 // ── Lifecycle ────────────────────────────────────────────
                 ProxyMessage::NodeReinitialised => {
-                    // Volatile state — clear on reinit
+                    // Volatile protocol state — clear on reinit so it gets
+                    // re-queried from the (possibly rebooted) node.
                     self.snip = None;
                     self.snip_status = SNIPStatus::Unknown;
                     self.pip_flags = None;
                     self.pip_status = PIPStatus::Unknown;
-                    self.config_values.clear();
-                    self.config_tree = None;
-                    // CDI XML is stable across reinit — keep it
+                    // CDI XML, config values, and config tree are all backed
+                    // by NV memory — they survive a node reboot and stay
+                    // valid across reinit.  Clearing them here would force
+                    // set_modified_value / get_node_tree to rebuild from CDI
+                    // without values, zeroing every field the user hasn't
+                    // just edited.
                 }
                 ProxyMessage::Shutdown => {
                     break;
@@ -598,5 +602,218 @@ impl NodeProxyHandle {
     /// Shut down the proxy actor.
     pub async fn shutdown(&self) {
         let _ = self.tx.send(ProxyMessage::Shutdown).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node_tree::{
+        ConfigNode, ConfigValue, LeafNode, LeafType, NodeConfigTree, SegmentNode,
+    };
+
+    /// Create a dummy TransportHandle that doesn't connect to anything.
+    fn dummy_transport_handle() -> TransportHandle {
+        let (tx, _rx) = mpsc::channel(1);
+        let (all_tx, _) = tokio::sync::broadcast::channel(1);
+        let mti_senders = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
+        TransportHandle::from_parts(tx, all_tx, mti_senders)
+    }
+
+    /// Build a minimal tree with one event-ID leaf carrying a known value.
+    fn tree_with_event_id(hex: &str, bytes: [u8; 8]) -> NodeConfigTree {
+        NodeConfigTree {
+            node_id: "05.02.01.02.03.00".into(),
+            identity: None,
+            connector_profile: None,
+            connector_profile_warning: None,
+            segments: vec![SegmentNode {
+                name: "Configuration".into(),
+                description: None,
+                origin: 0,
+                space: 0xFD,
+                children: vec![ConfigNode::Leaf(LeafNode {
+                    name: "Event ID".into(),
+                    description: None,
+                    element_type: LeafType::EventId,
+                    address: 100,
+                    size: 8,
+                    space: 0xFD,
+                    path: vec!["seg:0".into(), "elem:0".into()],
+                    value: Some(ConfigValue::EventId {
+                        bytes,
+                        hex: hex.into(),
+                    }),
+                    event_role: None,
+                    constraints: None,
+                    button_text: None,
+                    dialog_text: None,
+                    action_value: 0,
+                    hint_slider: None,
+                    hint_radio: false,
+                    modified_value: None,
+                    write_state: None,
+                    write_error: None,
+                    read_only: false,
+                })],
+            }],
+        }
+    }
+
+    /// Regression: NodeReinitialised must preserve config_tree and config_values.
+    ///
+    /// Previously the handler cleared both, which meant the next
+    /// set_modified_value / get_node_tree rebuilt from CDI without values,
+    /// zeroing every field the user hadn't just edited.
+    #[tokio::test]
+    async fn reinitialised_preserves_config_tree_and_values() {
+        let node_id = NodeID::new([0x05, 0x02, 0x01, 0x02, 0x03, 0x00]);
+        let handle = NodeProxy::spawn(node_id, 0x100, dummy_transport_handle(), 0x001);
+
+        // Populate config values
+        let mut vals = HashMap::new();
+        vals.insert(
+            "seg:0/elem:0".into(),
+            [0x05, 0x01, 0x01, 0x01, 0x22, 0x00, 0x00, 0xFF],
+        );
+        handle.set_config_values(vals.clone()).await.unwrap();
+
+        // Populate config tree
+        let tree = tree_with_event_id(
+            "05.01.01.01.22.00.00.FF",
+            [0x05, 0x01, 0x01, 0x01, 0x22, 0x00, 0x00, 0xFF],
+        );
+        handle.set_config_tree(tree.clone()).await.unwrap();
+
+        // Simulate node reinitialization (e.g. after Update Complete)
+        handle.node_reinitialised().await.unwrap();
+
+        // Config tree must survive
+        let after_tree = handle.get_config_tree().await.unwrap();
+        assert!(
+            after_tree.is_some(),
+            "config_tree must not be cleared on reinit"
+        );
+        let after_tree = after_tree.unwrap();
+        assert_eq!(after_tree.segments.len(), 1);
+        if let ConfigNode::Leaf(ref leaf) = after_tree.segments[0].children[0] {
+            assert_eq!(
+                leaf.value,
+                Some(ConfigValue::EventId {
+                    bytes: [0x05, 0x01, 0x01, 0x01, 0x22, 0x00, 0x00, 0xFF],
+                    hex: "05.01.01.01.22.00.00.FF".into(),
+                }),
+                "leaf value must survive reinit"
+            );
+        } else {
+            panic!("expected a leaf node");
+        }
+
+        // Config values must survive
+        let after_vals = handle.get_config_values().await.unwrap();
+        assert_eq!(after_vals, vals, "config_values must not be cleared on reinit");
+
+        // SNIP/PIP volatile state must be cleared (correct behavior)
+        let snapshot = handle.get_snapshot().await.unwrap();
+        assert_eq!(snapshot.snip_status, SNIPStatus::Unknown);
+        assert_eq!(snapshot.pip_status, PIPStatus::Unknown);
+
+        handle.shutdown().await;
+    }
+
+    /// MergeConfigValues must extend existing entries, not replace the map.
+    ///
+    /// The event-router and write pipeline both rely on additive merges to
+    /// update individual event-ID values without losing unrelated entries.
+    #[tokio::test]
+    async fn merge_config_values_extends_existing() {
+        let node_id = NodeID::new([0x05, 0x02, 0x01, 0x02, 0x03, 0x00]);
+        let handle = NodeProxy::spawn(node_id, 0x100, dummy_transport_handle(), 0x001);
+
+        let mut initial = HashMap::new();
+        initial.insert("seg:0/elem:0".into(), [1u8; 8]);
+        initial.insert("seg:0/elem:1".into(), [2u8; 8]);
+        handle.set_config_values(initial).await.unwrap();
+
+        let mut merge = HashMap::new();
+        merge.insert("seg:0/elem:1".into(), [3u8; 8]); // overwrite
+        merge.insert("seg:0/elem:2".into(), [4u8; 8]); // new entry
+        handle.merge_config_values(merge).await.unwrap();
+
+        let result = handle.get_config_values().await.unwrap();
+        assert_eq!(result.len(), 3, "merge should add new keys");
+        assert_eq!(result["seg:0/elem:0"], [1u8; 8], "untouched key preserved");
+        assert_eq!(result["seg:0/elem:1"], [3u8; 8], "overlapping key updated");
+        assert_eq!(result["seg:0/elem:2"], [4u8; 8], "new key added");
+
+        handle.shutdown().await;
+    }
+
+    /// UpdateConfigTree must be a safe no-op when no tree has been set.
+    ///
+    /// Callers (e.g. set_modified_value) may send UpdateConfigTree
+    /// optimistically; the actor must not panic if config_tree is None.
+    #[tokio::test]
+    async fn update_config_tree_noop_without_tree() {
+        let node_id = NodeID::new([0x05, 0x02, 0x01, 0x02, 0x03, 0x00]);
+        let handle = NodeProxy::spawn(node_id, 0x100, dummy_transport_handle(), 0x001);
+
+        // No tree set — update should silently complete
+        handle
+            .update_config_tree(|tree| {
+                tree.node_id = "should-not-be-reachable".into();
+            })
+            .await
+            .unwrap();
+
+        let tree = handle.get_config_tree().await.unwrap();
+        assert!(tree.is_none(), "tree should still be None");
+
+        handle.shutdown().await;
+    }
+
+    /// UpdateConfigTree applies the mutation when a tree exists.
+    #[tokio::test]
+    async fn update_config_tree_applies_mutation() {
+        let node_id = NodeID::new([0x05, 0x02, 0x01, 0x02, 0x03, 0x00]);
+        let handle = NodeProxy::spawn(node_id, 0x100, dummy_transport_handle(), 0x001);
+
+        let tree = tree_with_event_id(
+            "05.01.01.01.22.00.00.FF",
+            [0x05, 0x01, 0x01, 0x01, 0x22, 0x00, 0x00, 0xFF],
+        );
+        handle.set_config_tree(tree).await.unwrap();
+
+        handle
+            .update_config_tree(|tree| {
+                tree.segments[0].name = "Mutated".into();
+            })
+            .await
+            .unwrap();
+
+        let updated = handle.get_config_tree().await.unwrap().unwrap();
+        assert_eq!(updated.segments[0].name, "Mutated");
+
+        handle.shutdown().await;
+    }
+
+    /// UpdateAlias must be reflected in subsequent snapshots.
+    ///
+    /// The event router calls update_alias when a node's CAN alias changes
+    /// after reconnection; downstream code reads the alias from snapshots.
+    #[tokio::test]
+    async fn update_alias_reflected_in_snapshot() {
+        let node_id = NodeID::new([0x05, 0x02, 0x01, 0x02, 0x03, 0x00]);
+        let handle = NodeProxy::spawn(node_id, 0x100, dummy_transport_handle(), 0x001);
+
+        let snap_before = handle.get_snapshot().await.unwrap();
+        assert_eq!(snap_before.alias.value(), 0x100);
+
+        handle.update_alias(0x200).await.unwrap();
+
+        let snap_after = handle.get_snapshot().await.unwrap();
+        assert_eq!(snap_after.alias.value(), 0x200);
+
+        handle.shutdown().await;
     }
 }

@@ -87,6 +87,7 @@ interface ExecuteConfigReadCandidatesArgs {
     totalNodes: number,
   ) => Promise<ReadAllConfigValuesResponse>;
   reloadTree: (nodeId: string) => Promise<unknown>;
+  afterReloadTree?: (nodeId: string) => Promise<void> | void;
   setNodeReadStates: (states: NodeReadState[]) => void;
   warn: (message: string, error?: unknown) => void;
 }
@@ -119,6 +120,7 @@ export async function executeConfigReadCandidates({
   markNodeConfigRead,
   readAllConfigValues,
   reloadTree,
+  afterReloadTree,
   setNodeReadStates,
   warn,
 }: ExecuteConfigReadCandidatesArgs): Promise<ConfigReadExecutionResult> {
@@ -164,6 +166,7 @@ export async function executeConfigReadCandidates({
       }
 
       await reloadTree(nodeId);
+      await afterReloadTree?.(nodeId);
       nodeReadStates = updateNodeReadState(nodeReadStates, nodeIndex, {
         percentage: 100,
         status: 'complete',

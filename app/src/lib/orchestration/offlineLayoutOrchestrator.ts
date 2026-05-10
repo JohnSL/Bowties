@@ -17,7 +17,7 @@ interface OpenOfflineLayoutWithReplayArgs {
   path: string;
   openLayout: (path: string) => Promise<OpenLayoutResult>;
   hydrateOfflineSnapshots: (snapshots: OfflineNodeSnapshot[]) => Promise<void>;
-  applyPersistedOfflinePendingToTrees: () => void;
+  hydrateConnectorSelections?: (layout: LayoutFile) => void;
   onOpened?: () => void;
 }
 
@@ -369,7 +369,7 @@ export async function openOfflineLayoutWithReplay({
   path,
   openLayout,
   hydrateOfflineSnapshots,
-  applyPersistedOfflinePendingToTrees,
+  hydrateConnectorSelections,
   onOpened,
 }: OpenOfflineLayoutWithReplayArgs): Promise<OpenLayoutResult> {
   startLayoutOpen();
@@ -390,10 +390,10 @@ export async function openOfflineLayoutWithReplay({
     } as const;
 
     layoutStore.hydrateOfflineLayout(result.layout, context);
+  hydrateConnectorSelections?.(result.layout);
 
     startOfflineReplay();
     await offlineChangesStore.reloadFromBackend();
-    applyPersistedOfflinePendingToTrees();
     onOpened?.();
     finishOfflineReplay();
 

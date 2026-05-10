@@ -79,6 +79,18 @@ While offline, edits are tracked as pending layout changes. They do not write to
 
 ![Configuration view showing discovered nodes and a node being edited](../images/config-view-edit.png)
 
+### Connector daughterboards on supported carrier boards
+
+Some RR-CirKits carrier boards include one or more connector slots for optional daughterboards.
+
+1. Open the supported node's configuration view.
+2. Choose the installed daughterboard for each connector slot from the selector above the affected configuration.
+3. Bowties immediately narrows the visible sections and valid options for the governed lines.
+4. If a new daughterboard makes a current value invalid, Bowties stages the compatible repair before you apply changes.
+5. Save the layout or project to keep those connector selections with that node instance.
+
+Nodes without connector-slot metadata keep the normal pre-feature configuration workflow.
+
 ---
 
 ## Editing configuration

@@ -1,9 +1,14 @@
-import { hasModifiedLeaves, type NodeConfigTree } from '$lib/types/nodeTree';
+import { configChangesStore } from '$lib/stores/configChanges.svelte';
 
 export function hasUnsavedPromptChanges(
-  trees: Iterable<NodeConfigTree>,
+  treeNodeIds: Iterable<string>,
   bowtieMetadataDirty: boolean,
   draftCount: number,
+  layoutDirty: boolean,
+  revertedPersistedCount: number = 0,
 ): boolean {
-  return [...trees].some((tree) => hasModifiedLeaves(tree)) || bowtieMetadataDirty || draftCount > 0;
+  for (const nodeId of treeNodeIds) {
+    if (configChangesStore.hasDraftsForNode(nodeId)) return true;
+  }
+  return bowtieMetadataDirty || draftCount > 0 || layoutDirty || revertedPersistedCount > 0;
 }

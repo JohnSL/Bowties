@@ -18,7 +18,6 @@ import type {
   SegmentNode,
 } from '$lib/types/nodeTree';
 import { isGroup, isLeaf, getChildrenAtPath } from '$lib/types/nodeTree';
-import type { OfflineChangeRow } from '$lib/api/sync';
 import { normalizeNodeId } from '$lib/utils/nodeId';
 
 // ─── Store class ─────────────────────────────────────────────────────────────
@@ -98,6 +97,19 @@ class NodeTreeStore {
       const found = findLeafInChildren(seg.children, address);
       if (found) return found;
     }
+    return null;
+  }
+
+  /** Find a leaf by space and address across a node's tree. */
+  getLeafByLocation(nodeId: string, space: number, address: number): LeafConfigNode | null {
+    const tree = this._trees.get(nodeId);
+    if (!tree) return null;
+
+    for (const seg of tree.segments) {
+      const found = findLeafInChildrenByLocation(seg.children, space, address);
+      if (found) return found;
+    }
+
     return null;
   }
 
@@ -186,82 +198,6 @@ class NodeTreeStore {
     }
   }
 
-  /**
-   * Set or clear a leaf's modifiedValue locally without backend IPC.
-   * Used by offline mode to keep dirty indicators aligned with online UX.
-   */
-  setLeafModifiedValue(
-    nodeId: string,
-    fieldPath: string[],
-    modifiedValue: import('$lib/types/nodeTree').TreeConfigValue | null,
-  ): void {
-    const tree = this._trees.get(nodeId);
-    if (!tree) return;
-
-    const updatedTree = deepCloneTree(tree);
-    const leaf = findLeafByPath(updatedTree, fieldPath);
-    if (!leaf) return;
-
-    leaf.modifiedValue = modifiedValue;
-    if (modifiedValue === null) {
-      leaf.writeState = null;
-      leaf.writeError = null;
-    }
-
-    this._trees = new Map(this._trees);
-    this._trees.set(nodeId, updatedTree);
-  }
-
-  /** Clear all modifiedValue markers across all cached trees. */
-  clearAllModifiedValues(): void {
-    const next = new Map<string, NodeConfigTree>();
-    for (const [nodeId, tree] of this._trees.entries()) {
-      const updatedTree = deepCloneTree(tree);
-      clearModifiedInChildren(updatedTree.segments.flatMap((s) => s.children));
-      next.set(nodeId, updatedTree);
-    }
-    this._trees = next;
-  }
-
-  /**
-   * Apply pending offline change values to the live tree.
-   *
-   * For each persisted offline row with `status === 'pending'`, find the
-   * matching leaf (by nodeId + space + address) and set
-   * `leaf.modifiedValue = plannedValue` and `leaf.isOfflinePending = true`.
-   * This makes the config field show the planned value while the bus value
-   * is shown in the annotation.
-   *
-   * Must be called after a tree is loaded/rebuilt when a layout is open.
-   */
-  applyOfflinePendingValues(offlineRows: OfflineChangeRow[]): void {
-    const pendingRows = offlineRows.filter((r) => r.status === 'pending' && r.nodeId && r.space != null && r.offset != null);
-    if (pendingRows.length === 0) return;
-
-    const next = new Map<string, NodeConfigTree>();
-    for (const [nodeId, tree] of this._trees.entries()) {
-      const normalizedNodeId = normalizeNodeId(nodeId || tree.nodeId);
-      const rows = pendingRows.filter((r) => normalizeNodeId(r.nodeId) === normalizedNodeId);
-      if (rows.length === 0) {
-        next.set(nodeId, tree);
-        continue;
-      }
-      const updatedTree = deepCloneTree(tree);
-      for (const row of rows) {
-        const address = parseInt(row.offset!, 16);
-        const space = row.space!;
-        applyPendingInChildren(
-          updatedTree.segments.flatMap((s) => s.children),
-          space,
-          address,
-          row.plannedValue,
-        );
-      }
-      next.set(nodeId, updatedTree);
-    }
-    this._trees = next;
-  }
-
   // ── Listener lifecycle ────────────────────────────────────────────────────
 
   /**
@@ -324,6 +260,21 @@ function findLeafInChildren(
     if (isLeaf(child) && child.address === address) return child;
     if (isGroup(child)) {
       const found = findLeafInChildren(child.children, address);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function findLeafInChildrenByLocation(
+  children: ConfigNode[],
+  space: number,
+  address: number,
+): LeafConfigNode | null {
+  for (const child of children) {
+    if (isLeaf(child) && child.space === space && child.address === address) return child;
+    if (isGroup(child)) {
+      const found = findLeafInChildrenByLocation(child.children, space, address);
       if (found) return found;
     }
   }
@@ -407,6 +358,13 @@ function findLeafByPathInChildren(children: ConfigNode[], path: string[]): LeafC
   const instanceNum = elemMatch[2] ? parseInt(elemMatch[2], 10) : undefined;
 
   if (instanceNum !== undefined) {
+    const directInstance = findChildByComponent(children, segment);
+    if (directInstance) {
+      if (path.length === 1) return isLeaf(directInstance) ? directInstance : null;
+      if (isGroup(directInstance)) return findLeafByPathInChildren(directInstance.children, path.slice(1));
+      return null;
+    }
+
     // elem:N#M — find the wrapper group by its base path component "elem:N",
     // then navigate to instance M (1-based → 0-based)
     const wrapperComponent = `elem:${elemMatch[1]}`;
@@ -433,43 +391,3 @@ function findLeafByPathInChildren(children: ConfigNode[], path: string[]): LeafC
 
   return null;
 }
-
-function clearModifiedInChildren(children: ConfigNode[]): void {
-  for (const child of children) {
-    if (isLeaf(child)) {
-      child.modifiedValue = null;
-      child.isOfflinePending = false;
-      child.writeState = null;
-      child.writeError = null;
-      continue;
-    }
-    if (isGroup(child)) {
-      clearModifiedInChildren(child.children);
-    }
-  }
-}
-
-function parseOfflineValueString(value: string): import('$lib/types/nodeTree').TreeConfigValue {
-  if (/^[0-9]+$/.test(value)) return { type: 'int', value: parseInt(value, 10) };
-  if (/^[0-9]+\.[0-9]+$/.test(value)) return { type: 'float', value: parseFloat(value) };
-  if (/^([0-9A-F]{2}\.){7}[0-9A-F]{2}$/i.test(value)) {
-    const bytes = value.split('.').map((b) => parseInt(b, 16));
-    return { type: 'eventId', bytes, hex: value.toUpperCase() };
-  }
-  return { type: 'string', value };
-}
-
-function applyPendingInChildren(children: ConfigNode[], space: number, address: number, plannedValue: string): boolean {
-  for (const child of children) {
-    if (isLeaf(child) && child.space === space && child.address === address) {
-      child.modifiedValue = parseOfflineValueString(plannedValue);
-      child.isOfflinePending = true;
-      return true;
-    }
-    if (isGroup(child)) {
-      if (applyPendingInChildren(child.children, space, address, plannedValue)) return true;
-    }
-  }
-  return false;
-}
-

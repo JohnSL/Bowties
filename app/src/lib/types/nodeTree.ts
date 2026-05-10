@@ -7,6 +7,8 @@
  * Spec: 007-unified-node-tree, Phase 3.
  */
 
+import type { ConnectorProfileView } from '$lib/types/connectorProfile';
+
 // ─── Existing type re-used from tauri.ts ─────────────────────────────────────
 
 /** Event role classification — matches `lcc_rs::cdi::EventRole`. */
@@ -30,6 +32,10 @@ export interface NodeConfigTree {
   nodeId: string;
   /** Optional identification from CDI `<identification>` element */
   identity: Identification | null;
+  /** Optional connector daughterboard profile for supported modular boards. */
+  connectorProfile?: ConnectorProfileView | null;
+  /** Optional warning when connector filtering is disabled for safety. */
+  connectorProfileWarning?: string | null;
   /** Top-level segments mirroring CDI `<segment>` elements */
   segments: SegmentNode[];
 }
@@ -173,7 +179,11 @@ export interface LeafConfigNode extends ConfigNodeBase {
   hintSlider?: SliderHints | null;
   /** When true, render int field as radio buttons (one per map entry). */
   hintRadio?: boolean;
-  /** User-modified value not yet written to the node. */
+  /**
+   * Backend-only: user-modified value not yet written to the node.
+   * Present in the Rust backend tree; the frontend reads value layers
+   * from configChangesStore instead of this field.
+   */
   modifiedValue?: TreeConfigValue | null;
   /** Write lifecycle state. Absent when no modification is pending. */
   writeState?: LeafWriteState | null;
@@ -185,10 +195,9 @@ export interface LeafConfigNode extends ConfigNodeBase {
    */
   readOnly?: boolean;
   /**
-   * Set to true when a persisted offline change is pending for this leaf.
-   * The `modifiedValue` is set to the planned value so the field shows what
-   * will be written. These leaves are excluded from `countModifiedLeaves` so
-   * they don't trigger the SaveControls dirty indicator.
+   * Backend-only: set to true when a persisted offline change is pending.
+   * The frontend derives pending state from configChangesStore layers
+   * instead of reading this field directly.
    */
   isOfflinePending?: boolean;
 }
@@ -213,66 +222,9 @@ export function isLeaf(node: ConfigNode): node is LeafConfigNode {
   return node.kind === 'leaf';
 }
 
-/** Return the effective value for display: modifiedValue if present, else value. */
+/** Return the baseline value of a leaf (no draft overlay). */
 export function effectiveValue(leaf: LeafConfigNode): TreeConfigValue | null {
-  return leaf.modifiedValue ?? leaf.value;
-}
-
-/** Count the number of leaves with a pending `modifiedValue` in a tree. */
-export function countModifiedLeaves(tree: NodeConfigTree): number {
-  let count = 0;
-  for (const seg of tree.segments) {
-    count += countModifiedInChildren(seg.children);
-  }
-  return count;
-}
-
-function countModifiedInChildren(children: ConfigNode[]): number {
-  let count = 0;
-  for (const child of children) {
-    if (isLeaf(child)) {
-      if (child.modifiedValue != null && !child.isOfflinePending) count++;
-    } else if (isGroup(child)) {
-      count += countModifiedInChildren(child.children);
-    }
-  }
-  return count;
-}
-
-/** Check whether any leaf in a tree has a pending `modifiedValue`. */
-export function hasModifiedLeaves(tree: NodeConfigTree): boolean {
-  for (const seg of tree.segments) {
-    if (hasModifiedInChildren(seg.children)) return true;
-  }
-  return false;
-}
-
-function hasModifiedInChildren(children: ConfigNode[]): boolean {
-  for (const child of children) {
-    if (isLeaf(child)) {
-      if (child.modifiedValue != null && !child.isOfflinePending) return true;
-    } else if (isGroup(child)) {
-      if (hasModifiedInChildren(child.children)) return true;
-    }
-  }
-  return false;
-}
-
-/** Check whether any child has a pending modification (for a subtree path). */
-export function hasModifiedDescendant(children: ConfigNode[], path: string[]): boolean {
-  for (const child of children) {
-    if (isLeaf(child)) {
-      if (child.modifiedValue != null && !child.isOfflinePending && childIsDescendant(child.path, path)) return true;
-    } else if (isGroup(child)) {
-      if (hasModifiedDescendant(child.children, path)) return true;
-    }
-  }
-  return false;
-}
-
-function childIsDescendant(childPath: string[], ancestorPath: string[]): boolean {
-  if (childPath.length < ancestorPath.length) return false;
-  return ancestorPath.every((seg, i) => childPath[i] === seg);
+  return leaf.value;
 }
 
 // ─── Tree traversal helpers ──────────────────────────────────────────────────
@@ -491,15 +443,14 @@ function collectEventIdLeavesInChildren(
  */
 export function getInstanceDisplayName(group: GroupConfigNode): string {
   for (const child of group.children) {
-    const ev = effectiveValue(child as LeafConfigNode);
     if (
       isLeaf(child) &&
       child.elementType === 'string' &&
-      ev !== null &&
-      ev.type === 'string' &&
-      ev.value.trim() !== ''
+      child.value !== null &&
+      child.value.type === 'string' &&
+      child.value.value.trim() !== ''
     ) {
-      return `${ev.value.trim()} (${group.instance})`;
+      return `${child.value.value.trim()} (${group.instance})`;
     }
   }
   return group.instanceLabel;
@@ -525,7 +476,8 @@ export type GroupedChild =
  * Scans `children` in order:
  * - Leaf nodes pass through as `{ type: 'leaf' }`
  * - Non-replicated groups pass through as `{ type: 'group' }`
- * - Consecutive groups sharing the same `replicationOf` value (and replicationCount > 1)
+ * - Consecutive groups sharing the same `replicationOf` value and originating
+ *   CDI group step (and replicationCount > 1)
  *   are merged into `{ type: 'replicatedSet', instances: [...] }`
  */
 export function groupReplicatedChildren(children: ConfigNode[]): GroupedChild[] {
@@ -539,12 +491,13 @@ export function groupReplicatedChildren(children: ConfigNode[]): GroupedChild[] 
       result.push({ type: 'leaf', node: child });
       i++;
     } else if (isGroup(child) && child.replicationCount > 1) {
-      // Collect all consecutive siblings with same replicationOf
+      // Collect consecutive siblings that represent instances of the same CDI group.
       const instances: GroupConfigNode[] = [child];
+      const siblingKey = replicatedSiblingKey(child);
       let j = i + 1;
       while (j < children.length) {
         const next = children[j];
-        if (isGroup(next) && next.replicationOf === child.replicationOf) {
+        if (isGroup(next) && replicatedSiblingKey(next) === siblingKey) {
           instances.push(next);
           j++;
         } else {
@@ -590,12 +543,13 @@ function parseSegIndex(key: string): number | null {
 function findWrapperSiblings(children: ConfigNode[], wrapper: GroupConfigNode): GroupConfigNode[] {
   const idx = children.findIndex(c => c === wrapper);
   if (idx === -1) return [wrapper];
+  const siblingKey = replicatedSiblingKey(wrapper);
 
   // Walk backwards to find the start of the contiguous block
   let start = idx;
   while (start > 0) {
     const prev = children[start - 1];
-    if (isGroup(prev) && prev.replicationOf === wrapper.replicationOf && prev.replicationCount > 1) {
+    if (isGroup(prev) && prev.replicationCount > 1 && replicatedSiblingKey(prev) === siblingKey) {
       start--;
     } else {
       break;
@@ -607,7 +561,7 @@ function findWrapperSiblings(children: ConfigNode[], wrapper: GroupConfigNode): 
   let i = start;
   while (i < children.length) {
     const c = children[i];
-    if (isGroup(c) && c.replicationOf === wrapper.replicationOf && c.replicationCount > 1) {
+    if (isGroup(c) && c.replicationCount > 1 && replicatedSiblingKey(c) === siblingKey) {
       siblings.push(c as GroupConfigNode);
       i++;
     } else {
@@ -615,6 +569,12 @@ function findWrapperSiblings(children: ConfigNode[], wrapper: GroupConfigNode): 
     }
   }
   return siblings;
+}
+
+function replicatedSiblingKey(group: GroupConfigNode): string {
+  const finalStep = group.path.at(-1) ?? '';
+  const normalizedStep = finalStep.replace(/#\d+$/, '');
+  return `${group.replicationOf}:${normalizedStep}`;
 }
 
 /**

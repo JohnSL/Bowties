@@ -61,3 +61,111 @@ eventRoles:
 
 # Relevance rules are populated in T024 (Phase 4 / US2).
 relevanceRules: []
+
+connectorConstraintVariants:
+  - variantId: "tower-lcc-legacy"
+    cdiSignature:
+      requiredPaths:
+        - "Port I/O/Line/Output Function"
+        - "Port I/O/Line/Input Function"
+      enumEntryCounts:
+        - path: "Port I/O/Line/Output Function"
+          count: 17
+        - path: "Port I/O/Line/Input Function"
+          count: 9
+  - variantId: "tower-lcc-c7"
+    cdiSignature:
+      requiredPaths:
+        - "Port I/O/Line/Output Function"
+        - "Port I/O/Line/Receiving the configured Command (C) event(s) will drive or pulse the line:"
+        - "Port I/O/Line/Input Function"
+        - "Port I/O/Line/The configured Indication (P) event(s) will be sent when the line is driven:"
+      enumEntryCounts:
+        - path: "Port I/O/Line/Output Function"
+          count: 5
+        - path: "Port I/O/Line/Input Function"
+          count: 3
+
+connectorSlots:
+  # The Tower-LCC Port I/O segment exposes 16 replicated lines. The profile
+  # splits those lines evenly across the board's two daughterboard connectors.
+  - slotId: "connector-a"
+    label: "Connector A"
+    order: 0
+    allowNoneInstalled: true
+    supportedDaughterboardIds:
+      - "BOD4"
+      - "BOD4-CP"
+      - "BOD-8-SM"
+      - "FOB-A"
+      - "FOB-C"
+      - "BOB-S"
+      - "OI-IB-8"
+      - "OI-OB-8"
+      - "RB-2"
+      - "RB-4"
+      - "SMD-8"
+      - "SCSD-8"
+      - "Isolator-8"
+      - "MSS I/OAdapter"
+      - "Sampled I/O Splitter Pair"
+      - "I/O Test-SM"
+    affectedPaths:
+      - "Port I/O/Line#1"
+      - "Port I/O/Line#2"
+      - "Port I/O/Line#3"
+      - "Port I/O/Line#4"
+      - "Port I/O/Line#5"
+      - "Port I/O/Line#6"
+      - "Port I/O/Line#7"
+      - "Port I/O/Line#8"
+  - slotId: "connector-b"
+    label: "Connector B"
+    order: 1
+    allowNoneInstalled: true
+    supportedDaughterboardIds:
+      - "BOD4"
+      - "BOD4-CP"
+      - "BOD-8-SM"
+      - "FOB-A"
+      - "FOB-C"
+      - "BOB-S"
+      - "OI-IB-8"
+      - "OI-OB-8"
+      - "RB-2"
+      - "RB-4"
+      - "SMD-8"
+      - "SCSD-8"
+      - "Isolator-8"
+      - "MSS I/OAdapter"
+      - "Sampled I/O Splitter Pair"
+      - "I/O Test-SM"
+    affectedPaths:
+      - "Port I/O/Line#9"
+      - "Port I/O/Line#10"
+      - "Port I/O/Line#11"
+      - "Port I/O/Line#12"
+      - "Port I/O/Line#13"
+      - "Port I/O/Line#14"
+      - "Port I/O/Line#15"
+      - "Port I/O/Line#16"
+
+daughterboardReferences:
+  - "BOD4"
+  - "BOD4-CP"
+  - "BOD-8-SM"
+  - "FOB-A"
+  - "FOB-C"
+  - "BOB-S"
+  - "OI-IB-8"
+  - "OI-OB-8"
+  - "RB-2"
+  - "RB-4"
+  - "SMD-8"
+  - "SCSD-8"
+  - "Isolator-8"
+  - "MSS I/OAdapter"
+  - "Sampled I/O Splitter Pair"
+  - "I/O Test-SM"
+
+carrierOverrides: []

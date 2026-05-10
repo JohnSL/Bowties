@@ -1,0 +1,31 @@
+schemaVersion: "1.0"
+
+nodeType:
+  manufacturer: "RR-CirKits"
+  model: "Signal-LCC-P"
+
+eventRoles: []
+relevanceRules: []
+connectorSlots:
+  - slotId: "aux-port"
+    label: "Aux Port"
+    order: 0
+    allowNoneInstalled: true
+    supportedDaughterboardIds:
+      - "SMD-8"
+      - "SCSD-8"
+      - "RB-2"
+      - "RB-4"
+      - "BOB-S"
+      - "MSS I/OAdapter"
+      - "I/O Test-SM"
+    affectedPaths: []
+daughterboardReferences:
+  - "SMD-8"
+  - "SCSD-8"
+  - "RB-2"
+  - "RB-4"
+  - "BOB-S"
+  - "MSS I/OAdapter"
+  - "I/O Test-SM"
+carrierOverrides: []

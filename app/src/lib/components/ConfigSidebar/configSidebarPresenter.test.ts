@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { DiscoveredNode } from '$lib/api/tauri';
 import type { OfflineChangeRow } from '$lib/api/sync';
 import type { NodeConfigTree } from '$lib/types/nodeTree';
@@ -8,6 +8,16 @@ import {
   getSegmentPendingState,
   shouldShowConfigNotReadBadge,
 } from './configSidebarPresenter';
+
+const mockHasDraftsForNode = vi.fn().mockReturnValue(false);
+const mockChangeLayers = vi.fn().mockReturnValue([]);
+
+vi.mock('$lib/stores/configChanges.svelte', () => ({
+  configChangesStore: {
+    hasDraftsForNode: (...args: unknown[]) => mockHasDraftsForNode(...args),
+    changeLayers: (...args: unknown[]) => mockChangeLayers(...args),
+  },
+}));
 
 function makeNode(overrides: Partial<DiscoveredNode> = {}): DiscoveredNode {
   return {
@@ -151,6 +161,7 @@ describe('pending state helpers', () => {
   ];
 
   it('reports node-level pending edits and applies from the tree and persisted rows', () => {
+    mockHasDraftsForNode.mockReturnValue(true);
     expect(getNodePendingState(
       '02.01.57.00.00.01',
       makeTree(),
@@ -163,6 +174,7 @@ describe('pending state helpers', () => {
   });
 
   it('reports segment-level pending edits and applies for the matching segment origin', () => {
+    mockChangeLayers.mockReturnValue([{ type: 'draft', value: { type: 'int', value: 12 } }]);
     expect(getSegmentPendingState(
       '02.01.57.00.00.01',
       makeTree(),
@@ -173,5 +185,43 @@ describe('pending state helpers', () => {
       hasPendingApply: true,
       hasPendingEdits: true,
     });
+    mockChangeLayers.mockReturnValue([]);
+  });
+
+  it('reports hasPendingEdits only for the segment containing the drafted leaf', () => {
+    // The tree has one segment (origin 0) with a leaf at address 16.
+    // changeLayers returns a draft only for address 16's key.
+    mockChangeLayers.mockImplementation((key: string) => {
+      if (key === '020157000001:253:16') {
+        return [{ type: 'draft', value: { type: 'int', value: 99 } }];
+      }
+      return [];
+    });
+
+    // Segment origin 0 contains the leaf -> hasPendingEdits true
+    expect(getSegmentPendingState(
+      '02.01.57.00.00.01',
+      makeTree(),
+      0,
+      false,
+      [],
+    )).toEqual({
+      hasPendingApply: false,
+      hasPendingEdits: true,
+    });
+
+    // Segment origin 999 doesn't exist -> hasPendingEdits false
+    expect(getSegmentPendingState(
+      '02.01.57.00.00.01',
+      makeTree(),
+      999,
+      false,
+      [],
+    )).toEqual({
+      hasPendingApply: false,
+      hasPendingEdits: false,
+    });
+
+    mockChangeLayers.mockReturnValue([]);
   });
 });

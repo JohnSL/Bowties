@@ -15,11 +15,14 @@
   import { toast } from '@zerodevx/svelte-toast';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
+  import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+  import { configChangesStore } from '$lib/stores/configChanges.svelte';
+  import { stageDraftsForOfflineSave, discardAllConfigDrafts } from '$lib/orchestration/configDraftOrchestrator';
+  import { deriveSaveControlsViewState } from '$lib/components/ElementCardDeck/saveControlsPresenter';
   import { updateNodeSnipField } from '$lib/stores/nodeInfo';
   import DiscardConfirmDialog from '$lib/components/DiscardConfirmDialog.svelte';
-  import { deriveSaveControlsViewState } from './saveControlsPresenter';
 
   interface Props {
     /**
@@ -56,27 +59,30 @@
   let viewState = $derived(deriveSaveControlsViewState({
     bowtieMetadataEditCount: bowtieMetadataStore.editCount,
     bowtieMetadataIsDirty: bowtieMetadataStore.isDirty,
+    configDraftCount: configChangesStore.draftEntries().length,
+    connectorWarningCount: connectorSelectionsStore.totalWarningCount,
     layoutIsDirty: layoutStore.isDirty,
     layoutIsOfflineMode: layoutStore.isOfflineMode,
     offlineDraftCount: offlineChangesStore.draftCount,
     offlineDraftRows: offlineChangesStore.draftRows,
+    revertedPersistedCount: offlineChangesStore.revertedPersistedCount,
     saveProgressState: saveProgress.state,
-    trees: nodeTreeStore.trees,
+    treeNodeIds: [...nodeTreeStore.trees.keys()],
   }));
 
   // Whether the discard confirmation dialog is open.
   let showDiscardDialog = $state(false);
 
-  function reapplyPersistedOfflinePendingValues(): void {
-    nodeTreeStore.clearAllModifiedValues();
-    nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows);
+  function rehydrateConnectorSelectionsFromLayout(): void {
+    const layout = layoutStore.layout;
+    connectorSelectionsStore.hydrateFromLayout(layout);
   }
 
   // ── Save handler ────────────────────────────────────────────────────────────
 
   async function handleSave() {
     if (layoutStore.isOfflineMode) {
-      const localPending = offlineChangesStore.draftCount;
+      const localPending = configChangesStore.draftEntries().length + offlineChangesStore.draftCount;
       saveProgress = {
         state: 'saving',
         total: localPending,
@@ -86,10 +92,11 @@
       };
 
       try {
+        stageDraftsForOfflineSave();
         const saved = await onOfflineSave();
         if (saved) {
           await offlineChangesStore.reloadFromBackend();
-          reapplyPersistedOfflinePendingValues();
+          configChangesStore.clearAllDrafts();
           bowtieMetadataStore.clearAll();
           layoutStore.markClean();
           saveProgress = { ...saveProgress, state: 'completed', currentFieldLabel: null, completed: localPending };
@@ -117,13 +124,13 @@
     }
 
     const hasNodeEdits = viewState.hasConfigEdits;
-    const hasYamlEdits = bowtieMetadataStore.isDirty;
+    const hasLayoutMetadataEdits = bowtieMetadataStore.isDirty || layoutStore.isDirty;
 
-    if (!hasNodeEdits && !hasYamlEdits) return;
+    if (!hasNodeEdits && !hasLayoutMetadataEdits) return;
 
     saveProgress = {
       state: 'saving',
-      total: viewState.dirtyCount + (hasYamlEdits ? 1 : 0),
+      total: viewState.dirtyCount + (hasLayoutMetadataEdits ? 1 : 0),
       completed: 0,
       failed: 0,
       currentFieldLabel: hasNodeEdits ? 'Writing configuration…' : 'Layout metadata',
@@ -148,6 +155,14 @@
           failed: result.failed,
         };
         failCount += result.failed;
+
+        // Clear frontend drafts after a fully successful write.
+        // The backend has accepted all values; tree-updated events will refresh
+        // baselines shortly. For partial failures, leave drafts for
+        // pruneResolvedDraftsForNode to handle selectively.
+        if (result.failed === 0) {
+          configChangesStore.clearAllDrafts();
+        }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error('[SaveControls] writeModifiedValues failed:', msg);
@@ -158,12 +173,13 @@
 
     // T019: After node writes, save bowtie metadata to YAML layout file
     let yamlSaveOk = true;
-    if (bowtieMetadataStore.isDirty) {
+    if (hasLayoutMetadataEdits) {
       saveProgress = { ...saveProgress, currentFieldLabel: 'Layout metadata' };
       try {
         const saved = await onOfflineSave();
         if (saved) {
           bowtieMetadataStore.clearAll();
+          layoutStore.markClean();
         } else {
           yamlSaveOk = false;
         }
@@ -195,16 +211,19 @@
 
     if (layoutStore.isOfflineMode) {
       await offlineChangesStore.revertAllPending();
-      reapplyPersistedOfflinePendingValues();
+      discardAllConfigDrafts();
       bowtieMetadataStore.clearAll();
       layoutStore.revertToSaved();
+      rehydrateConnectorSelectionsFromLayout();
       saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
       return;
     }
 
     await discardModifiedValues();
+    discardAllConfigDrafts();
     bowtieMetadataStore.clearAll();
     layoutStore.revertToSaved();
+    rehydrateConnectorSelectionsFromLayout();
     saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
   }
 
@@ -222,7 +241,7 @@
     const saved = await onOfflineSaveAs();
     if (saved) {
       await offlineChangesStore.reloadFromBackend();
-      reapplyPersistedOfflinePendingValues();
+      configChangesStore.clearAllDrafts();
       bowtieMetadataStore.clearAll();
       layoutStore.markClean();
     }
@@ -259,9 +278,12 @@
 
 {:else if viewState.hasEdits}
   <!-- Idle with pending edits -->
-  <span class="pending-hint" role="status">
-    {viewState.pendingHintText}
-  </span>
+  <div class="pending-summary" role="status">
+    <span class="pending-hint">{viewState.pendingHintText}</span>
+    {#if viewState.connectorWarningCount > 0}
+      <span class="repair-warning">{viewState.connectorWarningCount} connector warning{viewState.connectorWarningCount === 1 ? '' : 's'}</span>
+    {/if}
+  </div>
 {/if}
 
 <button
@@ -330,6 +352,18 @@
     flex: 1;
     color: #835b00;                                /* amber: unsaved changes */
     font-style: italic;
+  }
+
+  .pending-summary {
+    flex: 1;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .repair-warning {
+    color: #ca5010;
   }
 
   .save-progress {

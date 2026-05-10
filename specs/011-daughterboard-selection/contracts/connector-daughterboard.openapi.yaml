@@ -1,0 +1,261 @@
+openapi: 3.1.0
+info:
+  title: Connector Daughterboard Planning Contract
+  version: 0.1.0
+  description: |
+    Logical backend contract for connector daughterboard selection and compatibility preview.
+    In implementation this will likely map to Tauri commands and node-tree payload fields rather than HTTP routes,
+    but the contract captures the request/response shape required by the feature.
+servers:
+  - url: tauri://bowties
+paths:
+  /nodes/{nodeId}/connector-profile:
+    get:
+      summary: Load connector-slot metadata and resolved profile topology for a node
+      operationId: getConnectorProfile
+      parameters:
+        - $ref: '#/components/parameters/NodeId'
+      responses:
+        '200':
+          description: Connector-aware profile metadata for the node
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorProfileView'
+        '404':
+          description: No connector-slot metadata for this node type
+  /layouts/{layoutId}/nodes/{nodeId}/connector-selections:
+    get:
+      summary: Read saved connector selections for a node in the active layout/project context
+      operationId: getConnectorSelections
+      parameters:
+        - $ref: '#/components/parameters/LayoutId'
+        - $ref: '#/components/parameters/NodeId'
+      responses:
+        '200':
+          description: Saved connector selection document
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorSelectionDocument'
+    put:
+      summary: Persist connector selections for a node in the active layout/project context
+      operationId: putConnectorSelections
+      parameters:
+        - $ref: '#/components/parameters/LayoutId'
+        - $ref: '#/components/parameters/NodeId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectorSelectionDocument'
+      responses:
+        '200':
+          description: Saved connector selection document
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorSelectionDocument'
+  /nodes/{nodeId}/connector-compatibility/preview:
+    post:
+      summary: Preview filtering and staged compatible repairs after a slot-selection change
+      operationId: previewConnectorCompatibility
+      parameters:
+        - $ref: '#/components/parameters/NodeId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompatibilityPreviewRequest'
+      responses:
+        '200':
+          description: Computed filtering and staged repairs for the proposed selection set
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompatibilityPreviewResponse'
+
+components:
+  parameters:
+    NodeId:
+      name: nodeId
+      in: path
+      required: true
+      schema:
+        type: string
+    LayoutId:
+      name: layoutId
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    ConnectorProfileView:
+      type: object
+      required:
+        - nodeId
+        - carrierKey
+        - slots
+      properties:
+        nodeId:
+          type: string
+        carrierKey:
+          type: string
+        slots:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConnectorSlotView'
+        supportedDaughterboards:
+          type: array
+          items:
+            $ref: '#/components/schemas/DaughterboardView'
+    ConnectorSlotView:
+      type: object
+      required:
+        - slotId
+        - label
+        - order
+        - allowNoneInstalled
+        - supportedDaughterboardIds
+      properties:
+        slotId:
+          type: string
+        label:
+          type: string
+        order:
+          type: integer
+        allowNoneInstalled:
+          type: boolean
+        supportedDaughterboardIds:
+          type: array
+          items:
+            type: string
+        affectedPaths:
+          type: array
+          items:
+            type: string
+    DaughterboardView:
+      type: object
+      required:
+        - daughterboardId
+        - displayName
+      properties:
+        daughterboardId:
+          type: string
+        displayName:
+          type: string
+        kind:
+          type: string
+        description:
+          type: string
+    ConnectorSelectionDocument:
+      type: object
+      required:
+        - nodeId
+        - carrierKey
+        - slotSelections
+      properties:
+        nodeId:
+          type: string
+        carrierKey:
+          type: string
+        slotSelections:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConnectorSelection'
+        updatedAt:
+          type: string
+          format: date-time
+    ConnectorSelection:
+      type: object
+      required:
+        - slotId
+        - status
+      properties:
+        slotId:
+          type: string
+        selectedDaughterboardId:
+          type: string
+        status:
+          type: string
+          enum: [selected, none, unknown]
+    CompatibilityPreviewRequest:
+      type: object
+      required:
+        - nodeId
+        - changedSlotId
+        - slotSelections
+      properties:
+        nodeId:
+          type: string
+        changedSlotId:
+          type: string
+        slotSelections:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConnectorSelection'
+    CompatibilityPreviewResponse:
+      type: object
+      required:
+        - nodeId
+        - changedSlotId
+        - filteredTargets
+        - stagedRepairs
+        - warnings
+      properties:
+        nodeId:
+          type: string
+        changedSlotId:
+          type: string
+        filteredTargets:
+          type: array
+          items:
+            $ref: '#/components/schemas/FilteredTarget'
+        stagedRepairs:
+          type: array
+          items:
+            $ref: '#/components/schemas/StagedRepair'
+        warnings:
+          type: array
+          items:
+            type: string
+    FilteredTarget:
+      type: object
+      required:
+        - targetPath
+        - effect
+      properties:
+        targetPath:
+          type: string
+        effect:
+          type: string
+          enum: [show, hide, disable, allowValues, denyValues]
+        allowedValues:
+          type: array
+          items:
+            type: string
+    StagedRepair:
+      type: object
+      required:
+        - targetPath
+        - baselineValue
+        - plannedValue
+        - reason
+        - originSlotId
+      properties:
+        targetPath:
+          type: string
+        space:
+          type: integer
+        offset:
+          type: string
+        baselineValue:
+          type: string
+        plannedValue:
+          type: string
+        reason:
+          type: string
+        originSlotId:
+          type: string

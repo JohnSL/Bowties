@@ -18,7 +18,34 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import TreeLeafRow from './TreeLeafRow.svelte';
 import type { LeafConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
 import type { BowtieCard } from '$lib/api/tauri';
-import { setModifiedValue, triggerAction } from '$lib/api/config';
+import { editKeyForLeaf } from '$lib/utils/editKey';
+import { triggerAction } from '$lib/api/config';
+
+const mockApplyEdit = vi.fn();
+const mockFlushDraftToBackend = vi.fn();
+
+let mockLayers: import('$lib/stores/configChanges.svelte').ChangeLayer[] = [];
+let mockVisible: TreeConfigValue | null = null;
+
+vi.mock('$lib/stores/configChanges.svelte', () => ({
+  configChangesStore: {
+    changeLayers: () => mockLayers,
+    visibleValue: () => mockVisible,
+    revert: vi.fn(),
+    hasDraftsForNode: vi.fn().mockReturnValue(false),
+    draftEntries: vi.fn().mockReturnValue([]),
+  },
+}));
+
+vi.mock('$lib/stores/configEditor.svelte', () => ({
+  configEditor: {
+    applyEdit: (...args: unknown[]) => mockApplyEdit(...args),
+  },
+}));
+
+vi.mock('$lib/orchestration/configDraftOrchestrator', () => ({
+  flushDraftToBackend: (...args: unknown[]) => mockFlushDraftToBackend(...args),
+}));
 
 // Mock $app/navigation
 vi.mock('$app/navigation', () => ({
@@ -58,6 +85,37 @@ vi.mock('$lib/api/config', () => ({
   triggerAction: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('$lib/stores/offlineChanges.svelte', () => ({
+  offlineChangesStore: {
+    isBusy: false,
+    findPersistedConfigChange: vi.fn().mockReturnValue(null),
+    revertToBaseline: vi.fn().mockResolvedValue(true),
+  },
+}));
+
+vi.mock('$lib/stores/layout.svelte', () => ({
+  layoutStore: {
+    isOfflineMode: false,
+    hasLayoutFile: false,
+    isDirty: false,
+    markDirty: vi.fn(),
+  },
+}));
+
+vi.mock('$lib/stores/layoutOpenLifecycle', () => {
+  const readable = (val: unknown) => ({ subscribe: (fn: (v: unknown) => void) => { fn(val); return () => {}; } });
+  return {
+    layoutOpenInProgress: readable(false),
+    layoutOpenPhase: readable('idle'),
+    setLayoutOpenPhase: vi.fn(),
+    layoutOpenStatusText: readable(''),
+  };
+});
+
+vi.mock('$lib/stores/connectionRequest.svelte', () => ({
+  connectionRequestStore: { isRequested: false, complete: vi.fn(), request: vi.fn() },
+}));
+
 function makeLeaf(overrides: Partial<LeafConfigNode> = {}): LeafConfigNode {
   return {
     kind: 'leaf',
@@ -91,6 +149,8 @@ function makeBowtie(overrides: Partial<BowtieCard> = {}): BowtieCard {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockLayers = [];
+  mockVisible = null;
 });
 
 describe('TreeLeafRow.svelte', () => {
@@ -126,7 +186,7 @@ describe('TreeLeafRow.svelte', () => {
     it('displays float value with precision', () => {
       const value: TreeConfigValue = { type: 'float', value: 3.14159 };
       render(TreeLeafRow, { props: { leaf: makeLeaf({ elementType: 'float', value }) } });
-      expect(screen.getByText('3.1416')).toBeInTheDocument();
+      expect(screen.getByText('3.14')).toBeInTheDocument();
     });
 
     it('displays event ID bytes in hex format', () => {
@@ -303,7 +363,7 @@ describe('TreeLeafRow.svelte', () => {
       expect(input).toHaveAttribute('maxlength', '15');
     });
 
-    it('calls setModifiedValue when text is entered', async () => {
+    it('calls configEditor.applyEdit when text is entered', async () => {
       const leaf = makeLeaf({
         elementType: 'string',
         value: { type: 'string', value: 'old' },
@@ -315,7 +375,7 @@ describe('TreeLeafRow.svelte', () => {
       const input = screen.getByRole('textbox');
       await fireEvent.input(input, { target: { value: 'new value' } });
 
-      expect(setModifiedValue).toHaveBeenCalledWith(NODE_ID, 100, 253, { type: 'string', value: 'new value' });
+      expect(mockApplyEdit).toHaveBeenCalledWith(editKeyForLeaf(NODE_ID, 253, 100), { type: 'string', value: 'new value' });
     });
   });
 
@@ -365,7 +425,7 @@ describe('TreeLeafRow.svelte', () => {
       expect(input).toHaveAttribute('max', '1000');
     });
 
-    it('calls setModifiedValue when a number is entered', async () => {
+    it('calls configEditor.applyEdit when a number is entered', async () => {
       const leaf = makeLeaf({
         elementType: 'int',
         value: { type: 'int', value: 0 },
@@ -378,7 +438,7 @@ describe('TreeLeafRow.svelte', () => {
       const input = screen.getByRole('spinbutton');
       await fireEvent.input(input, { target: { value: '7' } });
 
-      expect(setModifiedValue).toHaveBeenCalledWith(NODE_ID, 200, 253, { type: 'int', value: 7 });
+      expect(mockApplyEdit).toHaveBeenCalledWith(editKeyForLeaf(NODE_ID, 253, 200), { type: 'int', value: 7 });
     });
   });
 
@@ -435,7 +495,7 @@ describe('TreeLeafRow.svelte', () => {
       const select = screen.getByRole('combobox');
       await fireEvent.change(select, { target: { value: '1' } });
 
-      expect(setModifiedValue).toHaveBeenCalledWith(NODE_ID, 300, 253, { type: 'int', value: 1 });
+      expect(mockApplyEdit).toHaveBeenCalledWith(editKeyForLeaf(NODE_ID, 253, 300), { type: 'int', value: 1 });
     });
 
     it('does NOT render a number input for int with mapEntries', () => {
@@ -468,7 +528,7 @@ describe('TreeLeafRow.svelte', () => {
       expect(input).toHaveAttribute('step', 'any');
     });
 
-    it('calls setModifiedValue when float value entered', async () => {
+    it('calls configEditor.applyEdit when float value entered', async () => {
       const leaf = makeLeaf({
         elementType: 'float',
         value: { type: 'float', value: 1.0 },
@@ -481,10 +541,10 @@ describe('TreeLeafRow.svelte', () => {
       const input = screen.getByRole('spinbutton');
       await fireEvent.input(input, { target: { value: '2.718' } });
 
-      expect(setModifiedValue).toHaveBeenCalledWith(NODE_ID, 400, 253, { type: 'float', value: 2.718 });
+      expect(mockApplyEdit).toHaveBeenCalledWith(editKeyForLeaf(NODE_ID, 253, 400), { type: 'float', value: 2.718 });
     });
 
-    it('does not call setModifiedValue for non-numeric float input', async () => {
+    it('does not call configEditor.applyEdit for non-numeric float input', async () => {
       const leaf = makeLeaf({
         elementType: 'float',
         value: { type: 'float', value: 1.0 },
@@ -497,7 +557,7 @@ describe('TreeLeafRow.svelte', () => {
       const input = screen.getByRole('spinbutton');
       await fireEvent.input(input, { target: { value: 'abc' } });
 
-      expect(setModifiedValue).not.toHaveBeenCalled();
+      expect(mockApplyEdit).not.toHaveBeenCalled();
       expect(screen.getByRole('alert')).toBeInTheDocument();
     });
 
@@ -529,7 +589,7 @@ describe('TreeLeafRow.svelte', () => {
       expect(screen.getByRole('textbox', { name: /test field/i })).toBeInTheDocument();
     });
 
-    it('calls setModifiedValue with parsed bytes when valid dotted-hex event ID entered', async () => {
+    it('calls configEditor.applyEdit with parsed bytes when valid dotted-hex event ID entered', async () => {
       const leaf = makeLeaf({
         elementType: 'eventId',
         value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0], hex: '00.00.00.00.00.00.00.00' },
@@ -541,13 +601,13 @@ describe('TreeLeafRow.svelte', () => {
       const input = screen.getByRole('textbox', { name: /test field/i });
       await fireEvent.input(input, { target: { value: '05.01.01.01.22.00.00.FF' } });
 
-      expect(setModifiedValue).toHaveBeenCalledWith(
-        NODE_ID, 500, 253,
+      expect(mockApplyEdit).toHaveBeenCalledWith(
+        editKeyForLeaf(NODE_ID, 253, 500),
         expect.objectContaining({ type: 'eventId', bytes: [0x05, 0x01, 0x01, 0x01, 0x22, 0x00, 0x00, 0xff] }),
       );
     });
 
-    it('does not call setModifiedValue for malformed event ID', async () => {
+    it('does not call configEditor.applyEdit for malformed event ID', async () => {
       const leaf = makeLeaf({
         elementType: 'eventId',
         value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0], hex: '00.00.00.00.00.00.00.00' },
@@ -559,7 +619,7 @@ describe('TreeLeafRow.svelte', () => {
       const input = screen.getByRole('textbox', { name: /test field/i });
       await fireEvent.input(input, { target: { value: 'not-a-valid-event-id' } });
 
-      expect(setModifiedValue).not.toHaveBeenCalled();
+      expect(mockApplyEdit).not.toHaveBeenCalled();
       expect(screen.getByRole('alert')).toBeInTheDocument();
     });
 
@@ -575,7 +635,7 @@ describe('TreeLeafRow.svelte', () => {
       expect(screen.getByText('(not set)')).toBeInTheDocument();
     });
 
-    it('does not call setModifiedValue when all-zero event ID is typed', async () => {
+    it('does not call configEditor.applyEdit when all-zero event ID is typed', async () => {
       const leaf = makeLeaf({
         elementType: 'eventId',
         value: { type: 'eventId', bytes: [5, 1, 1, 1, 22, 0, 0, 1], hex: '05.01.01.01.16.00.00.01' },
@@ -587,7 +647,7 @@ describe('TreeLeafRow.svelte', () => {
       const input = screen.getByRole('textbox', { name: /test field/i });
       await fireEvent.input(input, { target: { value: '00.00.00.00.00.00.00.00' } });
 
-      expect(setModifiedValue).not.toHaveBeenCalled();
+      expect(mockApplyEdit).not.toHaveBeenCalled();
       expect(screen.getByRole('alert')).toBeInTheDocument();
       expect(screen.getByRole('alert').textContent).toContain('Event IDs starting with 00 are reserved placeholders');
     });
@@ -604,8 +664,8 @@ describe('TreeLeafRow.svelte', () => {
       const input = screen.getByRole('textbox', { name: /test field/i });
       await fireEvent.input(input, { target: { value: 'FF.FF.FF.FF.FF.FF.FF.FF' } });
 
-      expect(setModifiedValue).toHaveBeenCalledWith(
-        NODE_ID, 503, 253,
+      expect(mockApplyEdit).toHaveBeenCalledWith(
+        editKeyForLeaf(NODE_ID, 253, 503),
         expect.objectContaining({ type: 'eventId', bytes: [255, 255, 255, 255, 255, 255, 255, 255] }),
       );
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -637,7 +697,7 @@ describe('TreeLeafRow.svelte', () => {
       expect(screen.getByText(/Unconfigured placeholder/)).toBeInTheDocument();
     });
 
-    it('does not call setModifiedValue when leading-zero event ID is typed', async () => {
+    it('does not call configEditor.applyEdit when leading-zero event ID is typed', async () => {
       const leaf = makeLeaf({
         elementType: 'eventId',
         value: { type: 'eventId', bytes: [5, 1, 1, 1, 22, 0, 0, 1], hex: '05.01.01.01.16.00.00.01' },
@@ -649,7 +709,7 @@ describe('TreeLeafRow.svelte', () => {
       const input = screen.getByRole('textbox', { name: /test field/i });
       await fireEvent.input(input, { target: { value: '00.00.00.00.00.00.00.FF' } });
 
-      expect(setModifiedValue).not.toHaveBeenCalled();
+      expect(mockApplyEdit).not.toHaveBeenCalled();
       expect(screen.getByRole('alert')).toBeInTheDocument();
       expect(screen.getByRole('alert').textContent).toContain('Event IDs starting with 00 are reserved placeholders');
     });
@@ -719,7 +779,7 @@ describe('TreeLeafRow.svelte', () => {
       expect(input).toHaveValue(42);
     });
 
-    it('calls setModifiedValue when user types in a string field', async () => {
+    it('calls configEditor.applyEdit when user types in a string field', async () => {
       const leaf = makeLeaf({
         elementType: 'string',
         value: { type: 'string', value: 'Hello' },
@@ -731,7 +791,7 @@ describe('TreeLeafRow.svelte', () => {
       const input = screen.getByRole('textbox', { name: /test field/i });
       await fireEvent.input(input, { target: { value: 'World' } });
 
-      expect(setModifiedValue).toHaveBeenCalledWith(NODE_ID, 300, 253, { type: 'string', value: 'World' });
+      expect(mockApplyEdit).toHaveBeenCalledWith(editKeyForLeaf(NODE_ID, 253, 300), { type: 'string', value: 'World' });
     });
   });
 });
@@ -741,31 +801,38 @@ describe('TreeLeafRow.svelte', () => {
 describe('dirty and write state display', () => {
   const NODE_ID = '05.01.01.01.03.00';
 
-  it('applies dirty class when leaf has a modifiedValue', () => {
+  it('applies dirty class when a draft layer exists', () => {
+    mockLayers = [
+      { type: 'draft', value: { type: 'int', value: 42 } },
+      { type: 'baseline', value: { type: 'int', value: 0 } },
+    ];
+    mockVisible = { type: 'int', value: 42 };
     const leaf = makeLeaf({
       elementType: 'int',
       value: { type: 'int', value: 0 },
-      modifiedValue: { type: 'int', value: 42 },
     });
-    render(TreeLeafRow, { props: { leaf } });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
     expect(screen.getByRole('listitem')).toHaveClass('dirty');
   });
 
-  it('does not apply dirty class when modifiedValue is null', () => {
+  it('does not apply dirty class when no draft layer exists', () => {
     const leaf = makeLeaf({
       value: { type: 'int', value: 0 },
-      modifiedValue: null,
     });
     render(TreeLeafRow, { props: { leaf } });
     expect(screen.getByRole('listitem')).not.toHaveClass('dirty');
   });
 
-  it('shows modifiedValue in input instead of original committed value', () => {
+  it('shows draft value in input instead of original committed value', () => {
+    mockLayers = [
+      { type: 'draft', value: { type: 'int', value: 55 } },
+      { type: 'baseline', value: { type: 'int', value: 0 } },
+    ];
+    mockVisible = { type: 'int', value: 55 };
     const leaf = makeLeaf({
       elementType: 'int',
       value: { type: 'int', value: 0 },
       constraints: { min: 0, max: 100, defaultValue: null, mapEntries: null },
-      modifiedValue: { type: 'int', value: 55 },
     });
     render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
     expect(screen.getByRole('spinbutton')).toHaveValue(55);
@@ -776,7 +843,6 @@ describe('dirty and write state display', () => {
       elementType: 'int',
       value: { type: 'int', value: 5 },
       constraints: { min: 0, max: 10, defaultValue: null, mapEntries: null },
-      modifiedValue: { type: 'int', value: 7 },
       writeState: 'writing',
     });
     render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
@@ -929,7 +995,7 @@ describe('T041: int field with slider hint', () => {
     expect(document.querySelector('.slider-value')).not.toBeInTheDocument();
   });
 
-  it('calls setModifiedValue on change when immediate is false', async () => {
+  it('calls configEditor.applyEdit on change when immediate is false', async () => {
     const leaf = makeLeaf({
       elementType: 'int',
       value: { type: 'int', value: 5 },
@@ -942,7 +1008,7 @@ describe('T041: int field with slider hint', () => {
     render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
     const slider = screen.getByRole('slider');
     await fireEvent.change(slider, { target: { value: '8' } });
-    expect(setModifiedValue).toHaveBeenCalledWith(NODE_ID, 50, 253, { type: 'int', value: 8 });
+    expect(mockApplyEdit).toHaveBeenCalledWith(editKeyForLeaf(NODE_ID, 253, 50), { type: 'int', value: 8 });
   });
 });
 
@@ -988,7 +1054,7 @@ describe('T042: int field with radio button hint', () => {
     expect(screen.getByLabelText('Fast')).toBeInTheDocument();
   });
 
-  it('calls setModifiedValue with numeric value when radio is changed', async () => {
+  it('calls configEditor.applyEdit with numeric value when radio is changed', async () => {
     const leaf = makeLeaf({
       elementType: 'int',
       value: { type: 'int', value: 0 },
@@ -1004,7 +1070,7 @@ describe('T042: int field with radio button hint', () => {
     render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
     const onRadio = screen.getByLabelText('On');
     await fireEvent.change(onRadio, { target: { value: '1' } });
-    expect(setModifiedValue).toHaveBeenCalledWith(NODE_ID, 300, 253, { type: 'int', value: 1 });
+    expect(mockApplyEdit).toHaveBeenCalledWith(editKeyForLeaf(NODE_ID, 253, 300), { type: 'int', value: 1 });
   });
 });
 
@@ -1045,6 +1111,81 @@ describe('T043: reserved value option in dropdown select', () => {
     });
     render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
     expect(screen.queryByRole('option', { name: /reserved/i })).not.toBeInTheDocument();
+  });
+
+  it('shows the filtered-out current enum label without a warning when a compatible replacement exists', () => {
+    const leaf = makeLeaf({
+      name: 'Input Function',
+      elementType: 'int',
+      value: { type: 'int', value: 1 },
+      size: 1,
+      constraints: {
+        min: 0, max: 8, defaultValue: null,
+        mapEntries: [
+          { value: 0, label: 'Disabled' },
+          { value: 1, label: 'Active Hi' },
+          { value: 5, label: 'Sample Hi' },
+        ],
+      },
+    });
+
+    render(TreeLeafRow, {
+      props: {
+        leaf,
+        nodeId: NODE_ID,
+        connectorConstraintState: {
+          slotId: 'connector-a',
+          hidden: false,
+          disabled: false,
+          readOnly: false,
+          allowedValues: [0, 5],
+          deniedValues: [],
+          explanations: [],
+        },
+      },
+    });
+
+    const incompatibleOpt = screen.getByRole('option', { name: 'Active Hi' });
+    expect(incompatibleOpt).toBeInTheDocument();
+    expect(incompatibleOpt).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Input Function' })).toHaveValue('1');
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('shows the incompatibility warning for constrained numeric inputs when no compatible value exists', () => {
+    const leaf = makeLeaf({
+      name: 'Pulse Width',
+      elementType: 'int',
+      value: { type: 'int', value: 3 },
+      size: 1,
+      constraints: {
+        min: 0,
+        max: 8,
+        defaultValue: null,
+        mapEntries: null,
+      },
+    });
+
+    render(TreeLeafRow, {
+      props: {
+        leaf,
+        nodeId: NODE_ID,
+        connectorConstraintState: {
+          slotId: 'connector-a',
+          hidden: false,
+          disabled: false,
+          readOnly: false,
+          allowedValues: ['Missing Value'],
+          deniedValues: [],
+          explanations: [],
+        },
+      },
+    });
+
+    expect(screen.getByRole('spinbutton', { name: 'Pulse Width' })).toHaveValue(3);
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Current value is incompatible with selected daughterboard',
+    );
   });
 });
 

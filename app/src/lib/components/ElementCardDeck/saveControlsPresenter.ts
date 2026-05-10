@@ -1,8 +1,10 @@
 import type { OfflineChangeRow } from '$lib/api/sync';
-import { countModifiedLeaves, type NodeConfigTree, type SaveProgress } from '$lib/types/nodeTree';
+import { configChangesStore } from '$lib/stores/configChanges.svelte';
+import type { SaveProgress } from '$lib/types/nodeTree';
 
 export interface SaveControlsViewState {
   canSave: boolean;
+  connectorWarningCount: number;
   dirtyCount: number;
   dirtyNodeCount: number;
   discardFieldCount: number;
@@ -20,31 +22,35 @@ export interface SaveControlsViewState {
 export function deriveSaveControlsViewState(args: {
   bowtieMetadataEditCount: number;
   bowtieMetadataIsDirty: boolean;
+  configDraftCount: number;
+  connectorWarningCount: number;
   layoutIsDirty: boolean;
   layoutIsOfflineMode: boolean;
   offlineDraftCount: number;
   offlineDraftRows: OfflineChangeRow[];
+  revertedPersistedCount: number;
   saveProgressState: SaveProgress['state'];
-  trees: Map<string, NodeConfigTree>;
+  treeNodeIds: string[];
 }): SaveControlsViewState {
   const {
     bowtieMetadataEditCount,
     bowtieMetadataIsDirty,
+    configDraftCount,
+    connectorWarningCount,
     layoutIsDirty,
     layoutIsOfflineMode,
     offlineDraftCount,
     offlineDraftRows,
+    revertedPersistedCount,
     saveProgressState,
-    trees,
+    treeNodeIds,
   } = args;
 
-  let dirtyCount = 0;
+  // Count config drafts per node via configChangesStore
+  let dirtyCount = configDraftCount;
   const dirtyNodeIds = new Set<string>();
-
-  for (const [nodeId, tree] of trees) {
-    const modifiedCount = countModifiedLeaves(tree);
-    dirtyCount += modifiedCount;
-    if (modifiedCount > 0) {
+  for (const nodeId of treeNodeIds) {
+    if (configChangesStore.hasDraftsForNode(nodeId)) {
       dirtyNodeIds.add(nodeId);
     }
   }
@@ -57,20 +63,27 @@ export function deriveSaveControlsViewState(args: {
 
   const hasConfigEdits = dirtyCount > 0;
   const hasMetadataEdits = bowtieMetadataIsDirty;
-  const hasOfflineEdits = layoutIsOfflineMode && offlineDraftCount > 0;
-  const hasEdits = hasConfigEdits || hasMetadataEdits || hasOfflineEdits || layoutIsDirty;
-  const pendingEditCount = layoutIsOfflineMode
-    ? offlineDraftCount + (layoutIsDirty && offlineDraftCount === 0 ? 1 : 0)
-    : dirtyCount + (hasMetadataEdits ? bowtieMetadataEditCount : 0);
+  const metadataEditCount = hasMetadataEdits ? Math.max(1, bowtieMetadataEditCount) : 0;
+  const hasLayoutOnlyEdits = layoutIsDirty && !hasMetadataEdits;
+  const layoutOnlyEditCount = hasLayoutOnlyEdits ? 1 : 0;
+  const hasRevertedPersisted = revertedPersistedCount > 0;
+  const hasOfflineEdits = layoutIsOfflineMode && dirtyCount > 0;
+  const hasEdits = hasConfigEdits || hasMetadataEdits || hasOfflineEdits || hasRevertedPersisted || layoutIsDirty;
+  const pendingEditCount = dirtyCount + revertedPersistedCount + metadataEditCount + layoutOnlyEditCount;
   const pendingHintText = `${pendingEditCount} ${layoutIsOfflineMode ? 'unsaved edit' : 'unsaved change'}${pendingEditCount === 1 ? '' : 's'}`;
   const isSaving = saveProgressState === 'saving';
+  const baseDiscardFieldCount = dirtyCount + revertedPersistedCount;
+  const baseDiscardNodeCount = dirtyNodeIds.size;
+  const discardFieldCount = baseDiscardFieldCount + metadataEditCount + layoutOnlyEditCount;
+  const discardNodeCount = discardFieldCount > 0 ? Math.max(1, baseDiscardNodeCount) : 0;
 
   return {
     canSave: hasEdits && !isSaving,
+    connectorWarningCount,
     dirtyCount,
     dirtyNodeCount: dirtyNodeIds.size,
-    discardFieldCount: layoutIsOfflineMode ? offlineDraftCount : dirtyCount,
-    discardNodeCount: layoutIsOfflineMode ? offlineDirtyNodeCount : dirtyNodeIds.size,
+    discardFieldCount,
+    discardNodeCount,
     hasConfigEdits,
     hasEdits,
     hasMetadataEdits,

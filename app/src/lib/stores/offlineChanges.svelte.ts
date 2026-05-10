@@ -7,7 +7,10 @@
 
 import type { OfflineChangeInput, OfflineChangeRow } from '$lib/api/sync';
 import { listOfflineChanges, replaceOfflineChanges, revertOfflineChange } from '$lib/api/sync';
+import { effectiveValue, type LeafConfigNode, type TreeConfigValue } from '$lib/types/nodeTree';
 import { normalizeNodeId } from '$lib/utils/nodeId';
+import type { StagedRepair } from '$lib/types/connectorProfile';
+import { parseOfflineStoredValueForLeaf } from '$lib/utils/treeConfigValuePersistence';
 
 class OfflineChangesStore {
   private _persistedRows = $state<OfflineChangeRow[]>([]);
@@ -61,7 +64,23 @@ class OfflineChangesStore {
   }
 
   get draftCount(): number {
-    return this._draftRows.filter((r) => r.status === 'pending').length;
+    return this._draftRows.filter(
+      (r) => r.status === 'pending' && r.plannedValue !== r.baselineValue,
+    ).length;
+  }
+
+  /**
+   * Count of persisted pending rows that have been reverted in the working
+   * set but not yet saved to disk. Used by the presenter to count unsaved
+   * edits from persisted-row reversions.
+   */
+  get revertedPersistedCount(): number {
+    const persistedKeys = new Set(
+      this._persistedRows.map((r) => this.targetKeyForRow(r)),
+    );
+    return this._savedRows.filter(
+      (r) => r.status === 'pending' && !persistedKeys.has(this.targetKeyForRow(r)),
+    ).length;
   }
 
   setRows(rows: OfflineChangeRow[]): void {
@@ -91,15 +110,16 @@ class OfflineChangesStore {
     const existingPersisted = this.findPersistedConfigChange(change.nodeId, change.space, change.offset);
     const existingDraft = this.findDraftConfigChange(change.nodeId, change.space, change.offset);
 
-    const baselineValue =
-      existingDraft?.baselineValue ??
-      existingPersisted?.baselineValue ??
-      change.baselineValue;
+    const baselineValue = this.currentEffectivePlannedValueForConfigChange(
+      change.nodeId,
+      change.space,
+      change.offset,
+      change.baselineValue,
+    );
 
-    const nextRow: OfflineChangeRow = {
+    const nextRow: DraftOfflineChangeRow = {
       changeId:
         existingDraft?.changeId ??
-        existingPersisted?.changeId ??
         `local-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       kind: 'config',
       nodeId: change.nodeId,
@@ -110,8 +130,12 @@ class OfflineChangesStore {
       status: 'pending',
     };
 
-    if (nextRow.plannedValue === nextRow.baselineValue && !existingPersisted) {
-      if (existingDraft) this.removeDraftByTarget(nextRow);
+    if (nextRow.plannedValue === nextRow.baselineValue) {
+      if (existingDraft) {
+        this.removeDraftByTarget(nextRow);
+      } else if (existingPersisted) {
+        this.upsertRow(nextRow);
+      }
       return;
     }
 
@@ -173,6 +197,26 @@ class OfflineChangesStore {
     ) ?? null;
   }
 
+  findEffectiveConfigChange(nodeId: string, space: number, offset: string): OfflineChangeRow | null {
+    return this.effectiveRows.find(
+      (r) =>
+        r.kind === 'config' &&
+        r.status === 'pending' &&
+        normalizeNodeId(r.nodeId) === normalizeNodeId(nodeId) &&
+        r.space === space &&
+        r.offset === offset
+    ) ?? null;
+  }
+
+  resolveEffectiveCurrentValue(nodeId: string, leaf: LeafConfigNode): TreeConfigValue | null {
+    const effectiveRow = this.findEffectiveConfigChange(nodeId, leaf.space, this.offsetHex(leaf.address));
+    if (!effectiveRow) {
+      return effectiveValue(leaf);
+    }
+
+    return parseOfflineStoredValueForLeaf(leaf, effectiveRow.plannedValue) ?? effectiveValue(leaf);
+  }
+
   findDraftBowtieMetadataChange(eventIdHex: string): OfflineChangeRow | null {
     const baselineKey = `event:${eventIdHex}`;
     return this._draftRows.find(
@@ -195,24 +239,31 @@ class OfflineChangesStore {
     this._draftRows = this._draftRows.filter((r) => r.changeId !== changeId);
   }
 
-  /**
-   * Revert a single offline change back to its captured baseline.
-   * Removes the change from the current in-memory working set.
-   * Persisted rows are removed from the backend cache, but remain in the
-   * saved snapshot until the user explicitly saves or discards.
-   */
-  async revertToBaseline(changeId: string): Promise<boolean> {
+  async revertDraftChange(changeId: string): Promise<boolean> {
     this._busy = true;
     try {
-      // Remove from draft rows immediately
-      this._draftRows = this._draftRows.filter((r) => r.changeId !== changeId);
-
-      // If persisted, remove it from the backend cache and the current working rows.
-      const wasPersisted = this._persistedRows.some((r) => r.changeId === changeId);
-      if (wasPersisted) {
-        await revertOfflineChange(changeId);
-        this._persistedRows = this._persistedRows.filter((r) => r.changeId !== changeId);
+      const draftRow = this._draftRows.find((r) => r.changeId === changeId);
+      if (!draftRow) {
+        return false;
       }
+
+      this._draftRows = this._draftRows.filter((r) => r.changeId !== changeId);
+      return true;
+    } finally {
+      this._busy = false;
+    }
+  }
+
+  async revertPersistedChange(changeId: string): Promise<boolean> {
+    this._busy = true;
+    try {
+      const wasPersisted = this._persistedRows.some((r) => r.changeId === changeId);
+      if (!wasPersisted) {
+        return false;
+      }
+
+      await revertOfflineChange(changeId);
+      this._persistedRows = this._persistedRows.filter((r) => r.changeId !== changeId);
       return true;
     } catch {
       return false;
@@ -221,11 +272,61 @@ class OfflineChangesStore {
     }
   }
 
+  /**
+   * Revert a single offline change back to its captured baseline.
+   * Removes the change from the current in-memory working set.
+   * Persisted rows are removed from the backend cache, but remain in the
+   * saved snapshot until the user explicitly saves or discards.
+   */
+  async revertToBaseline(changeId: string): Promise<boolean> {
+    if (this._draftRows.some((r) => r.changeId === changeId)) {
+      return this.revertDraftChange(changeId);
+    }
+
+    return this.revertPersistedChange(changeId);
+  }
+
   clear(): void {
     this._persistedRows = [];
     this._savedRows = [];
     this._draftRows = [];
     this._busy = false;
+  }
+
+  applyConnectorCompatibilityConfigChanges(nodeId: string, repairs: StagedRepair[]): void {
+    for (const repair of repairs) {
+      if (repair.space == null || !repair.offset) {
+        continue;
+      }
+
+      this.upsertConfigChange({
+        nodeId,
+        space: repair.space,
+        offset: repair.offset,
+        baselineValue: repair.baselineValue,
+        plannedValue: repair.plannedValue,
+      });
+    }
+  }
+
+  /**
+   * Remove draft config change rows for the given locations.
+   *
+   * Used by the connector orchestrator to clear stale connector-repair drafts
+   * before recomputing compatibility, so old cancellation rows don't suppress
+   * persisted pending values on re-selection.
+   */
+  clearDraftConfigChanges(nodeId: string, locations: { space: number; offset: string }[]): void {
+    if (locations.length === 0) return;
+    const normalizedId = normalizeNodeId(nodeId);
+    const keySet = new Set(
+      locations.map((loc) => `config:${normalizedId}:${loc.space ?? 0}:${loc.offset ?? ''}`),
+    );
+    const before = this._draftRows.length;
+    this._draftRows = this._draftRows.filter((r) => !keySet.has(this.targetKeyForRow(r)));
+    if (this._draftRows.length !== before) {
+      this._draftRows = [...this._draftRows];
+    }
   }
 
   setBusy(value: boolean): void {
@@ -283,10 +384,34 @@ class OfflineChangesStore {
     return `${row.kind}:${row.changeId}`;
   }
 
+  private offsetHex(address: number): string {
+    return `0x${address.toString(16).toUpperCase().padStart(8, '0')}`;
+  }
+
   private removeDraftByTarget(row: OfflineChangeRow): void {
     const key = this.targetKeyForRow(row);
     this._draftRows = this._draftRows.filter((r) => this.targetKeyForRow(r) !== key);
   }
+
+  private currentEffectivePlannedValueForConfigChange(
+    nodeId: string,
+    space: number,
+    offset: string,
+    fallbackBaselineValue: string,
+  ): string {
+    const existingDraft = this.findDraftConfigChange(nodeId, space, offset);
+    if (existingDraft) {
+      return existingDraft.baselineValue;
+    }
+
+    const existingPersisted = this.findPersistedConfigChange(nodeId, space, offset);
+    if (existingPersisted) {
+      return existingPersisted.baselineValue;
+    }
+
+    return fallbackBaselineValue;
+  }
+
 }
 
 export const offlineChangesStore = new OfflineChangesStore();

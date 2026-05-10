@@ -2,13 +2,13 @@ import type { DiscoveredNode } from '$lib/api/tauri';
 import type { OfflineChangeRow } from '$lib/api/sync';
 import { pipConfirmsConfigReadable } from '$lib/orchestration/configReadOrchestrator';
 import {
-  hasModifiedDescendant,
-  hasModifiedLeaves,
   isGroup,
   isLeaf,
   type ConfigNode,
   type NodeConfigTree,
 } from '$lib/types/nodeTree';
+import { configChangesStore } from '$lib/stores/configChanges.svelte';
+import { editKeyForLeaf } from '$lib/utils/editKey';
 import { resolveNodeDisplayName } from '$lib/utils/nodeDisplayName';
 
 export interface SidebarNodeEntry {
@@ -81,7 +81,7 @@ export function getNodePendingState(
 
   return {
     hasPendingApply: hasPendingApplyForNode(nodeId, persistedRows),
-    hasPendingEdits: hasModifiedLeaves(tree),
+    hasPendingEdits: configChangesStore.hasDraftsForNode(nodeId),
   };
 }
 
@@ -103,7 +103,7 @@ export function getSegmentPendingState(
 
   return {
     hasPendingApply: hasPendingApplyInChildren(nodeId, segment.children, persistedRows),
-    hasPendingEdits: hasModifiedDescendant(segment.children, []),
+    hasPendingEdits: hasDraftInChildren(nodeId, segment.children),
   };
 }
 
@@ -171,6 +171,23 @@ function hasPendingApplyInChildren(
     }
 
     if (isGroup(child) && hasPendingApplyInChildren(nodeId, child.children, persistedRows)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function hasDraftInChildren(nodeId: string, children: ConfigNode[]): boolean {
+  for (const child of children) {
+    if (isLeaf(child)) {
+      const key = editKeyForLeaf(nodeId, child.space, child.address);
+      const layers = configChangesStore.changeLayers(key);
+      if (layers.some(l => l.type === 'draft')) return true;
+      continue;
+    }
+
+    if (isGroup(child) && hasDraftInChildren(nodeId, child.children)) {
       return true;
     }
   }

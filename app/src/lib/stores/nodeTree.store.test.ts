@@ -101,6 +101,27 @@ describe('nodeTreeStore — node-tree-updated', () => {
   });
 });
 
+describe('loadTree without connector metadata', () => {
+  it('preserves a null connectorProfile for non-modular nodes', async () => {
+    (invoke as any).mockResolvedValueOnce({
+      nodeId: NODE_ID,
+      identity: null,
+      connectorProfile: null,
+      connectorProfileWarning: null,
+      segments: [
+        { name: 'Config', description: null, origin: 0, space: 253, children: [] },
+      ],
+    });
+
+    const tree = await nodeTreeStore.loadTree(NODE_ID);
+
+    expect(invoke).toHaveBeenCalledWith('get_node_tree', { nodeId: NODE_ID });
+    expect(tree?.connectorProfile ?? null).toBe(null);
+    expect(tree?.connectorProfileWarning ?? null).toBe(null);
+    expect(nodeTreeStore.getSegments(NODE_ID)).toHaveLength(1);
+  });
+});
+
 // ─── Step 1: CDI-index vs array-index (findLeafByPathInChildren) ─────────────
 //
 // Tested indirectly via updateLeafValue, which calls findLeafByPath →
@@ -186,241 +207,5 @@ describe('updateLeafValue — CDI-index vs array-index (Step 1)', () => {
     const wrapperNode = tree.segments[0].children[0] as GroupConfigNode;
     const inst2Node = wrapperNode.children[1] as GroupConfigNode;
     expect(inst2Node.children[0]).toMatchObject({ kind: 'leaf', value: { type: 'int', value: 55 } });
-  });
-});
-
-// ─── Offline mode: setLeafModifiedValue and clearAllModifiedValues ─────────
-//
-// These helpers support offline mode dirty tracking without IPC.
-// setLeafModifiedValue() marks a leaf as having in-memory edits (for parent indicators).
-// clearAllModifiedValues() resets all trees after save completes.
-
-describe('setLeafModifiedValue — offline dirty marker', () => {
-  it('sets modifiedValue on a leaf without IPC', () => {
-    const leaf = makeTestLeaf(['seg:0', 'elem:0'], 0);
-    nodeTreeStore.setTree(NODE_ID, {
-      nodeId: NODE_ID, identity: null,
-      segments: [{ name: 'S', description: null, origin: 0, space: 253, children: [leaf] }],
-    });
-
-    // Initially no modifiedValue (should be null or undefined)
-    const leafBefore = nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0];
-    expect(leafBefore.modifiedValue).toBeFalsy();
-
-    // Set a modifiedValue (e.g. user edited this field in offline mode)
-    const modVal: TreeConfigValue = { type: 'int', value: 99 };
-    nodeTreeStore.setLeafModifiedValue(NODE_ID, ['seg:0', 'elem:0'], modVal);
-
-    // Verify modifiedValue is set and tree is still accessible
-    const updatedLeaf = nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0];
-    expect(updatedLeaf).toMatchObject({
-      kind: 'leaf',
-      modifiedValue: modVal,
-    });
-  });
-
-  it('clears modifiedValue when passed null', () => {
-    const leaf = makeTestLeaf(['seg:0', 'elem:0'], 0);
-    nodeTreeStore.setTree(NODE_ID, {
-      nodeId: NODE_ID, identity: null,
-      segments: [{ name: 'S', description: null, origin: 0, space: 253, children: [leaf] }],
-    });
-
-    // Set modifiedValue
-    nodeTreeStore.setLeafModifiedValue(NODE_ID, ['seg:0', 'elem:0'], { type: 'int', value: 99 });
-    expect(nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0].modifiedValue).toBeDefined();
-
-    // Clear it
-    nodeTreeStore.setLeafModifiedValue(NODE_ID, ['seg:0', 'elem:0'], null);
-
-    // Verify it's cleared and writeState/writeError are also cleared
-    const updatedLeaf = nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0];
-    expect(updatedLeaf.modifiedValue).toBeNull();
-    expect(updatedLeaf.writeState).toBeNull();
-    expect(updatedLeaf.writeError).toBeNull();
-  });
-
-  it('handles nested paths with groups', () => {
-    const innerLeaf = makeTestLeaf(['seg:0', 'elem:1#1', 'elem:0'], 10);
-    const inst = makeTestGroup(['seg:0', 'elem:1#1'], [innerLeaf]);
-    const wrapper = makeTestGroup(['seg:0', 'elem:1'], [inst]);
-
-    nodeTreeStore.setTree(NODE_ID, {
-      nodeId: NODE_ID, identity: null,
-      segments: [{ name: 'S', description: null, origin: 0, space: 253, children: [wrapper] }],
-    });
-
-    // Set modifiedValue on nested leaf
-    nodeTreeStore.setLeafModifiedValue(NODE_ID, ['seg:0', 'elem:1#1', 'elem:0'], { type: 'int', value: 50 });
-
-    const tree = nodeTreeStore.getTree(NODE_ID)!;
-    const wrapperNode = tree.segments[0].children[0] as GroupConfigNode;
-    const instNode = wrapperNode.children[0] as GroupConfigNode;
-    const targetLeaf = instNode.children[0];
-
-    expect(targetLeaf).toMatchObject({
-      kind: 'leaf',
-      modifiedValue: { type: 'int', value: 50 },
-    });
-  });
-});
-
-// ─── Offline pending: applyOfflinePendingValues ────────────────────────────
-
-import type { OfflineChangeRow } from '$lib/api/sync';
-
-function makePendingRow(overrides: Partial<OfflineChangeRow> = {}): OfflineChangeRow {
-  return {
-    changeId: 'row-1',
-    kind: 'config',
-    nodeId: NODE_ID,
-    space: 253,
-    offset: '0x00000000',
-    baselineValue: '3',
-    plannedValue: '5',
-    status: 'pending',
-    ...overrides,
-  };
-}
-
-describe('applyOfflinePendingValues', () => {
-  it('sets modifiedValue and isOfflinePending on a matching leaf (int)', () => {
-    const leaf = makeTestLeaf(['seg:0', 'elem:0'], 0);
-    nodeTreeStore.setTree(NODE_ID, {
-      nodeId: NODE_ID, identity: null,
-      segments: [{ name: 'Config', description: null, origin: 0, space: 253, children: [leaf] }],
-    });
-
-    nodeTreeStore.applyOfflinePendingValues([makePendingRow()]);
-
-    const updated = nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0] as LeafConfigNode;
-    expect(updated.modifiedValue).toEqual({ type: 'int', value: 5 });
-    expect(updated.isOfflinePending).toBe(true);
-  });
-
-  it('does not modify leaves when no row matches address', () => {
-    const leaf = makeTestLeaf(['seg:0', 'elem:0'], 4); // address 4, row targets 0x00000000
-    nodeTreeStore.setTree(NODE_ID, {
-      nodeId: NODE_ID, identity: null,
-      segments: [{ name: 'Config', description: null, origin: 0, space: 253, children: [leaf] }],
-    });
-
-    nodeTreeStore.applyOfflinePendingValues([makePendingRow()]);
-
-    const updated = nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0] as LeafConfigNode;
-    expect(updated.modifiedValue).toBeFalsy();
-    expect(updated.isOfflinePending).toBeFalsy();
-  });
-
-  it('skips rows with status !== pending', () => {
-    const leaf = makeTestLeaf(['seg:0', 'elem:0'], 0);
-    nodeTreeStore.setTree(NODE_ID, {
-      nodeId: NODE_ID, identity: null,
-      segments: [{ name: 'Config', description: null, origin: 0, space: 253, children: [leaf] }],
-    });
-
-    nodeTreeStore.applyOfflinePendingValues([makePendingRow({ status: 'applied' as any })]);
-
-    const updated = nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0] as LeafConfigNode;
-    expect(updated.modifiedValue).toBeFalsy();
-    expect(updated.isOfflinePending).toBeFalsy();
-  });
-
-  it('does not modify trees for nodes not in the store', () => {
-    // Store is empty (reset in beforeEach) — should not throw
-    expect(() => {
-      nodeTreeStore.applyOfflinePendingValues([makePendingRow()]);
-    }).not.toThrow();
-  });
-
-  it('matches canonical row nodeId to dotted tree nodeId', () => {
-    const leaf = makeTestLeaf(['seg:0', 'elem:0'], 0);
-    nodeTreeStore.setTree(NODE_ID, {
-      nodeId: NODE_ID, identity: null,
-      segments: [{ name: 'Config', description: null, origin: 0, space: 253, children: [leaf] }],
-    });
-
-    nodeTreeStore.applyOfflinePendingValues([
-      makePendingRow({ nodeId: '050201000000' }),
-    ]);
-
-    const updated = nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0] as LeafConfigNode;
-    expect(updated.modifiedValue).toEqual({ type: 'int', value: 5 });
-    expect(updated.isOfflinePending).toBe(true);
-  });
-
-  it('sets modifiedValue as string for non-numeric plannedValue', () => {
-    const leaf = makeTestLeaf(['seg:0', 'elem:0'], 0);
-    nodeTreeStore.setTree(NODE_ID, {
-      nodeId: NODE_ID, identity: null,
-      segments: [{ name: 'Config', description: null, origin: 0, space: 253, children: [leaf] }],
-    });
-
-    nodeTreeStore.applyOfflinePendingValues([makePendingRow({ plannedValue: 'Hello' })]);
-
-    const updated = nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0] as LeafConfigNode;
-    expect(updated.modifiedValue).toEqual({ type: 'string', value: 'Hello' });
-    expect(updated.isOfflinePending).toBe(true);
-  });
-});
-
-describe('clearAllModifiedValues — offline save cleanup', () => {
-  it('clears modifiedValue from all trees across all nodes', () => {
-    const NODE_ID_2 = '06.02.01.00.00.00';
-
-    // Set up two trees with modified leaves
-    const leaf1 = makeTestLeaf(['seg:0', 'elem:0'], 0);
-    const leaf2 = makeTestLeaf(['seg:0', 'elem:0'], 0);
-
-    nodeTreeStore.setTree(NODE_ID, {
-      nodeId: NODE_ID, identity: null,
-      segments: [{ name: 'S', description: null, origin: 0, space: 253, children: [leaf1] }],
-    });
-    nodeTreeStore.setTree(NODE_ID_2, {
-      nodeId: NODE_ID_2, identity: null,
-      segments: [{ name: 'S', description: null, origin: 0, space: 253, children: [leaf2] }],
-    });
-
-    // Set modifiedValue on both
-    nodeTreeStore.setLeafModifiedValue(NODE_ID, ['seg:0', 'elem:0'], { type: 'int', value: 99 });
-    nodeTreeStore.setLeafModifiedValue(NODE_ID_2, ['seg:0', 'elem:0'], { type: 'string', value: 'test' });
-
-    expect(nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0].modifiedValue).toBeDefined();
-    expect(nodeTreeStore.getTree(NODE_ID_2)!.segments[0].children[0].modifiedValue).toBeDefined();
-
-    // Clear all
-    nodeTreeStore.clearAllModifiedValues();
-
-    // Verify both are cleared
-    expect(nodeTreeStore.getTree(NODE_ID)!.segments[0].children[0].modifiedValue).toBeNull();
-    expect(nodeTreeStore.getTree(NODE_ID_2)!.segments[0].children[0].modifiedValue).toBeNull();
-  });
-
-  it('handles deeply nested structures when clearing', () => {
-    const innerLeaf = makeTestLeaf(['seg:0', 'elem:1#1', 'elem:0'], 10);
-    const inst = makeTestGroup(['seg:0', 'elem:1#1'], [innerLeaf]);
-    const wrapper = makeTestGroup(['seg:0', 'elem:1'], [inst]);
-
-    nodeTreeStore.setTree(NODE_ID, {
-      nodeId: NODE_ID, identity: null,
-      segments: [{ name: 'S', description: null, origin: 0, space: 253, children: [wrapper] }],
-    });
-
-    // Set modifiedValue on nested leaf
-    nodeTreeStore.setLeafModifiedValue(NODE_ID, ['seg:0', 'elem:1#1', 'elem:0'], { type: 'int', value: 50 });
-
-    const tree1Before = nodeTreeStore.getTree(NODE_ID)!;
-    const wrapperBefore = tree1Before.segments[0].children[0] as GroupConfigNode;
-    const instBefore = wrapperBefore.children[0] as GroupConfigNode;
-    expect(instBefore.children[0].modifiedValue).toBeDefined();
-
-    // Clear all
-    nodeTreeStore.clearAllModifiedValues();
-
-    // Verify nested leaf is cleared
-    const tree1After = nodeTreeStore.getTree(NODE_ID)!;
-    const wrapperAfter = tree1After.segments[0].children[0] as GroupConfigNode;
-    const instAfter = wrapperAfter.children[0] as GroupConfigNode;
-    expect(instAfter.children[0].modifiedValue).toBeNull();
   });
 });

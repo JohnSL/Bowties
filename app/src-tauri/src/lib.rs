@@ -324,6 +324,10 @@ pub fn run() {
             commands::revert_offline_change,  // Spec 010: offline change scaffolding
             commands::list_offline_changes,  // Spec 010: offline change scaffolding
             commands::replace_offline_changes,  // Spec 010: bulk replace offline changes cache
+            commands::get_connector_profile,
+            commands::get_connector_selections,
+            commands::put_connector_selections,
+            commands::preview_connector_compatibility,
             commands::compute_layout_match_status,  // Spec 010: sync match scaffolding
             commands::build_sync_session,  // Spec 010: sync session scaffolding
             commands::set_sync_mode,  // Spec 010: sync mode scaffolding

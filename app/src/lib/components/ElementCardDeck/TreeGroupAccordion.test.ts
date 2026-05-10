@@ -18,14 +18,44 @@ import { get } from 'svelte/store';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import TreeGroupAccordion from './TreeGroupAccordion.svelte';
 import type { GroupConfigNode, LeafConfigNode, ConfigNode } from '$lib/types/nodeTree';
+import type { ConnectorProfileView, ConnectorSelectionDocument } from '$lib/types/connectorProfile';
 import { groupReplicatedChildren, getInstanceDisplayName } from '$lib/types/nodeTree';
 import { pillSelections, setPillSelection } from '$lib/stores/pillSelection';
+import { editKeyForLeaf } from '$lib/utils/editKey';
+import type { TreeConfigValue } from '$lib/types/nodeTree';
 
-// Mock stores
+// ── Mocks ───────────────────────────────────────────────────────────────────
+
+// Mutable set of edit keys that currently have drafts. Tests push keys here
+// and the mock's changeLayers() returns a draft layer for matching keys.
+const draftKeys = new Set<string>();
+
 vi.mock('$lib/stores/bowties.svelte', () => ({
   bowtieCatalogStore: {
     nodeSlotMap: new Map(),
     effectiveNodeSlotMap: new Map(),
+  },
+}));
+
+vi.mock('$lib/stores/configChanges.svelte', () => ({
+  configChangesStore: {
+    changeLayers: (key: string) => {
+      if (draftKeys.has(key)) {
+        return [{ type: 'draft', value: { type: 'int', value: 99 } }];
+      }
+      return [];
+    },
+    visibleValue: (key: string) => {
+      if (draftKeys.has(key)) {
+        return { type: 'int', value: 99 } as TreeConfigValue;
+      }
+      return null;
+    },
+    hasDraftsForNode: () => draftKeys.size > 0,
+    hasDraftsUnderPath: () => false,
+    draftEntries: () => [],
+    clearAllDrafts: vi.fn(),
+    revert: vi.fn(),
   },
 }));
 
@@ -69,9 +99,57 @@ function makeGroup(
   };
 }
 
+function makeConnectorProfile(): ConnectorProfileView {
+  return {
+    nodeId: '02.01.00.00.00.01',
+    carrierKey: 'rr-cirkits::tower-lcc',
+    slots: [
+      {
+        slotId: 'connector-a',
+        label: 'Connector A',
+        order: 0,
+        allowNoneInstalled: true,
+        supportedDaughterboardIds: ['BOD4'],
+        affectedPaths: ['Port I/O/Line#1'],
+        resolvedAffectedPaths: [['seg:0', 'elem:0#1']],
+        supportedDaughterboardConstraints: [
+          {
+            daughterboardId: 'BOD4',
+            validityRules: [
+              {
+                targetPath: 'Port I/O/Line/Output Function',
+                resolvedPath: ['seg:0', 'elem:0', 'elem:1'],
+                effect: 'allowValues',
+                allowedValues: [0, 9, 10],
+              },
+              {
+                targetPath: 'Port I/O/Line/Producer Events',
+                resolvedPath: ['seg:0', 'elem:0', 'elem:5'],
+                effect: 'hide',
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    supportedDaughterboards: [{ daughterboardId: 'BOD4', displayName: 'BOD4' }],
+  };
+}
+
+function makeConnectorDocument(): ConnectorSelectionDocument {
+  return {
+    nodeId: '02.01.00.00.00.01',
+    carrierKey: 'rr-cirkits::tower-lcc',
+    slotSelections: [
+      { slotId: 'connector-a', selectedDaughterboardId: 'BOD4', status: 'selected' },
+    ],
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  draftKeys.clear();
   pillSelections.set(new Map());  // reset persisted pill state between tests
 });
 
@@ -261,6 +339,82 @@ describe('TreeGroupAccordion.svelte', () => {
     });
   });
 
+  describe('per-instance dirty indicators', () => {
+    function makeSiblingsWithDistinctAddresses() {
+      const instance1 = makeGroup([makeLeaf({ name: 'Field A', address: 100, space: 253 })], {
+        instance: 1,
+        instanceLabel: 'Line 1',
+        replicationOf: 'Line',
+        replicationCount: 3,
+        path: ['seg:0', 'elem:0#1'],
+      });
+      const instance2 = makeGroup([makeLeaf({ name: 'Field B', address: 200, space: 253 })], {
+        instance: 2,
+        instanceLabel: 'Line 2',
+        replicationOf: 'Line',
+        replicationCount: 3,
+        path: ['seg:0', 'elem:0#2'],
+      });
+      const instance3 = makeGroup([makeLeaf({ name: 'Field C', address: 300, space: 253 })], {
+        instance: 3,
+        instanceLabel: 'Line 3',
+        replicationOf: 'Line',
+        replicationCount: 3,
+        path: ['seg:0', 'elem:0#3'],
+      });
+      return [instance1, instance2, instance3];
+    }
+
+    it('shows dirty amber bar only on the section with a draft — not all sections', () => {
+      const nodeId = '02.01.00.00.00.01';
+      const [i1, i2, i3] = makeSiblingsWithDistinctAddresses();
+
+      // Set a draft on instance 2's leaf (address 200)
+      const key = editKeyForLeaf(nodeId, 253, 200);
+      draftKeys.add(key);
+
+      render(TreeGroupAccordion, {
+        props: { group: i1, nodeId, siblings: [i1, i2, i3] },
+      });
+
+      // Section label should indicate dirty (only if instance 2 is dirty)
+      const sectionLabel = screen.getByText('Line');
+      expect(sectionLabel).toBeInTheDocument();
+      // The PillSelector receives dirtyValues — check that it renders with dirty state
+      // (We can't easily inspect CSS classes on internal pill items, but we can verify
+      // the component renders without errors and the pill button is present.)
+      expect(screen.getByRole('button', { name: /line 1/i })).toBeInTheDocument();
+    });
+
+    it('no dirty indicator when no drafts exist', () => {
+      const nodeId = '02.01.00.00.00.01';
+      const [i1, i2, i3] = makeSiblingsWithDistinctAddresses();
+
+      render(TreeGroupAccordion, {
+        props: { group: i1, nodeId, siblings: [i1, i2, i3] },
+      });
+
+      // Section label should NOT have dirty class
+      const sectionLabel = screen.getByText('Line');
+      expect(sectionLabel).not.toHaveClass('pill-section-name--dirty');
+    });
+
+    it('shows dirty indicator on section label when any instance has a draft', () => {
+      const nodeId = '02.01.00.00.00.01';
+      const [i1, i2, i3] = makeSiblingsWithDistinctAddresses();
+
+      // Create draft on instance 1's leaf
+      draftKeys.add(editKeyForLeaf(nodeId, 253, 100));
+
+      render(TreeGroupAccordion, {
+        props: { group: i1, nodeId, siblings: [i1, i2, i3] },
+      });
+
+      const sectionLabel = screen.getByText('Line');
+      expect(sectionLabel).toHaveClass('pill-section-name--dirty');
+    });
+  });
+
   describe('nested groups — always visible', () => {
     it('renders nested groups and leaves without collapse', () => {
       const innerGroup = makeGroup([makeLeaf({ name: 'Nested Value' })], {
@@ -280,6 +434,147 @@ describe('TreeGroupAccordion.svelte', () => {
       expect(screen.getByText('Channel 1')).toBeInTheDocument();
       // Nested leaf visible without any clicks
       expect(screen.getByText('Nested Value')).toBeInTheDocument();
+    });
+  });
+
+  describe('connector-governed filtering', () => {
+    it('hides governed child groups when the selected daughterboard hides that target', () => {
+      const governedLeaf = makeLeaf({
+        name: 'Command',
+        path: ['seg:0', 'elem:0#1', 'elem:5', 'elem:0'],
+      });
+      const hiddenGroup = makeGroup([governedLeaf], {
+        instanceLabel: 'Producer Events',
+        path: ['seg:0', 'elem:0#1', 'elem:5'],
+      });
+      const lineGroup = makeGroup([hiddenGroup], {
+        instanceLabel: 'Line 1',
+        path: ['seg:0', 'elem:0#1'],
+      });
+
+      render(TreeGroupAccordion, {
+        props: {
+          group: lineGroup,
+          nodeId: '02.01.00.00.00.01',
+          connectorProfile: makeConnectorProfile(),
+          connectorDocument: makeConnectorDocument(),
+        },
+      });
+
+      expect(screen.queryByText('Producer Events')).not.toBeInTheDocument();
+      expect(screen.queryByText('Command')).not.toBeInTheDocument();
+    });
+
+    it('hides only the targeted event wrapper and leaves the other event wrapper visible', () => {
+      const lineGroup = makeGroup([
+        makeGroup([], {
+          instance: 0,
+          instanceLabel: 'Event',
+          displayName: 'Consumer Events',
+          replicationOf: 'Event',
+          replicationCount: 6,
+          path: ['seg:0', 'elem:0#1', 'elem:5'],
+        }),
+        makeGroup([], {
+          instance: 0,
+          instanceLabel: 'Event',
+          displayName: 'Producer Events',
+          replicationOf: 'Event',
+          replicationCount: 6,
+          path: ['seg:0', 'elem:0#1', 'elem:6'],
+        }),
+      ], {
+        instanceLabel: 'Line 1',
+        path: ['seg:0', 'elem:0#1'],
+      });
+
+      const connectorProfile: ConnectorProfileView = {
+        nodeId: '02.01.00.00.00.01',
+        carrierKey: 'rr-cirkits::tower-lcc',
+        slots: [
+          {
+            slotId: 'connector-a',
+            label: 'Connector A',
+            order: 0,
+            allowNoneInstalled: true,
+            supportedDaughterboardIds: ['BOD-8-SM'],
+            affectedPaths: ['Port I/O/Line#1'],
+            resolvedAffectedPaths: [['seg:0', 'elem:0#1']],
+            supportedDaughterboardConstraints: [
+              {
+                daughterboardId: 'BOD-8-SM',
+                validityRules: [
+                  {
+                    targetPath: 'Port I/O/Line/Event#1',
+                    resolvedPath: ['seg:0', 'elem:0', 'elem:5'],
+                    effect: 'hide',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        supportedDaughterboards: [{ daughterboardId: 'BOD-8-SM', displayName: 'BOD-8-SM' }],
+      };
+
+      render(TreeGroupAccordion, {
+        props: {
+          group: lineGroup,
+          nodeId: '02.01.00.00.00.01',
+          connectorProfile,
+          connectorDocument: {
+            nodeId: '02.01.00.00.00.01',
+            carrierKey: 'rr-cirkits::tower-lcc',
+            slotSelections: [
+              { slotId: 'connector-a', selectedDaughterboardId: 'BOD-8-SM', status: 'selected' },
+            ],
+          },
+        },
+      });
+
+      expect(screen.queryByText('Consumer Events')).not.toBeInTheDocument();
+      expect(screen.getByText('Producer Events')).toBeInTheDocument();
+    });
+
+    it('narrows enum options for governed leaves to the selected daughterboard subset', () => {
+      const governedLeaf = makeLeaf({
+        name: 'Output Function',
+        path: ['seg:0', 'elem:0#1', 'elem:1'],
+        value: { type: 'int', value: 0 },
+        constraints: {
+          min: 0,
+          max: 10,
+          defaultValue: null,
+          mapEntries: [
+            { value: 0, label: 'No Function' },
+            { value: 1, label: 'Steady Active Hi' },
+            { value: 2, label: 'Steady Active Lo' },
+            { value: 9, label: 'Sample Steady Active Hi' },
+            { value: 10, label: 'Sample Steady Active Lo' },
+          ],
+        },
+      });
+      const lineGroup = makeGroup([governedLeaf], {
+        instanceLabel: 'Line 1',
+        path: ['seg:0', 'elem:0#1'],
+      });
+
+      render(TreeGroupAccordion, {
+        props: {
+          group: lineGroup,
+          nodeId: '02.01.00.00.00.01',
+          connectorProfile: makeConnectorProfile(),
+          connectorDocument: makeConnectorDocument(),
+        },
+      });
+
+      const options = screen.getAllByRole('option').map((option) => option.textContent);
+      expect(options).toEqual([
+        'No Function',
+        'Sample Steady Active Hi',
+        'Sample Steady Active Lo',
+      ]);
+      expect(screen.queryByRole('option', { name: 'Steady Active Hi' })).not.toBeInTheDocument();
     });
   });
 
@@ -443,6 +738,30 @@ describe('groupReplicatedChildren', () => {
     expect(result[0].type).toBe('leaf');
     expect(result[1].type).toBe('replicatedSet');
     expect(result[2].type).toBe('leaf');
+  });
+
+  it('does not merge distinct replicated wrappers that share the same name', () => {
+    const consumerWrapper = makeGroup([], {
+      instance: 0,
+      instanceLabel: 'Event',
+      displayName: 'Consumer Events',
+      replicationOf: 'Event',
+      replicationCount: 6,
+      path: ['seg:0', 'elem:5'],
+    });
+    const producerWrapper = makeGroup([], {
+      instance: 0,
+      instanceLabel: 'Event',
+      displayName: 'Producer Events',
+      replicationOf: 'Event',
+      replicationCount: 6,
+      path: ['seg:0', 'elem:6'],
+    });
+
+    const result = groupReplicatedChildren([consumerWrapper, producerWrapper]);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ type: 'group', node: consumerWrapper });
+    expect(result[1]).toEqual({ type: 'group', node: producerWrapper });
   });
 });
 

@@ -15,7 +15,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import { nodeInfoStore } from '$lib/stores/nodeInfo';
 import { configSidebarStore } from '$lib/stores/configSidebar';
+import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
+import { configChangesStore } from '$lib/stores/configChanges.svelte';
+import { editKeyForLeaf } from '$lib/utils/editKey';
 import { clearConfigReadStatus, markNodeConfigRead } from '$lib/stores/configReadStatus';
 import ConfigSidebar from './ConfigSidebar.svelte';
 
@@ -57,6 +60,7 @@ function makeNode(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   configSidebarStore.reset();
+  connectorSelectionsStore.reset();
   nodeInfoStore.set(new Map());
   nodeTreeStore.reset();
   clearConfigReadStatus();
@@ -388,8 +392,8 @@ describe('ConfigSidebar.svelte', () => {
       let nodeEntry = screen.getByText('Test Node');
       expect(nodeEntry.querySelector('.pending-edits-dot')).not.toBeInTheDocument();
 
-      // Simulate offline edit: set modifiedValue on the leaf
-      nodeTreeStore.setLeafModifiedValue(nodeId, ['seg:0', 'elem:0'], { type: 'int' as const, value: 99 });
+      // Simulate offline edit: set a config draft
+      configChangesStore.set(editKeyForLeaf(nodeId, 253, 0), { type: 'int' as const, value: 99 });
 
       // The sidebar should now show unsaved edit indicator on the node
       await vi.waitFor(() => {
@@ -424,7 +428,6 @@ describe('ConfigSidebar.svelte', () => {
                 space: 253,
                 path: ['seg:0', 'elem:0'],
                 value: { type: 'int' as const, value: 10 },
-                modifiedValue: { type: 'int' as const, value: 99 },
                 eventRole: null,
                 constraints: null,
               },
@@ -437,13 +440,16 @@ describe('ConfigSidebar.svelte', () => {
       render(ConfigSidebar);
       configSidebarStore.toggleNodeExpanded(nodeId);
 
-      // Node should show unsaved edit due to modifiedValue
+      // Set a draft to simulate dirty state
+      configChangesStore.set(editKeyForLeaf(nodeId, 253, 1), { type: 'int' as const, value: 99 });
+
+      // Node should show unsaved edit due to config draft
       await vi.waitFor(() => {
         expect(screen.getByText('Test Node')).toBeInTheDocument();
       });
 
-      // Clear the modifiedValue (simulate successful save)
-      nodeTreeStore.clearAllModifiedValues();
+      // Clear the config draft (simulate successful save)
+      configChangesStore.clearAllDrafts();
 
       // Unsaved edit indicator should disappear
       await vi.waitFor(() => {
@@ -451,5 +457,118 @@ describe('ConfigSidebar.svelte', () => {
         expect(nodeEntry.querySelector('.pending-edits-dot')).not.toBeInTheDocument();
       });
     });
+  });
+
+  it('keeps connector slot selectors out of the sidebar when a modular node is expanded', async () => {
+    const nodeId = '02.01.57.00.00.01';
+    nodeInfoStore.set(new Map([[nodeId, MOCK_NODE as any]]));
+    nodeTreeStore.setTree(nodeId, {
+      nodeId,
+      identity: null,
+      connectorProfile: {
+        nodeId,
+        carrierKey: 'rr-cirkits::tower-lcc',
+        slots: [
+          {
+            slotId: 'connector-a',
+            label: 'Connector A',
+            order: 0,
+            allowNoneInstalled: true,
+            supportedDaughterboardIds: ['BOD4-CP'],
+            affectedPaths: ['Port I/O/Line'],
+          },
+        ],
+        supportedDaughterboards: [
+          {
+            daughterboardId: 'BOD4-CP',
+            displayName: 'BOD4-CP',
+            description: 'Detector board',
+          },
+        ],
+      },
+      segments: [],
+    } as any);
+    connectorSelectionsStore.hydrateFromLayout({
+      connectorSelections: {
+        '020157000001': {
+          carrierKey: 'rr-cirkits::tower-lcc',
+          slotSelections: {
+            'connector-a': {
+              selectedDaughterboardId: 'BOD4-CP',
+              status: 'selected',
+            },
+          },
+        },
+      },
+    });
+    configSidebarStore.toggleNodeExpanded(nodeId);
+
+    render(ConfigSidebar);
+
+    expect(screen.queryByLabelText('Connector daughterboards for Test Node')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Connector A')).not.toBeInTheDocument();
+  });
+
+  it('keeps Signal-LCC aux-port selectors out of the sidebar when a supported signal carrier is expanded', () => {
+    const nodeId = '02.01.57.00.00.02';
+    nodeInfoStore.set(new Map([[nodeId, makeNode({
+      node_id: [0x02, 0x01, 0x57, 0x00, 0x00, 0x02],
+      snip_data: {
+        ...MOCK_NODE.snip_data,
+        manufacturer: 'RR-CirKits',
+        model: 'Signal-LCC-P',
+        user_name: 'Signal Node',
+      },
+    }) as any]]));
+    nodeTreeStore.setTree(nodeId, {
+      nodeId,
+      identity: null,
+      connectorProfile: {
+        nodeId,
+        carrierKey: 'rr-cirkits::signal-lcc-p',
+        slots: [
+          {
+            slotId: 'aux-port',
+            label: 'Aux Port',
+            order: 0,
+            allowNoneInstalled: true,
+            supportedDaughterboardIds: ['SMD-8'],
+            affectedPaths: [],
+          },
+        ],
+        supportedDaughterboards: [
+          {
+            daughterboardId: 'SMD-8',
+            displayName: 'SMD-8',
+            description: 'Signal mast driver',
+          },
+        ],
+      },
+      segments: [],
+    } as any);
+    configSidebarStore.toggleNodeExpanded(nodeId);
+
+    render(ConfigSidebar);
+
+    expect(screen.queryByLabelText('Connector daughterboards for Signal Node')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Aux Port')).not.toBeInTheDocument();
+  });
+
+  it('does not render connector status for non-modular nodes', () => {
+    const nodeId = '02.01.57.00.00.01';
+    nodeInfoStore.set(new Map([[nodeId, MOCK_NODE as any]]));
+    nodeTreeStore.setTree(nodeId, {
+      nodeId,
+      identity: null,
+      connectorProfile: null,
+      connectorProfileWarning: null,
+      segments: [],
+    } as any);
+    configSidebarStore.toggleNodeExpanded(nodeId);
+
+    const { container } = render(ConfigSidebar);
+
+    expect(screen.getByText('No segments available')).toBeInTheDocument();
+    expect(container.querySelector('.connector-status')).toBeNull();
   });
 });

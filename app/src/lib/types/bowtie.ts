@@ -5,13 +5,30 @@
  * state model for bowtie creation, editing, and persistence.
  */
 
+import type { ConnectorSelectionStatus } from '$lib/types/connectorProfile';
+
 // ── Layout File Types (YAML persistence) ─────────────────────────────────────
+
+export interface LayoutConnectorSelectionRecord {
+  selectedDaughterboardId?: string;
+  status: ConnectorSelectionStatus;
+  sourceProfileVersion?: string;
+}
+
+export interface LayoutNodeHardwareSelectionSet {
+  carrierKey: string;
+  slotSelections: Record<string, LayoutConnectorSelectionRecord>;
+  updatedAt?: string;
+}
+
+export type LayoutConnectorSelections = Record<string, LayoutNodeHardwareSelectionSet>;
 
 /** Root structure matching YAML layout file */
 export interface LayoutFile {
   schemaVersion: string;
   bowties: Record<string, BowtieMetadata>;
   roleClassifications: Record<string, RoleClassification>;
+  connectorSelections: LayoutConnectorSelections;
 }
 
 /** Metadata for a single bowtie stored in layout YAML */

@@ -28,8 +28,42 @@
 * Dynamic SNIP & Config
   * If you modify SNIP information from LccPro, for example, the updates should appear right away
   * Same for if you save config from another app. The changes should appear immediately
+* Edit layer refactor — changes module + ConfigEditor
+  * Root cause: `leaf.modifiedValue` serves two unrelated roles (in-memory draft edit and persisted
+    offline planned value), causing every offline editing fix to destabilize the other role. The
+    clear-and-restamp pattern (`clearAllModifiedValues` + `applyOfflinePendingValues`) is a fragile
+    coupling that runs after every save, discard, sync apply, and tree rebuild.
+  * Fix approach: replace the overloaded field with two cooperating modules — a changes module
+    (layered state: draft / offline pending / baseline) and a ConfigEditor (dependency-aware edit
+    application with synchronous cascade corrections). Full cutover in three scoped PRs.
+  * Plan: `specs/010-offline-layout-editing/offline-edit-layer-refactor-plan.md` (approved)
+  * Files affected:
+    - New: `stores/configChanges.svelte.ts`, `stores/configEditor.svelte.ts`, `utils/editKey.ts`
+    - Rewrite: `TreeLeafRow.svelte`, `SaveControls.svelte`, `saveControlsPresenter.ts`,
+      `configSidebarPresenter.ts`, `TreeGroupAccordion.svelte`, `BowtieCatalogPanel.svelte`
+    - Delete symbols in: `nodeTree.ts`, `nodeTree.svelte.ts`
+    - Call-site updates: `+page.svelte`, `config/+page.svelte`, `syncApplyOrchestrator.ts`,
+      `unsavedChangesGuard.ts`, `offlineLayoutOrchestrator.ts`, `bowties.svelte.ts`, `eventIds.ts`
+* Cascade profile rules for ConfigEditor
+  * Root cause: ConfigEditor starts as a pass-through (no cascade logic). When a controlling field
+    like a daughter board selector changes, dependent fields may need corrective default writes.
+    Today this is handled manually or not at all.
+  * Fix approach: author cascade rules in `.profile.yaml` alongside existing relevance rules, using
+    the same extraction pipeline. ConfigEditor reads these rules and applies synchronous cascade
+    corrections within `applyEdit()`.
+  * Depends on: edit layer refactor (changes module + ConfigEditor must exist first)
 * Release workflow publication polish
   * Root cause: the new skill-based `/release-publish` workflow now owns tag creation and release-notes generation, but the final GitHub draft-release publication step is still a manual paste-and-publish handoff.
   * Follow-up:
     1. Validate that the generated end-user markdown is consistently good enough to paste directly into the GitHub draft release without manual rewriting.
     2. If the manual publication step becomes a recurring pain point, decide later whether to add a verified GitHub CLI path without regressing the simpler manual workflow.
+* Connector daughterboard Signal-LCC authoring evidence
+  * Root cause: The current implementation ships Signal-LCC aux-port selection and persistence support, but the workspace still does not contain equivalent Signal-LCC CDI/manual path evidence for aux-port-governed sections, so those profiles intentionally leave `affectedPaths` empty.
+  * Follow-up:
+    1. Acquire concrete Signal-LCC CDI or manual path evidence for aux-port-governed sections and line modes.
+    2. Author Signal-LCC affected paths and any carrier-specific overrides once those concrete paths are verified.
+* Mixed-use BOD4-CP sampled/output half constraints
+  * Root cause: Connector rules now support slot-relative `lineOrdinals`, so Bowties can constrain the detector half of BOD4/BOD4-CP accurately. The remaining gap is richer cross-field modeling for the BOD4-CP sampled/output half (local lines 5-8), where the manual allows multiple valid steady, pulse, and sample combinations depending on the attached device.
+  * Follow-up:
+    1. Capture concrete Tower-LCC-compatible mappings for the BOD4-CP local lines 5-8 output modes and corresponding sampled input modes.
+    2. Extend repair/constraint authoring if needed so Bowties can express output-function and input-function combinations for the BOD4-CP shared lines without hiding valid steady-output use cases.

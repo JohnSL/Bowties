@@ -11,19 +11,32 @@
    * The tree's `modifiedValue` and `writeState` drive dirty/error display.
    */
   import type { LeafConfigNode, TreeConfigValue, TreeMapEntry } from '$lib/types/nodeTree';
-  import { effectiveValue } from '$lib/types/nodeTree';
   import type { BowtieCard } from '$lib/api/tauri';
-  import { setModifiedValue, triggerAction } from '$lib/api/config';
+  import { triggerAction } from '$lib/api/config';
+  import { recomputeConnectorCompatibility } from '$lib/orchestration/connectorSelectionOrchestrator';
   import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { configFocusStore } from '$lib/stores/configFocus.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { layoutOpenInProgress } from '$lib/stores/layoutOpenLifecycle';
+  import { configChangesStore } from '$lib/stores/configChanges.svelte';
+  import { configEditor } from '$lib/stores/configEditor.svelte';
   import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
-  import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
+  import { flushDraftToBackend } from '$lib/orchestration/configDraftOrchestrator';
+  import { editKeyForLeaf } from '$lib/utils/editKey';
+  import { formatTreeConfigValue } from '$lib/utils/formatters';
   import { parseEventIdHex, formatEventIdHex } from '$lib/utils/serialize';
+  import {
+    parseOfflineStoredValueForLeaf,
+    treeConfigValueToOfflineString,
+  } from '$lib/utils/treeConfigValuePersistence';
+  import {
+    resolveConnectorCompatibilityMessage,
+    resolveLeafSelectViewState,
+  } from '$lib/utils/treeLeafViewState';
   import { isPlaceholderEventId } from '$lib/utils/eventIds';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
+  import type { ConnectorConstraintState } from '$lib/utils/connectorConstraints';
   import { untrack } from 'svelte';
 
   let {
@@ -34,6 +47,7 @@
     segmentOrigin = 0,
     segmentName = '',
     isNodeOffline = false,
+    connectorConstraintState = null,
   }: {
     leaf: LeafConfigNode;
     depth?: number;
@@ -45,6 +59,7 @@
     segmentName?: string;
     /** When true, all editable inputs are disabled (node is offline per FR-007, T050) */
     isNodeOffline?: boolean;
+    connectorConstraintState?: ConnectorConstraintState | null;
   } = $props();
 
   const DESC_TRUNCATE_THRESHOLD = 120;
@@ -70,63 +85,21 @@
    */
   let localStrInput = $state<string | null>(null);
 
-  function leafOffsetKey(): string {
-    return `0x${leaf.address.toString(16).toUpperCase().padStart(8, '0')}`;
-  }
+  /** Canonical edit key for this leaf in the changes store. */
+  let editKey = $derived(nodeId ? editKeyForLeaf(nodeId, leaf.space, leaf.address) : '');
 
-  function valueToOfflineString(v: TreeConfigValue): string {
-    switch (v.type) {
-      case 'string':
-        return v.value;
-      case 'int':
-        return String(v.value);
-      case 'float':
-        return String(v.value);
-      case 'eventId':
-        return v.hex ?? formatEventIdHex(v.bytes);
-    }
-  }
-
-  function parseOfflinePlannedValue(raw: string): TreeConfigValue | null {
-    if (leaf.elementType === 'string') {
-      return { type: 'string', value: raw };
-    }
-    if (leaf.elementType === 'int') {
-      const n = parseInt(raw, 10);
-      return Number.isNaN(n) ? null : { type: 'int', value: n };
-    }
-    if (leaf.elementType === 'float') {
-      const n = parseFloat(raw);
-      return Number.isNaN(n) ? null : { type: 'float', value: n };
-    }
-    if (leaf.elementType === 'eventId') {
-      const bytes = parseEventIdHex(raw);
-      return bytes ? { type: 'eventId', bytes, hex: formatEventIdHex(bytes) } : null;
-    }
-    return null;
+  function formatOfflineStoredValue(raw: string): string {
+    const parsed = parseOfflineStoredValueForLeaf(leaf, raw);
+    return parsed ? formatValue(parsed) : raw;
   }
 
   // ── Derived values ─────────────────────────────────────────────────────────
 
-  let isDirty = $derived(leaf.modifiedValue != null && !leaf.isOfflinePending);
-  let draftOfflineRow = $derived.by(() => {
-    if (!layoutStore.isOfflineMode || !nodeId) return null;
-    return offlineChangesStore.findDraftConfigChange(nodeId, leaf.space, leafOffsetKey());
-  });
-
-  let persistedOfflineRow = $derived.by(() => {
-    if (!layoutStore.isOfflineMode || !nodeId) return null;
-    return offlineChangesStore.findPersistedConfigChange(nodeId, leaf.space, leafOffsetKey());
-  });
-
-  let pendingOfflineRow = $derived(draftOfflineRow ?? persistedOfflineRow);
-
-  let offlinePlannedValue = $derived.by(() => {
-    if (!pendingOfflineRow) return null;
-    return parseOfflinePlannedValue(pendingOfflineRow.plannedValue);
-  });
-
-  let hasPendingApply = $derived(!!persistedOfflineRow);
+  /** Change layers from the changes store. */
+  let layers = $derived(editKey ? configChangesStore.changeLayers(editKey) : []);
+  let topLayer = $derived(layers[0] ?? null);
+  let isDirty = $derived(topLayer?.type === 'draft');
+  let hasPendingApply = $derived(layers.some(l => l.type === 'offlinePending'));
   let suppressTransientIndicators = $derived($layoutOpenInProgress);
   let isDirtyVisible = $derived(isDirty && !suppressTransientIndicators);
 
@@ -134,12 +107,13 @@
    * (per LCC S-9.7.0.3 §5.2 — reserved range, never a valid routable event ID) */
   let isEventIdPlaceholder = $derived.by(() => {
     if (!(nodeId.length > 0 && leaf.elementType === 'eventId')) return false;
-    const ev = effectiveValue(leaf);
+    const vis = editKey ? configChangesStore.visibleValue(editKey) : null;
+    const ev = vis ?? leaf.value;
     return ev?.type === 'eventId' && ev.bytes[0] === 0;
   });
 
   let isInvalid = $derived(localInvalidValue !== null);
-  let hasPendingApplyVisible = $derived(hasPendingApply && !isDirty && !isInvalid && !suppressTransientIndicators);
+  let hasPendingApplyVisible = $derived(hasPendingApply && !isInvalid && !suppressTransientIndicators);
 
   /** Active validation message: local input errors only (committed placeholder is shown separately) */
   let activeValidationMessage = $derived(localValidationMessage ?? null);
@@ -147,7 +121,13 @@
   let hasWriteError = $derived(leaf.writeState === 'error');
   /** True when input should be disabled: either saving, node is offline (FR-007), or
    * the device rejected a write for this field with 0x1083 (runtime read-only) */
-  let isDisabled = $derived(isWriting || isNodeOffline || !!leaf.readOnly);
+  let isDisabled = $derived(
+    isWriting
+    || isNodeOffline
+    || !!leaf.readOnly
+    || !!connectorConstraintState?.disabled
+    || !!connectorConstraintState?.readOnly,
+  );
 
   /** Whether this leaf type supports inline editing */
   let isEditable = $derived(
@@ -160,7 +140,7 @@
   let isSelectEditable = $derived(
     nodeId.length > 0 &&
     leaf.elementType === 'int' &&
-    !!(leaf.constraints?.mapEntries?.length) &&
+    !!connectorManagedMapEntries.length &&
     !leaf.hintRadio
   );
 
@@ -177,7 +157,7 @@
     nodeId.length > 0 &&
     leaf.elementType === 'int' &&
     !!leaf.hintRadio &&
-    !!(leaf.constraints?.mapEntries?.length)
+    !!connectorManagedMapEntries.length
   );
 
   /** Whether this leaf is an action element */
@@ -198,8 +178,15 @@
     leaf.elementType === 'eventId'
   );
 
-  /** Current display value: offline planned, else modifiedValue, else committed value */
-  let displayValue = $derived(offlinePlannedValue ?? effectiveValue(leaf));
+  /** Current display value from changes store layer resolution. */
+  let displayValue = $derived(editKey ? configChangesStore.visibleValue(editKey) ?? leaf.value : leaf.value);
+
+  let selectViewState = $derived(resolveLeafSelectViewState({
+    leaf,
+    displayValue,
+    connectorConstraintState,
+  }));
+  let connectorManagedMapEntries = $derived(selectViewState.managedMapEntries);
 
   /** String value for controlled text input — local buffer takes priority while typing */
   let inputStr = $derived(
@@ -219,9 +206,15 @@
   );
 
   /** Current selected map-entry value for controlled select */
-  let inputSelect = $derived(
-    displayValue?.type === 'int' ? displayValue.value : (leaf.value?.type === 'int' ? leaf.value.value : 0)
-  );
+  let inputSelect = $derived(selectViewState.selectedValue);
+
+  let currentValueCompatibilityMessage = $derived(resolveConnectorCompatibilityMessage({
+    leaf,
+    displayValue,
+    connectorConstraintState,
+  }));
+
+  let currentSelectFallbackLabel = $derived(selectViewState.currentSelectFallbackLabel);
 
   /** Dotted-hex string for event ID text input */
   let inputEventId = $derived(
@@ -261,46 +254,30 @@
 
   // ── Edit handlers ──────────────────────────────────────────────────────────
 
-  function applyOfflineChange(newVal: TreeConfigValue): void {
-    if (!nodeId) return;
-
-    const baselineFromRow = pendingOfflineRow?.baselineValue;
-    const baselineFromLeaf = leaf.value ? valueToOfflineString(leaf.value) : '';
-    const baselineValue = baselineFromRow ?? baselineFromLeaf;
-    const plannedValue = valueToOfflineString(newVal);
-
-    offlineChangesStore.upsertConfigChange({
-      nodeId,
-      space: leaf.space,
-      offset: leafOffsetKey(),
-      baselineValue,
-      plannedValue,
-    });
-
-    const draftRow = offlineChangesStore.findDraftConfigChange(nodeId, leaf.space, leafOffsetKey());
-    const modifiedValue = draftRow ? parseOfflinePlannedValue(draftRow.plannedValue) : null;
-    nodeTreeStore.setLeafModifiedValue(nodeId, leaf.path, modifiedValue);
-  }
-
+  /**
+   * Unified edit handler — routes through configEditor (synchronous) then
+   * mirrors to backend via the orchestrator when online.
+   */
   function applyLeafValueChange(newVal: TreeConfigValue): void {
-    if (layoutStore.isOfflineMode || isNodeOffline) {
-      applyOfflineChange(newVal);
-      return;
-    }
+    if (!editKey) return;
+    configEditor.applyEdit(editKey, newVal);
 
-    setModifiedValue(nodeId, leaf.address, leaf.space, newVal).catch((err) => {
-      console.error(`[TreeLeafRow] setModifiedValue failed for node ${nodeId}:`, err);
-    });
+    // Online: mirror to backend immediately
+    if (!layoutStore.isOfflineMode && !isNodeOffline) {
+      flushDraftToBackend(editKey);
+    }
+    if (nodeId) void recomputeConnectorCompatibility(nodeId);
   }
 
-  async function revertPendingOfflineChange(changeId: string, markDirty: boolean): Promise<void> {
-    const reverted = await offlineChangesStore.revertToBaseline(changeId);
-    if (!reverted) return;
+  async function revertDraft(): Promise<void> {
+    if (!editKey) return;
+    configChangesStore.revert(editKey);
+    if (nodeId) void recomputeConnectorCompatibility(nodeId);
+  }
 
-    nodeTreeStore.setLeafModifiedValue(nodeId, leaf.path, null);
-    if (markDirty) {
-      layoutStore.markDirty();
-    }
+  async function revertPersistedOfflineChange(changeId: string): Promise<void> {
+    await offlineChangesStore.revertToBaseline(changeId);
+    if (nodeId) void recomputeConnectorCompatibility(nodeId);
   }
 
   /** Validate a string value and send to Rust tree */
@@ -458,30 +435,13 @@
 
   // ── Value display helpers ──────────────────────────────────────────────────
 
-  /** Format a TreeConfigValue for display */
+  /** Format a TreeConfigValue for display using the shared formatter. */
   function formatValue(v: TreeConfigValue | null): string {
     if (v === null) return '—';
-    switch (v.type) {
-      case 'int':     return formatIntValue(v.value);
-      case 'string':  return v.value || '(empty)';
-      case 'float':   return v.value.toFixed(4);
-      case 'eventId': return formatEventId(v.bytes);
-    }
-  }
-
-  /** Map int values to enum labels when mapEntries exist */
-  function formatIntValue(value: number): string {
-    if (leaf.constraints?.mapEntries) {
-      const entry = leaf.constraints.mapEntries.find((e: TreeMapEntry) => e.value === value);
-      if (entry) return entry.label;
-    }
-    return String(value);
-  }
-
-  /** Format event ID bytes; all-zero = "(not set)" */
-  function formatEventId(bytes: number[]): string {
-    if (bytes.every(b => b === 0)) return '(not set)';
-    return bytes.map(b => b.toString(16).padStart(2, '0')).join('.');
+    const formatted = formatTreeConfigValue(v, leaf.constraints?.mapEntries);
+    if (v.type === 'string' && formatted === '') return '(empty)';
+    if (v.type === 'eventId' && v.bytes.every(b => b === 0)) return '(not set)';
+    return formatted;
   }
 
   /** Trigger an action element, with optional confirmation dialog. */
@@ -569,10 +529,10 @@
         aria-label={leaf.name}
         onchange={handleSelectChange}
       >
-        {#if !leaf.constraints.mapEntries.some((e: TreeMapEntry) => e.value === inputSelect)}
-          <option value={inputSelect} disabled>(Reserved: {inputSelect})</option>
+        {#if currentSelectFallbackLabel}
+          <option value={inputSelect} disabled>{currentSelectFallbackLabel}</option>
         {/if}
-        {#each leaf.constraints.mapEntries as entry}
+        {#each connectorManagedMapEntries as entry}
           <option value={entry.value}>{entry.label}</option>
         {/each}
       </select>
@@ -598,7 +558,7 @@
     {:else if isRadioEditable && leaf.constraints?.mapEntries}
       <!-- Radio hint: radio buttons for int with map entries -->
       <div class="field-radio-group" role="radiogroup" aria-label={leaf.name}>
-        {#each leaf.constraints.mapEntries as entry}
+        {#each connectorManagedMapEntries as entry}
           <label class="field-radio-label">
             <input
               type="radio"
@@ -658,6 +618,10 @@
       </span>
     {/if}
 
+    {#if currentValueCompatibilityMessage}
+      <span class="compatibility-msg" role="status">{currentValueCompatibilityMessage}</span>
+    {/if}
+
     {#if hasWriteError && leaf.writeError}
       <span class="write-error-msg" role="alert">⚠ {leaf.writeError}</span>
     {/if}
@@ -679,30 +643,48 @@
       <span class="validation-msg" role="alert">{activeValidationMessage}</span>
     {/if}
 
-    {#if !suppressTransientIndicators && draftOfflineRow}
+    {#if !suppressTransientIndicators && isDirty && layers.length >= 2}
       <span class="offline-change-msg" role="status">
-        Unsaved offline edit: {draftOfflineRow.baselineValue} -> {draftOfflineRow.plannedValue}
+        Unsaved offline edit: {formatValue(layers[1].value)} &rarr; {formatValue(layers[0].value)}
       </span>
       <button
         class="revert-baseline-btn"
-        onclick={() => void revertPendingOfflineChange(draftOfflineRow!.changeId, false)}
+        onclick={() => void revertDraft()}
         title="Revert to captured baseline value"
         aria-label="Revert to baseline"
         disabled={offlineChangesStore.isBusy}
       >↩ Revert</button>
     {/if}
 
-    {#if !suppressTransientIndicators && persistedOfflineRow}
+    {#if !suppressTransientIndicators && hasPendingApplyVisible && !isDirty}
+      {@const pendingLayer = layers.find(l => l.type === 'offlinePending')}
+      {@const baselineLayer = layers.find(l => l.type === 'baseline')}
+      {#if pendingLayer && baselineLayer}
       <span class="offline-pending-msg" role="status">
-        Bus: {persistedOfflineRow.baselineValue} | Pending: {persistedOfflineRow.plannedValue}
+        Bus: {formatValue(baselineLayer.value)} | Pending: {formatValue(pendingLayer.value)}
       </span>
       <button
         class="revert-baseline-btn"
-        onclick={() => void revertPendingOfflineChange(persistedOfflineRow!.changeId, true)}
+        onclick={() => {
+          const offsetKey = `0x${leaf.address.toString(16).toUpperCase().padStart(8, '0')}`;
+          const row = offlineChangesStore.findPersistedConfigChange(nodeId, leaf.space, offsetKey);
+          if (row) void revertPersistedOfflineChange(row.changeId);
+        }}
         title="Revert to captured baseline value"
         aria-label="Revert to baseline"
         disabled={offlineChangesStore.isBusy}
       >↩ Revert</button>
+      {/if}
+    {/if}
+
+    {#if !suppressTransientIndicators && hasPendingApplyVisible && isDirty}
+      {@const pendingLayer = layers.find(l => l.type === 'offlinePending')}
+      {@const baselineLayer = layers.find(l => l.type === 'baseline')}
+      {#if pendingLayer && baselineLayer}
+      <span class="offline-pending-secondary-msg" role="status">
+        Bus: {formatValue(baselineLayer.value)} | Pending: {formatValue(pendingLayer.value)}
+      </span>
+      {/if}
     {/if}
 
     {#if leaf.eventRole}
@@ -847,6 +829,17 @@
     border-radius: 10px;
     padding: 1px 8px;
     font-size: 11px;
+    line-height: 1.5;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  .offline-pending-secondary-msg {
+    color: #115e59;
+    background: #f0fdfa;
+    border: 1px solid #ccfbf1;
+    border-radius: 10px;
+    padding: 1px 8px;
+    font-size: 10px;
     line-height: 1.5;
     font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
   }
@@ -1009,6 +1002,17 @@
     font-size: 11px;
     color: #ca5010;                                /* colorPaletteOrangeForeground1 */
     margin-top: 2px;
+  }
+
+  .compatibility-msg {
+    color: #8a3707;
+    background: #fff4ce;
+    border: 1px solid #f9d67a;
+    border-radius: 10px;
+    padding: 1px 8px;
+    font-size: 11px;
+    line-height: 1.5;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
   }
 
   .field-desc {

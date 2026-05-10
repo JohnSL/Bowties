@@ -5,6 +5,7 @@ import type { LayoutFile } from '$lib/types/bowtie';
 const {
   layoutStoreRef,
   offlineChangesStoreRef,
+  connectorSelectionsStoreRef,
   lifecycleRef,
 } = vi.hoisted(() => ({
   layoutStoreRef: {
@@ -13,6 +14,9 @@ const {
   },
   offlineChangesStoreRef: {
     reloadFromBackend: vi.fn(async () => {}),
+  },
+  connectorSelectionsStoreRef: {
+    hydrateFromLayout: vi.fn(),
   },
   lifecycleRef: {
     startLayoutOpen: vi.fn(),
@@ -30,6 +34,10 @@ vi.mock('$lib/stores/layout.svelte', () => ({
 
 vi.mock('$lib/stores/offlineChanges.svelte', () => ({
   offlineChangesStore: offlineChangesStoreRef,
+}));
+
+vi.mock('$lib/stores/connectorSelections.svelte', () => ({
+  connectorSelectionsStore: connectorSelectionsStoreRef,
 }));
 
 vi.mock('$lib/stores/layoutOpenLifecycle', () => lifecycleRef);
@@ -60,6 +68,7 @@ function makeLayout(overrides: Partial<LayoutFile> = {}): LayoutFile {
       },
     },
     roleClassifications: {},
+    connectorSelections: {},
     ...overrides,
   };
 }
@@ -68,7 +77,6 @@ describe('openOfflineLayoutWithReplay', () => {
   it('calls onOpened after a successful offline layout replay', async () => {
     const onOpened = vi.fn();
     const hydrateOfflineSnapshots = vi.fn(async () => {});
-    const applyPersistedOfflinePendingToTrees = vi.fn();
     const result = {
       layoutId: 'yard-layout',
       capturedAt: '2026-04-25T00:00:00.000Z',
@@ -84,14 +92,13 @@ describe('openOfflineLayoutWithReplay', () => {
       path: 'D:/Layouts/yard.layout.yaml',
       openLayout: vi.fn(async () => result),
       hydrateOfflineSnapshots,
-      applyPersistedOfflinePendingToTrees,
+      hydrateConnectorSelections: connectorSelectionsStoreRef.hydrateFromLayout,
       onOpened,
     });
 
     expect(opened).toEqual(result);
     expect(hydrateOfflineSnapshots).toHaveBeenCalledWith([]);
     expect(offlineChangesStoreRef.reloadFromBackend).toHaveBeenCalledTimes(1);
-    expect(applyPersistedOfflinePendingToTrees).toHaveBeenCalledTimes(1);
     expect(onOpened).toHaveBeenCalledTimes(1);
     expect(layoutStoreRef.hydrateOfflineLayout).toHaveBeenCalledWith(makeLayout(), {
       layoutId: 'yard-layout',
@@ -100,6 +107,7 @@ describe('openOfflineLayoutWithReplay', () => {
       capturedAt: '2026-04-25T00:00:00.000Z',
       pendingOfflineChangeCount: 2,
     });
+    expect(connectorSelectionsStoreRef.hydrateFromLayout).toHaveBeenCalledWith(makeLayout());
   });
 
   it('does not call onOpened when the layout open fails', async () => {
@@ -112,7 +120,6 @@ describe('openOfflineLayoutWithReplay', () => {
         throw error;
       }),
       hydrateOfflineSnapshots: vi.fn(async () => {}),
-      applyPersistedOfflinePendingToTrees: vi.fn(),
       onOpened,
     })).rejects.toThrow('open failed');
 

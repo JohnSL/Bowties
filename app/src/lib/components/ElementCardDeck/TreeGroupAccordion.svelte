@@ -9,124 +9,165 @@
    * 2. **Inline section** — non-replicated groups show a subtle label header,
    *    children always visible.
    *
-   * Recursively renders children using `<svelte:self>` for nested groups and
+   * Recursively renders children using self-import for nested groups and
    * TreeLeafRow for leaves. Groups replicated children via `groupReplicatedChildren`.
    *
    * Spec: plan-cdiConfigNavigator.
    */
   import type { GroupConfigNode, ConfigNode, GroupedChild } from '$lib/types/nodeTree';
-  import { isGroup, isLeaf, hasModifiedDescendant, groupReplicatedChildren, getInstanceDisplayName } from '$lib/types/nodeTree';
+  import type { ConnectorProfileView, ConnectorSelectionDocument } from '$lib/types/connectorProfile';
+  import { isGroup, isLeaf, groupReplicatedChildren, getInstanceDisplayName } from '$lib/types/nodeTree';
   import PillSelector from '$lib/components/PillSelector/PillSelector.svelte';
 
   interface PillItem { value: number; label: string; description?: string; }
   import TreeLeafRow from './TreeLeafRow.svelte';
+  import TreeGroupAccordion from './TreeGroupAccordion.svelte';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
+  import { configChangesStore } from '$lib/stores/configChanges.svelte';
   import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
   import { layoutOpenInProgress } from '$lib/stores/layoutOpenLifecycle';
+  import { editKeyForLeaf } from '$lib/utils/editKey';
   import { pillSelections, setPillSelection, makePillKey } from '$lib/stores/pillSelection';
+  import { evaluateConnectorConstraintsForPath } from '$lib/utils/connectorConstraints';
 
-  /** The group node from the unified tree */
-  export let group: GroupConfigNode;
-  /** Node ID for cross-reference lookups */
-  export let nodeId: string;
-  /** Current nesting depth — used to indent deeper levels */
-  export let depth: number = 0;
-  /**
-   * Sibling replicated instances for pill-selector mode.
-   * When provided with 2+ items, PillSelector replaces per-instance accordions.
-   */
-  export let siblings: GroupConfigNode[] = [];
-  /** Whether the parent node is offline — disables all inputs (FR-007, T050) */
-  export let isNodeOffline: boolean = false;
-  /** Segment origin address — forwarded to TreeLeafRow for save context */
-  export let segmentOrigin: number = 0;
-  /** Segment display name — forwarded to TreeLeafRow for progress labels */
-  export let segmentName: string = '';
+  let {
+    group,
+    nodeId,
+    depth = 0,
+    siblings = [],
+    isNodeOffline = false,
+    connectorProfile = null,
+    connectorDocument = null,
+    focusedConnectorSlotId = null,
+    segmentOrigin = 0,
+    segmentName = '',
+  }: {
+    /** The group node from the unified tree */
+    group: GroupConfigNode;
+    /** Node ID for cross-reference lookups */
+    nodeId: string;
+    /** Current nesting depth — used to indent deeper levels */
+    depth?: number;
+    /** Sibling replicated instances for pill-selector mode */
+    siblings?: GroupConfigNode[];
+    /** Whether the parent node is offline — disables all inputs (FR-007, T050) */
+    isNodeOffline?: boolean;
+    connectorProfile?: ConnectorProfileView | null;
+    connectorDocument?: ConnectorSelectionDocument | null;
+    focusedConnectorSlotId?: string | null;
+    /** Segment origin address — forwarded to TreeLeafRow for save context */
+    segmentOrigin?: number;
+    /** Segment display name — forwarded to TreeLeafRow for progress labels */
+    segmentName?: string;
+  } = $props();
 
   // ── Pill-selector state ──
   // Stable key for this replicated set — persisted in pillSelections store so the
   // selected instance survives view switches (e.g. Bowties view ↔ config view).
-  $: pillKey = siblings.length > 1 ? makePillKey(nodeId, siblings[0]) : '';
-  $: selectedInstanceIndex = pillKey ? ($pillSelections.get(pillKey) ?? 0) : 0;
+  let pillKey = $derived(siblings.length > 1 ? makePillKey(nodeId, siblings[0]) : '');
+  let selectedInstanceIndex = $derived(pillKey ? ($pillSelections.get(pillKey) ?? 0) : 0);
 
-  $: pillMode = siblings.length > 1;
-  $: activeGroup = pillMode ? (siblings[selectedInstanceIndex] ?? siblings[0]) : group;
+  let visibleSiblings = $derived(filterSiblingsForFocusedConnector(siblings, focusedConnectorSlotId, connectorProfile));
+  let clampedSelectedInstanceIndex = $derived(Math.min(selectedInstanceIndex, Math.max(visibleSiblings.length - 1, 0)));
+  let pillMode = $derived(visibleSiblings.length > 1);
+  let activeGroup = $derived(pillMode ? (visibleSiblings[clampedSelectedInstanceIndex] ?? visibleSiblings[0]) : (visibleSiblings[0] ?? group));
 
   // Build pill items from siblings
-  $: pillItems = siblings.map((s, idx): PillItem => ({
+  let pillItems = $derived(visibleSiblings.map((s, idx): PillItem => ({
     value: idx,
     label: s.displayName ?? getInstanceDisplayName(s),
     description: s.instanceLabel,
-  }));
+  })));
 
   // ── Dirty-instance tracking ──
-  // Check which sibling instances have modified descendant leaves.
+  // Check which sibling instances have draft edits among their descendant leaves.
 
   /**
-   * Returns the set of sibling indices that have at least one modified leaf,
-   * determined by checking the tree's modifiedValue on descendant leaves.
+   * Check whether any descendant leaf of the given children array has a draft
+   * in the configChangesStore. Uses editKeyForLeaf to construct canonical keys
+   * so that $derived properly tracks configChangesStore reactivity.
    */
-  function computeDirtyInstances(sibs: GroupConfigNode[]): Set<number> {
-    const result = new Set<number>();
-    if (sibs.length < 2) return result;
-    for (let i = 0; i < sibs.length; i++) {
-      if (hasModifiedDescendant(sibs[i].children, [])) {
-        result.add(i);
-      }
-    }
-    return result;
-  }
-
-  function offsetFromAddress(address: number): string {
-    return `0x${address.toString(16).toUpperCase().padStart(8, '0')}`;
-  }
-
-  function hasPendingApplyInChildren(children: ConfigNode[]): boolean {
+  function hasDraftInChildren(nId: string, children: ConfigNode[]): boolean {
     for (const child of children) {
       if (isLeaf(child)) {
-        if (offlineChangesStore.hasPersistedConfigChange(nodeId, child.space, offsetFromAddress(child.address))) {
-          return true;
+        const key = editKeyForLeaf(nId, child.space, child.address);
+        if (configChangesStore.visibleValue(key) !== null) {
+          // Check if there's actually a draft (not just baseline or offline pending)
+          const layers = configChangesStore.changeLayers(key);
+          if (layers.length > 0 && layers[0].type === 'draft') return true;
         }
         continue;
       }
-      if (isGroup(child) && hasPendingApplyInChildren(child.children)) {
+      if (isGroup(child) && hasDraftInChildren(nId, child.children)) {
         return true;
       }
     }
     return false;
   }
 
-  function computePendingApplyInstances(sibs: GroupConfigNode[]): Set<number> {
+  function offsetFromAddress(address: number): string {
+    return `0x${address.toString(16).toUpperCase().padStart(8, '0')}`;
+  }
+
+  function hasPendingApplyInChildren(nId: string, children: ConfigNode[]): boolean {
+    for (const child of children) {
+      if (isLeaf(child)) {
+        if (offlineChangesStore.hasPersistedConfigChange(nId, child.space, offsetFromAddress(child.address))) {
+          return true;
+        }
+        continue;
+      }
+      if (isGroup(child) && hasPendingApplyInChildren(nId, child.children)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Per-instance dirty tracking: check each sibling's children individually.
+  // Uses $derived so that configChangesStore.$state changes trigger re-derivation.
+  let dirtyInstances = $derived.by(() => {
     const result = new Set<number>();
-    if (sibs.length < 2) return result;
-    for (let i = 0; i < sibs.length; i++) {
-      if (hasPendingApplyInChildren(sibs[i].children)) {
+    if (visibleSiblings.length < 2) return result;
+    for (let i = 0; i < visibleSiblings.length; i++) {
+      if (hasDraftInChildren(nodeId, visibleSiblings[i].children)) {
         result.add(i);
       }
     }
     return result;
-  }
+  });
+  let hasDirtyInstances = $derived(dirtyInstances.size > 0);
 
-  $: dirtyInstances = computeDirtyInstances(siblings);
-  $: hasDirtyInstances = dirtyInstances.size > 0;
-  $: pendingApplyInstances = computePendingApplyInstances(siblings);
-  $: hasPendingApplyInstances = pendingApplyInstances.size > 0;
-  $: activeGroupHasDirty = hasModifiedDescendant(activeGroup.children, []);
-  $: activeGroupHasPendingApply = hasPendingApplyInChildren(activeGroup.children);
-  $: suppressTransientIndicators = $layoutOpenInProgress;
+  let pendingApplyInstances = $derived.by(() => {
+    const result = new Set<number>();
+    if (visibleSiblings.length < 2) return result;
+    for (let i = 0; i < visibleSiblings.length; i++) {
+      if (hasPendingApplyInChildren(nodeId, visibleSiblings[i].children)) {
+        result.add(i);
+      }
+    }
+    return result;
+  });
+  let hasPendingApplyInstances = $derived(pendingApplyInstances.size > 0);
+
+  let activeGroupHasDirty = $derived(hasDraftInChildren(nodeId, activeGroup.children));
+  let activeGroupHasPendingApply = $derived(hasPendingApplyInChildren(nodeId, activeGroup.children));
+  let suppressTransientIndicators = $derived($layoutOpenInProgress);
 
   // ── Hideable group state ──
   // Tracks collapsed state for groups with hideable hint.
-  let collapsed = group.hiddenByDefault ?? false;
+  // Initialised from group.hiddenByDefault; further toggling is local state.
+  let collapsed = $state(false);
+  $effect(() => { collapsed = group.hiddenByDefault ?? false; });
 
   // Propagate readOnly down the tree: if this group is read-only, disable all inputs.
-  $: isEffectivelyReadOnly = isNodeOffline || !!(group.readOnly);
+  let isEffectivelyReadOnly = $derived(isNodeOffline || !!(group.readOnly));
 
   // Group children for the active group to handle nested replications
-  $: groupedChildren = groupReplicatedChildren(activeGroup.children);
+  let groupedChildren = $derived(groupReplicatedChildren(activeGroup.children));
 
   // Cross-reference lookup: nodeId + CDI path → BowtieCard
-  $: nodeSlotMap = bowtieCatalogStore.effectiveNodeSlotMap;
+  let nodeSlotMap = $derived(bowtieCatalogStore.effectiveNodeSlotMap);
 
   /** Get the BowtieCard cross-reference for a leaf's path */
   function getUsedIn(leaf: { path: string[] }) {
@@ -135,6 +176,53 @@
 
   function handlePillSelect(value: number) {
     if (pillKey) setPillSelection(pillKey, value);
+  }
+
+  function filterSiblingsForFocusedConnector(
+    nextSiblings: GroupConfigNode[],
+    focusedSlotId: string | null,
+    profile: ConnectorProfileView | null,
+  ): GroupConfigNode[] {
+    if (nextSiblings.length < 2 || !focusedSlotId) {
+      return nextSiblings;
+    }
+
+    const slotBySibling = nextSiblings.map((sibling) => findConnectorSlotIdForPath(sibling.path, profile));
+
+    if (!slotBySibling.some((slotId) => !!slotId)) {
+      return nextSiblings;
+    }
+
+    const filtered = nextSiblings.filter((_, idx) => slotBySibling[idx] === focusedSlotId);
+    return filtered.length > 0 ? filtered : nextSiblings;
+  }
+
+  function findConnectorSlotIdForPath(path: string[], profile: ConnectorProfileView | null): string | null {
+    if (!profile) {
+      return null;
+    }
+
+    for (const slot of profile.slots) {
+      for (const affectedPath of (slot.resolvedAffectedPaths ?? [])) {
+        if (isPathPrefix(affectedPath, path)) {
+          return slot.slotId;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function isPathPrefix(prefix: string[], fullPath: string[]): boolean {
+    if (prefix.length > fullPath.length) {
+      return false;
+    }
+
+    return prefix.every((step, index) => fullPath[index] === step);
+  }
+
+  function connectorConstraintForPath(path: string[]) {
+    return evaluateConnectorConstraintsForPath(connectorProfile, connectorDocument, path);
   }
 </script>
 
@@ -163,26 +251,41 @@
 
       {#each groupedChildren as item}
         {#if item.type === 'leaf'}
-          <TreeLeafRow leaf={item.node} usedIn={getUsedIn(item.node)} {depth} {nodeId} {segmentOrigin} {segmentName} {isNodeOffline} />
+          {@const leafConstraint = connectorConstraintForPath(item.node.path)}
+          {#if !leafConstraint.hidden}
+            <TreeLeafRow leaf={item.node} usedIn={getUsedIn(item.node)} {depth} {nodeId} {segmentOrigin} {segmentName} {isNodeOffline} connectorConstraintState={leafConstraint} />
+          {/if}
         {:else if item.type === 'group'}
-          <svelte:self
-            group={item.node}
-            {nodeId}
-            depth={depth + 1}
-            {segmentOrigin}
-            {segmentName}
-            {isNodeOffline}
-          />
+          {@const groupConstraint = connectorConstraintForPath(item.node.path)}
+          {#if !groupConstraint.hidden}
+            <TreeGroupAccordion
+              group={item.node}
+              {nodeId}
+              depth={depth + 1}
+              {segmentOrigin}
+              {segmentName}
+              {isNodeOffline}
+              {connectorProfile}
+              {connectorDocument}
+              {focusedConnectorSlotId}
+            />
+          {/if}
         {:else if item.type === 'replicatedSet'}
-          <svelte:self
-            group={item.instances[0]}
-            {nodeId}
-            depth={depth + 1}
-            siblings={item.instances}
-            {segmentOrigin}
-            {segmentName}
-            {isNodeOffline}
-          />
+          {@const replicatedConstraint = connectorConstraintForPath(item.instances[0].path)}
+          {#if !replicatedConstraint.hidden}
+            <TreeGroupAccordion
+              group={item.instances[0]}
+              {nodeId}
+              depth={depth + 1}
+              siblings={item.instances}
+              {segmentOrigin}
+              {segmentName}
+              {isNodeOffline}
+              {connectorProfile}
+              {connectorDocument}
+              {focusedConnectorSlotId}
+            />
+          {/if}
         {/if}
       {/each}
     </div>
@@ -218,26 +321,41 @@
     {#if !collapsed}
       {#each groupedChildren as item}
         {#if item.type === 'leaf'}
-          <TreeLeafRow leaf={item.node} usedIn={getUsedIn(item.node)} {depth} {nodeId} {segmentOrigin} {segmentName} isNodeOffline={isEffectivelyReadOnly} />
+          {@const leafConstraint = connectorConstraintForPath(item.node.path)}
+          {#if !leafConstraint.hidden}
+            <TreeLeafRow leaf={item.node} usedIn={getUsedIn(item.node)} {depth} {nodeId} {segmentOrigin} {segmentName} isNodeOffline={isEffectivelyReadOnly} connectorConstraintState={leafConstraint} />
+          {/if}
         {:else if item.type === 'group'}
-          <svelte:self
-            group={item.node}
-            {nodeId}
-            depth={depth + 1}
-            {segmentOrigin}
-            {segmentName}
-            isNodeOffline={isEffectivelyReadOnly}
-          />
+          {@const groupConstraint = connectorConstraintForPath(item.node.path)}
+          {#if !groupConstraint.hidden}
+            <TreeGroupAccordion
+              group={item.node}
+              {nodeId}
+              depth={depth + 1}
+              {segmentOrigin}
+              {segmentName}
+              isNodeOffline={isEffectivelyReadOnly}
+              {connectorProfile}
+              {connectorDocument}
+              {focusedConnectorSlotId}
+            />
+          {/if}
         {:else if item.type === 'replicatedSet'}
-          <svelte:self
-            group={item.instances[0]}
-            {nodeId}
-            depth={depth + 1}
-            siblings={item.instances}
-            {segmentOrigin}
-            {segmentName}
-            isNodeOffline={isEffectivelyReadOnly}
-          />
+          {@const replicatedConstraint = connectorConstraintForPath(item.instances[0].path)}
+          {#if !replicatedConstraint.hidden}
+            <TreeGroupAccordion
+              group={item.instances[0]}
+              {nodeId}
+              depth={depth + 1}
+              siblings={item.instances}
+              {segmentOrigin}
+              {segmentName}
+              isNodeOffline={isEffectivelyReadOnly}
+              {connectorProfile}
+              {connectorDocument}
+              {focusedConnectorSlotId}
+            />
+          {/if}
         {/if}
       {/each}
     {/if}

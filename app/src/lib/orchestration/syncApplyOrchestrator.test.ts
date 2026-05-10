@@ -12,10 +12,10 @@ const {
   markNodeConfigReadRef: vi.fn(),
   nodeTreeStoreRef: {
     setTree: vi.fn(),
-    applyOfflinePendingValues: vi.fn(),
   },
   offlineChangesStoreRef: {
     persistedRows: [] as Array<{ changeId: string; nodeId?: string; plannedValue: string; baselineValue: string; status: string; kind: string; space?: number; offset?: string }>,
+    get effectiveRows() { return this.persistedRows; },
     reloadFromBackend: vi.fn(async () => {}),
   },
 }));
@@ -61,7 +61,7 @@ beforeEach(() => {
 });
 
 describe('reconcileOfflineTreesAfterSyncApply', () => {
-  it('rebuilds only affected nodes and reapplies all persisted pending rows after partial apply', async () => {
+  it('rebuilds only affected nodes after partial apply (no restamping needed)', async () => {
     buildOfflineNodeTreeRef.mockImplementation(async (nodeId: string) => makeTree(nodeId.match(/.{1,2}/g)?.join('.') ?? nodeId));
 
     await reconcileOfflineTreesAfterSyncApply(
@@ -99,10 +99,9 @@ describe('reconcileOfflineTreesAfterSyncApply', () => {
     expect(buildOfflineNodeTreeRef).toHaveBeenCalledWith('050201020300');
     expect(nodeTreeStoreRef.setTree).toHaveBeenCalledWith('05.02.01.02.03.00', makeTree('05.02.01.02.03.00'));
     expect(markNodeConfigReadRef).toHaveBeenCalledWith('05.02.01.02.03.00');
-    expect(nodeTreeStoreRef.applyOfflinePendingValues).toHaveBeenCalledWith(offlineChangesStoreRef.persistedRows);
   });
 
-  it('keeps restamping pending values even if rebuilding one affected node fails', async () => {
+  it('continues even if rebuilding one affected node fails', async () => {
     buildOfflineNodeTreeRef.mockRejectedValueOnce(new Error('tree rebuild failed'));
     const warnRef = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -131,7 +130,6 @@ describe('reconcileOfflineTreesAfterSyncApply', () => {
 
     expect(nodeTreeStoreRef.setTree).not.toHaveBeenCalled();
     expect(markNodeConfigReadRef).not.toHaveBeenCalled();
-    expect(nodeTreeStoreRef.applyOfflinePendingValues).toHaveBeenCalledWith(offlineChangesStoreRef.persistedRows);
     expect(warnRef).toHaveBeenCalled();
 
     warnRef.mockRestore();

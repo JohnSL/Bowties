@@ -32,5 +32,5 @@ export async function reconcileOfflineTreesAfterSyncApply(
     }
   }
 
-  nodeTreeStore.applyOfflinePendingValues(offlineChangesStore.persistedRows);
+  // After edit layer refactor: layer resolution is derived. No restamping needed.
 }
