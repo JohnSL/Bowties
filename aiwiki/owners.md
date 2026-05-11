@@ -1,0 +1,309 @@
+# Module Ownership
+
+## Summary
+
+| Layer | Count | Key shared logic |
+|-------|-------|-----------------|
+| Routes | 3 pages + layout | Screen composition, tab wiring |
+| Components | ~34 across 7 dirs | Rendering, intent emission |
+| Orchestrators | 12 | Async workflows, lifecycle transitions |
+| Stores | ~20 | Durable frontend state, derived values |
+| Utils | ~13 | Normalization, formatting, serialization |
+| API | 8 | Tauri IPC bindings |
+| Backend commands | 60+ across 7 modules | IPC boundary, error translation |
+| Backend domain | ~15 modules | Node registry, proxy actors, layout persistence |
+| lcc-rs | ~20 modules | Protocol encoding, transport, CDI parsing |
+
+Governing docs: `product/architecture/code-placement-and-ownership.md`, `product/architecture/frontend-boundaries.md`
+
+---
+
+## Routes (`app/src/routes/`)
+
+| File | Purpose | Test |
+|------|---------|------|
+| `+page.svelte` | Main app page; tabs for layout/discovery/config/traffic | `page.route.test.ts` |
+| `+layout.svelte` | Root layout wrapper | — |
+| `+layout.ts` | Disables SSR (SPA-only for Tauri) | — |
+| `config/+page.svelte` | Config editor; renders ConfigSidebar + ElementCardDeck | — |
+| `traffic/+page.svelte` | Live CAN traffic monitor | — |
+
+---
+
+## Components (`app/src/lib/components/`)
+
+### Bowtie/ — Event-centric connection UI
+| File | Purpose | Test |
+|------|---------|------|
+| `BowtieCard.svelte` | Bowtie card with producer/consumer columns | `BowtieCard.test.ts` |
+| `BowtieCatalogPanel.svelte` | Full catalog panel with editable metadata | `BowtieCatalogPanel.test.ts` |
+| `ElementEntry.svelte` | Event slot entry (producer or consumer) | — |
+| `ElementPicker.svelte` | Searchable node/slot picker | `ElementPicker.test.ts` |
+| `PickerTreeNode.svelte` | Tree node in picker hierarchy | — |
+| `EmptyState.svelte` | Empty catalog prompt | `EmptyState.test.ts` |
+| `AddElementDialog.svelte` | Add node/slot to existing bowtie | — |
+| `NewConnectionDialog.svelte` | Create new bowtie connection | — |
+| `ConnectorArrow.svelte` | Visual arrow connecting producers to consumers | — |
+| `RoleClassifyPrompt.svelte` | Resolve ambiguous event roles | — |
+
+### ConfigSidebar/ — Node/section navigation
+| File | Purpose | Test |
+|------|---------|------|
+| `ConfigSidebar.svelte` | Left-side nav; nodes and CDI segments | `ConfigSidebar.test.ts` |
+| `configSidebarPresenter.ts` | Presenter logic for sidebar state | `configSidebarPresenter.test.ts` |
+| `NodeEntry.svelte` | Clickable node with status badge | `NodeEntry.test.ts` |
+| `SegmentEntry.svelte` | Clickable CDI segment entry | `SegmentEntry.test.ts` |
+| `ConnectorSlotSelector.svelte` | Daughterboard slot dropdown | — |
+
+### ElementCardDeck/ — Config value editing
+| File | Purpose | Test |
+|------|---------|------|
+| `ElementCardDeck.svelte` | Container for top-level group cards | `ElementCardDeck.test.ts` |
+| `ElementCard.svelte` | Single CDI group card | `ElementCard.test.ts` |
+| `SegmentView.svelte` | All cards in a segment | `SegmentView.test.ts` |
+| `TreeLeafRow.svelte` | Single config field row | `TreeLeafRow.test.ts`, `TreeLeafRow.offline.test.ts` |
+| `TreeGroupAccordion.svelte` | Accordion for replicated groups | `TreeGroupAccordion.test.ts` |
+| `SubGroupAccordion.svelte` | Nested non-root group accordion | — |
+| `EventSlotRow.svelte` | Event ID slot field | — |
+| `FieldRow.svelte` | Generic field row wrapper | — |
+| `SaveControls.svelte` | Save/discard buttons for batch writes | `SaveControls.test.ts`, `saveControlsPresenter.test.ts` |
+
+### Sync/ — Layout reconciliation
+| File | Purpose | Test |
+|------|---------|------|
+| `SyncPanel.svelte` | Modal for resolving offline/online mismatches | `SyncPanel.display.test.ts`, `SyncPanel.lifecycle.test.ts` |
+| `ConflictRow.svelte` | Conflict row with resolution controls | — |
+| `CleanSummarySection.svelte` | Summary of clean (uncontended) rows | — |
+
+### PillSelector/ — Instance selector
+| File | Purpose | Test |
+|------|---------|------|
+| `PillSelector.svelte` | Dropdown pill for replicated group instances | `PillSelector.test.ts` |
+
+### Layout/ — Offline mode indicators
+| File | Purpose | Test |
+|------|---------|------|
+| `OfflineBanner.svelte` | Offline status banner with sync trigger | — |
+| `MissingCaptureBadge.svelte` | Badge for missing snapshot values | — |
+
+### Root-level components
+| File | Purpose | Test |
+|------|---------|------|
+| `TrafficMonitor.svelte` | Live traffic frame display | — |
+| `NodeList.svelte` | Discovered nodes with CDI viewer access | — |
+| `ErrorDialog.svelte` | Error modal with Escape-to-close | — |
+| `DiscardConfirmDialog.svelte` | Confirm discard of unsaved edits | — |
+| `DiscoveryProgressModal.svelte` | Progress during discovery phases (reading, building-catalog, complete, cancelled) | — |
+| `RefreshButton.svelte` | Refresh discovered nodes | — |
+| `CdiDownloadDialog.svelte` | CDI download prompt | — |
+| `CdiXmlViewer.svelte` | Syntax-highlighted CDI XML viewer | — |
+
+---
+
+## Orchestrators (`app/src/lib/orchestration/`)
+
+| File | Purpose | Test |
+|------|---------|------|
+| `discoveryOrchestrator.ts` | Node discovery workflow: probe → SNIP/PIP → publish | `discoveryOrchestrator.test.ts` |
+| `configReadOrchestrator.ts` | Per-node CDI read preflight and eligibility checks | `configReadOrchestrator.test.ts` |
+| `configReadSessionOrchestrator.ts` | Multi-node config read session lifecycle (cancel/phase) | `configReadSessionOrchestrator.test.ts` |
+| `configDraftOrchestrator.ts` | Mirrors config drafts to backend IPC or offline persistence | — |
+| `cdiDialogOrchestrator.ts` | CDI download/cache/redownload state machine | `cdiDialogOrchestrator.test.ts` |
+| `connectorSelectionOrchestrator.ts` | Connector slot selection + compatibility recompute | `connectorSelectionOrchestrator.test.ts` |
+| `offlineLayoutOrchestrator.ts` | Offline layout hydration and snapshot replay | `offlineLayoutOrchestrator.test.ts` |
+| `syncSessionOrchestrator.ts` | Sync session lifecycle: classify → mode → reconcile | `syncSessionOrchestrator.test.ts` |
+| `syncApplyOrchestrator.ts` | Post-apply reconciliation: rebuild offline trees | `syncApplyOrchestrator.test.ts` |
+| `syncPanelViewOrchestrator.ts` | Sync panel user interactions (mode, deselect, apply) | `syncPanelViewOrchestrator.test.ts` |
+| `lifecycleTransitionMatrix.ts` | App lifecycle transition decision logic | `lifecycleTransitionMatrix.test.ts` |
+| `unsavedChangesGuard.ts` | Navigation guard for unsaved edits | `unsavedChangesGuard.test.ts` |
+
+---
+
+## Stores (`app/src/lib/stores/`)
+
+| File | Purpose | Test |
+|------|---------|------|
+| `bowties.svelte.ts` | Bowtie catalog + editable preview | `bowties.svelte.test.ts` |
+| `bowtieMetadata.svelte.ts` | Pending bowtie name/tag/role edits | `bowtieMetadata.svelte.test.ts` |
+| `nodeTree.svelte.ts` | Unified node config tree (CDI + addresses + values) | `nodeTree.store.test.ts` |
+| `configChanges.svelte.ts` | Layered change state (draft/offlinePending/baseline) | `configChanges.test.ts` |
+| `configEditor.svelte.ts` | Entry point for user-initiated config edits | `configEditor.test.ts` |
+| `configFocus.svelte.ts` | Navigation request: bowtie → config field | `configFocus.test.ts` |
+| `configReadStatus.ts` | Tracks nodes with successful config reads | `configReadStatus.test.ts` |
+| `layout.svelte.ts` | Layout file state: open/save/save-as/recent | `layout.svelte.test.ts` |
+| `layoutOpenLifecycle.ts` | Phase machine for layout open (opening→hydrating→ready) | — |
+| `offlineChanges.svelte.ts` | Offline change row tracking (persisted/draft layers) | `offlineChanges.store.test.ts` |
+| `syncPanel.svelte.ts` | Sync session state: conflict/clean row tracking | `syncPanel.store.test.ts` |
+| `connectorSelections.svelte.ts` | Connector slot selections per-node | — |
+| `bowtieFocus.svelte.ts` | Currently focused bowtie card (keyboard nav) | — |
+| `connectorSlotFocus.svelte.ts` | Focused connector slot per-node | — |
+| `connectionRequest.svelte.ts` | Cross-tab connection request (config→bowtie) | — |
+| `changeTracker.svelte.ts` | Unified "unsaved changes" snapshot for save controls | `changeTracker.svelte.test.ts` |
+| `nodes.ts` | Global discovered nodes list (Svelte 5 runes) | — |
+| `nodeInfo.ts` | nodeId → DiscoveredNode map for display-name resolution | — |
+| `pillSelection.ts` | Replicated group instance selections | `pillSelection.test.ts` |
+| `traffic.ts` | Live traffic message stream | — |
+
+---
+
+## Utils (`app/src/lib/utils/`)
+
+| File | Purpose | Test |
+|------|---------|------|
+| `nodeId.ts` | Node ID normalization: dotted-hex ↔ canonical | — |
+| `nodeDisplayName.ts` | Display name resolution via fallback chain | — |
+| `formatters.ts` | Config value display formatting (int/string/eventId/float) | `formatters.test.ts` |
+| `serialize.ts` | Serialize TreeConfigValue to raw bytes for writes | `serialize.test.ts` |
+| `eventIds.ts` | Event ID placeholder detection; fresh event ID generation | — |
+| `editKey.ts` | Canonical edit key construction: `nodeId:space:address` | `editKey.test.ts` |
+| `connectorConstraints.ts` | Evaluate connector slot constraints | `connectorConstraints.test.ts` |
+| `connectorLeafDecision.ts` | Leaf value compatibility under slot constraints | `connectorLeafDecision.test.ts` |
+| `connectorSlotSelectors.ts` | View model for connector slot selector UI | `connectorSlotSelectors.test.ts` |
+| `cardTitle.ts` | Card title from CDI group name + user names | `cardTitle.test.ts` |
+| `treeLeafViewState.ts` | Display state for tree leaf rows (offline, compatibility) | `treeLeafViewState.test.ts` |
+| `treeConfigValuePersistence.ts` | TreeConfigValue ↔ offline-stored string format | — |
+| `xmlFormatter.ts` | Pretty-print XML for CDI viewer | — |
+
+---
+
+## API Layer (`app/src/lib/api/`)
+
+| File | Purpose |
+|------|---------|
+| `tauri.ts` | Low-level Tauri IPC bindings (discovery, SNIP, PIP, registration) |
+| `cdi.ts` | CDI download/cache operations |
+| `config.ts` | Config read/write IPC (setModifiedValue, writeModifiedValues, discard) |
+| `bowties.ts` | Bowtie catalog building and layout persistence |
+| `layout.ts` | Layout file open/close, offline snapshot hydration |
+| `sync.ts` | Sync session and offline change reconciliation IPC |
+| `connectorProfiles.ts` | Connector profile queries, slot selection, compatibility preview |
+| `types.ts` | Shared API type definitions |
+
+---
+
+## Backend Commands (`app/src-tauri/src/commands/`)
+
+| Module | Key Commands | Purpose |
+|--------|-------------|---------|
+| `connection.rs` | `list_serial_ports`, `load_connection_prefs`, `save_connection_prefs` | Connection management |
+| `discovery.rs` | `discover_nodes`, `probe_nodes`, `register_node`, `query_snip_*`, `query_pip_*`, `verify_node_status`, `refresh_all_nodes` | Node discovery and metadata |
+| `bowties.rs` | `query_event_roles`, `build_bowtie_catalog_command`, `get_bowties`, `set_bowtie_metadata`, `load_layout`, `save_layout`, `*_recent_layout` | Bowtie catalog and layout files |
+| `cdi.rs` | `download_cdi`, `get_cdi_xml`, `get_cdi_structure`, `read_config_value`, `read_all_config_values`, `write_config_value`, `set_modified_value`, `write_modified_values`, `discard_modified_values`, `trigger_action`, `cancel_*` | CDI download, config read/write |
+| `layout_capture.rs` | `capture_layout_snapshot`, `save_layout_directory`, `open_layout_directory`, `close_layout`, `create_new_layout_capture`, `build_offline_node_tree` | Layout snapshot persistence |
+| `sync_panel.rs` | `set_offline_change`, `revert_offline_change`, `list_offline_changes` | Offline change staging |
+| `connector_profiles.rs` | `get_connector_profile`, `get_connector_selections`, `put_connector_selections`, `preview_connector_compatibility` | Connector profile and slot constraints |
+| `diagnostics.rs` | `get_diagnostic_report` | Ring-buffer logs and troubleshooting |
+
+---
+
+## Backend Domain Modules (`app/src-tauri/src/`)
+
+| Module | Purpose | Test |
+|--------|---------|------|
+| `lib.rs` | Entry point: connection init, state setup, command registration | — |
+| `main.rs` | Tauri desktop app launcher | — |
+| `state.rs` | Authoritative app state: connection, registry, caches | inline `#[cfg(test)]` |
+| `node_registry.rs` | Thread-safe NodeID → NodeProxyHandle map | inline `#[cfg(test)]` |
+| `node_proxy.rs` | Per-node actor: SNIP, PIP, CDI, config values via mailbox | inline `#[cfg(test)]` |
+| `node_tree.rs` | Unified config tree: CDI + addresses + values + roles | inline `#[cfg(test)]` |
+| `diagnostics.rs` | Ring-buffer logging (`bwlog!`), diagnostic stats | — |
+| `events/router.rs` | Event broadcast: transport frames → Tauri events | inline `#[cfg(test)]` |
+| `traffic/mod.rs` | Message decoding for traffic monitor display | — |
+| `menu.rs` | Desktop app menu | — |
+| `layout/mod.rs` | Layout persistence orchestration | — |
+| `layout/types.rs` | YAML data structures (BowtieMetadata, RoleClassification) | — |
+| `layout/io.rs` | File I/O with schema versioning, atomic writes | inline `#[cfg(test)]` |
+| `layout/manifest.rs` | Layout manifest tracking | inline `#[cfg(test)]` |
+| `layout/node_snapshot.rs` | Node config snapshot for offline use | inline `#[cfg(test)]` |
+| `layout/offline_changes.rs` | Offline change staging (config diffs) | inline `#[cfg(test)]` |
+| `layout/serde_node_id.rs` | Custom serde for NodeID (dotted-hex in YAML) | — |
+| `profile/mod.rs` | Profile loading + tree annotation | — |
+| `profile/types.rs` | Structure profile types (event roles, relevance, connectors) | — |
+| `profile/loader.rs` | `.profile.yaml` and `.connector.yaml` loading | inline `#[cfg(test)]` |
+| `profile/resolver.rs` | Profile conditional resolution (firmware checks) | inline `#[cfg(test)]` |
+
+---
+
+## lcc-rs Protocol Library (`lcc-rs/src/`)
+
+| Module | Purpose | Test |
+|--------|---------|------|
+| `lib.rs` | Public crate API; re-exports types and protocol structs | — |
+| `types.rs` | Core types: NodeID, EventID, NodeAlias, SNIPData, ProtocolFlags | inline `#[cfg(test)]` |
+| `constants.rs` | Protocol constants (timeouts, buffer sizes) | — |
+| `discovery.rs` | LccConnection: protocol orchestrator, node probe, BatchReader | inline `#[cfg(test)]` |
+| `alias_allocation.rs` | CID7→CID4 alias allocation, conflict detection per S-9.7.2.1 | inline `#[cfg(test)]` |
+| `snip.rs` | SNIP query via datagram: manufacturer/model/version retrieval | inline `#[cfg(test)]` |
+| `pip.rs` | Protocol Identification Protocol capability query | inline `#[cfg(test)]` |
+| `transport_actor.rs` | Dual-path frame I/O actor: mpsc queue + direct send | inline `#[cfg(test)]` |
+| `dispatcher.rs` | Inbound frame routing by MTI & alias | inline `#[cfg(test)]` |
+| `cdi/mod.rs` | Cdi struct and DataElement enum | — |
+| `cdi/parser.rs` | CDI XML → Cdi tree parsing | inline `#[cfg(test)]` |
+| `cdi/hierarchy.rs` | Tree traversal: `walk_event_slots()` iterator | inline `#[cfg(test)]` |
+| `cdi/role.rs` | Event role classification heuristics | inline `#[cfg(test)]` |
+| `protocol/mod.rs` | Protocol facade; re-exports | — |
+| `protocol/frame.rs` | GridConnectFrame: CAN header parse/encode | inline `#[cfg(test)]` |
+| `protocol/mti.rs` | MTI enum: 60+ message types with encoding | inline `#[cfg(test)]` |
+| `protocol/datagram.rs` | DatagramAssembler: multi-frame reassembly | inline `#[cfg(test)]` |
+| `protocol/memory_config.rs` | MemoryConfigCmd, address spaces, ReadReply parsing | inline `#[cfg(test)]` |
+| `transport/mod.rs` | Transport trait API | — |
+| `transport/tcp.rs` | TCP transport with GridConnect framing | inline `#[cfg(test)]` |
+| `transport/gridconnect_serial.rs` | Serial transport with GridConnect framing | inline `#[cfg(test)]` |
+| `transport/slcan_serial.rs` | Serial transport with SLCAN (Lawicel) framing | inline `#[cfg(test)]` |
+| `transport/mock.rs` | Mock transport for unit tests | — |
+
+---
+
+## Integration Boundaries
+
+### Frontend → Backend IPC
+- All commands return `Result<T, String>` (error as string)
+- State accessed via `tauri::State<'_, AppState>`
+- Events emitted: `lcc-node-discovered`, `lcc-message-received`, `lcc-connection-changed`, `cdi-read-complete`, `config-read-progress`
+
+### Backend → lcc-rs API Surface
+- `LccConnection` — main protocol orchestrator
+- `TransportHandle` — broadcast inbound + mpsc outbound
+- Types: `NodeID`, `EventID`, `NodeAlias`, `DiscoveredNode`, `SNIPData`, `ProtocolFlags`
+- Protocol: `GridConnectFrame`, `MTI`, `DatagramAssembler`, `MemoryConfigCmd`
+- CDI: `Cdi`, `DataElement`, `EventRole`, `classify_event_slot()`, `walk_event_slots()`
+- Transport: `LccTransport`, `GridConnectSerialTransport`, `SlcanSerialTransport`
+
+### Lifecycle Ownership Transitions
+- Discovery: lcc-rs probes → backend creates NodeProxy actors → frontend receives events
+- Config read: frontend orchestrator → backend batch reads → lcc-rs memory config datagrams
+- Layout open: frontend orchestrator → backend hydrates snapshots → stores populated
+- Sync apply: frontend orchestrator → backend writes changes → lcc-rs memory config
+
+---
+
+## Shared Conventions
+
+### Key Generation
+**Canonical implementation:** `app/src/lib/utils/editKey.ts`
+- Format: `"${normalizedNodeId}:${space}:${address}"` (e.g., `"050201020300:253:100"`)
+- `editKeyForLeaf(nodeId, space, address)` — single source of truth
+- `parseEditKey(key)` — inverse
+- Used by: `configChanges.svelte.ts`, `offlineChanges.svelte.ts`
+
+### Normalization Rules
+**Canonical implementation:** `app/src/lib/utils/nodeId.ts` + `lcc-rs/src/types.rs`
+- Node ID canonical: uppercase, no dots (`"050201020000FF"`)
+- Node ID display: dotted-hex (`"05.02.01.02.00.FF"`)
+- `normalizeNodeId()` — removes dots, uppercases
+- `formatNodeId()` — bytes → dotted display
+- Anti-pattern: inline `.replace(/\./g, '')` without uppercase → lookup failures
+- Governing doc: `product/architecture/naming-and-normalization.md`
+
+### Formatting / Display
+**Canonical implementation:** `app/src/lib/utils/formatters.ts`
+- `formatConfigValue()` — Int→string, String→as-is, EventId→dotted hex, Float→.toFixed(2)
+- `formatEventId()` — 8-byte array → dotted uppercase hex
+- `formatTreeConfigValue()` — resolves int enums to labels via mapEntries
+
+### Fallback Chains
+**Canonical implementation:** `app/src/lib/utils/nodeDisplayName.ts`
+- Display name: user_name → manufacturer+model → model → Node ID hex
+- `resolveNodeDisplayName(nodeId, node)` — single entry point
+- Anti-pattern: inline fallback `node.user_name || nodeId` — use the helper
+- Governing doc: `product/architecture/naming-and-normalization.md`

@@ -1033,6 +1033,7 @@ pub enum ProgressStatus {
     Starting,
     ReadingNode { node_name: String },
     NodeComplete { node_name: String, success: bool },
+    BuildingCatalog,
     Cancelled,
     Complete { success_count: usize, fail_count: usize },
 }
@@ -2207,6 +2208,19 @@ pub async fn read_all_config_values(
     if node_idx + 1 == total_node_count {
         eprintln!("[bowties] Last node complete — starting Identify Events exchange");
         let build_start = std::time::Instant::now();
+
+        // Notify frontend that catalog building is in progress
+        let _ = app_handle.emit("config-read-progress", ReadProgressUpdate {
+            total_nodes: total_node_count,
+            current_node_index: node_idx,
+            current_node_name: node_name.clone(),
+            current_node_id: node_id.clone(),
+            total_elements: total_count,
+            elements_read: success_count,
+            elements_failed: error_count,
+            percentage: 100,
+            status: ProgressStatus::BuildingCatalog,
+        });
 
         // Borrow AppState as a plain reference for the async helpers.
         let state_ref: &AppState = &*state;

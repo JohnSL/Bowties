@@ -27,6 +27,7 @@ export type ProgressStatus =
     | { type: 'Starting' }
     | { type: 'ReadingNode'; node_name: string }
     | { type: 'NodeComplete'; node_name: string; success: boolean }
+    | { type: 'BuildingCatalog' }
     | { type: 'Cancelled' }
     | { type: 'Complete'; success_count: number; fail_count: number };
 

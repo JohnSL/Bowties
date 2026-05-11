@@ -116,6 +116,11 @@ See [releasing.md](releasing.md) for the full release process (version number lo
 | [Tauri API](../technical/tauri-api.md) | Frontend IPC command reference |
 | [Feature Roadmap](roadmap.md) | Development timeline and priorities |
 | [Constitution](../../.specify/memory/constitution.md) | Development principles and standards |
+| [AI Workflow Guide](ai-workflow-guide.md) | How to use AI prompts, skills, and the knowledge base |
+| [Glossary](../../product/glossary.md) | Canonical terminology and avoid-lists |
+| [ADR Log](../../product/architecture/adr/) | Accepted and rejected architecture decisions |
+| [aiwiki/](../../aiwiki/) | AI-audience code-level navigation (module owners, flows, conventions) |
+| [specs/ideas/](../../specs/ideas/) | Structured prior-work cache with area tags |
 
 ## Acknowledgments
 

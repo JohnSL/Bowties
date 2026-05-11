@@ -105,4 +105,12 @@ describe('configReadSessionOrchestrator', () => {
       makeReadProgress({ type: 'Complete', fail_count: 0, success_count: 2 }),
     )).toEqual(closeConfigReadProgressUi());
   });
+
+  it('switches to building-catalog phase on BuildingCatalog status', () => {
+    const progress = makeReadProgress({ type: 'BuildingCatalog' });
+    expect(applyConfigReadProgressUpdate(makeNodeReadStates(), progress)).toEqual({
+      discoveryPhase: 'building-catalog',
+      readProgress: progress,
+    });
+  });
 });

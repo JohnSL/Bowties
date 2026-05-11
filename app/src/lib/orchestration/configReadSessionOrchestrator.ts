@@ -1,7 +1,7 @@
 import type { ReadProgressState, NodeReadState } from '$lib/api/types';
 import type { CdiNodeCandidate } from './cdiDialogOrchestrator';
 
-export type ConfigReadPhase = 'reading' | 'complete' | 'cancelled';
+export type ConfigReadPhase = 'reading' | 'building-catalog' | 'complete' | 'cancelled';
 
 export interface ConfigReadSessionPatch {
   cdiDownloadDialogVisible?: boolean;
@@ -87,6 +87,13 @@ export function applyConfigReadProgressUpdate(
 ): ConfigReadSessionPatch {
   if (payload.status.type === 'Cancelled' || payload.status.type === 'Complete') {
     return closeConfigReadProgressUi();
+  }
+
+  if (payload.status.type === 'BuildingCatalog') {
+    return {
+      discoveryPhase: 'building-catalog',
+      readProgress: payload,
+    };
   }
 
   let nodeReadStates = currentNodeReadStates;

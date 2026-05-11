@@ -61,7 +61,7 @@
   $: showCancel = phase !== 'complete' && phase !== 'cancelled';
 
   /** Whether to show per-node progress list */
-  $: showNodeList = phase === 'reading' && nodeReadStates.length > 0;
+  $: showNodeList = (phase === 'reading' || phase === 'building-catalog') && nodeReadStates.length > 0;
 
   /** Progress percentage for the bar */
   $: percentage = readProgress?.percentage ?? 0;
@@ -89,6 +89,8 @@
           ✓ Complete
         {:else if phase === 'cancelled'}
           ⚠ Cancelled
+        {:else if phase === 'building-catalog'}
+          Building Event Catalog
         {:else if phase === 'reading'}
           Reading Node Configurations
         {:else}
@@ -136,6 +138,12 @@
               </div>
             {/each}
           </div>
+          {#if phase === 'building-catalog'}
+            <p class="dm-phase-text">Identifying event roles and building catalog…</p>
+            <div class="dm-bar-track" aria-hidden="true">
+              <div class="dm-bar-fill dm-bar-indeterminate"></div>
+            </div>
+          {/if}
         {:else}
           <!-- Phase text -->
           <p class="dm-phase-text">

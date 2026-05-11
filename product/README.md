@@ -42,6 +42,11 @@ When current code, active tests, and `product/` disagree with older design or te
 - `product/architecture/lifecycle-and-state-ownership.md` — owner of each lifecycle transition and state machine
 - `product/architecture/naming-and-normalization.md` — Node ID normalization and display-name fallback rules
 - `product/architecture/sync-panel-workflow.md` — sync session building, row classification, apply semantics
+- `product/architecture/adr/` — accepted and rejected architecture decisions (ADR log)
+
+### Glossary
+
+- `product/glossary.md` — canonical terminology, avoid-lists, and term relationships for Bowties and LCC/OpenLCB
 
 ### User Experience
 
