@@ -54,15 +54,18 @@ Which modules participate in each major workflow. For full ownership rules, see 
 
 ## Layout Open / Save
 - **Route:** `+page.svelte`
-- **Orchestrator:** `offlineLayoutOrchestrator.ts`
-- **Store:** `layout.svelte.ts`, `bowtieMetadata.svelte.ts`, `layoutOpenLifecycle.ts`
+- **Orchestrator:** `offlineLayoutOrchestrator.ts` (calls `buildBowtieCatalog` after offline hydration)
+- **Store:** `layout.svelte.ts`, `bowtieMetadata.svelte.ts`, `layoutOpenLifecycle.ts`, `bowties.svelte.ts` (receives offline catalog via `setCatalog`), `configSidebar.ts` (reset on layout open/close)
 - **API:** `layout.ts`, `bowties.ts`
-- **Backend:** `commands/bowties.rs` (`load_layout`, `save_layout`), `commands/layout_capture.rs` (`create_new_layout_capture`, `capture_layout_snapshot`, `build_offline_node_tree`, `close_layout`)
+- **Backend:** `commands/bowties.rs` (`load_layout`, `save_layout`, `build_bowtie_catalog_command` — offline fallback via `OfflineBowtieData`), `commands/layout_capture.rs` (`create_new_layout_capture`, `capture_layout_snapshot`, `build_offline_node_tree`, `close_layout`)
+- **State:** `state.rs` (`OfflineBowtieData` — config values, profile roles, CDI XML accumulated per node during offline tree build)
+- **Sidebar clearing:** `openOfflineLayoutWithReplay` resets sidebar before hydration; `resetLayoutStateForNoLayout` resets sidebar during teardown. Both use injected `resetSidebar` callback.
 - **No protocol** — YAML snapshot I/O
 
 ## Bowtie Catalog Build
 - **Route:** `+page.svelte` (trigger on startup/changes)
-- **Store:** `bowties.svelte.ts`
+- **Orchestrator:** `offlineLayoutOrchestrator.ts` (offline path)
+- **Store:** `bowties.svelte.ts` (fast path: catalog used directly; slow path: `buildTreeEntriesIndex()` for pending edits)
 - **API:** `bowties.ts`
 - **Backend:** `commands/bowties.rs` (`build_bowtie_catalog_command`, `query_event_roles`, `get_bowties`)
 

@@ -286,12 +286,15 @@ describe('EditableBowtiePreviewStore.preview', () => {
     // Act
     const preview = editableBowtiePreviewStore.preview;
 
-    // Assert: catalog's original 1P+1C plus the new tree consumer = 1P + 2C
+    // Assert: When catalog is present and no config edits are pending,
+    // the catalog is authoritative (fast path — no tree scanning).
+    // The extra tree entry does NOT appear because the backend should have
+    // included it in the catalog if it was relevant.
     const card = preview.bowties.find(b => b.eventIdHex === TEST_EVENT_HEX);
     expect(card).toBeDefined();
     expect(card!.producers.length).toBe(1);
-    expect(card!.consumers.length).toBe(2);
-    expect(card!.isDirty).toBe(true); // new entry makes it dirty
+    expect(card!.consumers.length).toBe(1);
+    expect(card!.isDirty).toBe(false);
   });
 
   it('derives offline bowties from loaded trees when layout metadata is empty', () => {

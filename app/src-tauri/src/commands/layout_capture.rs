@@ -1,7 +1,7 @@
 //! Offline layout capture/open commands.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use tauri::{Emitter, Manager};
 
 use crate::layout::manifest::LayoutManifest;
@@ -88,33 +88,6 @@ fn canonical_node_id(node_id_dotted_hex: &str) -> String {
 
 fn config_value_to_string(value: &crate::node_tree::ConfigValue) -> String {
     value.to_snapshot_string()
-}
-
-fn sanitize_cache_fragment(s: &str) -> String {
-    s.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
-fn cdi_cache_path_for_snapshot(snapshot: &NodeSnapshot, app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Cannot resolve app data directory: {}", e))?;
-
-    let cdi_filename = format!(
-        "{}_{}_{}.cdi.xml",
-        sanitize_cache_fragment(&snapshot.snip.manufacturer_name),
-        sanitize_cache_fragment(&snapshot.snip.model_name),
-        sanitize_cache_fragment(&snapshot.cdi_ref.version),
-    );
-    Ok(app_data_dir.join("cdi_cache").join(cdi_filename))
 }
 
 fn collect_leaf_values(
@@ -470,13 +443,17 @@ pub async fn save_layout_directory(
 
     // Collect CDI files from cache, skipping nodes that don't support CDI.
     let mut cdi_files: Vec<(String, std::path::PathBuf)> = Vec::new();
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Cannot resolve app data directory: {}", e))?;
     for snapshot in &snapshots {
         if snapshot.cdi_ref.fingerprint == "not_supported"
             || snapshot.cdi_ref.fingerprint == "missing"
         {
             continue;
         }
-        let cdi_path = cdi_cache_path_for_snapshot(&snapshot, &app)?;
+        let cdi_path = crate::layout::io::cdi_cache_path(&snapshot, &app_data_dir);
         if !cdi_path.exists() {
             return Err(format!(
                 "CDI file not found in cache for node {}: expected at {} (cache key: {})",
@@ -584,6 +561,8 @@ pub async fn open_layout_directory(
 
     // Load offline changes into cache
     *state.offline_changes_cache.write().await = loaded.offline_changes.clone();
+    // Clear stale offline bowtie data from any previous session
+    *state.offline_bowtie_data.write().await = Default::default();
 
     let layout_node_ids = loaded.node_snapshots.iter().map(|s| s.node_id.clone()).collect();
     let context = ActiveLayoutContext {
@@ -634,6 +613,7 @@ pub async fn close_layout(
 
     *state.active_layout.write().await = None;
     *state.offline_changes_cache.write().await = Vec::new();
+    *state.offline_bowtie_data.write().await = Default::default();
     crate::commands::bowties::clear_recent_layout(app).await?;
 
     Ok(CloseLayoutResult {
@@ -701,16 +681,12 @@ pub async fn build_offline_node_tree(
         ));
     }
 
-    let cdi_path = cdi_cache_path_for_snapshot(&snapshot, &app)?;
-    if !cdi_path.exists() {
-        return Err(format!(
-            "CDI not in cache: {} (key: {})",
-            cdi_path.display(),
-            snapshot.cdi_ref.cache_key
-        ));
-    }
-    let xml = std::fs::read_to_string(&cdi_path)
-        .map_err(|e| format!("Cannot read CDI cache file {}: {}", cdi_path.display(), e))?;
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Cannot resolve app data directory: {}", e))?;
+    let xml = crate::layout::io::resolve_cdi_xml(&snapshot, &app_data_dir, &companion_dir)
+        .map_err(|e| format!("CDI not available for node {}: {}", node_id, e))?;
 
     let cdi = lcc_rs::cdi::parser::parse_cdi(&xml)
         .map_err(|e| format!("Cannot parse CDI for {}: {}", node_id, e))?;
@@ -744,6 +720,31 @@ pub async fn build_offline_node_tree(
                     report.warnings.len()
                 );
             }
+        }
+    }
+
+    // ── Accumulate offline bowtie data for later catalog build ────────────────
+    {
+        let mut offline_data = state.offline_bowtie_data.write().await;
+
+        // Store CDI XML for slot walking
+        offline_data.cdi_xml.insert(dotted_id.clone(), xml);
+
+        // Extract EventId config values from the tree
+        let mut node_config: HashMap<String, [u8; 8]> = HashMap::new();
+        for leaf in crate::node_tree::collect_event_id_leaves(&tree) {
+            if let Some(role) = leaf.event_role {
+                if role != lcc_rs::EventRole::Ambiguous {
+                    let key = format!("{}:{}", dotted_id, leaf.path.join("/"));
+                    offline_data.profile_roles.insert(key, role);
+                }
+            }
+            if let Some(bytes) = leaf.value {
+                node_config.insert(leaf.path.join("/"), bytes);
+            }
+        }
+        if !node_config.is_empty() {
+            offline_data.config_values.insert(dotted_id.clone(), node_config);
         }
     }
 

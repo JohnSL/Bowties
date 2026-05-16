@@ -42,9 +42,18 @@ vi.mock('$lib/stores/connectorSelections.svelte', () => ({
 
 vi.mock('$lib/stores/layoutOpenLifecycle', () => lifecycleRef);
 
+vi.mock('$lib/api/bowties', () => ({
+  buildBowtieCatalog: vi.fn(async () => ({ bowties: [], built_at: '', source_node_count: 0, total_slots_scanned: 0 })),
+}));
+
+vi.mock('$lib/stores/bowties.svelte', () => ({
+  bowtieCatalogStore: { setCatalog: vi.fn() },
+}));
+
 import {
   buildOfflineDiscoveryNodes,
   buildOfflineTreesFromSnapshots,
+  cdiUnavailableTree,
   clearActiveLayoutWithReset,
   openOfflineLayoutWithReplay,
   rehydrateOfflineStateFromSnapshots,
@@ -92,6 +101,7 @@ describe('openOfflineLayoutWithReplay', () => {
       path: 'D:/Layouts/yard.layout.yaml',
       openLayout: vi.fn(async () => result),
       hydrateOfflineSnapshots,
+      resetSidebar: vi.fn(),
       hydrateConnectorSelections: connectorSelectionsStoreRef.hydrateFromLayout,
       onOpened,
     });
@@ -110,6 +120,33 @@ describe('openOfflineLayoutWithReplay', () => {
     expect(connectorSelectionsStoreRef.hydrateFromLayout).toHaveBeenCalledWith(makeLayout());
   });
 
+  it('resets the config sidebar before hydrating the new layout', async () => {
+    const resetSidebar = vi.fn();
+    const hydrateOfflineSnapshots = vi.fn(async () => {});
+    const result = {
+      layoutId: 'yard-layout',
+      capturedAt: '2026-04-25T00:00:00.000Z',
+      layout: makeLayout(),
+      offlineMode: true,
+      nodeCount: 0,
+      pendingOfflineChangeCount: 0,
+      partialNodes: [],
+      nodeSnapshots: [],
+    };
+
+    await openOfflineLayoutWithReplay({
+      path: 'D:/Layouts/yard.layout.yaml',
+      openLayout: vi.fn(async () => result),
+      hydrateOfflineSnapshots,
+      resetSidebar,
+    });
+
+    expect(resetSidebar).toHaveBeenCalledTimes(1);
+    // Sidebar must be reset before hydration begins
+    expect(resetSidebar.mock.invocationCallOrder[0])
+      .toBeLessThan(hydrateOfflineSnapshots.mock.invocationCallOrder[0]);
+  });
+
   it('does not call onOpened when the layout open fails', async () => {
     const onOpened = vi.fn();
     const error = new Error('open failed');
@@ -120,6 +157,7 @@ describe('openOfflineLayoutWithReplay', () => {
         throw error;
       }),
       hydrateOfflineSnapshots: vi.fn(async () => {}),
+      resetSidebar: vi.fn(),
       onOpened,
     })).rejects.toThrow('open failed');
 
@@ -231,20 +269,21 @@ describe('offline snapshot helpers', () => {
     ]);
   });
 
-  it('falls back to raw snapshot trees when CDI tree build fails', async () => {
+  it('falls back to CDI-unavailable placeholder when CDI tree build fails', async () => {
     const warning = vi.fn();
     const snapshot = makeSnapshot();
     const [tree] = await buildOfflineTreesFromSnapshots({
       snapshots: [snapshot],
       buildOfflineNodeTree: vi.fn(async () => {
-        throw new Error('CDI not in cache');
+        throw new Error('CDI not available for node 050201020300 (tried X and Y)');
       }),
       onTreeBuildWarning: warning,
     });
 
-    expect(tree).toEqual(treeFromSnapshot(snapshot));
+    expect(tree).toEqual(cdiUnavailableTree(snapshot));
+    expect(tree.segments[0].name).toBe('CDI Not Available');
     expect(warning).toHaveBeenCalledWith(
-      '[offline] CDI not cached for node 050201020300 — falling back to raw address tree',
+      '[offline] CDI not available for node 050201020300 — configuration cannot be displayed',
     );
   });
 
@@ -325,10 +364,32 @@ describe('offline snapshot helpers', () => {
       clearOfflineChanges: vi.fn(),
       resetLayoutStore: vi.fn(),
       resetSyncSessionAutoTrigger: vi.fn(),
+      resetSidebar: vi.fn(),
       probeForNodes,
     });
 
     expect(probeForNodes).toHaveBeenCalledTimes(1);
+  });
+
+  it('resets the config sidebar when clearing layout state', async () => {
+    const resetSidebar = vi.fn();
+
+    await resetLayoutStateForNoLayout({
+      connected: false,
+      clearPartialCaptureNodes: vi.fn(),
+      clearCurrentLayoutSnapshots: vi.fn(),
+      clearNodes: vi.fn(),
+      clearConfigReadStatus: vi.fn(),
+      resetNodeTrees: vi.fn(),
+      clearMetadata: vi.fn(),
+      clearOfflineChanges: vi.fn(),
+      resetLayoutStore: vi.fn(),
+      resetSyncSessionAutoTrigger: vi.fn(),
+      resetSidebar,
+      probeForNodes: vi.fn(async () => {}),
+    });
+
+    expect(resetSidebar).toHaveBeenCalledTimes(1);
   });
 
   it('skips the fresh live reset when a layout file is active', () => {

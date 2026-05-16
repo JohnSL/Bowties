@@ -2,6 +2,8 @@
 agent: speckit.implement
 ---
 
+**First action**: Use `manage_todo_list` to create a todo from all 8 Bowties-specific steps below (in addition to any task-level todos). Update status as you work. Do not mark the task complete until all items including post-implementation enrichment are done.
+
 ## Bowties Pre-Implementation Analysis (do this BEFORE executing any tasks)
 
 Output the following analysis visibly before proceeding to task execution:
@@ -11,7 +13,7 @@ Output the following analysis visibly before proceeding to task execution:
 3. **Placement verification**: For each new module or significant logic change, verify correct layer placement per `product/architecture/code-placement-and-ownership.md`.
 4. **ADR check**: Scan `product/architecture/adr/` for decisions that constrain the implementation approach.
 
-## Bowties Post-Implementation Enrichment (do this AFTER all tasks complete)
+## Bowties Post-Implementation Enrichment (you are NOT done — complete these before summarizing)
 
 5. **Enrich aiwiki/owners.md**: Add any new modules, update test file mappings, and document any new shared conventions established during implementation.
 6. **Enrich aiwiki/flows.md**: If workflow module participation changed, update the relevant flow entries.

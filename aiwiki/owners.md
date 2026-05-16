@@ -110,7 +110,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `configDraftOrchestrator.ts` | Mirrors config drafts to backend IPC or offline persistence | — |
 | `cdiDialogOrchestrator.ts` | CDI download/cache/redownload state machine | `cdiDialogOrchestrator.test.ts` |
 | `connectorSelectionOrchestrator.ts` | Connector slot selection + compatibility recompute | `connectorSelectionOrchestrator.test.ts` |
-| `offlineLayoutOrchestrator.ts` | Offline layout hydration and snapshot replay | `offlineLayoutOrchestrator.test.ts` |
+| `offlineLayoutOrchestrator.ts` | Offline layout hydration, snapshot replay, and layout-transition resets (sidebar, nodes, trees, metadata). Three reset functions: `resetLayoutStateForNoLayout` (full teardown), `resetFreshLiveSessionState` (live-session guard), `openOfflineLayoutWithReplay` (clears sidebar before hydrating new layout) | `offlineLayoutOrchestrator.test.ts` |
 | `syncSessionOrchestrator.ts` | Sync session lifecycle: classify → mode → reconcile | `syncSessionOrchestrator.test.ts` |
 | `syncApplyOrchestrator.ts` | Post-apply reconciliation: rebuild offline trees | `syncApplyOrchestrator.test.ts` |
 | `syncPanelViewOrchestrator.ts` | Sync panel user interactions (mode, deselect, apply) | `syncPanelViewOrchestrator.test.ts` |
@@ -307,3 +307,20 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 - `resolveNodeDisplayName(nodeId, node)` — single entry point
 - Anti-pattern: inline fallback `node.user_name || nodeId` — use the helper
 - Governing doc: `product/architecture/naming-and-normalization.md`
+
+### CDI File Naming
+**Canonical saving:** `layout/io.rs` (layout dir), `commands/cdi.rs` (global cache)
+- Cache key: `{sanitize(manufacturer)}_{sanitize(model)}_{sanitize(version)}`
+- Global cache filename: `{cache_key}.cdi.xml` (in `app_data_dir/cdi_cache/`)
+- Layout directory filename: `{cache_key}.cdi.xml` (in `layout.d/cdi/`)
+- Legacy layout files may use `{cache_key}.xml` (without `.cdi` prefix) — readers fall back to this
+- `cdi_cache_path_for_snapshot()` in `layout_capture.rs` — global cache path builder
+- `get_cdi_path_for_snapshot()` in `layout/io.rs` — layout dir path builder (checks `.cdi.xml` then `.xml`)
+- Anti-pattern: constructing layout CDI filenames from sanitized SNIP fields instead of `cache_key` — they use different extensions
+
+### Config Change Layer Resolution
+**Canonical implementation:** `app/src/lib/stores/configChanges.svelte.ts`
+- `visibleValue(key)` — full resolution: draft → offlinePending → baseline (tree walk)
+- `overrideValue(key)` — fast resolution: draft → offlinePending only (no tree walk)
+- `_findLeaf` uses a `WeakMap`-backed address index (`addressIndexCache`) so repeated `visibleValue` calls into the same tree are O(1) instead of O(N) recursive walks. The cache is keyed by tree object identity; replaced trees get fresh indexes on next access.
+- Anti-pattern: calling `visibleValue()` in bulk scans over `collectEventIdLeaves()` — the baseline tree walk is O(N) per leaf and the caller already has the leaf value.

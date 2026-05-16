@@ -224,6 +224,40 @@ describe('layer priority — visibleValue', () => {
 
 // ─── changeLayers ─────────────────────────────────────────────────────────────
 
+describe('overrideValue — draft/offlinePending without baseline tree walk', () => {
+  it('returns null when no draft and no offline row exist', () => {
+    expect(configChangesStore.overrideValue(KEY)).toBeNull();
+  });
+
+  it('returns null even when a baseline tree exists (skips baseline)', () => {
+    mockTreesMap.set(NODE_ID, makeTree(NODE_ID, ADDRESS, intVal(3)));
+    expect(configChangesStore.overrideValue(KEY)).toBeNull();
+  });
+
+  it('returns draft value when draft exists', () => {
+    configChangesStore.set(KEY, intVal(9));
+    expect(configChangesStore.overrideValue(KEY)).toEqual(intVal(9));
+  });
+
+  it('returns offlinePending value when persisted row exists and no draft', () => {
+    mockPersistedRows = [makeOfflineRow({ plannedValue: '7' })];
+    expect(configChangesStore.overrideValue(KEY)).toEqual(intVal(7));
+  });
+
+  it('returns draft value (top layer wins) when both draft and persisted row exist', () => {
+    mockPersistedRows = [makeOfflineRow({ plannedValue: '7' })];
+    configChangesStore.set(KEY, intVal(9));
+    expect(configChangesStore.overrideValue(KEY)).toEqual(intVal(9));
+  });
+
+  it('falls back to offlinePending after draft is reverted', () => {
+    mockPersistedRows = [makeOfflineRow({ plannedValue: '7' })];
+    configChangesStore.set(KEY, intVal(9));
+    configChangesStore.revert(KEY);
+    expect(configChangesStore.overrideValue(KEY)).toEqual(intVal(7));
+  });
+});
+
 describe('changeLayers', () => {
   it('returns empty array when no tree and no drafts', () => {
     expect(configChangesStore.changeLayers(KEY)).toHaveLength(0);

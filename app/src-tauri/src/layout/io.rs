@@ -329,7 +329,7 @@ fn write_companion_contents(
         std::fs::create_dir_all(&cdi_dir)
             .map_err(|e| format!("Cannot create CDI directory {}: {}", cdi_dir.display(), e))?;
         for (cache_key, source_path) in &data.cdi_files {
-            let dest_filename = format!("{}.xml", cache_key);
+            let dest_filename = format!("{}.cdi.xml", cache_key);
             let dest_path = cdi_dir.join(&dest_filename);
             std::fs::copy(source_path, &dest_path)
                 .map_err(|e| format!("Cannot copy CDI file from {} to {}: {}", 
@@ -409,14 +409,88 @@ pub fn get_cdi_path_for_snapshot(
     _manifest: &LayoutManifest,
 ) -> Option<std::path::PathBuf> {
     let cdi_dir = layout_root.join(CDI_DIR);
-    let cdi_filename = format!("{}.xml", snapshot.cdi_ref.cache_key);
-    let cdi_path = cdi_dir.join(&cdi_filename);
-    
-    if cdi_path.exists() {
-        Some(cdi_path)
-    } else {
-        None
+    // Prefer .cdi.xml (current convention), fall back to .xml (legacy layouts)
+    let primary = cdi_dir.join(format!("{}.cdi.xml", snapshot.cdi_ref.cache_key));
+    if primary.exists() {
+        return Some(primary);
     }
+    let legacy = cdi_dir.join(format!("{}.xml", snapshot.cdi_ref.cache_key));
+    if legacy.exists() {
+        return Some(legacy);
+    }
+    None
+}
+
+/// Resolve CDI XML content for a snapshot by checking the global cache first,
+/// then the layout companion directory.
+///
+/// Lookup order:
+/// 1. Global cache: `{app_data_dir}/cdi_cache/{sanitized_snip}.cdi.xml`
+/// 2. Layout folder: `{companion_dir}/cdi/{cache_key}.cdi.xml`
+/// 3. Layout folder (legacy): `{companion_dir}/cdi/{cache_key}.xml`
+///
+/// Returns the raw XML string on success.
+pub fn resolve_cdi_xml(
+    snapshot: &NodeSnapshot,
+    app_data_dir: &Path,
+    companion_dir: &Path,
+) -> Result<String, String> {
+    let cache_filename = format!(
+        "{}_{}_{}.cdi.xml",
+        sanitize_cache_fragment(&snapshot.snip.manufacturer_name),
+        sanitize_cache_fragment(&snapshot.snip.model_name),
+        sanitize_cache_fragment(&snapshot.cdi_ref.version),
+    );
+    let cache_path = app_data_dir.join("cdi_cache").join(&cache_filename);
+
+    if cache_path.exists() {
+        return std::fs::read_to_string(&cache_path)
+            .map_err(|e| format!("Cannot read CDI cache file {}: {}", cache_path.display(), e));
+    }
+
+    // Fallback: layout companion cdi/ directory
+    let cdi_dir = companion_dir.join(CDI_DIR);
+    let primary = cdi_dir.join(format!("{}.cdi.xml", snapshot.cdi_ref.cache_key));
+    if primary.exists() {
+        return std::fs::read_to_string(&primary)
+            .map_err(|e| format!("Cannot read layout CDI {}: {}", primary.display(), e));
+    }
+    let legacy = cdi_dir.join(format!("{}.xml", snapshot.cdi_ref.cache_key));
+    if legacy.exists() {
+        return std::fs::read_to_string(&legacy)
+            .map_err(|e| format!("Cannot read layout CDI {}: {}", legacy.display(), e));
+    }
+
+    Err(format!(
+        "CDI not available (tried {} and {})",
+        cache_path.display(),
+        primary.display()
+    ))
+}
+
+fn sanitize_cache_fragment(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Build the global CDI cache path for a snapshot's SNIP metadata.
+///
+/// Format: `{app_data_dir}/cdi_cache/{sanitize(mfg)}_{sanitize(model)}_{sanitize(version)}.cdi.xml`
+pub fn cdi_cache_path(snapshot: &NodeSnapshot, app_data_dir: &Path) -> PathBuf {
+    let filename = format!(
+        "{}_{}_{}.cdi.xml",
+        sanitize_cache_fragment(&snapshot.snip.manufacturer_name),
+        sanitize_cache_fragment(&snapshot.snip.model_name),
+        sanitize_cache_fragment(&snapshot.cdi_ref.version),
+    );
+    app_data_dir.join("cdi_cache").join(filename)
 }
 
 #[cfg(test)]
@@ -682,7 +756,7 @@ mod tests {
 
         // Verify CDI file was copied for the CDI node
         let companion = derive_companion_dir_path(&base_file).unwrap();
-        let cdi_dest = companion.join("cdi").join("acme_modelx_1.0.xml");
+        let cdi_dest = companion.join("cdi").join("acme_modelx_1.0.cdi.xml");
         assert!(cdi_dest.exists());
 
         let _ = std::fs::remove_dir_all(&root);
@@ -726,7 +800,7 @@ mod tests {
         write_layout_capture(&base_file, &resave_data).unwrap();
 
         let companion = derive_companion_dir_path(&base_file).unwrap();
-        let cdi_dest = companion.join("cdi").join("acme_modelx_1.0.xml");
+        let cdi_dest = companion.join("cdi").join("acme_modelx_1.0.cdi.xml");
         assert!(cdi_dest.exists());
         assert_eq!(std::fs::read_to_string(&cdi_dest).unwrap(), "<cdi version=\"1\"/>");
 

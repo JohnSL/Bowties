@@ -125,6 +125,20 @@ pub struct ActiveLayoutContext {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Accumulated offline node data for catalog building without a live node_registry.
+///
+/// Populated incrementally by `build_offline_node_tree` as each node's tree is built.
+/// Consumed by `build_bowtie_catalog_command` when the node_registry is empty.
+#[derive(Debug, Clone, Default)]
+pub struct OfflineBowtieData {
+    /// Config values: node_id_hex → (path_key → event_id_bytes).
+    pub config_values: HashMap<String, HashMap<String, [u8; 8]>>,
+    /// Profile group roles: "node_id:path" → EventRole.
+    pub profile_roles: HashMap<String, lcc_rs::EventRole>,
+    /// CDI XML per node_id_hex (for slot walk in catalog builder).
+    pub cdi_xml: HashMap<String, String>,
+}
+
 // ── Application state ─────────────────────────────────────────────────────
 
 /// Global application state shared across Tauri commands
@@ -167,6 +181,13 @@ pub struct AppState {
     /// User-selected sync mode when bus match is uncertain.
     pub sync_mode: Arc<RwLock<Option<SyncMode>>>,
 
+    // ── Offline bowtie catalog data ───────────────────────────────────────
+
+    /// Accumulated data from `build_offline_node_tree` calls, used by
+    /// `build_bowtie_catalog_command` when no live node_registry is available.
+    /// Cleared when a layout is closed.
+    pub offline_bowtie_data: Arc<RwLock<OfflineBowtieData>>,
+
 
 
     // ── Spec 008: Structure profile cache ─────────────────────────────────
@@ -199,6 +220,7 @@ impl AppState {
             active_layout: Arc::new(RwLock::new(None)),
             offline_changes_cache: Arc::new(RwLock::new(Vec::new())),
             sync_mode: Arc::new(RwLock::new(None)),
+            offline_bowtie_data: Arc::new(RwLock::new(OfflineBowtieData::default())),
 
             profiles: Arc::new(RwLock::new(HashMap::new())),
             diag_log: crate::diagnostics::new_diag_log(),

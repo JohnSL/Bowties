@@ -60,6 +60,8 @@ These instructions are the always-on implementation contract for Bowties.
 - Update tests and the durable product docs together when intentional behavior changes land.
 - After finishing a code change, check `specs/backlog.md` and update it when the work resolves, changes, or newly reveals a backlog item. Keep that file current as the shared future-work ledger.
 - If a change touches a risky seam such as lifecycle ownership, Node ID normalization, naming fallback, or sync-trigger behavior, keep the change narrow and validate it with the closest focused test.
+- When touching a file, scan for dead code: unused functions, unreachable branches, stale imports, and commented-out blocks. Remove them as part of the change rather than leaving them to accumulate.
+- When touching a file, look for adjacent consistency issues: missing pattern conformance (e.g. a callback missing from a reset function that sibling functions include), inconsistent naming, or shallow fixes that leave a deeper problem unaddressed. Fix them as part of the change when the improvement is narrow and testable.
 
 ## Copilot Knowledge Base
 

@@ -2,6 +2,8 @@
 description: "Make a focused change with visible pre-implementation analysis, TDD, duplication prevention, and knowledge base enrichment."
 ---
 
+**First action**: Use `manage_todo_list` to create a todo from all 11 steps below. Update status as you work. Do not mark the task complete until all items including post-implementation are done.
+
 ## Pre-Implementation Analysis (output this BEFORE coding)
 
 Use the Explore subagent for research steps to keep the main context window lean.
@@ -22,7 +24,7 @@ Output the analysis as a structured summary with your proposed change approach.
 7. **No duplication**: Reuse existing shared helpers rather than creating local variants. If new shared logic is needed, add it to the appropriate utils/ or shared module.
 8. **Run affected tests**: Use the test mapping from `aiwiki/owners.md` to identify and run all tests that cover the changed modules.
 
-## Post-Implementation
+## Post-Implementation (you are NOT done — complete these before summarizing)
 
 9. **Enrich aiwiki/**: If the change revealed a module, convention, or flow not listed in `aiwiki/`, add it.
 10. **Update product/ docs**: If the change affects user-visible behavior or ownership, update the relevant product/ doc.

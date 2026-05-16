@@ -1108,6 +1108,8 @@ pub async fn clear_recent_layout(
 ///
 /// Uses the current AppState (discovered nodes, event roles, config cache)
 /// to build a fresh catalog, then merges layout metadata if provided.
+/// Falls back to offline bowtie data (populated by `build_offline_node_tree`)
+/// when the node_registry is empty (offline layout mode).
 /// The result is stored in AppState and emitted via `cdi-read-complete`.
 #[tauri::command]
 pub async fn build_bowtie_catalog_command(
@@ -1116,9 +1118,10 @@ pub async fn build_bowtie_catalog_command(
     state: tauri::State<'_, AppState>,
 ) -> Result<BowtieCatalog, String> {
     let nodes_snap = state.node_registry.get_all_snapshots().await;
+    let use_offline = nodes_snap.is_empty();
 
-    // Gather config values from all proxies
-    let config_cache_snap: HashMap<String, HashMap<String, [u8; 8]>> = {
+    // Gather config values: from live proxies (online) or offline cache
+    let config_cache_snap: HashMap<String, HashMap<String, [u8; 8]>> = if !use_offline {
         let handles = state.node_registry.get_all_handles().await;
         let mut map = HashMap::new();
         for h in &handles {
@@ -1129,10 +1132,12 @@ pub async fn build_bowtie_catalog_command(
             }
         }
         map
+    } else {
+        state.offline_bowtie_data.read().await.config_values.clone()
     };
 
-    // Gather profile group roles from proxy config trees
-    let profile_group_roles = {
+    // Gather profile group roles: from live proxy trees or offline cache
+    let profile_group_roles: HashMap<String, lcc_rs::EventRole> = if !use_offline {
         let handles = state.node_registry.get_all_handles().await;
         let mut map = HashMap::new();
         for h in &handles {
@@ -1149,27 +1154,54 @@ pub async fn build_bowtie_catalog_command(
             }
         }
         map
+    } else {
+        state.offline_bowtie_data.read().await.profile_roles.clone()
     };
 
-    // Run event query from existing cached roles (use stored catalog's data)
-    // We rebuild from AppState, not re-querying the network
-    let event_roles = {
-        // If we have a catalog already, we can extract event roles from it
-        // Otherwise query fresh
+    // Build synthetic DiscoveredNode list for offline (CDI-only, for slot walking)
+    let offline_nodes: Vec<lcc_rs::DiscoveredNode>;
+    let nodes_for_catalog: &[lcc_rs::DiscoveredNode] = if !use_offline {
+        &nodes_snap
+    } else {
+        let offline_data = state.offline_bowtie_data.read().await;
+        offline_nodes = offline_data.cdi_xml.iter().enumerate().map(|(i, (node_id_hex, xml))| {
+            let node_id = lcc_rs::NodeID::from_hex_string(node_id_hex)
+                .unwrap_or_else(|_| lcc_rs::NodeID::new([0; 6]));
+            lcc_rs::DiscoveredNode {
+                node_id,
+                alias: lcc_rs::NodeAlias::new((0x100 + i) as u16)
+                    .unwrap_or_else(|_| lcc_rs::NodeAlias::new(1).unwrap()),
+                snip_data: None,
+                snip_status: lcc_rs::types::SNIPStatus::Unknown,
+                connection_status: lcc_rs::types::ConnectionStatus::Unknown,
+                last_verified: None,
+                last_seen: chrono::Utc::now(),
+                cdi: Some(lcc_rs::types::CdiData {
+                    xml_content: xml.clone(),
+                    retrieved_at: chrono::Utc::now(),
+                }),
+                pip_flags: None,
+                pip_status: lcc_rs::types::PIPStatus::Unknown,
+            }
+        }).collect();
+        &offline_nodes
+    };
+
+    // Event roles: query from protocol (online) or empty (offline — no protocol exchange)
+    let event_roles: HashMap<[u8; 8], NodeRoles> = if !use_offline {
         let existing = state.bowties_catalog.read().await;
         if existing.is_some() {
-            // Reconstruct event roles from existing catalog nodes
-            // For a proper rebuild, we need the raw event roles
-            // Use query_event_roles only if needed
             drop(existing);
             query_event_roles(&state, 125, 500).await
         } else {
             HashMap::new()
         }
+    } else {
+        HashMap::new()
     };
 
     let mut catalog = build_bowtie_catalog(
-        &nodes_snap,
+        nodes_for_catalog,
         &event_roles,
         &config_cache_snap,
         Some(&profile_group_roles),
@@ -1181,10 +1213,10 @@ pub async fn build_bowtie_catalog_command(
     }
 
     // Store in AppState
+    let node_count = nodes_for_catalog.len();
     *state.bowties_catalog.write().await = Some(catalog.clone());
 
     // Emit to frontend
-    let node_count = nodes_snap.len();
     let _ = app.emit(
         "cdi-read-complete",
         CdiReadCompletePayload { catalog: catalog.clone(), node_count },

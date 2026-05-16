@@ -114,43 +114,13 @@ fn resolve_layout_cdi_from_snapshot(
     let base_file = std::path::Path::new(root_path);
     let companion_dir = crate::layout::io::derive_companion_dir_path(base_file)?;
 
-    // Build the CDI cache path from snapshot SNIP metadata
-    let sanitize = |s: &str| -> String {
-        s.chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
-            .collect()
-    };
-    let cdi_filename = format!(
-        "{}_{}_{}.cdi.xml",
-        sanitize(&snapshot.snip.manufacturer_name),
-        sanitize(&snapshot.snip.model_name),
-        sanitize(&snapshot.cdi_ref.version),
-    );
-
     let app_data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("Cannot resolve app data dir: {}", e))?;
-    let cdi_path = app_data_dir.join("cdi_cache").join(&cdi_filename);
 
-    // Try app cache first, then layout companion cdi/ dir
-    let xml = if cdi_path.exists() {
-        std::fs::read_to_string(&cdi_path)
-            .map_err(|e| format!("Cannot read CDI {}: {}", cdi_path.display(), e))?
-    } else {
-        let layout_cdi = companion_dir.join("cdi").join(&cdi_filename);
-        if layout_cdi.exists() {
-            std::fs::read_to_string(&layout_cdi)
-                .map_err(|e| format!("Cannot read layout CDI {}: {}", layout_cdi.display(), e))?
-        } else {
-            return Err(format!(
-                "CDI not found for node {} (tried {} and {})",
-                snapshot.node_id.to_canonical(),
-                cdi_path.display(),
-                companion_dir.join("cdi").join(&cdi_filename).display()
-            ));
-        }
-    };
+    let xml = crate::layout::io::resolve_cdi_xml(snapshot, &app_data_dir, &companion_dir)
+        .map_err(|e| format!("CDI not found for node {}: {}", snapshot.node_id.to_canonical(), e))?;
 
     lcc_rs::cdi::parser::parse_cdi(&xml)
         .map_err(|e| format!("Cannot parse CDI for {}: {}", snapshot.node_id.to_canonical(), e))

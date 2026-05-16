@@ -2,6 +2,8 @@
 description: "Fix a bug with visible pre-implementation analysis, TDD regression encoding, and knowledge base enrichment."
 ---
 
+**First action**: Use `manage_todo_list` to create a todo from all 11 steps below. Update status as you work. Do not mark the task complete until all items including post-implementation are done.
+
 ## Pre-Implementation Analysis (output this BEFORE coding)
 
 Use the Explore subagent for research steps to keep the main context window lean.
@@ -19,10 +21,10 @@ Output the analysis as a structured summary with your proposed fix approach.
 ## Implementation (after approval)
 
 6. **Encode the regression**: Write a focused test that reproduces the bug (the test should fail before the fix).
-7. **Fix narrowly**: Implement the smallest change that makes the test pass. Do not refactor adjacent code.
+7. **Fix narrowly, improve adjacently**: Implement the smallest change that makes the test pass. Then scan the touched files for adjacent consistency issues — missing pattern conformance, incomplete reset sequences, dead code — and fix them as part of the same change when the improvement is narrow and testable. Do not refactor unrelated modules.
 8. **Run affected tests**: Use the test mapping from `aiwiki/owners.md` to identify and run all tests that cover the changed module, including cross-layer tests.
 
-## Post-Implementation
+## Post-Implementation (you are NOT done — complete these before summarizing)
 
 9. **Enrich aiwiki/**: If the fix revealed a module, convention, or flow not listed in `aiwiki/`, add it.
 10. **Update product/ docs**: If the fix changes user-visible behavior or ownership, update the relevant product/ doc.

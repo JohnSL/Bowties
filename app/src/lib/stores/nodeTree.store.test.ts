@@ -7,7 +7,7 @@
  * `nodeTreeStore.trees` is populated without requiring the user to manually
  * expand each node in the config sidebar.
  *
- * This is required for the bowtie preview store's `collectEntriesForEventId()`
+ * This is required for the bowtie preview store's `buildTreeEntriesIndex()`
  * to have data — layout-named bowties should show their producer/consumer
  * entries as soon as discovery completes.
  *

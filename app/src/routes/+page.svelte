@@ -301,6 +301,9 @@
         path: selected,
         openLayout: openLayoutFile,
         hydrateOfflineSnapshots,
+        resetSidebar: () => {
+          configSidebarStore.reset();
+        },
         hydrateConnectorSelections: (layout) => {
           connectorSelectionsStore.hydrateFromLayout(layout);
         },
@@ -389,6 +392,9 @@
       },
       resetSyncSessionAutoTrigger: () => {
         syncSessionOrchestrator.resetAutoTrigger();
+      },
+      resetSidebar: () => {
+        configSidebarStore.reset();
       },
       probeForNodes,
     });
@@ -576,6 +582,9 @@
             path,
             openLayout: openLayoutFile,
             hydrateOfflineSnapshots,
+            resetSidebar: () => {
+              configSidebarStore.reset();
+            },
             hydrateConnectorSelections: (layout) => {
               connectorSelectionsStore.hydrateFromLayout(layout);
             },

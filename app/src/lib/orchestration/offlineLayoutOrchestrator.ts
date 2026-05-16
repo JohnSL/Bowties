@@ -1,7 +1,10 @@
 import type { CloseLayoutResult, OpenLayoutResult, OfflineNodeSnapshot, SnapshotValueNode } from '$lib/api/layout';
 import type { DiscoveredNode } from '$lib/api/tauri';
 import type { ActiveLayoutMode } from '$lib/stores/layout.svelte';
+import type { LayoutFile } from '$lib/types/bowtie';
 import type { ConfigNode, NodeConfigTree, TreeConfigValue } from '$lib/types/nodeTree';
+import { buildBowtieCatalog } from '$lib/api/bowties';
+import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
 import { layoutStore } from '$lib/stores/layout.svelte';
 import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
 import {
@@ -17,6 +20,7 @@ interface OpenOfflineLayoutWithReplayArgs {
   path: string;
   openLayout: (path: string) => Promise<OpenLayoutResult>;
   hydrateOfflineSnapshots: (snapshots: OfflineNodeSnapshot[]) => Promise<void>;
+  resetSidebar: () => void;
   hydrateConnectorSelections?: (layout: LayoutFile) => void;
   onOpened?: () => void;
 }
@@ -56,6 +60,7 @@ interface ResetLayoutStateForNoLayoutArgs {
   clearOfflineChanges: () => void;
   resetLayoutStore: () => void;
   resetSyncSessionAutoTrigger: () => void;
+  resetSidebar: () => void;
   probeForNodes: () => Promise<void>;
 }
 
@@ -119,17 +124,17 @@ export async function buildOfflineTreesFromSnapshots({
     }
 
     const reason = String(result?.status === 'rejected' ? result.reason : 'Unknown error');
-    if (reason.includes('CDI not in cache')) {
+    if (reason.includes('CDI not available') || reason.includes('CDI not in cache')) {
       onTreeBuildWarning?.(
-        `[offline] CDI not cached for node ${snapshot.nodeId} — falling back to raw address tree`,
+        `[offline] CDI not available for node ${snapshot.nodeId} — configuration cannot be displayed`,
       );
-    } else {
-      onTreeBuildWarning?.(
-        `[offline] Could not build CDI tree for node ${snapshot.nodeId}: ${reason}`,
-      );
+      return cdiUnavailableTree(snapshot);
     }
 
-    return treeFromSnapshot(snapshot);
+    onTreeBuildWarning?.(
+      `[offline] Could not build CDI tree for node ${snapshot.nodeId}: ${reason}`,
+    );
+    return cdiUnavailableTree(snapshot);
   });
 }
 
@@ -173,6 +178,7 @@ export async function resetLayoutStateForNoLayout({
   clearOfflineChanges,
   resetLayoutStore,
   resetSyncSessionAutoTrigger,
+  resetSidebar,
   probeForNodes,
 }: ResetLayoutStateForNoLayoutArgs): Promise<void> {
   clearPartialCaptureNodes();
@@ -184,6 +190,7 @@ export async function resetLayoutStateForNoLayout({
   clearOfflineChanges();
   resetLayoutStore();
   resetSyncSessionAutoTrigger();
+  resetSidebar();
 
   if (connected && reprobeLiveNodes) {
     await probeForNodes();
@@ -285,6 +292,33 @@ function createOfflineLeaf(
   };
 }
 
+/**
+ * Build a placeholder tree for a node whose CDI is not available.
+ * Renders a single empty segment with a description explaining the situation.
+ */
+export function cdiUnavailableTree(snapshot: OfflineNodeSnapshot): NodeConfigTree {
+  return {
+    nodeId: snapshot.nodeId.match(/.{1,2}/g)?.join('.') ?? snapshot.nodeId,
+    identity: {
+      manufacturer: snapshot.snip.manufacturerName || null,
+      model: snapshot.snip.modelName || null,
+      hardwareVersion: null,
+      softwareVersion: null,
+    },
+    segments: [
+      {
+        name: 'CDI Not Available',
+        description:
+          'The CDI definition for this node was not found in the global cache or the layout folder. ' +
+          'Connect to the bus and read this node\u2019s configuration to cache its CDI.',
+        origin: 0,
+        space: 253,
+        children: [],
+      },
+    ],
+  };
+}
+
 export function treeFromSnapshot(snapshot: OfflineNodeSnapshot): NodeConfigTree {
   const merged = new Map<string, Record<string, string>>();
 
@@ -369,6 +403,7 @@ export async function openOfflineLayoutWithReplay({
   path,
   openLayout,
   hydrateOfflineSnapshots,
+  resetSidebar,
   hydrateConnectorSelections,
   onOpened,
 }: OpenOfflineLayoutWithReplayArgs): Promise<OpenLayoutResult> {
@@ -377,6 +412,7 @@ export async function openOfflineLayoutWithReplay({
   try {
     const result = await openLayout(path);
 
+    resetSidebar();
     startLayoutHydration();
     await hydrateOfflineSnapshots(result.nodeSnapshots);
     finishLayoutHydration();
@@ -396,6 +432,13 @@ export async function openOfflineLayoutWithReplay({
     await offlineChangesStore.reloadFromBackend();
     onOpened?.();
     finishOfflineReplay();
+
+    // Build the bowtie catalog from offline data now that all trees are hydrated.
+    // The backend's build_offline_node_tree accumulated config values + profile roles
+    // during hydration; this call uses that data to build the catalog efficiently
+    // and emits cdi-read-complete so bowtieCatalogStore is populated.
+    const catalog = await buildBowtieCatalog(result.layout);
+    bowtieCatalogStore.setCatalog(catalog);
 
     return result;
   } catch (error) {

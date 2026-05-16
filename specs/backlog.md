@@ -1,22 +1,15 @@
-* Bowties offline derivation ownership
-  * Root cause: offline bowtie visibility currently has frontend fallback logic that derives
-    bowties from loaded trees when no live backend catalog is available. The canonical inclusion
-    rules already live in the backend `build_bowtie_catalog`, so the frontend copy can drift and
-    regress (for example, showing solitary events that are not real connections).
-  * Fix approach:
-    1. Move offline bowtie derivation into the backend so one authoritative rule set decides
-       which bowties exist in both live and offline modes.
-    2. Return an offline bowtie catalog, or a command to build one, from the backend during
-       offline layout open instead of reconstructing connection membership in frontend stores.
-    3. Reduce the frontend to rendering backend-owned results plus local display-only merge logic
-       such as names, tags, and transient UI state.
-    4. Add focused regression tests that prove live and offline bowtie inclusion/exclusion rules
-       stay aligned.
-  * Files affected:
-    - `src-tauri/src/commands/bowties.rs` — authoritative bowtie catalog builder
-    - `src-tauri/src/commands/layout_capture.rs` — offline open payload / backend-owned offline catalog
-    - `src/lib/stores/bowties.svelte.ts` — remove duplicated inclusion logic after backend ownership exists
-    - `src/lib/orchestration/offlineLayoutOrchestrator.ts` — consume backend-owned offline catalog
+* Bowties offline derivation ownership — PARTIALLY RESOLVED
+  * Status: The core fix is in place. `build_offline_node_tree` now accumulates config values,
+    profile roles, and CDI XML into `OfflineBowtieData` (in `state.rs`).
+    `build_bowtie_catalog_command` falls back to this data when no live node registry exists.
+    `offlineLayoutOrchestrator.ts` calls `buildBowtieCatalog` + `setCatalog` after offline
+    hydration, so the frontend uses the backend-owned catalog. The preview store fast path
+    skips tree scanning when catalog exists and no config edits are pending.
+  * Remaining:
+    1. Add focused regression tests that prove live and offline bowtie inclusion/exclusion rules
+       stay aligned (item 4 from original fix approach).
+    2. Consider extracting `resolve_cdi_xml` shared helper to DRY the CDI lookup across
+       `layout_capture.rs`, `sync_panel.rs`, and `layout/io.rs` (see `aiwiki/architecture-health.md`).
 * LCC Traffic Monitor:
   * When we're getting text, show the actual text along side the bytes
   * Same for other data types

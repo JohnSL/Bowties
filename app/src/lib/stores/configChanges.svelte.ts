@@ -18,14 +18,48 @@
 
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
-import { findLeafByAddress } from '$lib/types/nodeTree';
-import type { TreeConfigValue } from '$lib/types/nodeTree';
+import { findLeafByAddress, isLeaf, isGroup } from '$lib/types/nodeTree';
+import type { TreeConfigValue, NodeConfigTree, ConfigNode, LeafConfigNode } from '$lib/types/nodeTree';
 import {
   parseEditKey,
   addressToOffsetHex,
   parseOfflineValueString,
 } from '$lib/utils/editKey';
 import { normalizeNodeId } from '$lib/utils/nodeId';
+
+// ─── Address index cache ──────────────────────────────────────────────────────
+//
+// Lazily builds an address→LeafConfigNode map for each tree, cached via WeakMap.
+// When a tree object is replaced (e.g. by nodeTreeStore.setTree or updateLeafValue),
+// the old entry is GC'd and a fresh index is built on next access.  This turns
+// the O(N) recursive findLeafByAddress walk into an amortised O(1) lookup.
+
+const addressIndexCache = new WeakMap<NodeConfigTree, Map<number, LeafConfigNode>>();
+
+function getAddressIndex(tree: NodeConfigTree): Map<number, LeafConfigNode> {
+  let index = addressIndexCache.get(tree);
+  if (index) return index;
+  index = new Map();
+  for (const seg of tree.segments) {
+    indexChildren(seg.children, index);
+  }
+  addressIndexCache.set(tree, index);
+  return index;
+}
+
+function indexChildren(children: ConfigNode[], index: Map<number, LeafConfigNode>): void {
+  for (const child of children) {
+    if (isLeaf(child)) {
+      index.set(child.address, child);
+    } else if (isGroup(child)) {
+      indexChildren(child.children, index);
+    }
+  }
+}
+
+function findLeafByAddressIndexed(tree: NodeConfigTree, address: number): LeafConfigNode | null {
+  return getAddressIndex(tree).get(address) ?? null;
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -63,6 +97,22 @@ class ConfigChangesStore {
     if (offline !== null) return offline;
 
     return this._resolveBaseline(key);
+  }
+
+  /**
+   * Return the override value (draft or offlinePending) for this field,
+   * skipping the expensive baseline tree walk.
+   *
+   * Use when the caller already holds the leaf and only needs to know
+   * whether an edit layer overrides its tree value.  Returns null when
+   * no draft or offlinePending layer exists — callers should fall back
+   * to the leaf value they already have.
+   */
+  overrideValue(key: string): TreeConfigValue | null {
+    const draft = this._drafts.get(key);
+    if (draft !== undefined) return draft;
+
+    return this._resolveOfflinePending(key);
   }
 
   /**
@@ -230,6 +280,9 @@ class ConfigChangesStore {
   /**
    * Find a leaf in the tree store by normalized nodeId, space, and address.
    * Handles trees stored under dotted and undotted node ID keys.
+   *
+   * Uses a WeakMap-backed address index so repeated lookups into the same
+   * tree are O(1) instead of O(N) recursive walks.
    */
   private _findLeaf(
     normalizedNodeId: string,
@@ -238,7 +291,7 @@ class ConfigChangesStore {
   ): import('$lib/types/nodeTree').LeafConfigNode | null {
     for (const [treeKey, tree] of nodeTreeStore.trees.entries()) {
       if (normalizeNodeId(treeKey) !== normalizedNodeId) continue;
-      const leaf = findLeafByAddress(tree, address);
+      const leaf = findLeafByAddressIndexed(tree, address);
       if (leaf) return leaf;
     }
     return null;

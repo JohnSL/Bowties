@@ -104,6 +104,7 @@ vi.mock('$lib/api/tauri', () => ({
 vi.mock('$lib/api/bowties', () => ({
   getRecentLayout: getRecentLayoutRef,
   clearRecentLayout: vi.fn(async () => {}),
+  buildBowtieCatalog: vi.fn(async () => ({ bowties: [], built_at: '', source_node_count: 0, total_slots_scanned: 0 })),
 }));
 
 vi.mock('$lib/api/layout', () => ({
@@ -132,6 +133,7 @@ vi.mock('$lib/stores/bowties.svelte', async () => {
     ...actual,
     bowtieCatalogStore: {
       startListening: startListeningRef,
+      setCatalog: vi.fn(),
     },
   };
 });
