@@ -130,3 +130,50 @@ The KB grows incrementally during normal work. No batch maintenance needed.
 **When to check KB health**:
 - If an AI session struggles to find the right modules, `aiwiki/` may be stale
 - Periodically review `aiwiki/architecture-health.md` for accumulated observations
+- Check `last-verified` dates in `aiwiki/` entries — anything older than 30 days is worth spot-checking
+
+---
+
+## Part 3: Feature Lifecycle (End-to-End)
+
+How a feature flows from idea to main, and where each tool fits.
+
+```
+Brainstorm ─► /specify ─► /plan ─► /tasks ─► /implement ─► /feature-finish ─► Merge ─► /spec-close
+                │                                │               │                         │
+                │                                │               ├─ product/ updated        ├─ spec archived
+                │                                │               ├─ aiwiki/ enriched        └─ ideas extracted
+                │                                │               └─ ideas captured
+                │                                │
+                │                                └─ aiwiki/ read for orientation
+                │                                   specs/ideas/ checked for prior work
+                │                                   pre-implementation analysis shown
+                │
+                └─ /grill-with-docs (optional stress-test)
+```
+
+### Phase-by-phase
+
+| Phase | What happens | Who drives | Artifacts |
+|-------|-------------|------------|-----------|
+| **Brainstorm** | Discuss the feature idea | You | Conversation only |
+| **Specify** | `/specify` — AI creates spec | You describe, AI writes | `specs/NNN-feature/spec.md` |
+| **Plan** | `/plan` — AI creates implementation plan | AI proposes, you approve | `specs/NNN-feature/plan.md` |
+| **Tasks** | `/tasks` — AI breaks plan into ordered tasks | AI proposes, you review | `specs/NNN-feature/tasks.md` |
+| **Implement** | `/implement` — AI works through tasks (multiple sessions) | AI codes, you review | Code, tests, aiwiki/ enrichment |
+| **Finish** | `/feature-finish` — AI audits docs and KB | AI proposes, you review | product/, aiwiki/, ideas updates |
+| **Merge** | Squash-merge branch to main | You | Clean history on main |
+| **Close spec** | `/spec-close` — AI archives spec, extracts ideas | AI proposes, you confirm | Spec moved to `specs/archive/`, ideas captured |
+
+### For smaller work
+
+| Work type | Flow |
+|-----------|------|
+| Bug fix | `/bugfix` → review analysis → approve → AI fixes → optional `/feature-finish` → merge |
+| Quick change | `/quickchange` → review analysis → approve → AI implements → optional `/feature-finish` → merge |
+
+Run `/feature-finish` before merge whenever the change touched multiple modules or changed behavior. Skip it for trivial single-file fixes.
+
+### Between features
+
+Run `/whatsnext` to see all open work from `specs/backlog.md` and `specs/ideas/`, grouped by area.

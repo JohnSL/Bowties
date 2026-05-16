@@ -20,6 +20,8 @@
 12. owners.md structure: summary section at top (~20 lines), detailed inventory per layer below
 13. Test mapping: each module entry in owners.md includes its test file(s) and cross-layer test relationships
 14. Multi-session bootstrap: tracked via specs/012-knowledge-base/bootstrap-checklist.md
+15. Feature lifecycle: brainstorm → /specify → /plan → /tasks → /implement (multiple sessions) → /feature-finish → merge to main → /spec-close (archive spec, extract ideas). For smaller work: /bugfix or /quickchange → optional /feature-finish → merge.
+16. Staleness tracking: aiwiki/ entries include last-verified dates to make drift measurable
 
 ## Ideas format convention
 Each idea file in specs/ideas/:
@@ -41,7 +43,8 @@ Detailed item-level progress tracked in [bootstrap-checklist.md](bootstrap-check
 | Phase 1: Foundation | ✅ Done (Session 1) | 29/29 |
 | Phase 2: Skills & Prompts | ✅ Done (Session 2) | 9/9 |
 | Phase 3: Integration | ✅ Done (Session 2) | 7/7 |
-| Phase 4: Pilot | ⬜ Next | 0/4 |
+| Phase 4: Pilot | ⬜ Next | 0/6 |
+| Phase 5: Hooks | ⬜ After Pilot | 0/6 |
 
 ---
 
@@ -123,6 +126,24 @@ Detailed item-level progress tracked in [bootstrap-checklist.md](bootstrap-check
 
 ## T1-Phase 4: Pilot ⬜ NEXT
 
+### T1-4A. Create spec-close skill
+
+File: `.github/skills/spec-close/SKILL.md`
+
+Run after merging a feature to main to archive the spec and extract residual value.
+
+Workflow:
+1. Identify the spec directory under `specs/`
+2. Analyze completion: compare spec requirements vs. what was implemented
+3. Extract unfinished or deferred items as `specs/ideas/` entries (user confirms relevance)
+4. Move spec directory to `specs/archive/`
+5. Update `specs/backlog.md` if any items were resolved or revealed
+6. Summary: what was archived, what ideas were captured, what backlog items changed
+
+Does NOT delete anything — moves to archive. User confirms before the move.
+
+### T1-4B. Pilot features
+
 Use KB for 2-3 real features. Each feature:
 1. AI reads aiwiki/ for orientation (does it find what it needs?)
 2. AI checks specs/ideas/ for prior work
@@ -131,11 +152,87 @@ Use KB for 2-3 real features. Each feature:
 5. Enrich aiwiki/ for touched areas
 6. Run feature-finish
 
-### Evaluation
-- Orientation: did AI need fewer exploratory tool calls?
-- Architecture: did AI check for existing logic before implementing?
-- Ideas: did prior-work cache save re-discovery time?
-- Enrichment: did aiwiki/ grow naturally during feature work?
+### Evaluation Template
+
+Score each pilot feature on these criteria:
+
+1. **Orientation speed**: Did AI need fewer exploratory tool calls to orient? Compare search/read calls before first code edit vs. pre-KB baseline.
+2. **Architecture protection**: Did AI check aiwiki/owners.md for existing logic before implementing? Did it follow placement rules without being reminded?
+3. **Prior-work reuse**: Did specs/ideas/ save re-discovery time? Were relevant ideas surfaced during pre-implementation analysis?
+4. **Enrichment quality**: Did aiwiki/ grow accurately during feature work? Were new modules, conventions, or flows added correctly?
+5. **Hook false-positive estimate**: Would the planned high-risk path list have flagged this feature correctly? Note cases where it would have been too broad or too narrow.
+6. **Staleness detection**: After the feature, check last-verified dates. Are any entries older than 30 days? Would a freshness sweep have caught them?
+
+Record evaluation notes for each feature in bootstrap-checklist.md.
+
+### Pilot exit criteria
+
+Phase 4 is complete when:
+- At least 2 features have been completed with the KB
+- Evaluation notes show measurable improvement in orientation speed
+- No systematic accuracy problems in aiwiki/ enrichment
+- High-risk path list is tuned for Phase 5
+
+## T1-Phase 5: Hooks ⬜ AFTER PILOT
+
+Add bash git hooks as a safety net for drift enforcement. This phase is deferred until Phase 4 pilot proves the KB is working and the high-risk path rules are tuned.
+
+Full design detail preserved in [specs/ideas/git-hooks-enforcement.md](../ideas/git-hooks-enforcement.md).
+
+### T1-5A. Create `.githooks/pre-commit` (bash, non-blocking)
+
+Warning only. Logic:
+1. Get staged files via `git diff --cached --name-only`
+2. Check if any match high-risk paths (see list below)
+3. If high-risk files changed but no `aiwiki/` or `product/` files in the same commit → print warning
+4. Always exit 0 (non-blocking)
+
+### T1-5B. Create `.githooks/pre-push` (bash, blocking)
+
+Blocking check. Logic:
+1. Get commits being pushed via `git log @{push}..HEAD --name-only`
+2. Scan commit messages for override tags:
+   - `[kb-skip:reason]` → skip checks for that commit, log the reason
+   - `[kb-required]` → force checks even for low-risk changes
+3. For each commit without `[kb-skip]`:
+   a. Check if changed files match high-risk paths (or `[kb-required]` present)
+   b. Verify `aiwiki/` and `product/` were also updated in the set of commits being pushed
+   c. If mismatch: block push with actionable error message
+4. Exit 1 on failure, 0 on success
+
+### T1-5C. High-risk path list (default, tuned during pilot)
+
+- `app/src/lib/orchestration/**`
+- `app/src/lib/stores/**`
+- `app/src-tauri/src/**`
+- `lcc-rs/src/**`
+- `product/architecture/**`
+- `product/user-stories/**`
+
+### T1-5D. Override tags
+
+- `[kb-required]` in commit message → force checks on any change
+- `[kb-skip:reason]` in commit message → bypass checks with logged reason
+
+### T1-5E. Mismatch policy
+
+If `aiwiki/` was updated but `product/` behavior statements weren't synced, push is blocked until `product/` is updated.
+
+### T1-5F. Setup documentation
+
+Add to `docs/project/development.md`:
+- One-time setup: `git config core.hooksPath .githooks`
+- Hook behavior summary
+- Override tag usage
+
+### Verification
+
+1. Low-risk change only → commit and push succeed silently
+2. High-risk change without KB/product update → commit shows warning, push is blocked
+3. High-risk change with KB + product updates → commit and push succeed
+4. `[kb-skip:testing]` in commit message → push succeeds despite missing updates
+5. `[kb-required]` in commit message on low-risk change → push checks are forced
+6. Hooks work on Windows (Git Bash), Linux, and Mac
 
 ---
 
@@ -143,32 +240,32 @@ Use KB for 2-3 real features. Each feature:
 
 Each captured in specs/ideas/:
 
-| Idea | Areas | File |
-|------|-------|------|
-| docs/design/ redistribution | documentation, cleanup | docs-design-redistribution.md |
-| docs/technical/ migration | documentation, aiwiki | docs-technical-migration.md |
-| spec-close skill | skills, spec-lifecycle | spec-close-skill.md |
-| Layer-specific instruction enrichment reminders | instructions, enrichment | instruction-enrichment-reminders.md |
-| ai-workflow-guide.md (user guide) | documentation, dark-factory | ai-workflow-guide.md |
-| aiwiki/playbooks/ | aiwiki, workflows | aiwiki-playbooks.md |
-| CI workflow trigger updates | ci, documentation | ci-path-updates.md |
-| Git hooks | enforcement, ci | git-hooks-enforcement.md |
+| Idea | Areas | File | Status |
+|------|-------|------|--------|
+| docs/design/ redistribution | documentation, cleanup | docs-design-redistribution.md | deferred |
+| docs/technical/ migration | documentation, aiwiki | docs-technical-migration.md | deferred |
+| Layer-specific instruction enrichment reminders | instructions, enrichment | instruction-enrichment-reminders.md | deferred |
+| ai-workflow-guide.md (user guide) | documentation, dark-factory | ai-workflow-guide.md | completed |
+| aiwiki/playbooks/ | aiwiki, workflows | aiwiki-playbooks.md | superseded |
+| CI workflow trigger updates | ci, documentation | ci-path-updates.md | deferred |
 
 ---
 
 ## Scope Summary
 
-Tier 1 deliverables: ~18 files created/modified
+Tier 1 deliverables: ~21 files created/modified
 - 1 spec directory with bootstrap checklist (specs/012-knowledge-base/)
 - 1 glossary (product/glossary.md)
 - 4 aiwiki files (README, owners, flows, architecture-health)
 - 1 ADR directory + README (product/architecture/adr/)
-- 1 ideas directory + README + 8 Tier 2 idea files (specs/ideas/)
-- 3 skill files (grill-with-docs adapt, improve-codebase fix, feature-finish new)
+- 1 ideas directory + README + 8 idea files (specs/ideas/)
+- 4 skill files (grill-with-docs adapt, improve-codebase fix, feature-finish new, spec-close new)
 - 2 prompt files (bugfix, quickchange)
 - 2 agent updates (speckit.implement, speckit.analyze)
 - 1 directory rename (grill-with-docs)
 - 3 doc updates (copilot-instructions hardened, product/README, development.md)
 - 1 instruction applyTo fix
+- 2 git hook scripts (.githooks/pre-commit, .githooks/pre-push) — Phase 5
+- 1 setup doc update (development.md hooks section) — Phase 5
 
-Tier 2 deferred: 8 ideas captured in specs/ideas/
+Tier 2 deferred: 6 ideas captured in specs/ideas/ (git-hooks promoted to Tier 1 Phase 5, spec-close promoted to Tier 1 Phase 4, playbooks superseded)

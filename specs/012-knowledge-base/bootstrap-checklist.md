@@ -56,7 +56,21 @@
 - [x] .github/instructions/ applyTo fixed
 
 ## Phase 4: Pilot
+- [ ] spec-close skill created (.github/skills/spec-close/SKILL.md)
+- [ ] Evaluation template added to plan.md
+- [ ] Feature lifecycle summary added to aiwiki/README.md and ai-workflow-guide.md
+- [ ] last-verified date format added to aiwiki/README.md
 - [ ] Feature 1 completed with KB
-- [ ] Feature 1 evaluation notes
+- [ ] Feature 1 evaluation notes (score all 6 criteria)
 - [ ] Feature 2 completed with KB
-- [ ] Feature 2 evaluation notes
+- [ ] Feature 2 evaluation notes (score all 6 criteria)
+- [ ] High-risk path list tuned based on pilot results
+- [ ] Pilot exit criteria met
+
+## Phase 5: Hooks (after pilot)
+- [ ] .githooks/pre-commit created (bash, non-blocking warning)
+- [ ] .githooks/pre-push created (bash, blocking check)
+- [ ] Override tags ([kb-required], [kb-skip:reason]) implemented
+- [ ] Mismatch policy implemented (aiwiki/ vs product/ sync)
+- [ ] Setup docs added to docs/project/development.md
+- [ ] Cross-platform verification (Windows Git Bash, Linux, Mac)

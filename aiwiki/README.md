@@ -26,6 +26,21 @@ If aiwiki/ contradicts code or product/ docs, trust the code and product/ docs. 
 - Test files listed inline with their module.
 - Shared conventions name the canonical implementation file.
 - Flows list participating modules, not full code-path traces.
+- Include `last-verified: YYYY-MM-DD` on section headers or entries that represent factual claims about code structure. Update the date when you verify an entry is still accurate.
+
+## Feature Lifecycle Read-Order
+
+What to read at each phase of a feature:
+
+| Phase | Read | Why |
+|-------|------|-----|
+| Orientation | `aiwiki/owners.md` summary → relevant layer section | Find the owning module and its tests |
+| Prior work | `specs/ideas/` (scan area tags) | Reuse prior analysis, avoid re-discovery |
+| Placement | `product/architecture/code-placement-and-ownership.md` | Verify new logic goes in the right layer |
+| Vocabulary | `product/glossary.md` | Use canonical terms in code and output |
+| Constraints | `product/architecture/adr/` | Check for rejected approaches |
+| Implementation | Layer-specific `.github/instructions/` file | Follow layer conventions |
+| Graduation | Run `/feature-finish` skill | Sync product/ and aiwiki/ before merge |
 
 ## Enrichment Model
 
