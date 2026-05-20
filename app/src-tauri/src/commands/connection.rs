@@ -17,11 +17,22 @@ pub enum AdapterType {
     /// Network hub (JMRI, standalone TCP/IP bridge). Default LCC port 12021.
     Tcp,
     /// GridConnect framing over USB serial.
-    /// Compatible: RR-Cirkits Buffer LCC, CAN2USBINO, CANRS.
+    /// Compatible: RR-Cirkits Buffer LCC, SPROG USB-LCC, CAN2USBINO, CANRS.
     GridConnectSerial,
     /// SLCAN (Lawicel) framing over USB serial.
     /// Compatible: Canable, Lawicel CANUSB, any slcand-compatible adapter.
     SlcanSerial,
+}
+
+/// Hardware flow control mode for serial connections.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum FlowControl {
+    /// No hardware flow control (default for most adapters).
+    #[default]
+    None,
+    /// RTS/CTS hardware flow control (required by SPROG USB-LCC / PI-LCC).
+    RtsCts,
 }
 
 /// A saved connection configuration entry.
@@ -43,6 +54,10 @@ pub struct ConnectionConfig {
     /// Serial baud rate (serial only; USB CDC devices use this for host-side
     /// configuration, though the adapters themselves typically ignore it)
     pub baud_rate: Option<u32>,
+    /// Hardware flow control mode (GridConnect serial only).
+    /// Defaults to None when absent (backward-compatible with older saved configs).
+    #[serde(default)]
+    pub flow_control: FlowControl,
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────────

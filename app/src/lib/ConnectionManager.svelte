@@ -3,6 +3,84 @@
   import { createEventDispatcher, onMount } from 'svelte';
 
   type AdapterType = 'tcp' | 'gridConnectSerial' | 'slcanSerial';
+  type FlowControl = 'none' | 'rtsCts';
+
+  /** Known device presets with auto-filled serial parameters. */
+  type DevicePreset = 'tcp' | 'rrcirkits' | 'sprog-usblcc' | 'sprog-pilcc' | 'slcan' | 'otherGc' | 'otherSlcan';
+
+  interface DeviceInfo {
+    label: string;
+    hint: string;
+    adapterType: AdapterType;
+    defaultBaud: number;
+    flowControl: FlowControl;
+    /** When true, show baud + flow control fields for user override. */
+    showAdvanced: boolean;
+  }
+
+  const DEVICE_PRESETS: Record<DevicePreset, DeviceInfo> = {
+    tcp: {
+      label: 'Network hub (TCP)',
+      hint: 'JMRI, WifiTrax, or standalone TCP/IP bridge',
+      adapterType: 'tcp',
+      defaultBaud: 0,
+      flowControl: 'none',
+      showAdvanced: false,
+    },
+    rrcirkits: {
+      label: 'RR-CirKits LCC Buffer-USB',
+      hint: 'Also compatible with RR-CirKits LCC to Loconet Bridge',
+      adapterType: 'gridConnectSerial',
+      defaultBaud: 57600,
+      flowControl: 'none',
+      showAdvanced: false,
+    },
+    'sprog-usblcc': {
+      label: 'SPROG USB-LCC',
+      hint: 'SPROG DCC Ltd USB-LCC CAN adapter',
+      adapterType: 'gridConnectSerial',
+      defaultBaud: 460800,
+      flowControl: 'rtsCts',
+      showAdvanced: false,
+    },
+    'sprog-pilcc': {
+      label: 'SPROG PI-LCC',
+      hint: 'SPROG DCC Ltd Raspberry Pi LCC hat',
+      adapterType: 'gridConnectSerial',
+      defaultBaud: 460800,
+      flowControl: 'rtsCts',
+      showAdvanced: false,
+    },
+    slcan: {
+      label: 'Canable / Lawicell CANUSB',
+      hint: 'SLCAN-compatible USB-CAN adapter',
+      adapterType: 'slcanSerial',
+      defaultBaud: 115200,
+      flowControl: 'none',
+      showAdvanced: false,
+    },
+    otherGc: {
+      label: 'Other GridConnect adapter',
+      hint: 'CAN2USBINO, MERG CAN-RS, or other GridConnect device',
+      adapterType: 'gridConnectSerial',
+      defaultBaud: 57600,
+      flowControl: 'none',
+      showAdvanced: true,
+    },
+    otherSlcan: {
+      label: 'Other SLCAN adapter',
+      hint: 'Any slcand-compatible adapter not listed above',
+      adapterType: 'slcanSerial',
+      defaultBaud: 115200,
+      flowControl: 'none',
+      showAdvanced: true,
+    },
+  };
+
+  /** Ordered list for the dropdown. */
+  const DEVICE_ORDER: DevicePreset[] = [
+    'tcp', 'rrcirkits', 'sprog-usblcc', 'sprog-pilcc', 'slcan', 'otherGc', 'otherSlcan',
+  ];
 
   interface ConnectionConfig {
     id: string;
@@ -12,6 +90,7 @@
     port?: number;
     serialPort?: string;
     baudRate?: number;
+    flowControl: FlowControl;
   }
 
   const dispatch = createEventDispatcher<{ connected: { config: ConnectionConfig } }>();
@@ -42,11 +121,12 @@
 
   // Form fields (shared between add and edit)
   let formName = $state('');
-  let formType = $state<AdapterType>('tcp');
+  let formDevice = $state<DevicePreset>('tcp');
   let formHost = $state('localhost');
   let formTcpPort = $state(12021);
   let formSerialPort = $state('');
   let formBaudRate = $state(57600);
+  let formFlowControl = $state<FlowControl>('none');
 
   // Connection in progress
   let connectingId = $state<string | null>(null);
@@ -55,17 +135,16 @@
   // Pending delete confirmation
   let confirmDeleteId = $state<string | null>(null);
 
-  // Default baud rates per adapter type
-  const defaultBaudRates: Record<AdapterType, number> = {
-    tcp: 0,
-    gridConnectSerial: 57600,
-    slcanSerial: 115200,
-  };
+  // Derived: current device preset info
+  let deviceInfo = $derived(DEVICE_PRESETS[formDevice]);
+  let isSerial = $derived(deviceInfo.adapterType !== 'tcp');
 
-  // Update baud rate when type changes (only when adding, not while editing)
+  // Apply preset defaults when device changes (only when adding, not editing)
   $effect(() => {
-    if (editingId === null && (formType === 'gridConnectSerial' || formType === 'slcanSerial')) {
-      formBaudRate = defaultBaudRates[formType];
+    const preset = DEVICE_PRESETS[formDevice];
+    if (editingId === null) {
+      formBaudRate = preset.defaultBaud;
+      formFlowControl = preset.flowControl;
     }
   });
 
@@ -107,23 +186,40 @@
   function openAddModal() {
     editingId = null;
     formName = '';
-    formType = 'tcp';
+    formDevice = 'tcp';
     formHost = 'localhost';
     formTcpPort = 12021;
     formSerialPort = availablePorts[0] ?? '';
-    formBaudRate = defaultBaudRates['tcp'];
+    formBaudRate = DEVICE_PRESETS['tcp'].defaultBaud;
+    formFlowControl = 'none';
     errorMessage = '';
     showModal = true;
+  }
+
+  /** Infer the best device preset from a saved config's parameters. */
+  function inferPreset(conn: ConnectionConfig): DevicePreset {
+    if (conn.adapterType === 'tcp') return 'tcp';
+    if (conn.adapterType === 'slcanSerial') {
+      return conn.baudRate === 115200 && conn.flowControl === 'none' ? 'slcan' : 'otherSlcan';
+    }
+    // GridConnect — match known presets by baud + flow control
+    if (conn.flowControl === 'rtsCts' && conn.baudRate === 460800) {
+      // Could be USB-LCC or PI-LCC; default to USB-LCC since it's more common
+      return 'sprog-usblcc';
+    }
+    if (conn.baudRate === 57600 && conn.flowControl === 'none') return 'rrcirkits';
+    return 'otherGc';
   }
 
   function openEditModal(conn: ConnectionConfig) {
     editingId = conn.id;
     formName = conn.name;
-    formType = conn.adapterType;
+    formDevice = inferPreset(conn);
     formHost = conn.host ?? 'localhost';
     formTcpPort = conn.port ?? 12021;
     formSerialPort = conn.serialPort ?? (availablePorts[0] ?? '');
-    formBaudRate = conn.baudRate ?? defaultBaudRates[conn.adapterType];
+    formBaudRate = conn.baudRate ?? DEVICE_PRESETS[formDevice].defaultBaud;
+    formFlowControl = conn.flowControl ?? 'none';
     errorMessage = '';
     showModal = true;
   }
@@ -136,13 +232,15 @@
     if (!formName.trim()) return;
 
     try {
+      const preset = DEVICE_PRESETS[formDevice];
       const config: ConnectionConfig = {
         id: editingId ?? generateUUID(),
         name: formName.trim(),
-        adapterType: formType,
+        adapterType: preset.adapterType,
+        flowControl: isSerial ? formFlowControl : 'none',
       };
 
-      if (formType === 'tcp') {
+      if (preset.adapterType === 'tcp') {
         config.host = formHost;
         config.port = formTcpPort;
       } else {
@@ -184,7 +282,7 @@
   function adapterLabel(type: AdapterType): string {
     switch (type) {
       case 'tcp': return 'TCP';
-      case 'gridConnectSerial': return 'GridConnect';
+      case 'gridConnectSerial': return 'Serial';
       case 'slcanSerial': return 'SLCAN';
     }
   }
@@ -283,31 +381,19 @@
           <input type="text" bind:value={formName} placeholder="My layout hub" required />
         </label>
 
-        <!-- Type -->
-        <fieldset class="cm-fieldset">
-          <legend>Connection type</legend>
-
-          <label class="cm-radio">
-            <input type="radio" bind:group={formType} value="tcp" />
-            <span class="cm-radio-label">TCP</span>
-          </label>
-          <p class="cm-hint">Connect via a network hub such as JMRI or a standalone TCP/IP bridge.</p>
-
-          <label class="cm-radio">
-            <input type="radio" bind:group={formType} value="gridConnectSerial" />
-            <span class="cm-radio-label">GridConnect <em>(USB/Serial)</em></span>
-          </label>
-          <p class="cm-hint">Compatible devices: SPROG CANISB, SPROG USB-LCC, RR-Cirkits Buffer LCC, CAN2USBINO, CANRS</p>
-
-          <label class="cm-radio">
-            <input type="radio" bind:group={formType} value="slcanSerial" />
-            <span class="cm-radio-label">SLCAN <em>(USB/Serial)</em></span>
-          </label>
-          <p class="cm-hint">Compatible devices: Canable, Lawicel CANUSB, any slcand-compatible adapter</p>
-        </fieldset>
+        <!-- Device picker -->
+        <label class="cm-field">
+          <span>Device</span>
+          <select bind:value={formDevice}>
+            {#each DEVICE_ORDER as key}
+              <option value={key}>{DEVICE_PRESETS[key].label}</option>
+            {/each}
+          </select>
+        </label>
+        <p class="cm-hint cm-device-hint">{deviceInfo.hint}</p>
 
         <!-- TCP fields -->
-        {#if formType === 'tcp'}
+        {#if !isSerial}
           <label class="cm-field">
             <span>Host</span>
             <input type="text" bind:value={formHost} placeholder="localhost" />
@@ -319,7 +405,7 @@
         {/if}
 
         <!-- Serial fields -->
-        {#if formType === 'gridConnectSerial' || formType === 'slcanSerial'}
+        {#if isSerial}
           <div class="cm-field cm-port-row">
             <div class="cm-field-inner">
               <span>COM port</span>
@@ -344,13 +430,19 @@
             </button>
           </div>
 
-          <details class="cm-advanced">
-            <summary>Advanced</summary>
+          {#if deviceInfo.showAdvanced}
             <label class="cm-field">
               <span>Baud rate</span>
               <input type="number" bind:value={formBaudRate} min="1200" max="3000000" />
             </label>
-          </details>
+            <label class="cm-field">
+              <span>Flow ctrl</span>
+              <select bind:value={formFlowControl}>
+                <option value="none">None</option>
+                <option value="rtsCts">RTS/CTS</option>
+              </select>
+            </label>
+          {/if}
         {/if}
 
         <div class="cm-dialog-footer">
@@ -589,35 +681,15 @@
     box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
   }
 
-  .cm-fieldset {
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
-    padding: 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-  .cm-fieldset legend {
-    font-size: 12px;
-    font-weight: 600;
-    color: #6b7280;
-    padding: 0 4px;
-  }
-
-  .cm-radio {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
-    margin-top: 0.4rem;
-  }
-  .cm-radio-label { font-size: 14px; font-weight: 500; color: #111827; }
-  .cm-radio-label em { font-style: normal; color: #6b7280; font-weight: 400; }
-
   .cm-hint {
     margin: 0 0 0.25rem 1.4rem;
     font-size: 12px;
     color: #6b7280;
+  }
+
+  .cm-device-hint {
+    margin-left: calc(80px + 0.75rem);
+    margin-top: -0.35rem;
   }
 
   .cm-port-row {
@@ -645,13 +717,6 @@
     font-size: 14px;
     flex-shrink: 0;
   }
-
-  .cm-advanced summary {
-    font-size: 12px;
-    color: #6b7280;
-    cursor: pointer;
-  }
-  .cm-advanced .cm-field { margin-top: 0.5rem; }
 
   .cm-dialog-footer {
     display: flex;

@@ -46,6 +46,9 @@ pub use types::{NodeID, EventID, NodeAlias, DiscoveredNode, SNIPData, SNIPStatus
 pub use protocol::{GridConnectFrame, MTI, DatagramAssembler, DatagramState, MemoryConfigCmd, AddressSpace, ReadReply};
 pub use transport::LccTransport;
 pub use transport::{GridConnectSerialTransport, SlcanSerialTransport};
+/// Re-export `tokio_serial::FlowControl` so callers can specify flow control
+/// without adding a direct dependency on `tokio_serial`.
+pub use tokio_serial::FlowControl as SerialFlowControl;
 pub use discovery::LccConnection;
 pub use discovery::MemoryReadTiming;
 pub use discovery::{BatchReadDescriptor, BatchReadResult, BatchReader};

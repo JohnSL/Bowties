@@ -1,8 +1,12 @@
 //! GridConnect serial transport for USB-to-CAN adapters
 //!
-//! Supports devices like RR-Cirkits Buffer LCC, CAN2USBINO, and CANRS that use
-//! the GridConnect framing protocol over a serial (USB CDC) connection.
-//! No init sequence is required.
+//! Supports devices like RR-Cirkits Buffer LCC, SPROG USB-LCC, CAN2USBINO, and
+//! CANRS that use the GridConnect framing protocol over a serial (USB CDC)
+//! connection. No init sequence is required.
+//!
+//! Devices differ in baud rate and flow control — for example, SPROG USB-LCC
+//! requires 460800 baud with RTS/CTS, while RR-Cirkits Buffer LCC uses 57600
+//! with no flow control.
 
 use crate::{Error, Result, protocol::GridConnectFrame};
 use crate::transport::{LccTransport, TransportReader, TransportWriter};
@@ -28,25 +32,30 @@ impl GridConnectSerialTransport {
     ///
     /// # Arguments
     /// * `path` — Serial port path (e.g. `"COM3"` on Windows, `"/dev/ttyUSB0"` on Linux)
-    /// * `baud_rate` — Serial baud rate (e.g. 57600 for Buffer LCC)
-    pub async fn open(path: &str, baud_rate: u32) -> Result<Self> {
+    /// * `baud_rate` — Serial baud rate (e.g. 57600 for Buffer LCC, 460800 for SPROG USB-LCC)
+    /// * `flow_control` — Hardware flow control mode. Use `FlowControl::None` for
+    ///   most adapters (RR-Cirkits, MERG) or `FlowControl::Hardware` for SPROG
+    ///   USB-LCC / PI-LCC which require RTS/CTS.
+    pub async fn open(path: &str, baud_rate: u32, flow_control: tokio_serial::FlowControl) -> Result<Self> {
         let mut port = tokio_serial::new(path, baud_rate)
             .data_bits(tokio_serial::DataBits::Eight)
             .stop_bits(tokio_serial::StopBits::One)
             .parity(tokio_serial::Parity::None)
-            .flow_control(tokio_serial::FlowControl::None)
+            .flow_control(flow_control)
             .open_native_async()
             .map_err(|e| Error::Transport(format!("Failed to open serial port {}: {}", path, e)))?;
 
-        // Assert RTS and DTR so USB-CDC bridge firmware knows the host is ready.
-        // JMRI's GcSerialDriverAdapter calls setRTS()+setDTR() (both true) with
-        // FlowControl=NONE for all GridConnect adapters including the Buffer LCC.
-        // Without RTS asserted, the Buffer LCC will not forward frames to CAN.
-        if let Err(e) = port.write_request_to_send(true) {
-            eprintln!("Warning: Could not assert RTS on {}: {}", path, e);
-        }
+        // Assert DTR so USB-CDC bridge firmware knows the host is ready.
         if let Err(e) = port.write_data_terminal_ready(true) {
             eprintln!("Warning: Could not assert DTR on {}: {}", path, e);
+        }
+
+        // When flow control is None, manually assert RTS so the adapter forwards
+        // frames. With RTS/CTS flow control the OS manages RTS automatically.
+        if flow_control == tokio_serial::FlowControl::None {
+            if let Err(e) = port.write_request_to_send(true) {
+                eprintln!("Warning: Could not assert RTS on {}: {}", path, e);
+            }
         }
 
         Ok(Self {

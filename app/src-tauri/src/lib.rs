@@ -17,9 +17,9 @@ pub mod diagnostics;
 
 use menu::MenuHandles;
 
-use lcc_rs::{LccConnection, NodeID, GridConnectSerialTransport, SlcanSerialTransport};
+use lcc_rs::{LccConnection, NodeID, GridConnectSerialTransport, SlcanSerialTransport, SerialFlowControl};
 use state::AppState;
-use commands::{ConnectionConfig, AdapterType};
+use commands::{ConnectionConfig, AdapterType, FlowControl};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 
@@ -85,8 +85,12 @@ async fn connect_lcc(
                 .as_deref()
                 .ok_or_else(|| "serial_port is required for GridConnect".to_string())?;
             let baud_rate = config.baud_rate.unwrap_or(57600);
+            let flow = match &config.flow_control {
+                FlowControl::None => SerialFlowControl::None,
+                FlowControl::RtsCts => SerialFlowControl::Hardware,
+            };
             let transport = open_with_retry(
-                || GridConnectSerialTransport::open(serial_port, baud_rate),
+                || GridConnectSerialTransport::open(serial_port, baud_rate, flow),
                 "GridConnect serial port",
             )
             .await?;
