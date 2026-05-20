@@ -223,7 +223,7 @@
 
   {:else if segment}
     {@const nodeId = selectedSegment.nodeId}
-    {#key `${nodeId}:${connectorRevision}`}
+    {#key nodeId}
       {@const groupedChildren = groupReplicatedChildren(segment.children)}
       <div class="segment-content">
         <h2 class="segment-heading">{segment.name}</h2>

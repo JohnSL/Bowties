@@ -91,6 +91,120 @@ pub struct RoleClassification {
     pub role: String,
 }
 
+/// A single edit operation to apply to a layout file.
+///
+/// The frontend sends a list of these deltas instead of a full `LayoutFile`.
+/// The backend reads the current layout from disk, applies the deltas in order,
+/// and writes the result (ADR-0002).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum LayoutEditDelta {
+    /// Create a new bowtie entry (or no-op if it already exists).
+    #[serde(rename_all = "camelCase")]
+    CreateBowtie {
+        event_id_hex: String,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// Delete a bowtie entry.
+    #[serde(rename_all = "camelCase")]
+    DeleteBowtie { event_id_hex: String },
+    /// Rename an existing bowtie (creates if absent).
+    #[serde(rename_all = "camelCase")]
+    RenameBowtie {
+        event_id_hex: String,
+        new_name: String,
+    },
+    /// Add a tag to a bowtie.
+    #[serde(rename_all = "camelCase")]
+    AddTag { event_id_hex: String, tag: String },
+    /// Remove a tag from a bowtie.
+    #[serde(rename_all = "camelCase")]
+    RemoveTag { event_id_hex: String, tag: String },
+    /// Classify an event slot's role.
+    ClassifyRole { key: String, role: String },
+    /// Set connector selection for a node.
+    #[serde(rename_all = "camelCase")]
+    SetConnectorSelection {
+        node_id: String,
+        selection: NodeHardwareSelectionSet,
+    },
+    /// Adopt a new event ID — move bowtie metadata from old key to new key.
+    #[serde(rename_all = "camelCase")]
+    AdoptEventId {
+        old_event_id_hex: String,
+        new_event_id_hex: String,
+    },
+}
+
+/// Apply a sequence of edit deltas to a layout file, mutating it in place.
+pub fn apply_layout_deltas(layout: &mut LayoutFile, deltas: Vec<LayoutEditDelta>) {
+    for delta in deltas {
+        match delta {
+            LayoutEditDelta::CreateBowtie {
+                event_id_hex,
+                name,
+            } => {
+                layout
+                    .bowties
+                    .entry(event_id_hex)
+                    .or_insert_with(|| BowtieMetadata {
+                        name,
+                        tags: vec![],
+                    });
+            }
+            LayoutEditDelta::DeleteBowtie { event_id_hex } => {
+                layout.bowties.remove(&event_id_hex);
+            }
+            LayoutEditDelta::RenameBowtie {
+                event_id_hex,
+                new_name,
+            } => {
+                let entry =
+                    layout
+                        .bowties
+                        .entry(event_id_hex)
+                        .or_insert_with(|| BowtieMetadata {
+                            name: None,
+                            tags: vec![],
+                        });
+                entry.name = Some(new_name);
+            }
+            LayoutEditDelta::AddTag { event_id_hex, tag } => {
+                if let Some(entry) = layout.bowties.get_mut(&event_id_hex) {
+                    if !entry.tags.contains(&tag) {
+                        entry.tags.push(tag);
+                    }
+                }
+            }
+            LayoutEditDelta::RemoveTag { event_id_hex, tag } => {
+                if let Some(entry) = layout.bowties.get_mut(&event_id_hex) {
+                    entry.tags.retain(|t| t != &tag);
+                }
+            }
+            LayoutEditDelta::ClassifyRole { key, role } => {
+                layout
+                    .role_classifications
+                    .insert(key, RoleClassification { role });
+            }
+            LayoutEditDelta::SetConnectorSelection {
+                node_id,
+                selection,
+            } => {
+                layout.connector_selections.insert(node_id, selection);
+            }
+            LayoutEditDelta::AdoptEventId {
+                old_event_id_hex,
+                new_event_id_hex,
+            } => {
+                if let Some(meta) = layout.bowties.remove(&old_event_id_hex) {
+                    layout.bowties.insert(new_event_id_hex, meta);
+                }
+            }
+        }
+    }
+}
+
 /// Recent layout file reference, stored in app data dir.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -304,5 +418,282 @@ mod tests {
         assert_eq!(selection.status, ConnectorSelectionStatus::Unknown);
         assert_eq!(selection.selected_daughterboard_id.as_deref(), Some("legacy-aux-card"));
         assert_eq!(selection.source_profile_version.as_deref(), Some("2026-04-30"));
+    }
+
+    // ── apply_layout_deltas tests (ADR-0002) ─────────────────────────────
+
+    #[test]
+    fn apply_deltas_create_bowtie() {
+        let mut layout = LayoutFile::default();
+        apply_layout_deltas(&mut layout, vec![
+            LayoutEditDelta::CreateBowtie {
+                event_id_hex: "05.01.01.01.FF.00.00.01".to_string(),
+                name: Some("Yard Entry".to_string()),
+            },
+        ]);
+        assert_eq!(layout.bowties.len(), 1);
+        let entry = layout.bowties.get("05.01.01.01.FF.00.00.01").unwrap();
+        assert_eq!(entry.name.as_deref(), Some("Yard Entry"));
+        assert!(entry.tags.is_empty());
+    }
+
+    #[test]
+    fn apply_deltas_create_bowtie_noop_if_exists() {
+        let mut layout = LayoutFile::default();
+        layout.bowties.insert("05.01.01.01.FF.00.00.01".to_string(), BowtieMetadata {
+            name: Some("Original".to_string()),
+            tags: vec!["yard".to_string()],
+        });
+        apply_layout_deltas(&mut layout, vec![
+            LayoutEditDelta::CreateBowtie {
+                event_id_hex: "05.01.01.01.FF.00.00.01".to_string(),
+                name: Some("Overwrite Attempt".to_string()),
+            },
+        ]);
+        // Should not overwrite
+        assert_eq!(layout.bowties.get("05.01.01.01.FF.00.00.01").unwrap().name.as_deref(), Some("Original"));
+    }
+
+    #[test]
+    fn apply_deltas_delete_bowtie() {
+        let mut layout = LayoutFile::default();
+        layout.bowties.insert("05.01.01.01.FF.00.00.01".to_string(), BowtieMetadata {
+            name: Some("Doomed".to_string()),
+            tags: vec![],
+        });
+        apply_layout_deltas(&mut layout, vec![
+            LayoutEditDelta::DeleteBowtie { event_id_hex: "05.01.01.01.FF.00.00.01".to_string() },
+        ]);
+        assert!(layout.bowties.is_empty());
+    }
+
+    #[test]
+    fn apply_deltas_rename_bowtie() {
+        let mut layout = LayoutFile::default();
+        layout.bowties.insert("05.01.01.01.FF.00.00.01".to_string(), BowtieMetadata {
+            name: Some("Old Name".to_string()),
+            tags: vec!["yard".to_string()],
+        });
+        apply_layout_deltas(&mut layout, vec![
+            LayoutEditDelta::RenameBowtie {
+                event_id_hex: "05.01.01.01.FF.00.00.01".to_string(),
+                new_name: "New Name".to_string(),
+            },
+        ]);
+        let entry = layout.bowties.get("05.01.01.01.FF.00.00.01").unwrap();
+        assert_eq!(entry.name.as_deref(), Some("New Name"));
+        // Tags preserved
+        assert_eq!(entry.tags, vec!["yard"]);
+    }
+
+    #[test]
+    fn apply_deltas_rename_creates_if_absent() {
+        let mut layout = LayoutFile::default();
+        apply_layout_deltas(&mut layout, vec![
+            LayoutEditDelta::RenameBowtie {
+                event_id_hex: "05.01.01.01.FF.00.00.01".to_string(),
+                new_name: "Created via rename".to_string(),
+            },
+        ]);
+        assert_eq!(layout.bowties.get("05.01.01.01.FF.00.00.01").unwrap().name.as_deref(), Some("Created via rename"));
+    }
+
+    #[test]
+    fn apply_deltas_add_and_remove_tag() {
+        let mut layout = LayoutFile::default();
+        layout.bowties.insert("05.01.01.01.FF.00.00.01".to_string(), BowtieMetadata {
+            name: None,
+            tags: vec!["yard".to_string()],
+        });
+        apply_layout_deltas(&mut layout, vec![
+            LayoutEditDelta::AddTag {
+                event_id_hex: "05.01.01.01.FF.00.00.01".to_string(),
+                tag: "signals".to_string(),
+            },
+            LayoutEditDelta::RemoveTag {
+                event_id_hex: "05.01.01.01.FF.00.00.01".to_string(),
+                tag: "yard".to_string(),
+            },
+        ]);
+        assert_eq!(layout.bowties.get("05.01.01.01.FF.00.00.01").unwrap().tags, vec!["signals"]);
+    }
+
+    #[test]
+    fn apply_deltas_add_tag_deduplicates() {
+        let mut layout = LayoutFile::default();
+        layout.bowties.insert("05.01.01.01.FF.00.00.01".to_string(), BowtieMetadata {
+            name: None,
+            tags: vec!["yard".to_string()],
+        });
+        apply_layout_deltas(&mut layout, vec![
+            LayoutEditDelta::AddTag {
+                event_id_hex: "05.01.01.01.FF.00.00.01".to_string(),
+                tag: "yard".to_string(),
+            },
+        ]);
+        assert_eq!(layout.bowties.get("05.01.01.01.FF.00.00.01").unwrap().tags, vec!["yard"]);
+    }
+
+    #[test]
+    fn apply_deltas_classify_role() {
+        let mut layout = LayoutFile::default();
+        apply_layout_deltas(&mut layout, vec![
+            LayoutEditDelta::ClassifyRole {
+                key: "05.02.01.02.03.00:Port/Line/Event".to_string(),
+                role: "Producer".to_string(),
+            },
+        ]);
+        assert_eq!(layout.role_classifications.get("05.02.01.02.03.00:Port/Line/Event").unwrap().role, "Producer");
+    }
+
+    #[test]
+    fn apply_deltas_set_connector_selection() {
+        let mut layout = LayoutFile::default();
+        let mut slot_selections = BTreeMap::new();
+        slot_selections.insert("serial-a".to_string(), ConnectorSelectionRecord {
+            selected_daughterboard_id: Some("BOD4-CP".to_string()),
+            status: ConnectorSelectionStatus::Selected,
+            source_profile_version: None,
+        });
+        apply_layout_deltas(&mut layout, vec![
+            LayoutEditDelta::SetConnectorSelection {
+                node_id: "020157000001".to_string(),
+                selection: NodeHardwareSelectionSet {
+                    carrier_key: "rr-cirkits::tower-lcc".to_string(),
+                    slot_selections,
+                    updated_at: None,
+                },
+            },
+        ]);
+        let stored = layout.connector_selections.get("020157000001").unwrap();
+        assert_eq!(stored.carrier_key, "rr-cirkits::tower-lcc");
+    }
+
+    #[test]
+    fn apply_deltas_adopt_event_id() {
+        let mut layout = LayoutFile::default();
+        layout.bowties.insert("planning-123".to_string(), BowtieMetadata {
+            name: Some("My Bowtie".to_string()),
+            tags: vec!["yard".to_string()],
+        });
+        apply_layout_deltas(&mut layout, vec![
+            LayoutEditDelta::AdoptEventId {
+                old_event_id_hex: "planning-123".to_string(),
+                new_event_id_hex: "05.01.01.01.FF.00.00.01".to_string(),
+            },
+        ]);
+        assert!(!layout.bowties.contains_key("planning-123"));
+        let moved = layout.bowties.get("05.01.01.01.FF.00.00.01").unwrap();
+        assert_eq!(moved.name.as_deref(), Some("My Bowtie"));
+        assert_eq!(moved.tags, vec!["yard"]);
+    }
+
+    #[test]
+    fn apply_deltas_preserves_existing_roles_not_in_deltas() {
+        let mut layout = LayoutFile::default();
+        layout.role_classifications.insert(
+            "existing:path".to_string(),
+            RoleClassification { role: "Consumer".to_string() },
+        );
+        apply_layout_deltas(&mut layout, vec![
+            LayoutEditDelta::ClassifyRole {
+                key: "new:path".to_string(),
+                role: "Producer".to_string(),
+            },
+        ]);
+        // Existing role preserved
+        assert_eq!(layout.role_classifications.get("existing:path").unwrap().role, "Consumer");
+        // New role added
+        assert_eq!(layout.role_classifications.get("new:path").unwrap().role, "Producer");
+    }
+
+    #[test]
+    fn apply_deltas_multiple_operations_in_sequence() {
+        let mut layout = LayoutFile::default();
+        apply_layout_deltas(&mut layout, vec![
+            LayoutEditDelta::CreateBowtie {
+                event_id_hex: "05.01.01.01.FF.00.00.01".to_string(),
+                name: Some("Signal A".to_string()),
+            },
+            LayoutEditDelta::AddTag {
+                event_id_hex: "05.01.01.01.FF.00.00.01".to_string(),
+                tag: "yard".to_string(),
+            },
+            LayoutEditDelta::RenameBowtie {
+                event_id_hex: "05.01.01.01.FF.00.00.01".to_string(),
+                new_name: "Signal A (renamed)".to_string(),
+            },
+            LayoutEditDelta::ClassifyRole {
+                key: "node:path".to_string(),
+                role: "Producer".to_string(),
+            },
+        ]);
+        let entry = layout.bowties.get("05.01.01.01.FF.00.00.01").unwrap();
+        assert_eq!(entry.name.as_deref(), Some("Signal A (renamed)"));
+        assert_eq!(entry.tags, vec!["yard"]);
+        assert_eq!(layout.role_classifications.len(), 1);
+    }
+
+    #[test]
+    fn apply_deltas_empty_vec_is_noop() {
+        let mut layout = LayoutFile::default();
+        layout.bowties.insert("05.01.01.01.FF.00.00.01".to_string(), BowtieMetadata {
+            name: Some("Untouched".to_string()),
+            tags: vec![],
+        });
+        apply_layout_deltas(&mut layout, vec![]);
+        assert_eq!(layout.bowties.get("05.01.01.01.FF.00.00.01").unwrap().name.as_deref(), Some("Untouched"));
+    }
+
+    #[test]
+    fn layout_edit_delta_json_roundtrip() {
+        let deltas = vec![
+            LayoutEditDelta::CreateBowtie {
+                event_id_hex: "05.01.01.01.FF.00.00.01".to_string(),
+                name: Some("Test".to_string()),
+            },
+            LayoutEditDelta::ClassifyRole {
+                key: "node:path".to_string(),
+                role: "Producer".to_string(),
+            },
+        ];
+        let json = serde_json::to_string(&deltas).unwrap();
+        let parsed: Vec<LayoutEditDelta> = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.len(), 2);
+    }
+
+    /// Verify that the exact JSON the frontend sends (camelCase, name omitted)
+    /// deserializes correctly. This catches serde rename/default issues.
+    #[test]
+    fn layout_edit_delta_from_frontend_json() {
+        // Frontend sends camelCase field names; name may be undefined (omitted)
+        let json = r#"[
+            {"type":"createBowtie","eventIdHex":"05.01.01.01.FF.00.00.01"},
+            {"type":"createBowtie","eventIdHex":"05.01.01.01.FF.00.00.02","name":"Yard"},
+            {"type":"createBowtie","eventIdHex":"05.01.01.01.FF.00.00.03","name":null},
+            {"type":"deleteBowtie","eventIdHex":"05.01.01.01.FF.00.00.04"},
+            {"type":"renameBowtie","eventIdHex":"05.01.01.01.FF.00.00.05","newName":"Signal B"},
+            {"type":"addTag","eventIdHex":"05.01.01.01.FF.00.00.06","tag":"yard"},
+            {"type":"removeTag","eventIdHex":"05.01.01.01.FF.00.00.07","tag":"yard"},
+            {"type":"classifyRole","key":"node:path","role":"Producer"}
+        ]"#;
+        let parsed: Vec<LayoutEditDelta> = serde_json::from_str(json)
+            .expect("frontend JSON should deserialize");
+        assert_eq!(parsed.len(), 8);
+        // name omitted → None
+        match &parsed[0] {
+            LayoutEditDelta::CreateBowtie { name, .. } => assert_eq!(*name, None),
+            _ => panic!("expected CreateBowtie"),
+        }
+        // name present
+        match &parsed[1] {
+            LayoutEditDelta::CreateBowtie { name, .. } => assert_eq!(name.as_deref(), Some("Yard")),
+            _ => panic!("expected CreateBowtie"),
+        }
+        // name: null → None
+        match &parsed[2] {
+            LayoutEditDelta::CreateBowtie { name, .. } => assert_eq!(*name, None),
+            _ => panic!("expected CreateBowtie"),
+        }
     }
 }

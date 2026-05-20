@@ -29,6 +29,8 @@ pub struct SaveLayoutResult {
     pub node_files_written: usize,
     pub cdi_files_copied: usize,
     pub warnings: Vec<String>,
+    /// The persisted layout file data (ADR-0002: backend returns authoritative copy).
+    pub layout: LayoutFile,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,21 +68,25 @@ pub struct NewLayoutResult {
     pub created_at: String,
 }
 
-fn merge_saved_layout_metadata(
-    previous: Option<&crate::layout::types::LayoutFile>,
-    provided: Option<crate::layout::types::LayoutFile>,
-) -> crate::layout::types::LayoutFile {
-    let mut layout = previous.cloned().unwrap_or_default();
-
-    if let Some(provided_layout) = provided {
-        layout.schema_version = provided_layout.schema_version;
-        layout.bowties = provided_layout.bowties;
-        layout.role_classifications = provided_layout.role_classifications;
-        layout.connector_selections = provided_layout.connector_selections;
-    }
-
-    layout
+/// Result of the three-phase `save_layout_with_bus_writes` command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveWithBusWriteResult {
+    /// Layout was successfully saved to disk in phase 1.
+    pub layout_saved: bool,
+    /// Bus write result from phase 2 (None if not connected or no pending writes).
+    pub bus_writes: Option<super::cdi::WriteModifiedResult>,
+    /// Phase 3 reconcile save completed (only true when ≥1 bus write succeeded).
+    pub reconciled: bool,
+    /// Catalog was rebuilt by the backend after save.
+    pub catalog_rebuilt: bool,
+    /// Partial-capture node IDs from the initial layout save (same semantics as SaveLayoutResult.warnings).
+    pub warnings: Vec<String>,
+    /// The persisted layout file data (ADR-0002: backend returns authoritative copy).
+    pub layout: LayoutFile,
 }
+
+
 
 fn canonical_node_id(node_id_dotted_hex: &str) -> String {
     node_id_dotted_hex.replace('.', "").to_uppercase()
@@ -318,7 +324,7 @@ pub async fn capture_layout_snapshot(
 pub async fn save_layout_directory(
     path: String,
     overwrite: bool,
-    layout: Option<crate::layout::types::LayoutFile>,
+    deltas: Vec<crate::layout::types::LayoutEditDelta>,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<SaveLayoutResult, String> {
@@ -399,7 +405,9 @@ pub async fn save_layout_directory(
         .to_string();
     let companion_dir = crate::layout::io::derive_companion_dir_name(target)?;
 
-    let mut bowties = merge_saved_layout_metadata(previous.as_ref().map(|loaded| &loaded.bowties), layout);
+    // ADR-0002: read disk-authoritative layout, apply frontend deltas.
+    let mut bowties = previous.as_ref().map(|p| p.bowties.clone()).unwrap_or_default();
+    crate::layout::types::apply_layout_deltas(&mut bowties, deltas);
     let mut offline_changes = Vec::<OfflineChange>::new();
 
     if let Some(prev) = previous {
@@ -420,6 +428,12 @@ pub async fn save_layout_directory(
     }
 
     if let Some(catalog) = state.bowties_catalog.read().await.clone() {
+        // Persist all resolved (non-ambiguous) role classifications from the live catalog.
+        let resolved_roles = crate::commands::bowties::extract_catalog_role_classifications(&catalog);
+        for (key, rc) in resolved_roles {
+            bowties.role_classifications.insert(key, rc);
+        }
+
         for b in catalog.bowties {
             if !b.tags.is_empty() || b.name.is_some() {
                 bowties.bowties.insert(
@@ -495,17 +509,18 @@ pub async fn save_layout_directory(
         node_files_written: write_data.node_snapshots.len(),
         cdi_files_copied: cdi_files_count,
         warnings: partial_nodes,
+        layout: write_data.bowties.clone(),
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::merge_saved_layout_metadata;
+    use crate::layout::types::{apply_layout_deltas, LayoutEditDelta};
 
     #[test]
-    fn merge_saved_layout_metadata_prefers_provided_connector_selections() {
-        let mut previous = crate::layout::types::LayoutFile::default();
-        previous.connector_selections.insert(
+    fn apply_deltas_connector_selection_replaces_previous() {
+        let mut layout = crate::layout::types::LayoutFile::default();
+        layout.connector_selections.insert(
             "020157000001".to_string(),
             crate::layout::types::NodeHardwareSelectionSet {
                 carrier_key: "old-carrier".to_string(),
@@ -514,7 +529,6 @@ mod tests {
             },
         );
 
-        let mut provided = crate::layout::types::LayoutFile::default();
         let mut slot_selections = std::collections::BTreeMap::new();
         slot_selections.insert(
             "connector-a".to_string(),
@@ -524,17 +538,19 @@ mod tests {
                 source_profile_version: None,
             },
         );
-        provided.connector_selections.insert(
-            "020157000001".to_string(),
-            crate::layout::types::NodeHardwareSelectionSet {
-                carrier_key: "rr-cirkits::tower-lcc".to_string(),
-                slot_selections,
-                updated_at: Some("2026-05-02T12:00:00Z".to_string()),
-            },
-        );
 
-        let merged = merge_saved_layout_metadata(Some(&previous), Some(provided));
-        let stored = merged.connector_selections.get("020157000001").unwrap();
+        apply_layout_deltas(&mut layout, vec![
+            LayoutEditDelta::SetConnectorSelection {
+                node_id: "020157000001".to_string(),
+                selection: crate::layout::types::NodeHardwareSelectionSet {
+                    carrier_key: "rr-cirkits::tower-lcc".to_string(),
+                    slot_selections,
+                    updated_at: Some("2026-05-02T12:00:00Z".to_string()),
+                },
+            },
+        ]);
+
+        let stored = layout.connector_selections.get("020157000001").unwrap();
         assert_eq!(stored.carrier_key, "rr-cirkits::tower-lcc");
         assert_eq!(stored.slot_selections.get("connector-a").unwrap().selected_daughterboard_id.as_deref(), Some("BOD4-CP"));
     }
@@ -561,8 +577,63 @@ pub async fn open_layout_directory(
 
     // Load offline changes into cache
     *state.offline_changes_cache.write().await = loaded.offline_changes.clone();
-    // Clear stale offline bowtie data from any previous session
-    *state.offline_bowtie_data.write().await = Default::default();
+
+    // Populate offline bowtie data from snapshots so offline catalog rebuilds
+    // can discover event slots and merge saved role classifications.
+    {
+        let mut offline_data = crate::state::OfflineBowtieData::default();
+        let app_data_dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| format!("Cannot resolve app data directory: {}", e))?;
+        let companion_dir = crate::layout::io::derive_companion_dir_path(input_path)?;
+
+        for snapshot in &loaded.node_snapshots {
+            if snapshot.cdi_ref.fingerprint == "not_supported"
+                || snapshot.cdi_ref.fingerprint == "missing"
+            {
+                continue;
+            }
+            let dotted_id = snapshot.node_id.to_hex_string();
+
+            // Load CDI XML
+            let xml = match crate::layout::io::resolve_cdi_xml(snapshot, &app_data_dir, &companion_dir) {
+                Ok(xml) => xml,
+                Err(_) => continue,
+            };
+            offline_data.cdi_xml.insert(dotted_id.clone(), xml.clone());
+
+            // Parse CDI, build minimal tree, merge snapshot values, extract event ID leaves
+            let cdi = match lcc_rs::cdi::parser::parse_cdi(&xml) {
+                Ok(cdi) => cdi,
+                Err(_) => continue,
+            };
+            let mut tree = crate::node_tree::build_node_config_tree(&dotted_id, &cdi);
+            crate::node_tree::merge_snapshot_path_values(&mut tree, &snapshot.config);
+
+            let mut node_config: std::collections::HashMap<String, [u8; 8]> = std::collections::HashMap::new();
+            for leaf in crate::node_tree::collect_event_id_leaves(&tree) {
+                if let Some(bytes) = leaf.value {
+                    node_config.insert(leaf.path.join("/"), bytes);
+                }
+            }
+            if !node_config.is_empty() {
+                offline_data.config_values.insert(dotted_id.clone(), node_config);
+            }
+        }
+
+        // Convert saved role_classifications into profile_roles format
+        for (key, rc) in &loaded.bowties.role_classifications {
+            let role = match rc.role.as_str() {
+                "Producer" => lcc_rs::EventRole::Producer,
+                "Consumer" => lcc_rs::EventRole::Consumer,
+                _ => continue,
+            };
+            offline_data.profile_roles.insert(key.clone(), role);
+        }
+
+        *state.offline_bowtie_data.write().await = offline_data;
+    }
 
     let layout_node_ids = loaded.node_snapshots.iter().map(|s| s.node_id.clone()).collect();
     let context = ActiveLayoutContext {
@@ -643,6 +714,101 @@ pub async fn create_new_layout_capture(
     Ok(NewLayoutResult {
         layout_id,
         created_at,
+    })
+}
+
+/// Three-phase save: layout first, then bus writes (if connected), then reconcile.
+///
+/// Phase 1 — Persist layout to disk (with all resolved event roles from the live catalog).
+/// Phase 2 — If connected and there are pending modified values, write them to bus nodes.
+/// Phase 3 — If any writes succeeded, re-save the layout to clear succeeded offline changes.
+/// Phase 4 — Rebuild the bowtie catalog.
+///
+/// Progress events (type `save-progress`) are emitted on the Tauri event bus before each phase.
+#[tauri::command]
+pub async fn save_layout_with_bus_writes(
+    path: String,
+    overwrite: bool,
+    deltas: Vec<crate::layout::types::LayoutEditDelta>,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<SaveWithBusWriteResult, String> {
+    use tauri::Emitter;
+
+    let is_connected = state.connection.read().await.is_some();
+
+    // Phase 1: Save layout (with resolved role persistence via save_layout_directory).
+    let _ = app.emit("save-progress", serde_json::json!({ "phase": "saving-layout" }));
+    let save_result = save_layout_directory(
+        path.clone(),
+        overwrite,
+        deltas,
+        app.clone(),
+        state.clone(),
+    ).await?;
+
+    // Phase 2: Bus writes (only when connected).
+    let bus_writes = if is_connected {
+        let _ = app.emit("save-progress", serde_json::json!({
+            "phase": "writing-config",
+            "current": 0,
+            "total": 0,
+        }));
+        let result = super::cdi::write_modified_values(state.clone(), app.clone()).await
+            .unwrap_or_else(|_| super::cdi::WriteModifiedResult {
+                total: 0,
+                succeeded: 0,
+                failed: 0,
+                read_only_rejected: 0,
+            });
+        if result.total > 0 { Some(result) } else { None }
+    } else {
+        None
+    };
+
+    // Phase 3: Reconcile — re-save if any writes succeeded to clear applied offline changes.
+    let reconciled = if let Some(ref writes) = bus_writes {
+        if writes.succeeded > 0 {
+            let _ = app.emit("save-progress", serde_json::json!({ "phase": "reconciling" }));
+            // Reconcile re-save: no deltas needed, just re-persist current state.
+            save_layout_directory(path.clone(), true, vec![], app.clone(), state.clone()).await?;
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    // Phase 4: Rebuild bowtie catalog with saved layout metadata so user-added
+    // bowties, names, tags, and role classifications survive the rebuild.
+    // Re-read the layout just written in Phase 1/3 to get the authoritative metadata.
+    let final_read = crate::layout::io::read_layout_capture(std::path::Path::new(&path)).ok();
+    let saved_layout = final_read.as_ref().map(|loaded| loaded.bowties.clone());
+    let catalog_rebuilt = crate::commands::bowties::build_bowtie_catalog_command(
+        saved_layout,
+        app.clone(),
+        state.clone(),
+    ).await.is_ok();
+
+    // ADR-0002: return the persisted layout to the frontend.
+    let persisted_layout = final_read
+        .map(|loaded| loaded.bowties)
+        .unwrap_or_else(|| save_result.layout.clone());
+
+    let failed_count = bus_writes.as_ref().map(|w| w.failed).unwrap_or(0);
+    let _ = app.emit("save-progress", serde_json::json!({
+        "phase": "complete",
+        "failedCount": failed_count,
+    }));
+
+    Ok(SaveWithBusWriteResult {
+        layout_saved: true,
+        bus_writes,
+        reconciled,
+        catalog_rebuilt,
+        warnings: save_result.warnings,
+        layout: persisted_layout,
     })
 }
 

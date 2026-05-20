@@ -279,21 +279,19 @@ describe('adoptEventId', () => {
     expect(bowtieMetadataStore.getMetadata(REAL_ID)?.name).toBe('Future');
   });
 
-  it('in-session created bowtie: planning placeholder removed from layout after adopt', () => {
+  it('in-session created bowtie: planning placeholder removed from effective metadata after adopt', () => {
     bowtieMetadataStore.createBowtie(PLANNING_ID, 'Future');
-    // _applyToLayout() has now written planning-xxx into the layout
-    expect(mockLayout.current?.bowties[PLANNING_ID]).toBeDefined();
     bowtieMetadataStore.adoptEventId(PLANNING_ID, REAL_ID);
-    // The delete edit must purge the placeholder from the layout
-    expect(mockLayout.current?.bowties[PLANNING_ID]).toBeUndefined();
-    expect(mockLayout.current?.bowties[REAL_ID]).toBeDefined();
+    // The delete edit must make the placeholder invisible in effective metadata
+    expect(bowtieMetadataStore.getMetadata(PLANNING_ID)).toBeUndefined();
+    expect(bowtieMetadataStore.getMetadata(REAL_ID)).toBeDefined();
   });
 
-  it('file-loaded bowtie: removes placeholder and adds real event ID to layout', () => {
+  it('file-loaded bowtie: removes placeholder and adds real event ID to effective metadata', () => {
     seedLayout({ [PLANNING_ID]: { name: 'Future', tags: [] } });
     bowtieMetadataStore.adoptEventId(PLANNING_ID, REAL_ID);
-    expect(mockLayout.current?.bowties[PLANNING_ID]).toBeUndefined();
-    expect(mockLayout.current?.bowties[REAL_ID]).toBeDefined();
+    expect(bowtieMetadataStore.getMetadata(PLANNING_ID)).toBeUndefined();
+    expect(bowtieMetadataStore.getMetadata(REAL_ID)).toBeDefined();
   });
 
   it('file-loaded bowtie: preserves the original name', () => {
@@ -312,33 +310,31 @@ describe('adoptEventId', () => {
 // ─── demoteToPlanningBowtie ───────────────────────────────────────────────────
 
 describe('demoteToPlanningBowtie', () => {
-  it('removes the real event ID from the layout', () => {
+  it('removes the real event ID from effective metadata', () => {
     seedLayout({ [REAL_ID]: { name: 'Blink', tags: [] } });
     bowtieMetadataStore.demoteToPlanningBowtie(REAL_ID);
-    expect(mockLayout.current?.bowties[REAL_ID]).toBeUndefined();
+    expect(bowtieMetadataStore.getMetadata(REAL_ID)).toBeUndefined();
   });
 
-  it('adds a planning-prefixed entry to the layout', () => {
+  it('adds a planning-prefixed entry to pending edits', () => {
     seedLayout({ [REAL_ID]: { name: 'Blink', tags: [] } });
     bowtieMetadataStore.demoteToPlanningBowtie(REAL_ID);
-    const keys = Object.keys(mockLayout.current?.bowties ?? {});
-    expect(keys.some(k => k.startsWith('planning-'))).toBe(true);
+    const allIds = bowtieMetadataStore.allEventIds;
+    expect(allIds.some(k => k.startsWith('planning-'))).toBe(true);
   });
 
   it('preserves the bowtie name in the new planning entry', () => {
     seedLayout({ [REAL_ID]: { name: 'Blink', tags: [] } });
     bowtieMetadataStore.demoteToPlanningBowtie(REAL_ID);
-    const keys = Object.keys(mockLayout.current?.bowties ?? {});
-    const planningKey = keys.find(k => k.startsWith('planning-'))!;
-    expect(mockLayout.current?.bowties[planningKey]?.name).toBe('Blink');
+    const planningId = bowtieMetadataStore.allEventIds.find(k => k.startsWith('planning-'))!;
+    expect(bowtieMetadataStore.getMetadata(planningId)?.name).toBe('Blink');
   });
 
   it('preserves tags in the new planning entry', () => {
     seedLayout({ [REAL_ID]: { name: 'Blink', tags: ['yard', 'main'] } });
     bowtieMetadataStore.demoteToPlanningBowtie(REAL_ID);
-    const keys = Object.keys(mockLayout.current?.bowties ?? {});
-    const planningKey = keys.find(k => k.startsWith('planning-'))!;
-    expect(mockLayout.current?.bowties[planningKey]?.tags).toEqual(
+    const planningId = bowtieMetadataStore.allEventIds.find(k => k.startsWith('planning-'))!;
+    expect(bowtieMetadataStore.getMetadata(planningId)?.tags).toEqual(
       expect.arrayContaining(['yard', 'main'])
     );
   });

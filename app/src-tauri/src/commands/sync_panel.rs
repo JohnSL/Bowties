@@ -456,7 +456,7 @@ fn field_meta_to_leaf(meta: &FieldMeta, space: u8, address: u32) -> LeafNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OfflineChangeInput {
-    pub kind: String,
+    pub kind: OfflineChangeKind,
     pub node_id: Option<String>,
     pub space: Option<u8>,
     pub offset: Option<String>,
@@ -468,13 +468,13 @@ pub struct OfflineChangeInput {
 #[serde(rename_all = "camelCase")]
 pub struct OfflineChangeRow {
     pub change_id: String,
-    pub kind: String,
+    pub kind: OfflineChangeKind,
     pub node_id: Option<String>,
     pub space: Option<u8>,
     pub offset: Option<String>,
     pub baseline_value: String,
     pub planned_value: String,
-    pub status: String,
+    pub status: OfflineChangeStatus,
     pub error: Option<String>,
     pub updated_at: String,
 }
@@ -558,12 +558,7 @@ pub async fn set_offline_change(
     // Create the offline change record
     let offline_change = OfflineChange {
         change_id: change_id.clone(),
-        kind: match change.kind.as_str() {
-            "config" => OfflineChangeKind::Config,
-            "bowtieMetadata" => OfflineChangeKind::BowtieMetadata,
-            "bowtieEvent" => OfflineChangeKind::BowtieEvent,
-            _ => return Err(format!("Invalid change kind: {}", change.kind)),
-        },
+        kind: change.kind,
         node_id: parse_opt_node_id(change.node_id)?,
         space: change.space,
         offset: change.offset,
@@ -660,13 +655,13 @@ pub async fn list_offline_changes(
         .iter()
         .map(|c| OfflineChangeRow {
             change_id: c.change_id.clone(),
-            kind: format!("{:?}", c.kind).to_lowercase(),
+            kind: c.kind.clone(),
             node_id: opt_node_id_to_canonical(&c.node_id),
             space: c.space,
             offset: c.offset.clone(),
             baseline_value: c.baseline_value.clone(),
             planned_value: c.planned_value.clone(),
-            status: format!("{:?}", c.status).to_lowercase(),
+            status: c.status.clone(),
             error: c.error.clone(),
             updated_at: c.updated_at.clone(),
         })
@@ -693,16 +688,9 @@ pub async fn replace_offline_changes(
     let now = chrono::Utc::now().to_rfc3339();
     let mut rows = Vec::with_capacity(changes.len());
     for change in changes {
-        let kind = match change.kind.as_str() {
-            "config" => OfflineChangeKind::Config,
-            "bowtieMetadata" => OfflineChangeKind::BowtieMetadata,
-            "bowtieEvent" => OfflineChangeKind::BowtieEvent,
-            _ => return Err(format!("Invalid change kind: {}", change.kind)),
-        };
-
         let row = OfflineChange {
             change_id: format!("{}-{}", Uuid::new_v4(), chrono::Utc::now().timestamp_millis()),
-            kind,
+            kind: change.kind,
             node_id: parse_opt_node_id(change.node_id)?,
             space: change.space,
             offset: change.offset,
@@ -1127,6 +1115,35 @@ mod tests {
         let meta = find_field_meta_in_cdi(&cdi, 253, 32).expect("expected field metadata");
 
         assert_eq!(meta.field_label, "Port I/O.Line(2).Event(0).Indicator");
+    }
+
+    #[test]
+    fn offline_change_kind_serializes_to_camel_case() {
+        // OfflineChangeKind has serde(rename_all = "camelCase"), so serde
+        // serialization must produce "bowtieMetadata" not "bowtiemetadata".
+        // The kind round-trips through list → replace via serde, so this
+        // validates the enum variants produce correct IPC strings.
+        let json = serde_json::to_string(&OfflineChangeKind::BowtieMetadata).unwrap();
+        assert_eq!(json, r#""bowtieMetadata""#);
+
+        let json = serde_json::to_string(&OfflineChangeKind::BowtieEvent).unwrap();
+        assert_eq!(json, r#""bowtieEvent""#);
+
+        let json = serde_json::to_string(&OfflineChangeKind::Config).unwrap();
+        assert_eq!(json, r#""config""#);
+    }
+
+    #[test]
+    fn offline_change_kind_round_trips_through_serde_json() {
+        // Deserializing a camelCase string must produce the correct enum variant.
+        let kind: OfflineChangeKind = serde_json::from_str(r#""bowtieMetadata""#).unwrap();
+        assert_eq!(kind, OfflineChangeKind::BowtieMetadata);
+
+        let kind: OfflineChangeKind = serde_json::from_str(r#""bowtieEvent""#).unwrap();
+        assert_eq!(kind, OfflineChangeKind::BowtieEvent);
+
+        let kind: OfflineChangeKind = serde_json::from_str(r#""config""#).unwrap();
+        assert_eq!(kind, OfflineChangeKind::Config);
     }
 }
 

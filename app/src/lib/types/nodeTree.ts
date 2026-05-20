@@ -334,11 +334,12 @@ function findLeafInChildrenByPath(
 export function buildElementLabel(
   tree: NodeConfigTree,
   leaf: LeafConfigNode,
+  resolveValue?: (leaf: LeafConfigNode) => TreeConfigValue | null,
 ): string {
   // Find the leaf's ancestors by walking the tree
   const ancestors: string[] = [];
   for (const seg of tree.segments) {
-    if (collectAncestorNames(seg.children, leaf.address, ancestors)) {
+    if (collectAncestorNames(seg.children, leaf.address, ancestors, resolveValue)) {
       break;
     }
   }
@@ -365,15 +366,16 @@ function collectAncestorNames(
   children: ConfigNode[],
   address: number,
   ancestors: string[],
+  resolveValue?: (leaf: LeafConfigNode) => TreeConfigValue | null,
 ): boolean {
   for (const child of children) {
     if (isLeaf(child) && child.address === address) {
       return true;
     }
     if (isGroup(child)) {
-      const name = (child.displayName ?? getInstanceDisplayName(child)).trim();
+      const name = (child.displayName ?? getInstanceDisplayName(child, resolveValue)).trim();
       ancestors.push(name);
-      if (collectAncestorNames(child.children, address, ancestors)) {
+      if (collectAncestorNames(child.children, address, ancestors, resolveValue)) {
         return true;
       }
       ancestors.pop();
@@ -441,16 +443,16 @@ function collectEventIdLeavesInChildren(
  *   - `"${description} (${instance})"` if a description is found
  *   - `instanceLabel` otherwise (e.g. "Line 3")
  */
-export function getInstanceDisplayName(group: GroupConfigNode): string {
+export function getInstanceDisplayName(
+  group: GroupConfigNode,
+  resolveValue?: (leaf: LeafConfigNode) => TreeConfigValue | null,
+): string {
   for (const child of group.children) {
-    if (
-      isLeaf(child) &&
-      child.elementType === 'string' &&
-      child.value !== null &&
-      child.value.type === 'string' &&
-      child.value.value.trim() !== ''
-    ) {
-      return `${child.value.value.trim()} (${group.instance})`;
+    if (isLeaf(child) && child.elementType === 'string') {
+      const val = resolveValue ? resolveValue(child) : child.value;
+      if (val !== null && val.type === 'string' && val.value.trim() !== '') {
+        return `${val.value.trim()} (${group.instance})`;
+      }
     }
   }
   return group.instanceLabel;

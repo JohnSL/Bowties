@@ -20,12 +20,42 @@
 -->
 
 <script module lang="ts">
-  import type { ConfigNode, EventRole, GroupConfigNode } from '$lib/types/nodeTree';
+  import type { ConfigNode, EventRole, GroupConfigNode, LeafConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
   import { isGroup, isLeaf, getInstanceDisplayName } from '$lib/types/nodeTree';
+  import { effectiveLayoutStore } from '$lib/layout';
 
-  /** Single source of truth for how a group's label is displayed in the picker. */
-  export function pickerGroupLabel(group: GroupConfigNode): string {
-    return group.displayName ?? getInstanceDisplayName(group);
+  type ValueResolver = (leaf: LeafConfigNode) => TreeConfigValue | null;
+
+  /**
+   * Resolve the *effective* role for a picker leaf (ADR-0004 / S2c).
+   *
+   * The baseline `leaf.eventRole` is the CDI-derived classification. The
+   * effective role layers in pending classifications and catalog-derived
+   * roles, so the picker reflects user edits immediately without waiting for
+   * a save round-trip. Centralised here so every visibility check and badge
+   * inside this module routes through the same lookup.
+   */
+  function effRole(nodeId: string, leaf: LeafConfigNode): EventRole | null {
+    return effectiveLayoutStore.effectiveRole(nodeId, leaf);
+  }
+
+  /** Centralised role-filter predicate. null / Ambiguous always match. */
+  function roleMatches(role: EventRole | null, filter: EventRole | null): boolean {
+    return filter === null || role === filter || role === 'Ambiguous' || role === null;
+  }
+
+  /**
+   * Single source of truth for how a group's label is displayed in the picker.
+   *
+   * The optional `resolveValue` resolver lets the label reflect user-configured
+   * descriptions resolved through draft → offline pending → baseline
+   * (ADR-0003), so the picker shows the same name as bowtie cards when offline.
+   */
+  export function pickerGroupLabel(
+    group: GroupConfigNode,
+    resolveValue?: ValueResolver,
+  ): string {
+    return group.displayName ?? getInstanceDisplayName(group, resolveValue);
   }
 
   /**
@@ -48,16 +78,18 @@
     query: string = '',
     roleFilter: EventRole | null = null,
     nodeName: string = '',
+    resolveValue?: ValueResolver,
+    nodeId: string = '',
   ): { combinedLabel: string; terminal: ConfigNode } {
-    const label = pickerGroupLabel(node);
+    const label = pickerGroupLabel(node, resolveValue);
 
     // Count visible event-ID leaves (respecting role filter + search query)
-    const visibleLeaves = findVisibleEventIdLeaves(node.children, query, roleFilter, nodeName);
+    const visibleLeaves = findVisibleEventIdLeaves(node.children, query, roleFilter, nodeName, nodeId);
     if (visibleLeaves.length === 1 && isLeaf(visibleLeaves[0])) {
       const leaf = visibleLeaves[0];
       // Build full label: outerGroupName[.intermediateGroups].leafName
       const labelParts: string[] = [label];
-      appendGroupNamesToLeaf(node.children, leaf.address, labelParts);
+      appendGroupNamesToLeaf(node.children, leaf.address, labelParts, resolveValue);
       labelParts.push(leaf.name);
       return { combinedLabel: labelParts.join('.'), terminal: leaf };
     }
@@ -65,7 +97,7 @@
     // Legacy: chain of single raw-child groups (no eventId siblings)
     if (node.children.length === 1 && isGroup(node.children[0])) {
       const child = node.children[0] as GroupConfigNode;
-      const r = collapseGroupChain(child, query, roleFilter, nodeName);
+      const r = collapseGroupChain(child, query, roleFilter, nodeName, resolveValue, nodeId);
       return { combinedLabel: `${label}.${r.combinedLabel}`, terminal: r.terminal };
     }
 
@@ -78,16 +110,12 @@
     query: string,
     roleFilter: EventRole | null,
     nodeName: string,
+    nodeId: string,
   ): ConfigNode[] {
     const results: ConfigNode[] = [];
     for (const child of children) {
       if (isLeaf(child) && child.elementType === 'eventId') {
-        const matchesRole =
-          roleFilter === null ||
-          child.eventRole === roleFilter ||
-          child.eventRole === 'Ambiguous' ||
-          child.eventRole === null;
-        if (!matchesRole) continue;
+        if (!roleMatches(effRole(nodeId, child), roleFilter)) continue;
         if (
           query === '' ||
           child.name.toLowerCase().includes(query) ||
@@ -98,7 +126,7 @@
           results.push(child);
         }
       } else if (isGroup(child)) {
-        results.push(...findVisibleEventIdLeaves(child.children, query, roleFilter, nodeName));
+        results.push(...findVisibleEventIdLeaves(child.children, query, roleFilter, nodeName, nodeId));
       }
     }
     return results;
@@ -112,12 +140,13 @@
     children: ConfigNode[],
     address: number,
     labelParts: string[],
+    resolveValue?: ValueResolver,
   ): boolean {
     for (const child of children) {
       if (isLeaf(child) && child.address === address) return true;
       if (isGroup(child)) {
-        labelParts.push(pickerGroupLabel(child));
-        if (appendGroupNamesToLeaf(child.children, address, labelParts)) return true;
+        labelParts.push(pickerGroupLabel(child, resolveValue));
+        if (appendGroupNamesToLeaf(child.children, address, labelParts, resolveValue)) return true;
         labelParts.pop();
       }
     }
@@ -137,27 +166,24 @@
     query: string,
     roleFilter: EventRole | null,
     nodeName: string = '',
+    resolveValue?: ValueResolver,
+    nodeId: string = '',
   ): boolean {
     for (const child of children) {
       if (isLeaf(child) && child.elementType === 'eventId') {
-        const matchesRole =
-          roleFilter === null ||
-          child.eventRole === roleFilter ||
-          child.eventRole === 'Ambiguous' ||
-          child.eventRole === null;
-        if (!matchesRole) continue;
+        if (!roleMatches(effRole(nodeId, child), roleFilter)) continue;
         if (query === '') return true;
         if (child.name.toLowerCase().includes(query)) return true;
         if ((child.description ?? '').toLowerCase().includes(query)) return true;
         if (child.path.join('/').toLowerCase().includes(query)) return true;
         if (nodeName && nodeName.toLowerCase().includes(query)) return true;
       } else if (isGroup(child)) {
-        const groupLabel = pickerGroupLabel(child).toLowerCase();
+        const groupLabel = pickerGroupLabel(child, resolveValue).toLowerCase();
         if (query !== '' && groupLabel.includes(query)) {
           // Group label matches — show any role-matching descendant
-          if (hasMatchingDescendant(child.children, '', roleFilter, nodeName)) return true;
+          if (hasMatchingDescendant(child.children, '', roleFilter, nodeName, resolveValue, nodeId)) return true;
         } else {
-          if (hasMatchingDescendant(child.children, query, roleFilter, nodeName)) return true;
+          if (hasMatchingDescendant(child.children, query, roleFilter, nodeName, resolveValue, nodeId)) return true;
         }
       }
     }
@@ -169,6 +195,7 @@
   import type { LeafConfigNode } from '$lib/types/nodeTree';
   import PickerTreeNode from './PickerTreeNode.svelte';
   import { isPlaceholderEventId } from '$lib/utils/eventIds';
+  import { makeValueResolver } from '$lib/layout';
 
   interface Props {
     /** The config tree node to render. */
@@ -206,16 +233,20 @@
     nodeId,
     nodeName,
   }: Props = $props();
+
+  /** ADR-0003: resolve display values through draft → offline pending → baseline. */
+  const resolveValue = $derived(makeValueResolver(nodeId));
 </script>
 
 {#if isLeaf(node)}
   {#if node.elementType === 'eventId'}
     {@const q = searchQuery.toLowerCase().trim()}
+    {@const nodeEffRole = effectiveLayoutStore.effectiveRole(nodeId, node)}
     {@const matchesRole =
       roleFilter === null ||
-      node.eventRole === roleFilter ||
-      node.eventRole === 'Ambiguous' ||
-      node.eventRole === null}
+      nodeEffRole === roleFilter ||
+      nodeEffRole === 'Ambiguous' ||
+      nodeEffRole === null}
     {@const matchesSearch =
       q === '' ||
       node.name.toLowerCase().includes(q) ||
@@ -237,11 +268,11 @@
       >
         <span
           class="role-icon"
-          class:role-producer={node.eventRole === 'Producer'}
-          class:role-consumer={node.eventRole === 'Consumer'}
-          class:role-ambiguous={node.eventRole === 'Ambiguous' || node.eventRole === null}
+          class:role-producer={nodeEffRole === 'Producer'}
+          class:role-consumer={nodeEffRole === 'Consumer'}
+          class:role-ambiguous={nodeEffRole === 'Ambiguous' || nodeEffRole === null}
         >
-          {node.eventRole === 'Producer' ? '▲' : node.eventRole === 'Consumer' ? '▼' : '?'}
+          {nodeEffRole === 'Producer' ? '▲' : nodeEffRole === 'Consumer' ? '▼' : '?'}
         </span>
         <span class="slot-name">{node.name}</span>
         {#if !isFree}
@@ -252,11 +283,11 @@
   {/if}
 {:else if isGroup(node)}
   {@const q = searchQuery.toLowerCase().trim()}
-  {@const { combinedLabel, terminal } = collapseGroupChain(node, q, roleFilter, nodeName)}
+  {@const { combinedLabel, terminal } = collapseGroupChain(node, q, roleFilter, nodeName, resolveValue, nodeId)}
   {@const groupNameMatches = q !== '' && combinedLabel.toLowerCase().includes(q)}
   {@const hasMatch =
     groupNameMatches ||
-    hasMatchingDescendant(node.children, q, roleFilter, nodeName)}
+    hasMatchingDescendant(node.children, q, roleFilter, nodeName, resolveValue, nodeId)}
   {#if hasMatch}
     {@const childQuery = groupNameMatches ? '' : searchQuery}
     {@const key = `${pathKey}:${node.path.join('/')}`}
@@ -265,11 +296,12 @@
       <!-- Collapsed to a single eventId leaf: combinedLabel already includes the leaf name -->
       {@const leafLabel = combinedLabel}
       {@const leafQ = childQuery.toLowerCase().trim()}
+      {@const termEffRole = effectiveLayoutStore.effectiveRole(nodeId, terminal)}
       {@const matchesRole =
         roleFilter === null ||
-        terminal.eventRole === roleFilter ||
-        terminal.eventRole === 'Ambiguous' ||
-        terminal.eventRole === null}
+        termEffRole === roleFilter ||
+        termEffRole === 'Ambiguous' ||
+        termEffRole === null}
       {@const matchesSearch =
         leafQ === '' ||
         leafLabel.toLowerCase().includes(leafQ) ||
@@ -291,11 +323,11 @@
         >
           <span
             class="role-icon"
-            class:role-producer={terminal.eventRole === 'Producer'}
-            class:role-consumer={terminal.eventRole === 'Consumer'}
-            class:role-ambiguous={terminal.eventRole === 'Ambiguous' || terminal.eventRole === null}
+            class:role-producer={termEffRole === 'Producer'}
+            class:role-consumer={termEffRole === 'Consumer'}
+            class:role-ambiguous={termEffRole === 'Ambiguous' || termEffRole === null}
           >
-            {terminal.eventRole === 'Producer' ? '▲' : terminal.eventRole === 'Consumer' ? '▼' : '?'}
+            {termEffRole === 'Producer' ? '▲' : termEffRole === 'Consumer' ? '▼' : '?'}
           </span>
           <span class="slot-name">{leafLabel}</span>
           {#if !isFree}

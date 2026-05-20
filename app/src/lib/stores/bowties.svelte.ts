@@ -15,6 +15,7 @@ import { get } from 'svelte/store';
 import { type BowtieCatalog, type BowtieCard, type CdiReadCompletePayload, type EventSlotEntry } from '../api/tauri';
 import type { PreviewBowtieCard, EditableBowtiePreview } from '$lib/types/bowtie';
 import { buildElementLabel, collectEventIdLeaves, findLeafByPath } from '$lib/types/nodeTree';
+import type { LeafConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { editKeyForLeaf } from '$lib/utils/editKey';
@@ -48,30 +49,53 @@ class BowtieCatalogStore {
   }
 
   /**
+   * Whether a catalog card should be surfaced to UX components.
+   * Single-slot unnamed events exist in the catalog for role classification
+   * persistence but aren't useful as bowtie diagrams — unless the user
+   * explicitly created the bowtie (present in the layout file).
+   */
+  private _isDisplayable(card: BowtieCard): boolean {
+    const totalEntries = card.producers.length + card.consumers.length + card.ambiguous_entries.length;
+    const name = bowtieMetadataStore.getMetadata(card.event_id_hex)?.name ?? card.name;
+    if (totalEntries >= 2 || !!name) return true;
+    // User-created bowties in the layout file are always displayable
+    const layout = layoutStore.layout;
+    if (layout && card.event_id_hex in layout.bowties) return true;
+    return false;
+  }
+
+  /** Catalog cards that meet the display threshold (≥2 entries or named). */
+  get displayableBowties(): BowtieCard[] {
+    if (!this._catalog) return [];
+    return this._catalog.bowties.filter(card => this._isDisplayable(card));
+  }
+
+  /**
    * Derived map: event_id_hex → BowtieCard.
    * O(1) lookup used by cross-reference navigation (FR-008, research.md RQ-10).
-   * Because `_catalog` is `$state`, this getter is re-evaluated reactively
-   * whenever the catalog changes.
+   * Only includes displayable cards.
    */
   get usedInMap(): Map<string, BowtieCard> {
     const map = new Map<string, BowtieCard>();
     if (!this._catalog) return map;
     for (const card of this._catalog.bowties) {
-      map.set(card.event_id_hex, card);
+      if (this._isDisplayable(card)) {
+        map.set(card.event_id_hex, card);
+      }
     }
     return map;
   }
 
   /**
    * Derived map: `${nodeId}:${elementPath.join('/')}` → BowtieCard.
-   * Used by ElementCard to look up cross-reference by structural identity
-   * (node + CDI path) rather than current byte value, which may not yet be
-   * fetched at render time (FR-008, SC-005).
+   * Used by ElementCard to look up cross-reference by structural identity.
+   * Only includes entries from displayable cards.
    */
   get nodeSlotMap(): Map<string, BowtieCard> {
     const map = new Map<string, BowtieCard>();
     if (!this._catalog) return map;
     for (const card of this._catalog.bowties) {
+      if (!this._isDisplayable(card)) continue;
       for (const entry of [...card.producers, ...card.consumers, ...card.ambiguous_entries]) {
         const key = `${entry.node_id}:${entry.element_path.join('/')}`;
         if (!map.has(key)) {
@@ -92,14 +116,17 @@ class BowtieCatalogStore {
    * appears immediately after an assignment is made.
    */
   get effectiveNodeSlotMap(): Map<string, BowtieCard> {
-    // Start from the committed structural entries.
+    // Start from the committed structural entries (already filtered).
     const map = new Map(this.nodeSlotMap);
     if (!this._catalog) return map;
 
     // Build event_id_hex → BowtieCard reverse index for the pending-value scan.
+    // Only include displayable cards.
     const cardByEventId = new Map<string, BowtieCard>();
     for (const card of this._catalog.bowties) {
-      cardByEventId.set(card.event_id_hex, card);
+      if (this._isDisplayable(card)) {
+        cardByEventId.set(card.event_id_hex, card);
+      }
     }
 
     // Scan every eventId leaf in every loaded tree.  When the effective value is
@@ -131,6 +158,26 @@ class BowtieCatalogStore {
       this.usedInMap.get(eventIdHex)?.name ??
       eventIdHex
     );
+  }
+
+  /**
+   * Look up the authoritative role for a slot across ALL catalog cards,
+   * including sub-threshold cards that exist only for classification persistence.
+   *
+   * Returns 'Producer', 'Consumer', or null if no catalog card contains this slot.
+   */
+  getRoleForSlot(nodeId: string, elementPath: string[]): 'Producer' | 'Consumer' | null {
+    if (!this._catalog) return null;
+    const key = `${nodeId}:${elementPath.join('/')}`;
+    for (const card of this._catalog.bowties) {
+      for (const entry of card.producers) {
+        if (`${entry.node_id}:${entry.element_path.join('/')}` === key) return 'Producer';
+      }
+      for (const entry of card.consumers) {
+        if (`${entry.node_id}:${entry.element_path.join('/')}` === key) return 'Consumer';
+      }
+    }
+    return null;
   }
 
   // ── Mutations ─────────────────────────────────────────────────────────────
@@ -197,238 +244,110 @@ class BowtieCatalogStore {
  */
 export const bowtieCatalogStore = new BowtieCatalogStore();
 
-// ─── Editable Bowtie Preview (T018, T023) ─────────────────────────────────────
+// ─── Editable Bowtie Preview (T018, T023; ADR-0004 / S2c) ────────────────────
 
 /**
- * Derived class that merges the live BowtieCatalog + tree modifications
- * + metadata from BowtieMetadataStore to produce the current user-visible
- * bowtie state with per-card dirty flags.
+ * Compute the editable preview by merging catalog + tree + metadata + layout.
  *
- * Reactively recomputes when any of its inputs change (T023).
- * Tree modifications are reflected because `nodeTreeStore.trees` is reactive
- * and `buildTreeEntriesIndex` reads effective values from tree leaves.
+ * Single derivation (ADR-0004 / S2c). The tree scan is the source of truth
+ * for *current* slot membership; the catalog provides the canonical card
+ * shape (state, ambiguous entries) for known event IDs; metadata supplies
+ * user-authored names/tags; layout backfills bowties that exist in the
+ * file but have no live slots yet.
+ *
+ * Reactively recomputes when any of its inputs change: `nodeTreeStore.trees`,
+ * `bowtieCatalogStore.catalog`, `layoutStore.layout`,
+ * `bowtieMetadataStore`, and `configChangesStore` are all reactive sources.
+ *
+ * INTERNAL — consumed only by `$lib/layout/effectiveLayoutStore`. Components
+ * and routes read the preview through `effectiveLayoutStore.preview`.
  */
-class EditableBowtiePreviewStore {
-  get usedInMap(): Map<string, PreviewBowtieCard> {
-    const map = new Map<string, PreviewBowtieCard>();
-    for (const bowtie of this.preview.bowties) {
-      map.set(bowtie.eventIdHex, bowtie);
-    }
-    return map;
+export function buildEffectiveBowtiePreview(): EditableBowtiePreview {
+  const catalog = bowtieCatalogStore.catalog;
+  const layout = layoutStore.layout;
+  const metadataIsDirty = bowtieMetadataStore.isDirty;
+
+  let configIsDirty = false;
+  for (const nodeId of nodeTreeStore.trees.keys()) {
+    if (configChangesStore.hasDraftsForNode(nodeId)) { configIsDirty = true; break; }
   }
 
-  /**
-   * Compute the editable preview by merging catalog, metadata, and tree modifications.
-   *
-   * Performance: when no config edits are pending, we skip the expensive per-card
-   * tree scanning (buildTreeEntriesIndex, isEntryStillActive) and just transform
-   * the catalog cards directly.  Tree scanning is only needed to surface entries
-   * whose event ID was changed by an unsaved edit.
-   */
-  get preview(): EditableBowtiePreview {
-    const catalog = bowtieCatalogStore.catalog;
-    const metadataIsDirty = bowtieMetadataStore.isDirty;
-    // Check whether any tree has config drafts
-    let configIsDirty = false;
-    for (const nodeId of nodeTreeStore.trees.keys()) {
-      if (configChangesStore.hasDraftsForNode(nodeId)) { configIsDirty = true; break; }
-    }
-    const layout = layoutStore.layout;
+  const previews: PreviewBowtieCard[] = [];
+  const seenEventIds = new Set<string>();
 
-    // ── Fast path: catalog available and no config edits pending ────────────
-    // When the backend has built a catalog AND no event ID values have been
-    // modified, the catalog is the ground truth.  Skip all tree scanning and
-    // just map catalog + layout + metadata directly.
-    if (catalog && !configIsDirty) {
-      return this._buildPreviewFromCatalog(catalog, layout, metadataIsDirty);
-    }
+  // Pre-compute tree entries index: eventIdHex → { producers, consumers }
+  // Single-pass scan that builds an O(1) lookup map for all event entries.
+  const treeEntriesIndex = buildTreeEntriesIndex();
 
-    // ── Slow path: no catalog yet, or config edits pending ────────────────────
-    // Tree scanning is needed to discover bowties or detect moved/new values.
-    return this._buildPreviewWithTreeScanning(catalog, layout, metadataIsDirty, configIsDirty);
-  }
+  if (catalog) {
+    for (const card of catalog.bowties) {
+      const meta = bowtieMetadataStore.getMetadata(card.event_id_hex);
+      const dirtyFields = new Set<string>();
 
-  /**
-   * Fast path: build preview directly from catalog + metadata without tree scanning.
-   */
-  private _buildPreviewFromCatalog(
-    catalog: BowtieCatalog | null,
-    layout: import('$lib/types/bowtie').LayoutFile | null,
-    metadataIsDirty: boolean,
-  ): EditableBowtiePreview {
-    const previews: PreviewBowtieCard[] = [];
-    const seenEventIds = new Set<string>();
-
-    if (catalog) {
-      for (const card of catalog.bowties) {
-        seenEventIds.add(card.event_id_hex);
-        const meta = bowtieMetadataStore.getMetadata(card.event_id_hex);
-        const dirtyFields = bowtieMetadataStore.getDirtyFields(card.event_id_hex);
-
-        previews.push({
-          eventIdHex: card.event_id_hex,
-          eventIdBytes: card.event_id_bytes,
-          producers: card.producers.map(enrichEntryLabel),
-          consumers: card.consumers.map(enrichEntryLabel),
-          ambiguousEntries: card.ambiguous_entries,
-          name: meta?.name ?? card.name ?? undefined,
-          tags: meta?.tags ?? card.tags ?? [],
-          state: card.state === 'Active' ? 'active' : card.state === 'Incomplete' ? 'incomplete' : 'planning',
-          isDirty: dirtyFields.size > 0,
-          dirtyFields,
-          newEntryKeys: new Set<string>(),
-        });
+      for (const f of bowtieMetadataStore.getDirtyFields(card.event_id_hex)) {
+        dirtyFields.add(f);
       }
-    }
 
-    // Layout-only bowties not in catalog
-    if (layout) {
-      for (const [eventIdHex, meta] of Object.entries(layout.bowties)) {
-        if (seenEventIds.has(eventIdHex)) continue;
-        seenEventIds.add(eventIdHex);
-        const metaOverride = bowtieMetadataStore.getMetadata(eventIdHex);
-        const dirtyFields = bowtieMetadataStore.getDirtyFields(eventIdHex);
+      // Use pre-computed index instead of per-card tree scan
+      const treeEntries = treeEntriesIndex.get(card.event_id_hex);
+      const treeProducers = treeEntries?.producers ?? [];
+      const treeConsumers = treeEntries?.consumers ?? [];
 
-        previews.push({
-          eventIdHex,
-          eventIdBytes: eventIdHexToBytes(eventIdHex),
-          producers: [],
-          consumers: [],
-          ambiguousEntries: [],
-          name: metaOverride?.name ?? meta.name,
-          tags: metaOverride?.tags ?? meta.tags ?? [],
-          state: 'planning',
-          isDirty: dirtyFields.size > 0,
-          dirtyFields,
-          newEntryKeys: new Set<string>(),
-        });
+      // Filter out entries already present in the catalog card using Set-based lookup
+      const existingKeys = new Set<string>();
+      for (const e of [...card.producers, ...card.consumers, ...card.ambiguous_entries]) {
+        existingKeys.add(`${e.node_id}:${e.element_path.join('/')}`);
       }
-    }
+      const newProducers = treeProducers.filter(p =>
+        !existingKeys.has(`${p.node_id}:${p.element_path.join('/')}`)
+      );
+      const newConsumers = treeConsumers.filter(c =>
+        !existingKeys.has(`${c.node_id}:${c.element_path.join('/')}`)
+      );
 
-    // Metadata-only bowties not in catalog or layout
-    for (const eventIdHex of bowtieMetadataStore.allEventIds) {
-      if (seenEventIds.has(eventIdHex)) continue;
-      seenEventIds.add(eventIdHex);
-      const meta = bowtieMetadataStore.getMetadata(eventIdHex);
+      // Display filter: only show bowties with ≥2 entries, a name, or
+      // an explicit entry in the layout file (user-created bowties).
+      const totalEntries = card.producers.length + card.consumers.length + card.ambiguous_entries.length
+        + newProducers.length + newConsumers.length;
+      const effectiveName = meta?.name ?? card.name;
+      const inLayout = layout && card.event_id_hex in layout.bowties;
+      if (totalEntries < 2 && !effectiveName && !inLayout) continue;
+
+      seenEventIds.add(card.event_id_hex);
+
+      if (newProducers.length > 0 || newConsumers.length > 0) {
+        dirtyFields.add('elements');
+      }
+
+      const newEntryKeys = new Set<string>();
+      for (const e of [...newProducers, ...newConsumers]) {
+        newEntryKeys.add(`${e.node_id}:${e.element_path.join('/')}`);
+      }
 
       previews.push({
-        eventIdHex,
-        eventIdBytes: eventIdHexToBytes(eventIdHex),
-        producers: [],
-        consumers: [],
-        ambiguousEntries: [],
-        name: meta?.name,
-        tags: meta?.tags ?? [],
-        state: 'planning',
-        isDirty: true,
-        dirtyFields: new Set(['name']),
-        newEntryKeys: new Set<string>(),
+        eventIdHex: card.event_id_hex,
+        eventIdBytes: card.event_id_bytes,
+        producers: [...card.producers.filter(e => isEntryStillActive(e, card.event_id_hex)).map(enrichEntryLabel), ...newProducers],
+        consumers: [...card.consumers.filter(e => isEntryStillActive(e, card.event_id_hex)).map(enrichEntryLabel), ...newConsumers],
+        ambiguousEntries: card.ambiguous_entries.map(enrichEntryLabel),
+        name: meta?.name ?? card.name ?? undefined,
+        tags: meta?.tags ?? card.tags ?? [],
+        state: card.state === 'Active' ? 'active' : card.state === 'Incomplete' ? 'incomplete' : 'planning',
+        isDirty: dirtyFields.size > 0 || newProducers.length > 0 || newConsumers.length > 0,
+        dirtyFields,
+        newEntryKeys,
       });
     }
-
-    return { bowties: previews, hasUnsavedChanges: metadataIsDirty };
   }
 
-  /**
-   * Slow path: merge catalog + tree modifications + metadata with full tree scanning.
-   * Only called when config edits are pending.
-   */
-  private _buildPreviewWithTreeScanning(
-    catalog: BowtieCatalog | null,
-    layout: import('$lib/types/bowtie').LayoutFile | null,
-    metadataIsDirty: boolean,
-    configIsDirty: boolean,
-  ): EditableBowtiePreview {
-    const previews: PreviewBowtieCard[] = [];
-    const seenEventIds = new Set<string>();
-
-    // Pre-compute tree entries index: eventIdHex → { producers, consumers }
-    // Single-pass scan that builds an O(1) lookup map for all event entries.
-    const treeEntriesIndex = buildTreeEntriesIndex();
-
-    if (catalog) {
-      for (const card of catalog.bowties) {
-        seenEventIds.add(card.event_id_hex);
-        const meta = bowtieMetadataStore.getMetadata(card.event_id_hex);
-        const dirtyFields = new Set<string>();
-
-        for (const f of bowtieMetadataStore.getDirtyFields(card.event_id_hex)) {
-          dirtyFields.add(f);
-        }
-
-        // Use pre-computed index instead of per-card tree scan
-        const treeEntries = treeEntriesIndex.get(card.event_id_hex);
-        const treeProducers = treeEntries?.producers ?? [];
-        const treeConsumers = treeEntries?.consumers ?? [];
-
-        // Filter out entries already present in the catalog card using Set-based lookup
-        const existingKeys = new Set<string>();
-        for (const e of [...card.producers, ...card.consumers, ...card.ambiguous_entries]) {
-          existingKeys.add(`${e.node_id}:${e.element_path.join('/')}`);
-        }
-        const newProducers = treeProducers.filter(p =>
-          !existingKeys.has(`${p.node_id}:${p.element_path.join('/')}`)
-        );
-        const newConsumers = treeConsumers.filter(c =>
-          !existingKeys.has(`${c.node_id}:${c.element_path.join('/')}`)
-        );
-
-        if (newProducers.length > 0 || newConsumers.length > 0) {
-          dirtyFields.add('elements');
-        }
-
-        const newEntryKeys = new Set<string>();
-        for (const e of [...newProducers, ...newConsumers]) {
-          newEntryKeys.add(`${e.node_id}:${e.element_path.join('/')}`);
-        }
-
-        previews.push({
-          eventIdHex: card.event_id_hex,
-          eventIdBytes: card.event_id_bytes,
-          producers: [...card.producers.filter(e => isEntryStillActive(e, card.event_id_hex)).map(enrichEntryLabel), ...newProducers],
-          consumers: [...card.consumers.filter(e => isEntryStillActive(e, card.event_id_hex)).map(enrichEntryLabel), ...newConsumers],
-          ambiguousEntries: card.ambiguous_entries,
-          name: meta?.name ?? card.name ?? undefined,
-          tags: meta?.tags ?? card.tags ?? [],
-          state: card.state === 'Active' ? 'active' : card.state === 'Incomplete' ? 'incomplete' : 'planning',
-          isDirty: dirtyFields.size > 0 || newProducers.length > 0 || newConsumers.length > 0,
-          dirtyFields,
-          newEntryKeys,
-        });
-      }
-    }
-
-    // Layout-only bowties
-    if (layout) {
-      for (const [eventIdHex, meta] of Object.entries(layout.bowties)) {
-        if (seenEventIds.has(eventIdHex)) continue;
-        seenEventIds.add(eventIdHex);
-        const metaOverride = bowtieMetadataStore.getMetadata(eventIdHex);
-        const treeEntries = treeEntriesIndex.get(eventIdHex);
-        const dirtyFields = bowtieMetadataStore.getDirtyFields(eventIdHex);
-
-        previews.push({
-          eventIdHex,
-          eventIdBytes: eventIdHexToBytes(eventIdHex),
-          producers: treeEntries?.producers ?? [],
-          consumers: treeEntries?.consumers ?? [],
-          ambiguousEntries: [],
-          name: metaOverride?.name ?? meta.name,
-          tags: metaOverride?.tags ?? meta.tags ?? [],
-          state: 'planning',
-          isDirty: dirtyFields.size > 0,
-          dirtyFields,
-          newEntryKeys: new Set<string>(),
-        });
-      }
-    }
-
-    // Metadata-only bowties
-    for (const eventIdHex of bowtieMetadataStore.allEventIds) {
+  // Layout-only bowties
+  if (layout) {
+    for (const [eventIdHex, meta] of Object.entries(layout.bowties)) {
       if (seenEventIds.has(eventIdHex)) continue;
       seenEventIds.add(eventIdHex);
-      const meta = bowtieMetadataStore.getMetadata(eventIdHex);
+      const metaOverride = bowtieMetadataStore.getMetadata(eventIdHex);
       const treeEntries = treeEntriesIndex.get(eventIdHex);
+      const dirtyFields = bowtieMetadataStore.getDirtyFields(eventIdHex);
 
       previews.push({
         eventIdHex,
@@ -436,45 +355,67 @@ class EditableBowtiePreviewStore {
         producers: treeEntries?.producers ?? [],
         consumers: treeEntries?.consumers ?? [],
         ambiguousEntries: [],
-        name: meta?.name,
-        tags: meta?.tags ?? [],
+        name: metaOverride?.name ?? meta.name,
+        tags: metaOverride?.tags ?? meta.tags ?? [],
         state: 'planning',
-        isDirty: true,
-        dirtyFields: new Set(['name']),
-        newEntryKeys: new Set<string>(),
-      });
-    }
-
-    // Tree-discovered events not in catalog, layout, or metadata
-    for (const [eventIdHex, entries] of treeEntriesIndex) {
-      if (seenEventIds.has(eventIdHex)) continue;
-      const totalEntries = entries.producers.length + entries.consumers.length;
-      if (totalEntries < 2 && !isWellKnownEvent(eventIdHex)) continue;
-
-      seenEventIds.add(eventIdHex);
-      const meta = bowtieMetadataStore.getMetadata(eventIdHex);
-      const dirtyFields = bowtieMetadataStore.getDirtyFields(eventIdHex);
-
-      previews.push({
-        eventIdHex,
-        eventIdBytes: eventIdHexToBytes(eventIdHex),
-        producers: entries.producers,
-        consumers: entries.consumers,
-        ambiguousEntries: [],
-        name: meta?.name,
-        tags: meta?.tags ?? [],
-        state: deriveBowtieState(entries.producers.length, entries.consumers.length),
         isDirty: dirtyFields.size > 0,
         dirtyFields,
         newEntryKeys: new Set<string>(),
       });
     }
-
-    return {
-      bowties: previews,
-      hasUnsavedChanges: metadataIsDirty || configIsDirty,
-    };
   }
+
+  // Metadata-only bowties
+  for (const eventIdHex of bowtieMetadataStore.allEventIds) {
+    if (seenEventIds.has(eventIdHex)) continue;
+    seenEventIds.add(eventIdHex);
+    const meta = bowtieMetadataStore.getMetadata(eventIdHex);
+    const treeEntries = treeEntriesIndex.get(eventIdHex);
+
+    previews.push({
+      eventIdHex,
+      eventIdBytes: eventIdHexToBytes(eventIdHex),
+      producers: treeEntries?.producers ?? [],
+      consumers: treeEntries?.consumers ?? [],
+      ambiguousEntries: [],
+      name: meta?.name,
+      tags: meta?.tags ?? [],
+      state: 'planning',
+      isDirty: true,
+      dirtyFields: new Set(['name']),
+      newEntryKeys: new Set<string>(),
+    });
+  }
+
+  // Tree-discovered events not in catalog, layout, or metadata
+  for (const [eventIdHex, entries] of treeEntriesIndex) {
+    if (seenEventIds.has(eventIdHex)) continue;
+    const totalEntries = entries.producers.length + entries.consumers.length;
+    if (totalEntries < 2 && !isWellKnownEvent(eventIdHex)) continue;
+
+    seenEventIds.add(eventIdHex);
+    const meta = bowtieMetadataStore.getMetadata(eventIdHex);
+    const dirtyFields = bowtieMetadataStore.getDirtyFields(eventIdHex);
+
+    previews.push({
+      eventIdHex,
+      eventIdBytes: eventIdHexToBytes(eventIdHex),
+      producers: entries.producers,
+      consumers: entries.consumers,
+      ambiguousEntries: [],
+      name: meta?.name,
+      tags: meta?.tags ?? [],
+      state: deriveBowtieState(entries.producers.length, entries.consumers.length),
+      isDirty: dirtyFields.size > 0,
+      dirtyFields,
+      newEntryKeys: new Set<string>(),
+    });
+  }
+
+  return {
+    bowties: previews,
+    hasUnsavedChanges: metadataIsDirty || configIsDirty,
+  };
 }
 
 /**
@@ -487,7 +428,31 @@ function enrichEntryLabel(entry: EventSlotEntry): EventSlotEntry {
   if (!tree) return { ...entry, element_label: entry.element_label ?? entry.element_path.join('.') };
   const leaf = findLeafByPath(tree, entry.element_path);
   if (!leaf) return { ...entry, element_label: entry.element_label ?? entry.element_path.join('.') };
-  return { ...entry, element_label: buildElementLabel(tree, leaf) };
+
+  /** Resolve leaf value through draft → offlinePending → baseline layers. */
+  const resolveValue = (l: LeafConfigNode): TreeConfigValue | null => {
+    const key = editKeyForLeaf(entry.node_id, l.space, l.address);
+    return configChangesStore.overrideValue(key) ?? l.value;
+  };
+
+  return { ...entry, element_label: buildElementLabel(tree, leaf, resolveValue) };
+}
+
+/**
+ * Enrich all three entry arrays of a catalog card in one call.
+ * Prevents the bug class where a new array is added or an existing one is
+ * forgotten — every array goes through the same enrichment.
+ */
+function enrichCardEntries(card: import('../api/tauri').BowtieCard): {
+  producers: EventSlotEntry[];
+  consumers: EventSlotEntry[];
+  ambiguousEntries: EventSlotEntry[];
+} {
+  return {
+    producers: card.producers.map(enrichEntryLabel),
+    consumers: card.consumers.map(enrichEntryLabel),
+    ambiguousEntries: card.ambiguous_entries.map(enrichEntryLabel),
+  };
 }
 
 /**
@@ -548,6 +513,12 @@ function buildTreeEntriesIndex(): Map<string, { producers: EventSlotEntry[]; con
     const leaves = collectEventIdLeaves(tree);
     const nodeName = resolveNodeDisplayName(nodeId);
 
+    /** Resolve leaf value through draft → offlinePending → baseline layers. */
+    const resolveValue = (l: LeafConfigNode): TreeConfigValue | null => {
+      const key = editKeyForLeaf(nodeId, l.space, l.address);
+      return configChangesStore.overrideValue(key) ?? l.value;
+    };
+
     for (const leaf of leaves) {
       const key = editKeyForLeaf(nodeId, leaf.space, leaf.address);
       const val = configChangesStore.visibleValue(key) ?? leaf.value;
@@ -559,7 +530,7 @@ function buildTreeEntriesIndex(): Map<string, { producers: EventSlotEntry[]; con
         node_id: nodeId,
         node_name: nodeName,
         element_path: leaf.path,
-        element_label: buildElementLabel(tree, leaf),
+        element_label: buildElementLabel(tree, leaf, resolveValue),
         element_description: leaf.description,
         event_id: val.bytes,
         role: classifiedRole ?? leaf.eventRole ?? 'Ambiguous',
@@ -593,5 +564,5 @@ function resolveNodeDisplayName(nodeId: string): string {
   return resolveSharedNodeDisplayName(nodeId, nodes.get(nodeId));
 }
 
-/** Singleton editable bowtie preview store. */
-export const editableBowtiePreviewStore = new EditableBowtiePreviewStore();
+/** Singleton catalog store (the editable preview is now a pure function;
+ *  consumers read it via `effectiveLayoutStore.preview` in `$lib/layout`). */

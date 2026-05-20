@@ -214,6 +214,17 @@ class LayoutStore {
     this._dirty = true;
   }
 
+  /**
+   * Hydrate the layout store from the backend's persisted copy (ADR-0002).
+   *
+   * Called only after a successful save or open — sets both the live layout
+   * and the saved snapshot so dirty tracking resets correctly.
+   */
+  hydrateFromBackend(layout: LayoutFile): void {
+    this._layout = layout;
+    this._savedLayout = JSON.parse(JSON.stringify(layout));
+  }
+
   /** Lookup connector selections for a node from the active layout metadata. */
   getConnectorSelections(nodeId: string): LayoutNodeHardwareSelectionSet | null {
     if (!this._layout) {

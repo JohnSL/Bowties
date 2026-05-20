@@ -34,6 +34,8 @@ vi.mock('$lib/stores/bowties.svelte', () => ({
   bowtieCatalogStore: {
     nodeSlotMap: new Map(),
     effectiveNodeSlotMap: new Map(),
+    getRoleForSlot: vi.fn().mockReturnValue(null),
+    getDisplayName: vi.fn((id: string) => id),
   },
 }));
 
@@ -788,5 +790,24 @@ describe('getInstanceDisplayName', () => {
       { instance: 1, instanceLabel: 'Line 1' },
     );
     expect(getInstanceDisplayName(group)).toBe('Line 1');
+  });
+
+  it('uses resolveValue callback when provided', () => {
+    const group = makeGroup(
+      [makeLeaf({ name: 'Description', elementType: 'string', value: { type: 'string', value: 'Baseline' } })],
+      { instance: 4, instanceLabel: 'Line 4' },
+    );
+    const resolver = () => ({ type: 'string' as const, value: 'Draft Name' });
+    expect(getInstanceDisplayName(group, resolver)).toBe('Draft Name (4)');
+  });
+
+  it('falls back to instanceLabel when resolveValue returns null', () => {
+    const group = makeGroup(
+      [makeLeaf({ name: 'Description', elementType: 'string', value: { type: 'string', value: 'Baseline' } })],
+      { instance: 4, instanceLabel: 'Line 4' },
+    );
+    // Resolver overrides baseline — returning null means no effective value
+    const resolver = () => null;
+    expect(getInstanceDisplayName(group, resolver)).toBe('Line 4');
   });
 });

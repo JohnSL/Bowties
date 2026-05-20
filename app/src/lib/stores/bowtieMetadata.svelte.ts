@@ -9,9 +9,8 @@
  */
 
 import { SvelteMap } from 'svelte/reactivity';
-import type { LayoutFile, BowtieMetadata, RoleClassification, BowtieMetadataEdit, BowtieEditKind } from '$lib/types/bowtie';
+import type { LayoutFile, BowtieMetadata, RoleClassification, BowtieMetadataEdit, BowtieEditKind, LayoutEditDelta } from '$lib/types/bowtie';
 import { layoutStore } from '$lib/stores/layout.svelte';
-import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
 
 // ─── Store class ──────────────────────────────────────────────────────────────
 
@@ -49,20 +48,16 @@ class BowtieMetadataStore {
 
   /** Record a bowtie creation. */
   createBowtie(eventIdHex: string, name?: string): void {
-    const baselineValue = this._serializeMetadata(this._getEffectiveMetadata(eventIdHex));
     const id = this._makeId();
     this._edits.set(`create:${eventIdHex}`, {
       id,
       kind: { type: 'create', eventIdHex, name },
       timestamp: Date.now(),
     });
-    this._applyToLayout();
-    this._mirrorOfflineMetadataDelta(eventIdHex, baselineValue);
   }
 
   /** Record a bowtie deletion. */
   deleteBowtie(eventIdHex: string): void {
-    const baselineValue = this._serializeMetadata(this._getEffectiveMetadata(eventIdHex));
     const id = this._makeId();
     // Remove any pending create for this bowtie
     this._edits.delete(`create:${eventIdHex}`);
@@ -71,13 +66,10 @@ class BowtieMetadataStore {
       kind: { type: 'delete', eventIdHex },
       timestamp: Date.now(),
     });
-    this._applyToLayout();
-    this._mirrorOfflineMetadataDelta(eventIdHex, baselineValue);
   }
 
   /** Rename a bowtie. */
   renameBowtie(eventIdHex: string, newName: string): void {
-    const baselineValue = this._serializeMetadata(this._getEffectiveMetadata(eventIdHex));
     const id = this._makeId();
     const current = this._getEffectiveMetadata(eventIdHex);
     this._edits.set(`rename:${eventIdHex}`, {
@@ -85,26 +77,20 @@ class BowtieMetadataStore {
       kind: { type: 'rename', eventIdHex, oldName: current?.name, newName },
       timestamp: Date.now(),
     });
-    this._applyToLayout();
-    this._mirrorOfflineMetadataDelta(eventIdHex, baselineValue);
   }
 
   /** Add a tag to a bowtie. */
   addTag(eventIdHex: string, tag: string): void {
-    const baselineValue = this._serializeMetadata(this._getEffectiveMetadata(eventIdHex));
     const id = this._makeId();
     this._edits.set(`addTag:${eventIdHex}:${tag}`, {
       id,
       kind: { type: 'addTag', eventIdHex, tag },
       timestamp: Date.now(),
     });
-    this._applyToLayout();
-    this._mirrorOfflineMetadataDelta(eventIdHex, baselineValue);
   }
 
   /** Remove a tag from a bowtie. */
   removeTag(eventIdHex: string, tag: string): void {
-    const baselineValue = this._serializeMetadata(this._getEffectiveMetadata(eventIdHex));
     const id = this._makeId();
     // Remove any pending addTag for this same tag
     this._edits.delete(`addTag:${eventIdHex}:${tag}`);
@@ -113,8 +99,6 @@ class BowtieMetadataStore {
       kind: { type: 'removeTag', eventIdHex, tag },
       timestamp: Date.now(),
     });
-    this._applyToLayout();
-    this._mirrorOfflineMetadataDelta(eventIdHex, baselineValue);
   }
 
   /** Classify an ambiguous event slot role. */
@@ -125,7 +109,6 @@ class BowtieMetadataStore {
       kind: { type: 'classifyRole', key, role },
       timestamp: Date.now(),
     });
-    this._applyToLayout();
   }
 
   /** Re-classify an existing role classification. */
@@ -138,14 +121,10 @@ class BowtieMetadataStore {
    * adopted event ID (when the first element is added to a name-only bowtie).
    */
   adoptEventId(placeholderHex: string, realEventIdHex: string): void {
-    const baselinePlaceholder = this._serializeMetadata(this._getEffectiveMetadata(placeholderHex));
-    const baselineReal = this._serializeMetadata(this._getEffectiveMetadata(realEventIdHex));
     // Re-key the create edit
     const createEdit = this._edits.get(`create:${placeholderHex}`);
     if (createEdit?.kind.type === 'create') {
-      // Add a delete edit for the placeholder so _applyToLayout() removes it
-      // from the layout (which already contains the placeholder from the prior
-      // _applyToLayout() call that created it).
+      // Add a delete edit for the placeholder so save sends the deletion.
       this._edits.set(`delete:${placeholderHex}`, {
         id: this._makeId(),
         kind: { type: 'delete', eventIdHex: placeholderHex },
@@ -195,9 +174,6 @@ class BowtieMetadataStore {
         });
       }
     }
-    this._applyToLayout();
-    this._mirrorOfflineMetadataDelta(placeholderHex, baselinePlaceholder);
-    this._mirrorOfflineMetadataDelta(realEventIdHex, baselineReal);
   }
 
   /**
@@ -209,9 +185,7 @@ class BowtieMetadataStore {
    * unchanged — no hardware write is needed.
    */
   demoteToPlanningBowtie(eventIdHex: string): void {
-    const baselineReal = this._serializeMetadata(this._getEffectiveMetadata(eventIdHex));
     const placeholderHex = `planning-${Date.now()}`;
-    const baselinePlaceholder = this._serializeMetadata(this._getEffectiveMetadata(placeholderHex));
     const existingMeta = this._getEffectiveMetadata(eventIdHex);
 
     // Remove any in-session create/rename/tag edits for the old event ID
@@ -247,10 +221,6 @@ class BowtieMetadataStore {
         timestamp: Date.now(),
       });
     }
-
-    this._applyToLayout();
-    this._mirrorOfflineMetadataDelta(eventIdHex, baselineReal);
-    this._mirrorOfflineMetadataDelta(placeholderHex, baselinePlaceholder);
   }
 
   /** Clear all pending metadata edits (used by discard). */
@@ -267,6 +237,17 @@ class BowtieMetadataStore {
    */
   getMetadata(eventIdHex: string): BowtieMetadata | undefined {
     return this._getEffectiveMetadata(eventIdHex);
+  }
+
+  /**
+   * True when a `delete:<eventIdHex>` edit is pending for this bowtie.
+   *
+   * Display surfaces consult this through `effectiveLayoutStore` so that
+   * deleted bowties disappear from the panel immediately (ADR-0004, Bug 3),
+   * before the next save persists the deletion.
+   */
+  hasPendingDeletion(eventIdHex: string): boolean {
+    return this._edits.has(`delete:${eventIdHex}`);
   }
 
   /** Get the effective role classification for a key. */
@@ -300,9 +281,41 @@ class BowtieMetadataStore {
   }
 
   /**
+   * Collect pending edits as backend-ready `LayoutEditDelta[]` (ADR-0002).
+   *
+   * Converts the internal BowtieEditKind discriminated union into the
+   * format expected by the Rust `LayoutEditDelta` enum (camelCase tagged).
+   */
+  collectDeltas(): LayoutEditDelta[] {
+    const deltas: LayoutEditDelta[] = [];
+    for (const edit of this._edits.values()) {
+      switch (edit.kind.type) {
+        case 'create':
+          deltas.push({ type: 'createBowtie', eventIdHex: edit.kind.eventIdHex, name: edit.kind.name });
+          break;
+        case 'delete':
+          deltas.push({ type: 'deleteBowtie', eventIdHex: edit.kind.eventIdHex });
+          break;
+        case 'rename':
+          deltas.push({ type: 'renameBowtie', eventIdHex: edit.kind.eventIdHex, newName: edit.kind.newName });
+          break;
+        case 'addTag':
+          deltas.push({ type: 'addTag', eventIdHex: edit.kind.eventIdHex, tag: edit.kind.tag });
+          break;
+        case 'removeTag':
+          deltas.push({ type: 'removeTag', eventIdHex: edit.kind.eventIdHex, tag: edit.kind.tag });
+          break;
+        case 'classifyRole':
+          deltas.push({ type: 'classifyRole', key: edit.kind.key, role: edit.kind.role });
+          break;
+      }
+    }
+    return deltas;
+  }
+
+  /**
    * Return which metadata fields have pending (unsaved) edits for a given event ID.
-   * Driven by the _edits map directly, not by diffing the layout, so it stays
-   * accurate even after _applyToLayout() has merged the edits in-memory.
+   * Driven by the _edits map directly, not by diffing the layout.
    */
   getDirtyFields(eventIdHex: string): Set<string> {
     const fields = new Set<string>();
@@ -384,99 +397,6 @@ class BowtieMetadataStore {
     return meta;
   }
 
-  /**
-   * Apply all pending metadata edits to the layout store's in-memory layout.
-   * This keeps the layout store in sync for immediate UI updates and for
-   * eventual save.
-   */
-  private _applyToLayout(): void {
-    const layout = layoutStore.layout;
-    if (!layout) {
-      // Auto-create a new layout when first edit is made
-      layoutStore.newLayout();
-    }
-
-    const current = layoutStore.layout;
-    if (!current) return;
-
-    const updated: LayoutFile = {
-      schemaVersion: current.schemaVersion,
-      bowties: { ...current.bowties },
-      roleClassifications: { ...current.roleClassifications },
-    };
-
-    // Apply all edits in order of insertion
-    for (const edit of this._edits.values()) {
-      switch (edit.kind.type) {
-        case 'create': {
-          const existing = updated.bowties[edit.kind.eventIdHex];
-          if (!existing) {
-            updated.bowties[edit.kind.eventIdHex] = {
-              name: edit.kind.name,
-              tags: [],
-            };
-          }
-          break;
-        }
-        case 'delete':
-          delete updated.bowties[edit.kind.eventIdHex];
-          break;
-        case 'rename': {
-          const entry = updated.bowties[edit.kind.eventIdHex];
-          if (entry) {
-            updated.bowties[edit.kind.eventIdHex] = { ...entry, name: edit.kind.newName };
-          } else {
-            // Bowtie exists in discovery but not yet in the layout file; create entry now
-            updated.bowties[edit.kind.eventIdHex] = { name: edit.kind.newName, tags: [] };
-          }
-          break;
-        }
-        case 'addTag': {
-          const entry = updated.bowties[edit.kind.eventIdHex];
-          if (entry && !entry.tags.includes(edit.kind.tag)) {
-            updated.bowties[edit.kind.eventIdHex] = {
-              ...entry,
-              tags: [...entry.tags, edit.kind.tag],
-            };
-          }
-          break;
-        }
-        case 'removeTag': {
-          const entry = updated.bowties[edit.kind.eventIdHex];
-          if (entry) {
-            updated.bowties[edit.kind.eventIdHex] = {
-              ...entry,
-              tags: entry.tags.filter(t => t !== edit.kind.tag),
-            };
-          }
-          break;
-        }
-        case 'classifyRole':
-          updated.roleClassifications[edit.kind.key] = { role: edit.kind.role };
-          break;
-      }
-    }
-
-    layoutStore.updateLayout(updated);
-  }
-
-  private _serializeMetadata(meta: BowtieMetadata | undefined): string {
-    if (!meta) return 'null';
-    return JSON.stringify({
-      name: meta.name ?? null,
-      tags: [...meta.tags],
-    });
-  }
-
-  private _mirrorOfflineMetadataDelta(eventIdHex: string, baselineValue: string): void {
-    if (!layoutStore.isOfflineMode) return;
-    const plannedValue = this._serializeMetadata(this._getEffectiveMetadata(eventIdHex));
-    offlineChangesStore.upsertBowtieMetadataChange({
-      eventIdHex,
-      baselineValue,
-      plannedValue,
-    });
-  }
 }
 
 // ─── Singleton export ─────────────────────────────────────────────────────────

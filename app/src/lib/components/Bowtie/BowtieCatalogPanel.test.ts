@@ -55,10 +55,12 @@ vi.mock('$lib/stores/bowties.svelte', () => ({
   bowtieCatalogStore: {
     get catalog() { return null; },
     get readComplete() { return mockReadComplete.value; },
+    get displayableBowties() { return []; },
   },
-  editableBowtiePreviewStore: {
-    get preview() { return { bowties: mockPreviewCards }; },
-  },
+  // ADR-0004: the editable preview is exposed through `$lib/layout`; this
+  // module-level stub here only exists for compatibility with any legacy
+  // imports that may still resolve through the bowties module.
+  buildEffectiveBowtiePreview: () => ({ bowties: mockPreviewCards, hasUnsavedChanges: false }),
 }));
 
 vi.mock('$lib/stores/layout.svelte', () => ({
@@ -79,6 +81,7 @@ vi.mock('$lib/stores/offlineChanges.svelte', () => ({
 vi.mock('$lib/stores/bowtieMetadata.svelte', () => ({
   bowtieMetadataStore: {
     getAllTags: () => [],
+    hasPendingDeletion: () => false,
   },
 }));
 

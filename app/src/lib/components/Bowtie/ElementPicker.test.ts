@@ -41,16 +41,35 @@ vi.mock('$lib/stores/nodeTree.svelte', () => ({
 }));
 
 vi.mock('$lib/stores/bowties.svelte', () => ({
-  editableBowtiePreviewStore: {
-    get preview() { return { bowties: Array.from(usedInMapRef.map.values()) }; },
-    get usedInMap() { return usedInMapRef.map; },
-  },
+  // ADR-0004: legacy preview shape, kept only so any indirect imports through
+  // the bowties module continue to resolve. Component-level reads go through
+  // `$lib/layout` (mocked below).
+  buildEffectiveBowtiePreview: () => ({
+    bowties: Array.from(usedInMapRef.map.values()),
+    hasUnsavedChanges: false,
+  }),
 }));
 
 vi.mock('$lib/stores/bowtieMetadata.svelte', () => ({
   bowtieMetadataStore: {
     classifyRole: vi.fn(),
   },
+}));
+
+// ADR-0004: PickerTreeNode and ElementPicker consult the layout facade for
+// effective roles and the bowtie preview. Tests share `usedInMapRef` so that
+// reservation scenarios (e.g. connected event IDs) feed the facade preview.
+vi.mock('$lib/layout', () => ({
+  effectiveLayoutStore: {
+    get preview() { return { bowties: Array.from(usedInMapRef.map.values()) }; },
+    get effectiveBowties() { return Array.from(usedInMapRef.map.values()); },
+    get usedInMap() { return usedInMapRef.map; },
+    effectiveRole: (_nodeId: string, leaf: any) => leaf?.eventRole ?? null,
+    effectiveValue: (_nodeId: string, leaf: any) => leaf?.value ?? null,
+    slotsByRole: () => [],
+    isSlotFree: () => true,
+  },
+  makeValueResolver: (_nodeId: string) => (leaf: any) => leaf?.value ?? null,
 }));
 
 vi.mock('$lib/stores/nodeInfo', () => ({

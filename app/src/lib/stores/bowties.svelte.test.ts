@@ -1,9 +1,13 @@
 /**
- * Store-level tests for EditableBowtiePreviewStore.
+ * Store-level tests for the editable bowtie preview merge logic.
  *
- * Tests the reactive preview derivation that merges catalog, layout,
- * metadata, and tree data.  Exercises the four scenarios identified
- * as untested:
+ * Per ADR-0004 / S2c the merge is owned by `effectiveLayoutStore` in
+ * `$lib/layout`, which composes:
+ *   - `buildEffectiveBowtiePreview()` (catalog × tree × metadata × layout)
+ *   - the pending-deletion filter on `bowtieMetadataStore`
+ *
+ * These tests exercise the merge through the facade and verify the four
+ * scenarios that previously lived under `EditableBowtiePreviewStore`:
  *
  *   1. Layout bowtie visible when catalog is null (Bug 4 fix)
  *   2. Layout bowtie shows empty entries before any tree is loaded
@@ -66,6 +70,8 @@ vi.mock('$lib/stores/bowtieMetadata.svelte', () => ({
     getDirtyFields(_eventIdHex: string) { return new Set<string>(); },
     get allEventIds() { return []; },
     getRoleClassification(key: string) { return mockRoleClassificationsMap.get(key); },
+    // ADR-0004: facade-level filter; no pending deletions in these store tests.
+    hasPendingDeletion(_eventIdHex: string) { return false; },
   },
 }));
 
@@ -164,8 +170,16 @@ function makeCatalogWithCard(eventIdHex: string): BowtieCatalog {
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
-// Import AFTER mocks are in place so module-level singleton picks them up.
-const { editableBowtiePreviewStore, bowtieCatalogStore } = await import('$lib/stores/bowties.svelte');
+// Import AFTER mocks are in place so module-level singletons pick them up.
+// Per ADR-0004, the merge is exercised through the layout facade.
+const { bowtieCatalogStore } = await import('$lib/stores/bowties.svelte');
+const { effectiveLayoutStore } = await import('$lib/layout');
+
+// Test-local alias: tests below read `editableBowtiePreviewStore.preview` as
+// a shorthand for the facade's preview. The facade owns the merge and applies
+// the pending-deletion filter; in these tests no deletions are pending, so
+// the alias surfaces exactly what the merge function produces.
+const editableBowtiePreviewStore = effectiveLayoutStore;
 
 beforeEach(() => {
   mockCatalogState.catalog = null;
@@ -177,7 +191,7 @@ beforeEach(() => {
   bowtieCatalogStore.reset();
 });
 
-describe('EditableBowtiePreviewStore.preview', () => {
+describe('effectiveLayoutStore.preview (ADR-0004 / S2c)', () => {
   // ── Scenario 1: Layout bowtie visible when catalog is null ────────────────
 
   it('shows layout bowtie even when catalog is null (Bug 4)', () => {
@@ -286,15 +300,17 @@ describe('EditableBowtiePreviewStore.preview', () => {
     // Act
     const preview = editableBowtiePreviewStore.preview;
 
-    // Assert: When catalog is present and no config edits are pending,
-    // the catalog is authoritative (fast path — no tree scanning).
-    // The extra tree entry does NOT appear because the backend should have
-    // included it in the catalog if it was relevant.
+    // Assert: ADR-0004 / S2c — the preview is a single derivation that always
+    // merges tree-discovered entries with catalog cards. The third entry
+    // surfaces even when the catalog already has the event ID, because the
+    // tree is authoritative for *current* slot membership (the catalog may
+    // be a snapshot from before the latest CDI read).
     const card = preview.bowties.find(b => b.eventIdHex === TEST_EVENT_HEX);
     expect(card).toBeDefined();
     expect(card!.producers.length).toBe(1);
-    expect(card!.consumers.length).toBe(1);
-    expect(card!.isDirty).toBe(false);
+    expect(card!.consumers.length).toBe(2);
+    // The new tree-discovered entry marks the card as dirty (elements changed).
+    expect(card!.dirtyFields.has('elements')).toBe(true);
   });
 
   it('derives offline bowties from loaded trees when layout metadata is empty', () => {
@@ -349,5 +365,241 @@ describe('EditableBowtiePreviewStore.preview', () => {
 
     expect(preview.bowties).toHaveLength(1);
     expect(preview.bowties[0].eventIdHex).toBe('01.00.00.00.00.00.FF.FF');
+  });
+
+  // ── Bug 3 regression: ambiguous entries must be enriched with element_label ──
+
+  it('enriches ambiguous entries with element_label from tree (Bug 3)', () => {
+    // Arrange: catalog has a card with an ambiguous entry (no element_label from Rust)
+    const ambiguousEntry: EventSlotEntry = {
+      node_id: '02.01.57.00.00.01',
+      node_name: 'Test Node',
+      element_path: ['seg:0', 'elem:0#1', 'elem:0'],
+      element_description: 'Some CDI description',
+      event_id: TEST_EVENT_BYTES,
+      role: 'Ambiguous',
+      // Note: no element_label — Rust doesn't send it
+    };
+    bowtieCatalogStore.setCatalog({
+      bowties: [{
+        event_id_hex: TEST_EVENT_HEX,
+        event_id_bytes: TEST_EVENT_BYTES,
+        producers: [],
+        consumers: [],
+        ambiguous_entries: [ambiguousEntry],
+        name: 'Test Bowtie',
+        tags: [],
+        state: 'Incomplete',
+      }],
+      built_at: '2026-01-01T00:00:00Z',
+      source_node_count: 1,
+      total_slots_scanned: 5,
+    });
+
+    // No tree loaded — fallback path: element_label = element_path.join('.')
+    const preview = editableBowtiePreviewStore.preview;
+    const card = preview.bowties.find(b => b.eventIdHex === TEST_EVENT_HEX);
+    expect(card).toBeDefined();
+    expect(card!.ambiguousEntries).toHaveLength(1);
+    // Bug 3 regression: without enrichment, element_label would be undefined.
+    // With enrichment, it falls back to element_path.join('.').
+    expect(card!.ambiguousEntries[0].element_label).toBe('seg:0.elem:0#1.elem:0');
+  });
+
+  it('enriches ambiguous entries with tree-derived label when tree is available (Bug 3)', () => {
+    // Arrange: catalog with ambiguous entry + matching tree loaded
+    const nodeId = '02.01.57.00.00.01';
+    const ambiguousEntry: EventSlotEntry = {
+      node_id: nodeId,
+      node_name: 'Test Node',
+      element_path: ['seg:0', 'elem:0#1', 'elem:0'],
+      element_description: 'Some CDI description',
+      event_id: TEST_EVENT_BYTES,
+      role: 'Ambiguous',
+    };
+    bowtieCatalogStore.setCatalog({
+      bowties: [{
+        event_id_hex: TEST_EVENT_HEX,
+        event_id_bytes: TEST_EVENT_BYTES,
+        producers: [],
+        consumers: [],
+        ambiguous_entries: [ambiguousEntry],
+        name: 'Test Bowtie',
+        tags: [],
+        state: 'Incomplete',
+      }],
+      built_at: '2026-01-01T00:00:00Z',
+      source_node_count: 1,
+      total_slots_scanned: 5,
+    });
+
+    // Load a tree so enrichment resolves the real label
+    const leaf = makeEventIdLeaf({ eventRole: null });
+    mockTreesMap.set(nodeId, makeTree(nodeId, [leaf]));
+
+    const preview = editableBowtiePreviewStore.preview;
+    const card = preview.bowties.find(b => b.eventIdHex === TEST_EVENT_HEX);
+    expect(card).toBeDefined();
+    expect(card!.ambiguousEntries).toHaveLength(1);
+    // With tree available, enrichment produces a tree-derived label (e.g. "Event ID")
+    expect(card!.ambiguousEntries[0].element_label).toBeDefined();
+    expect(card!.ambiguousEntries[0].element_label).not.toBe('');
+  });
+});
+
+// ─── Display threshold: single-slot unnamed cards are classification-only ────
+
+describe('display threshold for single-slot unnamed catalog cards', () => {
+  const SINGLE_SLOT_EVENT_HEX = '05.02.01.02.02.00.01.00';
+  const SINGLE_SLOT_EVENT_BYTES = [0x05, 0x02, 0x01, 0x02, 0x02, 0x00, 0x01, 0x00];
+
+  function makeCatalogWithSingleSlotCard(): BowtieCatalog {
+    return {
+      bowties: [{
+        event_id_hex: SINGLE_SLOT_EVENT_HEX,
+        event_id_bytes: SINGLE_SLOT_EVENT_BYTES,
+        producers: [{
+          node_id: '02.01.57.00.00.01',
+          node_name: 'Test Node',
+          element_path: ['seg:0', 'elem:0'],
+          element_description: null,
+          event_id: SINGLE_SLOT_EVENT_BYTES,
+          role: 'Producer',
+        }],
+        consumers: [],
+        ambiguous_entries: [],
+        name: null,
+        tags: [],
+        state: 'Incomplete',
+      }],
+      built_at: '2026-01-01T00:00:00Z',
+      source_node_count: 1,
+      total_slots_scanned: 10,
+    };
+  }
+
+  it('preview excludes single-slot unnamed cards', () => {
+    bowtieCatalogStore.setCatalog(makeCatalogWithSingleSlotCard());
+    const preview = editableBowtiePreviewStore.preview;
+    expect(preview.bowties).toHaveLength(0);
+  });
+
+  it('preview includes single-slot unnamed cards when bowtie exists in layout', () => {
+    // User created this bowtie explicitly. Even though only one side has the
+    // matching event ID in the snapshot (offline consumer change not yet applied),
+    // the bowtie must remain visible because it's in the layout file.
+    bowtieCatalogStore.setCatalog(makeCatalogWithSingleSlotCard());
+    mockLayoutState.layout = makeLayout(SINGLE_SLOT_EVENT_HEX, undefined as unknown as string);
+    // Remove the name so it's truly unnamed
+    mockLayoutState.layout!.bowties[SINGLE_SLOT_EVENT_HEX] = { name: undefined as unknown as string, tags: [] };
+    const preview = editableBowtiePreviewStore.preview;
+    expect(preview.bowties).toHaveLength(1);
+    expect(preview.bowties[0].eventIdHex).toBe(SINGLE_SLOT_EVENT_HEX);
+  });
+
+  it('displayableBowties includes single-slot unnamed cards when in layout', () => {
+    bowtieCatalogStore.setCatalog(makeCatalogWithSingleSlotCard());
+    mockLayoutState.layout = { schemaVersion: '1.0', bowties: { [SINGLE_SLOT_EVENT_HEX]: { tags: [] } as any }, roleClassifications: {} };
+    expect(bowtieCatalogStore.displayableBowties.length).toBe(1);
+  });
+
+  it('preview includes single-slot cards when they have a name', () => {
+    const catalog = makeCatalogWithSingleSlotCard();
+    catalog.bowties[0].name = 'BTN A Pressed';
+    bowtieCatalogStore.setCatalog(catalog);
+    const preview = editableBowtiePreviewStore.preview;
+    expect(preview.bowties).toHaveLength(1);
+    expect(preview.bowties[0].name).toBe('BTN A Pressed');
+  });
+
+  it('nodeSlotMap excludes entries from single-slot unnamed cards', () => {
+    bowtieCatalogStore.setCatalog(makeCatalogWithSingleSlotCard());
+    const map = bowtieCatalogStore.nodeSlotMap;
+    expect(map.size).toBe(0);
+  });
+
+  it('nodeSlotMap includes entries from multi-slot cards', () => {
+    const catalog = makeCatalogWithCard(TEST_EVENT_HEX);
+    bowtieCatalogStore.setCatalog(catalog);
+    const map = bowtieCatalogStore.nodeSlotMap;
+    expect(map.size).toBe(2); // producer + consumer
+  });
+
+  it('nodeSlotMap includes entries from single-slot named cards', () => {
+    const catalog = makeCatalogWithSingleSlotCard();
+    catalog.bowties[0].name = 'BTN A Pressed';
+    bowtieCatalogStore.setCatalog(catalog);
+    const map = bowtieCatalogStore.nodeSlotMap;
+    expect(map.size).toBe(1);
+  });
+
+  it('displayableBowties count excludes single-slot unnamed cards', () => {
+    const catalog = makeCatalogWithSingleSlotCard();
+    // Add a real multi-slot card too
+    const multiSlotCard = makeCatalogWithCard(TEST_EVENT_HEX).bowties[0];
+    catalog.bowties.push(multiSlotCard);
+    bowtieCatalogStore.setCatalog(catalog);
+    expect(bowtieCatalogStore.displayableBowties.length).toBe(1);
+  });
+});
+
+// ─── getRoleForSlot: authoritative role lookup across all catalog cards ──────
+
+describe('getRoleForSlot', () => {
+  const SINGLE_SLOT_EVENT_HEX = '05.02.01.02.02.00.01.00';
+  const SINGLE_SLOT_EVENT_BYTES = [0x05, 0x02, 0x01, 0x02, 0x02, 0x00, 0x01, 0x00];
+
+  it('returns Producer for a slot in a catalog card\'s producers list', () => {
+    const catalog = makeCatalogWithCard(TEST_EVENT_HEX);
+    bowtieCatalogStore.setCatalog(catalog);
+    // The producer entry has node_id '02.01.57.00.00.01' and path ['seg:0', 'elem:0#1', 'elem:0']
+    const role = bowtieCatalogStore.getRoleForSlot('02.01.57.00.00.01', ['seg:0', 'elem:0#1', 'elem:0']);
+    expect(role).toBe('Producer');
+  });
+
+  it('returns Consumer for a slot in a catalog card\'s consumers list', () => {
+    const catalog = makeCatalogWithCard(TEST_EVENT_HEX);
+    bowtieCatalogStore.setCatalog(catalog);
+    const role = bowtieCatalogStore.getRoleForSlot('02.01.57.00.00.02', ['seg:0', 'elem:1#1', 'elem:0']);
+    expect(role).toBe('Consumer');
+  });
+
+  it('returns role from sub-threshold single-slot cards', () => {
+    // Single-slot unnamed card — not displayable, but role should still be found
+    bowtieCatalogStore.setCatalog({
+      bowties: [{
+        event_id_hex: SINGLE_SLOT_EVENT_HEX,
+        event_id_bytes: SINGLE_SLOT_EVENT_BYTES,
+        producers: [{
+          node_id: '02.01.57.00.00.01',
+          node_name: 'Test Node',
+          element_path: ['seg:0', 'elem:3'],
+          element_description: null,
+          event_id: SINGLE_SLOT_EVENT_BYTES,
+          role: 'Producer',
+        }],
+        consumers: [],
+        ambiguous_entries: [],
+        name: null,
+        tags: [],
+        state: 'Incomplete',
+      }],
+      built_at: '2026-01-01T00:00:00Z',
+      source_node_count: 1,
+      total_slots_scanned: 10,
+    });
+    const role = bowtieCatalogStore.getRoleForSlot('02.01.57.00.00.01', ['seg:0', 'elem:3']);
+    expect(role).toBe('Producer');
+  });
+
+  it('returns null for a slot not in any catalog card', () => {
+    bowtieCatalogStore.setCatalog(makeCatalogWithCard(TEST_EVENT_HEX));
+    const role = bowtieCatalogStore.getRoleForSlot('99.99.99.99.99.99', ['seg:0', 'elem:0']);
+    expect(role).toBeNull();
+  });
+
+  it('returns null when catalog is empty', () => {
+    const role = bowtieCatalogStore.getRoleForSlot('02.01.57.00.00.01', ['seg:0', 'elem:0']);
+    expect(role).toBeNull();
   });
 });

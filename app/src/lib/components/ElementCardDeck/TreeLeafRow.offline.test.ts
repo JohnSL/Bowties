@@ -95,8 +95,22 @@ vi.mock('$lib/stores/bowties.svelte', () => ({
     nodeSlotMap: new Map(),
     effectiveNodeSlotMap: new Map(),
     getDisplayName: vi.fn((id: string) => id),
+    getRoleForSlot: vi.fn().mockReturnValue(null),
   },
 }));
+vi.mock('$lib/stores/nodeTree.svelte', () => ({
+  nodeTreeStore: {
+    trees: new Map(),
+    getTree: vi.fn().mockReturnValue(null),
+  },
+}));
+vi.mock('$lib/types/nodeTree', async () => {
+  const actual = await vi.importActual('$lib/types/nodeTree');
+  return {
+    ...actual,
+    buildElementLabel: vi.fn((_tree: any, leaf: any) => leaf.name ?? 'Unknown'),
+  };
+});
 vi.mock('$lib/stores/bowtieFocus.svelte', () => ({
   bowtieFocusStore: { highlightedEventIdHex: null, focusBowtie: vi.fn(), clearFocus: vi.fn() },
 }));

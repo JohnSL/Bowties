@@ -26,7 +26,8 @@
 <script lang="ts">
   import ElementPicker from './ElementPicker.svelte';
   import type { ElementSelection, EventIdResolution } from '$lib/types/bowtie';
-  import { editableBowtiePreviewStore } from '$lib/stores/bowties.svelte';
+  // ADR-0004 / S2c: read bowtie preview through the layout facade.
+  import { effectiveLayoutStore } from '$lib/layout';
   import { isPlaceholderEventId } from '$lib/utils/eventIds';
 
   interface Props {
@@ -72,7 +73,7 @@
     producer: ElementSelection,
     consumer: ElementSelection,
   ): EventIdResolution {
-    const usedInMap = editableBowtiePreviewStore.usedInMap;
+    const usedInMap = effectiveLayoutStore.usedInMap;
     const prodConnected = usedInMap.has(producer.currentEventId) && !isPlaceholderEventId(producer.currentEventId);
     const consConnected = usedInMap.has(consumer.currentEventId) && !isPlaceholderEventId(consumer.currentEventId);
 

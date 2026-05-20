@@ -10,8 +10,8 @@
   import CdiXmlViewer from '$lib/components/CdiXmlViewer.svelte';
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import { probeNodes as probeNodesApi, querySnip, queryPip, registerNode, refreshAllNodes } from '$lib/api/tauri';
-  import { clearRecentLayout, getRecentLayout } from '$lib/api/bowties';
-  import { closeLayout, saveLayoutFile, openLayoutFile, buildOfflineNodeTree } from '$lib/api/layout';
+  import { buildBowtieCatalog, clearRecentLayout, getRecentLayout } from '$lib/api/bowties';
+  import { closeLayout, saveLayoutFile, saveLayoutWithBusWrites, openLayoutFile, buildOfflineNodeTree } from '$lib/api/layout';
   import type { OfflineNodeSnapshot } from '$lib/api/layout';
   import { readAllConfigValues, cancelConfigReading, getCdiXml, downloadCdi } from '$lib/api/cdi';
   import type { ViewerStatus } from '$lib/types/cdi';
@@ -96,6 +96,8 @@
   import SyncPanel from '$lib/components/Sync/SyncPanel.svelte';
   import { syncPanelStore } from '$lib/stores/syncPanel.svelte';
   import OfflineBanner from '$lib/components/Layout/OfflineBanner.svelte';
+  import { saveLayoutOrchestrated, type SaveLayoutOrchestratedArgs } from '$lib/orchestration/saveLayoutOrchestrator';
+  import { normalizeLayoutTitle } from '$lib/utils/layoutPath';
   import { formatNodeId, nodeIdStringToBytes } from '$lib/utils/nodeId';
 
   // Active tab state — 'config' (default) or 'bowties'
@@ -249,15 +251,6 @@
   // Sync-session lifecycle state is coordinated in a dedicated orchestrator.
   const syncSessionOrchestrator = new SyncSessionOrchestrator();
 
-  function normalizeLayoutTitle(raw: string | null | undefined): string | null {
-    if (!raw) return null;
-    const fileName = raw.replace(/\\/g, '/').split('/').pop() ?? raw;
-    return fileName
-      .replace(/\.layout$/i, '')
-      .replace(/\.bowties\.ya?ml$/i, '')
-      .replace(/\.ya?ml$/i, '')
-      .replace(/\.layout\.d$/i, '');
-  }
 
   let activeLayoutLabel = $derived.by(() => {
     const ctx = layoutStore.activeContext;
@@ -338,20 +331,41 @@
         targetPath = selected;
       }
 
-      if (layoutStore.isOfflineMode) {
-        await offlineChangesStore.flushPendingToBackend();
-      }
+      const deltas = bowtieMetadataStore.collectDeltas();
 
-      const result = await saveLayoutFile(targetPath, true, layoutStore.layout);
-      partialCaptureNodes = new Set(result.warnings);
-      const contextLayoutId = normalizeLayoutTitle(targetPath) ?? 'layout';
-      layoutStore.setActiveContext({
-        layoutId: contextLayoutId,
-        rootPath: targetPath,
-        mode: 'offline_file',
-        capturedAt: new Date().toISOString(),
-        pendingOfflineChangeCount: offlineChangesStore.pendingCount,
-      });
+      const sharedOrchestratorArgs = {
+        clearMetadata: () => bowtieMetadataStore.clearAll(),
+        markClean: () => layoutStore.markClean(),
+        hydrateLayout: (layout: import('$lib/types/bowtie').LayoutFile) =>
+          layoutStore.hydrateFromBackend(layout),
+        flushPending: layoutStore.isOfflineMode
+          ? async () => { await offlineChangesStore.flushPendingToBackend(); }
+          : undefined,
+        setActiveContext: (ctx: import('$lib/stores/layout.svelte').ActiveLayoutContext) =>
+          layoutStore.setActiveContext(ctx),
+        updatePartialCaptureNodes: (warnings: string[]) => {
+          partialCaptureNodes = new Set(warnings);
+        },
+        getPendingChangeCount: () => offlineChangesStore.pendingCount,
+        // ADR-0004 (S2c): drop config drafts that are now persisted on disk so
+        // the effective read model never observes a stale draft after the
+        // catalog has been rebuilt from the saved layout.
+        clearPersistedDrafts: () => configChangesStore.clearAllDrafts(),
+        path: targetPath,
+        deltas,
+      };
+      const orchestratorArgs: SaveLayoutOrchestratedArgs = connected
+        ? {
+            ...sharedOrchestratorArgs,
+            saveWithBusWrites: (p, d) => saveLayoutWithBusWrites(p, d, true),
+          }
+        : {
+            ...sharedOrchestratorArgs,
+            saveFile: (p, d) => saveLayoutFile(p, true, d),
+            rebuildCatalog: buildBowtieCatalog,
+            setCatalog: (catalog) => bowtieCatalogStore.setCatalog(catalog),
+          };
+      await saveLayoutOrchestrated(orchestratorArgs);
 
       return true;
     } catch (e) {

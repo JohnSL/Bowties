@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { NodeConfigTree } from '$lib/types/nodeTree';
-import type { LayoutFile } from '$lib/types/bowtie';
+import type { LayoutFile, LayoutEditDelta } from '$lib/types/bowtie';
 
 export type { LayoutConnectorSelections } from '$lib/types/bowtie';
 
@@ -15,6 +15,8 @@ export interface SaveLayoutResult {
   manifestPath: string;
   nodeFilesWritten: number;
   warnings: string[];
+  /** The persisted layout file data (ADR-0002: backend returns authoritative copy). */
+  layout: LayoutFile;
 }
 
 export interface OpenLayoutResult {
@@ -72,6 +74,29 @@ export interface NewLayoutResult {
   createdAt: string;
 }
 
+export interface WriteModifiedResult {
+  total: number;
+  succeeded: number;
+  failed: number;
+  readOnlyRejected: number;
+}
+
+/** Result of `save_layout_with_bus_writes` — the three-phase save command. */
+export interface SaveWithBusWriteResult {
+  /** Layout was successfully saved to disk. */
+  layoutSaved: boolean;
+  /** Bus write outcome (null if offline or no pending writes). */
+  busWrites: WriteModifiedResult | null;
+  /** Whether a reconcile re-save was performed (≥1 bus write succeeded). */
+  reconciled: boolean;
+  /** Whether the bowtie catalog was rebuilt by the backend. */
+  catalogRebuilt: boolean;
+  /** Partial-capture node IDs from the initial layout save. */
+  warnings: string[];
+  /** The persisted layout file data (ADR-0002: backend returns authoritative copy). */
+  layout: LayoutFile;
+}
+
 export async function captureLayoutSnapshot(includeProducerEvents = true): Promise<CaptureSummary> {
   return invoke<CaptureSummary>('capture_layout_snapshot', { includeProducerEvents });
 }
@@ -79,17 +104,26 @@ export async function captureLayoutSnapshot(includeProducerEvents = true): Promi
 export async function saveLayoutDirectory(
   path: string,
   overwrite = true,
-  layout?: LayoutFile | null,
+  deltas: LayoutEditDelta[] = [],
 ): Promise<SaveLayoutResult> {
-  return invoke<SaveLayoutResult>('save_layout_directory', { path, overwrite, layout });
+  return invoke<SaveLayoutResult>('save_layout_directory', { path, overwrite, deltas });
 }
 
 export async function saveLayoutFile(
   path: string,
   overwrite = true,
-  layout?: LayoutFile | null,
+  deltas: LayoutEditDelta[] = [],
 ): Promise<SaveLayoutResult> {
-  return invoke<SaveLayoutResult>('save_layout_directory', { path, overwrite, layout });
+  return invoke<SaveLayoutResult>('save_layout_directory', { path, overwrite, deltas });
+}
+
+/** Three-phase save: layout first, then bus writes (if connected), then reconcile. */
+export async function saveLayoutWithBusWrites(
+  path: string,
+  deltas: LayoutEditDelta[] = [],
+  overwrite = true,
+): Promise<SaveWithBusWriteResult> {
+  return invoke<SaveWithBusWriteResult>('save_layout_with_bus_writes', { path, overwrite, deltas });
 }
 
 export async function openLayoutDirectory(path: string): Promise<OpenLayoutResult> {

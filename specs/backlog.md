@@ -1,15 +1,6 @@
-* Bowties offline derivation ownership — PARTIALLY RESOLVED
-  * Status: The core fix is in place. `build_offline_node_tree` now accumulates config values,
-    profile roles, and CDI XML into `OfflineBowtieData` (in `state.rs`).
-    `build_bowtie_catalog_command` falls back to this data when no live node registry exists.
-    `offlineLayoutOrchestrator.ts` calls `buildBowtieCatalog` + `setCatalog` after offline
-    hydration, so the frontend uses the backend-owned catalog. The preview store fast path
-    skips tree scanning when catalog exists and no config edits are pending.
-  * Remaining:
-    1. Add focused regression tests that prove live and offline bowtie inclusion/exclusion rules
-       stay aligned (item 4 from original fix approach).
-    2. Consider extracting `resolve_cdi_xml` shared helper to DRY the CDI lookup across
-       `layout_capture.rs`, `sync_panel.rs`, and `layout/io.rs` (see `aiwiki/architecture-health.md`).
+* Bowties offline derivation ownership — remaining items
+  * Consider extracting `resolve_cdi_xml` shared helper to DRY the CDI lookup across
+    `layout_capture.rs`, `sync_panel.rs`, and `layout/io.rs` (see `aiwiki/architecture-health.md`).
 * LCC Traffic Monitor:
   * When we're getting text, show the actual text along side the bytes
   * Same for other data types

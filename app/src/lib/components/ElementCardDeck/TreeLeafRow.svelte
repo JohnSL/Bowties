@@ -11,6 +11,8 @@
    * The tree's `modifiedValue` and `writeState` drive dirty/error display.
    */
   import type { LeafConfigNode, TreeConfigValue, TreeMapEntry } from '$lib/types/nodeTree';
+  import { buildElementLabel } from '$lib/types/nodeTree';
+  import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import type { BowtieCard } from '$lib/api/tauri';
   import { triggerAction } from '$lib/api/config';
   import { recomputeConnectorCompatibility } from '$lib/orchestration/connectorSelectionOrchestrator';
@@ -37,6 +39,7 @@
   import { isPlaceholderEventId } from '$lib/utils/eventIds';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
   import type { ConnectorConstraintState } from '$lib/utils/connectorConstraints';
+  import { effectiveLayoutStore, makeValueResolver } from '$lib/layout';
   import { untrack } from 'svelte';
 
   let {
@@ -114,6 +117,9 @@
 
   let isInvalid = $derived(localInvalidValue !== null);
   let hasPendingApplyVisible = $derived(hasPendingApply && !isInvalid && !suppressTransientIndicators);
+
+  /** ADR-0003: effective role (pending edit → saved layout → catalog → CDI baseline). */
+  let effectiveRole = $derived(nodeId ? effectiveLayoutStore.effectiveRole(nodeId, leaf) : leaf.eventRole);
 
   /** Active validation message: local input errors only (committed placeholder is shown separately) */
   let activeValidationMessage = $derived(localValidationMessage ?? null);
@@ -465,10 +471,12 @@
 
   /** T039: Open the bowties tab with this slot pre-filled as a connection side. */
   function handleCreateConnection() {
+    const tree = nodeTreeStore.getTree(nodeId);
+    const resolver = makeValueResolver(nodeId);
     const selection = {
       nodeId,
       nodeName: nodeId,
-      elementLabel: leaf.name,
+      elementLabel: tree ? buildElementLabel(tree, leaf, resolver) : leaf.name,
       elementPath: leaf.path,
       address: leaf.address,
       space: leaf.space,
@@ -476,7 +484,8 @@
         ? (leaf.value as { type: 'eventId'; bytes: number[]; hex: string }).hex
         : '00.00.00.00.00.00.00.00',
     };
-    connectionRequestStore.requestConnection(selection, leaf.eventRole ?? 'Ambiguous');
+    const effectiveRole = effectiveLayoutStore.effectiveRole(nodeId, leaf);
+    connectionRequestStore.requestConnection(selection, effectiveRole ?? 'Ambiguous');
   }
 </script>
 
@@ -687,9 +696,9 @@
       {/if}
     {/if}
 
-    {#if leaf.eventRole}
+    {#if effectiveRole}
       <span class="event-role">
-        <span class="role-tag role-{leaf.eventRole.toLowerCase()}">{leaf.eventRole}</span>
+        <span class="role-tag role-{effectiveRole.toLowerCase()}">{effectiveRole}</span>
       </span>
     {/if}
 

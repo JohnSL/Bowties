@@ -48,6 +48,24 @@ export interface RecentLayout {
   lastOpened: string;
 }
 
+// ── Layout Edit Deltas (ADR-0002) ─────────────────────────────────────────────
+
+/**
+ * A single edit operation sent to the backend during save.
+ *
+ * The frontend sends a list of deltas instead of a full LayoutFile.
+ * The backend applies them to its disk-authoritative copy (ADR-0002).
+ */
+export type LayoutEditDelta =
+  | { type: 'createBowtie'; eventIdHex: string; name?: string | null }
+  | { type: 'deleteBowtie'; eventIdHex: string }
+  | { type: 'renameBowtie'; eventIdHex: string; newName: string }
+  | { type: 'addTag'; eventIdHex: string; tag: string }
+  | { type: 'removeTag'; eventIdHex: string; tag: string }
+  | { type: 'classifyRole'; key: string; role: string }
+  | { type: 'setConnectorSelection'; nodeId: string; selection: LayoutNodeHardwareSelectionSet }
+  | { type: 'adoptEventId'; oldEventIdHex: string; newEventIdHex: string };
+
 // ── Bowtie State ──────────────────────────────────────────────────────────────
 
 /** State of a bowtie based on its element membership */

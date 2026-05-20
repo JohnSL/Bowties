@@ -14,7 +14,7 @@
    *
    * Spec: plan-cdiConfigNavigator.
    */
-  import type { GroupConfigNode, ConfigNode, GroupedChild } from '$lib/types/nodeTree';
+  import type { GroupConfigNode, ConfigNode, GroupedChild, LeafConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
   import type { ConnectorProfileView, ConnectorSelectionDocument } from '$lib/types/connectorProfile';
   import { isGroup, isLeaf, groupReplicatedChildren, getInstanceDisplayName } from '$lib/types/nodeTree';
   import PillSelector from '$lib/components/PillSelector/PillSelector.svelte';
@@ -72,10 +72,16 @@
   let pillMode = $derived(visibleSiblings.length > 1);
   let activeGroup = $derived(pillMode ? (visibleSiblings[clampedSelectedInstanceIndex] ?? visibleSiblings[0]) : (visibleSiblings[0] ?? group));
 
+  /** Resolve leaf value through draft → offlinePending → baseline layers. */
+  function resolveLeafValue(leaf: LeafConfigNode): TreeConfigValue | null {
+    const key = editKeyForLeaf(nodeId, leaf.space, leaf.address);
+    return configChangesStore.overrideValue(key) ?? leaf.value;
+  }
+
   // Build pill items from siblings
   let pillItems = $derived(visibleSiblings.map((s, idx): PillItem => ({
     value: idx,
-    label: s.displayName ?? getInstanceDisplayName(s),
+    label: s.displayName ?? getInstanceDisplayName(s, resolveLeafValue),
     description: s.instanceLabel,
   })));
 
@@ -303,14 +309,14 @@
             onclick={() => { collapsed = !collapsed; }}
           >
             <span class="toggle-arrow" class:collapsed>{collapsed ? '▶' : '▼'}</span>
-            {group.displayName ?? group.instanceLabel}
+            {group.displayName ?? getInstanceDisplayName(group, resolveLeafValue)}
           </button>
         {:else}
           <span
             class="inline-name"
             class:inline-name--dirty={!suppressTransientIndicators && activeGroupHasDirty}
             class:inline-name--pending={!suppressTransientIndicators && activeGroupHasPendingApply}
-          >{group.displayName ?? group.instanceLabel}</span>
+          >{group.displayName ?? getInstanceDisplayName(group, resolveLeafValue)}</span>
         {/if}
         {#if group.description}
           <p class="section-description">{group.description}</p>

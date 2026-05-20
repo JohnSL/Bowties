@@ -435,7 +435,7 @@ pub fn build_bowtie_catalog(
 
             let total_entries =
                 producers.len() + consumers.len() + ambiguous_entries.len();
-            if total_entries < 2 {
+            if total_entries == 0 {
                 continue;
             }
         } else {
@@ -780,6 +780,30 @@ pub fn merge_layout_metadata(
     catalog.bowties.sort_by_key(|b| b.event_id_bytes);
 }
 
+/// Extract all non-ambiguous event role classifications from a live catalog for
+/// persistence into the layout file's `role_classifications` map.
+///
+/// Produces a `"{nodeId}:{element_path_joined_by_/}"` key for every producer
+/// and consumer entry.  Ambiguous entries are intentionally excluded — they are
+/// not persisted and will remain ambiguous on reopen until the user resolves them.
+pub fn extract_catalog_role_classifications(
+    catalog: &BowtieCatalog,
+) -> std::collections::BTreeMap<String, crate::layout::types::RoleClassification> {
+    let mut map = std::collections::BTreeMap::new();
+    for card in &catalog.bowties {
+        for entry in &card.producers {
+            let key = format!("{}:{}", entry.node_id, entry.element_path.join("/"));
+            map.insert(key, crate::layout::types::RoleClassification { role: "Producer".to_string() });
+        }
+        for entry in &card.consumers {
+            let key = format!("{}:{}", entry.node_id, entry.element_path.join("/"));
+            map.insert(key, crate::layout::types::RoleClassification { role: "Consumer".to_string() });
+        }
+        // ambiguous_entries — intentionally not extracted
+    }
+    map
+}
+
 /// Parse a dotted-hex event ID string into 8 bytes.
 fn parse_event_id_hex(hex: &str) -> Option<[u8; 8]> {
     let parts: Vec<&str> = hex.split('.').collect();
@@ -1121,7 +1145,7 @@ pub async fn build_bowtie_catalog_command(
     let use_offline = nodes_snap.is_empty();
 
     // Gather config values: from live proxies (online) or offline cache
-    let config_cache_snap: HashMap<String, HashMap<String, [u8; 8]>> = if !use_offline {
+    let mut config_cache_snap: HashMap<String, HashMap<String, [u8; 8]>> = if !use_offline {
         let handles = state.node_registry.get_all_handles().await;
         let mut map = HashMap::new();
         for h in &handles {
@@ -1135,6 +1159,64 @@ pub async fn build_bowtie_catalog_command(
     } else {
         state.offline_bowtie_data.read().await.config_values.clone()
     };
+
+    // Merge pending offline config changes into snapshot-based config values
+    // so the catalog reflects the user's pending event-ID assignments.
+    if use_offline {
+        let changes = state.offline_changes_cache.read().await;
+        let pending_config: Vec<_> = changes.iter()
+            .filter(|c| c.kind == crate::layout::offline_changes::OfflineChangeKind::Config
+                && c.status == crate::layout::offline_changes::OfflineChangeStatus::Pending
+                && c.node_id.is_some()
+                && c.space.is_some()
+                && c.offset.is_some())
+            .collect();
+
+        if !pending_config.is_empty() {
+            let offline_data = state.offline_bowtie_data.read().await;
+
+            // Build (space, address) → element-path maps from CDI XML,
+            // only for nodes that have pending changes.
+            let affected_nodes: std::collections::HashSet<String> = pending_config.iter()
+                .filter_map(|c| c.node_id.as_ref().map(|n| n.to_hex_string()))
+                .collect();
+
+            let mut address_to_path: HashMap<String, HashMap<(u8, u32), String>> = HashMap::new();
+            for node_id_hex in &affected_nodes {
+                if let Some(xml) = offline_data.cdi_xml.get(node_id_hex) {
+                    if let Ok(cdi) = lcc_rs::cdi::parser::parse_cdi(xml) {
+                        let tree = crate::node_tree::build_node_config_tree(node_id_hex, &cdi);
+                        let mut map = HashMap::new();
+                        for leaf in crate::node_tree::collect_event_id_leaves(&tree) {
+                            map.insert((leaf.space, leaf.address), leaf.path.join("/"));
+                        }
+                        address_to_path.insert(node_id_hex.clone(), map);
+                    }
+                }
+            }
+
+            // Overlay each pending event-ID change onto config_cache_snap.
+            for change in &pending_config {
+                let node_id_hex = change.node_id.as_ref().unwrap().to_hex_string();
+                let space = change.space.unwrap();
+                let address = u32::from_str_radix(
+                    change.offset.as_ref().unwrap()
+                        .trim_start_matches("0x").trim_start_matches("0X"),
+                    16,
+                ).unwrap_or(0);
+
+                if let Some(addr_map) = address_to_path.get(&node_id_hex) {
+                    if let Some(path) = addr_map.get(&(space, address)) {
+                        if let Some(bytes) = parse_event_id_hex(&change.planned_value) {
+                            config_cache_snap.entry(node_id_hex.clone())
+                                .or_default()
+                                .insert(path.clone(), bytes);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Gather profile group roles: from live proxy trees or offline cache
     let profile_group_roles: HashMap<String, lcc_rs::EventRole> = if !use_offline {
@@ -1698,6 +1780,7 @@ mod build_bowtie_catalog_tests {
 
     /// A lone same-node entry (total = 1) is filtered out: no connection to show.
     /// One node that is both producer+consumer with one ambiguous slot → total = 1.
+    /// (protocol-only path — no config cache evidence)
     #[test]
     fn t006_single_ambiguous_entry_filtered() {
         let nodes = make_nodes(1);
@@ -1714,6 +1797,31 @@ mod build_bowtie_catalog_tests {
             catalog.bowties.len(), 0,
             "Single ambiguous entry (total = 1) must be silently excluded"
         );
+    }
+
+    /// Single config-confirmed slot creates a card so its role classification
+    /// is captured for persistence.  The display layer (not the catalog) decides
+    /// whether to show single-slot bowties based on whether they have a name.
+    #[test]
+    fn single_config_slot_creates_card_for_role_persistence() {
+        let nodes = make_nodes(2);
+        let mut event_roles = HashMap::new();
+        // Protocol says node 0 produces EVENT_A, node 1 does not.
+        event_roles.insert(EVENT_A, roles(&[0], &[]));
+
+        // Config cache confirms node 0 has EVENT_A in one slot.
+        let mut config_cache: HashMap<String, HashMap<String, [u8; 8]>> = HashMap::new();
+        let mut node0_cache: HashMap<String, [u8; 8]> = HashMap::new();
+        node0_cache.insert("seg:0/elem:0".to_string(), EVENT_A);
+        config_cache.insert(node_id(0), node0_cache);
+
+        let catalog = build_bowtie_catalog(&nodes, &event_roles, &config_cache, None);
+
+        assert_eq!(catalog.bowties.len(), 1, "Single config slot must create a card");
+        let card = &catalog.bowties[0];
+        assert_eq!(card.producers.len(), 1);
+        assert_eq!(card.consumers.len(), 0);
+        assert_eq!(card.state, BowtieState::Incomplete);
     }
 
     /// T027: Same-node slot with a profile-declared Producer role is routed to
@@ -2212,3 +2320,118 @@ mod get_bowties_integration_tests {
     }
 }
 
+#[cfg(test)]
+mod extract_catalog_role_classifications_tests {
+    use super::*;
+    use crate::state::{BowtieCatalog, BowtieCard, BowtieState, EventSlotEntry};
+
+    fn make_entry(node_id: &str, path: &[&str], role: lcc_rs::EventRole) -> EventSlotEntry {
+        EventSlotEntry {
+            node_id: node_id.to_string(),
+            node_name: "Test Node".to_string(),
+            element_path: path.iter().map(|s| s.to_string()).collect(),
+            element_description: None,
+            event_id: [0u8; 8],
+            role,
+        }
+    }
+
+    fn empty_catalog() -> BowtieCatalog {
+        BowtieCatalog {
+            bowties: vec![],
+            built_at: "2026-01-01T00:00:00Z".to_string(),
+            source_node_count: 0,
+            total_slots_scanned: 0,
+        }
+    }
+
+    fn catalog_with_card(
+        producers: Vec<EventSlotEntry>,
+        consumers: Vec<EventSlotEntry>,
+        ambiguous: Vec<EventSlotEntry>,
+    ) -> BowtieCatalog {
+        BowtieCatalog {
+            bowties: vec![BowtieCard {
+                event_id_hex: "05.01.01.01.FF.00.00.01".to_string(),
+                event_id_bytes: [0u8; 8],
+                producers,
+                consumers,
+                ambiguous_entries: ambiguous,
+                name: None,
+                tags: vec![],
+                state: BowtieState::Active,
+            }],
+            built_at: "2026-01-01T00:00:00Z".to_string(),
+            source_node_count: 1,
+            total_slots_scanned: 3,
+        }
+    }
+
+    #[test]
+    fn returns_empty_map_for_empty_catalog() {
+        let catalog = empty_catalog();
+        let roles = extract_catalog_role_classifications(&catalog);
+        assert!(roles.is_empty());
+    }
+
+    #[test]
+    fn extracts_producer_role() {
+        let catalog = catalog_with_card(
+            vec![make_entry("02.01.57.00.00.01", &["seg:0", "elem:0"], lcc_rs::EventRole::Producer)],
+            vec![],
+            vec![],
+        );
+        let roles = extract_catalog_role_classifications(&catalog);
+        assert_eq!(roles.get("02.01.57.00.00.01:seg:0/elem:0").unwrap().role, "Producer");
+    }
+
+    #[test]
+    fn extracts_consumer_role() {
+        let catalog = catalog_with_card(
+            vec![],
+            vec![make_entry("02.01.57.00.00.02", &["seg:0", "elem:1"], lcc_rs::EventRole::Consumer)],
+            vec![],
+        );
+        let roles = extract_catalog_role_classifications(&catalog);
+        assert_eq!(roles.get("02.01.57.00.00.02:seg:0/elem:1").unwrap().role, "Consumer");
+    }
+
+    #[test]
+    fn skips_ambiguous_entries() {
+        let catalog = catalog_with_card(
+            vec![],
+            vec![],
+            vec![make_entry("02.01.57.00.00.03", &["seg:0", "elem:2"], lcc_rs::EventRole::Ambiguous)],
+        );
+        let roles = extract_catalog_role_classifications(&catalog);
+        assert!(roles.is_empty(), "Ambiguous entries must not be persisted");
+    }
+
+    #[test]
+    fn extracts_producers_and_consumers_together_skipping_ambiguous() {
+        let catalog = catalog_with_card(
+            vec![make_entry("02.01.57.00.00.01", &["seg:0", "elem:0"], lcc_rs::EventRole::Producer)],
+            vec![make_entry("02.01.57.00.00.02", &["seg:0", "elem:1"], lcc_rs::EventRole::Consumer)],
+            vec![make_entry("02.01.57.00.00.03", &["seg:0", "elem:2"], lcc_rs::EventRole::Ambiguous)],
+        );
+        let roles = extract_catalog_role_classifications(&catalog);
+        assert_eq!(roles.len(), 2);
+        assert_eq!(roles.get("02.01.57.00.00.01:seg:0/elem:0").unwrap().role, "Producer");
+        assert_eq!(roles.get("02.01.57.00.00.02:seg:0/elem:1").unwrap().role, "Consumer");
+        assert!(!roles.contains_key("02.01.57.00.00.03:seg:0/elem:2"), "Ambiguous must not appear");
+    }
+
+    #[test]
+    fn handles_multi_segment_element_path() {
+        let catalog = catalog_with_card(
+            vec![make_entry("02.01.57.00.00.01", &["Turnout", "Output", "Thrown Event"], lcc_rs::EventRole::Producer)],
+            vec![],
+            vec![],
+        );
+        let roles = extract_catalog_role_classifications(&catalog);
+        assert_eq!(
+            roles.get("02.01.57.00.00.01:Turnout/Output/Thrown Event").unwrap().role,
+            "Producer",
+        );
+    }
+}

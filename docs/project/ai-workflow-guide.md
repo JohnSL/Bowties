@@ -12,7 +12,10 @@ How to work with AI agents on Bowties. You own behavior and design decisions; th
 |--------------|-----|
 | Fix a bug | `/bugfix` prompt |
 | Make a small change | `/quickchange` prompt |
-| Build a feature | SpecKit pipeline (see below) |
+| Build a feature | Feature pipeline (see below) |
+| Assess architecture for a feature | `/design` skill |
+| Generate vertical slices | `/slices` skill |
+| Implement slices with TDD | `/build` skill |
 | See available work | `/whatsnext` prompt |
 | Review architecture | `/improve-codebase-architecture` skill |
 | Stress-test a plan | `/grill-with-docs` skill |
@@ -34,21 +37,32 @@ These two prompts follow the same user flow:
 
 For non-trivial changes that touched multiple modules, run `/feature-finish` before step 5 — it checks for documentation gaps and captures deferred work. Commit its updates to the branch so they're included in the squash.
 
-### Feature flow (SpecKit pipeline)
+### Feature flow
 
 For larger work that needs planning:
 
 1. **`/specify`** — describe the feature. AI produces a spec. Review and refine.
-2. **`/plan`** — AI produces an implementation plan. Review and approve.
-3. **`/tasks`** — AI breaks the plan into ordered tasks. Review task list.
-4. **`/implement`** — AI works through tasks, stopping for approval at key points.
-5. **`/feature-finish`** — AI audits docs, enriches the knowledge base, captures deferrals. Does NOT commit.
-6. **Commit.** Review the feature-finish updates and commit them to the branch.
-7. **Merge to main.** Squash-merge the branch into main.
+2. **`/clarify`** — AI identifies underspecified areas. You answer targeted questions.
+3. **`/plan`** — AI produces an implementation plan. Review and approve.
+4. **`/design`** — AI assesses architecture and defines vertical slices. Review findings and trade-offs.
+5. **`/slices`** — AI generates slice task file. Review granularity and HITL/AFK labels.
+6. **`/build`** — AI implements slices with TDD. May span multiple sessions.
+7. **`/feature-finish`** — AI audits docs, enriches KB, captures deferrals. Does NOT commit.
+8. **Commit.** Review and commit to the branch.
+9. **Merge to main.** Squash-merge the branch into main.
+10. **`/spec-close`** — AI archives spec, extracts ideas. (After merge.)
 
 Always run `/feature-finish` before merging so its updates are part of the squash — not a separate commit on main.
 
-You can use `/grill-with-docs` between steps 1-2 to stress-test the design against the glossary and past ADRs.
+You can use `/grill-with-docs` between steps 2-3 to stress-test the design against the glossary and past ADRs.
+
+### Multi-session builds
+
+Larger features may require multiple `/build` sessions. The AI tracks progress in `specs/<feature>/slices.md` with checkboxes. At the start of each session, it reads the slice file, finds the next unchecked slice, and picks up where the previous session left off.
+
+Slices are classified as **HITL** (needs your pattern-level input) or **AFK** (AI handles autonomously). HITL slices present the architectural pattern question before implementing. AFK slices proceed directly.
+
+The AI judges how many slices fit in a session based on complexity. It always stops at a slice boundary — never mid-slice — so every session ends with tests passing.
 
 ### When context gets long
 
@@ -92,6 +106,8 @@ After approval, the AI:
 - Writes a test first (TDD) — the test should fail before the fix/change
 - Implements the narrowest change that makes the test pass
 - Runs affected tests using the test mapping from `aiwiki/owners.md`
+
+For features, the `/build` skill implements one vertical slice at a time using red-green-refactor. Each slice cuts through all necessary layers and is independently testable. See `/build` skill docs for the full TDD workflow.
 
 ### The enrichment phase
 
@@ -139,17 +155,22 @@ The KB grows incrementally during normal work. No batch maintenance needed.
 How a feature flows from idea to main, and where each tool fits.
 
 ```
-Brainstorm ─► /specify ─► /plan ─► /tasks ─► /implement ─► /feature-finish ─► Merge ─► /spec-close
-                │                                │               │                         │
-                │                                │               ├─ product/ updated        ├─ spec archived
-                │                                │               ├─ aiwiki/ enriched        └─ ideas extracted
-                │                                │               └─ ideas captured
-                │                                │
-                │                                └─ aiwiki/ read for orientation
-                │                                   specs/ideas/ checked for prior work
-                │                                   pre-implementation analysis shown
+Brainstorm ─► /specify ─► /clarify ─► /plan ─► /design ─► /slices ─► /build ─► /feature-finish ─► Merge
+                │                        │          │          │          │
+                │                        │          │          │          ├─ TDD per slice (red→green)
+                │                        │          │          │          ├─ Multi-session via slices.md
+                │                        │          │          │          └─ aiwiki/ enrichment
+                │                        │          │          │
+                │                        │          │          └─ HITL/AFK labels
+                │                        │          │             Slice task file generated
+                │                        │          │
+                │                        │          └─ Architecture assessment
+                │                        │             Vertical slices defined
+                │                        │             Depth/locality/seam evaluation
+                │                        │
+                │                        └─ /grill-with-docs (optional stress-test)
                 │
-                └─ /grill-with-docs (optional stress-test)
+                └─ Spec requirements captured
 ```
 
 ### Phase-by-phase
@@ -158,9 +179,11 @@ Brainstorm ─► /specify ─► /plan ─► /tasks ─► /implement ─► /
 |-------|-------------|------------|-----------|
 | **Brainstorm** | Discuss the feature idea | You | Conversation only |
 | **Specify** | `/specify` — AI creates spec | You describe, AI writes | `specs/NNN-feature/spec.md` |
+| **Clarify** | `/clarify` — AI asks targeted questions | AI asks, you answer | Updated `spec.md` |
 | **Plan** | `/plan` — AI creates implementation plan | AI proposes, you approve | `specs/NNN-feature/plan.md` |
-| **Tasks** | `/tasks` — AI breaks plan into ordered tasks | AI proposes, you review | `specs/NNN-feature/tasks.md` |
-| **Implement** | `/implement` — AI works through tasks (multiple sessions) | AI codes, you review | Code, tests, aiwiki/ enrichment |
+| **Design** | `/design` — AI assesses architecture, defines slices | AI analyzes, you decide on trade-offs | Architecture Assessment in `plan.md` |
+| **Slices** | `/slices` — AI generates slice task file | AI proposes, you review granularity | `specs/NNN-feature/slices.md` |
+| **Build** | `/build` — AI implements slices with TDD (multi-session) | AI codes, you review HITL slices | Code, tests, aiwiki/ enrichment |
 | **Finish** | `/feature-finish` — AI audits docs and KB | AI proposes, you review | product/, aiwiki/, ideas updates |
 | **Merge** | Squash-merge branch to main | You | Clean history on main |
 | **Close spec** | `/spec-close` — AI archives spec, extracts ideas | AI proposes, you confirm | Spec moved to `specs/archive/`, ideas captured |
@@ -171,6 +194,7 @@ Brainstorm ─► /specify ─► /plan ─► /tasks ─► /implement ─► /
 |-----------|------|
 | Bug fix | `/bugfix` → review analysis → approve → AI fixes → optional `/feature-finish` → merge |
 | Quick change | `/quickchange` → review analysis → approve → AI implements → optional `/feature-finish` → merge |
+| Feature | `/specify` → `/clarify` → `/plan` → `/design` → `/slices` → `/build` (multi-session) → `/feature-finish` → merge |
 
 Run `/feature-finish` before merge whenever the change touched multiple modules or changed behavior. Skip it for trivial single-file fixes.
 

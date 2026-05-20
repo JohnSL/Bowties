@@ -15,11 +15,14 @@
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
-  import { editableBowtiePreviewStore } from '$lib/stores/bowties.svelte';
+  // ADR-0004 / S2c: read bowtie preview through the layout facade rather than
+  // the legacy `editableBowtiePreviewStore` export directly.
+  // `effectiveLayoutStore` is already imported above from `$lib/layout`.
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { nodeInfoStore } from '$lib/stores/nodeInfo';
   import { isPlaceholderEventId } from '$lib/utils/eventIds';
   import { resolveNodeDisplayName } from '$lib/utils/nodeDisplayName';
+  import { effectiveLayoutStore, makeValueResolver } from '$lib/layout';
   import {
     type SegmentNode,
     type ConfigNode,
@@ -61,7 +64,7 @@
   // can still reserve slots that already participate in saved bowties.
   let connectedEventIds = $derived.by(() => {
     const ids = new Set<string>();
-    for (const bowtie of editableBowtiePreviewStore.preview.bowties) {
+    for (const bowtie of effectiveLayoutStore.preview.bowties) {
       ids.add(bowtie.eventIdHex);
     }
     return ids;
@@ -92,8 +95,9 @@
 
     for (const [nodeId, tree] of trees) {
       const nodeName = getNodeDisplayName(nodeId);
+      const resolver = makeValueResolver(nodeId);
       const segments = tree.segments.filter(seg =>
-        hasMatchingDescendant(seg.children, query, roleFilter, nodeName)
+        hasMatchingDescendant(seg.children, query, roleFilter, nodeName, resolver, nodeId)
       );
       if (segments.length > 0) {
         result.push({ nodeId, nodeName, segments });
@@ -130,9 +134,12 @@
   function handleSelect(leaf: LeafConfigNode, nodeId: string): void {
     if (!isSlotFree(leaf)) return; // FR-012: can't select occupied slots
 
+    // ADR-0004: classify against the effective role, not the stale CDI baseline.
+    const effectiveRole = effectiveLayoutStore.effectiveRole(nodeId, leaf);
+
     // Phase 3: when the picker has a definite role filter and the slot is
     // ambiguous/unclassified, auto-classify it and skip the prompt entirely.
-    if ((leaf.eventRole === 'Ambiguous' || leaf.eventRole === null) &&
+    if ((effectiveRole === 'Ambiguous' || effectiveRole === null) &&
         (roleFilter === 'Producer' || roleFilter === 'Consumer')) {
       const key = `${nodeId}:${leaf.path.join('/')}`;
       bowtieMetadataStore.classifyRole(key, roleFilter);
@@ -141,7 +148,7 @@
     }
 
     // T035: intercept ambiguous/null role slots — ask user to classify first
-    if (leaf.eventRole === 'Ambiguous' || leaf.eventRole === null) {
+    if (effectiveRole === 'Ambiguous' || effectiveRole === null) {
       pendingAmbiguous = { leaf, nodeId };
       return;
     }
@@ -151,11 +158,12 @@
 
   function doSelect(leaf: LeafConfigNode, nodeId: string): void {
     const tree = nodeTreeStore.getTree(nodeId);
+    const resolver = makeValueResolver(nodeId);
     const selection: ElementSelection = {
       nodeId,
       nodeName: getNodeDisplayName(nodeId),
       elementPath: leaf.path,
-      elementLabel: tree ? buildElementLabel(tree, leaf) : leaf.name,
+      elementLabel: tree ? buildElementLabel(tree, leaf, resolver) : leaf.name,
       address: leaf.address,
       space: leaf.space,
       currentEventId: leaf.value?.type === 'eventId' ? leaf.value.hex : '00.00.00.00.00.00.00.00',

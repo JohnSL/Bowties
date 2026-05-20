@@ -11,7 +11,7 @@
    * Spec: 007-edit-node-config.
    */
   import type { SaveProgress, SaveState } from '$lib/types/nodeTree';
-  import { writeModifiedValues, discardModifiedValues } from '$lib/api/config';
+  import { discardModifiedValues } from '$lib/api/config';
   import { toast } from '@zerodevx/svelte-toast';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
@@ -123,78 +123,50 @@
       return;
     }
 
+    // ── Online (connected) path ─────────────────────────────────────────────
+    // ADR-0001: Layout MUST be saved before any bus writes.
+    // Delegate ALL save work to onOfflineSave → saveCurrentCaptureToFile →
+    // saveLayoutOrchestrated with saveWithBusWrites.  The backend's
+    // save_layout_with_bus_writes enforces: Phase 1 layout save → Phase 2
+    // bus writes → Phase 3 reconcile.  SaveControls never calls
+    // writeModifiedValues directly; the backend handles bus writes internally.
+
     const hasNodeEdits = viewState.hasConfigEdits;
     const hasLayoutMetadataEdits = bowtieMetadataStore.isDirty || layoutStore.isDirty;
 
     if (!hasNodeEdits && !hasLayoutMetadataEdits) return;
 
+    const totalEdits = viewState.dirtyCount + (hasLayoutMetadataEdits ? 1 : 0);
     saveProgress = {
       state: 'saving',
-      total: viewState.dirtyCount + (hasLayoutMetadataEdits ? 1 : 0),
+      total: totalEdits,
       completed: 0,
       failed: 0,
-      currentFieldLabel: hasNodeEdits ? 'Writing configuration…' : 'Layout metadata',
+      currentFieldLabel: 'Saving…',
     };
 
-    let failCount = 0;
-
-    // Write all modified tree leaves in one Rust batch
-    if (hasNodeEdits) {
-      try {
-        const result = await writeModifiedValues();
-        if ((result.readOnlyRejected ?? 0) > 0) {
-          const n = result.readOnlyRejected;
-          toast.push(
-            `${n} read-only field${n === 1 ? '' : 's'} reverted — device rejected the write`,
-            { classes: ['warn'], duration: 6000, pausable: true }
-          );
-        }
-        saveProgress = {
-          ...saveProgress,
-          completed: result.succeeded,
-          failed: result.failed,
-        };
-        failCount += result.failed;
-
-        // Clear frontend drafts after a fully successful write.
-        // The backend has accepted all values; tree-updated events will refresh
-        // baselines shortly. For partial failures, leave drafts for
-        // pruneResolvedDraftsForNode to handle selectively.
-        if (result.failed === 0) {
-          configChangesStore.clearAllDrafts();
-        }
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('[SaveControls] writeModifiedValues failed:', msg);
-        failCount += viewState.dirtyCount;
-        saveProgress = { ...saveProgress, failed: viewState.dirtyCount };
+    try {
+      const saved = await onOfflineSave();
+      if (saved) {
+        configChangesStore.clearAllDrafts();
+        saveProgress = { ...saveProgress, state: 'completed', currentFieldLabel: null, completed: totalEdits };
+      } else {
+        // User cancelled save dialog — zero bytes sent to bus (ADR-0001 cancel guarantee).
+        saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
       }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[SaveControls] save failed:', msg);
+      toast.push(`Save failed: ${msg}`, {
+        classes: ['warn'],
+        duration: 7000,
+        pausable: true,
+      });
+      saveProgress = { ...saveProgress, state: 'partial-failure', currentFieldLabel: null, failed: totalEdits };
     }
-
-    // T019: After node writes, save bowtie metadata to YAML layout file
-    let yamlSaveOk = true;
-    if (hasLayoutMetadataEdits) {
-      saveProgress = { ...saveProgress, currentFieldLabel: 'Layout metadata' };
-      try {
-        const saved = await onOfflineSave();
-        if (saved) {
-          bowtieMetadataStore.clearAll();
-          layoutStore.markClean();
-        } else {
-          yamlSaveOk = false;
-        }
-      } catch (err: unknown) {
-        yamlSaveOk = false;
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('[SaveControls] Layout save failed:', msg);
-      }
-    }
-
-    const finalState: SaveState = failCount === 0 && yamlSaveOk ? 'completed' : 'partial-failure';
-    saveProgress = { ...saveProgress, state: finalState, currentFieldLabel: null };
 
     // Auto-dismiss 'completed' state after 2s
-    if (finalState === 'completed') {
+    if (saveProgress.state === 'completed') {
       setTimeout(() => {
         saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
       }, 2000);

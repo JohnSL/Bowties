@@ -8,7 +8,7 @@
 
 <script lang="ts">
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
-  import { editableBowtiePreviewStore } from '$lib/stores/bowties.svelte';
+  import { effectiveLayoutStore } from '$lib/layout';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
@@ -49,8 +49,9 @@
   let catalog = $derived(bowtieCatalogStore.catalog);
   let readComplete = $derived(bowtieCatalogStore.readComplete);
   let hasLayoutFile = $derived(layoutStore.hasLayoutFile);
-  let preview = $derived(editableBowtiePreviewStore.preview);
+  let preview = $derived(effectiveLayoutStore.preview);
   let previewCards = $derived(preview.bowties);
+  let connectionCount = $derived(bowtieCatalogStore.displayableBowties.length);
 
   // T044: Filter bar state
   let filterText = $state('');
@@ -367,7 +368,7 @@
         + New Connection
       </button>
       <span class="catalog-meta">
-        {catalog.bowties.length} connection{catalog.bowties.length !== 1 ? 's' : ''}
+        {connectionCount} connection{connectionCount !== 1 ? 's' : ''}
         · {catalog.source_node_count} node{catalog.source_node_count !== 1 ? 's' : ''}
       </span>
       <!-- T044: Filter bar -->
@@ -408,7 +409,7 @@
         <p class="hint">Discover nodes and read their configuration from the toolbar.</p>
       </div>
 
-    {:else if previewCards.length === 0 && (!catalog || catalog.bowties.length === 0)}
+    {:else if previewCards.length === 0 && (!catalog || connectionCount === 0)}
       <EmptyState />
 
     {:else}
@@ -512,7 +513,7 @@
         This slot's role is ambiguous. Is it a producer or consumer?
       </p>
       <RoleClassifyPrompt
-        elementName={classifyBeforeConnect.selection.elementPath.at(-1) ?? 'event slot'}
+        elementName={classifyBeforeConnect.selection.elementLabel || (classifyBeforeConnect.selection.elementPath.at(-1) ?? 'event slot')}
         onClassify={(role) => {
           const sel = classifyBeforeConnect!.selection;
           const key = `${sel.nodeId}:${sel.elementPath.join('/')}`;
