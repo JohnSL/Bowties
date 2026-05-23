@@ -97,13 +97,7 @@ fn load_layout_snapshot(
     root_path: &str,
 ) -> Result<crate::layout::node_snapshot::NodeSnapshot, String> {
     let base_file = std::path::Path::new(root_path);
-    let companion_dir = crate::layout::io::derive_companion_dir_path(base_file)?;
-    let snapshot_path = companion_dir
-        .join("nodes")
-        .join(format!("{}.yaml", canonical_node_id.to_uppercase()));
-
-    crate::layout::io::read_yaml_file(&snapshot_path)
-        .map_err(|e| format!("Cannot load snapshot {}: {}", snapshot_path.display(), e))
+    crate::layout::read_node_snapshot(base_file, canonical_node_id)
 }
 
 fn resolve_layout_cdi_from_snapshot(
@@ -112,14 +106,13 @@ fn resolve_layout_cdi_from_snapshot(
     app: &tauri::AppHandle,
 ) -> Result<lcc_rs::cdi::Cdi, String> {
     let base_file = std::path::Path::new(root_path);
-    let companion_dir = crate::layout::io::derive_companion_dir_path(base_file)?;
 
     let app_data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("Cannot resolve app data dir: {}", e))?;
 
-    let xml = crate::layout::io::resolve_cdi_xml(snapshot, &app_data_dir, &companion_dir)
+    let xml = crate::layout::resolve_cdi_xml_for_snapshot(base_file, snapshot, &app_data_dir)
         .map_err(|e| format!("CDI not found for node {}: {}", snapshot.node_id.to_canonical(), e))?;
 
     lcc_rs::cdi::parser::parse_cdi(&xml)
@@ -974,13 +967,11 @@ pub async fn build_sync_session(
             }
         }
 
-        if let Ok(companion_dir) = crate::layout::io::derive_companion_dir_path(
+        if let Err(e) = crate::layout::update_offline_changes(
             std::path::Path::new(&context.root_path),
+            &cache_snapshot,
         ) {
-            let changes_path = companion_dir.join("offline-changes.yaml");
-            if let Err(e) = crate::layout::io::write_yaml_file(&changes_path, &cache_snapshot) {
-                eprintln!("[sync] Failed to persist offline-changes.yaml after already-applied clear: {}", e);
-            }
+            eprintln!("[sync] Failed to persist offline-changes after already-applied clear: {}", e);
         }
     }
 
@@ -1375,68 +1366,63 @@ pub async fn apply_sync_changes(
         }
     }
 
-    // Persist offline-changes.yaml and update node snapshot baselines on disk
+    // Persist offline-changes and update node snapshot baselines on disk
     if !applied.is_empty() || !read_only_cleared.is_empty() {
-        if let Ok(companion_dir) = crate::layout::io::derive_companion_dir_path(
-            std::path::Path::new(&context.root_path),
-        ) {
-            // Write updated offline-changes.yaml
-            let cache_snapshot = state.offline_changes_cache.read().await.clone();
-            let changes_path = companion_dir.join("offline-changes.yaml");
-            if let Err(e) = crate::layout::io::write_yaml_file(&changes_path, &cache_snapshot) {
-                eprintln!("[sync] Failed to persist offline-changes.yaml: {}", e);
-            }
+        let base_file = std::path::Path::new(&context.root_path);
 
-            // Update node snapshot baselines for successfully applied config changes
-            let nodes_dir = companion_dir.join("nodes");
-            let mut updated_snapshots: std::collections::HashMap<String, crate::layout::node_snapshot::NodeSnapshot> =
-                std::collections::HashMap::new();
-            let applied_at = chrono::Utc::now().to_rfc3339();
+        // Write updated offline-changes
+        let cache_snapshot = state.offline_changes_cache.read().await.clone();
+        if let Err(e) = crate::layout::update_offline_changes(base_file, &cache_snapshot) {
+            eprintln!("[sync] Failed to persist offline-changes: {}", e);
+        }
 
-            for (canonical_nid, space, offset_hex, planned_value) in &applied_config_details {
-                let snapshot = updated_snapshots.entry(canonical_nid.clone()).or_insert_with(|| {
-                    let node_path = crate::layout::io::derive_node_file_path(&nodes_dir, canonical_nid);
-                    match crate::layout::io::read_yaml_file::<crate::layout::node_snapshot::NodeSnapshot>(&node_path) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            eprintln!("[sync] Failed to read snapshot for {}: {}", canonical_nid, e);
-                            // Return a dummy that won't be saved (we check below)
-                            crate::layout::node_snapshot::NodeSnapshot {
-                                node_id: lcc_rs::NodeID::new([0; 6]),
-                                captured_at: String::new(),
-                                capture_status: crate::layout::node_snapshot::CaptureStatus::Complete,
-                                missing: Vec::new(),
-                                snip: crate::layout::node_snapshot::SnipSnapshot::default(),
-                                cdi_ref: crate::layout::node_snapshot::CdiReference {
-                                    cache_key: String::new(),
-                                    version: String::new(),
-                                    fingerprint: String::new(),
-                                },
-                                config: std::collections::BTreeMap::new(),
-                                producer_identified_events: Vec::new(),
-                            }
+        // Update node snapshot baselines for successfully applied config changes
+        let mut updated_snapshots: std::collections::HashMap<String, crate::layout::node_snapshot::NodeSnapshot> =
+            std::collections::HashMap::new();
+        let applied_at = chrono::Utc::now().to_rfc3339();
+
+        for (canonical_nid, space, offset_hex, planned_value) in &applied_config_details {
+            let snapshot = updated_snapshots.entry(canonical_nid.clone()).or_insert_with(|| {
+                match crate::layout::read_node_snapshot(base_file, canonical_nid) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("[sync] Failed to read snapshot for {}: {}", canonical_nid, e);
+                        // Return a dummy that won't be saved (we check below)
+                        crate::layout::node_snapshot::NodeSnapshot {
+                            node_id: lcc_rs::NodeID::new([0; 6]),
+                            captured_at: String::new(),
+                            capture_status: crate::layout::node_snapshot::CaptureStatus::Complete,
+                            missing: Vec::new(),
+                            snip: crate::layout::node_snapshot::SnipSnapshot::default(),
+                            cdi_ref: crate::layout::node_snapshot::CdiReference {
+                                cache_key: String::new(),
+                                version: String::new(),
+                                fingerprint: String::new(),
+                            },
+                            config: std::collections::BTreeMap::new(),
+                            producer_identified_events: Vec::new(),
                         }
                     }
-                });
-
-                crate::layout::node_snapshot::update_snapshot_baseline_and_capture_time(
-                    snapshot,
-                    *space,
-                    offset_hex,
-                    planned_value,
-                    &applied_at,
-                );
-            }
-
-            // Write back modified snapshots
-            for (canonical_nid, snapshot) in &updated_snapshots {
-                if snapshot.node_id == lcc_rs::NodeID::new([0; 6]) {
-                    continue; // Skip dummies from failed reads
                 }
-                let node_path = crate::layout::io::derive_node_file_path(&nodes_dir, canonical_nid);
-                if let Err(e) = crate::layout::io::write_yaml_file(&node_path, snapshot) {
-                    eprintln!("[sync] Failed to persist snapshot for {}: {}", canonical_nid, e);
-                }
+            });
+
+            crate::layout::node_snapshot::update_snapshot_baseline_and_capture_time(
+                snapshot,
+                *space,
+                offset_hex,
+                planned_value,
+                &applied_at,
+            );
+        }
+
+        // Write back modified snapshots in one partial-update call
+        let to_write: Vec<crate::layout::node_snapshot::NodeSnapshot> = updated_snapshots
+            .into_values()
+            .filter(|s| s.node_id != lcc_rs::NodeID::new([0; 6]))
+            .collect();
+        if !to_write.is_empty() {
+            if let Err(e) = crate::layout::update_node_snapshots(base_file, &to_write) {
+                eprintln!("[sync] Failed to persist snapshot updates: {}", e);
             }
         }
     }

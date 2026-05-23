@@ -28,6 +28,13 @@ export interface OpenLayoutResult {
   partialNodes: string[];
   pendingOfflineChangeCount: number;
   nodeSnapshots: OfflineNodeSnapshot[];
+  /**
+   * True when the layout journal rolled back an interrupted prior
+   * save before this open (ADR-0006). UI should surface a one-line
+   * notice that the previous save was incomplete and has been
+   * restored.
+   */
+  recoveryOccurred: boolean;
 }
 
 export interface SnapshotLeafValue {

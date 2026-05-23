@@ -17,7 +17,7 @@ Use [LANGUAGE.md](../improve-codebase-architecture/LANGUAGE.md) vocabulary for a
 2. Read `specs/<feature>/plan.md` and `specs/<feature>/spec.md`
 3. Read `product/architecture/code-placement-and-ownership.md`, `product/architecture/adr/`, `product/glossary.md`
 4. Read `aiwiki/owners.md` (module inventory, shared conventions) and `aiwiki/flows.md`
-5. Scan `specs/ideas/` for prior work matching the feature's area
+5. Scan `specs/ideas/**` (all bucket subfolders: `features/`, `refactors/`, `docs/`, `process/`) for prior work matching the feature's area
 
 ### 2. Identify affected modules
 
@@ -48,7 +48,7 @@ After user decisions:
 
 1. Append an **Architecture Assessment** section to plan.md (format in [ASSESSMENT.md](ASSESSMENT.md))
 2. Include slice definitions with HITL/AFK labels
-3. Capture deferred improvements as `specs/ideas/` entries (see `specs/ideas/README.md` for format)
+3. Capture deferred improvements as `specs/ideas/<bucket>/<slug>.md` entries (choose the bucket per `specs/ideas/README.md`: `features/` for user-facing capability, `refactors/` for code/architecture improvements, `docs/` for documentation work, `process/` for dev workflow/tooling)
 4. Draft ADRs for rejected approaches with load-bearing reasons (see [ADR-FORMAT.md](../grill-with-docs/ADR-FORMAT.md))
 5. Update `product/glossary.md` if terms were sharpened (see [GLOSSARY-FORMAT.md](../grill-with-docs/GLOSSARY-FORMAT.md))
 

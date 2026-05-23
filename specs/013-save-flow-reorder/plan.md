@@ -45,6 +45,12 @@ Adopt a layout-first model that eliminates the 4-state connection×layout matrix
 - `SaveProgressDialog` component — pure rendering, emits no workflow logic
 - No new dependencies, no new crates, no architectural violations
 
+**Post-S2c re-evaluation (2026-05-23)**: Added slices S2d and S2e after a user reported a Dropbox-synced save failure (sharing-violation on the staging-directory rename, leaving an unopenable layout). Both slices continue the S2 layout-authority arc:
+- **S2d** promotes `layout/` into a deep module: an intent-shaped public API (`save_capture`, `read_capture`, `update_offline_changes`, `update_node_snapshots`, `read_node_snapshot`) replaces the current pattern of command modules constructing companion-dir paths and calling `write_yaml_file` directly. Pure refactor, no behavior change. Captured as **ADR-0005**.
+- **S2e** replaces the staging-directory rename with in-place file writes plus a `.save-in-progress` + `.restore/` write-ahead journal. Eliminates the Windows `MoveFileEx` contention with cloud-sync agents, AV, and the indexer. Trades filesystem per-file atomicity for transactional rollback at the layout level. Captured as **ADR-0006**.
+
+All constitution gates still pass. No new dependencies, no new crates. S2d/S2e are localised to `app/src-tauri/src/layout/` plus the two command modules that currently leak file knowledge.
+
 ## Project Structure
 
 ### Documentation (this feature)
@@ -68,12 +74,14 @@ app/src-tauri/src/
 │   ├── connection.rs        # MODIFY — move connection defs into layout
 │   ├── layout_capture.rs    # MODIFY — save-reorder flow, known-layout registry
 │   ├── bowties.rs           # MODIFY — save-layout-first orchestration
-│   ├── cdi.rs               # MODIFY — save-reorder: defer write_modified_values
+│   ├── cdi.rs               # MODIFY — save-reorder: defer write_modified_values; (S2d) snapshot baseline updates go through layout::update_node_snapshots
+│   ├── sync_panel.rs        # MODIFY (S2d) — partial writes go through layout::update_offline_changes / update_node_snapshots; no direct companion-dir path construction
 │   └── startup.rs           # NEW — layout picker backend (known-layout registry)
 ├── layout/
+│   ├── mod.rs               # MODIFY (S2d) — promote to deep module; expose intent-shaped public API (save_capture, read_capture, update_offline_changes, update_node_snapshots, read_node_snapshot); make companion-dir helpers private
 │   ├── types.rs             # MODIFY — add connections section to LayoutFile
 │   ├── manifest.rs          # MODIFY — add connections to LayoutManifest
-│   ├── io.rs                # MODIFY — migration for existing layouts
+│   ├── io.rs                # MODIFY — migration for existing layouts; (S2e) replace staging-swap with in-place writes + .save-in-progress journal + .restore/ rollback; remove save_directory_atomic and per-file temp+rename
 │   └── known_layouts.rs     # NEW — known-layout registry persistence
 ├── state.rs                 # MODIFY — add known-layout registry, layout-required guard
 └── lib.rs                   # MODIFY — register new commands
@@ -165,7 +173,7 @@ Four deepening opportunities were identified in touched modules but deferred to 
 **F3: `layout.svelte.ts` mixes store and orchestration** (placement)
 - **Affected**: `layout.svelte.ts`
 - **Concern**: The store owns dialog opening, IPC sequencing, and recent-layout orchestration — concerns that belong in orchestrators. Legacy file-mode methods appear to be dead code.
-- **Decision**: Defer — not in critical path; captured as `specs/ideas/layout-store-orchestration-extraction.md`
+- **Decision**: Defer — not in critical path; captured as `specs/ideas/refactors/layout-store-orchestration-extraction.md`
 
 **F4: `api/layout.ts` duplicate IPC wrappers** (duplication)
 - **Affected**: `api/layout.ts`
@@ -180,12 +188,12 @@ Four deepening opportunities were identified in touched modules but deferred to 
 **F6: `save_layout_directory` mega-function** (depth/locality)
 - **Affected**: `commands/layout_capture.rs`
 - **Concern**: ~150-line function mixing 5 concerns. The new `save_layout_with_bus_writes` calls it as a step rather than extending it.
-- **Decision**: Include (implicitly) — new command preserves existing seam. Mega-function decomposition deferred as `specs/ideas/layout-capture-decomposition.md`
+- **Decision**: Include (implicitly) — new command preserves existing seam. Mega-function decomposition deferred as `specs/ideas/refactors/layout-capture-decomposition.md`
 
 **F7: `bowties.rs` mixed concerns — untested core algorithm** (placement/testability)
 - **Affected**: `commands/bowties.rs` (1,962 lines, 0 tests)
 - **Concern**: Layout YAML commands mixed with catalog builder. Core algorithm has zero test coverage. Three-phase save calls `build_bowtie_catalog_command` without needing to add logic here.
-- **Decision**: Defer — captured as `specs/ideas/bowties-rs-decomposition.md`
+- **Decision**: Defer — captured as `specs/ideas/refactors/bowties-rs-decomposition.md`
 
 **F8: Event role classification semantics extension** (depth)
 - **Affected**: `layout/types.rs`, `commands/bowties.rs`
@@ -298,9 +306,9 @@ S3 (progress) S9 (roles)  S6 (picker gate)◄───┘
 
 ### Deferred Improvements
 
-- [`specs/ideas/layout-store-orchestration-extraction.md`](../ideas/layout-store-orchestration-extraction.md) — Extract dialog + IPC sequencing from `layout.svelte.ts` to orchestrators (F3)
-- [`specs/ideas/layout-capture-decomposition.md`](../ideas/layout-capture-decomposition.md) — Decompose `save_layout_directory` mega-function in `layout_capture.rs` (F6)
-- [`specs/ideas/bowties-rs-decomposition.md`](../ideas/bowties-rs-decomposition.md) — Decompose `bowties.rs` mixed concerns + add test coverage for `build_bowtie_catalog` (F7)
+- [`specs/ideas/refactors/layout-store-orchestration-extraction.md`](../ideas/refactors/layout-store-orchestration-extraction.md) — Extract dialog + IPC sequencing from `layout.svelte.ts` to orchestrators (F3)
+- [`specs/ideas/refactors/layout-capture-decomposition.md`](../ideas/refactors/layout-capture-decomposition.md) — Decompose `save_layout_directory` mega-function in `layout_capture.rs` (F6)
+- [`specs/ideas/refactors/bowties-rs-decomposition.md`](../ideas/refactors/bowties-rs-decomposition.md) — Decompose `bowties.rs` mixed concerns + add test coverage for `build_bowtie_catalog` (F7)
 
 ### Architecture Decisions
 

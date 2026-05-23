@@ -1,19 +1,30 @@
 ﻿//! Layout file I/O operations.
 //!
-//! Handles loading and saving YAML layout files with atomic write support
-//! and schema validation.
+//! Holds path / filename knowledge for the companion-directory layout
+//! (`bowties.yaml`, `nodes/`, `offline-changes.yaml`, etc.) and the
+//! schema-validated read/write routines that sit underneath the
+//! intent-shaped public API in [`super`].
+//!
+//! Persistence into the companion directory goes through
+//! [`super::journal`] (ADR-0006). This module does not perform any
+//! `MoveFileEx` on a directory or per-file `rename` over the wire; it
+//! serializes YAML, builds a [`super::journal::SavePlan`], and lets the
+//! journal carry out the writes in place under a `.save-in-progress`
+//! marker.
 
-use std::path::{Path, PathBuf};
+use std::collections::HashSet;
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use super::types::LayoutFile;
 use super::manifest::LayoutManifest;
 use super::node_snapshot::NodeSnapshot;
 use super::offline_changes::OfflineChange;
+use super::journal::{self, PlannedWrite, PrunePlan, SavePlan, WriteOp};
 
-const BOWTIES_FILE: &str = "bowties.yaml";
-const OFFLINE_CHANGES_FILE: &str = "offline-changes.yaml";
-const EVENT_NAMES_FILE: &str = "event-names.yaml";
-const NODES_DIR: &str = "nodes";
+pub(crate) const BOWTIES_FILE: &str = "bowties.yaml";
+pub(crate) const OFFLINE_CHANGES_FILE: &str = "offline-changes.yaml";
+pub(crate) const EVENT_NAMES_FILE: &str = "event-names.yaml";
+pub(crate) const NODES_DIR: &str = "nodes";
 const CDI_DIR: &str = "cdi";
 
 /// Load a layout file from the given path.
@@ -91,94 +102,27 @@ pub fn save_file(path: &Path, layout: &LayoutFile) -> Result<(), String> {
     Ok(())
 }
 
-/// Serialize and write YAML in a deterministic manner for layout directory files.
-pub fn write_yaml_file<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Cannot create directory {}: {}", parent.display(), e))?;
-    }
-
-    let yaml = serde_yaml_ng::to_string(value)
-        .map_err(|e| format!("Failed to serialize YAML for {}: {}", path.display(), e))?;
-
-    let temp_path = path.with_extension("yaml.tmp");
-    let mut file = std::fs::File::create(&temp_path)
-        .map_err(|e| format!("Failed to create temp file {}: {}", temp_path.display(), e))?;
-    file.write_all(yaml.as_bytes())
-        .map_err(|e| format!("Failed to write YAML file {}: {}", path.display(), e))?;
-    file.flush()
-        .map_err(|e| format!("Failed to flush YAML file {}: {}", path.display(), e))?;
-    drop(file);
-
-    std::fs::rename(&temp_path, path)
-        .map_err(|e| format!("Failed to replace YAML file {}: {}", path.display(), e))?;
-    Ok(())
+/// Serialize a value to YAML bytes for inclusion in a journal
+/// [`SavePlan`].
+pub(crate) fn serialize_yaml<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, String> {
+    serde_yaml_ng::to_string(value)
+        .map(|s| s.into_bytes())
+        .map_err(|e| format!("Failed to serialize YAML: {}", e))
 }
 
 /// Read and deserialize a YAML file.
-pub fn read_yaml_file<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
+pub(crate) fn read_yaml_file<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
     let contents = std::fs::read_to_string(path)
         .map_err(|e| format!("Failed to read YAML file {}: {}", path.display(), e))?;
     serde_yaml_ng::from_str::<T>(&contents)
         .map_err(|e| format!("Failed to parse YAML file {}: {}", path.display(), e))
 }
 
-/// Save a directory atomically by writing into a staging directory and swapping it in place.
-pub fn save_directory_atomic<F>(target_dir: &Path, writer: F) -> Result<(), String>
-where
-    F: FnOnce(&Path) -> Result<(), String>,
-{
-    let parent = target_dir
-        .parent()
-        .ok_or_else(|| format!("Target directory has no parent: {}", target_dir.display()))?;
-    std::fs::create_dir_all(parent)
-        .map_err(|e| format!("Cannot create parent directory {}: {}", parent.display(), e))?;
-
-    let target_name = target_dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| format!("Invalid target directory name: {}", target_dir.display()))?;
-
-    let staging_dir = parent.join(format!("{}.staging", target_name));
-    let backup_dir = parent.join(format!("{}.backup", target_name));
-
-    if staging_dir.exists() {
-        std::fs::remove_dir_all(&staging_dir)
-            .map_err(|e| format!("Cannot clean staging directory {}: {}", staging_dir.display(), e))?;
-    }
-    std::fs::create_dir_all(&staging_dir)
-        .map_err(|e| format!("Cannot create staging directory {}: {}", staging_dir.display(), e))?;
-
-    writer(&staging_dir)?;
-
-    if backup_dir.exists() {
-        let _ = std::fs::remove_dir_all(&backup_dir);
-    }
-    if target_dir.exists() {
-        std::fs::rename(target_dir, &backup_dir)
-            .map_err(|e| format!("Failed to move old directory to backup: {}", e))?;
-    }
-
-    if let Err(e) = std::fs::rename(&staging_dir, target_dir) {
-        // Roll back to previous directory if swap fails.
-        if backup_dir.exists() {
-            let _ = std::fs::rename(&backup_dir, target_dir);
-        }
-        return Err(format!("Failed to move staging directory into place: {}", e));
-    }
-
-    if backup_dir.exists() {
-        let _ = std::fs::remove_dir_all(&backup_dir);
-    }
-
-    Ok(())
-}
-
-pub fn derive_node_file_path(nodes_dir: &Path, node_id: &str) -> PathBuf {
+pub(crate) fn derive_node_file_path(nodes_dir: &Path, node_id: &str) -> PathBuf {
     nodes_dir.join(format!("{}.yaml", node_id.to_uppercase()))
 }
 
-pub fn derive_companion_dir_name(base_file: &Path) -> Result<String, String> {
+pub(crate) fn derive_companion_dir_name(base_file: &Path) -> Result<String, String> {
     let file_name = base_file
         .file_name()
         .and_then(|v| v.to_str())
@@ -200,7 +144,7 @@ pub fn derive_companion_dir_name(base_file: &Path) -> Result<String, String> {
     Ok(format!("{}.layout.d", file_name))
 }
 
-pub fn derive_companion_dir_path(base_file: &Path) -> Result<PathBuf, String> {
+pub(crate) fn derive_companion_dir_path(base_file: &Path) -> Result<PathBuf, String> {
     let parent = base_file
         .parent()
         .ok_or_else(|| format!("Layout file has no parent directory: {}", base_file.display()))?;
@@ -223,9 +167,14 @@ pub struct LayoutDirectoryReadData {
     pub node_snapshots: Vec<NodeSnapshot>,
     pub bowties: LayoutFile,
     pub offline_changes: Vec<OfflineChange>,
+    /// True when [`read_layout_capture`] rolled back an interrupted
+    /// prior save (ADR-0006) before parsing this layout. The frontend
+    /// should surface a notice that the previous save was incomplete
+    /// and has been restored.
+    pub recovery_occurred: bool,
 }
 
-pub fn write_layout_capture(base_file: &Path, data: &LayoutDirectoryWriteData) -> Result<(), String> {
+pub(crate) fn write_layout_capture(base_file: &Path, data: &LayoutDirectoryWriteData) -> Result<(), String> {
     let parent = base_file
         .parent()
         .ok_or_else(|| format!("Layout file has no parent directory: {}", base_file.display()))?;
@@ -242,19 +191,78 @@ pub fn write_layout_capture(base_file: &Path, data: &LayoutDirectoryWriteData) -
     let mut manifest = data.manifest.clone();
     manifest.companion_dir = companion_name;
 
-    // Capture existing companion dir path before the atomic swap replaces it.
-    // This lets us preserve CDI files when re-saving without fresh cache entries.
-    let existing_companion = if companion_dir.exists() {
-        Some(companion_dir.clone())
-    } else {
-        None
+    // Build the journaled save plan. Every file the save will touch
+    // goes through a single `.save-in-progress` marker (ADR-0006) so
+    // an interrupted save can be rolled back on the next read.
+    let mut plan = SavePlan {
+        companion_dir: companion_dir.clone(),
+        writes: Vec::new(),
+        prune_dirs: Vec::new(),
     };
 
-    // Write base first so the canonical entry file always exists after a successful save.
-    write_yaml_file(base_file, &manifest)?;
-    save_directory_atomic(&companion_dir, |staging_dir| {
-        write_companion_contents(staging_dir, data, existing_companion.as_deref())
-    })?;
+    // Base manifest file (lives outside the companion dir).
+    plan.writes.push(PlannedWrite {
+        abs_path: base_file.to_path_buf(),
+        op: WriteOp::Bytes(serialize_yaml(&manifest)?),
+    });
+
+    // Top-level companion files.
+    plan.writes.push(PlannedWrite {
+        abs_path: companion_dir.join(BOWTIES_FILE),
+        op: WriteOp::Bytes(serialize_yaml(&data.bowties)?),
+    });
+    plan.writes.push(PlannedWrite {
+        abs_path: companion_dir.join(OFFLINE_CHANGES_FILE),
+        op: WriteOp::Bytes(serialize_yaml(&data.offline_changes)?),
+    });
+    plan.writes.push(PlannedWrite {
+        abs_path: companion_dir.join(EVENT_NAMES_FILE),
+        op: WriteOp::Bytes(serialize_yaml(&std::collections::BTreeMap::<String, String>::new())?),
+    });
+
+    // Per-node snapshots: also prune extras left over from a previous
+    // save (e.g. snapshots for nodes that have since been removed).
+    let nodes_dir = companion_dir.join(NODES_DIR);
+    let mut keep_nodes: HashSet<PathBuf> = HashSet::with_capacity(data.node_snapshots.len());
+    for snapshot in &data.node_snapshots {
+        let node_path = derive_node_file_path(&nodes_dir, &snapshot.node_id.to_canonical());
+        keep_nodes.insert(node_path.clone());
+        plan.writes.push(PlannedWrite {
+            abs_path: node_path,
+            op: WriteOp::Bytes(serialize_yaml(snapshot)?),
+        });
+    }
+    plan.prune_dirs.push(PrunePlan {
+        dir: nodes_dir,
+        keep_abs: keep_nodes,
+        extensions: vec!["yaml"],
+    });
+
+    // CDI files. When new CDI files are provided (fresh save from the
+    // live bus) we plan a copy for each and prune any extras. When no
+    // new CDI files are provided we leave the existing `cdi/`
+    // directory alone — in-place writes preserve what is already
+    // there, so the staging-dir "copy across" step is no longer
+    // needed.
+    let cdi_dir = companion_dir.join(CDI_DIR);
+    if !data.cdi_files.is_empty() {
+        let mut keep_cdi: HashSet<PathBuf> = HashSet::with_capacity(data.cdi_files.len());
+        for (cache_key, source_path) in &data.cdi_files {
+            let dest = cdi_dir.join(format!("{}.cdi.xml", cache_key));
+            keep_cdi.insert(dest.clone());
+            plan.writes.push(PlannedWrite {
+                abs_path: dest,
+                op: WriteOp::CopyFrom(source_path.clone()),
+            });
+        }
+        plan.prune_dirs.push(PrunePlan {
+            dir: cdi_dir,
+            keep_abs: keep_cdi,
+            extensions: vec!["xml"],
+        });
+    }
+
+    journal::execute(plan)?;
 
     if !base_file.exists() {
         return Err(format!(
@@ -271,7 +279,10 @@ pub fn write_layout_capture(base_file: &Path, data: &LayoutDirectoryWriteData) -
     Ok(())
 }
 
-pub fn read_layout_capture(base_file: &Path) -> Result<LayoutDirectoryReadData, String> {
+pub(crate) fn read_layout_capture(base_file: &Path) -> Result<LayoutDirectoryReadData, String> {
+    // ADR-0006: roll back any interrupted prior save before parsing.
+    let recovery_occurred = journal::recover_if_needed(base_file)?;
+
     let manifest: LayoutManifest = read_yaml_file(base_file)?;
     manifest.validate()?;
 
@@ -298,66 +309,8 @@ pub fn read_layout_capture(base_file: &Path) -> Result<LayoutDirectoryReadData, 
         node_snapshots,
         bowties,
         offline_changes,
+        recovery_occurred,
     })
-}
-
-fn write_companion_contents(
-    root_dir: &Path,
-    data: &LayoutDirectoryWriteData,
-    existing_companion: Option<&Path>,
-) -> Result<(), String> {
-    write_yaml_file(&root_dir.join(BOWTIES_FILE), &data.bowties)?;
-    write_yaml_file(&root_dir.join(OFFLINE_CHANGES_FILE), &data.offline_changes)?;
-    write_yaml_file(
-        &root_dir.join(EVENT_NAMES_FILE),
-        &std::collections::BTreeMap::<String, String>::new(),
-    )?;
-
-    let nodes_dir = root_dir.join(NODES_DIR);
-    std::fs::create_dir_all(&nodes_dir)
-        .map_err(|e| format!("Cannot create nodes dir {}: {}", nodes_dir.display(), e))?;
-    for snapshot in &data.node_snapshots {
-        let node_path = derive_node_file_path(&nodes_dir, &snapshot.node_id.to_canonical());
-        write_yaml_file(&node_path, snapshot)?;
-    }
-
-    // Copy CDI files to layout directory.
-    // If new CDI files are provided (fresh save from live bus), copy from cache.
-    // Otherwise, preserve existing CDI files from the previous companion dir.
-    let cdi_dir = root_dir.join(CDI_DIR);
-    if !data.cdi_files.is_empty() {
-        std::fs::create_dir_all(&cdi_dir)
-            .map_err(|e| format!("Cannot create CDI directory {}: {}", cdi_dir.display(), e))?;
-        for (cache_key, source_path) in &data.cdi_files {
-            let dest_filename = format!("{}.cdi.xml", cache_key);
-            let dest_path = cdi_dir.join(&dest_filename);
-            std::fs::copy(source_path, &dest_path)
-                .map_err(|e| format!("Cannot copy CDI file from {} to {}: {}", 
-                    source_path.display(), dest_path.display(), e))?;
-        }
-    } else if let Some(prev) = existing_companion {
-        let prev_cdi = prev.join(CDI_DIR);
-        if prev_cdi.exists() {
-            std::fs::create_dir_all(&cdi_dir)
-                .map_err(|e| format!("Cannot create CDI directory {}: {}", cdi_dir.display(), e))?;
-            let entries = std::fs::read_dir(&prev_cdi)
-                .map_err(|e| format!("Cannot read existing CDI directory {}: {}", prev_cdi.display(), e))?;
-            for entry in entries {
-                let entry = entry.map_err(|e| format!("Failed reading CDI entry: {}", e))?;
-                let source = entry.path();
-                if source.extension().and_then(|x| x.to_str()) == Some("xml") {
-                    if let Some(name) = source.file_name() {
-                        let dest = cdi_dir.join(name);
-                        std::fs::copy(&source, &dest)
-                            .map_err(|e| format!("Cannot copy existing CDI file from {} to {}: {}",
-                                source.display(), dest.display(), e))?;
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(())
 }
 
 fn read_companion_contents(
@@ -403,7 +356,8 @@ fn read_companion_contents(
 ///
 /// Returns the path to the CDI file if it exists in the layout's cdi directory,
 /// or None if the file is not present.
-pub fn get_cdi_path_for_snapshot(
+#[allow(dead_code)]
+pub(crate) fn get_cdi_path_for_snapshot(
     layout_root: &Path,
     snapshot: &NodeSnapshot,
     _manifest: &LayoutManifest,
@@ -430,7 +384,7 @@ pub fn get_cdi_path_for_snapshot(
 /// 3. Layout folder (legacy): `{companion_dir}/cdi/{cache_key}.xml`
 ///
 /// Returns the raw XML string on success.
-pub fn resolve_cdi_xml(
+pub(crate) fn resolve_cdi_xml(
     snapshot: &NodeSnapshot,
     app_data_dir: &Path,
     companion_dir: &Path,

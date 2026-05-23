@@ -8,7 +8,7 @@ description: "Fix a bug with root cause analysis, TDD regression encoding, impac
 
 Use the Explore subagent for research steps to keep the main context window lean.
 
-1. **Prior work**: Search `specs/ideas/` for idea files with matching area tags. Surface any relevant prior analysis.
+1. **Prior work**: Search `specs/ideas/**` (all bucket subfolders) for idea files with matching area tags. Surface any relevant prior analysis.
 2. **Owner identification**: Read `aiwiki/owners.md` to find which module owns the affected behavior. Identify the test file(s) for that module.
 3. **Shared logic check**: Check `aiwiki/owners.md` shared conventions section — is there existing shared logic relevant to this bug? Avoid reimplementing what already exists.
 4. **Placement check**: Verify the fix belongs in the identified module per `product/architecture/code-placement-and-ownership.md`.

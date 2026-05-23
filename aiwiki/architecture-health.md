@@ -36,5 +36,5 @@ Each entry:
 ### `bowties.rs` untested core algorithm (1,962 lines, 0 tests)
 - **Area**: `app/src-tauri/src/commands/bowties.rs`
 - **Risk**: The catalog builder is the intellectual core of the app. Mixed with layout YAML commands and protocol exchange. Zero test coverage on the most complex algorithm in the backend.
-- **Evidence**: Spec 013 assessment. See deferred idea: `specs/ideas/bowties-rs-decomposition.md`.
+- **Evidence**: Spec 013 assessment. See deferred idea: `specs/ideas/refactors/bowties-rs-decomposition.md`.
 - **Suggested action**: Decompose into catalog builder + layout YAML commands + protocol exchange. Add test coverage for the catalog builder with synthetic CDI trees.

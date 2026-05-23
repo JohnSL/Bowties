@@ -2,7 +2,7 @@
 
 Branch: 013-save-flow-reorder
 Generated: 2026-05-17
-Status: 4/10 slices complete (S1, S2, S2a, S2b done); S2c added after S2b validation surfaced three remaining divergence bugs
+Status: 7/12 slices complete (S1, S2, S2a, S2b, S2c, S2d, S2e done); S2e added 2026-05-23 to make persistence resilient to cloud-sync (Dropbox/OneDrive/AV) sharing-violation failures reported by a user
 
 ---
 
@@ -118,6 +118,8 @@ S2a made the backend the sole owner of layout file data, but display value resol
 
 <!-- Session: 2025-S2b — Completed S2b (unified display resolution). New `displayResolution.ts` utility centralizes value + role resolution per ADR-0003. All 6 divergent call sites now route through `makeValueResolver`/`resolveRole`: PickerTreeNode group labels, TreeGroupAccordion non-pill headers, TreeLeafRow role tag + context menu, ElementPicker auto-classification + label. T3 deferred (layered resolver makes baseline staleness invisible). Next: S3 (AFK). -->
 
+<!-- Session: 2026-05-23 — User reported Dropbox save failure ("The process cannot access the file because it is being used by another process") leaving a `.layout` file with an unpromoted `.layout.d.staging` directory. Root cause: Windows `MoveFileEx` on the staging directory loses to Dropbox/OneDrive/AV file handles. Investigation also surfaced that `layout/` is not a deep module — `commands/cdi.rs` and `commands/sync_panel.rs` directly construct companion-dir paths and call `write_yaml_file`, which would defeat any journal added to the save path. Adding S2d (deepen `layout/`) and S2e (in-place writes + `.restore/` journal) before S3. Both continue the S2 "layout-authoritative" arc. -->
+
 ---
 
 ## S2c: Layout facade + effective view store (ADR-0004) [HITL]
@@ -158,6 +160,74 @@ ADR-0004 establishes a `$lib/layout` facade as the only layout-state import surf
     - **T9b**: migrated remaining `editableBowtiePreviewStore` consumers (`ElementPicker.svelte`, `NewConnectionDialog.svelte`) to `$lib/layout`; added `effectiveLayoutStore.usedInMap` to the facade
     - **T9c**: extracted the merge into a module-level `buildEffectiveBowtiePreview()` function; deleted the `EditableBowtiePreviewStore` class and `editableBowtiePreviewStore` export; retargeted the 15 store tests to exercise the merge through `effectiveLayoutStore`
 - [x] S2c-T10: Validate — 876/876 vitest tests green; `aiwiki/owners.md` and `aiwiki/flows.md` updated. Manual scenarios (save-then-blank, offline picker filtering, delete-bowtie immediacy) require HITL re-verification before closing the spec.
+
+---
+
+## S2d: Deepen the layout module (single-owner file knowledge) [AFK]
+
+**Layers**: Backend domain, Backend command
+**Blocked by**: S2c
+**Complexity**: medium
+**User stories**: US4 (foundation for save robustness)
+
+The `layout/` module today is a thin I/O helper. Knowledge of *what files make up a layout* — the companion directory, the `nodes/` subfolder, the `offline-changes.yaml` filename, per-node YAML derivation — is duplicated across `commands/layout_capture.rs`, `commands/sync_panel.rs`, and `commands/cdi.rs`. Every one of these call sites independently constructs `derive_companion_dir_path(...).join("nodes").join(...)` and calls `write_yaml_file` directly. This blocks the journaled-save change in S2e because any single-file write that bypasses the journal can corrupt the recovery state. This slice promotes `layout/` into a deep module with an intent-shaped public API and makes all file/path/format details private — no behavior change.
+
+**Acceptance criteria**:
+- [x] `layout/mod.rs` exposes intent-shaped functions: `save_capture`, `read_capture`, `update_offline_changes`, `update_node_snapshots`, `read_node_snapshot`
+- [x] `derive_companion_dir_path`, `derive_node_file_path`, `write_yaml_file`, `read_yaml_file`, `save_directory_atomic`, and the `nodes/` / `offline-changes.yaml` / `bowties.yaml` / `event-names.yaml` constants are private to `layout/`
+- [x] No code outside `layout/` joins `"nodes"`, references the companion-dir layout, or writes YAML directly into a layout
+- [x] `commands/cdi.rs` and `commands/sync_panel.rs` partial-write paths call the new `update_*` APIs instead of constructing paths themselves
+- [x] All existing save/read tests pass unchanged; new tests cover the partial-update APIs going through the same code path as the full save
+
+**Tasks**:
+- [x] S2d-T1: Write tests — `update_offline_changes` and `update_node_snapshots` round-trip; `read_node_snapshot` returns the value written by either full save or partial update
+- [x] S2d-T2: Layout module — define the intent-shaped public API in `layout/mod.rs`; keep current internals but route through the new entry points
+- [x] S2d-T3: Command refactor — replace direct `write_yaml_file` / `derive_*` / `.join("nodes")` calls in `commands/sync_panel.rs` (~3 sites) and `commands/cdi.rs` (~2 sites) with the new APIs (also `commands/layout_capture.rs` and `commands/connector_profiles.rs`)
+- [x] S2d-T4: Visibility — made companion-dir helpers `pub(crate)`; verified `cargo build --tests` clean
+- [x] S2d-T5: Updated `aiwiki/owners.md` to mark `layout/` as the deep owner of layout file structure; wrote **ADR-0005** "Layout module owns all companion-dir file structure"
+- [x] S2d-T6: Validate — full backend test suite green (308 passed); no compiler warnings
+
+---
+
+## S2e: Journaled in-place save (cloud-sync resilience) [HITL]
+
+**Layers**: Backend domain, Backend command, Orchestrator (recovery notice)
+**Blocked by**: S2d
+**Complexity**: medium
+**User stories**: US4 (specifically the Dropbox/OneDrive failure mode)
+
+Today, saving a layout writes a `.layout.d.staging` directory and then renames it over `.layout.d`. On Windows the directory rename (`MoveFileEx`) fails with sharing-violation error 32 whenever Dropbox, OneDrive, antivirus, or Windows Search has briefly opened any file inside the staging directory — which they always do, immediately after each file is written. The user-visible failure is *"Save failed: The process cannot access the file because it is being used by another process"*, followed by an unopenable layout because the base `.layout` file was written but the staging directory was never promoted.
+
+This slice replaces the staging-swap with **in-place writes + a write-ahead journal** owned entirely inside `layout/`:
+
+1. Write a `.save-in-progress` marker with a phase field; fsync.
+2. For every file the save will modify or delete, copy current contents to `.restore/<relpath>`; fsync.
+3. Flip the marker to `phase: "writing"`; fsync.
+4. Overwrite each target file in place (`File::create` + write + `sync_all`) — no temp files, no renames.
+5. Delete files no longer in the snapshot.
+6. Delete the marker; fsync the directory.
+
+On read, if the marker exists the previous save was interrupted: roll back from `.restore/` and surface a notice. Every public mutation in `layout/` (full save and the S2d `update_*` APIs) flows through this protocol — one journal, one place. This trades filesystem per-file atomicity for transactional rollback at the layout level; under Dropbox/OneDrive/AV that trade is strongly favourable because in-place file writes do not contend with sync-agent read handles the way directory renames do.
+
+**Acceptance criteria**:
+- [ ] No code path under `layout/` calls `std::fs::rename` on a directory; per-file temp-then-rename is also gone in the new write path
+- [ ] Save succeeds in a folder where another process holds an open read handle on existing layout files (simulated test using a held file handle; gated to Windows)
+- [x] A crash injected between journal phases 3 and 6 leaves a coherent layout after the next open (auto-rollback from `.restore/` restores the previous coherent state)
+- [x] Existing `…layout.d.staging` and `…layout.d.backup` directories from the old scheme are cleaned up opportunistically on next save
+- [x] On rollback at open time, the user sees a one-line notice ("Previous save was interrupted and has been restored")
+- [x] No `.layout.d.staging` or `.tmp` files appear anywhere on disk after a normal save
+- [x] Frontend behavior is unchanged on the happy path; save progress dialog (S3) sees the same phase events
+- [ ] Bytes uploaded to Dropbox per save drop to "only files that actually changed" (manually verified, not asserted in test)
+
+**Tasks**:
+- [x] S2e-T1: Write tests — happy-path round-trip; held-handle save succeeds on Windows; crash-between-phases recovery (inject an abort flag in the marker writer, then assert read-back state); migration cleanup of leftover `.staging`/`.backup` dirs
+- [x] S2e-T2: Layout module — define the marker format (`.save-in-progress` containing `phase`, `started_at`, `manifest_path`) and the `.restore/` mirror layout
+- [x] S2e-T3: Layout module — implement the 6-step in-place journal; route `save_capture` and the S2d `update_*` APIs through it
+- [x] S2e-T4: Layout module — implement `recover_if_needed(base_file)` and call it from the top of `read_capture`; return a `RecoveryOccurred` flag on the read result
+- [x] S2e-T5: API + Orchestrator — surface the recovery flag through `open_layout_directory`; emit a toast/notice when set
+- [x] S2e-T6: Cleanup — remove `save_directory_atomic`, the temp-file dance in `write_yaml_file`, the staging/backup constants, and any related dead code
+- [x] S2e-T7: Update `aiwiki/owners.md` and `aiwiki/flows.md`; write **ADR-0006** "In-place writes with journaled rollback for layout persistence"
+- [ ] S2e-T8: Validate — full test suite green; manual save into a Dropbox-synced folder succeeds without sharing-violation errors; no orphan `.staging` directories remain *(automated suites green: 316 backend + 876 frontend tests; manual Dropbox check pending user verification)*
 
 ---
 

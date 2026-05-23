@@ -8,7 +8,7 @@ description: "Make a focused change with visible pre-implementation analysis, TD
 
 Use the Explore subagent for research steps to keep the main context window lean.
 
-1. **Prior work**: Search `specs/ideas/` for idea files with matching area tags. Surface any relevant prior analysis or deferred decisions.
+1. **Prior work**: Search `specs/ideas/**` (all bucket subfolders) for idea files with matching area tags. Surface any relevant prior analysis or deferred decisions.
 2. **Affected layers**: Read `aiwiki/owners.md` to identify which modules and layers this change touches. Note the test file(s) for each.
 3. **Shared logic check**: Check `aiwiki/owners.md` shared conventions section — does relevant shared logic already exist? Will this change create a new pattern that should be shared?
 4. **Placement check**: Verify new or moved logic goes in the right layer per `product/architecture/code-placement-and-ownership.md`.

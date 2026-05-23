@@ -8,7 +8,7 @@ Use the Explore subagent to collect items from these two sources:
 
 1. **`specs/backlog.md`**: Read all bullet items. For each, extract a short title and one-line summary. If the item mentions a spec by number or name, record the origin as `spec NNN: Title` (look up the spec title from `specs/NNN-*/spec.md` if needed).
 
-2. **`specs/ideas/*.md`** (excluding README.md): Read each file. Skip items with status `completed` or `superseded`. Extract the title (from `# heading`), areas (from `Areas` field), and origin (from `Origin` field). If the origin references a spec, format as `spec NNN: Title`.
+2. **`specs/ideas/**/*.md`** (recurse into `features/`, `refactors/`, `docs/`, `process/` bucket subfolders; exclude `README.md`): Read each file. Skip items with status `completed` or `superseded`. Extract the title (from `# heading`), areas (from `Areas` field), origin (from `Origin` field), and bucket (from the parent subfolder name). If the origin references a spec, format as `spec NNN: Title`.
 
 ## Group and Present
 
@@ -30,5 +30,6 @@ For each group, output a markdown table:
 
 - Show the full spec number and title in the Origin column (e.g., `spec 010: Offline Layout Editing`), not just a number.
 - If an item has a dependency, note it in the Item column (e.g., `*(depends on: X)*`).
-- Do not scan `specs/*/` directories for unfinished spec tasks — only `specs/backlog.md` and `specs/ideas/`.
+- Do not scan `specs/*/` directories for unfinished spec tasks — only `specs/backlog.md` and `specs/ideas/**`.
+- Prefer the idea's bucket (`features`/`refactors`/`docs`/`process`) when assigning it to a group: `features/` → Features; `refactors/` → Tooling & Infrastructure or a more specific group based on area tags; `docs/` → Documentation & Cleanup; `process/` → Tooling & Infrastructure.
 - Do not suggest or implement changes. This prompt is read-only.

@@ -44,6 +44,10 @@ pub struct OpenLayoutResult {
     pub partial_nodes: Vec<String>,
     pub pending_offline_change_count: usize,
     pub node_snapshots: Vec<NodeSnapshot>,
+    /// True when the layout journal (ADR-0006) rolled back an
+    /// interrupted prior save before this open. The frontend surfaces
+    /// a one-line notice when set.
+    pub recovery_occurred: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -344,7 +348,7 @@ pub async fn save_layout_directory(
     // Read existing layout data once (needed for layout_id, bowties, offline_changes,
     // and as fallback snapshot source when re-saving offline).
     let previous = if target.exists() {
-        crate::layout::io::read_layout_capture(target).ok()
+        crate::layout::read_capture(target).ok()
     } else {
         None
     };
@@ -403,7 +407,9 @@ pub async fn save_layout_directory(
         .and_then(|v| v.to_str())
         .unwrap_or("layout")
         .to_string();
-    let companion_dir = crate::layout::io::derive_companion_dir_name(target)?;
+    // `save_capture` (below) sets `manifest.companion_dir` itself from the
+    // base-file name, so we pass an empty string here.
+    let companion_dir = String::new();
 
     // ADR-0002: read disk-authoritative layout, apply frontend deltas.
     let mut bowties = previous.as_ref().map(|p| p.bowties.clone()).unwrap_or_default();
@@ -480,7 +486,7 @@ pub async fn save_layout_directory(
     }
 
     let cdi_files_count = cdi_files.len();
-    let write_data = crate::layout::io::LayoutDirectoryWriteData {
+    let write_data = crate::layout::LayoutDirectoryWriteData {
         manifest,
         node_snapshots: snapshots,
         bowties,
@@ -488,7 +494,7 @@ pub async fn save_layout_directory(
         cdi_files,
     };
 
-    crate::layout::io::write_layout_capture(target, &write_data)?;
+    crate::layout::save_capture(target, &write_data)?;
 
     let _ = crate::commands::bowties::set_recent_layout(path.clone(), app.clone()).await;
 
@@ -563,7 +569,7 @@ pub async fn open_layout_directory(
     state: tauri::State<'_, AppState>,
 ) -> Result<OpenLayoutResult, String> {
     let input_path = std::path::Path::new(&path);
-    let loaded = crate::layout::io::read_layout_capture(input_path)?;
+    let loaded = crate::layout::read_capture(input_path)?;
     let recent_path = input_path.to_string_lossy().to_string();
 
     let partial_nodes: Vec<String> = loaded
@@ -586,7 +592,6 @@ pub async fn open_layout_directory(
             .path()
             .app_data_dir()
             .map_err(|e| format!("Cannot resolve app data directory: {}", e))?;
-        let companion_dir = crate::layout::io::derive_companion_dir_path(input_path)?;
 
         for snapshot in &loaded.node_snapshots {
             if snapshot.cdi_ref.fingerprint == "not_supported"
@@ -597,7 +602,11 @@ pub async fn open_layout_directory(
             let dotted_id = snapshot.node_id.to_hex_string();
 
             // Load CDI XML
-            let xml = match crate::layout::io::resolve_cdi_xml(snapshot, &app_data_dir, &companion_dir) {
+            let xml = match crate::layout::resolve_cdi_xml_for_snapshot(
+                input_path,
+                snapshot,
+                &app_data_dir,
+            ) {
                 Ok(xml) => xml,
                 Err(_) => continue,
             };
@@ -654,6 +663,7 @@ pub async fn open_layout_directory(
             "capturedAt": loaded.manifest.captured_at,
             "offlineMode": true,
             "nodeCount": loaded.node_snapshots.len(),
+            "recoveryOccurred": loaded.recovery_occurred,
         }),
     );
 
@@ -666,6 +676,7 @@ pub async fn open_layout_directory(
         partial_nodes,
         pending_offline_change_count: loaded.offline_changes.len(),
         node_snapshots: loaded.node_snapshots,
+        recovery_occurred: loaded.recovery_occurred,
     })
 }
 
@@ -783,7 +794,7 @@ pub async fn save_layout_with_bus_writes(
     // Phase 4: Rebuild bowtie catalog with saved layout metadata so user-added
     // bowties, names, tags, and role classifications survive the rebuild.
     // Re-read the layout just written in Phase 1/3 to get the authoritative metadata.
-    let final_read = crate::layout::io::read_layout_capture(std::path::Path::new(&path)).ok();
+    let final_read = crate::layout::read_capture(std::path::Path::new(&path)).ok();
     let saved_layout = final_read.as_ref().map(|loaded| loaded.bowties.clone());
     let catalog_rebuilt = crate::commands::bowties::build_bowtie_catalog_command(
         saved_layout,
@@ -830,13 +841,7 @@ pub async fn build_offline_node_tree(
     };
 
     let base_file = std::path::Path::new(&context.root_path);
-    let companion_dir = crate::layout::io::derive_companion_dir_path(base_file)?;
-    let snapshot_path = companion_dir
-        .join("nodes")
-        .join(format!("{}.yaml", node_id.to_uppercase()));
-
-    let snapshot: crate::layout::node_snapshot::NodeSnapshot = crate::layout::io::read_yaml_file(&snapshot_path)
-        .map_err(|e| format!("Cannot load snapshot {}: {}", snapshot_path.display(), e))?;
+    let snapshot = crate::layout::read_node_snapshot(base_file, &node_id)?;
 
     if snapshot.cdi_ref.fingerprint == "not_supported"
         || snapshot.cdi_ref.fingerprint == "missing"
@@ -851,7 +856,7 @@ pub async fn build_offline_node_tree(
         .path()
         .app_data_dir()
         .map_err(|e| format!("Cannot resolve app data directory: {}", e))?;
-    let xml = crate::layout::io::resolve_cdi_xml(&snapshot, &app_data_dir, &companion_dir)
+    let xml = crate::layout::resolve_cdi_xml_for_snapshot(base_file, &snapshot, &app_data_dir)
         .map_err(|e| format!("CDI not available for node {}: {}", node_id, e))?;
 
     let cdi = lcc_rs::cdi::parser::parse_cdi(&xml)

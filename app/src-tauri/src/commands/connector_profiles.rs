@@ -355,18 +355,18 @@ async fn active_layout_path(state: &tauri::State<'_, AppState>) -> Result<PathBu
 
 async fn load_active_layout_metadata(
     state: &tauri::State<'_, AppState>,
-) -> Result<(PathBuf, crate::layout::io::LayoutDirectoryReadData), String> {
+) -> Result<(PathBuf, crate::layout::LayoutDirectoryReadData), String> {
     let path = active_layout_path(state).await?;
-    let loaded = crate::layout::io::read_layout_capture(&path)?;
+    let loaded = crate::layout::read_capture(&path)?;
     Ok((path, loaded))
 }
 
 fn persist_layout_metadata(
     path: &std::path::Path,
-    loaded: crate::layout::io::LayoutDirectoryReadData,
+    loaded: crate::layout::LayoutDirectoryReadData,
     layout: crate::layout::types::LayoutFile,
 ) -> Result<(), String> {
-    let write_data = crate::layout::io::LayoutDirectoryWriteData {
+    let write_data = crate::layout::LayoutDirectoryWriteData {
         manifest: loaded.manifest,
         node_snapshots: loaded.node_snapshots,
         bowties: layout,
@@ -374,7 +374,7 @@ fn persist_layout_metadata(
         cdi_files: vec![],
     };
 
-    crate::layout::io::write_layout_capture(path, &write_data)
+    crate::layout::save_capture(path, &write_data)
 }
 
 #[tauri::command]

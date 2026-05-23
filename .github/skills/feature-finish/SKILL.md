@@ -49,7 +49,7 @@ Verify no stale references:
 ### 6. Capture deferrals as ideas
 
 Review conversations, TODOs-in-code, and spec notes for work that was deferred during implementation:
-- Create `specs/ideas/<slug>.md` files for any deferred items using the standard format (title, areas, origin, status, date, prior work)
+- Create `specs/ideas/<bucket>/<slug>.md` files for any deferred items using the standard format (title, areas, origin, status, date, prior work). Choose the bucket per `specs/ideas/README.md`: `features/` for user-facing capability, `refactors/` for code/architecture improvements, `docs/` for documentation work, `process/` for dev workflow/tooling
 - Do not create ideas for trivial cleanup — only for items with enough substance to save future re-discovery
 
 ### 7. Backlog check

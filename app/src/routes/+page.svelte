@@ -13,6 +13,7 @@
   import { buildBowtieCatalog, clearRecentLayout, getRecentLayout } from '$lib/api/bowties';
   import { closeLayout, saveLayoutFile, saveLayoutWithBusWrites, openLayoutFile, buildOfflineNodeTree } from '$lib/api/layout';
   import type { OfflineNodeSnapshot } from '$lib/api/layout';
+  import { toast } from '@zerodevx/svelte-toast';
   import { readAllConfigValues, cancelConfigReading, getCdiXml, downloadCdi } from '$lib/api/cdi';
   import type { ViewerStatus } from '$lib/types/cdi';
   import type { DiscoveredNode } from '$lib/api/tauri';
@@ -306,6 +307,11 @@
       });
       partialCaptureNodes = new Set(result.partialNodes);
       currentLayoutSnapshots = result.nodeSnapshots;
+      if (result.recoveryOccurred) {
+        toast.push('Previous save was interrupted and has been restored.', {
+          theme: { '--toastBackground': '#fff4ce', '--toastColor': '#4f3a04', '--toastBarBackground': '#835b00' },
+        });
+      }
     } catch (error) {
       failLayoutOpen();
       errorDialog = {
@@ -612,6 +618,11 @@
           onRestored: (opened) => {
             partialCaptureNodes = new Set(opened.partialNodes);
             currentLayoutSnapshots = opened.nodeSnapshots;
+            if (opened.recoveryOccurred) {
+              toast.push('Previous save was interrupted and has been restored.', {
+                theme: { '--toastBackground': '#fff4ce', '--toastColor': '#4f3a04', '--toastBarBackground': '#835b00' },
+              });
+            }
           },
           onWarning: (message, error) => {
             console.warn(message, error);

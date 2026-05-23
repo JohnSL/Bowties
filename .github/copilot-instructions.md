@@ -9,7 +9,7 @@ These instructions are the always-on implementation contract for Bowties.
 - Treat `aiwiki/` as the AI-audience code-level navigation layer (WHERE things live, HOW they connect). It supplements `product/` (WHAT the product does, WHY).
 - Treat `docs/user/**` as end-user documentation and `docs/project/**` as developer-process documentation, not as the canonical source for current architecture.
 - Treat `specs/**` as feature-scoped planning and build artifacts. Treat `specs/archive/**` as historical only.
-- Treat `specs/ideas/` as structured prior-work cache with area tags. Check for relevant prior analysis before starting new work.
+- Treat `specs/ideas/` as structured prior-work cache, organized into bucket subfolders (`features/`, `refactors/`, `docs/`, `process/`) with area tags. Check for relevant prior analysis before starting new work.
 - If older design or technical notes conflict with current code, active non-archived specs, or the durable product docs, the durable product docs and current code win.
 - Precedence: `product/` + current code > `aiwiki/` > `specs/` > older docs.
 
@@ -73,7 +73,7 @@ Read-order for orientation on an unfamiliar area:
 4. `product/architecture/code-placement-and-ownership.md` — placement rules for new logic.
 5. `product/glossary.md` — canonical terminology and avoid-lists.
 6. `product/architecture/adr/` — past architecture decisions and rejected approaches.
-7. `specs/ideas/` — prior analysis and deferred work tagged by area.
+7. `specs/ideas/**` — prior analysis and deferred work, bucketed into `features/`, `refactors/`, `docs/`, `process/` and tagged by area.
 
 Enrich `aiwiki/` as you work: add modules, conventions, flows, or architecture observations you discover that are not yet documented. The knowledge base grows incrementally during feature work, not in batch passes.
 
@@ -85,7 +85,7 @@ Before implementing a change, verify:
 2. Check shared conventions in `aiwiki/owners.md`: is there already a pattern for this?
 3. Check `product/architecture/code-placement-and-ownership.md`: is this the right layer?
 4. Check `product/architecture/adr/`: has this approach been evaluated or rejected before?
-5. Check `specs/ideas/`: is there prior analysis for this area?
+5. Check `specs/ideas/**` (all bucket subfolders): is there prior analysis for this area?
 6. Identify affected tests from `aiwiki/owners.md` test mapping.
 7. If adding shared logic, update `aiwiki/owners.md` so the next session finds it.
 8. Prefer refactoring for depth over expedient shortcuts that create shallow modules.

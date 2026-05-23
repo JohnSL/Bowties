@@ -177,7 +177,7 @@ Phase 4 is complete when:
 
 Add bash git hooks as a safety net for drift enforcement. This phase is deferred until Phase 4 pilot proves the KB is working and the high-risk path rules are tuned.
 
-Full design detail preserved in [specs/ideas/git-hooks-enforcement.md](../ideas/git-hooks-enforcement.md).
+Full design detail preserved in [specs/ideas/process/git-hooks-enforcement.md](../ideas/process/git-hooks-enforcement.md).
 
 ### T1-5A. Create `.githooks/pre-commit` (bash, non-blocking)
 

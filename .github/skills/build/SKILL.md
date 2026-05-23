@@ -22,7 +22,7 @@ Before implementing each slice, verify:
 1. Check `aiwiki/owners.md` — does shared logic already exist for what you're building?
 2. Check `product/architecture/code-placement-and-ownership.md` — is each file in the right layer?
 3. Check `product/architecture/adr/` — does the approach conflict with past decisions?
-4. Check `specs/ideas/` for prior work on this area
+4. Check `specs/ideas/**` (all bucket subfolders: `features/`, `refactors/`, `docs/`, `process/`) for prior work on this area
 
 ## Per-Slice Workflow
 

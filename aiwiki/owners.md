@@ -230,9 +230,10 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `events/router.rs` | Event broadcast: transport frames → Tauri events | inline `#[cfg(test)]` |
 | `traffic/mod.rs` | Message decoding for traffic monitor display | — |
 | `menu.rs` | Desktop app menu | — |
-| `layout/mod.rs` | Layout persistence orchestration | — |
+| `layout/mod.rs` | **Deep module** (ADR-0005). Sole owner of the layout companion-directory file structure. Public intent-shaped API: `save_capture`, `read_capture`, `read_node_snapshot`, `update_offline_changes`, `update_node_snapshots`, `resolve_cdi_xml_for_snapshot`. Code outside `layout/` must use this API — never compute companion-dir paths, node-file names, or write YAML directly. | inline `#[cfg(test)]` |
 | `layout/types.rs` | YAML data structures (BowtieMetadata, RoleClassification, LayoutEditDelta) + `apply_layout_deltas` | `layout::types::tests` |
-| `layout/io.rs` | File I/O with schema versioning, atomic writes | inline `#[cfg(test)]` |
+| `layout/io.rs` | Internal: companion-dir / node-file path derivation, full capture read/write, CDI XML resolution. Builds `journal::SavePlan` for every mutation and calls `journal::execute`; `read_capture` runs `journal::recover_if_needed` first and surfaces `recovery_occurred`. All companion-dir helpers are `pub(crate)`; only the single-file `load_file`/`save_file` and `cdi_cache_path` remain `pub`. | inline `#[cfg(test)]` |
+| `layout/journal.rs` | **Write-ahead journal (ADR-0006).** Sole mutation primitive for the companion directory: in-place file writes guarded by `.save-in-progress` marker + `.restore/` backup mirror. `execute(SavePlan)` and `recover_if_needed(base_file)` are `pub(crate)` and called only from `layout/io.rs` and `layout/mod.rs`. Test seams `FAIL_AFTER_BACKUP` / `FAIL_MID_WRITES` are thread-local `#[cfg(test)]` `Cell<bool>`s. | inline `#[cfg(test)]` (8 tests) |
 | `layout/manifest.rs` | Layout manifest tracking | inline `#[cfg(test)]` |
 | `layout/node_snapshot.rs` | Node config snapshot for offline use | inline `#[cfg(test)]` |
 | `layout/offline_changes.rs` | Offline change staging (config diffs) | inline `#[cfg(test)]` |

@@ -2947,22 +2947,14 @@ pub async fn set_modified_value(
             // does during layout hydration.
             if let Some(context) = state.active_layout.read().await.as_ref() {
                 let base_file = std::path::Path::new(&context.root_path);
-                if let Ok(companion_dir) =
-                    crate::layout::io::derive_companion_dir_path(base_file)
+                let canonical = node_id.replace('.', "").to_uppercase();
+                if let Ok(snapshot) =
+                    crate::layout::read_node_snapshot(base_file, &canonical)
                 {
-                    let nodes_dir = companion_dir.join("nodes");
-                    let canonical = node_id.replace('.', "").to_uppercase();
-                    let snap_path =
-                        crate::layout::io::derive_node_file_path(&nodes_dir, &canonical);
-                    if let Ok(snapshot) = crate::layout::io::read_yaml_file::<
-                        crate::layout::node_snapshot::NodeSnapshot,
-                    >(&snap_path)
-                    {
-                        crate::node_tree::merge_snapshot_path_values(
-                            &mut t,
-                            &snapshot.config,
-                        );
-                    }
+                    crate::node_tree::merge_snapshot_path_values(
+                        &mut t,
+                        &snapshot.config,
+                    );
                 }
             }
             let _ = proxy.set_config_tree(t.clone()).await;
@@ -3211,55 +3203,49 @@ pub async fn write_modified_values(
     if !written_leaves.is_empty() {
         if let Some(context) = state.active_layout.read().await.as_ref() {
             let base_file = std::path::Path::new(&context.root_path);
-            if let Ok(companion_dir) = crate::layout::io::derive_companion_dir_path(base_file) {
-                let nodes_dir = companion_dir.join("nodes");
-                if nodes_dir.exists() {
-                    let mut snapshot_cache: std::collections::HashMap<
-                        String,
-                        crate::layout::node_snapshot::NodeSnapshot,
-                    > = std::collections::HashMap::new();
+            let mut snapshot_cache: std::collections::HashMap<
+                String,
+                crate::layout::node_snapshot::NodeSnapshot,
+            > = std::collections::HashMap::new();
 
-                    for (node_id, space, address, value_str) in &written_leaves {
-                        let canonical = node_id.replace('.', "").to_uppercase();
-                        let snapshot = snapshot_cache.entry(canonical.clone()).or_insert_with(|| {
-                            let path = crate::layout::io::derive_node_file_path(&nodes_dir, &canonical);
-                            crate::layout::io::read_yaml_file(&path).unwrap_or_else(|_| {
-                                // Node not in layout — use a dummy that won't be saved
-                                crate::layout::node_snapshot::NodeSnapshot {
-                                    node_id: lcc_rs::NodeID::new([0; 6]),
-                                    captured_at: String::new(),
-                                    capture_status: crate::layout::node_snapshot::CaptureStatus::Complete,
-                                    missing: Vec::new(),
-                                    snip: crate::layout::node_snapshot::SnipSnapshot::default(),
-                                    cdi_ref: crate::layout::node_snapshot::CdiReference {
-                                        cache_key: String::new(),
-                                        version: String::new(),
-                                        fingerprint: String::new(),
-                                    },
-                                    config: std::collections::BTreeMap::new(),
-                                    producer_identified_events: Vec::new(),
-                                }
-                            })
-                        });
-
-                        let offset_hex = format!("0x{:08X}", address);
-                        crate::layout::node_snapshot::update_snapshot_baseline(
-                            &mut snapshot.config,
-                            *space,
-                            &offset_hex,
-                            value_str,
-                        );
-                    }
-
-                    for (canonical, snapshot) in &snapshot_cache {
-                        if snapshot.node_id == lcc_rs::NodeID::new([0; 6]) {
-                            continue; // Skip nodes not in layout
+            for (node_id, space, address, value_str) in &written_leaves {
+                let canonical = node_id.replace('.', "").to_uppercase();
+                let snapshot = snapshot_cache.entry(canonical.clone()).or_insert_with(|| {
+                    crate::layout::read_node_snapshot(base_file, &canonical).unwrap_or_else(|_| {
+                        // Node not in layout — use a dummy that won't be saved
+                        crate::layout::node_snapshot::NodeSnapshot {
+                            node_id: lcc_rs::NodeID::new([0; 6]),
+                            captured_at: String::new(),
+                            capture_status: crate::layout::node_snapshot::CaptureStatus::Complete,
+                            missing: Vec::new(),
+                            snip: crate::layout::node_snapshot::SnipSnapshot::default(),
+                            cdi_ref: crate::layout::node_snapshot::CdiReference {
+                                cache_key: String::new(),
+                                version: String::new(),
+                                fingerprint: String::new(),
+                            },
+                            config: std::collections::BTreeMap::new(),
+                            producer_identified_events: Vec::new(),
                         }
-                        let path = crate::layout::io::derive_node_file_path(&nodes_dir, canonical);
-                        if let Err(e) = crate::layout::io::write_yaml_file(&path, snapshot) {
-                            eprintln!("[write] Failed to update snapshot for {}: {}", canonical, e);
-                        }
-                    }
+                    })
+                });
+
+                let offset_hex = format!("0x{:08X}", address);
+                crate::layout::node_snapshot::update_snapshot_baseline(
+                    &mut snapshot.config,
+                    *space,
+                    &offset_hex,
+                    value_str,
+                );
+            }
+
+            let to_write: Vec<crate::layout::node_snapshot::NodeSnapshot> = snapshot_cache
+                .into_values()
+                .filter(|s| s.node_id != lcc_rs::NodeID::new([0; 6]))
+                .collect();
+            if !to_write.is_empty() {
+                if let Err(e) = crate::layout::update_node_snapshots(base_file, &to_write) {
+                    eprintln!("[write] Failed to update snapshots: {}", e);
                 }
             }
         }

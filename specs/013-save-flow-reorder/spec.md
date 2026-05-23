@@ -22,6 +22,7 @@ This causes multiple interrelated defects:
 4. **`isOfflineMode` flips dynamically.** Connecting while a layout is open changes where edits go (offline cache → bus sync) without any user action — a source of confusion and edge-case bugs.
 5. **Metadata edits without a layout.** Creating bowties, classifying roles, or selecting daughter boards while connected without a layout forces implicit layout creation at save time, surprising the user.
 6. **Event roles lost on offline reopen.** Only user-override role classifications are persisted. Roles resolved via protocol exchange are lost when reopening offline.
+7. **Saves fail in cloud-synced folders.** The atomic save renames a `.layout.d.staging` directory into place. On Windows under Dropbox, OneDrive, or antivirus, the directory rename fails with a sharing-violation error because the sync agent has opened files inside the staging directory between write-close and rename. The user is left with a base `.layout` file but no companion directory, and the layout cannot be reopened. The root cause is twofold: the persistence layer relies on a directory rename (the single most contention-prone Windows filesystem operation), and the `layout/` module is not deep enough — command modules construct companion-dir paths and write into them directly, so any journal added inside `layout/` would be bypassed.
 
 These are symptoms of a structural problem: the app allows a "connected without layout" state that has no durable home for metadata, and the connection/layout independence creates combinatorial transition complexity.
 
@@ -110,6 +111,8 @@ When the user clicks Save, the layout (base file and companion directory) is alw
 4. **Given** configuration writes to the bus partially fail, **When** the save process completes, **Then** succeeded changes are cleared, failed changes remain as offline changes in the layout, and the user can retry.
 5. **Given** a user has only metadata edits (bowtie names, roles, connector selections) and no config changes, **When** they click Save, **Then** only the layout is saved — no bus writes occur.
 6. **Given** a save completes with all bus writes successful, **When** the layout is saved again (reconciliation), **Then** the layout contains zero offline changes for the values that were written.
+7. **Given** a layout lives in a folder actively synced by Dropbox or OneDrive, or scanned by antivirus, **When** the user saves, **Then** the save succeeds without sharing-violation errors and the layout reopens cleanly with all data intact.
+8. **Given** a previous save was interrupted (process kill, power loss, or unrecoverable sharing violation) leaving the layout in a partially-written state, **When** the user next opens the layout, **Then** the previous coherent state is restored automatically and the user sees a one-line notice that recovery occurred.
 
 ---
 
