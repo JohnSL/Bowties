@@ -10,8 +10,7 @@ Bowties is a desktop application for Windows, macOS, and Linux. Pre-built instal
 | Linux | x86-64 | Ubuntu 22.04 | — | `.deb`, `.AppImage` |
 | Linux | ARM64 | Ubuntu 22.04 | — | `.deb` |
 | Raspberry Pi OS | ARM64 | Pi OS 12 (Bookworm) | Pi 3, 3A+, 3B+, 4, 400, 5, Zero 2 W, CM3/4/5 | `.deb` |
-| macOS | Apple Silicon | 11 (Big Sur) | — | `.dmg` |
-| macOS | Intel x86-64 | 11 (Big Sur) | — | `.dmg` |
+| macOS | Universal (Apple Silicon + Intel) | 11 (Big Sur) | — | `.dmg` |
 
 > **Note:** Raspberry Pi support has been tested on a Pi 5 running Raspberry Pi OS 12 (Bookworm) only. Other boards and OS versions listed above are expected to work but have not been verified. Requires a 64-bit OS; the original Pi, Pi 2, and Pi Zero (32-bit only) are not supported.
 
@@ -74,9 +73,7 @@ After these steps the installer runs normally.
 
 ## macOS
 
-1. Download the latest `.dmg` for your Mac from [Releases](https://github.com/JohnSL/Bowties/releases):
-   - **Apple Silicon** (M1/M2/M3/M4): `Bowties_x.y.z_aarch64.dmg`
-   - **Intel**: `Bowties_x.y.z_x64.dmg`
+1. Download the latest `Bowties_x.y.z_universal.dmg` from [Releases](https://github.com/JohnSL/Bowties/releases). This is a universal binary that runs natively on both Apple Silicon and Intel Macs.
 2. Open the `.dmg` and drag **Bowties** into your **Applications** folder.
 3. On first launch, macOS will block the app because it is not code-signed — see [macOS Gatekeeper warning](#macos-gatekeeper-warning) below.
 
