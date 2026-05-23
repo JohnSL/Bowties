@@ -21,7 +21,7 @@ Bowties now supports connector daughterboard metadata as part of the shipped str
 ## Prerequisites
 
 - VS Code with GitHub Copilot (or access to any capable LLM)
-- `pdf-utilities` MCP extension installed (for targeted PDF text extraction via `read_pdf` with `pageRange`)
+- [`pdf-utilities`](https://marketplace.visualstudio.com/items?itemName=gleidsonfersanp.pdf-utilities) MCP extension installed (for targeted PDF text extraction via `read_pdf` with `pageRange`)
 - The node's PDF manual file (text-based PDF, not scanned images)
 - The node's CDI XML file
 

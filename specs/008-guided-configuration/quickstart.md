@@ -9,7 +9,7 @@ This guide walks through extracting profile content from a node's PDF manual and
 ## Prerequisites
 
 - VS Code with Copilot Chat (or access to any capable LLM)
-- `pdf-utilities` MCP extension installed (for PDF text extraction)
+- [`pdf-utilities`](https://marketplace.visualstudio.com/items?itemName=gleidsonfersanp.pdf-utilities) MCP extension installed (for PDF text extraction)
 - The node's PDF manual file
 - The node's CDI XML file (e.g., `specs/archive/003-miller-columns/Tower-LCC.xml`)
 
