@@ -1,0 +1,33 @@
+name: Idea
+description: Capture a deferred or not-yet-scoped idea for future consideration.
+title: "[Idea] "
+labels: ["kind/idea"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One paragraph describing the idea and why it matters.
+    validations:
+      required: true
+  - type: input
+    id: areas
+    attributes:
+      label: Areas
+      description: Comma-separated area tags. Also add the matching `area/*` labels after creation.
+      placeholder: layout, orchestration, profiles
+  - type: input
+    id: origin
+    attributes:
+      label: Origin
+      description: Which conversation, spec, or PR produced this idea?
+  - type: textarea
+    id: prior-work
+    attributes:
+      label: Prior Work
+      description: Options considered, decisions, constraints, and reusable analysis.
+  - type: textarea
+    id: open-questions
+    attributes:
+      label: Open Questions
+      description: Things to resolve before this becomes a spec.
