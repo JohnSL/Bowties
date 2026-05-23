@@ -9,7 +9,8 @@ These instructions are the always-on implementation contract for Bowties.
 - Treat `aiwiki/` as the AI-audience code-level navigation layer (WHERE things live, HOW they connect). It supplements `product/` (WHAT the product does, WHY).
 - Treat `docs/user/**` as end-user documentation and `docs/project/**` as developer-process documentation, not as the canonical source for current architecture.
 - Treat `specs/**` as feature-scoped planning and build artifacts. Treat `specs/archive/**` as historical only.
-- Treat `specs/ideas/` as structured prior-work cache, organized into bucket subfolders (`features/`, `refactors/`, `docs/`, `process/`) with area tags. Check for relevant prior analysis before starting new work.
+- Treat open GitHub issues labeled `kind/idea` as the prior-work cache for deferred and not-yet-scoped ideas. Search them by `area/*` labels before starting new work (`gh issue list --repo JohnSL/Bowties --label kind/idea --state open` or the GitHub MCP tools). Closed `kind/idea` issues are historical (adopted into a spec or rejected).
+- Any residual files under `specs/ideas/**` are legacy pending migration to issues — read them if directly relevant, but new ideas go to issues, not files.
 - If older design or technical notes conflict with current code, active non-archived specs, or the durable product docs, the durable product docs and current code win.
 - Precedence: `product/` + current code > `aiwiki/` > `specs/` > older docs.
 
@@ -73,7 +74,7 @@ Read-order for orientation on an unfamiliar area:
 4. `product/architecture/code-placement-and-ownership.md` — placement rules for new logic.
 5. `product/glossary.md` — canonical terminology and avoid-lists.
 6. `product/architecture/adr/` — past architecture decisions and rejected approaches.
-7. `specs/ideas/**` — prior analysis and deferred work, bucketed into `features/`, `refactors/`, `docs/`, `process/` and tagged by area.
+7. Open GitHub issues labeled `kind/idea` (filter by `area/*`) — prior analysis and deferred work. Legacy: any residual `specs/ideas/**` files.
 
 Enrich `aiwiki/` as you work: add modules, conventions, flows, or architecture observations you discover that are not yet documented. The knowledge base grows incrementally during feature work, not in batch passes.
 
@@ -85,7 +86,7 @@ Before implementing a change, verify:
 2. Check shared conventions in `aiwiki/owners.md`: is there already a pattern for this?
 3. Check `product/architecture/code-placement-and-ownership.md`: is this the right layer?
 4. Check `product/architecture/adr/`: has this approach been evaluated or rejected before?
-5. Check `specs/ideas/**` (all bucket subfolders): is there prior analysis for this area?
+5. Check open GitHub issues labeled `kind/idea` filtered by the relevant `area/*` labels: is there prior analysis for this area? (Also glance at any residual `specs/ideas/**` files until migration completes.)
 6. Identify affected tests from `aiwiki/owners.md` test mapping.
 7. If adding shared logic, update `aiwiki/owners.md` so the next session finds it.
 8. Prefer refactoring for depth over expedient shortcuts that create shallow modules.
@@ -99,3 +100,13 @@ After completing a change:
 - Note architecture risks or coupling observations in `aiwiki/architecture-health.md`.
 - Write an ADR in `product/architecture/adr/` when an architecture decision was made or an approach was rejected for load-bearing reasons.
 - If you discover a module, convention, or flow not listed in `aiwiki/`, add it before completing the change.
+
+## Issue Capture Protocol
+
+Deferred ideas, follow-up work, and out-of-scope improvements are captured as GitHub issues, not as files in the repo.
+
+- **Never create a GitHub issue without explicit user confirmation.** When you identify something worth capturing, **propose** the issue: state the title, the labels you would apply (`kind/*` plus relevant `area/*`), and a draft body. Then stop and wait for the user to say "create it" (or equivalent).
+- The same rule applies to issue edits: propose label changes, status changes, comments, and closures; do not perform them unprompted.
+- Use the GitHub MCP tools or `gh issue create` once the user approves. The repo is `JohnSL/Bowties`.
+- Follow the label taxonomy: one `kind/*`, one or more `area/*`, and a `status/*` only when status has actually been triaged (do not pre-apply `status/deferred` to fresh issues).
+- Bugs use the `bug` label (not `kind/bug`). Use the bug issue template fields when proposing.

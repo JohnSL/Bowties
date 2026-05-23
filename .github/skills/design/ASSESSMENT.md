@@ -130,7 +130,7 @@ Append this section to `specs/<feature>/plan.md` after the user has reviewed fin
 
 ### Deferred Improvements
 
-{References to specs/ideas/ entries created, if any.}
+{References to GitHub issues proposed for deferred improvements (only those the user approved and that were created).}
 
 ### Architecture Decisions
 

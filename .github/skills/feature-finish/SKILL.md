@@ -49,8 +49,8 @@ Verify no stale references:
 ### 6. Capture deferrals as ideas
 
 Review conversations, TODOs-in-code, and spec notes for work that was deferred during implementation:
-- Create `specs/ideas/<bucket>/<slug>.md` files for any deferred items using the standard format (title, areas, origin, status, date, prior work). Choose the bucket per `specs/ideas/README.md`: `features/` for user-facing capability, `refactors/` for code/architecture improvements, `docs/` for documentation work, `process/` for dev workflow/tooling
-- Do not create ideas for trivial cleanup — only for items with enough substance to save future re-discovery
+- For each deferred item, **propose** a GitHub issue (title, `kind/*` plus relevant `area/*` labels, body using the idea template fields: Summary, Areas, Origin, Prior Work, Open Questions). Present the proposals to the user and **wait for explicit confirmation** before creating any issue. Do not pre-apply a `status/*` label.
+- Do not create issues for trivial cleanup — only for items with enough substance to save future re-discovery.
 
 ### 7. Backlog check
 

@@ -8,7 +8,7 @@ agent: speckit.implement
 
 Output the following analysis visibly before proceeding to task execution:
 
-1. **Prior work**: Search `specs/ideas/**` (all bucket subfolders) for idea files with area tags matching this feature. Surface any relevant prior analysis or deferred decisions that affect scope.
+1. **Prior work**: Search open GitHub issues labeled `kind/idea` filtered by the feature's `area/*` labels (`gh issue list --repo JohnSL/Bowties --label kind/idea --state open`) for prior analysis or deferred decisions that affect scope. Also glance at any residual `specs/ideas/**` files until migration completes.
 2. **Existing logic check**: Read `aiwiki/owners.md` to verify whether logic needed for this feature already exists. Identify shared conventions, helpers, or modules that should be reused instead of reimplemented.
 3. **Placement verification**: For each new module or significant logic change, verify correct layer placement per `product/architecture/code-placement-and-ownership.md`.
 4. **ADR check**: Scan `product/architecture/adr/` for decisions that constrain the implementation approach.
