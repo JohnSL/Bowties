@@ -6,7 +6,7 @@ Bowties transforms complex LCC (Layout Command Control) event configuration into
 
 ## Getting started
 
-1. **[Download and install](docs/user/installing.md)** — pre-built installers for Windows and Linux.
+1. **[Download and install](docs/user/installing.md)** — pre-built installers for Windows, macOS, and Linux.
 2. **[Connect and explore](docs/user/using.md)** — connect to your LCC network, discover nodes, view and edit configuration, and explore the Bowties event map.
 
 ![Bowties view showing two buttons wired to a turnout](docs/images/bowties-view.png)

@@ -21,6 +21,10 @@ jobs:
           - os: ubuntu-22.04
             args: --bundles deb --target aarch64-unknown-linux-gnu
             cross_target: aarch64-unknown-linux-gnu
+          - os: macos-latest
+            args: --bundles dmg
+          - os: macos-13
+            args: --bundles dmg
 
     runs-on: ${{ matrix.os }}
 
