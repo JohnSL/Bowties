@@ -16,6 +16,11 @@
   export let hasPendingEdits: boolean = false;
   /** Whether this node has saved offline changes still pending apply to device */
   export let hasPendingApply: boolean = false;
+  /**
+   * S8: this node is visible to the frontend but has NOT yet been persisted
+   * into the saved layout roster. Saving the layout will promote it.
+   */
+  export let isUnsavedNew: boolean = false;
   /** Whether this node is selected (node-level selection, no segment) */
   export let isSelected: boolean = false;
 
@@ -70,6 +75,14 @@
       title="Saved in layout, pending apply to node"
       aria-label="Saved in layout, pending apply to node"
     ></span>
+  {/if}
+
+  {#if isUnsavedNew}
+    <span
+      class="unsaved-new-badge"
+      title="Discovered node — not yet in saved layout. Save to add."
+      aria-label="Unsaved new node"
+    >new</span>
   {/if}
 
   {#if isLoading}
@@ -226,5 +239,19 @@
     background-color: #0f766e;
     border: 1.5px solid #fff;
     box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.35);
+  }
+
+  .unsaved-new-badge {
+    flex-shrink: 0;
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background-color: #d97706;                     /* amber — promotion-pending */
+    color: #fff;
+    line-height: 1.3;
   }
 </style>

@@ -17,6 +17,12 @@ export interface SaveLayoutResult {
   warnings: string[];
   /** The persisted layout file data (ADR-0002: backend returns authoritative copy). */
   layout: LayoutFile;
+  /**
+   * Canonical (uppercase, no-dots) node IDs of every snapshot written to
+   * the companion `nodes/` directory after this save (S8). Frontend uses
+   * this to distinguish saved nodes from unsaved discovered nodes.
+   */
+  persistedNodeIds: string[];
 }
 
 export interface OpenLayoutResult {
@@ -102,21 +108,16 @@ export interface SaveWithBusWriteResult {
   warnings: string[];
   /** The persisted layout file data (ADR-0002: backend returns authoritative copy). */
   layout: LayoutFile;
+  /** Canonical node IDs persisted on disk after this save (S8). */
+  persistedNodeIds: string[];
 }
 
 export async function captureLayoutSnapshot(includeProducerEvents = true): Promise<CaptureSummary> {
   return invoke<CaptureSummary>('capture_layout_snapshot', { includeProducerEvents });
 }
 
+/** Persist the layout to its companion directory (writes layout file + node snapshots). */
 export async function saveLayoutDirectory(
-  path: string,
-  overwrite = true,
-  deltas: LayoutEditDelta[] = [],
-): Promise<SaveLayoutResult> {
-  return invoke<SaveLayoutResult>('save_layout_directory', { path, overwrite, deltas });
-}
-
-export async function saveLayoutFile(
   path: string,
   overwrite = true,
   deltas: LayoutEditDelta[] = [],
@@ -133,11 +134,8 @@ export async function saveLayoutWithBusWrites(
   return invoke<SaveWithBusWriteResult>('save_layout_with_bus_writes', { path, overwrite, deltas });
 }
 
+/** Open a layout from its `.layout` manifest path. */
 export async function openLayoutDirectory(path: string): Promise<OpenLayoutResult> {
-  return invoke<OpenLayoutResult>('open_layout_directory', { path });
-}
-
-export async function openLayoutFile(path: string): Promise<OpenLayoutResult> {
   return invoke<OpenLayoutResult>('open_layout_directory', { path });
 }
 
@@ -151,4 +149,41 @@ export async function createNewLayoutCapture(): Promise<NewLayoutResult> {
 
 export async function buildOfflineNodeTree(nodeId: string): Promise<NodeConfigTree> {
   return invoke<NodeConfigTree>('build_offline_node_tree', { nodeId });
+}
+
+// ── Per-layout connection registry (Spec 013 / S4) ─────────────────────────
+
+/** Adapter / transport variant matching the Rust `AdapterType` enum. */
+export type LayoutAdapterType = 'tcp' | 'gridConnectSerial' | 'slcanSerial';
+
+/** Hardware flow control mode matching the Rust `FlowControl` enum. */
+export type LayoutFlowControl = 'none' | 'rtsCts';
+
+/**
+ * A saved connection entry persisted inside a layout manifest's
+ * `connections` field. Mirrors the Rust `ConnectionConfig` type
+ * (camelCase via serde).
+ */
+export interface LayoutConnectionConfig {
+  id: string;
+  name: string;
+  adapterType: LayoutAdapterType;
+  host?: string | null;
+  port?: number | null;
+  serialPort?: string | null;
+  baudRate?: number | null;
+  flowControl?: LayoutFlowControl;
+}
+
+/** Read the saved connections list from a layout's manifest file. */
+export async function getLayoutConnections(path: string): Promise<LayoutConnectionConfig[]> {
+  return invoke<LayoutConnectionConfig[]>('get_layout_connections', { path });
+}
+
+/** Replace the saved connections list on a layout's manifest file. */
+export async function saveLayoutConnections(
+  path: string,
+  connections: LayoutConnectionConfig[],
+): Promise<void> {
+  await invoke('save_layout_connections', { path, connections });
 }

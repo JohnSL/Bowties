@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::types::ConnectionConfig;
+
 pub const LAYOUT_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +33,11 @@ pub struct LayoutManifest {
     pub match_thresholds: MatchThresholds,
     #[serde(default)]
     pub companion_dir: String,
+    /// Saved connection profiles attached to this layout (Spec 013 / S4).
+    /// Serde-defaulted so older layout files without this field open
+    /// cleanly with an empty list — no schema bump required.
+    #[serde(default)]
+    pub connections: Vec<ConnectionConfig>,
 }
 
 impl LayoutManifest {
@@ -48,6 +55,7 @@ impl LayoutManifest {
             active_mode: "offline".to_string(),
             match_thresholds: MatchThresholds::default(),
             companion_dir,
+            connections: Vec::new(),
         }
     }
 

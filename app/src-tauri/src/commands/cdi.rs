@@ -3105,7 +3105,19 @@ pub async fn write_modified_values(
     // Track successfully written leaves for layout snapshot updates
     let mut written_leaves: Vec<(String, u8, u32, String)> = Vec::new(); // (nodeId, space, address, value_string)
 
-    for (node_id, leaf_info) in &work {
+    // Spec 013 / S3: emit per-field bus-write progress so the SaveProgressDialog
+    // can show "Writing N of M: <field>…". Total is known up front.
+    let total_writes = work.len();
+
+    for (idx, (node_id, leaf_info)) in work.iter().enumerate() {
+        // Emit progress for this iteration (current is 1-based count of items in flight).
+        let _ = app_handle.emit("save-progress", serde_json::json!({
+            "phase": "writing-config",
+            "current": idx + 1,
+            "total": total_writes,
+            "label": leaf_info.name,
+        }));
+
         let parsed_nid = lcc_rs::NodeID::from_hex_string(node_id)
             .map_err(|e| format!("Invalid node ID: {}", e))?;
         let proxy = state.node_registry.get(&parsed_nid).await

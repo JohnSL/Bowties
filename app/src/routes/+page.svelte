@@ -11,8 +11,17 @@
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import { probeNodes as probeNodesApi, querySnip, queryPip, registerNode, refreshAllNodes } from '$lib/api/tauri';
   import { buildBowtieCatalog, clearRecentLayout, getRecentLayout } from '$lib/api/bowties';
-  import { closeLayout, saveLayoutFile, saveLayoutWithBusWrites, openLayoutFile, buildOfflineNodeTree } from '$lib/api/layout';
+  import { closeLayout, saveLayoutDirectory, saveLayoutWithBusWrites, openLayoutDirectory, buildOfflineNodeTree, createNewLayoutCapture } from '$lib/api/layout';
   import type { OfflineNodeSnapshot } from '$lib/api/layout';
+  import { getKnownLayouts, addKnownLayout, removeKnownLayout } from '$lib/api/startup';
+  import { knownLayoutsStore } from '$lib/stores/knownLayouts.svelte';
+  import {
+    loadKnownLayouts,
+    openLayoutFromRegistry,
+    createNewLayout,
+    removeKnownLayout as removeKnownLayoutOrchestrated,
+  } from '$lib/orchestration/startupOrchestrator';
+  import LayoutPicker from '$lib/components/LayoutPicker/LayoutPicker.svelte';
   import { toast } from '@zerodevx/svelte-toast';
   import { readAllConfigValues, cancelConfigReading, getCdiXml, downloadCdi } from '$lib/api/cdi';
   import type { ViewerStatus } from '$lib/types/cdi';
@@ -33,6 +42,8 @@
   import CdiDownloadDialog from '$lib/components/CdiDownloadDialog.svelte';
   import CdiRedownloadDialog from '$lib/components/CdiRedownloadDialog.svelte';
   import ErrorDialog from '$lib/components/ErrorDialog.svelte';
+  import SaveProgressDialog from '$lib/components/SaveProgressDialog.svelte';
+  import { saveProgressStore } from '$lib/stores/saveProgress.svelte';
   import MissingCaptureBadge from '$lib/components/Layout/MissingCaptureBadge.svelte';
   import { OFFLINE_LAYOUT_DEFAULT_FILENAME, offlineLayoutDialogFilter } from '$lib/constants/layoutFiles';
   import ConnectionManager from '$lib/ConnectionManager.svelte';
@@ -100,6 +111,7 @@
   import { saveLayoutOrchestrated, type SaveLayoutOrchestratedArgs } from '$lib/orchestration/saveLayoutOrchestrator';
   import { normalizeLayoutTitle } from '$lib/utils/layoutPath';
   import { formatNodeId, nodeIdStringToBytes } from '$lib/utils/nodeId';
+  import { computeDiscoveredOnlyNodeIds, computeUnsavedInMemoryNodeIds, canonicalizeNodeId } from '$lib/utils/nodeRoster';
 
   // Active tab state — 'config' (default) or 'bowties'
   let activeTab = $state<'config' | 'bowties'>('config');
@@ -134,7 +146,9 @@
   }
 
   function isMenuBusy(): boolean {
-    return probing || readingRemaining;
+    // S3: while a save is in progress the dialog is modal — no second save
+    // can be initiated and other menu actions are gated as well.
+    return probing || readingRemaining || saveProgressStore.isActive;
   }
 
   function canOpenLayoutAction(): boolean {
@@ -151,6 +165,9 @@
     const layoutDirty = layoutStore.isDirty;
     const metaDirty = bowtieMetadataStore.isDirty;
     const offlineActive = !!layoutStore.activeContext && layoutStore.hasLayoutFile;
+    // S8: `layoutStore.isDirty` now covers both LayoutFile-struct edits and
+    // fully-captured discovered nodes not yet in the saved roster, so the
+    // gate no longer needs an explicit discovered-node OR.
     const hasInMemoryEdits =
       configChangesStore.draftEntries().length > 0 ||
       bowtieMetadataStore.isDirty ||
@@ -160,7 +177,13 @@
   }
 
   function runOpenLayoutAction(): void {
-    promptUnsaved('Opening a new layout will discard unsaved changes. Continue?', () => openOfflineLayoutFromDialog(), 'Discard & Open');
+    // Clear the active layout to surface the layout picker, where the user
+    // chooses to open a known layout, browse for one, or create a new one.
+    // (Disabled in the menu when no layout is active — the picker is already
+    // visible in that case.)
+    promptUnsaved('Opening a new layout will discard unsaved changes. Continue?', () => {
+      void clearActiveLayout();
+    }, 'Discard & Open');
   }
 
   function runCloseLayoutAction(): void {
@@ -249,6 +272,56 @@
   // offline tree after disconnect so nodes are not lost from the UI (Bug 4).
   let currentLayoutSnapshots = $state<OfflineNodeSnapshot[]>([]);
 
+  /**
+   * S8: canonical IDs of discovered nodes that are NOT yet in the saved
+   * layout roster. Computed by comparing the currently visible nodes to
+   * `layoutStore.activeContext.layoutNodeIds`. Used to:
+   *   - render unsaved-new badges in the sidebar (no capture threshold —
+   *     the badge means "discovered, not yet in the layout file").
+   * Drops to `[]` automatically on disconnect/close once `nodes` is cleared
+   * and re-hydrated from saved snapshots.
+   */
+  const discoveredOnlyNodeIds = $derived(
+    computeDiscoveredOnlyNodeIds(
+      layoutStore.activeContext?.layoutNodeIds,
+      nodes.map((n) => formatNodeId(n.node_id)),
+    ),
+  );
+
+  /**
+   * S8: canonical IDs of discovered nodes that are fully captured
+   * (`nodeTreeStore.trees` has an entry AND the node is not in
+   * `partialCaptureNodes`) AND not yet in the saved roster. These are the
+   * nodes the next save will actually promote into the layout — they feed
+   * both the orchestrator's AddNode deltas and the centralised
+   * `layoutStore.isDirty` signal (so Save and the unsaved-changes guard
+   * see a single, uniform "in-memory changes not yet saved" indication).
+   */
+  const fullyCapturedNodeIds = $derived.by(() => {
+    const trees = nodeTreeStore.trees;
+    const out: string[] = [];
+    for (const key of trees.keys()) {
+      const canonical = canonicalizeNodeId(key);
+      if (!partialCaptureNodes.has(canonical)) out.push(canonical);
+    }
+    return out;
+  });
+
+  const unsavedInMemoryNodeIds = $derived(
+    computeUnsavedInMemoryNodeIds(
+      layoutStore.activeContext?.layoutNodeIds,
+      fullyCapturedNodeIds,
+    ),
+  );
+
+  // Push the unsaved-in-memory set into the layout store so `isDirty`
+  // (and therefore the Save button gate and the unsaved-changes guard)
+  // reflects the S8 capture threshold uniformly. The store dedupes
+  // equivalent pushes to avoid downstream churn.
+  $effect(() => {
+    layoutStore.setUnsavedInMemoryNodeIds(unsavedInMemoryNodeIds);
+  });
+
   // Sync-session lifecycle state is coordinated in a dedicated orchestrator.
   const syncSessionOrchestrator = new SyncSessionOrchestrator();
 
@@ -282,44 +355,122 @@
     });
   }
 
-  async function openOfflineLayoutFromDialog() {
-    const selected = await open({
-      title: 'Open Layout',
-      multiple: false,
-      filters: [offlineLayoutDialogFilter()],
-    });
-    if (!selected) return;
-
+  /**
+   * Open a layout from a known path through the same replay flow used by
+   * "Open Recent". After a successful open the layout is upserted into the
+   * known-layouts registry so its `lastOpened` timestamp is refreshed.
+   *
+   * Used by both the menu-driven "Open…" command and the startup picker.
+   *
+   * If a live bus connection is active, disconnect first — the connections
+   * defined on the outgoing layout are not necessarily valid for the incoming
+   * one (Spec 013 / S7: connections are per-layout).
+   */
+  async function runOpenLayoutByPath(path: string, name?: string): Promise<void> {
     try {
-      const result = await openOfflineLayoutWithReplay({
-        path: selected,
-        openLayout: openLayoutFile,
-        hydrateOfflineSnapshots,
-        resetSidebar: () => {
-          configSidebarStore.reset();
-        },
-        hydrateConnectorSelections: (layout) => {
-          connectorSelectionsStore.hydrateFromLayout(layout);
-        },
-        onOpened: () => {
-          showConnectionDialog = false;
+      if (connected) {
+        await disconnectBeforeLayoutSwitch();
+      }
+      await openLayoutFromRegistry({
+        path,
+        name,
+        openLayout: (p) => openOfflineLayoutWithReplay({
+          path: p,
+          openLayout: openLayoutDirectory,
+          hydrateOfflineSnapshots,
+          resetSidebar: () => {
+            configSidebarStore.reset();
+          },
+          hydrateConnectorSelections: (layout) => {
+            connectorSelectionsStore.hydrateFromLayout(layout);
+          },
+          onOpened: () => {
+            showConnectionDialog = false;
+          },
+        }),
+        api: { addKnownLayout },
+        store: knownLayoutsStore,
+        onOpened: (result) => {
+          partialCaptureNodes = new Set(result.partialNodes);
+          currentLayoutSnapshots = result.nodeSnapshots;
+          if (result.recoveryOccurred) {
+            toast.push('Previous save was interrupted and has been restored.', {
+              theme: { '--toastBackground': '#fff4ce', '--toastColor': '#4f3a04', '--toastBarBackground': '#835b00' },
+            });
+          }
         },
       });
-      partialCaptureNodes = new Set(result.partialNodes);
-      currentLayoutSnapshots = result.nodeSnapshots;
-      if (result.recoveryOccurred) {
-        toast.push('Previous save was interrupted and has been restored.', {
-          theme: { '--toastBackground': '#fff4ce', '--toastColor': '#4f3a04', '--toastBarBackground': '#835b00' },
-        });
-      }
     } catch (error) {
       failLayoutOpen();
       errorDialog = {
         title: 'Failed to Load Layout',
-        message: String(error ?? 'Unknown error')
+        message: String(error ?? 'Unknown error'),
       };
-    } finally {
     }
+  }
+
+  // ── Layout picker handlers (Spec 013 / S6) ──────────────────────────────
+
+  function handlePickerOpen(entry: { name: string; path: string }): void {
+    void runOpenLayoutByPath(entry.path, entry.name);
+  }
+
+  function handlePickerBrowse(path: string): void {
+    void runOpenLayoutByPath(path);
+  }
+
+  async function handlePickerCreate(args: { name: string; path: string }): Promise<void> {
+    try {
+      await createNewLayout({
+        name: args.name,
+        path: args.path,
+        api: { addKnownLayout },
+        lifecycle: {
+          createNewLayoutCapture,
+          saveLayoutDirectory: (p, overwrite, _deltas) =>
+            saveLayoutDirectory(p, overwrite, []),
+          openLayout: (p) => openOfflineLayoutWithReplay({
+            path: p,
+            openLayout: openLayoutDirectory,
+            hydrateOfflineSnapshots,
+            resetSidebar: () => {
+              configSidebarStore.reset();
+            },
+            hydrateConnectorSelections: (layout) => {
+              connectorSelectionsStore.hydrateFromLayout(layout);
+            },
+            onOpened: () => {
+              showConnectionDialog = false;
+            },
+          }),
+        },
+        store: knownLayoutsStore,
+        onOpened: (result) => {
+          partialCaptureNodes = new Set(result.partialNodes);
+          currentLayoutSnapshots = result.nodeSnapshots;
+        },
+      });
+    } catch (error) {
+      failLayoutOpen();
+      errorDialog = {
+        title: 'Failed to Create Layout',
+        message: String(error ?? 'Unknown error'),
+      };
+    }
+  }
+
+  async function handlePickerRemove(entry: { path: string }): Promise<void> {
+    await removeKnownLayoutOrchestrated({
+      path: entry.path,
+      api: { removeKnownLayout },
+      store: knownLayoutsStore,
+      onError: (err) => {
+        errorDialog = {
+          title: 'Failed to Remove Layout',
+          message: String(err ?? 'Unknown error'),
+        };
+      },
+    });
   }
 
   async function saveCurrentCaptureToFile(forceSaveAs = false): Promise<boolean> {
@@ -359,6 +510,11 @@
         clearPersistedDrafts: () => configChangesStore.clearAllDrafts(),
         path: targetPath,
         deltas,
+        // S8: send only fully-captured discovered nodes for promotion. The
+        // backend cannot save a usable snapshot for nodes whose CDI/config
+        // has not been read, so promoting them would leave the layout
+        // referencing an incomplete node.
+        discoveredOnlyNodeIds: unsavedInMemoryNodeIds,
       };
       const orchestratorArgs: SaveLayoutOrchestratedArgs = connected
         ? {
@@ -367,16 +523,28 @@
           }
         : {
             ...sharedOrchestratorArgs,
-            saveFile: (p, d) => saveLayoutFile(p, true, d),
+            saveFile: (p, d) => saveLayoutDirectory(p, true, d),
             rebuildCatalog: buildBowtieCatalog,
             setCatalog: (catalog) => bowtieCatalogStore.setCatalog(catalog),
           };
-      await saveLayoutOrchestrated(orchestratorArgs);
+      // S3: drive the save-progress modal. For the online path the backend
+      // emits `save-progress` events that overwrite the phase as they arrive;
+      // for the offline path this is the sole phase driver.
+      saveProgressStore.begin();
+      try {
+        await saveLayoutOrchestrated(orchestratorArgs);
+        saveProgressStore.apply({ phase: 'complete', failedCount: 0 });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        saveProgressStore.fail(`Save failed: ${msg}`);
+        throw err;
+      }
 
       return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      errorMessage = `Save failed: ${msg}`;
+      // The SaveProgressDialog (driven by `saveProgressStore.fail(msg)` above)
+      // owns the user-visible failure surface; no separate banner needed.
       console.error('[Page] saveCurrentCaptureToFile failed:', msg);
       throw e;
     }
@@ -481,11 +649,30 @@
   // because unreadCount excludes CDI-less nodes (e.g. JMRI), so the counts
   // would never match on a mixed network.
   let showConfigCta = $derived(
+    connected &&
     !layoutStore.hasLayoutFile &&
     !$layoutOpenInProgress &&
     nodes.length > 0 &&
     unreadCount > 0 &&
     $configReadNodesStore.size === 0 &&
+    !$configSidebarStore.selectedSegment &&
+    !$configSidebarStore.selectedNodeId
+  );
+
+  // S8-T16: empty-state "Read all" affordance when a layout IS loaded.
+  // Mirrors `showConfigCta` but for the post-layout-load case: surfaces the
+  // message + button whenever (a) the user has no node/segment selected and
+  // (b) at least one discovered node is not yet fully captured (i.e. not in
+  // `fullyCapturedNodeIds`). Clicking it invokes the same `readRemainingNodes`
+  // flow used by the toolbar "Read Remaining" button, promoting every
+  // not-yet-captured node across the capture threshold. The pane returns to
+  // its normal empty-state once everything is captured.
+  let showCaptureRemainingCta = $derived(
+    connected &&
+    layoutStore.hasLayoutFile &&
+    !$layoutOpenInProgress &&
+    nodes.length > 0 &&
+    unreadCount > 0 &&
     !$configSidebarStore.selectedSegment &&
     !$configSidebarStore.selectedNodeId
   );
@@ -555,6 +742,8 @@
 
   // Check connection status on mount
   onMount(() => {
+    // Spec 013 / S3: keep the save-progress modal in sync with backend phases.
+    void saveProgressStore.startListening();
     const unlistens: Array<() => void> = [];
     unlistens.push(
       installMenuShortcuts({
@@ -600,7 +789,7 @@
           getRecentLayout,
           restoreLayout: (path) => openOfflineLayoutWithReplay({
             path,
-            openLayout: openLayoutFile,
+            openLayout: openLayoutDirectory,
             hydrateOfflineSnapshots,
             resetSidebar: () => {
               configSidebarStore.reset();
@@ -726,7 +915,13 @@
       }));
 
       // Native menu event listeners — relay OS menu clicks to handler functions
-      unlistens.push(await listen('menu-disconnect',     () => disconnect()));
+      // S8-T17: disconnect must honor the unsaved-changes guard so the user is
+      // warned if there are in-memory edits or fully-captured discovered nodes
+      // not yet promoted to the layout file.
+      unlistens.push(await listen('menu-disconnect',     () => promptUnsaved(
+        'Disconnecting will discard unsaved changes. Continue?',
+        () => disconnect(),
+      )));
       unlistens.push(await listen('menu-refresh',        () => { if (connected) handleRefresh(); }));
       unlistens.push(await listen('menu-traffic',        () => { if (connected) openTrafficMonitor(); }));
       unlistens.push(await listen('menu-view-cdi',       () => {
@@ -774,6 +969,14 @@
       }));
     })().finally(() => {
       startupBootstrapPending = false;
+      // S6: load the known-layout registry so the picker (if shown) has
+      // entries to display. Runs in parallel with the rest of startup; the
+      // picker's render branch handles the "still loading" state on its own.
+      void loadKnownLayouts({
+        api: { getKnownLayouts },
+        store: knownLayoutsStore,
+        onError: (err) => console.warn('[startup] Failed to load known layouts:', err),
+      });
     });
 
     // Cleanup all listeners on component unmount
@@ -858,6 +1061,17 @@
       },
       preserveLiveState: () => {
         showConnectionDialog = false;
+        // S8: with a layout open but no persisted snapshots, there is
+        // nothing to "preserve" from the live session — captured-but-
+        // unsaved nodes would have either gone through the Save path
+        // (producing snapshots, taking the rehydrate branch instead) or
+        // through the Discard path (which clears their drafts and the
+        // unsaved-in-memory set). Drop live discovery state so the
+        // sidebar reflects the empty saved roster.
+        clearConfigReadStatus();
+        nodes = [];
+        updateNodeInfo([]);
+        nodeTreeStore.reset();
       },
       clearLiveState: () => {
         clearConfigReadStatus();
@@ -872,6 +1086,31 @@
         errorMessage = message;
       },
     });
+  }
+
+  /**
+   * Tear down the live bus session before switching to a different layout.
+   * Skips the offline-rehydration branch of the regular disconnect path
+   * because the layout (and its snapshots) are about to be replaced.
+   */
+  async function disconnectBeforeLayoutSwitch() {
+    errorMessage = "";
+    connectionLabel = "";
+    try {
+      await invoke('disconnect_lcc');
+    } catch (e) {
+      console.warn('Disconnect before layout switch failed:', e);
+    }
+    connected = false;
+    layoutStore.setConnected(false);
+    syncPanelStore.reset();
+    syncPanelVisible = false;
+    syncSessionOrchestrator.resetAutoTrigger();
+    clearConfigReadStatus();
+    nodes = [];
+    updateNodeInfo([]);
+    nodeTreeStore.reset();
+    showConnectionDialog = false;
   }
 
   /** Fire-and-forget probe — nodes appear via lcc-node-discovered events */
@@ -1264,9 +1503,13 @@
       offlineChangesStore.draftCount > 0 ||
       layoutStore.isDirty;
 
-    const canOpenLayout   = !busy;
+    // Open Layout and Save Layout As are meaningless while the layout picker
+    // is visible (no active layout). Gate them on an active context so the
+    // native menu items are disabled in that state.
+    const hasActiveLayout = !!layoutStore.activeContext;
+    const canOpenLayout   = !busy && hasActiveLayout;
     const canSaveLayout   = !busy && ((offlineActive && hasInMemoryEdits) || (layoutLoaded && (layoutDirty || metaDirty)));
-    const canSaveLayoutAs = !busy;
+    const canSaveLayoutAs = !busy && hasActiveLayout;
     const canSyncToBus    = conn && offlineActive && offlineChangesStore.pendingCount > 0;
 
     syncMenuState(conn, busy, canViewCdi, canRedownloadCdi, canOpenLayout, canCloseLayout, canSaveLayout, canSaveLayoutAs, canSyncToBus);
@@ -1339,10 +1582,33 @@
   $effect(() => {
     getCurrentWebviewWindow().setTitle(windowTitle).catch(() => {});
   });
+
+  // Spec 013 / S6: render the layout picker when no layout is active. The
+  // picker fully gates access to the toolbar and main content. It does not
+  // re-appear when the user disconnects from the bus — disconnecting keeps
+  // the active layout open in offline mode.
+  let pickerActive = $derived(
+    !startupBootstrapPending
+    && !$layoutOpenInProgress
+    && !layoutStore.activeContext
+  );
 </script>
 
 
 <div class="app-shell">
+
+  {#if pickerActive}
+    <!-- ═══ LAYOUT PICKER (Spec 013 / S6) ═══ -->
+    <LayoutPicker
+      entries={knownLayoutsStore.entries}
+      loaded={knownLayoutsStore.loaded}
+      busy={knownLayoutsStore.busy}
+      onOpen={handlePickerOpen}
+      onBrowse={handlePickerBrowse}
+      onCreate={handlePickerCreate}
+      onRemove={handlePickerRemove}
+    />
+  {:else}
 
   <!-- ═══ TOOLBAR (connected only) ═══ -->
   {#if connected || layoutStore.isOfflineMode}
@@ -1484,7 +1750,7 @@
       <BowtieCatalogPanel
         highlightedEventIdHex={bowtieFocusStore.highlightedEventIdHex}
         onReadConfig={readRemainingNodes}
-        hasUnreadNodes={unreadCount > 0}
+        hasUnreadNodes={connected && unreadCount > 0}
         readingConfig={readingRemaining}
         {unreadCount}
         nodesCount={nodes.length}
@@ -1497,7 +1763,7 @@
           on:readNodeConfig={(e) => readSingleNodeConfig(e.detail.nodeId)}
         />
         <div class="config-main">
-          {#if showConfigCta}
+          {#if showConfigCta || showCaptureRemainingCta}
             <div class="config-cta-panel">
               <h2 class="cta-title">Node Configuration</h2>
               <p class="cta-desc">
@@ -1546,6 +1812,7 @@
     {/if}
   </div>
 
+  {/if}
 </div>
 
 {#if showConnectionDialog}
@@ -1632,6 +1899,8 @@
     onClose={() => { errorDialog = null; }}
   />
 {/if}
+
+<SaveProgressDialog />
 
 <style>
   :global(html, body) {

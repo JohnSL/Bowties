@@ -30,6 +30,7 @@ function makeState(overrides: Partial<Parameters<typeof deriveSaveControlsViewSt
     revertedPersistedCount: 0,
     saveProgressState: 'idle',
     treeNodeIds: [],
+    unsavedInMemoryNodeCount: 0,
     ...overrides,
   });
 }

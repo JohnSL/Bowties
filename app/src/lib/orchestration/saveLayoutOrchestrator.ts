@@ -30,7 +30,7 @@ export interface SaveLayoutOrchestratedArgs {
   saveWithBusWrites?: (path: string, deltas: LayoutEditDelta[]) => Promise<SaveWithBusWriteResult>;
 
   // ── Offline path ─────────────────────────────────────────────────────────
-  /** Persist the layout file to disk (wraps saveLayoutFile IPC). */
+  /** Persist the layout file to disk (wraps saveLayoutDirectory IPC). */
   saveFile?: (path: string, deltas: LayoutEditDelta[]) => Promise<SaveLayoutResult>;
   /** Rebuild the bowtie catalog with layout metadata merged in. */
   rebuildCatalog?: (layout: LayoutFile | null) => Promise<import('$lib/api/tauri').BowtieCatalog>;
@@ -48,6 +48,16 @@ export interface SaveLayoutOrchestratedArgs {
   path: string;
   /** Edit deltas to send to the backend (ADR-0002). */
   deltas: LayoutEditDelta[];
+  /**
+   * Discovered node IDs (canonical, uppercase, no dots) that are visible to
+   * the frontend but not yet in the saved layout roster (S8). The orchestrator
+   * promotes them by appending `{ type: 'addNode', nodeIdHex }` deltas before
+   * sending the save to the backend.
+   *
+   * Optional for backwards compatibility — when omitted, no AddNode deltas
+   * are added and the save behaves exactly as before.
+   */
+  discoveredOnlyNodeIds?: string[];
   /** Optional: flush pending offline changes to backend before saving. */
   flushPending?: () => Promise<void>;
   /** Update the active layout context in the store after save. */
@@ -93,6 +103,7 @@ export async function saveLayoutOrchestrated({
   hydrateLayout,
   path,
   deltas,
+  discoveredOnlyNodeIds,
   flushPending,
   setActiveContext,
   updatePartialCaptureNodes,
@@ -104,16 +115,32 @@ export async function saveLayoutOrchestrated({
     await flushPending();
   }
 
+  // S8: promote any unsaved discovered nodes into the layout roster by
+  // appending AddNode deltas. The backend uses these (plus the previously
+  // persisted snapshots) to compute the set of nodes that are permitted to
+  // be written into the companion `nodes/` directory.
+  const effectiveDeltas: LayoutEditDelta[] = discoveredOnlyNodeIds && discoveredOnlyNodeIds.length > 0
+    ? [
+        ...deltas,
+        ...discoveredOnlyNodeIds.map((nodeIdHex) => ({
+          type: 'addNode' as const,
+          nodeIdHex,
+        })),
+      ]
+    : deltas;
+
   let warnings: string[];
   let busWriteResult: SaveWithBusWriteResult['busWrites'] | undefined;
   let persistedLayout: LayoutFile;
+  let persistedNodeIds: string[];
 
   if (saveWithBusWrites) {
     // ── Online path: backend owns all three phases + catalog rebuild ──────
-    const result = await saveWithBusWrites(path, deltas);
+    const result = await saveWithBusWrites(path, effectiveDeltas);
     warnings = result.warnings;
     busWriteResult = result.busWrites ?? undefined;
     persistedLayout = result.layout;
+    persistedNodeIds = result.persistedNodeIds;
   } else {
     // ── Offline path: explicit save → rebuild → set catalog ───────────────
     if (!saveFile || !rebuildCatalog || !setCatalog) {
@@ -121,9 +148,10 @@ export async function saveLayoutOrchestrated({
         'saveFile, rebuildCatalog, and setCatalog are required when saveWithBusWrites is not provided',
       );
     }
-    const result = await saveFile(path, deltas);
+    const result = await saveFile(path, effectiveDeltas);
     warnings = result.warnings;
     persistedLayout = result.layout;
+    persistedNodeIds = result.persistedNodeIds;
 
     const catalog = await rebuildCatalog(persistedLayout);
     setCatalog(catalog);
@@ -135,7 +163,9 @@ export async function saveLayoutOrchestrated({
   // 3. Update partial capture nodes
   updatePartialCaptureNodes(warnings);
 
-  // 4. Update the active layout context
+  // 4. Update the active layout context (S8: include the post-save node roster
+  //    so the dirty signal recomputes — any previously-unsaved discovered
+  //    nodes that were promoted in this save are now in `layoutNodeIds`).
   const layoutId = normalizeLayoutTitle(path) ?? 'layout';
   setActiveContext({
     layoutId,
@@ -143,6 +173,7 @@ export async function saveLayoutOrchestrated({
     mode: 'offline_file',
     capturedAt: new Date().toISOString(),
     pendingOfflineChangeCount: getPendingChangeCount(),
+    layoutNodeIds: persistedNodeIds,
   });
 
   // 5. Clear pending state

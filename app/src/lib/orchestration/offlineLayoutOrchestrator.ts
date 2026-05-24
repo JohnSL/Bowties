@@ -423,6 +423,12 @@ export async function openOfflineLayoutWithReplay({
       mode: 'offline_file',
       capturedAt: result.capturedAt,
       pendingOfflineChangeCount: result.pendingOfflineChangeCount,
+      // S8: seed the saved-node roster from the snapshots that just came
+      // from disk. Normalized to canonical (uppercase, no dots) here so
+      // the frontend has a single comparable form.
+      layoutNodeIds: result.nodeSnapshots.map(
+        (s) => s.nodeId.replace(/\./g, '').toUpperCase(),
+      ),
     } as const;
 
     layoutStore.hydrateOfflineLayout(result.layout, context);

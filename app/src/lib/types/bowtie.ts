@@ -64,7 +64,12 @@ export type LayoutEditDelta =
   | { type: 'removeTag'; eventIdHex: string; tag: string }
   | { type: 'classifyRole'; key: string; role: string }
   | { type: 'setConnectorSelection'; nodeId: string; selection: LayoutNodeHardwareSelectionSet }
-  | { type: 'adoptEventId'; oldEventIdHex: string; newEventIdHex: string };
+  | { type: 'adoptEventId'; oldEventIdHex: string; newEventIdHex: string }
+  /**
+   * Promote a discovered node into the layout's saved node roster (S8).
+   * `nodeIdHex` must be canonical (uppercase, no dots), e.g. `020157000001`.
+   */
+  | { type: 'addNode'; nodeIdHex: string };
 
 // ── Bowtie State ──────────────────────────────────────────────────────────────
 

@@ -125,6 +125,59 @@ describe('connector selection metadata', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// S8: isDirty includes unsaved-in-memory discovered nodes
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('isDirty + setUnsavedInMemoryNodeIds (S8)', () => {
+  it('is true when there are unsaved in-memory node IDs, even with a clean LayoutFile', () => {
+    layoutStore.newLayout();
+    expect(layoutStore.isDirty).toBe(false);
+
+    layoutStore.setUnsavedInMemoryNodeIds(['020157000099']);
+    expect(layoutStore.isDirty).toBe(true);
+    expect(layoutStore.unsavedInMemoryNodeIds).toEqual(['020157000099']);
+  });
+
+  it('returns to clean when the unsaved-in-memory set is emptied', () => {
+    layoutStore.newLayout();
+    layoutStore.setUnsavedInMemoryNodeIds(['020157000099']);
+    expect(layoutStore.isDirty).toBe(true);
+
+    layoutStore.setUnsavedInMemoryNodeIds([]);
+    expect(layoutStore.isDirty).toBe(false);
+  });
+
+  it('markClean clears both the metadata-dirty flag and the unsaved-in-memory set', () => {
+    layoutStore.newLayout();
+    layoutStore.upsertConnectorSelections('05.02.01.02.03.00', {
+      carrierKey: 'rr-cirkits::tower-lcc',
+      slotSelections: {},
+      updatedAt: '2026-05-02T12:00:00Z',
+    });
+    layoutStore.setUnsavedInMemoryNodeIds(['020157000099']);
+    expect(layoutStore.isDirty).toBe(true);
+
+    layoutStore.markClean();
+    expect(layoutStore.isDirty).toBe(false);
+    expect(layoutStore.unsavedInMemoryNodeIds).toEqual([]);
+  });
+
+  it('setActiveContext resets the unsaved-in-memory set (open/close/switch is the start-over moment)', () => {
+    layoutStore.newLayout();
+    layoutStore.setUnsavedInMemoryNodeIds(['020157000099']);
+    expect(layoutStore.unsavedInMemoryNodeIds).toEqual(['020157000099']);
+
+    layoutStore.setActiveContext({
+      layoutId: 'next',
+      rootPath: '/tmp/next.layout',
+      mode: 'offline_file',
+      pendingOfflineChangeCount: 0,
+    });
+    expect(layoutStore.unsavedInMemoryNodeIds).toEqual([]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // STATE MATRIX: isOfflineMode / hasLayoutFile / isConnected
 // ═══════════════════════════════════════════════════════════════════════════════
 

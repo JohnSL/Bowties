@@ -31,6 +31,12 @@ export function deriveSaveControlsViewState(args: {
   revertedPersistedCount: number;
   saveProgressState: SaveProgress['state'];
   treeNodeIds: string[];
+  /**
+   * S8: count of nodes that have crossed the capture threshold and are
+   * present in-memory but absent from the persisted layout roster. Each
+   * such node contributes one unsaved edit to the layout-level count.
+   */
+  unsavedInMemoryNodeCount: number;
 }): SaveControlsViewState {
   const {
     bowtieMetadataEditCount,
@@ -44,6 +50,7 @@ export function deriveSaveControlsViewState(args: {
     revertedPersistedCount,
     saveProgressState,
     treeNodeIds,
+    unsavedInMemoryNodeCount,
   } = args;
 
   // Count config drafts per node via configChangesStore
@@ -65,7 +72,13 @@ export function deriveSaveControlsViewState(args: {
   const hasMetadataEdits = bowtieMetadataIsDirty;
   const metadataEditCount = hasMetadataEdits ? Math.max(1, bowtieMetadataEditCount) : 0;
   const hasLayoutOnlyEdits = layoutIsDirty && !hasMetadataEdits;
-  const layoutOnlyEditCount = hasLayoutOnlyEdits ? 1 : 0;
+  // S8: each fully-captured unsaved-in-memory addition counts as a distinct
+  // layout edit. If the layout is dirty for any reason and we have no node
+  // additions to attribute the dirtiness to, fall back to a count of 1 so
+  // legacy non-node layout edits (e.g. element-deck reordering) still show.
+  const layoutOnlyEditCount = hasLayoutOnlyEdits
+    ? (unsavedInMemoryNodeCount > 0 ? unsavedInMemoryNodeCount : 1)
+    : 0;
   const hasRevertedPersisted = revertedPersistedCount > 0;
   const hasOfflineEdits = layoutIsOfflineMode && dirtyCount > 0;
   const hasEdits = hasConfigEdits || hasMetadataEdits || hasOfflineEdits || hasRevertedPersisted || layoutIsDirty;

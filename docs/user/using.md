@@ -4,33 +4,42 @@ This guide walks you through connecting Bowties to your LCC layout, exploring yo
 
 ## Connecting to your layout
 
-### Via a TCP hub (JMRI or standalone bridge)
+Bowties keeps a list of named connections in the **Connect to LCC Network** card. Each saved entry has a **Connect** button, plus an edit (🖊) and remove (×) action. The **`+`** button in the card header opens the Add connection dialog.
+
+The status indicator in the connection bar turns green once a connection is established.
+
+### Adding a connection
 
 1. Launch Bowties.
-2. Click **Add connection** in the top bar.
-3. Select **TCP**.
-4. Enter the host and port — for JMRI use `localhost:12021`.
-5. Click **Connect**.
+2. Click **`+`** in the Connect to LCC Network card.
+3. Enter a **Name** for the connection (for example *Layout hub* or *Workbench SPROG*).
+4. Pick your hardware from the **Device** dropdown. Bowties auto-fills baud rate and flow control for known devices and shows only the fields that device needs.
+5. Fill in the device-specific fields (see table below).
+6. Click **Add**.
 
-The status indicator in the connection bar turns green when the link is established.
+![Add connection dialog with the RR-CirKits LCC Buffer-USB device selected](../images/add-connection-dialog.png)
 
-### Via a USB-to-CAN adapter (GridConnect serial)
+### Device options
 
-> Supported adapters: SPROG CANISB, SPROG USB-LCC, RR-Cirkits Buffer LCC, CAN2USBINO
+| Device | Use for | Fields you enter |
+|--------|---------|------------------|
+| Network hub (TCP) | JMRI, WifiTrax, or a standalone TCP/IP bridge | Host + Port (JMRI uses `localhost:12021`) |
+| RR-CirKits LCC Buffer-USB | RR-CirKits LCC Buffer-USB, also the LCC to Loconet Bridge | COM port |
+| SPROG USB-LCC | SPROG DCC Ltd USB-LCC CAN adapter | COM port |
+| SPROG PI-LCC | SPROG DCC Ltd Raspberry Pi LCC hat | COM port |
+| Canable / Lawicell CANUSB | SLCAN-compatible USB-CAN adapter | COM port |
+| Other GridConnect adapter | CAN2USBINO, MERG CAN-RS, or any other GridConnect device | COM port + Baud rate + Flow control |
+| Other SLCAN adapter | Any `slcand`-compatible adapter not listed above | COM port + Baud rate + Flow control |
 
-1. Plug in your adapter; let Windows/Linux install the USB serial driver.
-2. Click **Add connection**.
-3. Select **GridConnect (USB/Serial)**.
-4. Choose the correct COM port (Windows) or `/dev/ttyUSB*` device (Linux) from the dropdown.
-5. Click **Connect**.
+For serial devices, choose the correct COM port (Windows), `/dev/cu.*` device (macOS), or `/dev/tty*` device (Linux) from the dropdown. If you plugged the adapter in after opening the dialog, click the **⟳** button next to the COM port list to rescan.
 
-![Add connection dialog with GridConnect serial selected](../images/add-connection-dialog.png)
+### Connecting, editing, and removing
 
-### Via a USB-to-CAN adapter (SLCAN)
+- Click **Connect** next to a saved entry to bring the link up.
+- Click 🖊 to reopen the dialog pre-filled with that entry's settings.
+- Click × and then **Delete** to remove a saved connection.
 
-> Supported adapters: Canable, Lawicel CANUSB, other `slcand`-compatible adapters
-
-Same steps as GridConnect serial, but choose **SLCAN (USB/Serial)** in step 3.
+Saved connections persist across launches.
 
 ---
 
@@ -174,8 +183,8 @@ If Bowties is not confident the connected bus matches the saved layout, it asks 
 - Try running **Discover Nodes** again — some nodes respond slowly on first boot.
 
 **A USB adapter is not listed**
-- Check Device Manager (Windows) or `dmesg` (Linux) to confirm the adapter is recognized as a serial port.
-- Try unplugging and re-plugging the adapter, then reopen the connection dialog.
+- Check Device Manager (Windows), System Information → USB (macOS), or `dmesg` (Linux) to confirm the adapter is recognized as a serial port.
+- Click the **⟳** button next to the COM port dropdown to rescan after plugging the adapter in.
 
 **Configuration changes are not accepted**
 - Some nodes require a reboot before new configuration takes effect. Check the node's manual.

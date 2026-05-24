@@ -8,6 +8,68 @@ use serde::{Deserialize, Serialize};
 /// Current schema version for layout files.
 pub const SCHEMA_VERSION: &str = "1.0";
 
+// ── Connection configuration ──────────────────────────────────────────────────
+//
+// These types describe a saved connection (TCP / GridConnect serial / SLCAN
+// serial). They live here in the layout module — rather than in
+// `commands/connection.rs` — because they are persisted both in the global
+// `connections.json` app preferences file AND, since Spec 013 / S4, inside
+// the layout manifest under the `connections` field. Centralising the type
+// here keeps a single serde shape across both persistence sites.
+//
+// `commands/connection.rs` re-exports these names so existing imports
+// (`use crate::commands::ConnectionConfig;`) continue to work.
+
+/// The transport/protocol variant for a connection.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum AdapterType {
+    /// Network hub (JMRI, standalone TCP/IP bridge). Default LCC port 12021.
+    Tcp,
+    /// GridConnect framing over USB serial.
+    /// Compatible: RR-Cirkits Buffer LCC, SPROG USB-LCC, CAN2USBINO, CANRS.
+    GridConnectSerial,
+    /// SLCAN (Lawicel) framing over USB serial.
+    /// Compatible: Canable, Lawicel CANUSB, any slcand-compatible adapter.
+    SlcanSerial,
+}
+
+/// Hardware flow control mode for serial connections.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum FlowControl {
+    /// No hardware flow control (default for most adapters).
+    #[default]
+    None,
+    /// RTS/CTS hardware flow control (required by SPROG USB-LCC / PI-LCC).
+    RtsCts,
+}
+
+/// A saved connection configuration entry.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionConfig {
+    /// Unique identifier (UUID v4)
+    pub id: String,
+    /// User-visible label for this connection
+    pub name: String,
+    /// Protocol / adapter type
+    pub adapter_type: AdapterType,
+    /// TCP hostname or IP (TCP only)
+    pub host: Option<String>,
+    /// TCP port number (TCP only, default 12021)
+    pub port: Option<u16>,
+    /// Serial port path, e.g. "COM3" or "/dev/ttyUSB0" (serial only)
+    pub serial_port: Option<String>,
+    /// Serial baud rate (serial only; USB CDC devices use this for host-side
+    /// configuration, though the adapters themselves typically ignore it)
+    pub baud_rate: Option<u32>,
+    /// Hardware flow control mode (GridConnect serial only).
+    /// Defaults to None when absent (backward-compatible with older saved configs).
+    #[serde(default)]
+    pub flow_control: FlowControl,
+}
+
 /// Root structure for the YAML layout file.
 ///
 /// Example YAML:
@@ -135,6 +197,25 @@ pub enum LayoutEditDelta {
         old_event_id_hex: String,
         new_event_id_hex: String,
     },
+    /// Promote a discovered node into the layout's saved node roster (S8).
+    ///
+    /// `apply_layout_deltas` is a no-op for this variant — node membership
+    /// is tracked by snapshot file presence in the companion `nodes/`
+    /// directory, not inside `LayoutFile`. The save command interprets this
+    /// delta as "include this node ID in the permitted-write set".
+    #[serde(rename_all = "camelCase")]
+    AddNode { node_id_hex: String },
+}
+
+impl LayoutEditDelta {
+    /// If this delta promotes a discovered node, return the canonical
+    /// (uppercase, no-dots) node ID. Otherwise return `None`.
+    pub fn as_add_node(&self) -> Option<&str> {
+        match self {
+            LayoutEditDelta::AddNode { node_id_hex } => Some(node_id_hex.as_str()),
+            _ => None,
+        }
+    }
 }
 
 /// Apply a sequence of edit deltas to a layout file, mutating it in place.
@@ -200,6 +281,10 @@ pub fn apply_layout_deltas(layout: &mut LayoutFile, deltas: Vec<LayoutEditDelta>
                 if let Some(meta) = layout.bowties.remove(&old_event_id_hex) {
                     layout.bowties.insert(new_event_id_hex, meta);
                 }
+            }
+            LayoutEditDelta::AddNode { .. } => {
+                // Node membership lives outside LayoutFile (snapshot files in
+                // the companion nodes/ dir). Handled in save_layout_directory.
             }
         }
     }
@@ -694,6 +779,53 @@ mod tests {
         match &parsed[2] {
             LayoutEditDelta::CreateBowtie { name, .. } => assert_eq!(*name, None),
             _ => panic!("expected CreateBowtie"),
+        }
+    }
+
+    #[test]
+    fn apply_deltas_add_node_is_noop_on_layout_file() {
+        // S8: AddNode does not modify LayoutFile (node membership lives in
+        // the companion nodes/ directory, not in bowties.yaml). It is
+        // interpreted by save_layout_directory as a permitted-set hint.
+        let mut layout = LayoutFile::default();
+        layout.bowties.insert("05.01.01.01.FF.00.00.01".to_string(), BowtieMetadata {
+            name: Some("Existing".to_string()),
+            tags: vec!["yard".to_string()],
+        });
+        let bowties_before: Vec<String> = layout.bowties.keys().cloned().collect();
+        let roles_before = layout.role_classifications.len();
+        let selections_before = layout.connector_selections.len();
+        apply_layout_deltas(&mut layout, vec![
+            LayoutEditDelta::AddNode { node_id_hex: "020157000001".to_string() },
+        ]);
+        let bowties_after: Vec<String> = layout.bowties.keys().cloned().collect();
+        assert_eq!(bowties_after, bowties_before);
+        assert_eq!(layout.role_classifications.len(), roles_before);
+        assert_eq!(layout.connector_selections.len(), selections_before);
+        // Existing bowtie unchanged.
+        let bw = layout.bowties.get("05.01.01.01.FF.00.00.01").expect("bowtie kept");
+        assert_eq!(bw.name.as_deref(), Some("Existing"));
+        assert_eq!(bw.tags, vec!["yard".to_string()]);
+    }
+
+    #[test]
+    fn add_node_delta_as_add_node_returns_id() {
+        let d = LayoutEditDelta::AddNode { node_id_hex: "020157000001".to_string() };
+        assert_eq!(d.as_add_node(), Some("020157000001"));
+
+        let other = LayoutEditDelta::DeleteBowtie { event_id_hex: "05.01.01.01.FF.00.00.01".to_string() };
+        assert_eq!(other.as_add_node(), None);
+    }
+
+    #[test]
+    fn add_node_delta_from_frontend_json() {
+        let json = r#"[{"type":"addNode","nodeIdHex":"020157000001"}]"#;
+        let parsed: Vec<LayoutEditDelta> = serde_json::from_str(json)
+            .expect("addNode JSON should deserialize");
+        assert_eq!(parsed.len(), 1);
+        match &parsed[0] {
+            LayoutEditDelta::AddNode { node_id_hex } => assert_eq!(node_id_hex, "020157000001"),
+            _ => panic!("expected AddNode"),
         }
     }
 }

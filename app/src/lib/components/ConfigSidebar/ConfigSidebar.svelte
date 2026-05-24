@@ -115,11 +115,15 @@
   }
 
   let nodes = $derived($nodeInfoStore);
-  let nodeEntries = $derived(buildSidebarNodeEntries(nodes));
+  let nodeEntries = $derived(buildSidebarNodeEntries(nodes, layoutStore.activeContext?.layoutNodeIds));
   let sidebarState = $derived($configSidebarStore);
   let configReadNodes = $derived($configReadNodesStore);
   let persistedRows = $derived(offlineChangesStore.persistedRows);
   let connectorRevision = $derived(connectorSelectionsStore.revision);
+  // S8: the threshold-gated list of fully-captured unsaved-new nodes; used in
+  // the loop below to flip the per-node "unsaved" dot on once a node crosses
+  // the capture threshold. Read as a Set for O(1) lookup.
+  let unsavedInMemoryNodeIdSet = $derived(new Set(layoutStore.unsavedInMemoryNodeIds));
 
   // Subscribe to tree changes to enable reactive updates on hasPendingEdits
   let trees = $derived(nodeTreeStore.trees);
@@ -150,6 +154,8 @@
           node,
           nodeId,
         })}
+        {@const canonicalNodeId = nodeId.replace(/\./g, '').toUpperCase()}
+        {@const isFullyCapturedUnsavedAddition = entry.isUnsavedNew && unsavedInMemoryNodeIdSet.has(canonicalNodeId)}
 
         <div class="node-group" class:child-selected={hasSelectedSegment}>
           <NodeEntry
@@ -160,10 +166,11 @@
             {isExpanded}
             isOffline={entry.isOffline}
             {isLoading}
-            configNotRead={isConfigNotRead}
+            configNotRead={isConfigNotRead && !entry.isUnsavedNew}
             isSelected={isNodeSelected}
-            hasPendingEdits={nodePending.hasPendingEdits}
+            hasPendingEdits={nodePending.hasPendingEdits || isFullyCapturedUnsavedAddition}
             hasPendingApply={nodePending.hasPendingApply}
+            isUnsavedNew={entry.isUnsavedNew}
             on:toggle={() => handleNodeToggle(nodeId, node, isExpanded)}
             on:readConfig={() => dispatch('readNodeConfig', { nodeId })}
           />

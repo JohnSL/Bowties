@@ -348,8 +348,11 @@ pub fn run() {
             commands::has_modified_values,  // Modified value: check for pending edits
             commands::trigger_action,         // Action element: fire-once write
             commands::list_serial_ports,
-            commands::load_connection_prefs,
-            commands::save_connection_prefs,
+            commands::get_layout_connections,   // Spec 013 / S4: per-layout connection registry
+            commands::save_layout_connections,  // Spec 013 / S4: per-layout connection registry
+            commands::get_known_layouts,        // Spec 013 / S5: known-layout registry
+            commands::add_known_layout,         // Spec 013 / S5: known-layout registry
+            commands::remove_known_layout,      // Spec 013 / S5: known-layout registry
             diagnostics::get_diagnostic_report,
             update_menu_state,
         ])

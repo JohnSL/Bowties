@@ -24,7 +24,7 @@ function makeDeltas(): LayoutEditDelta[] {
 }
 
 function makeSaveResult(overrides: Partial<SaveLayoutResult> = {}): SaveLayoutResult {
-  return { manifestPath: '', nodeFilesWritten: 0, warnings: [], layout: makeLayout(), ...overrides };
+  return { manifestPath: '', nodeFilesWritten: 0, warnings: [], layout: makeLayout(), persistedNodeIds: [], ...overrides };
 }
 
 function makeCatalog(): BowtieCatalog {
@@ -227,6 +227,7 @@ function makeBusWriteResult(overrides: Partial<SaveWithBusWriteResult> = {}): Sa
     catalogRebuilt: true,
     warnings: [],
     layout: makeLayout(),
+    persistedNodeIds: [],
     ...overrides,
   };
 }
@@ -497,6 +498,7 @@ describe('saveLayoutOrchestrated — clearPersistedDrafts (S2c)', () => {
       catalogRebuilt: true,
       warnings: [],
       layout: makeLayout(),
+      persistedNodeIds: [],
     }));
     const clearPersistedDrafts = vi.fn();
 
@@ -509,5 +511,81 @@ describe('saveLayoutOrchestrated — clearPersistedDrafts (S2c)', () => {
     });
 
     expect(clearPersistedDrafts).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── S8: discovered-node promotion ────────────────────────────────────────────
+
+describe('saveLayoutOrchestrated — S8 discoveredOnlyNodeIds promotion', () => {
+  function setup() {
+    const saveFile = vi.fn<(path: string, deltas: LayoutEditDelta[]) => Promise<SaveLayoutResult>>(
+      async () => makeSaveResult({ persistedNodeIds: ['020157000001', '020157000099'] }),
+    );
+    const rebuildCatalog = vi.fn<(layout: LayoutFile | null) => Promise<BowtieCatalog>>(
+      async () => makeCatalog(),
+    );
+    const setCatalog = vi.fn();
+    const clearMetadata = vi.fn();
+    const markClean = vi.fn();
+    const hydrateLayout = vi.fn();
+    const setActiveContext = vi.fn();
+    const updatePartialCaptureNodes = vi.fn();
+    const getPendingChangeCount = vi.fn(() => 0);
+    return {
+      saveFile, rebuildCatalog, setCatalog, clearMetadata, markClean, hydrateLayout,
+      setActiveContext, updatePartialCaptureNodes, getPendingChangeCount,
+    };
+  }
+
+  it('appends addNode deltas for each discoveredOnlyNodeIds entry', async () => {
+    const env = setup();
+    await saveLayoutOrchestrated({
+      ...env,
+      path: '/p/layout.bowties.yaml',
+      deltas: makeDeltas(),
+      discoveredOnlyNodeIds: ['020157000099', '020157000042'],
+    });
+
+    expect(env.saveFile).toHaveBeenCalledTimes(1);
+    const sentDeltas = env.saveFile.mock.calls[0][1];
+    const addNodeDeltas = sentDeltas.filter((d): d is { type: 'addNode'; nodeIdHex: string } =>
+      d.type === 'addNode');
+    expect(addNodeDeltas.map((d) => d.nodeIdHex)).toEqual(['020157000099', '020157000042']);
+    // Original deltas preserved
+    expect(sentDeltas.filter((d) => d.type !== 'addNode')).toEqual(makeDeltas());
+  });
+
+  it('does not append addNode deltas when discoveredOnlyNodeIds is empty or omitted', async () => {
+    const env = setup();
+    await saveLayoutOrchestrated({
+      ...env,
+      path: '/p/layout.bowties.yaml',
+      deltas: makeDeltas(),
+      discoveredOnlyNodeIds: [],
+    });
+    const sentDeltas = env.saveFile.mock.calls[0][1];
+    expect(sentDeltas.some((d) => d.type === 'addNode')).toBe(false);
+
+    await saveLayoutOrchestrated({
+      ...env,
+      path: '/p/layout.bowties.yaml',
+      deltas: makeDeltas(),
+    });
+    const sentDeltas2 = env.saveFile.mock.calls[1][1];
+    expect(sentDeltas2.some((d) => d.type === 'addNode')).toBe(false);
+  });
+
+  it('propagates persistedNodeIds from the save response into the active layout context', async () => {
+    const env = setup();
+    await saveLayoutOrchestrated({
+      ...env,
+      path: '/p/layout.bowties.yaml',
+      deltas: makeDeltas(),
+      discoveredOnlyNodeIds: ['020157000099'],
+    });
+
+    expect(env.setActiveContext).toHaveBeenCalledTimes(1);
+    const ctx = env.setActiveContext.mock.calls[0][0];
+    expect(ctx.layoutNodeIds).toEqual(['020157000001', '020157000099']);
   });
 });

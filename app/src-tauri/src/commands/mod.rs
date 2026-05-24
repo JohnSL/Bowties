@@ -8,6 +8,7 @@ pub mod bowties;
 pub mod connector_profiles;
 pub mod connection;
 pub mod layout_capture;
+pub mod startup;
 pub mod sync_panel;
 
 // Re-export all commands for easy registration
@@ -17,4 +18,5 @@ pub use bowties::*;
 pub use connector_profiles::*;
 pub use connection::*;
 pub use layout_capture::*;
+pub use startup::*;
 pub use sync_panel::*;

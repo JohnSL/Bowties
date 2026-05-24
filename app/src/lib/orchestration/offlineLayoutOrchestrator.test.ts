@@ -116,6 +116,7 @@ describe('openOfflineLayoutWithReplay', () => {
       mode: 'offline_file',
       capturedAt: '2026-04-25T00:00:00.000Z',
       pendingOfflineChangeCount: 2,
+      layoutNodeIds: [],
     });
     expect(connectorSelectionsStoreRef.hydrateFromLayout).toHaveBeenCalledWith(makeLayout());
   });

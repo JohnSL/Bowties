@@ -28,6 +28,7 @@ class ChangeTrackerStore {
       revertedPersistedCount: offlineChangesStore.revertedPersistedCount,
       saveProgressState,
       treeNodeIds: [...nodeTreeStore.trees.keys()],
+      unsavedInMemoryNodeCount: layoutStore.unsavedInMemoryNodeIds.length,
     });
 
     return {

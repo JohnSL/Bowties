@@ -112,6 +112,31 @@ describe('buildSidebarNodeEntries', () => {
     expect(entries[0].nodeTooltip).toContain('Alias: 0x123');
     expect(entries[0].nodeTooltip).toContain('Manufacturer: ACME');
   });
+
+  it('flags discovered nodes that are not in the saved layout as isUnsavedNew (S8)', () => {
+    const entries = buildSidebarNodeEntries(
+      new Map([
+        ['02.01.57.00.00.01', makeNode()],
+        ['02.01.57.00.00.99', makeNode({
+          alias: 0x999,
+          node_id: [0x02, 0x01, 0x57, 0x00, 0x00, 0x99],
+        })],
+      ]),
+      ['020157000001'],
+    );
+
+    const byId = new Map(entries.map((e) => [e.nodeId, e]));
+    expect(byId.get('02.01.57.00.00.01')?.isUnsavedNew).toBe(false);
+    expect(byId.get('02.01.57.00.00.99')?.isUnsavedNew).toBe(true);
+  });
+
+  it('treats every node as saved when savedNodeIds is undefined (pre-S8 contexts)', () => {
+    const entries = buildSidebarNodeEntries(
+      new Map([['02.01.57.00.00.01', makeNode()]]),
+    );
+
+    expect(entries[0].isUnsavedNew).toBe(false);
+  });
 });
 
 describe('shouldShowConfigNotReadBadge', () => {

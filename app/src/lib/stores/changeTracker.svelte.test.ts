@@ -15,7 +15,7 @@ const {
   bowtieRef: { editCount: 0, isDirty: false },
   configChangesRef: { draftEntries: [] as any[] },
   connectorRef: { totalWarningCount: 0 },
-  layoutRef: { isDirty: false, isOfflineMode: false },
+  layoutRef: { isDirty: false, isOfflineMode: false, unsavedInMemoryNodeIds: [] as string[] },
   offlineRef: { draftCount: 0, draftRows: [] as any[], revertedPersistedCount: 0 },
   presenterRef: {
     deriveSaveControlsViewState: vi.fn().mockReturnValue({
@@ -136,6 +136,7 @@ describe('changeTrackerStore', () => {
       revertedPersistedCount: 0,
       saveProgressState: 'idle',
       treeNodeIds: ['node-1'],
+      unsavedInMemoryNodeCount: 0,
     });
   });
 

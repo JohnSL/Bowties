@@ -31,6 +31,10 @@ pub struct SaveLayoutResult {
     pub warnings: Vec<String>,
     /// The persisted layout file data (ADR-0002: backend returns authoritative copy).
     pub layout: LayoutFile,
+    /// Canonical (uppercase, no-dots) node IDs of every snapshot written to the
+    /// companion `nodes/` directory after this save. Frontend uses this to
+    /// distinguish saved nodes from unsaved discovered nodes (S8).
+    pub persisted_node_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +92,8 @@ pub struct SaveWithBusWriteResult {
     pub warnings: Vec<String>,
     /// The persisted layout file data (ADR-0002: backend returns authoritative copy).
     pub layout: LayoutFile,
+    /// Canonical node IDs persisted on disk after this save (S8).
+    pub persisted_node_ids: Vec<String>,
 }
 
 
@@ -355,6 +361,32 @@ pub async fn save_layout_directory(
 
     // Resolve snapshots: live node registry takes priority (fresh data from bus),
     // otherwise fall back to existing companion dir snapshots (re-save while offline).
+    //
+    // S8: the layout is the durable source of truth for which nodes belong to it.
+    // The permitted set is the union of (a) node IDs already saved in this layout
+    // and (b) node IDs explicitly promoted via an `AddNode` delta in this save.
+    // Discovered nodes that are not in either set are excluded — they remain
+    // in-memory drafts on the frontend and do not pollute layout A when the user
+    // accidentally connects to bus B.
+    let previous_node_ids: std::collections::BTreeSet<String> = previous
+        .as_ref()
+        .map(|p| {
+            p.node_snapshots
+                .iter()
+                .map(|s| s.node_id.to_canonical())
+                .collect()
+        })
+        .unwrap_or_default();
+    let added_node_ids: std::collections::BTreeSet<String> = deltas
+        .iter()
+        .filter_map(|d| d.as_add_node().map(|s| s.replace('.', "").to_uppercase()))
+        .collect();
+    let permitted_node_ids: std::collections::BTreeSet<String> = previous_node_ids
+        .union(&added_node_ids)
+        .cloned()
+        .collect();
+    let has_persisted_layout = previous.is_some();
+
     let handles = state.node_registry.get_all_handles().await;
     let mut snapshots = if !handles.is_empty() {
         let mut producer_events_by_node: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -371,13 +403,36 @@ pub async fn save_layout_directory(
         }
 
         let mut out = Vec::new();
+        let mut covered: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for handle in &handles {
             let node_key = handle.node_id.to_canonical();
+            // S8: skip handles for nodes not in the permitted set. Exception:
+            // before the layout has ever been persisted (first save of a brand
+            // new layout that has no `AddNode` deltas yet), we keep every
+            // discovered handle so existing legacy callers and tests continue
+            // to work. Once the layout is on disk, every node must be either
+            // already saved or explicitly added via a delta.
+            if has_persisted_layout && !permitted_node_ids.contains(&node_key) {
+                continue;
+            }
             let producer_events = producer_events_by_node
                 .get(&node_key)
                 .cloned()
                 .unwrap_or_default();
             out.push(build_node_snapshot(handle, &captured_at, producer_events, state.inner()).await?);
+            covered.insert(node_key);
+        }
+        // S8: preserve previously-saved snapshots for permitted nodes that are
+        // not currently on the bus (saved + off-bus case). Without this, a
+        // re-save while one of the layout's nodes is offline would silently
+        // drop that node from the layout.
+        if let Some(ref prev) = previous {
+            for snap in &prev.node_snapshots {
+                let key = snap.node_id.to_canonical();
+                if permitted_node_ids.contains(&key) && !covered.contains(&key) {
+                    out.push(snap.clone());
+                }
+            }
         }
         out
     } else if let Some(ref prev) = previous {
@@ -516,6 +571,11 @@ pub async fn save_layout_directory(
         cdi_files_copied: cdi_files_count,
         warnings: partial_nodes,
         layout: write_data.bowties.clone(),
+        persisted_node_ids: write_data
+            .node_snapshots
+            .iter()
+            .map(|s| s.node_id.to_canonical())
+            .collect(),
     })
 }
 
@@ -820,6 +880,7 @@ pub async fn save_layout_with_bus_writes(
         catalog_rebuilt,
         warnings: save_result.warnings,
         layout: persisted_layout,
+        persisted_node_ids: save_result.persisted_node_ids,
     })
 }
 

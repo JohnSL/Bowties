@@ -29,6 +29,7 @@ const { treesRef, metaRef, layoutRef, offlineRef, configChangesRef, connectorSel
     isConnected: false,
     isLoaded: false,
     isDirty: false,
+    unsavedInMemoryNodeIds: [] as string[],
     markClean: vi.fn(),
     markDirty: vi.fn(),
     saveCurrentLayout: vi.fn().mockResolvedValue(undefined) as any,

@@ -5,9 +5,9 @@
 | Layer | Count | Key shared logic |
 |-------|-------|-----------------|
 | Routes | 3 pages + layout | Screen composition, tab wiring |
-| Components | ~34 across 7 dirs | Rendering, intent emission |
-| Orchestrators | 13 | Async workflows, lifecycle transitions |
-| Stores | ~20 | Durable frontend state, derived values |
+| Components | ~37 across 8 dirs | Rendering, intent emission |
+| Orchestrators | 14 | Async workflows, lifecycle transitions |
+| Stores | ~21 | Durable frontend state, derived values |
 | Utils | ~13 | Normalization, formatting, serialization |
 | API | 8 | Tauri IPC bindings |
 | Backend commands | 60+ across 7 modules | IPC boundary, error translation |
@@ -22,7 +22,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 
 | File | Purpose | Test |
 |------|---------|------|
-| `+page.svelte` | Main app page; tabs for layout/discovery/config/traffic | `page.route.test.ts` |
+| `+page.svelte` | Main app page; tabs for layout/discovery/config/traffic. **Picker gate (Spec 013 / S6):** when no layout is active (and bootstrap is finished and no open-in-progress), `+page.svelte` renders `LayoutPicker` instead of the toolbar + main-content; disconnecting does NOT re-show the picker (layout stays active). | `page.route.test.ts` |
 | `+layout.svelte` | Root layout wrapper | — |
 | `+layout.ts` | Disables SSR (SPA-only for Tauri) | — |
 | `config/+page.svelte` | Config editor; renders ConfigSidebar + ElementCardDeck | — |
@@ -86,6 +86,13 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `OfflineBanner.svelte` | Offline status banner with sync trigger | — |
 | `MissingCaptureBadge.svelte` | Badge for missing snapshot values | — |
 
+### LayoutPicker/ — Startup gate (Spec 013 / S6)
+| File | Purpose | Test |
+|------|---------|------|
+| `LayoutPicker.svelte` | Fullscreen startup picker. Renders known-layout list + `New Layout` + `Browse…`. Emits `onOpen` / `onBrowse` / `onCreate` / `onRemove` — no async work owned here. | — |
+| `LayoutEntry.svelte` | Single known-layout row with name, path, locale-formatted `lastOpened`, and a Remove (✕) action. | — |
+| `NewLayoutDialog.svelte` | Modal for creating a new layout. Folder picker via `@tauri-apps/plugin-dialog`, sanitised filename, preview of derived `<dir>/<name>.layout` path. | — |
+
 ### Root-level components
 | File | Purpose | Test |
 |------|---------|------|
@@ -94,6 +101,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `ErrorDialog.svelte` | Error modal with Escape-to-close | — |
 | `DiscardConfirmDialog.svelte` | Confirm discard of unsaved edits | — |
 | `DiscoveryProgressModal.svelte` | Progress during discovery phases (reading, building-catalog, complete, cancelled) | — |
+| `SaveProgressDialog.svelte` | Modal during the three-phase save flow; reads phase + per-field bus-write counters from `saveProgressStore`. Auto-dismisses on `complete` / `error` after 2 s. | — |
 | `RefreshButton.svelte` | Refresh discovered nodes | — |
 | `CdiDownloadDialog.svelte` | CDI download prompt | — |
 | `CdiXmlViewer.svelte` | Syntax-highlighted CDI XML viewer | — |
@@ -111,7 +119,8 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `cdiDialogOrchestrator.ts` | CDI download/cache/redownload state machine | `cdiDialogOrchestrator.test.ts` |
 | `connectorSelectionOrchestrator.ts` | Connector slot selection + compatibility recompute | `connectorSelectionOrchestrator.test.ts` |
 | `offlineLayoutOrchestrator.ts` | Offline layout hydration, snapshot replay, and layout-transition resets (sidebar, nodes, trees, metadata). Three reset functions: `resetLayoutStateForNoLayout` (full teardown), `resetFreshLiveSessionState` (live-session guard), `openOfflineLayoutWithReplay` (clears sidebar before hydrating new layout) | `offlineLayoutOrchestrator.test.ts` |
-| `saveLayoutOrchestrator.ts` | Full save lifecycle: flush pending → persist layout → rebuild catalog → update context & partial nodes → clear metadata → mark clean | `saveLayoutOrchestrator.test.ts` |
+| `saveLayoutOrchestrator.ts` | Full save lifecycle: flush pending → persist layout → rebuild catalog → update context & partial nodes → clear metadata → mark clean. **S8:** accepts `discoveredOnlyNodeIds?: string[]` and appends `{type:'addNode',nodeIdHex}` deltas; surfaces `persistedNodeIds` into the updated `ActiveLayoutContext.layoutNodeIds`. | `saveLayoutOrchestrator.test.ts` |
+| `startupOrchestrator.ts` | Layout picker lifecycle (Spec 013 / S6): `loadKnownLayouts`, `openLayoutFromRegistry` (open existing → register), `createNewLayout` (capture → save → reopen → register), `removeKnownLayout`, `deriveLayoutNameFromPath`. Pure functions with injected callbacks — no direct store or IPC imports. Registry refresh failures are non-fatal (logged via `onError`). | `startupOrchestrator.test.ts` (14 tests) |
 | `syncSessionOrchestrator.ts` | Sync session lifecycle: classify → mode → reconcile | `syncSessionOrchestrator.test.ts` |
 | `syncApplyOrchestrator.ts` | Post-apply reconciliation: rebuild offline trees | `syncApplyOrchestrator.test.ts` |
 | `syncPanelViewOrchestrator.ts` | Sync panel user interactions (mode, deselect, apply) | `syncPanelViewOrchestrator.test.ts` |
@@ -131,7 +140,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `configEditor.svelte.ts` | Entry point for user-initiated config edits | `configEditor.test.ts` |
 | `configFocus.svelte.ts` | Navigation request: bowtie → config field | `configFocus.test.ts` |
 | `configReadStatus.ts` | Tracks nodes with successful config reads | `configReadStatus.test.ts` |
-| `layout.svelte.ts` | Layout file state: open/save/save-as/recent; `hydrateFromBackend()` sets layout from backend response | `layout.svelte.test.ts` |
+| `layout.svelte.ts` | Layout file state: open/save/save-as/recent; `hydrateFromBackend()` sets layout from backend response. **S8 isDirty semantics:** `isDirty` returns `_hasFileEdits || _unsavedInMemoryNodeIds.length > 0` — the property carries both LayoutFile-struct edits AND fully-captured discovered nodes not yet promoted into the saved roster. The route pushes the discovered-node list in via `setUnsavedInMemoryNodeIds(ids)` from a `$effect`; the store deduplicates equivalent pushes. `markClean()` and `setActiveContext()` both clear the in-memory set. | `layout.svelte.test.ts` |
 | `layoutOpenLifecycle.ts` | Phase machine for layout open (opening→hydrating→ready) | — |
 | `offlineChanges.svelte.ts` | Offline change row tracking (persisted/draft layers) | `offlineChanges.store.test.ts` |
 | `syncPanel.svelte.ts` | Sync session state: conflict/clean row tracking | `syncPanel.store.test.ts` |
@@ -140,10 +149,12 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `connectorSlotFocus.svelte.ts` | Focused connector slot per-node | — |
 | `connectionRequest.svelte.ts` | Cross-tab connection request (config→bowtie) | — |
 | `changeTracker.svelte.ts` | Unified "unsaved changes" snapshot for save controls | `changeTracker.svelte.test.ts` |
+| `saveProgress.svelte.ts` | Phase tracker for the three-phase save flow. Listens to `save-progress` Tauri events (`saving-layout` / `writing-config` / `reconciling` / `complete`) emitted by `save_layout_with_bus_writes` + per-iteration events from `write_modified_values`. Also exposes `begin()` / `apply()` / `fail()` / `reset()` so the offline-save path (driven by `+page.svelte`) can flip phases without backend events. Consumed by `SaveProgressDialog.svelte` and by `isMenuBusy()` to gate concurrent saves. | `saveProgress.svelte.test.ts` |
 | `nodes.ts` | Global discovered nodes list (Svelte 5 runes) | — |
 | `nodeInfo.ts` | nodeId → DiscoveredNode map for display-name resolution | — |
 | `pillSelection.ts` | Replicated group instance selections | `pillSelection.test.ts` |
 | `traffic.ts` | Live traffic message stream | — |
+| `knownLayouts.svelte.ts` | `knownLayoutsStore` singleton — frontend mirror of `known-layouts.json` (Spec 013 / S6). Exposes `entries`, `loaded`, `busy`; setters tolerate undefined backend payloads. Written through by `startupOrchestrator`; read by `LayoutPicker`. | — |
 
 ---
 
@@ -169,6 +180,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | File | Purpose | Test |
 |------|---------|------|
 | `nodeId.ts` | Node ID normalization: dotted-hex ↔ canonical | — |
+| `nodeRoster.ts` | S8: pure helpers comparing the active layout's saved-node roster against the currently-visible node set — `canonicalizeNodeId`, `computeDiscoveredOnlyNodeIds` (badge predicate, no threshold), `computeUnsavedInMemoryNodeIds` (threshold-gated by full capture — feeds `layoutStore.isDirty` and `addNode` save deltas), `isUnsavedDiscoveredNode`, `isSavedOffBusNode`. Consumed by `+page.svelte` (sidebar badge + dirty signal + save deltas), `configSidebarPresenter` (unsaved-new badge), and any future "off-bus saved" surfaces. | `nodeRoster.test.ts` |
 | `nodeDisplayName.ts` | Display name resolution via fallback chain | — |
 | `formatters.ts` | Config value display formatting (int/string/eventId/float) | `formatters.test.ts` |
 | `serialize.ts` | Serialize TreeConfigValue to raw bytes for writes | `serialize.test.ts` |
@@ -205,11 +217,12 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 
 | Module | Key Commands | Purpose |
 |--------|-------------|---------|
-| `connection.rs` | `list_serial_ports`, `load_connection_prefs`, `save_connection_prefs` | Connection management |
+| `connection.rs` | `list_serial_ports`, `get_layout_connections`, `save_layout_connections` | Per-layout connection registry — stored inside each layout manifest (Spec 013 / S4, S7). The global `$APPDATA/bowties/connections.json` registry was removed in S7; connections now live with the layout they belong to. |
+| `startup.rs` | `get_known_layouts`, `add_known_layout`, `remove_known_layout` | Known-layout registry (`$APPDATA/bowties/known-layouts.json`) for the layout picker |
 | `discovery.rs` | `discover_nodes`, `probe_nodes`, `register_node`, `query_snip_*`, `query_pip_*`, `verify_node_status`, `refresh_all_nodes` | Node discovery and metadata |
 | `bowties.rs` | `query_event_roles`, `build_bowtie_catalog_command`, `get_bowties`, `set_bowtie_metadata`, `load_layout`, `save_layout`, `*_recent_layout` | Bowtie catalog and layout files |
 | `cdi.rs` | `download_cdi`, `get_cdi_xml`, `get_cdi_structure`, `read_config_value`, `read_all_config_values`, `write_config_value`, `set_modified_value`, `write_modified_values`, `discard_modified_values`, `trigger_action`, `cancel_*` | CDI download, config read/write |
-| `layout_capture.rs` | `capture_layout_snapshot`, `save_layout_directory`, `open_layout_directory`, `close_layout`, `create_new_layout_capture`, `build_offline_node_tree`, `save_layout_with_bus_writes` | Layout snapshot persistence; save commands accept `LayoutEditDelta[]` and return persisted `LayoutFile` |
+| `layout_capture.rs` | `capture_layout_snapshot`, `save_layout_directory`, `open_layout_directory`, `close_layout`, `create_new_layout_capture`, `build_offline_node_tree`, `save_layout_with_bus_writes` | Layout snapshot persistence; save commands accept `LayoutEditDelta[]` and return persisted `LayoutFile` plus (S8) `persistedNodeIds` — the canonical roster after applying any `AddNode` deltas. `save_layout_directory` computes a permitted-node set = previously-persisted ∪ explicitly-added; live handles outside the permitted set are skipped, and previously-saved snapshots for permitted off-bus nodes are carried forward from `prev.node_snapshots`. First-save (`previous == None`) passes all live handles through for backward compatibility. |
 | `sync_panel.rs` | `set_offline_change`, `revert_offline_change`, `list_offline_changes` | Offline change staging |
 | `connector_profiles.rs` | `get_connector_profile`, `get_connector_selections`, `put_connector_selections`, `preview_connector_compatibility` | Connector profile and slot constraints |
 | `diagnostics.rs` | `get_diagnostic_report` | Ring-buffer logs and troubleshooting |
@@ -230,11 +243,12 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `events/router.rs` | Event broadcast: transport frames → Tauri events | inline `#[cfg(test)]` |
 | `traffic/mod.rs` | Message decoding for traffic monitor display | — |
 | `menu.rs` | Desktop app menu | — |
-| `layout/mod.rs` | **Deep module** (ADR-0005). Sole owner of the layout companion-directory file structure. Public intent-shaped API: `save_capture`, `read_capture`, `read_node_snapshot`, `update_offline_changes`, `update_node_snapshots`, `resolve_cdi_xml_for_snapshot`. Code outside `layout/` must use this API — never compute companion-dir paths, node-file names, or write YAML directly. | inline `#[cfg(test)]` |
-| `layout/types.rs` | YAML data structures (BowtieMetadata, RoleClassification, LayoutEditDelta) + `apply_layout_deltas` | `layout::types::tests` |
+| `layout/mod.rs` | **Deep module** (ADR-0005). Sole owner of the layout companion-directory file structure. Public intent-shaped API: `save_capture`, `read_capture`, `read_node_snapshot`, `update_offline_changes`, `update_node_snapshots`, `resolve_cdi_xml_for_snapshot`, `read_manifest`, `update_manifest_connections`. Code outside `layout/` must use this API — never compute companion-dir paths, node-file names, or write YAML directly. | inline `#[cfg(test)]` |
+| `layout/types.rs` | YAML data structures (BowtieMetadata, RoleClassification, LayoutEditDelta) + `apply_layout_deltas`; also canonical home of `ConnectionConfig` / `AdapterType` / `FlowControl` (Spec 013 / S4) re-exported by `commands/connection.rs`. S8: `LayoutEditDelta::AddNode { node_id_hex }` is a no-op in `apply_layout_deltas` (node membership lives in the companion `nodes/` dir, not in `LayoutFile`); `as_add_node()` exposes the ID to `save_layout_directory` for permitted-set computation. | `layout::types::tests` |
 | `layout/io.rs` | Internal: companion-dir / node-file path derivation, full capture read/write, CDI XML resolution. Builds `journal::SavePlan` for every mutation and calls `journal::execute`; `read_capture` runs `journal::recover_if_needed` first and surfaces `recovery_occurred`. All companion-dir helpers are `pub(crate)`; only the single-file `load_file`/`save_file` and `cdi_cache_path` remain `pub`. | inline `#[cfg(test)]` |
 | `layout/journal.rs` | **Write-ahead journal (ADR-0006).** Sole mutation primitive for the companion directory: in-place file writes guarded by `.save-in-progress` marker + `.restore/` backup mirror. `execute(SavePlan)` and `recover_if_needed(base_file)` are `pub(crate)` and called only from `layout/io.rs` and `layout/mod.rs`. Test seams `FAIL_AFTER_BACKUP` / `FAIL_MID_WRITES` are thread-local `#[cfg(test)]` `Cell<bool>`s. | inline `#[cfg(test)]` (8 tests) |
-| `layout/manifest.rs` | Layout manifest tracking | inline `#[cfg(test)]` |
+| `layout/manifest.rs` | Layout manifest tracking; carries serde-defaulted `connections: Vec<ConnectionConfig>` for per-layout saved connections (Spec 013 / S4) | inline `#[cfg(test)]` |
+| `layout/known_layouts.rs` | App-level known-layout registry (Spec 013 / S5). Owns `$APPDATA/bowties/known-layouts.json` format, stale-path filtering, and atomic temp→flush→fsync→rename writes. Pure path-parameterised functions so the commands layer only resolves the registry path. | inline `#[cfg(test)]` (7 tests) |
 | `layout/node_snapshot.rs` | Node config snapshot for offline use | inline `#[cfg(test)]` |
 | `layout/offline_changes.rs` | Offline change staging (config diffs) | inline `#[cfg(test)]` |
 | `layout/serde_node_id.rs` | Custom serde for NodeID (dotted-hex in YAML) | — |

@@ -760,4 +760,127 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&root);
     }
+
+    // ── Spec 013 / S4: per-layout connections in manifest ─────────────────
+
+    fn test_connection(id: &str, name: &str) -> crate::layout::types::ConnectionConfig {
+        crate::layout::types::ConnectionConfig {
+            id: id.to_string(),
+            name: name.to_string(),
+            adapter_type: crate::layout::types::AdapterType::Tcp,
+            host: Some("localhost".to_string()),
+            port: Some(12021),
+            serial_port: None,
+            baud_rate: None,
+            flow_control: crate::layout::types::FlowControl::None,
+        }
+    }
+
+    #[test]
+    fn s4_existing_layout_without_connections_field_opens_with_empty_list() {
+        // An older layout file written before Spec 013 / S4 had no
+        // `connections` field. Opening it must succeed and produce an
+        // empty connections list — no migration required.
+        let root = std::env::temp_dir().join("bowties_s4_legacy_open");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let base_file = root.join("legacy.layout");
+        let manifest = LayoutManifest::new(
+            "legacy".to_string(),
+            "2026-05-23T00:00:00Z".to_string(),
+            "2026-05-23T00:00:00Z".to_string(),
+            "legacy.layout.d".to_string(),
+        );
+        let data = LayoutDirectoryWriteData {
+            manifest,
+            node_snapshots: vec![test_node_snapshot("050101011402")],
+            bowties: LayoutFile::default(),
+            offline_changes: Vec::new(),
+            cdi_files: Vec::new(),
+        };
+        write_layout_capture(&base_file, &data).unwrap();
+
+        // Rewrite the manifest with the `connections` field stripped so
+        // the file looks like one written by an older Bowties build.
+        let raw = std::fs::read_to_string(&base_file).unwrap();
+        let stripped: String = raw
+            .lines()
+            .filter(|l| !l.starts_with("connections"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&base_file, stripped).unwrap();
+
+        let loaded = read_layout_capture(&base_file).unwrap();
+        assert!(loaded.manifest.connections.is_empty(),
+            "legacy layout must open with empty connections list");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn s4_layout_connections_roundtrip_through_update_manifest_connections() {
+        let root = std::env::temp_dir().join("bowties_s4_connections_roundtrip");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let base_file = root.join("rt.layout");
+        let manifest = LayoutManifest::new(
+            "rt".to_string(),
+            "2026-05-23T00:00:00Z".to_string(),
+            "2026-05-23T00:00:00Z".to_string(),
+            "rt.layout.d".to_string(),
+        );
+        let data = LayoutDirectoryWriteData {
+            manifest,
+            node_snapshots: vec![test_node_snapshot("050101011402")],
+            bowties: LayoutFile::default(),
+            offline_changes: Vec::new(),
+            cdi_files: Vec::new(),
+        };
+        write_layout_capture(&base_file, &data).unwrap();
+
+        // Initially empty.
+        let initial = crate::layout::read_manifest(&base_file).unwrap();
+        assert!(initial.connections.is_empty());
+
+        // Write a single connection and round-trip it.
+        let conn_a = test_connection("aaa", "JMRI hub");
+        crate::layout::update_manifest_connections(&base_file, vec![conn_a.clone()]).unwrap();
+        let after_one = crate::layout::read_manifest(&base_file).unwrap();
+        assert_eq!(after_one.connections, vec![conn_a.clone()]);
+
+        // The companion-directory contents must be untouched.
+        let companion = derive_companion_dir_path(&base_file).unwrap();
+        assert!(companion.join("nodes").join("050101011402.yaml").exists());
+
+        // Write multiple connections in a defined order.
+        let conn_b = crate::layout::types::ConnectionConfig {
+            id: "bbb".to_string(),
+            name: "USB GridConnect".to_string(),
+            adapter_type: crate::layout::types::AdapterType::GridConnectSerial,
+            host: None,
+            port: None,
+            serial_port: Some("COM7".to_string()),
+            baud_rate: Some(57600),
+            flow_control: crate::layout::types::FlowControl::RtsCts,
+        };
+        let conn_c = test_connection("ccc", "Secondary hub");
+        crate::layout::update_manifest_connections(
+            &base_file,
+            vec![conn_a.clone(), conn_b.clone(), conn_c.clone()],
+        )
+        .unwrap();
+
+        let after_three = crate::layout::read_manifest(&base_file).unwrap();
+        assert_eq!(after_three.connections, vec![conn_a, conn_b, conn_c]);
+
+        // Round-trip through the full capture reader too, to confirm the
+        // companion directory still loads cleanly alongside the new field.
+        let full = read_layout_capture(&base_file).unwrap();
+        assert_eq!(full.manifest.connections.len(), 3);
+        assert_eq!(full.node_snapshots.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

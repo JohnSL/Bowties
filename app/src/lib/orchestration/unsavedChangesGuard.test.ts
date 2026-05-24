@@ -35,4 +35,12 @@ describe('hasUnsavedPromptChanges', () => {
   it('treats dirty in-memory layout metadata as unsaved', () => {
     expect(hasUnsavedPromptChanges(['node-1'], false, 0, true)).toBe(true);
   });
+
+  it('treats layoutDirty as the single carrier for unsaved discovered nodes (S8)', () => {
+    // S8 moved the discovered-node signal into `layoutStore.isDirty` itself;
+    // callers pass that single flag through the existing `layoutDirty`
+    // parameter rather than a separate count.
+    expect(hasUnsavedPromptChanges(['node-1'], false, 0, true)).toBe(true);
+    expect(hasUnsavedPromptChanges(['node-1'], false, 0, false)).toBe(false);
+  });
 });

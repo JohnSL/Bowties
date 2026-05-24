@@ -68,6 +68,7 @@
     revertedPersistedCount: offlineChangesStore.revertedPersistedCount,
     saveProgressState: saveProgress.state,
     treeNodeIds: [...nodeTreeStore.trees.keys()],
+    unsavedInMemoryNodeCount: layoutStore.unsavedInMemoryNodeIds.length,
   }));
 
   // Whether the discard confirmation dialog is open.

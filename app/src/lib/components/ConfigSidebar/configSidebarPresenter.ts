@@ -1,6 +1,6 @@
 import type { DiscoveredNode } from '$lib/api/tauri';
 import type { OfflineChangeRow } from '$lib/api/sync';
-import { pipConfirmsConfigReadable } from '$lib/orchestration/configReadOrchestrator';
+import { pipConfirmsConfigReadable, pipConfirmsNoCdi } from '$lib/orchestration/configReadOrchestrator';
 import {
   isGroup,
   isLeaf,
@@ -10,6 +10,7 @@ import {
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { editKeyForLeaf } from '$lib/utils/editKey';
 import { resolveNodeDisplayName } from '$lib/utils/nodeDisplayName';
+import { isSavedOffBusNode, isUnsavedDiscoveredNode } from '$lib/utils/nodeRoster';
 
 export interface SidebarNodeEntry {
   isOffline: boolean;
@@ -18,6 +19,12 @@ export interface SidebarNodeEntry {
   nodeId: string;
   nodeName: string;
   nodeTooltip: string;
+  /**
+   * S8: this node is currently on the bus (or in-memory) but has NOT yet been
+   * persisted into the saved layout roster. Surfaced as an "unsaved new" badge
+   * so the user can see which nodes will be promoted on the next save.
+   */
+  isUnsavedNew: boolean;
 }
 
 export interface SidebarPendingState {
@@ -25,7 +32,15 @@ export interface SidebarPendingState {
   hasPendingEdits: boolean;
 }
 
-export function buildSidebarNodeEntries(nodes: Map<string, DiscoveredNode>): SidebarNodeEntry[] {
+export function buildSidebarNodeEntries(
+  nodes: Map<string, DiscoveredNode>,
+  /**
+   * Canonical node IDs persisted in the active layout (S8). When `undefined`
+   * (no layout active or pre-S8 contexts) no node is considered unsaved-new
+   * so the badge never renders spuriously.
+   */
+  savedNodeIds?: string[],
+): SidebarNodeEntry[] {
   const baseNames = new Map<string, number>();
 
   for (const [nodeId, node] of nodes.entries()) {
@@ -48,9 +63,31 @@ export function buildSidebarNodeEntries(nodes: Map<string, DiscoveredNode>): Sid
         nodeId,
         nodeName,
         nodeTooltip: getNodeTooltip(nodeId, node),
+        // S8: a node that does not support CDI cannot be edited offline, so
+        // it can never participate in unsaved changes — suppress the badge
+        // for it even when it is absent from the saved roster. PIP must
+        // confirm absence of CDI (and memory-config) before suppressing;
+        // before PIP completes we still show the badge so brief discovery
+        // races don't leave the user without context.
+        isUnsavedNew: isUnsavedDiscoveredNode(nodeId, savedNodeIds)
+          && !pipConfirmsNoCdi(node),
       };
     })
     .sort((left, right) => left.nodeName.localeCompare(right.nodeName));
+}
+
+/**
+ * S8: returns canonical node IDs that are saved in the layout but NOT currently
+ * visible on the bus. Routes/components can render placeholder entries for
+ * these to make "saved but off-bus" status discoverable.
+ */
+export function computeOffBusSavedNodeIds(
+  nodes: Map<string, DiscoveredNode>,
+  savedNodeIds: string[] | undefined,
+): string[] {
+  if (!savedNodeIds) return [];
+  const currentIds = [...nodes.keys()];
+  return savedNodeIds.filter((id) => isSavedOffBusNode(id, savedNodeIds, currentIds));
 }
 
 export function shouldShowConfigNotReadBadge(args: {

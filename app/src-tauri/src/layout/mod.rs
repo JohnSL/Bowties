@@ -15,6 +15,7 @@ use std::path::Path;
 
 pub mod io;
 pub(crate) mod journal;
+pub mod known_layouts;
 pub mod manifest;
 pub mod node_snapshot;
 pub mod offline_changes;
@@ -132,6 +133,49 @@ pub fn resolve_cdi_xml_for_snapshot(
 ) -> Result<String, String> {
     let companion_dir = io::derive_companion_dir_path(base_file)?;
     io::resolve_cdi_xml(snapshot, app_data_dir, &companion_dir)
+}
+
+/// Read just the layout manifest file (the base `.layout` YAML),
+/// without loading companion-directory contents. Useful when callers
+/// only need a small piece of manifest data such as the saved
+/// connections list (Spec 013 / S4).
+pub fn read_manifest(base_file: &Path) -> Result<manifest::LayoutManifest, String> {
+    let m: manifest::LayoutManifest = io::read_yaml_file(base_file)?;
+    m.validate()?;
+    Ok(m)
+}
+
+/// Replace the saved connections list on a layout's manifest.
+///
+/// Loads the existing manifest, swaps in the new connections list,
+/// and writes the manifest back through the layout journal so a
+/// crash mid-write is recoverable (ADR-0006). The companion directory
+/// must already exist (i.e. the layout must have been saved at least
+/// once).
+pub fn update_manifest_connections(
+    base_file: &Path,
+    connections: Vec<types::ConnectionConfig>,
+) -> Result<(), String> {
+    let mut manifest: manifest::LayoutManifest = io::read_yaml_file(base_file)?;
+    manifest.validate()?;
+    manifest.connections = connections;
+
+    let companion_dir = io::derive_companion_dir_path(base_file)?;
+    if !companion_dir.exists() {
+        return Err(format!(
+            "Layout companion directory not found: {}",
+            companion_dir.display()
+        ));
+    }
+    let bytes = io::serialize_yaml(&manifest)?;
+    journal::execute(journal::SavePlan {
+        companion_dir,
+        writes: vec![journal::PlannedWrite {
+            abs_path: base_file.to_path_buf(),
+            op: journal::WriteOp::Bytes(bytes),
+        }],
+        prune_dirs: Vec::new(),
+    })
 }
 
 #[cfg(test)]

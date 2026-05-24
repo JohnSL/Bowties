@@ -109,11 +109,27 @@ vi.mock('$lib/api/bowties', () => ({
 
 vi.mock('$lib/api/layout', () => ({
   closeLayout: closeLayoutRef,
-  saveLayoutFile: vi.fn(async () => ({ warnings: [] })),
-  openLayoutFile: openLayoutFileRef,
+  saveLayoutDirectory: vi.fn(async () => ({ warnings: [] })),
+  openLayoutDirectory: openLayoutFileRef,
   buildOfflineNodeTree: vi.fn(async () => {
     throw new Error('not needed in route discovery test');
   }),
+  createNewLayoutCapture: vi.fn(async () => ({
+    layoutId: 'created-layout',
+    capturedAt: '2026-04-25T00:00:00.000Z',
+    layout: { schemaVersion: '1.0', bowties: {}, roleClassifications: {} },
+    offlineMode: true,
+    nodeCount: 0,
+    pendingOfflineChangeCount: 0,
+    partialNodes: [],
+    nodeSnapshots: [],
+  })),
+}));
+
+vi.mock('$lib/api/startup', () => ({
+  getKnownLayouts: vi.fn(async () => []),
+  addKnownLayout: vi.fn(async () => []),
+  removeKnownLayout: vi.fn(async () => []),
 }));
 
 vi.mock('$lib/api/cdi', () => ({
@@ -161,6 +177,8 @@ vi.mock('$lib/ConnectionManager.svelte', async () => await import('$lib/test/Con
 vi.mock('$lib/components/Sync/SyncPanel.svelte', async () => await import('$lib/test/StubComponent.svelte'));
 
 vi.mock('$lib/components/Layout/OfflineBanner.svelte', async () => await import('$lib/test/StubComponent.svelte'));
+
+vi.mock('$lib/components/LayoutPicker/LayoutPicker.svelte', async () => await import('$lib/test/StubComponent.svelte'));
 
 import Page from './+page.svelte';
 
@@ -221,6 +239,17 @@ beforeEach(() => {
     partialNodes: [],
     nodeSnapshots: [],
   }));
+
+  // Spec 013 / S6: pre-seed an active layout context so the picker gate
+  // (which now blocks the main UI when no layout is active) does not hide
+  // the toolbar and ConnectionManager that these legacy discovery tests
+  // exercise. Tests that explicitly close the layout re-seed as needed.
+  layoutStore.setActiveContext({
+    layoutId: 'test-pre-seeded',
+    rootPath: '',
+    mode: 'legacy_file',
+    pendingOfflineChangeCount: 0,
+  });
 });
 
 function makeJmriSnipData() {
@@ -261,17 +290,6 @@ describe('+page route discovery CTA', () => {
       }
       return null;
     });
-    dialogOpenRef.mockResolvedValueOnce('D:/Layouts/Test2.layout');
-    openLayoutFileRef.mockResolvedValueOnce({
-      layoutId: 'test-layout',
-      capturedAt: '2026-04-25T00:00:00.000Z',
-      layout: makeOfflineLayout(),
-      offlineMode: true,
-      nodeCount: 0,
-      pendingOfflineChangeCount: 0,
-      partialNodes: [],
-      nodeSnapshots: [],
-    });
     querySnipRef.mockResolvedValueOnce({
       status: 'Complete',
       snip_data: makeJmriSnipData(),
@@ -290,20 +308,30 @@ describe('+page route discovery CTA', () => {
       expect(screen.getByTestId('connect-manager-button')).toBeInTheDocument();
     });
 
-    const openLayout = eventHandlers.get('menu-open-layout');
-    expect(openLayout).toBeTypeOf('function');
-    await openLayout?.({});
-
-    await waitFor(() => {
-      expect(layoutStore.activeContext?.rootPath).toBe('D:/Layouts/Test2.layout');
-    });
-
+    // Close the pre-seeded layout to simulate the open/close cycle that
+    // resets node/CDI state. (Since Spec 013 / S7+, menu-open-layout no
+    // longer loads a file directly — it surfaces the picker, which is
+    // stubbed in this suite. The discovery-CTA scenario only needs the
+    // post-close re-seed for the connect+discover phase below.)
     const closeLayout = eventHandlers.get('menu-close-layout');
     expect(closeLayout).toBeTypeOf('function');
     await closeLayout?.({});
 
     await waitFor(() => {
       expect(layoutStore.activeContext).toBe(null);
+    });
+
+    // Spec 013 / S6: the picker is stubbed in this suite, so re-seed an
+    // active layout context so the ConnectionManager continues to render
+    // for the remainder of this discovery-CTA scenario.
+    layoutStore.setActiveContext({
+      layoutId: 'test-pre-seeded',
+      rootPath: '',
+      mode: 'legacy_file',
+      pendingOfflineChangeCount: 0,
+    });
+
+    await waitFor(() => {
       expect(screen.getByTestId('connect-manager-button')).toBeInTheDocument();
     });
 

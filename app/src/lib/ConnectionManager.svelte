@@ -1,6 +1,8 @@
 ﻿<script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { createEventDispatcher, onMount } from 'svelte';
+  import { getLayoutConnections, saveLayoutConnections } from '$lib/api/layout';
+  import { layoutStore } from '$lib/stores/layout.svelte';
 
   type AdapterType = 'tcp' | 'gridConnectSerial' | 'slcanSerial';
   type FlowControl = 'none' | 'rtsCts';
@@ -107,9 +109,14 @@
     ).join('');
   }
 
-  // Saved connections loaded from backend
+  // Saved connections loaded from the active layout's manifest (Spec 013 / S7).
   let savedConnections = $state<ConnectionConfig[]>([]);
   let sortedConnections = $derived([...savedConnections].sort((a, b) => a.name.localeCompare(b.name)));
+
+  // Track the layout path we last loaded from so we can refresh when the
+  // active layout changes (open/switch/close).
+  let loadedForPath = $state<string | null>(null);
+  let activeLayoutPath = $derived(layoutStore.activeContext?.rootPath ?? null);
 
   // Available serial ports
   let availablePorts = $state<string[]>([]);
@@ -148,15 +155,31 @@
     }
   });
 
-  onMount(async () => {
-    await Promise.all([loadPrefs(), refreshPorts()]);
+  onMount(() => {
+    void refreshPorts();
   });
 
-  async function loadPrefs() {
+  // Load connections whenever the active layout changes (including initial
+  // mount once the layout becomes available, and when the user switches
+  // layouts). Effect runs once on mount and again on every path change.
+  $effect(() => {
+    const path = activeLayoutPath;
+    if (path === loadedForPath) return;
+    loadedForPath = path;
+    void loadConnections();
+  });
+
+  async function loadConnections() {
+    const path = activeLayoutPath;
+    if (!path) {
+      savedConnections = [];
+      return;
+    }
     try {
-      savedConnections = await invoke<ConnectionConfig[]>('load_connection_prefs');
+      savedConnections = await getLayoutConnections(path);
     } catch (e) {
-      console.error('Failed to load connection prefs:', e);
+      console.error('Failed to load layout connections:', e);
+      savedConnections = [];
     }
   }
 
@@ -175,11 +198,20 @@
     }
   }
 
-  async function savePrefs() {
+  async function persistConnections() {
+    const path = activeLayoutPath;
+    if (!path) {
+      // No active layout — nothing to persist against. This should not
+      // happen in normal use because the layout picker (S6) gates the app
+      // until a layout is open.
+      console.warn('Refusing to save connections: no active layout');
+      return;
+    }
     try {
-      await invoke('save_connection_prefs', { connections: savedConnections });
+      await saveLayoutConnections(path, savedConnections);
     } catch (e) {
-      console.error('Failed to save connection prefs:', e);
+      console.error('Failed to save layout connections:', e);
+      errorMessage = `Failed to save connections: ${e}`;
     }
   }
 
@@ -253,7 +285,7 @@
       } else {
         savedConnections = [...savedConnections, config];
       }
-      await savePrefs();
+      await persistConnections();
       closeModal();
     } catch (e) {
       errorMessage = `Failed to save connection: ${e}`;
@@ -263,7 +295,7 @@
   async function deleteConnection(id: string) {
     savedConnections = savedConnections.filter(c => c.id !== id);
     confirmDeleteId = null;
-    await savePrefs();
+    await persistConnections();
   }
 
   async function connect(config: ConnectionConfig) {
