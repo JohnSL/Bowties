@@ -387,21 +387,6 @@ describe('SegmentView connector selectors', () => {
     });
   });
 
-  it('does not keep phantom unsaved layout metadata after selecting then clearing a daughterboard', async () => {
-    setSegmentTree();
-    markNodeConfigRead(NODE_ID);
-
-    render(SegmentView);
-
-    await connectorSelectionsStore.updateSlotSelection(NODE_ID, 'connector-a', 'BOD4-CP');
-    expect(layoutStore.isDirty).toBe(true);
-
-    await connectorSelectionsStore.updateSlotSelection(NODE_ID, 'connector-a', null);
-
-    expect(layoutStore.isDirty).toBe(false);
-    expect(layoutStore.getConnectorSelections(NODE_ID)).toBeNull();
-  });
-
   it('shows a warning when connector filtering is disabled because the CDI shape does not match', () => {
     nodeTreeStore.setTree(NODE_ID, {
       nodeId: NODE_ID,

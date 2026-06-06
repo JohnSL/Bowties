@@ -10,8 +10,8 @@
 | Stores | ~21 | Durable frontend state, derived values |
 | Utils | ~13 | Normalization, formatting, serialization |
 | API | 8 | Tauri IPC bindings |
-| Backend commands | 60+ across 7 modules | IPC boundary, error translation |
-| Backend domain | ~15 modules | Node registry, proxy actors, layout persistence |
+| bowties-core | 16 modules | Node tree, layout persistence, profile, registry |
+| Backend (Tauri shell) | ~15 modules | IPC commands, state, placeholder factory, events |
 | lcc-rs | ~20 modules | Protocol encoding, transport, CDI parsing |
 
 Governing docs: `product/architecture/code-placement-and-ownership.md`, `product/architecture/frontend-boundaries.md`
@@ -66,7 +66,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `SubGroupAccordion.svelte` | Nested non-root group accordion | — |
 | `EventSlotRow.svelte` | Event ID slot field | — |
 | `FieldRow.svelte` | Generic field row wrapper | — |
-| `SaveControls.svelte` | Save/discard buttons for batch writes | `SaveControls.test.ts`, `saveControlsPresenter.test.ts` |
+| `SaveControls.svelte` | Save/discard buttons for batch writes. **Spec 014 / Step 7 Option H:** thin delegate — only owns its local `saveProgress` UI state machine and invokes `onSave` / `onSaveAs` props. All cleanup wiring (drafts, metadata, mark-clean, offline reload) is owned by `saveLayoutOrchestrator` via callbacks composed in `+page.svelte`. The component MUST NOT reach into `layoutStore`, `bowtieMetadataStore`, `configChangesStore`, or `offlineChangesStore` directly. | `SaveControls.test.ts`, `saveControlsPresenter.test.ts` |
 
 ### Sync/ — Layout reconciliation
 | File | Purpose | Test |
@@ -100,6 +100,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `NodeList.svelte` | Discovered nodes with CDI viewer access | — |
 | `ErrorDialog.svelte` | Error modal with Escape-to-close | — |
 | `DiscardConfirmDialog.svelte` | Confirm discard of unsaved edits | — |
+| `AddBoardDialog.svelte` | Spec 014 / S8: modal picker for adding a placeholder board to the active offline layout. Lists bundled board-model profiles via `listBundledProfiles()` and calls `placeholderBoardOrchestrator.addPlaceholderBoard` on submit. Entry point is the native `File → Add Placeholder Board…` menu item (gated on `offlineActive && !busy`); mounted from `+page.svelte` behind a `showAddBoardDialog` state flag. | — |
 | `DiscoveryProgressModal.svelte` | Progress during discovery phases (reading, building-catalog, complete, cancelled) | — |
 | `SaveProgressDialog.svelte` | Modal during the three-phase save flow; reads phase + per-field bus-write counters from `saveProgressStore`. Auto-dismisses on `complete` / `error` after 2 s. | — |
 | `RefreshButton.svelte` | Refresh discovered nodes | — |
@@ -118,8 +119,10 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `configDraftOrchestrator.ts` | Mirrors config drafts to backend IPC or offline persistence | — |
 | `cdiDialogOrchestrator.ts` | CDI download/cache/redownload state machine | `cdiDialogOrchestrator.test.ts` |
 | `connectorSelectionOrchestrator.ts` | Connector slot selection + compatibility recompute | `connectorSelectionOrchestrator.test.ts` |
-| `offlineLayoutOrchestrator.ts` | Offline layout hydration, snapshot replay, and layout-transition resets (sidebar, nodes, trees, metadata). Three reset functions: `resetLayoutStateForNoLayout` (full teardown), `resetFreshLiveSessionState` (live-session guard), `openOfflineLayoutWithReplay` (clears sidebar before hydrating new layout) | `offlineLayoutOrchestrator.test.ts` |
-| `saveLayoutOrchestrator.ts` | Full save lifecycle: flush pending → persist layout → rebuild catalog → update context & partial nodes → clear metadata → mark clean. **S8:** accepts `discoveredOnlyNodeIds?: string[]` and appends `{type:'addNode',nodeIdHex}` deltas; surfaces `persistedNodeIds` into the updated `ActiveLayoutContext.layoutNodeIds`. | `saveLayoutOrchestrator.test.ts` |
+| `placeholderBoardOrchestrator.ts` | Spec 014 / S8.10: placeholder board lifecycle. Calls `addPlaceholderBoardIpc(profileStem)` (backend factory mints UUID, builds proxy, registers in backend), then reads tree via `getNodeTree` IPC and seeds `nodeRoster`. Delete gates on caller-supplied `confirm: () => Promise<boolean>` (FR-017a). UUID minting moved to backend factory in S8.10. | `placeholderBoardOrchestrator.test.ts` |
+| `offlineLayoutOrchestrator.ts` | Offline layout hydration and snapshot replay. Exposes `buildOfflineDiscoveryNodes`, `buildOfflineTreesFromSnapshots`, `rehydrateOfflineStateFromSnapshots`, `restoreRecentOfflineLayout`, `openOfflineLayoutWithReplay`. The legacy standalone `resetLayoutStateForNoLayout` / `resetFreshLiveSessionState` exports remain for back-compat but new code MUST go through `layoutLifecycleOrchestrator` (ADR-0011) — the route's two wrappers now delegate. | `offlineLayoutOrchestrator.test.ts` |
+| `layoutLifecycleOrchestrator.ts` | **Single owner of in-memory layout-lifecycle resets** (ADR-0011, Step 11). Three named entry points: `resetForNewLayout({connected, reprobeLiveNodes, probeForNodes, afterReset})` (full teardown — close, discard, new-layout, no-layout recovery; calls `nodeRoster.clearLayoutScope()` so placeholders do NOT bleed across layouts — R7 fix), `resetForFreshLiveSession()` (disconnect/reconnect within the same live session; preserves placeholders because they are layout-scoped), and `closeLayout({activeMode, closeLayoutIpc, clearRecentLayout, ...})` which sequences backend close → frontend reset. Imports stores directly (not callback bags) so a new `effectiveNodeStore` input cannot be added without also extending the reset path. | `layoutLifecycleOrchestrator.test.ts` |
+| `saveLayoutOrchestrator.ts` | Full save lifecycle: flush pending → persist layout → rebuild catalog → update context & partial nodes → clear metadata → mark clean. **S8.11:** accepts `inMemorySnapshotKeys?: string[]` (unified real-node + placeholder keys) and appends `{type:'addNode', nodeKey}` deltas; surfaces `persistedNodeIds` into the updated `ActiveLayoutContext.layoutNodeIds`. | `saveLayoutOrchestrator.test.ts` |
 | `startupOrchestrator.ts` | Layout picker lifecycle (Spec 013 / S6): `loadKnownLayouts`, `openLayoutFromRegistry` (open existing → register), `createNewLayout` (capture → save → reopen → register), `removeKnownLayout`, `deriveLayoutNameFromPath`. Pure functions with injected callbacks — no direct store or IPC imports. Registry refresh failures are non-fatal (logged via `onError`). | `startupOrchestrator.test.ts` (14 tests) |
 | `syncSessionOrchestrator.ts` | Sync session lifecycle: classify → mode → reconcile | `syncSessionOrchestrator.test.ts` |
 | `syncApplyOrchestrator.ts` | Post-apply reconciliation: rebuild offline trees | `syncApplyOrchestrator.test.ts` |
@@ -136,22 +139,24 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `bowties.svelte.ts` | `bowtieCatalogStore` singleton + `buildEffectiveBowtiePreview()` (the catalog×tree×metadata×layout merge). The merge is consumed only by `$lib/layout/effectiveLayoutStore`; components do not import from here directly. | `bowties.svelte.test.ts` (tests exercise the merge through `effectiveLayoutStore`) |
 | `bowtieMetadata.svelte.ts` | Pending bowtie name/tag/role edits; `collectDeltas()` converts edits to `LayoutEditDelta[]` for save | `bowtieMetadata.svelte.test.ts` |
 | `nodeTree.svelte.ts` | Unified node config tree (CDI + addresses + values) | `nodeTree.store.test.ts` |
-| `configChanges.svelte.ts` | Layered change state (draft/offlinePending/baseline) | `configChanges.test.ts` |
+| `configChanges.svelte.ts` | Layered change state (draft/offlinePending/baseline). S8.12: `commitForSave()` replaces `clearNonPlaceholderDrafts()` — uniform draft clearing post-save. | `configChanges.test.ts` |
 | `configEditor.svelte.ts` | Entry point for user-initiated config edits | `configEditor.test.ts` |
 | `configFocus.svelte.ts` | Navigation request: bowtie → config field | `configFocus.test.ts` |
 | `configReadStatus.ts` | Tracks nodes with successful config reads | `configReadStatus.test.ts` |
-| `layout.svelte.ts` | Layout file state: open/save/save-as/recent; `hydrateFromBackend()` sets layout from backend response. **S8 isDirty semantics:** `isDirty` returns `_hasFileEdits || _unsavedInMemoryNodeIds.length > 0` — the property carries both LayoutFile-struct edits AND fully-captured discovered nodes not yet promoted into the saved roster. The route pushes the discovered-node list in via `setUnsavedInMemoryNodeIds(ids)` from a `$effect`; the store deduplicates equivalent pushes. `markClean()` and `setActiveContext()` both clear the in-memory set. | `layout.svelte.test.ts` |
+| `layout.svelte.ts` | Layout file state: open/save/save-as/recent; `hydrateFromBackend()` sets layout from backend response. **ADR-0011:** the per-node `isDirty` projection (fully-captured live nodes + persistability) is owned by `effectiveNodeStore`. `layoutStore.isDirty` carries only the LayoutFile-struct edits (`_hasFileEdits`); aggregate dirty signal lives on `effectiveNodeStore.isDirty`. Consumers (`SaveControls` presenter, top-bar dot, unsaved-changes count) MUST read through the facade, not directly off `layoutStore.isDirty`. | `layout.svelte.test.ts` |
 | `layoutOpenLifecycle.ts` | Phase machine for layout open (opening→hydrating→ready) | — |
 | `offlineChanges.svelte.ts` | Offline change row tracking (persisted/draft layers) | `offlineChanges.store.test.ts` |
 | `syncPanel.svelte.ts` | Sync session state: conflict/clean row tracking | `syncPanel.store.test.ts` |
-| `connectorSelections.svelte.ts` | Connector slot selections per-node | — |
+| `connectorSelections.svelte.ts` | Connector slot selections per-node. **Spec 014 / S6:** writes through `set_node_mode_selection` IPC (`$lib/api/layout`) — the unified `node_mode_selections` seam on `LayoutFile`. Identity mapping for Tower-LCC: slot_id ≡ mode_id, daughterboardId ≡ variantId. `fromNodeModeSelections(nodeId, profile, selections)` projects the unified map back onto the slot list for display. IPC save failures are logged via `console.warn` (not stored in the node-level error channel, which is reserved for "can't load this connector"). Selector changes are wrapped by `connectorSelectionOrchestrator.applyConnectorSelectionChange` which awaits `nodeTreeStore.refreshTree(nodeId)` so the backend re-runs `annotate_tree` with the new selection and the rendered tree re-shapes. | `connectorSelections.s6.test.ts` |
+| `placeholderBoards.svelte.ts` | Spec 014 / S8: read-only projection of `layoutStore.layout.placeholderBoards`. Exposes `list()` (sorted by name, case-insensitive), `get(id)`, `exists(id)`, `displayName(id)`. Owns no state; all mutations go through `placeholderBoardOrchestrator`. Consumed by `ConfigSidebar.svelte` to render placeholder entries with the `isPlaceholder` badge. | `placeholderBoards.svelte.test.ts` |
 | `bowtieFocus.svelte.ts` | Currently focused bowtie card (keyboard nav) | — |
 | `connectorSlotFocus.svelte.ts` | Focused connector slot per-node | — |
 | `connectionRequest.svelte.ts` | Cross-tab connection request (config→bowtie) | — |
 | `changeTracker.svelte.ts` | Unified "unsaved changes" snapshot for save controls | `changeTracker.svelte.test.ts` |
 | `saveProgress.svelte.ts` | Phase tracker for the three-phase save flow. Listens to `save-progress` Tauri events (`saving-layout` / `writing-config` / `reconciling` / `complete`) emitted by `save_layout_with_bus_writes` + per-iteration events from `write_modified_values`. Also exposes `begin()` / `apply()` / `fail()` / `reset()` so the offline-save path (driven by `+page.svelte`) can flip phases without backend events. Consumed by `SaveProgressDialog.svelte` and by `isMenuBusy()` to gate concurrent saves. | `saveProgress.svelte.test.ts` |
 | `nodes.ts` | Global discovered nodes list (Svelte 5 runes) | — |
-| `nodeInfo.ts` | nodeId → DiscoveredNode map for display-name resolution | — |
+| `nodeInfo.ts` | nodeId → DiscoveredNode map for display-name resolution. **Spec 014 / S8.7:** kept as internal backing storage; the canonical single source of truth for "the set of nodes the user sees" is now `nodeRoster.svelte.ts`. New consumers should read from the roster facade. | — |
+| `nodeRoster.svelte.ts` | **Spec 014 / S8.7, S8.12:** Unified facade over `nodeInfoStore`, `configReadNodesStore`, `nodeTreeStore`, and an internal `_profileStems` map (S8.12 — previously `inMemoryPlaceholdersStore`, now deleted). Exposes `allEntries` / `liveEntries` / `placeholderEntries` / `liveNodes` / `hasAnyEntries` / `has(nodeKey)` as reactive views, and `upsertLive`, `replaceLiveRoster` (preserves placeholders), `addPlaceholder`, `removePlaceholder`, `markPlaceholdersPersisted`, `setTree`, `markRead`, `clearLayoutScope` as mutators. | `nodeRoster.svelte.test.ts` |
 | `pillSelection.ts` | Replicated group instance selections | `pillSelection.test.ts` |
 | `traffic.ts` | Live traffic message stream | — |
 | `knownLayouts.svelte.ts` | `knownLayoutsStore` singleton — frontend mirror of `known-layouts.json` (Spec 013 / S6). Exposes `entries`, `loaded`, `busy`; setters tolerate undefined backend payloads. Written through by `startupOrchestrator`; read by `LayoutPicker`. | — |
@@ -164,8 +169,9 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 
 | File | Purpose | Test |
 |------|---------|------|
-| `index.ts` | Public facade. Re-exports `effectiveLayoutStore`, `bowtieCatalogStore`, `makeValueResolver`, `saveLayoutOrchestrated` + types, and the edit-recording commands (`recordBowtieDeletion`, `recordRoleClassification`, `recordConfigDraft`). | — |
-| `effectiveLayoutStore.svelte.ts` | Single read model that merges all edit layers into the user-visible view. `preview` / `effectiveBowties` (catalog × tree × metadata × layout, with `hasPendingDeletion` filter); `effectiveRole(nodeId, leaf)` (pending classify → catalog → leaf baseline); `effectiveValue(nodeId, leaf)` (draft override → leaf baseline); `slotsByRole(nodeId, role)`; `isSlotFree(nodeId, leaf)`; `usedInMap`. Composes `buildEffectiveBowtiePreview()` from `bowties.svelte.ts`. | `effectiveLayoutStore.svelte.test.ts` |
+| `index.ts` | Public facade. Re-exports `effectiveLayoutStore`, `effectiveNodeStore`, `bowtieCatalogStore`, `makeValueResolver`, `saveLayoutOrchestrated` + types, and the edit-recording commands (`recordBowtieDeletion`, `recordRoleClassification`, `recordConfigDraft`). | — |
+| `effectiveLayoutStore.svelte.ts` | Single read model that merges all edit layers into the user-visible **value** view. `preview` / `effectiveBowties` (catalog × tree × metadata × layout, with `hasPendingDeletion` filter); `effectiveRole(nodeId, leaf)` (pending classify → catalog → leaf baseline); `effectiveValue(nodeId, leaf)` (draft override → leaf baseline); `slotsByRole(nodeId, role)`; `isSlotFree(nodeId, leaf)`; `usedInMap`. Composes `buildEffectiveBowtiePreview()` from `bowties.svelte.ts`. | `effectiveLayoutStore.svelte.test.ts` |
+| `effectiveNodeStore.svelte.ts` | **Per-node** layout facade sibling to `effectiveLayoutStore` (ADR-0011, Step 10). Projects `nodeTreeStore`, `nodeInfoStore`, `configReadNodesStore`, `partialCaptureNodesStore`, `layoutStore.activeContext`, and the edit-layer stores into `nodeOrigin(key)`, `isFullyCaptured(key)`, `isConfigRead(key)`, `isPersistableInLayout(key)` (= `isFullyCaptured ∧ (isConfigRead ∨ placeholder)` — R5 fix), `unsavedInMemoryNodeIds`, `unsavedRemovedNodeIds`, `isDirty` (R6 fix). Reads only — never writes through. The lifecycle reset path is `layoutLifecycleOrchestrator`, which MUST enumerate every store this facade reads. | `effectiveNodeStore.svelte.test.ts` |
 
 ### Layout facade conventions
 
@@ -180,11 +186,13 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | File | Purpose | Test |
 |------|---------|------|
 | `nodeId.ts` | Node ID normalization: dotted-hex ↔ canonical | — |
+| `nodeKey.ts` | **NodeKey** (Spec 014, ADR-0008, ADR-0010) — branded discriminated union covering live `NodeID` and `placeholder:<uuidv4>`. Exports `type NodeKey = LiveNodeKey | PlaceholderNodeKey`, constructor `nodeKey(input)`, `nodeKeyEquals`, `nodeKeyToString`, `nodeKeyToDisplay`, `toCanonicalNodeKey(input: string | NodeKey | null \| undefined)`, `isPlaceholderInput(input)`, and the transitional shim `NodeKeyInput = string \| NodeKey`. Mirrors the backend prefix predicate `layout::types::is_placeholder` exactly. Consumed by `configChanges.svelte.ts`, `editKey.ts`, and any store that legitimately widens to placeholders. | `nodeKey.test.ts` |
 | `nodeRoster.ts` | S8: pure helpers comparing the active layout's saved-node roster against the currently-visible node set — `canonicalizeNodeId`, `computeDiscoveredOnlyNodeIds` (badge predicate, no threshold), `computeUnsavedInMemoryNodeIds` (threshold-gated by full capture — feeds `layoutStore.isDirty` and `addNode` save deltas), `isUnsavedDiscoveredNode`, `isSavedOffBusNode`. Consumed by `+page.svelte` (sidebar badge + dirty signal + save deltas), `configSidebarPresenter` (unsaved-new badge), and any future "off-bus saved" surfaces. | `nodeRoster.test.ts` |
 | `nodeDisplayName.ts` | Display name resolution via fallback chain | — |
 | `formatters.ts` | Config value display formatting (int/string/eventId/float) | `formatters.test.ts` |
 | `serialize.ts` | Serialize TreeConfigValue to raw bytes for writes | `serialize.test.ts` |
 | `eventIds.ts` | Event ID placeholder detection; fresh event ID generation | — |
+| `uuid.ts` | RFC 4122 v4 UUID generation via `crypto.getRandomValues` (broader Tauri-target compatibility than `crypto.randomUUID`). Single helper `generateUuidV4()`. No longer used by `placeholderBoardOrchestrator` (UUID minting moved to backend factory in S8.10); available for any future v4 UUID need (saved-connection ids, etc.). | — |
 | `editKey.ts` | Canonical edit key construction: `nodeId:space:address` | `editKey.test.ts` |
 | `displayResolution.ts` | **INTERNAL** (ADR-0004) — leaf-level resolution primitives consumed only by `$lib/layout` and the closely-related structural helpers. `resolveValue` waterfalls draft → offlinePending → baseline; `resolveRole` waterfalls pending edit → saved layout → catalog → CDI baseline; `makeValueResolver(nodeId)` is re-exported from `$lib/layout` for `buildElementLabel`/`getInstanceDisplayName`. | `displayResolution.test.ts` |
 | `connectorConstraints.ts` | Evaluate connector slot constraints | `connectorConstraints.test.ts` |
@@ -222,41 +230,60 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `discovery.rs` | `discover_nodes`, `probe_nodes`, `register_node`, `query_snip_*`, `query_pip_*`, `verify_node_status`, `refresh_all_nodes` | Node discovery and metadata |
 | `bowties.rs` | `query_event_roles`, `build_bowtie_catalog_command`, `get_bowties`, `set_bowtie_metadata`, `load_layout`, `save_layout`, `*_recent_layout` | Bowtie catalog and layout files |
 | `cdi.rs` | `download_cdi`, `get_cdi_xml`, `get_cdi_structure`, `read_config_value`, `read_all_config_values`, `write_config_value`, `set_modified_value`, `write_modified_values`, `discard_modified_values`, `trigger_action`, `cancel_*` | CDI download, config read/write |
-| `layout_capture.rs` | `capture_layout_snapshot`, `save_layout_directory`, `open_layout_directory`, `close_layout`, `create_new_layout_capture`, `build_offline_node_tree`, `save_layout_with_bus_writes` | Layout snapshot persistence; save commands accept `LayoutEditDelta[]` and return persisted `LayoutFile` plus (S8) `persistedNodeIds` — the canonical roster after applying any `AddNode` deltas. `save_layout_directory` computes a permitted-node set = previously-persisted ∪ explicitly-added; live handles outside the permitted set are skipped, and previously-saved snapshots for permitted off-bus nodes are carried forward from `prev.node_snapshots`. First-save (`previous == None`) passes all live handles through for backward compatibility. |
+| `layout_capture.rs` | `capture_layout_snapshot`, `save_layout_directory`, `open_layout_directory`, `close_layout`, `create_new_layout_capture`, `build_offline_node_tree`, `save_layout_with_bus_writes` | Layout snapshot persistence; save commands accept `LayoutEditDelta[]` and return persisted `LayoutFile` plus (S8) `persistedNodeIds` — the canonical roster after applying any `AddNode` deltas. `save_layout_directory` computes a permitted-node set = previously-persisted ∪ explicitly-added; live handles outside the permitted set are skipped, and previously-saved snapshots for permitted off-bus nodes are carried forward from `prev.node_snapshots`. First-save (`previous == None`) passes all live handles through for backward compatibility. **Manifest reconstruction goes through `layout::manifest::build_save_manifest(previous, layout_id, captured_at, last_saved_at, companion_dir)`** — preserves `connections` / `match_thresholds` / `active_mode` from `previous`, never falls back to `LayoutManifest::new(...)` on re-save (that path silently zeroed per-layout LCC connections; see `resave_preserves_existing_connections_via_build_save_manifest` test in `layout/io.rs`). |
 | `sync_panel.rs` | `set_offline_change`, `revert_offline_change`, `list_offline_changes` | Offline change staging |
-| `connector_profiles.rs` | `get_connector_profile`, `get_connector_selections`, `put_connector_selections`, `preview_connector_compatibility` | Connector profile and slot constraints |
+| `connector_profiles.rs` | `get_connector_profile`, `preview_connector_compatibility` | Connector profile and slot constraints. Selection persistence (`get_connector_selections` / `put_connector_selections`) was removed in Spec 014; the replacement seam is `node_mode_selections` written through `placeholders.rs`. |
+| `placeholders.rs` | `add_placeholder_board`, `delete_placeholder_board`, `set_placeholder_config_value`, `set_node_mode_selection`, `rename_placeholder_board` | Spec 014 / S3: thin wrappers that validate input, build a single `LayoutEditDelta`, and delegate to `save_layout_directory` (ADR-0002 delta pipeline). |
 | `diagnostics.rs` | `get_diagnostic_report` | Ring-buffer logs and troubleshooting |
 
 ---
 
-## Backend Domain Modules (`app/src-tauri/src/`)
+## Backend Domain Modules
+
+### bowties-core crate (`bowties-core/src/`)
+
+Pure domain logic extracted from `src-tauri` so that tests can run with
+`cargo test` (no Tauri DLL dependency). Re-exported by `src-tauri` via
+thin shim modules so existing `crate::` paths compile unchanged.
+
+| Module | Purpose | Test |
+|--------|---------|------|
+| `node_key.rs` | **`NodeKey`** (ADR-0010) — sum type `Live(NodeID) \| Placeholder(Uuid)` with canonical wire form. | inline `#[cfg(test)]` (10) |
+| `node_tree.rs` | Unified config tree: CDI + addresses + values + roles. Also owns `NodeRoles` (per-event producer/consumer sets). | inline `#[cfg(test)]` (24+) |
+| `node_proxy.rs` | Polymorphic node handle (`NodeProxyHandle` enum: `Live` + `Synthesized`). `LiveNodeProxy` actor, `SynthesizedNodeProxy` passive state holder. | inline `#[cfg(test)]` |
+| `node_registry.rs` | Thread-safe `NodeKey → NodeProxyHandle` map. Owns `saved_trees` cache. | inline `#[cfg(test)]` |
+| `layout/mod.rs` | **Deep module** (ADR-0005). Sole owner of companion-directory file structure. Public API: `save_capture`, `read_capture`, `read_node_snapshot`, `update_offline_changes`, etc. | inline `#[cfg(test)]` |
+| `layout/types.rs` | YAML data structures, `ConnectionConfig`, `LayoutEditDelta`, `apply_layout_deltas`. | inline `#[cfg(test)]` |
+| `layout/io.rs` | Companion-dir / node-file path derivation, full capture read/write, CDI XML resolution. | inline `#[cfg(test)]` |
+| `layout/journal.rs` | **Write-ahead journal** (ADR-0006). In-place writes guarded by marker + backup. | inline `#[cfg(test)]` (8) |
+| `layout/manifest.rs` | Layout manifest, saved connections. | inline `#[cfg(test)]` |
+| `layout/known_layouts.rs` | App-level known-layout registry (Spec 013 / S5). | inline `#[cfg(test)]` (7) |
+| `layout/node_snapshot.rs` | Node config snapshot for offline use. | inline `#[cfg(test)]` |
+| `layout/offline_changes.rs` | Offline change staging (config diffs). | inline `#[cfg(test)]` |
+| `layout/serde_node_id.rs` | Custom serde for NodeID (dotted-hex in YAML). | — |
+| `profile/mod.rs` | Profile tree annotation, overlay composition, cache types. | inline `#[cfg(test)]` |
+| `profile/types.rs` | Structure profile types (event roles, relevance, connectors). | — |
+| `profile/resolver.rs` | Profile conditional resolution (firmware checks). | inline `#[cfg(test)]` |
+
+### Tauri app shell (`app/src-tauri/src/`)
 
 | Module | Purpose | Test |
 |--------|---------|------|
 | `lib.rs` | Entry point: connection init, state setup, command registration | — |
 | `main.rs` | Tauri desktop app launcher | — |
-| `state.rs` | Authoritative app state: connection, registry, caches | inline `#[cfg(test)]` |
-| `node_registry.rs` | Thread-safe NodeID → NodeProxyHandle map | inline `#[cfg(test)]` |
-| `node_proxy.rs` | Per-node actor: SNIP, PIP, CDI, config values via mailbox | inline `#[cfg(test)]` |
-| `node_tree.rs` | Unified config tree: CDI + addresses + values + roles | inline `#[cfg(test)]` |
+| `state.rs` | Authoritative app state: connection, registry, caches. Re-exports `NodeRoles` from `bowties_core`. | inline `#[cfg(test)]` |
+| `node_key.rs` | Re-export shim → `bowties_core::node_key` | — |
+| `node_registry.rs` | Re-export shim → `bowties_core::node_registry` | — |
+| `node_proxy.rs` | Re-export shim → `bowties_core::node_proxy` | — |
+| `node_tree.rs` | Re-export shim → `bowties_core::node_tree` | — |
+| `layout/mod.rs` | Re-export shim → `bowties_core::layout` | — |
+| `profile/mod.rs` | Re-export shim → `bowties_core::profile` + keeps `loader` submodule | — |
+| `profile/loader.rs` | `.profile.yaml` loading; depends on `tauri::AppHandle` for resource-dir resolution. Bundled-profile listing for placeholder picker. | inline `#[cfg(test)]` |
+| `placeholder.rs` | **Placeholder factory** (S8.10). Depends on `AppHandle` and `AppState` — stays in src-tauri. Pure helpers (`collect_eventid_zeros`, `merge_config_values_into_tree`, `populate_leaf_defaults_in_tree`) are candidates for future extraction. | inline `#[cfg(test)]` (7 tests) |
 | `diagnostics.rs` | Ring-buffer logging (`bwlog!`), diagnostic stats | — |
 | `events/router.rs` | Event broadcast: transport frames → Tauri events | inline `#[cfg(test)]` |
 | `traffic/mod.rs` | Message decoding for traffic monitor display | — |
 | `menu.rs` | Desktop app menu | — |
-| `layout/mod.rs` | **Deep module** (ADR-0005). Sole owner of the layout companion-directory file structure. Public intent-shaped API: `save_capture`, `read_capture`, `read_node_snapshot`, `update_offline_changes`, `update_node_snapshots`, `resolve_cdi_xml_for_snapshot`, `read_manifest`, `update_manifest_connections`. Code outside `layout/` must use this API — never compute companion-dir paths, node-file names, or write YAML directly. | inline `#[cfg(test)]` |
-| `layout/types.rs` | YAML data structures (BowtieMetadata, RoleClassification, LayoutEditDelta) + `apply_layout_deltas`; also canonical home of `ConnectionConfig` / `AdapterType` / `FlowControl` (Spec 013 / S4) re-exported by `commands/connection.rs`. S8: `LayoutEditDelta::AddNode { node_id_hex }` is a no-op in `apply_layout_deltas` (node membership lives in the companion `nodes/` dir, not in `LayoutFile`); `as_add_node()` exposes the ID to `save_layout_directory` for permitted-set computation. | `layout::types::tests` |
-| `layout/io.rs` | Internal: companion-dir / node-file path derivation, full capture read/write, CDI XML resolution. Builds `journal::SavePlan` for every mutation and calls `journal::execute`; `read_capture` runs `journal::recover_if_needed` first and surfaces `recovery_occurred`. All companion-dir helpers are `pub(crate)`; only the single-file `load_file`/`save_file` and `cdi_cache_path` remain `pub`. | inline `#[cfg(test)]` |
-| `layout/journal.rs` | **Write-ahead journal (ADR-0006).** Sole mutation primitive for the companion directory: in-place file writes guarded by `.save-in-progress` marker + `.restore/` backup mirror. `execute(SavePlan)` and `recover_if_needed(base_file)` are `pub(crate)` and called only from `layout/io.rs` and `layout/mod.rs`. Test seams `FAIL_AFTER_BACKUP` / `FAIL_MID_WRITES` are thread-local `#[cfg(test)]` `Cell<bool>`s. | inline `#[cfg(test)]` (8 tests) |
-| `layout/manifest.rs` | Layout manifest tracking; carries serde-defaulted `connections: Vec<ConnectionConfig>` for per-layout saved connections (Spec 013 / S4) | inline `#[cfg(test)]` |
-| `layout/known_layouts.rs` | App-level known-layout registry (Spec 013 / S5). Owns `$APPDATA/bowties/known-layouts.json` format, stale-path filtering, and atomic temp→flush→fsync→rename writes. Pure path-parameterised functions so the commands layer only resolves the registry path. | inline `#[cfg(test)]` (7 tests) |
-| `layout/node_snapshot.rs` | Node config snapshot for offline use | inline `#[cfg(test)]` |
-| `layout/offline_changes.rs` | Offline change staging (config diffs) | inline `#[cfg(test)]` |
-| `layout/serde_node_id.rs` | Custom serde for NodeID (dotted-hex in YAML) | — |
-| `profile/mod.rs` | Profile loading + tree annotation | — |
-| `profile/types.rs` | Structure profile types (event roles, relevance, connectors) | — |
-| `profile/loader.rs` | `.profile.yaml` and `.connector.yaml` loading | inline `#[cfg(test)]` |
-| `profile/resolver.rs` | Profile conditional resolution (firmware checks) | inline `#[cfg(test)]` |
-
 ---
 
 ## lcc-rs Protocol Library (`lcc-rs/src/`)
@@ -305,7 +332,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 - Transport: `LccTransport`, `GridConnectSerialTransport`, `SlcanSerialTransport`
 
 ### Lifecycle Ownership Transitions
-- Discovery: lcc-rs probes → backend creates NodeProxy actors → frontend receives events
+- Discovery: lcc-rs probes → backend creates LiveNodeProxy actors → frontend receives events
 - Config read: frontend orchestrator → backend batch reads → lcc-rs memory config datagrams
 - Layout open: frontend orchestrator → backend hydrates snapshots → stores populated
 - Sync apply: frontend orchestrator → backend writes changes → lcc-rs memory config
@@ -366,6 +393,14 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 - `enrichEntryLabel(entry)` — computes element_label from the live tree, falling back to `element_path.join('.')`.
 - All preview build paths must use `enrichCardEntries` instead of mapping arrays individually — prevents the bug class where a new array is added or forgotten.
 - Anti-pattern: calling `enrichEntryLabel` on producers and consumers but not ambiguous entries.
+
+### Component Thin-Delegate Contract Tests
+**Canonical example:** `app/src/lib/components/ElementCardDeck/SaveControls.test.ts` (`describe('Step 7 Option H: thin-delegate contract', ...)`)
+- When a component is refactored to a thin delegate (presenter says yes/no → component invokes the `onAction` prop; no direct store mutation), the test suite MUST encode the contract directly:
+  1. **Presenter-says-yes invokes prop.** Set up the minimum store state the presenter needs to gate `canX: true`, render the real component (not the presenter), click the button, and assert `onAction` was invoked. The Save no-op regression that motivated Option H slipped past mocked-presenter tests because the regression was in the component's parallel gate, not the presenter.
+  2. **Component does NOT reach into cleanup stores.** Assert `.not.toHaveBeenCalled()` on `layoutStore.markClean`, `bowtieMetadataStore.clearAll`, `configChangesStore.commitForSave`, `offlineChangesStore.reloadFromBackend`, and any other post-action wiring that orchestrators own.
+  3. **Mode parity.** When the component is mode-agnostic but the orchestrator wiring differs (online vs offline), parameterise the contract test over both modes with a `runFor(mode)` helper that mounts and unmounts cleanly.
+- Anti-pattern: asserting that the component itself calls `commitForSave`/`markClean`/etc. — that test moves with the cleanup, not with the component, and inverts when the refactor lands.
 
 ## Skills
 

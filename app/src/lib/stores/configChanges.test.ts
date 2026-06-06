@@ -443,6 +443,25 @@ describe('hasDraftsForNode', () => {
     configChangesStore.clearDraftsForNode(NODE_ID);
     expect(configChangesStore.hasDraftsForNode(NODE_ID)).toBe(false);
   });
+
+  // Spec 014, ADR-0008 — placeholder NodeKeys must be addressable by all
+  // draft-management methods without colliding with live NodeIDs.
+  it('isolates drafts by NodeKey — placeholder vs. live node', () => {
+    const placeholderKey = 'placeholder:01234567-89ab-cdef-0123-456789abcdef';
+    const placeholderEditKey = editKeyForLeaf(placeholderKey, SPACE, ADDRESS);
+
+    configChangesStore.set(KEY, intVal(1));
+    configChangesStore.set(placeholderEditKey, intVal(2));
+
+    expect(configChangesStore.hasDraftsForNode(NODE_ID)).toBe(true);
+    expect(configChangesStore.hasDraftsForNode(placeholderKey)).toBe(true);
+    expect(configChangesStore.countDraftsForNode(NODE_ID)).toBe(1);
+    expect(configChangesStore.countDraftsForNode(placeholderKey)).toBe(1);
+
+    configChangesStore.clearDraftsForNode(placeholderKey);
+    expect(configChangesStore.hasDraftsForNode(placeholderKey)).toBe(false);
+    expect(configChangesStore.hasDraftsForNode(NODE_ID)).toBe(true);
+  });
 });
 
 describe('hasDraftsUnderPath', () => {

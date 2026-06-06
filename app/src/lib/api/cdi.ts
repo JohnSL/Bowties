@@ -6,6 +6,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type { GetCdiXmlResponse } from '$lib/types/cdi';
+import { toCanonicalNodeKey, type NodeKeyInput } from '$lib/utils/nodeKey';
 
 // T102: AbortController for request cancellation
 let currentAbortController: AbortController | null = null;
@@ -34,9 +35,9 @@ let currentAbortController: AbortController | null = null;
  * }
  * ```
  */
-export async function getCdiXml(nodeId: string): Promise<GetCdiXmlResponse> {
+export async function getCdiXml(nodeId: NodeKeyInput): Promise<GetCdiXmlResponse> {
   return await invoke<GetCdiXmlResponse>('get_cdi_xml', {
-    nodeId,
+    nodeId: toCanonicalNodeKey(nodeId),
   });
 }
 
@@ -60,9 +61,9 @@ export async function getCdiXml(nodeId: string): Promise<GetCdiXmlResponse> {
  * }
  * ```
  */
-export async function downloadCdi(nodeId: string): Promise<GetCdiXmlResponse> {
+export async function downloadCdi(nodeId: NodeKeyInput): Promise<GetCdiXmlResponse> {
   return await invoke<GetCdiXmlResponse>('download_cdi', {
-    nodeId,
+    nodeId: toCanonicalNodeKey(nodeId),
   });
 }
 
@@ -200,8 +201,8 @@ export async function getDiscoveredNodes(): Promise<GetDiscoveredNodesResponse> 
  * @returns Complete CDI structure with parsed segments and elements
  * @throws Error if CDI not available or parse error
  */
-export async function getCdiStructure(nodeId: string): Promise<CdiStructureResponse> {
-    return await invoke<CdiStructureResponse>('get_cdi_structure', { nodeId });
+export async function getCdiStructure(nodeId: NodeKeyInput): Promise<CdiStructureResponse> {
+    return await invoke<CdiStructureResponse>('get_cdi_structure', { nodeId: toCanonicalNodeKey(nodeId) });
 }
 
 /**
@@ -215,7 +216,7 @@ export async function getCdiStructure(nodeId: string): Promise<CdiStructureRespo
  * @throws Error if path is invalid or CDI not loaded
  */
 export async function getColumnItems(
-    nodeId: string,
+    nodeId: NodeKeyInput,
     parentPath: string[],
     depth: number
 ): Promise<GetColumnItemsResponse> {
@@ -230,7 +231,7 @@ export async function getColumnItems(
     
     try {
         const result = await invoke<GetColumnItemsResponse>('get_column_items', {
-            nodeId,
+            nodeId: toCanonicalNodeKey(nodeId),
             parentPath,
             depth,
         });
@@ -259,11 +260,11 @@ export async function getColumnItems(
  * @throws Error if element not found
  */
 export async function getElementDetails(
-    nodeId: string,
+    nodeId: NodeKeyInput,
     elementPath: string[]
 ): Promise<ElementDetailsResponse> {
     return await invoke<ElementDetailsResponse>('get_element_details', {
-        nodeId,
+        nodeId: toCanonicalNodeKey(nodeId),
         elementPath,
     });
 }
@@ -277,11 +278,11 @@ export async function getElementDetails(
  * @throws Error if group not found or not replicated
  */
 export async function expandReplicatedGroup(
-    nodeId: string,
+    nodeId: NodeKeyInput,
     groupPath: string[]
 ): Promise<ExpandReplicatedGroupResponse> {
     return await invoke<ExpandReplicatedGroupResponse>('expand_replicated_group', {
-        nodeId,
+        nodeId: toCanonicalNodeKey(nodeId),
         groupPath,
     });
 }
@@ -310,12 +311,12 @@ export async function expandReplicatedGroup(
  * ```
  */
 export async function readConfigValue(
-    nodeId: string,
+    nodeId: NodeKeyInput,
     elementPath: string[],
     timeoutMs?: number
 ): Promise<import('./types').ConfigValueWithMetadata> {
     return await invoke('read_config_value', {
-        nodeId,
+        nodeId: toCanonicalNodeKey(nodeId),
         elementPath,
         timeoutMs,
     });
@@ -341,13 +342,13 @@ export async function readConfigValue(
  * ```
  */
 export async function readAllConfigValues(
-    nodeId: string,
+    nodeId: NodeKeyInput,
     timeoutMs?: number,
     nodeIndex?: number,
     totalNodes?: number
 ): Promise<import('./types').ReadAllConfigValuesResponse> {
     return await invoke('read_all_config_values', {
-        nodeId,
+        nodeId: toCanonicalNodeKey(nodeId),
         timeoutMs,
         nodeIndex,
         totalNodes,

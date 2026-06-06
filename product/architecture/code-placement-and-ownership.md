@@ -24,7 +24,8 @@ Put logic in the narrowest layer that can own it without leaking unrelated conce
 | Multi-step async workflows, lifecycle transitions, backend call sequencing, cross-store coordination | `app/src/lib/orchestration/**` | The logic is actually a pure state transition or a protocol/backend concern |
 | Durable frontend state, deterministic state transitions, derived state | `app/src/lib/stores/**` | The logic becomes multi-step workflow sequencing or pure reusable helper logic |
 | Pure normalization, formatting, comparison, parsing, translation helpers | `app/src/lib/utils/**` | The helper needs store mutation, backend calls, or protocol/runtime side effects |
-| IPC boundaries, filesystem access, authoritative app state, layout persistence, node registry coordination, backend workflows | `app/src-tauri/src/**` | The behavior is actually reusable LCC/OpenLCB protocol logic |
+| IPC boundaries, app state, placeholder factory, event routing, Tauri-specific startup | `app/src-tauri/src/**` | The logic is pure domain (no Tauri types) → move to `bowties-core` |
+| Pure backend domain logic: node tree building, layout persistence, profile resolution, node registry, node proxy actors | `bowties-core/src/**` | The code needs `tauri::AppHandle` or `AppState` → keep in `src-tauri`. The code is reusable LCC protocol logic → move to `lcc-rs` |
 | Protocol semantics, transport behavior, discovery rules, alias handling, frame/datagram parsing, reusable wire-level helpers | `lcc-rs/**` | The code only exists to shape Bowties application behavior or UI workflows |
 
 ## Frontend Placement Rules

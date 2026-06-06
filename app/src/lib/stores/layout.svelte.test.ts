@@ -67,113 +67,36 @@ beforeEach(() => {
   layoutStore.setConnected(false);
 });
 
-describe('connector selection metadata', () => {
-  it('creates an empty connector selection map for new layouts', () => {
-    layoutStore.newLayout();
-
-    expect(layoutStore.layout?.connectorSelections).toEqual({});
+describe('node mode selections (Spec 014 / S6)', () => {
+  it('returns null when no layout is loaded', () => {
+    layoutStore.reset();
+    expect(layoutStore.getNodeModeSelections('050201020300')).toBeNull();
   });
 
-  it('upserts connector selections using normalized node ids', () => {
-    layoutStore.newLayout();
+  it('returns null when the layout has no entry for the node key', () => {
+    layoutStore.hydrateFromBackend({
+      schemaVersion: '1.0',
+      bowties: {},
+      roleClassifications: {},
+    });
+    expect(layoutStore.getNodeModeSelections('050201020300')).toBeNull();
+  });
 
-    layoutStore.upsertConnectorSelections('05.02.01.02.03.00', {
-      carrierKey: 'rr-cirkits::tower-lcc',
-      slotSelections: {
-        'connector-a': {
-          selectedDaughterboardId: 'BOD4-CP',
-          status: 'selected',
+  it('looks up selections using a normalized node key', () => {
+    layoutStore.hydrateFromBackend({
+      schemaVersion: '1.0',
+      bowties: {},
+      roleClassifications: {},
+      nodeModeSelections: {
+        '050201020300': {
+          'connector-a': 'BOD4-CP',
         },
       },
-      updatedAt: '2026-05-02T12:00:00Z',
     });
 
-    expect(layoutStore.getConnectorSelections('050201020300')).toEqual({
-      carrierKey: 'rr-cirkits::tower-lcc',
-      slotSelections: {
-        'connector-a': {
-          selectedDaughterboardId: 'BOD4-CP',
-          status: 'selected',
-        },
-      },
-      updatedAt: '2026-05-02T12:00:00Z',
+    expect(layoutStore.getNodeModeSelections('05.02.01.02.03.00')).toEqual({
+      'connector-a': 'BOD4-CP',
     });
-    expect(layoutStore.layout?.connectorSelections).toHaveProperty('050201020300');
-  });
-
-  it('clears dirty state when connector selection round-trips back to saved snapshot', () => {
-    layoutStore.newLayout();
-
-    layoutStore.upsertConnectorSelections('05.02.01.02.03.00', {
-      carrierKey: 'rr-cirkits::tower-lcc',
-      slotSelections: {
-        'connector-a': {
-          selectedDaughterboardId: 'BOD4-CP',
-          status: 'selected',
-        },
-      },
-      updatedAt: '2026-05-02T12:00:00Z',
-    });
-
-    expect(layoutStore.isDirty).toBe(true);
-
-    layoutStore.removeConnectorSelections('05.02.01.02.03.00');
-
-    expect(layoutStore.isDirty).toBe(false);
-    expect(layoutStore.layout?.connectorSelections).toEqual({});
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// S8: isDirty includes unsaved-in-memory discovered nodes
-// ═══════════════════════════════════════════════════════════════════════════════
-
-describe('isDirty + setUnsavedInMemoryNodeIds (S8)', () => {
-  it('is true when there are unsaved in-memory node IDs, even with a clean LayoutFile', () => {
-    layoutStore.newLayout();
-    expect(layoutStore.isDirty).toBe(false);
-
-    layoutStore.setUnsavedInMemoryNodeIds(['020157000099']);
-    expect(layoutStore.isDirty).toBe(true);
-    expect(layoutStore.unsavedInMemoryNodeIds).toEqual(['020157000099']);
-  });
-
-  it('returns to clean when the unsaved-in-memory set is emptied', () => {
-    layoutStore.newLayout();
-    layoutStore.setUnsavedInMemoryNodeIds(['020157000099']);
-    expect(layoutStore.isDirty).toBe(true);
-
-    layoutStore.setUnsavedInMemoryNodeIds([]);
-    expect(layoutStore.isDirty).toBe(false);
-  });
-
-  it('markClean clears both the metadata-dirty flag and the unsaved-in-memory set', () => {
-    layoutStore.newLayout();
-    layoutStore.upsertConnectorSelections('05.02.01.02.03.00', {
-      carrierKey: 'rr-cirkits::tower-lcc',
-      slotSelections: {},
-      updatedAt: '2026-05-02T12:00:00Z',
-    });
-    layoutStore.setUnsavedInMemoryNodeIds(['020157000099']);
-    expect(layoutStore.isDirty).toBe(true);
-
-    layoutStore.markClean();
-    expect(layoutStore.isDirty).toBe(false);
-    expect(layoutStore.unsavedInMemoryNodeIds).toEqual([]);
-  });
-
-  it('setActiveContext resets the unsaved-in-memory set (open/close/switch is the start-over moment)', () => {
-    layoutStore.newLayout();
-    layoutStore.setUnsavedInMemoryNodeIds(['020157000099']);
-    expect(layoutStore.unsavedInMemoryNodeIds).toEqual(['020157000099']);
-
-    layoutStore.setActiveContext({
-      layoutId: 'next',
-      rootPath: '/tmp/next.layout',
-      mode: 'offline_file',
-      pendingOfflineChangeCount: 0,
-    });
-    expect(layoutStore.unsavedInMemoryNodeIds).toEqual([]);
   });
 });
 

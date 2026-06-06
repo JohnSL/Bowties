@@ -1,15 +1,19 @@
 /**
  * Canonical edit key construction and offline value conversion utilities.
  *
- * The edit key `"${normalizedNodeId}:${space}:${address}"` is the single
- * source of truth for field identity in the changes module.
+ * The edit key `"${normalizedNodeKey}:${space}:${address}"` is the single
+ * source of truth for field identity in the changes module. The leading
+ * component is a `NodeKey` (Spec 014, ADR-0008) — either a canonical 12-hex
+ * live NodeID or a `placeholder:<uuidv4>`. Because placeholder NodeKeys
+ * contain an internal `:`, the parser splits from the right and treats
+ * everything before the last two `:` segments as the NodeKey.
  *
  * Offline change rows store addresses as hex offset strings ("0x00000064").
  * This module provides the conversion layer so the rest of the system
  * can work exclusively in decimal addresses.
  */
 
-import { normalizeNodeId } from '$lib/utils/nodeId';
+import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
 import type { TreeConfigValue } from '$lib/types/nodeTree';
 
 // ─── Canonical key ────────────────────────────────────────────────────────────
@@ -17,33 +21,39 @@ import type { TreeConfigValue } from '$lib/types/nodeTree';
 /**
  * Build the canonical edit key for a config field.
  *
- * Format: `"${normalizedNodeId}:${space}:${address}"`
- * - nodeId is normalized (uppercase, no dots) via normalizeNodeId
+ * Format: `"${normalizedNodeKey}:${space}:${address}"`
+ * - nodeKey is normalized via `toCanonicalNodeKey` (live NodeIDs uppercased and
+ *   dots stripped; placeholder keys pass through unchanged).
  * - address is raw decimal (NOT hex)
  *
  * @example
  * editKeyForLeaf('05.02.01.02.03.00', 253, 100) === '050201020300:253:100'
+ * editKeyForLeaf('placeholder:01234567-89ab-cdef-0123-456789abcdef', 253, 100)
+ *   === 'placeholder:01234567-89ab-cdef-0123-456789abcdef:253:100'
  */
-export function editKeyForLeaf(nodeId: string, space: number, address: number): string {
-  return `${normalizeNodeId(nodeId)}:${space}:${address}`;
+export function editKeyForLeaf(nodeKey: string, space: number, address: number): string {
+  return `${toCanonicalNodeKey(nodeKey)}:${space}:${address}`;
 }
 
 /**
  * Parse an edit key back into its components.
  *
- * Inverse of editKeyForLeaf. Returns the normalized node ID, space, and
- * decimal address.
+ * Inverse of `editKeyForLeaf`. Splits from the right so placeholder NodeKeys
+ * (which contain an internal `:`) round-trip correctly. The legacy field name
+ * `normalizedNodeId` is retained for backward compatibility with existing
+ * call sites; it now holds a `NodeKey` (live NodeID or placeholder).
  */
 export function parseEditKey(key: string): {
   normalizedNodeId: string;
   space: number;
   address: number;
 } {
-  const parts = key.split(':');
+  const lastColon = key.lastIndexOf(':');
+  const secondLastColon = key.lastIndexOf(':', lastColon - 1);
   return {
-    normalizedNodeId: parts[0],
-    space: parseInt(parts[1], 10),
-    address: parseInt(parts[2], 10),
+    normalizedNodeId: key.slice(0, secondLastColon),
+    space: parseInt(key.slice(secondLastColon + 1, lastColon), 10),
+    address: parseInt(key.slice(lastColon + 1), 10),
   };
 }
 

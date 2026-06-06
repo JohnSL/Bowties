@@ -31,15 +31,17 @@ Use the format in [SLICE-FORMAT.md](SLICE-FORMAT.md).
 ### 3. Quiz the user
 
 Present the proposed breakdown as a numbered list. For each slice show:
-- Title and HITL/AFK label
+- Title and HITL/AFK/REFACTOR label
 - Blocked-by relationships
 - Task count and layers touched
 - Estimated complexity (small / medium / large)
+- **User-visible change** — one sentence describing what the user can see or do after this slice. If empty, flag as a `[REFACTOR]` slice or recommend folding into the first downstream slice that produces a visible outcome.
 
 Ask:
 - Does the granularity feel right? (too coarse / too fine)
 - Are the dependency relationships correct?
-- Are the HITL/AFK labels right?
+- Are the HITL/AFK/REFACTOR labels right?
+- Is every slice demoable to a product manager? If not, is the non-demoable slice justified as a refactor or migration?
 - Should any slices be merged or split?
 
 Iterate until the user approves.

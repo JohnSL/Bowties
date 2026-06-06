@@ -1,8 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { NodeConfigTree } from '$lib/types/nodeTree';
 import type { LayoutFile, LayoutEditDelta } from '$lib/types/bowtie';
-
-export type { LayoutConnectorSelections } from '$lib/types/bowtie';
+import { toCanonicalNodeKey, type NodeKeyInput } from '$lib/utils/nodeKey';
 
 export interface CaptureSummary {
   capturedAt: string;
@@ -23,6 +22,9 @@ export interface SaveLayoutResult {
    * this to distinguish saved nodes from unsaved discovered nodes.
    */
   persistedNodeIds: string[];
+  /** Node snapshots written to disk. Cached by the page so disconnect can
+   *  rehydrate the offline view without re-opening the layout. */
+  nodeSnapshots: OfflineNodeSnapshot[];
 }
 
 export interface OpenLayoutResult {
@@ -56,7 +58,12 @@ export interface SnapshotValueBranch {
 export type SnapshotValueNode = SnapshotLeafValue | SnapshotValueBranch;
 
 export interface OfflineNodeSnapshot {
-  nodeId: string;
+  /** Authoritative identity — canonical NodeID for real nodes, `"placeholder:<uuid>"` for placeholders. */
+  nodeKey: string;
+  /** Canonical dotted-hex NodeID. Present for real nodes, absent for placeholders. */
+  nodeId?: string;
+  /** Bundled profile stem (e.g. `"Mustangpeak-Engineering_TurnoutBoss"`). Present for placeholders only. */
+  profileStem?: string;
   capturedAt: string;
   captureStatus: 'complete' | 'partial';
   missing: string[];
@@ -110,6 +117,9 @@ export interface SaveWithBusWriteResult {
   layout: LayoutFile;
   /** Canonical node IDs persisted on disk after this save (S8). */
   persistedNodeIds: string[];
+  /** Node snapshots written to disk. Cached by the page so disconnect can
+   *  rehydrate the offline view without re-opening the layout. */
+  nodeSnapshots: OfflineNodeSnapshot[];
 }
 
 export async function captureLayoutSnapshot(includeProducerEvents = true): Promise<CaptureSummary> {
@@ -147,8 +157,75 @@ export async function createNewLayoutCapture(): Promise<NewLayoutResult> {
   return invoke<NewLayoutResult>('create_new_layout_capture');
 }
 
-export async function buildOfflineNodeTree(nodeId: string): Promise<NodeConfigTree> {
-  return invoke<NodeConfigTree>('build_offline_node_tree', { nodeId });
+export async function buildOfflineNodeTree(nodeId: NodeKeyInput): Promise<NodeConfigTree> {
+  return invoke<NodeConfigTree>('build_offline_node_tree', { nodeId: toCanonicalNodeKey(nodeId) });
+}
+
+/**
+ * Persist a single Configuration Mode variant selection for a node into the
+ * active layout's `nodeModeSelections` map (Spec 014 / S6).
+ *
+ * `nodeKey` may be a canonical NodeID (uppercase, no dots) or a
+ * `placeholder:<uuidv4>` key. Backend immediately writes through to disk
+ * and returns the updated `SaveLayoutResult`.
+ */
+export async function setNodeModeSelection(
+  nodeKey: NodeKeyInput,
+  modeId: string,
+  variantId: string,
+): Promise<SaveLayoutResult> {
+  return invoke<SaveLayoutResult>('set_node_mode_selection', { nodeKey: toCanonicalNodeKey(nodeKey), modeId, variantId });
+}
+
+// ── Placeholder boards (Spec 014 / S8) ────────────────────────────────────
+
+/**
+ * Picker-ready summary of a bundled board-model profile. Matches the Rust
+ * `BundledProfileSummary` struct on the wire (camelCase via serde).
+ */
+export interface BundledProfileSummary {
+  /** Profile filename stem (e.g. `"RR-CirKits_Tower-LCC"`); FR-019 identity. */
+  stem: string;
+  manufacturer: string;
+  model: string;
+}
+
+/**
+ * List every bundled board-model profile available for placeholder creation.
+ *
+ * Returns summaries sorted by `(manufacturer, model)`. Malformed bundle
+ * entries are silently skipped backend-side, so this call never throws on
+ * a single bad profile.
+ */
+export async function listBundledProfiles(): Promise<BundledProfileSummary[]> {
+  return invoke<BundledProfileSummary[]>('list_bundled_profiles_command');
+}
+
+/**
+ * Add a placeholder board by synthesizing it from a bundled profile
+ * (Spec 014 / S8.10).
+ *
+ * Calls the backend factory, which mints a `placeholder:<uuid>` key,
+ * loads the bundled CDI, builds the config tree, and inserts a
+ * `Synthesized` proxy into the node registry. Returns the minted
+ * `nodeKey` so the frontend can seed its roster and route to it.
+ */
+export async function addPlaceholderBoardIpc(
+  profileStem: string,
+): Promise<{ nodeKey: string }> {
+  return invoke<{ nodeKey: string }>('add_placeholder_board', { profileStem });
+}
+
+/**
+ * Read the unified config tree for a node (Spec 007 / S8.10).
+ *
+ * Dispatches through the backend registry uniformly — both live nodes and
+ * synthesized placeholders are resolved via the same `get_node_tree` IPC.
+ */
+export async function getNodeTree(
+  nodeKey: NodeKeyInput,
+): Promise<NodeConfigTree> {
+  return invoke<NodeConfigTree>('get_node_tree', { nodeId: toCanonicalNodeKey(nodeKey) });
 }
 
 // ── Per-layout connection registry (Spec 013 / S4) ─────────────────────────

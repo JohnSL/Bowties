@@ -1,4 +1,4 @@
-﻿# Reference Only: Generated Project Summary
+# Reference Only: Generated Project Summary
 
 This file is retained only as non-authoritative reference material.
 

@@ -1,0 +1,247 @@
+nodeType:
+  manufacturer: "Mustangpeak Engineering"
+  model: "TurnoutBoss"
+
+sections:
+  # ===== Segment 1: Layout Configuration Setup =====
+  - cdiPath: "Layout Configuration Setup"
+    level: "segment"
+    name: "Layout Configuration Setup"
+    description: |
+      The minimum required configuration to bring a TurnoutBoss online and start
+      signaling a passing siding. Set the **board name**, **which end of the siding**
+      this board controls (Left or Right), **node IDs of the adjacent TurnoutBoss
+      boards**, and **how many pushbuttons** drive the turnout. Visit this segment
+      first when commissioning a new board — most layouts need nothing more than
+      these basics plus the default hardware settings.
+    citation: "CDI segment description, p. 3 (Section 2 'Planning Your Installation'), p. 17 (Figure 9)"
+
+  - cdiPath: "Layout Configuration Setup/User Info"
+    level: "group"
+    name: "User Info"
+    description: |
+      Free-text **Name** and **Description** to identify this specific board on
+      your layout (e.g., "East end of Westgate siding"). These are the first
+      values to set after attaching a configuration tool — they make every later
+      configuration step easier because the board is identifiable in tool
+      listings.
+    citation: "Manual §5.1, p. 19"
+
+  - cdiPath: "Layout Configuration Setup/How this TurnoutBoss is used on your layout."
+    level: "group"
+    name: "How this TurnoutBoss is used on your layout."
+    description: |
+      Selects whether this board sits at the **Left** end of a siding
+      (monitoring three track blocks: turnout, mainline-between, siding) or the
+      **Right** end (monitoring two blocks: turnout and mainline-to-next-siding).
+      This single choice changes which occupancy detectors are wired, which
+      occupancy events are produced versus consumed, and whether **Detector 3
+      sensitivity** has any effect.
+    citation: "Manual §5.2, p. 20; layout diagram Figure 2 (p. 3) and Figure 3 (p. 4)"
+
+  - cdiPath: "Layout Configuration Setup/Layout Connections"
+    level: "group"
+    name: "Layout Connections"
+    description: |
+      Holds the **64-bit Node IDs of the adjacent TurnoutBoss boards** — the one
+      immediately to the left and the one immediately to the right on the
+      layout. The firmware uses these IDs to automatically wire up
+      producer/consumer event connections between neighboring boards so they can
+      exchange occupancy and signal-state information. Enter each ID as an
+      eight-byte string: the six-byte node ID followed by two trailing zeros.
+    citation: "Manual §5.3, p. 20; Manual §A.1, p. 28 ('TurnoutBoss boards normally set up these producer to consumer connections automatically when you configure the Left-Right board pairs')"
+
+  - cdiPath: "Layout Configuration Setup/Turnout Control"
+    level: "group"
+    name: "Turnout Control"
+    description: |
+      Picks **one-button** or **two-button** fascia control of the turnout.
+      One-button mode uses a single SPST pushbutton (wired N to Gnd) that
+      *toggles* between Normal and Diverging on each press. Two-button mode uses
+      two pushbuttons: one forces Normal, the other forces Diverging. Whichever
+      mode is selected, the unused button input remains available as a
+      **general-purpose LCC input** that emits its own events.
+    citation: "Manual §5.4, p. 20; Manual §2.1, p. 4; Manual §4.2, p. 13"
+
+  # ===== Segment 2: Hardware Configuration =====
+  - cdiPath: "Hardware Configuration"
+    level: "segment"
+    name: "Hardware Configuration"
+    description: |
+      Adjustments for the specific hardware wired to this TurnoutBoss: turnout
+      feedback switches, facing-point signal style, LED wiring scheme, occupancy
+      detector sensitivity, signal-lamp brightness, servo end positions, and
+      optical-sensor polarity. **Most installations never need to change these
+      defaults.** Visit this segment only when you have non-standard hardware or
+      when you need to tune detector sensitivity, signal brightness, or servo
+      end-points to match your physical layout.
+    citation: "CDI segment description; Manual §5 introduction, p. 16"
+
+  - cdiPath: "Hardware Configuration/Turnout Feedback"
+    level: "group"
+    name: "Turnout Feedback"
+    description: |
+      Tells the board whether you have wired **zero, one, or two feedback
+      switches** to confirm that the turnout points have actually moved to the
+      commanded position. With two switches the board can also detect "in
+      motion" (first switch open, second not yet closed). Any feedback input
+      you don't use for feedback remains usable as a **general-purpose LCC
+      input** that emits events on state change. Default is *Unused*.
+    citation: "Manual §5.5, p. 20; Manual §2.4, p. 7; Manual §A.3 / A.5, p. 29"
+
+  - cdiPath: "Hardware Configuration/Facing Point Signals"
+    level: "group"
+    name: "Facing Point Signals"
+    description: |
+      Tells the board whether the signal at the **facing points of the turnout**
+      is a **double-headed** mast (upper head C = mainline route, lower head
+      D = diverging route — prototypical signaling) or a **single-headed** mast
+      (head C only). When set to single-head, the Signal D outputs, brightness
+      controls, and lamp-status events have no effect. Default is double-head.
+    citation: "Manual §5.6, p. 20; Manual §1.1, p. 2–3; Figure 5, p. 7"
+
+  - cdiPath: "Hardware Configuration/Signalhead Lamp Configuration"
+    level: "group"
+    name: "Signalhead Lamp Configuration"
+    description: |
+      Selects how all four signal heads (A, B, C, D) are wired: **three outputs
+      with common anode**, **three outputs with common cathode**, or **two
+      outputs driving a bidirectional LED** (Red and Green via polarity reversal,
+      Yellow by rapid alternation). The setting applies to *all four heads
+      simultaneously* — mixing wiring styles across heads on one board is not
+      supported. Default is three-output common anode.
+    citation: "Manual §5.7, p. 20; Manual §2.3, p. 5–6"
+
+  - cdiPath: "Hardware Configuration/Track Detector Sensitivity"
+    level: "group"
+    name: "Track Detector Sensitivity"
+    description: |
+      Tunes the trigger threshold of each of the three current-sensing occupancy
+      detectors. Range is 0–63 with default **32**; lower values are *more
+      sensitive* (trigger on smaller currents), higher values are *less
+      sensitive*. The factory default detects roughly 1 mA — enough to spot a
+      single 10 kΩ resistor wheelset. **Detector 3 is only wired on Left boards**;
+      on Right boards its setting has no effect.
+    citation: "Manual §5.8, p. 20; Manual §4.4, p. 14; Figure 3, p. 4"
+
+  - cdiPath: "Hardware Configuration/Signal LED Brightness"
+    level: "group"
+    name: "Signal LED Brightness"
+    description: |
+      Container for **per-signal-head brightness controls**. The configuration
+      tool displays this as four tabs — one each for Signal A, Signal B,
+      Signal C, and Signal D. Adjust the current driving each signal's LEDs to
+      match the brightness of mixed LED types or compensate for differences
+      between heads. See the replicated **Signal A/B/C/D** sub-template for the
+      individual color sliders.
+    citation: "Manual §5.9, p. 21; Figure 11, p. 19"
+
+  - cdiPath: "Hardware Configuration/Signal LED Brightness/Signal"
+    level: "group"
+    name: "Signal (replicated template — Signal A, B, C, D)"
+    description: |
+      Per-head brightness sliders for one signal head — replicated four times
+      as Signal A, Signal B, Signal C, and Signal D. Each slider runs **1–8**
+      with default **5** (~75% of full current); higher is brighter. Includes
+      Red, Yellow, Green, *and* a Lunar lamp output for the rare prototypes that
+      use one. **Signal D's controls are inactive when Facing Point Signals is
+      set to single-head** (no D head exists).
+    citation: "Manual §5.9, p. 21; Manual §1 (head A/B/C/D wiring), p. 1"
+
+  - cdiPath: "Hardware Configuration/Servo Limits"
+    level: "group"
+    name: "Servo Limits"
+    description: |
+      Sets the **two end-point positions** for a servo-driven turnout: 0–255
+      counts for Normal (default 64) and Reversed (default 196). Adjust both so
+      the points just touch the stock rails — **do not** drive past the rail or
+      the servo will stall, overheat, and eventually fail. Ignore this group if
+      you are using a stall-motor (Tortoise-style) turnout machine.
+    citation: "Manual §5.10, p. 21; Manual §4.3, p. 14"
+
+  - cdiPath: "Hardware Configuration/Optical Input"
+    level: "group"
+    name: "Optical Input"
+    description: |
+      Selects the polarity of the optical (through-beam or reflective) train
+      detector wired to the turnout: *Train detected when input is low* (default,
+      typical of reflective sensors) or *Train detected when input is high*
+      (typical of beam-break sensors). **Leave at the default if no optical
+      sensor is connected.**
+    citation: "Manual §5.11, p. 21"
+
+  # ===== Segment 3: Producers and Consumers =====
+  - cdiPath: "Producers and Consumers"
+    level: "segment"
+    name: "Producers and Consumers"
+    description: |
+      The full catalog of **LCC event IDs** this TurnoutBoss produces (P) and
+      consumes (C). Use the **Copy/Paste** buttons next to each event to wire
+      the board to other LCC nodes: occupancy detectors, signal repeaters,
+      fascia indicators, CTC panels, dispatcher consoles. Most users never need
+      to type an Event ID directly — copy from one node and paste into another.
+    citation: "CDI segment description; Manual §6, p. 21–22; Appendix A, p. 23–30"
+
+  - cdiPath: "Producers and Consumers/Occupancy"
+    level: "group"
+    name: "Occupancy"
+    description: |
+      **Dual-role event slots** for every track block this board interacts with.
+      Each pair of Occupied/Unoccupied events is *both* produced (when this
+      board's own detectors trip) *and* consumed (when the partner board across
+      the siding reports its detectors). The Left/Right configuration determines
+      which subset acts as producer versus consumer; the firmware auto-pairs
+      these connections from the Layout Connections node IDs, so manual editing
+      is rarely needed.
+    citation: "Manual §A.1, p. 28; Figure 12, p. 24"
+
+  - cdiPath: "Producers and Consumers/Turnout Control"
+    level: "group"
+    name: "Turnout Control"
+    description: |
+      Event slots covering everything related to turnout state: **two consumer
+      events** (Turnout Command Normal / Diverging) that let other nodes command
+      this turnout, and **eleven producer events** reporting feedback-switch
+      transitions, pushbutton presses, and observed turnout position (Normal /
+      Diverging / In Motion). Use the consumer events to drive this turnout
+      from a CTC panel; use the producer events to drive remote indicators.
+    citation: "Manual §A.2 – §A.5, p. 28–29; Figure 13, p. 25"
+
+  - cdiPath: "Producers and Consumers/Signal Lamp Status"
+    level: "group"
+    name: "Signal Lamp Status"
+    description: |
+      **Sixteen producer-only events** — one for every (Signal × Color)
+      combination across the four heads A, B, C, D and the four lamp states
+      Red, Yellow, Green, Dark. The board emits the matching event whenever a
+      signal head lamp changes. Wire these to repeater LEDs on a control panel
+      or to a software dispatcher display. **Signal D events never fire when
+      Facing Point Signals is set to single-head.**
+    citation: "Manual §A.6, p. 29; Figure 14, p. 26"
+
+  - cdiPath: "Producers and Consumers/Signal Controls"
+    level: "group"
+    name: "Signal Controls"
+    description: |
+      Cross-board signal coordination and **CTC vital-logic overrides**.
+      Contains **ten consumer events** — six "Signal State Stop / Nonstop" slots
+      that receive the partner board's aspect across the siding, plus four
+      Vital Logic Control slots (Held / Cleared Left / Cleared Right / Cleared
+      Both) that a dispatcher panel uses to hold or clear signal logic in
+      either direction. The **six producer events** broadcast this board's own
+      aspect (A, B, and the combined CD head) for consumption by the partner
+      board and any CTC indicators.
+    citation: "Manual §A.7 – §A.9, p. 30; Figure 15, p. 27"
+
+  - cdiPath: "Producers and Consumers/Optical Sensor"
+    level: "group"
+    name: "Optical Sensor"
+    description: |
+      **Two producer-only events** emitted whenever the optical-sensor input
+      transitions between Active and Inactive (after polarity adjustment in the
+      Hardware Configuration → Optical Input setting). Useful for detecting
+      non-DCC rolling stock that doesn't draw current, supplementing the
+      current-sensing occupancy detectors. The events fire even if the sensor
+      input is unconnected — leave the polarity at default and ignore these
+      events if you have no optical sensor.
+    citation: "Manual §A.10, p. 30; Manual §5.11, p. 21; Figure 16, p. 28"

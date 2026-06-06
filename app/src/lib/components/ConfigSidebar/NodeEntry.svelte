@@ -21,6 +21,12 @@
    * into the saved layout roster. Saving the layout will promote it.
    */
   export let isUnsavedNew: boolean = false;
+  /**
+   * Spec 014 / S8: this entry is a placeholder board (no live LCC node
+   * behind it). Shown with a "placeholder" badge so the user can tell
+   * placeholders apart from discovered nodes at a glance.
+   */
+  export let isPlaceholder: boolean = false;
   /** Whether this node is selected (node-level selection, no segment) */
   export let isSelected: boolean = false;
 
@@ -83,6 +89,14 @@
       title="Discovered node — not yet in saved layout. Save to add."
       aria-label="Unsaved new node"
     >new</span>
+  {/if}
+
+  {#if isPlaceholder}
+    <span
+      class="placeholder-badge"
+      title="Placeholder board — no live LCC node behind this entry."
+      aria-label="Placeholder board"
+    >placeholder</span>
   {/if}
 
   {#if isLoading}
@@ -251,6 +265,20 @@
     text-transform: uppercase;
     letter-spacing: 0.04em;
     background-color: #d97706;                     /* amber — promotion-pending */
+    color: #fff;
+    line-height: 1.3;
+  }
+
+  .placeholder-badge {
+    flex-shrink: 0;
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background-color: #6b7280;                     /* slate — non-live entry */
     color: #fff;
     line-height: 1.3;
   }

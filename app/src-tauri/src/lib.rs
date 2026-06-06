@@ -14,6 +14,8 @@ pub mod node_proxy;
 pub mod node_registry;
 pub mod profile;
 pub mod diagnostics;
+pub mod placeholder;
+pub mod node_key;
 
 use menu::MenuHandles;
 
@@ -196,6 +198,8 @@ async fn update_menu_state(
     can_save_layout: bool,
     can_save_layout_as: bool,
     can_sync_to_bus: bool,
+    can_add_placeholder_board: bool,
+    can_delete_placeholder_board: bool,
     handles: tauri::State<'_, MenuHandles>,
 ) -> Result<(), String> {
     handles.disconnect     .set_enabled(connected)                      .map_err(|e| e.to_string())?;
@@ -209,6 +213,10 @@ async fn update_menu_state(
     handles.save_layout    .set_enabled(can_save_layout)                .map_err(|e| e.to_string())?;
     handles.save_layout_as .set_enabled(can_save_layout_as)             .map_err(|e| e.to_string())?;
     handles.sync_to_bus    .set_enabled(can_sync_to_bus)                .map_err(|e| e.to_string())?;
+    handles.add_placeholder_board
+        .set_enabled(can_add_placeholder_board)                          .map_err(|e| e.to_string())?;
+    handles.delete_placeholder_board
+        .set_enabled(can_delete_placeholder_board)                       .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -248,6 +256,8 @@ pub fn run() {
                     "menu-save-layout"    => { let _ = app_h.emit("menu-save-layout", ()); }
                     "menu-save-layout-as" => { let _ = app_h.emit("menu-save-layout-as", ()); }
                     "menu-sync-to-bus"    => { let _ = app_h.emit("menu-sync-to-bus", ()); }
+                    "menu-add-placeholder-board" => { let _ = app_h.emit("menu-add-placeholder-board", ()); }
+                    "menu-delete-placeholder-board" => { let _ = app_h.emit("menu-delete-placeholder-board", ()); }
                     "menu-exit"           => { let _ = app_h.emit("menu-exit", ()); }
                     "menu-diagnostics"    => { let _ = app_h.emit("menu-diagnostics", ()); }
                     _ => {}
@@ -330,9 +340,10 @@ pub fn run() {
             commands::list_offline_changes,  // Spec 010: offline change scaffolding
             commands::replace_offline_changes,  // Spec 010: bulk replace offline changes cache
             commands::get_connector_profile,
-            commands::get_connector_selections,
-            commands::put_connector_selections,
             commands::preview_connector_compatibility,
+            commands::set_node_mode_selection,          // Spec 014 / S3: unified node_mode_selections
+            commands::list_bundled_profiles_command,    // Spec 014 / S8: placeholder picker
+            commands::add_placeholder_board,            // Spec 014 / S8.10: factory-backed placeholder synthesis
             commands::compute_layout_match_status,  // Spec 010: sync match scaffolding
             commands::build_sync_session,  // Spec 010: sync session scaffolding
             commands::set_sync_mode,  // Spec 010: sync mode scaffolding

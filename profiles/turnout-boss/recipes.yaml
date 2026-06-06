@@ -1,0 +1,346 @@
+nodeType:
+  manufacturer: "Mustangpeak Engineering"
+  model: "TurnoutBoss"
+
+recipes:
+  # =====================================================
+  # Recipe 1 — Commission a new Left board
+  # =====================================================
+  - name: "Commission a new Left-end TurnoutBoss"
+    scope: "Layout Configuration Setup"
+    description: |
+      First-time configuration of a TurnoutBoss that controls the **left**
+      turnout of a passing siding. The Left board monitors three blocks —
+      the turnout, the mainline between the two siding turnouts, and the
+      siding itself — and produces occupancy events for the partner
+      Right board across the siding.
+    prerequisites: |
+      - Board has been factory-reset (Hold *Teach* + *Learn*, press *Reset*, then press *Teach* — Manual §3.2, p. 9)
+      - Board is wired into the LCC bus with CAN terminators at both ends
+      - Power LED is solid green
+      - You know the **Node ID of the partner Right board** to the right of this one
+    steps:
+      - order: 1
+        field: "Layout Configuration Setup/User Info/User Name"
+        value: "<short location name, e.g. \"Westgate East TB\">"
+        rawValue: null
+        rationale: |
+          Make this board uniquely identifiable in tool listings.
+          Configuration is much easier later when the board is named
+          after its **physical location**, not its function.
+      - order: 2
+        field: "Layout Configuration Setup/User Info/User Description"
+        value: "<longer description, e.g. \"Left board, east end of Westgate siding, double-head signal\">"
+        rawValue: null
+        rationale: |
+          Capture the role, wiring intent, and any installation quirks
+          here so a future operator (or future-you) does not have to
+          re-derive them from the layout.
+      - order: 3
+        field: "Layout Configuration Setup/How this TurnoutBoss is used on your layout."
+        value: '"Left" board: three blocks (turnout, mainline between, siding)'
+        rawValue: 0
+        rationale: |
+          Selects Left-end behavior: Detector 1 = left turnout, Detector
+          2 = mainline-between, Detector 3 = siding. The board will
+          *produce* the **Turnout Left**, **Main Center**, and **Siding**
+          occupancy events and *consume* **Main Left** from the next
+          board to the left.
+      - order: 4
+        field: "Layout Configuration Setup/Layout Connections/Right"
+        value: "<Node ID of partner Right board, padded to 8 bytes with .00.00>"
+        rawValue: null
+        rationale: |
+          Tells the firmware which neighbor to auto-pair with. Once set,
+          the Occupancy and Signal State events between the Left and
+          Right boards are wired automatically — no manual event copying
+          required.
+      - order: 5
+        field: "Layout Configuration Setup/Layout Connections/Left"
+        value: "<Node ID of TurnoutBoss to the left, OR leave 00.00.00.00.00.00.00.00 if no left neighbor>"
+        rawValue: null
+        rationale: |
+          Identifies the next board to the *left* (typically the Right
+          board of the *previous* siding). Leave at default if this
+          siding is the leftmost on the layout.
+      - order: 6
+        field: "Layout Configuration Setup/Turnout Control/Control Buttons"
+        value: "One turnout control button"
+        rawValue: 0
+        rationale: |
+          Default. A single SPST pushbutton between **N** and **Gnd**
+          toggles the turnout on each press. Switch to *Two turnout
+          control button* only if you have wired separate Normal and
+          Diverging buttons.
+    citation: "Manual §3 (button-based commissioning, p. 9-12), §5.1-5.4 (config-tool view, p. 19-20), Figure 2 (p. 3) for Left/Right layout."
+
+  # =====================================================
+  # Recipe 2 — Commission a new Right board
+  # =====================================================
+  - name: "Commission a new Right-end TurnoutBoss"
+    scope: "Layout Configuration Setup"
+    description: |
+      First-time configuration of a TurnoutBoss that controls the
+      **right** turnout of a passing siding. The Right board monitors
+      two blocks (turnout and mainline-to-next-siding) and **does not
+      use Detector 3**.
+    prerequisites: |
+      - Factory-reset complete
+      - LCC bus wired with terminators
+      - Partner **Left board** Node ID known
+    steps:
+      - order: 1
+        field: "Layout Configuration Setup/User Info/User Name"
+        value: "<short location name>"
+        rawValue: null
+        rationale: "Identify the board by its location."
+      - order: 2
+        field: "Layout Configuration Setup/User Info/User Description"
+        value: "<longer description>"
+        rawValue: null
+        rationale: "Record role and wiring intent."
+      - order: 3
+        field: "Layout Configuration Setup/How this TurnoutBoss is used on your layout."
+        value: '"Right" board: two blocks (turnout, mainline to next siding)'
+        rawValue: 1
+        rationale: |
+          Selects Right-end behavior: Detector 1 = right turnout,
+          Detector 2 = mainline-to-next-siding. The board will *consume*
+          **Main Center** and **Siding** events from the Left partner
+          and *produce* **Turnout Right** and **Turnout Main Right**.
+          **Detector 3 sensitivity has no effect in this mode** — leave
+          it at default.
+      - order: 4
+        field: "Layout Configuration Setup/Layout Connections/Left"
+        value: "<Node ID of partner Left board, padded to 8 bytes>"
+        rawValue: null
+        rationale: |
+          Identifies the Left partner across this siding. Auto-pairs
+          occupancy and signal-state events with that board.
+      - order: 5
+        field: "Layout Configuration Setup/Layout Connections/Right"
+        value: "<Node ID of TurnoutBoss for next siding to the right, OR leave default>"
+        rawValue: null
+        rationale: |
+          Identifies the next siding's Left board. Leave at default if
+          this is the rightmost siding on the layout.
+      - order: 6
+        field: "Layout Configuration Setup/Turnout Control/Control Buttons"
+        value: "One turnout control button"
+        rawValue: 0
+        rationale: "Default fascia control mode (see Recipe 1 for two-button alternative)."
+    citation: "Manual §5.1-5.4, p. 19-20; Manual Figure 2, p. 3; Manual §A.1, p. 28 (auto-paired occupancy)."
+
+  # =====================================================
+  # Recipe 3 — Configure for a single-head facing-point signal
+  # =====================================================
+  - name: "Use a single-head facing-point signal"
+    scope: "Hardware Configuration/Facing Point Signals"
+    description: |
+      Switch from the default double-head facing-point signal (heads C
+      *and* D) to a single mast with only the upper head (C). Use this
+      when you are modeling a railroad that uses one-head signals at
+      diverging routes or when D-head hardware is simply not installed.
+    prerequisites: |
+      - Only the **Signal C** connector on the board is wired to a physical signal head
+      - Signal D outputs are unconnected (or you accept that any Signal D events will not fire)
+    steps:
+      - order: 1
+        field: "Hardware Configuration/Facing Point Signals/What type of signal(s) is at the turnout points?"
+        value: "Signal at turnout points is a single head"
+        rawValue: 1
+        rationale: |
+          Tells the firmware to drive only head C with the combined
+          facing-point aspect and to suppress all Signal D outputs.
+          **Side effects:** the Signal D brightness sliders (under
+          *Hardware Configuration/Signal LED Brightness/Signal D*) have
+          no effect, and the four *Signal D Red/Yellow/Green/Dark*
+          producer events never fire.
+    citation: "Manual §5.6, p. 20; Manual §1.1 / §2.3 Figure 5, p. 2–7."
+
+  # =====================================================
+  # Recipe 4 — Enable two-switch turnout feedback
+  # =====================================================
+  - name: "Enable two-switch turnout feedback (with in-motion detection)"
+    scope: "Hardware Configuration/Turnout Feedback"
+    description: |
+      Wire two point-position microswitches so the board can confirm
+      the turnout fully reached the commanded position **and** detect
+      the in-between mid-travel state. Required if you want the
+      *Turnout Observed In Motion* event to fire.
+    prerequisites: |
+      - One microswitch wired between **N** and **Gnd** on the Turnout Feedback connector — closes when the points are fully Normal
+      - A second microswitch wired between **D** and **Gnd** on the same connector — closes when the points are fully Diverging
+      - Both switches are normally-open (they close only at end of travel)
+    steps:
+      - order: 1
+        field: "Hardware Configuration/Turnout Feedback/Using turnout feedback sensors?"
+        value: "Two turnout feedback sensors"
+        rawValue: 2
+        rationale: |
+          Activates two-switch logic. The firmware now uses both inputs
+          to derive Observed Normal / Diverging and additionally emits
+          **Turnout Observed In Motion** when the first switch has
+          opened but the second has not yet closed.
+    citation: "Manual §5.5, p. 20; Manual §2.4, p. 7; Manual §A.5, p. 29 (Observed In Motion only fires with two switches); Manual §4.6, p. 15 (wiring)."
+
+  # =====================================================
+  # Recipe 5 — Remote turnout control from a CTC panel
+  # =====================================================
+  - name: "Add remote turnout control from a CTC panel or JMRI"
+    scope: "Producers and Consumers/Turnout Control"
+    description: |
+      Let a CTC panel button, JMRI Turnout, or any other LCC node
+      throw this turnout to Normal or Diverging by producing two
+      consumer events. The TurnoutBoss will move the points to the
+      commanded position regardless of fascia button state.
+    prerequisites: |
+      - Remote node (CTC panel, JMRI Logix, etc.) is on the same LCC bus
+      - The remote node can be configured to *produce* two distinct events
+    steps:
+      - order: 1
+        field: "Producers and Consumers/Turnout Control/Turnout Command Normal (C)"
+        value: "<copy the Event ID this slot already contains, OR generate a fresh well-known event ID>"
+        rawValue: null
+        rationale: |
+          Read the current Event ID from this consumer slot (use the
+          *Copy* button in the configuration tool). This is the event
+          the TurnoutBoss listens for to throw the turnout to **Normal**.
+      - order: 2
+        field: "<Remote node: its 'set turnout Normal' producer slot>"
+        value: "<paste the Event ID from step 1>"
+        rawValue: null
+        rationale: |
+          Wire the remote producer to the TurnoutBoss consumer. Pressing
+          the CTC button now throws the turnout to Normal across the
+          LCC bus.
+      - order: 3
+        field: "Producers and Consumers/Turnout Control/Turnout Command Diverging (C)"
+        value: "<copy the Event ID this slot contains>"
+        rawValue: null
+        rationale: |
+          The Event ID the TurnoutBoss listens for to throw the turnout
+          to **Diverging**.
+      - order: 4
+        field: "<Remote node: its 'set turnout Diverging' producer slot>"
+        value: "<paste the Event ID from step 3>"
+        rawValue: null
+        rationale: |
+          Completes the pairing. The CTC panel can now command either
+          turnout position remotely. Local fascia buttons remain fully
+          functional in parallel.
+    citation: "Manual §6.1, p. 21; Manual §A.2, p. 28 ('When these events are produced somewhere else on the LCC network, the TurnoutBoss will consume them and change the position of the attached turnout')."
+
+  # =====================================================
+  # Recipe 6 — Connect to a CTC panel for signal indication
+  # =====================================================
+  - name: "Drive a CTC panel's signal and turnout indicators"
+    scope: "Producers and Consumers"
+    description: |
+      Feed this board's lamp-state and turnout-position events to a
+      CTC dispatcher panel so the panel mirrors the live state of the
+      layout signals and points.
+    prerequisites: |
+      - CTC panel node on the LCC bus, with consumer slots for each indicator LED
+      - Panel layout known (which indicator corresponds to which signal aspect / turnout position)
+    steps:
+      - order: 1
+        field: "Producers and Consumers/Signal Lamp Status/Signal A Red (P) … Signal D Dark (P)"
+        value: "<for each indicator on the panel, copy the matching (Signal × Color) Event ID and paste into the panel's consumer slot>"
+        rawValue: null
+        rationale: |
+          The board produces 16 lamp-state events (4 heads × 4 colors —
+          omit Signal D rows if you are in single-head facing-point
+          mode, since those will never fire). Each event corresponds to
+          one panel indicator LED.
+      - order: 2
+        field: "Producers and Consumers/Turnout Control/Turnout Observed Normal (P), Turnout Observed Diverging (P), Turnout Observed In Motion (P)"
+        value: "<copy each Event ID and paste into the corresponding panel turnout-indicator consumer>"
+        rawValue: null
+        rationale: |
+          Drives the panel's "points Normal", "points Diverging", and
+          (optionally) "points in motion" indicators. *In Motion* only
+          fires when two-switch feedback is configured.
+      - order: 3
+        field: "Producers and Consumers/Signal Controls/Signal State A Stop (P) … Signal State CD Nonstop (P)"
+        value: "<copy and paste into the panel's at-stop / clear indicators>"
+        rawValue: null
+        rationale: |
+          Aggregate Stop / Non-stop aspect events (per head). Useful
+          when the panel shows a single red/green indicator per signal
+          rather than per-lamp indicators.
+    citation: "Manual §6.2, p. 22; Manual §A.5–§A.7, p. 29-30."
+
+  # =====================================================
+  # Recipe 7 — Tune occupancy detector sensitivity
+  # =====================================================
+  - name: "Tune occupancy detector sensitivity"
+    scope: "Hardware Configuration/Track Detector Sensitivity"
+    description: |
+      Adjust the threshold of each current-sensing occupancy detector
+      so it reliably trips on resistor-wheelset cars and DCC locos but
+      does not false-trigger from noise.
+    prerequisites: |
+      - DCC track power is on
+      - A resistor-wheelset car (or known-good loco) is available for testing
+      - Detector LEDs on the board are visible
+    steps:
+      - order: 1
+        field: "Hardware Configuration/Track Detector Sensitivity/Detector 1"
+        value: "<starting value 31 (≈1 mA); raise the number until the LED stays off with no rolling stock, then lower by 1–2 steps below the false-trigger threshold>"
+        rawValue: null
+        rationale: |
+          Detector 1 monitors the turnout block on both Left and Right
+          boards. Higher numbers are *less* sensitive; lower numbers
+          *more* sensitive. The factory default of 31 detects roughly
+          1 mA, which is enough for a single 10 kΩ resistor wheelset.
+      - order: 2
+        field: "Hardware Configuration/Track Detector Sensitivity/Detector 2"
+        value: "<same tuning method as Detector 1>"
+        rawValue: null
+        rationale: |
+          Detector 2 monitors mainline-between (Left board) or
+          mainline-to-next-siding (Right board).
+      - order: 3
+        field: "Hardware Configuration/Track Detector Sensitivity/Detector 3"
+        value: "<same tuning method — Left board only>"
+        rawValue: null
+        rationale: |
+          Detector 3 monitors the siding. **Skip this step on Right
+          boards** — Detector 3 is unwired there and its value has no
+          effect.
+    citation: "Manual §5.8, p. 20; Manual §4.4, p. 14 (test by placing rolling stock on each section)."
+
+  # =====================================================
+  # Recipe 8 — Adjust servo end-points for a servo turnout
+  # =====================================================
+  - name: "Adjust servo end-points"
+    scope: "Hardware Configuration/Servo Limits"
+    description: |
+      Set the two servo positions so the points just touch the stock
+      rails in both directions. Critical to avoid servo overheating
+      from continuous force against the rails.
+    prerequisites: |
+      - Servo motor mechanically linked to the turnout points
+      - Servo power supply (5–8 V) connected
+      - Start with **conservative** values close to center (e.g., 100 and 156) so the servo cannot over-travel the first time it moves
+    steps:
+      - order: 1
+        field: "Hardware Configuration/Servo Limits/Normal Servo Position"
+        value: "<adjust until points just touch the mainline stock rail; do NOT push past contact>"
+        rawValue: null
+        rationale: |
+          Sets the servo position commanded when the turnout is at
+          **Normal**. CDI default is 64 (manual cites 85); both are
+          starting points only — the correct value depends on linkage
+          geometry. *If the servo runs warm or hums after stopping,
+          back off this value by 5–10 counts.*
+      - order: 2
+        field: "Hardware Configuration/Servo Limits/Reversed Servo Position"
+        value: "<adjust until points just touch the diverging stock rail>"
+        rawValue: null
+        rationale: |
+          Sets the servo position commanded when the turnout is at
+          **Diverging** (Reversed). CDI default 196 (manual cites 170).
+          Same caveats as the Normal position.
+    citation: "Manual §5.10, p. 21; Manual §4.3, p. 14 ('if the servo has to exert ongoing force to push the points too far against the stock rails, the servo will heat up and eventually fail')."

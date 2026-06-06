@@ -25,7 +25,7 @@ import {
   addressToOffsetHex,
   parseOfflineValueString,
 } from '$lib/utils/editKey';
-import { normalizeNodeId } from '$lib/utils/nodeId';
+import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
 
 // ─── Address index cache ──────────────────────────────────────────────────────
 //
@@ -144,9 +144,9 @@ class ConfigChangesStore {
     return layers;
   }
 
-  /** Count of draft entries for the given node. */
+  /** Count of draft entries for the given node (NodeKey — live NodeID or placeholder). */
   countDraftsForNode(nodeId: string): number {
-    const prefix = `${normalizeNodeId(nodeId)}:`;
+    const prefix = `${toCanonicalNodeKey(nodeId)}:`;
     let count = 0;
     for (const key of this._drafts.keys()) {
       if (key.startsWith(prefix)) count++;
@@ -168,7 +168,7 @@ class ConfigChangesStore {
    * tree to check the path prefix.
    */
   hasDraftsUnderPath(nodeId: string, pathPrefix: string): boolean {
-    const normalizedId = normalizeNodeId(nodeId);
+    const normalizedId = toCanonicalNodeKey(nodeId);
     const prefix = `${normalizedId}:`;
     for (const key of this._drafts.keys()) {
       if (!key.startsWith(prefix)) continue;
@@ -205,9 +205,20 @@ class ConfigChangesStore {
     this._drafts = new Map();
   }
 
+  /**
+   * Atomic save commit: clear all drafts.
+   *
+   * Post-S8.11, the save flow stages every draft (real-node and placeholder
+   * alike) into `offlineChangesStore` before persisting. Once staged, all
+   * drafts are cleared uniformly — no species-based partitioning.
+   */
+  commitForSave(): void {
+    this._drafts = new Map();
+  }
+
   /** Remove all drafts belonging to the given node (used after save). */
   clearDraftsForNode(nodeId: string): void {
-    const prefix = `${normalizeNodeId(nodeId)}:`;
+    const prefix = `${toCanonicalNodeKey(nodeId)}:`;
     const next = new Map(this._drafts);
     for (const key of next.keys()) {
       if (key.startsWith(prefix)) next.delete(key);
@@ -222,7 +233,7 @@ class ConfigChangesStore {
    * unrelated drafts that still differ from the refreshed baseline.
    */
   pruneResolvedDraftsForNode(nodeId: string): string[] {
-    const normalizedId = normalizeNodeId(nodeId);
+    const normalizedId = toCanonicalNodeKey(nodeId);
     const prefix = `${normalizedId}:`;
     const next = new Map(this._drafts);
     const removed: string[] = [];
@@ -290,7 +301,7 @@ class ConfigChangesStore {
     address: number,
   ): import('$lib/types/nodeTree').LeafConfigNode | null {
     for (const [treeKey, tree] of nodeTreeStore.trees.entries()) {
-      if (normalizeNodeId(treeKey) !== normalizedNodeId) continue;
+      if (toCanonicalNodeKey(treeKey) !== normalizedNodeId) continue;
       const leaf = findLeafByAddressIndexed(tree, address);
       if (leaf) return leaf;
     }

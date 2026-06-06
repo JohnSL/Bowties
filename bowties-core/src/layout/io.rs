@@ -1,4 +1,4 @@
-﻿//! Layout file I/O operations.
+//! Layout file I/O operations.
 //!
 //! Holds path / filename knowledge for the companion-directory layout
 //! (`bowties.yaml`, `nodes/`, `offline-changes.yaml`, etc.) and the
@@ -21,10 +21,10 @@ use super::node_snapshot::NodeSnapshot;
 use super::offline_changes::OfflineChange;
 use super::journal::{self, PlannedWrite, PrunePlan, SavePlan, WriteOp};
 
-pub(crate) const BOWTIES_FILE: &str = "bowties.yaml";
-pub(crate) const OFFLINE_CHANGES_FILE: &str = "offline-changes.yaml";
-pub(crate) const EVENT_NAMES_FILE: &str = "event-names.yaml";
-pub(crate) const NODES_DIR: &str = "nodes";
+pub const BOWTIES_FILE: &str = "bowties.yaml";
+pub const OFFLINE_CHANGES_FILE: &str = "offline-changes.yaml";
+pub const EVENT_NAMES_FILE: &str = "event-names.yaml";
+pub const NODES_DIR: &str = "nodes";
 const CDI_DIR: &str = "cdi";
 
 /// Load a layout file from the given path.
@@ -104,25 +104,25 @@ pub fn save_file(path: &Path, layout: &LayoutFile) -> Result<(), String> {
 
 /// Serialize a value to YAML bytes for inclusion in a journal
 /// [`SavePlan`].
-pub(crate) fn serialize_yaml<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, String> {
+pub fn serialize_yaml<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, String> {
     serde_yaml_ng::to_string(value)
         .map(|s| s.into_bytes())
         .map_err(|e| format!("Failed to serialize YAML: {}", e))
 }
 
 /// Read and deserialize a YAML file.
-pub(crate) fn read_yaml_file<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
+pub fn read_yaml_file<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
     let contents = std::fs::read_to_string(path)
         .map_err(|e| format!("Failed to read YAML file {}: {}", path.display(), e))?;
     serde_yaml_ng::from_str::<T>(&contents)
         .map_err(|e| format!("Failed to parse YAML file {}: {}", path.display(), e))
 }
 
-pub(crate) fn derive_node_file_path(nodes_dir: &Path, node_id: &str) -> PathBuf {
+pub fn derive_node_file_path(nodes_dir: &Path, node_id: &str) -> PathBuf {
     nodes_dir.join(format!("{}.yaml", node_id.to_uppercase()))
 }
 
-pub(crate) fn derive_companion_dir_name(base_file: &Path) -> Result<String, String> {
+pub fn derive_companion_dir_name(base_file: &Path) -> Result<String, String> {
     let file_name = base_file
         .file_name()
         .and_then(|v| v.to_str())
@@ -144,7 +144,7 @@ pub(crate) fn derive_companion_dir_name(base_file: &Path) -> Result<String, Stri
     Ok(format!("{}.layout.d", file_name))
 }
 
-pub(crate) fn derive_companion_dir_path(base_file: &Path) -> Result<PathBuf, String> {
+pub fn derive_companion_dir_path(base_file: &Path) -> Result<PathBuf, String> {
     let parent = base_file
         .parent()
         .ok_or_else(|| format!("Layout file has no parent directory: {}", base_file.display()))?;
@@ -174,7 +174,7 @@ pub struct LayoutDirectoryReadData {
     pub recovery_occurred: bool,
 }
 
-pub(crate) fn write_layout_capture(base_file: &Path, data: &LayoutDirectoryWriteData) -> Result<(), String> {
+pub fn write_layout_capture(base_file: &Path, data: &LayoutDirectoryWriteData) -> Result<(), String> {
     let parent = base_file
         .parent()
         .ok_or_else(|| format!("Layout file has no parent directory: {}", base_file.display()))?;
@@ -225,11 +225,21 @@ pub(crate) fn write_layout_capture(base_file: &Path, data: &LayoutDirectoryWrite
     let nodes_dir = companion_dir.join(NODES_DIR);
     let mut keep_nodes: HashSet<PathBuf> = HashSet::with_capacity(data.node_snapshots.len());
     for snapshot in &data.node_snapshots {
-        let node_path = derive_node_file_path(&nodes_dir, &snapshot.node_id.to_canonical());
+        let node_path = derive_node_file_path(&nodes_dir, &snapshot.filename_basis());
         keep_nodes.insert(node_path.clone());
+        let bytes = serialize_yaml(snapshot)?;
+        // Skip writing if the file already exists with identical content
+        // (ADR-0006: "Files that did not change are not rewritten").
+        if node_path.is_file() {
+            if let Ok(existing) = std::fs::read(&node_path) {
+                if existing == bytes {
+                    continue;
+                }
+            }
+        }
         plan.writes.push(PlannedWrite {
             abs_path: node_path,
-            op: WriteOp::Bytes(serialize_yaml(snapshot)?),
+            op: WriteOp::Bytes(bytes),
         });
     }
     plan.prune_dirs.push(PrunePlan {
@@ -279,7 +289,7 @@ pub(crate) fn write_layout_capture(base_file: &Path, data: &LayoutDirectoryWrite
     Ok(())
 }
 
-pub(crate) fn read_layout_capture(base_file: &Path) -> Result<LayoutDirectoryReadData, String> {
+pub fn read_layout_capture(base_file: &Path) -> Result<LayoutDirectoryReadData, String> {
     // ADR-0006: roll back any interrupted prior save before parsing.
     let recovery_occurred = journal::recover_if_needed(base_file)?;
 
@@ -348,7 +358,7 @@ fn read_companion_contents(
         }
     }
 
-    node_snapshots.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+    node_snapshots.sort_by(|a, b| a.node_key.cmp(&b.node_key));
     Ok((bowties, node_snapshots, offline_changes))
 }
 
@@ -357,7 +367,7 @@ fn read_companion_contents(
 /// Returns the path to the CDI file if it exists in the layout's cdi directory,
 /// or None if the file is not present.
 #[allow(dead_code)]
-pub(crate) fn get_cdi_path_for_snapshot(
+pub fn get_cdi_path_for_snapshot(
     layout_root: &Path,
     snapshot: &NodeSnapshot,
     _manifest: &LayoutManifest,
@@ -378,24 +388,18 @@ pub(crate) fn get_cdi_path_for_snapshot(
 /// Resolve CDI XML content for a snapshot by checking the global cache first,
 /// then the layout companion directory.
 ///
-/// Lookup order:
-/// 1. Global cache: `{app_data_dir}/cdi_cache/{sanitized_snip}.cdi.xml`
+/// Lookup order (S8.6 — single source: `snapshot.cdi_ref.cache_key`):
+/// 1. Global cache: `{app_data_dir}/cdi_cache/{cache_key}.cdi.xml`
 /// 2. Layout folder: `{companion_dir}/cdi/{cache_key}.cdi.xml`
 /// 3. Layout folder (legacy): `{companion_dir}/cdi/{cache_key}.xml`
 ///
 /// Returns the raw XML string on success.
-pub(crate) fn resolve_cdi_xml(
+pub fn resolve_cdi_xml(
     snapshot: &NodeSnapshot,
     app_data_dir: &Path,
     companion_dir: &Path,
 ) -> Result<String, String> {
-    let cache_filename = format!(
-        "{}_{}_{}.cdi.xml",
-        sanitize_cache_fragment(&snapshot.snip.manufacturer_name),
-        sanitize_cache_fragment(&snapshot.snip.model_name),
-        sanitize_cache_fragment(&snapshot.cdi_ref.version),
-    );
-    let cache_path = app_data_dir.join("cdi_cache").join(&cache_filename);
+    let cache_path = cdi_cache_path(snapshot, app_data_dir);
 
     if cache_path.exists() {
         return std::fs::read_to_string(&cache_path)
@@ -422,29 +426,22 @@ pub(crate) fn resolve_cdi_xml(
     ))
 }
 
-fn sanitize_cache_fragment(s: &str) -> String {
-    s.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
+/// S8.6: global CDI cache path. Reads only `snapshot.cdi_ref.cache_key` —
+/// no parallel SNIP-based derivation. The filename layout matches what
+/// `commands/cdi.rs::write_cdi_to_cache` wrote at download time, because
+/// both call sites mint the key via `CdiReference::from_snip`.
+///
+/// Format: `{app_data_dir}/cdi_cache/{cache_key}.cdi.xml`
+pub fn cdi_cache_path(snapshot: &NodeSnapshot, app_data_dir: &Path) -> PathBuf {
+    cdi_cache_path_for_key(&snapshot.cdi_ref.cache_key, app_data_dir)
 }
 
-/// Build the global CDI cache path for a snapshot's SNIP metadata.
-///
-/// Format: `{app_data_dir}/cdi_cache/{sanitize(mfg)}_{sanitize(model)}_{sanitize(version)}.cdi.xml`
-pub fn cdi_cache_path(snapshot: &NodeSnapshot, app_data_dir: &Path) -> PathBuf {
-    let filename = format!(
-        "{}_{}_{}.cdi.xml",
-        sanitize_cache_fragment(&snapshot.snip.manufacturer_name),
-        sanitize_cache_fragment(&snapshot.snip.model_name),
-        sanitize_cache_fragment(&snapshot.cdi_ref.version),
-    );
-    app_data_dir.join("cdi_cache").join(filename)
+/// S8.6: bare key → global cache path. Used directly by the live-node
+/// download path before a `NodeSnapshot` exists for the node.
+pub fn cdi_cache_path_for_key(cache_key: &str, app_data_dir: &Path) -> PathBuf {
+    app_data_dir
+        .join("cdi_cache")
+        .join(format!("{}.cdi.xml", cache_key))
 }
 
 #[cfg(test)]
@@ -458,8 +455,12 @@ mod tests {
     use lcc_rs::NodeID;
 
     fn test_node_snapshot(node_id: &str) -> NodeSnapshot {
+        let nid = NodeID::from_hex_string(node_id).unwrap();
         let mut snapshot = NodeSnapshot {
-            node_id: NodeID::from_hex_string(node_id).unwrap(),
+            node_key: nid.to_canonical(),
+            node_id: Some(nid),
+            profile_stem: None,
+            lifecycle: crate::layout::node_snapshot::NodeSnapshotLifecycle::Persisted,
             captured_at: "2026-04-05T12:00:00Z".to_string(),
             capture_status: CaptureStatus::Complete,
             missing: Vec::new(),
@@ -611,8 +612,12 @@ mod tests {
     }
 
     fn test_node_no_cdi(node_id: &str) -> NodeSnapshot {
+        let nid = NodeID::from_hex_string(node_id).unwrap();
         NodeSnapshot {
-            node_id: NodeID::from_hex_string(node_id).unwrap(),
+            node_key: nid.to_canonical(),
+            node_id: Some(nid),
+            profile_stem: None,
+            lifecycle: crate::layout::node_snapshot::NodeSnapshotLifecycle::Persisted,
             captured_at: "2026-04-05T12:00:00Z".to_string(),
             capture_status: CaptureStatus::Partial,
             missing: vec!["configuration tree not available".to_string()],
@@ -658,7 +663,7 @@ mod tests {
 
         assert_eq!(loaded.node_snapshots.len(), 1);
         let snap = &loaded.node_snapshots[0];
-        assert_eq!(snap.node_id, NodeID::from_hex_string("0201120033CC").unwrap());
+        assert_eq!(snap.node_id, Some(NodeID::from_hex_string("0201120033CC").unwrap()));
         assert_eq!(snap.cdi_ref.fingerprint, "not_supported");
         assert_eq!(snap.capture_status, CaptureStatus::Partial);
         assert!(snap.config.is_empty());
@@ -700,11 +705,11 @@ mod tests {
 
         assert_eq!(loaded.node_snapshots.len(), 2);
 
-        let cdi_node = loaded.node_snapshots.iter().find(|n| n.node_id == NodeID::from_hex_string("050101011402").unwrap()).unwrap();
+        let cdi_node = loaded.node_snapshots.iter().find(|n| n.node_id == Some(NodeID::from_hex_string("050101011402").unwrap())).unwrap();
         assert_eq!(cdi_node.cdi_ref.fingerprint, "len:123");
         assert!(!cdi_node.config.is_empty());
 
-        let no_cdi_node = loaded.node_snapshots.iter().find(|n| n.node_id == NodeID::from_hex_string("0201120033CC").unwrap()).unwrap();
+        let no_cdi_node = loaded.node_snapshots.iter().find(|n| n.node_id == Some(NodeID::from_hex_string("0201120033CC").unwrap())).unwrap();
         assert_eq!(no_cdi_node.cdi_ref.fingerprint, "not_supported");
         assert!(no_cdi_node.config.is_empty());
 
@@ -712,6 +717,93 @@ mod tests {
         let companion = derive_companion_dir_path(&base_file).unwrap();
         let cdi_dest = companion.join("cdi").join("acme_modelx_1.0.cdi.xml");
         assert!(cdi_dest.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// S8.5 / T5 parity test: a layout directory whose only NodeSnapshot is a
+    /// placeholder (node_id: None, node_key starts with "placeholder:") writes
+    /// to disk and reads back through the same `write_layout_capture` /
+    /// `read_layout_capture` path used by real nodes — no special-case branch.
+    /// The on-disk filename is derived from `filename_basis()`
+    /// (`placeholder_<uuid>.yaml`).
+    #[test]
+    fn s8_5_placeholder_snapshot_round_trips_through_layout_io_like_real_node() {
+        let root = std::env::temp_dir().join("bowties_test_s8_5_placeholder_parity");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let base_file = root.join("placeholder-parity.bowties-layout.yaml");
+        let manifest = LayoutManifest::new(
+            "placeholder-parity".to_string(),
+            "2026-05-25T00:00:00Z".to_string(),
+            "2026-05-25T00:00:00Z".to_string(),
+            "placeholder-parity.bowties-layout.d".to_string(),
+        );
+
+        let placeholder_key = "placeholder:11111111-2222-4333-8444-555555555555".to_string();
+        let mut placeholder_snap = NodeSnapshot {
+            node_key: placeholder_key.clone(),
+            node_id: None,
+            profile_stem: Some("RR-CirKits_Tower-LCC".to_string()),
+            lifecycle: crate::layout::node_snapshot::NodeSnapshotLifecycle::Persisted,
+            captured_at: "2026-05-25T00:00:00Z".to_string(),
+            capture_status: CaptureStatus::Complete,
+            missing: Vec::new(),
+            snip: SnipSnapshot {
+                user_name: "My Tower".to_string(),
+                user_description: String::new(),
+                manufacturer_name: "RR-CirKits".to_string(),
+                model_name: "Tower-LCC".to_string(),
+            },
+            cdi_ref: CdiReference {
+                cache_key: "RR-CirKits_Tower-LCC".to_string(),
+                version: "bundled".to_string(),
+                fingerprint: "bundled".to_string(),
+            },
+            config: BTreeMap::new(),
+            producer_identified_events: Vec::new(),
+        };
+        placeholder_snap.add_config_leaf(
+            &["Segment 0".to_string(), "User Name".to_string()],
+            SnapshotLeafValue {
+                value: "Hello".to_string(),
+                space: Some(253),
+                offset: Some("0x00000000".to_string()),
+            },
+        );
+
+        let data = LayoutDirectoryWriteData {
+            manifest,
+            node_snapshots: vec![placeholder_snap],
+            bowties: LayoutFile::default(),
+            offline_changes: Vec::new(),
+            cdi_files: Vec::new(),
+        };
+
+        write_layout_capture(&base_file, &data).unwrap();
+
+        // The on-disk filename uses the placeholder filename basis (no `:`).
+        let companion = derive_companion_dir_path(&base_file).unwrap();
+        let nodes_dir = companion.join(NODES_DIR);
+        let on_disk = nodes_dir.join("PLACEHOLDER_11111111-2222-4333-8444-555555555555.yaml");
+        assert!(
+            on_disk.exists(),
+            "expected placeholder snapshot at {}, dir contains: {:?}",
+            on_disk.display(),
+            std::fs::read_dir(&nodes_dir)
+                .ok()
+                .map(|it| it.filter_map(|e| e.ok().map(|e| e.file_name())).collect::<Vec<_>>())
+        );
+
+        let loaded = read_layout_capture(&base_file).unwrap();
+        assert_eq!(loaded.node_snapshots.len(), 1);
+        let snap = &loaded.node_snapshots[0];
+        assert_eq!(snap.node_key, placeholder_key);
+        assert_eq!(snap.node_id, None);
+        assert_eq!(snap.cdi_ref.cache_key, "RR-CirKits_Tower-LCC");
+        assert_eq!(snap.capture_status, CaptureStatus::Complete);
+        assert!(!snap.config.is_empty(), "config tree must round-trip");
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -880,6 +972,186 @@ mod tests {
         let full = read_layout_capture(&base_file).unwrap();
         assert_eq!(full.manifest.connections.len(), 3);
         assert_eq!(full.node_snapshots.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resave_preserves_existing_connections_via_build_save_manifest() {
+        // Regression: opening a layout that already has a saved LCC
+        // connection, making any change, and re-saving must not drop the
+        // connection. The previous bug was in `save_layout_directory`,
+        // which constructed the new manifest via `LayoutManifest::new(...)`
+        // and silently zeroed `connections`. The fix is the
+        // `manifest::build_save_manifest` helper used at that seam; this
+        // test pins the contract at the io layer.
+        let root = std::env::temp_dir().join("bowties_resave_preserves_connections");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let base_file = root.join("rs.layout");
+        let initial_manifest = LayoutManifest::new(
+            "rs".to_string(),
+            "2026-06-01T00:00:00Z".to_string(),
+            "2026-06-01T00:00:00Z".to_string(),
+            "rs.layout.d".to_string(),
+        );
+        let initial = LayoutDirectoryWriteData {
+            manifest: initial_manifest,
+            node_snapshots: vec![test_node_snapshot("050101011402")],
+            bowties: LayoutFile::default(),
+            offline_changes: Vec::new(),
+            cdi_files: Vec::new(),
+        };
+        write_layout_capture(&base_file, &initial).unwrap();
+
+        // User adds a connection via ConnectionManager.
+        let conn = test_connection("conn-1", "Home TCP");
+        crate::layout::update_manifest_connections(&base_file, vec![conn.clone()]).unwrap();
+
+        // Simulate `save_layout_directory`: read previous capture, build a
+        // new manifest via the helper, and write through `save_capture`.
+        let previous = crate::layout::read_capture(&base_file).unwrap();
+        let new_manifest = crate::layout::manifest::build_save_manifest(
+            Some(&previous.manifest),
+            previous.manifest.layout_id.clone(),
+            previous.manifest.captured_at.clone(),
+            "2026-06-01T00:05:00Z".to_string(),
+            String::new(),
+        );
+        let resave = LayoutDirectoryWriteData {
+            manifest: new_manifest,
+            node_snapshots: previous.node_snapshots.clone(),
+            bowties: LayoutFile::default(),
+            offline_changes: Vec::new(),
+            cdi_files: Vec::new(),
+        };
+        write_layout_capture(&base_file, &resave).unwrap();
+
+        let after = crate::layout::read_manifest(&base_file).unwrap();
+        assert_eq!(after.connections, vec![conn],
+            "re-save must preserve connections from the previous manifest");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- S8.6: single CDI artifact resolver (cdi_cache_path reads cache_key) ----
+
+    fn snapshot_with_cdi_ref(cdi_ref: CdiReference) -> NodeSnapshot {
+        NodeSnapshot {
+            node_key: "050101010301".to_string(),
+            node_id: Some(NodeID::from_hex_string("050101010301").unwrap()),
+            profile_stem: None,
+            lifecycle: crate::layout::node_snapshot::NodeSnapshotLifecycle::Persisted,
+            captured_at: "2026-05-25T00:00:00Z".to_string(),
+            capture_status: CaptureStatus::Complete,
+            missing: Vec::new(),
+            // Deliberately set SNIP fields to values that would produce a
+            // DIFFERENT filename under the legacy SNIP-synthesis rule, to
+            // prove the resolver no longer touches SNIP.
+            snip: SnipSnapshot {
+                user_name: String::new(),
+                user_description: String::new(),
+                manufacturer_name: "DIFFERENT".to_string(),
+                model_name: "VALUES".to_string(),
+            },
+            cdi_ref,
+            config: BTreeMap::new(),
+            producer_identified_events: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn s8_6_cdi_cache_path_reads_only_cache_key() {
+        let app_data = std::path::PathBuf::from("/fake/app_data");
+        let cdi_ref = CdiReference::from_snip(
+            &SnipSnapshot {
+                user_name: String::new(),
+                user_description: String::new(),
+                manufacturer_name: "Mustangpeak Engineering".to_string(),
+                model_name: "TurnoutBoss".to_string(),
+            },
+            "5.14",
+            "len:1000",
+        );
+        let snap = snapshot_with_cdi_ref(cdi_ref);
+        let path = cdi_cache_path(&snap, &app_data);
+        assert_eq!(
+            path,
+            std::path::PathBuf::from("/fake/app_data/cdi_cache/Mustangpeak_Engineering_TurnoutBoss_5_14.cdi.xml"),
+        );
+    }
+
+    #[test]
+    fn s8_6_cdi_cache_path_for_placeholder_uses_profile_stem() {
+        let app_data = std::path::PathBuf::from("/fake/app_data");
+        // Regression: the placeholder save-flush previously failed because
+        // `cdi_cache_path` derived `Mustangpeak_Engineering_TurnoutBoss_bundled.cdi.xml`
+        // from SNIP+version, while the cache_key was the profile stem
+        // `Mustangpeak-Engineering_TurnoutBoss` (hyphen preserved). After
+        // S8.6 the resolver reads `cache_key` directly.
+        let cdi_ref = CdiReference::from_profile_stem("Mustangpeak-Engineering_TurnoutBoss");
+        let snap = snapshot_with_cdi_ref(cdi_ref);
+        let path = cdi_cache_path(&snap, &app_data);
+        assert_eq!(
+            path,
+            std::path::PathBuf::from("/fake/app_data/cdi_cache/Mustangpeak-Engineering_TurnoutBoss.cdi.xml"),
+        );
+    }
+
+    #[test]
+    fn s8_6_cdi_cache_path_for_key_matches_snapshot_resolver() {
+        let app_data = std::path::PathBuf::from("/fake/app_data");
+        let by_key = cdi_cache_path_for_key("acme_modelx_1_0", &app_data);
+        let snap = snapshot_with_cdi_ref(CdiReference {
+            cache_key: "acme_modelx_1_0".to_string(),
+            version: "1.0".to_string(),
+            fingerprint: "len:123".to_string(),
+        });
+        assert_eq!(by_key, cdi_cache_path(&snap, &app_data));
+    }
+
+    #[test]
+    fn unchanged_node_snapshot_not_rewritten_on_resave() {
+        // ADR-0006: "Files that did not change are not rewritten."
+        // When a node snapshot is byte-identical to what is already on disk,
+        // the save plan must skip the write so file timestamps and cloud
+        // sync are not disturbed.
+        let root = std::env::temp_dir().join("bowties_test_unchanged_skip");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let base_file = root.join("layout.bowties-layout.yaml");
+        let manifest = LayoutManifest::new(
+            "layout".to_string(),
+            "2026-04-05T12:00:00Z".to_string(),
+            "2026-04-05T12:00:00Z".to_string(),
+            "layout.bowties-layout.d".to_string(),
+        );
+        let data = LayoutDirectoryWriteData {
+            manifest: manifest.clone(),
+            node_snapshots: vec![test_node_snapshot("050101011402")],
+            bowties: LayoutFile::default(),
+            offline_changes: Vec::new(),
+            cdi_files: Vec::new(),
+        };
+
+        write_layout_capture(&base_file, &data).unwrap();
+        let node_path = derive_companion_dir_path(&base_file).unwrap()
+            .join("nodes").join("050101011402.yaml");
+        let mtime_after_first = std::fs::metadata(&node_path).unwrap().modified().unwrap();
+
+        // Brief sleep so filesystem timestamp would differ if rewritten
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Re-save with identical data
+        write_layout_capture(&base_file, &data).unwrap();
+        let mtime_after_second = std::fs::metadata(&node_path).unwrap().modified().unwrap();
+
+        assert_eq!(
+            mtime_after_first, mtime_after_second,
+            "Unchanged node file should not have been rewritten"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }

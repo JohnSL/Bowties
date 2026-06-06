@@ -11,7 +11,7 @@
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import { probeNodes as probeNodesApi, querySnip, queryPip, registerNode, refreshAllNodes } from '$lib/api/tauri';
   import { buildBowtieCatalog, clearRecentLayout, getRecentLayout } from '$lib/api/bowties';
-  import { closeLayout, saveLayoutDirectory, saveLayoutWithBusWrites, openLayoutDirectory, buildOfflineNodeTree, createNewLayoutCapture } from '$lib/api/layout';
+  import { closeLayout, saveLayoutDirectory, saveLayoutWithBusWrites, openLayoutDirectory, buildOfflineNodeTree, createNewLayoutCapture, getNodeTree } from '$lib/api/layout';
   import type { OfflineNodeSnapshot } from '$lib/api/layout';
   import { getKnownLayouts, addKnownLayout, removeKnownLayout } from '$lib/api/startup';
   import { knownLayoutsStore } from '$lib/stores/knownLayouts.svelte';
@@ -25,9 +25,7 @@
   import { toast } from '@zerodevx/svelte-toast';
   import { readAllConfigValues, cancelConfigReading, getCdiXml, downloadCdi } from '$lib/api/cdi';
   import type { ViewerStatus } from '$lib/types/cdi';
-  import type { DiscoveredNode } from '$lib/api/tauri';
   import type { ReadProgressState, NodeReadState } from '$lib/api/types';
-  import { updateNodeInfo } from '$lib/stores/nodeInfo';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
@@ -36,6 +34,7 @@
   import { resolvePillSelectionsForPath } from '$lib/types/nodeTree';
   import type { NodeConfigTree } from '$lib/types/nodeTree';
   import { configReadNodesStore, markNodeConfigRead, clearConfigReadStatus, removeNodesConfigRead } from '$lib/stores/configReadStatus';
+  import { nodeRoster } from '$lib/stores/nodeRoster.svelte';
   import BowtieCatalogPanel from '$lib/components/Bowtie/BowtieCatalogPanel.svelte';
   import DiscoveryProgressModal from '$lib/components/DiscoveryProgressModal.svelte';
   import SaveControls from '$lib/components/ElementCardDeck/SaveControls.svelte';
@@ -43,6 +42,7 @@
   import CdiRedownloadDialog from '$lib/components/CdiRedownloadDialog.svelte';
   import ErrorDialog from '$lib/components/ErrorDialog.svelte';
   import SaveProgressDialog from '$lib/components/SaveProgressDialog.svelte';
+  import AddBoardDialog from '$lib/components/AddBoardDialog.svelte';
   import { saveProgressStore } from '$lib/stores/saveProgress.svelte';
   import MissingCaptureBadge from '$lib/components/Layout/MissingCaptureBadge.svelte';
   import { OFFLINE_LAYOUT_DEFAULT_FILENAME, offlineLayoutDialogFilter } from '$lib/constants/layoutFiles';
@@ -54,13 +54,11 @@
   import { setPillSelection } from '$lib/stores/pillSelection';
   import { layoutOpenInProgress, layoutOpenStatusText, failLayoutOpen, resetLayoutOpenPhase } from '$lib/stores/layoutOpenLifecycle';
   import {
-    clearActiveLayoutWithReset,
     openOfflineLayoutWithReplay,
     rehydrateOfflineStateFromSnapshots,
-    resetFreshLiveSessionState as resetFreshLiveSessionStateOrchestrated,
-    resetLayoutStateForNoLayout as resetLayoutStateForNoLayoutOrchestrated,
     restoreRecentOfflineLayout,
   } from '$lib/orchestration/offlineLayoutOrchestrator';
+  import { layoutLifecycleOrchestrator } from '$lib/orchestration/layoutLifecycleOrchestrator';
   import {
     createWaitingNodeReadStates,
     executeConfigReadCandidates,
@@ -109,9 +107,14 @@
   import { syncPanelStore } from '$lib/stores/syncPanel.svelte';
   import OfflineBanner from '$lib/components/Layout/OfflineBanner.svelte';
   import { saveLayoutOrchestrated, type SaveLayoutOrchestratedArgs } from '$lib/orchestration/saveLayoutOrchestrator';
+  import { stageDraftsForOfflineSave } from '$lib/orchestration/configDraftOrchestrator';
   import { normalizeLayoutTitle } from '$lib/utils/layoutPath';
   import { formatNodeId, nodeIdStringToBytes } from '$lib/utils/nodeId';
-  import { computeDiscoveredOnlyNodeIds, computeUnsavedInMemoryNodeIds, canonicalizeNodeId } from '$lib/utils/nodeRoster';
+  import { computeDiscoveredOnlyNodeIds, canonicalizeNodeId } from '$lib/utils/nodeRoster';
+  import { effectiveNodeStore } from '$lib/layout';
+  import { partialCaptureNodesStore } from '$lib/stores/partialCaptureNodes.svelte';
+  import { deletePlaceholderBoard } from '$lib/orchestration/placeholderBoardOrchestrator';
+  import { isPlaceholderInput } from '$lib/utils/nodeKey';
 
   // Active tab state — 'config' (default) or 'bowties'
   let activeTab = $state<'config' | 'bowties'>('config');
@@ -130,12 +133,22 @@
   let isForceClosing = false;
   let errorDialog = $state<{ title: string; message: string } | null>(null);
 
+  // Spec 014 / S8: placeholder picker modal visibility. Opened by the
+  // "Add Placeholder Board…" menu item; closed on cancel or after a
+  // successful add.
+  let showAddBoardDialog = $state(false);
+
+  // Spec 014 / S8.5 / T11: pending "Delete Placeholder Board" confirmation.
+  // Holds the NodeKey to delete while the user confirms; cleared on
+  // confirm/cancel.
+  let pendingDeletePlaceholderKey = $state<string | null>(null);
+
   function promptUnsaved(message: string, proceed: () => void, confirmLabel = 'Discard & Continue'): void {
     const hasUnsaved = hasUnsavedPromptChanges(
       nodeTreeStore.trees.keys(),
       bowtieMetadataStore.isDirty,
       offlineChangesStore.draftCount,
-      layoutStore.isDirty,
+      effectiveNodeStore.isDirty,
       offlineChangesStore.revertedPersistedCount,
     );
     if (hasUnsaved) {
@@ -165,14 +178,10 @@
     const layoutDirty = layoutStore.isDirty;
     const metaDirty = bowtieMetadataStore.isDirty;
     const offlineActive = !!layoutStore.activeContext && layoutStore.hasLayoutFile;
-    // S8: `layoutStore.isDirty` now covers both LayoutFile-struct edits and
-    // fully-captured discovered nodes not yet in the saved roster, so the
-    // gate no longer needs an explicit discovered-node OR.
-    const hasInMemoryEdits =
-      configChangesStore.draftEntries().length > 0 ||
-      bowtieMetadataStore.isDirty ||
-      offlineChangesStore.draftCount > 0 ||
-      layoutStore.isDirty;
+    // ADR-0011: `effectiveNodeStore.isDirty` is the aggregate "any in-memory
+    // change" signal (LayoutFile struct + drafts + metadata + offline +
+    // unsaved-new). `layoutStore.isDirty` now means struct edits only.
+    const hasInMemoryEdits = effectiveNodeStore.isDirty;
     return !busy && ((offlineActive && hasInMemoryEdits) || (layoutLoaded && (layoutDirty || metaDirty)));
   }
 
@@ -261,9 +270,15 @@
   let errorMessage = $state("");
 
   // Discovery state
-  let nodes = $state<DiscoveredNode[]>([]);
+  // Spec 014 / S8.7: the page-local `nodes` array was the bug-2 misfire — it
+  // mirrored only live discoveries, missing every placeholder, so the
+  // "No nodes found." gate fired for placeholder-only layouts. Now derived
+  // from `nodeRoster.allEntries` (live + placeholder) so any consumer
+  // reading `nodes` sees the unified roster. `liveNodes` is exposed for
+  // call sites that still need the strict live-only subset.
+  const nodes = $derived(nodeRoster.allEntries.map((e) => e.info));
+  const liveNodes = $derived(nodeRoster.liveNodes);
   let probing = $state(false);
-  let partialCaptureNodes = $state(new Set<string>());
   let showConnectionDialog = $state(false);
   let startupBootstrapPending = $state(true);
   let syncPanelVisible = $state(false);
@@ -284,43 +299,16 @@
   const discoveredOnlyNodeIds = $derived(
     computeDiscoveredOnlyNodeIds(
       layoutStore.activeContext?.layoutNodeIds,
-      nodes.map((n) => formatNodeId(n.node_id)),
+      nodes.map((n) => canonicalizeNodeId(formatNodeId(n.node_id))),
     ),
   );
 
-  /**
-   * S8: canonical IDs of discovered nodes that are fully captured
-   * (`nodeTreeStore.trees` has an entry AND the node is not in
-   * `partialCaptureNodes`) AND not yet in the saved roster. These are the
-   * nodes the next save will actually promote into the layout — they feed
-   * both the orchestrator's AddNode deltas and the centralised
-   * `layoutStore.isDirty` signal (so Save and the unsaved-changes guard
-   * see a single, uniform "in-memory changes not yet saved" indication).
-   */
-  const fullyCapturedNodeIds = $derived.by(() => {
-    const trees = nodeTreeStore.trees;
-    const out: string[] = [];
-    for (const key of trees.keys()) {
-      const canonical = canonicalizeNodeId(key);
-      if (!partialCaptureNodes.has(canonical)) out.push(canonical);
-    }
-    return out;
-  });
-
-  const unsavedInMemoryNodeIds = $derived(
-    computeUnsavedInMemoryNodeIds(
-      layoutStore.activeContext?.layoutNodeIds,
-      fullyCapturedNodeIds,
-    ),
-  );
-
-  // Push the unsaved-in-memory set into the layout store so `isDirty`
-  // (and therefore the Save button gate and the unsaved-changes guard)
-  // reflects the S8 capture threshold uniformly. The store dedupes
-  // equivalent pushes to avoid downstream churn.
-  $effect(() => {
-    layoutStore.setUnsavedInMemoryNodeIds(unsavedInMemoryNodeIds);
-  });
+  // ADR-0011: `effectiveNodeStore` is the single source of truth for the
+  // per-node persistability projection and the aggregate "any in-memory
+  // change" signal. Callers read `effectiveNodeStore.isDirty` /
+  // `.unsavedInMemoryNodeIds` directly; nothing mirrors back into
+  // `layoutStore`. `layoutStore.isDirty` now means LayoutFile-struct edits
+  // only — its proper domain.
 
   // Sync-session lifecycle state is coordinated in a dedicated orchestrator.
   const syncSessionOrchestrator = new SyncSessionOrchestrator();
@@ -338,8 +326,7 @@
       nodeIdStringToBytes,
       buildOfflineNodeTree,
       publishNodes: (offlineNodes) => {
-        nodes = offlineNodes;
-        updateNodeInfo(offlineNodes);
+        nodeRoster.replaceLiveRoster(offlineNodes);
       },
       clearConfigReadStatus,
       resetNodeTrees: () => {
@@ -353,6 +340,48 @@
         console.warn(message);
       },
     });
+
+    // S9: Restore placeholder nodes that were saved in the layout.
+    // The backend reconstituted them into the registry during
+    // open_layout_directory; we just need to publish them to the sidebar.
+    const placeholderSnapshots = snapshots.filter((s) => isPlaceholderInput(s.nodeKey));
+    const restoredKeys: string[] = [];
+    for (const snap of placeholderSnapshots) {
+      try {
+        const tree = await getNodeTree(snap.nodeKey);
+        const nowIso = new Date().toISOString();
+        nodeRoster.addPlaceholder({
+          nodeKey: snap.nodeKey,
+          profileStem: snap.profileStem!,
+          info: {
+            node_id: [],
+            alias: 0,
+            snip_data: {
+              manufacturer: snap.snip.manufacturerName,
+              model: snap.snip.modelName,
+              hardware_version: '',
+              software_version: '',
+              user_name: snap.snip.userName,
+              user_description: snap.snip.userDescription,
+            },
+            snip_status: 'Complete',
+            connection_status: 'Unknown',
+            last_verified: nowIso,
+            last_seen: nowIso,
+            cdi: null,
+            pip_flags: null,
+            pip_status: 'NotSupported',
+          },
+          tree,
+        });
+        restoredKeys.push(snap.nodeKey);
+      } catch (e) {
+        console.warn(`[offline] Failed to restore placeholder ${snap.nodeKey}:`, e);
+      }
+    }
+    if (restoredKeys.length > 0) {
+      nodeRoster.markPlaceholdersPersisted(restoredKeys);
+    }
   }
 
   /**
@@ -391,7 +420,7 @@
         api: { addKnownLayout },
         store: knownLayoutsStore,
         onOpened: (result) => {
-          partialCaptureNodes = new Set(result.partialNodes);
+          partialCaptureNodesStore.replace(result.partialNodes);
           currentLayoutSnapshots = result.nodeSnapshots;
           if (result.recoveryOccurred) {
             toast.push('Previous save was interrupted and has been restored.', {
@@ -426,6 +455,7 @@
         path: args.path,
         api: { addKnownLayout },
         lifecycle: {
+          closeLayout: () => clearActiveLayout(),
           createNewLayoutCapture,
           saveLayoutDirectory: (p, overwrite, _deltas) =>
             saveLayoutDirectory(p, overwrite, []),
@@ -446,7 +476,7 @@
         },
         store: knownLayoutsStore,
         onOpened: (result) => {
-          partialCaptureNodes = new Set(result.partialNodes);
+          partialCaptureNodesStore.replace(result.partialNodes);
           currentLayoutSnapshots = result.nodeSnapshots;
         },
       });
@@ -490,6 +520,14 @@
 
       const deltas = bowtieMetadataStore.collectDeltas();
 
+      // Offline mode owns draft staging: promote config drafts into the
+      // offline-change channel before the orchestrator runs. The component
+      // (SaveControls) no longer reaches into draft state — it just calls
+      // `onSave()` and trusts the page/orchestrator to do the right thing.
+      if (layoutStore.isOfflineMode) {
+        stageDraftsForOfflineSave();
+      }
+
       const sharedOrchestratorArgs = {
         clearMetadata: () => bowtieMetadataStore.clearAll(),
         markClean: () => layoutStore.markClean(),
@@ -501,7 +539,7 @@
         setActiveContext: (ctx: import('$lib/stores/layout.svelte').ActiveLayoutContext) =>
           layoutStore.setActiveContext(ctx),
         updatePartialCaptureNodes: (warnings: string[]) => {
-          partialCaptureNodes = new Set(warnings);
+          partialCaptureNodesStore.replace(warnings);
         },
         getPendingChangeCount: () => offlineChangesStore.pendingCount,
         // ADR-0004 (S2c): drop config drafts that are now persisted on disk so
@@ -510,11 +548,23 @@
         clearPersistedDrafts: () => configChangesStore.clearAllDrafts(),
         path: targetPath,
         deltas,
-        // S8: send only fully-captured discovered nodes for promotion. The
-        // backend cannot save a usable snapshot for nodes whose CDI/config
-        // has not been read, so promoting them would leave the layout
-        // referencing an incomplete node.
-        discoveredOnlyNodeIds: unsavedInMemoryNodeIds,
+        // S8.11: unified set of in-memory node keys (real + placeholder)
+        // that are not yet in the saved layout roster.
+        inMemorySnapshotKeys: effectiveNodeStore.unsavedInMemoryNodeIds,
+        // Bug 3: placeholders the user removed from a persisted layout —
+        // emitted as `removeNode` deltas so the backend drops them and
+        // prunes their snapshot files.
+        inMemoryRemovedKeys: effectiveNodeStore.unsavedRemovedNodeIds,
+        clearPersistedPlaceholders: (nodeKeys: string[]) => {
+          nodeRoster.markPlaceholdersPersisted(nodeKeys);
+        },
+        clearPersistedRemovals: () => nodeRoster.clearPersistedRemovals(),
+        // Offline mode only: the backend rewrites pending offline changes
+        // during the save, so the frontend mirror must be re-pulled before
+        // the UI settles. Online mode omits this callback.
+        reloadOfflineChanges: layoutStore.isOfflineMode
+          ? async () => { await offlineChangesStore.reloadFromBackend(); }
+          : undefined,
       };
       const orchestratorArgs: SaveLayoutOrchestratedArgs = connected
         ? {
@@ -532,7 +582,11 @@
       // for the offline path this is the sole phase driver.
       saveProgressStore.begin();
       try {
-        await saveLayoutOrchestrated(orchestratorArgs);
+        const saveResult = await saveLayoutOrchestrated(orchestratorArgs);
+        // Bug 2b fix: cache the snapshots from this save so the disconnect
+        // transition matrix sees `hasSnapshots: true` and takes the
+        // `rehydrated_offline` path instead of clearing everything.
+        currentLayoutSnapshots = saveResult.nodeSnapshots;
         saveProgressStore.apply({ phase: 'complete', failedCount: 0 });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -551,71 +605,33 @@
   }
 
   async function resetLayoutStateForNoLayout(reprobeLiveNodes = true) {
-    await resetLayoutStateForNoLayoutOrchestrated({
+    await layoutLifecycleOrchestrator.resetForNewLayout({
       connected,
       reprobeLiveNodes,
-      clearPartialCaptureNodes: () => {
-        partialCaptureNodes = new Set<string>();
-      },
-      clearCurrentLayoutSnapshots: () => {
+      probeForNodes,
+      afterReset: () => {
         currentLayoutSnapshots = [];
-      },
-      clearNodes: () => {
-        nodes = [];
-        updateNodeInfo([]);
-      },
-      clearConfigReadStatus,
-      resetNodeTrees: () => {
-        nodeTreeStore.reset();
-      },
-      clearMetadata: () => {
-        bowtieMetadataStore.clearAll();
-      },
-      clearOfflineChanges: () => {
-        offlineChangesStore.clear();
-      },
-      resetLayoutStore: () => {
-        layoutStore.reset();
-        connectorSelectionsStore.reset();
-      },
-      resetSyncSessionAutoTrigger: () => {
         syncSessionOrchestrator.resetAutoTrigger();
       },
-      resetSidebar: () => {
-        configSidebarStore.reset();
-      },
-      probeForNodes,
     });
   }
 
   function resetFreshLiveSessionState(): void {
-    resetFreshLiveSessionStateOrchestrated({
-      hasLayoutFile: layoutStore.hasLayoutFile,
-      clearNodes: () => {
-        nodes = [];
-        updateNodeInfo([]);
-      },
-      clearConfigReadStatus,
-      resetSidebar: () => {
-        configSidebarStore.reset();
-      },
-      resetNodeTrees: () => {
-        nodeTreeStore.reset();
-      },
-      clearNodesWithCdi: () => {
-        nodesWithCdi = new Set();
-      },
-      
-    });
-    connectorSelectionsStore.reset();
+    layoutLifecycleOrchestrator.resetForFreshLiveSession();
+    nodesWithCdi = new Set();
   }
 
   async function clearActiveLayout() {
-    await clearActiveLayoutWithReset({
-      activeLayoutMode: layoutStore.activeContext?.mode,
-      closeLayout: (decision) => closeLayout(decision),
+    await layoutLifecycleOrchestrator.closeLayout({
+      activeMode: layoutStore.activeContext?.mode,
+      closeLayoutIpc: (decision) => closeLayout(decision),
       clearRecentLayout,
-      resetLayoutState: () => resetLayoutStateForNoLayout(),
+      connected,
+      probeForNodes,
+      afterReset: () => {
+        currentLayoutSnapshots = [];
+        syncSessionOrchestrator.resetAutoTrigger();
+      },
       onRecentLayoutClearError: (error) => {
         console.warn('[layout] Failed to clear persisted startup layout:', error);
       },
@@ -684,8 +700,9 @@
   let selectedUnreadNodeId = $derived((() => {
     const sel = $configSidebarStore.selectedSegment?.nodeId ?? $configSidebarStore.selectedNodeId;
     if (!sel) return null;
-    if ($configReadNodesStore.has(sel)) return null;
-    const selectedNode = nodes.find(n => formatNodeId(n.node_id) === sel);
+    if ($configReadNodesStore.has(canonicalizeNodeId(sel))) return null;
+    const selCanonical = canonicalizeNodeId(sel);
+    const selectedNode = nodes.find(n => canonicalizeNodeId(formatNodeId(n.node_id)) === selCanonical);
     if (selectedNode && pipConfirmsNoCdi(selectedNode)) return null;
     return sel;
   })());
@@ -693,7 +710,8 @@
   let selectedUnreadNodeName = $derived(
     selectedUnreadNodeId
       ? (() => {
-          const selectedNode = nodes.find((n) => formatNodeId(n.node_id) === selectedUnreadNodeId);
+          const selCanonical = canonicalizeNodeId(selectedUnreadNodeId);
+          const selectedNode = nodes.find((n) => canonicalizeNodeId(formatNodeId(n.node_id)) === selCanonical);
           return selectedNode ? toConfigReadCandidate(selectedNode).nodeName : selectedUnreadNodeId;
         })()
       : null
@@ -805,7 +823,7 @@
           resetLayoutStateForNoLayout,
           resetLayoutOpenPhase,
           onRestored: (opened) => {
-            partialCaptureNodes = new Set(opened.partialNodes);
+            partialCaptureNodesStore.replace(opened.partialNodes);
             currentLayoutSnapshots = opened.nodeSnapshots;
             if (opened.recoveryOccurred) {
               toast.push('Previous save was interrupted and has been restored.', {
@@ -839,7 +857,7 @@
             nodeTreeStore.trees.keys(),
             bowtieMetadataStore.isDirty,
             offlineChangesStore.draftCount,
-            layoutStore.isDirty,
+            effectiveNodeStore.isDirty,
             offlineChangesStore.revertedPersistedCount,
           );
         if (hasUnsaved) {
@@ -868,20 +886,24 @@
         if (!connected) return; // ignore stray events after disconnect
         const { nodeId, alias } = event.payload;
 
+        // Bug 1 fix: pass liveNodes (excludes placeholders) instead of nodes
+        // (allEntries). The discovery pipeline uses `keyOf(node)` which calls
+        // `nodeKey(formatNodeId(node.node_id))` — placeholder entries have
+        // node_id: [] and crash that path. replaceLiveRoster preserves
+        // placeholders from the store independently.
         const result = await handleDiscoveredNode({
-          currentNodes: nodes,
-          getCurrentNodes: () => nodes,
+          currentNodes: liveNodes,
+          getCurrentNodes: () => liveNodes,
           nodeId,
           alias,
           registerNode,
           querySnip,
           queryPip,
           publishNodes: (nextNodes) => {
-            nodes = nextNodes;
-            updateNodeInfo(nextNodes);
+            nodeRoster.replaceLiveRoster(nextNodes);
           },
         });
-        nodes = result.nodes;
+        nodeRoster.replaceLiveRoster(result.nodes);
         if (result.skipped) return;
 
         // Reset the discovery settling timer — wait for 1s of silence after the
@@ -899,19 +921,19 @@
         if (!connected) return;
         const { nodeId, alias } = event.payload;
         console.log(`[D15] Node ${nodeId} reinitialized — refreshing SNIP+PIP`);
+        // Bug 1 fix: use liveNodes — same rationale as lcc-node-discovered.
         const result = await refreshReinitializedNode({
-          currentNodes: nodes,
-          getCurrentNodes: () => nodes,
+          currentNodes: liveNodes,
+          getCurrentNodes: () => liveNodes,
           nodeId,
           alias,
           querySnip,
           queryPip,
           publishNodes: (nextNodes) => {
-            nodes = nextNodes;
-            updateNodeInfo(nextNodes);
+            nodeRoster.replaceLiveRoster(nextNodes);
           },
         });
-        nodes = result.nodes;
+        nodeRoster.replaceLiveRoster(result.nodes);
       }));
 
       // Native menu event listeners — relay OS menu clicks to handler functions
@@ -956,6 +978,20 @@
       }));
       unlistens.push(await listen('menu-sync-to-bus', () => {
         if (connected && layoutStore.hasLayoutFile) forceSyncPanel();
+      }));
+      unlistens.push(await listen('menu-add-placeholder-board', () => {
+        // FR-017a: only meaningful with an active offline layout — the menu
+        // item is already gated, but guard here too for completeness.
+        if (layoutStore.hasLayoutFile) showAddBoardDialog = true;
+      }));
+      unlistens.push(await listen('menu-delete-placeholder-board', () => {
+        // S8.5 / T11 — gated server-side by the menu enable bit; reassert
+        // here so a stale event from before a selection change cannot
+        // bypass the placeholder check.
+        const store = get(configSidebarStore);
+        const selectedNodeId = store.selectedSegment?.nodeId ?? store.selectedNodeId;
+        if (!selectedNodeId || !isPlaceholderInput(selectedNodeId)) return;
+        pendingDeletePlaceholderKey = selectedNodeId;
       }));
       unlistens.push(await listen('menu-diagnostics', async () => {
         try {
@@ -1020,7 +1056,7 @@
     await syncSessionOrchestrator.maybeTriggerSync({
       hasLayoutFile: layoutStore.hasLayoutFile,
       pendingCount: offlineChangesStore.pendingCount,
-      discoveredNodeIds: nodes.map((node) => formatNodeId(node.node_id)),
+      discoveredNodeIds: nodes.map((node) => canonicalizeNodeId(formatNodeId(node.node_id))),
       syncPanelStore,
       showSyncPanel: () => {
         syncPanelVisible = true;
@@ -1033,7 +1069,7 @@
     await syncSessionOrchestrator.forceSyncPanel({
       hasLayoutFile: layoutStore.hasLayoutFile,
       pendingCount: offlineChangesStore.pendingCount,
-      discoveredNodeIds: nodes.map((node) => formatNodeId(node.node_id)),
+      discoveredNodeIds: nodes.map((node) => canonicalizeNodeId(formatNodeId(node.node_id))),
       syncPanelStore,
       showSyncPanel: () => {
         syncPanelVisible = true;
@@ -1069,14 +1105,12 @@
         // unsaved-in-memory set). Drop live discovery state so the
         // sidebar reflects the empty saved roster.
         clearConfigReadStatus();
-        nodes = [];
-        updateNodeInfo([]);
+        nodeRoster.replaceLiveRoster([]);
         nodeTreeStore.reset();
       },
       clearLiveState: () => {
         clearConfigReadStatus();
-        nodes = [];
-        updateNodeInfo([]);
+        nodeRoster.replaceLiveRoster([]);
         nodeTreeStore.reset();
       },
       showConnectionDialog: () => {
@@ -1107,8 +1141,7 @@
     syncPanelVisible = false;
     syncSessionOrchestrator.resetAutoTrigger();
     clearConfigReadStatus();
-    nodes = [];
-    updateNodeInfo([]);
+    nodeRoster.replaceLiveRoster([]);
     nodeTreeStore.reset();
     showConnectionDialog = false;
   }
@@ -1135,15 +1168,15 @@
       if (staleIds.length > 0) {
         const sidebarState = get(configSidebarStore);
         const selectedId = sidebarState.selectedSegment?.nodeId ?? sidebarState.selectedNodeId;
+        // Bug 1 fix: use liveNodes — same rationale as lcc-node-discovered.
         const refreshed = reconcileRefreshState({
-          currentNodes: nodes,
+          currentNodes: liveNodes,
           staleNodeIds: staleIds,
           selectedNodeId: selectedId,
           nodesWithCdi,
         });
 
-        nodes = refreshed.nodes;
-        updateNodeInfo(refreshed.nodes);
+        nodeRoster.replaceLiveRoster(refreshed.nodes);
         // Only clean up state for nodes that actually left — preserve config read
         // status and CDI data for nodes that are still present.
         removeNodesConfigRead(refreshed.removedNodeIds);
@@ -1260,7 +1293,8 @@
 
   /** Read config values for a single node (triggered from sidebar indicator) */
   async function readSingleNodeConfig(nodeId: string) {
-    const node = nodes.find(n => formatNodeId(n.node_id) === nodeId);
+    const nodeIdCanonical = canonicalizeNodeId(nodeId);
+    const node = nodes.find(n => canonicalizeNodeId(formatNodeId(n.node_id)) === nodeIdCanonical);
     if (!node?.snip_data) return;
     const nodeName = node.snip_data.user_name || nodeId;
     applyConfigReadSessionPatch(beginConfigReadSession([
@@ -1454,6 +1488,8 @@
     canSaveLayout: boolean,
     canSaveLayoutAs: boolean,
     canSyncToBus: boolean,
+    canAddPlaceholderBoard: boolean,
+    canDeletePlaceholderBoard: boolean,
   ) {
     try {
       await invoke("update_menu_state", {
@@ -1466,6 +1502,8 @@
         canSaveLayout,
         canSaveLayoutAs,
         canSyncToBus,
+        canAddPlaceholderBoard,
+        canDeletePlaceholderBoard,
       });
     } catch (e) {
       console.warn("Failed to update menu state:", e);
@@ -1497,11 +1535,9 @@
     const metaDirty    = bowtieMetadataStore.isDirty;
     const offlineActive = !!layoutStore.activeContext && layoutStore.hasLayoutFile;
     const canCloseLayout = !!layoutStore.activeContext;
-    const hasInMemoryEdits =
-      configChangesStore.draftEntries().length > 0 ||
-      bowtieMetadataStore.isDirty ||
-      offlineChangesStore.draftCount > 0 ||
-      layoutStore.isDirty;
+    // ADR-0011: aggregate edits read from the facade; `layoutDirty` above
+    // is struct-only and is used only for the non-offline Save gate.
+    const hasInMemoryEdits = effectiveNodeStore.isDirty;
 
     // Open Layout and Save Layout As are meaningless while the layout picker
     // is visible (no active layout). Gate them on an active context so the
@@ -1511,8 +1547,21 @@
     const canSaveLayout   = !busy && ((offlineActive && hasInMemoryEdits) || (layoutLoaded && (layoutDirty || metaDirty)));
     const canSaveLayoutAs = !busy && hasActiveLayout;
     const canSyncToBus    = conn && offlineActive && offlineChangesStore.pendingCount > 0;
+    // Spec 014 / S8: "Add Placeholder Board…" is only meaningful while an
+    // offline layout is the active context.
+    const canAddPlaceholderBoard = !busy && offlineActive;
+    // Spec 014 / S8.5 / T11: "Delete Placeholder Board…" is enabled only
+    // when the currently selected node is an in-memory placeholder that is
+    // still in the roster (deleted placeholders may briefly remain as the
+    // last selection key in `selectedSegment` until the effect re-runs).
+    const canDeletePlaceholderBoard =
+      !busy
+      && offlineActive
+      && !!selectedNodeId
+      && isPlaceholderInput(selectedNodeId)
+      && nodeRoster.has(selectedNodeId);
 
-    syncMenuState(conn, busy, canViewCdi, canRedownloadCdi, canOpenLayout, canCloseLayout, canSaveLayout, canSaveLayoutAs, canSyncToBus);
+    syncMenuState(conn, busy, canViewCdi, canRedownloadCdi, canOpenLayout, canCloseLayout, canSaveLayout, canSaveLayoutAs, canSyncToBus, canAddPlaceholderBoard, canDeletePlaceholderBoard);
   });
 
   $effect(() => {
@@ -1656,7 +1705,7 @@
           </button>
         {/if}
         {#if connected || layoutStore.isOfflineMode}
-          <SaveControls toolbar={true} bind:this={saveControlsRef} onOfflineSave={() => saveCurrentCaptureToFile(false)} onOfflineSaveAs={() => saveCurrentCaptureToFile(true)} />
+          <SaveControls toolbar={true} bind:this={saveControlsRef} onSave={() => saveCurrentCaptureToFile(false)} onSaveAs={() => saveCurrentCaptureToFile(true)} />
         {/if}
       </div>
       <div class="toolbar-right">
@@ -1784,7 +1833,7 @@
           {:else if selectedUnreadNodeId}
             <div class="config-cta-panel">
               <h2 class="cta-title">{selectedUnreadNodeName}</h2>
-              {#if partialCaptureNodes.has(selectedUnreadNodeId)}
+              {#if partialCaptureNodesStore.has(selectedUnreadNodeId)}
                 <MissingCaptureBadge text="(Not captured)" />
               {/if}
               <p class="cta-desc">
@@ -1799,10 +1848,22 @@
               </button>
             </div>
           {:else}
-            {#if layoutStore.hasLayoutFile && selectedNodeIdAny && partialCaptureNodes.has(selectedNodeIdAny.replace(/\./g, '').toUpperCase())}
+            {#if layoutStore.hasLayoutFile && selectedNodeIdAny && partialCaptureNodesStore.has(selectedNodeIdAny)}
               <div class="partial-capture-note">
                 <MissingCaptureBadge text="(Not captured)" />
                 <span>Some values for this node were not captured and remain read-only offline.</span>
+              </div>
+            {/if}
+            {#if selectedNodeIdAny && isPlaceholderInput(selectedNodeIdAny)}
+              <!-- S8.5 / T11 — in-pane shortcut for deleting the selected placeholder. -->
+              <div class="placeholder-pane-actions">
+                <button
+                  class="placeholder-delete-btn"
+                  data-testid="delete-placeholder-board-btn"
+                  onclick={() => { pendingDeletePlaceholderKey = selectedNodeIdAny; }}
+                >
+                  Delete Placeholder Board…
+                </button>
               </div>
             {/if}
             <SegmentView on:changeConnectorSelection={(e) => handleConnectorSelectionChange(e.detail)} />
@@ -1898,6 +1959,60 @@
     message={errorDialog.message}
     onClose={() => { errorDialog = null; }}
   />
+{/if}
+
+{#if showAddBoardDialog}
+  <AddBoardDialog
+    onCancel={() => { showAddBoardDialog = false; }}
+    onAdded={() => { showAddBoardDialog = false; }}
+  />
+{/if}
+
+{#if pendingDeletePlaceholderKey}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
+  <div
+    class="unsaved-overlay"
+    role="presentation"
+    onclick={(e) => { if (e.target === e.currentTarget) pendingDeletePlaceholderKey = null; }}
+  >
+    <div
+      class="unsaved-dialog"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="delete-placeholder-title"
+    >
+      <h3 id="delete-placeholder-title" class="unsaved-title">Delete placeholder board?</h3>
+      <p class="unsaved-body">
+        This will remove the placeholder board and any unsaved configuration
+        changes for it. This cannot be undone.
+      </p>
+      <div class="unsaved-actions">
+        <button
+          class="unsaved-btn unsaved-btn-secondary"
+          onclick={() => { pendingDeletePlaceholderKey = null; }}
+        >
+          Cancel
+        </button>
+        <button
+          class="unsaved-btn unsaved-btn-danger"
+          data-testid="confirm-delete-placeholder"
+          onclick={async () => {
+            const key = pendingDeletePlaceholderKey;
+            pendingDeletePlaceholderKey = null;
+            if (!key) return;
+            try {
+              await deletePlaceholderBoard({ nodeKey: key, confirm: async () => true });
+            } catch (e) {
+              console.error('Failed to delete placeholder board:', e);
+              errorDialog = { title: 'Delete failed', message: String(e) };
+            }
+          }}
+        >
+          Delete
+        </button>
+      </div>
+    </div>
+  </div>
 {/if}
 
 <SaveProgressDialog />
@@ -2391,6 +2506,30 @@
 
   .unsaved-btn-danger:hover {
     background: #b91c1c;
+  }
+
+  /* Spec 014 / S8.5 / T11: in-pane "Delete Placeholder Board" action. */
+  .placeholder-pane-actions {
+    display: flex;
+    justify-content: flex-end;
+    padding: 8px 12px 0;
+  }
+
+  .placeholder-delete-btn {
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #b91c1c;
+    background: #fff;
+    border: 1px solid #fca5a5;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+
+  .placeholder-delete-btn:hover {
+    background: #fef2f2;
+    border-color: #f87171;
   }
 
   /* ─── Read Configuration CTA Panel ─────────────────── */

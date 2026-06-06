@@ -1,0 +1,174 @@
+schemaVersion: "2.0"
+
+# Structure profile for the Mustangpeak Engineering TurnoutBoss.
+#
+# Assembled from Phase 1 extraction outputs at:
+#   profiles/turnout-boss/event-roles.json
+#   profiles/turnout-boss/relevance-rules.json
+#
+# The TurnoutBoss is configured as either a "Left" or a "Right" board around a
+# siding. That single setup choice reshapes which Occupancy events the board
+# produces vs consumes (it auto-pairs with its neighbor) and whether
+# Detector 3 is wired in hardware. We model that pairing as a single v2
+# ConfigurationMode below.
+
+nodeType:
+  manufacturer: "Mustangpeak Engineering"
+  model: "TurnoutBoss"
+
+# ── Base event role declarations ────────────────────────────────────────────
+# These apply regardless of the active variant. The Occupancy group is
+# intentionally omitted here so the Left / Right variant overlays own it.
+eventRoles:
+  # Layout Connections holds neighbor NodeIDs (not event IDs) the firmware
+  # uses to auto-pair producer/consumer connections with adjacent boards.
+  - groupPath: "Layout Configuration Setup/Layout Connections"
+    role: Consumer
+    label: "Neighbor Layout Connections"
+
+  - groupPath: "Producers and Consumers/Turnout Control"
+    role: Producer
+    label: "Turnout Control"
+
+  - groupPath: "Producers and Consumers/Signal Lamp Status"
+    role: Producer
+    label: "Signal Lamp Status"
+
+  - groupPath: "Producers and Consumers/Signal Controls"
+    role: Producer
+    label: "Signal Controls"
+
+  - groupPath: "Producers and Consumers/Optical Sensor"
+    role: Producer
+    label: "Optical Sensor"
+
+# ── Base relevance rules ────────────────────────────────────────────────────
+# Conditional irrelevance driven by CDI field values. Phase 4 annotation
+# (attaching RelevanceAnnotation to GroupNodes) is still stubbed — these rules
+# live here so they bind automatically when that work lands.
+relevanceRules:
+  - id: "R001"
+    affectedTarget: "Hardware Configuration/Track Detector Sensitivity/Detector 3"
+    allOf:
+      - field: "Layout Configuration Setup/How this TurnoutBoss is used on your layout."
+        irrelevantWhen: [1]
+    explanation: |-
+      Detector 3 is only used on Left boards, which monitor three blocks
+      (turnout, mainline-between, siding). Right boards monitor only two
+      blocks (turnout, mainline-to-next-siding) and leave Detector 3
+      unwired, so changing its sensitivity has no observable effect. To use
+      Detector 3, set 'How this TurnoutBoss is used on your layout' to
+      '"Left" board: three blocks'.
+
+  - id: "R002"
+    affectedTarget: "Hardware Configuration/Signal LED Brightness/Signal D"
+    allOf:
+      - field: "Hardware Configuration/Facing Point Signals/What type of signal(s) is at the turnout points?"
+        irrelevantWhen: [1]
+    explanation: |-
+      Signal D is the lower (Diverging) head on the facing-point mast. With
+      a single-head facing-point signal, only Signal C is wired, so
+      Signal D's brightness settings have no observable effect. To
+      configure Signal D brightness, set 'What type of signal(s) is at the
+      turnout points?' to 'Signal at turnout points is a double head'.
+
+  - id: "R003"
+    affectedTarget: "Producers and Consumers/Signal Lamp Status/Signal D Red (P)"
+    allOf:
+      - field: "Hardware Configuration/Facing Point Signals/What type of signal(s) is at the turnout points?"
+        irrelevantWhen: [1]
+    explanation: |-
+      With a single-head facing-point signal, the Signal D head does not
+      exist physically, so the board never emits a 'Signal D Red' event.
+      The configured Event ID has no effect. To use this event, set 'What
+      type of signal(s) is at the turnout points?' to 'Signal at turnout
+      points is a double head'.
+
+  - id: "R004"
+    affectedTarget: "Producers and Consumers/Signal Lamp Status/Signal D Yellow (P)"
+    allOf:
+      - field: "Hardware Configuration/Facing Point Signals/What type of signal(s) is at the turnout points?"
+        irrelevantWhen: [1]
+    explanation: |-
+      With a single-head facing-point signal, the Signal D head does not
+      exist physically, so the board never emits a 'Signal D Yellow'
+      event. The configured Event ID has no effect. To use this event, set
+      'What type of signal(s) is at the turnout points?' to 'Signal at
+      turnout points is a double head'.
+
+  - id: "R005"
+    affectedTarget: "Producers and Consumers/Signal Lamp Status/Signal D Green (P)"
+    allOf:
+      - field: "Hardware Configuration/Facing Point Signals/What type of signal(s) is at the turnout points?"
+        irrelevantWhen: [1]
+    explanation: |-
+      With a single-head facing-point signal, the Signal D head does not
+      exist physically, so the board never emits a 'Signal D Green'
+      event. The configured Event ID has no effect. To use this event, set
+      'What type of signal(s) is at the turnout points?' to 'Signal at
+      turnout points is a double head'.
+
+  - id: "R006"
+    affectedTarget: "Producers and Consumers/Signal Lamp Status/Signal D Dark (P)"
+    allOf:
+      - field: "Hardware Configuration/Facing Point Signals/What type of signal(s) is at the turnout points?"
+        irrelevantWhen: [1]
+    explanation: |-
+      With a single-head facing-point signal, the Signal D head does not
+      exist physically, so the board never emits a 'Signal D Dark' event.
+      The configured Event ID has no effect. To use this event, set 'What
+      type of signal(s) is at the turnout points?' to 'Signal at turnout
+      points is a double head'.
+
+  - id: "R007"
+    affectedTarget: "Producers and Consumers/Turnout Control/Turnout Observed In Motion (P)"
+    allOf:
+      - field: "Hardware Configuration/Turnout Feedback/Using turnout feedback sensors?"
+        irrelevantWhen: [0, 1]
+    explanation: |-
+      The 'Turnout Observed In Motion' event only fires when two feedback
+      switches are configured — it is emitted when the first switch has
+      opened and the second has not yet closed, indicating the points are
+      mid-travel. With zero or one feedback switches the board cannot
+      detect this transition state and never emits this event. To use this
+      event, set 'Using turnout feedback sensors?' to 'Two turnout
+      feedback sensors'.
+
+# ── Configuration Modes (v2) ────────────────────────────────────────────────
+# One mode: Left vs Right siding placement. The variant selector mirrors the
+# CDI int "How this TurnoutBoss is used on your layout." (0 = Left,
+# 1 = Right). Flipping the variant reshapes the Occupancy event-role group:
+#
+#   Left  — board produces Left Turnout / Main Center / Siding occupancy
+#           events and consumes its neighbor's Main events.
+#   Right — board consumes its neighbor's occupancy events to drive signal
+#           logic; its own production set is narrower.
+#
+# We collapse the firmware's per-event Producer/Consumer split into a single
+# group-level role here. Phase 4 fine-grained per-leaf overrides can land
+# later without changing the variant contract.
+configurationModes:
+  - id: "turnoutboss-side"
+    label: "Used as Left or Right"
+    selector:
+      kind: enumField
+      fieldPath: "Layout Configuration Setup/How this TurnoutBoss is used on your layout."
+    variants:
+      - id: "0"
+        label: "\"Left\" board: three blocks"
+        overlay:
+          eventRoles:
+            - groupPath: "Producers and Consumers/Occupancy"
+              role: Producer
+              label: "Occupancy (Left board produces)"
+          relevanceRules: []
+          structuralConstraints: []
+      - id: "1"
+        label: "\"Right\" board: two blocks"
+        overlay:
+          eventRoles:
+            - groupPath: "Producers and Consumers/Occupancy"
+              role: Consumer
+              label: "Occupancy (Right board consumes)"
+          relevanceRules: []
+          structuralConstraints: []

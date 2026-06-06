@@ -10,8 +10,28 @@ A vertical slice:
 
 1. **Cuts through all necessary layers** — from user-visible UI through backend to protocol library, as needed. Not every slice touches every layer, but each delivers a complete path.
 2. **Is independently testable** — after implementing this slice, you can write a test that exercises the complete path and verify it passes.
-3. **Is independently demoable** — you can show the slice working without needing other slices to be done.
+3. **Is independently demoable** — you can show the slice working without needing other slices to be done. The user or product manager can verify the acceptance criteria.
 4. **Delivers a narrow but complete behavior** — one user-visible outcome, not "half of two outcomes."
+
+### Demo Gate
+
+Every slice must answer: **"What can the user see or do after this slice that they couldn't before?"**
+
+If the answer is "nothing new is visible," the slice is not vertical — it is either:
+- A horizontal foundation that should be folded into the first downstream slice that produces a visible outcome, OR
+- A legitimate `[REFACTOR]` slice (see below) whose acceptance criteria describe what invariant is preserved, not what's new.
+
+### Stub-and-Widen (Preferred S1 Pattern)
+
+When a feature needs backend foundation before UI can render, the first slice should **stub the backend** and wire the full vertical path:
+
+1. S1 stands up a hardcoded/minimal backend that returns a plausible response, wires it through IPC, and renders it in the UI. The user can demo the UI.
+2. S2 replaces the hardcoded backend with real implementation. The UI doesn't change; the data becomes real.
+3. Subsequent slices widen the behavior.
+
+This is the opposite of building a complete backend first and wiring the UI last. The stub is typically 5–10 lines of hardcoded return values — trivial throwaway cost compared to the integration bugs caught by forcing the full vertical path in S1.
+
+The stub also defines the **IPC contract from the consumer's perspective** before the backend is built. The backend implementation then conforms to a contract already proven to work end-to-end.
 
 ## Anti-Pattern: Horizontal Slicing
 
@@ -19,6 +39,7 @@ Do NOT slice by layer:
 - "First build all the stores" → nothing testable until components exist
 - "First build the backend commands" → nothing testable until the frontend calls them
 - "First build all the tests" → tests verify imagined behavior, not actual
+- "First build the schema types, then the resolver, then the layout types, then the UI" → five slices of backend-only work before anything is demoable; integration assumptions go unvalidated until the end
 
 ## Bowties Layer Stack
 
@@ -37,7 +58,7 @@ When identifying which layers a slice touches, use this stack:
 
 A typical slice might touch: Route → Component → Store → API → Backend command → Backend domain. Not every slice needs all layers.
 
-## HITL vs AFK Classification
+## HITL vs AFK vs REFACTOR Classification
 
 **HITL** (Human-In-The-Loop): The slice introduces a **new architectural pattern**, creates a **new seam**, or involves a **design trade-off** that requires principle-level judgment. The user reviews the pattern choice before implementation begins.
 
@@ -53,11 +74,18 @@ Examples:
 - Slice extending an existing store with a new field and derivation
 - Slice adding a backend command that mirrors an existing one
 
-**Rule of thumb**: The first slice in a new area is usually HITL. Subsequent slices in the same area are usually AFK.
+**REFACTOR** (or **MIGRATION**): The slice produces **no user-visible change**. It restructures internals, migrates data formats, or reduces architectural debt while preserving existing behavior. Acceptance criteria describe what invariant is preserved, not what's new.
+
+Examples:
+- Re-expressing a profile under a new schema with identical runtime behavior
+- Collapsing parallel code paths into a single unified path
+- Renaming internal identifiers to match updated vocabulary
+
+**Rule of thumb**: The first slice in a new area is usually HITL. Subsequent slices in the same area are usually AFK. Slices that exist only to pay down debt or migrate formats are REFACTOR.
 
 ## Slice Ordering Principles
 
-1. **Risk-first**: Put the riskiest architectural assumptions in the earliest slices. If Slice 1 proves the architecture doesn't work, you discover it before investing in Slices 2-N.
+1. **Integration-risk-first**: The riskiest assumption is almost always "do these layers integrate correctly?" — not "is the schema shape right?" Schema shape is cheap to change; integration shape is expensive. The first slice should prove the integration path end-to-end with the thinnest possible backend (see Stub-and-Widen above).
 
 2. **Dependencies**: If Slice B requires data or infrastructure from Slice A, Slice A goes first. Express this as "Blocked by: S{N}".
 

@@ -4,6 +4,7 @@ use lcc_rs::{TransportHandle, ReceivedMessage, MTI};
 use serde::Serialize;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
+use crate::node_key::NodeKey;
 use crate::node_registry::NodeRegistry;
 use crate::traffic::DecodedMessage;
 
@@ -12,7 +13,7 @@ use crate::traffic::DecodedMessage;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeDiscoveredEvent {
-    pub node_id: String,
+    pub node_id: NodeKey,
     pub alias: u16,
     pub timestamp: String,
 }
@@ -179,28 +180,21 @@ impl EventRouter {
                     eprintln!("[EventRouter] ignoring own VerifiedNode (alias=0x{:03X})", alias);
                     return;
                 }
-                // Node ID is in the first 6 bytes
+                // Node ID is in the first 6 bytes. Emit a `NodeKey::Live(...)`
+                // which serializes as the canonical 12-hex uppercase form
+                // (ADR-0010 — NodeKey is the wire-form identity for nodes).
                 let node_id_bytes: [u8; 6] = msg.frame.data[0..6].try_into().unwrap_or([0; 6]);
-                let node_id = format!(
-                    "{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}",
-                    node_id_bytes[0],
-                    node_id_bytes[1],
-                    node_id_bytes[2],
-                    node_id_bytes[3],
-                    node_id_bytes[4],
-                    node_id_bytes[5]
-                );
+                let parsed_node_id = lcc_rs::NodeID::new(node_id_bytes);
+                let node_key = NodeKey::from_node_id(parsed_node_id);
 
                 let event = NodeDiscoveredEvent {
-                    node_id: node_id.clone(),
+                    node_id: node_key,
                     alias,
                     timestamp: chrono::Utc::now().to_rfc3339(),
                 };
 
                 // Auto-register proxy for this node
-                if let Ok(parsed_node_id) = lcc_rs::NodeID::from_hex_string(&node_id) {
-                    let _ = registry.get_or_create(parsed_node_id, alias).await;
-                }
+                let _ = registry.get_or_create(parsed_node_id, alias).await;
 
                 eprintln!("[EventRouter] emitting lcc-node-discovered: node_id={} alias=0x{:03X}", event.node_id, event.alias);
                 // Emit to frontend
@@ -220,22 +214,17 @@ impl EventRouter {
                     return;
                 }
                 let node_id_bytes: [u8; 6] = msg.frame.data[0..6].try_into().unwrap_or([0; 6]);
-                let node_id = format!(
-                    "{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}",
-                    node_id_bytes[0], node_id_bytes[1], node_id_bytes[2],
-                    node_id_bytes[3], node_id_bytes[4], node_id_bytes[5]
-                );
+                let parsed_node_id = lcc_rs::NodeID::new(node_id_bytes);
+                let node_key = NodeKey::from_node_id(parsed_node_id);
 
                 // Auto-register proxy and signal reinitialization
-                if let Ok(parsed_node_id) = lcc_rs::NodeID::from_hex_string(&node_id) {
-                    if let Ok(proxy) = registry.get_or_create(parsed_node_id, alias).await {
-                        let _ = proxy.node_reinitialised().await;
-                    }
+                if let Ok(proxy) = registry.get_or_create(parsed_node_id, alias).await {
+                    let _ = proxy.node_reinitialised().await;
                 }
 
                 // Always emit node-discovered so new nodes get added
                 let event = NodeDiscoveredEvent {
-                    node_id: node_id.clone(),
+                    node_id: node_key,
                     alias,
                     timestamp: chrono::Utc::now().to_rfc3339(),
                 };
@@ -264,5 +253,23 @@ impl Drop for EventRouter {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discovered_event_serializes_node_id_as_canonical_string() {
+        let id = lcc_rs::NodeID::new([0x02, 0x01, 0x57, 0x00, 0x02, 0xD9]);
+        let event = NodeDiscoveredEvent {
+            node_id: NodeKey::from_node_id(id),
+            alias: 0x123,
+            timestamp: "2026-05-31T00:00:00Z".into(),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["nodeId"], "020157000002D9");
+        assert_eq!(json["alias"], 0x123);
     }
 }

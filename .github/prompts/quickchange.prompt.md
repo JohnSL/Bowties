@@ -13,8 +13,7 @@ Use the Explore subagent for research steps to keep the main context window lean
 3. **Shared logic check**: Check `aiwiki/owners.md` shared conventions section — does relevant shared logic already exist? Will this change create a new pattern that should be shared?
 4. **Placement check**: Verify new or moved logic goes in the right layer per `product/architecture/code-placement-and-ownership.md`.
 5. **ADR check**: Scan `product/architecture/adr/` for decisions that constrain this change.
-
-Output the analysis as a structured summary with your proposed change approach.
+6. **Options and sign-off**: Load and follow the `architecture-first-fix` skill. It defines the option format (seam + ADRs + named principle: DRY / SOLID / YAGNI / Depth / Locality / ADR-compliance + tradeoff), the stopgap rule, and the stop-and-wait gate. Present the structured pre-implementation summary together with the options.
 
 **STOP here and wait for user sign-off before implementing.**
 

@@ -23,13 +23,19 @@ import {
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { findLeafByAddress } from '$lib/types/nodeTree';
 import { normalizeNodeId } from '$lib/utils/nodeId';
+import { isPlaceholderInput } from '$lib/utils/nodeKey';
 
 /**
  * Mirror a single config draft to the Rust backend via IPC.
  * Called by the edit path when the app is online.
+ *
+ * Placeholder NodeKeys are skipped: placeholders have no bus identity, so
+ * there is nothing to mirror to. Their edits stay in `configChangesStore`
+ * and are persisted into the on-disk `NodeSnapshot` at Save time.
  */
 export function flushDraftToBackend(key: string): void {
   const { normalizedNodeId, space, address } = parseEditKey(key);
+  if (isPlaceholderInput(normalizedNodeId)) return;
   const value = configChangesStore.visibleValue(key);
   if (value === null) return;
 
@@ -45,11 +51,16 @@ export function flushDraftToBackend(key: string): void {
  * Stage all current config drafts into offlineChangesStore before an offline save.
  *
  * For each draft entry, finds the baseline value (from the persisted offline row
- * or the tree leaf) and upserts an offline change row. After staging, clears all
- * config drafts so the display falls back to the newly-persisted layer.
+ * or the tree leaf) and upserts an offline change row. After staging, clears the
+ * staged config drafts so the display falls back to the newly-persisted layer.
+ *
+ * Post-S8.11 all node species (real and placeholder) flow through the same
+ * offline-change channel. Placeholder NodeKeys are accepted verbatim by
+ * the `replace_offline_changes` IPC (S8.11 root-cause fix).
  */
 export function stageDraftsForOfflineSave(): void {
   const entries = configChangesStore.draftEntries();
+  const stagedKeys: string[] = [];
   for (const { key, value } of entries) {
     const { normalizedNodeId, space, address } = parseEditKey(key);
     const offset = addressToOffsetHex(address);
@@ -71,9 +82,10 @@ export function stageDraftsForOfflineSave(): void {
       baselineValue,
       plannedValue: configValueToOfflineString(value),
     });
+    stagedKeys.push(key);
   }
 
-  configChangesStore.clearAllDrafts();
+  for (const key of stagedKeys) configChangesStore.revert(key);
 }
 
 /**

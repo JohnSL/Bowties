@@ -10,6 +10,7 @@ description: "Use when editing Bowties frontend orchestrators. Orchestrators own
 - Name the workflow that each orchestrator owns and keep its boundary explicit.
 - Coordinate routes, components, stores, and backend calls here instead of spreading sequencing logic across those layers.
 - When touching a workflow seam that is currently split across layers, improve the ownership boundary instead of preserving or extending the split.
+- An orchestrator owns the *complete* lifecycle transition, not just the data mutation. If a workflow's downstream state fixup (selection, menu enablement, dirty flags, derived stores) currently lives in a route or component, propose pulling it into the orchestrator — or into a derived store the orchestrator updates — as one of your options. Do not silently patch the downstream site to mask an incomplete orchestrator boundary.
 - Reuse shared normalization and translation helpers instead of re-encoding comparison rules inside a workflow.
 - Apply SOLID by keeping one orchestrator focused on one coherent workflow or seam.
 - Apply DRY by centralizing repeated workflow sequencing and guard conditions instead of duplicating them in routes or stores.

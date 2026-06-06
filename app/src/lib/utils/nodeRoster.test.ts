@@ -107,3 +107,35 @@ describe('computeUnsavedInMemoryNodeIds (S8 promotion threshold)', () => {
     ).toEqual([]);
   });
 });
+
+// ── S8.5 / T9: placeholder-key safety ────────────────────────────────────────
+
+describe('canonicalizeNodeId — placeholder keys', () => {
+  it('preserves placeholder NodeKeys case-sensitively (does not uppercase the UUID)', () => {
+    const key = 'placeholder:abcd-1234-5678-90ef';
+    expect(canonicalizeNodeId(key)).toBe(key);
+  });
+});
+
+describe('computeDiscoveredOnlyNodeIds — placeholder keys', () => {
+  it('does not treat placeholder NodeKeys as discovered-only nodes', () => {
+    // Placeholders are handled by the unified save path (inMemorySnapshotKeys).
+    // They must NEVER surface in `discoveredOnlyNodeIds` (the sidebar badge
+    // is for bus-discovered nodes only).
+    const saved: string[] = [];
+    const current = ['placeholder:aaaa-bbbb', '02.01.57.00.00.01'];
+    expect(computeDiscoveredOnlyNodeIds(saved, current)).toEqual(['020157000001']);
+  });
+});
+
+describe('computeUnsavedInMemoryNodeIds — placeholder keys', () => {
+  it('includes placeholder NodeKeys in the unsaved set (S8.11 unification)', () => {
+    const saved: string[] = [];
+    const fullyCaptured = ['placeholder:xyz', '02.01.57.00.00.99'];
+    expect(computeUnsavedInMemoryNodeIds(saved, fullyCaptured)).toEqual([
+      'placeholder:xyz',
+      '020157000099',
+    ]);
+  });
+});
+

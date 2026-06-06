@@ -18,7 +18,7 @@ import type { NodeConfigTree, LeafConfigNode, SegmentNode } from '$lib/types/nod
 
 // ── Hoisted mock references ───────────────────────────────────────────────────
 // vi.hoisted ensures these are available inside vi.mock() factories.
-const { treesRef, metaRef, layoutRef, offlineRef, configChangesRef, connectorSelectionsRef } = vi.hoisted(() => ({
+const { treesRef, metaRef, layoutRef, offlineRef, configChangesRef, connectorSelectionsRef, effectiveNodeRef } = vi.hoisted(() => ({
   treesRef: { map: new Map<string, NodeConfigTree>() },
   configChangesRef: { draftCount: 0, hasDraftsForNode: false },
   metaRef: { isDirty: false, editCount: 0, clearAll: vi.fn() },
@@ -29,12 +29,15 @@ const { treesRef, metaRef, layoutRef, offlineRef, configChangesRef, connectorSel
     isConnected: false,
     isLoaded: false,
     isDirty: false,
-    unsavedInMemoryNodeIds: [] as string[],
     markClean: vi.fn(),
     markDirty: vi.fn(),
     saveCurrentLayout: vi.fn().mockResolvedValue(undefined) as any,
     saveLayoutAs: vi.fn().mockResolvedValue(undefined) as any,
     revertToSaved: vi.fn(),
+  },
+  effectiveNodeRef: {
+    unsavedInMemoryNodeIds: [] as string[],
+    isDirty: false,
   },
   offlineRef: {
     draftCount: 0,
@@ -67,6 +70,7 @@ vi.mock('$lib/stores/configChanges.svelte', () => ({
   configChangesStore: {
     draftEntries: () => Array.from({ length: configChangesRef.draftCount }, (_, i) => ({ key: `k${i}`, value: { type: 'int', value: i } })),
     clearAllDrafts: vi.fn(),
+    commitForSave: vi.fn(),
     hasDraftsForNode: () => configChangesRef.hasDraftsForNode,
   },
 }));
@@ -87,6 +91,10 @@ vi.mock('$lib/api/config', () => ({
 
 vi.mock('$lib/stores/layout.svelte', () => ({
   layoutStore: layoutRef,
+}));
+
+vi.mock('$lib/layout', () => ({
+  effectiveNodeStore: effectiveNodeRef,
 }));
 
 vi.mock('$lib/stores/connectorSelections.svelte', () => ({
@@ -151,6 +159,8 @@ beforeEach(() => {
   layoutRef.isConnected = false;
   layoutRef.isLoaded = false;
   layoutRef.isDirty = false;
+  effectiveNodeRef.unsavedInMemoryNodeIds = [];
+  effectiveNodeRef.isDirty = false;
   offlineRef.draftCount = 0;
   offlineRef.draftRows = [];
   offlineRef.pendingCount = 0;
@@ -236,11 +246,11 @@ describe('SaveControls.svelte', () => {
       });
     });
 
-    it('online save delegates to onOfflineSave — does not call writeModifiedValues directly (ADR-0001)', async () => {
+    it('online save delegates to onSave — does not call writeModifiedValues directly (ADR-0001)', async () => {
       const { writeModifiedValues } = await import('$lib/api/config');
       const mockOnSave = vi.fn().mockResolvedValue(true);
       treesRef.map.set('node1', makeDirtyTree(1));
-      render(SaveControls, { props: { onOfflineSave: mockOnSave } });
+      render(SaveControls, { props: { onSave: mockOnSave } });
       const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
       await fireEvent.click(saveBtn);
       expect(mockOnSave).toHaveBeenCalled();
@@ -254,33 +264,38 @@ describe('SaveControls.svelte', () => {
       const { writeModifiedValues } = await import('$lib/api/config');
       const mockOnSave = vi.fn().mockResolvedValue(false);
       treesRef.map.set('node1', makeDirtyTree(1));
-      render(SaveControls, { props: { onOfflineSave: mockOnSave } });
+      render(SaveControls, { props: { onSave: mockOnSave } });
       const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
       await fireEvent.click(saveBtn);
       expect(mockOnSave).toHaveBeenCalled();
       expect(writeModifiedValues).not.toHaveBeenCalled();
     });
 
-    it('clears config drafts after successful online save', async () => {
+    it('delegates cleanup to the page route after a successful online save (orchestrator owns commitForSave)', async () => {
+      // Post-Step 7 Option H: the component no longer calls
+      // `configChangesStore.commitForSave` directly. Cleanup moved into
+      // `saveLayoutOrchestrator.clearPersistedDrafts` (wired by
+      // `+page.svelte`'s `saveCurrentCaptureToFile`). The component's
+      // contract is just "call onSave; trust the page to clean up."
       const { configChangesStore } = await import('$lib/stores/configChanges.svelte');
       const mockOnSave = vi.fn().mockResolvedValue(true);
       treesRef.map.set('node1', makeDirtyTree(2));
-      render(SaveControls, { props: { onOfflineSave: mockOnSave } });
+      render(SaveControls, { props: { onSave: mockOnSave } });
       const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
       await fireEvent.click(saveBtn);
       await waitFor(() => {
-        expect(configChangesStore.clearAllDrafts).toHaveBeenCalled();
+        expect(mockOnSave).toHaveBeenCalledTimes(1);
       });
+      expect(configChangesStore.commitForSave).not.toHaveBeenCalled();
     });
 
-    it('does not clear config drafts when online save is cancelled', async () => {
-      const { configChangesStore } = await import('$lib/stores/configChanges.svelte');
+    it('does not invoke onSave when the user cancels the save dialog', async () => {
       const mockOnSave = vi.fn().mockResolvedValue(false);
       treesRef.map.set('node1', makeDirtyTree(1));
-      render(SaveControls, { props: { onOfflineSave: mockOnSave } });
+      render(SaveControls, { props: { onSave: mockOnSave } });
       const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
       await fireEvent.click(saveBtn);
-      expect(configChangesStore.clearAllDrafts).not.toHaveBeenCalled();
+      expect(mockOnSave).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -390,8 +405,8 @@ describe('SaveControls.svelte', () => {
 
   // ── Offline vs online save routing ──────────────────────────────────────────
 
-  describe('offline mode: save routes to onOfflineSave', () => {
-    it('calls onOfflineSave (not writeModifiedValues) when offline with drafts', async () => {
+  describe('offline mode: save routes to onSave', () => {
+    it('calls onSave (not writeModifiedValues) when offline with drafts', async () => {
       const { writeModifiedValues } = await import('$lib/api/config');
       layoutRef.isOfflineMode = true;
       layoutRef.hasLayoutFile = true;
@@ -403,7 +418,7 @@ describe('SaveControls.svelte', () => {
       ];
 
       const mockSave = vi.fn().mockResolvedValue(true);
-      render(SaveControls, { props: { onOfflineSave: mockSave, onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: mockSave, onSaveAs: vi.fn() } });
 
       const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
       await fireEvent.click(saveBtn);
@@ -421,7 +436,7 @@ describe('SaveControls.svelte', () => {
       offlineRef.draftCount = 1;
       offlineRef.draftRows = [{ status: 'pending', nodeId: 'n1' }];
 
-      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: vi.fn(), onSaveAs: vi.fn() } });
 
       await waitFor(() => {
         expect(screen.getByText(/1 unsaved edit$/i)).toBeInTheDocument();
@@ -439,14 +454,18 @@ describe('SaveControls.svelte', () => {
         { status: 'pending', nodeId: 'n2' },
       ];
 
-      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: vi.fn(), onSaveAs: vi.fn() } });
 
       await waitFor(() => {
         expect(screen.getByText(/3 unsaved edits/i)).toBeInTheDocument();
       });
     });
 
-    it('reloads offline store and clears trees after successful save', async () => {
+    it('delegates offline save to the page route (no direct reloadFromBackend or markClean)', async () => {
+      // Post-Step 7 Option H: SaveControls is a thin delegate.
+      // `offlineChangesStore.reloadFromBackend` and `layoutStore.markClean`
+      // are now called by `saveLayoutOrchestrator` via the wired
+      // `reloadOfflineChanges` / `markClean` callbacks, not by the component.
       layoutRef.isOfflineMode = true;
       layoutRef.hasLayoutFile = true;
       configChangesRef.draftCount = 1;
@@ -454,49 +473,39 @@ describe('SaveControls.svelte', () => {
       offlineRef.draftRows = [{ status: 'pending', nodeId: 'n1' }];
 
       const mockSave = vi.fn().mockResolvedValue(true);
-      render(SaveControls, { props: { onOfflineSave: mockSave, onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: mockSave, onSaveAs: vi.fn() } });
 
       const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
       await fireEvent.click(saveBtn);
 
       await waitFor(() => {
-        expect(offlineRef.reloadFromBackend).toHaveBeenCalled();
-        expect(layoutRef.markClean).toHaveBeenCalled();
+        expect(mockSave).toHaveBeenCalledTimes(1);
       });
+      expect(offlineRef.reloadFromBackend).not.toHaveBeenCalled();
+      expect(layoutRef.markClean).not.toHaveBeenCalled();
     });
 
-    it('re-applies persisted pending rows to the tree after successful offline save', async () => {
-      const { nodeTreeStore } = await import('$lib/stores/nodeTree.svelte');
-
+    it('does not call configChangesStore.commitForSave directly after offline save (orchestrator owns it)', async () => {
       layoutRef.isOfflineMode = true;
       layoutRef.hasLayoutFile = true;
       configChangesRef.draftCount = 1;
       offlineRef.draftCount = 1;
       offlineRef.draftRows = [{ status: 'pending', nodeId: 'n1' }];
-      (offlineRef as any).persistedRows = [{
-        changeId: 'persisted-1',
-        kind: 'config',
-        nodeId: '05.02.01.02.03.00',
-        space: 253,
-        offset: '0x00000000',
-        baselineValue: '1',
-        plannedValue: '2',
-        status: 'pending',
-      }];
 
       const mockSave = vi.fn().mockResolvedValue(true);
-      render(SaveControls, { props: { onOfflineSave: mockSave, onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: mockSave, onSaveAs: vi.fn() } });
 
       const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
       await fireEvent.click(saveBtn);
 
-      await waitFor(async () => {
-        const { configChangesStore } = await import('$lib/stores/configChanges.svelte');
-        expect(configChangesStore.clearAllDrafts).toHaveBeenCalled();
+      await waitFor(() => {
+        expect(mockSave).toHaveBeenCalledTimes(1);
       });
+      const { configChangesStore } = await import('$lib/stores/configChanges.svelte');
+      expect(configChangesStore.commitForSave).not.toHaveBeenCalled();
     });
 
-    it('reverts to idle when onOfflineSave returns false (user cancelled)', async () => {
+    it('reverts to idle when onSave returns false (user cancelled)', async () => {
       layoutRef.isOfflineMode = true;
       layoutRef.hasLayoutFile = true;
       configChangesRef.draftCount = 1;
@@ -504,7 +513,7 @@ describe('SaveControls.svelte', () => {
       offlineRef.draftRows = [{ status: 'pending', nodeId: 'n1' }];
 
       const mockSave = vi.fn().mockResolvedValue(false);
-      render(SaveControls, { props: { onOfflineSave: mockSave, onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: mockSave, onSaveAs: vi.fn() } });
 
       const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
       await fireEvent.click(saveBtn);
@@ -532,7 +541,7 @@ describe('SaveControls.svelte', () => {
         status: 'pending',
       }];
 
-      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: vi.fn(), onSaveAs: vi.fn() } });
 
       expect(screen.queryByText(/unsaved edit/i)).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument();
@@ -545,7 +554,7 @@ describe('SaveControls.svelte', () => {
       layoutRef.isDirty = true;
       offlineRef.draftCount = 0;
 
-      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: vi.fn(), onSaveAs: vi.fn() } });
 
       await waitFor(() => {
         expect(screen.getByText(/1 unsaved edit$/i)).toBeInTheDocument();
@@ -575,7 +584,7 @@ describe('SaveControls.svelte', () => {
         status: 'pending',
       }];
 
-      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: vi.fn(), onSaveAs: vi.fn() } });
 
       await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: /discard/i })));
       await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: /revert/i })));
@@ -587,15 +596,15 @@ describe('SaveControls.svelte', () => {
     });
   });
 
-  describe('online mode: save routes to onOfflineSave (three-phase flow)', () => {
-    it('calls onOfflineSave (not writeModifiedValues) when online with config edits', async () => {
+  describe('online mode: save routes to onSave (three-phase flow)', () => {
+    it('calls onSave (not writeModifiedValues) when online with config edits', async () => {
       const { writeModifiedValues } = await import('$lib/api/config');
       layoutRef.isOfflineMode = false;
       layoutRef.isConnected = true;
       treesRef.map.set('node1', makeDirtyTree(2));
 
       const mockSave = vi.fn().mockResolvedValue(true);
-      render(SaveControls, { props: { onOfflineSave: mockSave, onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: mockSave, onSaveAs: vi.fn() } });
 
       const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
       await fireEvent.click(saveBtn);
@@ -667,12 +676,12 @@ describe('SaveControls.svelte', () => {
       expect(screen.queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument();
     });
 
-    it('routes Save to onOfflineSave (three-phase flow), not writeModifiedValues', async () => {
+    it('routes Save to onSave (three-phase flow), not writeModifiedValues', async () => {
       const { writeModifiedValues } = await import('$lib/api/config');
       treesRef.map.set('node1', makeDirtyTree(1));
 
       const mockOfflineSave = vi.fn().mockResolvedValue(true);
-      render(SaveControls, { props: { onOfflineSave: mockOfflineSave, onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: mockOfflineSave, onSaveAs: vi.fn() } });
 
       const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
       await fireEvent.click(saveBtn);
@@ -700,62 +709,54 @@ describe('SaveControls.svelte', () => {
       });
     });
 
-    it('clears config drafts after successful online save', async () => {
+    it('online save delegates to onSave; commitForSave is owned by the orchestrator', async () => {
       const { configChangesStore } = await import('$lib/stores/configChanges.svelte');
       treesRef.map.set('node1', makeDirtyTree(1));
 
       const mockSave = vi.fn().mockResolvedValue(true);
-      render(SaveControls, { props: { onOfflineSave: mockSave, onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: mockSave, onSaveAs: vi.fn() } });
 
       const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
       await fireEvent.click(saveBtn);
 
       await waitFor(() => {
-        expect(configChangesStore.clearAllDrafts).toHaveBeenCalled();
+        expect(mockSave).toHaveBeenCalledTimes(1);
       });
+      expect(configChangesStore.commitForSave).not.toHaveBeenCalled();
     });
 
-    it('does not clear config drafts when online save is cancelled', async () => {
-      const { configChangesStore } = await import('$lib/stores/configChanges.svelte');
+    it('does not invoke onSave again when the page route reports cancellation', async () => {
       treesRef.map.set('node1', makeDirtyTree(1));
 
       const mockSave = vi.fn().mockResolvedValue(false);
-      render(SaveControls, { props: { onOfflineSave: mockSave, onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: mockSave, onSaveAs: vi.fn() } });
 
       const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
       await fireEvent.click(saveBtn);
 
-      expect(configChangesStore.clearAllDrafts).not.toHaveBeenCalled();
+      expect(mockSave).toHaveBeenCalledTimes(1);
     });
 
-    it('defers clearAllDrafts until after onOfflineSave when layout metadata is dirty', async () => {
-      const { writeModifiedValues } = await import('$lib/api/config');
+    it('invokes onSave when layout metadata is dirty without reaching into store cleanup', async () => {
+      // The component now trusts the page route to handle commit ordering;
+      // the previous "commit-after-onSave" assertion is covered by the
+      // orchestrator's wired callbacks (clearMetadata / clearPersistedDrafts).
       const { configChangesStore } = await import('$lib/stores/configChanges.svelte');
-      (writeModifiedValues as ReturnType<typeof vi.fn>).mockResolvedValue({ succeeded: 1, failed: 0, readOnlyRejected: 0 });
       treesRef.map.set('node1', makeDirtyTree(1));
       metaRef.isDirty = true;
       metaRef.editCount = 1;
 
-      // Track call order: onOfflineSave must be called before clearAllDrafts
-      const callOrder: string[] = [];
-      const mockSave = vi.fn().mockImplementation(async () => {
-        callOrder.push('onOfflineSave');
-        return true;
-      });
-      (configChangesStore.clearAllDrafts as ReturnType<typeof vi.fn>).mockImplementation(() => {
-        callOrder.push('clearAllDrafts');
-      });
-
-      render(SaveControls, { props: { onOfflineSave: mockSave, onOfflineSaveAs: vi.fn() } });
+      const mockSave = vi.fn().mockResolvedValue(true);
+      render(SaveControls, { props: { onSave: mockSave, onSaveAs: vi.fn() } });
 
       const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
       await fireEvent.click(saveBtn);
 
       await waitFor(() => {
-        expect(configChangesStore.clearAllDrafts).toHaveBeenCalled();
+        expect(mockSave).toHaveBeenCalledTimes(1);
       });
-      expect(mockSave).toHaveBeenCalled();
-      expect(callOrder.indexOf('onOfflineSave')).toBeLessThan(callOrder.indexOf('clearAllDrafts'));
+      expect(configChangesStore.commitForSave).not.toHaveBeenCalled();
+      expect(metaRef.clearAll).not.toHaveBeenCalled();
     });
   });
 
@@ -769,7 +770,7 @@ describe('SaveControls.svelte', () => {
       offlineRef.draftCount = 0;
       layoutRef.isDirty = true;
 
-      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: vi.fn(), onSaveAs: vi.fn() } });
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
@@ -781,20 +782,20 @@ describe('SaveControls.svelte', () => {
       offlineRef.draftCount = 0;
       layoutRef.isDirty = false;
 
-      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: vi.fn(), onSaveAs: vi.fn() } });
 
       await waitFor(() => {
         expect(screen.queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument();
       });
     });
 
-    it('calls onOfflineSave when Save is clicked with isDirty set', async () => {
+    it('calls onSave when Save is clicked with isDirty set', async () => {
       const mockSave = vi.fn().mockResolvedValue(true);
       layoutRef.isOfflineMode = true;
       offlineRef.draftCount = 0;
       layoutRef.isDirty = true;
 
-      render(SaveControls, { props: { onOfflineSave: mockSave, onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: mockSave, onSaveAs: vi.fn() } });
 
       const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
       await fireEvent.click(saveBtn);
@@ -804,20 +805,23 @@ describe('SaveControls.svelte', () => {
       });
     });
 
-    it('markClean is called after successful isDirty save', async () => {
+    it('delegates to onSave for isDirty saves (markClean is owned by the orchestrator)', async () => {
+      // Post-Step 7 Option H: `layoutStore.markClean` is now invoked by
+      // `saveLayoutOrchestrator` via the wired `markClean` callback.
       const mockSave = vi.fn().mockResolvedValue(true);
       layoutRef.isOfflineMode = true;
       offlineRef.draftCount = 0;
       layoutRef.isDirty = true;
 
-      render(SaveControls, { props: { onOfflineSave: mockSave, onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: mockSave, onSaveAs: vi.fn() } });
 
       const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
       await fireEvent.click(saveBtn);
 
       await waitFor(() => {
-        expect(layoutRef.markClean).toHaveBeenCalled();
+        expect(mockSave).toHaveBeenCalledTimes(1);
       });
+      expect(layoutRef.markClean).not.toHaveBeenCalled();
     });
 
     it('shows "1 unsaved edit" when only isDirty is set (no draft count)', async () => {
@@ -827,7 +831,7 @@ describe('SaveControls.svelte', () => {
       offlineRef.draftCount = 0;
       layoutRef.isDirty = true;
 
-      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: vi.fn(), onSaveAs: vi.fn() } });
 
       await waitFor(() => {
         expect(screen.getByText(/1 unsaved edit/i)).toBeInTheDocument();
@@ -841,11 +845,99 @@ describe('SaveControls.svelte', () => {
       configChangesRef.draftCount = 3;
       layoutRef.isDirty = true;
 
-      render(SaveControls, { props: { onOfflineSave: vi.fn(), onOfflineSaveAs: vi.fn() } });
+      render(SaveControls, { props: { onSave: vi.fn(), onSaveAs: vi.fn() } });
 
       await waitFor(() => {
         expect(screen.getByText(/4 unsaved edits/i)).toBeInTheDocument();
       });
+    });
+  });
+
+  // ── Step 7 Option H: SaveControls is a thin delegate ──────────────────────
+  //
+  // These tests pin the post-refactor contract: SaveControls honours the
+  // presenter's `canSave` gate (no parallel gate), invokes `onSave` exactly
+  // once, and does NOT reach into store cleanup. Cleanup ownership moved
+  // into `saveLayoutOrchestrator` via wired callbacks
+  // (`markClean`, `clearMetadata`, `clearPersistedDrafts`,
+  // `reloadOfflineChanges`).
+  //
+  // The first test is a regression contract for the Save no-op: an empty
+  // layout + connect + Read all config produces `unsavedInMemoryNodeIds`
+  // (effectiveNodeStore) but zero config drafts and zero metadata edits.
+  // The old parallel gate `if (!hasNodeEdits && !hasLayoutMetadataEdits) return`
+  // never fired `onSave`. The presenter says `canSave: true` in this state.
+
+  describe('Step 7 Option H: thin-delegate contract', () => {
+    it('regression: invokes onSave when only unsavedInMemoryNodeIds are dirty (empty layout + Read all)', async () => {
+      // No config drafts, no metadata, no layoutIsDirty — only unsaved-in-memory
+      // node additions. Presenter must say canSave: true; handler must fire.
+      configChangesRef.draftCount = 0;
+      metaRef.isDirty = false;
+      metaRef.editCount = 0;
+      layoutRef.isDirty = false;
+      layoutRef.isOfflineMode = false;
+      effectiveNodeRef.unsavedInMemoryNodeIds = ['nodeA'];
+      effectiveNodeRef.isDirty = true;
+
+      const mockSave = vi.fn().mockResolvedValue(true);
+      render(SaveControls, { props: { onSave: mockSave, onSaveAs: vi.fn() } });
+
+      const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
+      expect(saveBtn).not.toBeDisabled();
+      await fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(mockSave).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it('cleanup parity: neither online nor offline mode performs duplicate component-side cleanup', async () => {
+      // Same dirty signals; only mode differs. After a successful save the
+      // component touches no store cleanup in either mode — the orchestrator
+      // owns markClean / clearAll / commitForSave / reloadFromBackend.
+      const runFor = async (offline: boolean) => {
+        vi.clearAllMocks();
+        treesRef.map = new Map();
+        treesRef.map.set('nodeA', makeDirtyTree(1));
+        layoutRef.isOfflineMode = offline;
+        layoutRef.hasLayoutFile = offline;
+        const mockSave = vi.fn().mockResolvedValue(true);
+        const { unmount } = render(SaveControls, { props: { onSave: mockSave, onSaveAs: vi.fn() } });
+        const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
+        await fireEvent.click(saveBtn);
+        await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(1));
+        expect(layoutRef.markClean).not.toHaveBeenCalled();
+        expect(metaRef.clearAll).not.toHaveBeenCalled();
+        expect(offlineRef.reloadFromBackend).not.toHaveBeenCalled();
+        const { configChangesStore } = await import('$lib/stores/configChanges.svelte');
+        expect(configChangesStore.commitForSave).not.toHaveBeenCalled();
+        unmount();
+      };
+      await runFor(false);
+      await runFor(true);
+    });
+
+    it('no duplicate cleanup: handleSave does not call markClean, clearAll, commitForSave, or reloadFromBackend directly', async () => {
+      // Property test: when onSave succeeds, none of the store-cleanup
+      // methods are invoked from inside the component. The orchestrator
+      // (wired by +page.svelte's saveCurrentCaptureToFile) owns them.
+      const { configChangesStore } = await import('$lib/stores/configChanges.svelte');
+      treesRef.map.set('nodeA', makeDirtyTree(1));
+      metaRef.isDirty = true;
+      metaRef.editCount = 1;
+      layoutRef.isDirty = true;
+
+      const mockSave = vi.fn().mockResolvedValue(true);
+      render(SaveControls, { props: { onSave: mockSave, onSaveAs: vi.fn() } });
+      const saveBtn = await waitFor(() => screen.getByRole('button', { name: /^save$/i }));
+      await fireEvent.click(saveBtn);
+
+      await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(1));
+      expect(layoutRef.markClean).not.toHaveBeenCalled();
+      expect(metaRef.clearAll).not.toHaveBeenCalled();
+      expect(offlineRef.reloadFromBackend).not.toHaveBeenCalled();
+      expect(configChangesStore.commitForSave).not.toHaveBeenCalled();
     });
   });
 });

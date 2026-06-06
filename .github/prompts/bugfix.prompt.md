@@ -15,12 +15,13 @@ Use the Explore subagent for research steps to keep the main context window lean
 5. **ADR check**: Scan `product/architecture/adr/` for decisions that constrain the fix approach.
 6. **Root cause analysis**: Distinguish the _symptom_ from the _cause_. Trace the bug to the point where the contract or invariant was violated — not just where the wrong value surfaces. If the symptom and root cause are in different modules, identify both.
 7. **Impact tracing**: Identify callers, subscribers, and downstream consumers of the code you plan to change. List modules that depend on the current behavior, even if it is buggy — they may have adapted to it.
+8. **Options and sign-off**: Load and follow the `architecture-first-fix` skill. It defines the option format (seam + ADRs + named principle: DRY / SOLID / YAGNI / Depth / Locality / ADR-compliance + tradeoff), the stopgap rule, and the stop-and-wait gate. If the bug touches a known risky seam (lifecycle ownership, dirty/save tracking, selection state, naming fallback, placeholder vs real node, sync triggers, or any cross-layer coordination), also invoke the `improve-codebase-architecture` skill on that seam before drafting options.
 
-Output the analysis as a structured summary with:
-- Symptom vs. root cause (if different)
-- Proposed fix approach (at the root cause, not the symptom)
+Present the structured pre-implementation summary together with the options:
+- Symptom vs. root cause (always distinguish; the root cause is the violated contract or ownership rule, not the surface site)
 - Impact radius: modules and flows affected by the change
 - Risk assessment: what could break if the fix changes observable behavior
+- Options (in the format defined by `architecture-first-fix`), with a recommendation.
 
 **STOP here and wait for user sign-off before implementing.**
 

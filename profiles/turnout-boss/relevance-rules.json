@@ -1,0 +1,71 @@
+{
+  "nodeType": {
+    "manufacturer": "Mustangpeak Engineering",
+    "model": "TurnoutBoss"
+  },
+  "rules": [
+    {
+      "id": "R001",
+      "affectedSection": "Hardware Configuration/Track Detector Sensitivity/Detector 3",
+      "controllingField": "Layout Configuration Setup/How this TurnoutBoss is used on your layout.",
+      "irrelevantWhen": [1],
+      "irrelevantValueLabels": ["\"Right\" board: two blocks (turnout, mainline to next siding)"],
+      "explanation": "Detector 3 is only used on Left boards, which monitor three blocks (turnout, mainline-between, siding). Right boards monitor only two blocks (turnout, mainline-to-next-siding) and leave Detector 3 unwired, so changing its sensitivity has no observable effect. To use Detector 3, set 'How this TurnoutBoss is used on your layout' to '\"Left\" board: three blocks'.",
+      "citation": "Manual Figure 3 (p. 4): 'The left turnout is connected to detection connector 1, the main between turnouts is wired to detection connector 2, and the siding is wired to detection connector 3 on the left-hand board. The boards marked in red are connected to the right-hand board. The right turnout where the board is located is wired to detection connector 1 and the main between sidings is wired to detection connector 2 on the right-hand board.'"
+    },
+    {
+      "id": "R002",
+      "affectedSection": "Hardware Configuration/Signal LED Brightness/Signal D",
+      "controllingField": "Hardware Configuration/Facing Point Signals/What type of signal(s) is at the turnout points?",
+      "irrelevantWhen": [1],
+      "irrelevantValueLabels": ["Signal at turnout points is a single head"],
+      "explanation": "Signal D is the lower (Diverging) head on the facing-point mast. With a single-head facing-point signal, only Signal C is wired, so Signal D's brightness settings have no observable effect. To configure Signal D brightness, set 'What type of signal(s) is at the turnout points?' to 'Signal at turnout points is a double head'.",
+      "citation": "Manual §2.3 / Figure 5 (p. 7): 'Note that head \"c\" is the upper head and \"d\" is the lower head on a single mast. The \"d\" head is optional, although it's recommended for prototypical signaling.' Manual §1.1 (p. 3): 'The TurnoutBoss by default expects a double-headed signal to be wired for the facing point position. It can also be configured to properly drive a single-headed signal there if you'd prefer that.'"
+    },
+    {
+      "id": "R003",
+      "affectedSection": "Producers and Consumers/Signal Lamp Status/Signal D Red (P)",
+      "controllingField": "Hardware Configuration/Facing Point Signals/What type of signal(s) is at the turnout points?",
+      "irrelevantWhen": [1],
+      "irrelevantValueLabels": ["Signal at turnout points is a single head"],
+      "explanation": "With a single-head facing-point signal, the Signal D head does not exist physically, so the board never emits a 'Signal D Red' event. The configured Event ID has no effect. To use this event, set 'What type of signal(s) is at the turnout points?' to 'Signal at turnout points is a double head'.",
+      "citation": "Manual §A.6 (p. 29): 'The TurnoutBoss board will produce events when it changes its signal head outputs. For each of the A, B, C and D signals, there's an event that corresponds to the signal going Green, Yellow, Red or Dark.' Combined with §2.3 Figure 5 (p. 7) noting head D is the optional second facing-point head."
+    },
+    {
+      "id": "R004",
+      "affectedSection": "Producers and Consumers/Signal Lamp Status/Signal D Yellow (P)",
+      "controllingField": "Hardware Configuration/Facing Point Signals/What type of signal(s) is at the turnout points?",
+      "irrelevantWhen": [1],
+      "irrelevantValueLabels": ["Signal at turnout points is a single head"],
+      "explanation": "With a single-head facing-point signal, the Signal D head does not exist physically, so the board never emits a 'Signal D Yellow' event. The configured Event ID has no effect. To use this event, set 'What type of signal(s) is at the turnout points?' to 'Signal at turnout points is a double head'.",
+      "citation": "Manual §A.6 (p. 29) and §2.3 Figure 5 (p. 7) — head D is the optional second facing-point head and is absent in single-head mode."
+    },
+    {
+      "id": "R005",
+      "affectedSection": "Producers and Consumers/Signal Lamp Status/Signal D Green (P)",
+      "controllingField": "Hardware Configuration/Facing Point Signals/What type of signal(s) is at the turnout points?",
+      "irrelevantWhen": [1],
+      "irrelevantValueLabels": ["Signal at turnout points is a single head"],
+      "explanation": "With a single-head facing-point signal, the Signal D head does not exist physically, so the board never emits a 'Signal D Green' event. The configured Event ID has no effect. To use this event, set 'What type of signal(s) is at the turnout points?' to 'Signal at turnout points is a double head'.",
+      "citation": "Manual §A.6 (p. 29) and §2.3 Figure 5 (p. 7) — head D is the optional second facing-point head and is absent in single-head mode."
+    },
+    {
+      "id": "R006",
+      "affectedSection": "Producers and Consumers/Signal Lamp Status/Signal D Dark (P)",
+      "controllingField": "Hardware Configuration/Facing Point Signals/What type of signal(s) is at the turnout points?",
+      "irrelevantWhen": [1],
+      "irrelevantValueLabels": ["Signal at turnout points is a single head"],
+      "explanation": "With a single-head facing-point signal, the Signal D head does not exist physically, so the board never emits a 'Signal D Dark' event. The configured Event ID has no effect. To use this event, set 'What type of signal(s) is at the turnout points?' to 'Signal at turnout points is a double head'.",
+      "citation": "Manual §A.6 (p. 29) and §2.3 Figure 5 (p. 7) — head D is the optional second facing-point head and is absent in single-head mode."
+    },
+    {
+      "id": "R007",
+      "affectedSection": "Producers and Consumers/Turnout Control/Turnout Observed In Motion (P)",
+      "controllingField": "Hardware Configuration/Turnout Feedback/Using turnout feedback sensors?",
+      "irrelevantWhen": [0, 1],
+      "irrelevantValueLabels": ["Unused", "One turnout position sensor"],
+      "explanation": "The 'Turnout Observed In Motion' event only fires when two feedback switches are configured — it is emitted when the first switch has opened and the second has not yet closed, indicating the points are mid-travel. With zero or one feedback switches the board cannot detect this transition state and never emits this event. To use this event, set 'Using turnout feedback sensors?' to 'Two turnout feedback sensors'.",
+      "citation": "Manual §A.5 (p. 29): 'When configured to zero or one switches, the board will produce the \"Observed Normal\" and \"Observed Diverging\" when the turnout position changes. When configured to two switches, the board will also produce the \"Observed In Motion\" event when the first switch has opened and the second switch has not yet closed.'"
+    }
+  ]
+}

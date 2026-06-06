@@ -1,0 +1,90 @@
+{
+  "nodeType": {
+    "manufacturer": "Mustangpeak Engineering",
+    "model": "TurnoutBoss"
+  },
+  "cdiFile": "/Users/dwightkelly/Desktop/turnoutboss_cdi.xml",
+  "pdfFile": "/Users/dwightkelly/Desktop/UserDocument.pdf",
+  "totalPages": 30,
+  "generatedDate": "2026-05-13",
+  "sections": [
+    {
+      "order": 1,
+      "name": "Introduction",
+      "pages": "1-2",
+      "topics": [
+        "TurnoutBoss board overview and feature list",
+        "Signaling around a simple passing siding",
+        "Clear/Approach/Stop signal indication concepts",
+        "Double-headed signals at facing points (Normal vs Diverging routes)"
+      ],
+      "relevantTo": ["profile-3"],
+      "notes": "High-level orientation. Useful background for understanding why fields exist, but does not describe specific configuration fields."
+    },
+    {
+      "order": 2,
+      "name": "Planning Your Installation",
+      "pages": "3-8",
+      "topics": [
+        "Left vs Right board assignment (turnout end of siding)",
+        "Turnout control approaches: one-button toggle vs two-button N/D",
+        "Occupancy block setup and current-sensing detector wiring",
+        "Signal LED wiring types: common cathode, common anode, bidirectional",
+        "Turnout feedback options: zero, one, or two switches",
+        "Power supply options: LCC cable, wall-wart, terminal block; servo power 5-8V"
+      ],
+      "relevantTo": ["profile-2", "profile-3", "profile-5"],
+      "notes": "Decision-oriented planning content. Strong source for relevance rules (e.g., 'if no feedback sensors, leave field default') and for recipes describing installation planning steps."
+    },
+    {
+      "order": 3,
+      "name": "Basic Configuration of the TurnoutBoss Boards",
+      "pages": "9-12",
+      "topics": [
+        "Network preparation: connect boards, terminators, power up",
+        "Factory reset procedure (Hold Teach+Learn, press Reset, press Teach)",
+        "Configure board connections via button presses (left/right neighbor, end-of-siding role)",
+        "Configure initial hardware options via button presses (signal wiring type, one/two-button turnout control)",
+        "Button-press flow diagrams (Figures 6, 7, 8)"
+      ],
+      "relevantTo": ["profile-5"],
+      "notes": "Pure step-by-step recipe content using on-board buttons. Not typically relevant to CDI field descriptions, but mirrors fields in 'How this TurnoutBoss is used on your layout' and 'Turnout Control' / 'Signalhead Lamp Configuration' groups."
+    },
+    {
+      "order": 4,
+      "name": "Installation and Wiring",
+      "pages": "13-15",
+      "topics": [
+        "LCC cable, terminators, and external power wiring",
+        "Turnout motor (Tortoise/stall-motor) and pushbutton wiring",
+        "Servo output wiring and power requirements",
+        "Occupancy detector coil wiring and optical input",
+        "Signal head wiring (common anode/cathode/bidirectional) and built-in lamp-test mode (Teach+Reset)",
+        "Turnout feedback switch wiring (one or two switches)"
+      ],
+      "relevantTo": ["profile-5"],
+      "notes": "Physical wiring steps. Useful for recipes that pair CDI choices with corresponding physical connections."
+    },
+    {
+      "order": 5,
+      "name": "Using a Configuration Tool",
+      "pages": "16-22",
+      "topics": [
+        "Overview of CDI configuration tools (JMRI, Model Railroad System, LccTools)",
+        "Three CDI segments: Layout Configuration Setup, Hardware Configuration, Producers and Consumers",
+        "Screenshots of each segment (Figures 9, 10, 11)",
+        "Per-field descriptions for User Info, Board Usage, Layout Connections, Turnout Control, Turnout Feedback, Facing Point Signals, Signalhead Lamp Configuration, Track Detector Sensitivity, Signal LED Brightness, Servo Limits, Optical Input",
+        "Remote turnout control and control-panel integration via LCC events"
+      ],
+      "relevantTo": ["profile-1", "profile-2", "profile-3", "profile-4", "profile-5"],
+      "notes": "Core source for CDI field/section semantics. Subsections 5.1-5.11 (pages 19-22) are tight prose maps to each CDI group; section 6.1/6.2 (pages 21-22) document event-driven external integration."
+    }
+  ],
+  "appendices": [
+    {
+      "name": "A. Event Definitions",
+      "pages": "23-30",
+      "purpose": "Enumerates every event ID the TurnoutBoss produces (P) or consumes (C), grouped to match the CDI 'Producers and Consumers' segment. Includes screenshots of the event list (Figures 12-16) and prose descriptions for Occupancy (A.1), Turnout Command (A.2), Turnout Feedback (A.3), Turnout Buttons (A.4), Turnout Observed Position (A.5), Signal Outputs (A.6), Signal State P/C (A.7/A.8), Vital Logic Control (A.9), and Optical Sensor (A.10). Differentiates auto-managed events (Left/Right pair auto-wires occupancy) from user-facing copy/paste events. Primary source for profile-1 event roles and profile-4 event field descriptions."
+    }
+  ]
+}

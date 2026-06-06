@@ -5,15 +5,16 @@ import type {
   ConnectorProfileView,
   ConnectorSelectionDocument,
 } from '$lib/types/connectorProfile';
+import { toCanonicalNodeKey, type NodeKeyInput } from '$lib/utils/nodeKey';
 
-export async function getConnectorProfile(nodeId: string): Promise<ConnectorProfileView | null> {
-  return invoke<ConnectorProfileView | null>('get_connector_profile', { nodeId });
+export async function getConnectorProfile(nodeId: NodeKeyInput): Promise<ConnectorProfileView | null> {
+  return invoke<ConnectorProfileView | null>('get_connector_profile', { nodeId: toCanonicalNodeKey(nodeId) });
 }
 
 export async function getConnectorSelections(
-  nodeId: string,
+  nodeId: NodeKeyInput,
 ): Promise<ConnectorSelectionDocument | null> {
-  return invoke<ConnectorSelectionDocument | null>('get_connector_selections', { nodeId });
+  return invoke<ConnectorSelectionDocument | null>('get_connector_selections', { nodeId: toCanonicalNodeKey(nodeId) });
 }
 
 export async function putConnectorSelections(

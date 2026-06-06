@@ -1,0 +1,365 @@
+schemaVersion: "1.0"
+manufacturer: "RR-CirKits"
+daughterboards:
+  - daughterboardId: "BOD4"
+    displayName: "BOD4"
+    kind: "mixed-io"
+    validityRules:
+      - targetPath: "Port I/O/Line/Output Function"
+        lineOrdinals: [1, 2, 3, 4]
+        constraintType: allowValues
+        allowedValues: [0]
+        allowedValueLabels: ["No Function"]
+        explanation: "BOD4 local lines 1-4 are detector outputs, so those governed Tower-LCC lines do not drive output functions."
+      - targetPath: "Port I/O/Line/Input Function"
+        lineOrdinals: [1, 2, 3, 4]
+        constraintType: allowValues
+        allowedValues: [2]
+        allowedValueLabels: ["Active Lo"]
+        explanation: "The BOD-4 detector outputs are low during detection, so local lines 1-4 must use Active Lo input mode."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        lineOrdinals: [1, 2, 3, 4]
+        constraintType: allowValues
+        allowedValues: [0, 5, 6, 7, 8]
+        allowedValueLabels: ["None", "Input On", "Input Off", "Gated On (Non Veto Input)", "Gated Off (Non Veto Input)"]
+        explanation: "BOD4 detector lines can only send producer indications from input transitions or gated input transitions."
+      - targetPath: "Port I/O/Line/Event#1"
+        lineOrdinals: [1, 2, 3, 4]
+        constraintType: hideSection
+        explanation: "Consumer output events do not apply to the BOD4 detector lines."
+    constraintVariants:
+      - variantId: "tower-lcc-c7"
+        replaceBaseValidityRules: true
+        validityRules:
+          - targetPath: "Port I/O/Line/Output Function"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: allowValues
+            allowedValues: [0]
+            allowedValueLabels: ["None"]
+            explanation: "BOD4 local lines 1-4 are detector outputs, so those governed Tower-LCC lines do not drive output functions."
+          - targetPath: "Port I/O/Line/Input Function"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: allowValues
+            allowedValues: [1]
+            allowedValueLabels: ["Normal"]
+            explanation: "The rev-C7 Tower-LCC CDI splits detector polarity from input mode, so BOD4 local lines 1-4 must use Normal input mode."
+          - targetPath: "Port I/O/Line/Receiving the configured Command (C) event(s) will drive or pulse the line:"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: hideSection
+            explanation: "BOD4 detector lines do not drive commanded outputs, so the command-drive polarity setting is irrelevant."
+          - targetPath: "Port I/O/Line/The configured Indication (P) event(s) will be sent when the line is driven:"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: allowValues
+            allowedValues: [0]
+            allowedValueLabels: ["Low (0V)"]
+            explanation: "BOD4 detector outputs are active low, so the producer indication polarity for local lines 1-4 must stay Low (0V)."
+          - targetPath: "Port I/O/Line/Event#2/Upon this action"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: allowValues
+            allowedValues: [0, 5, 6, 7, 8]
+            allowedValueLabels: ["None", "Input On", "Input Off", "Gated On (Non Veto Input)", "Gated Off (Non Veto Input)"]
+            explanation: "BOD4 detector lines can only send producer indications from input transitions or gated input transitions."
+          - targetPath: "Port I/O/Line/Event#1"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: hideSection
+            explanation: "Consumer output events do not apply to the BOD4 detector lines."
+    metadata:
+      notes: "4-block occupancy detector plus 4 additional logic-level I/O lines. The shared rules constrain only the detector half of the connector (local lines 1-4)."
+  - daughterboardId: "BOD4-CP"
+    displayName: "BOD4-CP"
+    kind: "mixed-io"
+    validityRules:
+      - targetPath: "Port I/O/Line/Output Function"
+        lineOrdinals: [1, 2, 3, 4]
+        constraintType: allowValues
+        allowedValues: [0]
+        allowedValueLabels: ["No Function"]
+        explanation: "BOD4-CP local lines 1-4 are occupancy detector outputs, so those lines do not drive output functions."
+      - targetPath: "Port I/O/Line/Input Function"
+        lineOrdinals: [1, 2, 3, 4]
+        constraintType: allowValues
+        allowedValues: [2]
+        allowedValueLabels: ["Active Lo"]
+        explanation: "The BOD4-CP detector half uses active-low occupancy outputs on local lines 1-4."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        lineOrdinals: [1, 2, 3, 4]
+        constraintType: allowValues
+        allowedValues: [0, 5, 6, 7, 8]
+        allowedValueLabels: ["None", "Input On", "Input Off", "Gated On (Non Veto Input)", "Gated Off (Non Veto Input)"]
+        explanation: "BOD4-CP detector lines can only send producer indications from input transitions or gated input transitions."
+      - targetPath: "Port I/O/Line/Event#1"
+        lineOrdinals: [1, 2, 3, 4]
+        constraintType: hideSection
+        explanation: "Consumer output events do not apply to the BOD4-CP detector lines."
+    constraintVariants:
+      - variantId: "tower-lcc-c7"
+        replaceBaseValidityRules: true
+        validityRules:
+          - targetPath: "Port I/O/Line/Output Function"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: allowValues
+            allowedValues: [0]
+            allowedValueLabels: ["None"]
+            explanation: "BOD4-CP local lines 1-4 are occupancy detector outputs, so those lines do not drive output functions."
+          - targetPath: "Port I/O/Line/Input Function"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: allowValues
+            allowedValues: [1]
+            allowedValueLabels: ["Normal"]
+            explanation: "The rev-C7 Tower-LCC CDI splits detector polarity from input mode, so BOD4-CP local lines 1-4 must use Normal input mode."
+          - targetPath: "Port I/O/Line/Receiving the configured Command (C) event(s) will drive or pulse the line:"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: hideSection
+            explanation: "BOD4-CP detector lines do not drive commanded outputs, so the command-drive polarity setting is irrelevant."
+          - targetPath: "Port I/O/Line/The configured Indication (P) event(s) will be sent when the line is driven:"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: allowValues
+            allowedValues: [0]
+            allowedValueLabels: ["Low (0V)"]
+            explanation: "BOD4-CP detector outputs are active low, so the producer indication polarity for local lines 1-4 must stay Low (0V)."
+          - targetPath: "Port I/O/Line/Event#2/Upon this action"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: allowValues
+            allowedValues: [0, 5, 6, 7, 8]
+            allowedValueLabels: ["None", "Input On", "Input Off", "Gated On (Non Veto Input)", "Gated Off (Non Veto Input)"]
+            explanation: "BOD4-CP detector lines can only send producer indications from input transitions or gated input transitions."
+          - targetPath: "Port I/O/Line/Event#1"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: hideSection
+            explanation: "Consumer output events do not apply to the BOD4-CP detector lines."
+    metadata:
+      notes: "4-block control-point board with 4 detection blocks plus a separate mixed sample/output half. Shared rules constrain the detector half (local lines 1-4) and leave local lines 5-8 available for the board's sampled/output use cases."
+  - daughterboardId: "BOD-8-SM"
+    displayName: "BOD-8-SM"
+    kind: "detection"
+    validityRules:
+      - targetPath: "Port I/O/Line/Output Function"
+        constraintType: allowValues
+        allowedValues: [0]
+        allowedValueLabels: ["No Function"]
+        explanation: "Occupancy detector boards do not drive Tower-LCC output functions."
+      - targetPath: "Port I/O/Line/Input Function"
+        constraintType: allowValues
+        allowedValues: [2]
+        allowedValueLabels: ["Active Lo"]
+        explanation: "BOD-8 outputs are low during detection, so governed Tower-LCC lines must use Active Lo input mode."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 5, 6, 7, 8]
+        allowedValueLabels: ["None", "Input On", "Input Off", "Gated On (Non Veto Input)", "Gated Off (Non Veto Input)"]
+        explanation: "Detector daughterboards can only send producer indications from input transitions or gated input transitions."
+      - targetPath: "Port I/O/Line/Event#1"
+        constraintType: hideSection
+        explanation: "Consumer output events do not apply to detector daughterboards."
+    constraintVariants:
+      - variantId: "tower-lcc-c7"
+        replaceBaseValidityRules: true
+        validityRules:
+          - targetPath: "Port I/O/Line/Output Function"
+            constraintType: allowValues
+            allowedValues: [0]
+            allowedValueLabels: ["None"]
+            explanation: "Occupancy detector boards do not drive Tower-LCC output functions."
+          - targetPath: "Port I/O/Line/Input Function"
+            constraintType: allowValues
+            allowedValues: [1]
+            allowedValueLabels: ["Normal"]
+            explanation: "The rev-C7 Tower-LCC CDI splits detector polarity from input mode, so BOD-8-SM lines must use Normal input mode."
+          - targetPath: "Port I/O/Line/Receiving the configured Command (C) event(s) will drive or pulse the line:"
+            constraintType: hideSection
+            explanation: "BOD-8-SM detector lines do not drive commanded outputs, so the command-drive polarity setting is irrelevant."
+          - targetPath: "Port I/O/Line/The configured Indication (P) event(s) will be sent when the line is driven:"
+            constraintType: allowValues
+            allowedValues: [0]
+            allowedValueLabels: ["Low (0V)"]
+            explanation: "BOD-8-SM detector outputs are active low, so the producer indication polarity must stay Low (0V)."
+          - targetPath: "Port I/O/Line/Event#2/Upon this action"
+            constraintType: allowValues
+            allowedValues: [0, 5, 6, 7, 8]
+            allowedValueLabels: ["None", "Input On", "Input Off", "Gated On (Non Veto Input)", "Gated Off (Non Veto Input)"]
+            explanation: "Detector daughterboards can only send producer indications from input transitions or gated input transitions."
+          - targetPath: "Port I/O/Line/Event#1"
+            constraintType: hideSection
+            explanation: "Consumer output events do not apply to detector daughterboards."
+    metadata:
+      notes: "8-block surface-mount occupancy detector daughterboard. Existing Tower-LCC recipe evidence and RR-CirKits detector manuals describe detector outputs as active-low during occupancy."
+  - daughterboardId: "FOB-A"
+    displayName: "FOB-A"
+    kind: "breakout"
+    metadata:
+      notes: "Aux-port fan-out board that may be used per line for either inputs or outputs."
+  - daughterboardId: "FOB-C"
+    displayName: "FOB-C"
+    kind: "breakout"
+    metadata:
+      notes: "Aux-port fan-out board that may be used per line for either inputs or outputs."
+  - daughterboardId: "BOB-S"
+    displayName: "BOB-S"
+    kind: "breakout"
+    metadata:
+      notes: "Screw-terminal aux-port breakout board that may be used per line for either inputs or outputs."
+  - daughterboardId: "OI-IB-8"
+    displayName: "OI-IB-8"
+    kind: "input"
+    validityRules:
+      - targetPath: "Port I/O/Line/Output Function"
+        constraintType: allowValues
+        allowedValues: [0]
+        allowedValueLabels: ["No Function"]
+        explanation: "Input daughterboards do not use Tower-LCC output functions."
+      - targetPath: "Port I/O/Line/Input Function"
+        constraintType: allowValues
+        allowedValues: [0, 1, 2, 3, 4, 5, 6, 7, 8]
+        allowedValueLabels: ["Disabled", "Active Hi", "Active Lo", "Alt Action Hi", "Alt Action Lo", "Sample Hi", "Sample Lo", "Alt Sample Hi", "Alt Sample Lo"]
+        explanation: "Input daughterboards are limited to Tower-LCC input modes."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 5, 6, 7, 8]
+        allowedValueLabels: ["None", "Input On", "Input Off", "Gated On (Non Veto Input)", "Gated Off (Non Veto Input)"]
+        explanation: "Input daughterboards can only send producer indications from input transitions or gated input transitions."
+      - targetPath: "Port I/O/Line/Event#1"
+        constraintType: hideSection
+        explanation: "Consumer output events do not apply to input daughterboards."
+    metadata:
+      notes: "8-input opto-isolator board for monitoring external AC or DC sources on RR-CirKits aux-port carriers."
+  - daughterboardId: "OI-OB-8"
+    displayName: "OI-OB-8"
+    kind: "output"
+    validityRules:
+      - targetPath: "Port I/O/Line/Input Function"
+        constraintType: allowValues
+        allowedValues: [0]
+        allowedValueLabels: ["Disabled"]
+        explanation: "Output daughterboards leave Tower-LCC input modes disabled."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 1, 2, 3, 4]
+        allowedValueLabels: ["None", "Output State On command", "Output State Off command", "Output On (Function hi)", "Output Off (Function lo)"]
+        explanation: "Output-only daughterboards can only send producer indications from output-state or output-function changes."
+    metadata:
+      notes: "8-bit output expander for RR-CirKits aux-port carriers."
+  - daughterboardId: "RB-2"
+    displayName: "RB-2"
+    kind: "relay"
+    validityRules:
+      - targetPath: "Port I/O/Line/Input Function"
+        constraintType: allowValues
+        allowedValues: [0]
+        allowedValueLabels: ["Disabled"]
+        explanation: "Relay daughterboards leave Tower-LCC input modes disabled."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 1, 2, 3, 4]
+        allowedValueLabels: ["None", "Output State On command", "Output State Off command", "Output On (Function hi)", "Output Off (Function lo)"]
+        explanation: "Output-only daughterboards can only send producer indications from output-state or output-function changes."
+    metadata:
+      notes: "2-relay daughterboard for isolated output switching."
+  - daughterboardId: "RB-4"
+    displayName: "RB-4"
+    kind: "relay"
+    validityRules:
+      - targetPath: "Port I/O/Line/Input Function"
+        constraintType: allowValues
+        allowedValues: [0]
+        allowedValueLabels: ["Disabled"]
+        explanation: "Relay daughterboards leave Tower-LCC input modes disabled."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 1, 2, 3, 4]
+        allowedValueLabels: ["None", "Output State On command", "Output State Off command", "Output On (Function hi)", "Output Off (Function lo)"]
+        explanation: "Output-only daughterboards can only send producer indications from output-state or output-function changes."
+    metadata:
+      notes: "4 x SPDT relay board with active-low logic inputs and optically isolated relay power."
+  - daughterboardId: "SMD-8"
+    displayName: "SMD-8"
+    kind: "signal"
+    validityRules:
+      - targetPath: "Port I/O/Line/Input Function"
+        constraintType: allowValues
+        allowedValues: [0]
+        allowedValueLabels: ["Disabled"]
+        explanation: "Signal driver boards leave Tower-LCC input modes disabled."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 1, 2, 3, 4]
+        allowedValueLabels: ["None", "Output State On command", "Output State Off command", "Output On (Function hi)", "Output Off (Function lo)"]
+        explanation: "Output-only daughterboards can only send producer indications from output-state or output-function changes."
+    metadata:
+      notes: "8-line stall motor driver with optically isolated H-bridge outputs."
+  - daughterboardId: "SCSD-8"
+    displayName: "SCSD-8"
+    kind: "signal"
+    validityRules:
+      - targetPath: "Port I/O/Line/Input Function"
+        constraintType: allowValues
+        allowedValues: [0]
+        allowedValueLabels: ["Disabled"]
+        explanation: "Signal driver boards leave Tower-LCC input modes disabled."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 1, 2, 3, 4]
+        allowedValueLabels: ["None", "Output State On command", "Output State Off command", "Output On (Function hi)", "Output Off (Function lo)"]
+        explanation: "Output-only daughterboards can only send producer indications from output-state or output-function changes."
+    metadata:
+      notes: "Single-coil solenoid driver output module that can also drive paired dual-coil momentary switch machines."
+  - daughterboardId: "Isolator-8"
+    displayName: "Isolator-8"
+    kind: "isolation"
+    validityRules:
+      - targetPath: "Port I/O/Line/Output Function"
+        constraintType: allowValues
+        allowedValues: [0]
+        allowedValueLabels: ["No Function"]
+        explanation: "Isolation daughterboards do not use Tower-LCC output functions."
+      - targetPath: "Port I/O/Line/Input Function"
+        constraintType: allowValues
+        allowedValues: [0, 1, 2, 3, 4, 5, 6, 7, 8]
+        allowedValueLabels: ["Disabled", "Active Hi", "Active Lo", "Alt Action Hi", "Alt Action Lo", "Sample Hi", "Sample Lo", "Alt Sample Hi", "Alt Sample Lo"]
+        explanation: "Isolation daughterboards are limited to Tower-LCC input modes."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 5, 6, 7, 8]
+        allowedValueLabels: ["None", "Input On", "Input Off", "Gated On (Non Veto Input)", "Gated Off (Non Veto Input)"]
+        explanation: "Input daughterboards can only send producer indications from input transitions or gated input transitions."
+      - targetPath: "Port I/O/Line/Event#1"
+        constraintType: hideSection
+        explanation: "Consumer output events do not apply to input daughterboards."
+    metadata:
+      notes: "8-channel galvanic isolation daughterboard."
+  - daughterboardId: "MSS I/OAdapter"
+    displayName: "MSS I/OAdapter"
+    kind: "adapter"
+    validityRules:
+      - targetPath: "Port I/O/Line/Input Function"
+        constraintType: allowValues
+        allowedValues: [0]
+        allowedValueLabels: ["Disabled"]
+        explanation: "Adapter boards leave Tower-LCC input modes disabled."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 1, 2, 3, 4]
+        allowedValueLabels: ["None", "Output State On command", "Output State Off command", "Output On (Function hi)", "Output Off (Function lo)"]
+        explanation: "Output-only daughterboards can only send producer indications from output-state or output-function changes."
+    metadata:
+      notes: "Adapter board for MSS signal wiring on RR-CirKits carriers."
+  - daughterboardId: "Sampled I/O Splitter Pair"
+    displayName: "Sampled I/O Splitter Pair"
+    kind: "adapter"
+    validityRules:
+      - targetPath: "Port I/O/Line/Input Function"
+        constraintType: allowValues
+        allowedValues: [0]
+        allowedValueLabels: ["Disabled"]
+        explanation: "Splitter pairs leave Tower-LCC input modes disabled."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        allowedValues: [0, 1, 2, 3, 4]
+        allowedValueLabels: ["None", "Output State On command", "Output State Off command", "Output On (Function hi)", "Output Off (Function lo)"]
+        explanation: "Output-only daughterboards can only send producer indications from output-state or output-function changes."
+    metadata:
+      notes: "Splits one aux-port connection across paired sampled-I/O modules."
+  - daughterboardId: "I/O Test-SM"
+    displayName: "I/O Test-SM"
+    kind: "test"
+    metadata:
+      notes: "Aux-port loopback and diagnostics daughterboard."

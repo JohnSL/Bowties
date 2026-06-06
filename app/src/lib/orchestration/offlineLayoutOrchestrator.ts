@@ -1,8 +1,8 @@
-import type { CloseLayoutResult, OpenLayoutResult, OfflineNodeSnapshot, SnapshotValueNode } from '$lib/api/layout';
+import type { OpenLayoutResult, OfflineNodeSnapshot, SnapshotValueNode } from '$lib/api/layout';
 import type { DiscoveredNode } from '$lib/api/tauri';
-import type { ActiveLayoutMode } from '$lib/stores/layout.svelte';
 import type { LayoutFile } from '$lib/types/bowtie';
 import type { ConfigNode, NodeConfigTree, TreeConfigValue } from '$lib/types/nodeTree';
+import { isPlaceholderInput } from '$lib/utils/nodeKey';
 import { buildBowtieCatalog } from '$lib/api/bowties';
 import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
 import { layoutStore } from '$lib/stores/layout.svelte';
@@ -23,14 +23,6 @@ interface OpenOfflineLayoutWithReplayArgs {
   resetSidebar: () => void;
   hydrateConnectorSelections?: (layout: LayoutFile) => void;
   onOpened?: () => void;
-}
-
-interface ClearActiveLayoutWithResetArgs {
-  activeLayoutMode: ActiveLayoutMode | null | undefined;
-  closeLayout: (decision: 'discard') => Promise<CloseLayoutResult>;
-  clearRecentLayout: () => Promise<void>;
-  resetLayoutState: () => Promise<void>;
-  onRecentLayoutClearError?: (error: unknown) => void;
 }
 
 interface BuildOfflineTreesFromSnapshotsArgs {
@@ -87,25 +79,27 @@ export function buildOfflineDiscoveryNodes(
   snapshots: OfflineNodeSnapshot[],
   nodeIdStringToBytes: (nodeId: string) => number[],
 ): DiscoveredNode[] {
-  return snapshots.map((snapshot, index) => ({
-    node_id: nodeIdStringToBytes(snapshot.nodeId),
-    alias: 0x700 + index,
-    snip_data: {
-      manufacturer: snapshot.snip.manufacturerName,
-      model: snapshot.snip.modelName,
-      hardware_version: '',
-      software_version: snapshot.cdiRef.version,
-      user_name: snapshot.snip.userName,
-      user_description: snapshot.snip.userDescription,
-    },
-    snip_status: 'Complete',
-    connection_status: 'Unknown',
-    last_verified: null,
-    last_seen: snapshot.capturedAt,
-    cdi: null,
-    pip_flags: null,
-    pip_status: 'Unknown',
-  }));
+  return snapshots
+    .filter((s) => !isPlaceholderInput(s.nodeKey))
+    .map((snapshot, index) => ({
+      node_id: nodeIdStringToBytes(snapshot.nodeId!),
+      alias: 0x700 + index,
+      snip_data: {
+        manufacturer: snapshot.snip.manufacturerName,
+        model: snapshot.snip.modelName,
+        hardware_version: '',
+        software_version: snapshot.cdiRef.version,
+        user_name: snapshot.snip.userName,
+        user_description: snapshot.snip.userDescription,
+      },
+      snip_status: 'Complete',
+      connection_status: 'Unknown',
+      last_verified: null,
+      last_seen: snapshot.capturedAt,
+      cdi: null,
+      pip_flags: null,
+      pip_status: 'Unknown',
+    }));
 }
 
 export async function buildOfflineTreesFromSnapshots({
@@ -113,11 +107,15 @@ export async function buildOfflineTreesFromSnapshots({
   buildOfflineNodeTree,
   onTreeBuildWarning,
 }: BuildOfflineTreesFromSnapshotsArgs): Promise<NodeConfigTree[]> {
+  // Filter out placeholders — they're reconstituted via the placeholder
+  // factory in the backend and don't go through the offline CDI cache path.
+  const realSnapshots = snapshots.filter((s) => !isPlaceholderInput(s.nodeKey));
+
   const results = await Promise.allSettled(
-    snapshots.map((snapshot) => buildOfflineNodeTree(snapshot.nodeId)),
+    realSnapshots.map((snapshot) => buildOfflineNodeTree(snapshot.nodeId!)),
   );
 
-  return snapshots.map((snapshot, index) => {
+  return realSnapshots.map((snapshot, index) => {
     const result = results[index];
     if (result?.status === 'fulfilled') {
       return result.value;
@@ -297,8 +295,9 @@ function createOfflineLeaf(
  * Renders a single empty segment with a description explaining the situation.
  */
 export function cdiUnavailableTree(snapshot: OfflineNodeSnapshot): NodeConfigTree {
+  const dottedId = snapshot.nodeId?.match(/.{1,2}/g)?.join('.') ?? snapshot.nodeKey;
   return {
-    nodeId: snapshot.nodeId.match(/.{1,2}/g)?.join('.') ?? snapshot.nodeId,
+    nodeId: dottedId,
     identity: {
       manufacturer: snapshot.snip.manufacturerName || null,
       model: snapshot.snip.modelName || null,
@@ -366,7 +365,7 @@ export function treeFromSnapshot(snapshot: OfflineNodeSnapshot): NodeConfigTree 
   });
 
   return {
-    nodeId: snapshot.nodeId.match(/.{1,2}/g)?.join('.') ?? snapshot.nodeId,
+    nodeId: snapshot.nodeId?.match(/.{1,2}/g)?.join('.') ?? snapshot.nodeKey,
     identity: {
       manufacturer: snapshot.snip.manufacturerName || null,
       model: snapshot.snip.modelName || null,
@@ -375,28 +374,6 @@ export function treeFromSnapshot(snapshot: OfflineNodeSnapshot): NodeConfigTree 
     },
     segments,
   };
-}
-
-export async function clearActiveLayoutWithReset({
-  activeLayoutMode,
-  closeLayout,
-  clearRecentLayout,
-  resetLayoutState,
-  onRecentLayoutClearError,
-}: ClearActiveLayoutWithResetArgs): Promise<boolean> {
-  if (activeLayoutMode === 'offline_file') {
-    const result = await closeLayout('discard');
-    if (!result.closed) return false;
-  } else {
-    try {
-      await clearRecentLayout();
-    } catch (error) {
-      onRecentLayoutClearError?.(error);
-    }
-  }
-
-  await resetLayoutState();
-  return true;
 }
 
 export async function openOfflineLayoutWithReplay({
@@ -423,11 +400,11 @@ export async function openOfflineLayoutWithReplay({
       mode: 'offline_file',
       capturedAt: result.capturedAt,
       pendingOfflineChangeCount: result.pendingOfflineChangeCount,
-      // S8: seed the saved-node roster from the snapshots that just came
-      // from disk. Normalized to canonical (uppercase, no dots) here so
-      // the frontend has a single comparable form.
+      // S8/S9: seed the saved-node roster from the snapshots that just came
+      // from disk. For real nodes, normalize to canonical (uppercase, no dots).
+      // For placeholders, use nodeKey as-is (it's already canonical).
       layoutNodeIds: result.nodeSnapshots.map(
-        (s) => s.nodeId.replace(/\./g, '').toUpperCase(),
+        (s) => isPlaceholderInput(s.nodeKey) ? s.nodeKey : s.nodeId!.replace(/\./g, '').toUpperCase(),
       ),
     } as const;
 

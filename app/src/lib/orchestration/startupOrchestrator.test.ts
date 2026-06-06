@@ -154,6 +154,7 @@ describe('openLayoutFromRegistry', () => {
 
 describe('createNewLayout', () => {
   let store: ReturnType<typeof makeStore>;
+  let closeLayout: ReturnType<typeof vi.fn>;
   let createNewLayoutCapture: ReturnType<typeof vi.fn>;
   let saveLayoutDirectory: ReturnType<typeof vi.fn>;
   let openLayout: ReturnType<typeof vi.fn>;
@@ -162,6 +163,7 @@ describe('createNewLayout', () => {
 
   beforeEach(() => {
     store = makeStore();
+    closeLayout = vi.fn(async () => {});
     createNewLayoutCapture = vi.fn(async () => ({ layoutId: 'l-1', createdAt: 'x' }));
     saveLayoutDirectory = vi.fn(async () => ({}));
     openLayout = vi.fn(async () => makeOpenResult());
@@ -169,8 +171,9 @@ describe('createNewLayout', () => {
     onOpened = vi.fn(async () => {});
   });
 
-  it('runs createNewLayoutCapture → saveLayoutDirectory → openLayout → addKnownLayout in order', async () => {
+  it('runs closeLayout → createNewLayoutCapture → saveLayoutDirectory → openLayout → addKnownLayout in order', async () => {
     const order: string[] = [];
+    closeLayout.mockImplementation(async () => { order.push('close'); });
     createNewLayoutCapture.mockImplementation(async () => { order.push('create'); return { layoutId: 'l-1', createdAt: 'x' }; });
     saveLayoutDirectory.mockImplementation(async () => { order.push('save'); return {}; });
     openLayout.mockImplementation(async () => { order.push('open'); return makeOpenResult(); });
@@ -180,12 +183,12 @@ describe('createNewLayout', () => {
       name: 'Yard',
       path: 'D:/Layouts/yard.layout',
       api: { addKnownLayout },
-      lifecycle: { createNewLayoutCapture, saveLayoutDirectory, openLayout },
+      lifecycle: { closeLayout, createNewLayoutCapture, saveLayoutDirectory, openLayout },
       store,
       onOpened,
     });
 
-    expect(order).toEqual(['create', 'save', 'open', 'register']);
+    expect(order).toEqual(['close', 'create', 'save', 'open', 'register']);
     expect(saveLayoutDirectory).toHaveBeenCalledWith('D:/Layouts/yard.layout', true, []);
     expect(openLayout).toHaveBeenCalledWith('D:/Layouts/yard.layout');
   });
@@ -195,10 +198,11 @@ describe('createNewLayout', () => {
       name: '   ',
       path: 'D:/Layouts/yard.layout',
       api: { addKnownLayout },
-      lifecycle: { createNewLayoutCapture, saveLayoutDirectory, openLayout },
+      lifecycle: { closeLayout, createNewLayoutCapture, saveLayoutDirectory, openLayout },
       store,
       onOpened,
     })).rejects.toThrow(/name/i);
+    expect(closeLayout).not.toHaveBeenCalled();
     expect(createNewLayoutCapture).not.toHaveBeenCalled();
   });
 
@@ -207,11 +211,84 @@ describe('createNewLayout', () => {
       name: 'Yard',
       path: '',
       api: { addKnownLayout },
-      lifecycle: { createNewLayoutCapture, saveLayoutDirectory, openLayout },
+      lifecycle: { closeLayout, createNewLayoutCapture, saveLayoutDirectory, openLayout },
       store,
       onOpened,
     })).rejects.toThrow(/path/i);
+    expect(closeLayout).not.toHaveBeenCalled();
     expect(createNewLayoutCapture).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * R7 regression: composed-seam test. The R7 bug — open a layout with a
+ * placeholder, close it, create a new layout, and the placeholder
+ * reappears — was a leak across three modules. Wire the *real*
+ * `layoutLifecycleOrchestrator.closeLayout` into `createNewLayout`'s
+ * lifecycle, seed a placeholder, and assert it is gone before
+ * `saveLayoutDirectory` runs (the leak point in the old flow).
+ */
+describe('createNewLayout + layoutLifecycleOrchestrator integration', () => {
+  it('clears placeholder roster before saving the new layout (R7)', async () => {
+    const { layoutLifecycleOrchestrator } = await import('./layoutLifecycleOrchestrator');
+    const { nodeRoster } = await import('$lib/stores/nodeRoster.svelte');
+    const { layoutStore } = await import('$lib/stores/layout.svelte');
+    const { nodeInfoStore } = await import('$lib/stores/nodeInfo');
+    const { get } = await import('svelte/store');
+
+    layoutStore.reset();
+    nodeRoster.clearLayoutScope();
+    nodeInfoStore.set(new Map());
+
+    const PH = 'placeholder:99999999-2222-4333-8444-555555555555';
+    const map = new Map(get(nodeInfoStore));
+    map.set(PH, {
+      node_id: [0, 0, 0, 0, 0, 0], alias: 0,
+      snip_data: { manufacturer: 'M', model: 'M', hardware_version: '', software_version: '', user_name: 'X', user_description: '' },
+      snip_status: 'Complete', connection_status: 'NotApplicable',
+      last_verified: '', last_seen: '', cdi: null, pip_flags: null, pip_status: 'NotSupported',
+    } as never);
+    nodeInfoStore.set(map);
+    nodeRoster.addPlaceholder({
+      nodeKey: PH, profileStem: 'stem',
+      info: get(nodeInfoStore).get(PH)!,
+      tree: { segments: [] } as never,
+    });
+
+    expect(nodeRoster.placeholderEntries.length).toBe(1);
+
+    const store = makeStore();
+    const saveLayoutDirectory = vi.fn(async () => {
+      // Pin the seam: by the time the new layout is being persisted,
+      // the prior placeholder must already be gone from the frontend
+      // roster (and the backend's clear_layout_scope must have fired).
+      expect(nodeRoster.placeholderEntries.length).toBe(0);
+      return {};
+    });
+
+    await createNewLayout({
+      name: 'Yard',
+      path: 'D:/Layouts/yard.layout',
+      api: { addKnownLayout: vi.fn(async () => []) },
+      lifecycle: {
+        // Wire the real lifecycle orchestrator's closeLayout (legacy_file
+        // mode skips the backend IPC, so this isolates the frontend seam).
+        closeLayout: () => layoutLifecycleOrchestrator.closeLayout({
+          activeMode: 'legacy_file',
+          closeLayoutIpc: vi.fn(async () => ({ closed: true })),
+          clearRecentLayout: vi.fn(async () => {}),
+          connected: false,
+        }).then(() => undefined),
+        createNewLayoutCapture: vi.fn(async () => ({ layoutId: 'l-1', createdAt: 'x' })),
+        saveLayoutDirectory,
+        openLayout: vi.fn(async () => makeOpenResult()),
+      },
+      store,
+      onOpened: vi.fn(),
+    });
+
+    expect(saveLayoutDirectory).toHaveBeenCalledTimes(1);
+    expect(nodeRoster.placeholderEntries.length).toBe(0);
   });
 });
 

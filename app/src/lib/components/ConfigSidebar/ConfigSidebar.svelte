@@ -7,6 +7,7 @@
   import { configReadNodesStore } from '$lib/stores/configReadStatus';
   import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
+  import { effectiveNodeStore } from '$lib/layout';
   import { layoutOpenInProgress } from '$lib/stores/layoutOpenLifecycle';
   import NodeEntry from './NodeEntry.svelte';
   import SegmentEntry from './SegmentEntry.svelte';
@@ -115,6 +116,9 @@
   }
 
   let nodes = $derived($nodeInfoStore);
+  // Spec 014 / S8.5: placeholders now live in `nodeInfoStore` alongside
+  // real discovered nodes (keyed by `placeholder:<uuidv4>`) and flow
+  // through the same sidebar entry list — no separate loop / store.
   let nodeEntries = $derived(buildSidebarNodeEntries(nodes, layoutStore.activeContext?.layoutNodeIds));
   let sidebarState = $derived($configSidebarStore);
   let configReadNodes = $derived($configReadNodesStore);
@@ -123,7 +127,7 @@
   // S8: the threshold-gated list of fully-captured unsaved-new nodes; used in
   // the loop below to flip the per-node "unsaved" dot on once a node crosses
   // the capture threshold. Read as a Set for O(1) lookup.
-  let unsavedInMemoryNodeIdSet = $derived(new Set(layoutStore.unsavedInMemoryNodeIds));
+  let unsavedInMemoryNodeIdSet = $derived(new Set(effectiveNodeStore.unsavedInMemoryNodeIds));
 
   // Subscribe to tree changes to enable reactive updates on hasPendingEdits
   let trees = $derived(nodeTreeStore.trees);

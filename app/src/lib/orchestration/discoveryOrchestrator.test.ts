@@ -314,6 +314,86 @@ describe('handleDiscoveredNode', () => {
     expect(publishNodes).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith('Failed to query node 05.02.01.02.03.00:', error);
   });
+
+  // Spec 014 Step 6c — regression contract.
+  //
+  // After Step 4a the backend events router emits `NodeKey` payloads in
+  // canonical wire form (no dots, uppercase). The orchestrator previously
+  // compared `formatNodeId(node.node_id)` (dotted) to the incoming string;
+  // a canonical-form event would miss every existing entry, causing
+  // `updateOrInsertNodeById` to *append* a duplicate skeleton instead of
+  // merging SNIP/PIP onto the known node. Sidebar names disappeared and
+  // expanding a node showed "Configuration not supported by this node".
+  it('merges SNIP/PIP onto an existing entry when the event arrives in canonical wire form', async () => {
+    const existing = makeNode({
+      alias: 0x123,
+      snip_data: null,
+      snip_status: 'Unknown',
+      pip_flags: null,
+      pip_status: 'Unknown',
+    });
+    let liveNodes: DiscoveredNode[] = [existing];
+    const publishNodes = vi.fn((next: DiscoveredNode[]) => {
+      liveNodes = next;
+    });
+    const snipData = makeSnipData({ user_name: 'Merged Node' });
+    const pipFlags = makePipFlags();
+
+    const result = await handleDiscoveredNode({
+      currentNodes: liveNodes,
+      getCurrentNodes: () => liveNodes,
+      // Canonical wire form — no dots, uppercase — as the events router emits.
+      nodeId: '050201020300',
+      alias: 0x123,
+      registerNode: vi.fn(async () => {}),
+      querySnip: vi.fn(async (): Promise<QuerySnipResponse> => ({ alias: 0x123, snip_data: snipData, status: 'Complete' })),
+      queryPip: vi.fn(async (): Promise<QueryPipResponse> => ({ alias: 0x123, pip_flags: pipFlags, status: 'Complete' })),
+      publishNodes,
+      now: () => '2026-05-30T00:00:00.000Z',
+    });
+
+    expect(result.skipped).toBe(false);
+    expect(result.nodes).toHaveLength(1); // merged, not appended
+    expect(result.nodes[0]).toMatchObject({
+      node_id: [0x05, 0x02, 0x01, 0x02, 0x03, 0x00],
+      alias: 0x123,
+      snip_status: 'Complete',
+      pip_status: 'Complete',
+      snip_data: snipData,
+      pip_flags: pipFlags,
+    });
+  });
+
+  it('discovers new nodes when existing roster has only live nodes (Bug 1 regression: callers must filter placeholders)', async () => {
+    // Bug 1: when `nodes` was derived from `allEntries` (live + placeholder),
+    // placeholder entries with `node_id: []` would crash `keyOf`. The fix is
+    // at the caller: pass `liveNodes` (excluding placeholders) instead of
+    // `nodes` (all entries). This test verifies discovery works when starting
+    // from an empty live-node list — the scenario after opening a layout
+    // that contains only a placeholder.
+    const publishNodes = vi.fn();
+    const snipData = makeSnipData({ user_name: 'Live Node' });
+    const pipFlags = makePipFlags();
+
+    const result = await handleDiscoveredNode({
+      currentNodes: [],
+      nodeId: '05.02.01.02.03.00',
+      alias: 0x321,
+      registerNode: vi.fn(async () => {}),
+      querySnip: vi.fn(async (): Promise<QuerySnipResponse> => ({
+        alias: 0x321, snip_data: snipData, status: 'Complete',
+      })),
+      queryPip: vi.fn(async (): Promise<QueryPipResponse> => ({
+        alias: 0x321, pip_flags: pipFlags, status: 'Complete',
+      })),
+      publishNodes,
+      now: () => '2026-06-06T12:00:00.000Z',
+    });
+
+    expect(result.nodes).toHaveLength(1);
+    expect(result.nodes[0].snip_data?.user_name).toBe('Live Node');
+    expect(result.skipped).toBe(false);
+  });
 });
 
 describe('reconcileRefreshState', () => {

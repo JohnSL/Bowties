@@ -2,6 +2,7 @@ import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
 import { layoutStore } from '$lib/stores/layout.svelte';
+import { effectiveNodeStore } from '$lib/layout';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
 import { hasUnsavedPromptChanges as deriveUnsavedPromptChanges } from '$lib/orchestration/unsavedChangesGuard';
@@ -28,7 +29,7 @@ class ChangeTrackerStore {
       revertedPersistedCount: offlineChangesStore.revertedPersistedCount,
       saveProgressState,
       treeNodeIds: [...nodeTreeStore.trees.keys()],
-      unsavedInMemoryNodeCount: layoutStore.unsavedInMemoryNodeIds.length,
+      unsavedInMemoryNodeCount: effectiveNodeStore.unsavedInMemoryNodeIds.length,
     });
 
     return {
@@ -37,7 +38,7 @@ class ChangeTrackerStore {
         nodeTreeStore.trees.keys(),
         bowtieMetadataStore.isDirty,
         offlineChangesStore.draftCount,
-        layoutStore.isDirty,
+        effectiveNodeStore.isDirty,
         offlineChangesStore.revertedPersistedCount,
       ),
     };

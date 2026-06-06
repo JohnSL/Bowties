@@ -1,0 +1,167 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://bowties.app/schemas/structure-profile-v2.schema.json",
+  "title": "Structure Profile (v2)",
+  "description": "Phase 2 structure profile for an LCC node type (.profile.yaml). v2 introduces first-class Configuration Modes and relaxes v1 event-role and relevance-rule restrictions. The legacy connectorSlots / connectorConstraintVariants / daughterboardReferences / carrierOverrides fields are removed and re-expressed under configurationModes (FR-008).",
+  "type": "object",
+  "required": ["schemaVersion", "nodeType"],
+  "additionalProperties": true,
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "2.0",
+      "description": "Schema version. Must be '2.0' for this contract."
+    },
+    "nodeType": {
+      "type": "object",
+      "required": ["manufacturer", "model"],
+      "properties": {
+        "manufacturer": { "type": "string", "minLength": 1 },
+        "model":        { "type": "string", "minLength": 1 },
+        "firmwareVersionRange": {
+          "type": "object",
+          "properties": {
+            "min": { "type": ["string", "null"] },
+            "max": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "eventRoles": {
+      "type": "array",
+      "default": [],
+      "items": { "$ref": "#/definitions/EventRoleDecl" },
+      "description": "Top-level event-role declarations. May target either a group OR an individual eventid leaf (v1 group-uniform restriction removed)."
+    },
+    "relevanceRules": {
+      "type": "array",
+      "default": [],
+      "items": { "$ref": "#/definitions/RelevanceRule" },
+      "description": "Top-level relevance rules. Controlling field and affected target may live anywhere in the CDI (v1 sibling-only restriction removed). Multi-condition allOf is evaluated."
+    },
+    "configurationModes": {
+      "type": "array",
+      "default": [],
+      "items": { "$ref": "#/definitions/ConfigurationMode" },
+      "description": "First-class Configuration Modes (FR-001). Composed in declaration order, last-write-wins per target (FR-006)."
+    }
+  },
+  "definitions": {
+    "EventRoleDecl": {
+      "type": "object",
+      "required": ["groupPath", "role"],
+      "properties": {
+        "groupPath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "CDI path in '/' + '#N' notation. May resolve to a group OR an individual eventid leaf."
+        },
+        "role": { "enum": ["Producer", "Consumer"] },
+        "label": { "type": "string" }
+      }
+    },
+    "RelevanceRule": {
+      "type": "object",
+      "required": ["id", "affectedTarget", "allOf", "explanation"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "affectedTarget": {
+          "type": "string",
+          "minLength": 1,
+          "description": "CDI path of the target rendered irrelevant. May be a group, a single replication instance, or a leaf."
+        },
+        "allOf": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/RelevanceCondition" }
+        },
+        "explanation": { "type": "string", "minLength": 1 }
+      }
+    },
+    "RelevanceCondition": {
+      "type": "object",
+      "required": ["field", "irrelevantWhen"],
+      "properties": {
+        "field": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Any CDI field path (cross-segment allowed). Same '/' + '#N' syntax as groupPath."
+        },
+        "irrelevantWhen": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "integer" }
+        }
+      }
+    },
+    "ConfigurationMode": {
+      "type": "object",
+      "required": ["id", "label", "selector", "variants"],
+      "properties": {
+        "id":    { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "selector": { "$ref": "#/definitions/Selector" },
+        "variants": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/Variant" }
+        }
+      }
+    },
+    "Selector": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "fieldPath"],
+          "properties": {
+            "kind":      { "const": "enumField" },
+            "fieldPath": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "slotId", "affectedPaths"],
+          "properties": {
+            "kind":               { "const": "structuralSlot" },
+            "slotId":             { "type": "string", "minLength": 1 },
+            "affectedPaths":      {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "allowNoneInstalled": { "type": "boolean", "default": false }
+          }
+        }
+      ]
+    },
+    "Variant": {
+      "type": "object",
+      "required": ["id", "label", "overlay"],
+      "properties": {
+        "id":      { "type": "string", "minLength": 1 },
+        "label":   { "type": "string", "minLength": 1 },
+        "overlay": { "$ref": "#/definitions/Overlay" }
+      }
+    },
+    "Overlay": {
+      "type": "object",
+      "properties": {
+        "eventRoles": {
+          "type": "array",
+          "default": [],
+          "items": { "$ref": "#/definitions/EventRoleDecl" }
+        },
+        "relevanceRules": {
+          "type": "array",
+          "default": [],
+          "items": { "$ref": "#/definitions/RelevanceRule" }
+        },
+        "structuralConstraints": {
+          "type": "array",
+          "default": [],
+          "description": "Constraint rules in the same shape as v1 ConnectorConstraintRule (allowValues / denyValues / showSection / hideSection / readOnly). Replaces v1 connectorConstraintVariants + carrierOverrides."
+        }
+      }
+    }
+  }
+}

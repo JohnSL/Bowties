@@ -34,6 +34,8 @@ vi.mock('@tauri-apps/api/event', () => ({
 // ─── Mock invoke so get_node_tree returns a valid tree ────────────────────────
 
 const NODE_ID = '05.02.01.00.00.00';
+// Canonical form that the store normalizes to before invoking IPC (ADR-0010).
+const NODE_ID_CANONICAL = '050201000000';
 
 const MOCK_TREE: NodeConfigTree = {
   nodeId: NODE_ID,
@@ -65,7 +67,7 @@ beforeEach(async () => {
 describe('nodeTreeStore — node-tree-updated', () => {
   it('loads tree for a newly discovered node when backend emits node-tree-updated after CDI scan', async () => {
     // Precondition: store is empty, node has never been expanded
-    expect(nodeTreeStore.trees.has(NODE_ID)).toBe(false);
+    expect(nodeTreeStore.hasTree(NODE_ID)).toBe(false);
 
     // Register the listener (simulates app startup)
     await nodeTreeStore.startListening();
@@ -77,7 +79,7 @@ describe('nodeTreeStore — node-tree-updated', () => {
     // Currently the listener exits early because `!_trees.has(NODE_ID)`,
     // so the tree is never fetched — the store should fetch it regardless.
     await vi.waitFor(() => {
-      expect(nodeTreeStore.trees.has(NODE_ID)).toBe(true);
+      expect(nodeTreeStore.hasTree(NODE_ID)).toBe(true);
     }, { timeout: 1000 });
 
     expect(nodeTreeStore.getTree(NODE_ID)).toMatchObject({ nodeId: NODE_ID });
@@ -86,7 +88,7 @@ describe('nodeTreeStore — node-tree-updated', () => {
   it('refreshes tree for a node that is already loaded when backend emits node-tree-updated', async () => {
     // Pre-populate the store as if the user had already expanded this node
     nodeTreeStore.setTree(NODE_ID, MOCK_TREE);
-    expect(nodeTreeStore.trees.has(NODE_ID)).toBe(true);
+    expect(nodeTreeStore.hasTree(NODE_ID)).toBe(true);
 
     await nodeTreeStore.startListening();
     expect(capturedNodeTreeListener).not.toBeNull();
@@ -96,7 +98,7 @@ describe('nodeTreeStore — node-tree-updated', () => {
 
     // This already works today — the existing guard `if (_trees.has(nodeId))` allows it
     await vi.waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith('get_node_tree', { nodeId: NODE_ID });
+      expect(invoke).toHaveBeenCalledWith('get_node_tree', { nodeId: NODE_ID_CANONICAL });
     }, { timeout: 1000 });
   });
 });
@@ -115,10 +117,36 @@ describe('loadTree without connector metadata', () => {
 
     const tree = await nodeTreeStore.loadTree(NODE_ID);
 
-    expect(invoke).toHaveBeenCalledWith('get_node_tree', { nodeId: NODE_ID });
+    expect(invoke).toHaveBeenCalledWith('get_node_tree', { nodeId: NODE_ID_CANONICAL });
     expect(tree?.connectorProfile ?? null).toBe(null);
     expect(tree?.connectorProfileWarning ?? null).toBe(null);
     expect(nodeTreeStore.getSegments(NODE_ID)).toHaveLength(1);
+  });
+});
+
+// Step 6a behavior pin: the store accepts a `NodeKey` and invokes
+// the backend with the canonical wire form regardless of how the caller
+// constructed the key. Prevents stringly-typed comparison drift from
+// reappearing as the migration extends through 6b\u20136e.
+describe('loadTree accepts NodeKey', () => {
+  it('invokes get_node_tree with canonical wire form for a key parsed from dotted input', async () => {
+    const { nodeKey } = await import('$lib/utils/nodeKey');
+    const key = nodeKey(NODE_ID); // dotted input
+
+    await nodeTreeStore.loadTree(key);
+
+    expect(invoke).toHaveBeenCalledWith('get_node_tree', { nodeId: NODE_ID_CANONICAL });
+  });
+
+  it('looks up the cached tree via the same branded key', async () => {
+    const { nodeKey } = await import('$lib/utils/nodeKey');
+    const dottedKey = nodeKey(NODE_ID);
+    const canonicalKey = nodeKey(NODE_ID_CANONICAL);
+
+    await nodeTreeStore.loadTree(dottedKey);
+
+    expect(nodeTreeStore.hasTree(canonicalKey)).toBe(true);
+    expect(nodeTreeStore.getTree(canonicalKey)).toBeDefined();
   });
 });
 

@@ -22,6 +22,12 @@ pub struct MenuHandles {
     pub save_layout:      MenuItem<Wry>,
     pub save_layout_as:   MenuItem<Wry>,
     pub sync_to_bus:      MenuItem<Wry>,
+    /// Spec 014 / S8 — "Add Placeholder Board…". Enabled only when an
+    /// offline layout is the active context.
+    pub add_placeholder_board: MenuItem<Wry>,
+    /// Spec 014 / S8.5 / T11 — "Delete Placeholder Board…". Enabled only
+    /// when the currently selected node is an in-memory placeholder board.
+    pub delete_placeholder_board: MenuItem<Wry>,
     pub diagnostics:      MenuItem<Wry>,
 }
 
@@ -45,6 +51,8 @@ pub fn build_app_menu(app: &AppHandle<Wry>) -> tauri::Result<(tauri::menu::Menu<
     let save_layout_item    = MenuItem::with_id(app, "menu-save-layout",    "Save Layout",           false, Some("CmdOrCtrl+S"))?;
     let save_layout_as_item = MenuItem::with_id(app, "menu-save-layout-as", "Save Layout As\u{2026}", false, Some("CmdOrCtrl+Shift+S"))?;
     let sync_to_bus_item    = MenuItem::with_id(app, "menu-sync-to-bus",    "Sync to Bus",           false, None::<&str>)?;
+    let add_placeholder_item    = MenuItem::with_id(app, "menu-add-placeholder-board",    "Add Placeholder Board\u{2026}",    false, None::<&str>)?;
+    let delete_placeholder_item = MenuItem::with_id(app, "menu-delete-placeholder-board", "Delete Placeholder Board\u{2026}", false, None::<&str>)?;
 
     let file_submenu = SubmenuBuilder::new(app, "File")
         .item(&disconnect_item)
@@ -55,6 +63,9 @@ pub fn build_app_menu(app: &AppHandle<Wry>) -> tauri::Result<(tauri::menu::Menu<
         .item(&save_layout_item)
         .item(&save_layout_as_item)
         .item(&sync_to_bus_item)
+        .separator()
+        .item(&add_placeholder_item)
+        .item(&delete_placeholder_item)
         .separator()
         .item(&exit_item)
         .build()?;
@@ -105,6 +116,8 @@ pub fn build_app_menu(app: &AppHandle<Wry>) -> tauri::Result<(tauri::menu::Menu<
         save_layout:     save_layout_item,
         save_layout_as:  save_layout_as_item,
         sync_to_bus:     sync_to_bus_item,
+        add_placeholder_board: add_placeholder_item,
+        delete_placeholder_board: delete_placeholder_item,
         diagnostics:     diagnostics_item,
     };
 

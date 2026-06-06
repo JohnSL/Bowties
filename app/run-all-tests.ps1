@@ -8,9 +8,9 @@ $failedTests = @()
 
 # Per-project counters
 $results = [ordered]@{
-    'vitest'    = @{ Passed = 0; Failed = 0 }
-    'lcc-rs'    = @{ Passed = 0; Failed = 0 }
-    'src-tauri' = @{ Passed = 0; Failed = 0 }
+    'vitest'       = @{ Passed = 0; Failed = 0 }
+    'bowties-core' = @{ Passed = 0; Failed = 0 }
+    'lcc-rs'       = @{ Passed = 0; Failed = 0 }
 }
 
 # --- Vitest (Svelte / TypeScript) ---
@@ -64,8 +64,8 @@ function Invoke-CargoTest {
     }
 }
 
-Invoke-CargoTest -Label 'lcc-rs'    -ManifestPath "$PSScriptRoot\..\lcc-rs\Cargo.toml"
-Invoke-CargoTest -Label 'src-tauri' -ManifestPath "$PSScriptRoot\src-tauri\Cargo.toml"
+Invoke-CargoTest -Label 'bowties-core' -ManifestPath "$PSScriptRoot\..\bowties-core\Cargo.toml"
+Invoke-CargoTest -Label 'lcc-rs'       -ManifestPath "$PSScriptRoot\..\lcc-rs\Cargo.toml"
 
 # --- Summary ---
 $totalPassed = ($results.Values | ForEach-Object { $_.Passed } | Measure-Object -Sum).Sum
@@ -83,16 +83,16 @@ if ($failedTests.Count -gt 0) {
 }
 
 Write-Host ""
-Write-Host ("  {0,-12} {1,8} {2,8}" -f 'Project', 'Passed', 'Failed')
-Write-Host ("  {0,-12} {1,8} {2,8}" -f '-------', '------', '------')
+Write-Host ("  {0,-14} {1,8} {2,8}" -f 'Project', 'Passed', 'Failed')
+Write-Host ("  {0,-14} {1,8} {2,8}" -f '---------', '------', '------')
 foreach ($key in $results.Keys) {
     $p = $results[$key].Passed
     $f = $results[$key].Failed
     $color = if ($f -gt 0) { 'Red' } else { 'Green' }
-    Write-Host ("  {0,-12} {1,8} {2,8}" -f $key, $p, $f) -ForegroundColor $color
+    Write-Host ("  {0,-14} {1,8} {2,8}" -f $key, $p, $f) -ForegroundColor $color
 }
-Write-Host ("  {0,-12} {1,8} {2,8}" -f '-------', '------', '------')
-Write-Host ("  {0,-12} {1,8} {2,8}" -f 'TOTAL', $totalPassed, $totalFailed) -ForegroundColor $(if ($totalFailed -gt 0) { 'Red' } else { 'Green' })
+Write-Host ("  {0,-14} {1,8} {2,8}" -f '---------', '------', '------')
+Write-Host ("  {0,-14} {1,8} {2,8}" -f 'TOTAL', $totalPassed, $totalFailed) -ForegroundColor $(if ($totalFailed -gt 0) { 'Red' } else { 'Green' })
 Write-Host ""
 
 if ($totalFailed -gt 0) {

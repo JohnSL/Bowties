@@ -31,6 +31,7 @@ import type { TreeConfigValue } from '$lib/types/nodeTree';
 // ── Read model ───────────────────────────────────────────────────────────────
 
 export { effectiveLayoutStore } from './effectiveLayoutStore.svelte';
+export { effectiveNodeStore, type NodeOrigin } from './effectiveNodeStore.svelte';
 
 /**
  * `makeValueResolver(nodeId)` returns a `(leaf) → value` closure suitable for

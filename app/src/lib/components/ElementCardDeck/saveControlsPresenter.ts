@@ -71,17 +71,22 @@ export function deriveSaveControlsViewState(args: {
   const hasConfigEdits = dirtyCount > 0;
   const hasMetadataEdits = bowtieMetadataIsDirty;
   const metadataEditCount = hasMetadataEdits ? Math.max(1, bowtieMetadataEditCount) : 0;
-  const hasLayoutOnlyEdits = layoutIsDirty && !hasMetadataEdits;
+  const hasUnsavedNewNodes = unsavedInMemoryNodeCount > 0;
+  // `layoutIsDirty` covers ONLY LayoutFile-struct edits (post-ADR-0011).
+  // Unsaved-new-node additions are a separate signal that also counts as a
+  // "layout edit" for display purposes.
+  const hasLayoutOrNewNodeEdits = layoutIsDirty || hasUnsavedNewNodes;
+  const hasLayoutOnlyEdits = hasLayoutOrNewNodeEdits && !hasMetadataEdits;
   // S8: each fully-captured unsaved-in-memory addition counts as a distinct
   // layout edit. If the layout is dirty for any reason and we have no node
   // additions to attribute the dirtiness to, fall back to a count of 1 so
   // legacy non-node layout edits (e.g. element-deck reordering) still show.
   const layoutOnlyEditCount = hasLayoutOnlyEdits
-    ? (unsavedInMemoryNodeCount > 0 ? unsavedInMemoryNodeCount : 1)
+    ? (hasUnsavedNewNodes ? unsavedInMemoryNodeCount : 1)
     : 0;
   const hasRevertedPersisted = revertedPersistedCount > 0;
   const hasOfflineEdits = layoutIsOfflineMode && dirtyCount > 0;
-  const hasEdits = hasConfigEdits || hasMetadataEdits || hasOfflineEdits || hasRevertedPersisted || layoutIsDirty;
+  const hasEdits = hasConfigEdits || hasMetadataEdits || hasOfflineEdits || hasRevertedPersisted || hasLayoutOrNewNodeEdits;
   const pendingEditCount = dirtyCount + revertedPersistedCount + metadataEditCount + layoutOnlyEditCount;
   const pendingHintText = `${pendingEditCount} ${layoutIsOfflineMode ? 'unsaved edit' : 'unsaved change'}${pendingEditCount === 1 ? '' : 's'}`;
   const isSaving = saveProgressState === 'saving';

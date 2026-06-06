@@ -5,30 +5,28 @@
  * state model for bowtie creation, editing, and persistence.
  */
 
-import type { ConnectorSelectionStatus } from '$lib/types/connectorProfile';
-
 // ── Layout File Types (YAML persistence) ─────────────────────────────────────
 
-export interface LayoutConnectorSelectionRecord {
-  selectedDaughterboardId?: string;
-  status: ConnectorSelectionStatus;
-  sourceProfileVersion?: string;
-}
-
-export interface LayoutNodeHardwareSelectionSet {
-  carrierKey: string;
-  slotSelections: Record<string, LayoutConnectorSelectionRecord>;
-  updatedAt?: string;
-}
-
-export type LayoutConnectorSelections = Record<string, LayoutNodeHardwareSelectionSet>;
+/**
+ * Configuration-mode variant selections per node (Spec 014, ADR-0008).
+ *
+ * Outer key is a `NodeKey` — canonical NodeID (uppercase, no dots) for real
+ * nodes or `placeholder:<uuidv4>` for placeholder boards. Inner key is the
+ * `ConfigurationMode` id; value is the chosen `VariantId`.
+ */
+export type LayoutNodeModeSelections = Record<string, Record<string, string>>;
 
 /** Root structure matching YAML layout file */
 export interface LayoutFile {
   schemaVersion: string;
   bowties: Record<string, BowtieMetadata>;
   roleClassifications: Record<string, RoleClassification>;
-  connectorSelections: LayoutConnectorSelections;
+  /**
+   * Configuration-mode variant selections (Spec 014 / S6). Replaces the
+   * pre-release `connectorSelections` field. Optional because freshly
+   * created layouts may omit the field entirely.
+   */
+  nodeModeSelections?: LayoutNodeModeSelections;
 }
 
 /** Metadata for a single bowtie stored in layout YAML */
@@ -63,13 +61,20 @@ export type LayoutEditDelta =
   | { type: 'addTag'; eventIdHex: string; tag: string }
   | { type: 'removeTag'; eventIdHex: string; tag: string }
   | { type: 'classifyRole'; key: string; role: string }
-  | { type: 'setConnectorSelection'; nodeId: string; selection: LayoutNodeHardwareSelectionSet }
   | { type: 'adoptEventId'; oldEventIdHex: string; newEventIdHex: string }
   /**
-   * Promote a discovered node into the layout's saved node roster (S8).
-   * `nodeIdHex` must be canonical (uppercase, no dots), e.g. `020157000001`.
+   * Promote a node (real or placeholder) into the layout's saved node roster
+   * (S8 / S8.11).  `nodeKey` is the canonical NodeID (uppercase hex, no dots)
+   * for real nodes or `"placeholder:<uuid>"` for synthesized placeholders.
    */
-  | { type: 'addNode'; nodeIdHex: string };
+  | { type: 'addNode'; nodeKey: string }
+  /**
+   * Remove a previously-persisted node from the layout's saved roster.
+   * Symmetric to `addNode` (S8). The backend drops the node from its
+   * permitted-write set; the companion `nodes/<key>.yaml` file is then
+   * pruned by the normal save flow.
+   */
+  | { type: 'removeNode'; nodeKey: string };
 
 // ── Bowtie State ──────────────────────────────────────────────────────────────
 

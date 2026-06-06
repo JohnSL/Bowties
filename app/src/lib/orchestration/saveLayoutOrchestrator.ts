@@ -17,7 +17,7 @@
  */
 
 import type { LayoutFile, LayoutEditDelta } from '$lib/types/bowtie';
-import type { SaveLayoutResult, SaveWithBusWriteResult } from '$lib/api/layout';
+import type { SaveLayoutResult, SaveWithBusWriteResult, OfflineNodeSnapshot } from '$lib/api/layout';
 import type { ActiveLayoutContext } from '$lib/stores/layout.svelte';
 import { normalizeLayoutTitle } from '$lib/utils/layoutPath';
 
@@ -49,15 +49,22 @@ export interface SaveLayoutOrchestratedArgs {
   /** Edit deltas to send to the backend (ADR-0002). */
   deltas: LayoutEditDelta[];
   /**
-   * Discovered node IDs (canonical, uppercase, no dots) that are visible to
-   * the frontend but not yet in the saved layout roster (S8). The orchestrator
-   * promotes them by appending `{ type: 'addNode', nodeIdHex }` deltas before
-   * sending the save to the backend.
+   * Node keys (real or placeholder) that are visible to the frontend but
+   * not yet persisted in the layout. The orchestrator promotes them by
+   * appending `{ type: 'addNode', nodeKey }` deltas before sending the
+   * save to the backend.
    *
-   * Optional for backwards compatibility — when omitted, no AddNode deltas
-   * are added and the save behaves exactly as before.
+   * Replaces the S8 `discoveredOnlyNodeIds` + S8.5 `unsavedPlaceholders`
+   * with a single unified set (S8.11).
    */
-  discoveredOnlyNodeIds?: string[];
+  inMemorySnapshotKeys?: string[];
+  /**
+   * Node keys that were persisted in the open layout but have been
+   * removed in-memory and not yet saved. The orchestrator appends a
+   * `{ type: 'removeNode', nodeKey }` delta for each before sending.
+   * Symmetric to `inMemorySnapshotKeys` (S8 / Bug 3).
+   */
+  inMemoryRemovedKeys?: string[];
   /** Optional: flush pending offline changes to backend before saving. */
   flushPending?: () => Promise<void>;
   /** Update the active layout context in the store after save. */
@@ -77,6 +84,27 @@ export interface SaveLayoutOrchestratedArgs {
    * draft layer simply omit it.
    */
   clearPersistedDrafts?: () => void;
+  /**
+   * Drop in-memory placeholder roster entries that have been persisted by
+   * this save (S8.11). Receives the list of placeholder `nodeKey`s that
+   * were among the `inMemorySnapshotKeys`. Called after the rebuilt catalog
+   * / layout have been applied, mirroring `clearPersistedDrafts`.
+   *
+   * Optional for backwards compatibility.
+   */
+  clearPersistedPlaceholders?: (nodeKeys: string[]) => void;
+  /**
+   * Drop the persisted-removals set after a successful save. Symmetric to
+   * `clearPersistedPlaceholders`.
+   */
+  clearPersistedRemovals?: () => void;
+  /**
+   * Reload offline-change rows from the backend after a successful save.
+   * Only supplied in offline mode — the backend rewrites pending changes
+   * during the save, so the frontend mirror must be re-pulled. Online
+   * mode omits this callback (no offline-change state to reload).
+   */
+  reloadOfflineChanges?: () => Promise<void>;
 }
 
 export interface SaveLayoutOrchestratedResult {
@@ -84,6 +112,9 @@ export interface SaveLayoutOrchestratedResult {
   warnings: string[];
   /** Bus write result (only present when saveWithBusWrites was used). */
   busWriteResult?: SaveWithBusWriteResult['busWrites'];
+  /** Node snapshots persisted by this save. The page caches these so
+   *  disconnect can rehydrate the offline view (Bug 2b fix). */
+  nodeSnapshots: OfflineNodeSnapshot[];
 }
 
 /**
@@ -103,36 +134,42 @@ export async function saveLayoutOrchestrated({
   hydrateLayout,
   path,
   deltas,
-  discoveredOnlyNodeIds,
+  inMemorySnapshotKeys,
+  inMemoryRemovedKeys,
   flushPending,
   setActiveContext,
   updatePartialCaptureNodes,
   getPendingChangeCount,
   clearPersistedDrafts,
+  clearPersistedPlaceholders,
+  clearPersistedRemovals,
+  reloadOfflineChanges,
 }: SaveLayoutOrchestratedArgs): Promise<SaveLayoutOrchestratedResult> {
   // 1. Flush pending offline changes (if applicable)
   if (flushPending) {
     await flushPending();
   }
 
-  // S8: promote any unsaved discovered nodes into the layout roster by
-  // appending AddNode deltas. The backend uses these (plus the previously
-  // persisted snapshots) to compute the set of nodes that are permitted to
-  // be written into the companion `nodes/` directory.
-  const effectiveDeltas: LayoutEditDelta[] = discoveredOnlyNodeIds && discoveredOnlyNodeIds.length > 0
-    ? [
-        ...deltas,
-        ...discoveredOnlyNodeIds.map((nodeIdHex) => ({
-          type: 'addNode' as const,
-          nodeIdHex,
-        })),
-      ]
-    : deltas;
+  // S8.11: promote any in-memory nodes (real or placeholder) into the
+  // layout roster by appending unified `AddNode { nodeKey }` deltas.
+  // The backend uses these (plus the previously persisted snapshots) to
+  // compute the set of nodes permitted in the companion `nodes/` directory.
+  const addNodeDeltas: LayoutEditDelta[] = inMemorySnapshotKeys
+    ? inMemorySnapshotKeys.map((nodeKey) => ({ type: 'addNode' as const, nodeKey }))
+    : [];
+  const removeNodeDeltas: LayoutEditDelta[] = inMemoryRemovedKeys
+    ? inMemoryRemovedKeys.map((nodeKey) => ({ type: 'removeNode' as const, nodeKey }))
+    : [];
+  const effectiveDeltas: LayoutEditDelta[] =
+    addNodeDeltas.length === 0 && removeNodeDeltas.length === 0
+      ? deltas
+      : [...deltas, ...addNodeDeltas, ...removeNodeDeltas];
 
   let warnings: string[];
   let busWriteResult: SaveWithBusWriteResult['busWrites'] | undefined;
   let persistedLayout: LayoutFile;
   let persistedNodeIds: string[];
+  let nodeSnapshots: OfflineNodeSnapshot[];
 
   if (saveWithBusWrites) {
     // ── Online path: backend owns all three phases + catalog rebuild ──────
@@ -141,6 +178,7 @@ export async function saveLayoutOrchestrated({
     busWriteResult = result.busWrites ?? undefined;
     persistedLayout = result.layout;
     persistedNodeIds = result.persistedNodeIds;
+    nodeSnapshots = result.nodeSnapshots;
   } else {
     // ── Offline path: explicit save → rebuild → set catalog ───────────────
     if (!saveFile || !rebuildCatalog || !setCatalog) {
@@ -152,6 +190,7 @@ export async function saveLayoutOrchestrated({
     warnings = result.warnings;
     persistedLayout = result.layout;
     persistedNodeIds = result.persistedNodeIds;
+    nodeSnapshots = result.nodeSnapshots;
 
     const catalog = await rebuildCatalog(persistedLayout);
     setCatalog(catalog);
@@ -187,5 +226,31 @@ export async function saveLayoutOrchestrated({
     clearPersistedDrafts();
   }
 
-  return { warnings, busWriteResult };
+  // 7. S8.5 / T8: drop in-memory placeholder entries whose snapshots are
+  //    now persisted on disk. The frontend stores (`nodeInfoStore` etc.)
+  //    keep the placeholder under the same NodeKey — it just stops being
+  //    "in-memory only" from the save-flush composer's perspective.
+  if (clearPersistedPlaceholders && inMemorySnapshotKeys && inMemorySnapshotKeys.length > 0) {
+    // Only placeholder keys need clearing — real nodes don't have in-memory
+    // roster entries that need cleanup.
+    const placeholderKeys = inMemorySnapshotKeys.filter((k) => k.startsWith('placeholder:'));
+    if (placeholderKeys.length > 0) {
+      clearPersistedPlaceholders(placeholderKeys);
+    }
+  }
+
+  // 8. Drop the persisted-removals set — the backend has now applied the
+  //    `removeNode` deltas and pruned the corresponding node files.
+  if (clearPersistedRemovals) {
+    clearPersistedRemovals();
+  }
+
+  // 9. Offline mode only: reload offline-change rows from the backend so
+  //    the frontend mirror matches the rewritten pending set. Online mode
+  //    omits this callback.
+  if (reloadOfflineChanges) {
+    await reloadOfflineChanges();
+  }
+
+  return { warnings, busWriteResult, nodeSnapshots };
 }

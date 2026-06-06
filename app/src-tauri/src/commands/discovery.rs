@@ -86,14 +86,10 @@ pub async fn register_node(
 ) -> Result<(), String> {
     let _node_alias = NodeAlias::new(alias).map_err(|e| format!("Invalid alias: {}", e))?;
 
-    let bytes: Vec<u8> = node_id_hex
-        .split('.')
-        .map(|s| u8::from_str_radix(s, 16).map_err(|e| format!("Bad node ID byte '{}': {}", s, e)))
-        .collect::<Result<Vec<_>, _>>()?;
-    if bytes.len() != 6 {
-        return Err(format!("Expected 6 bytes in node ID, got {}", bytes.len()));
-    }
-    let node_id = NodeID::from_slice(&bytes).map_err(|e| e.to_string())?;
+    // Accept both dotted (`02.01.57.00.02.D9`) and canonical (`0201570002D9`)
+    // forms — `NodeID::from_hex_string` handles both.
+    let node_id = NodeID::from_hex_string(&node_id_hex)
+        .map_err(|e| format!("Bad node ID '{}': {}", node_id_hex, e))?;
 
     // Create proxy in the registry (or get existing)
     let _ = state.node_registry.get_or_create(node_id, alias).await?;
@@ -112,7 +108,7 @@ pub async fn query_snip_single(
     let proxy = state.node_registry.get_by_alias(alias).await
         .ok_or_else(|| format!("No node registered with alias 0x{:03X}", alias))?;
 
-    eprintln!("[SNIP] alias=0x{:03X}  node_id={}", alias, proxy.node_id);
+    eprintln!("[SNIP] alias=0x{:03X}  node_id={}", alias, proxy.node_key());
 
     let (snip_data, status) = proxy.query_snip().await?;
 
@@ -154,7 +150,7 @@ pub async fn query_snip_batch(
         let proxy = proxy.clone();
         join_set.spawn(async move {
             let result = proxy.query_snip().await;
-            (alias, proxy.node_id, result)
+            (alias, proxy.node_key(), result)
         });
     }
 
@@ -352,7 +348,7 @@ pub async fn query_pip_single(
             format!("No node registered with alias 0x{:03X}", alias)
         })?;
 
-    eprintln!("[PIP] alias=0x{:03X}  node_id={}", alias, proxy.node_id);
+    eprintln!("[PIP] alias=0x{:03X}  node_id={}", alias, proxy.node_key());
 
     let (pip_flags, status) = proxy.query_pip().await?;
 
@@ -393,7 +389,7 @@ pub async fn query_pip_batch(
         let proxy = proxy.clone();
         join_set.spawn(async move {
             let result = proxy.query_pip().await;
-            (alias, proxy.node_id, result)
+            (alias, proxy.node_key(), result)
         });
     }
 

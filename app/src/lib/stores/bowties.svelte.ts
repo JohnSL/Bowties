@@ -25,6 +25,7 @@ import { nodeInfoStore } from '$lib/stores/nodeInfo';
 import { resolveNodeDisplayName as resolveSharedNodeDisplayName } from '$lib/utils/nodeDisplayName';
 import { isPlaceholderEventId } from '$lib/utils/eventIds';
 import { isWellKnownEvent } from '$lib/utils/formatters';
+import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
 
 // ─── Store class ─────────────────────────────────────────────────────────────
 
@@ -97,7 +98,7 @@ class BowtieCatalogStore {
     for (const card of this._catalog.bowties) {
       if (!this._isDisplayable(card)) continue;
       for (const entry of [...card.producers, ...card.consumers, ...card.ambiguous_entries]) {
-        const key = `${entry.node_id}:${entry.element_path.join('/')}`;
+        const key = `${entry.node_key}:${entry.element_path.join('/')}`;
         if (!map.has(key)) {
           map.set(key, card);
         }
@@ -168,13 +169,14 @@ class BowtieCatalogStore {
    */
   getRoleForSlot(nodeId: string, elementPath: string[]): 'Producer' | 'Consumer' | null {
     if (!this._catalog) return null;
-    const key = `${nodeId}:${elementPath.join('/')}`;
+    const canonicalId = toCanonicalNodeKey(nodeId);
+    const key = `${canonicalId}:${elementPath.join('/')}`;
     for (const card of this._catalog.bowties) {
       for (const entry of card.producers) {
-        if (`${entry.node_id}:${entry.element_path.join('/')}` === key) return 'Producer';
+        if (`${entry.node_key}:${entry.element_path.join('/')}` === key) return 'Producer';
       }
       for (const entry of card.consumers) {
-        if (`${entry.node_id}:${entry.element_path.join('/')}` === key) return 'Consumer';
+        if (`${entry.node_key}:${entry.element_path.join('/')}` === key) return 'Consumer';
       }
     }
     return null;
@@ -296,13 +298,13 @@ export function buildEffectiveBowtiePreview(): EditableBowtiePreview {
       // Filter out entries already present in the catalog card using Set-based lookup
       const existingKeys = new Set<string>();
       for (const e of [...card.producers, ...card.consumers, ...card.ambiguous_entries]) {
-        existingKeys.add(`${e.node_id}:${e.element_path.join('/')}`);
+        existingKeys.add(`${e.node_key}:${e.element_path.join('/')}`);
       }
       const newProducers = treeProducers.filter(p =>
-        !existingKeys.has(`${p.node_id}:${p.element_path.join('/')}`)
+        !existingKeys.has(`${p.node_key}:${p.element_path.join('/')}`)
       );
       const newConsumers = treeConsumers.filter(c =>
-        !existingKeys.has(`${c.node_id}:${c.element_path.join('/')}`)
+        !existingKeys.has(`${c.node_key}:${c.element_path.join('/')}`)
       );
 
       // Display filter: only show bowties with ≥2 entries, a name, or
@@ -321,7 +323,7 @@ export function buildEffectiveBowtiePreview(): EditableBowtiePreview {
 
       const newEntryKeys = new Set<string>();
       for (const e of [...newProducers, ...newConsumers]) {
-        newEntryKeys.add(`${e.node_id}:${e.element_path.join('/')}`);
+        newEntryKeys.add(`${e.node_key}:${e.element_path.join('/')}`);
       }
 
       previews.push({
@@ -424,14 +426,14 @@ export function buildEffectiveBowtiePreview(): EditableBowtiePreview {
  * Falls back to element_path.join('.') when the tree or leaf cannot be found.
  */
 function enrichEntryLabel(entry: EventSlotEntry): EventSlotEntry {
-  const tree = nodeTreeStore.getTree(entry.node_id);
+  const tree = nodeTreeStore.getTree(entry.node_key);
   if (!tree) return { ...entry, element_label: entry.element_label ?? entry.element_path.join('.') };
   const leaf = findLeafByPath(tree, entry.element_path);
   if (!leaf) return { ...entry, element_label: entry.element_label ?? entry.element_path.join('.') };
 
   /** Resolve leaf value through draft → offlinePending → baseline layers. */
   const resolveValue = (l: LeafConfigNode): TreeConfigValue | null => {
-    const key = editKeyForLeaf(entry.node_id, l.space, l.address);
+    const key = editKeyForLeaf(entry.node_key, l.space, l.address);
     return configChangesStore.overrideValue(key) ?? l.value;
   };
 
@@ -461,11 +463,11 @@ function enrichCardEntries(card: import('../api/tauri').BowtieCard): {
  * the leaf cannot be found (conservative: keep the entry).
  */
 function isEntryStillActive(entry: import('../api/tauri').EventSlotEntry, eventIdHex: string): boolean {
-  const tree = nodeTreeStore.getTree(entry.node_id);
+  const tree = nodeTreeStore.getTree(entry.node_key);
   if (!tree) return true;
   const leaf = findLeafByPath(tree, entry.element_path);
   if (!leaf) return true;
-  const key = editKeyForLeaf(entry.node_id, leaf.space, leaf.address);
+  const key = editKeyForLeaf(entry.node_key, leaf.space, leaf.address);
   const val = configChangesStore.visibleValue(key) ?? leaf.value;
   if (val?.type !== 'eventId') return false;
   return val.hex === eventIdHex;
@@ -527,7 +529,7 @@ function buildTreeEntriesIndex(): Map<string, { producers: EventSlotEntry[]; con
       const slotKey = `${nodeId}:${leaf.path.join('/')}`;
       const classifiedRole = bowtieMetadataStore.getRoleClassification(slotKey)?.role;
       const entry: EventSlotEntry = {
-        node_id: nodeId,
+        node_key: nodeId,
         node_name: nodeName,
         element_path: leaf.path,
         element_label: buildElementLabel(tree, leaf, resolveValue),
@@ -561,7 +563,8 @@ function buildTreeEntriesIndex(): Map<string, { producers: EventSlotEntry[]; con
  */
 function resolveNodeDisplayName(nodeId: string): string {
   const nodes = get(nodeInfoStore);
-  return resolveSharedNodeDisplayName(nodeId, nodes.get(nodeId));
+  const key = toCanonicalNodeKey(nodeId);
+  return resolveSharedNodeDisplayName(nodeId, nodes.get(key));
 }
 
 /** Singleton catalog store (the editable preview is now a pure function;

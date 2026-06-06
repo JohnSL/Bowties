@@ -51,9 +51,108 @@ pub struct GetCdiXmlResponse {
     pub retrieved_at: Option<String>,
 }
 
-/// Generate CDI cache file path based on node SNIP data
-/// 
-/// Uses format: {manufacturer}_{model}_{software_version}.cdi.xml
+/// Classification of where to source CDI XML for a given `NodeKey`
+/// (Spec 014, ADR-0008).
+///
+/// Pure policy decision — does no I/O. `resolve_cdi_source` dispatches on
+/// this to either fetch from a live node (`LiveNode`) or read a bundled
+/// XML file from the profiles directory (`Bundled`).
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CdiSource {
+    /// Real LCC node — fetch via the existing memory-config pipeline.
+    /// Carries the canonical 12-hex node-id string (without dots).
+    LiveNode(String),
+    /// Placeholder board — load the bundled CDI XML keyed by profile stem
+    /// (e.g. `"RR-CirKits_Tower-LCC"`).
+    Bundled { profile_stem: String },
+}
+
+/// Classify a `NodeKey` into a `CdiSource` (Spec 014, ADR-0008; reworked in S8.5).
+///
+/// Superseded by `placeholder::reconstitute` + registry dispatch in S8.10.
+/// Retained for test coverage of the classification logic.
+#[cfg(test)]
+pub fn classify_snapshot_cdi_source(
+    node_key: &str,
+    snapshot: Option<&crate::layout::node_snapshot::NodeSnapshot>,
+) -> Result<CdiSource, String> {
+    if crate::layout::types::is_placeholder(node_key) {
+        let snap = snapshot.ok_or_else(|| {
+            format!("UnknownPlaceholder: '{node_key}' has no persisted NodeSnapshot in the active layout")
+        })?;
+        Ok(CdiSource::Bundled {
+            profile_stem: snap.cdi_ref.cache_key.clone(),
+        })
+    } else {
+        Ok(CdiSource::LiveNode(node_key.to_string()))
+    }
+}
+
+/// Load a bundled CDI XML file from the first matching `<stem>.cdi.xml` in
+/// `search_dirs` (Spec 014, ADR-0008).
+///
+/// Pure helper — caller resolves the search dirs (matching the
+/// `profile_search_dirs` discipline in `profile/loader.rs`). On success
+/// Superseded by `placeholder::load_bundled_cdi_with_xml` in S8.10.
+/// Retained for test coverage of bundled CDI resolution.
+#[cfg(test)]
+pub fn load_bundled_cdi(
+    search_dirs: &[std::path::PathBuf],
+    profile_stem: &str,
+) -> Result<lcc_rs::cdi::Cdi, String> {
+    let file_name = format!("{profile_stem}.cdi.xml");
+    let path = search_dirs
+        .iter()
+        .map(|dir| dir.join(&file_name))
+        .find(|candidate| candidate.exists())
+        .ok_or_else(|| {
+            format!(
+                "BundledCdiNotFound: '{file_name}' not present in any bundled-profiles directory"
+            )
+        })?;
+
+    let xml = std::fs::read_to_string(&path).map_err(|e| {
+        format!("BundledCdiReadFailed: '{}': {e}", path.display())
+    })?;
+
+    lcc_rs::cdi::parser::parse_cdi(&xml).map_err(|e| format!("InvalidXml: {e}"))
+}
+
+/// Resolve the search directories for bundled `.cdi.xml` files.
+///
+/// Mirrors `profile/loader.rs::profile_search_dirs` because bundled profiles
+/// (`<stem>.profile.yaml`) and bundled CDI XML (`<stem>.cdi.xml`) live side by
+/// side. Returns dirs in priority order: debug source dir first, packaged
+/// resource dir second. Filters out non-existent paths.
+pub(crate) fn bundled_cdi_search_dirs(app_handle: &tauri::AppHandle) -> Vec<std::path::PathBuf> {
+    let mut dirs: Vec<std::path::PathBuf> = Vec::new();
+
+    #[cfg(debug_assertions)]
+    {
+        let debug_dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("profiles");
+        if debug_dir.exists() {
+            dirs.push(debug_dir);
+        }
+    }
+
+    if let Ok(resource_dir) = app_handle.path().resource_dir() {
+        let bundled = resource_dir.join("profiles");
+        if bundled.exists() && !dirs.iter().any(|d| d == &bundled) {
+            dirs.push(bundled);
+        }
+    }
+
+    dirs
+}
+
+/// Generate CDI cache file path for a node identified by SNIP fields.
+///
+/// S8.6: thin shim — mints the cache_key via `CdiReference::from_snip` and
+/// routes the lookup through `layout::io::cdi_cache_path_for_key`, the
+/// single resolver. Kept as a helper because callers here only have raw
+/// SNIP strings, not a `NodeSnapshot`.
 fn get_cdi_cache_path(
     app_handle: &tauri::AppHandle,
     manufacturer: &str,
@@ -65,26 +164,26 @@ fn get_cdi_cache_path(
         .app_data_dir()
         .map_err(|e| CdiError::IoError(format!("Failed to get app data dir: {}", e)))?;
 
-    // Create cdi_cache subdirectory
     let cdi_cache_dir = app_data_dir.join("cdi_cache");
     std::fs::create_dir_all(&cdi_cache_dir)
         .map_err(|e| CdiError::IoError(format!("Failed to create CDI cache dir: {}", e)))?;
 
-    // Sanitize parts for filename (replace invalid characters)
-    let sanitize = |s: &str| {
-        s.chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
-            .collect::<String>()
+    let snip = crate::layout::node_snapshot::SnipSnapshot {
+        user_name: String::new(),
+        user_description: String::new(),
+        manufacturer_name: manufacturer.to_string(),
+        model_name: model.to_string(),
     };
-
-    let filename = format!(
-        "{}_{}_{}.cdi.xml",
-        sanitize(manufacturer),
-        sanitize(model),
-        sanitize(version)
+    let cdi_ref = crate::layout::node_snapshot::CdiReference::from_snip(
+        &snip,
+        version,
+        "len:0", // fingerprint is irrelevant for path derivation
     );
 
-    Ok(cdi_cache_dir.join(filename))
+    Ok(crate::layout::io::cdi_cache_path_for_key(
+        &cdi_ref.cache_key,
+        &app_data_dir,
+    ))
 }
 
 /// Read CDI from file cache if it exists
@@ -295,12 +394,19 @@ pub async fn get_cdi_xml(
     // Try to get CDI from active layout first (if one is loaded)
     if let Some(active_layout) = state.active_layout.read().await.clone() {
         if let Some(snip) = &snip_data {
-            let cache_key = format!(
-                "{}_{}_{}",
-                snip.manufacturer.replace(' ', "_"),
-                snip.model.replace(' ', "_"),
-                snip.software_version.replace(' ', "_")
-            );
+            // S8.6: route through the single mint formula.
+            let synthetic_snip = crate::layout::node_snapshot::SnipSnapshot {
+                user_name: String::new(),
+                user_description: String::new(),
+                manufacturer_name: snip.manufacturer.clone(),
+                model_name: snip.model.clone(),
+            };
+            let cache_key = crate::layout::node_snapshot::CdiReference::from_snip(
+                &synthetic_snip,
+                snip.software_version.clone(),
+                "len:0",
+            )
+            .cache_key;
             
             // Derive companion directory from root_path
             let base_file = std::path::Path::new(&active_layout.root_path);
@@ -412,8 +518,10 @@ pub async fn get_discovered_nodes(
         // Check if CDI is available (memory cache or file cache)
         let has_cdi = has_cdi_available(node, &app_handle).await;
         
+        // Emit canonical NodeKey form so the frontend roster stores keys
+        // that round-trip cleanly through the registry (ADR-0010).
         discovered_nodes.push(DiscoveredNode {
-            node_id: node.node_id.to_hex_string(),
+            node_id: node.node_id.to_canonical(),
             node_name,
             has_cdi,
         });
@@ -955,6 +1063,124 @@ mod tests {
     // T043l-T043o: Basic struct validation tests
     // Full integration tests would require proper AppState and mocked LCC connections
 
+    // ─────────────────────────────────────────────────────────────────────
+    // S4 (Spec 014, ADR-0008): unified NodeKey → CDI source resolution.
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn s4_classify_node_key_routes_real_node_to_live_node_source() {
+        let source = classify_snapshot_cdi_source("050101010001", None)
+            .expect("real node-id must classify");
+        match source {
+            CdiSource::LiveNode(node_id) => assert_eq!(node_id, "050101010001"),
+            other => panic!("expected LiveNode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn s8_5_classify_node_key_routes_placeholder_to_bundled_source_via_snapshot() {
+        use crate::layout::node_snapshot::{CdiReference, NodeSnapshot, SnipSnapshot};
+        use crate::layout::node_snapshot::CaptureStatus;
+        let placeholder_id = "placeholder:11111111-2222-4333-8444-555555555555";
+        let snap = NodeSnapshot {
+            node_key: placeholder_id.to_string(),
+            node_id: None,
+            profile_stem: Some("RR-CirKits_Tower-LCC".to_string()),
+            lifecycle: crate::layout::node_snapshot::NodeSnapshotLifecycle::Persisted,
+            captured_at: "2026-05-25T00:00:00Z".to_string(),
+            capture_status: CaptureStatus::Complete,
+            missing: Vec::new(),
+            snip: SnipSnapshot::default(),
+            cdi_ref: CdiReference {
+                cache_key: "RR-CirKits_Tower-LCC".to_string(),
+                version: "bundled".to_string(),
+                fingerprint: "bundled".to_string(),
+            },
+            config: Default::default(),
+            producer_identified_events: Vec::new(),
+        };
+
+        let source = classify_snapshot_cdi_source(placeholder_id, Some(&snap))
+            .expect("placeholder must classify");
+        match source {
+            CdiSource::Bundled { profile_stem } => {
+                assert_eq!(profile_stem, "RR-CirKits_Tower-LCC")
+            }
+            other => panic!("expected Bundled, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn s8_5_classify_node_key_rejects_placeholder_without_snapshot() {
+        let result = classify_snapshot_cdi_source(
+            "placeholder:11111111-2222-4333-8444-555555555555",
+            None,
+        );
+        let err = result.expect_err("missing placeholder must error");
+        assert!(
+            err.starts_with("UnknownPlaceholder"),
+            "expected UnknownPlaceholder error, got: {err}"
+        );
+    }
+
+    fn s4_make_temp_profiles_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("bowties-s4-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp profiles dir");
+        dir
+    }
+
+    const S4_MIN_CDI_XML: &str = r#"<?xml version="1.0"?>
+<cdi>
+  <segment space="253" origin="0">
+    <name>Test Segment</name>
+    <int size="1" offset="0"><name>Test Int</name></int>
+  </segment>
+</cdi>"#;
+
+    #[test]
+    fn s4_load_bundled_cdi_reads_xml_from_search_dirs() {
+        let dir = s4_make_temp_profiles_dir();
+        let stem = "Test_Placeholder";
+        std::fs::write(dir.join(format!("{stem}.cdi.xml")), S4_MIN_CDI_XML)
+            .expect("write fixture");
+
+        let cdi = load_bundled_cdi(&[dir.clone()], stem)
+            .expect("bundled CDI must load");
+
+        assert_eq!(cdi.segments.len(), 1);
+        assert_eq!(cdi.segments[0].name.as_deref(), Some("Test Segment"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn s4_load_bundled_cdi_errors_when_file_missing() {
+        let dir = s4_make_temp_profiles_dir();
+        let err = load_bundled_cdi(&[dir.clone()], "Nonexistent_Stem")
+            .expect_err("missing bundled CDI must error");
+        assert!(
+            err.starts_with("BundledCdiNotFound"),
+            "expected BundledCdiNotFound, got: {err}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn s4_load_bundled_cdi_walks_search_dirs_in_order() {
+        let dir_a = s4_make_temp_profiles_dir();
+        let dir_b = s4_make_temp_profiles_dir();
+        // Only second dir contains the fixture.
+        std::fs::write(dir_b.join("Test_Placeholder.cdi.xml"), S4_MIN_CDI_XML)
+            .expect("write fixture");
+
+        let cdi = load_bundled_cdi(&[dir_a.clone(), dir_b.clone()], "Test_Placeholder")
+            .expect("must find file in second search dir");
+        assert_eq!(cdi.segments.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir_a);
+        let _ = std::fs::remove_dir_all(&dir_b);
+    }
+
     #[test]
     fn test_discovered_node_struct() {
         let node = DiscoveredNode {
@@ -1441,7 +1667,7 @@ pub async fn read_config_value(
     // Get node alias from proxy
     let proxy = state.node_registry.get(&parsed_node_id).await
         .ok_or_else(|| format!("Node not found: {}", node_id))?;
-    let alias = proxy.alias;
+    let alias = proxy.alias();
     
     // Get element size
     let size = get_element_size(element)?;
@@ -1486,19 +1712,102 @@ pub async fn get_node_tree(
     app_handle: tauri::AppHandle,
     node_id: String,
 ) -> Result<crate::node_tree::NodeConfigTree, String> {
-    let parsed_node_id = lcc_rs::NodeID::from_hex_string(&node_id)
-        .map_err(|e| format!("InvalidNodeId: {}", e))?;
+    // S4 (Spec 014, ADR-0008 / ADR-0010): the `node_id` parameter is a NodeKey —
+    // either a canonical 12-hex LCC NodeID or a `placeholder:<uuidv4>`. The
+    // IPC parameter name stays `node_id` because IPC field names are part of
+    // the public contract; semantically it is a NodeKey throughout.
+    let node_key = &node_id;
+    let parsed_key = crate::node_key::NodeKey::parse(node_key)
+        .map_err(|e| format!("InvalidNodeKey: {}", e))?;
 
-    // Fast path: check proxy for cached tree
-    if let Some(proxy) = state.node_registry.get(&parsed_node_id).await {
-        if let Ok(Some(tree)) = proxy.get_config_tree().await {
-            return Ok(tree);
+    // ── Fast path: proxy in registry with cached tree ────────────────────
+    {
+        if let Some(proxy) = state.node_registry.get_by_node_key(&parsed_key).await {
+            if let Ok(Some(mut tree)) = proxy.get_config_tree().await {
+                // The cached tree may have been stored by `read_all_config_values`
+                // with config values merged but without profile annotation (the
+                // config-read path doesn't load profiles). If the tree has no
+                // profile annotation yet, apply it now so connector controls and
+                // event-role overlays appear on the first `get_node_tree` fetch
+                // after a config read.
+                if !tree.profile_applied {
+                    if let Ok(cdi) = get_cdi_from_cache(node_key, &app_handle, &state).await {
+                        if let Some(identity) = &cdi.identification {
+                            let manufacturer = identity.manufacturer.as_deref().unwrap_or("");
+                            let model = identity.model.as_deref().unwrap_or("");
+                            if !manufacturer.is_empty() || !model.is_empty() {
+                                if let Some(profile) = crate::profile::load_profile(
+                                    manufacturer,
+                                    model,
+                                    &cdi,
+                                    &app_handle,
+                                    &state.profiles,
+                                ).await {
+                                    let shared_daughterboards = crate::profile::load_shared_daughterboards(&app_handle).await;
+                                    let selections = active_node_mode_selections(&state, &node_id).await;
+                                    apply_profile_metadata_to_tree(
+                                        &mut tree,
+                                        &node_id,
+                                        &profile,
+                                        shared_daughterboards.as_ref(),
+                                        &cdi,
+                                        &selections,
+                                    );
+                                    let _ = proxy.set_config_tree(tree.clone()).await;
+                                }
+                            }
+                        }
+                    }
+                }
+                return Ok(tree);
+            }
         }
     }
 
+    // ── Saved placeholder not yet in registry ────────────────────────────
+    // When a layout is opened, saved placeholder snapshots are read from
+    // disk but the registry isn't populated until the frontend requests the
+    // tree. Reconstitute a Synthesized proxy from the snapshot's profile
+    // stem and register it for future lookups.
+    if crate::layout::types::is_placeholder(node_key) {
+        let active = state.active_layout.read().await.clone();
+        let ctx = active.ok_or_else(|| format!(
+            "NoActiveLayout: cannot resolve placeholder '{node_key}' without an active layout"
+        ))?;
+        let base = std::path::Path::new(&ctx.root_path);
+        let companion = crate::layout::io::derive_companion_dir_path(base)?;
+        let nodes_dir = companion.join(crate::layout::io::NODES_DIR);
+        let basis = crate::layout::node_snapshot::filename_basis_for_key(node_key);
+        let snap_path = crate::layout::io::derive_node_file_path(&nodes_dir, &basis);
+        if !snap_path.exists() {
+            return Err(format!(
+                "UnknownPlaceholder: '{node_key}' has no persisted NodeSnapshot at {}",
+                snap_path.display()
+            ));
+        }
+        let snap = crate::layout::io::read_yaml_file::<crate::layout::node_snapshot::NodeSnapshot>(&snap_path)
+            .map_err(|e| format!("BundledCdiReadFailed: cannot read placeholder snapshot {}: {e}", snap_path.display()))?;
+        let profile_stem = snap.profile_stem.as_deref().ok_or_else(|| {
+            format!("MissingProfileStem: placeholder '{node_key}' has no profile_stem in snapshot")
+        })?;
+        let proxy = crate::placeholder::reconstitute(
+            node_key, profile_stem, &app_handle, &state,
+        ).await?;
+        let handle = crate::node_proxy::NodeProxyHandle::Synthesized(proxy);
+        let tree = handle.get_config_tree().await?.ok_or_else(|| {
+            "InternalError: reconstituted proxy has no config tree".to_string()
+        })?;
+        state.node_registry.insert(parsed_key, handle).await;
+        return Ok(tree);
+    }
+
+    // ── Real node: not in registry or no cached tree ─────────────────────
+    let parsed_node_id = lcc_rs::NodeID::from_hex_string(node_key)
+        .map_err(|e| format!("InvalidNodeId: {}", e))?;
+
     // Build from CDI
-    let cdi = get_cdi_from_cache(&node_id, &app_handle, &state).await?;
-    let mut tree = crate::node_tree::build_node_config_tree(&node_id, &cdi);
+    let cdi = get_cdi_from_cache(node_key, &app_handle, &state).await?;
+    let mut tree = crate::node_tree::build_node_config_tree(node_key, &cdi);
 
     // Apply structure profile if available
     if let Some(identity) = &cdi.identification {
@@ -1513,12 +1822,14 @@ pub async fn get_node_tree(
                 &state.profiles,
             ).await {
                 let shared_daughterboards = crate::profile::load_shared_daughterboards(&app_handle).await;
+                let selections = active_node_mode_selections(&state, &node_id).await;
                 let report = apply_profile_metadata_to_tree(
                     &mut tree,
                     &node_id,
                     &profile,
                     shared_daughterboards.as_ref(),
                     &cdi,
+                    &selections,
                 );
                 eprintln!(
                     "[profile] {} — {} event roles, {} rules applied, {} warnings",
@@ -1539,14 +1850,15 @@ pub async fn get_node_tree(
     Ok(tree)
 }
 
-fn apply_profile_metadata_to_tree(
+pub(crate) fn apply_profile_metadata_to_tree(
     tree: &mut crate::node_tree::NodeConfigTree,
     node_id: &str,
     profile: &crate::profile::StructureProfile,
     shared_daughterboards: Option<&crate::profile::SharedDaughterboardLibrary>,
     cdi: &lcc_rs::cdi::Cdi,
+    selections: &std::collections::BTreeMap<String, String>,
 ) -> crate::profile::AnnotationReport {
-    let report = crate::profile::annotate_tree(tree, profile, cdi);
+    let report = crate::profile::annotate_tree(tree, profile, selections, cdi);
     let connector_profile_outcome = crate::profile::build_connector_profile_with_diagnostics(
         node_id,
         profile,
@@ -1555,7 +1867,41 @@ fn apply_profile_metadata_to_tree(
     );
     tree.connector_profile = connector_profile_outcome.profile;
     tree.connector_profile_warning = connector_profile_outcome.warning;
+    // Spec 014 / S6: surface unknown-variant warnings on the tree payload so
+    // the editor's mode selector can render an inline marker without parsing
+    // free-form warning strings.
+    tree.unknown_variants = report.unknown_variants.clone();
+    tree.profile_applied = true;
     report
+}
+
+/// Read the active layout's saved Configuration Mode selections for one node.
+///
+/// Returns an empty map when there is no active layout, the layout has no
+/// on-disk path yet, the file fails to load, or the node has no selections.
+/// Reading is best-effort: a missing/corrupt layout must not block tree
+/// assembly — it just means no overlays are applied (the same behavior as
+/// before Spec 014 / S6 introduced the wire-up).
+pub(crate) async fn active_node_mode_selections(
+    state: &AppState,
+    node_key: &str,
+) -> std::collections::BTreeMap<String, String> {
+    let active = state.active_layout.read().await.clone();
+    let Some(ctx) = active else {
+        return Default::default();
+    };
+    if ctx.root_path.is_empty() {
+        return Default::default();
+    }
+    let bowties_path =
+        std::path::Path::new(&ctx.root_path).join(crate::layout::io::BOWTIES_FILE);
+    if !bowties_path.exists() {
+        return Default::default();
+    }
+    match crate::layout::io::load_file(&bowties_path) {
+        Ok(layout) => layout.selections_for_node(node_key),
+        Err(_) => Default::default(),
+    }
 }
 
 /// A single memory-read unit produced by [`build_read_plan`].
@@ -2186,8 +2532,11 @@ pub async fn read_all_config_values(
     {
         let proxy = state.node_registry.get(&parsed_node_id).await;
         if let Some(proxy) = &proxy {
-            let mut tree = proxy.get_config_tree().await
-                .ok().flatten()
+            let mut tree = proxy
+                .get_config_tree()
+                .await
+                .ok()
+                .flatten()
                 .unwrap_or_else(|| crate::node_tree::build_node_config_tree(&node_id, &cdi));
             crate::node_tree::merge_config_values_by_space(&mut tree, &raw_data_by_space_address);
             let leaf_count = crate::node_tree::count_leaves(&tree);
@@ -2235,13 +2584,15 @@ pub async fn read_all_config_values(
         let node_count = nodes_snap.len();
 
         // Gather config values from all proxies
-        let config_cache_snap: HashMap<String, HashMap<String, [u8; 8]>> = {
+        let config_cache_snap: HashMap<crate::node_key::NodeKey, HashMap<String, [u8; 8]>> = {
             let handles = state.node_registry.get_all_handles().await;
             let mut map = HashMap::new();
             for h in &handles {
                 if let Ok(vals) = h.get_config_values().await {
                     if !vals.is_empty() {
-                        map.insert(h.node_id.to_hex_string(), vals);
+                        if let Some(nid) = h.node_id() {
+                            map.insert(crate::node_key::NodeKey::from_node_id(nid), vals);
+                        }
                     }
                 }
             }
@@ -2253,7 +2604,10 @@ pub async fn read_all_config_values(
             let handles = state.node_registry.get_all_handles().await;
             for h in &handles {
                 if let Ok(Some(mut tree)) = h.get_config_tree().await {
-                    let nid = h.node_id.to_hex_string();
+                    let nid = match h.node_id() {
+                        Some(id) => id.to_hex_string(),
+                        None => continue,
+                    };
                     let path_roles = crate::node_tree::classify_leaf_roles_from_protocol(
                         &tree,
                         &event_roles,
@@ -2271,8 +2625,12 @@ pub async fn read_all_config_values(
         // so profile-declared roles take precedence over protocol-exchange heuristics).
         {
             let handles = state.node_registry.get_all_handles().await;
+            let mut annotated_node_ids: Vec<String> = Vec::new();
             for h in &handles {
-                let nid = h.node_id.to_hex_string();
+                let nid = match h.node_id() {
+                    Some(id) => id.to_hex_string(),
+                    None => continue,
+                };
                 let cdi = match get_cdi_from_cache(&nid, &app_handle, &state).await {
                     Ok(c) => c,
                     Err(_) => continue,
@@ -2289,7 +2647,9 @@ pub async fn read_all_config_values(
                             &state.profiles,
                         ).await {
                             if let Ok(Some(mut tree)) = h.get_config_tree().await {
-                                let report = crate::profile::annotate_tree(&mut tree, &profile, &cdi);
+                                let selections = active_node_mode_selections(&state, &nid).await;
+                                let report = crate::profile::annotate_tree(&mut tree, &profile, &selections, &cdi);
+                                tree.unknown_variants = report.unknown_variants.clone();
                                 eprintln!(
                                     "[profile] {} — {} event roles, {} rules applied, {} warnings",
                                     nid,
@@ -2298,22 +2658,33 @@ pub async fn read_all_config_values(
                                     report.warnings.len()
                                 );
                                 let _ = h.set_config_tree(tree).await;
+                                annotated_node_ids.push(nid);
                             }
                         }
                     }
                 }
             }
 
-            // Now that profiles are fully applied, notify the frontend to refresh every
-            // tree so the annotated event roles and element names are visible immediately
-            // (e.g. in ElementPicker search) without requiring the user to first expand
-            // a node to trigger a lazy reload.
-            for h in &handles {
-                let nid = h.node_id.to_hex_string();
-                let leaf_count = h.get_config_tree().await
-                    .ok().flatten()
-                    .map(|t| crate::node_tree::count_leaves(&t))
-                    .unwrap_or(0);
+            // Notify the frontend to refresh trees only for nodes that were
+            // actually annotated by a profile. Previously this emitted for
+            // ALL handles, which triggered re-fetches for nodes whose proxy
+            // had no config tree — returning a zero-filled tree from CDI and
+            // overwriting good data loaded from saved layout snapshots.
+            for nid in &annotated_node_ids {
+                let parsed_key = match crate::node_key::NodeKey::parse(nid) {
+                    Ok(k) => k,
+                    Err(_) => continue,
+                };
+                let leaf_count = if let Some(proxy) = state.node_registry.get_by_node_key(
+                    &parsed_key
+                ).await {
+                    proxy.get_config_tree().await
+                        .ok().flatten()
+                        .map(|t| crate::node_tree::count_leaves(&t))
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
                 let _ = app_handle.emit("node-tree-updated", serde_json::json!({
                     "nodeId": nid,
                     "leafCount": leaf_count,
@@ -2330,12 +2701,15 @@ pub async fn read_all_config_values(
             let handles = state.node_registry.get_all_handles().await;
             let mut map = std::collections::HashMap::new();
             for h in &handles {
-                let nid = h.node_id.to_hex_string();
+                let nk = match h.node_id() {
+                    Some(id) => crate::node_key::NodeKey::from_node_id(id),
+                    None => continue,
+                };
                 if let Ok(Some(tree)) = h.get_config_tree().await {
                     for leaf in crate::node_tree::collect_event_id_leaves(&tree) {
                         if let Some(role) = leaf.event_role {
                             if role != lcc_rs::EventRole::Ambiguous {
-                                let key = format!("{}:{}", nid, leaf.path.join("/"));
+                                let key = format!("{}:{}", nk, leaf.path.join("/"));
                                 map.insert(key, role);
                             }
                         }
@@ -2837,7 +3211,7 @@ pub async fn write_config_value(
     // Get node alias from proxy
     let proxy = state.node_registry.get(&parsed_node_id).await
         .ok_or_else(|| format!("Node not found: {}", node_id))?;
-    let alias = proxy.alias;
+    let alias = proxy.alias();
 
     // Perform write
     let mut conn = connection.lock().await;
@@ -2885,7 +3259,7 @@ pub async fn send_update_complete(
     // Get node alias from proxy
     let proxy = state.node_registry.get(&parsed_node_id).await
         .ok_or_else(|| format!("Node not found: {}", node_id))?;
-    let alias = proxy.alias;
+    let alias = proxy.alias();
 
     // Send update complete
     let mut conn = connection.lock().await;
@@ -2937,7 +3311,9 @@ pub async fn set_modified_value(
                     if let Some(profile) = crate::profile::load_profile(
                         manufacturer, model, &cdi, &app_handle, &state.profiles,
                     ).await {
-                        crate::profile::annotate_tree(&mut t, &profile, &cdi);
+                        let selections = active_node_mode_selections(&state, &node_id).await;
+                        let report = crate::profile::annotate_tree(&mut t, &profile, &selections, &cdi);
+                        t.unknown_variants = report.unknown_variants.clone();
                     }
                 }
             }
@@ -3045,7 +3421,10 @@ pub async fn discard_modified_values(
                     let _ = h.set_config_values(rebuilt).await;
                     let _ = h.set_config_tree(tree).await;
 
-                    let nid = h.node_id.to_hex_string();
+                    let nid = match h.node_id() {
+                        Some(id) => id.to_hex_string(),
+                        None => continue,
+                    };
                     let _ = app_handle.emit(
                         "node-tree-updated",
                         serde_json::json!({ "nodeId": nid }),
@@ -3074,7 +3453,10 @@ pub async fn write_modified_values(
         let handles = state.node_registry.get_all_handles().await;
         for h in &handles {
             if let Ok(Some(tree)) = h.get_config_tree().await {
-                let nid = h.node_id.to_hex_string();
+                let nid = match h.node_id() {
+                    Some(id) => id.to_hex_string(),
+                    None => continue,
+                };
                 for leaf in crate::node_tree::collect_modified_leaves(&tree) {
                     work.push((nid.clone(), leaf));
                 }
@@ -3122,7 +3504,7 @@ pub async fn write_modified_values(
             .map_err(|e| format!("Invalid node ID: {}", e))?;
         let proxy = state.node_registry.get(&parsed_nid).await
             .ok_or_else(|| format!("Node not found: {}", node_id))?;
-        let alias = proxy.alias;
+        let alias = proxy.alias();
 
         // Mark as writing via proxy
         if let Ok(Some(mut tree)) = proxy.get_config_tree().await {
@@ -3195,7 +3577,7 @@ pub async fn write_modified_values(
             Err(_) => continue,
         };
         if let Some(proxy) = state.node_registry.get(&parsed_nid).await {
-            let alias = proxy.alias;
+            let alias = proxy.alias();
             let mut conn = connection.lock().await;
             let _ = conn.send_update_complete(alias).await;
         }
@@ -3225,8 +3607,12 @@ pub async fn write_modified_values(
                 let snapshot = snapshot_cache.entry(canonical.clone()).or_insert_with(|| {
                     crate::layout::read_node_snapshot(base_file, &canonical).unwrap_or_else(|_| {
                         // Node not in layout — use a dummy that won't be saved
+                        // (sentinel: empty node_key).
                         crate::layout::node_snapshot::NodeSnapshot {
-                            node_id: lcc_rs::NodeID::new([0; 6]),
+                            node_key: String::new(),
+                            node_id: None,
+                            profile_stem: None,
+                            lifecycle: crate::layout::node_snapshot::NodeSnapshotLifecycle::Persisted,
                             captured_at: String::new(),
                             capture_status: crate::layout::node_snapshot::CaptureStatus::Complete,
                             missing: Vec::new(),
@@ -3253,7 +3639,7 @@ pub async fn write_modified_values(
 
             let to_write: Vec<crate::layout::node_snapshot::NodeSnapshot> = snapshot_cache
                 .into_values()
-                .filter(|s| s.node_id != lcc_rs::NodeID::new([0; 6]))
+                .filter(|s| !s.node_key.is_empty())
                 .collect();
             if !to_write.is_empty() {
                 if let Err(e) = crate::layout::update_node_snapshots(base_file, &to_write) {
@@ -3314,7 +3700,7 @@ pub async fn trigger_action(
         .map_err(|e| format!("Invalid node ID: {}", e))?;
     let proxy = state.node_registry.get(&parsed_nid).await
         .ok_or_else(|| format!("Node not found: {}", node_id))?;
-    let alias = proxy.alias;
+    let alias = proxy.alias();
 
     let bytes: Vec<u8> = match size {
         1 => vec![value as u8],
@@ -4213,13 +4599,10 @@ mod profile_metadata_tests {
             firmware_version_range: None,
             event_roles: vec![],
             relevance_rules: vec![],
-            connector_slots: vec![],
-            connector_constraint_variants: vec![],
-            daughterboard_references: vec![],
-            carrier_overrides: vec![],
+            configuration_modes: vec![],
         };
 
-        let report = apply_profile_metadata_to_tree(&mut tree, "05.02.01.02.03.00", &profile, None, &cdi);
+        let report = apply_profile_metadata_to_tree(&mut tree, "05.02.01.02.03.00", &profile, None, &cdi, &std::collections::BTreeMap::new());
 
         assert_eq!(report.event_roles_applied, 0);
         assert_eq!(report.rules_applied, 0);
@@ -4404,3 +4787,104 @@ mod fill_short_reply_tests {
         }
     }
 }
+
+// ============================================================================
+// Step 4b — NodeKey behavior pin: cached tree survives registry lookup via any
+// wire-form input (dotted or canonical). Pre-migration the dotted form missed
+// the canonical-keyed proxy, triggering a fresh empty-value tree rebuild.
+// ============================================================================
+#[cfg(test)]
+mod node_key_lookup_tests {
+    use crate::node_key::NodeKey;
+    use crate::node_proxy::{NodeProxyHandle, SynthesizedNodeProxy};
+    use crate::node_registry::NodeRegistry;
+    use crate::node_tree::{
+        ConfigNode, ConfigValue, LeafNode, LeafType, NodeConfigTree, SegmentNode,
+    };
+    use lcc_rs::NodeID;
+    use std::collections::HashMap;
+
+    fn populated_tree() -> NodeConfigTree {
+        NodeConfigTree {
+            node_id: "02.01.57.00.02.D9".into(),
+            identity: None,
+            connector_profile: None,
+            connector_profile_warning: None,
+            unknown_variants: Vec::new(),
+            segments: vec![SegmentNode {
+                name: "Config".into(),
+                description: None,
+                origin: 0,
+                space: 0xFD,
+                children: vec![ConfigNode::Leaf(LeafNode {
+                    name: "Event ID".into(),
+                    description: None,
+                    element_type: LeafType::EventId,
+                    address: 0,
+                    size: 8,
+                    space: 0xFD,
+                    path: vec!["seg:0".into(), "elem:0".into()],
+                    value: Some(ConfigValue::EventId {
+                        bytes: [1, 2, 3, 4, 5, 6, 7, 8],
+                        hex: "01.02.03.04.05.06.07.08".into(),
+                    }),
+                    event_role: None,
+                    constraints: None,
+                    button_text: None,
+                    dialog_text: None,
+                    action_value: 0,
+                    hint_slider: None,
+                    hint_radio: false,
+                    modified_value: None,
+                    write_state: None,
+                    write_error: None,
+                    read_only: false,
+                })],
+            }],
+        }
+    }
+
+    fn synth_with_tree(key: &NodeKey, tree: NodeConfigTree) -> NodeProxyHandle {
+        NodeProxyHandle::Synthesized(SynthesizedNodeProxy {
+            node_key: key.to_string(),
+            profile_stem: "test".into(),
+            snip: None,
+            cdi_data: None,
+            cdi_parsed: None,
+            config_values: HashMap::new(),
+            config_tree: Some(tree),
+            producer_identified_events: Vec::new(),
+        })
+    }
+
+    /// Behavior contract for `get_node_tree` fast path: a populated tree
+    /// inserted under `NodeKey::Live(id)` is returned intact by a lookup
+    /// using a `NodeKey` parsed from the dotted-form wire string.
+    #[tokio::test]
+    async fn cached_tree_survives_lookup_via_dotted_form() {
+        let registry = NodeRegistry::new();
+        let id = NodeID::new([0x02, 0x01, 0x57, 0x00, 0x02, 0xD9]);
+        let canonical_key = NodeKey::from_node_id(id);
+        registry
+            .insert(canonical_key, synth_with_tree(&canonical_key, populated_tree()))
+            .await;
+
+        let dotted_lookup = NodeKey::parse("02.01.57.00.02.D9").unwrap();
+        let handle = registry
+            .get_by_node_key(&dotted_lookup)
+            .await
+            .expect("proxy must be reachable via dotted-form NodeKey");
+        let tree = handle.get_config_tree().await.unwrap().expect("tree must be cached");
+        let leaf = match &tree.segments[0].children[0] {
+            ConfigNode::Leaf(l) => l,
+            _ => panic!("expected leaf"),
+        };
+        match &leaf.value {
+            Some(ConfigValue::EventId { bytes, .. }) => {
+                assert_eq!(bytes, &[1, 2, 3, 4, 5, 6, 7, 8]);
+            }
+            other => panic!("expected populated EventId, got {other:?}"),
+        }
+    }
+}
+

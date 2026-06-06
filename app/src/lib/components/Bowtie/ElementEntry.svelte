@@ -31,7 +31,7 @@
     <span class="element-label">
       <button
         class="element-label-link"
-        onclick={() => configFocusStore.focusConfigField(entry.node_id, entry.element_path)}
+        onclick={() => configFocusStore.focusConfigField(entry.node_key, entry.element_path)}
         title="Go to this field in the configuration"
         aria-label="Go to {entry.element_label ?? 'field'} in configuration"
       >{entry.element_label ?? ''}</button>

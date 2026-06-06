@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use tauri::{Emitter, Manager};
 
-use crate::layout::manifest::LayoutManifest;
 use crate::layout::node_snapshot::{
     capture_status_from_missing, missing_detail, CaptureStatus, CdiReference, NodeSnapshot,
     SnapshotLeafValue, SnipSnapshot,
@@ -35,6 +34,9 @@ pub struct SaveLayoutResult {
     /// companion `nodes/` directory after this save. Frontend uses this to
     /// distinguish saved nodes from unsaved discovered nodes (S8).
     pub persisted_node_ids: Vec<String>,
+    /// Node snapshots written to disk. Frontend caches these so the disconnect
+    /// transition can rehydrate the offline view without re-opening the layout.
+    pub node_snapshots: Vec<NodeSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,13 +96,11 @@ pub struct SaveWithBusWriteResult {
     pub layout: LayoutFile,
     /// Canonical node IDs persisted on disk after this save (S8).
     pub persisted_node_ids: Vec<String>,
+    /// Node snapshots written to disk. Frontend caches these so the disconnect
+    /// transition can rehydrate the offline view without re-opening the layout.
+    pub node_snapshots: Vec<NodeSnapshot>,
 }
 
-
-
-fn canonical_node_id(node_id_dotted_hex: &str) -> String {
-    node_id_dotted_hex.replace('.', "").to_uppercase()
-}
 
 fn config_value_to_string(value: &crate::node_tree::ConfigValue) -> String {
     value.to_snapshot_string()
@@ -192,19 +192,11 @@ async fn build_node_snapshot(
         "missing".to_string()
     };
 
-    let (cache_key, version) = if let Some(snip) = &snapshot.snip_data {
-        (
-            format!(
-                "{}_{}_{}",
-                snip.manufacturer.replace(' ', "_"),
-                snip.model.replace(' ', "_"),
-                snip.software_version.replace(' ', "_")
-            ),
-            snip.software_version.clone(),
-        )
-    } else {
-        ("unknown_node_type".to_string(), "unknown".to_string())
-    };
+    let version = snapshot
+        .snip_data
+        .as_ref()
+        .map(|s| s.software_version.clone())
+        .unwrap_or_else(|| "unknown".to_string());
 
     let snip = if let Some(snip) = snapshot.snip_data {
         SnipSnapshot {
@@ -217,17 +209,48 @@ async fn build_node_snapshot(
         SnipSnapshot::default()
     };
 
+    // S9: Synthesized placeholders use CdiReference::from_profile_stem so
+    // the save flow resolves CDI from bundled profiles, not cdi_cache.
+    // They also carry node_id: None and profile_stem: Some(...).
+    let (cdi_ref, node_key, node_id, profile_stem) =
+        if let crate::node_proxy::NodeProxyHandle::Synthesized(synth) = handle {
+            (
+                CdiReference::from_profile_stem(&synth.profile_stem),
+                synth.node_key.clone(),
+                None,
+                Some(synth.profile_stem.clone()),
+            )
+        } else {
+            // S8.6: single mint formula via `CdiReference::from_snip`. For nodes
+            // without SNIP we keep the historical `"unknown_node_type"` cache_key
+            // so existing on-disk cache files keep resolving.
+            let cdi_ref = if snip.manufacturer_name.is_empty() && snip.model_name.is_empty() {
+                CdiReference {
+                    cache_key: "unknown_node_type".to_string(),
+                    version,
+                    fingerprint: cdi_fingerprint,
+                }
+            } else {
+                CdiReference::from_snip(&snip, version, cdi_fingerprint)
+            };
+            (
+                cdi_ref,
+                snapshot.node_id.to_canonical(),
+                Some(snapshot.node_id),
+                None,
+            )
+        };
+
     let mut snapshot = NodeSnapshot {
-        node_id: snapshot.node_id,
+        node_key,
+        node_id,
+        profile_stem,
+        lifecycle: crate::layout::node_snapshot::NodeSnapshotLifecycle::Persisted,
         captured_at: captured_at.to_string(),
         capture_status: CaptureStatus::Complete,
         missing: Vec::new(),
         snip,
-        cdi_ref: CdiReference {
-            cache_key,
-            version,
-            fingerprint: cdi_fingerprint,
-        },
+        cdi_ref,
         config: BTreeMap::new(),
         producer_identified_events: producer_events,
     };
@@ -236,13 +259,13 @@ async fn build_node_snapshot(
     crate::bwlog!(
         state,
         "[layout capture] snapshot start: node={} manufacturer={} model={} tree_available={} segments={}",
-        snapshot.node_id,
+        snapshot.node_key,
         snapshot.snip.manufacturer_name,
         snapshot.snip.model_name,
         tree.is_some(),
         tree_segment_count,
     );
-    let node_id_for_logs = snapshot.node_id.to_string();
+    let node_id_for_logs = snapshot.node_key.clone();
 
     let mut missing = Vec::new();
     if let Some(tree) = tree {
@@ -261,7 +284,7 @@ async fn build_node_snapshot(
         crate::bwlog!(
             state,
             "[layout capture] missing configuration tree: node={} manufacturer={} model={}",
-            snapshot.node_id,
+            snapshot.node_key,
             snapshot.snip.manufacturer_name,
             snapshot.snip.model_name,
         );
@@ -273,7 +296,7 @@ async fn build_node_snapshot(
     crate::bwlog!(
         state,
         "[layout capture] snapshot complete: node={} status={:?} missing_count={}",
-        snapshot.node_id,
+        snapshot.node_key,
         snapshot.capture_status,
         snapshot.missing.len(),
     );
@@ -294,7 +317,7 @@ pub async fn capture_layout_snapshot(
     if let Some(catalog) = state.bowties_catalog.read().await.clone() {
         for bowtie in catalog.bowties {
             for producer in bowtie.producers {
-                let key = canonical_node_id(&producer.node_id);
+                let key = producer.node_key.to_string();
                 producer_events_by_node
                     .entry(key)
                     .or_default()
@@ -308,7 +331,7 @@ pub async fn capture_layout_snapshot(
     let mut partial_count = 0usize;
 
     for handle in handles {
-        let node_key = handle.node_id.to_canonical();
+        let node_key = handle.node_key();
         let producer_events = producer_events_by_node
             .get(&node_key)
             .cloned()
@@ -373,19 +396,28 @@ pub async fn save_layout_directory(
         .map(|p| {
             p.node_snapshots
                 .iter()
-                .map(|s| s.node_id.to_canonical())
+                .map(|s| s.node_key.clone())
                 .collect()
         })
         .unwrap_or_default();
-    let added_node_ids: std::collections::BTreeSet<String> = deltas
+    // S8.11: `AddNode { node_key }` is the single delta variant for both
+    // real nodes and placeholders.  All promoted node keys are unified.
+    let added_node_keys: std::collections::BTreeSet<String> = deltas
         .iter()
-        .filter_map(|d| d.as_add_node().map(|s| s.replace('.', "").to_uppercase()))
+        .filter_map(|d| d.as_add_node().map(|s| s.to_string()))
         .collect();
-    let permitted_node_ids: std::collections::BTreeSet<String> = previous_node_ids
-        .union(&added_node_ids)
+    // Symmetric to AddNode: a RemoveNode delta drops a previously-persisted
+    // node from the permitted-write set. The companion nodes/ prune step
+    // in `write_layout_capture` will then delete its `<key>.yaml` file.
+    let removed_node_keys: std::collections::BTreeSet<String> = deltas
+        .iter()
+        .filter_map(|d| d.as_remove_node().map(|s| s.to_string()))
+        .collect();
+    let permitted_node_keys: std::collections::BTreeSet<String> = previous_node_ids
+        .union(&added_node_keys)
+        .filter(|k| !removed_node_keys.contains(*k))
         .cloned()
         .collect();
-    let has_persisted_layout = previous.is_some();
 
     let handles = state.node_registry.get_all_handles().await;
     let mut snapshots = if !handles.is_empty() {
@@ -393,7 +425,7 @@ pub async fn save_layout_directory(
         if let Some(catalog) = state.bowties_catalog.read().await.clone() {
             for bowtie in &catalog.bowties {
                 for producer in &bowtie.producers {
-                    let key = canonical_node_id(&producer.node_id);
+                    let key = producer.node_key.to_string();
                     producer_events_by_node
                         .entry(key)
                         .or_default()
@@ -404,22 +436,48 @@ pub async fn save_layout_directory(
 
         let mut out = Vec::new();
         let mut covered: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        // Build a lookup from previous snapshots for fallback comparison.
+        let previous_snap_by_key: std::collections::BTreeMap<String, &NodeSnapshot> = previous
+            .as_ref()
+            .map(|p| p.node_snapshots.iter().map(|s| (s.node_key.clone(), s)).collect())
+            .unwrap_or_default();
         for handle in &handles {
-            let node_key = handle.node_id.to_canonical();
-            // S8: skip handles for nodes not in the permitted set. Exception:
-            // before the layout has ever been persisted (first save of a brand
-            // new layout that has no `AddNode` deltas yet), we keep every
-            // discovered handle so existing legacy callers and tests continue
-            // to work. Once the layout is on disk, every node must be either
-            // already saved or explicitly added via a delta.
-            if has_persisted_layout && !permitted_node_ids.contains(&node_key) {
+            let node_key = handle.node_key();
+            // S8 / ADR-0011 (2026-05-31 extension): the layout is the single
+            // source of truth for which nodes belong to it. Every handle must
+            // be either already saved in this layout or explicitly promoted
+            // via an `AddNode` delta — including the brand-new-layout case.
+            // The previous "no persisted layout ⇒ save every handle"
+            // exception leaked stale registry entries (notably placeholders
+            // surviving close_layout) into freshly-created layouts.
+            if !permitted_node_keys.contains(&node_key) {
                 continue;
             }
             let producer_events = producer_events_by_node
                 .get(&node_key)
                 .cloned()
                 .unwrap_or_default();
-            out.push(build_node_snapshot(handle, &captured_at, producer_events, state.inner()).await?);
+            let fresh = build_node_snapshot(handle, &captured_at, producer_events, state.inner()).await?;
+
+            // Never persist a partial snapshot when a more-complete previous
+            // snapshot exists. This prevents data loss when a previously-saved
+            // node is on the bus but hasn't had its config re-read this session.
+            if fresh.capture_status == CaptureStatus::Partial {
+                if let Some(prev) = previous_snap_by_key.get(&node_key) {
+                    if prev.capture_status == CaptureStatus::Complete {
+                        crate::bwlog!(
+                            state.inner(),
+                            "[layout save] keeping previous Complete snapshot for {} (fresh is Partial)",
+                            node_key,
+                        );
+                        out.push((*prev).clone());
+                        covered.insert(node_key);
+                        continue;
+                    }
+                }
+            }
+
+            out.push(fresh);
             covered.insert(node_key);
         }
         // S8: preserve previously-saved snapshots for permitted nodes that are
@@ -428,8 +486,8 @@ pub async fn save_layout_directory(
         // drop that node from the layout.
         if let Some(ref prev) = previous {
             for snap in &prev.node_snapshots {
-                let key = snap.node_id.to_canonical();
-                if permitted_node_ids.contains(&key) && !covered.contains(&key) {
+                let key = snap.node_key.clone();
+                if permitted_node_keys.contains(&key) && !covered.contains(&key) {
                     out.push(snap.clone());
                 }
             }
@@ -450,7 +508,7 @@ pub async fn save_layout_directory(
     let partial_nodes: Vec<String> = snapshots
         .iter()
         .filter(|s| s.capture_status == CaptureStatus::Partial)
-        .map(|s| s.node_id.to_canonical())
+        .map(|s| s.node_key.clone())
         .collect();
 
     let mut manifest_captured_at = snapshots
@@ -471,10 +529,10 @@ pub async fn save_layout_directory(
     crate::layout::types::apply_layout_deltas(&mut bowties, deltas);
     let mut offline_changes = Vec::<OfflineChange>::new();
 
-    if let Some(prev) = previous {
-        layout_id = prev.manifest.layout_id;
-        manifest_captured_at = prev.manifest.captured_at;
-        offline_changes = prev.offline_changes;
+    if let Some(prev) = previous.as_ref() {
+        layout_id = prev.manifest.layout_id.clone();
+        manifest_captured_at = prev.manifest.captured_at.clone();
+        offline_changes = prev.offline_changes.clone();
     }
 
     // Single pre-save edit path: if saving the currently active offline layout,
@@ -509,34 +567,61 @@ pub async fn save_layout_directory(
     }
     bowties.validate()?;
 
-    let manifest = LayoutManifest::new(
+    let manifest = crate::layout::manifest::build_save_manifest(
+        previous.as_ref().map(|p| &p.manifest),
         layout_id.clone(),
         manifest_captured_at.clone(),
         chrono::Utc::now().to_rfc3339(),
         companion_dir,
     );
 
-    // Collect CDI files from cache, skipping nodes that don't support CDI.
+    // Collect CDI files, skipping nodes that don't support CDI.
+    //
+    // S8.6: per snapshot, the CDI source path depends on provenance:
+    //   * Bundled placeholder (`fingerprint == "bundled"`) — source from
+    //     the bundled `profiles/` resource directory; never expected in
+    //     `cdi_cache/`.
+    //   * Live node — source from `cdi_cache/{cache_key}.cdi.xml`.
+    //
+    // Both paths flow through `CdiReference::from_snip` /
+    // `CdiReference::from_profile_stem` at mint time, so the lookup here
+    // reads `cache_key` directly without re-deriving from SNIP.
     let mut cdi_files: Vec<(String, std::path::PathBuf)> = Vec::new();
     let app_data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("Cannot resolve app data directory: {}", e))?;
+    let bundled_search_dirs = crate::commands::cdi::bundled_cdi_search_dirs(&app);
     for snapshot in &snapshots {
         if snapshot.cdi_ref.fingerprint == "not_supported"
             || snapshot.cdi_ref.fingerprint == "missing"
         {
             continue;
         }
-        let cdi_path = crate::layout::io::cdi_cache_path(&snapshot, &app_data_dir);
-        if !cdi_path.exists() {
-            return Err(format!(
-                "CDI file not found in cache for node {}: expected at {} (cache key: {})",
-                snapshot.node_id,
-                cdi_path.display(),
-                snapshot.cdi_ref.cache_key
-            ));
-        }
+        let cdi_path = if snapshot.cdi_ref.is_bundled() {
+            let file_name = format!("{}.cdi.xml", snapshot.cdi_ref.cache_key);
+            bundled_search_dirs
+                .iter()
+                .map(|dir| dir.join(&file_name))
+                .find(|candidate| candidate.exists())
+                .ok_or_else(|| {
+                    format!(
+                        "Bundled CDI not found for placeholder {}: '{}' missing from every bundled-profiles directory",
+                        snapshot.node_key, file_name
+                    )
+                })?
+        } else {
+            let path = crate::layout::io::cdi_cache_path(&snapshot, &app_data_dir);
+            if !path.exists() {
+                return Err(format!(
+                    "CDI file not found in cache for node {}: expected at {} (cache key: {})",
+                    snapshot.node_key,
+                    path.display(),
+                    snapshot.cdi_ref.cache_key
+                ));
+            }
+            path
+        };
         cdi_files.push((snapshot.cdi_ref.cache_key.clone(), cdi_path));
     }
 
@@ -553,14 +638,18 @@ pub async fn save_layout_directory(
 
     let _ = crate::commands::bowties::set_recent_layout(path.clone(), app.clone()).await;
 
-    let layout_node_ids = write_data.node_snapshots.iter().map(|s| s.node_id.clone()).collect();
+    let layout_node_keys: Vec<crate::node_key::NodeKey> = write_data
+        .node_snapshots
+        .iter()
+        .filter_map(|s| crate::node_key::NodeKey::parse(&s.node_key).ok())
+        .collect();
     let context = ActiveLayoutContext {
         layout_id,
         root_path: path.clone(),
         mode: ActiveLayoutMode::OfflineFile,
         captured_at: Some(manifest_captured_at),
         pending_offline_change_count: write_data.offline_changes.len(),
-        layout_node_ids,
+        layout_node_keys,
     };
     *state.active_layout.write().await = Some(context);
     *state.offline_changes_cache.write().await = write_data.offline_changes.clone();
@@ -574,51 +663,150 @@ pub async fn save_layout_directory(
         persisted_node_ids: write_data
             .node_snapshots
             .iter()
-            .map(|s| s.node_id.to_canonical())
+            .map(|s| s.node_key.clone())
             .collect(),
+        node_snapshots: write_data.node_snapshots,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::layout::types::{apply_layout_deltas, LayoutEditDelta};
+    // Connector-selection deltas were removed in Spec 014. The replacement
+    // (placeholder boards + `node_mode_selections`) is exercised by
+    // `layout::types::tests::s3_*`.
 
-    #[test]
-    fn apply_deltas_connector_selection_replaces_previous() {
-        let mut layout = crate::layout::types::LayoutFile::default();
-        layout.connector_selections.insert(
-            "020157000001".to_string(),
-            crate::layout::types::NodeHardwareSelectionSet {
-                carrier_key: "old-carrier".to_string(),
-                slot_selections: std::collections::BTreeMap::new(),
-                updated_at: Some("2026-01-01T00:00:00Z".to_string()),
-            },
+    use super::*;
+
+    #[tokio::test]
+    async fn s9_build_node_snapshot_placeholder_uses_bundled_cdi_ref() {
+        // Synthesized placeholders must produce a CdiReference with
+        // from_profile_stem (fingerprint = "bundled") so the save flow
+        // resolves CDI from the bundled profiles directory, not cdi_cache.
+        let proxy = crate::node_proxy::SynthesizedNodeProxy {
+            node_key: "placeholder:test-uuid".to_string(),
+            profile_stem: "Mustangpeak-Engineering_TurnoutBoss".to_string(),
+            snip: Some(lcc_rs::SNIPData {
+                manufacturer: "Mustangpeak Engineering".to_string(),
+                model: "TurnoutBoss".to_string(),
+                hardware_version: String::new(),
+                software_version: "1.0".to_string(),
+                user_name: String::new(),
+                user_description: String::new(),
+            }),
+            cdi_data: Some(lcc_rs::CdiData {
+                xml_content: "<cdi/>".to_string(),
+                retrieved_at: chrono::Utc::now(),
+            }),
+            cdi_parsed: None,
+            config_values: std::collections::HashMap::new(),
+            config_tree: None,
+            producer_identified_events: Vec::new(),
+        };
+        let handle = crate::node_proxy::NodeProxyHandle::Synthesized(proxy);
+        let state = AppState::new();
+
+        let snap = build_node_snapshot(&handle, "2026-05-31T00:00:00Z", vec![], &state)
+            .await
+            .expect("build_node_snapshot should succeed for placeholder");
+
+        // node_key must be the placeholder key, not a canonical NodeID
+        assert_eq!(snap.node_key, "placeholder:test-uuid");
+        // node_id must be None for placeholders
+        assert!(snap.node_id.is_none(), "placeholder snapshot must have node_id = None");
+        // profile_stem must be set
+        assert_eq!(
+            snap.profile_stem.as_deref(),
+            Some("Mustangpeak-Engineering_TurnoutBoss")
         );
+        // CdiReference must use from_profile_stem, not from_snip
+        assert!(snap.cdi_ref.is_bundled(), "placeholder CdiReference must be bundled");
+        assert_eq!(snap.cdi_ref.cache_key, "Mustangpeak-Engineering_TurnoutBoss");
+        assert_eq!(snap.cdi_ref.version, "bundled");
+        assert_eq!(snap.cdi_ref.fingerprint, "bundled");
+    }
 
-        let mut slot_selections = std::collections::BTreeMap::new();
-        slot_selections.insert(
-            "connector-a".to_string(),
-            crate::layout::types::ConnectorSelectionRecord {
-                selected_daughterboard_id: Some("BOD4-CP".to_string()),
-                status: crate::layout::types::ConnectorSelectionStatus::Selected,
-                source_profile_version: None,
-            },
+    // Step 4d behavior pin: a fully-populated config tree produces a
+    // `Complete` capture with an empty `missing` list. Pre-migration the
+    // registry-miss bug left leaves with `value: None`, which surfaced as
+    // "missing value" log spam and a `Partial` capture status.
+    #[tokio::test]
+    async fn populated_tree_yields_complete_capture_with_no_missing_values() {
+        use crate::node_tree::{
+            ConfigNode, ConfigValue, LeafNode, LeafType, NodeConfigTree, SegmentNode,
+        };
+
+        let tree = NodeConfigTree {
+            node_id: "02.01.57.00.02.D9".into(),
+            identity: None,
+            connector_profile: None,
+            connector_profile_warning: None,
+            unknown_variants: Vec::new(),
+            segments: vec![SegmentNode {
+                name: "Config".into(),
+                description: None,
+                origin: 0,
+                space: 0xFD,
+                children: vec![ConfigNode::Leaf(LeafNode {
+                    name: "Event ID".into(),
+                    description: None,
+                    element_type: LeafType::EventId,
+                    address: 0,
+                    size: 8,
+                    space: 0xFD,
+                    path: vec!["seg:0".into(), "elem:0".into()],
+                    value: Some(ConfigValue::EventId {
+                        bytes: [1, 2, 3, 4, 5, 6, 7, 8],
+                        hex: "01.02.03.04.05.06.07.08".into(),
+                    }),
+                    event_role: None,
+                    constraints: None,
+                    button_text: None,
+                    dialog_text: None,
+                    action_value: 0,
+                    hint_slider: None,
+                    hint_radio: false,
+                    modified_value: None,
+                    write_state: None,
+                    write_error: None,
+                    read_only: false,
+                })],
+            }],
+        };
+
+        let proxy = crate::node_proxy::SynthesizedNodeProxy {
+            node_key: "placeholder:populated-uuid".to_string(),
+            profile_stem: "TestProfile".to_string(),
+            snip: Some(lcc_rs::SNIPData {
+                manufacturer: "Test".into(),
+                model: "Node".into(),
+                hardware_version: String::new(),
+                software_version: "1.0".into(),
+                user_name: String::new(),
+                user_description: String::new(),
+            }),
+            cdi_data: Some(lcc_rs::CdiData {
+                xml_content: "<cdi/>".into(),
+                retrieved_at: chrono::Utc::now(),
+            }),
+            cdi_parsed: None,
+            config_values: std::collections::HashMap::new(),
+            config_tree: Some(tree),
+            producer_identified_events: Vec::new(),
+        };
+        let handle = crate::node_proxy::NodeProxyHandle::Synthesized(proxy);
+        let state = AppState::new();
+
+        let snap = build_node_snapshot(&handle, "2026-05-31T00:00:00Z", vec![], &state)
+            .await
+            .expect("build_node_snapshot");
+
+        assert!(
+            snap.missing.is_empty(),
+            "populated tree must not surface 'missing value' entries, got: {:?}",
+            snap.missing
         );
-
-        apply_layout_deltas(&mut layout, vec![
-            LayoutEditDelta::SetConnectorSelection {
-                node_id: "020157000001".to_string(),
-                selection: crate::layout::types::NodeHardwareSelectionSet {
-                    carrier_key: "rr-cirkits::tower-lcc".to_string(),
-                    slot_selections,
-                    updated_at: Some("2026-05-02T12:00:00Z".to_string()),
-                },
-            },
-        ]);
-
-        let stored = layout.connector_selections.get("020157000001").unwrap();
-        assert_eq!(stored.carrier_key, "rr-cirkits::tower-lcc");
-        assert_eq!(stored.slot_selections.get("connector-a").unwrap().selected_daughterboard_id.as_deref(), Some("BOD4-CP"));
+        assert_eq!(snap.capture_status, CaptureStatus::Complete);
+        assert_eq!(snap.config.len(), 1, "one populated leaf must round-trip into config map");
     }
 }
 
@@ -636,7 +824,7 @@ pub async fn open_layout_directory(
         .node_snapshots
         .iter()
         .filter(|n| n.capture_status == CaptureStatus::Partial)
-        .map(|n| n.node_id.to_canonical())
+        .map(|n| n.node_key.clone())
         .collect();
 
     let _ = crate::commands::bowties::set_recent_layout(recent_path.clone(), app.clone()).await;
@@ -648,18 +836,32 @@ pub async fn open_layout_directory(
     // can discover event slots and merge saved role classifications.
     {
         let mut offline_data = crate::state::OfflineBowtieData::default();
+        let mut saved_trees: std::collections::HashMap<crate::node_key::NodeKey, crate::node_tree::NodeConfigTree> =
+            std::collections::HashMap::new();
         let app_data_dir = app
             .path()
             .app_data_dir()
             .map_err(|e| format!("Cannot resolve app data directory: {}", e))?;
 
         for snapshot in &loaded.node_snapshots {
+            if snapshot.is_placeholder() {
+                // Placeholders are excluded from the bowties catalog
+                // (FR-015 — no binding enumeration for placeholder eventids).
+                continue;
+            }
             if snapshot.cdi_ref.fingerprint == "not_supported"
                 || snapshot.cdi_ref.fingerprint == "missing"
             {
                 continue;
             }
-            let dotted_id = snapshot.node_id.to_hex_string();
+            let dotted_id = snapshot
+                .node_id
+                .as_ref()
+                .expect("real-node snapshot has Some(node_id)")
+                .to_hex_string();
+            let nk = crate::node_key::NodeKey::from_node_id(
+                *snapshot.node_id.as_ref().unwrap()
+            );
 
             // Load CDI XML
             let xml = match crate::layout::resolve_cdi_xml_for_snapshot(
@@ -670,7 +872,7 @@ pub async fn open_layout_directory(
                 Ok(xml) => xml,
                 Err(_) => continue,
             };
-            offline_data.cdi_xml.insert(dotted_id.clone(), xml.clone());
+            offline_data.cdi_xml.insert(nk, xml.clone());
 
             // Parse CDI, build minimal tree, merge snapshot values, extract event ID leaves
             let cdi = match lcc_rs::cdi::parser::parse_cdi(&xml) {
@@ -680,6 +882,10 @@ pub async fn open_layout_directory(
             let mut tree = crate::node_tree::build_node_config_tree(&dotted_id, &cdi);
             crate::node_tree::merge_snapshot_path_values(&mut tree, &snapshot.config);
 
+            // Cache the fully-populated tree so it can seed the live proxy
+            // when this node is rediscovered on the bus.
+            saved_trees.insert(nk, tree.clone());
+
             let mut node_config: std::collections::HashMap<String, [u8; 8]> = std::collections::HashMap::new();
             for leaf in crate::node_tree::collect_event_id_leaves(&tree) {
                 if let Some(bytes) = leaf.value {
@@ -687,7 +893,7 @@ pub async fn open_layout_directory(
                 }
             }
             if !node_config.is_empty() {
-                offline_data.config_values.insert(dotted_id.clone(), node_config);
+                offline_data.config_values.insert(nk, node_config);
             }
         }
 
@@ -702,16 +908,62 @@ pub async fn open_layout_directory(
         }
 
         *state.offline_bowtie_data.write().await = offline_data;
+        state.node_registry.set_saved_trees(saved_trees).await;
     }
 
-    let layout_node_ids = loaded.node_snapshots.iter().map(|s| s.node_id.clone()).collect();
+    // S9: Reconstitute placeholder nodes into the registry so they're
+    // available for tree queries and sidebar display during offline mode.
+    for snapshot in &loaded.node_snapshots {
+        if let Some(ref stem) = snapshot.profile_stem {
+            match crate::placeholder::reconstitute(
+                &snapshot.node_key,
+                stem,
+                &app,
+                &state,
+            )
+            .await
+            {
+                Ok(proxy) => {
+                    let parsed = match crate::node_key::NodeKey::parse(&snapshot.node_key) {
+                        Ok(k) => k,
+                        Err(e) => {
+                            eprintln!(
+                                "[layout open] invalid placeholder node_key {}: {}",
+                                snapshot.node_key, e
+                            );
+                            continue;
+                        }
+                    };
+                    state
+                        .node_registry
+                        .insert(
+                            parsed,
+                            crate::node_proxy::NodeProxyHandle::Synthesized(proxy),
+                        )
+                        .await;
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[layout open] failed to reconstitute placeholder {}: {}",
+                        snapshot.node_key, e
+                    );
+                }
+            }
+        }
+    }
+
+    let layout_node_keys: Vec<crate::node_key::NodeKey> = loaded
+        .node_snapshots
+        .iter()
+        .filter_map(|s| crate::node_key::NodeKey::parse(&s.node_key).ok())
+        .collect();
     let context = ActiveLayoutContext {
         layout_id: loaded.manifest.layout_id.clone(),
         root_path: recent_path.clone(),
         mode: ActiveLayoutMode::OfflineFile,
         captured_at: Some(loaded.manifest.captured_at.clone()),
         pending_offline_change_count: loaded.offline_changes.len(),
-        layout_node_ids,
+        layout_node_keys,
     };
     *state.active_layout.write().await = Some(context);
 
@@ -756,6 +1008,7 @@ pub async fn close_layout(
     *state.active_layout.write().await = None;
     *state.offline_changes_cache.write().await = Vec::new();
     *state.offline_bowtie_data.write().await = Default::default();
+    state.node_registry.clear_layout_scope().await;
     crate::commands::bowties::clear_recent_layout(app).await?;
 
     Ok(CloseLayoutResult {
@@ -777,7 +1030,7 @@ pub async fn create_new_layout_capture(
         mode: ActiveLayoutMode::OfflineFile,
         captured_at: Some(created_at.clone()),
         pending_offline_change_count: 0,
-        layout_node_ids: Vec::new(),
+        layout_node_keys: Vec::new(),
     };
     *state.active_layout.write().await = Some(context);
     *state.offline_changes_cache.write().await = Vec::new();
@@ -881,6 +1134,7 @@ pub async fn save_layout_with_bus_writes(
         warnings: save_result.warnings,
         layout: persisted_layout,
         persisted_node_ids: save_result.persisted_node_ids,
+        node_snapshots: save_result.node_snapshots,
     })
 }
 
@@ -934,7 +1188,8 @@ pub async fn build_offline_node_tree(
         let model = identity.model.as_deref().unwrap_or("");
         if !manufacturer.is_empty() || !model.is_empty() {
             if let Some(profile) = crate::profile::load_profile(manufacturer, model, &cdi, &app, &state.profiles).await {
-                let report = crate::profile::annotate_tree(&mut tree, &profile, &cdi);
+                let selections = crate::commands::cdi::active_node_mode_selections(&state, &node_id).await;
+                let report = crate::profile::annotate_tree(&mut tree, &profile, &selections, &cdi);
                 let shared_daughterboards = crate::profile::load_shared_daughterboards(&app).await;
                 let connector_profile_outcome = crate::profile::build_connector_profile_with_diagnostics(
                     &dotted_id,
@@ -944,6 +1199,7 @@ pub async fn build_offline_node_tree(
                 );
                 tree.connector_profile = connector_profile_outcome.profile;
                 tree.connector_profile_warning = connector_profile_outcome.warning;
+                tree.unknown_variants = report.unknown_variants.clone();
                 eprintln!(
                     "[offline profile] {} - {} event roles, {} rules applied, {} warnings",
                     node_id,
@@ -958,16 +1214,18 @@ pub async fn build_offline_node_tree(
     // ── Accumulate offline bowtie data for later catalog build ────────────────
     {
         let mut offline_data = state.offline_bowtie_data.write().await;
+        let nk = crate::node_key::NodeKey::parse(&dotted_id)
+            .unwrap_or_else(|_| crate::node_key::NodeKey::from_node_id(parsed_nid));
 
         // Store CDI XML for slot walking
-        offline_data.cdi_xml.insert(dotted_id.clone(), xml);
+        offline_data.cdi_xml.insert(nk, xml);
 
         // Extract EventId config values from the tree
         let mut node_config: HashMap<String, [u8; 8]> = HashMap::new();
         for leaf in crate::node_tree::collect_event_id_leaves(&tree) {
             if let Some(role) = leaf.event_role {
                 if role != lcc_rs::EventRole::Ambiguous {
-                    let key = format!("{}:{}", dotted_id, leaf.path.join("/"));
+                    let key = format!("{}:{}", nk, leaf.path.join("/"));
                     offline_data.profile_roles.insert(key, role);
                 }
             }
@@ -976,7 +1234,7 @@ pub async fn build_offline_node_tree(
             }
         }
         if !node_config.is_empty() {
-            offline_data.config_values.insert(dotted_id.clone(), node_config);
+            offline_data.config_values.insert(nk, node_config);
         }
     }
 

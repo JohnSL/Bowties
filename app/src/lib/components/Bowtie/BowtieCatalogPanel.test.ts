@@ -328,7 +328,7 @@ describe('BowtieCatalogPanel — catalog content (readComplete=true, hasUnreadNo
     mockHasLayoutFile.value = true;
     mockIsOfflineMode.value = true;
 
-    const nodeId = '02.01.57.00.02.D9';
+    const nodeId = '0201570002D9';
     mockTreeByNodeId.set(
       nodeId,
       makeTree(nodeId, [
@@ -349,7 +349,7 @@ describe('BowtieCatalogPanel — catalog content (readComplete=true, hasUnreadNo
       eventIdBytes: [5, 1, 1, 1, 0, 0, 0, 1],
       producers: [
         {
-          node_id: '02.01.57.00.00.01',
+          node_key: '020157000001',
           node_name: 'Producer Node',
           element_path: ['seg:0', 'elem:0'],
           element_label: 'Producer 1',
@@ -360,7 +360,7 @@ describe('BowtieCatalogPanel — catalog content (readComplete=true, hasUnreadNo
       ],
       consumers: [
         {
-          node_id: nodeId,
+          node_key: nodeId,
           node_name: 'Offline Node',
           element_path: ['seg:0', 'elem:2'],
           element_label: 'Consumer A',
@@ -369,7 +369,7 @@ describe('BowtieCatalogPanel — catalog content (readComplete=true, hasUnreadNo
           role: 'Consumer',
         },
         {
-          node_id: '02.01.57.00.02.DA',
+          node_key: '0201570002DA',
           node_name: 'Offline Node B',
           element_path: ['seg:0', 'elem:3'],
           element_label: 'Consumer B',

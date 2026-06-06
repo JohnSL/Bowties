@@ -81,6 +81,13 @@ Could we improve a touched module's depth or locality as part of this feature wo
 - Look for: scattered logic that could be consolidated, multiple callers doing the same coordination, test workarounds that indicate a missing seam.
 - Only flag when the improvement is narrow and testable within the feature's scope.
 
+### 12. Demo-ability
+
+Can each proposed slice be demonstrated to a stakeholder after completion?
+
+- **Good**: The slice produces a user-visible change that a product manager can verify without reading code or running tests.
+- **Concerning**: The slice produces no user-visible change. It should either be folded into the first downstream slice that produces a visible outcome, or explicitly labeled as a `[REFACTOR]` slice whose acceptance criteria describe the invariant preserved.
+
 ## Scaling Rules
 
 | Signal | Output level | What to present |

@@ -1,0 +1,130 @@
+{
+  "nodeType": {
+    "manufacturer": "Mustangpeak Engineering",
+    "model": "TurnoutBoss"
+  },
+  "cdiFile": "/Users/dwightkelly/Desktop/turnoutboss_cdi.xml",
+  "extractionFiles": [
+    "/Users/dwightkelly/Documents/Projects/Bowties/profiles/turnout-boss/event-roles.json",
+    "/Users/dwightkelly/Documents/Projects/Bowties/profiles/turnout-boss/relevance-rules.json",
+    "/Users/dwightkelly/Documents/Projects/Bowties/profiles/turnout-boss/section-descriptions.yaml",
+    "/Users/dwightkelly/Documents/Projects/Bowties/profiles/turnout-boss/field-descriptions.yaml",
+    "/Users/dwightkelly/Documents/Projects/Bowties/profiles/turnout-boss/recipes.yaml"
+  ],
+  "cdiRegistry": {
+    "segments": [
+      "Layout Configuration Setup",
+      "Hardware Configuration",
+      "Producers and Consumers"
+    ],
+    "groups": [
+      "Layout Configuration Setup/User Info",
+      "Layout Configuration Setup/How this TurnoutBoss is used on your layout.",
+      "Layout Configuration Setup/Layout Connections",
+      "Layout Configuration Setup/Turnout Control",
+      "Hardware Configuration/Turnout Feedback",
+      "Hardware Configuration/Facing Point Signals",
+      "Hardware Configuration/Signalhead Lamp Configuration",
+      "Hardware Configuration/Track Detector Sensitivity",
+      "Hardware Configuration/Signal LED Brightness",
+      "Hardware Configuration/Signal LED Brightness/<replicated, repnames Signal A/B/C/D>",
+      "Hardware Configuration/Servo Limits",
+      "Hardware Configuration/Optical Input",
+      "Producers and Consumers/Occupancy",
+      "Producers and Consumers/Turnout Control",
+      "Producers and Consumers/Signal Lamp Status",
+      "Producers and Consumers/Signal Controls",
+      "Producers and Consumers/Optical Sensor"
+    ],
+    "totals": {
+      "segments": 3,
+      "groups": 17,
+      "leafFieldsNonEvent": 17,
+      "eventSlots": 61
+    }
+  },
+  "pathErrors": [],
+  "resolvedPathErrors": [
+    {
+      "extractionFile": "relevance-rules.json",
+      "entryId": "R001",
+      "originalReferencedPath": "Layout Configuration Setup/How this TurnoutBoss is used on your layout",
+      "correctedReferencedPath": "Layout Configuration Setup/How this TurnoutBoss is used on your layout.",
+      "resolution": "Added trailing period to match the CDI <name> exactly. Verified consistent with section-descriptions.yaml, field-descriptions.yaml, and recipes.yaml."
+    }
+  ],
+  "enumErrors": [],
+  "augmentedPaths": [
+    {
+      "extractionFile": "event-roles.json",
+      "paths": [
+        "Producers and Consumers/Occupancy (Produced)",
+        "Producers and Consumers/Occupancy (Consumed)",
+        "Producers and Consumers/Turnout Control (Consumed)",
+        "Producers and Consumers/Turnout Control (Produced)",
+        "Producers and Consumers/Signal Controls (Consumed)",
+        "Producers and Consumers/Signal Controls (Produced)"
+      ],
+      "note": "Not errors — these are synthetic disambiguation suffixes used by profile-1 to split a single CDI group into separate Producer/Consumer entries (Occupancy is dual-role; Turnout Control and Signal Controls contain a mix of (P) and (C) child events). The base CDI path before the parenthetical suffix exists in the registry. Consumers of this file should strip the suffix to look up the underlying group."
+    },
+    {
+      "extractionFile": "section-descriptions.yaml and field-descriptions.yaml",
+      "paths": [
+        "Hardware Configuration/Signal LED Brightness/Signal",
+        "Hardware Configuration/Signal LED Brightness/Signal/Red LED Brightness",
+        "Hardware Configuration/Signal LED Brightness/Signal/Yellow LED Brightness",
+        "Hardware Configuration/Signal LED Brightness/Signal/Green LED Brightness",
+        "Hardware Configuration/Signal LED Brightness/Signal/Lunar LED Brightness"
+      ],
+      "note": "Not errors — the inner replicated group under 'Signal LED Brightness' has no <name> in the CDI, only four <repname> entries (Signal A, Signal B, Signal C, Signal D). 'Signal' is a synthesized template name used consistently across section-descriptions.yaml and field-descriptions.yaml to describe the template once. relevance-rules.json refers to a specific instance with the repname-based path 'Hardware Configuration/Signal LED Brightness/Signal D', which is a valid instance reference."
+    },
+    {
+      "extractionFile": "recipes.yaml",
+      "paths": [
+        "Producers and Consumers/Signal Lamp Status/Signal A Red (P) … Signal D Dark (P)",
+        "Producers and Consumers/Turnout Control/Turnout Observed Normal (P), Turnout Observed Diverging (P), Turnout Observed In Motion (P)",
+        "Producers and Consumers/Signal Controls/Signal State A Stop (P) … Signal State CD Nonstop (P)",
+        "<Remote node: its 'set turnout Normal' producer slot>",
+        "<Remote node: its 'set turnout Diverging' producer slot>"
+      ],
+      "note": "Not errors — Recipe 6 uses informal range descriptions to instruct the user to copy/paste multiple event IDs at once (avoiding 16 separate steps for the lamp-status events). Recipe 5 uses '<Remote node: …>' placeholders that intentionally point outside this CDI (the user must select a producer slot on a different LCC node). These are guidance text, not strict CDI references."
+    }
+  ],
+  "coverage": {
+    "totalSegments": 3,
+    "coveredSegments": 3,
+    "totalGroups": 17,
+    "coveredGroups": 17,
+    "totalLeafFields": 17,
+    "coveredLeafFields": 17,
+    "totalEventSlots": 61,
+    "coveredEventSlots": 61,
+    "overallPercentage": 100
+  },
+  "coverageDetail": {
+    "segments": {
+      "Layout Configuration Setup": ["section-descriptions.yaml"],
+      "Hardware Configuration": ["section-descriptions.yaml"],
+      "Producers and Consumers": ["section-descriptions.yaml"]
+    },
+    "groupsWithEventRoles": {
+      "Layout Configuration Setup/Layout Connections": "Consumer (Medium confidence; NodeID storage)",
+      "Producers and Consumers/Occupancy": "Producer + Consumer (dual-role)",
+      "Producers and Consumers/Turnout Control": "Producer + Consumer (mixed P/C)",
+      "Producers and Consumers/Signal Lamp Status": "Producer",
+      "Producers and Consumers/Signal Controls": "Producer + Consumer (mixed P/C)",
+      "Producers and Consumers/Optical Sensor": "Producer"
+    },
+    "groupsWithRelevanceRules": {
+      "Hardware Configuration/Track Detector Sensitivity/Detector 3": "R001",
+      "Hardware Configuration/Signal LED Brightness/Signal D": "R002",
+      "Producers and Consumers/Signal Lamp Status/Signal D Red (P)": "R003",
+      "Producers and Consumers/Signal Lamp Status/Signal D Yellow (P)": "R004",
+      "Producers and Consumers/Signal Lamp Status/Signal D Green (P)": "R005",
+      "Producers and Consumers/Signal Lamp Status/Signal D Dark (P)": "R006",
+      "Producers and Consumers/Turnout Control/Turnout Observed In Motion (P)": "R007"
+    }
+  },
+  "uncoveredSections": [],
+  "summary": "PASS — 0 path errors, 0 enum errors, 100% coverage (3/3 segments, 17/17 groups, 17/17 non-event leaf fields, 61/61 event slots all described), 6/6 event-bearing groups have role classifications. The previous R001 path error (missing trailing period on 'How this TurnoutBoss is used on your layout.') has been corrected — see resolvedPathErrors. Three categories of non-error augmented paths are noted (see augmentedPaths): (1) profile-1's intentional (Produced)/(Consumed) suffixes that split mixed/dual-role groups; (2) the synthesized 'Signal' template name for the unnamed replicated brightness group; (3) recipes.yaml's informal multi-path range descriptions in Recipes 5 and 6. Profile is structurally valid and ready for use."
+}

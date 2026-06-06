@@ -1,58 +1,48 @@
 import {
   getConnectorProfile,
 } from '$lib/api/connectorProfiles';
+import { setNodeModeSelection } from '$lib/api/layout';
 import { layoutStore } from '$lib/stores/layout.svelte';
-import type {
-  LayoutConnectorSelectionRecord,
-  LayoutConnectorSelections,
-  LayoutNodeHardwareSelectionSet,
-} from '$lib/types/bowtie';
+import type { LayoutFile } from '$lib/types/bowtie';
 import type {
   ConnectorProfileView,
-  ConnectorSelection,
   ConnectorSelectionDocument,
   ConnectorSelectionStatus,
 } from '$lib/types/connectorProfile';
 import { normalizeNodeId } from '$lib/utils/nodeId';
 
-function toLayoutSelectionRecord(selection: ConnectorSelection): LayoutConnectorSelectionRecord {
-  return {
-    selectedDaughterboardId: selection.selectedDaughterboardId,
-    status: selection.status,
-  };
-}
-
-function toLayoutSelectionSet(document: ConnectorSelectionDocument): LayoutNodeHardwareSelectionSet {
-  return {
-    carrierKey: document.carrierKey,
-    slotSelections: Object.fromEntries(
-      document.slotSelections.map((selection) => [selection.slotId, toLayoutSelectionRecord(selection)]),
-    ),
-    updatedAt: document.updatedAt,
-  };
-}
-
-function hasPersistedConnectorSelection(document: ConnectorSelectionDocument): boolean {
-  return document.slotSelections.some((selection) => (
-    !!selection.selectedDaughterboardId || selection.status !== 'none'
-  ));
-}
-
-function fromLayoutSelectionSet(
+/**
+ * Build a ConnectorSelectionDocument from the unified
+ * `nodeModeSelections[nodeKey]` map (Spec 014 / S6).
+ *
+ * The Tower-LCC profile uses an identity mapping: each connector slot id
+ * (e.g. `connector-a`) is also a Configuration Mode id, and each
+ * daughterboard id (e.g. `BOD4-CP`) is its variant id. So the per-node
+ * selection map can be projected back onto the slot list directly.
+ */
+function fromNodeModeSelections(
   nodeId: string,
-  selectionSet: LayoutNodeHardwareSelectionSet,
+  profile: ConnectorProfileView,
+  selections: Record<string, string>,
 ): ConnectorSelectionDocument {
   return {
     nodeId,
-    carrierKey: selectionSet.carrierKey,
-    slotSelections: Object.entries(selectionSet.slotSelections)
-      .map(([slotId, selection]) => ({
-        slotId,
-        selectedDaughterboardId: selection.selectedDaughterboardId,
-        status: selection.status ?? 'unknown',
-      }))
-      .sort((left, right) => left.slotId.localeCompare(right.slotId)),
-    updatedAt: selectionSet.updatedAt,
+    carrierKey: profile.carrierKey,
+    slotSelections: [...profile.slots]
+      .sort((left, right) => left.order - right.order)
+      .map((slot) => {
+        const variantId = selections[slot.slotId];
+        return {
+          slotId: slot.slotId,
+          selectedDaughterboardId: variantId,
+          status: variantId
+            ? (slot.supportedDaughterboardIds.includes(variantId)
+                ? ('selected' satisfies ConnectorSelectionStatus)
+                : ('unknown' satisfies ConnectorSelectionStatus))
+            : ('none' satisfies ConnectorSelectionStatus),
+        };
+      }),
+    updatedAt: undefined,
   };
 }
 
@@ -183,17 +173,17 @@ class ConnectorSelectionsStore {
     return this._errors.get(normalizeNodeId(nodeId)) ?? null;
   }
 
-  hydrateFromLayout(layout: { connectorSelections: LayoutConnectorSelections } | null): void {
-    const nextDocuments = new Map<string, ConnectorSelectionDocument>();
-
-    for (const [nodeId, selectionSet] of Object.entries(layout?.connectorSelections ?? {})) {
-      nextDocuments.set(
-        normalizeNodeId(nodeId),
-        fromLayoutSelectionSet(nodeId, selectionSet),
-      );
-    }
-
-    this._documents = nextDocuments;
+  /**
+   * Reset cached documents on layout open/close (Spec 014 / S6).
+   *
+   * Documents are no longer projected up-front from the layout file —
+   * they're built lazily by `loadNode()` when a profile is also available
+   * (the identity mapping needs the slot list to know which mode ids to
+   * read out of `nodeModeSelections`). This hook still exists so the
+   * orchestrator can clear cross-layout state on open.
+   */
+  hydrateFromLayout(_layout: LayoutFile | null): void {
+    this._documents = new Map();
     this._previewWarnings = new Map();
     this.revision += 1;
   }
@@ -256,9 +246,9 @@ class ConnectorSelectionsStore {
       const profile = profileOverride !== undefined
         ? profileOverride
         : await getConnectorProfile(nodeId);
-      const layoutSelectionSet = layoutStore.getConnectorSelections(nodeId);
-      const layoutDocument = layoutSelectionSet
-        ? fromLayoutSelectionSet(nodeId, layoutSelectionSet)
+      const nodeModeSelections = layoutStore.getNodeModeSelections(nodeId);
+      const layoutDocument = profile && nodeModeSelections
+        ? fromNodeModeSelections(nodeId, profile, nodeModeSelections)
         : null;
       const existingDocument = this._documents.get(nodeKey) ?? null;
       const document = profile
@@ -293,6 +283,18 @@ class ConnectorSelectionsStore {
     }
   }
 
+  /**
+   * Persist a connector selection document by emitting one
+   * `set_node_mode_selection` IPC per slot that has a daughterboard set
+   * (Spec 014 / S6). The Tower-LCC profile uses an identity mapping so
+   * `slotId` is also `modeId` and `selectedDaughterboardId` is also
+   * `variantId`.
+   *
+   * Note (deselection): there is no backend "clear selection" delta yet —
+   * a slot whose `selectedDaughterboardId` is undefined is preserved in
+   * the in-memory document but not pushed to the backend. Clearing must
+   * be handled by a future Configuration Mode delta variant.
+   */
   async saveDocument(document: ConnectorSelectionDocument): Promise<ConnectorSelectionDocument> {
     const saved: ConnectorSelectionDocument = {
       ...document,
@@ -305,10 +307,26 @@ class ConnectorSelectionsStore {
     this._documents = nextDocuments;
     this.revision += 1;
 
-    if (hasPersistedConnectorSelection(saved)) {
-      layoutStore.upsertConnectorSelections(saved.nodeId, toLayoutSelectionSet(saved));
-    } else {
-      layoutStore.removeConnectorSelections(saved.nodeId);
+    for (const selection of saved.slotSelections) {
+      if (!selection.selectedDaughterboardId) {
+        continue;
+      }
+      try {
+        await setNodeModeSelection(
+          nodeKey,
+          selection.slotId,
+          selection.selectedDaughterboardId,
+        );
+      } catch (error) {
+        // Save failures are surfaced as console warnings rather than the
+        // node-level error channel (which represents "can't load this
+        // connector" — a different concern). The in-memory document is
+        // already updated, so the UI continues to reflect user intent.
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(
+          `[connectorSelections] set_node_mode_selection failed for ${nodeKey}/${selection.slotId}: ${message}`,
+        );
+      }
     }
 
     return saved;

@@ -3,6 +3,7 @@ import type { NodeReadState, ReadAllConfigValuesResponse } from '$lib/api/types'
 import { getCdiErrorMessage, isCdiError } from '$lib/types/cdi';
 import { resolveNodeDisplayName } from '$lib/utils/nodeDisplayName';
 import { formatNodeId } from '$lib/utils/nodeId';
+import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
 
 export interface ConfigReadNodeCandidate {
   nodeId: string;
@@ -40,7 +41,7 @@ export function getUnreadConfigEligibleNodes(
   return nodes.filter((node) => {
     if (!node.snip_data) return false;
     if (!pipConfirmsConfigReadable(node)) return false;
-    return !readNodeIds.has(formatNodeId(node.node_id));
+    return !readNodeIds.has(toCanonicalNodeKey(formatNodeId(node.node_id)));
   });
 }
 

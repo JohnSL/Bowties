@@ -49,8 +49,9 @@ checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
 
 [[package]]
 name = "app"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
+ "bowties-core",
  "chrono",
  "lazy_static",
  "lcc-rs",
@@ -290,6 +291,20 @@ dependencies = [
  "futures-io",
  "futures-lite",
  "piper",
+]
+
+[[package]]
+name = "bowties-core"
+version = "0.2.1"
+dependencies = [
+ "chrono",
+ "lcc-rs",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "thiserror 1.0.69",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -1908,7 +1923,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "lcc-rs"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "chrono",

@@ -1,6 +1,5 @@
 //! Offline change row types for persisted pending edits.
 
-use lcc_rs::NodeID;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -28,8 +27,11 @@ pub enum OfflineChangeStatus {
 pub struct OfflineChange {
     pub change_id: String,
     pub kind: OfflineChangeKind,
-    #[serde(with = "crate::layout::serde_node_id::canonical_option")]
-    pub node_id: Option<NodeID>,
+    /// The node this change targets, as a `NodeKey` string — canonical hex
+    /// NodeID for real nodes, `"placeholder:<uuid>"` for placeholders.
+    /// `None` for non-node-scoped changes (e.g. bowtie metadata).
+    #[serde(alias = "nodeId")]
+    pub node_key: Option<String>,
     pub space: Option<u8>,
     pub offset: Option<String>,
     pub baseline_value: String,

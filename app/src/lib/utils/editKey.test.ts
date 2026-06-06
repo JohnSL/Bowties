@@ -102,6 +102,18 @@ describe('parseEditKey', () => {
     expect(parseEditKey(editKeyForLeaf('050201020300', 254, 1)).space).toBe(254);
     expect(parseEditKey(editKeyForLeaf('050201020300', 255, 1)).space).toBe(255);
   });
+
+  // Spec 014, ADR-0008 — placeholder NodeKeys contain an internal ':', so
+  // round-tripping must split from the right.
+  it('round-trips a placeholder NodeKey unchanged', () => {
+    const placeholderKey = 'placeholder:01234567-89ab-cdef-0123-456789abcdef';
+    const key = editKeyForLeaf(placeholderKey, 253, 42);
+    expect(key).toBe(`${placeholderKey}:253:42`);
+    const parsed = parseEditKey(key);
+    expect(parsed.normalizedNodeId).toBe(placeholderKey);
+    expect(parsed.space).toBe(253);
+    expect(parsed.address).toBe(42);
+  });
 });
 
 // ─── addressToOffsetHex ───────────────────────────────────────────────────────

@@ -8,7 +8,7 @@
 
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { loadLayout, saveLayout, getRecentLayout, setRecentLayout, buildBowtieCatalog } from '$lib/api/bowties';
-import type { LayoutConnectorSelections, LayoutFile, LayoutNodeHardwareSelectionSet } from '$lib/types/bowtie';
+import type { LayoutFile } from '$lib/types/bowtie';
 import { normalizeNodeId } from '$lib/utils/nodeId';
 import { OFFLINE_LAYOUT_DEFAULT_FILENAME, offlineLayoutDialogFilter } from '$lib/constants/layoutFiles';
 
@@ -47,21 +47,6 @@ class LayoutStore {
   /** True if the LayoutFile struct has unsaved metadata edits. */
   private _dirty = $state<boolean>(false);
 
-  /**
-   * Canonical IDs of discovered nodes that are fully captured (CDI cached
-   * + all config values read) but not yet present in the saved layout
-   * roster (S8). These are in-memory drafts that Save will promote into
-   * saved snapshots; the public `isDirty` getter ORs this with the
-   * LayoutFile-struct dirty signal so the Save button and unsaved-changes
-   * guard see a single, uniform "in-memory changes not yet saved"
-   * indication.
-   *
-   * The route owns the source of truth (it knows which discovered nodes
-   * have crossed the capture threshold) and pushes the list in via
-   * `setUnsavedInMemoryNodeIds`.
-   */
-  private _unsavedInMemoryNodeIds = $state<string[]>([]);
-
   /** True if a file operation is in progress. */
   private _busy = $state<boolean>(false);
 
@@ -85,18 +70,14 @@ class LayoutStore {
   }
 
   /**
-   * True when there are in-memory changes that have not been saved.
-   * Includes both LayoutFile-struct metadata edits (bowties, role
-   * classifications, connector selections) and fully-captured discovered
-   * nodes not yet in `layoutNodeIds` (S8).
+   * True when the LayoutFile struct has unsaved metadata edits (bowties,
+   * role classifications, connector selections). The aggregate "any
+   * in-memory change" signal lives on `effectiveNodeStore.isDirty`
+   * (ADR-0011) — this getter intentionally does NOT include drafts,
+   * offline changes, or fully-captured discovered-but-unsaved nodes.
    */
   get isDirty(): boolean {
-    return this._dirty || this._unsavedInMemoryNodeIds.length > 0;
-  }
-
-  /** Snapshot of the unsaved-in-memory node IDs (S8). */
-  get unsavedInMemoryNodeIds(): readonly string[] {
-    return this._unsavedInMemoryNodeIds;
+    return this._dirty;
   }
 
   get isLoaded(): boolean {
@@ -160,7 +141,6 @@ class LayoutStore {
       this._savedLayout = JSON.parse(JSON.stringify(layout));
       this._path = filePath;
       this._dirty = false;
-      this._unsavedInMemoryNodeIds = [];
       this._offlineMode = false;
       this._activeContext = {
         layoutId: filePath,
@@ -224,7 +204,6 @@ class LayoutStore {
       this._path = selected;
       this._savedLayout = JSON.parse(JSON.stringify(this._layout));
       this._dirty = false;
-      this._unsavedInMemoryNodeIds = [];
       this._offlineMode = false;
       this._activeContext = {
         layoutId: selected,
@@ -263,69 +242,12 @@ class LayoutStore {
     this._savedLayout = JSON.parse(JSON.stringify(layout));
   }
 
-  /** Lookup connector selections for a node from the active layout metadata. */
-  getConnectorSelections(nodeId: string): LayoutNodeHardwareSelectionSet | null {
+  /** Lookup configuration-mode selections for a node from the active layout metadata. */
+  getNodeModeSelections(nodeKey: string): Record<string, string> | null {
     if (!this._layout) {
       return null;
     }
-
-    return this._layout.connectorSelections[normalizeNodeId(nodeId)] ?? null;
-  }
-
-  /** Replace connector selection metadata for the loaded layout. */
-  replaceConnectorSelections(connectorSelections: LayoutConnectorSelections): void {
-    if (!this._layout) {
-      this.newLayout();
-    }
-    if (!this._layout) {
-      return;
-    }
-
-    this._layout = {
-      ...this._layout,
-      connectorSelections: JSON.parse(JSON.stringify(connectorSelections)),
-    };
-    this.recomputeDirtyFromSaved();
-  }
-
-  /** Upsert connector selection metadata for one node into the active layout. */
-  upsertConnectorSelections(nodeId: string, selections: LayoutNodeHardwareSelectionSet): void {
-    if (!this._layout) {
-      this.newLayout();
-    }
-    if (!this._layout) {
-      return;
-    }
-
-    this._layout = {
-      ...this._layout,
-      connectorSelections: {
-        ...this._layout.connectorSelections,
-        [normalizeNodeId(nodeId)]: JSON.parse(JSON.stringify(selections)),
-      },
-    };
-    this.recomputeDirtyFromSaved();
-  }
-
-  /** Remove connector selection metadata for one node from the active layout. */
-  removeConnectorSelections(nodeId: string): void {
-    if (!this._layout) {
-      return;
-    }
-
-    const normalizedNodeId = normalizeNodeId(nodeId);
-    if (!(normalizedNodeId in this._layout.connectorSelections)) {
-      return;
-    }
-
-    const nextConnectorSelections = { ...this._layout.connectorSelections };
-    delete nextConnectorSelections[normalizedNodeId];
-
-    this._layout = {
-      ...this._layout,
-      connectorSelections: nextConnectorSelections,
-    };
-    this.recomputeDirtyFromSaved();
+    return this._layout.nodeModeSelections?.[normalizeNodeId(nodeKey)] ?? null;
   }
 
   /**
@@ -338,7 +260,6 @@ class LayoutStore {
     this._savedLayout = JSON.parse(JSON.stringify(layout));
     this._path = context.rootPath;
     this._dirty = false;
-    this._unsavedInMemoryNodeIds = [];
     this._activeContext = context;
     this._offlineMode = context.mode === 'offline_file';
   }
@@ -363,31 +284,11 @@ class LayoutStore {
   }
 
   /**
-   * Mark the layout as clean (all changes saved). Clears both the
-   * LayoutFile-struct dirty flag and the S8 unsaved-in-memory node set;
-   * after a successful save the route re-pushes any nodes still discovered
-   * but not yet persisted on the next reactivity cycle.
+   * Mark the layout struct as clean. Aggregate cleanliness (drafts +
+   * metadata + offline + unsaved-new) is owned by the facade.
    */
   markClean(): void {
     this._dirty = false;
-    this._unsavedInMemoryNodeIds = [];
-  }
-
-  /**
-   * Replace the S8 unsaved-in-memory node ID list. The route pushes this in
-   * via a `$effect` whenever its derived set of fully-captured-but-unsaved
-   * nodes changes; the store treats it as opaque state.
-   */
-  setUnsavedInMemoryNodeIds(ids: readonly string[]): void {
-    // Avoid reassignment churn when the contents are equivalent so that
-    // downstream $derived consumers don't re-run on every push.
-    if (
-      this._unsavedInMemoryNodeIds.length === ids.length
-      && this._unsavedInMemoryNodeIds.every((id, i) => id === ids[i])
-    ) {
-      return;
-    }
-    this._unsavedInMemoryNodeIds = [...ids];
   }
 
   /**
@@ -398,12 +299,10 @@ class LayoutStore {
       schemaVersion: '1.0',
       bowties: {},
       roleClassifications: {},
-      connectorSelections: {},
     };
     this._savedLayout = JSON.parse(JSON.stringify(this._layout));
     this._path = null;
     this._dirty = false;
-    this._unsavedInMemoryNodeIds = [];
     this._activeContext = null;
     this._offlineMode = false;
   }
@@ -416,7 +315,6 @@ class LayoutStore {
     this._savedLayout = null;
     this._path = null;
     this._dirty = false;
-    this._unsavedInMemoryNodeIds = [];
     this._busy = false;
     this._activeContext = null;
     this._offlineMode = false;
@@ -434,11 +332,6 @@ class LayoutStore {
   setActiveContext(context: ActiveLayoutContext | null): void {
     this._activeContext = context;
     this._offlineMode = context?.mode === 'offline_file';
-    // A context swap (open/close/switch) is the canonical "start over"
-    // moment for the unsaved-in-memory node set — the route's $effect
-    // will repopulate it on the next cycle if any nodes still qualify
-    // under the new context.
-    this._unsavedInMemoryNodeIds = [];
   }
 
   private recomputeDirtyFromSaved(): void {

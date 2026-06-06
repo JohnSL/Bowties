@@ -22,6 +22,15 @@ These instructions are the always-on implementation contract for Bowties.
 - Apply TDD for production behavior changes: add or update a focused test around the behavior seam first when practical, then implement the smallest change that makes it pass.
 - When fixing a regression, encode the regression as a behavior contract in tests and update the durable product docs if the user-visible behavior or ownership rule is part of the fix.
 
+## Context Conservation
+
+Skills like `design`, `build`, and `architecture-first-fix` require reading many canonical files (aiwiki, ADRs, placement rules, glossary, GitHub issues). Gathering all of that in the main conversation burns context tokens that are better spent on decisions and implementation.
+
+- **Delegate read-heavy context gathering to subagents.** When a skill step requires reading 3+ canonical files or searching GitHub issues, use an `Explore` subagent to fetch and summarize the results. Work from the subagent's structured summary in the main conversation.
+- **Cache build checks per session.** On the first slice of a build session, run pre-implementation checks via subagent and store results in session memory (`/memories/session/`). Reference that cache for subsequent slices instead of re-running the same searches.
+- **Deduplicate GitHub issue searches.** Search `kind/idea` issues once per session (or once per skill invocation), not once per step that mentions them. Reuse the results across steps.
+- **Keep decision points in-band.** Do NOT delegate user-facing presentations to subagents: option presentation (architecture-first-fix), finding review (design), HITL slice decisions (build), and TDD implementation loops must stay in the main conversation where the user can interact.
+
 ## Where Logic Goes
 
 - Use `product/architecture/code-placement-and-ownership.md` as the durable decision rule for where new logic belongs.
@@ -91,6 +100,14 @@ Before implementing a change, verify:
 7. If adding shared logic, update `aiwiki/owners.md` so the next session finds it.
 8. Prefer refactoring for depth over expedient shortcuts that create shallow modules.
 
+## Architecture-First Default
+
+For every bugfix or behavior change — whether triggered by a slash command (`/bugfix`, `/quickchange`, etc.) or a freeform chat request — load and follow the `architecture-first-fix` skill before editing code. The skill defines the procedure: identify the seam, distinguish symptom from root cause, present two or more options at the root cause with the principle at stake named explicitly (DRY / SOLID / YAGNI / Depth / Locality / ADR-compliance), and wait for the user to choose.
+
+Exempt: trivial mechanical edits (typo, comment, import sort, formatting), and cases where the user has explicitly said "just patch it", "skip the architecture check", or equivalent.
+
+The purpose of this rule is to prevent the slow architectural decay that results from a sequence of locally-reasonable patches at symptom sites. Treat "the cheapest local change" as a red flag, not a default.
+
 ## Post-Work Enrichment
 
 After completing a change:
@@ -98,7 +115,7 @@ After completing a change:
 - Update `aiwiki/owners.md` for any modules, conventions, or test files you added or changed.
 - Update `aiwiki/flows.md` if the change affects workflow module participation.
 - Note architecture risks or coupling observations in `aiwiki/architecture-health.md`.
-- Write an ADR in `product/architecture/adr/` when an architecture decision was made or an approach was rejected for load-bearing reasons.
+- Prefer extending the relevant seam-scoped ADR in `product/architecture/adr/` with a dated section (`## YYYY-MM-DD extension: <short title>`). Write a new ADR only when the work introduces a genuinely new seam, reverses an existing commitment (mark the old ADR `superseded by ADR-NNNN`), or crosses a boundary the existing ADR explicitly excluded. See `product/architecture/adr/README.md`.
 - If you discover a module, convention, or flow not listed in `aiwiki/`, add it before completing the change.
 
 ## Issue Capture Protocol

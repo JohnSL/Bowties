@@ -186,7 +186,14 @@ function createConfigSidebarStore() {
 
     /** Track which node the user most recently interacted with. */
     setSelectedNode(nodeId: string | null): void {
-      update(state => ({ ...state, selectedNodeId: nodeId }));
+      update(state => ({
+        ...state,
+        selectedNodeId: nodeId,
+        // Deselecting must also drop any active segment, otherwise
+        // `selectedSegment?.nodeId ?? selectedNodeId` keeps the old node
+        // "selected" downstream (e.g. menu-state gating).
+        selectedSegment: nodeId === null ? null : state.selectedSegment,
+      }));
     },
 
     /** Record that a node's segments have loaded successfully */

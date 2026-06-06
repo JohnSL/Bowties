@@ -9,6 +9,7 @@ description: "Use when editing Bowties Svelte route files. Routes should compose
 - Keep routes focused on screen composition, page-level state wiring, and user interaction entry points.
 - Do not embed multi-step business workflows, protocol sequencing, or cross-store orchestration directly in route files when an orchestrator or focused store should own that behavior.
 - When touching a route that already owns logic better placed elsewhere, move that logic toward the correct owner instead of extending the mixed boundary.
+- When fixing a bug whose symptom appears in a route but whose root cause is a misplaced workflow, a missing facade contract, or stale derived state owned elsewhere, propose moving the logic to its correct owner as one of your options. Do not silently patch in the route to mask a wrong-layer ownership problem.
 - Reuse shared helpers for Node ID normalization, naming fallback, and formatting instead of implementing route-local variants.
 - Apply SOLID by keeping each route responsible for one screen-level composition concern.
 - Apply DRY by delegating repeated workflow logic to orchestrators or shared helpers.

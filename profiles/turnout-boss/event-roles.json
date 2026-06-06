@@ -1,0 +1,147 @@
+{
+  "nodeType": {
+    "manufacturer": "Mustangpeak Engineering",
+    "model": "TurnoutBoss"
+  },
+  "roles": [
+    {
+      "cdiPath": "Layout Configuration Setup/Layout Connections",
+      "role": "Consumer",
+      "childFields": ["Left", "Right"],
+      "citation": "CDI: 'NodeID of the TurnoutBoss to immediate left/right of this unit.' Manual 5.3 (p. 20): 'You can enter the node ID of the boards to the immediate left and right. These are entered as an eight-byte string, with the first six being the node ID of the board, and the last two being zero.' Manual A.1 (p. 28): 'TurnoutBoss boards normally set up these producer to consumer connections automatically when you configure the Left-Right board pairs.'",
+      "confidence": "Medium",
+      "notes": "Atypical eventid usage: these slots hold neighbor NodeIDs (not event IDs) used by the firmware to auto-pair producer/consumer connections with adjacent boards. Classified as Consumer because the board uses these IDs to listen for events FROM neighbors; the manual does not call them Producer or Consumer slots directly."
+    },
+    {
+      "cdiPath": "Producers and Consumers/Occupancy (Produced)",
+      "role": "Producer",
+      "childFields": [
+        "Main Left Occupied",
+        "Main Left Unoccupied",
+        "Turnout Left Occupied",
+        "Turnout Left Unoccupied",
+        "Main Center Occupied",
+        "Main Center Unoccupied",
+        "Siding Occupied",
+        "Siding Unoccupied",
+        "Turnout Right Occupied",
+        "Turnout Right Unoccupied",
+        "Turnout Main Right Occupied",
+        "Turnout Main Right Unoccupied"
+      ],
+      "citation": "CDI group description: 'These are both produced and consumed'. Manual A.1 (p. 28): 'The TurnoutBoss will produce or consume these events when a track section becomes occupied or unoccupied. If the board is configured as a \"Left\" board it produces: Left Turnout, Main Center, Siding... If the board is configured as \"Right\" it produces: Right Turnout, Right Main.'",
+      "confidence": "High",
+      "notes": "Dual-role group: each slot is both Produced and Consumed depending on board configuration (Left vs Right). As Producer, the board emits these when its own monitored track sections change state. Specific producer subset is determined by the 'How this TurnoutBoss is used on your layout' field (Left=3 blocks, Right=2 blocks)."
+    },
+    {
+      "cdiPath": "Producers and Consumers/Occupancy (Consumed)",
+      "role": "Consumer",
+      "childFields": [
+        "Main Left Occupied",
+        "Main Left Unoccupied",
+        "Turnout Left Occupied",
+        "Turnout Left Unoccupied",
+        "Main Center Occupied",
+        "Main Center Unoccupied",
+        "Siding Occupied",
+        "Siding Unoccupied",
+        "Turnout Right Occupied",
+        "Turnout Right Unoccupied",
+        "Turnout Main Right Occupied",
+        "Turnout Main Right Unoccupied"
+      ],
+      "citation": "Manual A.1 (p. 28): 'and consumes: Left Main' (when Left board); 'and consumes: Main Center, Siding' (when Right board). 'These events can also be used to indicate occupancy on a control panel or fascia indicators.'",
+      "confidence": "High",
+      "notes": "Same 12 slots are also Consumer slots: the board listens for occupancy events from the adjacent TurnoutBoss to drive its signal logic. Consumer subset depends on board configuration. Auto-paired with neighbor producers via the Layout Connections NodeIDs."
+    },
+    {
+      "cdiPath": "Producers and Consumers/Turnout Control (Consumed)",
+      "role": "Consumer",
+      "childFields": [
+        "Turnout Command Normal (C)",
+        "Turnout Command Diverging (C)"
+      ],
+      "citation": "CDI group description: '(P) and (C) mean produced and consumed, respectively.' Manual A.2 (p. 28): 'When these events are produced somewhere else on the LCC network, the TurnoutBoss will consume them and change the position of the attached turnout. This lets you create one or more control panels that can control the turnout position.'",
+      "confidence": "High",
+      "notes": "Two consumer slots commanding the local turnout to Normal or Diverging position. Used by remote control panels (manual 6.1, p. 21)."
+    },
+    {
+      "cdiPath": "Producers and Consumers/Turnout Control (Produced)",
+      "role": "Producer",
+      "childFields": [
+        "Turnout Feedback Normal Active (P)",
+        "Turnout Feedback Normal Inactive (P)",
+        "Turnout Feedback Diverging Active (P)",
+        "Turnout Feedback Diverging Inactive (P)",
+        "Turnout Button Normal Open (P)",
+        "Turnout Button Normal Closed (P)",
+        "Turnout Button Diverging Open (P)",
+        "Turnout Button Diverging Closed (P)",
+        "Turnout Observed Normal (P)",
+        "Turnout Observed Diverging (P)",
+        "Turnout Observed In Motion (P)"
+      ],
+      "citation": "Manual A.3 (p. 29): 'When the \"Normal\" input goes Active (closed) it will produce its Active event; when it goes Inactive (open), it will produce its Inactive event.' Manual A.4 (p. 29): 'When the \"Normal\" button is pressed it will produce its Closed event; when it is released, it will produce its Open event.' Manual A.5 (p. 29): 'When configured to zero or one switches, the board will produce the \"Observed Normal\" and \"Observed Diverging\" when the turnout position changes. When configured to two switches, the board will also produce the \"Observed In Motion\" event.'",
+      "confidence": "High",
+      "notes": "Eleven producer slots covering: feedback switch states (A.3), pushbutton input states usable as general inputs (A.4), and observed turnout position used to drive CTC indicators (A.5). The '(P)' suffix in each child name corroborates the producer role."
+    },
+    {
+      "cdiPath": "Producers and Consumers/Signal Lamp Status",
+      "role": "Producer",
+      "childFields": [
+        "Signal A Red (P)", "Signal A Yellow (P)", "Signal A Green (P)", "Signal A Dark (P)",
+        "Signal B Red (P)", "Signal B Yellow (P)", "Signal B Green (P)", "Signal B Dark (P)",
+        "Signal C Red (P)", "Signal C Yellow (P)", "Signal C Green (P)", "Signal C Dark (P)",
+        "Signal D Red (P)", "Signal D Yellow (P)", "Signal D Green (P)", "Signal D Dark (P)"
+      ],
+      "citation": "CDI group description: 'These are produced by the node.' Manual A.6 (p. 29): 'The TurnoutBoss board will produce events when it changes its signal head outputs. For each of the A, B, C and D signals, there's an event that corresponds to the signal going Green, Yellow, Red or Dark. These can be used to put a repeater signal on the layout or on a control panel.'",
+      "confidence": "High",
+      "notes": "All 16 slots are producer-only. Each (Signal, Color) combination emits when the corresponding lamp state is asserted."
+    },
+    {
+      "cdiPath": "Producers and Consumers/Signal Controls (Consumed)",
+      "role": "Consumer",
+      "childFields": [
+        "Signal State A Stop (C)",
+        "Signal State A Nonstop (C)",
+        "Signal State B Stop (C)",
+        "Signal State B Nonstop (C)",
+        "Signal State CD Stop (C)",
+        "Signal State CD Nonstop (C)",
+        "Vital Logic Held (C)",
+        "Vital Logic Cleared Left (C)",
+        "Vital Logic Cleared Right (C)",
+        "Vital Logic Cleared Both (C)"
+      ],
+      "citation": "CDI group description: '(P) and (C) mean produced and consumed, respectively.' Manual A.8 (p. 30): 'These are used by the two Turnout Boss boards around a single siding to communicate the status of their signals to each other. There's generally no need for other boards on the LCC network to produce these events.' Manual A.9 (p. 30): 'These events can be used by a CTC panel to control the signal logic for the signals controlled by the TurnoutBoss board. The last event consumed controls the operation: Both Clear, Right Clear, Left Clear, Both Held.'",
+      "confidence": "High",
+      "notes": "Six Signal State (C) slots receive the partner board's signal aspect across the siding. Four Vital Logic Control (C) slots receive CTC dispatcher commands to hold or clear signals in either direction."
+    },
+    {
+      "cdiPath": "Producers and Consumers/Signal Controls (Produced)",
+      "role": "Producer",
+      "childFields": [
+        "Signal State A Stop (P)",
+        "Signal State A Nonstop (P)",
+        "Signal State B Stop (P)",
+        "Signal State B Nonstop (P)",
+        "Signal State CD Stop (P)",
+        "Signal State CD Nonstop (P)"
+      ],
+      "citation": "Manual A.7 (p. 30): 'These are used by the two Turnout Boss boards around a single siding to communicate the status of their signals to each other. The board will produce these events to indicate whether a signal is at stop (showing all Red) or clear (showing Green or Yellow). These can be used to drive the signal indicators on a CTC control panel.'",
+      "confidence": "High",
+      "notes": "Six producer slots emitting an aggregate Stop/Nonstop aspect for signals A, B, and the combined C/D head. Consumed by the partner TurnoutBoss board for cross-siding coordination and optionally by CTC panel indicators."
+    },
+    {
+      "cdiPath": "Producers and Consumers/Optical Sensor",
+      "role": "Producer",
+      "childFields": [
+        "Optical Sensor Active",
+        "Optical Sensor Inactive"
+      ],
+      "citation": "CDI group description: 'Produced when the optical sensor input changes.' Manual A.10 (p. 30): 'These events are produced when the optical sensor on the turnout becomes active or inactive. This can also create occupancy events and changes to signals, etc.'",
+      "confidence": "High",
+      "notes": "Two producer-only slots emitted on optical-sensor transitions. Polarity (active-high vs active-low) is set by the 'Optical Input' hardware configuration field."
+    }
+  ]
+}

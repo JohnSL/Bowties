@@ -24,7 +24,7 @@ function makeDeltas(): LayoutEditDelta[] {
 }
 
 function makeSaveResult(overrides: Partial<SaveLayoutResult> = {}): SaveLayoutResult {
-  return { manifestPath: '', nodeFilesWritten: 0, warnings: [], layout: makeLayout(), persistedNodeIds: [], ...overrides };
+  return { manifestPath: '', nodeFilesWritten: 0, warnings: [], layout: makeLayout(), persistedNodeIds: [], nodeSnapshots: [], ...overrides };
 }
 
 function makeCatalog(): BowtieCatalog {
@@ -128,6 +128,15 @@ describe('saveLayoutOrchestrated', () => {
     expect(result.warnings).toEqual(['node-1-partial']);
   });
 
+  it('passes nodeSnapshots through from saveFile result (Bug 2b regression)', async () => {
+    const snapshots = [{ nodeKey: '020157000001', capturedAt: '2026-06-06T00:00:00Z' }] as any;
+    saveFile.mockResolvedValue(makeSaveResult({ nodeSnapshots: snapshots }));
+
+    const result = await saveLayoutOrchestrated(baseArgs());
+
+    expect(result.nodeSnapshots).toEqual(snapshots);
+  });
+
   it('does not clear metadata or mark clean if saveFile throws', async () => {
     saveFile.mockRejectedValue(new Error('disk full'));
 
@@ -228,6 +237,7 @@ function makeBusWriteResult(overrides: Partial<SaveWithBusWriteResult> = {}): Sa
     warnings: [],
     layout: makeLayout(),
     persistedNodeIds: [],
+    nodeSnapshots: [],
     ...overrides,
   };
 }
@@ -281,6 +291,15 @@ describe('saveLayoutOrchestrated — saveWithBusWrites path', () => {
     await saveLayoutOrchestrated(busWriteArgs());
 
     expect(hydrateLayout).toHaveBeenCalledWith(persistedLayout);
+  });
+
+  it('passes nodeSnapshots through from saveWithBusWrites result (Bug 2b regression)', async () => {
+    const snapshots = [{ nodeKey: '020157000001', capturedAt: '2026-06-06T00:00:00Z' }] as any;
+    saveWithBusWrites.mockResolvedValue(makeBusWriteResult({ nodeSnapshots: snapshots }));
+
+    const result = await saveLayoutOrchestrated(busWriteArgs());
+
+    expect(result.nodeSnapshots).toEqual(snapshots);
   });
 
   it('does not call saveFile when saveWithBusWrites is provided', async () => {
@@ -499,6 +518,7 @@ describe('saveLayoutOrchestrated — clearPersistedDrafts (S2c)', () => {
       warnings: [],
       layout: makeLayout(),
       persistedNodeIds: [],
+      nodeSnapshots: [],
     }));
     const clearPersistedDrafts = vi.fn();
 
@@ -514,9 +534,9 @@ describe('saveLayoutOrchestrated — clearPersistedDrafts (S2c)', () => {
   });
 });
 
-// ── S8: discovered-node promotion ────────────────────────────────────────────
+// ── S8.11: unified inMemorySnapshotKeys promotion ────────────────────────────
 
-describe('saveLayoutOrchestrated — S8 discoveredOnlyNodeIds promotion', () => {
+describe('saveLayoutOrchestrated — S8.11 inMemorySnapshotKeys promotion', () => {
   function setup() {
     const saveFile = vi.fn<(path: string, deltas: LayoutEditDelta[]) => Promise<SaveLayoutResult>>(
       async () => makeSaveResult({ persistedNodeIds: ['020157000001', '020157000099'] }),
@@ -537,31 +557,31 @@ describe('saveLayoutOrchestrated — S8 discoveredOnlyNodeIds promotion', () => 
     };
   }
 
-  it('appends addNode deltas for each discoveredOnlyNodeIds entry', async () => {
+  it('appends addNode deltas for each inMemorySnapshotKeys entry', async () => {
     const env = setup();
     await saveLayoutOrchestrated({
       ...env,
       path: '/p/layout.bowties.yaml',
       deltas: makeDeltas(),
-      discoveredOnlyNodeIds: ['020157000099', '020157000042'],
+      inMemorySnapshotKeys: ['020157000099', '020157000042'],
     });
 
     expect(env.saveFile).toHaveBeenCalledTimes(1);
     const sentDeltas = env.saveFile.mock.calls[0][1];
-    const addNodeDeltas = sentDeltas.filter((d): d is { type: 'addNode'; nodeIdHex: string } =>
+    const addNodeDeltas = sentDeltas.filter((d): d is { type: 'addNode'; nodeKey: string } =>
       d.type === 'addNode');
-    expect(addNodeDeltas.map((d) => d.nodeIdHex)).toEqual(['020157000099', '020157000042']);
+    expect(addNodeDeltas.map((d) => d.nodeKey)).toEqual(['020157000099', '020157000042']);
     // Original deltas preserved
     expect(sentDeltas.filter((d) => d.type !== 'addNode')).toEqual(makeDeltas());
   });
 
-  it('does not append addNode deltas when discoveredOnlyNodeIds is empty or omitted', async () => {
+  it('does not append addNode deltas when inMemorySnapshotKeys is empty or omitted', async () => {
     const env = setup();
     await saveLayoutOrchestrated({
       ...env,
       path: '/p/layout.bowties.yaml',
       deltas: makeDeltas(),
-      discoveredOnlyNodeIds: [],
+      inMemorySnapshotKeys: [],
     });
     const sentDeltas = env.saveFile.mock.calls[0][1];
     expect(sentDeltas.some((d) => d.type === 'addNode')).toBe(false);
@@ -581,11 +601,77 @@ describe('saveLayoutOrchestrated — S8 discoveredOnlyNodeIds promotion', () => 
       ...env,
       path: '/p/layout.bowties.yaml',
       deltas: makeDeltas(),
-      discoveredOnlyNodeIds: ['020157000099'],
+      inMemorySnapshotKeys: ['020157000099'],
     });
 
     expect(env.setActiveContext).toHaveBeenCalledTimes(1);
     const ctx = env.setActiveContext.mock.calls[0][0];
     expect(ctx.layoutNodeIds).toEqual(['020157000001', '020157000099']);
+  });
+
+  it('appends unified addNode deltas for both real nodes and placeholders', async () => {
+    const env = setup();
+    await saveLayoutOrchestrated({
+      ...env,
+      path: '/p/layout.bowties.yaml',
+      deltas: [],
+      inMemorySnapshotKeys: ['020157000099', 'placeholder:abcd'],
+    });
+    const sent = env.saveFile.mock.calls[0][1];
+    const addNodes = sent.filter((d): d is { type: 'addNode'; nodeKey: string } =>
+      d.type === 'addNode');
+    expect(addNodes.map((d) => d.nodeKey)).toEqual(['020157000099', 'placeholder:abcd']);
+  });
+
+  it('calls clearPersistedPlaceholders only with placeholder keys after a successful save', async () => {
+    const env = setup();
+    const clearPersistedPlaceholders = vi.fn();
+    await saveLayoutOrchestrated({
+      ...env,
+      path: '/p/layout.bowties.yaml',
+      deltas: [],
+      inMemorySnapshotKeys: ['020157000099', 'placeholder:1111', 'placeholder:2222'],
+      clearPersistedPlaceholders,
+    });
+    expect(clearPersistedPlaceholders).toHaveBeenCalledTimes(1);
+    expect(clearPersistedPlaceholders).toHaveBeenCalledWith(['placeholder:1111', 'placeholder:2222']);
+  });
+
+  it('does not call clearPersistedPlaceholders when saveFile throws', async () => {
+    const env = setup();
+    env.saveFile.mockRejectedValue(new Error('disk full'));
+    const clearPersistedPlaceholders = vi.fn();
+    await expect(saveLayoutOrchestrated({
+      ...env,
+      path: '/p/layout.bowties.yaml',
+      deltas: [],
+      inMemorySnapshotKeys: ['placeholder:1111'],
+      clearPersistedPlaceholders,
+    })).rejects.toThrow();
+    expect(clearPersistedPlaceholders).not.toHaveBeenCalled();
+  });
+
+  it('also works on the saveWithBusWrites (online) path', async () => {
+    const saveWithBusWrites = vi.fn<(path: string, deltas: LayoutEditDelta[]) => Promise<SaveWithBusWriteResult>>(
+      async () => makeBusWriteResult(),
+    );
+    const clearPersistedPlaceholders = vi.fn();
+    await saveLayoutOrchestrated({
+      saveWithBusWrites,
+      setCatalog: vi.fn(),
+      clearMetadata: vi.fn(),
+      markClean: vi.fn(),
+      hydrateLayout: vi.fn(),
+      setActiveContext: vi.fn(),
+      updatePartialCaptureNodes: vi.fn(),
+      getPendingChangeCount: vi.fn(() => 0),
+      clearPersistedPlaceholders,
+      path: '/p/layout.bowties.yaml',
+      deltas: [],
+      inMemorySnapshotKeys: ['placeholder:9999'],
+    });
+    const sent = saveWithBusWrites.mock.calls[0][1];
+    expect(sent.some((d) => d.type === 'addNode')).toBe(true);
+    expect(clearPersistedPlaceholders).toHaveBeenCalledWith(['placeholder:9999']);
   });
 });

@@ -68,6 +68,11 @@ export async function applyConnectorSelectionChange(detail: {
       return null;
     }
 
+    // Spec 014 / S6: a Configuration Mode variant change re-runs
+    // `annotate_tree` server-side, so re-fetch the node tree to pick up
+    // the re-shaped relevance + event-role annotations.
+    await nodeTreeStore.refreshTree(detail.nodeId);
+
     await recomputeConnectorCompatibility(detail.nodeId);
     return saved;
   });

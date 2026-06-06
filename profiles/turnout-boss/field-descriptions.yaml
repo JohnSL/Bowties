@@ -1,0 +1,862 @@
+nodeType:
+  manufacturer: "Mustangpeak Engineering"
+  model: "TurnoutBoss"
+
+fields:
+  # =====================================================
+  # SEGMENT 1: Layout Configuration Setup
+  # =====================================================
+
+  # --- User Info ---
+  - cdiPath: "Layout Configuration Setup/User Info/User Name"
+    name: "User Name"
+    elementType: "string"
+    description: |
+      Free-text name identifying this specific TurnoutBoss on your layout.
+      Choose something that names the *physical location* — e.g.,
+      `Westgate East TB` — so the board is easy to recognize in
+      configuration tools and on the LCC bus.
+    units: null
+    validRange: "Up to 63 characters"
+    typicalValues: null
+    citation: "Manual §5.1, p. 19"
+
+  - cdiPath: "Layout Configuration Setup/User Info/User Description"
+    name: "User Description"
+    elementType: "string"
+    description: |
+      Longer free-text description of this board's role on the layout
+      (e.g., `Controls turnout #5 at the east end of Westgate siding,
+      double-head facing-point signal`). Used alongside User Name to
+      identify the board in tool listings.
+    units: null
+    validRange: "Up to 64 characters"
+    typicalValues: null
+    citation: "Manual §5.1, p. 19"
+
+  # --- How this TurnoutBoss is used on your layout. ---
+  - cdiPath: "Layout Configuration Setup/How this TurnoutBoss is used on your layout."
+    name: "Board Role (Left / Right end of siding)"
+    elementType: "int"
+    description: |
+      Selects which **end of the siding** this TurnoutBoss controls. The
+      Left and Right boards differ in which track blocks they monitor and
+      which occupancy events they produce versus consume. This single
+      choice also determines whether **Detector 3** is wired (Left only).
+      The field is unnamed in the CDI; the configuration tool displays it
+      as a pair of radio buttons.
+    units: null
+    validRange: "0 – 1"
+    typicalValues: null
+    options:
+      - value: 0
+        label: '"Left" board: three blocks (turnout, mainline between, siding)'
+        description: |
+          This board controls the **left turnout** of the siding and
+          monitors three track blocks: the turnout itself (Detector 1),
+          the mainline between the two siding turnouts (Detector 2), and
+          the siding track (Detector 3). Produces occupancy for *Turnout
+          Left*, *Main Center*, and *Siding*; consumes *Main Left* from
+          the next board to its left.
+        category: null
+      - value: 1
+        label: '"Right" board: two blocks (turnout, mainline to next siding)'
+        description: |
+          This board controls the **right turnout** of the siding and
+          monitors two track blocks: the turnout itself (Detector 1) and
+          the mainline heading toward the next siding (Detector 2).
+          Produces occupancy for *Turnout Right* and *Turnout Main Right*;
+          consumes *Main Center* and *Siding* from the Left board across
+          the siding. **Detector 3 sensitivity has no effect in this
+          mode.**
+        category: null
+    citation: "Manual §5.2, p. 20; Manual §2 Figure 2 (p. 3) and Figure 3 (p. 4)"
+
+  # --- Layout Connections ---
+  - cdiPath: "Layout Configuration Setup/Layout Connections/Left"
+    name: "Left"
+    elementType: "eventid"
+    description: |
+      **Node ID** (not an event ID) of the TurnoutBoss immediately to the
+      **left** of this unit on the layout. Enter as an eight-byte string:
+      the six-byte node ID followed by two trailing zeros (e.g.,
+      `02.01.57.00.12.34.00.00`). The firmware uses this ID to
+      auto-pair producer/consumer occupancy events with the neighbor
+      board. Leave at the default `00.00.00.00.00.00.00.00` if there
+      is no board to the left.
+    units: null
+    validRange: null
+    typicalValues: null
+    citation: "Manual §5.3, p. 20; Manual §A.1, p. 28"
+
+  - cdiPath: "Layout Configuration Setup/Layout Connections/Right"
+    name: "Right"
+    elementType: "eventid"
+    description: |
+      **Node ID** (not an event ID) of the TurnoutBoss immediately to the
+      **right** of this unit on the layout. Enter as an eight-byte string:
+      the six-byte node ID followed by two trailing zeros. The firmware
+      uses this ID to auto-pair producer/consumer occupancy events with
+      the neighbor board. Leave at the default
+      `00.00.00.00.00.00.00.00` if there is no board to the right.
+    units: null
+    validRange: null
+    typicalValues: null
+    citation: "Manual §5.3, p. 20; Manual §A.1, p. 28"
+
+  # --- Turnout Control ---
+  - cdiPath: "Layout Configuration Setup/Turnout Control/Control Buttons"
+    name: "Control Buttons"
+    elementType: "int"
+    description: |
+      Selects whether the fascia turnout-control input uses **one
+      pushbutton** (toggle) or **two pushbuttons** (Normal / Diverging).
+      Whichever mode you select, the *unused* input remains available as
+      a general-purpose LCC input that emits its own button events.
+    units: null
+    validRange: "0 – 1"
+    typicalValues: null
+    options:
+      - value: 0
+        label: "One turnout control button"
+        description: |
+          A single SPST pushbutton wired between the **N** and **Gnd**
+          pins of the Pushbutton connector toggles the turnout between
+          Normal and Diverging on each press. The **D** input is free for
+          use as a general-purpose LCC input.
+        category: null
+      - value: 1
+        label: "Two turnout control button"
+        description: |
+          Two SPST pushbuttons: one between **N** and **Gnd** forces
+          Normal, another between **D** and **Gnd** forces Diverging.
+          Pressing the same button again has no effect (idempotent).
+        category: null
+    citation: "Manual §5.4, p. 20; Manual §2.1, p. 4; Manual §4.2, p. 13"
+
+  # =====================================================
+  # SEGMENT 2: Hardware Configuration
+  # =====================================================
+
+  # --- Turnout Feedback ---
+  - cdiPath: "Hardware Configuration/Turnout Feedback/Using turnout feedback sensors?"
+    name: "Using turnout feedback sensors?"
+    elementType: "int"
+    description: |
+      Number of feedback switches wired to confirm the points have moved.
+      Whichever feedback inputs you don't use remain available as
+      general-purpose LCC inputs. Two-switch mode unlocks the
+      *Turnout Observed In Motion* producer event.
+    units: null
+    validRange: "0 – 2"
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Unused"
+        description: |
+          No feedback wiring. The board assumes the turnout reaches the
+          commanded position. Both feedback inputs (Normal and Diverging)
+          remain usable as **general-purpose LCC inputs**. Default.
+        category: null
+      - value: 1
+        label: "One turnout position sensor"
+        description: |
+          A single feedback switch — typically the Tortoise auxiliary
+          contact — wired between **N** and **Gnd** on the Turnout
+          Feedback connector. The Diverging feedback input remains usable
+          as a general-purpose input.
+        category: null
+      - value: 2
+        label: "Two turnout feedback sensors"
+        description: |
+          Two microswitches at the points, one closing when the turnout
+          is fully Normal (wired N–Gnd), the other when fully Diverging
+          (wired D–Gnd). Required to detect mid-travel: the firmware
+          emits **Turnout Observed In Motion** when the first switch has
+          opened and the second has not yet closed.
+        category: null
+    citation: "Manual §5.5, p. 20; Manual §2.4, p. 7; Manual §A.5, p. 29"
+
+  # --- Facing Point Signals ---
+  - cdiPath: "Hardware Configuration/Facing Point Signals/What type of signal(s) is at the turnout points?"
+    name: "What type of signal(s) is at the turnout points?"
+    elementType: "int"
+    description: |
+      Selects whether the signal mast at the **facing points** of the
+      turnout uses one head or two. Prototype practice uses two heads
+      to show separate aspects for the Normal route (upper head, C) and
+      Diverging route (lower head, D). With one head, only head C is
+      wired and Signal D's brightness, lamp events, and outputs have no
+      effect.
+    units: null
+    validRange: "0 – 1"
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Signal at turnout points is a double head"
+        description: |
+          Two-head mast: **head C** = upper (Normal route indication),
+          **head D** = lower (Diverging route indication). All four
+          Signal D events fire and the Signal D brightness sliders are
+          active. Default — recommended for prototypical signaling.
+        category: null
+      - value: 1
+        label: "Signal at turnout points is a single head"
+        description: |
+          One-head mast: only **head C** is wired. The Signal D outputs,
+          brightness sliders, and producer events are inactive.
+        category: null
+    citation: "Manual §5.6, p. 20; Manual §1.1 / §2.3 Figure 5, p. 2–7"
+
+  # --- Signalhead Lamp Configuration ---
+  - cdiPath: "Hardware Configuration/Signalhead Lamp Configuration/Signal Head LED Type"
+    name: "Signal Head LED Type"
+    elementType: "int"
+    description: |
+      Selects the LED wiring scheme used by **all four signal heads**
+      (A, B, C, D). The board cannot mix wiring styles across heads. Do
+      not place series resistors in line with the LEDs — the TurnoutBoss
+      already current-limits.
+    units: null
+    validRange: "0 – 2"
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Three outputs (individual LED outputs common anode)"
+        description: |
+          Three signal LEDs per head with their **anodes (+)** tied
+          together and brought out as the **A** terminal. Connect the
+          common anode to **A** and the individual cathodes to **R**,
+          **Y**, **G**. Default.
+        category: null
+      - value: 1
+        label: "Three outputs (individual LED outputs command cathode)"
+        description: |
+          Three signal LEDs per head with their **cathodes (−)** tied
+          together and brought out as the **K** terminal. Connect the
+          common cathode to **K** and the individual anodes to **R**,
+          **Y**, **G**. (CDI label preserves the original typo
+          *"command cathode"*.)
+        category: null
+      - value: 2
+        label: "Two outputs (bi-directional LED with multiplexed yellow)"
+        description: |
+          Two-lead bidirectional LED per head: the driver shows Red when
+          one lead is positive, Green when the other is positive, and
+          Yellow by rapidly alternating between Red and Green. Wire the
+          LED leads to the **R** and **G** connections on the signal
+          connector.
+        category: null
+    citation: "Manual §5.7, p. 20; Manual §2.3, p. 5–6; Manual §4.5, p. 14"
+
+  # --- Track Detector Sensitivity ---
+  - cdiPath: "Hardware Configuration/Track Detector Sensitivity/Detector 1"
+    name: "Detector 1"
+    elementType: "int"
+    description: |
+      Trigger threshold for the **first** current-sensing occupancy
+      detector — wired to the turnout block on both Left and Right boards.
+      **Lower values are more sensitive** (smaller currents trigger);
+      higher values are less sensitive. Tune by raising the value until
+      the LED stays off with no rolling stock, then lower it by a couple
+      of steps below the false-trigger threshold.
+    units: "count (0–63)"
+    validRange: "0 – 63"
+    typicalValues: "31 (default, ≈ 1 mA — detects a single 10 kΩ resistor wheelset)"
+    citation: "Manual §5.8, p. 20; Manual §4.4, p. 14"
+
+  - cdiPath: "Hardware Configuration/Track Detector Sensitivity/Detector 2"
+    name: "Detector 2"
+    elementType: "int"
+    description: |
+      Trigger threshold for the **second** current-sensing occupancy
+      detector — wired to the mainline-between-turnouts on a Left board
+      or the mainline-to-next-siding on a Right board. Lower = more
+      sensitive. Tuning method as for Detector 1.
+    units: "count (0–63)"
+    validRange: "0 – 63"
+    typicalValues: "31 (default)"
+    citation: "Manual §5.8, p. 20; Manual §4.4, p. 14"
+
+  - cdiPath: "Hardware Configuration/Track Detector Sensitivity/Detector 3"
+    name: "Detector 3"
+    elementType: "int"
+    description: |
+      Trigger threshold for the **third** current-sensing occupancy
+      detector — wired to the siding track. **Only used on Left boards.**
+      On Right boards this detector is not connected and changing its
+      value has no observable effect. Lower = more sensitive.
+    units: "count (0–63)"
+    validRange: "0 – 63"
+    typicalValues: "31 (default)"
+    citation: "Manual §5.8, p. 20; Figure 3, p. 4 (Detector 3 wired only on Left boards)"
+
+  # --- Signal LED Brightness (replicated group: Signal A, B, C, D) ---
+  - cdiPath: "Hardware Configuration/Signal LED Brightness/Signal/Red LED Brightness"
+    name: "Red LED Brightness"
+    elementType: "int"
+    description: |
+      Drive current for the **Red lamp** of this signal head. Values
+      1–8, where 1 is dimmest and 8 is full current. Adjust to balance
+      brightness across heads that mix LED types, or to dim overly
+      bright LEDs. Applies independently to each of the four signal
+      heads (A, B, C, D).
+    units: "current step (1–8)"
+    validRange: "1 – 8"
+    typicalValues: "5 (default, ≈ 75% of full current)"
+    citation: "Manual §5.9, p. 21"
+
+  - cdiPath: "Hardware Configuration/Signal LED Brightness/Signal/Yellow LED Brightness"
+    name: "Yellow LED Brightness"
+    elementType: "int"
+    description: |
+      Drive current for the **Yellow lamp** of this signal head. Values
+      1–8 (1 = dimmest, 8 = full current). On bidirectional-LED heads,
+      Yellow is produced by alternating Red and Green — this control
+      still tunes the perceived Yellow brightness.
+    units: "current step (1–8)"
+    validRange: "1 – 8"
+    typicalValues: "5 (default, ≈ 75% of full current)"
+    citation: "Manual §5.9, p. 21"
+
+  - cdiPath: "Hardware Configuration/Signal LED Brightness/Signal/Green LED Brightness"
+    name: "Green LED Brightness"
+    elementType: "int"
+    description: |
+      Drive current for the **Green lamp** of this signal head. Values
+      1–8 (1 = dimmest, 8 = full current).
+    units: "current step (1–8)"
+    validRange: "1 – 8"
+    typicalValues: "5 (default, ≈ 75% of full current)"
+    citation: "Manual §5.9, p. 21"
+
+  - cdiPath: "Hardware Configuration/Signal LED Brightness/Signal/Lunar LED Brightness"
+    name: "Lunar LED Brightness"
+    elementType: "int"
+    description: |
+      Drive current for the **Lunar (white) lamp** of this signal head.
+      Used only by signals that include a fourth lunar/white lamp
+      (uncommon — typically restricting-aspect lunar indicators on
+      certain railroads). Values 1–8 (1 = dimmest, 8 = full current).
+    units: "current step (1–8)"
+    validRange: "1 – 8"
+    typicalValues: "5 (default, ≈ 75% of full current)"
+    citation: "Manual §1, p. 1 (mentions lunar lamp per signal head)"
+
+  # --- Servo Limits ---
+  - cdiPath: "Hardware Configuration/Servo Limits/Normal Servo Position"
+    name: "Normal Servo Position"
+    elementType: "int"
+    description: |
+      Servo pulse-width count corresponding to the **Normal** turnout
+      position. Range 0–255 covers the servo's full travel. Adjust so the
+      points just touch the stock rails — do not drive past the rails or
+      the servo will stall and overheat. Visible only with a servo
+      motor; ignore when using a stall-motor turnout machine like a
+      Tortoise.
+    units: "servo count (0–255)"
+    validRange: "0 – 255"
+    typicalValues: "64 (default per CDI) / 85 (default cited in Manual §4.3)"
+    citation: "Manual §5.10, p. 21; Manual §4.3, p. 14"
+
+  - cdiPath: "Hardware Configuration/Servo Limits/Reversed Servo Position"
+    name: "Reversed Servo Position"
+    elementType: "int"
+    description: |
+      Servo pulse-width count corresponding to the **Diverging
+      (Reversed)** turnout position. Range 0–255. Adjust so the points
+      just touch the diverging stock rail without over-travel.
+    units: "servo count (0–255)"
+    validRange: "0 – 255"
+    typicalValues: "196 (default per CDI) / 170 (default cited in Manual §4.3)"
+    citation: "Manual §5.10, p. 21; Manual §4.3, p. 14"
+
+  # --- Optical Input ---
+  - cdiPath: "Hardware Configuration/Optical Input/Optical input polarity"
+    name: "Optical input polarity"
+    elementType: "int"
+    description: |
+      Selects the polarity of the optical-sensor input that supplements
+      the current-sensing detectors at the turnout. Pick the value that
+      matches your sensor type. Leave at default if no optical sensor is
+      wired.
+    units: null
+    validRange: "0 – 1"
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Train detected when input is low"
+        description: |
+          The board treats a **low (active-low)** input as "train
+          present". Typical of reflective sensors mounted under the rail
+          (rolling stock reflects light to the receiver, pulling the
+          input low). Default.
+        category: null
+      - value: 1
+        label: "Train detected when input is high"
+        description: |
+          The board treats a **high (active-high)** input as "train
+          present". Typical of through-beam sensors where rolling stock
+          blocks the beam and the receiver's output rises.
+        category: null
+    citation: "Manual §5.11, p. 21"
+
+  # =====================================================
+  # SEGMENT 3: Producers and Consumers
+  # =====================================================
+  # All eventid fields below. Roles confirmed by event-roles.json.
+
+  # --- Occupancy (dual-role: each slot is both Producer and Consumer
+  #     depending on Left/Right board configuration) ---
+  - cdiPath: "Producers and Consumers/Occupancy/Main Left Occupied"
+    name: "Main Left Occupied"
+    elementType: "eventid"
+    description: |
+      **Dual-role.** Mainline section *to the left* of the Left turnout
+      became **occupied**. A Right board *produces* this event from its
+      Detector 2 (mainline to next siding). A Left board *consumes* this
+      same event from its left-neighbor's Right board. Auto-wired from
+      the Layout Connections node IDs.
+    citation: "Manual §A.1, p. 28"
+
+  - cdiPath: "Producers and Consumers/Occupancy/Main Left Unoccupied"
+    name: "Main Left Unoccupied"
+    elementType: "eventid"
+    description: |
+      **Dual-role.** Paired with *Main Left Occupied* — fires when the
+      mainline section becomes **clear**.
+    citation: "Manual §A.1, p. 28"
+
+  - cdiPath: "Producers and Consumers/Occupancy/Turnout Left Occupied"
+    name: "Turnout Left Occupied"
+    elementType: "eventid"
+    description: |
+      **Producer (Left board) / Consumer (Right board).** The Left
+      board's **turnout block** (its Detector 1) became occupied. Used
+      by the partner Right board for signal logic and by any control
+      panel for indication.
+    citation: "Manual §A.1, p. 28"
+
+  - cdiPath: "Producers and Consumers/Occupancy/Turnout Left Unoccupied"
+    name: "Turnout Left Unoccupied"
+    elementType: "eventid"
+    description: |
+      **Producer (Left) / Consumer (Right).** Paired with *Turnout Left
+      Occupied* — fires when the Left turnout block becomes clear.
+    citation: "Manual §A.1, p. 28"
+
+  - cdiPath: "Producers and Consumers/Occupancy/Main Center Occupied"
+    name: "Main Center Occupied"
+    elementType: "eventid"
+    description: |
+      **Producer (Left) / Consumer (Right).** The mainline block
+      **between the two siding turnouts** became occupied. Produced by
+      the Left board (its Detector 2), consumed by the Right board for
+      its signal logic.
+    citation: "Manual §A.1, p. 28"
+
+  - cdiPath: "Producers and Consumers/Occupancy/Main Center Unoccupied"
+    name: "Main Center Unoccupied"
+    elementType: "eventid"
+    description: |
+      **Producer (Left) / Consumer (Right).** Paired with *Main Center
+      Occupied* — fires when the center mainline block becomes clear.
+    citation: "Manual §A.1, p. 28"
+
+  - cdiPath: "Producers and Consumers/Occupancy/Siding Occupied"
+    name: "Siding Occupied"
+    elementType: "eventid"
+    description: |
+      **Producer (Left) / Consumer (Right).** The siding track between
+      the two turnouts became occupied. Produced by the Left board (its
+      Detector 3), consumed by the Right board.
+    citation: "Manual §A.1, p. 28"
+
+  - cdiPath: "Producers and Consumers/Occupancy/Siding Unoccupied"
+    name: "Siding Unoccupied"
+    elementType: "eventid"
+    description: |
+      **Producer (Left) / Consumer (Right).** Paired with *Siding
+      Occupied* — fires when the siding track becomes clear.
+    citation: "Manual §A.1, p. 28"
+
+  - cdiPath: "Producers and Consumers/Occupancy/Turnout Right Occupied"
+    name: "Turnout Right Occupied"
+    elementType: "eventid"
+    description: |
+      **Producer (Right board) / Consumer (Left board).** The Right
+      board's **turnout block** (its Detector 1) became occupied.
+    citation: "Manual §A.1, p. 28"
+
+  - cdiPath: "Producers and Consumers/Occupancy/Turnout Right Unoccupied"
+    name: "Turnout Right Unoccupied"
+    elementType: "eventid"
+    description: |
+      **Producer (Right) / Consumer (Left).** Paired with *Turnout
+      Right Occupied* — fires when the Right turnout block becomes clear.
+    citation: "Manual §A.1, p. 28"
+
+  - cdiPath: "Producers and Consumers/Occupancy/Turnout Main Right Occupied"
+    name: "Turnout Main Right Occupied"
+    elementType: "eventid"
+    description: |
+      **Dual-role.** Mainline section *to the right* of the Right
+      turnout became occupied. A Right board *produces* this from its
+      Detector 2. A subsequent Left board (next siding to the right)
+      *consumes* it.
+    citation: "Manual §A.1, p. 28"
+
+  - cdiPath: "Producers and Consumers/Occupancy/Turnout Main Right Unoccupied"
+    name: "Turnout Main Right Unoccupied"
+    elementType: "eventid"
+    description: |
+      **Dual-role.** Paired with *Turnout Main Right Occupied* — fires
+      when the mainline section to the right becomes clear.
+    citation: "Manual §A.1, p. 28"
+
+  # --- Turnout Control (mixed: 2 consumers + 11 producers) ---
+  - cdiPath: "Producers and Consumers/Turnout Control/Turnout Command Normal (C)"
+    name: "Turnout Command Normal (C)"
+    elementType: "eventid"
+    description: |
+      **Consumer.** When any node on the LCC network produces this
+      event, the TurnoutBoss drives its turnout to the **Normal**
+      (straight-route) position. Wire this to a CTC panel button, a
+      JMRI turnout, or another producer to enable remote turnout
+      control.
+    citation: "Manual §A.2, p. 28"
+
+  - cdiPath: "Producers and Consumers/Turnout Control/Turnout Command Diverging (C)"
+    name: "Turnout Command Diverging (C)"
+    elementType: "eventid"
+    description: |
+      **Consumer.** Drives the turnout to the **Diverging**
+      (siding-route) position when this event is produced anywhere on
+      the network.
+    citation: "Manual §A.2, p. 28"
+
+  - cdiPath: "Producers and Consumers/Turnout Control/Turnout Feedback Normal Active (P)"
+    name: "Turnout Feedback Normal Active (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when the **Normal feedback input** transitions
+      to closed (active). If feedback is set to *Unused*, this input is
+      a general-purpose LCC input and the event still fires on closure.
+    citation: "Manual §A.3, p. 29"
+
+  - cdiPath: "Producers and Consumers/Turnout Control/Turnout Feedback Normal Inactive (P)"
+    name: "Turnout Feedback Normal Inactive (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when the Normal feedback input transitions
+      to open (inactive).
+    citation: "Manual §A.3, p. 29"
+
+  - cdiPath: "Producers and Consumers/Turnout Control/Turnout Feedback Diverging Active (P)"
+    name: "Turnout Feedback Diverging Active (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when the **Diverging feedback input**
+      transitions to closed (active).
+    citation: "Manual §A.3, p. 29"
+
+  - cdiPath: "Producers and Consumers/Turnout Control/Turnout Feedback Diverging Inactive (P)"
+    name: "Turnout Feedback Diverging Inactive (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when the Diverging feedback input
+      transitions to open (inactive).
+    citation: "Manual §A.3, p. 29"
+
+  - cdiPath: "Producers and Consumers/Turnout Control/Turnout Button Normal Open (P)"
+    name: "Turnout Button Normal Open (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when the **Normal pushbutton input** is
+      released (goes open). Useful when the Normal button doubles as a
+      general-purpose input.
+    citation: "Manual §A.4, p. 29"
+
+  - cdiPath: "Producers and Consumers/Turnout Control/Turnout Button Normal Closed (P)"
+    name: "Turnout Button Normal Closed (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when the Normal pushbutton input is
+      pressed (closed).
+    citation: "Manual §A.4, p. 29"
+
+  - cdiPath: "Producers and Consumers/Turnout Control/Turnout Button Diverging Open (P)"
+    name: "Turnout Button Diverging Open (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when the **Diverging pushbutton input** is
+      released (goes open). Still fires in one-button turnout-control
+      mode if a switch is wired here.
+    citation: "Manual §A.4, p. 29"
+
+  - cdiPath: "Producers and Consumers/Turnout Control/Turnout Button Diverging Closed (P)"
+    name: "Turnout Button Diverging Closed (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when the Diverging pushbutton input is
+      pressed (closed).
+    citation: "Manual §A.4, p. 29"
+
+  - cdiPath: "Producers and Consumers/Turnout Control/Turnout Observed Normal (P)"
+    name: "Turnout Observed Normal (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when the firmware concludes the turnout has
+      reached the **Normal** position. With zero or one feedback
+      switches, this fires based on commanded position. With two
+      switches, it fires only when both switch states confirm Normal.
+    citation: "Manual §A.5, p. 29"
+
+  - cdiPath: "Producers and Consumers/Turnout Control/Turnout Observed Diverging (P)"
+    name: "Turnout Observed Diverging (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when the firmware concludes the turnout has
+      reached the **Diverging** position. See Observed Normal for
+      derivation logic.
+    citation: "Manual §A.5, p. 29"
+
+  - cdiPath: "Producers and Consumers/Turnout Control/Turnout Observed In Motion (P)"
+    name: "Turnout Observed In Motion (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when the firmware sees the first feedback
+      switch open *and* the second has not yet closed — i.e., the points
+      are mid-travel. **Fires only when** *Using turnout feedback
+      sensors?* **is set to Two turnout feedback sensors.**
+    citation: "Manual §A.5, p. 29"
+
+  # --- Signal Lamp Status (all 16 are producers) ---
+  - cdiPath: "Producers and Consumers/Signal Lamp Status/Signal A Red (P)"
+    name: "Signal A Red (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when **Signal A** (one of the two heads at
+      the *frog/exit* end of the turnout) goes to Red. Wire to a
+      repeater LED on a CTC panel.
+    citation: "Manual §A.6, p. 29"
+  - cdiPath: "Producers and Consumers/Signal Lamp Status/Signal A Yellow (P)"
+    name: "Signal A Yellow (P)"
+    elementType: "eventid"
+    description: "**Producer.** Emitted when Signal A goes to Yellow."
+    citation: "Manual §A.6, p. 29"
+  - cdiPath: "Producers and Consumers/Signal Lamp Status/Signal A Green (P)"
+    name: "Signal A Green (P)"
+    elementType: "eventid"
+    description: "**Producer.** Emitted when Signal A goes to Green."
+    citation: "Manual §A.6, p. 29"
+  - cdiPath: "Producers and Consumers/Signal Lamp Status/Signal A Dark (P)"
+    name: "Signal A Dark (P)"
+    elementType: "eventid"
+    description: "**Producer.** Emitted when Signal A goes Dark (all lamps off)."
+    citation: "Manual §A.6, p. 29"
+
+  - cdiPath: "Producers and Consumers/Signal Lamp Status/Signal B Red (P)"
+    name: "Signal B Red (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when **Signal B** (the second head at the
+      *frog/exit* end of the turnout) goes to Red.
+    citation: "Manual §A.6, p. 29"
+  - cdiPath: "Producers and Consumers/Signal Lamp Status/Signal B Yellow (P)"
+    name: "Signal B Yellow (P)"
+    elementType: "eventid"
+    description: "**Producer.** Emitted when Signal B goes to Yellow."
+    citation: "Manual §A.6, p. 29"
+  - cdiPath: "Producers and Consumers/Signal Lamp Status/Signal B Green (P)"
+    name: "Signal B Green (P)"
+    elementType: "eventid"
+    description: "**Producer.** Emitted when Signal B goes to Green."
+    citation: "Manual §A.6, p. 29"
+  - cdiPath: "Producers and Consumers/Signal Lamp Status/Signal B Dark (P)"
+    name: "Signal B Dark (P)"
+    elementType: "eventid"
+    description: "**Producer.** Emitted when Signal B goes Dark."
+    citation: "Manual §A.6, p. 29"
+
+  - cdiPath: "Producers and Consumers/Signal Lamp Status/Signal C Red (P)"
+    name: "Signal C Red (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when **Signal C** (the upper head at the
+      *facing-point* end) goes to Red. With single-head facing-point
+      mode, C is the only facing-point head.
+    citation: "Manual §A.6, p. 29; Figure 5, p. 7"
+  - cdiPath: "Producers and Consumers/Signal Lamp Status/Signal C Yellow (P)"
+    name: "Signal C Yellow (P)"
+    elementType: "eventid"
+    description: "**Producer.** Emitted when Signal C goes to Yellow."
+    citation: "Manual §A.6, p. 29"
+  - cdiPath: "Producers and Consumers/Signal Lamp Status/Signal C Green (P)"
+    name: "Signal C Green (P)"
+    elementType: "eventid"
+    description: "**Producer.** Emitted when Signal C goes to Green."
+    citation: "Manual §A.6, p. 29"
+  - cdiPath: "Producers and Consumers/Signal Lamp Status/Signal C Dark (P)"
+    name: "Signal C Dark (P)"
+    elementType: "eventid"
+    description: "**Producer.** Emitted when Signal C goes Dark."
+    citation: "Manual §A.6, p. 29"
+
+  - cdiPath: "Producers and Consumers/Signal Lamp Status/Signal D Red (P)"
+    name: "Signal D Red (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when **Signal D** (the lower head at the
+      *facing-point* end — the Diverging-route indicator) goes to Red.
+      **Never fires when** *Facing Point Signals* **is set to single-head.**
+    citation: "Manual §A.6, p. 29; Figure 5, p. 7"
+  - cdiPath: "Producers and Consumers/Signal Lamp Status/Signal D Yellow (P)"
+    name: "Signal D Yellow (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when Signal D goes to Yellow. Inactive in
+      single-head facing-point mode.
+    citation: "Manual §A.6, p. 29"
+  - cdiPath: "Producers and Consumers/Signal Lamp Status/Signal D Green (P)"
+    name: "Signal D Green (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when Signal D goes to Green. Inactive in
+      single-head facing-point mode.
+    citation: "Manual §A.6, p. 29"
+  - cdiPath: "Producers and Consumers/Signal Lamp Status/Signal D Dark (P)"
+    name: "Signal D Dark (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when Signal D goes Dark. Inactive in
+      single-head facing-point mode.
+    citation: "Manual §A.6, p. 29"
+
+  # --- Signal Controls (mixed: 10 consumers + 6 producers) ---
+  - cdiPath: "Producers and Consumers/Signal Controls/Signal State A Stop (C)"
+    name: "Signal State A Stop (C)"
+    elementType: "eventid"
+    description: |
+      **Consumer.** Received from the partner TurnoutBoss across the
+      siding to report that *its* Signal A is at Stop. Drives this
+      board's signal logic (e.g., adjacent block "approach" indications).
+    citation: "Manual §A.8, p. 30"
+  - cdiPath: "Producers and Consumers/Signal Controls/Signal State A Nonstop (C)"
+    name: "Signal State A Nonstop (C)"
+    elementType: "eventid"
+    description: |
+      **Consumer.** Received from the partner board to report that its
+      Signal A is showing a non-Stop aspect (Green or Yellow).
+    citation: "Manual §A.8, p. 30"
+  - cdiPath: "Producers and Consumers/Signal Controls/Signal State B Stop (C)"
+    name: "Signal State B Stop (C)"
+    elementType: "eventid"
+    description: "**Consumer.** Partner board reports its Signal B is at Stop."
+    citation: "Manual §A.8, p. 30"
+  - cdiPath: "Producers and Consumers/Signal Controls/Signal State B Nonstop (C)"
+    name: "Signal State B Nonstop (C)"
+    elementType: "eventid"
+    description: "**Consumer.** Partner board reports its Signal B is non-Stop."
+    citation: "Manual §A.8, p. 30"
+  - cdiPath: "Producers and Consumers/Signal Controls/Signal State CD Stop (C)"
+    name: "Signal State CD Stop (C)"
+    elementType: "eventid"
+    description: |
+      **Consumer.** Partner board reports its combined **C/D
+      facing-point mast** is at Stop. Note that this aggregate aspect
+      represents both heads together (or only C in single-head mode).
+    citation: "Manual §A.8, p. 30"
+  - cdiPath: "Producers and Consumers/Signal Controls/Signal State CD Nonstop (C)"
+    name: "Signal State CD Nonstop (C)"
+    elementType: "eventid"
+    description: "**Consumer.** Partner board reports its CD facing-point mast is non-Stop."
+    citation: "Manual §A.8, p. 30"
+
+  - cdiPath: "Producers and Consumers/Signal Controls/Vital Logic Held (C)"
+    name: "Vital Logic Held (C)"
+    elementType: "eventid"
+    description: |
+      **Consumer.** CTC dispatcher command: **hold all signals at
+      Stop** in both directions. Trains are not cleared to move either
+      way. Wire to a CTC "Both Held" lever position.
+    citation: "Manual §A.9, p. 30"
+  - cdiPath: "Producers and Consumers/Signal Controls/Vital Logic Cleared Left (C)"
+    name: "Vital Logic Cleared Left (C)"
+    elementType: "eventid"
+    description: |
+      **Consumer.** CTC dispatcher command: **clear leftward** moves.
+      Left-bound signals operate normally; right-bound signals are held
+      at Stop.
+    citation: "Manual §A.9, p. 30"
+  - cdiPath: "Producers and Consumers/Signal Controls/Vital Logic Cleared Right (C)"
+    name: "Vital Logic Cleared Right (C)"
+    elementType: "eventid"
+    description: |
+      **Consumer.** CTC dispatcher command: **clear rightward** moves.
+      Right-bound signals operate normally; left-bound signals are held
+      at Stop.
+    citation: "Manual §A.9, p. 30"
+  - cdiPath: "Producers and Consumers/Signal Controls/Vital Logic Cleared Both (C)"
+    name: "Vital Logic Cleared Both (C)"
+    elementType: "eventid"
+    description: |
+      **Consumer.** CTC dispatcher command: **clear both directions**.
+      Signals in both directions operate normally. Initial power-up
+      state of the board.
+    citation: "Manual §A.9, p. 30"
+
+  - cdiPath: "Producers and Consumers/Signal Controls/Signal State A Stop (P)"
+    name: "Signal State A Stop (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when this board's Signal A goes to Stop
+      (showing all Red). Consumed by the partner board across the
+      siding and by any CTC indicator.
+    citation: "Manual §A.7, p. 30"
+  - cdiPath: "Producers and Consumers/Signal Controls/Signal State A Nonstop (P)"
+    name: "Signal State A Nonstop (P)"
+    elementType: "eventid"
+    description: "**Producer.** Emitted when Signal A goes to a non-Stop aspect."
+    citation: "Manual §A.7, p. 30"
+  - cdiPath: "Producers and Consumers/Signal Controls/Signal State B Stop (P)"
+    name: "Signal State B Stop (P)"
+    elementType: "eventid"
+    description: "**Producer.** Emitted when Signal B goes to Stop."
+    citation: "Manual §A.7, p. 30"
+  - cdiPath: "Producers and Consumers/Signal Controls/Signal State B Nonstop (P)"
+    name: "Signal State B Nonstop (P)"
+    elementType: "eventid"
+    description: "**Producer.** Emitted when Signal B goes to a non-Stop aspect."
+    citation: "Manual §A.7, p. 30"
+  - cdiPath: "Producers and Consumers/Signal Controls/Signal State CD Stop (P)"
+    name: "Signal State CD Stop (P)"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when this board's combined **C/D
+      facing-point mast** goes to Stop.
+    citation: "Manual §A.7, p. 30"
+  - cdiPath: "Producers and Consumers/Signal Controls/Signal State CD Nonstop (P)"
+    name: "Signal State CD Nonstop (P)"
+    elementType: "eventid"
+    description: "**Producer.** Emitted when the CD facing-point mast goes to a non-Stop aspect."
+    citation: "Manual §A.7, p. 30"
+
+  # --- Optical Sensor (2 producers) ---
+  - cdiPath: "Producers and Consumers/Optical Sensor/Optical Sensor Active"
+    name: "Optical Sensor Active"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when the optical sensor input transitions
+      to its **active** state (as determined by *Optical input polarity*
+      — high or low). Useful for detecting non-DCC rolling stock at the
+      turnout that current-sensing detectors cannot see.
+    citation: "Manual §A.10, p. 30; Manual §5.11, p. 21"
+
+  - cdiPath: "Producers and Consumers/Optical Sensor/Optical Sensor Inactive"
+    name: "Optical Sensor Inactive"
+    elementType: "eventid"
+    description: |
+      **Producer.** Emitted when the optical sensor input transitions
+      to its **inactive** state.
+    citation: "Manual §A.10, p. 30"

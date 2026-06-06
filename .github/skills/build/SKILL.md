@@ -18,7 +18,8 @@ If slices.md doesn't exist, tell the user to run `/slices` first.
 
 ## Pre-Implementation Checks
 
-Before implementing each slice, verify:
+**Run once per session, not per slice.** On the first slice, delegate these checks to an `Explore` subagent and store the results in session memory (`/memories/session/build-checks-<feature>.md`). For subsequent slices, reference the cached results — only re-run a check if the current slice touches a module not covered by the cache.
+
 1. Check `aiwiki/owners.md` — does shared logic already exist for what you're building?
 2. Check `product/architecture/code-placement-and-ownership.md` — is each file in the right layer?
 3. Check `product/architecture/adr/` — does the approach conflict with past decisions?
@@ -28,16 +29,40 @@ Before implementing each slice, verify:
 
 ### HITL Slices
 
-Present the architectural pattern question to the user first:
-- What pattern is this slice introducing?
-- What are the alternatives?
-- What's your recommendation and why?
+Present the slice to the user as a **single chat message** with two parts. Do NOT use `vscode_askQuestions` — batch presentation enables the user to spot cross-cutting architectural smells across decisions that sequential questioning destroys.
 
-Wait for user direction, then proceed with TDD.
+**Part 1 — Architectural context** (for the architect / product owner):
+
+- **Before/after mermaid diagrams** showing the module-level shape change this slice introduces. Show responsibilities and data flow, not code details.
+- **Pattern names** — name each architectural pattern being introduced or changed, with a one-sentence explanation of what it means in this context.
+- **Module-level change table** — columns: Module | Today | After. Describe responsibility shifts, not implementation details.
+
+**Part 2 — Numbered decisions** (for principle-level trade-offs):
+
+Present ALL decisions for the slice as a numbered list. Each entry follows this structure:
+
+```
+**D{N}: {Short title}** — {Principle at stake: DRY / SOLID / YAGNI / Depth / Locality / ADR-compliance / etc.}
+Options: (A) {option} | (B) {option}
+Recommend: {A|B} — {why, tied to the named principle}
+Impact: {scope — which downstream slices, how many modules, load-bearing or contained}
+```
+
+The user reviews the full picture and responds with approvals, overrides, or questions — e.g., "1: approved, 2: option B instead, 3: question — doesn't this violate ADR-0002?"
+
+Wait for user direction on all decisions, then proceed with TDD.
 
 ### AFK Slices
 
 Implement autonomously following established patterns. Present the result when done.
+
+**Mid-slice stop condition.** If during implementation you discover the planned approach conflicts with an ADR, sits in the wrong layer per `product/architecture/code-placement-and-ownership.md`, requires coordinating state across layers that the slice did not anticipate, or duplicates logic that already has a shared owner, **stop**. Load and follow the `architecture-first-fix` skill to present options to the user before continuing. Do not patch through the surprise to keep the slice moving — unanticipated complications usually mean the slice's design needs to be revisited, not worked around.
+
+### REFACTOR Slices
+
+Implement autonomously. These slices produce no user-visible change — they restructure internals while preserving existing behavior. Present the result with a focus on what invariant was preserved and what architectural debt was reduced.
+
+**Mid-slice stop condition.** Same as AFK slices: if the refactor reveals a deeper seam problem than the slice anticipated (an invariant that doesn't actually hold, a layer boundary that's wrong, a duplication wider than the slice's scope), load and follow the `architecture-first-fix` skill before continuing. A refactor that quietly absorbs a bug or scope creep defeats its own purpose.
 
 ### TDD Loop (both types)
 

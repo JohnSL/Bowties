@@ -137,7 +137,7 @@ function makeLayout(eventIdHex: string, name: string): LayoutFile {
 
 function makeCatalogWithCard(eventIdHex: string): BowtieCatalog {
   const entry: EventSlotEntry = {
-    node_id: '02.01.57.00.00.01',
+    node_key: '020157000001',
     node_name: 'Test Node',
     element_path: ['seg:0', 'elem:0#1', 'elem:0'],
     element_label: 'Config.Event ID',
@@ -152,7 +152,7 @@ function makeCatalogWithCard(eventIdHex: string): BowtieCatalog {
       producers: [entry],
       consumers: [{
         ...entry,
-        node_id: '02.01.57.00.00.02',
+        node_key: '020157000002',
         node_name: 'Node 2',
         element_path: ['seg:0', 'elem:1#1', 'elem:0'],
         role: 'Consumer',
@@ -372,7 +372,7 @@ describe('effectiveLayoutStore.preview (ADR-0004 / S2c)', () => {
   it('enriches ambiguous entries with element_label from tree (Bug 3)', () => {
     // Arrange: catalog has a card with an ambiguous entry (no element_label from Rust)
     const ambiguousEntry: EventSlotEntry = {
-      node_id: '02.01.57.00.00.01',
+      node_key: '020157000001',
       node_name: 'Test Node',
       element_path: ['seg:0', 'elem:0#1', 'elem:0'],
       element_description: 'Some CDI description',
@@ -410,7 +410,7 @@ describe('effectiveLayoutStore.preview (ADR-0004 / S2c)', () => {
     // Arrange: catalog with ambiguous entry + matching tree loaded
     const nodeId = '02.01.57.00.00.01';
     const ambiguousEntry: EventSlotEntry = {
-      node_id: nodeId,
+      node_key: nodeId,
       node_name: 'Test Node',
       element_path: ['seg:0', 'elem:0#1', 'elem:0'],
       element_description: 'Some CDI description',
@@ -459,7 +459,7 @@ describe('display threshold for single-slot unnamed catalog cards', () => {
         event_id_hex: SINGLE_SLOT_EVENT_HEX,
         event_id_bytes: SINGLE_SLOT_EVENT_BYTES,
         producers: [{
-          node_id: '02.01.57.00.00.01',
+          node_key: '020157000001',
           node_name: 'Test Node',
           element_path: ['seg:0', 'elem:0'],
           element_description: null,
@@ -571,7 +571,7 @@ describe('getRoleForSlot', () => {
         event_id_hex: SINGLE_SLOT_EVENT_HEX,
         event_id_bytes: SINGLE_SLOT_EVENT_BYTES,
         producers: [{
-          node_id: '02.01.57.00.00.01',
+          node_key: '020157000001',
           node_name: 'Test Node',
           element_path: ['seg:0', 'elem:3'],
           element_description: null,

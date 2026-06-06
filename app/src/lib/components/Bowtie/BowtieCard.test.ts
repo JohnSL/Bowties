@@ -38,7 +38,7 @@ vi.mock('$lib/stores/configFocus.svelte', () => ({
 
 function makeEntry(overrides: { node_name?: string; element_label?: string } = {}) {
   return {
-    node_id: '02.01.57.00.00.01',
+    node_key: '020157000001',
     node_name: overrides.node_name ?? 'Signal Node',
     element_path: ['seg:0', 'elem:0', 'elem:0'],
     element_label: overrides.element_label ?? 'Output Active',
@@ -158,7 +158,7 @@ describe('BowtieCard.svelte', () => {
     const link = screen.getByRole('button', { name: /go to button pressed in configuration/i });
     await fireEvent.click(link);
     expect(focusConfigFieldMock).toHaveBeenCalledWith(
-      '02.01.57.00.00.01',
+      '020157000001',
       ['seg:0', 'elem:0', 'elem:0'],
     );
   });

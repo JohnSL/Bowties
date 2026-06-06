@@ -90,6 +90,14 @@ _Avoid_: name resolution, fallback chain (imprecise)
 A persistently saved YAML file containing the node tree, offline changes, sync session state, bowtie metadata, and connector selections for a particular LCC layout.
 _Avoid_: config file, session, project, template
 
+**NodeKey**:
+A unified identifier for nodes in the Bowties backend and frontend. On the frontend it is a branded discriminated union (`LiveNodeKey | PlaceholderNodeKey`) defined in `app/src/lib/utils/nodeKey.ts`; on the backend and on the wire it is the canonical `String` form. Live nodes use their canonical 12-hex `NodeID` (e.g. `"050101011402"`). Placeholder nodes use `"placeholder:<uuidv4>"`. The Proxy Registry, layout layer, and offline-change layer are keyed by `NodeKey`. See ADR-0008 and ADR-0010.
+_Avoid_: node_id (ambiguous — could mean the 6-byte LCC Node ID or the string key), node identifier, BrandedNodeKey (renamed to NodeKey 2024-12)
+
+**Placeholder (Board)**:
+A node that exists only in the Bowties layout, not on the physical LCC bus. Represented as a `NodeSnapshot` with `node_id: None` and `profile_stem: Some(...)`. In memory, a `SynthesizedNodeProxy` in the Proxy Registry. The placeholder factory (`placeholder.rs`) synthesizes what bus discovery would have produced. All event ID fields are pre-filled with `[0u8; 8]` (all-zero, excluded from bowtie binding by the zero-prefix rule). See ADR-0009.
+_Avoid_: virtual node (implies protocol presence), stub, mock
+
 ## Architecture Roles
 
 **Route**:
@@ -163,6 +171,22 @@ _Avoid_: repair rules, auto-fix, side-effect rules
 **Guided Configuration**:
 A UI/workflow mode that uses profile relevance rules and field descriptions to present only applicable configuration sections and step-by-step recipes to users.
 _Avoid_: assisted configuration, wizard (implies linear flow; guided is contextual), smart forms
+
+**Fully Captured**:
+A node whose CDI tree has been read into `nodeTreeStore` *and* is not currently in `partialCaptureNodesStore`. The threshold from ADR-0007 — the *tree-completeness* half of persistability. A fully-captured node is not yet persistable on its own; live nodes additionally require **Config Read**.
+_Avoid_: "complete" (ambiguous), "captured" alone (drops the partial-capture exclusion)
+
+**Config Read**:
+Membership in `configReadNodesStore` — the user has run "Read all configuration" against the node and real values are in hand. Distinct from "the CDI tree is loaded" (that is **Fully Captured**). For placeholders this concept does not apply: a placeholder is persistable as soon as it exists.
+_Avoid_: "values loaded", "fetched" (both ambiguous with CDI fetch)
+
+**Persistable in Layout (`isPersistableInLayout`)**:
+The single predicate governing whether a node can be promoted into the saved layout file: `isFullyCaptured(key) ∧ (isConfigRead(key) ∨ key.kind === 'placeholder')`. Owned by `effectiveNodeStore` (ADR-0011). Save, the orange in-memory-changes dot, the unsaved-changes count, and the unsaved-new sidebar badge all derive from this one predicate so they cannot drift.
+_Avoid_: "saveable", "dirty" (a layout can be dirty without any persistable in-memory node — e.g. a metadata edit), "promotable" (used historically; superseded)
+
+**effectiveNodeStore**:
+The per-node layout facade (ADR-0011, sibling to `effectiveLayoutStore`). Projects `nodeTreeStore`, `nodeInfoStore`, `configReadNodesStore`, `partialCaptureNodesStore`, `layoutStore.activeContext`, and the edit-layer stores into `nodeOrigin`, `isFullyCaptured`, `isConfigRead`, `isPersistableInLayout`, `unsavedInMemoryNodeIds`, `unsavedRemovedNodeIds`, `isDirty`. Reads only — never writes through. Lives at `app/src/lib/layout/effectiveNodeStore.svelte.ts`, exposed via `$lib/layout`.
+_Avoid_: "node store" (overloaded), "dirty store"
 
 ## Relationships
 

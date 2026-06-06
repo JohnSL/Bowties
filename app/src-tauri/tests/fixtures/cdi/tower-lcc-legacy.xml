@@ -1,0 +1,406 @@
+<?xml version="1.0"?> 
+<cdi xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://openlcb.org/schema/cdi/1/1/cdi.xsd"> 
+<identification>
+<manufacturer>RR-CirKits</manufacturer> 
+<model>Tower-LCC</model>
+<hardwareVersion>rev-D</hardwareVersion>
+<softwareVersion>rev-C6</softwareVersion> 
+</identification> 
+<acdi/> 
+
+<segment space='251'> 
+<name>NODE ID</name>
+<group> 
+<name>Your name and description for this node</name>
+<string size='63'>
+<name>Node Name</name>
+</string> 
+<string size='64' offset='1'> 
+<name>Node Description</name> 
+</string> 
+</group>
+</segment>
+
+<segment space='253' origin='7744'> 
+<name>Node Power Monitor</name> 
+<int size='1'>
+<name>Message Options</name>
+<map> 
+<relation><property>0</property><value>None</value></relation>
+<relation><property>1</property><value>Send Power OK only</value></relation>
+<relation><property>2</property><value>Send both Power OK and Power Not OK</value></relation> 
+</map>
+</int>
+<eventid> 
+<name>Power OK</name> 
+<description>EventID</description>
+</eventid>
+<eventid> 
+<name>Power Not OK</name> 
+<description>EventID (may be lost)</description>
+</eventid>
+</segment>
+<segment space='253' origin='128'>
+<name>Port I/O</name> 
+<group replication='16'>
+<name>Line</name> 
+<repname>Line</repname> 
+<string size='32'>
+<name>Line Description</name> 
+</string> 
+<int size='1'>
+<name>Output Function</name>
+<map> 
+<relation><property>0</property><value>No Function</value></relation> 
+<relation><property>1</property><value>Steady Active Hi</value></relation>
+<relation><property>2</property><value>Steady Active Lo</value></relation>
+<relation><property>9</property><value>Sample Steady Active Hi</value></relation> 
+<relation><property>10</property><value>Sample Steady Active Lo</value></relation>
+<relation><property>11</property><value>Alt. Sample Steady Active Hi</value></relation> 
+<relation><property>12</property><value>Alt. Sample Steady Active Lo</value></relation> 
+<relation><property>3</property><value>Pulse Active Hi</value></relation> 
+<relation><property>4</property><value>Pulse Active Lo</value></relation> 
+<relation><property>13</property><value>Sample Pulse Active Hi</value></relation> 
+<relation><property>14</property><value>Sample Pulse Active Lo</value></relation> 
+<relation><property>15</property><value>Alt. Sample Pulse Active Hi</value></relation>
+<relation><property>16</property><value>Alt. Sample Pulse Active Lo</value></relation>
+<relation><property>5</property><value>Blink A Active Hi</value></relation> 
+<relation><property>6</property><value>Blink A Active Lo</value></relation> 
+<relation><property>7</property><value>Blink B Active Hi</value></relation> 
+<relation><property>8</property><value>Blink B Active Lo</value></relation> 
+</map>
+</int>
+<int size='1'>
+<name>Input Function</name> 
+<map> 
+<relation><property>0</property><value>Disabled</value></relation>
+<relation><property>1</property><value>Active Hi</value></relation> 
+<relation><property>2</property><value>Active Lo</value></relation> 
+<relation><property>3</property><value>Alt Action Hi</value></relation> 
+<relation><property>4</property><value>Alt Action Lo</value></relation> 
+<relation><property>5</property><value>Sample Hi</value></relation> 
+<relation><property>6</property><value>Sample Lo</value></relation> 
+<relation><property>7</property><value>Alt Sample Hi</value></relation> 
+<relation><property>8</property><value>Alt Sample Lo</value></relation> 
+</map>
+</int>
+<group replication='2'> 
+<name>Delay</name>
+<description>Delay time values for blinks, pulses, debounce.</description>
+<repname>Interval</repname> 
+<int size='2'>
+<name>Delay Time (1-60000)</name> 
+</int>
+<int size='1'>
+<name>Units</name>
+<map> 
+<relation><property>0</property><value>Milliseconds</value></relation>
+<relation><property>1</property><value>Seconds</value></relation> 
+<relation><property>2</property><value>Minutes</value></relation> 
+</map>
+</int>
+<int size='1'>
+<name>Retrigger</name>
+<map> 
+<relation><property>0</property><value>No</value></relation>
+<relation><property>1</property><value>Yes</value></relation> 
+</map>
+</int>
+</group>
+<group replication='6'> 
+<name>Event</name>
+<repname>Event</repname>
+<eventid> 
+<name>Command</name>
+<description>(C) When this event occurs</description> 
+</eventid>
+<int size='1'>
+<name>Action</name> 
+<description>the line state will be changed to</description>
+<map> 
+<relation><property>0</property><value>None</value></relation>
+<relation><property>1</property><value>On  (Line Active)</value></relation> 
+<relation><property>2</property><value>Off (Line Inactive)</value></relation> 
+<relation><property>3</property><value>Change (Toggle)</value></relation> 
+<relation><property>4</property><value>Veto On  (Active)</value></relation> 
+<relation><property>5</property><value>Veto Off (Inactive)</value></relation> 
+<relation><property>6</property><value>Gated On  (Non Veto Output)</value></relation> 
+<relation><property>7</property><value>Gated Off (Non Veto Output)</value></relation> 
+<relation><property>8</property><value>Gated Change (Non Veto Toggle)</value></relation>
+</map>
+</int>
+</group>
+<group replication='6'> 
+<name>Event</name>
+<repname>Event</repname>
+<int size='1'>
+<name>Upon this action</name> 
+<map> 
+<relation><property>0</property><value>None</value></relation>
+<relation><property>1</property><value>Output State On command</value></relation> 
+<relation><property>2</property><value>Output State Off command</value></relation>
+<relation><property>3</property><value>Output On (Function hi)</value></relation> 
+<relation><property>4</property><value>Output Off (Function lo)</value></relation>
+<relation><property>5</property><value>Input On</value></relation>
+<relation><property>6</property><value>Input Off</value></relation> 
+<relation><property>7</property><value>Gated On (Non Veto Input)</value></relation> 
+<relation><property>8</property><value>Gated Off (Non Veto Input)</value></relation>
+</map>
+</int>
+<eventid> 
+<name>Indicator</name>
+<description>(P) this event will be sent</description>
+</eventid>
+</group>
+</group>
+</segment>
+
+<segment space='253' origin='2528'> 
+<name>Conditionals</name> 
+<group replication='32'>
+<name>Logic</name>
+<repname>Logic</repname>
+<string size='32'>
+<name>Description</name>
+</string> 
+<int size='1'>
+<name>Function</name> 
+<map> 
+<relation><property>0</property><value>Blocked</value></relation> 
+<relation><property>1</property><value>Group</value></relation> 
+<relation><property>3</property><value>Last (Single)</value></relation> 
+</map>
+</int>
+<group> 
+<name>Variable #1</name>
+<int size='1' offset='5631'>
+<name>Trigger</name>
+<map> 
+<relation><property>0</property><value>On Variable Change</value></relation>
+<relation><property>1</property><value>On Matching Event</value></relation> 
+<relation><property>2</property><value>None</value></relation>
+</map>
+</int>
+<int size='1'>
+<name>Source</name> 
+<map> 
+<relation><property>0</property><value>Use Variable #1's (C) Events</value></relation>
+<relation><property>1</property><value>Track Circuit 1</value></relation> 
+<relation><property>2</property><value>Track Circuit 2</value></relation> 
+<relation><property>3</property><value>Track Circuit 3</value></relation> 
+<relation><property>4</property><value>Track Circuit 4</value></relation> 
+<relation><property>5</property><value>Track Circuit 5</value></relation> 
+<relation><property>6</property><value>Track Circuit 6</value></relation> 
+<relation><property>7</property><value>Track Circuit 7</value></relation> 
+<relation><property>8</property><value>Track Circuit 8</value></relation> 
+</map>
+</int>
+<int size='1'>
+<name>Track Speed</name>
+<map> 
+<relation><property>0</property><value>Stop</value></relation>
+<relation><property>1</property><value>Restricting/Tumble Down</value></relation> 
+<relation><property>2</property><value>Slow</value></relation>
+<relation><property>3</property><value>Medium</value></relation>
+<relation><property>4</property><value>Limited</value></relation> 
+<relation><property>5</property><value>Approach</value></relation>
+<relation><property>6</property><value>Approach-Medium</value></relation> 
+<relation><property>7</property><value>Clear/Proceed</value></relation> 
+</map>
+</int>
+<eventid offset='-5634'>
+<name>set true</name> 
+<description>(C) Event to set variable #1 true.</description> 
+</eventid>
+<eventid> 
+<name>set false</name>
+<description>(C) Event to set variable #1 false.</description>
+</eventid>
+</group>
+<int size='1'>
+<name>Logic Operation</name>
+<map> 
+<relation><property>0</property><value>V1 AND V2</value></relation> 
+<relation><property>1</property><value>V1 OR V2</value></relation>
+<relation><property>2</property><value>V1 XOR V2</value></relation> 
+<relation><property>3</property><value>V1 AND V2 => change</value></relation> 
+<relation><property>4</property><value>V1 OR V2 => change</value></relation>
+<relation><property>5</property><value>V1 AND Then V2 => true</value></relation>
+<relation><property>7</property><value>V1 Only</value></relation> 
+<relation><property>8</property><value>V2 Only</value></relation> 
+<relation><property>6</property><value>null => true</value></relation>
+</map>
+</int>
+<group> 
+<name>Variable #2</name>
+<int size='1' offset='5617'>
+<name>Trigger</name>
+<map> 
+<relation><property>0</property><value>On Variable Change</value></relation>
+<relation><property>1</property><value>On Matching Event</value></relation> 
+<relation><property>2</property><value>None</value></relation>
+</map>
+</int>
+<int size='1'>
+<name>Source</name> 
+<map> 
+<relation><property>0</property><value>Use Variable #2's (C) Events</value></relation>
+<relation><property>1</property><value>Track Circuit 1</value></relation> 
+<relation><property>2</property><value>Track Circuit 2</value></relation> 
+<relation><property>3</property><value>Track Circuit 3</value></relation> 
+<relation><property>4</property><value>Track Circuit 4</value></relation> 
+<relation><property>5</property><value>Track Circuit 5</value></relation> 
+<relation><property>6</property><value>Track Circuit 6</value></relation> 
+<relation><property>7</property><value>Track Circuit 7</value></relation> 
+<relation><property>8</property><value>Track Circuit 8</value></relation> 
+</map>
+</int>
+<int size='1'>
+<name>Track Speed</name>
+<map> 
+<relation><property>0</property><value>Stop</value></relation>
+<relation><property>1</property><value>Restricting/Tumble Down</value></relation> 
+<relation><property>2</property><value>Slow</value></relation>
+<relation><property>3</property><value>Medium</value></relation>
+<relation><property>4</property><value>Limited</value></relation> 
+<relation><property>5</property><value>Approach</value></relation>
+<relation><property>6</property><value>Approach-Medium</value></relation> 
+<relation><property>7</property><value>Clear/Proceed</value></relation> 
+</map>
+</int>
+<eventid offset='-5620'>
+<name>set true</name> 
+<description>(C) Event to set variable #2 true.</description> 
+</eventid>
+<eventid> 
+<name>set false</name>
+<description>(C) Event to set variable #2 false.</description>
+</eventid>
+</group>
+<group> 
+<name>Action</name> 
+<int size='1' offset='5604'>
+<name>when true</name>
+<description>Action when Conditional = True</description> 
+<map> 
+<relation><property>0</property><value>Send then Exit Group</value></relation>
+<relation><property>2</property><value>Send then Evaluate Next</value></relation> 
+<relation><property>3</property><value>Exit Group</value></relation>
+<relation><property>4</property><value>Evaluate Next</value></relation> 
+</map>
+</int>
+<int size='1'>
+<name>when false</name> 
+<description>Action when Conditional = False</description>
+<map> 
+<relation><property>0</property><value>Send then Exit Group</value></relation>
+<relation><property>2</property><value>Send then Evaluate Next</value></relation> 
+<relation><property>3</property><value>Exit Group</value></relation>
+<relation><property>4</property><value>Evaluate Next</value></relation> 
+</map>
+</int>
+</group>
+<group> 
+<name>Time Delay before action</name> 
+<int size='2' offset='-5606'> 
+<name>Delay Time (1-60000)</name> 
+</int>
+<int size='1'>
+<name>Units</name>
+<map> 
+<relation><property>0</property><value>Milliseconds</value></relation>
+<relation><property>1</property><value>Seconds</value></relation> 
+<relation><property>2</property><value>Minutes</value></relation> 
+</map>
+</int>
+<int size='1'>
+<name>Retriggerable</name>
+<map> 
+<relation><property>0</property><value>No</value></relation>
+<relation><property>1</property><value>Yes</value></relation> 
+</map>
+</int>
+</group>
+<group replication='4'> 
+<name>Action</name> 
+<description>A trigger or change will generate the following events.</description>
+<repname>Action</repname> 
+<int size='1'>
+<name>Condition</name>
+<map> 
+<relation><property>0</property><value>none</value></relation>
+<relation><property>1</property><value>Immediately</value></relation> 
+<relation><property>2</property><value>After delay</value></relation> 
+<relation><property>3</property><value>Immediate if True</value></relation> 
+<relation><property>4</property><value>Immediate if False</value></relation>
+<relation><property>5</property><value>Delayed if True</value></relation> 
+<relation><property>6</property><value>Delayed if False</value></relation>
+</map>
+</int>
+<int size='1' offset='5601'>
+<name>Destination</name>
+<map> 
+<relation><property>0</property><value>Use Action (P) Event</value></relation>
+<relation><property>1</property><value>Track Circuit 1</value></relation> 
+<relation><property>2</property><value>Track Circuit 2</value></relation> 
+<relation><property>3</property><value>Track Circuit 3</value></relation> 
+<relation><property>4</property><value>Track Circuit 4</value></relation> 
+<relation><property>5</property><value>Track Circuit 5</value></relation> 
+<relation><property>6</property><value>Track Circuit 6</value></relation> 
+<relation><property>7</property><value>Track Circuit 7</value></relation> 
+<relation><property>8</property><value>Track Circuit 8</value></relation> 
+</map>
+</int>
+<int size='1'>
+<name>Track Speed</name>
+<map> 
+<relation><property>0</property><value>Stop</value></relation>
+<relation><property>1</property><value>Restricting/Tumble Down</value></relation> 
+<relation><property>2</property><value>Slow</value></relation>
+<relation><property>3</property><value>Medium</value></relation>
+<relation><property>4</property><value>Limited</value></relation> 
+<relation><property>5</property><value>Approach</value></relation>
+<relation><property>6</property><value>Approach-Medium</value></relation> 
+<relation><property>7</property><value>Clear/Proceed</value></relation> 
+</map>
+</int>
+<eventid offset='-5603'>
+<name>Action Event</name> 
+<description>(P) this event will be sent</description>
+</eventid>
+</group>
+</group>
+</segment>
+
+<segment space='253' origin='7104'> 
+<name>Track Receiver</name> 
+<group replication='8'> 
+<name>Circuit</name>
+<description>Each track circuit may receive speed information from one remote mast.</description> 
+<repname>Circuit</repname>
+<string size='32'>
+<name>Remote Mast Description</name>
+</string> 
+<eventid> 
+<name>Link Address</name> 
+<description>(C) Remote Mast Link Address. Copy from 'Next' Mast and Paste here.</description>
+</eventid>
+</group>
+</segment>
+
+<segment space='253' origin='7424'> 
+<name>Track Transmitter</name>
+<group replication='8'> 
+<name>Circuit</name>
+<description>Each track circuit may send speed information to one remote mast.</description>
+<repname>Circuit</repname>
+<string size='32'>
+<name>Remote Mast Description</name>
+</string> 
+<eventid> 
+<name>Link Address</name> 
+<description>(P) Track Circuit Link Address. Copy and Paste into linked Track Circuit. (Read Only)</description>
+</eventid>
+</group>
+</segment>
+</cdi>

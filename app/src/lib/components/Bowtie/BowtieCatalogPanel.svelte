@@ -276,20 +276,20 @@
   }
 
   function doRemoveElement(card: PreviewBowtieCard, entry: EventSlotEntry) {
-    const tree = nodeTreeStore.getTree(entry.node_id);
+    const tree = nodeTreeStore.getTree(entry.node_key);
     if (!tree) {
-      console.warn('[BowtieCatalogPanel] doRemoveElement: tree not found for node', entry.node_id);
+      console.warn('[BowtieCatalogPanel] doRemoveElement: tree not found for node', entry.node_key);
       return;
     }
 
     // Find leaf by path (EventSlotEntry.element_path matches LeafConfigNode.path)
     const leaf = findLeafByPath(tree, entry.element_path);
     if (!leaf) {
-      console.warn('[BowtieCatalogPanel] doRemoveElement: leaf not found for path', entry.element_path, 'in node', entry.node_id);
+      console.warn('[BowtieCatalogPanel] doRemoveElement: leaf not found for path', entry.element_path, 'in node', entry.node_key);
       return;
     }
 
-    const newEventIdHex = generateFreshEventIdForNode(entry.node_id, tree);
+    const newEventIdHex = generateFreshEventIdForNode(entry.node_key, tree);
     const newEventIdBytes = newEventIdHex.split('.').map(h => parseInt(h, 16));
 
     const newValue = {
@@ -298,7 +298,7 @@
       hex: newEventIdHex,
     };
 
-    const key = editKeyForLeaf(entry.node_id, leaf.space, leaf.address);
+    const key = editKeyForLeaf(entry.node_key, leaf.space, leaf.address);
     configEditor.applyEdit(key, newValue);
 
     if (!layoutStore.isOfflineMode) {

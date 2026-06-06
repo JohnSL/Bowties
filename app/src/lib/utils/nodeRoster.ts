@@ -20,8 +20,17 @@
 
 /** Canonical node-ID form (uppercase, no dots), used in `layoutNodeIds`. */
 import { normalizeNodeId } from './nodeId';
+import { isPlaceholderInput } from './nodeKey';
 
+/**
+ * Canonicalize a NodeID for roster comparisons.
+ *
+ * - Live node IDs → uppercase, dots stripped (`normalizeNodeId`).
+ * - Placeholder NodeKeys (`placeholder:<uuidv4>`) → returned unchanged so
+ *   the case-sensitive UUID is preserved.
+ */
 export function canonicalizeNodeId(nodeId: string): string {
+  if (isPlaceholderInput(nodeId)) return nodeId;
   return normalizeNodeId(nodeId);
 }
 
@@ -47,6 +56,10 @@ export function computeDiscoveredOnlyNodeIds(
   const out: string[] = [];
   const seen = new Set<string>();
   for (const id of currentNodeIds) {
+    // Placeholder NodeKeys are handled by the unified save path
+    // (inMemorySnapshotKeys) — never surface them as discovered-only
+    // node IDs since the sidebar badge is for bus-discovered nodes only.
+    if (isPlaceholderInput(id)) continue;
     const canonical = canonicalizeNodeId(id);
     if (seen.has(canonical)) continue;
     seen.add(canonical);

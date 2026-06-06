@@ -5,6 +5,12 @@
  * config values, and event roles.  Populated by calling the `get_node_tree`
  * Tauri command and kept up-to-date via the `node-tree-updated` event.
  *
+ * Keying (Spec 014, ADR-0008/0010): the map key is a `NodeKey` — either a
+ * live NodeID (canonical 12-hex form) or a `placeholder:<uuidv4>`. The store
+ * normalizes incoming keys at the IPC seam via `toCanonicalNodeKey`, so callers
+ * may pass either dotted or canonical live-node forms and lookups will agree.
+ * See `$lib/utils/nodeKey` for the predicate and normalizer.
+ *
  * Spec: 007-unified-node-tree, Phase 3.
  */
 
@@ -18,7 +24,13 @@ import type {
   SegmentNode,
 } from '$lib/types/nodeTree';
 import { isGroup, isLeaf, getChildrenAtPath } from '$lib/types/nodeTree';
-import { normalizeNodeId } from '$lib/utils/nodeId';
+import { toCanonicalNodeKey, type NodeKeyInput } from '$lib/utils/nodeKey';
+
+export type { NodeKeyInput };
+
+function toCanonical(input: NodeKeyInput): string {
+  return toCanonicalNodeKey(input);
+}
 
 // ─── Store class ─────────────────────────────────────────────────────────────
 
@@ -55,42 +67,42 @@ class NodeTreeStore {
   // ── Tree access ───────────────────────────────────────────────────────────
 
   /** Get the tree for a specific node, or undefined if not loaded. */
-  getTree(nodeId: string): NodeConfigTree | undefined {
-    return this._trees.get(nodeId);
+  getTree(nodeId: NodeKeyInput): NodeConfigTree | undefined {
+    return this._trees.get(toCanonical(nodeId));
   }
 
   /** Whether a tree exists for the given nodeId. */
-  hasTree(nodeId: string): boolean {
-    return this._trees.has(nodeId);
+  hasTree(nodeId: NodeKeyInput): boolean {
+    return this._trees.has(toCanonical(nodeId));
   }
 
   /** Whether a specific node is currently loading. */
-  isNodeLoading(nodeId: string): boolean {
-    return this._loading.has(nodeId);
+  isNodeLoading(nodeId: NodeKeyInput): boolean {
+    return this._loading.has(toCanonical(nodeId));
   }
 
   /** Get error for a specific node, or undefined. */
-  getError(nodeId: string): string | undefined {
-    return this._errors.get(nodeId);
+  getError(nodeId: NodeKeyInput): string | undefined {
+    return this._errors.get(toCanonical(nodeId));
   }
 
   // ── Segment helpers ───────────────────────────────────────────────────────
 
   /** Get the segments for a node (empty array if tree not loaded). */
-  getSegments(nodeId: string): SegmentNode[] {
-    return this._trees.get(nodeId)?.segments ?? [];
+  getSegments(nodeId: NodeKeyInput): SegmentNode[] {
+    return this._trees.get(toCanonical(nodeId))?.segments ?? [];
   }
 
   /** Get children at a given path within a node's tree. */
-  getChildren(nodeId: string, pathKey: string[]): ConfigNode[] | null {
-    const tree = this._trees.get(nodeId);
+  getChildren(nodeId: NodeKeyInput, pathKey: string[]): ConfigNode[] | null {
+    const tree = this._trees.get(toCanonical(nodeId));
     if (!tree) return null;
     return getChildrenAtPath(tree, pathKey);
   }
 
   /** Find a leaf by address across a node's tree. */
-  getLeaf(nodeId: string, address: number): LeafConfigNode | null {
-    const tree = this._trees.get(nodeId);
+  getLeaf(nodeId: NodeKeyInput, address: number): LeafConfigNode | null {
+    const tree = this._trees.get(toCanonical(nodeId));
     if (!tree) return null;
 
     for (const seg of tree.segments) {
@@ -101,8 +113,8 @@ class NodeTreeStore {
   }
 
   /** Find a leaf by space and address across a node's tree. */
-  getLeafByLocation(nodeId: string, space: number, address: number): LeafConfigNode | null {
-    const tree = this._trees.get(nodeId);
+  getLeafByLocation(nodeId: NodeKeyInput, space: number, address: number): LeafConfigNode | null {
+    const tree = this._trees.get(toCanonical(nodeId));
     if (!tree) return null;
 
     for (const seg of tree.segments) {
@@ -121,31 +133,32 @@ class NodeTreeStore {
    * If a load is already in progress for this node, the call is a no-op.
    * The tree is stored and reactively available via `getTree(nodeId)`.
    */
-  async loadTree(nodeId: string): Promise<NodeConfigTree | null> {
-    if (this._loading.has(nodeId)) return this._trees.get(nodeId) ?? null;
+  async loadTree(nodeId: NodeKeyInput): Promise<NodeConfigTree | null> {
+    const key = toCanonical(nodeId);
+    if (this._loading.has(key)) return this._trees.get(key) ?? null;
 
     // Mark loading
-    this._loading = new Set([...this._loading, nodeId]);
+    this._loading = new Set([...this._loading, key]);
     this._errors = new Map(this._errors);
-    this._errors.delete(nodeId);
+    this._errors.delete(key);
 
     try {
-      const tree = await invoke<NodeConfigTree>('get_node_tree', { nodeId });
+      const tree = await invoke<NodeConfigTree>('get_node_tree', { nodeId: key });
 
       // Store tree
       this._trees = new Map(this._trees);
-      this._trees.set(nodeId, tree);
+      this._trees.set(key, tree);
 
       return tree;
     } catch (err) {
       const message = typeof err === 'string' ? err : String(err);
       this._errors = new Map(this._errors);
-      this._errors.set(nodeId, message);
+      this._errors.set(key, message);
       return null;
     } finally {
       // Clear loading flag
       this._loading = new Set(this._loading);
-      this._loading.delete(nodeId);
+      this._loading.delete(key);
     }
   }
 
@@ -156,21 +169,34 @@ class NodeTreeStore {
    * Unlike `loadTree`, this bypasses the loading guard so a fresh fetch
    * is always issued — even if another load is already in progress.
    */
-  async refreshTree(nodeId: string): Promise<NodeConfigTree | null> {
+  async refreshTree(nodeId: NodeKeyInput): Promise<NodeConfigTree | null> {
+    const key = toCanonical(nodeId);
     // Clear any in-progress guard so the fetch isn't skipped
-    if (this._loading.has(nodeId)) {
+    if (this._loading.has(key)) {
       this._loading = new Set(this._loading);
-      this._loading.delete(nodeId);
+      this._loading.delete(key);
     }
-    return this.loadTree(nodeId);
+    return this.loadTree(key);
   }
 
   // ── Store in tree directly (for optimistic / incremental updates) ─────────
 
   /** Replace or insert a tree directly (no backend call). */
-  setTree(nodeId: string, tree: NodeConfigTree): void {
+  setTree(nodeId: NodeKeyInput, tree: NodeConfigTree): void {
+    const key = toCanonical(nodeId);
     this._trees = new Map(this._trees);
-    this._trees.set(nodeId, tree);
+    this._trees.set(key, tree);
+  }
+
+  /** Remove a tree and any loading/error state for a node (Spec 014 / S8.5). */
+  removeTree(nodeId: NodeKeyInput): void {
+    const key = toCanonical(nodeId);
+    if (this._trees.has(key)) {
+      this._trees = new Map(this._trees);
+      this._trees.delete(key);
+    }
+    this._loading.delete(key);
+    this._errors.delete(key);
   }
 
   /**
@@ -184,8 +210,9 @@ class NodeTreeStore {
    * @param fieldPath The leaf's path array (e.g. ["seg:0", "elem:1"]).
    * @param newValue  The value just written to the node.
    */
-  updateLeafValue(nodeId: string, fieldPath: string[], newValue: import('$lib/types/nodeTree').TreeConfigValue): void {
-    const tree = this._trees.get(nodeId);
+  updateLeafValue(nodeId: NodeKeyInput, fieldPath: string[], newValue: import('$lib/types/nodeTree').TreeConfigValue): void {
+    const key = toCanonical(nodeId);
+    const tree = this._trees.get(key);
     if (!tree) return;
 
     // Deep-clone the tree so Svelte 5 reactivity detects the change
@@ -194,7 +221,7 @@ class NodeTreeStore {
     if (leaf) {
       leaf.value = newValue;
       this._trees = new Map(this._trees);
-      this._trees.set(nodeId, updatedTree);
+      this._trees.set(key, updatedTree);
     }
   }
 

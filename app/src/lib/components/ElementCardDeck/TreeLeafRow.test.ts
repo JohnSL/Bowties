@@ -1205,3 +1205,55 @@ describe('T043: reserved value option in dropdown select', () => {
   });
 });
 
+
+// === S8.5 / T10: placeholder eventid — disabled field with role badge ===
+describe('T10 placeholder eventid field', () => {
+  it('renders a disabled eventid input (not a badge) when nodeId is a placeholder key', () => {
+    const leaf = makeLeaf({
+      elementType: 'eventId',
+      value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0], hex: '00.00.00.00.00.00.00.00' },
+      size: 8,
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: 'placeholder:abcd-1234' } });
+    // EventId input IS rendered (same as a real board)
+    const input = screen.getByRole('textbox', { name: /test field/i });
+    expect(input).toBeInTheDocument();
+    // But it is disabled
+    expect(input).toBeDisabled();
+    // No badge text
+    expect(screen.queryByText(/Placeholder eventid/i)).not.toBeInTheDocument();
+  });
+
+  it('does not show "New Connection" button for placeholder eventid fields', () => {
+    const leaf = makeLeaf({
+      elementType: 'eventId',
+      value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0], hex: '00.00.00.00.00.00.00.00' },
+      size: 8,
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: 'placeholder:abcd-1234' } });
+    expect(screen.queryByRole('button', { name: /new connection/i })).not.toBeInTheDocument();
+  });
+
+  it('does not show "Unconfigured placeholder" warning for placeholder eventid fields', () => {
+    const leaf = makeLeaf({
+      elementType: 'eventId',
+      value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0], hex: '00.00.00.00.00.00.00.00' },
+      size: 8,
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: 'placeholder:abcd-1234' } });
+    expect(screen.queryByText(/Unconfigured placeholder/i)).not.toBeInTheDocument();
+  });
+
+  it('renders the normal editable eventid editor for non-placeholder nodeIds', () => {
+    const leaf = makeLeaf({
+      elementType: 'eventId',
+      value: { type: 'eventId', bytes: [0, 0, 0, 0, 0, 0, 0, 0], hex: '00.00.00.00.00.00.00.00' },
+      size: 8,
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: '05.01.01.01.03.00' } });
+    const input = screen.getByRole('textbox', { name: /test field/i });
+    expect(input).toBeInTheDocument();
+    expect(input).not.toBeDisabled();
+  });
+});
+

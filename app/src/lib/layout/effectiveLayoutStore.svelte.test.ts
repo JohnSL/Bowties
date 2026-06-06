@@ -28,7 +28,7 @@ import { editKeyForLeaf } from '$lib/utils/editKey';
 
 const EVENT_HEX = '02.01.57.00.02.D9.00.06';
 const EVENT_BYTES = [0x02, 0x01, 0x57, 0x00, 0x02, 0xD9, 0x00, 0x06];
-const NODE_ID = '02.01.57.00.00.01';
+const NODE_ID = '020157000001';
 
 // ─── Mock state containers ───────────────────────────────────────────────────
 
@@ -184,7 +184,7 @@ function makeCatalogCard(opts: Partial<{
 
 function makeEntry(overrides: Partial<EventSlotEntry> = {}): EventSlotEntry {
   return {
-    node_id: NODE_ID,
+    node_key: NODE_ID,
     node_name: 'Test Node',
     element_path: ['seg:0', 'elem:0#1', 'elem:0'],
     element_label: 'Event ID',
@@ -218,7 +218,7 @@ describe('effectiveLayoutStore.effectiveBowties', () => {
   it('returns catalog cards from the underlying catalog', () => {
     bowtieCatalogStore.setCatalog(makeCatalogCard({
       producers: [makeEntry({ role: 'Producer' })],
-      consumers: [makeEntry({ node_id: '02.01.57.00.00.02', role: 'Consumer' })],
+      consumers: [makeEntry({ node_key: '02.01.57.00.00.02', role: 'Consumer' })],
     }));
 
     const cards = effectiveLayoutStore.effectiveBowties;
@@ -232,7 +232,7 @@ describe('effectiveLayoutStore.effectiveBowties', () => {
   it('removes a card with a pending deleteBowtie edit (Bug 3 — immediate delete)', () => {
     bowtieCatalogStore.setCatalog(makeCatalogCard({
       producers: [makeEntry()],
-      consumers: [makeEntry({ node_id: '02.01.57.00.00.02', role: 'Consumer' })],
+      consumers: [makeEntry({ node_key: '02.01.57.00.00.02', role: 'Consumer' })],
     }));
     mockPendingDeletes.add(EVENT_HEX);
 
@@ -406,7 +406,7 @@ describe('effectiveLayoutStore.isSlotFree', () => {
   it('returns false when the leafs event ID participates in a catalog bowtie', () => {
     bowtieCatalogStore.setCatalog(makeCatalogCard({
       producers: [makeEntry()],
-      consumers: [makeEntry({ node_id: '02.01.57.00.00.02', role: 'Consumer' })],
+      consumers: [makeEntry({ node_key: '02.01.57.00.00.02', role: 'Consumer' })],
     }));
     const leaf = makeLeaf();
     expect(effectiveLayoutStore.isSlotFree(NODE_ID, leaf)).toBe(false);
@@ -422,7 +422,7 @@ describe('effectiveLayoutStore.isSlotFree', () => {
   it('returns true when the only card referencing this event has a pending delete (Bug 3)', () => {
     bowtieCatalogStore.setCatalog(makeCatalogCard({
       producers: [makeEntry()],
-      consumers: [makeEntry({ node_id: '02.01.57.00.00.02', role: 'Consumer' })],
+      consumers: [makeEntry({ node_key: '02.01.57.00.00.02', role: 'Consumer' })],
     }));
     mockPendingDeletes.add(EVENT_HEX);
     const leaf = makeLeaf();

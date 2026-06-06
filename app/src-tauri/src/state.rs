@@ -1,28 +1,17 @@
 //! Application state management for Bowties Tauri application
 
-use lcc_rs::{LccConnection, NodeID, SNIPData, TransportHandle};
+use lcc_rs::{LccConnection, SNIPData, TransportHandle};
 use crate::commands::{ConnectionConfig};
 use crate::events::EventRouter;
 use crate::node_registry::NodeRegistry;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use tokio::sync::{RwLock, Mutex};
+use crate::node_key::NodeKey;
 
-// ── Feature 006: Bowtie catalog types ─────────────────────────────────────
-
-/// Protocol-level producer/consumer ground truth from the Identify Events exchange.
-///
-/// Returned by `query_event_roles`, keyed by raw event_id bytes.
-/// Populated by sending `IdentifyEventsAddressed` to each known node (125 ms
-/// between sends) and collecting `ProducerIdentified` / `ConsumerIdentified` replies.
-#[derive(Debug, Clone, Default)]
-pub struct NodeRoles {
-    /// Node IDs (dotted-hex) that replied ProducerIdentified for this event.
-    pub producers: HashSet<String>,
-    /// Node IDs (dotted-hex) that replied ConsumerIdentified for this event.
-    pub consumers: HashSet<String>,
-}
+// Re-export NodeRoles from bowties-core (now owns the canonical definition).
+pub use bowties_core::node_tree::NodeRoles;
 
 // ── Bowtie catalog types (defined here to avoid circular deps with commands::bowties) ──
 
@@ -38,8 +27,8 @@ pub enum BowtieState {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct EventSlotEntry {
-    /// Node identifier (dotted-hex)
-    pub node_id: String,
+    /// Node key (canonical 12-hex for live nodes, placeholder:<uuid> for placeholders)
+    pub node_key: NodeKey,
     /// Human-readable node name
     pub node_name: String,
     /// CDI element path from segment root
@@ -117,10 +106,12 @@ pub struct ActiveLayoutContext {
     pub mode: ActiveLayoutMode,
     pub captured_at: Option<String>,
     pub pending_offline_change_count: usize,
-    /// Node IDs from the captured layout (uppercase hex, no dots).
-    /// Populated when the layout is opened; used for bus-match overlap scoring.
-    #[serde(default, with = "crate::layout::serde_node_id::canonical_vec")]
-    pub layout_node_ids: Vec<NodeID>,
+    /// Node keys for every snapshot in the active layout. Real nodes use
+    /// the canonical 12-hex form (e.g. `"050201020200"`); placeholders use
+    /// `"placeholder:<uuidv4>"`. Populated when the layout is opened; used
+    /// for bus-match overlap scoring.
+    #[serde(default)]
+    pub layout_node_keys: Vec<NodeKey>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -131,12 +122,12 @@ pub struct ActiveLayoutContext {
 /// Consumed by `build_bowtie_catalog_command` when the node_registry is empty.
 #[derive(Debug, Clone, Default)]
 pub struct OfflineBowtieData {
-    /// Config values: node_id_hex → (path_key → event_id_bytes).
-    pub config_values: HashMap<String, HashMap<String, [u8; 8]>>,
-    /// Profile group roles: "node_id:path" → EventRole.
+    /// Config values: NodeKey → (path_key → event_id_bytes).
+    pub config_values: HashMap<NodeKey, HashMap<String, [u8; 8]>>,
+    /// Profile group roles: "{canonical_node_key}:{path}" → EventRole.
     pub profile_roles: HashMap<String, lcc_rs::EventRole>,
-    /// CDI XML per node_id_hex (for slot walk in catalog builder).
-    pub cdi_xml: HashMap<String, String>,
+    /// CDI XML per NodeKey (for slot walk in catalog builder).
+    pub cdi_xml: HashMap<NodeKey, String>,
 }
 
 // ── Application state ─────────────────────────────────────────────────────

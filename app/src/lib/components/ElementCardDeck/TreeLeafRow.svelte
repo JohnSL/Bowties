@@ -37,6 +37,7 @@
     resolveLeafSelectViewState,
   } from '$lib/utils/treeLeafViewState';
   import { isPlaceholderEventId } from '$lib/utils/eventIds';
+  import { isPlaceholderInput } from '$lib/utils/nodeKey';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
   import type { ConnectorConstraintState } from '$lib/utils/connectorConstraints';
   import { effectiveLayoutStore, makeValueResolver } from '$lib/layout';
@@ -107,8 +108,10 @@
   let isDirtyVisible = $derived(isDirty && !suppressTransientIndicators);
 
   /** True when an editable event ID field's effective value is a leading-zero placeholder
-   * (per LCC S-9.7.0.3 §5.2 — reserved range, never a valid routable event ID) */
+   * (per LCC S-9.7.0.3 §5.2 — reserved range, never a valid routable event ID).
+   * Suppressed for placeholder boards — their eventids are *expected* to be zeros. */
   let isEventIdPlaceholder = $derived.by(() => {
+    if (isPlaceholderNode) return false;
     if (!(nodeId.length > 0 && leaf.elementType === 'eventId')) return false;
     const vis = editKey ? configChangesStore.visibleValue(editKey) : null;
     const ev = vis ?? leaf.value;
@@ -132,7 +135,8 @@
     || isNodeOffline
     || !!leaf.readOnly
     || !!connectorConstraintState?.disabled
-    || !!connectorConstraintState?.readOnly,
+    || !!connectorConstraintState?.readOnly
+    || (isPlaceholderNode && leaf.elementType === 'eventId'),
   );
 
   /** Whether this leaf type supports inline editing */
@@ -178,7 +182,14 @@
     leaf.elementType === 'float'
   );
 
-  /** Whether this leaf is an event ID field that supports inline editing */
+  /**
+   * S8.5 / T10 — placeholder boards render the same EventId field as real
+   * boards (FR-014 revised): show the ID value and producer/consumer badge,
+   * but disabled with no add-connection control.
+   */
+  let isPlaceholderNode = $derived(isPlaceholderInput(nodeId));
+
+  /** Whether this leaf is an event ID field that supports inline rendering */
   let isEventIdEditable = $derived(
     nodeId.length > 0 &&
     leaf.elementType === 'eventId'
@@ -713,7 +724,7 @@
       </span>
     {/if}
 
-    {#if isEventIdEditable && !usedIn && !isEventIdPlaceholder}
+    {#if isEventIdEditable && !usedIn && !isEventIdPlaceholder && !isPlaceholderNode}
       <button
         class="new-connection-btn"
         onclick={handleCreateConnection}

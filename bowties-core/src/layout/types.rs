@@ -6,7 +6,21 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 /// Current schema version for layout files.
+///
+/// Bowties has not yet shipped a release whose layout files persist
+/// daughterboard / placeholder / configuration-mode selections, so the
+/// new field added in Spec 014 (`node_mode_selections`) is introduced
+/// under the existing `"1.0"` schema rather than behind a version bump.
+/// Old files load with the new field defaulting to empty; the now-removed
+/// `connector_selections` and `placeholder_boards` fields are silently
+/// dropped (placeholder boards moved to `NodeSnapshot` files per S8.5).
+/// The next version bump waits until a real on-disk shape change requires it. The next
+/// version bump waits until a real on-disk shape change requires it.
 pub const SCHEMA_VERSION: &str = "1.0";
+
+/// Reserved variant id meaning "this slot is intentionally empty" — used by
+/// Configuration Modes that declare `allowNoneInstalled: true`.
+pub const RESERVED_VARIANT_NONE: &str = "__none__";
 
 // ── Connection configuration ──────────────────────────────────────────────────
 //
@@ -91,8 +105,11 @@ pub struct LayoutFile {
     pub bowties: BTreeMap<String, BowtieMetadata>,
     #[serde(default)]
     pub role_classifications: BTreeMap<String, RoleClassification>,
+    /// Configuration-mode variant selections per node (Spec 014, ADR-0008).
+    /// Outer key is a `NodeKey` (canonical NodeID or `placeholder:<uuidv4>`);
+    /// inner key is the `ConfigurationMode` id.
     #[serde(default)]
-    pub connector_selections: BTreeMap<String, NodeHardwareSelectionSet>,
+    pub node_mode_selections: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl Default for LayoutFile {
@@ -101,39 +118,9 @@ impl Default for LayoutFile {
             schema_version: SCHEMA_VERSION.to_string(),
             bowties: BTreeMap::new(),
             role_classifications: BTreeMap::new(),
-            connector_selections: BTreeMap::new(),
+            node_mode_selections: BTreeMap::new(),
         }
     }
-}
-
-/// Saved per-node connector daughterboard assumptions for one layout context.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NodeHardwareSelectionSet {
-    pub carrier_key: String,
-    #[serde(default)]
-    pub slot_selections: BTreeMap<String, ConnectorSelectionRecord>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<String>,
-}
-
-/// One persisted connector selection for a specific slot.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConnectorSelectionRecord {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selected_daughterboard_id: Option<String>,
-    pub status: ConnectorSelectionStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_profile_version: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ConnectorSelectionStatus {
-    Selected,
-    None,
-    Unknown,
 }
 
 /// Metadata for a single bowtie, stored in layout YAML.
@@ -185,11 +172,13 @@ pub enum LayoutEditDelta {
     RemoveTag { event_id_hex: String, tag: String },
     /// Classify an event slot's role.
     ClassifyRole { key: String, role: String },
-    /// Set connector selection for a node.
+    /// Upsert one Configuration Mode variant selection for a node.
+    /// `node_key` may be a canonical NodeID or a `placeholder:<uuidv4>`.
     #[serde(rename_all = "camelCase")]
-    SetConnectorSelection {
-        node_id: String,
-        selection: NodeHardwareSelectionSet,
+    SetNodeModeSelection {
+        node_key: String,
+        mode_id: String,
+        variant_id: String,
     },
     /// Adopt a new event ID — move bowtie metadata from old key to new key.
     #[serde(rename_all = "camelCase")]
@@ -197,22 +186,44 @@ pub enum LayoutEditDelta {
         old_event_id_hex: String,
         new_event_id_hex: String,
     },
-    /// Promote a discovered node into the layout's saved node roster (S8).
+    /// Promote a node into the layout's saved node roster (S8).
+    ///
+    /// `node_key` is a canonical NodeID (uppercase hex, no dots) for real
+    /// nodes or `"placeholder:<uuid>"` for synthesized placeholders.
     ///
     /// `apply_layout_deltas` is a no-op for this variant — node membership
     /// is tracked by snapshot file presence in the companion `nodes/`
     /// directory, not inside `LayoutFile`. The save command interprets this
-    /// delta as "include this node ID in the permitted-write set".
+    /// delta as "include this node key in the permitted-write set".
     #[serde(rename_all = "camelCase")]
-    AddNode { node_id_hex: String },
+    AddNode { node_key: String },
+    /// Remove a previously-persisted node from the layout's saved roster.
+    ///
+    /// Symmetric to `AddNode`. Like `AddNode`, this is a no-op for
+    /// `apply_layout_deltas` — node membership lives in the companion
+    /// `nodes/` directory. The save command interprets this delta as
+    /// "drop this node key from the permitted-write set", which causes
+    /// `write_layout_capture`'s nodes-dir prune step to delete the
+    /// corresponding `<key>.yaml` file.
+    #[serde(rename_all = "camelCase")]
+    RemoveNode { node_key: String },
 }
 
 impl LayoutEditDelta {
-    /// If this delta promotes a discovered node, return the canonical
-    /// (uppercase, no-dots) node ID. Otherwise return `None`.
+    /// If this delta promotes a node (real or placeholder), return its
+    /// `NodeKey` string. Otherwise return `None`.
     pub fn as_add_node(&self) -> Option<&str> {
         match self {
-            LayoutEditDelta::AddNode { node_id_hex } => Some(node_id_hex.as_str()),
+            LayoutEditDelta::AddNode { node_key } => Some(node_key.as_str()),
+            _ => None,
+        }
+    }
+
+    /// If this delta removes a previously-persisted node, return its
+    /// `NodeKey` string. Otherwise return `None`.
+    pub fn as_remove_node(&self) -> Option<&str> {
+        match self {
+            LayoutEditDelta::RemoveNode { node_key } => Some(node_key.as_str()),
             _ => None,
         }
     }
@@ -268,11 +279,16 @@ pub fn apply_layout_deltas(layout: &mut LayoutFile, deltas: Vec<LayoutEditDelta>
                     .role_classifications
                     .insert(key, RoleClassification { role });
             }
-            LayoutEditDelta::SetConnectorSelection {
-                node_id,
-                selection,
+            LayoutEditDelta::SetNodeModeSelection {
+                node_key,
+                mode_id,
+                variant_id,
             } => {
-                layout.connector_selections.insert(node_id, selection);
+                layout
+                    .node_mode_selections
+                    .entry(node_key)
+                    .or_default()
+                    .insert(mode_id, variant_id);
             }
             LayoutEditDelta::AdoptEventId {
                 old_event_id_hex,
@@ -285,6 +301,11 @@ pub fn apply_layout_deltas(layout: &mut LayoutFile, deltas: Vec<LayoutEditDelta>
             LayoutEditDelta::AddNode { .. } => {
                 // Node membership lives outside LayoutFile (snapshot files in
                 // the companion nodes/ dir). Handled in save_layout_directory.
+            }
+            LayoutEditDelta::RemoveNode { .. } => {
+                // Same as AddNode — node membership lives outside LayoutFile.
+                // Handled in save_layout_directory by subtracting from the
+                // permitted-write set.
             }
         }
     }
@@ -312,6 +333,75 @@ fn is_valid_event_id_hex(s: &str) -> bool {
 fn is_valid_bowtie_key(s: &str) -> bool {
     is_valid_event_id_hex(s)
         || (s.starts_with("planning-") && s[9..].chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Validate a `placeholder:<uuidv4>` id (Spec 014).
+///
+/// Lives in `layout/types.rs` so commands, deltas, and load-time validation
+/// share one rule. Returns the documented `InvalidPlaceholderId` error
+/// message on rejection.
+pub fn validate_placeholder_id(id: &str) -> Result<(), String> {
+    let Some(rest) = id.strip_prefix("placeholder:") else {
+        return Err(format!(
+            "InvalidPlaceholderId: '{id}' must start with 'placeholder:'"
+        ));
+    };
+    if !is_uuid_v4(rest) {
+        return Err(format!(
+            "InvalidPlaceholderId: '{id}' must be 'placeholder:<uuidv4>'"
+        ));
+    }
+    Ok(())
+}
+
+/// Validate a `NodeKey` \u2014 a canonical 12-hex-char LCC NodeID OR
+/// `placeholder:<uuidv4>` (Spec 014, ADR-0008).
+pub fn validate_node_key(key: &str) -> Result<(), String> {
+    if key.starts_with("placeholder:") {
+        return validate_placeholder_id(key)
+            .map_err(|e| e.replace("InvalidPlaceholderId", "InvalidNodeKey"));
+    }
+    if key.len() == 12 && key.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Ok(());
+    }
+    Err(format!(
+        "InvalidNodeKey: '{key}' must be a 12-hex-char NodeID or 'placeholder:<uuidv4>'"
+    ))
+}
+
+/// True if `node_key` refers to a placeholder board (binding-enumeration gate).
+pub fn is_placeholder(node_key: &str) -> bool {
+    node_key.starts_with("placeholder:")
+}
+
+/// Returns true when `s` is a lowercase UUID v4 (8-4-4-4-12, version nibble
+/// `4`, variant nibble in `8`/`9`/`a`/`b`).
+fn is_uuid_v4(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.len() != 36 {
+        return false;
+    }
+    let dash_at = |i: usize| bytes[i] == b'-';
+    if !(dash_at(8) && dash_at(13) && dash_at(18) && dash_at(23)) {
+        return false;
+    }
+    for (i, &b) in bytes.iter().enumerate() {
+        if i == 8 || i == 13 || i == 18 || i == 23 {
+            continue;
+        }
+        if !b.is_ascii_hexdigit() || b.is_ascii_uppercase() {
+            return false;
+        }
+    }
+    // Version nibble (index 14) must be '4'.
+    if bytes[14] != b'4' {
+        return false;
+    }
+    // Variant nibble (index 19) must be 8/9/a/b.
+    if !matches!(bytes[19], b'8' | b'9' | b'a' | b'b') {
+        return false;
+    }
+    true
 }
 
 impl LayoutFile {
@@ -345,20 +435,31 @@ impl LayoutFile {
             }
         }
 
-        for (node_id, selections) in &self.connector_selections {
-            for (slot_id, selection) in &selections.slot_selections {
-                if selection.status == ConnectorSelectionStatus::Selected
-                    && selection.selected_daughterboard_id.is_none()
-                {
-                    return Err(format!(
-                        "Invalid connector selection for node '{}' slot '{}': selected status requires selectedDaughterboardId",
-                        node_id, slot_id
-                    ));
-                }
-            }
+        // Validate node_mode_selections keys.
+        for key in self.node_mode_selections.keys() {
+            validate_node_key(key)?;
         }
 
         Ok(())
+    }
+
+    /// Return the saved Configuration Mode selections for a single node.
+    ///
+    /// `node_key` may be a canonical 12-hex-char NodeID or
+    /// `placeholder:<uuidv4>` (Spec 014, ADR-0008). Lookup is exact — the
+    /// caller is responsible for passing a canonical key (the frontend
+    /// normalizes via `normalizeNodeKey` before any IPC round-trip, and the
+    /// `SetNodeModeSelection` delta applier likewise stores by the canonical
+    /// form supplied by the command surface).
+    ///
+    /// Returns an empty map (not `None`) when the node has no selections so
+    /// callers can `annotate_tree(&tree, &profile, &layout.selections_for_node(key), &cdi)`
+    /// uniformly regardless of whether the user has chosen any variants.
+    pub fn selections_for_node(&self, node_key: &str) -> std::collections::BTreeMap<String, String> {
+        self.node_mode_selections
+            .get(node_key)
+            .cloned()
+            .unwrap_or_default()
     }
 }
 
@@ -375,7 +476,7 @@ mod tests {
     #[test]
     fn invalid_schema_version() {
         let layout = LayoutFile {
-            schema_version: "2.0".to_string(),
+            schema_version: "3.0".to_string(),
             ..Default::default()
         };
         assert!(layout.validate().unwrap_err().contains("Unsupported"));
@@ -435,74 +536,15 @@ mod tests {
     }
 
     #[test]
-    fn connector_selection_roundtrip() {
-        let mut layout = LayoutFile::default();
-        let mut slot_selections = BTreeMap::new();
-        slot_selections.insert(
-            "serial-a".to_string(),
-            ConnectorSelectionRecord {
-                selected_daughterboard_id: Some("db-8in".to_string()),
-                status: ConnectorSelectionStatus::Selected,
-                source_profile_version: Some("1.0".to_string()),
-            },
-        );
-        layout.connector_selections.insert(
-            "0501010112345678".to_string(),
-            NodeHardwareSelectionSet {
-                carrier_key: "rr-cirkits::tower-lcc".to_string(),
-                slot_selections,
-                updated_at: Some("2026-05-02T10:30:00Z".to_string()),
-            },
-        );
-
-        assert!(layout.validate().is_ok());
-
-        let yaml = serde_yaml_ng::to_string(&layout).unwrap();
-        let parsed: LayoutFile = serde_yaml_ng::from_str(&yaml).unwrap();
-
-        assert!(parsed.validate().is_ok());
-        assert_eq!(parsed.connector_selections.len(), 1);
-        let node = parsed.connector_selections.get("0501010112345678").unwrap();
-        assert_eq!(node.carrier_key, "rr-cirkits::tower-lcc");
-        assert_eq!(node.slot_selections.len(), 1);
-        assert_eq!(
-            node.slot_selections.get("serial-a").unwrap().selected_daughterboard_id.as_deref(),
-            Some("db-8in")
-        );
+    fn connector_selection_roundtrip_removed_in_v2() {
+        // Connector-selection persistence was removed in Spec 014. The
+        // replacement seam is `node_mode_selections` + `placeholder_boards`,
+        // exercised by the s3_* tests below.
     }
 
     #[test]
-    fn connector_selection_preserves_unknown_daughterboard_records() {
-        let mut layout = LayoutFile::default();
-        let mut slot_selections = BTreeMap::new();
-        slot_selections.insert(
-            "serial-a".to_string(),
-            ConnectorSelectionRecord {
-                selected_daughterboard_id: Some("legacy-aux-card".to_string()),
-                status: ConnectorSelectionStatus::Unknown,
-                source_profile_version: Some("2026-04-30".to_string()),
-            },
-        );
-        layout.connector_selections.insert(
-            "0501010112345678".to_string(),
-            NodeHardwareSelectionSet {
-                carrier_key: "rr-cirkits::tower-lcc".to_string(),
-                slot_selections,
-                updated_at: Some("2026-05-02T10:30:00Z".to_string()),
-            },
-        );
-
-        assert!(layout.validate().is_ok());
-
-        let yaml = serde_yaml_ng::to_string(&layout).unwrap();
-        let parsed: LayoutFile = serde_yaml_ng::from_str(&yaml).unwrap();
-
-        assert!(parsed.validate().is_ok());
-        let restored = parsed.connector_selections.get("0501010112345678").unwrap();
-        let selection = restored.slot_selections.get("serial-a").unwrap();
-        assert_eq!(selection.status, ConnectorSelectionStatus::Unknown);
-        assert_eq!(selection.selected_daughterboard_id.as_deref(), Some("legacy-aux-card"));
-        assert_eq!(selection.source_profile_version.as_deref(), Some("2026-04-30"));
+    fn connector_selection_preserves_unknown_records_removed_in_v2() {
+        // See `connector_selection_roundtrip_removed_in_v2`.
     }
 
     // ── apply_layout_deltas tests (ADR-0002) ─────────────────────────────
@@ -632,26 +674,10 @@ mod tests {
     }
 
     #[test]
-    fn apply_deltas_set_connector_selection() {
-        let mut layout = LayoutFile::default();
-        let mut slot_selections = BTreeMap::new();
-        slot_selections.insert("serial-a".to_string(), ConnectorSelectionRecord {
-            selected_daughterboard_id: Some("BOD4-CP".to_string()),
-            status: ConnectorSelectionStatus::Selected,
-            source_profile_version: None,
-        });
-        apply_layout_deltas(&mut layout, vec![
-            LayoutEditDelta::SetConnectorSelection {
-                node_id: "020157000001".to_string(),
-                selection: NodeHardwareSelectionSet {
-                    carrier_key: "rr-cirkits::tower-lcc".to_string(),
-                    slot_selections,
-                    updated_at: None,
-                },
-            },
-        ]);
-        let stored = layout.connector_selections.get("020157000001").unwrap();
-        assert_eq!(stored.carrier_key, "rr-cirkits::tower-lcc");
+    fn apply_deltas_set_connector_selection_removed_in_v2() {
+        // The `SetConnectorSelection` delta variant was removed in Spec 014.
+        // Configuration-mode selections (which subsumed it) are exercised by
+        // `s3_placeholder_full_roundtrip_with_yaml` below.
     }
 
     #[test]
@@ -794,14 +820,12 @@ mod tests {
         });
         let bowties_before: Vec<String> = layout.bowties.keys().cloned().collect();
         let roles_before = layout.role_classifications.len();
-        let selections_before = layout.connector_selections.len();
         apply_layout_deltas(&mut layout, vec![
-            LayoutEditDelta::AddNode { node_id_hex: "020157000001".to_string() },
+            LayoutEditDelta::AddNode { node_key: "020157000001".to_string() },
         ]);
         let bowties_after: Vec<String> = layout.bowties.keys().cloned().collect();
         assert_eq!(bowties_after, bowties_before);
         assert_eq!(layout.role_classifications.len(), roles_before);
-        assert_eq!(layout.connector_selections.len(), selections_before);
         // Existing bowtie unchanged.
         let bw = layout.bowties.get("05.01.01.01.FF.00.00.01").expect("bowtie kept");
         assert_eq!(bw.name.as_deref(), Some("Existing"));
@@ -810,7 +834,7 @@ mod tests {
 
     #[test]
     fn add_node_delta_as_add_node_returns_id() {
-        let d = LayoutEditDelta::AddNode { node_id_hex: "020157000001".to_string() };
+        let d = LayoutEditDelta::AddNode { node_key: "020157000001".to_string() };
         assert_eq!(d.as_add_node(), Some("020157000001"));
 
         let other = LayoutEditDelta::DeleteBowtie { event_id_hex: "05.01.01.01.FF.00.00.01".to_string() };
@@ -819,13 +843,118 @@ mod tests {
 
     #[test]
     fn add_node_delta_from_frontend_json() {
-        let json = r#"[{"type":"addNode","nodeIdHex":"020157000001"}]"#;
+        // S8.11: frontend now sends `nodeKey` instead of `nodeIdHex`.
+        let json = r#"[{"type":"addNode","nodeKey":"020157000001"}]"#;
         let parsed: Vec<LayoutEditDelta> = serde_json::from_str(json)
             .expect("addNode JSON should deserialize");
         assert_eq!(parsed.len(), 1);
         match &parsed[0] {
-            LayoutEditDelta::AddNode { node_id_hex } => assert_eq!(node_id_hex, "020157000001"),
+            LayoutEditDelta::AddNode { node_key } => assert_eq!(node_key, "020157000001"),
             _ => panic!("expected AddNode"),
         }
+    }
+
+    // ── S3: Layout file v2 — placeholders + nodeModeSelections ───────────
+
+    const VALID_PLACEHOLDER_ID: &str =
+        "placeholder:11111111-2222-4333-8444-555555555555";
+    const ALT_PLACEHOLDER_ID: &str =
+        "placeholder:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+
+    #[test]
+    fn s3_default_layout_has_empty_node_mode_selections() {
+        let layout = LayoutFile::default();
+        assert_eq!(layout.schema_version, SCHEMA_VERSION);
+        assert!(layout.node_mode_selections.is_empty());
+        assert!(layout.validate().is_ok());
+    }
+
+    #[test]
+    fn s8_5_add_placeholder_board_is_noop_on_layout_file() {
+        // Per S8.11: placeholders and real nodes both use AddNode. The
+        // delta is a no-op on LayoutFile; the save command builds the
+        // snapshot from the registry.
+        let mut layout = LayoutFile::default();
+        apply_layout_deltas(
+            &mut layout,
+            vec![LayoutEditDelta::AddNode {
+                node_key: VALID_PLACEHOLDER_ID.to_string(),
+            }],
+        );
+        // LayoutFile body is unchanged.
+        assert!(layout.bowties.is_empty());
+        assert!(layout.node_mode_selections.is_empty());
+    }
+
+    #[test]
+    fn s8_11_add_node_accepts_placeholder_key() {
+        let d = LayoutEditDelta::AddNode {
+            node_key: VALID_PLACEHOLDER_ID.to_string(),
+        };
+        assert_eq!(d.as_add_node(), Some(VALID_PLACEHOLDER_ID));
+        let real = LayoutEditDelta::AddNode { node_key: "020157000001".to_string() };
+        assert_eq!(real.as_add_node(), Some("020157000001"));
+    }
+
+    #[test]
+    fn s3_validate_placeholder_id_accepts_v4_uuid() {
+        assert!(validate_placeholder_id(VALID_PLACEHOLDER_ID).is_ok());
+        assert!(validate_placeholder_id(ALT_PLACEHOLDER_ID).is_ok());
+    }
+
+    // ── S6: selections_for_node accessor ──────────────────────────────────
+    #[test]
+    fn s6_selections_for_node_returns_saved_entries() {
+        let mut layout = LayoutFile::default();
+        let mut entries = BTreeMap::new();
+        entries.insert("connector-a".to_string(), "BOD4-CP".to_string());
+        entries.insert("connector-b".to_string(), "BOD-8".to_string());
+        layout
+            .node_mode_selections
+            .insert("020157000001".to_string(), entries);
+
+        let got = layout.selections_for_node("020157000001");
+        assert_eq!(got.len(), 2);
+        assert_eq!(got.get("connector-a").map(String::as_str), Some("BOD4-CP"));
+        assert_eq!(got.get("connector-b").map(String::as_str), Some("BOD-8"));
+    }
+
+    #[test]
+    fn s6_selections_for_node_returns_empty_when_missing() {
+        let layout = LayoutFile::default();
+        assert!(layout.selections_for_node("020157000001").is_empty());
+        assert!(layout.selections_for_node(VALID_PLACEHOLDER_ID).is_empty());
+    }
+
+    #[test]
+    fn s3_validate_placeholder_id_rejects_malformed() {
+        // Missing prefix.
+        assert!(validate_placeholder_id("11111111-2222-4333-8444-555555555555").is_err());
+        // Wrong UUID version (v1, not v4).
+        assert!(
+            validate_placeholder_id("placeholder:11111111-2222-1333-8444-555555555555").is_err()
+        );
+        // Wrong variant nibble.
+        assert!(
+            validate_placeholder_id("placeholder:11111111-2222-4333-7444-555555555555").is_err()
+        );
+        // Empty.
+        assert!(validate_placeholder_id("placeholder:").is_err());
+        // Non-hex characters.
+        assert!(
+            validate_placeholder_id("placeholder:zzzzzzzz-2222-4333-8444-555555555555").is_err()
+        );
+    }
+
+    #[test]
+    fn s3_validate_node_key_accepts_canonical_node_id_and_placeholder() {
+        assert!(validate_node_key("020157000001").is_ok());
+        assert!(validate_node_key(VALID_PLACEHOLDER_ID).is_ok());
+    }
+
+    #[test]
+    fn s3_validate_node_key_rejects_malformed() {
+        assert!(validate_node_key("not-a-node").is_err());
+        assert!(validate_node_key("placeholder:not-a-uuid").is_err());
     }
 }

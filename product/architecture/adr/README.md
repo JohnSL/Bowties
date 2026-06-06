@@ -43,3 +43,19 @@ If a decision is easy to reverse, skip it. If it isn't surprising, nobody will w
 - Deliberate deviations from the obvious path
 - Constraints not visible in the code
 - Rejected alternatives with non-obvious reasoning
+
+## How ADRs evolve
+
+ADRs are **append-only** and **seam-scoped**, not per-change. One ADR per durable architectural seam — a module boundary, an ownership rule, an integration pattern — and that file accrues the design rationale for that seam over time.
+
+**Extend an existing ADR** with a new dated section when a new commitment refines or builds on the same principle in the same seam. Use the heading shape `## YYYY-MM-DD extension: <short title>` and mirror the original structure (Context / Decision / Consequences) scoped to the new commitment. Original sections stay intact; keep each section to the 1–3-sentence template discipline.
+
+**Write a new ADR** only when one of these is true:
+
+1. A genuinely different seam appears that the existing ADR doesn't cover.
+2. You are reversing a prior commitment — mark the old ADR `superseded by ADR-NNNN` and explain in the new one what changed.
+3. The new decision crosses a boundary the existing ADR explicitly excluded.
+
+**Don't write an ADR** for implementation details that aren't load-bearing commitments. Use a code comment or an `aiwiki/` note instead.
+
+When an absorbed ADR is folded into another, replace its file with a one-line tombstone (`Status: folded into ADR-MMMM on YYYY-MM-DD`) rather than deleting it — the number stays reserved and existing links keep working.

@@ -36,8 +36,20 @@ export interface NodeConfigTree {
   connectorProfile?: ConnectorProfileView | null;
   /** Optional warning when connector filtering is disabled for safety. */
   connectorProfileWarning?: string | null;
+  /**
+   * Configuration-mode variants requested in the active layout that the
+   * node's structure profile does not define (Spec 014 / S6). Surface
+   * inline in the UI so a user can repair the selection.
+   */
+  unknownVariants?: UnknownVariantWarning[];
   /** Top-level segments mirroring CDI `<segment>` elements */
   segments: SegmentNode[];
+}
+
+/** One unknown-variant warning emitted during `annotate_tree`. */
+export interface UnknownVariantWarning {
+  modeId: string;
+  requestedVariantId: string;
 }
 
 /** One CDI segment — a contiguous memory space. */

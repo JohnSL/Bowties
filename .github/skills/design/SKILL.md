@@ -13,11 +13,15 @@ Use [LANGUAGE.md](../improve-codebase-architecture/LANGUAGE.md) vocabulary for a
 
 ### 1. Load context
 
+**Delegate to an `Explore` subagent** to conserve main-conversation context. The subagent should fetch all of the following and return a structured summary (affected modules, relevant ADRs, terminology notes, prior `kind/idea` issues, placement rules excerpt):
+
 1. Detect current feature from branch name or `$env:SPECIFY_FEATURE`
 2. Read `specs/<feature>/plan.md` and `specs/<feature>/spec.md`
 3. Read `product/architecture/code-placement-and-ownership.md`, `product/architecture/adr/`, `product/glossary.md`
 4. Read `aiwiki/owners.md` (module inventory, shared conventions) and `aiwiki/flows.md`
 5. Search open GitHub issues labeled `kind/idea` filtered by the feature's `area/*` labels (`gh issue list --repo JohnSL/Bowties --label kind/idea --state open`) for prior work. Also glance at any residual `specs/ideas/**` files until migration completes.
+
+Work from the subagent's summary for subsequent steps.
 
 ### 2. Identify affected modules
 
@@ -38,7 +42,21 @@ Using the methodology in [SLICING.md](SLICING.md), divide the feature into verti
 
 Scale the output to what the assessment found. See [ASSESSMENT.md](ASSESSMENT.md) scaling rules.
 
-Present findings using domain vocabulary (from `product/glossary.md`) and architecture vocabulary (from [LANGUAGE.md](../improve-codebase-architecture/LANGUAGE.md)). For each finding: what it is, why it matters, recommended action.
+Present findings as a **single chat message** with three sections. Do NOT use `vscode_askQuestions` — batch presentation enables the user to spot cross-cutting architectural smells that sequential questioning destroys.
+
+**Section 1 — Architectural shape** (for the architect / product owner):
+
+- **Before/after mermaid diagrams** showing the module-level architecture today vs. after the feature lands. Show responsibilities and data flow between modules, not code details.
+- **Pattern names** — name each architectural pattern being introduced or changed, with a one-sentence explanation of what it means in this feature's context.
+- **Module-level change table** — columns: Module | Today | After. Describe responsibility shifts, not implementation details.
+
+**Section 2 — Findings** (for principle-level review):
+
+For each finding: what principle is at stake (DRY, SOLID, YAGNI, Depth, Locality, etc.), why it matters at the architectural level, and the recommended action. Use domain vocabulary (from `product/glossary.md`) and architecture vocabulary (from [LANGUAGE.md](../improve-codebase-architecture/LANGUAGE.md)).
+
+**Section 3 — Proposed slices** (for behavioral review):
+
+A **behavior summary table** — one row per slice, columns: Slice title | User-visible change | Demoable? This gives the product manager a 30-second scan of when to pay attention. Slices where "User-visible change" is empty are flagged as `[REFACTOR]` slices.
 
 **STOP and wait for user input.** The user decides for each finding: include in slices, defer as idea, or reject.
 

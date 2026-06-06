@@ -98,7 +98,7 @@ describe('getUnreadConfigEligibleNodes', () => {
 
     const unread = getUnreadConfigEligibleNodes(
       [eligible, cdiLess, alreadyRead],
-      new Set(['02.01.57.00.00.03']),
+      new Set(['020157000003']),
     );
 
     expect(unread).toHaveLength(1);

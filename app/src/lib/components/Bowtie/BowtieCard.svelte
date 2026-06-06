@@ -244,8 +244,8 @@
           <span class="empty-column-hint">⚠ No producers</span>
         {/if}
       {:else}
-        {#each card.producers as entry (entry.node_id + entry.element_path.join('/'))}
-          {@const isNew = newEntryKeys?.has(`${entry.node_id}:${entry.element_path.join('/')}`) ?? false}
+        {#each card.producers as entry (entry.node_key + entry.element_path.join('/'))}
+          {@const isNew = newEntryKeys?.has(`${entry.node_key}:${entry.element_path.join('/')}`) ?? false}
           <div class="entry-row">
             <ElementEntry {entry} {isNew} />
             {#if onRemoveElement}
@@ -276,8 +276,8 @@
           <span class="empty-column-hint">⚠ No consumers</span>
         {/if}
       {:else}
-        {#each card.consumers as entry (entry.node_id + entry.element_path.join('/'))}
-          {@const isNew = newEntryKeys?.has(`${entry.node_id}:${entry.element_path.join('/')}`) ?? false}
+        {#each card.consumers as entry (entry.node_key + entry.element_path.join('/'))}
+          {@const isNew = newEntryKeys?.has(`${entry.node_key}:${entry.element_path.join('/')}`) ?? false}
           <div class="entry-row">
             <ElementEntry {entry} {isNew} />
             {#if onRemoveElement}
@@ -304,13 +304,13 @@
     <div class="ambiguous-section" aria-label="Unknown role entries">
       <h4 class="ambiguous-label">Unknown role — click to classify</h4>
       <div class="ambiguous-entries">
-        {#each card.ambiguous_entries as entry (entry.node_id + entry.element_path.join('/'))}
+        {#each card.ambiguous_entries as entry (entry.node_key + entry.element_path.join('/'))}
           <div class="ambiguous-entry-row">
             {#if reclassifyingEntry === entry}
               <RoleClassifyPrompt
                 elementName={entry.element_label}
                 onClassify={(role) => {
-                  onReclassifyRole?.(entry.node_id, entry.element_path, role);
+                  onReclassifyRole?.(entry.node_key, entry.element_path, role);
                   reclassifyingEntry = null;
                 }}
                 onCancel={() => { reclassifyingEntry = null; }}

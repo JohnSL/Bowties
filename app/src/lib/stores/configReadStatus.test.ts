@@ -21,9 +21,9 @@ beforeEach(() => {
 });
 
 describe('markNodeConfigRead', () => {
-  it('adds a node ID to the set', () => {
+  it('adds a node ID to the set (canonical form)', () => {
     markNodeConfigRead('01.02.03.04.05.06');
-    expect(get(configReadNodesStore).has('01.02.03.04.05.06')).toBe(true);
+    expect(get(configReadNodesStore).has('010203040506')).toBe(true);
   });
 
   it('is idempotent — marking the same node twice leaves size at 1', () => {
@@ -36,8 +36,8 @@ describe('markNodeConfigRead', () => {
     markNodeConfigRead('AA.BB.CC.DD.EE.01');
     markNodeConfigRead('AA.BB.CC.DD.EE.02');
     const store = get(configReadNodesStore);
-    expect(store.has('AA.BB.CC.DD.EE.01')).toBe(true);
-    expect(store.has('AA.BB.CC.DD.EE.02')).toBe(true);
+    expect(store.has('AABBCCDDEE01')).toBe(true);
+    expect(store.has('AABBCCDDEE02')).toBe(true);
     expect(store.size).toBe(2);
   });
 });
@@ -65,9 +65,9 @@ describe('removeNodesConfigRead', () => {
     removeNodesConfigRead(['01.02.03.04.05.01', '01.02.03.04.05.03']);
 
     const store = get(configReadNodesStore);
-    expect(store.has('01.02.03.04.05.01')).toBe(false);
-    expect(store.has('01.02.03.04.05.03')).toBe(false);
-    expect(store.has('01.02.03.04.05.02')).toBe(true);
+    expect(store.has('010203040501')).toBe(false);
+    expect(store.has('010203040503')).toBe(false);
+    expect(store.has('010203040502')).toBe(true);
     expect(store.size).toBe(1);
   });
 
@@ -80,7 +80,7 @@ describe('removeNodesConfigRead', () => {
   it('is safe when a specified ID is not in the set', () => {
     markNodeConfigRead('01.02.03.04.05.06');
     removeNodesConfigRead(['FF.FF.FF.FF.FF.FF']);
-    expect(get(configReadNodesStore).has('01.02.03.04.05.06')).toBe(true);
+    expect(get(configReadNodesStore).has('010203040506')).toBe(true);
   });
 
   it('removes all when all IDs are specified', () => {

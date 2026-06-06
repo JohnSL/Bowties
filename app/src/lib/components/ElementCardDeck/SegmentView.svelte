@@ -17,6 +17,7 @@
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { nodeInfoStore } from '$lib/stores/nodeInfo';
+  import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
   import type { SegmentNode, TreeConfigValue } from '$lib/types/nodeTree';
   import { groupReplicatedChildren } from '$lib/types/nodeTree';
   import TreeGroupAccordion from './TreeGroupAccordion.svelte';
@@ -93,7 +94,7 @@
   });
   let connectorControlsEnabled = $derived(
     selectedSegment
-      ? layoutStore.hasLayoutFile || configReadNodes.has(selectedSegment.nodeId)
+      ? layoutStore.hasLayoutFile || configReadNodes.has(toCanonicalNodeKey(selectedSegment.nodeId))
       : false,
   );
   let hasSelectedConnectorDaughterboard = $derived(
@@ -128,7 +129,7 @@
 
   let isNodeOffline = $derived(
     selectedSegment
-      ? ($nodeInfoStore.get(selectedSegment.nodeId)?.connection_status === 'NotResponding')
+      ? ($nodeInfoStore.get(toCanonicalNodeKey(selectedSegment.nodeId))?.connection_status === 'NotResponding')
       : false,
   );
 
@@ -270,6 +271,13 @@
               <p class="connector-hint">Read this node configuration online or open a layout to edit connector selections.</p>
             {:else if showConnectorSessionOnlyHint}
               <p class="connector-hint">Connector selections are session-only until you save a layout file.</p>
+            {/if}
+            {#if selectedTree?.unknownVariants && selectedTree.unknownVariants.length > 0}
+              {#each selectedTree.unknownVariants as warning (`${warning.modeId}:${warning.requestedVariantId}`)}
+                <p class="connector-hint connector-hint--warning" role="status">
+                  Unknown selection for {warning.modeId}: <code>{warning.requestedVariantId}</code>. Choose a known option to apply mode-specific behavior.
+                </p>
+              {/each}
             {/if}
           </section>
         {/if}

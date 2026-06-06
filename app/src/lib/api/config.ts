@@ -6,6 +6,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type { WriteResult, TreeConfigValue } from '$lib/types/nodeTree';
+import { toCanonicalNodeKey, type NodeKeyInput } from '$lib/utils/nodeKey';
 
 /**
  * Write raw bytes to a node's configuration memory.
@@ -20,13 +21,13 @@ import type { WriteResult, TreeConfigValue } from '$lib/types/nodeTree';
  * @returns        `WriteResult` with success/error detail and retry count.
  */
 export async function writeConfigValue(
-  nodeId: string,
+  nodeId: NodeKeyInput,
   address: number,
   space: number,
   data: number[],
 ): Promise<WriteResult> {
   return await invoke<WriteResult>('write_config_value', {
-    nodeId,
+    nodeId: toCanonicalNodeKey(nodeId),
     address,
     space,
     data,
@@ -43,8 +44,8 @@ export async function writeConfigValue(
  *
  * @param nodeId  Node ID in dotted-hex.
  */
-export async function sendUpdateComplete(nodeId: string): Promise<void> {
-  return await invoke<void>('send_update_complete', { nodeId });
+export async function sendUpdateComplete(nodeId: NodeKeyInput): Promise<void> {
+  return await invoke<void>('send_update_complete', { nodeId: toCanonicalNodeKey(nodeId) });
 }
 
 // ── Modified value commands ──────────────────────────────────────────────────
@@ -56,13 +57,13 @@ export async function sendUpdateComplete(nodeId: string): Promise<void> {
  * automatically cleared (revert). Emits `node-tree-updated`.
  */
 export async function setModifiedValue(
-  nodeId: string,
+  nodeId: NodeKeyInput,
   address: number,
   space: number,
   value: TreeConfigValue,
 ): Promise<boolean> {
   return await invoke<boolean>('set_modified_value', {
-    nodeId,
+    nodeId: toCanonicalNodeKey(nodeId),
     address,
     space,
     value,
@@ -94,8 +95,8 @@ export async function writeModifiedValues(): Promise<WriteModifiedResult> {
  * @param nodeId If provided, discard only for that node. Otherwise all nodes.
  * @returns Number of nodes affected.
  */
-export async function discardModifiedValues(nodeId?: string): Promise<number> {
-  return await invoke<number>('discard_modified_values', { nodeId: nodeId ?? null });
+export async function discardModifiedValues(nodeId?: NodeKeyInput): Promise<number> {
+  return await invoke<number>('discard_modified_values', { nodeId: nodeId == null ? null : toCanonicalNodeKey(nodeId) });
 }
 
 /**
@@ -117,11 +118,11 @@ export async function hasModifiedValues(): Promise<boolean> {
  * @param value    Integer value to write.
  */
 export async function triggerAction(
-  nodeId: string,
+  nodeId: NodeKeyInput,
   space: number,
   address: number,
   size: number,
   value: number,
 ): Promise<void> {
-  return await invoke<void>('trigger_action', { nodeId, space, address, size, value });
+  return await invoke<void>('trigger_action', { nodeId: toCanonicalNodeKey(nodeId), space, address, size, value });
 }

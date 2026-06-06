@@ -15,11 +15,12 @@
   import { toast } from '@zerodevx/svelte-toast';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
+  import { effectiveNodeStore } from '$lib/layout';
   import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
   import { configChangesStore } from '$lib/stores/configChanges.svelte';
-  import { stageDraftsForOfflineSave, discardAllConfigDrafts } from '$lib/orchestration/configDraftOrchestrator';
+  import { discardAllConfigDrafts } from '$lib/orchestration/configDraftOrchestrator';
   import { deriveSaveControlsViewState } from '$lib/components/ElementCardDeck/saveControlsPresenter';
   import { updateNodeSnipField } from '$lib/stores/nodeInfo';
   import DiscardConfirmDialog from '$lib/components/DiscardConfirmDialog.svelte';
@@ -33,17 +34,19 @@
      */
     toolbar?: boolean;
     /**
-     * Optional offline-save handler provided by the page route.
-     * Returns true when a save was performed, false when user cancelled.
+     * Save handler provided by the page route. Returns `true` when a save
+     * was performed, `false` when the user cancelled. The page owns
+     * orchestrator wiring (online vs offline path, draft staging,
+     * post-save cleanup) \u2014 this component just delegates.
      */
-    onOfflineSave?: () => Promise<boolean>;
-    onOfflineSaveAs?: () => Promise<boolean>;
+    onSave?: () => Promise<boolean>;
+    onSaveAs?: () => Promise<boolean>;
   }
 
   let {
     toolbar = false,
-    onOfflineSave = async () => false,
-    onOfflineSaveAs = async () => false,
+    onSave = async () => false,
+    onSaveAs = async () => false,
   }: Props = $props();
 
   // ── Reactive state ──────────────────────────────────────────────────────────
@@ -68,7 +71,7 @@
     revertedPersistedCount: offlineChangesStore.revertedPersistedCount,
     saveProgressState: saveProgress.state,
     treeNodeIds: [...nodeTreeStore.trees.keys()],
-    unsavedInMemoryNodeCount: layoutStore.unsavedInMemoryNodeIds.length,
+    unsavedInMemoryNodeCount: effectiveNodeStore.unsavedInMemoryNodeIds.length,
   }));
 
   // Whether the discard confirmation dialog is open.
@@ -80,79 +83,34 @@
   }
 
   // ── Save handler ────────────────────────────────────────────────────────────
+  //
+  // Thin delegate: the page route owns draft staging, orchestrator wiring,
+  // and post-save cleanup (markClean, clearMetadata, offline-changes reload,
+  // configChangesStore commit). This handler exists only to:
+  //   1. Honour the presenter's `canSave` gate (no parallel gate divergence).
+  //   2. Drive `saveProgress` so the UI reflects in-flight state.
+  //   3. Surface failures via toast.
+  // Mode-specific behaviour lives entirely in `onSave` (and the orchestrator
+  // it calls), not here.
 
   async function handleSave() {
-    if (layoutStore.isOfflineMode) {
-      const localPending = configChangesStore.draftEntries().length + offlineChangesStore.draftCount;
-      saveProgress = {
-        state: 'saving',
-        total: localPending,
-        completed: 0,
-        failed: 0,
-        currentFieldLabel: 'Offline layout changes',
-      };
+    if (!viewState.canSave) return;
 
-      try {
-        stageDraftsForOfflineSave();
-        const saved = await onOfflineSave();
-        if (saved) {
-          await offlineChangesStore.reloadFromBackend();
-          configChangesStore.clearAllDrafts();
-          bowtieMetadataStore.clearAll();
-          layoutStore.markClean();
-          saveProgress = { ...saveProgress, state: 'completed', currentFieldLabel: null, completed: localPending };
-        } else {
-          // Save was cancelled (for example, Save As dialog dismissed).
-          saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
-        }
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('[SaveControls] offline save failed:', msg);
-        toast.push(`Offline save failed: ${msg}`, {
-          classes: ['warn'],
-          duration: 7000,
-          pausable: true,
-        });
-        saveProgress = { ...saveProgress, state: 'partial-failure', currentFieldLabel: null, failed: localPending };
-      }
-
-      if (saveProgress.state === 'completed') {
-        setTimeout(() => {
-          saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
-        }, 2000);
-      }
-      return;
-    }
-
-    // ── Online (connected) path ─────────────────────────────────────────────
-    // ADR-0001: Layout MUST be saved before any bus writes.
-    // Delegate ALL save work to onOfflineSave → saveCurrentCaptureToFile →
-    // saveLayoutOrchestrated with saveWithBusWrites.  The backend's
-    // save_layout_with_bus_writes enforces: Phase 1 layout save → Phase 2
-    // bus writes → Phase 3 reconcile.  SaveControls never calls
-    // writeModifiedValues directly; the backend handles bus writes internally.
-
-    const hasNodeEdits = viewState.hasConfigEdits;
-    const hasLayoutMetadataEdits = bowtieMetadataStore.isDirty || layoutStore.isDirty;
-
-    if (!hasNodeEdits && !hasLayoutMetadataEdits) return;
-
-    const totalEdits = viewState.dirtyCount + (hasLayoutMetadataEdits ? 1 : 0);
+    const totalEdits = viewState.pendingEditCount;
     saveProgress = {
       state: 'saving',
       total: totalEdits,
       completed: 0,
       failed: 0,
-      currentFieldLabel: 'Saving…',
+      currentFieldLabel: layoutStore.isOfflineMode ? 'Offline layout changes' : 'Saving\u2026',
     };
 
     try {
-      const saved = await onOfflineSave();
+      const saved = await onSave();
       if (saved) {
-        configChangesStore.clearAllDrafts();
         saveProgress = { ...saveProgress, state: 'completed', currentFieldLabel: null, completed: totalEdits };
       } else {
-        // User cancelled save dialog — zero bytes sent to bus (ADR-0001 cancel guarantee).
+        // User cancelled (e.g. Save As dialog dismissed). ADR-0001: zero bus writes.
         saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
       }
     } catch (err: unknown) {
@@ -166,7 +124,6 @@
       saveProgress = { ...saveProgress, state: 'partial-failure', currentFieldLabel: null, failed: totalEdits };
     }
 
-    // Auto-dismiss 'completed' state after 2s
     if (saveProgress.state === 'completed') {
       setTimeout(() => {
         saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
@@ -211,13 +168,9 @@
   }
 
   export async function triggerSaveAs(): Promise<void> {
-    const saved = await onOfflineSaveAs();
-    if (saved) {
-      await offlineChangesStore.reloadFromBackend();
-      configChangesStore.clearAllDrafts();
-      bowtieMetadataStore.clearAll();
-      layoutStore.markClean();
-    }
+    // Thin delegate \u2014 the page route's `saveCurrentCaptureToFile(true)`
+    // owns all cleanup via the orchestrator's wired callbacks.
+    await onSaveAs();
   }
 </script>
 

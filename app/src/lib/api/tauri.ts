@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { toCanonicalNodeKey, type NodeKeyInput } from '$lib/utils/nodeKey';
 
 /**
  * Node ID represented as 6-byte array (serialized directly as array from Rust)
@@ -133,9 +134,14 @@ export async function probeNodes(): Promise<void> {
  * Register a newly appeared node in the backend state cache.
  * Call this when a `lcc-node-discovered` event is received so that
  * subsequent backend commands can find the node.
+ *
+ * Spec 014 Step 6d: accepts any `NodeKeyInput`; the wrapper canonicalizes
+ * to the backend wire form before sending. Live keys go out as 12-hex
+ * uppercase, placeholder keys as `placeholder:<id>` (the backend ignores
+ * placeholders here, but the type stays uniform).
  */
-export async function registerNode(nodeIdHex: string, alias: number): Promise<void> {
-  return invoke<void>('register_node', { nodeIdHex, alias });
+export async function registerNode(nodeId: NodeKeyInput, alias: number): Promise<void> {
+  return invoke<void>('register_node', { nodeIdHex: toCanonicalNodeKey(nodeId), alias });
 }
 
 /**
@@ -225,8 +231,8 @@ export type EventRole = 'Producer' | 'Consumer' | 'Ambiguous';
  * 'Ambiguous' slots appear only in `ambiguous_entries`.
  */
 export interface EventSlotEntry {
-  /** Node identifier in dotted-hex, e.g. "02.01.57.00.00.01" */
-  node_id: string;
+  /** Node key: canonical 12-hex for live nodes (e.g. "020157000001"), placeholder:<uuid> for placeholders */
+  node_key: string;
   /** Human-readable node name */
   node_name: string;
   /** CDI path from segment root to this element */

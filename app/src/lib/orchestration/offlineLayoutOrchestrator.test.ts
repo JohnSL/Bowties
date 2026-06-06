@@ -54,7 +54,6 @@ import {
   buildOfflineDiscoveryNodes,
   buildOfflineTreesFromSnapshots,
   cdiUnavailableTree,
-  clearActiveLayoutWithReset,
   openOfflineLayoutWithReplay,
   rehydrateOfflineStateFromSnapshots,
   resetFreshLiveSessionState,
@@ -167,62 +166,9 @@ describe('openOfflineLayoutWithReplay', () => {
   });
 });
 
-describe('clearActiveLayoutWithReset', () => {
-  it('closes offline layouts before resetting local state', async () => {
-    const closeLayout = vi.fn(async () => ({ closed: true }));
-    const clearRecentLayout = vi.fn(async () => {});
-    const resetLayoutState = vi.fn(async () => {});
-
-    const cleared = await clearActiveLayoutWithReset({
-      activeLayoutMode: 'offline_file',
-      closeLayout,
-      clearRecentLayout,
-      resetLayoutState,
-    });
-
-    expect(cleared).toBe(true);
-    expect(closeLayout).toHaveBeenCalledWith('discard');
-    expect(clearRecentLayout).not.toHaveBeenCalled();
-    expect(resetLayoutState).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not reset local state when the backend refuses to close an offline layout', async () => {
-    const closeLayout = vi.fn(async () => ({ closed: false, reason: 'cancelled' }));
-    const resetLayoutState = vi.fn(async () => {});
-
-    const cleared = await clearActiveLayoutWithReset({
-      activeLayoutMode: 'offline_file',
-      closeLayout,
-      clearRecentLayout: vi.fn(async () => {}),
-      resetLayoutState,
-    });
-
-    expect(cleared).toBe(false);
-    expect(resetLayoutState).not.toHaveBeenCalled();
-  });
-
-  it('warns but still resets when clearing the recent legacy layout fails', async () => {
-    const warning = vi.fn();
-    const resetLayoutState = vi.fn(async () => {});
-
-    const cleared = await clearActiveLayoutWithReset({
-      activeLayoutMode: 'legacy_file',
-      closeLayout: vi.fn(async () => ({ closed: true })),
-      clearRecentLayout: vi.fn(async () => {
-        throw new Error('disk busy');
-      }),
-      resetLayoutState,
-      onRecentLayoutClearError: warning,
-    });
-
-    expect(cleared).toBe(true);
-    expect(warning).toHaveBeenCalledTimes(1);
-    expect(resetLayoutState).toHaveBeenCalledTimes(1);
-  });
-});
-
 function makeSnapshot(overrides: Partial<OfflineNodeSnapshot> = {}): OfflineNodeSnapshot {
   return {
+    nodeKey: '050201020300',
     nodeId: '050201020300',
     capturedAt: '2026-04-25T00:00:00.000Z',
     captureStatus: 'complete',
@@ -456,5 +402,61 @@ describe('offline snapshot helpers', () => {
     expect(resetLayoutState).toHaveBeenCalledWith(false);
     expect(resetLayoutOpenPhase).toHaveBeenCalledTimes(1);
     expect(onWarning).toHaveBeenCalled();
+  });
+
+  it('S9: buildOfflineDiscoveryNodes filters out placeholder snapshots', () => {
+    const realSnap = makeSnapshot();
+    const placeholderSnap = makeSnapshot({
+      nodeKey: 'placeholder:test-uuid',
+      nodeId: undefined,
+      profileStem: 'Mustangpeak-Engineering_TurnoutBoss',
+    });
+
+    const nodes = buildOfflineDiscoveryNodes(
+      [realSnap, placeholderSnap],
+      () => [0x05, 0x02, 0x01, 0x02, 0x03, 0x00],
+    );
+
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0].snip_data.user_name).toBe('East Panel');
+  });
+
+  it('S9: buildOfflineTreesFromSnapshots skips placeholder snapshots', async () => {
+    const realSnap = makeSnapshot();
+    const placeholderSnap = makeSnapshot({
+      nodeKey: 'placeholder:test-uuid',
+      nodeId: undefined,
+      profileStem: 'Mustangpeak-Engineering_TurnoutBoss',
+    });
+
+    const buildOfflineNodeTree = vi.fn(async () => ({
+      nodeId: '05.02.01.02.03.00',
+      identity: { manufacturer: 'ACME', model: 'Node-8', hardwareVersion: null, softwareVersion: null },
+      segments: [],
+    }));
+
+    const trees = await buildOfflineTreesFromSnapshots({
+      snapshots: [realSnap, placeholderSnap],
+      buildOfflineNodeTree,
+    });
+
+    // Only the real node should produce a tree
+    expect(trees).toHaveLength(1);
+    // buildOfflineNodeTree should only be called for the real node
+    expect(buildOfflineNodeTree).toHaveBeenCalledTimes(1);
+    expect(buildOfflineNodeTree).toHaveBeenCalledWith('050201020300');
+  });
+
+  it('S9: cdiUnavailableTree handles snapshot with no nodeId', () => {
+    const placeholderSnap = makeSnapshot({
+      nodeKey: 'placeholder:test-uuid',
+      nodeId: undefined,
+    });
+
+    const tree = cdiUnavailableTree(placeholderSnap);
+
+    // Should fallback to nodeKey when nodeId is undefined
+    expect(tree.nodeId).toBe('placeholder:test-uuid');
+    expect(tree.segments[0].name).toBe('CDI Not Available');
   });
 });

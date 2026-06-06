@@ -26,6 +26,14 @@ export interface StartupApi {
 }
 
 export interface LayoutLifecycleApi {
+  /**
+   * Tear down any in-memory layout state — backend registry + frontend
+   * stores — before a new layout takes ownership of them. Pinned by
+   * `ADR-0011` (2026-05-31 extension): without this step, residual
+   * placeholders from a previously-closed layout leak into the new
+   * `save_layout_directory` call and reappear after `openLayout`.
+   */
+  closeLayout: () => Promise<void>;
   /** Persist an empty layout file at the given path (used by "New Layout"). */
   createNewLayoutCapture: () => Promise<NewLayoutResult>;
   saveLayoutDirectory: (
@@ -127,10 +135,15 @@ export interface CreateNewLayoutArgs {
  * Create a brand-new empty layout at the given path, then open it like any
  * other known layout. The flow is:
  *
- *   1. createNewLayoutCapture → empty in-memory capture state
- *   2. saveLayoutDirectory(path)  → writes the base file + companion dir
- *   3. openLayout(path)            → loads it back through the normal open path
- *   4. addKnownLayout              → registry entry
+ *   1. closeLayout                 → drop any residual prior-layout state
+ *                                    (backend node_registry + frontend
+ *                                    stores) so it cannot leak into the
+ *                                    new layout's first save (ADR-0011
+ *                                    2026-05-31 extension).
+ *   2. createNewLayoutCapture      → empty in-memory capture state
+ *   3. saveLayoutDirectory(path)   → writes the base file + companion dir
+ *   4. openLayout(path)            → loads it back through the normal open path
+ *   5. addKnownLayout              → registry entry
  */
 export async function createNewLayout(
   args: CreateNewLayoutArgs,
@@ -139,6 +152,7 @@ export async function createNewLayout(
   if (!trimmed) throw new Error('Layout name is required.');
   if (!args.path) throw new Error('Layout path is required.');
 
+  await args.lifecycle.closeLayout();
   await args.lifecycle.createNewLayoutCapture();
   await args.lifecycle.saveLayoutDirectory(args.path, true, []);
 

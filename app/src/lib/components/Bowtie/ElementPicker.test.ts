@@ -108,8 +108,8 @@ function makeTree(nodeId: string, leafName = 'Event ID'): NodeConfigTree {
   return { nodeId, identity: null, segments: [seg] };
 }
 
-const NODE_A = '05.01.01.01.00.00.00.01';
-const NODE_B = '05.01.01.01.00.00.00.02';
+const NODE_A = '0501010100000001';
+const NODE_B = '0501010100000002';
 
 beforeEach(() => {
   nodesRef.map = new Map();
