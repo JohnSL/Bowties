@@ -13,6 +13,7 @@
 
 use std::path::Path;
 
+pub mod capture;
 pub mod io;
 pub(crate) mod journal;
 pub mod known_layouts;

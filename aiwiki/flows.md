@@ -58,7 +58,7 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **Orchestrator:** `offlineLayoutOrchestrator.ts` (calls `buildBowtieCatalog` after offline hydration), `saveLayoutOrchestrator.ts` (tested save→rebuild→clean sequence)
 - **Store:** `layout.svelte.ts`, `bowtieMetadata.svelte.ts`, `layoutOpenLifecycle.ts`, `bowties.svelte.ts` (receives offline catalog via `setCatalog`), `configSidebar.ts` (reset on layout open/close)
 - **API:** `layout.ts`, `bowties.ts`
-- **Backend:** `commands/bowties.rs` (`load_layout`, `save_layout`, `build_bowtie_catalog_command` — offline fallback via `OfflineBowtieData`), `commands/layout_capture.rs` (`create_new_layout_capture`, `capture_layout_snapshot`, `build_offline_node_tree`, `close_layout`)
+- **Backend:** `commands/bowties.rs` (`load_layout`, `save_layout`, `build_bowtie_catalog_command` — offline fallback via `OfflineBowtieData`), `commands/layout_capture.rs` (`create_new_layout_capture`, `capture_layout_snapshot`, `build_offline_node_tree`, `close_layout`; snapshot tree-walking delegates to `bowties_core::layout::capture`)
 - **State:** `state.rs` (`OfflineBowtieData` — config values, profile roles, CDI XML accumulated per node during offline tree build). `node_registry.rs` (`saved_trees` — config trees built from saved snapshots during layout open; seeded into live proxies on bus rediscovery so previously-captured config is the base layer).
 - **Sidebar clearing:** `openOfflineLayoutWithReplay` resets sidebar before hydration; `resetLayoutStateForNoLayout` resets sidebar during teardown. Both use injected `resetSidebar` callback.
 - **Save invariant:** `saveCurrentCaptureToFile` must call `buildBowtieCatalog` after `saveLayoutFile` to rebuild the catalog with merged metadata (names, tags, role classifications). Without this, the stale pre-save catalog is used and bowties appear incomplete.
@@ -81,13 +81,13 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **Orchestrator:** `syncSessionOrchestrator.ts`
 - **Store:** `syncPanel.svelte.ts`
 - **API:** `sync.ts`
-- **Backend:** `commands/sync_panel.rs`
+- **Backend:** `commands/sync_panel.rs` (thin coordinator; delegates scoring to `bowties_core::sync::classifier`, CDI field resolution to `bowties_core::sync::field_meta`, change helpers to `bowties_core::sync::changes`)
 
 ## Sync Apply
 - **Orchestrator:** `syncApplyOrchestrator.ts`, `syncPanelViewOrchestrator.ts`
 - **Store:** `offlineChanges.svelte.ts`, `syncPanel.svelte.ts`
 - **API:** `sync.ts`
-- **Backend:** `commands/sync_panel.rs`
+- **Backend:** `commands/sync_panel.rs` (bus I/O and AppState coordination; value conversion via `bowties_core::sync::field_meta`)
 - **lcc-rs:** `protocol/memory_config.rs` (applies writes)
 
 ## Connector Selection

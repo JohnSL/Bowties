@@ -74,15 +74,21 @@ Each entry:
 
 ### `bowties.rs` untested core algorithm (1,962 lines, 0 tests)
 - **Area**: `app/src-tauri/src/commands/bowties.rs`
-- **Risk**: The catalog builder is the intellectual core of the app. Mixed with layout YAML commands and protocol exchange. Zero test coverage on the most complex algorithm in the backend. This module stays in src-tauri (it depends on `AppState` and emits Tauri events) and is not covered by the bowties-core extraction.
+- **Risk**: The catalog builder is the intellectual core of the app. Mixed with layout YAML commands and protocol exchange. Zero test coverage on the most complex algorithm in the backend.
 - **Evidence**: Spec 013 assessment. See deferred idea: `specs/ideas/refactors/bowties-rs-decomposition.md`.
 - **Suggested action**: Decompose into catalog builder + layout YAML commands + protocol exchange. Extract the pure catalog-building logic into `bowties-core` via trait injection. Add test coverage for the catalog builder with synthetic CDI trees.
+- **Partial resolution (Phase 2)**: The pure catalog-building algorithm (`walk_cdi_slots`, `best_slot`, `slot_for_event_id`, `build_bowtie_catalog`) was extracted to `bowties_core::bowtie::catalog` with 25+ unit tests. The command handler in `bowties.rs` remains a thin coordinator (gathers CDI/config data from AppState, calls core, emits Tauri events). The layout YAML and protocol exchange halves are still mixed into `bowties.rs`.
 
 ### Backend testability gap resolved by `bowties-core` extraction (resolved)
 - **Area**: `bowties-core/`, `app/src-tauri/src/`
 - **Risk** (resolved): All backend unit tests (~237) were blocked from running by the Tauri WebView2Loader DLL issue (`STATUS_ENTRYPOINT_NOT_FOUND` on Windows). Tests existed but had never executed, and 6 contained incorrect expectations that were never caught.
-- **Fix**: Extracted pure domain modules (`node_key`, `node_tree`, `node_proxy`, `node_registry`, `layout/*`, `profile/` types+resolver+annotation) into a `bowties-core` crate with no `tauri` dependency. The crate runs `cargo test` cleanly. ADR-0010 extended to document the decision.
-- **Outstanding**: `placeholder.rs` and `profile/loader.rs` remain in src-tauri (depend on `AppHandle`). Their pure helper functions could be trait-injected and moved in a follow-up. `commands/bowties.rs` (1,962 lines, 0 tests) is the largest untested module remaining.
+- **Fix**: Extracted pure domain modules across four phases into a `bowties-core` crate with no `tauri` dependency:
+  - Phase 1: `placeholder` factory helpers
+  - Phase 2: `bowtie/catalog` builder (25+ tests)
+  - Phase 3: `layout/capture` snapshot builder (8 tests)
+  - Phase 4: `sync/` domain logic — changes, field_meta, classifier (22 tests)
+- **Result**: bowties-core runs 310 tests via `cargo test`. ADR-0010 extended to document all four phases.
+- **Outstanding**: `placeholder.rs` and `profile/loader.rs` remain in src-tauri (depend on `AppHandle`). Their pure helper functions could be trait-injected and moved in a follow-up. `commands/bowties.rs` layout YAML + protocol exchange halves are still mixed together (partial resolution noted above).
 
 ### Saved layout config not seeded into backend proxies (resolved)
 - **Area**: `node_registry.rs`, `commands/layout_capture.rs`, `commands/cdi.rs`

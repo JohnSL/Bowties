@@ -110,3 +110,40 @@ no Tauri coupling and is the only state.rs type that domain modules reference.
 **Test fixes discovered.** Four `node_key` tests and two `node_registry` tests
 had incorrect 14-char NodeID expectations (should be 12-char). These were
 never caught because the tests had never run. Fixed as part of the extraction.
+
+## 2026-06-07 extension: Phases 3–4 extraction (snapshot builder + sync domain logic)
+
+Continued the bowties-core extraction with two more batches of pure domain
+logic, completing the four-phase plan.
+
+**Phase 3 — Snapshot builder** (`bowties_core::layout::capture`). The
+tree-walking logic that populates a `NodeSnapshot` from a config tree —
+`collect_leaf_values`, `group_key`, and the core `build_node_snapshot`
+algorithm — moved from `commands/layout_capture.rs` into a new
+`bowties-core/src/layout/capture.rs`. A `ProxySnapshotData` input struct
+decouples the builder from `NodeProxyHandle` and `AppState`. The src-tauri
+command handler became a thin adapter: `proxy_snapshot_data()` fetches from
+the proxy, delegates to the pure builder, relays log messages via `bwlog!`.
+8 unit tests cover placeholder CdiRef, complete/partial/missing captures,
+SNIP fallback, and producer-event propagation.
+
+**Phase 4 — Sync domain logic** (`bowties_core::sync`). Three submodules:
+
+- `sync/changes.rs` — `same_change_target`, `remove_changes_by_id` (5 tests).
+- `sync/field_meta.rs` — CDI field metadata resolution (`find_field_meta_in_cdi`,
+  `walk_elements_for_meta`), value conversion (`raw_bytes_to_value_string`,
+  `string_to_config_value`), synthetic leaf construction (`field_meta_to_leaf`),
+  snapshot label helpers (`find_snapshot_field_label`, `fallback_field_label`,
+  `resolve_snapshot_node_name`) (10 tests).
+- `sync/classifier.rs` — layout match scoring (`compute_layout_match`), sync
+  row classification (`classify_sync_row` returning an enum instead of inline
+  `if/else`), and IPC types (`SyncSession`, `SyncRow`, `ApplySyncResult`,
+  `ApplySyncFailure`, `LayoutMatchStatus`) (7 tests).
+
+`commands/sync_panel.rs` shrank from 1,337 to 959 lines. It now imports and
+re-exports bowties-core types, keeping only AppState coordination, bus I/O,
+and CDI path resolution (which depend on `tauri::AppHandle`).
+
+**Net result.** bowties-core grew from 287 to 310 tests (+23). The four
+extraction phases together brought the previously-untestable backend from
+0 runnable tests to 310 passing tests across domain modules.

@@ -5,8 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use tauri::{Emitter, Manager};
 
 use crate::layout::node_snapshot::{
-    capture_status_from_missing, missing_detail, CaptureStatus, CdiReference, NodeSnapshot,
-    SnapshotLeafValue, SnipSnapshot,
+    CaptureStatus, NodeSnapshot,
 };
 use crate::layout::offline_changes::OfflineChange;
 use crate::layout::types::LayoutFile;
@@ -102,204 +101,50 @@ pub struct SaveWithBusWriteResult {
 }
 
 
-fn config_value_to_string(value: &crate::node_tree::ConfigValue) -> String {
-    value.to_snapshot_string()
-}
+use bowties_core::layout::capture::ProxySnapshotData;
 
-fn collect_leaf_values(
-    nodes: &[crate::node_tree::ConfigNode],
-    hierarchy: &mut Vec<String>,
-    snapshot: &mut NodeSnapshot,
-    missing: &mut Vec<String>,
-    state: &AppState,
-    node_id: &str,
-) {
-    for node in nodes {
-        match node {
-            crate::node_tree::ConfigNode::Leaf(leaf) => {
-                let offset_key = format!("0x{:08X}", leaf.address);
-                if let Some(v) = &leaf.value {
-                    let value = config_value_to_string(v);
-                        let mut named_path = hierarchy.clone();
-                    named_path.push(leaf.name.clone());
-                    snapshot.add_config_leaf(
-                        &named_path,
-                        SnapshotLeafValue {
-                            value,
-                            space: Some(leaf.space),
-                            offset: Some(offset_key),
-                        },
-                    );
-                } else {
-                    crate::bwlog!(
-                        state,
-                        "[layout capture] missing value: node={} leaf={} hierarchy={} cdi_path={} space={} offset={} type={:?}",
-                        node_id,
-                        leaf.name,
-                        hierarchy.join(" / "),
-                        leaf.path.join("/"),
-                        leaf.space,
-                        offset_key,
-                        leaf.element_type,
-                    );
-                    missing.push(missing_detail(leaf.space, &offset_key, &leaf.path));
-                }
-            }
-            crate::node_tree::ConfigNode::Group(group) => {
-                let mut pushed = false;
-                if let Some(group_key) = group_key(group) {
-                    hierarchy.push(group_key);
-                    pushed = true;
-                }
-                collect_leaf_values(&group.children, hierarchy, snapshot, missing, state, node_id);
-                if pushed {
-                    let _ = hierarchy.pop();
-                }
-            }
+/// Fetch pre-computed data from a `NodeProxyHandle` and build the
+/// `ProxySnapshotData` struct needed by the pure bowties-core snapshot builder.
+async fn proxy_snapshot_data(
+    handle: &crate::node_proxy::NodeProxyHandle,
+) -> Result<ProxySnapshotData, String> {
+    let discovered = handle.get_snapshot().await?;
+    let tree = handle.get_config_tree().await?;
+
+    let (is_synthesized, synthesized_node_key, profile_stem) = match handle {
+        crate::node_proxy::NodeProxyHandle::Synthesized(synth) => {
+            (true, Some(synth.node_key.clone()), Some(synth.profile_stem.clone()))
         }
-    }
+        _ => (false, None, None),
+    };
+
+    Ok(ProxySnapshotData {
+        is_synthesized,
+        synthesized_node_key,
+        profile_stem,
+        node_id: if is_synthesized { None } else { Some(discovered.node_id) },
+        snip_data: discovered.snip_data,
+        cdi_xml_len: discovered.cdi.as_ref().map(|c| c.xml_content.len()),
+        pip_status: discovered.pip_status,
+        pip_cdi_flag: discovered.pip_flags.as_ref().is_some_and(|f| f.cdi),
+        config_tree: tree,
+    })
 }
 
-fn group_key(group: &crate::node_tree::GroupNode) -> Option<String> {
-    // Replication wrapper groups (instance=0) are structural only.
-    if group.instance == 0 && group.replication_count > 1 {
-        return None;
-    }
-
-    if group.replication_count > 1 && group.instance > 0 {
-        return Some(format!("{}({})", group.name, group.instance - 1));
-    }
-
-    Some(group.name.clone())
-}
-
+/// Thin wrapper: fetch proxy data, call bowties-core snapshot builder,
+/// relay log messages via `bwlog!`.
 async fn build_node_snapshot(
     handle: &crate::node_proxy::NodeProxyHandle,
     captured_at: &str,
     producer_events: Vec<String>,
     state: &AppState,
 ) -> Result<NodeSnapshot, String> {
-    let snapshot = handle.get_snapshot().await?;
-    let tree = handle.get_config_tree().await?;
-
-    let cdi_fingerprint = if let Some(cdi) = &snapshot.cdi {
-        format!("len:{}", cdi.xml_content.len())
-    } else if snapshot.pip_status == lcc_rs::PIPStatus::Complete
-        && snapshot.pip_flags.as_ref().is_some_and(|f| !f.cdi)
-    {
-        "not_supported".to_string()
-    } else {
-        "missing".to_string()
-    };
-
-    let version = snapshot
-        .snip_data
-        .as_ref()
-        .map(|s| s.software_version.clone())
-        .unwrap_or_else(|| "unknown".to_string());
-
-    let snip = if let Some(snip) = snapshot.snip_data {
-        SnipSnapshot {
-            user_name: snip.user_name,
-            user_description: snip.user_description,
-            manufacturer_name: snip.manufacturer,
-            model_name: snip.model,
-        }
-    } else {
-        SnipSnapshot::default()
-    };
-
-    // S9: Synthesized placeholders use CdiReference::from_profile_stem so
-    // the save flow resolves CDI from bundled profiles, not cdi_cache.
-    // They also carry node_id: None and profile_stem: Some(...).
-    let (cdi_ref, node_key, node_id, profile_stem) =
-        if let crate::node_proxy::NodeProxyHandle::Synthesized(synth) = handle {
-            (
-                CdiReference::from_profile_stem(&synth.profile_stem),
-                synth.node_key.clone(),
-                None,
-                Some(synth.profile_stem.clone()),
-            )
-        } else {
-            // S8.6: single mint formula via `CdiReference::from_snip`. For nodes
-            // without SNIP we keep the historical `"unknown_node_type"` cache_key
-            // so existing on-disk cache files keep resolving.
-            let cdi_ref = if snip.manufacturer_name.is_empty() && snip.model_name.is_empty() {
-                CdiReference {
-                    cache_key: "unknown_node_type".to_string(),
-                    version,
-                    fingerprint: cdi_fingerprint,
-                }
-            } else {
-                CdiReference::from_snip(&snip, version, cdi_fingerprint)
-            };
-            (
-                cdi_ref,
-                snapshot.node_id.to_canonical(),
-                Some(snapshot.node_id),
-                None,
-            )
-        };
-
-    let mut snapshot = NodeSnapshot {
-        node_key,
-        node_id,
-        profile_stem,
-        lifecycle: crate::layout::node_snapshot::NodeSnapshotLifecycle::Persisted,
-        captured_at: captured_at.to_string(),
-        capture_status: CaptureStatus::Complete,
-        missing: Vec::new(),
-        snip,
-        cdi_ref,
-        config: BTreeMap::new(),
-        producer_identified_events: producer_events,
-    };
-
-    let tree_segment_count = tree.as_ref().map(|t| t.segments.len()).unwrap_or(0);
-    crate::bwlog!(
-        state,
-        "[layout capture] snapshot start: node={} manufacturer={} model={} tree_available={} segments={}",
-        snapshot.node_key,
-        snapshot.snip.manufacturer_name,
-        snapshot.snip.model_name,
-        tree.is_some(),
-        tree_segment_count,
-    );
-    let node_id_for_logs = snapshot.node_key.clone();
-
-    let mut missing = Vec::new();
-    if let Some(tree) = tree {
-        for segment in &tree.segments {
-            let mut hierarchy = vec![segment.name.clone()];
-            collect_leaf_values(
-                &segment.children,
-                &mut hierarchy,
-                &mut snapshot,
-                &mut missing,
-                state,
-                &node_id_for_logs,
-            );
-        }
-    } else {
-        crate::bwlog!(
-            state,
-            "[layout capture] missing configuration tree: node={} manufacturer={} model={}",
-            snapshot.node_key,
-            snapshot.snip.manufacturer_name,
-            snapshot.snip.model_name,
-        );
-        missing.push("configuration tree not available".to_string());
+    let data = proxy_snapshot_data(handle).await?;
+    let (snapshot, log_messages) =
+        bowties_core::layout::capture::build_node_snapshot(&data, captured_at, producer_events)?;
+    for msg in &log_messages {
+        crate::bwlog!(state, "{}", msg);
     }
-
-    snapshot.missing = missing;
-    snapshot.capture_status = capture_status_from_missing(&snapshot.missing);
-    crate::bwlog!(
-        state,
-        "[layout capture] snapshot complete: node={} status={:?} missing_count={}",
-        snapshot.node_key,
-        snapshot.capture_status,
-        snapshot.missing.len(),
-    );
     Ok(snapshot)
 }
 

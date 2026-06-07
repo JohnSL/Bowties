@@ -1,76 +1,33 @@
 //! Offline sync panel commands.
 //!
 //! Implements layout-match scoring, sync session building, and selective apply.
+//! Pure domain logic (scoring, classification, CDI field resolution, change helpers)
+//! lives in `bowties_core::sync`. This module owns only the Tauri command wrappers
+//! and AppState coordination.
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use tauri::Manager;
 use crate::layout::offline_changes::{OfflineChange, OfflineChangeKind, OfflineChangeStatus};
-use crate::node_tree::{ConfigValue, LeafNode, LeafType};
 use crate::state::{AppState, ActiveLayoutMode, SyncMode};
 
-fn same_change_target(a: &OfflineChange, b: &OfflineChange) -> bool {
-    a.kind == b.kind
-        && a.node_key == b.node_key
-        && a.space == b.space
-        && a.offset == b.offset
-        && a.baseline_value == b.baseline_value
-}
+use bowties_core::sync::changes::{same_change_target, remove_changes_by_id};
+use bowties_core::sync::field_meta::{
+    find_field_meta_in_cdi, find_snapshot_field_label, fallback_field_label,
+    field_meta_to_leaf, parse_offset, raw_bytes_to_value_string, resolve_snapshot_node_name,
+    string_to_config_value,
+};
+use bowties_core::sync::classifier::{
+    self, compute_layout_match, classify_sync_row, SyncClassification,
+};
 
-fn remove_changes_by_id(
-    cache: &mut Vec<OfflineChange>,
-    cleared_ids: &std::collections::HashSet<String>,
-) -> usize {
-    let initial_len = cache.len();
-    cache.retain(|change| !cleared_ids.contains(&change.change_id));
-    initial_len.saturating_sub(cache.len())
-}
+// Re-export types used in IPC contracts from bowties-core.
+pub use bowties_core::sync::classifier::{
+    LayoutMatchStatus, SyncRow, SyncSession,
+    ApplySyncFailure, ApplySyncResult,
+};
 
-/// Parse a hex offset string like "0x00000120" into a u32 address.
-fn parse_offset(offset: &str) -> Option<u32> {
-    let trimmed = offset.strip_prefix("0x").or_else(|| offset.strip_prefix("0X")).unwrap_or(offset);
-    u32::from_str_radix(trimmed, 16).ok()
-}
-
-/// Parse a string value back into a `ConfigValue` using the leaf's type/size metadata.
-fn string_to_config_value(s: &str, leaf: &LeafNode) -> Option<ConfigValue> {
-    use crate::node_tree::LeafType;
-    match leaf.element_type {
-        LeafType::Int => {
-            let v: i64 = s.parse().ok()?;
-            Some(ConfigValue::Int { value: v })
-        }
-        LeafType::String => Some(ConfigValue::String { value: s.to_string() }),
-        LeafType::Float => {
-            let v: f64 = s.parse().ok()?;
-            Some(ConfigValue::Float { value: v })
-        }
-        LeafType::EventId => {
-            // Parse dotted-hex format: "01.02.03.04.05.06.07.08"
-            let parts: Vec<&str> = s.split('.').collect();
-            if parts.len() != 8 {
-                return None;
-            }
-            let mut bytes = [0u8; 8];
-            for (i, part) in parts.iter().enumerate() {
-                bytes[i] = u8::from_str_radix(part, 16).ok()?;
-            }
-            let hex = s.to_string();
-            Some(ConfigValue::EventId { bytes, hex })
-        }
-        _ => None,
-    }
-}
-
-// ── CDI-based field metadata for targeted reads ─────────────────────────────
-
-/// Metadata for a single CDI leaf element, resolved by walking the CDI tree.
-#[derive(Debug, Clone)]
-struct FieldMeta {
-    leaf_type: LeafType,
-    size: u32,
-    field_label: String,
-}
+// ── CDI / layout resolution (Tauri-dependent, stays here) ───────────────────
 
 #[derive(Debug, Clone)]
 struct LayoutNodeResources {
@@ -105,10 +62,6 @@ fn resolve_layout_cdi_from_snapshot(
         .map_err(|e| format!("Cannot parse CDI for {}: {}", snapshot.node_key, e))
 }
 
-/// Resolve CDI XML for a node from the layout companion directory.
-///
-/// Loads the node snapshot YAML to get the CDI reference, then reads the
-/// cached CDI file.  Returns the parsed CDI or an error.
 fn resolve_layout_cdi(
     canonical_node_id: &str,
     root_path: &str,
@@ -128,305 +81,27 @@ fn load_layout_node_resources(
     Ok(LayoutNodeResources { snapshot, cdi })
 }
 
-fn resolve_snapshot_node_name(
-    snapshot: &crate::layout::node_snapshot::NodeSnapshot,
-    node_key: &str,
-) -> String {
-    let user_name = snapshot.snip.user_name.trim();
-    if user_name.is_empty() {
-        node_key.to_string()
-    } else {
-        user_name.to_string()
-    }
-}
-
-fn find_snapshot_field_label(
-    snapshot: &crate::layout::node_snapshot::NodeSnapshot,
-    space: u8,
-    offset: &str,
-) -> Option<String> {
-    snapshot
-        .flattened_config_entries()
-        .into_iter()
-        .find(|entry| {
-            entry.leaf.space == Some(space)
-                && entry
-                    .leaf
-                    .offset
-                    .as_deref()
-                    .is_some_and(|leaf_offset| leaf_offset.eq_ignore_ascii_case(offset))
-        })
-        .map(|entry| entry.path.join("."))
-}
-
-fn fallback_field_label(space: Option<u8>, offset: Option<&str>) -> Option<String> {
-    match (space, offset) {
-        (Some(space), Some(offset)) => Some(format!("Space {} @ {}", space, offset)),
-        _ => None,
-    }
-}
-
-fn build_sync_row(
+/// Build a `SyncRow` from an `OfflineChange` using the bowties-core builder.
+fn sync_row_from_change(
     change: &OfflineChange,
     node_name: Option<String>,
     field_label: Option<String>,
     bus_value: Option<String>,
     error: Option<String>,
 ) -> SyncRow {
-    SyncRow {
-        change_id: change.change_id.clone(),
-        node_id: change.node_key.clone(),
+    classifier::build_sync_row(
+        &change.change_id,
+        change.node_key.as_deref(),
         node_name,
         field_label,
-        baseline_value: change.baseline_value.clone(),
-        planned_value: change.planned_value.clone(),
+        &change.baseline_value,
+        &change.planned_value,
         bus_value,
-        resolution: "unresolved".to_string(),
         error,
-    }
+    )
 }
 
-fn join_label_path(path: &[String], leaf_name: String) -> String {
-    let mut parts = path.to_vec();
-    parts.push(leaf_name);
-    parts.join(".")
-}
 
-fn group_label(group: &lcc_rs::cdi::Group, index: usize, instance: Option<u32>) -> String {
-    let base = group
-        .name
-        .clone()
-        .unwrap_or_else(|| format!("Group {}", index));
-    match instance {
-        Some(instance) => format!("{}({})", base, instance),
-        None => base,
-    }
-}
-
-fn int_label(element: &lcc_rs::cdi::IntElement, index: usize) -> String {
-    element.name.clone().unwrap_or_else(|| format!("Int {}", index))
-}
-
-fn string_label(element: &lcc_rs::cdi::StringElement, index: usize) -> String {
-    element
-        .name
-        .clone()
-        .unwrap_or_else(|| format!("String {}", index))
-}
-
-fn event_id_label(element: &lcc_rs::cdi::EventIdElement, index: usize) -> String {
-    element
-        .name
-        .clone()
-        .unwrap_or_else(|| format!("EventId {}", index))
-}
-
-fn float_label(element: &lcc_rs::cdi::FloatElement, index: usize) -> String {
-    element
-        .name
-        .clone()
-        .unwrap_or_else(|| format!("Float {}", index))
-}
-
-/// Walk parsed CDI elements recursively to find a leaf at the given absolute
-/// address within the given space.  Returns the leaf's type and size.
-fn find_field_meta_in_cdi(cdi: &lcc_rs::cdi::Cdi, space: u8, address: u32) -> Option<FieldMeta> {
-    for segment in &cdi.segments {
-        if segment.space != space {
-            continue;
-        }
-        let mut path = vec![
-            segment
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("Space {}", segment.space)),
-        ];
-        if let Some(meta) = walk_elements_for_meta(
-            &segment.elements,
-            segment.origin as i32,
-            0,
-            address,
-            &mut path,
-        ) {
-            return Some(meta);
-        }
-    }
-    None
-}
-
-/// Recursively walk CDI elements using cursor-based addressing to locate a
-/// leaf at `target_address` in `target_space`.
-fn walk_elements_for_meta(
-    elements: &[lcc_rs::cdi::DataElement],
-    segment_origin: i32,
-    base_offset: i32,
-    target_address: u32,
-    path: &mut Vec<String>,
-) -> Option<FieldMeta> {
-    use lcc_rs::cdi::DataElement;
-
-    let mut cursor: i32 = 0;
-
-    for (index, element) in elements.iter().enumerate() {
-        match element {
-            DataElement::Group(g) => {
-                cursor += g.offset;
-                let group_start = base_offset + cursor;
-                let stride = g.calculate_size();
-                let effective_replication = if stride == 0 && g.replication > 1 { 1u32 } else { g.replication };
-
-                for instance in 0..effective_replication {
-                    let instance_base = group_start + instance as i32 * stride;
-                    path.push(group_label(g, index, if effective_replication > 1 { Some(instance) } else { None }));
-                    if let Some(meta) = walk_elements_for_meta(
-                        &g.elements,
-                        segment_origin,
-                        instance_base,
-                        target_address,
-                        path,
-                    ) {
-                        return Some(meta);
-                    }
-                    let _ = path.pop();
-                }
-                cursor += effective_replication as i32 * stride;
-            }
-            DataElement::Int(e) => {
-                cursor += e.offset;
-                let abs = (segment_origin + base_offset + cursor) as u32;
-                if abs == target_address {
-                    return Some(FieldMeta {
-                        leaf_type: LeafType::Int,
-                        size: e.size as u32,
-                        field_label: join_label_path(path, int_label(e, index)),
-                    });
-                }
-                cursor += e.size as i32;
-            }
-            DataElement::String(e) => {
-                cursor += e.offset;
-                let abs = (segment_origin + base_offset + cursor) as u32;
-                if abs == target_address {
-                    return Some(FieldMeta {
-                        leaf_type: LeafType::String,
-                        size: e.size as u32,
-                        field_label: join_label_path(path, string_label(e, index)),
-                    });
-                }
-                cursor += e.size as i32;
-            }
-            DataElement::EventId(e) => {
-                cursor += e.offset;
-                let abs = (segment_origin + base_offset + cursor) as u32;
-                if abs == target_address {
-                    return Some(FieldMeta {
-                        leaf_type: LeafType::EventId,
-                        size: 8,
-                        field_label: join_label_path(path, event_id_label(e, index)),
-                    });
-                }
-                cursor += 8;
-            }
-            DataElement::Float(e) => {
-                cursor += e.offset;
-                let abs = (segment_origin + base_offset + cursor) as u32;
-                if abs == target_address {
-                    return Some(FieldMeta {
-                        leaf_type: LeafType::Float,
-                        size: e.size as u32,
-                        field_label: join_label_path(path, float_label(e, index)),
-                    });
-                }
-                cursor += e.size as i32;
-            }
-            DataElement::Action(e) => { cursor += e.offset + 1; }
-            DataElement::Blob(e) => { cursor += e.offset + e.size as i32; }
-        }
-    }
-    None
-}
-
-/// Parse raw bytes from a memory read into a string value matching the format
-/// used by `config_value_to_string`.
-fn raw_bytes_to_value_string(meta: &FieldMeta, raw: &[u8]) -> Option<String> {
-    use crate::node_tree::LeafType as LT;
-    match meta.leaf_type {
-        LT::Int => {
-            let val = match meta.size {
-                1 => raw.first().map(|&b| b as i64),
-                2 if raw.len() >= 2 => Some(i16::from_be_bytes([raw[0], raw[1]]) as i64),
-                4 if raw.len() >= 4 => Some(i32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]) as i64),
-                8 if raw.len() >= 8 => Some(i64::from_be_bytes([
-                    raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
-                ])),
-                _ => None,
-            };
-            val.map(|v| v.to_string())
-        }
-        LT::String => {
-            let s: String = raw
-                .iter()
-                .take(meta.size as usize)
-                .take_while(|&&b| b != 0)
-                .filter(|&&b| b != 0xFF)
-                .map(|&b| b as char)
-                .collect();
-            Some(s)
-        }
-        LT::EventId => {
-            if raw.len() >= 8 {
-                let hex = raw[..8]
-                    .iter()
-                    .map(|b| format!("{:02X}", b))
-                    .collect::<Vec<_>>()
-                    .join(".");
-                Some(hex)
-            } else {
-                None
-            }
-        }
-        LT::Float => {
-            if meta.size == 4 && raw.len() >= 4 {
-                let val = f32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]);
-                Some((val as f64).to_string())
-            } else if meta.size == 8 && raw.len() >= 8 {
-                let val = f64::from_be_bytes([
-                    raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
-                ]);
-                Some(val.to_string())
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
-}
-
-/// Build a synthetic `LeafNode` from CDI field metadata, used by
-/// `string_to_config_value` and `serialize_config_value` in `apply_sync_changes`.
-fn field_meta_to_leaf(meta: &FieldMeta, space: u8, address: u32) -> LeafNode {
-    LeafNode {
-        name: String::new(),
-        description: None,
-        element_type: meta.leaf_type,
-        address,
-        size: meta.size,
-        space,
-        path: Vec::new(),
-        value: None,
-        event_role: None,
-        constraints: None,
-        button_text: None,
-        dialog_text: None,
-        action_value: 0,
-        hint_slider: None,
-        hint_radio: false,
-        modified_value: None,
-        write_state: None,
-        write_error: None,
-        read_only: false,
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -454,59 +129,7 @@ pub struct OfflineChangeRow {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LayoutMatchThresholds {
-    pub likely_same_min: u8,
-    pub uncertain_min: u8,
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LayoutMatchStatus {
-    pub overlap_percent: f64,
-    pub classification: String,
-    pub expected_thresholds: LayoutMatchThresholds,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncRow {
-    pub change_id: String,
-    pub node_id: Option<String>,
-    pub node_name: Option<String>,
-    pub field_label: Option<String>,
-    pub baseline_value: String,
-    pub planned_value: String,
-    pub bus_value: Option<String>,
-    pub resolution: String,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncSession {
-    pub conflict_rows: Vec<SyncRow>,
-    pub clean_rows: Vec<SyncRow>,
-    pub already_applied_count: usize,
-    pub node_missing_rows: Vec<SyncRow>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ApplySyncFailure {
-    pub change_id: String,
-    pub reason: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ApplySyncResult {
-    pub applied: Vec<String>,
-    pub skipped: Vec<String>,
-    pub failed: Vec<ApplySyncFailure>,
-    pub read_only_cleared: Vec<String>,
-}
 
 #[tauri::command]
 pub async fn set_offline_change(
@@ -709,41 +332,12 @@ pub async fn compute_layout_match_status(
         .map(|nk| nk.to_string())
         .collect();
 
-    if layout_ids.is_empty() {
-        return Ok(LayoutMatchStatus {
-            overlap_percent: 0.0,
-            classification: "likely_different".to_string(),
-            expected_thresholds: LayoutMatchThresholds {
-                likely_same_min: 80,
-                uncertain_min: 40,
-            },
-        });
-    }
-
     let discovered_ids: std::collections::HashSet<String> = discovered_node_ids
         .iter()
         .map(|id| id.replace('.', "").to_uppercase())
         .collect();
 
-    let matched = layout_ids.intersection(&discovered_ids).count();
-    let overlap_percent = (matched as f64 / layout_ids.len() as f64) * 100.0;
-
-    let classification = if overlap_percent >= 80.0 {
-        "likely_same"
-    } else if overlap_percent >= 40.0 {
-        "uncertain"
-    } else {
-        "likely_different"
-    };
-
-    Ok(LayoutMatchStatus {
-        overlap_percent,
-        classification: classification.to_string(),
-        expected_thresholds: LayoutMatchThresholds {
-            likely_same_min: 80,
-            uncertain_min: 40,
-        },
-    })
+    Ok(compute_layout_match(&layout_ids, &discovered_ids))
 }
 
 #[tauri::command]
@@ -786,14 +380,14 @@ pub async fn build_sync_session(
         // Only config changes go through bus comparison; bowtie metadata
         // changes are always clean (they don't live on the bus).
         if change.kind != OfflineChangeKind::Config {
-            clean_rows.push(build_sync_row(change, None, None, None, None));
+            clean_rows.push(sync_row_from_change(change, None, None, None, None));
             continue;
         }
 
         let parsed_node_key = match &change.node_key {
             Some(key) => key.clone(),
             None => {
-                node_missing_rows.push(build_sync_row(
+                node_missing_rows.push(sync_row_from_change(
                     change,
                     None,
                     fallback_field_label(change.space, change.offset.as_deref()),
@@ -836,12 +430,12 @@ pub async fn build_sync_session(
             Some(nk) => match state.node_registry.get_by_node_key(&nk).await {
                 Some(p) if p.node_id().is_some() => p,
                 _ => {
-                    node_missing_rows.push(build_sync_row(change, node_name, field_label, None, None));
+                    node_missing_rows.push(sync_row_from_change(change, node_name, field_label, None, None));
                     continue;
                 }
             },
             None => {
-                node_missing_rows.push(build_sync_row(change, node_name, field_label, None, None));
+                node_missing_rows.push(sync_row_from_change(change, node_name, field_label, None, None));
                 continue;
             }
         };
@@ -857,7 +451,7 @@ pub async fn build_sync_session(
         let cdi = match resources {
             Some(resources) => &resources.cdi,
             None => {
-                node_missing_rows.push(build_sync_row(
+                node_missing_rows.push(sync_row_from_change(
                     change,
                     node_name,
                     field_label,
@@ -872,7 +466,7 @@ pub async fn build_sync_session(
         let meta = match find_field_meta_in_cdi(cdi, space, address) {
             Some(m) => m,
             None => {
-                node_missing_rows.push(build_sync_row(
+                node_missing_rows.push(sync_row_from_change(
                     change,
                     node_name,
                     field_label,
@@ -896,7 +490,7 @@ pub async fn build_sync_session(
         let raw = match raw {
             Ok(data) => data,
             Err(e) => {
-                node_missing_rows.push(build_sync_row(
+                node_missing_rows.push(sync_row_from_change(
                     change,
                     node_name,
                     field_label,
@@ -910,7 +504,7 @@ pub async fn build_sync_session(
         let bus_value = match raw_bytes_to_value_string(&meta, &raw) {
             Some(v) => v,
             None => {
-                node_missing_rows.push(build_sync_row(
+                node_missing_rows.push(sync_row_from_change(
                     change,
                     node_name,
                     field_label,
@@ -922,25 +516,29 @@ pub async fn build_sync_session(
         };
 
         // Classify the row
-        if bus_value == change.planned_value {
-            already_applied_count += 1;
-            already_applied_ids.insert(change.change_id.clone());
-        } else if bus_value == change.baseline_value {
-            clean_rows.push(build_sync_row(
-                change,
-                node_name,
-                Some(field_label.unwrap_or_else(|| meta.field_label.clone())),
-                Some(bus_value),
-                None,
-            ));
-        } else {
-            conflict_rows.push(build_sync_row(
-                change,
-                node_name,
-                Some(field_label.unwrap_or_else(|| meta.field_label.clone())),
-                Some(bus_value),
-                None,
-            ));
+        match classify_sync_row(&bus_value, &change.baseline_value, &change.planned_value) {
+            SyncClassification::AlreadyApplied => {
+                already_applied_count += 1;
+                already_applied_ids.insert(change.change_id.clone());
+            }
+            SyncClassification::Clean => {
+                clean_rows.push(sync_row_from_change(
+                    change,
+                    node_name,
+                    Some(field_label.unwrap_or_else(|| meta.field_label.clone())),
+                    Some(bus_value),
+                    None,
+                ));
+            }
+            SyncClassification::Conflict => {
+                conflict_rows.push(sync_row_from_change(
+                    change,
+                    node_name,
+                    Some(field_label.unwrap_or_else(|| meta.field_label.clone())),
+                    Some(bus_value),
+                    None,
+                ));
+            }
         }
     }
 
