@@ -10,7 +10,7 @@
 | Stores | ~21 | Durable frontend state, derived values |
 | Utils | ~13 | Normalization, formatting, serialization |
 | API | 8 | Tauri IPC bindings |
-| bowties-core | 16 modules | Node tree, layout persistence, profile, registry |
+| bowties-core | 19 modules | Node tree, layout persistence, profile, registry, placeholder, bowtie catalog |
 | Backend (Tauri shell) | ~15 modules | IPC commands, state, placeholder factory, events |
 | lcc-rs | ~20 modules | Protocol encoding, transport, CDI parsing |
 
@@ -228,7 +228,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `connection.rs` | `list_serial_ports`, `get_layout_connections`, `save_layout_connections` | Per-layout connection registry — stored inside each layout manifest (Spec 013 / S4, S7). The global `$APPDATA/bowties/connections.json` registry was removed in S7; connections now live with the layout they belong to. |
 | `startup.rs` | `get_known_layouts`, `add_known_layout`, `remove_known_layout` | Known-layout registry (`$APPDATA/bowties/known-layouts.json`) for the layout picker |
 | `discovery.rs` | `discover_nodes`, `probe_nodes`, `register_node`, `query_snip_*`, `query_pip_*`, `verify_node_status`, `refresh_all_nodes` | Node discovery and metadata |
-| `bowties.rs` | `query_event_roles`, `build_bowtie_catalog_command`, `get_bowties`, `set_bowtie_metadata`, `load_layout`, `save_layout`, `*_recent_layout` | Bowtie catalog and layout files |
+| `bowties.rs` | `query_event_roles`, `build_bowtie_catalog_command`, `get_bowties`, `set_bowtie_metadata`, `load_layout`, `save_layout`, `*_recent_layout`. Re-exports pure catalog functions from `bowties_core::bowtie::catalog`. | Bowtie catalog and layout files |
 | `cdi.rs` | `download_cdi`, `get_cdi_xml`, `get_cdi_structure`, `read_config_value`, `read_all_config_values`, `write_config_value`, `set_modified_value`, `write_modified_values`, `discard_modified_values`, `trigger_action`, `cancel_*` | CDI download, config read/write |
 | `layout_capture.rs` | `capture_layout_snapshot`, `save_layout_directory`, `open_layout_directory`, `close_layout`, `create_new_layout_capture`, `build_offline_node_tree`, `save_layout_with_bus_writes` | Layout snapshot persistence; save commands accept `LayoutEditDelta[]` and return persisted `LayoutFile` plus (S8) `persistedNodeIds` — the canonical roster after applying any `AddNode` deltas. `save_layout_directory` computes a permitted-node set = previously-persisted ∪ explicitly-added; live handles outside the permitted set are skipped, and previously-saved snapshots for permitted off-bus nodes are carried forward from `prev.node_snapshots`. First-save (`previous == None`) passes all live handles through for backward compatibility. **Manifest reconstruction goes through `layout::manifest::build_save_manifest(previous, layout_id, captured_at, last_saved_at, companion_dir)`** — preserves `connections` / `match_thresholds` / `active_mode` from `previous`, never falls back to `LayoutManifest::new(...)` on re-save (that path silently zeroed per-layout LCC connections; see `resave_preserves_existing_connections_via_build_save_manifest` test in `layout/io.rs`). |
 | `sync_panel.rs` | `set_offline_change`, `revert_offline_change`, `list_offline_changes` | Offline change staging |
@@ -264,6 +264,10 @@ thin shim modules so existing `crate::` paths compile unchanged.
 | `profile/mod.rs` | Profile tree annotation, overlay composition, cache types. | inline `#[cfg(test)]` |
 | `profile/types.rs` | Structure profile types (event roles, relevance, connectors). | — |
 | `profile/resolver.rs` | Profile conditional resolution (firmware checks). | inline `#[cfg(test)]` |
+| `placeholder.rs` | **Placeholder factory helpers** — CDI loading, EventId-zero collection, config-value merging, leaf-default population. All pure (no Tauri deps). | inline `#[cfg(test)]` (5 tests) |
+| `bowtie/mod.rs` | Bowtie catalog module root. | — |
+| `bowtie/types.rs` | Bowtie catalog types: `BowtieState`, `EventSlotEntry`, `BowtieCard`, `BowtieCatalog`. | — |
+| `bowtie/catalog.rs` | **Bowtie catalog builder** — pure algorithm: slot walking, catalog building, layout metadata merging, role extraction. Also owns `SlotInfo`, `WELL_KNOWN_EVENT_IDS`, `node_display_name`, `CdiReadCompletePayload`. | inline `#[cfg(test)]` (25+ tests) |
 
 ### Tauri app shell (`app/src-tauri/src/`)
 
@@ -271,7 +275,7 @@ thin shim modules so existing `crate::` paths compile unchanged.
 |--------|---------|------|
 | `lib.rs` | Entry point: connection init, state setup, command registration | — |
 | `main.rs` | Tauri desktop app launcher | — |
-| `state.rs` | Authoritative app state: connection, registry, caches. Re-exports `NodeRoles` from `bowties_core`. | inline `#[cfg(test)]` |
+| `state.rs` | Authoritative app state: connection, registry, caches. Re-exports `NodeRoles` from `bowties_core::node_tree` and bowtie catalog types from `bowties_core::bowtie::types`. | inline `#[cfg(test)]` |
 | `node_key.rs` | Re-export shim → `bowties_core::node_key` | — |
 | `node_registry.rs` | Re-export shim → `bowties_core::node_registry` | — |
 | `node_proxy.rs` | Re-export shim → `bowties_core::node_proxy` | — |
@@ -279,7 +283,7 @@ thin shim modules so existing `crate::` paths compile unchanged.
 | `layout/mod.rs` | Re-export shim → `bowties_core::layout` | — |
 | `profile/mod.rs` | Re-export shim → `bowties_core::profile` + keeps `loader` submodule | — |
 | `profile/loader.rs` | `.profile.yaml` loading; depends on `tauri::AppHandle` for resource-dir resolution. Bundled-profile listing for placeholder picker. | inline `#[cfg(test)]` |
-| `placeholder.rs` | **Placeholder factory** (S8.10). Depends on `AppHandle` and `AppState` — stays in src-tauri. Pure helpers (`collect_eventid_zeros`, `merge_config_values_into_tree`, `populate_leaf_defaults_in_tree`) are candidates for future extraction. | inline `#[cfg(test)]` (7 tests) |
+| `placeholder.rs` | **Placeholder factory orchestrator** (S8.10). Owns `synthesize`/`reconstitute` (Tauri-dependent). Re-exports pure helpers from `bowties_core::placeholder`. | — |
 | `diagnostics.rs` | Ring-buffer logging (`bwlog!`), diagnostic stats | — |
 | `events/router.rs` | Event broadcast: transport frames → Tauri events | inline `#[cfg(test)]` |
 | `traffic/mod.rs` | Message decoding for traffic monitor display | — |
