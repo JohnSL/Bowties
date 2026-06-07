@@ -1,6 +1,3 @@
-* Bowties offline derivation ownership — remaining items
-  * Consider extracting `resolve_cdi_xml` shared helper to DRY the CDI lookup across
-    `layout_capture.rs`, `sync_panel.rs`, and `layout/io.rs` (see `aiwiki/architecture-health.md`).
 * LCC Traffic Monitor:
   * When we're getting text, show the actual text along side the bytes
   * Same for other data types
@@ -12,22 +9,6 @@
 * Dynamic SNIP & Config
   * If you modify SNIP information from LccPro, for example, the updates should appear right away
   * Same for if you save config from another app. The changes should appear immediately
-* Edit layer refactor — changes module + ConfigEditor
-  * Root cause: `leaf.modifiedValue` serves two unrelated roles (in-memory draft edit and persisted
-    offline planned value), causing every offline editing fix to destabilize the other role. The
-    clear-and-restamp pattern (`clearAllModifiedValues` + `applyOfflinePendingValues`) is a fragile
-    coupling that runs after every save, discard, sync apply, and tree rebuild.
-  * Fix approach: replace the overloaded field with two cooperating modules — a changes module
-    (layered state: draft / offline pending / baseline) and a ConfigEditor (dependency-aware edit
-    application with synchronous cascade corrections). Full cutover in three scoped PRs.
-  * Plan: `specs/010-offline-layout-editing/offline-edit-layer-refactor-plan.md` (approved)
-  * Files affected:
-    - New: `stores/configChanges.svelte.ts`, `stores/configEditor.svelte.ts`, `utils/editKey.ts`
-    - Rewrite: `TreeLeafRow.svelte`, `SaveControls.svelte`, `saveControlsPresenter.ts`,
-      `configSidebarPresenter.ts`, `TreeGroupAccordion.svelte`, `BowtieCatalogPanel.svelte`
-    - Delete symbols in: `nodeTree.ts`, `nodeTree.svelte.ts`
-    - Call-site updates: `+page.svelte`, `config/+page.svelte`, `syncApplyOrchestrator.ts`,
-      `unsavedChangesGuard.ts`, `offlineLayoutOrchestrator.ts`, `bowties.svelte.ts`, `eventIds.ts`
 * Cascade profile rules for ConfigEditor
   * Root cause: ConfigEditor starts as a pass-through (no cascade logic). When a controlling field
     like a daughter board selector changes, dependent fields may need corrective default writes.
@@ -35,7 +16,7 @@
   * Fix approach: author cascade rules in `.profile.yaml` alongside existing relevance rules, using
     the same extraction pipeline. ConfigEditor reads these rules and applies synchronous cascade
     corrections within `applyEdit()`.
-  * Depends on: edit layer refactor (changes module + ConfigEditor must exist first)
+  * Prerequisite met: edit layer refactor (changes module + ConfigEditor) is complete.
 * Release workflow publication polish
   * Root cause: the new skill-based `/release-publish` workflow now owns tag creation and release-notes generation, but the final GitHub draft-release publication step is still a manual paste-and-publish handoff.
   * Follow-up:

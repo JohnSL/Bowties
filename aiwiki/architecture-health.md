@@ -59,12 +59,11 @@ Each entry:
 - **Evidence**: `resetLayoutStateForNoLayout` and `openOfflineLayoutWithReplay` both forgot to clear the config sidebar while `resetFreshLiveSessionState` included it. Fixed May 2026.
 - **Suggested action**: When adding new store state that must be cleared on layout transitions, check all three reset functions and their tests. Consider adding a comment in the orchestrator listing the full set of reset paths for cross-reference.
 
-### Online save ordering causes stale catalog / blank bowties
+### Online save ordering causes stale catalog / blank bowties (resolved)
 - **Area**: `SaveControls.svelte`, `configChangesStore`, `bowties.svelte.ts` (preview getter), `+page.svelte` (`node-tree-updated` listener)
-- **Risk**: Bus writes before layout file save triggers draft pruning (`pruneResolvedDraftsForNode` via `node-tree-updated`), which switches the bowtie preview to the fast path with a stale catalog. Bowties show "No producers" / "No consumers." Cancel after writes leaves blank bowties with no recovery path.
+- **Risk** (resolved): Bus writes before layout file save triggered draft pruning (`pruneResolvedDraftsForNode` via `node-tree-updated`), which switched the bowtie preview to the fast path with a stale catalog. Bowties showed "No producers" / "No consumers." Cancel after writes left blank bowties with no recovery path.
 - **Evidence**: Reproduced May 2026 — reset boards, create connections, click Save → blank bowties during dialog and after cancel.
-- **Suggested action**: Implement three-phase save reorder (`specs/013-save-flow-reorder/plan.md`, slices S1+S2). ADR: `0001-save-layout-before-bus-writes.md`.
-- **Status**: Fix in progress — spec 013 architecture assessment complete, slices defined.
+- **Resolution** (Spec 013, S1–S8, 13 slices): Three-phase save reorder saves layout **before** bus writes (ADR-0001). Backend-authoritative save (ADR-0002) accepts edit deltas and returns the persisted layout. Unified display resolution (ADR-0003). Layout facade + effective view store (ADR-0004) clears drafts on save so catalog never goes stale. Deep layout module (ADR-0005) keeps file knowledge private. Journaled in-place save (ADR-0006) eliminates cloud-sync contention. Known-layout registry (S5) + layout picker gate (S6) + layout-scoped connections (S7) + durable node roster (S8) complete the feature. 929 vitest + 328 cargo tests pass.
 
 ### `+page.svelte` god component (1,942 lines)
 - **Area**: `app/src/routes/+page.svelte`

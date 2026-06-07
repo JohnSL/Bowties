@@ -69,12 +69,6 @@ graph TB
     Transport --> Bus
 
     Commands -.->|"emit() events"| Routes
-
-    style Frontend fill:#e8f4fd,stroke:#2196F3
-    style IPC fill:#fff3e0,stroke:#FF9800
-    style Backend fill:#fce4ec,stroke:#E91E63
-    style Core fill:#f3e5f5,stroke:#9C27B0
-    style Protocol fill:#e8f5e9,stroke:#4CAF50
 ```
 
 ---
@@ -83,37 +77,73 @@ graph TB
 
 Deep modules hide significant complexity behind a narrow public API. These are the architectural anchors — the places where important decisions are encapsulated. Touching them should be deliberate.
 
-```mermaid
-graph LR
-    subgraph "Deep Modules (high complexity, narrow API)"
-        direction TB
+### `layout/*` — bowties-core
 
-        LM["<b>layout/*</b><br/>bowties-core<br/><br/>▸ Journaled writes (ADR-0006)<br/>▸ Companion-dir structure<br/>▸ Snapshot read/write<br/>▸ Offline change staging<br/>▸ Manifest reconstruction<br/>▸ Known-layouts registry<br/><br/><i>API: save_capture, read_capture,<br/>update_offline_changes,<br/>execute (journal)</i>"]
+- Journaled writes (ADR-0006)
+- Companion-dir structure
+- Snapshot read/write
+- Offline change staging
+- Manifest reconstruction
+- Known-layouts registry
+- **API:** `save_capture`, `read_capture`, `update_offline_changes`, `execute` (journal)
 
-        BC["<b>bowtie/catalog</b><br/>bowties-core<br/><br/>▸ CDI slot walking<br/>▸ Event role extraction<br/>▸ Producer/consumer pairing<br/>▸ Layout metadata merge<br/>▸ Well-known EventID filtering<br/><br/><i>API: build_catalog(),<br/>CdiReadCompletePayload</i>"]
+### `bowtie/catalog` — bowties-core
 
-        ELS["<b>effectiveLayoutStore</b><br/>Layout Facade<br/><br/>▸ catalog × tree × metadata × layout merge<br/>▸ Pending-deletion filter<br/>▸ effectiveRole() waterfall<br/>▸ effectiveValue() waterfall<br/>▸ slotsByRole(), isSlotFree()<br/><br/><i>API: preview, effectiveBowties,<br/>effectiveRole, effectiveValue</i>"]
+- CDI slot walking
+- Event role extraction
+- Producer/consumer pairing
+- Layout metadata merge
+- Well-known EventID filtering
+- **API:** `build_catalog()`, `CdiReadCompletePayload`
 
-        ENS["<b>effectiveNodeStore</b><br/>Layout Facade<br/><br/>▸ Per-node origin tracking<br/>▸ Capture/read status projection<br/>▸ Persistability predicate<br/>▸ Aggregate isDirty signal<br/><br/><i>API: nodeOrigin(), isPersistableInLayout(),<br/>isDirty, unsavedInMemoryNodeIds</i>"]
+### `effectiveLayoutStore` — Layout Facade
 
-        NR["<b>nodeRoster</b><br/>Store<br/><br/>▸ Unified live + placeholder facade<br/>▸ Reactive allEntries/liveEntries/placeholderEntries<br/>▸ Layout-scope clearing<br/>▸ Profile stem tracking<br/><br/><i>API: allEntries, upsertLive,<br/>addPlaceholder, clearLayoutScope</i>"]
+- catalog × tree × metadata × layout merge
+- Pending-deletion filter
+- `effectiveRole()` waterfall
+- `effectiveValue()` waterfall
+- `slotsByRole()`, `isSlotFree()`
+- **API:** `preview`, `effectiveBowties`, `effectiveRole`, `effectiveValue`
 
-        LCO["<b>layoutLifecycleOrchestrator</b><br/>Orchestrator<br/><br/>▸ Single owner of lifecycle resets (ADR-0011)<br/>▸ resetForNewLayout (full teardown)<br/>▸ resetForFreshLiveSession<br/>▸ closeLayout sequencing<br/><br/><i>API: 3 entry points</i>"]
+### `effectiveNodeStore` — Layout Facade
 
-        LC["<b>LccConnection</b><br/>lcc-rs<br/><br/>▸ TCP/Serial connect + alias allocation<br/>▸ Node discovery protocol<br/>▸ SNIP/PIP batch queries<br/>▸ Memory config read/write<br/>▸ Transport actor lifecycle<br/><br/><i>API: connect(), discover_nodes(),<br/>read_memory(), BatchReader</i>"]
+- Per-node origin tracking
+- Capture/read status projection
+- Persistability predicate
+- Aggregate isDirty signal
+- **API:** `nodeOrigin()`, `isPersistableInLayout()`, `isDirty`, `unsavedInMemoryNodeIds`
 
-        DA["<b>DatagramAssembler</b><br/>lcc-rs<br/><br/>▸ Multi-frame reassembly<br/>▸ Pending/complete datagram tracking<br/>▸ Error datagram handling<br/><br/><i>API: process_frame() → Option&lt;Datagram&gt;</i>"]
-    end
+### `nodeRoster` — Store
 
-    style LM fill:#f3e5f5,stroke:#9C27B0
-    style BC fill:#f3e5f5,stroke:#9C27B0
-    style ELS fill:#e8f4fd,stroke:#2196F3
-    style ENS fill:#e8f4fd,stroke:#2196F3
-    style NR fill:#e8f4fd,stroke:#2196F3
-    style LCO fill:#e8f4fd,stroke:#2196F3
-    style LC fill:#e8f5e9,stroke:#4CAF50
-    style DA fill:#e8f5e9,stroke:#4CAF50
-```
+- Unified live + placeholder facade
+- Reactive `allEntries`/`liveEntries`/`placeholderEntries`
+- Layout-scope clearing
+- Profile stem tracking
+- **API:** `allEntries`, `upsertLive`, `addPlaceholder`, `clearLayoutScope`
+
+### `layoutLifecycleOrchestrator` — Orchestrator
+
+- Single owner of lifecycle resets (ADR-0011)
+- `resetForNewLayout` (full teardown)
+- `resetForFreshLiveSession`
+- `closeLayout` sequencing
+- **API:** 3 entry points
+
+### `LccConnection` — lcc-rs
+
+- TCP/Serial connect + alias allocation
+- Node discovery protocol
+- SNIP/PIP batch queries
+- Memory config read/write
+- Transport actor lifecycle
+- **API:** `connect()`, `discover_nodes()`, `read_memory()`, `BatchReader`
+
+### `DatagramAssembler` — lcc-rs
+
+- Multi-frame reassembly
+- Pending/complete datagram tracking
+- Error datagram handling
+- **API:** `process_frame()` → `Option<Datagram>`
 
 ---
 
@@ -173,13 +203,6 @@ graph TB
     S3 ~~~ S4
     S4 ~~~ S5
     S5 ~~~ S6
-
-    style S1 fill:#e8f4fd,stroke:#2196F3
-    style S2 fill:#e8f4fd,stroke:#2196F3
-    style S3 fill:#e8f4fd,stroke:#2196F3
-    style S4 fill:#fff3e0,stroke:#FF9800
-    style S5 fill:#fce4ec,stroke:#E91E63
-    style S6 fill:#e8f5e9,stroke:#4CAF50
 ```
 
 ---
@@ -203,12 +226,6 @@ graph TB
 
         CS["<b>configChanges.svelte.ts</b><br/>(3 layers: draft/offlinePending/baseline)<br/><br/>▸ Multiple overlapping change layers<br/>▸ Pruning logic spread across orchestrators<br/>  and the store itself<br/>▸ commitForSave() vs clearPersistedDrafts() —<br/>  two paths for clearing<br/><br/><i>Risk: subtle data-loss bugs when layers<br/>interact unexpectedly</i>"]
     end
-
-    style PP fill:#fff9c4,stroke:#FFC107
-    style BR fill:#ffccbc,stroke:#FF5722
-    style CD fill:#fff9c4,stroke:#FFC107
-    style API fill:#f5f5f5,stroke:#9E9E9E
-    style CS fill:#fff9c4,stroke:#FFC107
 ```
 
 ---
@@ -257,9 +274,6 @@ graph LR
     appState --> registry
     appState --> layoutCtx
     registry --> savedTrees
-
-    style effectiveLayout fill:#e8f4fd,stroke:#2196F3
-    style effectiveNode fill:#e8f4fd,stroke:#2196F3
 ```
 
 ---
