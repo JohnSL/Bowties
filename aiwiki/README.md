@@ -9,6 +9,7 @@ Help AI agents quickly answer:
 - **Does this already exist?** → [owners.md](owners.md) shared conventions section
 - **What's involved in this workflow?** → [flows.md](flows.md)
 - **Is there coupling or debt to watch?** → [architecture-health.md](architecture-health.md)
+- **What are the layers, seams, and deep modules?** → [architecture-diagrams.md](architecture-diagrams.md)
 
 ## Scope
 
