@@ -7,7 +7,8 @@ import {
   resolveConnectionLabel,
   resolveDisconnectTransition,
   SyncSessionOrchestrator,
-} from './syncSessionOrchestrator';
+  type SyncSessionConnectionDeps,
+} from './syncSessionOrchestrator.svelte';
 
 function createSyncPanelStore() {
   return {
@@ -18,6 +19,26 @@ function createSyncPanelStore() {
     reset: vi.fn(),
     computeMatch: vi.fn(async (_ids: string[]) => {}),
     loadSession: vi.fn(async () => {}),
+  };
+}
+
+function createConnectionDeps(
+  overrides: Partial<SyncSessionConnectionDeps> = {},
+): SyncSessionConnectionDeps {
+  return {
+    disconnectLcc: vi.fn(async () => {}),
+    probeForNodes: vi.fn(async () => {}),
+    hasLayoutFile: vi.fn(() => false),
+    hasSnapshots: vi.fn(() => false),
+    setLayoutConnected: vi.fn(),
+    resetFreshLiveSessionState: vi.fn(),
+    rehydrateOffline: vi.fn(async () => {}),
+    clearLiveState: vi.fn(),
+    resetSyncPanel: vi.fn(),
+    setShowConnectionDialog: vi.fn(),
+    setErrorMessage: vi.fn(),
+    warn: vi.fn(),
+    ...overrides,
   };
 }
 
@@ -40,7 +61,6 @@ describe('connectLiveSession', () => {
 
   it('resets the fresh live session before probing when no layout file is active', () => {
     const setConnectionLabel = vi.fn();
-    const setConnected = vi.fn();
     const setLayoutConnected = vi.fn();
     const hideConnectionDialog = vi.fn();
     const resetSyncSessionAutoTrigger = vi.fn();
@@ -51,7 +71,6 @@ describe('connectLiveSession', () => {
       config: { name: 'Bench Bus' },
       hasLayoutFile: false,
       setConnectionLabel,
-      setConnected,
       setLayoutConnected,
       hideConnectionDialog,
       resetSyncSessionAutoTrigger,
@@ -60,7 +79,6 @@ describe('connectLiveSession', () => {
     });
 
     expect(setConnectionLabel).toHaveBeenCalledWith('Bench Bus');
-    expect(setConnected).toHaveBeenCalledWith(true);
     expect(setLayoutConnected).toHaveBeenCalledWith(true);
     expect(hideConnectionDialog).toHaveBeenCalledTimes(1);
     expect(resetSyncSessionAutoTrigger).toHaveBeenCalledTimes(1);
@@ -79,7 +97,6 @@ describe('connectLiveSession', () => {
       config: { host: 'localhost', port: 12021 },
       hasLayoutFile: true,
       setConnectionLabel: vi.fn(),
-      setConnected: vi.fn(),
       setLayoutConnected: vi.fn(),
       hideConnectionDialog: vi.fn(),
       resetSyncSessionAutoTrigger: vi.fn(),
@@ -104,9 +121,6 @@ describe('bootstrapStartupLifecycle', () => {
 
     await bootstrapStartupLifecycle({
       getConnectionStatus: vi.fn(async () => ({ connected: true, config: { name: 'Bench Bus' } })),
-      setConnected: vi.fn((value: boolean) => {
-        calls.push(`connected:${value}`);
-      }),
       setLayoutConnected: vi.fn((value: boolean) => {
         calls.push(`layoutConnected:${value}`);
       }),
@@ -129,7 +143,6 @@ describe('bootstrapStartupLifecycle', () => {
     });
 
     expect(calls).toEqual([
-      'connected:true',
       'layoutConnected:true',
       'label:Bench Bus',
       'bowties',
@@ -146,7 +159,6 @@ describe('bootstrapStartupLifecycle', () => {
 
     await bootstrapStartupLifecycle({
       getConnectionStatus: vi.fn(async () => ({ connected: true, config: { host: '127.0.0.1', port: 12021 } })),
-      setConnected: vi.fn(),
       setLayoutConnected: vi.fn(),
       setConnectionLabel: vi.fn(),
       startBowtieListening: vi.fn(async () => {}),
@@ -172,7 +184,6 @@ describe('bootstrapStartupLifecycle', () => {
       getConnectionStatus: vi.fn(async () => {
         throw new Error('status unavailable');
       }),
-      setConnected: vi.fn(),
       setLayoutConnected: vi.fn(),
       setConnectionLabel: vi.fn(),
       onConnectionStatusError,
@@ -198,7 +209,7 @@ describe('SyncSessionOrchestrator', () => {
   });
 
   it('shows the sync panel for an uncertain match without loading a session', async () => {
-    const orchestrator = new SyncSessionOrchestrator(50);
+    const orchestrator = new SyncSessionOrchestrator(createConnectionDeps(), 50);
     const syncPanelStore = createSyncPanelStore();
     const showSyncPanel = vi.fn();
 
@@ -222,7 +233,7 @@ describe('SyncSessionOrchestrator', () => {
   });
 
   it('loads a sync session and shows the panel when rows exist', async () => {
-    const orchestrator = new SyncSessionOrchestrator(50);
+    const orchestrator = new SyncSessionOrchestrator(createConnectionDeps(), 50);
     const syncPanelStore = createSyncPanelStore();
     const showSyncPanel = vi.fn();
 
@@ -252,7 +263,7 @@ describe('SyncSessionOrchestrator', () => {
   });
 
   it('does not show the sync panel when the loaded session has no rows', async () => {
-    const orchestrator = new SyncSessionOrchestrator(50);
+    const orchestrator = new SyncSessionOrchestrator(createConnectionDeps(), 50);
     const syncPanelStore = createSyncPanelStore();
     const showSyncPanel = vi.fn();
 
@@ -282,7 +293,7 @@ describe('SyncSessionOrchestrator', () => {
   });
 
   it('debounces discovery-settle auto sync and can be reset for manual reopen', async () => {
-    const orchestrator = new SyncSessionOrchestrator(50);
+    const orchestrator = new SyncSessionOrchestrator(createConnectionDeps(), 50);
     const triggerSync = vi.fn();
     const syncPanelStore = createSyncPanelStore();
     const showSyncPanel = vi.fn();
@@ -318,7 +329,7 @@ describe('SyncSessionOrchestrator', () => {
   });
 
   it('does not schedule auto sync when no layout is open or no pending rows exist', async () => {
-    const orchestrator = new SyncSessionOrchestrator(50);
+    const orchestrator = new SyncSessionOrchestrator(createConnectionDeps(), 50);
     const triggerSync = vi.fn();
 
     orchestrator.scheduleAutoSync({ hasLayoutFile: false, pendingCount: 1, triggerSync });
@@ -326,6 +337,111 @@ describe('SyncSessionOrchestrator', () => {
 
     await vi.advanceTimersByTimeAsync(100);
     expect(triggerSync).not.toHaveBeenCalled();
+  });
+});
+
+describe('SyncSessionOrchestrator connection workflow', () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('connect() sets the connection label and mirrors connected into the layout store', () => {
+    const deps = createConnectionDeps({ hasLayoutFile: vi.fn(() => false) });
+    const orchestrator = new SyncSessionOrchestrator(deps);
+
+    orchestrator.connect({ name: 'Bench Bus' });
+
+    expect(orchestrator.connectionLabel).toBe('Bench Bus');
+    expect(deps.setLayoutConnected).toHaveBeenCalledWith(true);
+    expect(deps.setShowConnectionDialog).toHaveBeenCalledWith(false);
+    expect(deps.resetFreshLiveSessionState).toHaveBeenCalledTimes(1);
+    expect(deps.probeForNodes).toHaveBeenCalledTimes(1);
+  });
+
+  it('connect() preserves layout state but still probes when a layout file is open', () => {
+    const deps = createConnectionDeps({ hasLayoutFile: vi.fn(() => true) });
+    const orchestrator = new SyncSessionOrchestrator(deps);
+
+    orchestrator.connect({ host: '127.0.0.1', port: 12021 });
+
+    expect(orchestrator.connectionLabel).toBe('127.0.0.1:12021');
+    expect(deps.setLayoutConnected).toHaveBeenCalledWith(true);
+    expect(deps.resetFreshLiveSessionState).not.toHaveBeenCalled();
+    expect(deps.probeForNodes).toHaveBeenCalledTimes(1);
+  });
+
+  it('disconnect() clears the label, disconnects the bus, and rehydrates offline when snapshots exist', async () => {
+    const deps = createConnectionDeps({
+      hasLayoutFile: vi.fn(() => true),
+      hasSnapshots: vi.fn(() => true),
+    });
+    const orchestrator = new SyncSessionOrchestrator(deps);
+    orchestrator.connect({ name: 'Bench Bus' });
+
+    await orchestrator.disconnect();
+
+    expect(orchestrator.connectionLabel).toBe('');
+    expect(deps.setErrorMessage).toHaveBeenCalledWith('');
+    expect(deps.disconnectLcc).toHaveBeenCalledTimes(1);
+    expect(deps.setLayoutConnected).toHaveBeenLastCalledWith(false);
+    expect(deps.resetSyncPanel).toHaveBeenCalledTimes(1);
+    expect(deps.rehydrateOffline).toHaveBeenCalledTimes(1);
+    expect(deps.clearLiveState).not.toHaveBeenCalled();
+  });
+
+  it('disconnect() clears live state and reopens the connection dialog when no layout is open', async () => {
+    const deps = createConnectionDeps({
+      hasLayoutFile: vi.fn(() => false),
+      hasSnapshots: vi.fn(() => false),
+    });
+    const orchestrator = new SyncSessionOrchestrator(deps);
+
+    await orchestrator.disconnect();
+
+    expect(deps.clearLiveState).toHaveBeenCalledTimes(1);
+    expect(deps.setShowConnectionDialog).toHaveBeenLastCalledWith(true);
+    expect(deps.rehydrateOffline).not.toHaveBeenCalled();
+  });
+
+  it('disconnect() reports a failure through setErrorMessage', async () => {
+    const deps = createConnectionDeps({
+      disconnectLcc: vi.fn(async () => { throw new Error('bus offline'); }),
+    });
+    const orchestrator = new SyncSessionOrchestrator(deps);
+
+    await orchestrator.disconnect();
+
+    expect(deps.setErrorMessage).toHaveBeenLastCalledWith('Disconnect failed: Error: bus offline');
+  });
+
+  it('disconnectBeforeLayoutSwitch() tears down live state and hides the connection dialog', async () => {
+    const deps = createConnectionDeps({ hasLayoutFile: vi.fn(() => true) });
+    const orchestrator = new SyncSessionOrchestrator(deps);
+    orchestrator.connect({ name: 'Bench Bus' });
+
+    await orchestrator.disconnectBeforeLayoutSwitch();
+
+    expect(orchestrator.connectionLabel).toBe('');
+    expect(deps.disconnectLcc).toHaveBeenCalledTimes(1);
+    expect(deps.setLayoutConnected).toHaveBeenLastCalledWith(false);
+    expect(deps.resetSyncPanel).toHaveBeenCalledTimes(1);
+    expect(deps.clearLiveState).toHaveBeenCalledTimes(1);
+    expect(deps.setShowConnectionDialog).toHaveBeenLastCalledWith(false);
+    expect(deps.rehydrateOffline).not.toHaveBeenCalled();
+  });
+
+  it('disconnectBeforeLayoutSwitch() swallows a disconnect error via warn and still tears down', async () => {
+    const deps = createConnectionDeps({
+      disconnectLcc: vi.fn(async () => { throw new Error('bus offline'); }),
+    });
+    const orchestrator = new SyncSessionOrchestrator(deps);
+
+    await orchestrator.disconnectBeforeLayoutSwitch();
+
+    expect(deps.warn).toHaveBeenCalledTimes(1);
+    expect(deps.setLayoutConnected).toHaveBeenLastCalledWith(false);
+    expect(deps.clearLiveState).toHaveBeenCalledTimes(1);
+    expect(deps.setShowConnectionDialog).toHaveBeenLastCalledWith(false);
   });
 });
 

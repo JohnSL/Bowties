@@ -5,7 +5,7 @@
   /** Whether the modal is visible */
   export let visible: boolean = false;
   /** Current discovery phase */
-  export let phase: 'discovering' | 'querying' | 'refreshing' | 'reading' | 'complete' | 'cancelled' = 'discovering';
+  export let phase: 'discovering' | 'querying' | 'refreshing' | 'reading' | 'building-catalog' | 'complete' | 'cancelled' = 'discovering';
   /** Config reading progress (only meaningful during 'reading' phase) */
   export let readProgress: ReadProgressState | null = null;
   /** Per-node progress states for the reading phase */
@@ -49,6 +49,7 @@
       case 'refreshing':  return 'Refreshing nodes on the network…';
       case 'querying':    return 'Querying node information…';
       case 'reading':     return 'Reading node configurations…';
+      case 'building-catalog': return '';
       case 'complete':    return 'Complete';
       case 'cancelled':   return 'Cancelled';
     }

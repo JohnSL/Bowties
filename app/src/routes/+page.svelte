@@ -24,8 +24,7 @@
   import LayoutPicker from '$lib/components/LayoutPicker/LayoutPicker.svelte';
   import { toast } from '@zerodevx/svelte-toast';
   import { readAllConfigValues, cancelConfigReading, getCdiXml, downloadCdi } from '$lib/api/cdi';
-  import type { ViewerStatus } from '$lib/types/cdi';
-  import type { ReadProgressState, NodeReadState } from '$lib/api/types';
+  import type { ReadProgressState } from '$lib/api/types';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
@@ -35,6 +34,7 @@
   import type { NodeConfigTree } from '$lib/types/nodeTree';
   import { configReadNodesStore, markNodeConfigRead, clearConfigReadStatus, removeNodesConfigRead } from '$lib/stores/configReadStatus';
   import { nodeRoster } from '$lib/stores/nodeRoster.svelte';
+  import { cdiCacheStore } from '$lib/stores/cdiCache.svelte';
   import BowtieCatalogPanel from '$lib/components/Bowtie/BowtieCatalogPanel.svelte';
   import DiscoveryProgressModal from '$lib/components/DiscoveryProgressModal.svelte';
   import SaveControls from '$lib/components/ElementCardDeck/SaveControls.svelte';
@@ -60,49 +60,26 @@
   } from '$lib/orchestration/offlineLayoutOrchestrator';
   import { layoutLifecycleOrchestrator } from '$lib/orchestration/layoutLifecycleOrchestrator';
   import {
-    createWaitingNodeReadStates,
-    executeConfigReadCandidates,
     getUnreadConfigEligibleNodes,
     pipConfirmsNoCdi,
-    resolveConfigReadPreflight,
     toConfigReadCandidate,
   } from '$lib/orchestration/configReadOrchestrator';
   import {
     applyConnectorSelectionChange,
     recomputeConnectorCompatibility,
   } from '$lib/orchestration/connectorSelectionOrchestrator';
-  import {
-    createCancelledCdiDownloadState,
-    createClosedCdiRedownloadState,
-    createClosedCdiViewerState,
-    createOpenCdiRedownloadState,
-    createOpeningCdiViewerState,
-    createWaitingCdiDownloadNodes,
-    loadCdiViewerState,
-    resolvePostDownloadReadNodes,
-    updateCdiDownloadNodeStatus,
-  } from '$lib/orchestration/cdiDialogOrchestrator';
-  import {
-    applyConfigReadProgressUpdate,
-    beginConfigReadSession,
-    divertConfigReadToDownloadDialog,
-    failConfigReadCancellation,
-    failConfigReadSession,
-    finishConfigReadSession,
-    type ConfigReadSessionPatch,
-    requestConfigReadCancellation,
-  } from '$lib/orchestration/configReadSessionOrchestrator';
+  import { ConfigAcquisitionOrchestrator } from '$lib/orchestration/configAcquisitionOrchestrator.svelte';
+  import { CdiInspectionOrchestrator } from '$lib/orchestration/cdiInspectionOrchestrator.svelte';
   import { handleDiscoveredNode, reconcileRefreshState, refreshReinitializedNode } from '$lib/orchestration/discoveryOrchestrator';
   import { hasUnsavedPromptChanges } from '$lib/orchestration/unsavedChangesGuard';
   import { configChangesStore } from '$lib/stores/configChanges.svelte';
   import {
     bootstrapStartupLifecycle,
-    connectLiveSession,
-    disconnectWithOfflineFallback,
     SyncSessionOrchestrator,
-  } from '$lib/orchestration/syncSessionOrchestrator';
+  } from '$lib/orchestration/syncSessionOrchestrator.svelte';
   import { installMenuShortcuts } from '../lib/keyboard/menuShortcuts';
-  import type { MissingCdiNode } from '$lib/components/CdiDownloadDialog.svelte';
+  import { registerMenuListeners } from '$lib/orchestration/menuListeners';
+  import { computeMenuEnableState } from '$lib/utils/menuEnableState';
   import SyncPanel from '$lib/components/Sync/SyncPanel.svelte';
   import { syncPanelStore } from '$lib/stores/syncPanel.svelte';
   import OfflineBanner from '$lib/components/Layout/OfflineBanner.svelte';
@@ -110,7 +87,7 @@
   import { stageDraftsForOfflineSave } from '$lib/orchestration/configDraftOrchestrator';
   import { normalizeLayoutTitle } from '$lib/utils/layoutPath';
   import { formatNodeId, nodeIdStringToBytes } from '$lib/utils/nodeId';
-  import { computeDiscoveredOnlyNodeIds, canonicalizeNodeId } from '$lib/utils/nodeRoster';
+  import { canonicalizeNodeId } from '$lib/utils/nodeRoster';
   import { effectiveNodeStore } from '$lib/layout';
   import { partialCaptureNodesStore } from '$lib/stores/partialCaptureNodes.svelte';
   import { deletePlaceholderBoard } from '$lib/orchestration/placeholderBoardOrchestrator';
@@ -161,7 +138,7 @@
   function isMenuBusy(): boolean {
     // S3: while a save is in progress the dialog is modal — no second save
     // can be initiated and other menu actions are gated as well.
-    return probing || readingRemaining || saveProgressStore.isActive;
+    return probing || configAcquisition.readingRemaining || saveProgressStore.isActive;
   }
 
   function canOpenLayoutAction(): boolean {
@@ -265,8 +242,9 @@
   });
 
   // Connection state
-  let connectionLabel = $state("");
-  let connected = $state(false);
+  // `connected` is owned by `layoutStore` (read via `layoutStore.isConnected`)
+  // and the connection label is owned by `syncSessionOrchestrator` (S3).
+  // `errorMessage` is the page-wide error banner, written by several workflows.
   let errorMessage = $state("");
 
   // Discovery state
@@ -287,22 +265,6 @@
   // offline tree after disconnect so nodes are not lost from the UI (Bug 4).
   let currentLayoutSnapshots = $state<OfflineNodeSnapshot[]>([]);
 
-  /**
-   * S8: canonical IDs of discovered nodes that are NOT yet in the saved
-   * layout roster. Computed by comparing the currently visible nodes to
-   * `layoutStore.activeContext.layoutNodeIds`. Used to:
-   *   - render unsaved-new badges in the sidebar (no capture threshold —
-   *     the badge means "discovered, not yet in the layout file").
-   * Drops to `[]` automatically on disconnect/close once `nodes` is cleared
-   * and re-hydrated from saved snapshots.
-   */
-  const discoveredOnlyNodeIds = $derived(
-    computeDiscoveredOnlyNodeIds(
-      layoutStore.activeContext?.layoutNodeIds,
-      nodes.map((n) => canonicalizeNodeId(formatNodeId(n.node_id))),
-    ),
-  );
-
   // ADR-0011: `effectiveNodeStore` is the single source of truth for the
   // per-node persistability projection and the aggregate "any in-memory
   // change" signal. Callers read `effectiveNodeStore.isDirty` /
@@ -311,7 +273,33 @@
   // only — its proper domain.
 
   // Sync-session lifecycle state is coordinated in a dedicated orchestrator.
-  const syncSessionOrchestrator = new SyncSessionOrchestrator();
+  // S3: it also owns the connect/disconnect workflow and the connection label;
+  // `connected` lives in `layoutStore` (authoritative) and `errorMessage` stays
+  // page-owned (written by several workflows), reported via `setErrorMessage`.
+  const syncSessionOrchestrator = new SyncSessionOrchestrator({
+    disconnectLcc: () => invoke('disconnect_lcc'),
+    probeForNodes,
+    hasLayoutFile: () => layoutStore.hasLayoutFile,
+    hasSnapshots: () => currentLayoutSnapshots.length > 0,
+    setLayoutConnected: (value) => { layoutStore.setConnected(value); },
+    resetFreshLiveSessionState: () => { resetFreshLiveSessionState(); },
+    rehydrateOffline: async () => {
+      nodeTreeStore.reset();
+      await hydrateOfflineSnapshots(currentLayoutSnapshots);
+    },
+    clearLiveState: () => {
+      clearConfigReadStatus();
+      nodeRoster.replaceLiveRoster([]);
+      nodeTreeStore.reset();
+    },
+    resetSyncPanel: () => {
+      syncPanelStore.reset();
+      syncPanelVisible = false;
+    },
+    setShowConnectionDialog: (visible) => { showConnectionDialog = visible; },
+    setErrorMessage: (message) => { errorMessage = message; },
+    warn: (message, error) => { console.warn(message, error); },
+  });
 
 
   let activeLayoutLabel = $derived.by(() => {
@@ -397,7 +385,7 @@
    */
   async function runOpenLayoutByPath(path: string, name?: string): Promise<void> {
     try {
-      if (connected) {
+      if (layoutStore.isConnected) {
         await disconnectBeforeLayoutSwitch();
       }
       await openLayoutFromRegistry({
@@ -566,7 +554,7 @@
           ? async () => { await offlineChangesStore.reloadFromBackend(); }
           : undefined,
       };
-      const orchestratorArgs: SaveLayoutOrchestratedArgs = connected
+      const orchestratorArgs: SaveLayoutOrchestratedArgs = layoutStore.isConnected
         ? {
             ...sharedOrchestratorArgs,
             saveWithBusWrites: (p, d) => saveLayoutWithBusWrites(p, d, true),
@@ -606,7 +594,7 @@
 
   async function resetLayoutStateForNoLayout(reprobeLiveNodes = true) {
     await layoutLifecycleOrchestrator.resetForNewLayout({
-      connected,
+      connected: layoutStore.isConnected,
       reprobeLiveNodes,
       probeForNodes,
       afterReset: () => {
@@ -618,7 +606,7 @@
 
   function resetFreshLiveSessionState(): void {
     layoutLifecycleOrchestrator.resetForFreshLiveSession();
-    nodesWithCdi = new Set();
+    cdiCacheStore.reset();
   }
 
   async function clearActiveLayout() {
@@ -626,7 +614,7 @@
       activeMode: layoutStore.activeContext?.mode,
       closeLayoutIpc: (decision) => closeLayout(decision),
       clearRecentLayout,
-      connected,
+      connected: layoutStore.isConnected,
       probeForNodes,
       afterReset: () => {
         currentLayoutSnapshots = [];
@@ -637,20 +625,6 @@
       },
     });
   }
-
-  // Config reading progress state (T063-T067)
-  let readProgress = $state<ReadProgressState | null>(null);
-  let isCancelling = $state(false);
-
-  // Discovery progress modal state
-  let discoveryModalVisible = $state(false);
-  let discoveryPhase = $state<'reading' | 'complete' | 'cancelled'>('reading');
-
-  // Track whether a single-node or batch "read remaining" is in progress
-  let readingRemaining = $state(false);
-
-  // Per-node progress state for the redesigned progress modal
-  let nodeReadStates = $state<NodeReadState[]>([]);
 
   // Reactive count of nodes with SNIP data not yet config-read — drives "Read Remaining" visibility
   let unreadCount = $derived(
@@ -665,7 +639,7 @@
   // because unreadCount excludes CDI-less nodes (e.g. JMRI), so the counts
   // would never match on a mixed network.
   let showConfigCta = $derived(
-    connected &&
+    layoutStore.isConnected &&
     !layoutStore.hasLayoutFile &&
     !$layoutOpenInProgress &&
     nodes.length > 0 &&
@@ -684,7 +658,7 @@
   // not-yet-captured node across the capture threshold. The pane returns to
   // its normal empty-state once everything is captured.
   let showCaptureRemainingCta = $derived(
-    connected &&
+    layoutStore.isConnected &&
     layoutStore.hasLayoutFile &&
     !$layoutOpenInProgress &&
     nodes.length > 0 &&
@@ -721,42 +695,32 @@
     $configSidebarStore.selectedSegment?.nodeId ?? $configSidebarStore.selectedNodeId ?? null
   );
 
-  // CDI XML viewer state
-  let viewerVisible = $state(false);
-  let viewerNodeId = $state<string | null>(null);
-  let viewerXmlContent = $state<string | null>(null);
-  let viewerStatus = $state<ViewerStatus>('idle');
-  let viewerErrorMessage = $state<string | null>(null);
+  // Config-acquisition workflow owner (preflight → missing-CDI download →
+  // reads → progress → cancel). Route delegates intent and subscribes to its
+  // reactive getters; the shared cached-CDI set lives in `cdiCacheStore` (S6).
+  const configAcquisition = new ConfigAcquisitionOrchestrator({
+    getNodes: () => nodes,
+    getReadNodeIds: () => get(configReadNodesStore),
+    getCdiXml,
+    downloadCdi,
+    readAllConfigValues: (nodeId, nodeIndex, totalNodes) => (
+      readAllConfigValues(nodeId, undefined, nodeIndex, totalNodes)
+    ),
+    cancelConfigReading,
+    markNodeConfigRead,
+    refreshTree: (nodeId) => nodeTreeStore.refreshTree(nodeId),
+    loadTree: (nodeId) => nodeTreeStore.loadTree(nodeId),
+    recomputeConnectorCompatibility,
+    setErrorMessage: (message) => { errorMessage = message; },
+  });
 
-  // CDI re-download dialog state (menu-redownload-cdi)
-  let cdiRedownloadVisible = $state(false);
-  let cdiRedownloadNodeId = $state<string | null>(null);
-  let cdiRedownloadNodeName = $state<string | null>(null);
-
-  // CDI download dialog state
-  let cdiDownloadDialogVisible = $state(false);
-  let cdiMissingNodes = $state<MissingCdiNode[]>([]);
-  let cdiDownloading = $state(false);
-  let cdiDownloadedCount = $state(0);
-  // All unread nodes pending config read — set by readRemainingNodes when CDI is missing.
-  // handleCdiDownload reads ALL of these (not just downloaded ones) after CDI download.
-  let pendingConfigNodes = $state<MissingCdiNode[]>([]);
-
-  // Track which nodes have CDI available in cache (populated during discovery/refresh)
-  let nodesWithCdi = $state(new Set<string>());
-
-  function applyConfigReadSessionPatch(patch: ConfigReadSessionPatch) {
-    if ('cdiDownloadDialogVisible' in patch) cdiDownloadDialogVisible = patch.cdiDownloadDialogVisible ?? cdiDownloadDialogVisible;
-    if ('cdiMissingNodes' in patch) cdiMissingNodes = patch.cdiMissingNodes ?? cdiMissingNodes;
-    if ('discoveryModalVisible' in patch) discoveryModalVisible = patch.discoveryModalVisible ?? discoveryModalVisible;
-    if ('discoveryPhase' in patch) discoveryPhase = patch.discoveryPhase ?? discoveryPhase;
-    if ('errorMessage' in patch) errorMessage = patch.errorMessage ?? errorMessage;
-    if ('isCancelling' in patch) isCancelling = patch.isCancelling ?? isCancelling;
-    if ('nodeReadStates' in patch) nodeReadStates = patch.nodeReadStates ?? nodeReadStates;
-    if ('pendingConfigNodes' in patch) pendingConfigNodes = patch.pendingConfigNodes ?? pendingConfigNodes;
-    if ('readProgress' in patch) readProgress = patch.readProgress ?? null;
-    if ('readingRemaining' in patch) readingRemaining = patch.readingRemaining ?? readingRemaining;
-  }
+  // CDI-inspection workflow owner (read-only XML viewer + menu re-download).
+  // Separate from acquisition: inspecting CDI does not read config values.
+  const cdiInspection = new CdiInspectionOrchestrator({
+    getCdiXml,
+    downloadCdi,
+    getRedownloadCandidates: () => nodes.map((node) => toConfigReadCandidate(node)),
+  });
 
   // Check connection status on mount
   onMount(() => {
@@ -786,14 +750,11 @@
           connected: boolean;
           config?: { name?: string | null; host?: string | null; port?: string | number | null; serialPort?: string | null } | null;
         },
-        setConnected: (value) => {
-          connected = value;
-        },
         setLayoutConnected: (value) => {
           layoutStore.setConnected(value);
         },
         setConnectionLabel: (label) => {
-          connectionLabel = label;
+          syncSessionOrchestrator.setConnectionLabel(label);
         },
         onConnectionStatusError: (error) => {
           console.error('Failed to get connection status:', error);
@@ -872,9 +833,7 @@
 
       // T063: Setup config-read-progress event listener
       unlistens.push(await listen<ReadProgressState>('config-read-progress', (event) => {
-        applyConfigReadSessionPatch(
-          applyConfigReadProgressUpdate(nodeReadStates, event.payload),
-        );
+        configAcquisition.applyProgressEvent(event.payload);
       }));
 
       // Reactive node discovery: nodes appear one-by-one as VerifiedNode replies arrive.
@@ -883,7 +842,7 @@
       // no backend proxy). In that case we upgrade them with the real bus alias and proceed
       // to registerNode + SNIP/PIP so backend proxies are created for sync.
       unlistens.push(await listen<{ nodeId: string; alias: number; timestamp: string }>('lcc-node-discovered', async (event) => {
-        if (!connected) return; // ignore stray events after disconnect
+        if (!layoutStore.isConnected) return; // ignore stray events after disconnect
         const { nodeId, alias } = event.payload;
 
         // Bug 1 fix: pass liveNodes (excludes placeholders) instead of nodes
@@ -918,7 +877,7 @@
       // D15: When a known node sends InitializationComplete (reboot/factory-reset),
       // re-query its SNIP+PIP so the UI reflects any changed configuration.
       unlistens.push(await listen<{ nodeId: string; alias: number; timestamp: string }>('lcc-node-reinitialized', async (event) => {
-        if (!connected) return;
+        if (!layoutStore.isConnected) return;
         const { nodeId, alias } = event.payload;
         console.log(`[D15] Node ${nodeId} reinitialized — refreshing SNIP+PIP`);
         // Bug 1 fix: use liveNodes — same rationale as lcc-node-discovered.
@@ -936,72 +895,68 @@
         nodeRoster.replaceLiveRoster(result.nodes);
       }));
 
-      // Native menu event listeners — relay OS menu clicks to handler functions
-      // S8-T17: disconnect must honor the unsaved-changes guard so the user is
-      // warned if there are in-memory edits or fully-captured discovered nodes
-      // not yet promoted to the layout file.
-      unlistens.push(await listen('menu-disconnect',     () => promptUnsaved(
-        'Disconnecting will discard unsaved changes. Continue?',
-        () => disconnect(),
-      )));
-      unlistens.push(await listen('menu-refresh',        () => { if (connected) handleRefresh(); }));
-      unlistens.push(await listen('menu-traffic',        () => { if (connected) openTrafficMonitor(); }));
-      unlistens.push(await listen('menu-view-cdi',       () => {
-        const state = get(configSidebarStore);
-        const nodeId = state.selectedSegment?.nodeId ?? state.selectedNodeId;
-        if (nodeId) openCdiViewer(nodeId);
-      }));
-      unlistens.push(await listen('menu-redownload-cdi', () => {
-        const state = get(configSidebarStore);
-        const nodeId = state.selectedSegment?.nodeId ?? state.selectedNodeId;
-        if (nodeId) openCdiRedownload(nodeId);
-      }));
-      unlistens.push(await listen('menu-exit', () => {
-        const win = getCurrentWebviewWindow();
-        promptUnsaved('You have unsaved changes. Exit without saving?', () => {
-          isForceClosing = true;
-          bowtieMetadataStore.clearAll();
-          win.close();
-        }, 'Exit Without Saving');
-      }));
-      unlistens.push(await listen('menu-open-layout', () => {
-        runOpenLayoutAction();
-      }));
-      unlistens.push(await listen('menu-close-layout', () => {
-        runCloseLayoutAction();
-      }));
-      unlistens.push(await listen('menu-save-layout', () => {
-        runSaveLayoutAction();
-      }));
-      unlistens.push(await listen('menu-save-layout-as', async () => {
-        runSaveLayoutAsAction();
-      }));
-      unlistens.push(await listen('menu-sync-to-bus', () => {
-        if (connected && layoutStore.hasLayoutFile) forceSyncPanel();
-      }));
-      unlistens.push(await listen('menu-add-placeholder-board', () => {
-        // FR-017a: only meaningful with an active offline layout — the menu
-        // item is already gated, but guard here too for completeness.
-        if (layoutStore.hasLayoutFile) showAddBoardDialog = true;
-      }));
-      unlistens.push(await listen('menu-delete-placeholder-board', () => {
-        // S8.5 / T11 — gated server-side by the menu enable bit; reassert
-        // here so a stale event from before a selection change cannot
-        // bypass the placeholder check.
-        const store = get(configSidebarStore);
-        const selectedNodeId = store.selectedSegment?.nodeId ?? store.selectedNodeId;
-        if (!selectedNodeId || !isPlaceholderInput(selectedNodeId)) return;
-        pendingDeletePlaceholderKey = selectedNodeId;
-      }));
-      unlistens.push(await listen('menu-diagnostics', async () => {
-        try {
-          const report = await invoke('get_diagnostic_report');
-          await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
-          // Brief visual feedback via console — a toast could be added later.
-          console.info('Diagnostic report copied to clipboard');
-        } catch (e) {
-          console.error('Failed to copy diagnostic report:', e);
-        }
+      // Native menu event listeners — relay OS menu clicks to handler
+      // functions. The registrar owns the listen/teardown bookkeeping; the
+      // route owns each action body (store access + unsaved-changes guards).
+      unlistens.push(await registerMenuListeners({
+        // S8-T17: disconnect must honor the unsaved-changes guard so the user
+        // is warned if there are in-memory edits or fully-captured discovered
+        // nodes not yet promoted to the layout file.
+        disconnect: () => promptUnsaved(
+          'Disconnecting will discard unsaved changes. Continue?',
+          () => disconnect(),
+        ),
+        refresh: () => { if (layoutStore.isConnected) handleRefresh(); },
+        traffic: () => { if (layoutStore.isConnected) openTrafficMonitor(); },
+        viewCdi: () => {
+          const state = get(configSidebarStore);
+          const nodeId = state.selectedSegment?.nodeId ?? state.selectedNodeId;
+          if (nodeId) cdiInspection.openViewer(nodeId);
+        },
+        redownloadCdi: () => {
+          const state = get(configSidebarStore);
+          const nodeId = state.selectedSegment?.nodeId ?? state.selectedNodeId;
+          if (nodeId) cdiInspection.openRedownload(nodeId);
+        },
+        exit: () => {
+          const win = getCurrentWebviewWindow();
+          promptUnsaved('You have unsaved changes. Exit without saving?', () => {
+            isForceClosing = true;
+            bowtieMetadataStore.clearAll();
+            win.close();
+          }, 'Exit Without Saving');
+        },
+        openLayout: () => runOpenLayoutAction(),
+        closeLayout: () => runCloseLayoutAction(),
+        saveLayout: () => runSaveLayoutAction(),
+        saveLayoutAs: () => runSaveLayoutAsAction(),
+        syncToBus: () => {
+          if (layoutStore.isConnected && layoutStore.hasLayoutFile) forceSyncPanel();
+        },
+        addPlaceholderBoard: () => {
+          // FR-017a: only meaningful with an active offline layout — the menu
+          // item is already gated, but guard here too for completeness.
+          if (layoutStore.hasLayoutFile) showAddBoardDialog = true;
+        },
+        deletePlaceholderBoard: () => {
+          // S8.5 / T11 — gated server-side by the menu enable bit; reassert
+          // here so a stale event from before a selection change cannot
+          // bypass the placeholder check.
+          const store = get(configSidebarStore);
+          const selectedNodeId = store.selectedSegment?.nodeId ?? store.selectedNodeId;
+          if (!selectedNodeId || !isPlaceholderInput(selectedNodeId)) return;
+          pendingDeletePlaceholderKey = selectedNodeId;
+        },
+        diagnostics: async () => {
+          try {
+            const report = await invoke('get_diagnostic_report');
+            await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+            // Brief visual feedback via console — a toast could be added later.
+            console.info('Diagnostic report copied to clipboard');
+          } catch (e) {
+            console.error('Failed to copy diagnostic report:', e);
+          }
+        },
       }));
     })().finally(() => {
       startupBootstrapPending = false;
@@ -1023,29 +978,7 @@
   });
 
   function handleConnected(e: CustomEvent<{ config: any }>) {
-    connectLiveSession({
-      config: e.detail.config,
-      hasLayoutFile: layoutStore.hasLayoutFile,
-      setConnectionLabel: (label) => {
-        connectionLabel = label;
-      },
-      setConnected: (value) => {
-        connected = value;
-      },
-      setLayoutConnected: (value) => {
-        layoutStore.setConnected(value);
-      },
-      hideConnectionDialog: () => {
-        showConnectionDialog = false;
-      },
-      resetSyncSessionAutoTrigger: () => {
-        syncSessionOrchestrator.resetAutoTrigger();
-      },
-      resetFreshLiveSessionState: () => {
-        resetFreshLiveSessionState();
-      },
-      probeForNodes,
-    });
+    syncSessionOrchestrator.connect(e.detail.config);
   }
 
   /**
@@ -1078,48 +1011,7 @@
   }
 
   async function disconnect() {
-    errorMessage = "";
-    connectionLabel = "";
-    await disconnectWithOfflineFallback({
-      disconnect: () => invoke('disconnect_lcc'),
-      afterDisconnect: () => {
-        connected = false;
-        layoutStore.setConnected(false);
-        syncPanelStore.reset();
-        syncPanelVisible = false;
-        syncSessionOrchestrator.resetAutoTrigger();
-      },
-      hasLayoutFile: layoutStore.hasLayoutFile,
-      hasSnapshots: currentLayoutSnapshots.length > 0,
-      rehydrateOffline: async () => {
-        nodeTreeStore.reset();
-        await hydrateOfflineSnapshots(currentLayoutSnapshots);
-      },
-      preserveLiveState: () => {
-        showConnectionDialog = false;
-        // S8: with a layout open but no persisted snapshots, there is
-        // nothing to "preserve" from the live session — captured-but-
-        // unsaved nodes would have either gone through the Save path
-        // (producing snapshots, taking the rehydrate branch instead) or
-        // through the Discard path (which clears their drafts and the
-        // unsaved-in-memory set). Drop live discovery state so the
-        // sidebar reflects the empty saved roster.
-        clearConfigReadStatus();
-        nodeRoster.replaceLiveRoster([]);
-        nodeTreeStore.reset();
-      },
-      clearLiveState: () => {
-        clearConfigReadStatus();
-        nodeRoster.replaceLiveRoster([]);
-        nodeTreeStore.reset();
-      },
-      showConnectionDialog: () => {
-        showConnectionDialog = true;
-      },
-      onError: (message) => {
-        errorMessage = message;
-      },
-    });
+    await syncSessionOrchestrator.disconnect();
   }
 
   /**
@@ -1128,22 +1020,7 @@
    * because the layout (and its snapshots) are about to be replaced.
    */
   async function disconnectBeforeLayoutSwitch() {
-    errorMessage = "";
-    connectionLabel = "";
-    try {
-      await invoke('disconnect_lcc');
-    } catch (e) {
-      console.warn('Disconnect before layout switch failed:', e);
-    }
-    connected = false;
-    layoutStore.setConnected(false);
-    syncPanelStore.reset();
-    syncPanelVisible = false;
-    syncSessionOrchestrator.resetAutoTrigger();
-    clearConfigReadStatus();
-    nodeRoster.replaceLiveRoster([]);
-    nodeTreeStore.reset();
-    showConnectionDialog = false;
+    await syncSessionOrchestrator.disconnectBeforeLayoutSwitch();
   }
 
   /** Fire-and-forget probe — nodes appear via lcc-node-discovered events */
@@ -1173,14 +1050,14 @@
           currentNodes: liveNodes,
           staleNodeIds: staleIds,
           selectedNodeId: selectedId,
-          nodesWithCdi,
+          nodesWithCdi: cdiCacheStore.nodes,
         });
 
         nodeRoster.replaceLiveRoster(refreshed.nodes);
         // Only clean up state for nodes that actually left — preserve config read
         // status and CDI data for nodes that are still present.
         removeNodesConfigRead(refreshed.removedNodeIds);
-        nodesWithCdi = refreshed.nodesWithCdi;
+        cdiCacheStore.replace(refreshed.nodesWithCdi);
         if (refreshed.shouldResetSidebar) {
           configSidebarStore.reset();
         }
@@ -1191,10 +1068,6 @@
     } finally {
       probing = false;
     }
-  }
-
-  function formatAlias(alias: number): string {
-    return '0x' + alias.toString(16).toUpperCase().padStart(3, '0');
   }
 
   async function openTrafficMonitor() {
@@ -1213,266 +1086,6 @@
       const existing = await WebviewWindow.getByLabel('traffic');
       if (existing) await existing.setFocus();
     });
-  }
-
-  // T066: Cancel button handler for config reading
-  async function handleCancelConfigReading() {
-    if (isCancelling) return; // Already cancelling
-    applyConfigReadSessionPatch(requestConfigReadCancellation());
-    
-    try {
-      await cancelConfigReading();
-      console.log('Config reading cancellation requested');
-    } catch (e) {
-      console.error('Failed to cancel config reading:', e);
-      applyConfigReadSessionPatch(failConfigReadCancellation(`Cancel failed: ${e}`));
-    }
-  }
-
-  // ─── CDI XML Viewer ───────────────────────────────────────────────────────
-
-  /** Read config values for all unread nodes (batch) */
-  async function readRemainingNodes() {
-    const unread = getUnreadConfigEligibleNodes(nodes, get(configReadNodesStore));
-    if (unread.length === 0) return;
-    applyConfigReadSessionPatch(beginConfigReadSession());
-
-    // Phase A: CDI pre-check — check cache for all nodes BEFORE opening any modal.
-    // This ensures the download dialog is shown before any config reading begins.
-    const preflight = await resolveConfigReadPreflight(
-      unread,
-      async (nodeId) => {
-        const cdiCheck = await getCdiXml(nodeId);
-        return cdiCheck.xmlContent !== null;
-      },
-      'Cannot read configuration',
-    );
-    nodesWithCdi = new Set([...nodesWithCdi, ...preflight.nodesWithCdi]);
-
-    if (preflight.failureMessage) {
-      applyConfigReadSessionPatch(failConfigReadSession(preflight.failureMessage));
-      return;
-    }
-
-    if (preflight.missingNodes.length > 0) {
-      applyConfigReadSessionPatch(
-        divertConfigReadToDownloadDialog(preflight.pendingNodes, preflight.missingNodes),
-      );
-      return;
-    }
-
-    // Phase B: All nodes have CDI — read config immediately.
-    const allNodes = preflight.pendingNodes;
-    applyConfigReadSessionPatch(beginConfigReadSession(createWaitingNodeReadStates(allNodes)));
-
-    try {
-      await executeConfigReadCandidates({
-        nodes: allNodes,
-        markNodeConfigRead,
-        readAllConfigValues: async (nodeId, nodeIndex, totalNodes) => (
-          readAllConfigValues(nodeId, undefined, nodeIndex, totalNodes)
-        ),
-        reloadTree: (nodeId) => nodeTreeStore.refreshTree(nodeId),
-        afterReloadTree: (nodeId) => recomputeConnectorCompatibility(nodeId),
-        setNodeReadStates: (states) => {
-          nodeReadStates = states;
-        },
-        warn: (message, error) => {
-          if (error === undefined) {
-            console.warn(message);
-            return;
-          }
-          console.warn(message, error);
-        },
-      });
-      applyConfigReadSessionPatch(finishConfigReadSession());
-    } catch (e) {
-      applyConfigReadSessionPatch(failConfigReadSession(`Read remaining failed: ${e}`));
-    }
-  }
-
-  /** Read config values for a single node (triggered from sidebar indicator) */
-  async function readSingleNodeConfig(nodeId: string) {
-    const nodeIdCanonical = canonicalizeNodeId(nodeId);
-    const node = nodes.find(n => canonicalizeNodeId(formatNodeId(n.node_id)) === nodeIdCanonical);
-    if (!node?.snip_data) return;
-    const nodeName = node.snip_data.user_name || nodeId;
-    applyConfigReadSessionPatch(beginConfigReadSession([
-      { nodeId, name: nodeName, percentage: 0, status: 'waiting' },
-    ]));
-
-    try {
-      const preflight = await resolveConfigReadPreflight(
-        [node],
-        async (candidateNodeId) => {
-          const cdiCheck = await getCdiXml(candidateNodeId);
-          return cdiCheck.xmlContent !== null;
-        },
-        'Cannot read configuration',
-      );
-
-      nodesWithCdi = new Set([...nodesWithCdi, ...preflight.nodesWithCdi]);
-
-      if (preflight.failureMessage) {
-        applyConfigReadSessionPatch(failConfigReadSession(preflight.failureMessage));
-        return;
-      }
-
-      if (preflight.missingNodes.length > 0) {
-        // CDI not in cache — close the progress modal and show the download dialog
-        // for just this node, matching the batch-read behaviour.
-        applyConfigReadSessionPatch(
-          divertConfigReadToDownloadDialog(preflight.pendingNodes, preflight.missingNodes),
-        );
-        return;
-      }
-      applyConfigReadSessionPatch(beginConfigReadSession(createWaitingNodeReadStates(preflight.pendingNodes)));
-      const execution = await executeConfigReadCandidates({
-        nodes: preflight.pendingNodes,
-        markNodeConfigRead,
-        readAllConfigValues: async (candidateNodeId, nodeIndex, totalNodes) => (
-          readAllConfigValues(candidateNodeId, undefined, nodeIndex, totalNodes)
-        ),
-        reloadTree: (candidateNodeId) => nodeTreeStore.refreshTree(candidateNodeId),
-        afterReloadTree: (candidateNodeId) => recomputeConnectorCompatibility(candidateNodeId),
-        setNodeReadStates: (states) => {
-          nodeReadStates = states;
-        },
-        warn: (message, error) => {
-          if (error === undefined) {
-            console.warn(message);
-            return;
-          }
-          console.warn(message, error);
-        },
-      });
-      const failure = execution.failures.find((entry) => entry.nodeId === nodeId && entry.status === 'failed');
-      if (failure?.error) {
-        throw new Error(String(failure.error));
-      }
-      applyConfigReadSessionPatch(finishConfigReadSession());
-    } catch (e) {
-      applyConfigReadSessionPatch(failConfigReadSession(`Failed to read config for ${nodeName}: ${e}`));
-    }
-  }
-
-  async function openCdiViewer(nodeId: string) {
-    const viewerState = createOpeningCdiViewerState(nodeId);
-    viewerVisible = viewerState.visible;
-    viewerNodeId = viewerState.nodeId;
-    viewerXmlContent = viewerState.xmlContent;
-    viewerStatus = viewerState.status;
-    viewerErrorMessage = viewerState.errorMessage;
-
-    const loadedState = await loadCdiViewerState(nodeId, getCdiXml, downloadCdi);
-    viewerXmlContent = loadedState.xmlContent;
-    viewerStatus = loadedState.status;
-    viewerErrorMessage = loadedState.errorMessage;
-  }
-
-  function openCdiRedownload(nodeId: string) {
-    const nextState = createOpenCdiRedownloadState(
-      nodeId,
-      nodes.map((node) => toConfigReadCandidate(node)),
-    );
-    cdiRedownloadNodeId = nextState.nodeId;
-    cdiRedownloadNodeName = nextState.nodeName;
-    cdiRedownloadVisible = nextState.visible;
-  }
-
-  function closeCdiRedownload() {
-    const nextState = createClosedCdiRedownloadState();
-    cdiRedownloadVisible = nextState.visible;
-    cdiRedownloadNodeId = nextState.nodeId;
-    cdiRedownloadNodeName = nextState.nodeName;
-  }
-
-  function closeCdiViewer() {
-    const nextState = createClosedCdiViewerState();
-    viewerVisible = nextState.visible;
-    viewerNodeId = nextState.nodeId;
-    viewerXmlContent = nextState.xmlContent;
-    viewerStatus = nextState.status;
-    viewerErrorMessage = nextState.errorMessage;
-  }
-
-  function handleCdiDownloadCancel() {
-    const nextState = createCancelledCdiDownloadState();
-    cdiDownloadDialogVisible = nextState.cdiDownloadDialogVisible;
-    cdiMissingNodes = nextState.cdiMissingNodes;
-    pendingConfigNodes = nextState.pendingConfigNodes;
-  }
-
-  async function handleCdiDownload() {
-    cdiDownloading = true;
-    cdiDownloadedCount = 0;
-    const nodesToDownload = [...cdiMissingNodes];
-
-    // Mark all nodes as waiting before we start
-    cdiMissingNodes = createWaitingCdiDownloadNodes(nodesToDownload);
-
-    for (let i = 0; i < nodesToDownload.length; i++) {
-      const { nodeId, nodeName } = nodesToDownload[i];
-      cdiMissingNodes = updateCdiDownloadNodeStatus(cdiMissingNodes, i, 'downloading');
-      try {
-        await downloadCdi(nodeId);
-        console.log(`Downloaded CDI for ${nodeName}`);
-        nodesWithCdi = new Set([...nodesWithCdi, nodeId]);
-        cdiMissingNodes = updateCdiDownloadNodeStatus(cdiMissingNodes, i, 'done');
-      } catch (e) {
-        console.warn(`Failed to download CDI for ${nodeName}:`, e);
-        cdiMissingNodes = updateCdiDownloadNodeStatus(cdiMissingNodes, i, 'failed');
-      }
-      cdiDownloadedCount = i + 1;
-    }
-
-    cdiDownloadDialogVisible = false;
-    cdiDownloading = false;
-
-    // Read config for ALL pending nodes that now have CDI (pre-existing + newly downloaded).
-    // pendingConfigNodes contains all unread nodes from the original batch; fall back to
-    // just the downloaded nodes when triggered from a single-node flow.
-    const nodesToRead = resolvePostDownloadReadNodes({
-      nodesToDownload,
-      nodesWithCdi,
-      pendingConfigNodes,
-    });
-    cdiMissingNodes = [];
-    pendingConfigNodes = [];
-
-    if (nodesToRead.length === 0) return;
-
-    // Show the progress modal for the config-read phase
-    applyConfigReadSessionPatch(beginConfigReadSession(createWaitingNodeReadStates(nodesToRead)));
-
-    try {
-      await executeConfigReadCandidates({
-        nodes: nodesToRead,
-        hasCachedCdi: async (nodeId) => {
-          const cdiCheck = await getCdiXml(nodeId);
-          return cdiCheck.xmlContent !== null;
-        },
-        markNodeConfigRead,
-        readAllConfigValues: async (nodeId, nodeIndex, totalNodes) => (
-          readAllConfigValues(nodeId, undefined, nodeIndex, totalNodes)
-        ),
-        reloadTree: (nodeId) => nodeTreeStore.loadTree(nodeId),
-        afterReloadTree: (nodeId) => recomputeConnectorCompatibility(nodeId),
-        setNodeReadStates: (states) => {
-          nodeReadStates = states;
-        },
-        warn: (message, error) => {
-          if (error === undefined) {
-            console.warn(message);
-            return;
-          }
-          console.warn(message, error);
-        },
-      });
-      applyConfigReadSessionPatch(finishConfigReadSession());
-    } catch (e) {
-      applyConfigReadSessionPatch(failConfigReadSession(`Read config after CDI download failed: ${e}`));
-    }
   }
 
   // Sync native menu item enable/disable state with current app state.
@@ -1511,57 +1124,47 @@
   }
 
   $effect(() => {
-    const conn = connected;
-    const busy = probing || readingRemaining;
+    const conn = layoutStore.isConnected;
+    const busy = probing || configAcquisition.readingRemaining;
     const store = $configSidebarStore;
 
     // Determine which node is selected
     const selectedNodeId = store.selectedSegment?.nodeId ?? store.selectedNodeId;
 
-    // Re-download CDI is available if any node is selected
-    const canRedownloadCdi = conn && !busy && !!selectedNodeId;
+    // Build a reactive snapshot for the pure menu-enable policy. Reading each
+    // store value here keeps the effect tracking them; `computeMenuEnableState`
+    // owns the rules (ADR-0011: `effectiveNodeStore.isDirty` is the aggregate
+    // edit facade; `layoutStore.isDirty` is struct-only).
+    const menu = computeMenuEnableState({
+      connected: conn,
+      busy,
+      hasSelection: !!selectedNodeId,
+      hasSelectedSegment: !!store.selectedSegment,
+      selectedNodeHasCdi: !!selectedNodeId && cdiCacheStore.has(selectedNodeId),
+      selectedIsPlaceholder: !!selectedNodeId && isPlaceholderInput(selectedNodeId),
+      selectedInRoster: !!selectedNodeId && nodeRoster.has(selectedNodeId),
+      layoutLoaded: layoutStore.isLoaded,
+      layoutDirty: layoutStore.isDirty,
+      metaDirty: bowtieMetadataStore.isDirty,
+      hasActiveLayout: !!layoutStore.activeContext,
+      hasLayoutFile: layoutStore.hasLayoutFile,
+      hasInMemoryEdits: effectiveNodeStore.isDirty,
+      pendingSyncCount: offlineChangesStore.pendingCount,
+    });
 
-    // View CDI is available if:
-    // - A segment is selected (segment exists → CDI exists), OR
-    // - A node is selected and has cached CDI
-    const canViewCdi =
-      conn &&
-      !busy &&
-      (!!store.selectedSegment || (!!selectedNodeId && nodesWithCdi.has(selectedNodeId)));
-
-    // Layout menu items
-    const layoutLoaded = layoutStore.isLoaded;
-    const layoutDirty  = layoutStore.isDirty;
-    const metaDirty    = bowtieMetadataStore.isDirty;
-    const offlineActive = !!layoutStore.activeContext && layoutStore.hasLayoutFile;
-    const canCloseLayout = !!layoutStore.activeContext;
-    // ADR-0011: aggregate edits read from the facade; `layoutDirty` above
-    // is struct-only and is used only for the non-offline Save gate.
-    const hasInMemoryEdits = effectiveNodeStore.isDirty;
-
-    // Open Layout and Save Layout As are meaningless while the layout picker
-    // is visible (no active layout). Gate them on an active context so the
-    // native menu items are disabled in that state.
-    const hasActiveLayout = !!layoutStore.activeContext;
-    const canOpenLayout   = !busy && hasActiveLayout;
-    const canSaveLayout   = !busy && ((offlineActive && hasInMemoryEdits) || (layoutLoaded && (layoutDirty || metaDirty)));
-    const canSaveLayoutAs = !busy && hasActiveLayout;
-    const canSyncToBus    = conn && offlineActive && offlineChangesStore.pendingCount > 0;
-    // Spec 014 / S8: "Add Placeholder Board…" is only meaningful while an
-    // offline layout is the active context.
-    const canAddPlaceholderBoard = !busy && offlineActive;
-    // Spec 014 / S8.5 / T11: "Delete Placeholder Board…" is enabled only
-    // when the currently selected node is an in-memory placeholder that is
-    // still in the roster (deleted placeholders may briefly remain as the
-    // last selection key in `selectedSegment` until the effect re-runs).
-    const canDeletePlaceholderBoard =
-      !busy
-      && offlineActive
-      && !!selectedNodeId
-      && isPlaceholderInput(selectedNodeId)
-      && nodeRoster.has(selectedNodeId);
-
-    syncMenuState(conn, busy, canViewCdi, canRedownloadCdi, canOpenLayout, canCloseLayout, canSaveLayout, canSaveLayoutAs, canSyncToBus, canAddPlaceholderBoard, canDeletePlaceholderBoard);
+    syncMenuState(
+      conn,
+      busy,
+      menu.canViewCdi,
+      menu.canRedownloadCdi,
+      menu.canOpenLayout,
+      menu.canCloseLayout,
+      menu.canSaveLayout,
+      menu.canSaveLayoutAs,
+      menu.canSyncToBus,
+      menu.canAddPlaceholderBoard,
+      menu.canDeletePlaceholderBoard,
+    );
   });
 
   $effect(() => {
@@ -1660,7 +1263,7 @@
   {:else}
 
   <!-- ═══ TOOLBAR (connected only) ═══ -->
-  {#if connected || layoutStore.isOfflineMode}
+  {#if layoutStore.isConnected || layoutStore.isOfflineMode}
     <div class="toolbar" role="toolbar" aria-label="Main toolbar">
       <div class="toolbar-left">
         <!-- Segmented mode control: Config | Bowties -->
@@ -1692,32 +1295,30 @@
             <span>Bowties</span>
           </button>
         </div>
-        {#if connected && (readingRemaining || unreadCount > 0)}
+        {#if layoutStore.isConnected && (configAcquisition.readingRemaining || unreadCount > 0)}
           <span class="toolbar-sep" aria-hidden="true"></span>
           <button
             class="toolbar-btn"
-            onclick={readRemainingNodes}
-            disabled={probing || readingRemaining}
+            onclick={() => configAcquisition.readRemaining()}
+            disabled={probing || configAcquisition.readingRemaining}
             title="Read configuration values for nodes not yet read"
           >
-            <span class="tb-icon" class:tb-spin={readingRemaining}>⟳</span>
-            <span>{readingRemaining ? 'Reading…' : `Read Remaining (${unreadCount})`}</span>
+            <span class="tb-icon" class:tb-spin={configAcquisition.readingRemaining}>⟳</span>
+            <span>{configAcquisition.readingRemaining ? 'Reading…' : `Read Remaining (${unreadCount})`}</span>
           </button>
         {/if}
-        {#if connected || layoutStore.isOfflineMode}
-          <SaveControls toolbar={true} bind:this={saveControlsRef} onSave={() => saveCurrentCaptureToFile(false)} onSaveAs={() => saveCurrentCaptureToFile(true)} />
-        {/if}
+        <SaveControls toolbar={true} bind:this={saveControlsRef} onSave={() => saveCurrentCaptureToFile(false)} onSaveAs={() => saveCurrentCaptureToFile(true)} />
       </div>
       <div class="toolbar-right">
-        {#if connected}
+        {#if layoutStore.isConnected}
           <button
             class="toolbar-status-btn"
             onclick={disconnect}
-            title="Disconnect from {connectionLabel}"
-            aria-label="Disconnect from {connectionLabel}"
+            title="Disconnect from {syncSessionOrchestrator.connectionLabel}"
+            aria-label="Disconnect from {syncSessionOrchestrator.connectionLabel}"
           >
             <span class="status-dot status-connected" aria-hidden="true"></span>
-            <span class="status-text">{connectionLabel}</span>
+            <span class="status-text">{syncSessionOrchestrator.connectionLabel}</span>
             <span class="status-disconnect-hint" aria-hidden="true">Disconnect</span>
           </button>
         {:else}
@@ -1737,12 +1338,12 @@
 
   <!-- ═══ DISCOVERY PROGRESS MODAL ═══ -->
   <DiscoveryProgressModal
-    visible={discoveryModalVisible}
-    phase={discoveryPhase}
-    {readProgress}
-    {isCancelling}
-    {nodeReadStates}
-    onCancel={handleCancelConfigReading}
+    visible={configAcquisition.discoveryModalVisible}
+    phase={configAcquisition.discoveryPhase}
+    readProgress={configAcquisition.readProgress}
+    isCancelling={configAcquisition.isCancelling}
+    nodeReadStates={configAcquisition.nodeReadStates}
+    onCancel={() => configAcquisition.cancel()}
   />
 
   <!-- ═══ SYNC PANEL MODAL ═══ -->
@@ -1771,7 +1372,7 @@
     <OfflineBanner
       capturedAt={layoutStore.activeContext?.capturedAt ?? null}
       layoutId={activeLayoutLabel}
-      isConnected={connected}
+      isConnected={layoutStore.isConnected}
       isSyncDismissed={syncPanelStore.isDismissed}
       onsyncrequest={forceSyncPanel}
     />
@@ -1783,7 +1384,7 @@
       <div class="startup-placeholder" aria-live="polite">
         <p>Loading Bowties…</p>
       </div>
-    {:else if !connected && !layoutStore.hasLayoutFile && nodes.length === 0}
+    {:else if !layoutStore.isConnected && !layoutStore.hasLayoutFile && nodes.length === 0}
       <div class="connect-area">
         <ConnectionManager on:connected={handleConnected} />
       </div>
@@ -1798,9 +1399,9 @@
       <!-- Feature 006: Bowties catalog in-page tab (no navigation) -->
       <BowtieCatalogPanel
         highlightedEventIdHex={bowtieFocusStore.highlightedEventIdHex}
-        onReadConfig={readRemainingNodes}
-        hasUnreadNodes={connected && unreadCount > 0}
-        readingConfig={readingRemaining}
+        onReadConfig={() => configAcquisition.readRemaining()}
+        hasUnreadNodes={layoutStore.isConnected && unreadCount > 0}
+        readingConfig={configAcquisition.readingRemaining}
         {unreadCount}
         nodesCount={nodes.length}
       />
@@ -1809,7 +1410,7 @@
       <!-- FR-001: two-panel layout — fixed sidebar + scrollable main area -->
       <div class="config-layout">
         <ConfigSidebar
-          on:readNodeConfig={(e) => readSingleNodeConfig(e.detail.nodeId)}
+          on:readNodeConfig={(e) => configAcquisition.readSingleNode(e.detail.nodeId)}
         />
         <div class="config-main">
           {#if showConfigCta || showCaptureRemainingCta}
@@ -1821,8 +1422,8 @@
               </p>
               <button
                 class="cta-btn"
-                onclick={readRemainingNodes}
-                disabled={readingRemaining}
+                onclick={() => configAcquisition.readRemaining()}
+                disabled={configAcquisition.readingRemaining}
               >
                 Read Node Configuration
               </button>
@@ -1841,8 +1442,8 @@
               </p>
               <button
                 class="cta-btn"
-                onclick={() => readSingleNodeConfig(selectedUnreadNodeId)}
-                disabled={readingRemaining}
+                onclick={() => configAcquisition.readSingleNode(selectedUnreadNodeId)}
+                disabled={configAcquisition.readingRemaining}
               >
                 Read Configuration
               </button>
@@ -1896,31 +1497,31 @@
 
 <!-- CDI XML Viewer Modal -->
 <CdiXmlViewer
-  visible={viewerVisible}
-  nodeId={viewerNodeId}
-  xmlContent={viewerXmlContent}
-  status={viewerStatus}
-  errorMessage={viewerErrorMessage}
-  onClose={closeCdiViewer}
+  visible={cdiInspection.viewerVisible}
+  nodeId={cdiInspection.viewerNodeId}
+  xmlContent={cdiInspection.viewerXmlContent}
+  status={cdiInspection.viewerStatus}
+  errorMessage={cdiInspection.viewerErrorMessage}
+  onClose={() => cdiInspection.closeViewer()}
 />
 
 <!-- CDI Re-download Dialog — compact download-only dialog from menu-redownload-cdi -->
-{#if cdiRedownloadVisible && cdiRedownloadNodeId && cdiRedownloadNodeName}
+{#if cdiInspection.redownloadVisible && cdiInspection.redownloadNodeId && cdiInspection.redownloadNodeName}
   <CdiRedownloadDialog
-    nodeId={cdiRedownloadNodeId}
-    nodeName={cdiRedownloadNodeName}
-    onClose={closeCdiRedownload}
+    nodeId={cdiInspection.redownloadNodeId}
+    nodeName={cdiInspection.redownloadNodeName}
+    onClose={() => cdiInspection.closeRedownload()}
   />
 {/if}
 
 <!-- CDI Download Dialog — shown when nodes lack a cached CDI after discovery -->
-{#if cdiDownloadDialogVisible}
+{#if configAcquisition.cdiDownloadDialogVisible}
   <CdiDownloadDialog
-    nodes={cdiMissingNodes}
-    downloading={cdiDownloading}
-    downloadedCount={cdiDownloadedCount}
-    onDownload={handleCdiDownload}
-    onCancel={handleCdiDownloadCancel}
+    nodes={configAcquisition.cdiMissingNodes}
+    downloading={configAcquisition.cdiDownloading}
+    downloadedCount={configAcquisition.cdiDownloadedCount}
+    onDownload={() => configAcquisition.downloadMissingCdi()}
+    onCancel={() => configAcquisition.cancelDownload()}
   />
 {/if}
 

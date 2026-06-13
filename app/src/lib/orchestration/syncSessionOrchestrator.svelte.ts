@@ -43,7 +43,6 @@ interface ConnectLiveSessionArgs {
   config: ConnectionConfig;
   hasLayoutFile: boolean;
   setConnectionLabel: (label: string) => void;
-  setConnected: (connected: boolean) => void;
   setLayoutConnected: (connected: boolean) => void;
   hideConnectionDialog: () => void;
   resetSyncSessionAutoTrigger: () => void;
@@ -58,7 +57,6 @@ interface StartupConnectionStatus {
 
 interface BootstrapStartupLifecycleArgs {
   getConnectionStatus: () => Promise<StartupConnectionStatus>;
-  setConnected: (connected: boolean) => void;
   setLayoutConnected: (connected: boolean) => void;
   setConnectionLabel: (label: string) => void;
   onConnectionStatusError?: (error: unknown) => void;
@@ -100,7 +98,6 @@ export function connectLiveSession({
   config,
   hasLayoutFile,
   setConnectionLabel,
-  setConnected,
   setLayoutConnected,
   hideConnectionDialog,
   resetSyncSessionAutoTrigger,
@@ -110,7 +107,6 @@ export function connectLiveSession({
   const transition = resolveConnectTransition(hasLayoutFile);
 
   setConnectionLabel(resolveConnectionLabel(config));
-  setConnected(true);
   setLayoutConnected(true);
   hideConnectionDialog();
   resetSyncSessionAutoTrigger();
@@ -126,7 +122,6 @@ export function connectLiveSession({
 
 export async function bootstrapStartupLifecycle({
   getConnectionStatus,
-  setConnected,
   setLayoutConnected,
   setConnectionLabel,
   onConnectionStatusError,
@@ -142,7 +137,6 @@ export async function bootstrapStartupLifecycle({
   try {
     const status = await getConnectionStatus();
     connected = status.connected;
-    setConnected(connected);
     setLayoutConnected(connected);
     if (connected && status.config) {
       setConnectionLabel(resolveConnectionLabel(status.config));
@@ -166,11 +160,133 @@ export async function bootstrapStartupLifecycle({
   }
 }
 
+/**
+ * Dependencies the orchestrator needs to drive the connect/disconnect
+ * workflow. Injected via the constructor so the orchestrator stays decoupled
+ * from Tauri/stores and is unit-testable with plain mocks.
+ *
+ * `connected` itself is NOT owned here — `layout.svelte.ts` is its authoritative
+ * owner via `setLayoutConnected`. The error banner is NOT owned here either —
+ * it is page-wide route state written by several workflows, so the orchestrator
+ * only reports failures through the narrow `setErrorMessage` dep.
+ */
+export interface SyncSessionConnectionDeps {
+  /** Disconnect the live bus session (Tauri `disconnect_lcc`). */
+  disconnectLcc: () => Promise<void>;
+  /** Probe for nodes after a fresh connect. */
+  probeForNodes: () => Promise<void> | void;
+  /** Whether a layout file is currently open. */
+  hasLayoutFile: () => boolean;
+  /** Whether the active layout has persisted snapshots (offline fallback). */
+  hasSnapshots: () => boolean;
+  /** Mirror connection state into the layout store (authoritative owner). */
+  setLayoutConnected: (connected: boolean) => void;
+  /** Reset transient state for a fresh live session on connect. */
+  resetFreshLiveSessionState: () => void;
+  /** Rehydrate offline snapshots after disconnect (resets tree first). */
+  rehydrateOffline: () => Promise<void>;
+  /** Tear down live discovery/tree state (config status + roster + tree). */
+  clearLiveState: () => void;
+  /** Reset + hide the sync panel. */
+  resetSyncPanel: () => void;
+  /** Show/hide the connection dialog (page-composition state). */
+  setShowConnectionDialog: (visible: boolean) => void;
+  /** Report a workflow error to the page banner (route-owned). */
+  setErrorMessage: (message: string) => void;
+  /** Surface a non-fatal warning (defaults to console.warn at the call site). */
+  warn?: (message: string, error?: unknown) => void;
+}
+
 export class SyncSessionOrchestrator {
   private discoverySettleTimer: ReturnType<typeof setTimeout> | null = null;
   private syncTriggered = false;
 
-  constructor(private readonly settleDelayMs = 1000) {}
+  #connectionLabel = $state('');
+
+  constructor(
+    private readonly deps: SyncSessionConnectionDeps,
+    private readonly settleDelayMs = 1000,
+  ) {}
+
+  /** Visible label for the active connection (status pill). */
+  get connectionLabel(): string {
+    return this.#connectionLabel;
+  }
+
+  /**
+   * Apply a connection label discovered outside the `connect()` path — namely
+   * the startup lifecycle (`bootstrapStartupLifecycle`) when the app launches
+   * already connected.
+   */
+  setConnectionLabel(label: string): void {
+    this.#connectionLabel = label;
+  }
+
+  /**
+   * Connect a live bus session from a ConnectionManager `connected` event.
+   * Hides preflight/transition sequencing behind the existing pure
+   * `connectLiveSession` helper; owns the connection label.
+   */
+  connect(config: ConnectionConfig): void {
+    connectLiveSession({
+      config,
+      hasLayoutFile: this.deps.hasLayoutFile(),
+      setConnectionLabel: (label) => { this.#connectionLabel = label; },
+      setLayoutConnected: this.deps.setLayoutConnected,
+      hideConnectionDialog: () => this.deps.setShowConnectionDialog(false),
+      resetSyncSessionAutoTrigger: () => this.resetAutoTrigger(),
+      resetFreshLiveSessionState: this.deps.resetFreshLiveSessionState,
+      probeForNodes: this.deps.probeForNodes,
+    });
+  }
+
+  /**
+   * Tear down the live bus session, falling back to offline state when a
+   * layout with snapshots is active. Sequencing lives in the pure
+   * `disconnectWithOfflineFallback` helper.
+   */
+  async disconnect(): Promise<void> {
+    this.deps.setErrorMessage('');
+    this.#connectionLabel = '';
+    await disconnectWithOfflineFallback({
+      disconnect: this.deps.disconnectLcc,
+      afterDisconnect: () => {
+        this.deps.setLayoutConnected(false);
+        this.deps.resetSyncPanel();
+        this.resetAutoTrigger();
+      },
+      hasLayoutFile: this.deps.hasLayoutFile(),
+      hasSnapshots: this.deps.hasSnapshots(),
+      rehydrateOffline: this.deps.rehydrateOffline,
+      preserveLiveState: () => {
+        this.deps.setShowConnectionDialog(false);
+        this.deps.clearLiveState();
+      },
+      clearLiveState: this.deps.clearLiveState,
+      showConnectionDialog: () => this.deps.setShowConnectionDialog(true),
+      onError: (message) => this.deps.setErrorMessage(message),
+    });
+  }
+
+  /**
+   * Tear down the live bus session before switching to a different layout.
+   * Skips the offline-rehydration branch of the regular disconnect path
+   * because the layout (and its snapshots) are about to be replaced.
+   */
+  async disconnectBeforeLayoutSwitch(): Promise<void> {
+    this.deps.setErrorMessage('');
+    this.#connectionLabel = '';
+    try {
+      await this.deps.disconnectLcc();
+    } catch (error) {
+      this.deps.warn?.('Disconnect before layout switch failed:', error);
+    }
+    this.deps.setLayoutConnected(false);
+    this.deps.resetSyncPanel();
+    this.resetAutoTrigger();
+    this.deps.clearLiveState();
+    this.deps.setShowConnectionDialog(false);
+  }
 
   resetAutoTrigger(): void {
     this.cancelPendingTrigger();

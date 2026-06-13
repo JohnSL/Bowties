@@ -6,9 +6,9 @@
 |-------|-------|-----------------|
 | Routes | 3 pages + layout | Screen composition, tab wiring |
 | Components | ~37 across 8 dirs | Rendering, intent emission |
-| Orchestrators | 14 | Async workflows, lifecycle transitions |
+| Orchestrators | 15 | Async workflows, lifecycle transitions |
 | Stores | ~21 | Durable frontend state, derived values |
-| Utils | ~13 | Normalization, formatting, serialization |
+| Utils | ~14 | Normalization, formatting, serialization |
 | API | 8 | Tauri IPC bindings |
 | bowties-core | 19 modules | Node tree, layout persistence, profile, registry, placeholder, bowtie catalog |
 | Backend (Tauri shell) | ~15 modules | IPC commands, state, placeholder factory, events |
@@ -114,21 +114,22 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | File | Purpose | Test |
 |------|---------|------|
 | `discoveryOrchestrator.ts` | Node discovery workflow: probe → SNIP/PIP → publish | `discoveryOrchestrator.test.ts` |
-| `configReadOrchestrator.ts` | Per-node CDI read preflight and eligibility checks | `configReadOrchestrator.test.ts` |
-| `configReadSessionOrchestrator.ts` | Multi-node config read session lifecycle (cancel/phase) | `configReadSessionOrchestrator.test.ts` |
+| `configReadOrchestrator.ts` | Per-node CDI read preflight and eligibility checks (pure helpers; composed by `configAcquisitionOrchestrator`) | `configReadOrchestrator.test.ts` |
+| `configAcquisitionOrchestrator.svelte.ts` | **Stateful owner of the acquire-config workflow**: CDI preflight → missing-CDI download dialog → config reads → per-node progress → cancel. Class with `$state` + reactive getters; route instantiates with constructor-injected deps (`new ConfigAcquisitionOrchestrator({...})`) and delegates intent (`readRemaining`, `readSingleNode`, `cancel`, `downloadMissingCdi`, `cancelDownload`, `applyProgressEvent`). Merges newly cached nodes into `cdiCacheStore` (its single owner; S6). | `configAcquisitionOrchestrator.svelte.test.ts` |
 | `configDraftOrchestrator.ts` | Mirrors config drafts to backend IPC or offline persistence | — |
-| `cdiDialogOrchestrator.ts` | CDI download/cache/redownload state machine | `cdiDialogOrchestrator.test.ts` |
+| `cdiInspectionOrchestrator.svelte.ts` | **Stateful owner of CDI inspection**: read-only XML viewer + menu re-download dialog. Class with `$state` + getters; route instantiates with injected deps and delegates `openViewer`/`closeViewer`/`openRedownload`/`closeRedownload`. Viewer load (cache → download fallback → error) hidden behind `openViewer`; `loadCdiViewerState` exported as a pure helper. Does NOT read config values. | `cdiInspectionOrchestrator.svelte.test.ts` |
 | `connectorSelectionOrchestrator.ts` | Connector slot selection + compatibility recompute | `connectorSelectionOrchestrator.test.ts` |
 | `placeholderBoardOrchestrator.ts` | Spec 014 / S8.10: placeholder board lifecycle. Calls `addPlaceholderBoardIpc(profileStem)` (backend factory mints UUID, builds proxy, registers in backend), then reads tree via `getNodeTree` IPC and seeds `nodeRoster`. Delete gates on caller-supplied `confirm: () => Promise<boolean>` (FR-017a). UUID minting moved to backend factory in S8.10. | `placeholderBoardOrchestrator.test.ts` |
 | `offlineLayoutOrchestrator.ts` | Offline layout hydration and snapshot replay. Exposes `buildOfflineDiscoveryNodes`, `buildOfflineTreesFromSnapshots`, `rehydrateOfflineStateFromSnapshots`, `restoreRecentOfflineLayout`, `openOfflineLayoutWithReplay`. The legacy standalone `resetLayoutStateForNoLayout` / `resetFreshLiveSessionState` exports remain for back-compat but new code MUST go through `layoutLifecycleOrchestrator` (ADR-0011) — the route's two wrappers now delegate. | `offlineLayoutOrchestrator.test.ts` |
 | `layoutLifecycleOrchestrator.ts` | **Single owner of in-memory layout-lifecycle resets** (ADR-0011, Step 11). Three named entry points: `resetForNewLayout({connected, reprobeLiveNodes, probeForNodes, afterReset})` (full teardown — close, discard, new-layout, no-layout recovery; calls `nodeRoster.clearLayoutScope()` so placeholders do NOT bleed across layouts — R7 fix), `resetForFreshLiveSession()` (disconnect/reconnect within the same live session; preserves placeholders because they are layout-scoped), and `closeLayout({activeMode, closeLayoutIpc, clearRecentLayout, ...})` which sequences backend close → frontend reset. Imports stores directly (not callback bags) so a new `effectiveNodeStore` input cannot be added without also extending the reset path. | `layoutLifecycleOrchestrator.test.ts` |
 | `saveLayoutOrchestrator.ts` | Full save lifecycle: flush pending → persist layout → rebuild catalog → update context & partial nodes → clear metadata → mark clean. **S8.11:** accepts `inMemorySnapshotKeys?: string[]` (unified real-node + placeholder keys) and appends `{type:'addNode', nodeKey}` deltas; surfaces `persistedNodeIds` into the updated `ActiveLayoutContext.layoutNodeIds`. | `saveLayoutOrchestrator.test.ts` |
 | `startupOrchestrator.ts` | Layout picker lifecycle (Spec 013 / S6): `loadKnownLayouts`, `openLayoutFromRegistry` (open existing → register), `createNewLayout` (capture → save → reopen → register), `removeKnownLayout`, `deriveLayoutNameFromPath`. Pure functions with injected callbacks — no direct store or IPC imports. Registry refresh failures are non-fatal (logged via `onError`). | `startupOrchestrator.test.ts` (14 tests) |
-| `syncSessionOrchestrator.ts` | Sync session lifecycle: classify → mode → reconcile | `syncSessionOrchestrator.test.ts` |
+| `syncSessionOrchestrator.svelte.ts` | **Stateful owner of the connect/disconnect workflow + sync-session lifecycle.** Class with `connectionLabel` `$state` + getter and injected `SyncSessionConnectionDeps`; route instantiates and delegates `connect(config)` / `disconnect()` / `disconnectBeforeLayoutSwitch()`. Connect/disconnect sequencing stays in the exported pure helpers `connectLiveSession` / `disconnectWithOfflineFallback` (composed by the class). `connected` is NOT owned here — `layout.svelte.ts` is authoritative (`setLayoutConnected` dep). `errorMessage` is NOT owned here — it is the page-wide banner, written by several workflows and reported through the narrow `setErrorMessage` dep. Also owns sync auto-trigger (`scheduleAutoSync`, `maybeTriggerSync`, `forceSyncPanel`) and `bootstrapStartupLifecycle` (`setConnectionLabel` setter used by startup-connected). | `syncSessionOrchestrator.svelte.test.ts` |
 | `syncApplyOrchestrator.ts` | Post-apply reconciliation: rebuild offline trees | `syncApplyOrchestrator.test.ts` |
 | `syncPanelViewOrchestrator.ts` | Sync panel user interactions (mode, deselect, apply) | `syncPanelViewOrchestrator.test.ts` |
 | `lifecycleTransitionMatrix.ts` | App lifecycle transition decision logic | `lifecycleTransitionMatrix.test.ts` |
 | `unsavedChangesGuard.ts` | Navigation guard for unsaved edits | `unsavedChangesGuard.test.ts` |
+| `menuListeners.ts` | **Owner of the native-menu (`menu-*`) event listener lifecycle** (S4). `registerMenuListeners(actions, listenFn?)` registers one Tauri `listen` per entry in the `MENU_EVENT_BINDINGS` table and returns a single combined teardown; `listenFn` is injectable for tests. The route supplies each action body (store access + unsaved-changes guards) via `MenuActionHandlers`; this module owns only the event-name table and register/unlisten bookkeeping. Mirrors `installMenuShortcuts`' shape. | `menuListeners.test.ts` |
 
 ---
 
@@ -149,6 +150,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `syncPanel.svelte.ts` | Sync session state: conflict/clean row tracking | `syncPanel.store.test.ts` |
 | `connectorSelections.svelte.ts` | Connector slot selections per-node. **Spec 014 / S6:** writes through `set_node_mode_selection` IPC (`$lib/api/layout`) — the unified `node_mode_selections` seam on `LayoutFile`. Identity mapping for Tower-LCC: slot_id ≡ mode_id, daughterboardId ≡ variantId. `fromNodeModeSelections(nodeId, profile, selections)` projects the unified map back onto the slot list for display. IPC save failures are logged via `console.warn` (not stored in the node-level error channel, which is reserved for "can't load this connector"). Selector changes are wrapped by `connectorSelectionOrchestrator.applyConnectorSelectionChange` which awaits `nodeTreeStore.refreshTree(nodeId)` so the backend re-runs `annotate_tree` with the new selection and the rendered tree re-shapes. | `connectorSelections.s6.test.ts` |
 | `partialCaptureNodes.svelte.ts` | Canonical `NodeKey` set of live nodes whose config read finished with at least one missing/failed leaf (partial capture warnings). Promoted from a `+page.svelte` `$state<Set>` so `effectiveNodeStore` and `layoutLifecycleOrchestrator` share a single reactive source for the partial-capture half of the full-capture threshold (ADR-0007, ADR-0011). Exposes `has(key)`, `replace(keys)`, `clear()`. | — |
+| `cdiCache.svelte.ts` | Node-ID set of nodes whose CDI is present in the local cache. Promoted from a `+page.svelte` `$state<Set>` (S6) so the shared cached-CDI state has one owner. Written by `configAcquisitionOrchestrator` (preflight + post-download merge via `add`) and the refresh reconciler (`replace`); read by the native-menu enable effect (`has`) to gate "View CDI". Exposes `nodes`, `has(id)`, `add(ids)`, `replace(ids)`, `reset()`. | `cdiCache.svelte.test.ts` |
 | `bowtieFocus.svelte.ts` | Currently focused bowtie card (keyboard nav) | — |
 | `connectorSlotFocus.svelte.ts` | Focused connector slot per-node | — |
 | `connectionRequest.svelte.ts` | Cross-tab connection request (config→bowtie) | — |
@@ -202,6 +204,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `treeLeafViewState.ts` | Display state for tree leaf rows (offline, compatibility) | `treeLeafViewState.test.ts` |
 | `treeConfigValuePersistence.ts` | TreeConfigValue ↔ offline-stored string format | — |
 | `layoutPath.ts` | Layout file path utilities: `normalizeLayoutTitle` strips extensions to get display name | `layoutPath.test.ts` |
+| `menuEnableState.ts` | **Single owner of the native-menu enable policy** (S4). Pure `computeMenuEnableState(inputs: MenuEnableInputs) → MenuEnableState` derives the enable bits for the File/Connection menu items (View/Re-download CDI, Open/Close/Save/Save As, Sync to Bus, Add/Delete Placeholder Board). The route's reactive `$effect` builds the snapshot from its stores and feeds the result to the `update_menu_state` IPC. ADR-0011: reads the aggregate `hasInMemoryEdits` facade for offline Save, struct-only `layoutDirty` for the loaded-layout Save gate. | `menuEnableState.test.ts` |
 | `xmlFormatter.ts` | Pretty-print XML for CDI viewer | — |
 
 ---

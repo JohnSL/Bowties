@@ -78,7 +78,7 @@ Which modules participate in each major workflow. For full ownership rules, see 
 
 ## Sync Session (Classification)
 - **Route:** `+page.svelte`
-- **Orchestrator:** `syncSessionOrchestrator.ts`
+- **Orchestrator:** `syncSessionOrchestrator.svelte.ts`
 - **Store:** `syncPanel.svelte.ts`
 - **API:** `sync.ts`
 - **Backend:** `commands/sync_panel.rs` (thin coordinator; delegates scoring to `bowties_core::sync::classifier`, CDI field resolution to `bowties_core::sync::field_meta`, change helpers to `bowties_core::sync::changes`)
@@ -126,3 +126,10 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **Orchestrator:** `unsavedChangesGuard.ts`
 - **Store:** `changeTracker.svelte.ts`, `configChanges.svelte.ts`
 - **Component:** `DiscardConfirmDialog.svelte`
+
+## Native Menu Wiring (S4)
+- **Route:** `+page.svelte` — builds the `MenuEnableInputs` snapshot in a reactive `$effect`, supplies `MenuActionHandlers` bodies, pushes enable bits via `update_menu_state` IPC
+- **Util:** `menuEnableState.ts` (`computeMenuEnableState` — pure enable policy)
+- **Orchestrator:** `menuListeners.ts` (`registerMenuListeners` — owns the `menu-*` listen/teardown lifecycle)
+- **Keyboard:** `menuShortcuts.ts` (`installMenuShortcuts` — Ctrl/Cmd accelerator bindings)
+- **Backend:** `update_menu_state` IPC command (native menu item enable/disable)
