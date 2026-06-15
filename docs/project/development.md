@@ -48,6 +48,23 @@ npm run test:refactor-gate
 
 For changes in the offline layout, sync, discovery, or config-read workflow, run `npm run test:refactor-gate` before opening a PR. Add any narrower route/store/component tests needed for the slice you touched. Use `npm run check` selectively while the broader frontend typecheck baseline is still being cleaned up.
 
+## Knowledge-base enrichment gate
+
+Production code changes should be accompanied by knowledge-base / product-doc enrichment (`aiwiki/`, `product/`, or `specs/backlog.md`). Two deterministic gates enforce this so it does not depend on remembering:
+
+- **VS Code Stop hook** (`.github/hooks/enrichment-gate.json` → `enrichment-gate.ps1`): when the agent tries to finish, it blocks completion if non-test source under `app/src/`, `app/src-tauri/src/`, `lcc-rs/`, or `bowties-core/` changed in the working tree but no doc/KB file did. Workspace hooks like this do not need the `chat.useCustomAgentHooks` setting, but agent hooks are a Preview VS Code feature overall — hence the pre-push safety net below.
+- **Git pre-push hook** (`.githooks/pre-push` → `enrichment-prepush.ps1`): the durable safety net. Blocks a push when the pushed commits change source without an accompanying doc update.
+
+Both gates share one classifier (`.github/hooks/enrichment-classify.ps1`), so the rules never drift.
+
+**One-time setup** for the pre-push gate (requires PowerShell 7 / `pwsh` on PATH):
+
+```bash
+git config core.hooksPath .githooks
+```
+
+**Override** (use sparingly): add `[kb-skip:reason]` to a commit message to bypass the pre-push check for that push; add `[kb-required]` to force the check even when no code paths matched.
+
 ## Architecture
 
 ```

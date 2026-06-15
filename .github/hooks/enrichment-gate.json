@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File .github/hooks/enrichment-gate.ps1",
+        "windows": "pwsh -NoProfile -ExecutionPolicy Bypass -File .github\\hooks\\enrichment-gate.ps1",
+        "timeout": 15
+      }
+    ]
+  }
+}

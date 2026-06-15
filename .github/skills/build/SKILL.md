@@ -10,11 +10,13 @@ Implement feature slices using TDD. One slice at a time, test-first, across sess
 ## Session Startup
 
 1. Detect current feature from branch name or `$env:SPECIFY_FEATURE`
-2. Read `specs/<feature>/slices.md` — find the next unchecked slice
+2. Read `specs/<feature>/slices.md` — read the **Roadmap** table and find the next slice that is not `done` (respecting blocked-by order)
 3. If resuming: read the session note at the bottom of slices.md for context
 4. Re-orient via `aiwiki/owners.md` for modules you'll touch
 
 If slices.md doesn't exist, tell the user to run `/slices` first.
+
+The roadmap is a thin, two-tier file: every slice starts as a one-line `sketched` row, and you expand exactly one slice to task detail at a time (see [Just-In-Time Tasking](#just-in-time-tasking) below).
 
 ## Pre-Implementation Checks
 
@@ -24,6 +26,20 @@ If slices.md doesn't exist, tell the user to run `/slices` first.
 2. Check `product/architecture/code-placement-and-ownership.md` — is each file in the right layer?
 3. Check `product/architecture/adr/` — does the approach conflict with past decisions?
 4. Check open GitHub issues labeled `kind/idea` filtered by relevant `area/*` labels (`gh issue list --repo JohnSL/Bowties --label kind/idea --state open`) for prior work on this area. Also glance at any residual `specs/ideas/**` files until migration completes.
+
+## Just-In-Time Tasking
+
+`/slices` produces a **roadmap** of slice cards: each carries intent, boundary, blocked-by, acceptance criteria, and (for HITL/new-seam slices) an architecture note — but **no per-layer task breakdown**. You author the task breakdown **one slice at a time**, just before implementing that slice — never all up front. This keeps a mid-feature pivot cheap: it edits a slice card plus the single slice in flight, not a whole task list.
+
+**At the start of each slice:**
+
+1. Take the next roadmap slice that is not `done`. Confirm its blocked-by slices are `done`.
+2. **Re-read the roadmap** and adjust this slice's card in light of what earlier slices revealed — its boundary, and its acceptance criteria or architecture note if the learning changed them. If the learning changes the slice's intent, label, or ordering — or splits/merges it — update the card(s) first. This per-slice re-cut is an **expected checkpoint**, not an exception.
+3. Append the **per-layer task breakdown** to the slice's card, following [SLICE-FORMAT.md](../slices/SLICE-FORMAT.md). The acceptance criteria are already on the card — do not rewrite them; derive the tasks from them. Task 1 is always the integration test; implementation tasks in dependency order (deepest layer first); the last task is always validation. Add complexity / user-stories to the card if not already present.
+4. Flip the slice's status `sketched → tasked`.
+5. Proceed with the Per-Slice Workflow below.
+
+Only **one** slice is `tasked` at a time. Do not author the task breakdown for a downstream slice until the current one is `done`. If a pivot during implementation invalidates a downstream slice, edit that slice's card — it costs a sentence, not a rewrite, precisely because its tasks were never authored.
 
 ## Per-Slice Workflow
 
@@ -83,11 +99,35 @@ Rules:
 - Mock at [system boundaries only](mocking.md)
 - Tests should verify [behavior, not implementation](tests.md)
 
+#### Delegating the loop to the TDD coordinator (optional, context-saving)
+
+Red→green→refactor accumulates failing-test output, stack traces, and abandoned
+attempts that fill the main window fast. To keep the main conversation lean, you
+may run the loop for the **current, already-tasked slice** through the `tdd-build`
+coordinator agent, which delegates each phase to a context-isolated worker
+(`tdd-red`, `tdd-green`, `tdd-refactor`) and returns one summary per cycle.
+
+Constraints when delegating:
+- The coordinator runs **strictly downstream of `/design`** and **inside** a
+  single slice that is already `status: tasked` (and, for HITL slices, already
+  approved). It never re-decides architecture or re-cuts slices — that stays here.
+- The **Refactor** worker is bound to `architecture-first-fix`: if cleanup reveals
+  a deeper seam problem, it stops and surfaces options instead of patching.
+- The coordinator stops at the slice boundary and writes back to `slices.md`, then
+  hands control here to re-read the roadmap and task the next slice (per
+  [Just-In-Time Tasking](#just-in-time-tasking)).
+
+Delegation is optional. For a small slice it is often cheaper to run the loop
+inline; for a long or test-heavy slice, prefer the coordinator. Either way the
+TDD rules above are unchanged.
+
 ### After Each Slice
 
 1. Check off all tasks in slices.md (`[x]`)
-2. Update the status line (`N/total slices complete`)
-3. Present the result: what was built, what the test proves, any surprises
+2. Set the slice's roadmap status `tasked → done`
+3. Update the status line (`N/total slices complete`)
+4. Present the result: what was built, what the test proves, any surprises
+5. **Re-read the roadmap and adjust the next slice's card** in light of what this slice revealed (the just-in-time re-cut) — its boundary, and acceptance criteria/architecture note if the learning changed them. Do not author the next slice's task breakdown until you actually start it.
 
 ## Session Capacity
 

@@ -21,6 +21,21 @@ If the answer is "nothing new is visible," the slice is not vertical — it is e
 - A horizontal foundation that should be folded into the first downstream slice that produces a visible outcome, OR
 - A legitimate `[REFACTOR]` slice (see below) whose acceptance criteria describe what invariant is preserved, not what's new.
 
+### The Vertical-Slice Gate (a slice is rejected unless it passes)
+
+A proposed slice is **valid only if both** of these hold:
+
+1. **It cuts every layer the behavior needs** — a complete path, not one horizontal layer.
+2. **It yields a user-exercisable behavior** — a product manager can demo or observe the result, or (for `[REFACTOR]`) verify a preserved invariant.
+
+If a proposed slice fails either test, **reject it** and reshape:
+
+- A slice that is "just the store", "just the types", "all the backend", or "all the tests" is **horizontal** → reject and fold it into the first downstream slice that becomes demoable (use Stub-and-Widen below).
+- A slice that touches all layers but produces nothing the user can exercise is **not a slice** → it is setup; merge it forward.
+
+**"Testable" means "user-demoable", not merely "test-covered."** A slice that adds tests against an internal shape nobody can yet exercise is not testable in the sense this gate requires. The test that proves a slice must exercise the user-visible behavior end-to-end, not an internal data structure in isolation.
+
+
 ### Stub-and-Widen (Preferred S1 Pattern)
 
 When a feature needs backend foundation before UI can render, the first slice should **stub the backend** and wire the full vertical path:

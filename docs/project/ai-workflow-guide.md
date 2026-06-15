@@ -44,9 +44,9 @@ For larger work that needs planning:
 1. **`/specify`** — describe the feature. AI produces a spec. Review and refine.
 2. **`/clarify`** — AI identifies underspecified areas. You answer targeted questions.
 3. **`/plan`** — AI produces an implementation plan. Review and approve.
-4. **`/design`** — AI assesses architecture and defines vertical slices. Review findings and trade-offs.
-5. **`/slices`** — AI generates slice task file. Review granularity and HITL/AFK labels.
-6. **`/build`** — AI implements slices with TDD. May span multiple sessions.
+4. **`/design`** — AI assesses architecture and validates the **slice set** (the roadmap) against placement rules and ADRs. It does *not* drill slices into tasks. Review findings and trade-offs.
+5. **`/slices`** — AI generates a slice **roadmap**: one card per slice (intent + boundary + HITL/AFK + acceptance criteria, plus an architecture note for slices that shift the design). The per-layer task breakdown is *not* written yet. Review granularity, acceptance criteria, and labels.
+6. **`/build`** — AI appends a task breakdown to **one slice at a time**, implements it with TDD, then re-reads the roadmap and adjusts the next slice's card before expanding it. May span multiple sessions.
 7. **`/feature-finish`** — AI audits docs, enriches KB, captures deferrals. Does NOT commit.
 8. **Commit.** Review and commit to the branch.
 9. **Merge to main.** Squash-merge the branch into main.
@@ -56,13 +56,25 @@ Always run `/feature-finish` before merging so its updates are part of the squas
 
 You can use `/grill-with-docs` between steps 2-3 to stress-test the design against the glossary and past ADRs.
 
+### Vertical slices and just-in-time tasking
+
+Work is cut into **vertical slices** — each slice cuts through every layer it needs *and* yields something you can see, do, or verify. A slice that is "just the store", "just the types", "all the backend", or "all the tests" is **horizontal** and is rejected at `/design`/`/slices` time. "Testable" here means *user-demoable*, not merely *test-covered*.
+
+`/slices` writes a **roadmap** of slice cards — each carries what you review: the slice's intent, the layers it cuts, the **acceptance criteria** (what you'll be able to test/demo), and — for slices that introduce a new pattern or seam — a short **architecture note**. What it deliberately leaves out is the pivot-fragile per-layer **task breakdown** (`store…`, `backend…`, `lcc-rs…`); `/build` appends that to one card at a time, just before implementing it, and re-cuts the next slice after each one finishes. This keeps your review surface intact — you can still judge each slice's purpose, architectural impact, and testability up front — while mid-feature pivots stay cheap: changing your mind edits a card plus the single slice in flight, not a whole pre-written task list. Expect the AI to pause at each slice boundary, show you what it learned, and adjust the next card before continuing.
+
 ### Multi-session builds
 
-Larger features may require multiple `/build` sessions. The AI tracks progress in `specs/<feature>/slices.md` with checkboxes. At the start of each session, it reads the slice file, finds the next unchecked slice, and picks up where the previous session left off.
+Larger features may require multiple `/build` sessions. The AI tracks progress in `specs/<feature>/slices.md`: each roadmap card carries a status (`sketched` → `tasked` → `done`) and tasks are checked off as they complete. At the start of each session, it reads the roadmap, finds the next slice that isn't `done`, and picks up where the previous session left off.
 
-Slices are classified as **HITL** (needs your pattern-level input) or **AFK** (AI handles autonomously). HITL slices present the architectural pattern question before implementing. AFK slices proceed directly.
+Slices are classified as **HITL** (needs your pattern-level input), **AFK** (AI handles autonomously), or **REFACTOR** (no user-visible change; preserves an invariant). HITL slices present the architectural pattern question before implementing. AFK and REFACTOR slices proceed directly.
 
 The AI judges how many slices fit in a session based on complexity. It always stops at a slice boundary — never mid-slice — so every session ends with tests passing.
+
+### The TDD coordinator (optional, for long slices)
+
+The red→green→refactor loop generates a lot of failing-test output and abandoned attempts that fill the chat window fast. For a long or test-heavy slice, the AI can run the loop through the **`tdd-build` coordinator agent**, which delegates each phase to a context-isolated worker (`tdd-red` writes one failing test, `tdd-green` writes the minimal code to pass, `tdd-refactor` cleans up) and returns just a summary per cycle — so your main conversation stays lean.
+
+The coordinator runs **strictly inside an already-designed, already-tasked slice** — it never re-decides architecture or re-cuts slices. Its Refactor worker is bound to `architecture-first-fix`: if cleanup reveals a deeper seam problem (wrong layer, ADR conflict, broken invariant), it stops and surfaces options to you instead of patching through. For a small slice it's often cheaper to just run the loop inline; the coordinator is there when context is the constraint.
 
 ### When context gets long
 
@@ -157,15 +169,16 @@ How a feature flows from idea to main, and where each tool fits.
 ```
 Brainstorm ─► /specify ─► /clarify ─► /plan ─► /design ─► /slices ─► /build ─► /feature-finish ─► Merge
                 │                        │          │          │          │
-                │                        │          │          │          ├─ TDD per slice (red→green)
+                │                        │          │          │          ├─ TDD per slice (red→green→refactor)
+                │                        │          │          │          ├─ Tasks one slice at a time (just-in-time tasking)
                 │                        │          │          │          ├─ Multi-session via slices.md
                 │                        │          │          │          └─ aiwiki/ enrichment
                 │                        │          │          │
-                │                        │          │          └─ HITL/AFK labels
-                │                        │          │             Slice task file generated
+                │                        │          │          ├─ HITL/AFK labels
+                │                        │          │          └─ Slice roadmap (cards w/ acceptance criteria)
                 │                        │          │
                 │                        │          └─ Architecture assessment
-                │                        │             Vertical slices defined
+                │                        │             Slice set (roadmap) validated
                 │                        │             Depth/locality/seam evaluation
                 │                        │
                 │                        └─ /grill-with-docs (optional stress-test)
@@ -181,9 +194,9 @@ Brainstorm ─► /specify ─► /clarify ─► /plan ─► /design ─► /s
 | **Specify** | `/specify` — AI creates spec | You describe, AI writes | `specs/NNN-feature/spec.md` |
 | **Clarify** | `/clarify` — AI asks targeted questions | AI asks, you answer | Updated `spec.md` |
 | **Plan** | `/plan` — AI creates implementation plan | AI proposes, you approve | `specs/NNN-feature/plan.md` |
-| **Design** | `/design` — AI assesses architecture, defines slices | AI analyzes, you decide on trade-offs | Architecture Assessment in `plan.md` |
-| **Slices** | `/slices` — AI generates slice task file | AI proposes, you review granularity | `specs/NNN-feature/slices.md` |
-| **Build** | `/build` — AI implements slices with TDD (multi-session) | AI codes, you review HITL slices | Code, tests, aiwiki/ enrichment |
+| **Design** | `/design` — AI assesses architecture, validates the slice set (roadmap) | AI analyzes, you decide on trade-offs | Architecture Assessment in `plan.md` |
+| **Slices** | `/slices` — AI generates the slice **roadmap** (one card per slice: intent, boundary, acceptance criteria, arch note) | AI proposes, you review granularity + acceptance criteria | `specs/NNN-feature/slices.md` |
+| **Build** | `/build` — AI tasks and implements one slice at a time with TDD (multi-session) | AI codes, you review HITL slices | Code, tests, aiwiki/ enrichment |
 | **Finish** | `/feature-finish` — AI audits docs and KB | AI proposes, you review | product/, aiwiki/, ideas updates |
 | **Merge** | Squash-merge branch to main | You | Clean history on main |
 | **Close spec** | `/spec-close` — AI archives spec, extracts ideas | AI proposes, you confirm | Spec moved to `specs/archive/`, ideas captured |

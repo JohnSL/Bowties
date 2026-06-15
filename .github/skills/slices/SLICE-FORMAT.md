@@ -9,6 +9,27 @@ This file serves three audiences:
 
 Fields are designed for future GitHub issue compatibility: each slice maps to one issue with title, description, acceptance criteria, and blocked-by.
 
+## Two Tiers: Roadmap + Just-In-Time Tasks
+
+The file has **two tiers**, and `/slices` writes only the first:
+
+- **Tier 1 — Roadmap** (authored by `/slices`): the ordered set of slices, each written as a **roadmap card** rich enough to review without seeing code — title, one-line intent, layer boundary, HITL/AFK/REFACTOR label, blocked-by, **acceptance criteria** (what you'll be able to test/demo), and — for slices that shift the architecture — a short **architecture note** (pattern introduced / seam touched). Each card starts at `status: sketched`. This is the whole-feature view the architecture firewall validated in `/design`.
+- **Tier 2 — Task breakdown** (authored by `/build`, one slice at a time): the per-layer task list for a single slice, appended to that slice's card **only when `/build` is about to implement it**. Expanding the next slice flips its status `sketched → tasked`; finishing it flips `tasked → done`.
+
+**Only the per-layer task breakdown is deferred — not the slice's behavioral contract.** Acceptance criteria and the architecture note are the slice's *purpose* and *impact*; you need them to review and approve a slice (especially a HITL one), and they are cheap and pivot-stable to author. What is genuinely pivot-fragile is the per-layer task list (`S1-T2: store…`, `S1-T3: backend…`), because earlier slices routinely invalidate it (re-slices, "Option 2/3" re-cuts). Plan **direction broadly, tasks narrowly**: the roadmap carries enough to review, but a mid-feature pivot still edits a card plus the one slice in flight — not a pre-written task list.
+
+## Slice Status Lifecycle
+
+Each slice carries a `status`:
+
+| Status | Meaning | Set by |
+|--------|---------|--------|
+| `sketched` | Roadmap card (intent, boundary, acceptance criteria, arch note) written; no task breakdown yet | `/slices` |
+| `tasked` | Per-layer task breakdown appended to the card; ready to implement or in progress | `/build` at slice start |
+| `done` | All tasks checked; slice complete | `/build` at slice end |
+
+`/build` only ever holds **one** slice at `tasked` at a time. After completing it, `/build` re-reads the roadmap, adjusts the *next* slice's card (boundary and, if learning changed them, acceptance criteria) in light of what was learned, then appends that slice's task breakdown.
+
 ## File Structure
 
 ```markdown
@@ -49,33 +70,67 @@ Status: {N}/{total} slices complete
 
 ---
 
-## S1: {Slice title} [{HITL|AFK|REFACTOR}]
+## Roadmap
 
-**Layers**: {Route, Component, Store, API, Backend, lcc-rs}
-**Blocked by**: None
-**Complexity**: {small | medium | large}
-**User stories**: {US1, US3 — from spec.md}
+The ordered slice set. An overview table for at-a-glance scanning, followed by one **roadmap card** per slice. `/build` appends a task breakdown to a card when it implements that slice; it does not pre-author tasks.
 
-{One-paragraph description of the end-to-end behavior this slice delivers. Describe the behavior, not layer-by-layer implementation.}
+| # | Slice title | Label | Blocked by | Status |
+|---|---|---|---|---|
+| S1 | {title} | HITL | None | sketched |
+| S2 | {title} | AFK | S1 | sketched |
+| S3 | {title} | REFACTOR | S2 | sketched |
+
+### S1: {Slice title} [{HITL|AFK|REFACTOR}]
+
+**Intent**: {what the user can see or do after this slice — for REFACTOR, the invariant preserved}
+**Boundary**: {Route → Component → Store → API → Backend → lcc-rs — the layers this slice cuts}
+**Blocked by**: {None | S{M}}
+**Status**: sketched
 
 **Acceptance criteria**:
 - [ ] {Behavioral criterion verifiable by a product manager — what the user sees or can do}
 - [ ] {Another behavioral criterion}
 
-**Tasks**:
-- [ ] S1-T1: Write integration test — {what the test proves}
-- [ ] S1-T2: {Deepest layer} — {what to implement}
-- [ ] S1-T3: {Next layer} — {what to implement}
-- [ ] S1-T4: {Next layer} — {what to implement}
-- [ ] S1-T5: Validate — {test suite(s) pass, implementation assertions}
+**Architecture note** *(HITL / new-seam slices only)*: {1–2 lines — the pattern this slice introduces or the seam it changes, and why it needs review. Omit for AFK/REFACTOR slices that reuse an established pattern.}
+
+### S2: {Slice title} [{HITL|AFK|REFACTOR}]
+
+**Intent**: {one-line intent}
+**Boundary**: {layers}
+**Blocked by**: S1
+**Status**: sketched
+
+**Acceptance criteria**:
+- [ ] {criterion}
 
 ---
 
-## S2: {Slice title} [{HITL|AFK|REFACTOR}]
+<!--
+Tier 2 — Task breakdown. `/build` appends a Tasks block (and complexity / user-stories)
+to a slice's card when it starts that slice, flipping the slice's status to `tasked`.
+Do not pre-author the task breakdown. An expanded slice card looks like this:
+-->
 
-**Layers**: {layers}
-**Blocked by**: S1
-...
+### S1: {Slice title} [{HITL|AFK|REFACTOR}]
+
+**Intent**: {one-line intent}
+**Boundary**: {layers}
+**Blocked by**: {None | S{M}}
+**Status**: tasked
+**Complexity**: {small | medium | large}
+**User stories**: {US1, US3 — from spec.md}
+
+**Acceptance criteria**:
+- [ ] {behavioral criterion}
+- [ ] {behavioral criterion}
+
+**Architecture note** *(HITL / new-seam only)*: {pattern / seam}
+
+**Tasks**:
+- [ ] S{N}-T1: Write integration test — {what the test proves}
+- [ ] S{N}-T2: {Deepest layer} — {what to implement}
+- [ ] S{N}-T3: {Next layer} — {what to implement}
+- [ ] S{N}-T4: Validate — {test suite(s) pass, implementation assertions}
 ```
 
 ## Conventions
@@ -102,12 +157,24 @@ Format: `S{slice}-T{task}` — e.g., `S1-T1`, `S2-T3`.
 
 Sequential within each slice. Task 1 is always the integration test. The last task is always validation.
 
+Task IDs only exist once a slice is expanded (`status: tasked`). A `sketched` slice's card has acceptance criteria but no task breakdown yet.
+
 ### Checkboxes
 
 - `[ ]` — not started
 - `[x]` — completed
 
 The `/build` skill checks off tasks as it completes them. The status line at the top (`N/total slices complete`) is updated when all tasks in a slice are checked.
+
+### Slice Status
+
+Every roadmap card carries a `status`: `sketched` → `tasked` → `done`.
+
+- `sketched`: written by `/slices`; the card has intent, boundary, blocked-by, acceptance criteria, and (for HITL/new-seam slices) an architecture note — but no task breakdown.
+- `tasked`: written by `/build` when it starts the slice; a per-layer Tasks block (plus complexity / user-stories) is now appended to the card.
+- `done`: written by `/build` when all of the slice's tasks are checked.
+
+Only one slice is `tasked` at a time. `/build` expands the next `sketched` slice only after the current one is `done`, re-reading the roadmap and adjusting the next slice's card (boundary, and acceptance criteria if learning changed them) first.
 
 ### HITL/AFK/REFACTOR Labels
 
@@ -197,19 +264,32 @@ flowchart LR
 
 ---
 
-## S1: View CDI tree structure [HITL]
+## Roadmap
 
-**Layers**: Route, Component, Orchestrator, Store, API, Backend, lcc-rs
+| # | Slice title | Label | Blocked by | Status |
+|---|---|---|---|---|
+| S1 | View CDI tree structure | HITL | None | tasked |
+| S2 | Read a single config value | AFK | S1 | sketched |
+| S3 | Edit a config value | HITL | S2 | sketched |
+| S4 | Write changes to the node | AFK | S3 | sketched |
+
+<!-- Only S1 is expanded (has a Tasks block). S2–S4 cards carry intent + acceptance criteria but no tasks until their turn. -->
+
+### S1: View CDI tree structure [HITL]
+
+**Intent**: User sees the node's config tree with named groups and fields
+**Boundary**: Route → Component → Orchestrator → Store → API → Backend → lcc-rs
 **Blocked by**: None
+**Status**: tasked
 **Complexity**: large
 **User stories**: US1
-
-The user connects to a node and navigates to its configuration page. The app reads the node's CDI XML, parses it into a tree structure, and renders the groups and fields in a navigable sidebar.
 
 **Acceptance criteria**:
 - [ ] Opening a node's config page shows its CDI tree with named groups and fields
 - [ ] Groups are expandable and collapsible
 - [ ] The tree structure matches the node's actual CDI (not hardcoded)
+
+**Architecture note** *(HITL — new seam)*: Establishes the read-render pipeline (backend fetch+parse → store cache → component render) and the first CDI IPC contract. Both are reused by every later config slice, so the shape is load-bearing — review before build.
 
 **Tasks**:
 - [ ] S1-T1: Write integration test — CDI tree renders after connecting to a node
@@ -222,28 +302,45 @@ The user connects to a node and navigates to its configuration page. The app rea
 - [ ] S1-T8: Route — config page composition with sidebar
 - [ ] S1-T9: Validate — integration test passes; vitest + cargo test green
 
----
+### S2: Read a single config value [AFK]
 
-## S2: Read a single config value [AFK]
-
-**Layers**: Component, Store, API, Backend, lcc-rs
+**Intent**: Selecting a field shows its current value read from the node
+**Boundary**: Component → Store → API → Backend → lcc-rs
 **Blocked by**: S1
-**Complexity**: medium
-**User stories**: US2
-
-The user selects a field in the CDI tree. The app reads the field's current value from the node via memory config protocol and displays it.
+**Status**: sketched
 
 **Acceptance criteria**:
 - [ ] Selecting a field shows its current value read from the node
 - [ ] A loading indicator appears while the value is being read
 - [ ] The displayed value matches what the node reports
 
-**Tasks**:
-- [ ] S2-T1: Write integration test — selecting a field shows its current value
-- [ ] S2-T2: lcc-rs — memory config read for a single address/size
-- [ ] S2-T3: Backend — command to read config value at address
-- [ ] S2-T4: API — Tauri invoke binding for config read
-- [ ] S2-T5: Store — config value state per field (loading/value/error)
-- [ ] S2-T6: Component — field value display with loading state
-- [ ] S2-T7: Validate — integration test passes; value matches node state
+### S3: Edit a config value [HITL]
+
+**Intent**: Editing a field shows the modified value with a visual indicator
+**Boundary**: Component → Store
+**Blocked by**: S2
+**Status**: sketched
+
+**Acceptance criteria**:
+- [ ] Editing a field shows the modified value and marks it as changed
+- [ ] The changed field is visually distinct from unchanged fields
+
+**Architecture note** *(HITL — new seam)*: Introduces the draft-over-baseline pattern (edits layer over node baseline; store resolves the effective value). Decides where the draft state lives and how the effective value is resolved — review before build.
+
+### S4: Write changes to the node [AFK]
+
+**Intent**: Writing changes persists them on the node
+**Boundary**: Orchestrator → Store → API → Backend → lcc-rs
+**Blocked by**: S3
+**Status**: sketched
+
+**Acceptance criteria**:
+- [ ] Writing changes sends the correct memory-config datagrams
+- [ ] After a successful write, values persist on the node and the baseline updates
+
+<!--
+S2–S4 are NOT expanded yet (no Tasks block). When `/build` finishes S1 it will
+re-read the roadmap, adjust S2's card in light of what S1 revealed, then append
+S2's Tasks block and flip S2's status to `tasked`.
+-->
 ```

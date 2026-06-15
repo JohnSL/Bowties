@@ -118,6 +118,8 @@ After completing a change:
 - Prefer extending the relevant seam-scoped ADR in `product/architecture/adr/` with a dated section (`## YYYY-MM-DD extension: <short title>`). Write a new ADR only when the work introduces a genuinely new seam, reverses an existing commitment (mark the old ADR `superseded by ADR-NNNN`), or crosses a boundary the existing ADR explicitly excluded. See `product/architecture/adr/README.md`.
 - If you discover a module, convention, or flow not listed in `aiwiki/`, add it before completing the change.
 
+This step is enforced by a deterministic enrichment gate, not just this instruction: a VS Code Stop hook (`.github/hooks/enrichment-gate.json`) blocks the turn from finishing when production source changed in the working tree but no `aiwiki/`, `product/`, or `specs/backlog.md` file did, and a git pre-push hook (`.githooks/pre-push`) is the safety net. Both share `.github/hooks/enrichment-classify.ps1`. If the gate blocks and no enrichment genuinely applies, document why and finish; do not bypass it as a reflex. See `docs/project/development.md` for setup and override tags.
+
 ## Issue Capture Protocol
 
 Deferred ideas, follow-up work, and out-of-scope improvements are captured as GitHub issues, not as files in the repo.

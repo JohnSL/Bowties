@@ -1,0 +1,11 @@
+#!/bin/sh
+# Enrichment pre-push gate (Workstream A) — durable safety net for the VS Code
+# Stop hook. Blocks a push when production source changed across the pushed
+# commits but no knowledge-base / product / backlog doc was updated.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+#
+# git passes ref updates on stdin and "<remote-name> <remote-url>" as args.
+# We forward both to the PowerShell implementation, which shares its
+# classification predicate with the Stop hook (.github/hooks/enrichment-classify.ps1).
+exec pwsh -NoProfile -ExecutionPolicy Bypass -File .github/hooks/enrichment-prepush.ps1 "$@"

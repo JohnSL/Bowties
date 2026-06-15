@@ -38,6 +38,10 @@ Evaluate each affected and proposed module using the criteria in [ASSESSMENT.md]
 
 Using the methodology in [SLICING.md](SLICING.md), divide the feature into vertical slices. Each slice cuts through all necessary layers and is independently testable. Classify each as HITL or AFK. Order risk-first.
 
+Apply the **Vertical-Slice Gate** from [SLICING.md](SLICING.md): reject any horizontal slice (one that fails to cut all needed layers or yields nothing the user can exercise) and reshape it before continuing. "Testable" means *user-demoable*, not merely *test-covered*.
+
+**Validate at the slice-set (roadmap) level — do not write per-layer task breakdowns here.** `/design` owns the whole-feature view: it checks that the *set* of slices and their seams are sound (no cycles, no depth/locality violations, no slice that can't be demoed). It defines each slice as a card — title, one-line intent, layer boundary, HITL/AFK/REFACTOR label, acceptance criteria, and (for HITL/new-seam slices) a short architecture note. The per-layer task breakdown is authored later, one slice at a time, by `/build` (just-in-time tasking) — writing it now would commit pivot-fragile detail that earlier slices may invalidate. The architecture firewall lives here at the roadmap level; the per-layer task detail does not.
+
 ### 5. Scale and present
 
 Scale the output to what the assessment found. See [ASSESSMENT.md](ASSESSMENT.md) scaling rules.
