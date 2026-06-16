@@ -22,6 +22,8 @@ The roadmap is a thin, two-tier file: every slice starts as a one-line `sketched
 
 **Run once per session, not per slice.** On the first slice, delegate these checks to an `Explore` subagent and store the results in session memory (`/memories/session/build-checks-<feature>.md`). For subsequent slices, reference the cached results — only re-run a check if the current slice touches a module not covered by the cache.
 
+Model routing rule: start this pre-check pass on a faster model (retrieval and mapping). Escalate to a stronger model only if the first pass returns conflicting ownership/ADR signals or cannot converge on likely seams.
+
 1. Check `aiwiki/owners.md` — does shared logic already exist for what you're building?
 2. Check `product/architecture/code-placement-and-ownership.md` — is each file in the right layer?
 3. Check `product/architecture/adr/` — does the approach conflict with past decisions?

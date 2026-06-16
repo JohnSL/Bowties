@@ -104,6 +104,7 @@ Cross-cutting, every session:
 - **Stop-hook gate** blocks completion if code changed without doc/KB enrichment.
 - **CI/pre-commit staleness check** as the safety net.
 - **`architecture-first-fix`** remains the quality gate for every bugfix/behavior change and mid-slice surprise.
+- **Subagent model routing is fast-first.** Use a faster model for retrieval/mapping work; escalate to a stronger model only for unresolved ambiguity, conflicting diagnostics, or high-impact architecture synthesis.
 - Phase transitions are **fresh sessions**, re-grounded from files — not handoffs.
 
 ---
@@ -156,6 +157,7 @@ Cross-cutting, every session:
 - [ ] E1. Update `docs/project/ai-workflow-guide.md` to add the **Proposal** phase, the SpecKit eject note, the **fresh-session-not-handoff** rule for phase transitions, and the **vertical-slice + just-in-time-tasking** discipline.
 - [ ] E2. Note that enrichment is now **hook-enforced**, not memory-dependent.
 - [ ] E3. Capture any deferred items in `specs/backlog.md` and (with confirmation) as `kind/idea` issues.
+- [x] E4. Document subagent model routing defaults (fast-first with escalation criteria) in `.github/copilot-instructions.md`, `docs/project/ai-workflow-guide.md`, and the build/TDD execution docs.
 
 ---
 

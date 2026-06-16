@@ -74,6 +74,8 @@ The AI judges how many slices fit in a session based on complexity. It always st
 
 The red→green→refactor loop generates a lot of failing-test output and abandoned attempts that fill the chat window fast. For a long or test-heavy slice, the AI can run the loop through the **`tdd-build` coordinator agent**, which delegates each phase to a context-isolated worker (`tdd-red` writes one failing test, `tdd-green` writes the minimal code to pass, `tdd-refactor` cleans up) and returns just a summary per cycle — so your main conversation stays lean.
 
+Model selection for the coordinator follows a fast-first rule: start workers on a faster model for routine red/green cycles and escalate only if confidence is low, diagnostics conflict, or the refactor phase hits an ambiguous seam question.
+
 The coordinator runs **strictly inside an already-designed, already-tasked slice** — it never re-decides architecture or re-cuts slices. Its Refactor worker is bound to `architecture-first-fix`: if cleanup reveals a deeper seam problem (wrong layer, ADR conflict, broken invariant), it stops and surfaces options to you instead of patching through. For a small slice it's often cheaper to just run the loop inline; the coordinator is there when context is the constraint.
 
 ### When context gets long
@@ -109,6 +111,8 @@ Both `/bugfix` and `/quickchange` begin with a research phase. The AI uses subag
 - Checks for existing shared logic to avoid duplication
 - Verifies placement rules via `product/architecture/code-placement-and-ownership.md`
 - Scans `product/architecture/adr/` for decisions that constrain the approach
+
+Model selection for this phase is also fast-first: use a faster model for retrieval/mapping work (find, list, summarize, ownership/location checks), then escalate only when the first pass leaves unresolved ambiguity.
 
 The AI outputs a structured summary and then **stops** for your approval.
 

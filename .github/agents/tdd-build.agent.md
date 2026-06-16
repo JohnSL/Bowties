@@ -62,6 +62,11 @@ Between phases, work only from each worker's returned summary. Pass the next
 worker exactly what it needs (the failing test for Green; the changed file set for
 Refactor) — not the full transcript.
 
+Model routing rule: default each delegated phase to a faster model and escalate
+only when needed. Typical escalations are contradictory diagnostics across cycles,
+unclear root cause after one fast pass, or refactor-phase seam ambiguity that may
+require deeper architectural reasoning.
+
 ## Delegation contract
 
 - **tdd-red**: give it the single behavior, the test location, and the framework.
