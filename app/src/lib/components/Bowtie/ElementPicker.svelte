@@ -21,8 +21,7 @@
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { nodeInfoStore } from '$lib/stores/nodeInfo';
   import { isPlaceholderEventId } from '$lib/utils/eventIds';
-  import { resolveNodeDisplayName } from '$lib/utils/nodeDisplayName';
-  import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
+  import { resolveNodeName } from '$lib/layout';
   import { effectiveLayoutStore, makeValueResolver } from '$lib/layout';
   import {
     type SegmentNode,
@@ -83,10 +82,9 @@
     }
   });
 
-  /** Get display name for a node using SNIP data from nodeInfoStore. */
+  /** Get display name for a node, edit-layer aware (ADR-0003 point 4). */
   function getNodeDisplayName(nodeId: string): string {
-    const nodes = get(nodeInfoStore);
-    return resolveNodeDisplayName(nodeId, nodes.get(toCanonicalNodeKey(nodeId)));
+    return resolveNodeName(nodeId);
   }
 
   /** Build the picker tree data directly from NodeConfigTree — no flattening. */

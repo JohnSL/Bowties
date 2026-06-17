@@ -32,3 +32,19 @@ The root cause is that there is no single resolution function that all display p
 - Components never import `configChangesStore` for value resolution directly — they use the resolution API.
 - The offline tree baseline updates after catalog rebuild, so the bottom layer of the resolution waterfall stays current.
 - The backend catalog response may need to carry per-field resolved values (or the frontend updates its baseline by replaying the offline changes store against the snapshot — either approach satisfies the invariant).
+
+## 2026-06-16 extension: node Display Name resolves the User Name edit layer
+
+Point 4 ("display name resolution uses the effective-value path everywhere") was implemented for config-tree labels (`getInstanceDisplayName`, `buildElementLabel`, picker/group labels) but the **node-level Display Name** was the lone holdout: `resolveNodeDisplayName()` read only the SNIP snapshot (`snip_data.user_name`) and never consulted the edit layer. Editing the node's User Name offline therefore did not update the Display Name shown in the sidebar or on bowtie cards until save + re-read.
+
+The editable node name is the ACDI User Name leaf in **memory space 251** (the editable equivalent of `snip_data.user_name`). Its offline edits land in `configChangesStore` as drafts.
+
+Decision: node Display Name resolution now consults the edit layer first, consistent with point 4.
+
+- `resolveEffectiveUserName(tree, resolveValue)` (in `app/src/lib/utils/nodeDisplayName.ts`) locates the User Name leaf (lowest-address `string` leaf in space 251) and resolves it through the draft → offline → baseline waterfall. Pure and store-free; the resolver is injected.
+- Node-name surfaces resolve in this order: **effective User Name (edit layer) → SNIP Display Name fallback chain**. Encapsulated in `resolveNodeName(nodeId)` from `$lib/layout` — the canonical single entry point. All node-name surfaces (bowtie store, config sidebar presenter, Element Picker, config-read orchestrator, config-acquisition orchestrator) import and call this function.
+- The SNIP-only `resolveNodeDisplayName(nodeId, node)` remains the pure final-tier fallback when no User Name leaf/edit exists. It is not imported directly by display surfaces — they use `resolveNodeName`.
+- Consequence: `nodeInfo.updateNodeSnipField()` (a post-save write-through that pushed the edited name back into `snip_data`) is now obsolete — the edit layer surfaces the rename immediately — and was removed as dead code. Stuffing draft state into the SNIP snapshot was the rejected approach here; the snapshot stays a hardware-reported mirror.
+- Dead inline fallbacks removed: `NodeList.svelte` `getFriendlyName()`, `getSecondaryInfo()`, `getDisplayName()` (duplicated the SNIP chain); `configAcquisitionOrchestrator` inline `snip_data.user_name || nodeId`.
+- Sidebar detail/tooltip now receive the effective node name so subtitle and tooltip decisions respect edit-layer renames.
+

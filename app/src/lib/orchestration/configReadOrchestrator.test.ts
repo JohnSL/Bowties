@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { DiscoveredNode, ProtocolFlags, SNIPData } from '$lib/api/tauri';
+import { nodeInfoStore } from '$lib/stores/nodeInfo';
 import {
   createWaitingNodeReadStates,
   executeConfigReadCandidates,
@@ -11,6 +12,33 @@ import {
   resolveConfigReadPreflight,
   toConfigReadCandidate,
 } from './configReadOrchestrator';
+
+vi.mock('$lib/stores/configChanges.svelte', () => ({
+  configChangesStore: {
+    overrideValue: () => null,
+  },
+}));
+
+vi.mock('$lib/stores/nodeTree.svelte', () => ({
+  nodeTreeStore: {
+    getTree: () => null,
+    get trees() { return new Map(); },
+  },
+}));
+
+/** Populate nodeInfoStore with canonical keys so resolveNodeName finds SNIP data. */
+function populateNodeInfoStore(...nodes: DiscoveredNode[]): void {
+  const map = new Map<string, DiscoveredNode>();
+  for (const n of nodes) {
+    const key = n.node_id.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('');
+    map.set(key, n);
+  }
+  nodeInfoStore.set(map);
+}
+
+beforeEach(() => {
+  nodeInfoStore.set(new Map());
+});
 
 function makeSnipData(overrides: Partial<SNIPData> = {}): SNIPData {
   return {
@@ -84,6 +112,10 @@ describe('pipConfirmsNoCdi', () => {
 });
 
 describe('getUnreadConfigEligibleNodes', () => {
+  beforeEach(() => {
+    nodeInfoStore.set(new Map());
+  });
+
   it('excludes confirmed CDI-less nodes without blocking other unread eligible nodes', () => {
     const eligible = makeNode({ node_id: [0x02, 0x01, 0x57, 0x00, 0x00, 0x01] });
     const cdiLess = makeNode({
@@ -95,6 +127,8 @@ describe('getUnreadConfigEligibleNodes', () => {
       node_id: [0x02, 0x01, 0x57, 0x00, 0x00, 0x03],
       snip_data: makeSnipData({ user_name: 'Read Node' }),
     });
+
+    populateNodeInfoStore(eligible, cdiLess, alreadyRead);
 
     const unread = getUnreadConfigEligibleNodes(
       [eligible, cdiLess, alreadyRead],
@@ -147,6 +181,7 @@ describe('partitionNodesByCdiAvailability', () => {
       }),
     });
 
+    populateNodeInfoStore(manufacturerFallback, nodeIdFallback);
     const hasCachedCdi = vi.fn(async (nodeId: string) => nodeId === '02.01.57.00.00.0A');
 
     const result = await partitionNodesByCdiAvailability(
@@ -166,6 +201,7 @@ describe('partitionNodesByCdiAvailability', () => {
 
   it('treats only CdiNotRetrieved lookup errors as missing CDI for the prompt', async () => {
     const node = makeNode();
+    populateNodeInfoStore(node);
 
     const result = await partitionNodesByCdiAvailability(
       [node],
@@ -186,6 +222,7 @@ describe('partitionNodesByCdiAvailability', () => {
 
   it('returns non-downloadable CDI lookup errors separately', async () => {
     const node = makeNode();
+    populateNodeInfoStore(node);
 
     const result = await partitionNodesByCdiAvailability(
       [node],
@@ -351,6 +388,7 @@ describe('executeConfigReadCandidates', () => {
 describe('resolveConfigReadPreflight', () => {
   it('returns pending nodes without failures when all candidates can proceed', async () => {
     const node = makeNode();
+    populateNodeInfoStore(node);
 
     const result = await resolveConfigReadPreflight(
       [node],
@@ -377,6 +415,8 @@ describe('resolveConfigReadPreflight', () => {
       node_id: [0x02, 0x01, 0x57, 0x00, 0x00, 0x03],
       snip_data: makeSnipData({ user_name: 'South Panel' }),
     });
+
+    populateNodeInfoStore(okNode, missingNode, failedNode);
 
     const result = await resolveConfigReadPreflight(
       [okNode, missingNode, failedNode],

@@ -9,7 +9,7 @@ import {
 } from '$lib/types/nodeTree';
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { editKeyForLeaf } from '$lib/utils/editKey';
-import { resolveNodeDisplayName } from '$lib/utils/nodeDisplayName';
+import { resolveNodeName } from '$lib/layout';
 import { isSavedOffBusNode, isUnsavedDiscoveredNode } from '$lib/utils/nodeRoster';
 
 export interface SidebarNodeEntry {
@@ -43,26 +43,26 @@ export function buildSidebarNodeEntries(
 ): SidebarNodeEntry[] {
   const baseNames = new Map<string, number>();
 
-  for (const [nodeId, node] of nodes.entries()) {
-    const baseName = resolveNodeDisplayName(nodeId, node);
+  for (const [nodeId] of nodes.entries()) {
+    const baseName = resolveNodeName(nodeId);
     baseNames.set(baseName, (baseNames.get(baseName) ?? 0) + 1);
   }
 
   return [...nodes.entries()]
     .map(([nodeId, node]) => {
-      const baseName = resolveNodeDisplayName(nodeId, node);
+      const baseName = resolveNodeName(nodeId);
       const duplicateCount = baseNames.get(baseName) ?? 0;
       const nodeName = duplicateCount > 1
-        ? `${baseName} (${nodeId.split('.').slice(-2).join('.')})`
+        ? `${baseName} (${nodeId.replace(/\./g, '').slice(-4)})`
         : baseName;
 
       return {
         isOffline: node.connection_status === 'NotResponding',
         node,
-        nodeDetail: getNodeDetail(node),
+        nodeDetail: getNodeDetail(node, baseName),
         nodeId,
         nodeName,
-        nodeTooltip: getNodeTooltip(nodeId, node),
+        nodeTooltip: getNodeTooltip(nodeId, node, baseName),
         // S8: a node that does not support CDI cannot be edited offline, so
         // it can never participate in unsaved changes — suppress the badge
         // for it even when it is absent from the saved roster. PIP must
@@ -144,16 +144,24 @@ export function getSegmentPendingState(
   };
 }
 
-function getNodeDetail(node: DiscoveredNode): string | null {
+function getNodeDetail(node: DiscoveredNode, effectiveNodeName: string): string | null {
   const snip = node.snip_data;
   if (!snip) return null;
-  if (snip.user_name && snip.manufacturer && snip.model) {
-    return `${snip.manufacturer} ${snip.model}`;
+  // Show manufacturer+model as a subtitle when the resolved display name
+  // is the user-assigned name (SNIP or edit-layer) rather than the
+  // manufacturer+model itself. This mirrors the intent of the original
+  // check but respects edit-layer renames.
+  if (snip.manufacturer && snip.model) {
+    const mfgModel = `${snip.manufacturer} ${snip.model}`;
+    // Only show as detail if the effective name is NOT the manufacturer+model
+    if (effectiveNodeName !== `${snip.manufacturer} — ${snip.model}` && effectiveNodeName !== snip.model) {
+      return mfgModel;
+    }
   }
   return null;
 }
 
-function getNodeTooltip(nodeId: string, node: DiscoveredNode): string {
+function getNodeTooltip(nodeId: string, node: DiscoveredNode, effectiveNodeName: string): string {
   const parts: string[] = [`Node ID: ${nodeId}`];
   if (node.alias != null) {
     parts.push(`Alias: 0x${node.alias.toString(16).toUpperCase().padStart(3, '0')}`);
@@ -165,7 +173,8 @@ function getNodeTooltip(nodeId: string, node: DiscoveredNode): string {
     if (snip.model) parts.push(`Model: ${snip.model}`);
     if (snip.hardware_version) parts.push(`Hardware: ${snip.hardware_version}`);
     if (snip.software_version) parts.push(`Software: ${snip.software_version}`);
-    if (snip.user_name) parts.push(`User Name: ${snip.user_name}`);
+    // Show the effective user name (edit-layer aware), not the raw SNIP snapshot.
+    if (effectiveNodeName !== nodeId) parts.push(`User Name: ${effectiveNodeName}`);
     if (snip.user_description) parts.push(`Description: ${snip.user_description}`);
   }
 

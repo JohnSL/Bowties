@@ -32,6 +32,7 @@ import type { NodeReadState, ReadAllConfigValuesResponse, ReadProgressState } fr
 import type { GetCdiXmlResponse } from '$lib/types/cdi';
 import { canonicalizeNodeId } from '$lib/utils/nodeRoster';
 import { formatNodeId } from '$lib/utils/nodeId';
+import { resolveNodeName } from '$lib/layout';
 import { cdiCacheStore } from '$lib/stores/cdiCache.svelte';
 import {
   createWaitingNodeReadStates,
@@ -220,7 +221,7 @@ export class ConfigAcquisitionOrchestrator {
       (candidate) => canonicalizeNodeId(formatNodeId(candidate.node_id)) === canonical,
     );
     if (!node?.snip_data) return;
-    const nodeName = node.snip_data.user_name || nodeId;
+    const nodeName = resolveNodeName(nodeId);
     this.#beginSession([{ nodeId, name: nodeName, percentage: 0, status: 'waiting' }]);
 
     try {

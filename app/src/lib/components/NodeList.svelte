@@ -188,56 +188,6 @@
   }
 
   /**
-   * Get friendly name for display based on priority:
-   * 1. user_name (if present)
-   * 2. manufacturer + model (if available)
-   * 3. Node ID (fallback)
-   */
-  function getFriendlyName(node: DiscoveredNode): string {
-    // Priority 1: User-assigned name
-    if (node.snip_data?.user_name && node.snip_data.user_name.trim()) {
-      return node.snip_data.user_name;
-    }
-
-    // Priority 2: Manufacturer + Model
-    if (node.snip_data?.manufacturer || node.snip_data?.model) {
-      const manufacturer = node.snip_data.manufacturer || '';
-      const model = node.snip_data.model || '';
-      const combined = `${manufacturer} ${model}`.trim();
-      if (combined) {
-        return combined;
-      }
-    }
-
-    // Priority 3: Node ID
-    return formatNodeId(node.node_id);
-  }
-
-  /**
-   * Get secondary info for display (shown below friendly name)
-   */
-  function getSecondaryInfo(node: DiscoveredNode): string {
-    const parts: string[] = [];
-
-    // If friendly name is user_name, show manufacturer+model
-    if (node.snip_data?.user_name && node.snip_data.user_name.trim()) {
-      const manufacturer = node.snip_data.manufacturer || '';
-      const model = node.snip_data.model || '';
-      const combined = `${manufacturer} ${model}`.trim();
-      if (combined) {
-        parts.push(combined);
-      }
-    }
-
-    // Add software version if available
-    if (node.snip_data?.software_version) {
-      parts.push(`v${node.snip_data.software_version}`);
-    }
-
-    return parts.join(' • ');
-  }
-
-  /**
    * Get tooltip text with full details
    */
   function getTooltip(node: DiscoveredNode): string {
@@ -277,27 +227,6 @@
       return text;
     }
     return text.substring(0, maxLength - 1) + '…';
-  }
-
-  /**
-   * Check for duplicate names and add disambiguation
-   */
-  function getDisplayName(node: DiscoveredNode, index: number): string {
-    const baseName = getFriendlyName(node);
-    
-    // Count how many nodes have the same friendly name
-    const duplicates = nodes.filter(n => getFriendlyName(n) === baseName);
-    
-    if (duplicates.length > 1) {
-      // Append partial Node ID to disambiguate
-      const nodeIdSuffix = node.node_id
-        .slice(-2)
-        .map(b => b.toString(16).padStart(2, '0').toUpperCase())
-        .join('');
-      return `${baseName} (${nodeIdSuffix})`;
-    }
-    
-    return baseName;
   }
 
   /**

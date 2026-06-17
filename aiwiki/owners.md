@@ -171,7 +171,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 
 | File | Purpose | Test |
 |------|---------|------|
-| `index.ts` | Public facade. Re-exports `effectiveLayoutStore`, `effectiveNodeStore`, `bowtieCatalogStore`, `makeValueResolver`, `saveLayoutOrchestrated` + types, and the edit-recording commands (`recordBowtieDeletion`, `recordRoleClassification`, `recordConfigDraft`). | — |
+| `index.ts` | Public facade. Re-exports `effectiveLayoutStore`, `effectiveNodeStore`, `bowtieCatalogStore`, `makeValueResolver`, `resolveNodeName`, `saveLayoutOrchestrated` + types, and the edit-recording commands (`recordBowtieDeletion`, `recordRoleClassification`, `recordConfigDraft`). `resolveNodeName(nodeId)` is the canonical single entry point for edit-layer-aware node Display Name resolution (ADR-0003 point 4). | — |
 | `effectiveLayoutStore.svelte.ts` | Single read model that merges all edit layers into the user-visible **value** view. `preview` / `effectiveBowties` (catalog × tree × metadata × layout, with `hasPendingDeletion` filter); `effectiveRole(nodeId, leaf)` (pending classify → catalog → leaf baseline); `effectiveValue(nodeId, leaf)` (draft override → leaf baseline); `slotsByRole(nodeId, role)`; `isSlotFree(nodeId, leaf)`; `usedInMap`. Composes `buildEffectiveBowtiePreview()` from `bowties.svelte.ts`. | `effectiveLayoutStore.svelte.test.ts` |
 | `effectiveNodeStore.svelte.ts` | **Per-node** layout facade sibling to `effectiveLayoutStore` (ADR-0011, Step 10). Projects `nodeTreeStore`, `nodeInfoStore`, `configReadNodesStore`, `partialCaptureNodesStore`, `layoutStore.activeContext`, and the edit-layer stores into `nodeOrigin(key)`, `isFullyCaptured(key)`, `isConfigRead(key)`, `isPersistableInLayout(key)` (= `isFullyCaptured ∧ (isConfigRead ∨ placeholder)` — R5 fix), `unsavedInMemoryNodeIds`, `unsavedRemovedNodeIds`, `isDirty` (R6 fix). Reads only — never writes through. The lifecycle reset path is `layoutLifecycleOrchestrator`, which MUST enumerate every store this facade reads. | `effectiveNodeStore.svelte.test.ts` |
 
@@ -190,7 +190,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `nodeId.ts` | Node ID normalization: dotted-hex ↔ canonical | — |
 | `nodeKey.ts` | **NodeKey** (Spec 014, ADR-0008, ADR-0010) — branded discriminated union covering live `NodeID` and `placeholder:<uuidv4>`. Exports `type NodeKey = LiveNodeKey | PlaceholderNodeKey`, constructor `nodeKey(input)`, `nodeKeyEquals`, `nodeKeyToString`, `nodeKeyToDisplay`, `toCanonicalNodeKey(input: string | NodeKey | null \| undefined)`, `isPlaceholderInput(input)`, and the transitional shim `NodeKeyInput = string \| NodeKey`. Mirrors the backend prefix predicate `layout::types::is_placeholder` exactly. Consumed by `configChanges.svelte.ts`, `editKey.ts`, and any store that legitimately widens to placeholders. | `nodeKey.test.ts` |
 | `nodeRoster.ts` | S8: pure helpers comparing the active layout's saved-node roster against the currently-visible node set — `canonicalizeNodeId`, `computeDiscoveredOnlyNodeIds` (badge predicate, no threshold), `computeUnsavedInMemoryNodeIds` (threshold-gated by full capture — feeds `layoutStore.isDirty` and `addNode` save deltas), `isUnsavedDiscoveredNode`, `isSavedOffBusNode`. Consumed by `+page.svelte` (sidebar badge + dirty signal + save deltas), `configSidebarPresenter` (unsaved-new badge), and any future "off-bus saved" surfaces. | `nodeRoster.test.ts` |
-| `nodeDisplayName.ts` | Display name resolution via fallback chain | — |
+| `nodeDisplayName.ts` | Display name resolution. `resolveNodeDisplayName` = SNIP fallback chain; `resolveEffectiveUserName(tree, resolveValue)` = edit-layer tier (ACDI User Name leaf, space 251, draft→offline→baseline). Node-name surfaces compose `resolveEffectiveUserName(...) ?? resolveNodeDisplayName(...)`. | `nodeDisplayName.test.ts` |
 | `formatters.ts` | Config value display formatting (int/string/eventId/float) | `formatters.test.ts` |
 | `serialize.ts` | Serialize TreeConfigValue to raw bytes for writes | `serialize.test.ts` |
 | `eventIds.ts` | Event ID placeholder detection; fresh event ID generation | — |
@@ -376,11 +376,25 @@ thin shim modules so existing `crate::` paths compile unchanged.
 - `formatTreeConfigValue()` — resolves int enums to labels via mapEntries
 
 ### Fallback Chains
-**Canonical implementation:** `app/src/lib/utils/nodeDisplayName.ts`
-- Display name: user_name → manufacturer+model → model → Node ID hex
-- `resolveNodeDisplayName(nodeId, node)` — single entry point
-- Anti-pattern: inline fallback `node.user_name || nodeId` — use the helper
-- Governing doc: `product/architecture/naming-and-normalization.md`
+**Canonical entry point:** `resolveNodeName(nodeId)` from `$lib/layout` (facade).
+**Implementation:** `app/src/lib/utils/nodeDisplayName.ts`
+- Display name (edit-layer tier first): effective ACDI User Name leaf (space 251, draft→offline→baseline) → SNIP user_name → manufacturer+model → model → Node ID hex
+- `resolveNodeName(nodeId)` — facade function; the **only** import callers should use for node display names. Composes `resolveEffectiveUserName` + `resolveNodeDisplayName` against the live stores.
+- `resolveNodeDisplayName(nodeId, node)` — SNIP-only fallback tiers (internal to the composition)
+- `resolveEffectiveUserName(tree, resolveValue)` — edit-layer tier (ADR-0003 point 4); pure, resolver injected
+- Anti-pattern: calling `resolveNodeDisplayName` directly from components — use `resolveNodeName` from `$lib/layout`
+- Anti-pattern: inline fallback `node.user_name || nodeId` — use `resolveNodeName`
+- Anti-pattern: writing draft state back into `snip_data` (e.g. the removed `updateNodeSnipField`) — the snapshot is a hardware-reported mirror; drafts live in `configChangesStore`
+- Governing docs: `product/architecture/naming-and-normalization.md`, ADR-0003
+- **Resolve late, on the consuming side.** Display names must be derived from
+  the live `nodeInfoStore` at frontend derivation/render time, not consumed
+  from a pre-baked upstream value. The config sidebar (`configSidebarPresenter`)
+  and bowtie cards both do this. The Rust catalog's `EventSlotEntry.node_name`
+  (`bowties-core/src/bowtie/catalog.rs` `node_display_name`) is computed once at
+  build time and is a best-effort initial value only — `enrichEntryLabel`
+  (`bowties.svelte.ts`) re-resolves it from `nodeInfoStore` so late SNIP arrival
+  updates the card. Trusting the backing `node_name` directly is the regression
+  this guards against.
 
 ### CDI File Naming
 **Canonical saving:** `layout/io.rs` (layout dir), `commands/cdi.rs` (global cache)

@@ -14,6 +14,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import { nodeInfoStore } from '$lib/stores/nodeInfo';
+import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
 import { configSidebarStore } from '$lib/stores/configSidebar';
 import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
@@ -21,6 +22,17 @@ import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { editKeyForLeaf } from '$lib/utils/editKey';
 import { clearConfigReadStatus, markNodeConfigRead } from '$lib/stores/configReadStatus';
 import ConfigSidebar from './ConfigSidebar.svelte';
+
+/**
+ * Set nodeInfoStore with canonical keys. Tests may pass dotted-hex keys for
+ * readability; this helper normalises them to the canonical (no-dot uppercase)
+ * form that resolveNodeName expects.
+ */
+function setNodeInfo(entries: [string, unknown][]): void {
+  const canonical = new Map<string, any>();
+  for (const [id, node] of entries) canonical.set(toCanonicalNodeKey(id), node);
+  nodeInfoStore.set(canonical);
+}
 
 // Mock Tauri invoke so we don't need an actual backend
 vi.mock('@tauri-apps/api/core', () => ({
@@ -61,7 +73,7 @@ function makeNode(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   configSidebarStore.reset();
   connectorSelectionsStore.reset();
-  nodeInfoStore.set(new Map());
+  setNodeInfo([]);
   nodeTreeStore.reset();
   clearConfigReadStatus();
   vi.clearAllMocks();
@@ -74,25 +86,26 @@ describe('ConfigSidebar.svelte', () => {
   });
 
   it('renders a node name for each discovered node', async () => {
-    nodeInfoStore.set(new Map([['02.01.57.00.00.01', MOCK_NODE as any]]));
+    setNodeInfo([['02.01.57.00.00.01', MOCK_NODE as any]]);
     render(ConfigSidebar);
     expect(screen.getByText('Test Node')).toBeInTheDocument();
   });
 
   it('updates from raw node id to friendly name when SNIP data arrives', async () => {
     const nodeId = '02.01.57.00.00.01';
-    nodeInfoStore.set(new Map([[
+    const canonicalId = '020157000001';
+    setNodeInfo([[
       nodeId,
       makeNode({
         snip_data: null,
         snip_status: 'Unknown',
       }) as any,
-    ]]));
+    ]]);
 
     render(ConfigSidebar);
-    expect(screen.getByText(nodeId)).toBeInTheDocument();
+    expect(screen.getByText(canonicalId)).toBeInTheDocument();
 
-    nodeInfoStore.set(new Map([[
+    setNodeInfo([[
       nodeId,
       makeNode({
         snip_data: {
@@ -101,17 +114,17 @@ describe('ConfigSidebar.svelte', () => {
         },
         snip_status: 'Complete',
       }) as any,
-    ]]));
+    ]]);
 
     await vi.waitFor(() => {
       expect(screen.getByText('East Panel')).toBeInTheDocument();
     });
-    expect(screen.queryByText(nodeId)).not.toBeInTheDocument();
+    expect(screen.queryByText(canonicalId)).not.toBeInTheDocument();
   });
 
   it('falls back to manufacturer and model when user name is blank', () => {
     const nodeId = '02.01.57.00.00.01';
-    nodeInfoStore.set(new Map([[
+    setNodeInfo([[
       nodeId,
       makeNode({
         snip_data: {
@@ -122,7 +135,7 @@ describe('ConfigSidebar.svelte', () => {
           model: 'Tower-LCC',
         },
       }) as any,
-    ]]));
+    ]]);
 
     render(ConfigSidebar);
 
@@ -132,7 +145,7 @@ describe('ConfigSidebar.svelte', () => {
 
   it('falls back to node id when no friendly SNIP name is available', () => {
     const nodeId = '02.01.57.00.00.01';
-    nodeInfoStore.set(new Map([[
+    setNodeInfo([[
       nodeId,
       makeNode({
         snip_data: {
@@ -143,27 +156,74 @@ describe('ConfigSidebar.svelte', () => {
           model: '',
         },
       }) as any,
-    ]]));
+    ]]);
 
     render(ConfigSidebar);
 
-    expect(screen.getByText(nodeId)).toBeInTheDocument();
+    // Canonical form is what's stored; resolveNodeName returns it as-is when
+    // no SNIP name fields are present.
+    expect(screen.getByText('020157000001')).toBeInTheDocument();
     expect(screen.queryByText('Offline note')).not.toBeInTheDocument();
   });
 
+  it('reflects an offline User Name edit (ACDI space 251) in the sidebar name', async () => {
+    const nodeId = '02.01.57.00.00.01';
+    setNodeInfo([[nodeId, MOCK_NODE as any]]);
+
+    // The node's tree exposes the editable ACDI User Name leaf (space 251).
+    nodeTreeStore.setTree(nodeId, {
+      nodeId,
+      identity: null,
+      segments: [
+        {
+          name: 'User Info',
+          description: null,
+          origin: 0,
+          space: 251,
+          children: [
+            {
+              kind: 'leaf' as const,
+              name: 'User Name',
+              description: null,
+              elementType: 'string' as const,
+              address: 1,
+              size: 63,
+              space: 251,
+              path: ['seg:0', 'elem:0'],
+              value: { type: 'string' as const, value: 'Test Node' },
+              eventRole: null,
+              constraints: null,
+            },
+          ],
+        },
+      ],
+    } as any);
+
+    render(ConfigSidebar);
+    expect(screen.getByText('Test Node')).toBeInTheDocument();
+
+    // User renames the node offline — a draft on the User Name leaf.
+    configChangesStore.set(editKeyForLeaf(nodeId, 251, 1), { type: 'string' as const, value: 'Renamed Offline' });
+
+    await vi.waitFor(() => {
+      expect(screen.getByText('Renamed Offline')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Test Node')).not.toBeInTheDocument();
+  });
+
   it('disambiguates duplicate friendly names with the node id suffix', () => {
-    nodeInfoStore.set(new Map([
+    setNodeInfo([
       ['02.01.57.00.00.01', makeNode() as any],
       ['02.01.57.00.00.02', makeNode({
         node_id: [0x02, 0x01, 0x57, 0x00, 0x00, 0x02],
         alias: 0x124,
       }) as any],
-    ]));
+    ]);
 
     render(ConfigSidebar);
 
-    expect(screen.getByText('Test Node (00.01)')).toBeInTheDocument();
-    expect(screen.getByText('Test Node (00.02)')).toBeInTheDocument();
+    expect(screen.getByText('Test Node (0001)')).toBeInTheDocument();
+    expect(screen.getByText('Test Node (0002)')).toBeInTheDocument();
   });
 
   it('expands a node to show its segments when clicked (FR-002, FR-015)', async () => {
@@ -175,23 +235,23 @@ describe('ConfigSidebar.svelte', () => {
         { name: 'Port I/O', description: null, space: 253, origin: 0, children: [] },
       ],
     });
-    nodeInfoStore.set(new Map([['02.01.57.00.00.01', MOCK_NODE as any]]));
+    setNodeInfo([['02.01.57.00.00.01', MOCK_NODE as any]]);
     const { container } = render(ConfigSidebar);
 
     const nodeRow = screen.getByText('Test Node');
     await fireEvent.click(nodeRow);
 
-    // After clicking, the store should have the node expanded
+    // After clicking, the store should have the node expanded (canonical key form)
     let state: any;
     configSidebarStore.subscribe(s => (state = s))();
-    expect(state.expandedNodeIds).toContain('02.01.57.00.00.01');
+    expect(state.expandedNodeIds).toContain('020157000001');
   });
 
   it('preserves expansion state across segment selections (FR-015)', async () => {
-    nodeInfoStore.set(new Map([
+    setNodeInfo([
       ['02.01.57.00.00.01', MOCK_NODE as any],
       ['02.01.57.00.00.02', { ...MOCK_NODE, node_id: [2, 1, 87, 0, 0, 2], snip_data: { ...MOCK_NODE.snip_data, user_name: 'Node B' } } as any],
-    ]));
+    ]);
     render(ConfigSidebar);
 
     // Both nodes can be expanded simultaneously (FR-015: collapse NOT on other node click)
@@ -205,7 +265,7 @@ describe('ConfigSidebar.svelte', () => {
   });
 
   it('highlights the selected segment (FR-005)', () => {
-    nodeInfoStore.set(new Map([['02.01.57.00.00.01', MOCK_NODE as any]]));
+    setNodeInfo([['02.01.57.00.00.01', MOCK_NODE as any]]);
     configSidebarStore.toggleNodeExpanded('02.01.57.00.00.01');
     configSidebarStore.selectSegment('02.01.57.00.00.01', 'seg:0', 'Port I/O');
     render(ConfigSidebar);
@@ -216,7 +276,7 @@ describe('ConfigSidebar.svelte', () => {
   });
 
   it('collapses a node when clicked a second time (FR-002)', () => {
-    nodeInfoStore.set(new Map([['02.01.57.00.00.01', MOCK_NODE as any]]));
+    setNodeInfo([['02.01.57.00.00.01', MOCK_NODE as any]]);
     render(ConfigSidebar);
 
     configSidebarStore.toggleNodeExpanded('02.01.57.00.00.01');
@@ -239,7 +299,7 @@ describe('ConfigSidebar.svelte', () => {
     };
     (invoke as any).mockResolvedValue(MOCK_TREE);
 
-    nodeInfoStore.set(new Map([['02.01.57.00.00.01', MOCK_NODE as any]]));
+    setNodeInfo([['02.01.57.00.00.01', MOCK_NODE as any]]);
 
     // First mount: expand node, segments load
     const { unmount } = render(ConfigSidebar);
@@ -254,10 +314,10 @@ describe('ConfigSidebar.svelte', () => {
     // Simulate navigation away: unmount the component
     unmount();
 
-    // The store still remembers the node is expanded
+    // The store still remembers the node is expanded (canonical key form)
     let state: any;
     configSidebarStore.subscribe(s => (state = s))();
-    expect(state.expandedNodeIds).toContain('02.01.57.00.00.01');
+    expect(state.expandedNodeIds).toContain('020157000001');
 
     // Remount: simulates navigating back to config page
     render(ConfigSidebar);
@@ -276,7 +336,7 @@ describe('ConfigSidebar.svelte', () => {
     (invoke as any).mockRejectedValue('CdiNotRetrieved: no cache entry');
 
     const nodeId = '02.01.57.00.00.01';
-    nodeInfoStore.set(new Map([[nodeId, makeNode() as any]]));
+    setNodeInfo([[nodeId, makeNode() as any]]);
 
     render(ConfigSidebar);
     await fireEvent.click(screen.getByText('Test Node'));
@@ -294,7 +354,7 @@ describe('ConfigSidebar.svelte', () => {
 
     const nodeId = '02.01.57.00.00.01';
     markNodeConfigRead(nodeId);
-    nodeInfoStore.set(new Map([[nodeId, MOCK_NODE as any]]));
+    setNodeInfo([[nodeId, MOCK_NODE as any]]);
 
     render(ConfigSidebar);
     await fireEvent.click(screen.getByText('Test Node'));
@@ -307,7 +367,7 @@ describe('ConfigSidebar.svelte', () => {
 
   it('suppresses the read-config CTA for nodes confirmed to have no CDI support', () => {
     const nodeId = '02.01.57.00.00.01';
-    nodeInfoStore.set(new Map([[
+    setNodeInfo([[
       nodeId,
       makeNode({
         pip_flags: {
@@ -315,7 +375,7 @@ describe('ConfigSidebar.svelte', () => {
           memory_configuration: false,
         },
       }) as any,
-    ]]));
+    ]]);
 
     render(ConfigSidebar);
 
@@ -327,7 +387,7 @@ describe('ConfigSidebar.svelte', () => {
     (invoke as any).mockRejectedValue('CdiUnavailable: 02.01.57.00.00.01');
 
     const nodeId = '02.01.57.00.00.01';
-    nodeInfoStore.set(new Map([[
+    setNodeInfo([[
       nodeId,
       makeNode({
         pip_flags: {
@@ -335,7 +395,7 @@ describe('ConfigSidebar.svelte', () => {
           memory_configuration: false,
         },
       }) as any,
-    ]]));
+    ]]);
 
     render(ConfigSidebar);
     await fireEvent.click(screen.getByText('Test Node'));
@@ -350,7 +410,7 @@ describe('ConfigSidebar.svelte', () => {
   describe('Tree reactivity for unsaved edit indicators', () => {
     it('shows unsaved edit indicator when tree leaf gets modifiedValue (offline mode)', async () => {
       const nodeId = '02.01.57.00.00.01';
-      nodeInfoStore.set(new Map([[nodeId, MOCK_NODE as any]]));
+      setNodeInfo([[nodeId, MOCK_NODE as any]]);
 
       // Set up a mock tree
       const mockTree = {
@@ -405,7 +465,7 @@ describe('ConfigSidebar.svelte', () => {
 
     it('removes unsaved edit indicator when modifiedValue is cleared', async () => {
       const nodeId = '02.01.57.00.00.01';
-      nodeInfoStore.set(new Map([[nodeId, MOCK_NODE as any]]));
+      setNodeInfo([[nodeId, MOCK_NODE as any]]);
 
       // Set up a tree with a modified leaf
       const mockTree = {
@@ -461,7 +521,7 @@ describe('ConfigSidebar.svelte', () => {
 
   it('keeps connector slot selectors out of the sidebar when a modular node is expanded', async () => {
     const nodeId = '02.01.57.00.00.01';
-    nodeInfoStore.set(new Map([[nodeId, MOCK_NODE as any]]));
+    setNodeInfo([[nodeId, MOCK_NODE as any]]);
     nodeTreeStore.setTree(nodeId, {
       nodeId,
       identity: null,
@@ -511,7 +571,7 @@ describe('ConfigSidebar.svelte', () => {
 
   it('keeps Signal-LCC aux-port selectors out of the sidebar when a supported signal carrier is expanded', () => {
     const nodeId = '02.01.57.00.00.02';
-    nodeInfoStore.set(new Map([[nodeId, makeNode({
+    setNodeInfo([[nodeId, makeNode({
       node_id: [0x02, 0x01, 0x57, 0x00, 0x00, 0x02],
       snip_data: {
         ...MOCK_NODE.snip_data,
@@ -519,7 +579,7 @@ describe('ConfigSidebar.svelte', () => {
         model: 'Signal-LCC-P',
         user_name: 'Signal Node',
       },
-    }) as any]]));
+    }) as any]]);
     nodeTreeStore.setTree(nodeId, {
       nodeId,
       identity: null,
@@ -556,15 +616,16 @@ describe('ConfigSidebar.svelte', () => {
 
   it('does not render connector status for non-modular nodes', () => {
     const nodeId = '02.01.57.00.00.01';
-    nodeInfoStore.set(new Map([[nodeId, MOCK_NODE as any]]));
-    nodeTreeStore.setTree(nodeId, {
-      nodeId,
+    const canonicalId = '020157000001';
+    setNodeInfo([[nodeId, MOCK_NODE as any]]);
+    nodeTreeStore.setTree(canonicalId, {
+      nodeId: canonicalId,
       identity: null,
       connectorProfile: null,
       connectorProfileWarning: null,
       segments: [],
     } as any);
-    configSidebarStore.toggleNodeExpanded(nodeId);
+    configSidebarStore.toggleNodeExpanded(canonicalId);
 
     const { container } = render(ConfigSidebar);
 

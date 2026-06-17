@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { DiscoveredNode } from '$lib/api/tauri';
 import type { OfflineChangeRow } from '$lib/api/sync';
 import type { NodeConfigTree } from '$lib/types/nodeTree';
+import { nodeInfoStore } from '$lib/stores/nodeInfo';
+import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
 import {
   buildSidebarNodeEntries,
   getNodePendingState,
@@ -16,6 +18,14 @@ vi.mock('$lib/stores/configChanges.svelte', () => ({
   configChangesStore: {
     hasDraftsForNode: (...args: unknown[]) => mockHasDraftsForNode(...args),
     changeLayers: (...args: unknown[]) => mockChangeLayers(...args),
+    overrideValue: () => null,
+  },
+}));
+
+vi.mock('$lib/stores/nodeTree.svelte', () => ({
+  nodeTreeStore: {
+    getTree: () => null,
+    get trees() { return new Map(); },
   },
 }));
 
@@ -94,19 +104,32 @@ function makeTree(): NodeConfigTree {
   };
 }
 
+/** Populate nodeInfoStore (canonical keys) so the facade's resolveNodeName sees the same data. */
+function withNodeInfo(nodes: Map<string, DiscoveredNode>): Map<string, DiscoveredNode> {
+  const canonical = new Map<string, DiscoveredNode>();
+  for (const [id, node] of nodes) canonical.set(toCanonicalNodeKey(id), node);
+  nodeInfoStore.set(canonical);
+  return nodes;
+}
+
 describe('buildSidebarNodeEntries', () => {
+  beforeEach(() => {
+    nodeInfoStore.set(new Map());
+  });
+
   it('disambiguates duplicate friendly names and includes tooltip details', () => {
-    const entries = buildSidebarNodeEntries(new Map([
+    const nodes = withNodeInfo(new Map([
       ['02.01.57.00.00.01', makeNode()],
       ['02.01.57.00.00.02', makeNode({
         alias: 0x124,
         node_id: [0x02, 0x01, 0x57, 0x00, 0x00, 0x02],
       })],
     ]));
+    const entries = buildSidebarNodeEntries(nodes);
 
     expect(entries.map((entry) => entry.nodeName)).toEqual([
-      'East Panel (00.01)',
-      'East Panel (00.02)',
+      'East Panel (0001)',
+      'East Panel (0002)',
     ]);
     expect(entries[0].nodeDetail).toBe('ACME Node-8');
     expect(entries[0].nodeTooltip).toContain('Alias: 0x123');
@@ -114,14 +137,15 @@ describe('buildSidebarNodeEntries', () => {
   });
 
   it('flags discovered nodes that are not in the saved layout as isUnsavedNew (S8)', () => {
-    const entries = buildSidebarNodeEntries(
-      new Map([
+    const nodes = withNodeInfo(new Map([
         ['02.01.57.00.00.01', makeNode()],
         ['02.01.57.00.00.99', makeNode({
           alias: 0x999,
           node_id: [0x02, 0x01, 0x57, 0x00, 0x00, 0x99],
         })],
-      ]),
+      ]));
+    const entries = buildSidebarNodeEntries(
+      nodes,
       ['020157000001'],
     );
 
@@ -132,7 +156,7 @@ describe('buildSidebarNodeEntries', () => {
 
   it('treats every node as saved when savedNodeIds is undefined (pre-S8 contexts)', () => {
     const entries = buildSidebarNodeEntries(
-      new Map([['02.01.57.00.00.01', makeNode()]]),
+      withNodeInfo(new Map([['02.01.57.00.00.01', makeNode()]])),
     );
 
     expect(entries[0].isUnsavedNew).toBe(false);

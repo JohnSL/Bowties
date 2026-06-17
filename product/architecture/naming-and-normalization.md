@@ -79,20 +79,23 @@ const bytes = nodeIdStringToBytes('05.02.01.02.00.00.00.FF');
 
 The display name shown for a node in the UI follows this priority order:
 
-1. **User Name** — `snip_data.user_name` (trimmed, non-empty)
-2. **Manufacturer + Model** — `snip_data.manufacturer` + `snip_data.model`, formatted as `"Manufacturer — Model"` (both trimmed, non-empty)
-3. **Model only** — `snip_data.model` (trimmed, non-empty) when manufacturer is absent
-4. **Node ID** — raw Node ID string, as the final fallback when no SNIP data is available or all SNIP name fields are empty
+1. **User Name (edit layer)** — the effective value of the editable ACDI User Name leaf (memory space 251), resolved through the draft → offline → baseline waterfall. An offline rename is reflected here before save.
+2. **User Name (SNIP)** — `snip_data.user_name` (trimmed, non-empty)
+3. **Manufacturer + Model** — `snip_data.manufacturer` + `snip_data.model`, formatted as `"Manufacturer — Model"` (both trimmed, non-empty)
+4. **Model only** — `snip_data.model` (trimmed, non-empty) when manufacturer is absent
+5. **Node ID** — raw Node ID string, as the final fallback when no SNIP data is available or all SNIP name fields are empty
 
-### Display Name Helper
+Tier 1 is the editable equivalent of the SNIP user name and takes priority so a pending offline rename updates the UI immediately (ADR-0003 point 4). Tiers 2–5 are the SNIP-only fallback chain implemented by `resolveNodeDisplayName()`.
 
-All display-name resolution must use `resolveNodeDisplayName()` from `app/src/lib/utils/nodeDisplayName.ts`:
+### Display Name Helpers
+
+The SNIP-only fallback (tiers 2–5) is `resolveNodeDisplayName()` from `app/src/lib/utils/nodeDisplayName.ts`:
 
 ```ts
 import { resolveNodeDisplayName } from '$lib/utils/nodeDisplayName';
 
 const label = resolveNodeDisplayName(nodeId, node);
-// Returns: user name, or "Manufacturer — Model", or model, or nodeId
+// Returns: SNIP user name, or "Manufacturer — Model", or model, or nodeId
 ```
 
 **Signature:**
@@ -104,11 +107,40 @@ function resolveNodeDisplayName(
 ): string
 ```
 
+The edit-layer tier (tier 1) is `resolveEffectiveUserName()` from the same module — pure and store-free; the leaf-value resolver is injected:
+
+```ts
+function resolveEffectiveUserName(
+  tree: NodeConfigTree | null | undefined,
+  resolveValue: (leaf: LeafConfigNode) => TreeConfigValue | null,
+): string | null  // trimmed name, or null when no User Name leaf/edit
+```
+
+Node-name surfaces compose the two: `resolveEffectiveUserName(...) ?? resolveNodeDisplayName(...)`. This composition is encapsulated in `resolveNodeName(nodeId)` from `$lib/layout`, which is the **canonical single entry point** for all surfaces that display a node name.
+
+**Do not** call `resolveNodeDisplayName` directly from components or orchestrators — it misses the edit layer. Import `resolveNodeName` from `$lib/layout` instead.
+
+**Do not** read `snip_data.user_name` directly for display — it misses the edit layer and the manufacturer/model fallback.
+
 **Do not** implement ad-hoc fallback chains locally in components or stores. If the fallback order changes, it must change in one place.
 
 ### When SNIP Data Is Not Yet Available
 
 Before SNIP enrichment completes during discovery, the node has no `snip_data`. `resolveNodeDisplayName()` returns the raw Node ID string in that case. This is expected behavior: names update reactively once SNIP data arrives.
+
+### Resolve Late, On The Consuming Side
+
+Display names must be resolved from the live node info at frontend
+derivation/render time — never consumed from a value that was resolved earlier
+upstream and shipped along. The backend bowtie catalog computes a `node_name`
+for each `EventSlotEntry` once at catalog-build time; if SNIP had not arrived
+yet, that value is the raw Node ID. Treat such a pre-baked `node_name` as a
+best-effort initial value only. The bowtie preview derivation
+(`enrichEntryLabel` in `bowties.svelte.ts`) re-resolves `node_name` through
+`resolveNodeDisplayName()` against the live `nodeInfoStore`, so cards update to
+the Display Name once SNIP arrives — matching the config sidebar. Trusting a
+pre-baked `node_name` directly breaks the "names update reactively" guarantee
+above.
 
 ---
 

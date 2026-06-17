@@ -105,10 +105,6 @@ vi.mock('$lib/stores/offlineChanges.svelte', () => ({
   offlineChangesStore: offlineRef,
 }));
 
-vi.mock('$lib/stores/nodeInfo', () => ({
-  updateNodeSnipField: vi.fn(),
-}));
-
 vi.mock('@zerodevx/svelte-toast', () => ({
   toast: { push: vi.fn(), pop: vi.fn() },
   SvelteToast: vi.fn(),

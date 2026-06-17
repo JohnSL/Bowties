@@ -1,7 +1,7 @@
 import type { DiscoveredNode } from '$lib/api/tauri';
 import type { NodeReadState, ReadAllConfigValuesResponse } from '$lib/api/types';
 import { getCdiErrorMessage, isCdiError } from '$lib/types/cdi';
-import { resolveNodeDisplayName } from '$lib/utils/nodeDisplayName';
+import { resolveNodeName } from '$lib/layout';
 import { formatNodeId } from '$lib/utils/nodeId';
 import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
 
@@ -49,7 +49,7 @@ export function toConfigReadCandidate(node: DiscoveredNode): ConfigReadNodeCandi
   const nodeId = formatNodeId(node.node_id);
   return {
     nodeId,
-    nodeName: resolveNodeDisplayName(nodeId, node),
+    nodeName: resolveNodeName(nodeId),
   };
 }
 

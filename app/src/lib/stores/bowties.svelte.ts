@@ -11,7 +11,6 @@
  */
 
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { get } from 'svelte/store';
 import { type BowtieCatalog, type BowtieCard, type CdiReadCompletePayload, type EventSlotEntry } from '../api/tauri';
 import type { PreviewBowtieCard, EditableBowtiePreview } from '$lib/types/bowtie';
 import { buildElementLabel, collectEventIdLeaves, findLeafByPath } from '$lib/types/nodeTree';
@@ -21,8 +20,7 @@ import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { editKeyForLeaf } from '$lib/utils/editKey';
 import { layoutStore } from '$lib/stores/layout.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
-import { nodeInfoStore } from '$lib/stores/nodeInfo';
-import { resolveNodeDisplayName as resolveSharedNodeDisplayName } from '$lib/utils/nodeDisplayName';
+import { resolveNodeName } from '$lib/layout';
 import { isPlaceholderEventId } from '$lib/utils/eventIds';
 import { isWellKnownEvent } from '$lib/utils/formatters';
 import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
@@ -421,15 +419,27 @@ export function buildEffectiveBowtiePreview(): EditableBowtiePreview {
 }
 
 /**
- * Compute the element_label for a catalog entry from the live tree so it
- * reflects getInstanceDisplayName (e.g. "GPIO13 (1)") and pending name edits.
- * Falls back to element_path.join('.') when the tree or leaf cannot be found.
+ * Refresh a catalog entry's derived display fields from live frontend state:
+ *
+ *   - `node_name` is re-resolved via the shared `resolveNodeName` facade
+ *     (ADR-0003 point 4). The Rust catalog computes `node_name` once at
+ *     build time; if SNIP had not arrived yet it is the raw node ID hex. We
+ *     always re-resolve so the card shows the Display Name once SNIP lands
+ *     and also reflects any pending offline User Name edit — mirroring how
+ *     the config sidebar derives names.
+ *   - `element_label` is re-derived from the live tree so it reflects
+ *     getInstanceDisplayName (e.g. "GPIO13 (1)") and pending name edits.
+ *     Falls back to element_path.join('.') when the tree or leaf cannot be found.
  */
 function enrichEntryLabel(entry: EventSlotEntry): EventSlotEntry {
+  // node_name resolution does not depend on the tree (SNIP lives in
+  // nodeInfoStore), so resolve it before the tree/leaf guards.
+  const node_name = resolveNodeName(entry.node_key);
+
   const tree = nodeTreeStore.getTree(entry.node_key);
-  if (!tree) return { ...entry, element_label: entry.element_label ?? entry.element_path.join('.') };
+  if (!tree) return { ...entry, node_name, element_label: entry.element_label ?? entry.element_path.join('.') };
   const leaf = findLeafByPath(tree, entry.element_path);
-  if (!leaf) return { ...entry, element_label: entry.element_label ?? entry.element_path.join('.') };
+  if (!leaf) return { ...entry, node_name, element_label: entry.element_label ?? entry.element_path.join('.') };
 
   /** Resolve leaf value through draft → offlinePending → baseline layers. */
   const resolveValue = (l: LeafConfigNode): TreeConfigValue | null => {
@@ -437,7 +447,7 @@ function enrichEntryLabel(entry: EventSlotEntry): EventSlotEntry {
     return configChangesStore.overrideValue(key) ?? l.value;
   };
 
-  return { ...entry, element_label: buildElementLabel(tree, leaf, resolveValue) };
+  return { ...entry, node_name, element_label: buildElementLabel(tree, leaf, resolveValue) };
 }
 
 /**
@@ -513,7 +523,7 @@ function buildTreeEntriesIndex(): Map<string, { producers: EventSlotEntry[]; con
 
   for (const [nodeId, tree] of nodeTreeStore.trees) {
     const leaves = collectEventIdLeaves(tree);
-    const nodeName = resolveNodeDisplayName(nodeId);
+    const nodeName = resolveNodeName(nodeId);
 
     /** Resolve leaf value through draft → offlinePending → baseline layers. */
     const resolveValue = (l: LeafConfigNode): TreeConfigValue | null => {
@@ -555,16 +565,6 @@ function buildTreeEntriesIndex(): Map<string, { producers: EventSlotEntry[]; con
   }
 
   return index;
-}
-
-/**
- * Resolve a human-readable node name, mirroring the Rust `node_display_name()` logic:
- * user_name → "manufacturer — model" → node_id_hex.
- */
-function resolveNodeDisplayName(nodeId: string): string {
-  const nodes = get(nodeInfoStore);
-  const key = toCanonicalNodeKey(nodeId);
-  return resolveSharedNodeDisplayName(nodeId, nodes.get(key));
 }
 
 /** Singleton catalog store (the editable preview is now a pure function;

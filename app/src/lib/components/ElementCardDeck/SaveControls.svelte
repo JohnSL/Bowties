@@ -22,7 +22,6 @@
   import { configChangesStore } from '$lib/stores/configChanges.svelte';
   import { discardAllConfigDrafts } from '$lib/orchestration/configDraftOrchestrator';
   import { deriveSaveControlsViewState } from '$lib/components/ElementCardDeck/saveControlsPresenter';
-  import { updateNodeSnipField } from '$lib/stores/nodeInfo';
   import DiscardConfirmDialog from '$lib/components/DiscardConfirmDialog.svelte';
 
   interface Props {

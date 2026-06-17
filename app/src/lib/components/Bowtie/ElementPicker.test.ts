@@ -70,6 +70,16 @@ vi.mock('$lib/layout', () => ({
     isSlotFree: () => true,
   },
   makeValueResolver: (_nodeId: string) => (leaf: any) => leaf?.value ?? null,
+  resolveNodeName: (nodeId: string) => {
+    const node = nodesRef.map.get(nodeId);
+    const userName = node?.snip_data?.user_name?.trim();
+    if (userName) return userName;
+    const mfg = node?.snip_data?.manufacturer?.trim() ?? '';
+    const model = node?.snip_data?.model?.trim() ?? '';
+    if (mfg && model) return `${mfg} — ${model}`;
+    if (model) return model;
+    return nodeId;
+  },
 }));
 
 vi.mock('$lib/stores/nodeInfo', () => ({

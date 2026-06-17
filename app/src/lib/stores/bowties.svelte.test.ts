@@ -19,6 +19,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NodeConfigTree, LeafConfigNode } from '$lib/types/nodeTree';
 import type { BowtieCatalog, EventSlotEntry } from '$lib/api/tauri';
 import type { LayoutFile } from '$lib/types/bowtie';
+import { configChangesStore } from '$lib/stores/configChanges.svelte';
+import { editKeyForLeaf } from '$lib/utils/editKey';
 
 // ─── Shared test event ID ────────────────────────────────────────────────────
 
@@ -189,6 +191,7 @@ beforeEach(() => {
   mockNodeInfoMap.clear();
   mockRoleClassificationsMap.clear();
   bowtieCatalogStore.reset();
+  configChangesStore.clearAllDrafts();
 });
 
 describe('effectiveLayoutStore.preview (ADR-0004 / S2c)', () => {
@@ -311,6 +314,100 @@ describe('effectiveLayoutStore.preview (ADR-0004 / S2c)', () => {
     expect(card!.consumers.length).toBe(2);
     // The new tree-discovered entry marks the card as dirty (elements changed).
     expect(card!.dirtyFields.has('elements')).toBe(true);
+  });
+
+  // ── Regression: catalog entry node_name is re-resolved from live SNIP ──────
+  // The Rust catalog computes node_name once at build time. If SNIP had not
+  // arrived yet, that value is the raw node ID hex. enrichEntryLabel must
+  // re-resolve node_name from the live nodeInfoStore so the card shows the
+  // Display Name once SNIP lands — mirroring the config sidebar behaviour.
+  it('re-resolves catalog entry node_name from live SNIP (Display Name regression)', () => {
+    // Arrange: catalog card whose producer node_name is the stale raw node ID
+    // (SNIP was unavailable at catalog-build time).
+    const catalog = makeCatalogWithCard(TEST_EVENT_HEX);
+    catalog.bowties[0].producers[0].node_name = '02.01.57.00.00.01';
+    bowtieCatalogStore.setCatalog(catalog);
+
+    // SNIP arrives later and populates the live node info store with a user name.
+    mockNodeInfoMap.set('020157000001', {
+      node_id: '02.01.57.00.00.01',
+      snip_data: {
+        manufacturer: 'Acme',
+        model: 'IO16',
+        hardware_version: '',
+        software_version: '',
+        user_name: 'East Panel',
+        user_description: '',
+      },
+    });
+
+    // Act
+    const preview = editableBowtiePreviewStore.preview;
+
+    // Assert: the producer entry shows the resolved Display Name, not the raw ID.
+    const card = preview.bowties.find(b => b.eventIdHex === TEST_EVENT_HEX);
+    expect(card).toBeDefined();
+    expect(card!.producers).toHaveLength(1);
+    expect(card!.producers[0].node_name).toBe('East Panel');
+  });
+
+  // ── Regression: catalog entry node_name reflects an offline User Name edit ──
+  // The editable User Name is the ACDI leaf in memory space 251. An offline
+  // edit lands in configChangesStore as a draft. The Display Name must consult
+  // that edit layer (ADR-0003 point 4), not just the SNIP snapshot, so a
+  // pending offline rename is visible on the card before save.
+  it('re-resolves catalog entry node_name from an offline User Name edit (edit-layer regression)', () => {
+    // Arrange: catalog card whose producer is node 020157000001.
+    const catalog = makeCatalogWithCard(TEST_EVENT_HEX);
+    bowtieCatalogStore.setCatalog(catalog);
+
+    // SNIP still reports the old name.
+    mockNodeInfoMap.set('020157000001', {
+      node_id: '02.01.57.00.00.01',
+      snip_data: {
+        manufacturer: 'Acme',
+        model: 'IO16',
+        hardware_version: '',
+        software_version: '',
+        user_name: 'Old SNIP Name',
+        user_description: '',
+      },
+    });
+
+    // The node's tree exposes the ACDI User Name leaf (space 251).
+    const userNameLeaf: LeafConfigNode = {
+      kind: 'leaf',
+      name: 'User Name',
+      description: null,
+      elementType: 'string',
+      address: 1,
+      size: 63,
+      space: 251,
+      path: ['seg:0', 'elem:9'],
+      value: { type: 'string', value: 'Old SNIP Name' },
+      eventRole: null,
+      constraints: null,
+    };
+    mockTreesMap.set('020157000001', {
+      nodeId: '020157000001',
+      identity: null,
+      segments: [{ name: 'User Info', description: null, origin: 0, space: 251, children: [userNameLeaf] }],
+    });
+
+    // The user renamed the node offline — a draft on the User Name leaf.
+    configChangesStore.set(editKeyForLeaf('020157000001', 251, 1), {
+      type: 'string',
+      value: 'Renamed Offline',
+    });
+
+    // Act
+    const preview = editableBowtiePreviewStore.preview;
+
+    // Assert: the card reflects the pending offline rename, not the SNIP name.
+    const card = preview.bowties.find(b => b.eventIdHex === TEST_EVENT_HEX);
+    expect(card).toBeDefined();
+    expect(card!.producers).toHaveLength(1);
+    expect(card!.producers[0].node_name).toBe('Renamed Offline');
   });
 
   it('derives offline bowties from loaded trees when layout metadata is empty', () => {

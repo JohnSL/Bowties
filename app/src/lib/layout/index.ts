@@ -26,7 +26,13 @@
 
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
+import { nodeInfoStore } from '$lib/stores/nodeInfo';
+import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
+import { editKeyForLeaf } from '$lib/utils/editKey';
+import { resolveNodeDisplayName, resolveEffectiveUserName } from '$lib/utils/nodeDisplayName';
+import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
 import type { TreeConfigValue } from '$lib/types/nodeTree';
+import { get } from 'svelte/store';
 
 // ── Read model ───────────────────────────────────────────────────────────────
 
@@ -45,6 +51,32 @@ export { effectiveNodeStore, type NodeOrigin } from './effectiveNodeStore.svelte
  * for resolution semantics.
  */
 export { makeValueResolver } from '$lib/utils/displayResolution';
+
+/**
+ * Resolve a node's Display Name, edit-layer-aware (ADR-0003 point 4):
+ *
+ *   1. Effective ACDI User Name leaf (space 251, draft → offline → baseline)
+ *   2. SNIP user_name → manufacturer+model → model → Node ID hex
+ *
+ * This is the canonical single entry point for any surface that displays a
+ * human-readable node name. It composes `resolveEffectiveUserName` (edit tier)
+ * with `resolveNodeDisplayName` (SNIP fallback) against the live stores.
+ *
+ * Do NOT read `snip_data.user_name` directly or call `resolveNodeDisplayName`
+ * alone — both miss the edit layer.
+ */
+export function resolveNodeName(nodeId: string): string {
+  const tree = nodeTreeStore.getTree(nodeId);
+  const editedName = resolveEffectiveUserName(
+    tree,
+    (leaf) => configChangesStore.overrideValue(editKeyForLeaf(nodeId, leaf.space, leaf.address)) ?? leaf.value,
+  );
+  if (editedName) return editedName;
+
+  const nodes = get(nodeInfoStore);
+  const key = toCanonicalNodeKey(nodeId);
+  return resolveNodeDisplayName(nodeId, nodes.get(key));
+}
 
 // ── Save workflow ────────────────────────────────────────────────────────────
 
