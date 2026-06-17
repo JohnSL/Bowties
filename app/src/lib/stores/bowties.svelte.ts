@@ -324,16 +324,48 @@ export function buildEffectiveBowtiePreview(): EditableBowtiePreview {
         newEntryKeys.add(`${e.node_key}:${e.element_path.join('/')}`);
       }
 
+      // Apply pending role classifications to ambiguous entries (T037).
+      // Move any ambiguous entry with a pending classification to producers or consumers.
+      const stillAmbiguous: EventSlotEntry[] = [];
+      let reclassifiedProducers: EventSlotEntry[] = [];
+      let reclassifiedConsumers: EventSlotEntry[] = [];
+
+      for (const entry of card.ambiguous_entries) {
+        const slotKey = `${entry.node_key}:${entry.element_path.join('/')}`;
+        const classification = bowtieMetadataStore.getRoleClassification(slotKey);
+
+        if (classification) {
+          // This entry has been classified; move it to the appropriate list.
+          const enriched = enrichEntryLabel(entry);
+          if (classification.role === 'Producer') {
+            reclassifiedProducers.push(enriched);
+          } else {
+            reclassifiedConsumers.push(enriched);
+          }
+        } else {
+          // Still ambiguous; keep it in the ambiguous list.
+          stillAmbiguous.push(entry);
+        }
+      }
+
       previews.push({
         eventIdHex: card.event_id_hex,
         eventIdBytes: card.event_id_bytes,
-        producers: [...card.producers.filter(e => isEntryStillActive(e, card.event_id_hex)).map(enrichEntryLabel), ...newProducers],
-        consumers: [...card.consumers.filter(e => isEntryStillActive(e, card.event_id_hex)).map(enrichEntryLabel), ...newConsumers],
-        ambiguousEntries: card.ambiguous_entries.map(enrichEntryLabel),
+        producers: [
+          ...card.producers.filter(e => isEntryStillActive(e, card.event_id_hex)).map(enrichEntryLabel),
+          ...newProducers,
+          ...reclassifiedProducers,
+        ],
+        consumers: [
+          ...card.consumers.filter(e => isEntryStillActive(e, card.event_id_hex)).map(enrichEntryLabel),
+          ...newConsumers,
+          ...reclassifiedConsumers,
+        ],
+        ambiguousEntries: stillAmbiguous.map(enrichEntryLabel),
         name: meta?.name ?? card.name ?? undefined,
         tags: meta?.tags ?? card.tags ?? [],
         state: card.state === 'Active' ? 'active' : card.state === 'Incomplete' ? 'incomplete' : 'planning',
-        isDirty: dirtyFields.size > 0 || newProducers.length > 0 || newConsumers.length > 0,
+        isDirty: dirtyFields.size > 0 || newProducers.length > 0 || newConsumers.length > 0 || reclassifiedProducers.length > 0 || reclassifiedConsumers.length > 0,
         dirtyFields,
         newEntryKeys,
       });

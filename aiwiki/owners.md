@@ -360,6 +360,15 @@ thin shim modules so existing `crate::` paths compile unchanged.
 - `parseEditKey(key)` — inverse
 - Used by: `configChanges.svelte.ts`, `offlineChanges.svelte.ts`
 
+### Slot Key Generation
+**Canonical pattern (not a factory function):** `"${entry.node_key}:${entry.element_path.join('/')}"`
+- Identifies a unique event slot across the frontend layers (bowtie, config sidebar, element picker)
+- **Used for:** bowtie metadata edits (role classification), element tracking, ambiguous entry UI state
+- **Consistency rule:** Wherever an `EventSlotEntry` is keyed in rendering (`{#each}` blocks, maps), the slot key must be computed identically and used in comparisons and state management. Inconsistent key computation leads to stale UI state across re-renders (regression: T037).
+- **Proxy safety (ADR-0010):** Never compare object identity (`===`) of reactive-loop variables with `$state` proxies. Use the slot key string instead.
+- **Used by:** `BowtieCard.svelte` (reclassifyKey state), `BowtieCatalogPanel.svelte`, `bowtieMetadata.svelte.ts`
+- Anti-pattern: storing full `EventSlotEntry` object in `$state` and comparing by object identity — will fail on re-renders. Store the key string instead.
+
 ### Normalization Rules
 **Canonical implementation:** `app/src/lib/utils/nodeId.ts` + `lcc-rs/src/types.rs`
 - Node ID canonical: uppercase, no dots (`"050201020000FF"`)

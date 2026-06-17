@@ -162,4 +162,61 @@ describe('BowtieCard.svelte', () => {
       ['seg:0', 'elem:0', 'elem:0'],
     );
   });
+
+  // Regression: state_proxy_equality_mismatch on ambiguous entry click (T037).
+  // Root cause: comparing $state proxy to reactive-loop variable with === fails.
+  // The comparison always returns false, so RoleClassifyPrompt never renders
+  // and onReclassifyRole never fires when user clicks the ? button.
+  // Fix: store composite slot key (string) instead of object reference.
+
+  it('clicking ambiguous entry ? button calls onReclassifyRole (regression T037)', async () => {
+    const ambiguousEntry = { ...makeEntry({ node_name: 'Unknown', element_label: 'Unclear Slot' }), role: 'Ambiguous' as const };
+    const onReclassifyRole = vi.fn();
+    const card = makeCard({
+      ambiguous_entries: [ambiguousEntry],
+    });
+    render(BowtieCard, { props: { card, onReclassifyRole } });
+
+    // Find the ? button by aria-label (unique per ambiguous entry)
+    const classifyBtn = screen.getByRole('button', { name: /classify role for unclear slot/i });
+    expect(classifyBtn).toBeInTheDocument();
+
+    // Click the ? button
+    await fireEvent.click(classifyBtn);
+
+    // Before fix: RoleClassifyPrompt does not render; clicking changes internal state
+    // but the conditional {#if reclassifyingEntry === entry} stays false.
+    // After fix: RoleClassifyPrompt should render with the correct entry.
+    // We verify this indirectly: after clicking, there should be a confirmation
+    // dialog visible. Check for text that only appears in RoleClassifyPrompt.
+
+    // RoleClassifyPrompt renders "Producer" and "Consumer" buttons.
+    // This assertion verifies the prompt component is now visible.
+    expect(screen.getByRole('button', { name: /Producer/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Consumer/i })).toBeInTheDocument();
+  });
+
+  it('selecting role in ambiguous entry prompt fires onReclassifyRole (regression T037)', async () => {
+    const ambiguousEntry = { ...makeEntry({ node_name: 'Unknown', element_label: 'Unclear Slot' }), role: 'Ambiguous' as const };
+    const onReclassifyRole = vi.fn();
+    const card = makeCard({
+      ambiguous_entries: [ambiguousEntry],
+    });
+    render(BowtieCard, { props: { card, onReclassifyRole } });
+
+    // Click the ? button to show the prompt
+    const classifyBtn = screen.getByRole('button', { name: /classify role for unclear slot/i });
+    await fireEvent.click(classifyBtn);
+
+    // Now the RoleClassifyPrompt should be visible. Click "Producer" role.
+    const producerBtn = screen.getByRole('button', { name: /Producer/i });
+    await fireEvent.click(producerBtn);
+
+    // Verify onReclassifyRole was called with the correct arguments
+    expect(onReclassifyRole).toHaveBeenCalledWith(
+      ambiguousEntry.node_key,
+      ambiguousEntry.element_path,
+      'Producer',
+    );
+  });
 });

@@ -53,6 +53,14 @@ Each entry:
 
 ## Historical entries
 
+### State proxy equality comparison broken in reactive loops (T037, resolved)
+- **Area**: `app/src/lib/components/Bowtie/BowtieCard.svelte`
+- **Risk** (resolved): Svelte 5's `$state(...)` wraps values in reactive proxies. Comparing a `$state` proxy with `===` against an object from a reactive loop variable (`{#each}`) always returns `false` because the proxy identity never matches the loop variable identity across re-renders. Result: `{#if reclassifyingEntry === entry}` conditionals always evaluate false, blocking UI state transitions (role classification prompt never renders).
+- **Evidence**: Console warning `state_proxy_equality_mismatch`. User clicking "?" on ambiguous event slots had no effect — the `RoleClassifyPrompt` component never appeared.
+- **Fix**: Store the composite slot key string (`"${node_key}:${element_path.join('/')}"`) instead of the full object. Comparison becomes `{#if reclassifyingKey === entryKey}` — a string identity check that survives re-renders. Added shared convention to `aiwiki/owners.md` Slot Key Generation section documenting the pattern and the proxy-safety rule.
+- **Test coverage**: Two regression tests in `BowtieCard.test.ts` verify: (1) clicking the ? button shows the prompt, (2) selecting a role fires the callback.
+- **Precedent**: ADR-0010 documented a similar identity fragility when `NodeKey` was a plain string — the solution was to use a typed discriminated union. This fix extends that lesson to UI state management: prefer identifiers (strings, numbers) over object identity in reactive contexts.
+
 ### Reset callback consistency across layout orchestrator functions
 - **Area**: `offlineLayoutOrchestrator.ts`, `+page.svelte`
 - **Risk**: When a new reset function is added or an existing one is modified, it's easy to forget a callback (e.g. `resetSidebar` was missing from two of three reset paths). The set of stores that need clearing on layout transitions is implicit — there's no checklist or compile-time enforcement.

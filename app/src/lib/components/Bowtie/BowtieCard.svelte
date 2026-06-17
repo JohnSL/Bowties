@@ -95,7 +95,10 @@
   });
 
   // T037: which ambiguous entry is being reclassified inline
-  let reclassifyingEntry = $state<EventSlotEntry | null>(null);
+  // Stores composite slot key (string: "${node_key}:${element_path.join('/')}") to avoid
+  // state_proxy_equality_mismatch from comparing $state proxy with reactive-loop variable.
+  // Follows ADR-0010 precedent: use typed identifiers, not object references.
+  let reclassifyingKey = $state<string | null>(null);
 
   // T042: inline name editing
   let isEditingName = $state(false);
@@ -305,20 +308,21 @@
       <h4 class="ambiguous-label">Unknown role — click to classify</h4>
       <div class="ambiguous-entries">
         {#each card.ambiguous_entries as entry (entry.node_key + entry.element_path.join('/'))}
+          {@const entryKey = entry.node_key + entry.element_path.join('/')}
           <div class="ambiguous-entry-row">
-            {#if reclassifyingEntry === entry}
+            {#if reclassifyingKey === entryKey}
               <RoleClassifyPrompt
                 elementName={entry.element_label}
                 onClassify={(role) => {
                   onReclassifyRole?.(entry.node_key, entry.element_path, role);
-                  reclassifyingEntry = null;
+                  reclassifyingKey = null;
                 }}
-                onCancel={() => { reclassifyingEntry = null; }}
+                onCancel={() => { reclassifyingKey = null; }}
               />
             {:else}
               <button
                 class="ambiguous-classify-btn"
-                onclick={() => { reclassifyingEntry = entry; }}
+                onclick={() => { reclassifyingKey = entryKey; }}
                 title="Click to classify this entry as Producer or Consumer"
                 aria-label="Classify role for {entry.element_label}"
               >
