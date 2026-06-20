@@ -196,6 +196,40 @@ describe('BowtieCard.svelte', () => {
     expect(screen.getByRole('button', { name: /Consumer/i })).toBeInTheDocument();
   });
 
+  it('keeps ambiguous slot details visible while classify prompt is open', async () => {
+    const ambiguousEntry = {
+      ...makeEntry({ node_name: 'Unknown Node', element_label: 'Unclear Slot' }),
+      role: 'Ambiguous' as const,
+    };
+    const card = makeCard({
+      ambiguous_entries: [ambiguousEntry],
+    });
+    render(BowtieCard, { props: { card } });
+
+    const classifyBtn = screen.getByRole('button', { name: /classify role for unclear slot/i });
+    await fireEvent.click(classifyBtn);
+
+    expect(screen.getByText('Unknown Node')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Producer/i })).toBeInTheDocument();
+  });
+
+  it('renders the classify prompt in a sidecar panel beside the ambiguous slot', async () => {
+    const ambiguousEntry = {
+      ...makeEntry({ node_name: 'Unknown Node', element_label: 'Unclear Slot' }),
+      role: 'Ambiguous' as const,
+    };
+    const card = makeCard({
+      ambiguous_entries: [ambiguousEntry],
+    });
+    const { container } = render(BowtieCard, { props: { card } });
+
+    const classifyBtn = screen.getByRole('button', { name: /classify role for unclear slot/i });
+    await fireEvent.click(classifyBtn);
+
+    expect(container.querySelector('.ambiguous-classify-sidecar')).not.toBeNull();
+    expect(container.querySelector('.ambiguous-classify-popover')).toBeNull();
+  });
+
   it('selecting role in ambiguous entry prompt fires onReclassifyRole (regression T037)', async () => {
     const ambiguousEntry = { ...makeEntry({ node_name: 'Unknown', element_label: 'Unclear Slot' }), role: 'Ambiguous' as const };
     const onReclassifyRole = vi.fn();

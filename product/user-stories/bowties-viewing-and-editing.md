@@ -81,6 +81,7 @@ A user encounters an element whose event role is not known automatically and sti
 
 - Ambiguous elements are not silently treated as fully known producer or consumer entries.
 - The current product flow can prompt for role clarification when needed during bowtie creation or editing.
+- In the bowties view, the role-clarification control opens as a sidecar beside the ambiguous entry so the user can still see the underlying slot details while choosing Producer or Consumer.
 - The resulting role decision is carried into the current editable bowtie workflow.
 
 ### What The User Gets

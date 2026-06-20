@@ -44,7 +44,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `AddElementDialog.svelte` | Add node/slot to existing bowtie | — |
 | `NewConnectionDialog.svelte` | Create new bowtie connection | — |
 | `ConnectorArrow.svelte` | Visual arrow connecting producers to consumers | — |
-| `RoleClassifyPrompt.svelte` | Resolve ambiguous event roles | — |
+| `RoleClassifyPrompt.svelte` | Sidecar prompt for resolving ambiguous event roles without hiding the slot row | — |
 
 ### ConfigSidebar/ — Node/section navigation
 | File | Purpose | Test |

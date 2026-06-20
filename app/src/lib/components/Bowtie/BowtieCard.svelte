@@ -309,26 +309,29 @@
       <div class="ambiguous-entries">
         {#each card.ambiguous_entries as entry (entry.node_key + entry.element_path.join('/'))}
           {@const entryKey = entry.node_key + entry.element_path.join('/')}
-          <div class="ambiguous-entry-row">
+          <div class:ambiguous-entry-row--open={reclassifyingKey === entryKey} class="ambiguous-entry-row">
+            <button
+              class="ambiguous-classify-btn"
+              onclick={() => { reclassifyingKey = entryKey; }}
+              title="Click to classify this entry as Producer or Consumer"
+              aria-label="Classify role for {entry.element_label}"
+              aria-expanded={reclassifyingKey === entryKey}
+              aria-haspopup="dialog"
+            >
+              <span class="ambiguous-question">?</span>
+              <ElementEntry {entry} />
+            </button>
             {#if reclassifyingKey === entryKey}
-              <RoleClassifyPrompt
-                elementName={entry.element_label}
-                onClassify={(role) => {
-                  onReclassifyRole?.(entry.node_key, entry.element_path, role);
-                  reclassifyingKey = null;
-                }}
-                onCancel={() => { reclassifyingKey = null; }}
-              />
-            {:else}
-              <button
-                class="ambiguous-classify-btn"
-                onclick={() => { reclassifyingKey = entryKey; }}
-                title="Click to classify this entry as Producer or Consumer"
-                aria-label="Classify role for {entry.element_label}"
-              >
-                <span class="ambiguous-question">?</span>
-                <ElementEntry {entry} />
-              </button>
+              <div class="ambiguous-classify-sidecar">
+                <RoleClassifyPrompt
+                  elementName={entry.element_label}
+                  onClassify={(role) => {
+                    onReclassifyRole?.(entry.node_key, entry.element_path, role);
+                    reclassifyingKey = null;
+                  }}
+                  onCancel={() => { reclassifyingKey = null; }}
+                />
+              </div>
             {/if}
           </div>
         {/each}
@@ -713,6 +716,13 @@
     margin-bottom: 4px;
   }
 
+  .ambiguous-entry-row--open {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+    gap: 12px;
+    align-items: start;
+  }
+
   .ambiguous-classify-btn {
     display: flex;
     align-items: center;
@@ -729,6 +739,20 @@
 
   .ambiguous-classify-btn:hover {
     background: rgba(202, 80, 16, 0.06);
+  }
+
+  .ambiguous-classify-btn[aria-expanded='true'] {
+    background: rgba(202, 80, 16, 0.08);
+  }
+
+  .ambiguous-classify-sidecar {
+    align-self: stretch;
+  }
+
+  @media (max-width: 900px) {
+    .ambiguous-entry-row--open {
+      grid-template-columns: 1fr;
+    }
   }
 
   .ambiguous-question {

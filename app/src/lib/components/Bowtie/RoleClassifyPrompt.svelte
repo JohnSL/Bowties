@@ -1,7 +1,7 @@
 <!--
   T034: RoleClassifyPrompt.svelte
-  Inline prompt asking the user to classify an ambiguous event slot as
-  Producer or Consumer.
+  Contextual sidecar asking the user to classify an ambiguous event slot as
+  Producer or Consumer while leaving the originating slot visible.
 
   Props:
     elementName: string — display name of the element being classified
@@ -58,6 +58,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+    height: 100%;
   }
 
   .prompt-header {
