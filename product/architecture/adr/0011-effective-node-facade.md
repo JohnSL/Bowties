@@ -212,3 +212,11 @@ deltas writes zero snapshots.
 - The save-layout exception that bypassed `permitted_node_keys` for
   brand-new layouts is gone; tests that relied on it need to add
   explicit `AddNode` deltas.
+
+## 2026-06-20 extension: bus disconnect is part of the close lifecycle
+
+**Problem:** ADR-0011's original `closeLayout` decision left the answer to "is bus connection state preserved across the close?" open. The result was a regression: closing a connected layout left `layoutStore.isConnected` as `true` and the connection indicator showing "Online" for the new (empty) layout.
+
+**Decision:** Bus disconnect is part of the layout-close lifecycle and belongs in `layoutLifecycleOrchestrator.closeLayout()`. The method accepts an optional `disconnectBeforeClose?: () => Promise<void>` dep. When `connected` is `true` and the dep is provided, it is called after the backend confirms the close but before the frontend stores are wiped. The route passes `syncSessionOrchestrator.disconnectBeforeLayoutSwitch()`, which tears down the bus and clears the connection indicator without triggering offline rehydration (the layout is being discarded anyway). When `connected` is `false` or the dep is absent, the method behaves as before.
+
+**Invariant:** After `closeLayout` returns `true`, `layoutStore.isConnected` is `false`.

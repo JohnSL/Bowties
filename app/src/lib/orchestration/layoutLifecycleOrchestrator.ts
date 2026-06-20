@@ -58,6 +58,13 @@ export interface CloseLayoutOptions extends ResetForNewLayoutOptions {
   clearRecentLayout: () => Promise<void>;
   /** Reporter invoked when `clearRecentLayout` throws on the legacy_file path. */
   onRecentLayoutClearError?: (error: unknown) => void;
+  /**
+   * Called after the backend confirms the close but before frontend stores are
+   * wiped. Required when `connected` is true so the bus is torn down and the
+   * connection indicator is cleared as part of the close lifecycle.
+   * Skipped when `connected` is false or when the backend refuses to close.
+   */
+  disconnectBeforeClose?: () => Promise<void>;
 }
 
 class LayoutLifecycleOrchestrator {
@@ -121,6 +128,7 @@ class LayoutLifecycleOrchestrator {
       closeLayoutIpc,
       clearRecentLayout,
       onRecentLayoutClearError,
+      disconnectBeforeClose,
       ...resetOpts
     } = opts;
 
@@ -133,6 +141,10 @@ class LayoutLifecycleOrchestrator {
       } catch (error) {
         onRecentLayoutClearError?.(error);
       }
+    }
+
+    if (resetOpts.connected && disconnectBeforeClose) {
+      await disconnectBeforeClose();
     }
 
     await this.resetForNewLayout(resetOpts);

@@ -249,4 +249,59 @@ describe('layoutLifecycleOrchestrator.closeLayout', () => {
     expect(warning).toHaveBeenCalledTimes(1);
     expect(nodeRoster.placeholderEntries.length).toBe(0);
   });
+
+  it('calls disconnectBeforeClose before resetting stores when connected (regression: connection indicator stays Online after close)', async () => {
+    seedPlaceholder();
+    const calls: string[] = [];
+    const disconnectBeforeClose = vi.fn(async () => {
+      calls.push('disconnect');
+      // Frontend stores must not have been wiped yet when disconnect runs.
+      expect(get(nodeInfoStore).has(PLACEHOLDER_KEY)).toBe(true);
+    });
+    const afterReset = vi.fn(() => {
+      calls.push('afterReset');
+    });
+
+    const closed = await layoutLifecycleOrchestrator.closeLayout({
+      activeMode: 'offline_file',
+      closeLayoutIpc: vi.fn(async () => { calls.push('ipc'); return { closed: true }; }),
+      clearRecentLayout: vi.fn(async () => {}),
+      connected: true,
+      disconnectBeforeClose,
+      afterReset,
+    });
+
+    expect(closed).toBe(true);
+    expect(disconnectBeforeClose).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual(['ipc', 'disconnect', 'afterReset']);
+  });
+
+  it('does not call disconnectBeforeClose when not connected', async () => {
+    const disconnectBeforeClose = vi.fn(async () => {});
+
+    await layoutLifecycleOrchestrator.closeLayout({
+      activeMode: 'offline_file',
+      closeLayoutIpc: vi.fn(async () => ({ closed: true })),
+      clearRecentLayout: vi.fn(async () => {}),
+      connected: false,
+      disconnectBeforeClose,
+    });
+
+    expect(disconnectBeforeClose).not.toHaveBeenCalled();
+  });
+
+  it('does not call disconnectBeforeClose when backend refuses to close', async () => {
+    const disconnectBeforeClose = vi.fn(async () => {});
+
+    const closed = await layoutLifecycleOrchestrator.closeLayout({
+      activeMode: 'offline_file',
+      closeLayoutIpc: vi.fn(async () => ({ closed: false, reason: 'cancelled' })),
+      clearRecentLayout: vi.fn(async () => {}),
+      connected: true,
+      disconnectBeforeClose,
+    });
+
+    expect(closed).toBe(false);
+    expect(disconnectBeforeClose).not.toHaveBeenCalled();
+  });
 });

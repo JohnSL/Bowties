@@ -615,6 +615,7 @@
       closeLayoutIpc: (decision) => closeLayout(decision),
       clearRecentLayout,
       connected: layoutStore.isConnected,
+      disconnectBeforeClose: () => syncSessionOrchestrator.disconnectBeforeLayoutSwitch(),
       probeForNodes,
       afterReset: () => {
         currentLayoutSnapshots = [];
