@@ -1,21 +1,34 @@
 # Using Bowties
 
-This guide walks you through connecting Bowties to your LCC layout, exploring your network, viewing and editing node configuration, and working with saved layouts offline.
+This guide walks you through opening a layout, connecting Bowties to your LCC bus, exploring your network, viewing and editing node configuration, and working offline.
+
+## Opening or creating a layout
+
+When Bowties starts, it opens to the layout picker. Choose one of these options before doing anything else:
+
+- Open a known layout from the list.
+- Click **New Layout** to create a new `.layout` file and companion `.layout.d` folder.
+- Click **Browse...** to open an existing layout from disk.
+
+Once a layout is open, Bowties restores the saved node snapshots, pending offline changes, and any layout-specific connections.
 
 ## Connecting to your layout
 
-Bowties keeps a list of named connections in the **Connect to LCC Network** card. Each saved entry has a **Connect** button, plus an edit (🖊) and remove (×) action. The **`+`** button in the card header opens the Add connection dialog.
+Bowties keeps a list of named connections in the **Connect to LCC Network** card for the currently open layout. This card is opened from the connection status button in the top-right corner. When you have not connected yet, that button shows **Offline**.
+
+Click the top-right **Offline** (or connection status) button to open the connection card. Each saved entry has a **Connect** button, plus an edit (🖊) and remove (×) action. The **`+`** button in the card header opens the Add connection dialog.
 
 The status indicator in the connection bar turns green once a connection is established.
 
 ### Adding a connection
 
-1. Launch Bowties.
-2. Click **`+`** in the Connect to LCC Network card.
-3. Enter a **Name** for the connection (for example *Layout hub* or *Workbench SPROG*).
-4. Pick your hardware from the **Device** dropdown. Bowties auto-fills baud rate and flow control for known devices and shows only the fields that device needs.
-5. Fill in the device-specific fields (see table below).
-6. Click **Add**.
+1. Open or create a layout.
+2. Click the top-right **Offline** (or connection status) button to open the **Connect to LCC Network** card.
+3. Click **`+`** in the card.
+4. Enter a **Name** for the connection (for example *Layout hub* or *Workbench SPROG*).
+5. Pick your hardware from the **Device** dropdown. Bowties auto-fills baud rate and flow control for known devices and shows only the fields that device needs.
+6. Fill in the device-specific fields (see table below).
+7. Click **Add**.
 
 ![Add connection dialog with the RR-CirKits LCC Buffer-USB device selected](../images/add-connection-dialog.png)
 
@@ -39,13 +52,13 @@ For serial devices, choose the correct COM port (Windows), `/dev/cu.*` device (m
 - Click 🖊 to reopen the dialog pre-filled with that entry's settings.
 - Click × and then **Delete** to remove a saved connection.
 
-Saved connections persist across launches.
+Saved connections persist with the layout file.
 
 ---
 
 ## Discovering nodes
 
-After connecting, click **Discover Nodes** in the toolbar. The **Node List** will populate with the nodes on your layout. This only takes a second or two.
+When you connect to the bus, Bowties discovers nodes automatically. The **Node List** populates with all nodes on your layout, showing manufacturer, model, and online status. Discovery is usually very fast.
 
 ## Reading node configuration
 
@@ -57,25 +70,20 @@ Once complete, you can click into any node to view or edit its configuration, or
 
 > **Note:** Configuration is cached after the first read, so subsequent launches are much faster.
 
-## Saving a layout for offline work
+## Making and saving changes
 
-Once discovery and configuration reads have finished, save the current layout so you can reopen it later without a live bus connection.
+After reading node configuration, **Save** and **Discard** buttons appear in the toolbar.
 
-1. Click **Save Layout**.
-2. Choose the `.layout` file you want Bowties to use.
-3. Bowties writes the layout plus its companion directory, including captured node snapshots and any pending offline changes.
+**While connected to the bus:**
+- Edit configuration fields in the cards and click **Apply** to write directly to the node hardware.
+- When all pending edits are applied, click **Save** in the toolbar to persist node snapshots and bowtie metadata to the layout file.
 
-Later, you can reopen that layout while disconnected and continue browsing or planning changes.
+**While disconnected (offline mode):**
+- Edit configuration fields and click **Apply**. These edits are staged locally as pending changes.
+- Click **Save** to write your pending changes to the layout file.
+- Click **Discard** to abandon all pending edits and restore the last saved layout state.
 
----
-
-## Opening a saved layout offline
-
-1. Open the saved layout file.
-2. Bowties restores the captured nodes, configuration data, and Bowties view from disk.
-3. If no live bus is connected, you stay in offline mode and can keep browsing the saved layout.
-
-While offline, edits are tracked as pending layout changes. They do not write to physical nodes until you reconnect and sync them.
+Your layout file always reflects the state you last saved, so you can safely close and reopen Bowties without losing work.
 
 ---
 
@@ -150,15 +158,9 @@ You can also start a connection from the Configuration View: click **→ New Con
 
 ---
 
-## Saving your work
+## Reconnecting with pending offline changes
 
-When you are connected to the live bus, clicking **Apply** writes that field directly to the node hardware.
-
-When you are working in a saved layout, offline edits stay pending in the layout until you click **Save Layout**. **Discard** throws away unsaved offline edits and restores the last saved layout state.
-
-If you later reconnect with a layout that still has pending offline changes, Bowties opens the **Sync Offline Changes** flow so you can review and apply them safely.
-
-Connection settings (host, port, adapter) are saved automatically and restored the next time you launch Bowties.
+If you saved a layout with pending offline changes and later reconnect with that layout, Bowties opens the **Sync Offline Changes** flow so you can review and apply them safely.
 
 ---
 
@@ -177,10 +179,10 @@ If Bowties is not confident the connected bus matches the saved layout, it asks 
 
 ## Troubleshooting
 
-**No nodes appear after discovery**
-- Check that the connection status is green.
+**No nodes appear after connecting**
+- Check that the connection status is green (top-right button shows a colored status, not "Offline").
 - Ensure your LCC network has power and that at least one node is online.
-- Try running **Discover Nodes** again — some nodes respond slowly on first boot.
+- If you still see no nodes after a few seconds, try disconnecting and reconnecting — some nodes respond slowly on first boot.
 
 **A USB adapter is not listed**
 - Check Device Manager (Windows), System Information → USB (macOS), or `dmesg` (Linux) to confirm the adapter is recognized as a serial port.
