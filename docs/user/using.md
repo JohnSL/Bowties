@@ -7,10 +7,12 @@ This guide walks you through opening a layout, connecting Bowties to your LCC bu
 When Bowties starts, it opens to the layout picker. Choose one of these options before doing anything else:
 
 - Open a known layout from the list.
-- Click **New Layout** to create a new `.layout` file and companion `.layout.d` folder.
-- Click **Browse...** to open an existing layout from disk.
+- Click **New Layout** to create a new layout folder.
+- Click **Browse...** to open an existing layout folder from disk.
 
 Once a layout is open, Bowties restores the saved node snapshots, pending offline changes, and any layout-specific connections.
+
+> **Tip:** A layout is a self-contained folder. You can share it with others, back it up, or move it to another computer by copying the entire folder and its contents.
 
 ## Connecting to your layout
 
@@ -52,7 +54,7 @@ For serial devices, choose the correct COM port (Windows), `/dev/cu.*` device (m
 - Click 🖊 to reopen the dialog pre-filled with that entry's settings.
 - Click × and then **Delete** to remove a saved connection.
 
-Saved connections persist with the layout file.
+Saved connections persist with the layout.
 
 ---
 
@@ -76,14 +78,14 @@ After reading node configuration, **Save** and **Discard** buttons appear in the
 
 **While connected to the bus:**
 - Edit configuration fields in the cards and click **Apply** to write directly to the node hardware.
-- When all pending edits are applied, click **Save** in the toolbar to persist node snapshots and bowtie metadata to the layout file.
+- When all pending edits are applied, click **Save** in the toolbar to persist node snapshots and bowtie metadata to the layout.
 
 **While disconnected (offline mode):**
 - Edit configuration fields and click **Apply**. These edits are staged locally as pending changes.
-- Click **Save** to write your pending changes to the layout file.
+- Click **Save** to write your pending changes to the layout.
 - Click **Discard** to abandon all pending edits and restore the last saved layout state.
 
-Your layout file always reflects the state you last saved, so you can safely close and reopen Bowties without losing work.
+Your layout always reflects the state you last saved, so you can safely close and reopen Bowties without losing work.
 
 ---
 

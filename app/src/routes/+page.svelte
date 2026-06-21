@@ -383,6 +383,7 @@
    * one (Spec 013 / S7: connections are per-layout).
    */
   async function runOpenLayoutByPath(path: string, name?: string): Promise<void> {
+    errorDialog = null;
     try {
       if (layoutStore.isConnected) {
         await disconnectBeforeLayoutSwitch();
@@ -436,6 +437,7 @@
   }
 
   async function handlePickerCreate(args: { name: string; path: string }): Promise<void> {
+    errorDialog = null;
     try {
       await createNewLayout({
         name: args.name,

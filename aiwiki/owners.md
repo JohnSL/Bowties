@@ -98,7 +98,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 |------|---------|------|
 | `TrafficMonitor.svelte` | Live traffic frame display | — |
 | `NodeList.svelte` | Discovered nodes with CDI viewer access | — |
-| `ErrorDialog.svelte` | Error modal with Escape-to-close | — |
+| `ErrorDialog.svelte` | Error modal with Escape-to-close. z-index 2000 — topmost overlay so errors are never hidden behind LayoutPicker (1200) or NewLayoutDialog (1600). | — |
 | `DiscardConfirmDialog.svelte` | Confirm discard of unsaved edits | — |
 | `AddBoardDialog.svelte` | Spec 014 / S8: modal picker for adding a placeholder board to the active offline layout. Lists bundled board-model profiles via `listBundledProfiles()` and calls `placeholderBoardOrchestrator.addPlaceholderBoard` on submit. Entry point is the native `File → Add Placeholder Board…` menu item (gated on `offlineActive && !busy`); mounted from `+page.svelte` behind a `showAddBoardDialog` state flag. | — |
 | `DiscoveryProgressModal.svelte` | Progress during discovery phases (reading, building-catalog, complete, cancelled) | — |
