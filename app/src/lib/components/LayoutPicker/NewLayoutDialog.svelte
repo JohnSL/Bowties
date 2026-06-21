@@ -2,12 +2,11 @@
   /**
    * NewLayoutDialog — modal for creating a new layout (Spec 013 / S6).
    *
-   * Collects a display name + parent directory, builds the `.layout` file
-   * path, and emits a single `onCreate` event with both. The picker's
-   * orchestrator owns the actual file/registry work.
+   * Collects a display name + parent directory, builds the layout folder
+   * path (`<parent>/<name>/`), and emits a single `onCreate` event with
+   * both. The picker's orchestrator owns the actual folder/registry work.
    */
   import { open } from '@tauri-apps/plugin-dialog';
-  import { OFFLINE_LAYOUT_EXTENSION } from '$lib/constants/layoutFiles';
 
   interface Props {
     visible: boolean;
@@ -22,16 +21,16 @@
   let directory = $state('');
   let errorMessage = $state<string | null>(null);
 
-  // Sanitise the filename — strip path separators and trailing dots/spaces
+  // Sanitise the folder name — strip path separators and trailing dots/spaces
   // that would otherwise break on Windows.
   let filenameSafeName = $derived(name.trim().replace(/[\\/:*?"<>|]/g, '_').replace(/[. ]+$/, ''));
   let derivedPath = $derived(buildDerivedPath(directory, filenameSafeName));
 
-  function buildDerivedPath(dir: string, fileBase: string): string {
-    if (!dir || !fileBase) return '';
+  function buildDerivedPath(dir: string, folderName: string): string {
+    if (!dir || !folderName) return '';
     const sep = dir.includes('\\') && !dir.includes('/') ? '\\' : '/';
     const trimmed = dir.replace(/[\\/]+$/, '');
-    return `${trimmed}${sep}${fileBase}.${OFFLINE_LAYOUT_EXTENSION}`;
+    return `${trimmed}${sep}${folderName}`;
   }
 
   async function pickDirectory(): Promise<void> {
@@ -137,7 +136,7 @@
       </div>
 
       {#if derivedPath}
-        <p class="nl-preview" title={derivedPath}>Will create: <code>{derivedPath}</code></p>
+        <p class="nl-preview" title={derivedPath}>Will create folder: <code>{derivedPath}</code></p>
       {/if}
 
       {#if errorMessage}

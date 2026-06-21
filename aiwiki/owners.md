@@ -91,7 +91,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 |------|---------|------|
 | `LayoutPicker.svelte` | Fullscreen startup picker. Renders known-layout list + `New Layout` + `Browse…`. Emits `onOpen` / `onBrowse` / `onCreate` / `onRemove` — no async work owned here. | — |
 | `LayoutEntry.svelte` | Single known-layout row with name, path, locale-formatted `lastOpened`, and a Remove (✕) action. | — |
-| `NewLayoutDialog.svelte` | Modal for creating a new layout. Folder picker via `@tauri-apps/plugin-dialog`, sanitised filename, preview of derived `<dir>/<name>.layout` path. | — |
+| `NewLayoutDialog.svelte` | Modal for creating a new layout. Folder picker via `@tauri-apps/plugin-dialog`, sanitised folder name, preview of derived `<parent>/<name>` path. | — |
 
 ### Root-level components
 | File | Purpose | Test |
@@ -161,7 +161,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `nodeRoster.svelte.ts` | **Spec 014 / S8.7, S8.12:** Unified facade over `nodeInfoStore`, `configReadNodesStore`, `nodeTreeStore`, and an internal `_profileStems` map (S8.12 — previously `inMemoryPlaceholdersStore`, now deleted). Exposes `allEntries` / `liveEntries` / `placeholderEntries` / `liveNodes` / `hasAnyEntries` / `has(nodeKey)` as reactive views, and `upsertLive`, `replaceLiveRoster` (preserves placeholders), `addPlaceholder`, `removePlaceholder`, `markPlaceholdersPersisted`, `setTree`, `markRead`, `clearLayoutScope` as mutators. | `nodeRoster.svelte.test.ts` |
 | `pillSelection.ts` | Replicated group instance selections | `pillSelection.test.ts` |
 | `traffic.ts` | Live traffic message stream | — |
-| `knownLayouts.svelte.ts` | `knownLayoutsStore` singleton — frontend mirror of `known-layouts.json` (Spec 013 / S6). Exposes `entries`, `loaded`, `busy`; setters tolerate undefined backend payloads. Written through by `startupOrchestrator`; read by `LayoutPicker`. | — |
+| `knownLayouts.svelte.ts` | `knownLayoutsStore` singleton — frontend mirror of `known-layouts.json` (Spec 013 / S6). Exposes `entries`, `loaded`, `busy`; setters tolerate undefined backend payloads. Entries store layout folder paths. Written through by `startupOrchestrator`; read by `LayoutPicker`. | — |
 
 ---
 
@@ -255,11 +255,11 @@ thin shim modules so existing `crate::` paths compile unchanged.
 | `node_tree.rs` | Unified config tree: CDI + addresses + values + roles. Also owns `NodeRoles` (per-event producer/consumer sets). | inline `#[cfg(test)]` (24+) |
 | `node_proxy.rs` | Polymorphic node handle (`NodeProxyHandle` enum: `Live` + `Synthesized`). `LiveNodeProxy` actor, `SynthesizedNodeProxy` passive state holder. | inline `#[cfg(test)]` |
 | `node_registry.rs` | Thread-safe `NodeKey → NodeProxyHandle` map. Owns `saved_trees` cache. | inline `#[cfg(test)]` |
-| `layout/mod.rs` | **Deep module** (ADR-0005). Sole owner of companion-directory file structure. Public API: `save_capture`, `read_capture`, `read_node_snapshot`, `update_offline_changes`, etc. | inline `#[cfg(test)]` |
+| `layout/mod.rs` | **Deep module** (ADR-0005). Sole owner of layout directory file structure. Public API: `save_capture`, `read_capture`, `read_node_snapshot`, `update_offline_changes`, etc. Layout identity = folder path. | inline `#[cfg(test)]` |
 | `layout/types.rs` | YAML data structures, `ConnectionConfig`, `LayoutEditDelta`, `apply_layout_deltas`. | inline `#[cfg(test)]` |
-| `layout/io.rs` | Companion-dir / node-file path derivation, full capture read/write, CDI XML resolution. | inline `#[cfg(test)]` |
+| `layout/io.rs` | Layout directory read/write, node-file path derivation, CDI XML resolution. `MANIFEST_FILE` constant. | inline `#[cfg(test)]` |
 | `layout/journal.rs` | **Write-ahead journal** (ADR-0006). In-place writes guarded by marker + backup. | inline `#[cfg(test)]` (8) |
-| `layout/manifest.rs` | Layout manifest, saved connections. | inline `#[cfg(test)]` |
+| `layout/manifest.rs` | Layout manifest (schema v4, no `companion_dir`), saved connections. | inline `#[cfg(test)]` |
 | `layout/known_layouts.rs` | App-level known-layout registry (Spec 013 / S5). | inline `#[cfg(test)]` (7) |
 | `layout/node_snapshot.rs` | Node config snapshot for offline use. | inline `#[cfg(test)]` |
 | `layout/offline_changes.rs` | Offline change staging (config diffs). | inline `#[cfg(test)]` |

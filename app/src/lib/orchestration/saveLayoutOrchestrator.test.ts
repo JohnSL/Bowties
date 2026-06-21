@@ -195,14 +195,14 @@ describe('saveLayoutOrchestrated', () => {
   it('calls setActiveContext with derived layoutId and path after save', async () => {
     await saveLayoutOrchestrated({
       ...baseArgs(),
-      path: '/layouts/yard.bowties.yaml',
+      path: '/layouts/yard',
       getPendingChangeCount: () => 3,
     });
 
     expect(setActiveContext).toHaveBeenCalledWith(
       expect.objectContaining({
         layoutId: 'yard',
-        rootPath: '/layouts/yard.bowties.yaml',
+        rootPath: '/layouts/yard',
         mode: 'offline_file',
         pendingOfflineChangeCount: 3,
       }),
@@ -357,14 +357,14 @@ describe('saveLayoutOrchestrated — saveWithBusWrites path', () => {
   it('calls setActiveContext with path and pending change count after saveWithBusWrites', async () => {
     await saveLayoutOrchestrated({
       ...busWriteArgs(),
-      path: '/layouts/yard.bowties.yaml',
+      path: '/layouts/yard',
       getPendingChangeCount: () => 5,
     });
 
     expect(setActiveContext).toHaveBeenCalledWith(
       expect.objectContaining({
         layoutId: 'yard',
-        rootPath: '/layouts/yard.bowties.yaml',
+        rootPath: '/layouts/yard',
         mode: 'offline_file',
         pendingOfflineChangeCount: 5,
       }),

@@ -108,7 +108,7 @@ describe('openLayoutFromRegistry', () => {
     const store = makeStore();
     const addKnownLayout = vi.fn(async () => []);
     await openLayoutFromRegistry({
-      path: 'D:/Layouts/freight-yard.layout',
+      path: 'D:/Layouts/freight-yard',
       openLayout: async () => makeOpenResult(),
       api: { addKnownLayout },
       store,
@@ -326,16 +326,16 @@ describe('removeKnownLayout', () => {
 });
 
 describe('deriveLayoutNameFromPath', () => {
-  it('strips the .layout extension', () => {
-    expect(deriveLayoutNameFromPath('D:/Layouts/yard.layout')).toBe('yard');
-    expect(deriveLayoutNameFromPath('/home/me/freight.LAYOUT')).toBe('freight');
+  it('returns the folder name from a Unix path', () => {
+    expect(deriveLayoutNameFromPath('D:/Layouts/yard')).toBe('yard');
+    expect(deriveLayoutNameFromPath('/home/me/freight')).toBe('freight');
   });
 
   it('handles Windows backslash paths', () => {
-    expect(deriveLayoutNameFromPath('D:\\Layouts\\depot.layout')).toBe('depot');
+    expect(deriveLayoutNameFromPath('D:\\Layouts\\depot')).toBe('depot');
   });
 
-  it('returns the basename when there is no .layout extension', () => {
-    expect(deriveLayoutNameFromPath('D:/Layouts/oddly-named')).toBe('oddly-named');
+  it('strips trailing slashes', () => {
+    expect(deriveLayoutNameFromPath('D:/Layouts/oddly-named/')).toBe('oddly-named');
   });
 });

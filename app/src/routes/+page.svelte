@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from '@tauri-apps/api/event';
-  import { open, save } from '@tauri-apps/plugin-dialog';
+  import { open } from '@tauri-apps/plugin-dialog';
   import { onMount, untrack } from 'svelte';
   import { get } from 'svelte/store';
   import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
@@ -45,7 +45,6 @@
   import AddBoardDialog from '$lib/components/AddBoardDialog.svelte';
   import { saveProgressStore } from '$lib/stores/saveProgress.svelte';
   import MissingCaptureBadge from '$lib/components/Layout/MissingCaptureBadge.svelte';
-  import { OFFLINE_LAYOUT_DEFAULT_FILENAME, offlineLayoutDialogFilter } from '$lib/constants/layoutFiles';
   import ConnectionManager from '$lib/ConnectionManager.svelte';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
    import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
@@ -497,12 +496,12 @@
         ? layoutStore.activeContext.rootPath
         : '';
       if (forceSaveAs || !targetPath) {
-        const selected = await save({
-          title: 'Save Layout File',
-          defaultPath: targetPath || OFFLINE_LAYOUT_DEFAULT_FILENAME,
-          filters: [offlineLayoutDialogFilter()],
+        const selected = await open({
+          title: 'Choose Layout Folder',
+          directory: true,
+          multiple: false,
         });
-        if (!selected) return false;
+        if (!selected || typeof selected !== 'string') return false;
         targetPath = selected;
       }
 

@@ -2,32 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { normalizeLayoutTitle } from './layoutPath';
 
 describe('normalizeLayoutTitle', () => {
-  it('strips .bowties.yaml extension', () => {
-    expect(normalizeLayoutTitle('/layouts/yard.bowties.yaml')).toBe('yard');
+  it('returns folder name from Unix path', () => {
+    expect(normalizeLayoutTitle('/layouts/yard')).toBe('yard');
   });
 
-  it('strips .bowties.yml extension', () => {
-    expect(normalizeLayoutTitle('/layouts/yard.bowties.yml')).toBe('yard');
-  });
-
-  it('strips .layout extension', () => {
-    expect(normalizeLayoutTitle('/layouts/my-layout.layout')).toBe('my-layout');
-  });
-
-  it('strips .yaml extension', () => {
-    expect(normalizeLayoutTitle('/layouts/test.yaml')).toBe('test');
-  });
-
-  it('strips .layout.d extension', () => {
-    expect(normalizeLayoutTitle('/layouts/yard.layout.d')).toBe('yard');
-  });
-
-  it('returns basename without extension for plain names', () => {
-    expect(normalizeLayoutTitle('/a/b/yard')).toBe('yard');
+  it('returns folder name from nested path', () => {
+    expect(normalizeLayoutTitle('/a/b/my-layout')).toBe('my-layout');
   });
 
   it('handles Windows paths', () => {
-    expect(normalizeLayoutTitle('C:\\Users\\john\\yard.bowties.yaml')).toBe('yard');
+    expect(normalizeLayoutTitle('C:\\Users\\john\\yard')).toBe('yard');
+  });
+
+  it('strips trailing slashes', () => {
+    expect(normalizeLayoutTitle('/layouts/yard/')).toBe('yard');
+    expect(normalizeLayoutTitle('C:\\Layouts\\Yard\\')).toBe('Yard');
   });
 
   it('returns null for null', () => {

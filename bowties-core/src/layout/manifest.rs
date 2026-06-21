@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::types::ConnectionConfig;
 
-pub const LAYOUT_SCHEMA_VERSION: u32 = 3;
+pub const LAYOUT_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,8 +31,6 @@ pub struct LayoutManifest {
     pub last_saved_at: String,
     pub active_mode: String,
     pub match_thresholds: MatchThresholds,
-    #[serde(default)]
-    pub companion_dir: String,
     /// Saved connection profiles attached to this layout (Spec 013 / S4).
     /// Serde-defaulted so older layout files without this field open
     /// cleanly with an empty list — no schema bump required.
@@ -45,7 +43,6 @@ impl LayoutManifest {
         layout_id: String,
         captured_at: String,
         last_saved_at: String,
-        companion_dir: String,
     ) -> Self {
         Self {
             schema_version: LAYOUT_SCHEMA_VERSION,
@@ -54,7 +51,6 @@ impl LayoutManifest {
             last_saved_at,
             active_mode: "offline".to_string(),
             match_thresholds: MatchThresholds::default(),
-            companion_dir,
             connections: Vec::new(),
         }
     }
@@ -70,9 +66,6 @@ impl LayoutManifest {
         if self.layout_id.trim().is_empty() {
             return Err("layoutId must not be empty".to_string());
         }
-        if self.schema_version == LAYOUT_SCHEMA_VERSION && self.companion_dir.trim().is_empty() {
-            return Err("companionDir must not be empty for schema v3".to_string());
-        }
         Ok(())
     }
 }
@@ -81,23 +74,15 @@ impl LayoutManifest {
 /// save command does not intentionally rewrite.
 ///
 /// Save-owned fields (always assigned from arguments): `schema_version`,
-/// `layout_id`, `captured_at`, `last_saved_at`, `companion_dir`.
+/// `layout_id`, `captured_at`, `last_saved_at`.
 ///
 /// Preserved from `previous` when present (defaults otherwise):
 /// `connections`, `match_thresholds`, `active_mode`.
-///
-/// The previous behaviour — `LayoutManifest::new(...)` which initialises
-/// every non-save-owned field to its default — silently dropped per-layout
-/// `connections` on every save, because `save_layout_directory` only
-/// carried `layout_id` / `captured_at` / `offline_changes` forward from
-/// the on-disk manifest. This helper makes the preservation contract
-/// explicit at one seam.
 pub fn build_save_manifest(
     previous: Option<&LayoutManifest>,
     layout_id: String,
     captured_at: String,
     last_saved_at: String,
-    companion_dir: String,
 ) -> LayoutManifest {
     LayoutManifest {
         schema_version: LAYOUT_SCHEMA_VERSION,
@@ -110,7 +95,6 @@ pub fn build_save_manifest(
         match_thresholds: previous
             .map(|m| m.match_thresholds.clone())
             .unwrap_or_default(),
-        companion_dir,
         connections: previous
             .map(|m| m.connections.clone())
             .unwrap_or_default(),
@@ -142,7 +126,6 @@ mod tests {
             "layout-a".to_string(),
             "2026-06-01T00:00:00Z".to_string(),
             "2026-06-01T00:00:01Z".to_string(),
-            "layout-a.bowties-layout.d".to_string(),
         );
         assert_eq!(m.layout_id, "layout-a");
         assert_eq!(m.active_mode, "offline");
@@ -162,7 +145,6 @@ mod tests {
             last_saved_at: "2026-06-01T00:00:00Z".to_string(),
             active_mode: "online".to_string(),
             match_thresholds: MatchThresholds { likely_same: 90, uncertain_min: 50 },
-            companion_dir: "layout-a.bowties-layout.d".to_string(),
             connections: vec![sample_connection()],
         };
         let m = build_save_manifest(
@@ -170,7 +152,6 @@ mod tests {
             previous.layout_id.clone(),
             previous.captured_at.clone(),
             "2026-06-01T00:01:00Z".to_string(),
-            previous.companion_dir.clone(),
         );
         assert_eq!(m.connections, vec![sample_connection()]);
         assert_eq!(m.active_mode, "online");

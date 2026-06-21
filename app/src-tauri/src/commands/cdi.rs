@@ -1775,8 +1775,7 @@ pub async fn get_node_tree(
             "NoActiveLayout: cannot resolve placeholder '{node_key}' without an active layout"
         ))?;
         let base = std::path::Path::new(&ctx.root_path);
-        let companion = crate::layout::io::derive_companion_dir_path(base)?;
-        let nodes_dir = companion.join(crate::layout::io::NODES_DIR);
+        let nodes_dir = base.join(crate::layout::io::NODES_DIR);
         let basis = crate::layout::node_snapshot::filename_basis_for_key(node_key);
         let snap_path = crate::layout::io::derive_node_file_path(&nodes_dir, &basis);
         if !snap_path.exists() {

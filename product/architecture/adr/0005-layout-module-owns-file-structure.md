@@ -50,3 +50,28 @@ The partial-update APIs go through the same write code path as the full save. To
 ## Status
 
 Accepted (2026-05-23) — slice S2d.
+
+## 2026-06-20 extension: Folder-identity model (breaking change)
+
+The layout storage model changed from "base file + companion directory" to
+"the layout IS a folder." The `derive_companion_dir_path` / `derive_companion_dir_name`
+functions are removed. The layout's identity is now its directory path.
+
+**On-disk structure** (inside the layout folder):
+- `manifest.yaml` — layout manifest (was previously the `.layout` base file outside the companion dir)
+- `bowties.yaml` — bowtie metadata
+- `offline-changes.yaml` — offline edit queue
+- `event-names.yaml` — event name cache
+- `nodes/` — per-node snapshot YAML files
+- `cdi/` — CDI XML files
+- `.save-in-progress` — journal marker (ADR-0006, unchanged)
+- `.restore/` — journal recovery directory (ADR-0006, unchanged)
+
+**Key changes:**
+- `LayoutManifest` no longer has a `companion_dir` field (schema v4).
+- `known-layouts.json` and `recent-layout.json` store folder paths.
+- IPC commands (`save_layout_directory`, `open_layout_directory`) accept folder paths.
+- Frontend pickers use directory dialogs, not file dialogs.
+
+**Breaking:** Existing `.layout` files and `.layout.d/` companion directories are
+not supported. Users must recreate layouts. No migration path is provided.

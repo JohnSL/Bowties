@@ -77,9 +77,9 @@ pub(crate) struct PrunePlan {
 
 #[derive(Debug, Clone)]
 pub(crate) struct SavePlan {
-    /// Companion directory that hosts the marker and `.restore/`. Must
+    /// Layout directory that hosts the marker and `.restore/`. Must
     /// be inside the same volume as every file in `writes`.
-    pub companion_dir: PathBuf,
+    pub layout_dir: PathBuf,
     pub writes: Vec<PlannedWrite>,
     pub prune_dirs: Vec<PrunePlan>,
 }
@@ -130,21 +130,21 @@ thread_local! {
 /// 8. Delete the marker and `.restore/`.
 pub(crate) fn execute(plan: SavePlan) -> Result<(), String> {
     // 1. Clean up legacy staging/backup directories (best-effort).
-    cleanup_legacy_dirs(&plan.companion_dir);
+    cleanup_legacy_dirs(&plan.layout_dir);
 
-    // 2. Make sure the companion directory exists. Recover any prior
+    // 2. Make sure the layout directory exists. Recover any prior
     //    interrupted save before we touch it.
-    std::fs::create_dir_all(&plan.companion_dir).map_err(|e| {
+    std::fs::create_dir_all(&plan.layout_dir).map_err(|e| {
         format!(
-            "Cannot create companion directory {}: {}",
-            plan.companion_dir.display(),
+            "Cannot create layout directory {}: {}",
+            plan.layout_dir.display(),
             e
         )
     })?;
-    recover_companion_dir(&plan.companion_dir)?;
+    recover_layout_dir(&plan.layout_dir)?;
 
-    let marker_path = plan.companion_dir.join(MARKER_FILE);
-    let restore_dir = plan.companion_dir.join(RESTORE_DIR);
+    let marker_path = plan.layout_dir.join(MARKER_FILE);
+    let restore_dir = plan.layout_dir.join(RESTORE_DIR);
 
     // Discard any stale .restore/ left over from a previous run that
     // crashed without writing a marker.
@@ -224,7 +224,7 @@ pub(crate) fn execute(plan: SavePlan) -> Result<(), String> {
 
     // 4. Write marker (phase=preparing) and fsync.
     write_marker(&marker_path, &marker)?;
-    fsync_dir(&plan.companion_dir);
+    fsync_dir(&plan.layout_dir);
 
     // 5. Back up every pre-existing target into .restore/.
     for entry in &marker.entries {
@@ -251,7 +251,7 @@ pub(crate) fn execute(plan: SavePlan) -> Result<(), String> {
     // 6. Flip marker to phase=writing.
     marker.phase = Phase::Writing;
     write_marker(&marker_path, &marker)?;
-    fsync_dir(&plan.companion_dir);
+    fsync_dir(&plan.layout_dir);
 
     // 7. Execute writes and deletes in plan order. Any failure here
     //    leaves the marker on disk so the next read_capture rolls back.
@@ -284,30 +284,28 @@ pub(crate) fn execute(plan: SavePlan) -> Result<(), String> {
         format!("Cannot remove marker {}: {}", marker_path.display(), e)
     })?;
     let _ = std::fs::remove_dir_all(&restore_dir);
-    fsync_dir(&plan.companion_dir);
+    fsync_dir(&plan.layout_dir);
 
     Ok(())
 }
 
-/// If a save marker exists inside the companion directory derived from
-/// `base_file`, roll back any partial writes. Returns `true` if a
-/// recovery happened.
+/// If a save marker exists inside the layout directory, roll back any
+/// partial writes. Returns `true` if a recovery happened.
 ///
 /// Called from the top of [`super::io::read_layout_capture`] so a layout
 /// is always coherent by the time it is parsed.
-pub(crate) fn recover_if_needed(base_file: &Path) -> Result<bool, String> {
-    let companion_dir = super::io::derive_companion_dir_path(base_file)?;
-    if !companion_dir.exists() {
+pub(crate) fn recover_if_needed(layout_dir: &Path) -> Result<bool, String> {
+    if !layout_dir.exists() {
         return Ok(false);
     }
-    let recovered = recover_companion_dir(&companion_dir)?;
+    let recovered = recover_layout_dir(layout_dir)?;
     if recovered {
-        cleanup_legacy_dirs(&companion_dir);
+        cleanup_legacy_dirs(layout_dir);
     }
     Ok(recovered)
 }
 
-fn recover_companion_dir(companion_dir: &Path) -> Result<bool, String> {
+fn recover_layout_dir(companion_dir: &Path) -> Result<bool, String> {
     let marker_path = companion_dir.join(MARKER_FILE);
     if !marker_path.is_file() {
         return Ok(false);
@@ -459,7 +457,7 @@ mod tests {
 
     fn make_plan(companion: &Path, writes: Vec<(PathBuf, &[u8])>) -> SavePlan {
         SavePlan {
-            companion_dir: companion.to_path_buf(),
+            layout_dir: companion.to_path_buf(),
             writes: writes
                 .into_iter()
                 .map(|(p, b)| PlannedWrite {
@@ -511,7 +509,7 @@ mod tests {
         std::fs::create_dir_all(companion.join(RESTORE_DIR)).unwrap();
         std::fs::write(companion.join(RESTORE_DIR).join("0000.bin"), b"backup-of-old").unwrap();
 
-        let recovered = recover_companion_dir(&companion).unwrap();
+        let recovered = recover_layout_dir(&companion).unwrap();
         assert!(recovered);
         assert!(!companion.join(MARKER_FILE).exists());
         assert!(!companion.join(RESTORE_DIR).exists());
@@ -540,7 +538,7 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"old");
 
         // Recovery clears marker without touching the file.
-        let recovered = recover_companion_dir(&companion).unwrap();
+        let recovered = recover_layout_dir(&companion).unwrap();
         assert!(recovered);
         assert!(!companion.join(MARKER_FILE).exists());
         assert_eq!(std::fs::read(&target).unwrap(), b"old");
@@ -567,7 +565,7 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
 
         // Recovery restores old contents from .restore/.
-        let recovered = recover_companion_dir(&companion).unwrap();
+        let recovered = recover_layout_dir(&companion).unwrap();
         assert!(recovered);
         assert!(!companion.join(MARKER_FILE).exists());
         assert!(!companion.join(RESTORE_DIR).exists());
@@ -598,7 +596,7 @@ mod tests {
         // (Both writes happen synchronously before the test seam fires
         // again; with N=2 only the first write happens since the seam
         // fires after each write.)
-        let recovered = recover_companion_dir(&companion).unwrap();
+        let recovered = recover_layout_dir(&companion).unwrap();
         assert!(recovered);
 
         // a is restored, b should not exist.
@@ -622,7 +620,7 @@ mod tests {
         let mut keep = HashSet::new();
         keep.insert(keeper.clone());
         let plan = SavePlan {
-            companion_dir: companion.clone(),
+            layout_dir: companion.clone(),
             writes: vec![PlannedWrite {
                 abs_path: keeper.clone(),
                 op: WriteOp::Bytes(b"new".to_vec()),

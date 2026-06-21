@@ -6,11 +6,10 @@
  * for native file dialogs.
  */
 
-import { save, open } from '@tauri-apps/plugin-dialog';
+import { open } from '@tauri-apps/plugin-dialog';
 import { loadLayout, saveLayout, getRecentLayout, setRecentLayout, buildBowtieCatalog } from '$lib/api/bowties';
 import type { LayoutFile } from '$lib/types/bowtie';
 import { normalizeNodeId } from '$lib/utils/nodeId';
-import { OFFLINE_LAYOUT_DEFAULT_FILENAME, offlineLayoutDialogFilter } from '$lib/constants/layoutFiles';
 
 export type ActiveLayoutMode = 'legacy_file' | 'offline_file';
 
@@ -121,11 +120,12 @@ class LayoutStore {
    */
   async openLayout(): Promise<void> {
     const selected = await open({
-      title: 'Open Layout File',
-      filters: [offlineLayoutDialogFilter()],
+      title: 'Open Layout Folder',
+      directory: true,
+      multiple: false,
     });
 
-    if (!selected) return; // user cancelled
+    if (!selected || typeof selected !== 'string') return; // user cancelled
 
     await this.loadLayoutFromPath(selected);
   }
@@ -190,13 +190,13 @@ class LayoutStore {
   async saveLayoutAs(): Promise<boolean> {
     if (!this._layout) this.newLayout();
 
-    const selected = await save({
-      title: 'Save Layout File',
-      defaultPath: this._path ?? OFFLINE_LAYOUT_DEFAULT_FILENAME,
-      filters: [offlineLayoutDialogFilter()],
+    const selected = await open({
+      title: 'Choose Layout Folder',
+      directory: true,
+      multiple: false,
     });
 
-    if (!selected) return false; // user cancelled
+    if (!selected || typeof selected !== 'string') return false; // user cancelled
 
     this._busy = true;
     try {

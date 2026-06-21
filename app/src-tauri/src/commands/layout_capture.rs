@@ -207,14 +207,14 @@ pub async fn save_layout_directory(
     state: tauri::State<'_, AppState>,
 ) -> Result<SaveLayoutResult, String> {
     let target = std::path::Path::new(&path);
-    if target.is_dir() {
+    if target.is_file() {
         return Err(format!(
-            "Save target must be a layout file path, not a directory: {}",
+            "Save target must be a layout directory path, not a file: {}",
             target.display()
         ));
     }
     if target.exists() && !overwrite {
-        return Err(format!("Target layout file already exists: {}", target.display()));
+        return Err(format!("Target layout directory already exists: {}", target.display()));
     }
 
     let captured_at = chrono::Utc::now().to_rfc3339();
@@ -360,14 +360,12 @@ pub async fn save_layout_directory(
         .first()
         .map(|s| s.captured_at.clone())
         .unwrap_or_else(|| captured_at.clone());
+    // Layout ID defaults to the folder name.
     let mut layout_id = target
-        .file_stem()
+        .file_name()
         .and_then(|v| v.to_str())
         .unwrap_or("layout")
         .to_string();
-    // `save_capture` (below) sets `manifest.companion_dir` itself from the
-    // base-file name, so we pass an empty string here.
-    let companion_dir = String::new();
 
     // ADR-0002: read disk-authoritative layout, apply frontend deltas.
     let mut bowties = previous.as_ref().map(|p| p.bowties.clone()).unwrap_or_default();
@@ -417,7 +415,6 @@ pub async fn save_layout_directory(
         layout_id.clone(),
         manifest_captured_at.clone(),
         chrono::Utc::now().to_rfc3339(),
-        companion_dir,
     );
 
     // Collect CDI files, skipping nodes that don't support CDI.

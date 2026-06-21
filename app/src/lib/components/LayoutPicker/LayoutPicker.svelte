@@ -13,7 +13,6 @@
    */
   import { open } from '@tauri-apps/plugin-dialog';
   import type { KnownLayoutEntry } from '$lib/api/startup';
-  import { offlineLayoutDialogFilter } from '$lib/constants/layoutFiles';
   import LayoutEntry from './LayoutEntry.svelte';
   import NewLayoutDialog from './NewLayoutDialog.svelte';
 
@@ -36,9 +35,9 @@
     browseError = null;
     try {
       const selected = await open({
-        title: 'Open Layout',
+        title: 'Open Layout Folder',
+        directory: true,
         multiple: false,
-        filters: [offlineLayoutDialogFilter()],
       });
       if (typeof selected === 'string') {
         onBrowse(selected);

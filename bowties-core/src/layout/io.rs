@@ -25,6 +25,7 @@ pub const BOWTIES_FILE: &str = "bowties.yaml";
 pub const OFFLINE_CHANGES_FILE: &str = "offline-changes.yaml";
 pub const EVENT_NAMES_FILE: &str = "event-names.yaml";
 pub const NODES_DIR: &str = "nodes";
+pub const MANIFEST_FILE: &str = "manifest.yaml";
 const CDI_DIR: &str = "cdi";
 
 /// Load a layout file from the given path.
@@ -122,33 +123,9 @@ pub fn derive_node_file_path(nodes_dir: &Path, node_id: &str) -> PathBuf {
     nodes_dir.join(format!("{}.yaml", node_id.to_uppercase()))
 }
 
-pub fn derive_companion_dir_name(base_file: &Path) -> Result<String, String> {
-    let file_name = base_file
-        .file_name()
-        .and_then(|v| v.to_str())
-        .ok_or_else(|| format!("Invalid base layout filename: {}", base_file.display()))?;
-
-    let suffixes = [
-        ".layout",
-        ".bowties-layout.yaml",
-        ".bowties-layout.yml",
-        ".yaml",
-        ".yml",
-    ];
-    for suffix in suffixes {
-        if let Some(stem) = file_name.strip_suffix(suffix) {
-            return Ok(format!("{}.layout.d", stem));
-        }
-    }
-
-    Ok(format!("{}.layout.d", file_name))
-}
-
-pub fn derive_companion_dir_path(base_file: &Path) -> Result<PathBuf, String> {
-    let parent = base_file
-        .parent()
-        .ok_or_else(|| format!("Layout file has no parent directory: {}", base_file.display()))?;
-    Ok(parent.join(derive_companion_dir_name(base_file)?))
+/// Derive the manifest file path inside a layout directory.
+pub fn derive_manifest_path(layout_dir: &Path) -> PathBuf {
+    layout_dir.join(MANIFEST_FILE)
 }
 
 #[derive(Debug, Clone)]
@@ -174,55 +151,44 @@ pub struct LayoutDirectoryReadData {
     pub recovery_occurred: bool,
 }
 
-pub fn write_layout_capture(base_file: &Path, data: &LayoutDirectoryWriteData) -> Result<(), String> {
-    let parent = base_file
-        .parent()
-        .ok_or_else(|| format!("Layout file has no parent directory: {}", base_file.display()))?;
-    std::fs::create_dir_all(parent)
-        .map_err(|e| format!("Cannot create parent directory {}: {}", parent.display(), e))?;
+pub fn write_layout_capture(layout_dir: &Path, data: &LayoutDirectoryWriteData) -> Result<(), String> {
+    std::fs::create_dir_all(layout_dir)
+        .map_err(|e| format!("Cannot create layout directory {}: {}", layout_dir.display(), e))?;
 
-    let companion_dir = derive_companion_dir_path(base_file)?;
-    let companion_name = companion_dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| format!("Invalid companion directory: {}", companion_dir.display()))?
-        .to_string();
-
-    let mut manifest = data.manifest.clone();
-    manifest.companion_dir = companion_name;
+    let manifest = data.manifest.clone();
 
     // Build the journaled save plan. Every file the save will touch
     // goes through a single `.save-in-progress` marker (ADR-0006) so
     // an interrupted save can be rolled back on the next read.
     let mut plan = SavePlan {
-        companion_dir: companion_dir.clone(),
+        layout_dir: layout_dir.to_path_buf(),
         writes: Vec::new(),
         prune_dirs: Vec::new(),
     };
 
-    // Base manifest file (lives outside the companion dir).
+    // Manifest file (inside the layout directory).
     plan.writes.push(PlannedWrite {
-        abs_path: base_file.to_path_buf(),
+        abs_path: layout_dir.join(MANIFEST_FILE),
         op: WriteOp::Bytes(serialize_yaml(&manifest)?),
     });
 
-    // Top-level companion files.
+    // Top-level layout files.
     plan.writes.push(PlannedWrite {
-        abs_path: companion_dir.join(BOWTIES_FILE),
+        abs_path: layout_dir.join(BOWTIES_FILE),
         op: WriteOp::Bytes(serialize_yaml(&data.bowties)?),
     });
     plan.writes.push(PlannedWrite {
-        abs_path: companion_dir.join(OFFLINE_CHANGES_FILE),
+        abs_path: layout_dir.join(OFFLINE_CHANGES_FILE),
         op: WriteOp::Bytes(serialize_yaml(&data.offline_changes)?),
     });
     plan.writes.push(PlannedWrite {
-        abs_path: companion_dir.join(EVENT_NAMES_FILE),
+        abs_path: layout_dir.join(EVENT_NAMES_FILE),
         op: WriteOp::Bytes(serialize_yaml(&std::collections::BTreeMap::<String, String>::new())?),
     });
 
     // Per-node snapshots: also prune extras left over from a previous
     // save (e.g. snapshots for nodes that have since been removed).
-    let nodes_dir = companion_dir.join(NODES_DIR);
+    let nodes_dir = layout_dir.join(NODES_DIR);
     let mut keep_nodes: HashSet<PathBuf> = HashSet::with_capacity(data.node_snapshots.len());
     for snapshot in &data.node_snapshots {
         let node_path = derive_node_file_path(&nodes_dir, &snapshot.filename_basis());
@@ -254,7 +220,7 @@ pub fn write_layout_capture(base_file: &Path, data: &LayoutDirectoryWriteData) -
     // directory alone — in-place writes preserve what is already
     // there, so the staging-dir "copy across" step is no longer
     // needed.
-    let cdi_dir = companion_dir.join(CDI_DIR);
+    let cdi_dir = layout_dir.join(CDI_DIR);
     if !data.cdi_files.is_empty() {
         let mut keep_cdi: HashSet<PathBuf> = HashSet::with_capacity(data.cdi_files.len());
         for (cache_key, source_path) in &data.cdi_files {
@@ -274,45 +240,31 @@ pub fn write_layout_capture(base_file: &Path, data: &LayoutDirectoryWriteData) -
 
     journal::execute(plan)?;
 
-    if !base_file.exists() {
+    if !layout_dir.exists() {
         return Err(format!(
-            "Layout save failed: base file missing after save: {}",
-            base_file.display()
-        ));
-    }
-    if !companion_dir.exists() {
-        return Err(format!(
-            "Layout save failed: companion directory missing after save: {}",
-            companion_dir.display()
+            "Layout save failed: layout directory missing after save: {}",
+            layout_dir.display()
         ));
     }
     Ok(())
 }
 
-pub fn read_layout_capture(base_file: &Path) -> Result<LayoutDirectoryReadData, String> {
-    // ADR-0006: roll back any interrupted prior save before parsing.
-    let recovery_occurred = journal::recover_if_needed(base_file)?;
-
-    let manifest: LayoutManifest = read_yaml_file(base_file)?;
-    manifest.validate()?;
-
-    let companion_dir = if manifest.companion_dir.trim().is_empty() {
-        derive_companion_dir_path(base_file)?
-    } else {
-        base_file
-            .parent()
-            .ok_or_else(|| format!("Layout file has no parent directory: {}", base_file.display()))?
-            .join(&manifest.companion_dir)
-    };
-
-    if !companion_dir.exists() {
+pub fn read_layout_capture(layout_dir: &Path) -> Result<LayoutDirectoryReadData, String> {
+    if !layout_dir.exists() {
         return Err(format!(
-            "Layout companion directory not found: {}",
-            companion_dir.display()
+            "Layout directory not found: {}",
+            layout_dir.display()
         ));
     }
 
-    let (bowties, node_snapshots, offline_changes) = read_companion_contents(&companion_dir, &manifest)?;
+    // ADR-0006: roll back any interrupted prior save before parsing.
+    let recovery_occurred = journal::recover_if_needed(layout_dir)?;
+
+    let manifest_path = layout_dir.join(MANIFEST_FILE);
+    let manifest: LayoutManifest = read_yaml_file(&manifest_path)?;
+    manifest.validate()?;
+
+    let (bowties, node_snapshots, offline_changes) = read_companion_contents(layout_dir, &manifest)?;
 
     Ok(LayoutDirectoryReadData {
         manifest,
@@ -551,12 +503,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
 
-        let base_file = root.join("np-layout.bowties-layout.yaml");
+        let layout_dir = root.join("np-layout");
         let manifest = LayoutManifest::new(
             "np-layout".to_string(),
             "2026-04-05T12:00:00Z".to_string(),
             "2026-04-05T12:00:00Z".to_string(),
-            "np-layout.bowties-layout.d".to_string(),
         );
         let data = LayoutDirectoryWriteData {
             manifest,
@@ -566,12 +517,10 @@ mod tests {
             cdi_files: Vec::new(),
         };
 
-        write_layout_capture(&base_file, &data).unwrap();
-        let companion = derive_companion_dir_path(&base_file).unwrap();
-        assert!(base_file.exists());
-        assert!(companion.exists());
+        write_layout_capture(&layout_dir, &data).unwrap();
+        assert!(layout_dir.exists());
 
-        let loaded = read_layout_capture(&base_file).unwrap();
+        let loaded = read_layout_capture(&layout_dir).unwrap();
         assert_eq!(loaded.manifest.layout_id, "np-layout");
         assert_eq!(loaded.node_snapshots.len(), 1);
         assert!(!loaded.node_snapshots[0].config.is_empty());
@@ -585,12 +534,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
 
-        let base_file = root.join("layout.bowties-layout.yaml");
+        let layout_dir = root.join("layout");
         let manifest = LayoutManifest::new(
             "layout".to_string(),
             "2026-04-05T12:00:00Z".to_string(),
             "2026-04-05T12:00:00Z".to_string(),
-            "layout.bowties-layout.d".to_string(),
         );
         let data = LayoutDirectoryWriteData {
             manifest,
@@ -600,11 +548,11 @@ mod tests {
             cdi_files: Vec::new(),
         };
 
-        write_layout_capture(&base_file, &data).unwrap();
-        let first = std::fs::read_to_string(derive_companion_dir_path(&base_file).unwrap().join("nodes").join("050101011402.yaml")).unwrap();
+        write_layout_capture(&layout_dir, &data).unwrap();
+        let first = std::fs::read_to_string(layout_dir.to_path_buf().join("nodes").join("050101011402.yaml")).unwrap();
 
-        write_layout_capture(&base_file, &data).unwrap();
-        let second = std::fs::read_to_string(derive_companion_dir_path(&base_file).unwrap().join("nodes").join("050101011402.yaml")).unwrap();
+        write_layout_capture(&layout_dir, &data).unwrap();
+        let second = std::fs::read_to_string(layout_dir.to_path_buf().join("nodes").join("050101011402.yaml")).unwrap();
 
         assert_eq!(first, second);
 
@@ -643,12 +591,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
 
-        let base_file = root.join("layout.bowties-layout.yaml");
+        let layout_dir = root.join("layout");
         let manifest = LayoutManifest::new(
             "layout".to_string(),
             "2026-04-05T12:00:00Z".to_string(),
             "2026-04-05T12:00:00Z".to_string(),
-            "layout.bowties-layout.d".to_string(),
         );
         let data = LayoutDirectoryWriteData {
             manifest,
@@ -658,8 +605,8 @@ mod tests {
             cdi_files: Vec::new(),
         };
 
-        write_layout_capture(&base_file, &data).unwrap();
-        let loaded = read_layout_capture(&base_file).unwrap();
+        write_layout_capture(&layout_dir, &data).unwrap();
+        let loaded = read_layout_capture(&layout_dir).unwrap();
 
         assert_eq!(loaded.node_snapshots.len(), 1);
         let snap = &loaded.node_snapshots[0];
@@ -677,12 +624,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
 
-        let base_file = root.join("mixed.bowties-layout.yaml");
+        let layout_dir = root.join("mixed");
         let manifest = LayoutManifest::new(
             "mixed".to_string(),
             "2026-04-05T12:00:00Z".to_string(),
             "2026-04-05T12:00:00Z".to_string(),
-            "mixed.bowties-layout.d".to_string(),
         );
 
         // Create a fake CDI file in a temp location to simulate cache
@@ -700,8 +646,8 @@ mod tests {
             cdi_files: vec![("acme_modelx_1.0".to_string(), cdi_source)],
         };
 
-        write_layout_capture(&base_file, &data).unwrap();
-        let loaded = read_layout_capture(&base_file).unwrap();
+        write_layout_capture(&layout_dir, &data).unwrap();
+        let loaded = read_layout_capture(&layout_dir).unwrap();
 
         assert_eq!(loaded.node_snapshots.len(), 2);
 
@@ -714,8 +660,8 @@ mod tests {
         assert!(no_cdi_node.config.is_empty());
 
         // Verify CDI file was copied for the CDI node
-        let companion = derive_companion_dir_path(&base_file).unwrap();
-        let cdi_dest = companion.join("cdi").join("acme_modelx_1.0.cdi.xml");
+        // layout_dir IS the layout folder
+        let cdi_dest = layout_dir.join("cdi").join("acme_modelx_1.0.cdi.xml");
         assert!(cdi_dest.exists());
 
         let _ = std::fs::remove_dir_all(&root);
@@ -733,12 +679,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
 
-        let base_file = root.join("placeholder-parity.bowties-layout.yaml");
+        let layout_dir = root.join("placeholder-parity");
         let manifest = LayoutManifest::new(
             "placeholder-parity".to_string(),
             "2026-05-25T00:00:00Z".to_string(),
             "2026-05-25T00:00:00Z".to_string(),
-            "placeholder-parity.bowties-layout.d".to_string(),
         );
 
         let placeholder_key = "placeholder:11111111-2222-4333-8444-555555555555".to_string();
@@ -781,11 +726,11 @@ mod tests {
             cdi_files: Vec::new(),
         };
 
-        write_layout_capture(&base_file, &data).unwrap();
+        write_layout_capture(&layout_dir, &data).unwrap();
 
         // The on-disk filename uses the placeholder filename basis (no `:`).
-        let companion = derive_companion_dir_path(&base_file).unwrap();
-        let nodes_dir = companion.join(NODES_DIR);
+        // layout_dir IS the layout folder
+        let nodes_dir = layout_dir.join(NODES_DIR);
         let on_disk = nodes_dir.join("PLACEHOLDER_11111111-2222-4333-8444-555555555555.yaml");
         assert!(
             on_disk.exists(),
@@ -796,7 +741,7 @@ mod tests {
                 .map(|it| it.filter_map(|e| e.ok().map(|e| e.file_name())).collect::<Vec<_>>())
         );
 
-        let loaded = read_layout_capture(&base_file).unwrap();
+        let loaded = read_layout_capture(&layout_dir).unwrap();
         assert_eq!(loaded.node_snapshots.len(), 1);
         let snap = &loaded.node_snapshots[0];
         assert_eq!(snap.node_key, placeholder_key);
@@ -814,12 +759,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
 
-        let base_file = root.join("layout.bowties-layout.yaml");
+        let layout_dir = root.join("layout");
         let manifest = LayoutManifest::new(
             "layout".to_string(),
             "2026-04-05T12:00:00Z".to_string(),
             "2026-04-05T12:00:00Z".to_string(),
-            "layout.bowties-layout.d".to_string(),
         );
 
         let cdi_source = root.join("acme_modelx_1.0.cdi.xml");
@@ -833,7 +777,7 @@ mod tests {
             cdi_files: vec![("acme_modelx_1.0".to_string(), cdi_source)],
         };
 
-        write_layout_capture(&base_file, &initial_data).unwrap();
+        write_layout_capture(&layout_dir, &initial_data).unwrap();
 
         let resave_data = LayoutDirectoryWriteData {
             manifest,
@@ -843,10 +787,10 @@ mod tests {
             cdi_files: Vec::new(),
         };
 
-        write_layout_capture(&base_file, &resave_data).unwrap();
+        write_layout_capture(&layout_dir, &resave_data).unwrap();
 
-        let companion = derive_companion_dir_path(&base_file).unwrap();
-        let cdi_dest = companion.join("cdi").join("acme_modelx_1.0.cdi.xml");
+        // layout_dir IS the layout folder
+        let cdi_dest = layout_dir.join("cdi").join("acme_modelx_1.0.cdi.xml");
         assert!(cdi_dest.exists());
         assert_eq!(std::fs::read_to_string(&cdi_dest).unwrap(), "<cdi version=\"1\"/>");
 
@@ -877,12 +821,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
 
-        let base_file = root.join("legacy.layout");
+        let layout_dir = root.join("legacy");
         let manifest = LayoutManifest::new(
             "legacy".to_string(),
             "2026-05-23T00:00:00Z".to_string(),
             "2026-05-23T00:00:00Z".to_string(),
-            "legacy.layout.d".to_string(),
         );
         let data = LayoutDirectoryWriteData {
             manifest,
@@ -891,19 +834,20 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
         };
-        write_layout_capture(&base_file, &data).unwrap();
+        write_layout_capture(&layout_dir, &data).unwrap();
 
         // Rewrite the manifest with the `connections` field stripped so
         // the file looks like one written by an older Bowties build.
-        let raw = std::fs::read_to_string(&base_file).unwrap();
+        let manifest_path = layout_dir.join(MANIFEST_FILE);
+        let raw = std::fs::read_to_string(&manifest_path).unwrap();
         let stripped: String = raw
             .lines()
             .filter(|l| !l.starts_with("connections"))
             .collect::<Vec<_>>()
             .join("\n");
-        std::fs::write(&base_file, stripped).unwrap();
+        std::fs::write(&manifest_path, stripped).unwrap();
 
-        let loaded = read_layout_capture(&base_file).unwrap();
+        let loaded = read_layout_capture(&layout_dir).unwrap();
         assert!(loaded.manifest.connections.is_empty(),
             "legacy layout must open with empty connections list");
 
@@ -916,12 +860,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
 
-        let base_file = root.join("rt.layout");
+        let layout_dir = root.join("rt");
         let manifest = LayoutManifest::new(
             "rt".to_string(),
             "2026-05-23T00:00:00Z".to_string(),
             "2026-05-23T00:00:00Z".to_string(),
-            "rt.layout.d".to_string(),
         );
         let data = LayoutDirectoryWriteData {
             manifest,
@@ -930,21 +873,21 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
         };
-        write_layout_capture(&base_file, &data).unwrap();
+        write_layout_capture(&layout_dir, &data).unwrap();
 
         // Initially empty.
-        let initial = crate::layout::read_manifest(&base_file).unwrap();
+        let initial = crate::layout::read_manifest(&layout_dir).unwrap();
         assert!(initial.connections.is_empty());
 
         // Write a single connection and round-trip it.
         let conn_a = test_connection("aaa", "JMRI hub");
-        crate::layout::update_manifest_connections(&base_file, vec![conn_a.clone()]).unwrap();
-        let after_one = crate::layout::read_manifest(&base_file).unwrap();
+        crate::layout::update_manifest_connections(&layout_dir, vec![conn_a.clone()]).unwrap();
+        let after_one = crate::layout::read_manifest(&layout_dir).unwrap();
         assert_eq!(after_one.connections, vec![conn_a.clone()]);
 
         // The companion-directory contents must be untouched.
-        let companion = derive_companion_dir_path(&base_file).unwrap();
-        assert!(companion.join("nodes").join("050101011402.yaml").exists());
+        // layout_dir IS the layout folder
+        assert!(layout_dir.join("nodes").join("050101011402.yaml").exists());
 
         // Write multiple connections in a defined order.
         let conn_b = crate::layout::types::ConnectionConfig {
@@ -959,17 +902,17 @@ mod tests {
         };
         let conn_c = test_connection("ccc", "Secondary hub");
         crate::layout::update_manifest_connections(
-            &base_file,
+            &layout_dir,
             vec![conn_a.clone(), conn_b.clone(), conn_c.clone()],
         )
         .unwrap();
 
-        let after_three = crate::layout::read_manifest(&base_file).unwrap();
+        let after_three = crate::layout::read_manifest(&layout_dir).unwrap();
         assert_eq!(after_three.connections, vec![conn_a, conn_b, conn_c]);
 
         // Round-trip through the full capture reader too, to confirm the
         // companion directory still loads cleanly alongside the new field.
-        let full = read_layout_capture(&base_file).unwrap();
+        let full = read_layout_capture(&layout_dir).unwrap();
         assert_eq!(full.manifest.connections.len(), 3);
         assert_eq!(full.node_snapshots.len(), 1);
 
@@ -989,12 +932,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
 
-        let base_file = root.join("rs.layout");
+        let layout_dir = root.join("rs");
         let initial_manifest = LayoutManifest::new(
             "rs".to_string(),
             "2026-06-01T00:00:00Z".to_string(),
             "2026-06-01T00:00:00Z".to_string(),
-            "rs.layout.d".to_string(),
         );
         let initial = LayoutDirectoryWriteData {
             manifest: initial_manifest,
@@ -1003,21 +945,20 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
         };
-        write_layout_capture(&base_file, &initial).unwrap();
+        write_layout_capture(&layout_dir, &initial).unwrap();
 
         // User adds a connection via ConnectionManager.
         let conn = test_connection("conn-1", "Home TCP");
-        crate::layout::update_manifest_connections(&base_file, vec![conn.clone()]).unwrap();
+        crate::layout::update_manifest_connections(&layout_dir, vec![conn.clone()]).unwrap();
 
         // Simulate `save_layout_directory`: read previous capture, build a
         // new manifest via the helper, and write through `save_capture`.
-        let previous = crate::layout::read_capture(&base_file).unwrap();
+        let previous = crate::layout::read_capture(&layout_dir).unwrap();
         let new_manifest = crate::layout::manifest::build_save_manifest(
             Some(&previous.manifest),
             previous.manifest.layout_id.clone(),
             previous.manifest.captured_at.clone(),
             "2026-06-01T00:05:00Z".to_string(),
-            String::new(),
         );
         let resave = LayoutDirectoryWriteData {
             manifest: new_manifest,
@@ -1026,9 +967,9 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
         };
-        write_layout_capture(&base_file, &resave).unwrap();
+        write_layout_capture(&layout_dir, &resave).unwrap();
 
-        let after = crate::layout::read_manifest(&base_file).unwrap();
+        let after = crate::layout::read_manifest(&layout_dir).unwrap();
         assert_eq!(after.connections, vec![conn],
             "re-save must preserve connections from the previous manifest");
 
@@ -1121,12 +1062,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
 
-        let base_file = root.join("layout.bowties-layout.yaml");
+        let layout_dir = root.join("layout");
         let manifest = LayoutManifest::new(
             "layout".to_string(),
             "2026-04-05T12:00:00Z".to_string(),
             "2026-04-05T12:00:00Z".to_string(),
-            "layout.bowties-layout.d".to_string(),
         );
         let data = LayoutDirectoryWriteData {
             manifest: manifest.clone(),
@@ -1136,8 +1076,8 @@ mod tests {
             cdi_files: Vec::new(),
         };
 
-        write_layout_capture(&base_file, &data).unwrap();
-        let node_path = derive_companion_dir_path(&base_file).unwrap()
+        write_layout_capture(&layout_dir, &data).unwrap();
+        let node_path = layout_dir.to_path_buf()
             .join("nodes").join("050101011402.yaml");
         let mtime_after_first = std::fs::metadata(&node_path).unwrap().modified().unwrap();
 
@@ -1145,7 +1085,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(50));
 
         // Re-save with identical data
-        write_layout_capture(&base_file, &data).unwrap();
+        write_layout_capture(&layout_dir, &data).unwrap();
         let mtime_after_second = std::fs::metadata(&node_path).unwrap().modified().unwrap();
 
         assert_eq!(
@@ -1156,3 +1096,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
+
+
+

@@ -188,7 +188,6 @@ export async function removeKnownLayout(args: RemoveKnownLayoutArgs): Promise<vo
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 export function deriveLayoutNameFromPath(path: string): string {
-  const normalized = path.replace(/\\/g, '/');
-  const last = normalized.split('/').pop() ?? path;
-  return last.replace(/\.layout$/i, '') || last;
+  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '');
+  return normalized.split('/').pop() ?? path;
 }

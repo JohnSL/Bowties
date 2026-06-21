@@ -1,12 +1,12 @@
 //! Layout file persistence for bowtie metadata.
 //!
 //! Manages loading and saving user-managed YAML layout files (single-file
-//! `.bowties.yaml` documents and companion-directory layout captures), and
-//! is the sole owner of the companion-directory file structure.
+//! `.bowties.yaml` documents and folder-based layout captures), and
+//! is the sole owner of the layout directory file structure.
 //!
 //! Code outside `layout/` must use only the intent-shaped functions exposed
 //! here (or the single-file helpers in [`io`]). It must not compute
-//! companion-directory paths, node-snapshot filenames, or write YAML directly
+//! layout-directory paths, node-snapshot filenames, or write YAML directly
 //! into a layout directory — every mutation must flow through this module so
 //! that the journaled-write protocol in [`journal`] (ADR-0006) covers
 //! every persistence path.
@@ -28,7 +28,7 @@ use offline_changes::OfflineChange;
 
 pub use io::{LayoutDirectoryReadData, LayoutDirectoryWriteData};
 
-/// Save a complete layout: manifest + companion-directory contents
+/// Save a complete layout: manifest + directory contents
 /// (bowtie metadata, node snapshots, offline changes, CDI files).
 ///
 /// Persistence goes through the layout journal (ADR-0006): files are
@@ -36,50 +36,48 @@ pub use io::{LayoutDirectoryReadData, LayoutDirectoryWriteData};
 /// interrupted save can be rolled back on the next read, and so that
 /// no `MoveFileEx` on a directory contends with Dropbox / OneDrive /
 /// antivirus handles.
-pub fn save_capture(base_file: &Path, data: &LayoutDirectoryWriteData) -> Result<(), String> {
-    io::write_layout_capture(base_file, data)
+pub fn save_capture(layout_dir: &Path, data: &LayoutDirectoryWriteData) -> Result<(), String> {
+    io::write_layout_capture(layout_dir, data)
 }
 
-/// Read a complete layout: manifest + companion-directory contents.
-pub fn read_capture(base_file: &Path) -> Result<LayoutDirectoryReadData, String> {
-    io::read_layout_capture(base_file)
+/// Read a complete layout: manifest + directory contents.
+pub fn read_capture(layout_dir: &Path) -> Result<LayoutDirectoryReadData, String> {
+    io::read_layout_capture(layout_dir)
 }
 
-/// Read a single node snapshot from the layout's companion directory.
+/// Read a single node snapshot from the layout directory.
 ///
 /// `canonical_node_id` is the hex-string node id (with or without dots);
 /// case is normalized to upper-case internally.
 pub fn read_node_snapshot(
-    base_file: &Path,
+    layout_dir: &Path,
     canonical_node_id: &str,
 ) -> Result<NodeSnapshot, String> {
-    let companion_dir = io::derive_companion_dir_path(base_file)?;
-    let nodes_dir = companion_dir.join(io::NODES_DIR);
+    let nodes_dir = layout_dir.join(io::NODES_DIR);
     let path = io::derive_node_file_path(&nodes_dir, canonical_node_id);
     io::read_yaml_file::<NodeSnapshot>(&path)
         .map_err(|e| format!("Cannot load snapshot {}: {}", path.display(), e))
 }
 
-/// Replace the offline-changes file in the layout's companion directory.
+/// Replace the offline-changes file in the layout directory.
 ///
-/// The companion directory must already exist (the layout must have been
+/// The layout directory must already exist (the layout must have been
 /// saved at least once). Routed through the layout journal so a crash
 /// mid-write is recoverable on the next read.
 pub fn update_offline_changes(
-    base_file: &Path,
+    layout_dir: &Path,
     changes: &[OfflineChange],
 ) -> Result<(), String> {
-    let companion_dir = io::derive_companion_dir_path(base_file)?;
-    if !companion_dir.exists() {
+    if !layout_dir.exists() {
         return Err(format!(
-            "Layout companion directory not found: {}",
-            companion_dir.display()
+            "Layout directory not found: {}",
+            layout_dir.display()
         ));
     }
-    let path = companion_dir.join(io::OFFLINE_CHANGES_FILE);
+    let path = layout_dir.join(io::OFFLINE_CHANGES_FILE);
     let bytes = io::serialize_yaml(&changes.to_vec())?;
     journal::execute(journal::SavePlan {
-        companion_dir,
+        layout_dir: layout_dir.to_path_buf(),
         writes: vec![journal::PlannedWrite {
             abs_path: path,
             op: journal::WriteOp::Bytes(bytes),
@@ -88,24 +86,23 @@ pub fn update_offline_changes(
     })
 }
 
-/// Write the given node snapshots into the layout's companion directory.
+/// Write the given node snapshots into the layout directory.
 ///
 /// Snapshots for nodes not in the list are left untouched. Creates the
-/// `nodes/` subdirectory if it does not already exist. The companion
+/// `nodes/` subdirectory if it does not already exist. The layout
 /// directory itself must already exist. Routed through the layout
 /// journal so a crash mid-write is recoverable.
 pub fn update_node_snapshots(
-    base_file: &Path,
+    layout_dir: &Path,
     snapshots: &[NodeSnapshot],
 ) -> Result<(), String> {
-    let companion_dir = io::derive_companion_dir_path(base_file)?;
-    if !companion_dir.exists() {
+    if !layout_dir.exists() {
         return Err(format!(
-            "Layout companion directory not found: {}",
-            companion_dir.display()
+            "Layout directory not found: {}",
+            layout_dir.display()
         ));
     }
-    let nodes_dir = companion_dir.join(io::NODES_DIR);
+    let nodes_dir = layout_dir.join(io::NODES_DIR);
     std::fs::create_dir_all(&nodes_dir)
         .map_err(|e| format!("Cannot create nodes dir {}: {}", nodes_dir.display(), e))?;
     let mut writes = Vec::with_capacity(snapshots.len());
@@ -119,29 +116,29 @@ pub fn update_node_snapshots(
         });
     }
     journal::execute(journal::SavePlan {
-        companion_dir,
+        layout_dir: layout_dir.to_path_buf(),
         writes,
         prune_dirs: Vec::new(),
     })
 }
 
 /// Resolve CDI XML for a node snapshot, checking the global app-data cache
-/// first, then falling back to the layout's companion directory.
+/// first, then falling back to the layout directory.
 pub fn resolve_cdi_xml_for_snapshot(
-    base_file: &Path,
+    layout_dir: &Path,
     snapshot: &NodeSnapshot,
     app_data_dir: &Path,
 ) -> Result<String, String> {
-    let companion_dir = io::derive_companion_dir_path(base_file)?;
-    io::resolve_cdi_xml(snapshot, app_data_dir, &companion_dir)
+    io::resolve_cdi_xml(snapshot, app_data_dir, layout_dir)
 }
 
-/// Read just the layout manifest file (the base `.layout` YAML),
-/// without loading companion-directory contents. Useful when callers
-/// only need a small piece of manifest data such as the saved
-/// connections list (Spec 013 / S4).
-pub fn read_manifest(base_file: &Path) -> Result<manifest::LayoutManifest, String> {
-    let m: manifest::LayoutManifest = io::read_yaml_file(base_file)?;
+/// Read just the layout manifest file (the `manifest.yaml` inside the
+/// layout directory), without loading the rest of the contents. Useful
+/// when callers only need a small piece of manifest data such as the
+/// saved connections list (Spec 013 / S4).
+pub fn read_manifest(layout_dir: &Path) -> Result<manifest::LayoutManifest, String> {
+    let manifest_path = layout_dir.join(io::MANIFEST_FILE);
+    let m: manifest::LayoutManifest = io::read_yaml_file(&manifest_path)?;
     m.validate()?;
     Ok(m)
 }
@@ -150,29 +147,29 @@ pub fn read_manifest(base_file: &Path) -> Result<manifest::LayoutManifest, Strin
 ///
 /// Loads the existing manifest, swaps in the new connections list,
 /// and writes the manifest back through the layout journal so a
-/// crash mid-write is recoverable (ADR-0006). The companion directory
+/// crash mid-write is recoverable (ADR-0006). The layout directory
 /// must already exist (i.e. the layout must have been saved at least
 /// once).
 pub fn update_manifest_connections(
-    base_file: &Path,
+    layout_dir: &Path,
     connections: Vec<types::ConnectionConfig>,
 ) -> Result<(), String> {
-    let mut manifest: manifest::LayoutManifest = io::read_yaml_file(base_file)?;
+    let manifest_path = layout_dir.join(io::MANIFEST_FILE);
+    let mut manifest: manifest::LayoutManifest = io::read_yaml_file(&manifest_path)?;
     manifest.validate()?;
     manifest.connections = connections;
 
-    let companion_dir = io::derive_companion_dir_path(base_file)?;
-    if !companion_dir.exists() {
+    if !layout_dir.exists() {
         return Err(format!(
-            "Layout companion directory not found: {}",
-            companion_dir.display()
+            "Layout directory not found: {}",
+            layout_dir.display()
         ));
     }
     let bytes = io::serialize_yaml(&manifest)?;
     journal::execute(journal::SavePlan {
-        companion_dir,
+        layout_dir: layout_dir.to_path_buf(),
         writes: vec![journal::PlannedWrite {
-            abs_path: base_file.to_path_buf(),
+            abs_path: manifest_path,
             op: journal::WriteOp::Bytes(bytes),
         }],
         prune_dirs: Vec::new(),
@@ -250,12 +247,11 @@ mod tests {
         }
     }
 
-    fn seed_layout(base_file: &Path, snapshots: Vec<NodeSnapshot>) {
+    fn seed_layout(layout_dir: &Path, snapshots: Vec<NodeSnapshot>) {
         let manifest = LayoutManifest::new(
             "layout".to_string(),
             "2026-05-23T00:00:00Z".to_string(),
             "2026-05-23T00:00:00Z".to_string(),
-            "layout.layout.d".to_string(),
         );
         let data = LayoutDirectoryWriteData {
             manifest,
@@ -264,17 +260,17 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
         };
-        save_capture(base_file, &data).unwrap();
+        save_capture(layout_dir, &data).unwrap();
     }
 
     #[test]
     fn read_node_snapshot_returns_value_written_by_save_capture() {
         let root = fresh_dir("bowties_s2d_read_after_save");
-        let base = root.join("layout.layout");
+        let layout_dir = root.join("my-layout");
         let snap = make_snapshot("050101011402");
-        seed_layout(&base, vec![snap.clone()]);
+        seed_layout(&layout_dir, vec![snap.clone()]);
 
-        let loaded = read_node_snapshot(&base, "050101011402").unwrap();
+        let loaded = read_node_snapshot(&layout_dir, "050101011402").unwrap();
         assert_eq!(loaded.node_id, snap.node_id);
         assert_eq!(loaded.cdi_ref.cache_key, "acme_modelx_1.0");
         assert!(!loaded.config.is_empty());
@@ -285,13 +281,13 @@ mod tests {
     #[test]
     fn update_offline_changes_roundtrips_through_read_capture() {
         let root = fresh_dir("bowties_s2d_offline_changes_roundtrip");
-        let base = root.join("layout.layout");
-        seed_layout(&base, vec![make_snapshot("050101011402")]);
+        let layout_dir = root.join("my-layout");
+        seed_layout(&layout_dir, vec![make_snapshot("050101011402")]);
 
         let changes = vec![make_change("c1"), make_change("c2")];
-        update_offline_changes(&base, &changes).unwrap();
+        update_offline_changes(&layout_dir, &changes).unwrap();
 
-        let loaded = read_capture(&base).unwrap();
+        let loaded = read_capture(&layout_dir).unwrap();
         assert_eq!(loaded.offline_changes.len(), 2);
         assert_eq!(loaded.offline_changes[0].change_id, "c1");
         assert_eq!(loaded.offline_changes[1].change_id, "c2");
@@ -302,21 +298,21 @@ mod tests {
     #[test]
     fn update_node_snapshots_preserves_other_nodes() {
         let root = fresh_dir("bowties_s2d_node_snapshots_partial");
-        let base = root.join("layout.layout");
+        let layout_dir = root.join("my-layout");
         let snap_a = make_snapshot("050101011402");
-        seed_layout(&base, vec![snap_a.clone()]);
+        seed_layout(&layout_dir, vec![snap_a.clone()]);
 
         // Add a second snapshot via partial update.
         let snap_b = make_snapshot("050101011403");
-        update_node_snapshots(&base, &[snap_b.clone()]).unwrap();
+        update_node_snapshots(&layout_dir, &[snap_b.clone()]).unwrap();
 
         // Both snapshots should be readable.
-        let read_a = read_node_snapshot(&base, "050101011402").unwrap();
+        let read_a = read_node_snapshot(&layout_dir, "050101011402").unwrap();
         assert_eq!(read_a.node_id, snap_a.node_id);
-        let read_b = read_node_snapshot(&base, "050101011403").unwrap();
+        let read_b = read_node_snapshot(&layout_dir, "050101011403").unwrap();
         assert_eq!(read_b.node_id, snap_b.node_id);
 
-        let loaded = read_capture(&base).unwrap();
+        let loaded = read_capture(&layout_dir).unwrap();
         assert_eq!(loaded.node_snapshots.len(), 2);
 
         let _ = std::fs::remove_dir_all(&root);
@@ -325,27 +321,27 @@ mod tests {
     #[test]
     fn read_node_snapshot_returns_value_written_by_partial_update() {
         let root = fresh_dir("bowties_s2d_read_after_partial_update");
-        let base = root.join("layout.layout");
-        seed_layout(&base, vec![make_snapshot("050101011402")]);
+        let layout_dir = root.join("my-layout");
+        seed_layout(&layout_dir, vec![make_snapshot("050101011402")]);
 
         let mut updated = make_snapshot("050101011402");
         updated.captured_at = "2026-06-01T12:00:00Z".to_string();
-        update_node_snapshots(&base, &[updated]).unwrap();
+        update_node_snapshots(&layout_dir, &[updated]).unwrap();
 
-        let loaded = read_node_snapshot(&base, "050101011402").unwrap();
+        let loaded = read_node_snapshot(&layout_dir, "050101011402").unwrap();
         assert_eq!(loaded.captured_at, "2026-06-01T12:00:00Z");
 
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn update_apis_error_when_companion_dir_missing() {
-        let root = fresh_dir("bowties_s2d_missing_companion");
-        let base = root.join("nope.layout");
-        // No seed_layout — companion dir doesn't exist.
-        let err = update_offline_changes(&base, &[]).unwrap_err();
+    fn update_apis_error_when_layout_dir_missing() {
+        let root = fresh_dir("bowties_s2d_missing_layout_dir");
+        let layout_dir = root.join("nope");
+        // No seed_layout — directory doesn't exist.
+        let err = update_offline_changes(&layout_dir, &[]).unwrap_err();
         assert!(err.contains("not found"), "got: {}", err);
-        let err = update_node_snapshots(&base, &[]).unwrap_err();
+        let err = update_node_snapshots(&layout_dir, &[]).unwrap_err();
         assert!(err.contains("not found"), "got: {}", err);
 
         let _ = std::fs::remove_dir_all(&root);

@@ -1,23 +1,19 @@
 /**
- * Layout path utilities — pure transformations for layout file paths.
+ * Layout path utilities — pure transformations for layout folder paths.
  */
 
 /**
- * Derives a human-readable layout title from a raw file path.
+ * Derives a human-readable layout title from a raw folder path.
  *
- * Strips common layout file extensions and returns just the base name.
- * Returns null for null/undefined/empty input.
+ * Returns the last path segment (the folder name). Returns null for
+ * null/undefined/empty input.
  *
  * @example
- * normalizeLayoutTitle('/layouts/yard.bowties.yaml')  // "yard"
- * normalizeLayoutTitle('my-layout.layout')            // "my-layout"
+ * normalizeLayoutTitle('/layouts/yard')        // "yard"
+ * normalizeLayoutTitle('C:\\Layouts\\MyRR')    // "MyRR"
  */
 export function normalizeLayoutTitle(raw: string | null | undefined): string | null {
   if (!raw) return null;
-  const fileName = raw.replace(/\\/g, '/').split('/').pop() ?? raw;
-  return fileName
-    .replace(/\.layout$/i, '')
-    .replace(/\.bowties\.ya?ml$/i, '')
-    .replace(/\.ya?ml$/i, '')
-    .replace(/\.layout\.d$/i, '');
+  const normalized = raw.replace(/\\/g, '/').replace(/\/+$/, '');
+  return normalized.split('/').pop() ?? raw;
 }
