@@ -13,6 +13,12 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **lcc-rs:** `discovery.rs` (alias allocation, node probing)
 - **Invariant — live-only inputs:** `handleDiscoveredNode`, `refreshReinitializedNode`, and `reconcileRefreshState` must receive only live-node `DiscoveredNode[]` arrays (i.e. `liveNodes`, not `nodes`/`allEntries`). Placeholder entries have `node_id: []`, which crashes `keyOf()`→`nodeKey("")`. `replaceLiveRoster` also skips entries with empty `node_id` as a belt-and-braces defense.
 
+## Disconnect / Offline Fallback
+- **Orchestrator:** `syncSessionOrchestrator.svelte.ts` (`disconnect()` → `disconnectWithOfflineFallback()`)
+- **Transition matrix:** `lifecycleTransitionMatrix.ts` (`resolveDisconnectTransition`)
+- **Paths:** `rehydrated_offline` (layout + snapshots → rehydrate), `preserved_layout` (layout, no snapshots → clear live state), `cleared_to_connection` (no layout → clear + show dialog)
+- **Sidebar invariant:** The `rehydrateOffline` callback in `+page.svelte` calls `configSidebarStore.pruneToAvailableNodes()` *after* hydration to keep the selection if the node survived into the offline roster. The `clearLiveState` callback calls `configSidebarStore.reset()` unconditionally (no nodes survive when there are no snapshots).
+
 ## SNIP / PIP Query
 - **Orchestrator:** `discoveryOrchestrator.ts` (embedded in discovery; also `reconcileRefreshState()`)
 - **Store:** `nodeInfo.ts`

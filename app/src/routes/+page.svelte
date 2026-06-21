@@ -285,8 +285,11 @@
     rehydrateOffline: async () => {
       nodeTreeStore.reset();
       await hydrateOfflineSnapshots(currentLayoutSnapshots);
+      const availableKeys = new Set(nodeRoster.allEntries.map((e) => e.nodeKey));
+      configSidebarStore.pruneToAvailableNodes(availableKeys);
     },
     clearLiveState: () => {
+      configSidebarStore.reset();
       clearConfigReadStatus();
       nodeRoster.replaceLiveRoster([]);
       nodeTreeStore.reset();

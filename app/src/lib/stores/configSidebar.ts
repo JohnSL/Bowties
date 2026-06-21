@@ -358,6 +358,30 @@ function createConfigSidebarStore() {
     },
 
     /**
+     * Keep selection and expansion state for nodes that still exist after a
+     * transition (e.g. disconnect → offline fallback). Clears everything for
+     * nodes not in `availableNodeKeys`, and always resets transient state
+     * (cardDeck, loading states, errors).
+     */
+    pruneToAvailableNodes(availableNodeKeys: Set<string>): void {
+      update(state => {
+        const nodeAlive = (id: string) => availableNodeKeys.has(id);
+        return {
+          selectedNodeId: state.selectedNodeId && nodeAlive(state.selectedNodeId)
+            ? state.selectedNodeId
+            : null,
+          selectedSegment: state.selectedSegment && nodeAlive(state.selectedSegment.nodeId)
+            ? state.selectedSegment
+            : null,
+          expandedNodeIds: state.expandedNodeIds.filter(nodeAlive),
+          cardDeck: null,
+          nodeLoadingStates: {},
+          nodeErrors: {},
+        };
+      });
+    },
+
+    /**
      * Clear all state.
      * FR-018: Called when Discover/Refresh Nodes is triggered.
      */
