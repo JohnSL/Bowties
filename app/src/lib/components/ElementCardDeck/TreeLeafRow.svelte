@@ -323,25 +323,10 @@
     localInvalidValue = null;
     localValidationMessage = null;
 
-    // In offline mode, commit on blur/tab to avoid creating rows per keystroke.
-    if (!layoutStore.isOfflineMode && !isNodeOffline) {
-      applyLeafValueChange(newVal);
-    }
+    applyLeafValueChange(newVal);
   }
 
   function handleStringBlur() {
-    if (!(layoutStore.isOfflineMode || isNodeOffline)) {
-      localStrInput = null;
-      return;
-    }
-
-    const raw = localStrInput ?? inputStr;
-    const maxLen = leaf.size - 1;
-    const byteLen = new TextEncoder().encode(raw).length;
-    if (byteLen <= maxLen) {
-      const newVal: TreeConfigValue = { type: 'string', value: raw };
-      applyLeafValueChange(newVal);
-    }
     localStrInput = null;
   }
 

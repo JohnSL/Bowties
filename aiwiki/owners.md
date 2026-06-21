@@ -140,7 +140,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `bowties.svelte.ts` | `bowtieCatalogStore` singleton + `buildEffectiveBowtiePreview()` (the catalog×tree×metadata×layout merge). The merge is consumed only by `$lib/layout/effectiveLayoutStore`; components do not import from here directly. | `bowties.svelte.test.ts` (tests exercise the merge through `effectiveLayoutStore`) |
 | `bowtieMetadata.svelte.ts` | Pending bowtie name/tag/role edits; `collectDeltas()` converts edits to `LayoutEditDelta[]` for save | `bowtieMetadata.svelte.test.ts` |
 | `nodeTree.svelte.ts` | Unified node config tree (CDI + addresses + values) | `nodeTree.store.test.ts` |
-| `configChanges.svelte.ts` | Layered change state (draft/offlinePending/baseline). S8.12: `commitForSave()` replaces `clearNonPlaceholderDrafts()` — uniform draft clearing post-save. | `configChanges.test.ts` |
+| `configChanges.svelte.ts` | Layered change state (draft/offlinePending/baseline). `set()` guards against no-op drafts: skips/removes the draft when the new value equals the effective value (offlinePending or baseline). S8.12: `commitForSave()` replaces `clearNonPlaceholderDrafts()` — uniform draft clearing post-save. | `configChanges.test.ts` |
 | `configEditor.svelte.ts` | Entry point for user-initiated config edits | `configEditor.test.ts` |
 | `configFocus.svelte.ts` | Navigation request: bowtie → config field | `configFocus.test.ts` |
 | `configReadStatus.ts` | Tracks nodes with successful config reads | `configReadStatus.test.ts` |

@@ -347,6 +347,38 @@ describe('set', () => {
     configChangesStore.set(KEY, strVal('Tower East'));
     expect(configChangesStore.visibleValue(KEY)).toEqual(strVal('Tower East'));
   });
+
+  it('does not create a draft when value equals the baseline', () => {
+    mockTreesMap.set(NODE_ID, makeTree(NODE_ID, ADDRESS, intVal(3)));
+    configChangesStore.set(KEY, intVal(3));
+    expect(configChangesStore.hasDraftsForNode(NODE_ID)).toBe(false);
+    expect(configChangesStore.changeLayers(KEY)).toHaveLength(1); // baseline only
+  });
+
+  it('does not create a draft when string value equals the baseline', () => {
+    const strTree = makeTree(NODE_ID, ADDRESS, strVal('Modulino Tests'));
+    mockTreesMap.set(NODE_ID, strTree);
+    configChangesStore.set(KEY, strVal('Modulino Tests'));
+    expect(configChangesStore.hasDraftsForNode(NODE_ID)).toBe(false);
+  });
+
+  it('removes an existing draft when value is edited back to baseline', () => {
+    mockTreesMap.set(NODE_ID, makeTree(NODE_ID, ADDRESS, intVal(3)));
+    configChangesStore.set(KEY, intVal(9));
+    expect(configChangesStore.hasDraftsForNode(NODE_ID)).toBe(true);
+    // User edits back to the original value
+    configChangesStore.set(KEY, intVal(3));
+    expect(configChangesStore.hasDraftsForNode(NODE_ID)).toBe(false);
+  });
+
+  it('keeps draft when value differs from offlinePending even if it matches baseline', () => {
+    mockTreesMap.set(NODE_ID, makeTree(NODE_ID, ADDRESS, intVal(3)));
+    mockPersistedRows = [makeOfflineRow({ plannedValue: '7' })];
+    // User edits to baseline value — but offlinePending exists, so this is
+    // still a meaningful override (reverting the offline change)
+    configChangesStore.set(KEY, intVal(3));
+    expect(configChangesStore.hasDraftsForNode(NODE_ID)).toBe(true);
+  });
 });
 
 describe('revert', () => {

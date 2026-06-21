@@ -186,8 +186,24 @@ class ConfigChangesStore {
 
   // ── Write interface ───────────────────────────────────────────────────────
 
-  /** Create or update the draft (top layer) for this field. */
+  /**
+   * Create or update the draft (top layer) for this field.
+   *
+   * No-op when the new value equals the effective value below the draft
+   * layer (offlinePending if present, otherwise baseline). If a draft
+   * already exists and the user edits back to the effective value, the
+   * draft is removed — the field returns to its pre-edit state.
+   */
   set(key: string, value: TreeConfigValue): void {
+    const effective = this._resolveOfflinePending(key) ?? this._resolveBaseline(key);
+    if (effective !== null && this._valuesEqual(value, effective)) {
+      // Value matches what's already stored — remove any existing draft
+      if (this._drafts.has(key)) {
+        this._drafts = new Map(this._drafts);
+        this._drafts.delete(key);
+      }
+      return;
+    }
     this._drafts = new Map(this._drafts);
     this._drafts.set(key, value);
   }
