@@ -22,7 +22,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 
 | File | Purpose | Test |
 |------|---------|------|
-| `+page.svelte` | Main app page; tabs for layout/discovery/config/traffic. **Picker gate (Spec 013 / S6):** when no layout is active (and bootstrap is finished and no open-in-progress), `+page.svelte` renders `LayoutPicker` instead of the toolbar + main-content; disconnecting does NOT re-show the picker (layout stays active). | `page.route.test.ts` |
+| `+page.svelte` | Main app page; tabs for layout/discovery/config/traffic. **Picker gate (Spec 013 / S6):** when no layout is active (and bootstrap is finished and no open-in-progress), `+page.svelte` renders `LayoutPicker` instead of the toolbar + main-content; disconnecting does NOT re-show the picker (layout stays active). **Window-close lifecycle:** owns `onCloseRequested` handler — always prevents native close, shows unsaved-changes dialog when dirty, calls `disconnect_lcc` for graceful LCC teardown before exiting. Menu Exit follows the same path via `promptUnsaved`. | `page.route.test.ts` |
 | `+layout.svelte` | Root layout wrapper | — |
 | `+layout.ts` | Disables SSR (SPA-only for Tauri) | — |
 | `config/+page.svelte` | Config editor; renders ConfigSidebar + ElementCardDeck | — |
@@ -281,7 +281,7 @@ thin shim modules so existing `crate::` paths compile unchanged.
 
 | Module | Purpose | Test |
 |--------|---------|------|
-| `lib.rs` | Entry point: connection init, state setup, command registration | — |
+| `lib.rs` | Entry point: connection init, state setup, command registration. Window close is handled by the frontend (see `+page.svelte` `onCloseRequested`); the backend provides `disconnect_lcc` as an IPC command but does not intercept the close event. | — |
 | `main.rs` | Tauri desktop app launcher | — |
 | `state.rs` | Authoritative app state: connection, registry, caches. Re-exports `NodeRoles` from `bowties_core::node_tree` and bowtie catalog types from `bowties_core::bowtie::types`. | inline `#[cfg(test)]` |
 | `node_key.rs` | Re-export shim → `bowties_core::node_key` | — |

@@ -27,7 +27,18 @@ const {
   getCdiXmlRef,
   readAllConfigValuesRef,
   startListeningRef,
+  closeRequestedHandler,
+  appWindowMock,
 } = vi.hoisted(() => ({
+  closeRequestedHandler: { current: null as ((event: any) => unknown) | null },
+  appWindowMock: {
+    onCloseRequested: vi.fn(async (handler: (event: any) => unknown) => {
+      closeRequestedHandler.current = handler;
+      return () => { closeRequestedHandler.current = null; };
+    }),
+    setTitle: vi.fn(async () => {}),
+    close: vi.fn(),
+  },
   eventHandlers: new Map<string, (event: any) => unknown>(),
   getRecentLayoutRef: vi.fn<() => Promise<{ path?: string | null } | null>>(async () => null),
   invokeRef: vi.fn(),
@@ -86,11 +97,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 
 vi.mock('@tauri-apps/api/webviewWindow', () => ({
   WebviewWindow: class {},
-  getCurrentWebviewWindow: () => ({
-    onCloseRequested: vi.fn(async () => () => {}),
-    setTitle: vi.fn(async () => {}),
-    close: vi.fn(),
-  }),
+  getCurrentWebviewWindow: () => appWindowMock,
 }));
 
 vi.mock('$lib/api/tauri', () => ({
@@ -193,6 +200,7 @@ function makeOfflineLayout() {
 beforeEach(() => {
   vi.clearAllMocks();
   eventHandlers.clear();
+  closeRequestedHandler.current = null;
 
   invokeRef.mockImplementation(async (command: string) => {
     if (command === 'get_connection_status') {
@@ -624,6 +632,41 @@ describe('+page route discovery CTA', () => {
       expect(connectorSelectionsStore.getProfile(nodeId)).toBe(null);
       expect(connectorSelectionsStore.getDocument(nodeId)).toBe(null);
       expect(connectorSelectionsStore.getWarnings(nodeId)).toEqual([]);
+    });
+  });
+});
+
+describe('window close unsaved-changes guard', () => {
+  it('shows unsaved-changes dialog and prevents close when dirty', async () => {
+    render(Page);
+    await waitFor(() => expect(closeRequestedHandler.current).toBeTypeOf('function'));
+
+    // Make the layout dirty
+    bowtieMetadataStore.createBowtie('00.00.00.00.00.00.00.01');
+
+    const event = { preventDefault: vi.fn() };
+    await closeRequestedHandler.current!(event);
+
+    expect(event.preventDefault).toHaveBeenCalled();
+    // The unsaved-changes dialog should be visible
+    await waitFor(() => {
+      expect(screen.getByText('Unsaved Changes')).toBeInTheDocument();
+    });
+  });
+
+  it('disconnects gracefully and closes when no unsaved changes', async () => {
+    render(Page);
+    await waitFor(() => expect(closeRequestedHandler.current).toBeTypeOf('function'));
+
+    const event = { preventDefault: vi.fn() };
+    await closeRequestedHandler.current!(event);
+
+    // Should still prevent close (to do async disconnect first)
+    expect(event.preventDefault).toHaveBeenCalled();
+    // Should invoke disconnect then close
+    await waitFor(() => {
+      expect(invokeRef).toHaveBeenCalledWith('disconnect_lcc');
+      expect(appWindowMock.close).toHaveBeenCalled();
     });
   });
 });

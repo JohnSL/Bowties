@@ -812,9 +812,14 @@
       });
 
       // T050: Prompt-to-save guard on app close (FR-024)
+      // Always prevent the native close so we can disconnect gracefully
+      // (sends FIN instead of RST to the LCC hub) and, when dirty, show
+      // the unsaved-changes dialog before exiting.
       const appWindow = getCurrentWebviewWindow();
-      unlistens.push(await appWindow.onCloseRequested((event) => {
+      unlistens.push(await appWindow.onCloseRequested(async (event) => {
         if (isForceClosing) return;
+        event.preventDefault();
+
         const hasUnsaved =
           hasUnsavedPromptChanges(
             nodeTreeStore.trees.keys(),
@@ -824,12 +829,20 @@
             offlineChangesStore.revertedPersistedCount,
           );
         if (hasUnsaved) {
-          event.preventDefault();
           unsavedDialog = {
             message: 'You have unsaved changes. Exit without saving?',
             confirmLabel: 'Exit Without Saving',
-            proceed: () => { isForceClosing = true; bowtieMetadataStore.clearAll(); appWindow.close(); },
+            proceed: async () => {
+              isForceClosing = true;
+              bowtieMetadataStore.clearAll();
+              await invoke('disconnect_lcc');
+              appWindow.close();
+            },
           };
+        } else {
+          isForceClosing = true;
+          await invoke('disconnect_lcc');
+          appWindow.close();
         }
       }));
 
@@ -922,9 +935,10 @@
         },
         exit: () => {
           const win = getCurrentWebviewWindow();
-          promptUnsaved('You have unsaved changes. Exit without saving?', () => {
+          promptUnsaved('You have unsaved changes. Exit without saving?', async () => {
             isForceClosing = true;
             bowtieMetadataStore.clearAll();
+            await invoke('disconnect_lcc');
             win.close();
           }, 'Exit Without Saving');
         },
