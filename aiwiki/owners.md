@@ -54,6 +54,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `NodeEntry.svelte` | Clickable node with status badge | `NodeEntry.test.ts` |
 | `SegmentEntry.svelte` | Clickable CDI segment entry | `SegmentEntry.test.ts` |
 | `ConnectorSlotSelector.svelte` | Daughterboard slot dropdown | — |
+| `SidebarResizeHandle.svelte` | Drag handle for resizing the sidebar panel; emits `resize` events with clamped width. Keyboard accessible (arrow keys ±10px). | — |
 
 ### ElementCardDeck/ — Config value editing
 | File | Purpose | Test |
@@ -161,6 +162,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `nodeRoster.svelte.ts` | **Spec 014 / S8.7, S8.12:** Unified facade over `nodeInfoStore`, `configReadNodesStore`, `nodeTreeStore`, and an internal `_profileStems` map (S8.12 — previously `inMemoryPlaceholdersStore`, now deleted). Exposes `allEntries` / `liveEntries` / `placeholderEntries` / `liveNodes` / `hasAnyEntries` / `has(nodeKey)` as reactive views, and `upsertLive`, `replaceLiveRoster` (preserves placeholders), `addPlaceholder`, `removePlaceholder`, `markPlaceholdersPersisted`, `setTree`, `markRead`, `clearLayoutScope` as mutators. | `nodeRoster.svelte.test.ts` |
 | `pillSelection.ts` | Replicated group instance selections | `pillSelection.test.ts` |
 | `configSidebar.ts` | Sidebar UI state: selected node/segment, expanded nodes, card deck. `reset()` clears all; `pruneToAvailableNodes(keys)` keeps selection for surviving nodes and clears transient state (card deck, loading states, errors). | `configSidebar.test.ts` |
+| `sidebarWidth.ts` | App-wide sidebar panel width with localStorage persistence (`bowties:sidebarWidth`). Exposes `setWidth(px)` (clamped 160–600), `reset()`. Consumed by the config tab in `routes/+page.svelte` via the `--config-sidebar-width` CSS custom property on `.config-layout`; written by `SidebarResizeHandle.svelte` resize events. | `sidebarWidth.test.ts` |
 | `traffic.ts` | Live traffic message stream | — |
 | `knownLayouts.svelte.ts` | `knownLayoutsStore` singleton — frontend mirror of `known-layouts.json` (Spec 013 / S6). Exposes `entries`, `loaded`, `busy`; setters tolerate undefined backend payloads. Entries store layout folder paths. Written through by `startupOrchestrator`; read by `LayoutPicker`. | — |
 

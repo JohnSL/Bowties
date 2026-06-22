@@ -231,12 +231,13 @@
 
 <style>
   .config-sidebar {
-    width: 240px;
-    min-width: 240px;
+    width: var(--config-sidebar-width, 240px);
+    min-width: var(--config-sidebar-width, 240px);
+    max-width: var(--config-sidebar-width, 240px);
     height: 100%;
     overflow-y: auto;
+    overflow-x: auto;
     background-color: var(--sidebar-bg, #fafafa);
-    border-right: 1px solid var(--border-color, #ddd);
     display: flex;
     flex-direction: column;
   }

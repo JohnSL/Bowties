@@ -6,9 +6,11 @@
   import { get } from 'svelte/store';
   import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
   import ConfigSidebar from '$lib/components/ConfigSidebar/ConfigSidebar.svelte';
+  import SidebarResizeHandle from '$lib/components/ConfigSidebar/SidebarResizeHandle.svelte';
   import SegmentView from '$lib/components/ElementCardDeck/SegmentView.svelte';
   import CdiXmlViewer from '$lib/components/CdiXmlViewer.svelte';
   import { configSidebarStore } from '$lib/stores/configSidebar';
+  import { sidebarWidthStore } from '$lib/stores/sidebarWidth';
   import { probeNodes as probeNodesApi, querySnip, queryPip, registerNode, refreshAllNodes } from '$lib/api/tauri';
   import { buildBowtieCatalog, clearRecentLayout, getRecentLayout } from '$lib/api/bowties';
   import { closeLayout, saveLayoutDirectory, saveLayoutWithBusWrites, openLayoutDirectory, buildOfflineNodeTree, createNewLayoutCapture, getNodeTree } from '$lib/api/layout';
@@ -1426,10 +1428,14 @@
       />
 
     {:else}
-      <!-- FR-001: two-panel layout — fixed sidebar + scrollable main area -->
-      <div class="config-layout">
+      <!-- FR-001: two-panel layout — resizable sidebar + scrollable main area -->
+      <div class="config-layout" style="--config-sidebar-width: {$sidebarWidthStore}px">
         <ConfigSidebar
           on:readNodeConfig={(e) => configAcquisition.readSingleNode(e.detail.nodeId)}
+        />
+        <SidebarResizeHandle
+          currentWidth={$sidebarWidthStore}
+          onresize={(width) => sidebarWidthStore.setWidth(width)}
         />
         <div class="config-main">
           {#if showConfigCta || showCaptureRemainingCta}
