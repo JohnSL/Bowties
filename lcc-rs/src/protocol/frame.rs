@@ -110,6 +110,71 @@ impl GridConnectFrame {
         Self::new(header, data)
     }
     
+    /// Parse a GridConnect frame from a wire string without validating the
+    /// 29-bit CAN header constraint. Use this when the wire encoding may use
+    /// all 32 bits of the header field (e.g. MERG CAN-RS encoding).
+    ///
+    /// The caller is responsible for decoding the header to a valid 29-bit
+    /// CAN ID after parsing.
+    pub fn parse_wire(s: &str) -> Result<Self> {
+        let s = s.trim();
+        
+        if s.len() < 2 || !s[..2].eq_ignore_ascii_case(":X") {
+            return Err(Error::InvalidFrame(format!(
+                "Frame must start with ':X' or ':x', got '{}'",
+                s.chars().take(2).collect::<String>()
+            )));
+        }
+        if !s.ends_with(';') {
+            return Err(Error::InvalidFrame(format!(
+                "Frame must end with ';', got '{}'",
+                s.chars().last().unwrap_or(' ')
+            )));
+        }
+        
+        let n_pos = s.to_uppercase().find('N').ok_or_else(|| {
+            Error::InvalidFrame("Frame must contain 'N' separator".to_string())
+        })?;
+        
+        let header_str = &s[2..n_pos];
+        if header_str.len() != 8 {
+            return Err(Error::InvalidFrame(format!(
+                "Header must be 8 hex digits, got {} digits",
+                header_str.len()
+            )));
+        }
+        
+        let header = u32::from_str_radix(header_str, 16).map_err(|e| {
+            Error::InvalidFrame(format!("Invalid header hex: {}", e))
+        })?;
+        
+        let data_str = &s[n_pos + 1..s.len() - 1];
+        
+        if !data_str.len().is_multiple_of(2) {
+            return Err(Error::InvalidFrame(format!(
+                "Data must have even number of hex digits, got {}",
+                data_str.len()
+            )));
+        }
+        
+        let mut data = Vec::new();
+        for i in (0..data_str.len()).step_by(2) {
+            let byte = u8::from_str_radix(&data_str[i..i + 2], 16).map_err(|e| {
+                Error::InvalidFrame(format!("Invalid data hex: {}", e))
+            })?;
+            data.push(byte);
+        }
+        
+        if data.len() > 8 {
+            return Err(Error::InvalidFrame(format!(
+                "Data must be <=8 bytes, got {}",
+                data.len()
+            )));
+        }
+        
+        Ok(Self { header, data })
+    }
+
     /// Encode the frame to GridConnect string format
     /// 
     /// # Examples

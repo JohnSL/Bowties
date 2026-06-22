@@ -319,13 +319,13 @@ thin shim modules so existing `crate::` paths compile unchanged.
 | `cdi/hierarchy.rs` | Tree traversal: `walk_event_slots()` iterator | inline `#[cfg(test)]` |
 | `cdi/role.rs` | Event role classification heuristics | inline `#[cfg(test)]` |
 | `protocol/mod.rs` | Protocol facade; re-exports | — |
-| `protocol/frame.rs` | GridConnectFrame: CAN header parse/encode | inline `#[cfg(test)]` |
+| `protocol/frame.rs` | GridConnectFrame: CAN header parse/encode; `parse_wire()` variant skips 29-bit validation for adapters with non-standard header encoding | inline `#[cfg(test)]` |
 | `protocol/mti.rs` | MTI enum: 60+ message types with encoding | inline `#[cfg(test)]` |
 | `protocol/datagram.rs` | DatagramAssembler: multi-frame reassembly | inline `#[cfg(test)]` |
 | `protocol/memory_config.rs` | MemoryConfigCmd, address spaces, ReadReply parsing | inline `#[cfg(test)]` |
 | `transport/mod.rs` | Transport trait API | — |
 | `transport/tcp.rs` | TCP transport with GridConnect framing | inline `#[cfg(test)]` |
-| `transport/gridconnect_serial.rs` | Serial transport with GridConnect framing | inline `#[cfg(test)]` |
+| `transport/gridconnect_serial.rs` | Serial transport with GridConnect framing; owns `FrameEncoding` enum (Standard / MergCanRs) for adapter-specific header codec | inline `#[cfg(test)]` — 6 MERG codec tests |
 | `transport/slcan_serial.rs` | Serial transport with SLCAN (Lawicel) framing | inline `#[cfg(test)]` |
 | `transport/mock.rs` | Mock transport for unit tests | — |
 
@@ -343,6 +343,7 @@ thin shim modules so existing `crate::` paths compile unchanged.
 - `TransportHandle` — broadcast inbound + mpsc outbound
 - Types: `NodeID`, `EventID`, `NodeAlias`, `DiscoveredNode`, `SNIPData`, `ProtocolFlags`
 - Protocol: `GridConnectFrame`, `MTI`, `DatagramAssembler`, `MemoryConfigCmd`
+- Transport: `FrameEncoding` (`Standard` / `MergCanRs`) — passed to `GridConnectSerialTransport::open()`
 - CDI: `Cdi`, `DataElement`, `EventRole`, `classify_event_slot()`, `walk_event_slots()`
 - Transport: `LccTransport`, `GridConnectSerialTransport`, `SlcanSerialTransport`
 

@@ -19,7 +19,7 @@ pub mod node_key;
 
 use menu::MenuHandles;
 
-use lcc_rs::{LccConnection, NodeID, GridConnectSerialTransport, SlcanSerialTransport, SerialFlowControl};
+use lcc_rs::{LccConnection, NodeID, GridConnectSerialTransport, SlcanSerialTransport, SerialFlowControl, FrameEncoding};
 use state::AppState;
 use commands::{ConnectionConfig, AdapterType, FlowControl};
 use serde::{Deserialize, Serialize};
@@ -92,7 +92,7 @@ async fn connect_lcc(
                 FlowControl::RtsCts => SerialFlowControl::Hardware,
             };
             let transport = open_with_retry(
-                || GridConnectSerialTransport::open(serial_port, baud_rate, flow),
+                || GridConnectSerialTransport::open(serial_port, baud_rate, flow, FrameEncoding::Standard),
                 "GridConnect serial port",
             )
             .await?;
@@ -102,6 +102,28 @@ async fn connect_lcc(
             )
             .await
             .map_err(|e| format!("Failed to connect via GridConnect serial: {}", e))?
+        }
+        AdapterType::MergGridConnectSerial => {
+            let serial_port = config
+                .serial_port
+                .as_deref()
+                .ok_or_else(|| "serial_port is required for MERG GridConnect".to_string())?;
+            let baud_rate = config.baud_rate.unwrap_or(115200);
+            let flow = match &config.flow_control {
+                FlowControl::None => SerialFlowControl::None,
+                FlowControl::RtsCts => SerialFlowControl::Hardware,
+            };
+            let transport = open_with_retry(
+                || GridConnectSerialTransport::open(serial_port, baud_rate, flow, FrameEncoding::MergCanRs),
+                "MERG GridConnect serial port",
+            )
+            .await?;
+            LccConnection::connect_with_dispatcher_and_transport(
+                Box::new(transport),
+                node_id,
+            )
+            .await
+            .map_err(|e| format!("Failed to connect via MERG GridConnect serial: {}", e))?
         }
         AdapterType::SlcanSerial => {
             let serial_port = config
@@ -133,7 +155,7 @@ async fn connect_lcc(
             let port = config.port.unwrap_or(12021);
             format!("{}:{}", host, port)
         }
-        AdapterType::GridConnectSerial | AdapterType::SlcanSerial => {
+        AdapterType::GridConnectSerial | AdapterType::MergGridConnectSerial | AdapterType::SlcanSerial => {
             config.serial_port.clone().unwrap_or_default()
         }
     };

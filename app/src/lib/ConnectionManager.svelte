@@ -4,11 +4,11 @@
   import { getLayoutConnections, saveLayoutConnections } from '$lib/api/layout';
   import { layoutStore } from '$lib/stores/layout.svelte';
 
-  type AdapterType = 'tcp' | 'gridConnectSerial' | 'slcanSerial';
+  type AdapterType = 'tcp' | 'gridConnectSerial' | 'mergGridConnectSerial' | 'slcanSerial';
   type FlowControl = 'none' | 'rtsCts';
 
   /** Known device presets with auto-filled serial parameters. */
-  type DevicePreset = 'tcp' | 'rrcirkits' | 'sprog-usblcc' | 'sprog-pilcc' | 'slcan' | 'otherGc' | 'otherSlcan';
+  type DevicePreset = 'tcp' | 'rrcirkits' | 'sprog-usblcc' | 'sprog-pilcc' | 'merg-canrs' | 'slcan' | 'otherGc' | 'otherSlcan';
 
   interface DeviceInfo {
     label: string;
@@ -53,6 +53,14 @@
       flowControl: 'rtsCts',
       showAdvanced: false,
     },
+    'merg-canrs': {
+      label: 'MERG CAN-RS / CANUSB4',
+      hint: 'MERG CAN-RS, CANUSB4, or compatible adapter',
+      adapterType: 'mergGridConnectSerial',
+      defaultBaud: 115200,
+      flowControl: 'none',
+      showAdvanced: true,
+    },
     slcan: {
       label: 'Canable / Lawicell CANUSB',
       hint: 'SLCAN-compatible USB-CAN adapter',
@@ -63,7 +71,7 @@
     },
     otherGc: {
       label: 'Other GridConnect adapter',
-      hint: 'CAN2USBINO, MERG CAN-RS, or other GridConnect device',
+      hint: 'CAN2USBINO or other GridConnect device',
       adapterType: 'gridConnectSerial',
       defaultBaud: 57600,
       flowControl: 'none',
@@ -81,7 +89,7 @@
 
   /** Ordered list for the dropdown. */
   const DEVICE_ORDER: DevicePreset[] = [
-    'tcp', 'rrcirkits', 'sprog-usblcc', 'sprog-pilcc', 'slcan', 'otherGc', 'otherSlcan',
+    'tcp', 'rrcirkits', 'sprog-usblcc', 'sprog-pilcc', 'merg-canrs', 'slcan', 'otherGc', 'otherSlcan',
   ];
 
   interface ConnectionConfig {
@@ -234,6 +242,7 @@
     if (conn.adapterType === 'slcanSerial') {
       return conn.baudRate === 115200 && conn.flowControl === 'none' ? 'slcan' : 'otherSlcan';
     }
+    if (conn.adapterType === 'mergGridConnectSerial') return 'merg-canrs';
     // GridConnect — match known presets by baud + flow control
     if (conn.flowControl === 'rtsCts' && conn.baudRate === 460800) {
       // Could be USB-LCC or PI-LCC; default to USB-LCC since it's more common
@@ -315,6 +324,7 @@
     switch (type) {
       case 'tcp': return 'TCP';
       case 'gridConnectSerial': return 'Serial';
+      case 'mergGridConnectSerial': return 'MERG';
       case 'slcanSerial': return 'SLCAN';
     }
   }

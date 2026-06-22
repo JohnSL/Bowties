@@ -8,5 +8,5 @@ pub mod slcan_serial;
 pub mod mock;
 
 pub use tcp::{LccTransport, TcpTransport, TransportReader, TransportWriter};
-pub use gridconnect_serial::GridConnectSerialTransport;
+pub use gridconnect_serial::{GridConnectSerialTransport, FrameEncoding};
 pub use slcan_serial::SlcanSerialTransport;

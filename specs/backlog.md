@@ -3,6 +3,10 @@
   * Same for other data types
   * Have a check box that will show the byte data with the parsed results.
   * Show names for the message types
+* SPROG USB-LCC CDI read timeouts (Issue #14): Discovery works but multi-frame datagram reads
+  time out. Suspected causes: byte-at-a-time serial reads (vs JMRI's 128-byte buffered reads),
+  per-frame `flush()` adding latency, or datagram ACK timing issues under load. Needs diagnostic
+  frame logging for the user to capture a trace, and/or switching to chunked buffered reads.
 * Cache Location: The current location on my computer is `C:\Users\john_\AppData\Roaming\com.john.app\cdi_cache`. But that does match what we have in the architecture.md, which calls for `com.bowtiesapp.bowties` to be the directory.
 * LCC Event Driver: Switch to always listening to LCC events, which we'll need for the event monitor anyway.
 * Add app icon

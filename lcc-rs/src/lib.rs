@@ -45,7 +45,7 @@ pub mod alias_allocation;
 pub use types::{NodeID, EventID, NodeAlias, DiscoveredNode, SNIPData, SNIPStatus, ConnectionStatus, CdiData, ProtocolFlags, PIPStatus};
 pub use protocol::{GridConnectFrame, MTI, DatagramAssembler, DatagramState, MemoryConfigCmd, AddressSpace, ReadReply};
 pub use transport::LccTransport;
-pub use transport::{GridConnectSerialTransport, SlcanSerialTransport};
+pub use transport::{GridConnectSerialTransport, SlcanSerialTransport, FrameEncoding};
 /// Re-export `tokio_serial::FlowControl` so callers can specify flow control
 /// without adding a direct dependency on `tokio_serial`.
 pub use tokio_serial::FlowControl as SerialFlowControl;

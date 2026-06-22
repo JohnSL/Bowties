@@ -41,8 +41,12 @@ pub enum AdapterType {
     /// Network hub (JMRI, standalone TCP/IP bridge). Default LCC port 12021.
     Tcp,
     /// GridConnect framing over USB serial.
-    /// Compatible: RR-Cirkits Buffer LCC, SPROG USB-LCC, CAN2USBINO, CANRS.
+    /// Compatible: RR-Cirkits Buffer LCC, SPROG USB-LCC, CAN2USBINO.
     GridConnectSerial,
+    /// MERG CAN-RS / CANUSB4 GridConnect framing over USB serial.
+    /// Uses non-standard header encoding where the 29-bit CAN ID is sent as
+    /// `<11-bit SID><0><1><0><18-bit EID>`.
+    MergGridConnectSerial,
     /// SLCAN (Lawicel) framing over USB serial.
     /// Compatible: Canable, Lawicel CANUSB, any slcand-compatible adapter.
     SlcanSerial,
