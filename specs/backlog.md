@@ -40,3 +40,7 @@
   * Follow-up:
     1. Capture concrete Tower-LCC-compatible mappings for the BOD4-CP local lines 5-8 output modes and corresponding sampled input modes.
     2. Extend repair/constraint authoring if needed so Bowties can express output-function and input-function combinations for the BOD4-CP shared lines without hiding valid steady-output use cases.
+* JMRI Bridge integration (proposal stage)
+  * Draft proposals exist (`specs/proposals/jmri-bridge-proposal.md`, `specs/proposals/behavior-templates-proposal.md`) exploring bidirectional sync between Bowties channels and JMRI objects (sensors, turnouts, signal masts) via a Jython bridge script.
+  * Key design decisions still open: protocol-agnostic channel model (LCC + DCC/LocoNet via JMRI), LogixNG as alternative logic execution target, panel topology import for future layout editor, signal system metadata per channel.
+  * No implementation work until proposals are reviewed and scoped.

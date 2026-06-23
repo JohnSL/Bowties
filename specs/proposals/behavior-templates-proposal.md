@@ -35,12 +35,15 @@ This transforms a search/reconciliation problem into a lookup. Bowties can apply
 
 ### Information Channels
 
-An **information channel** represents a single piece of meaningful information (e.g., "block occupancy", "turnout position") rather than raw event IDs. Each channel:
+An **information channel** represents a single piece of meaningful information (e.g., "block occupancy", "turnout position") independent of protocol or wiring. Each channel:
 
 - Has a **type** (from a well-known set or user-defined)
 - Has **states** (e.g., occupied/clear, normal/diverging, red/yellow/green)
-- Is implemented underneath by **one bowtie per state** (each bowtie = one event ID with producers and consumers)
-- Reduces cognitive load: users think "occupancy" once; the system handles the event pair
+- Has a **backing implementation** — LCC event ID pairs (bowties), DCC addresses via JMRI, LocoNet messages, or other protocols
+- Has **directionality** — full bidirectional (LCC, LocoNet), command-only (basic DCC), or mixed (DCC command + separate LCC feedback sensor)
+- Reduces cognitive load: users think "occupancy" once; the system handles protocol-specific details
+
+Channels are **protocol-agnostic at the abstraction level.** A "Block 7 Occupancy" channel works the same way in templates and facilities regardless of whether it's backed by an LCC BOD, a LocoNet BDL168, or any other detector. The protocol and directionality are implementation properties, not identity.
 
 **Examples of well-known channel types:**
 - Block Occupancy (binary: occupied / clear)
@@ -92,8 +95,8 @@ A **behavior template** captures a reusable behavior pattern — how information
 A behavior template defines:
 1. **Metadata** — name, description, behavior category
 2. **Channel requirements** — typed information channels it needs (e.g., "1× block-occupancy input", "1× signal-aspect output")
-3. **Logic requirements** — logic blocks or STL program slots needed to implement decision-making (e.g., "2× logic lines" or "1× STL program slot")
-4. **Logic programming** — the actual logic block configuration or STL program that connects input channels to output channels through decision rules
+3. **Logic requirements** — decision-making capacity needed, expressed abstractly (e.g., "signal aspect logic for 3-block ABS")
+4. **Logic programming** — the decision rules connecting input channels to output channels, expressed in an execution-target-agnostic form that can be compiled to on-node logic (TowerLCC logic lines, STL programs) or JMRI LogixNG conditionals
 5. **Name templates** — patterns with substitution variables (e.g., `"${location} - Occupied"`)
 6. **Board-specific bindings** (optional) — for Tier 3 general-purpose pins where the template also needs to set CDI values to achieve the behavior
 
@@ -101,7 +104,7 @@ Behavior templates answer: "How do these pieces cooperate to achieve a goal?"
 
 A single behavior template can support multiple board types via board-specific bindings. Since hardware is already set up when the behavior template is applied, the template uses the appropriate bindings for the boards that are present.
 
-**Example:** "ABS Signal Block" — requires 1× block-occupancy channel (input), 1× next-block-occupancy channel (input), 1× signal-aspect channel (output), plus 2× logic lines (or 1× STL program slot). Includes the logic programming that determines signal aspect from the occupancy inputs — the actual signal engineering is encoded in the template.
+**Example:** "ABS Signal Block" — requires 1× block-occupancy channel (input), 1× next-block-occupancy channel (input), 1× signal-aspect channel (output), plus logic capacity to determine signal aspect from occupancy. The logic can execute on-node (TowerLCC logic lines or STL program) or in JMRI (LogixNG conditional). The template encodes the actual signal engineering rules once; the apply engine targets the user's chosen execution platform.
 
 #### The Separation
 
@@ -121,13 +124,33 @@ If a behavior template's requirements aren't met (e.g., no block-occupancy chann
 ```
 Facility (behavior instance — "Eagle Creek Siding")
   ├── Information Channel (meaning — "Eagle Creek Occupancy")
-  │    └── Bowtie (one state transition — "Eagle Creek Occupied")
-  │         └── Slot (one pin/field on one node participating in that event)
+  │    ├── Backing: LCC event pair (bowtie per state)
+  │    │    └── Slot (one pin/field on one node participating in that event)
+  │    ├── Backing: JMRI object (sensor/turnout/mast of any protocol)
+  │    └── Properties: directionality, signal system, connectivity
   └── Logic (decision rules — "if next block occupied → show yellow")
-       └── Logic block / STL program on a specific node
+       ├── On-node: Logic block / STL program on a specific node
+       └── JMRI: LogixNG conditional (for mixed-protocol or computer-hosted logic)
 ```
 
-Users think and work at the facility and channel levels. Logic, bowties, and slots are the implementation layer — still essential but not the primary interaction surface for common tasks.
+Users think and work at the facility and channel levels. Logic, bowties, slots, and protocol details are the implementation layer — still essential but not the primary interaction surface for common tasks.
+
+### Channel Connectivity and Topology
+
+Information channels can be **connected** to express physical topology:
+- "Block 7 Occupancy" connects-to "Block 8 Occupancy" (adjacent blocks)
+- "East Turnout Position" protects "Block 7 Signal Aspect" (signal protection)
+- "Block 7 Occupancy" feeds "Block 7 Signal Logic" (input relationship)
+
+This connectivity enables:
+- **Auto-wiring in templates:** When topology is known, the template can infer relationships instead of asking the user to pick each one manually. "Block 8 Occupancy is the 'next block' input for Block 7's signal logic" is automatic if the system knows they're adjacent.
+- **Gap analysis:** "Block 7 has occupancy detection but no signal assigned" or "This turnout has no position feedback — signal logic using it is unreliable."
+- **Directionality warnings:** "This turnout is DCC (command-only) — signal logic that reads its position depends on a separate feedback sensor. None exists."
+
+Topology can come from:
+- **Manual specification** in Bowties (user declares adjacency)
+- **Import from JMRI's Layout Editor** (where block connectivity is already encoded in the panel drawing)
+- **Future Bowties layout editor** (draws topology natively with channels integrated)
 
 ---
 
@@ -202,29 +225,41 @@ Logic blocks fit into the resource model:
 | I/O pin | Connector A pin 3 | Produces/consumes events |
 | Logic block (fixed) | TowerLCC Logic Line 5 | Evaluates conditions, triggers outputs |
 | Logic program (STL) | TowerLCC+Q STL slot | Executes programmed behavior |
+| JMRI LogixNG conditional | LogixNG conditional tree | Evaluates conditions, controls JMRI objects |
 
 A behavior template's requirements would include logic resources:
-- "Requires: 2× logic lines (for approach lighting + interlocking)"
-- Or: "Requires: 1× STL program slot"
+- "Requires: signal logic capacity (2× logic lines, or 1× STL slot, or LogixNG conditional)"
 
-At apply time, the user assigns logic resources just like I/O resources: "Use logic lines 3-4 on Tower-3."
+At apply time, the user chooses the **execution target**:
+- **On-node (TowerLCC logic lines):** "Use logic lines 3-4 on Tower-3" — works without a computer running, lowest latency
+- **On-node (STL program):** "Use STL slot on Tower-3" — more complex logic, still computer-independent
+- **JMRI LogixNG:** "Run in JMRI" — required for mixed-protocol layouts (logic that reads LocoNet sensors and commands DCC turnouts), requires computer running
 
-#### STL/Logic Programs in Templates
+The choice of execution target depends on the user's hardware, protocol mix, and reliability requirements. Templates encode the logic once; compilation to the target platform is handled by the apply engine.
 
-For programmable nodes (TowerLCC+Q), a behavior template would carry:
-- The STL program text (parameterized with channel references)
-- Substitution points where specific event IDs get inserted at apply time
-- Resource requirements (how many logic slots / program space needed)
+#### Logic Programs in Templates
 
-This means a template author writes the STL once; every user who applies the template gets a working program customized to their specific channels — without ever reading the STL language reference.
+A behavior template carries logic in an **abstract decision-rule form**:
+- Input channels (conditions to evaluate)
+- Output channels (actions to take)
+- Decision rules (if/then/else logic connecting inputs to outputs)
+
+The apply engine **compiles** this to the chosen execution target:
+- **TowerLCC logic lines:** CDI field values that configure fixed-function logic elements
+- **TowerLCC+Q STL:** Program text with event IDs substituted at apply time
+- **JMRI LogixNG:** Conditional expression tree in LogixNG's structure, pushed via the JMRI bridge
+
+This means a template author writes the signal engineering rules once; every user who applies the template gets a working program customized to their specific channels and target platform — without ever reading the STL language reference or understanding LogixNG's expression syntax.
+
+For boards with on-node logic, the template can also carry **board-specific bindings** — pre-compiled logic configurations for specific firmware versions when the abstract compilation isn't sufficient.
 
 #### Taming Cognitive Load
 
-Today: "Read the STL manual, understand PLC logic, figure out which events map to which variables, write and debug the program."
+Today: "Read the STL manual, understand PLC logic, figure out which events map to which variables, write and debug the program." Or: "Open JMRI LogixNG, figure out the expression tree, manually connect sensors and signal masts, hope you got the aspect rules right."
 
-With templates: "Apply 'ABS 3-Aspect Signal Block', select your occupancy channels and signal heads, done."
+With templates: "Apply 'ABS 3-Aspect Signal Block', select your occupancy channels and signal heads, pick whether logic runs on-node or in JMRI, done."
 
-The expert's knowledge (signal engineering + STL programming) gets captured once and reused many times. This is where the payoff is highest — not in simple I/O wiring, but in the logic layer that makes complex behaviors work.
+The expert's knowledge (signal engineering + platform-specific programming) gets captured once and reused many times. This is where the payoff is highest — not in simple I/O wiring, but in the logic layer that makes complex behaviors work. It applies equally whether the user has an all-LCC layout or a mixed DCC/LocoNet/LCC layout where logic must run in JMRI.
 
 ---
 
@@ -357,6 +392,7 @@ Hardware templates are board-specific by nature. Behavior templates declare chan
 | **Logic blocks / STL** | Behavior templates program these to implement decision rules |
 | **Backup/Restore** | Existing config read/write infrastructure supports template apply |
 | **Sync** | Full layout topology enables correct cross-node wiring |
+| **JMRI Bridge** | Channels created by templates are automatically projected into JMRI objects (sensors, turnouts, signal masts) via a separate bridge layer — see [JMRI Bridge proposal](./jmri-bridge-proposal.md) |
 
 ---
 
