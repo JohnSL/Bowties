@@ -73,6 +73,9 @@ export interface ParseResult {
 const PRIMARY_LINE_RE =
   /^(\d{2}:\d{2}:\d{2}\.\d{3}):\s+\[\[([0-9a-fA-F]{1,8})\]([\s0-9a-fA-F]*)\]\s+([RS]):\s*(.*)$/;
 
+/** Matches a bare GridConnect frame:  :X[8-hex]N[hex-data]; */
+const GRIDCONNECT_RE = /^:X([0-9a-fA-F]{8})N([0-9a-fA-F]*);$/i;
+
 /** Extracts all dotted-hex NodeIDs:  "09.00.99.05.01.C0" */
 const NODE_ID_RE = /\b([0-9A-Fa-f]{2}(?:\.[0-9A-Fa-f]{2}){5})\b/g;
 
@@ -127,6 +130,37 @@ export function parseTrace(text: string): ParseResult {
 
     const m = PRIMARY_LINE_RE.exec(line);
     if (!m) {
+      // Try bare GridConnect format: :X[8-hex]N[hex-data];
+      const gc = GRIDCONNECT_RE.exec(line.trim());
+      if (gc) {
+        const header = parseInt(gc[1], 16);
+        const rawBytes = parseHexBytes(gc[2]);
+        const decoded = decodeHeader(header);
+
+        let addrDestAlias: number | undefined;
+        let addressedPayload: number[] | undefined;
+        if (decoded.mtiInfo?.addressed && decoded.destAlias === undefined && rawBytes.length >= 2) {
+          const result = extractAddrDest(rawBytes);
+          addrDestAlias = result.destAlias;
+          addressedPayload = result.payload;
+        }
+
+        const frame: ParsedFrame = {
+          timestamp: "",
+          header,
+          decoded,
+          rawBytes,
+          addrDestAlias,
+          addressedPayload,
+          direction: "R",
+          jmriText: "",
+          jmriNodeIds: [],
+          rawLine: line,
+        };
+        frames.push(frame);
+        continue;
+      }
+
       unparsedLines.push(line);
       continue;
     }
