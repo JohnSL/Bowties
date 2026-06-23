@@ -9,7 +9,10 @@ function makeDeps(overrides: Partial<CdiInspectionDeps> = {}): CdiInspectionDeps
   return {
     getCdiXml: vi.fn(async () => ({ xmlContent: '<cdi/>', sizeBytes: 5, retrievedAt: null })),
     downloadCdi: vi.fn(async () => ({ xmlContent: '<downloaded/>', sizeBytes: 13, retrievedAt: null })),
-    getRedownloadCandidates: () => [{ nodeId: '02.01.57.00.00.01', nodeName: 'East Panel' }],
+    resolveNodeName: (nodeId: string) => {
+      if (nodeId === '02.01.57.00.00.01') return 'East Panel';
+      return nodeId;
+    },
     ...overrides,
   };
 }
@@ -94,6 +97,18 @@ describe('CdiInspectionOrchestrator', () => {
 
     orch.openRedownload('02.01.57.00.00.09');
     expect(orch.redownloadNodeName).toBe('02.01.57.00.00.09');
+  });
+
+  it('resolves name for canonical (no-dot) nodeId format', () => {
+    const orch = new CdiInspectionOrchestrator(makeDeps({
+      resolveNodeName: (nodeId: string) => {
+        if (nodeId === '020157000001' || nodeId === '02.01.57.00.00.01') return 'East Panel';
+        return nodeId;
+      },
+    }));
+    // Canonical format (as stored in configSidebarStore)
+    orch.openRedownload('020157000001');
+    expect(orch.redownloadNodeName).toBe('East Panel');
   });
 
   it('closes the re-download dialog and resets its state', () => {

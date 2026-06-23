@@ -90,7 +90,7 @@
   import { normalizeLayoutTitle } from '$lib/utils/layoutPath';
   import { formatNodeId, nodeIdStringToBytes } from '$lib/utils/nodeId';
   import { canonicalizeNodeId } from '$lib/utils/nodeRoster';
-  import { effectiveNodeStore } from '$lib/layout';
+  import { effectiveNodeStore, resolveNodeName } from '$lib/layout';
   import { partialCaptureNodesStore } from '$lib/stores/partialCaptureNodes.svelte';
   import { deletePlaceholderBoard } from '$lib/orchestration/placeholderBoardOrchestrator';
   import { isPlaceholderInput } from '$lib/utils/nodeKey';
@@ -728,7 +728,7 @@
   const cdiInspection = new CdiInspectionOrchestrator({
     getCdiXml,
     downloadCdi,
-    getRedownloadCandidates: () => nodes.map((node) => toConfigReadCandidate(node)),
+    resolveNodeName,
   });
 
   // Check connection status on mount

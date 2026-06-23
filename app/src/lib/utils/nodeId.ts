@@ -8,6 +8,13 @@ export function formatNodeId(nodeId: number[]): string {
   return nodeId.map((byte) => byte.toString(16).toUpperCase().padStart(2, '0')).join('.');
 }
 
+/** Convert any NodeID string (canonical or dotted) to dotted-hex display form. */
+export function nodeIdToDisplayHex(nodeId: string): string {
+  const canonical = normalizeNodeId(nodeId);
+  if (canonical.length === 0) return '';
+  return (canonical.match(/.{1,2}/g) ?? []).join('.');
+}
+
 /** Convert canonical or dotted NodeID text into a 6-byte array. */
 export function nodeIdStringToBytes(nodeId: string): number[] {
   const pairs = normalizeNodeId(nodeId).match(/.{1,2}/g) ?? [];

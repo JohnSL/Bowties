@@ -11,6 +11,8 @@
    */
   import { onMount, onDestroy } from 'svelte';
   import { cancelCdiDownload, downloadCdi } from '$lib/api/cdi';
+  import { getCdiErrorMessage } from '$lib/types/cdi';
+  import { nodeIdToDisplayHex } from '$lib/utils/nodeId';
 
   interface Props {
     nodeId: string;
@@ -19,6 +21,8 @@
   }
 
   let { nodeId, nodeName, onClose }: Props = $props();
+
+  const displayNodeId = $derived(nodeIdToDisplayHex(nodeId));
 
   type Status = 'downloading' | 'done' | 'failed';
   let status = $state<Status>('downloading');
@@ -40,7 +44,7 @@
         onClose();
       } else {
         status = 'failed';
-        errorMessage = msg;
+        errorMessage = getCdiErrorMessage(e);
       }
     }
   }
@@ -115,7 +119,7 @@
       <li class="cd-node-item">
         <div class="cd-node-info">
           <span class="cd-node-name">{nodeName}</span>
-          <span class="cd-node-id">{nodeId}</span>
+          <span class="cd-node-id">{displayNodeId}</span>
         </div>
         {#if status === 'downloading'}
           <span class="cd-node-status cd-node-status--downloading" aria-label="Downloading">

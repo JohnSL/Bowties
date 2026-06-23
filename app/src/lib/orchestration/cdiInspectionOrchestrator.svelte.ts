@@ -16,8 +16,8 @@ import { getCdiErrorMessage, isCdiError, type GetCdiXmlResponse, type ViewerStat
 export interface CdiInspectionDeps {
   getCdiXml: (nodeId: string) => Promise<GetCdiXmlResponse>;
   downloadCdi: (nodeId: string) => Promise<GetCdiXmlResponse>;
-  /** Candidate nodes used to resolve a friendly name for the re-download dialog. */
-  getRedownloadCandidates: () => Array<{ nodeId: string; nodeName: string }>;
+  /** Resolve a human-readable display name for a node (ADR-0003 edit-layer path). */
+  resolveNodeName: (nodeId: string) => string;
 }
 
 /**
@@ -111,9 +111,8 @@ export class CdiInspectionOrchestrator {
 
   /** Open the compact CDI re-download dialog for a node. */
   openRedownload(nodeId: string): void {
-    const candidate = this.#deps.getRedownloadCandidates().find((node) => node.nodeId === nodeId);
     this.#redownloadNodeId = nodeId;
-    this.#redownloadNodeName = candidate?.nodeName ?? nodeId;
+    this.#redownloadNodeName = this.#deps.resolveNodeName(nodeId);
     this.#redownloadVisible = true;
   }
 

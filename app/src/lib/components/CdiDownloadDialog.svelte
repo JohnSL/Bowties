@@ -8,6 +8,7 @@
    *   Tab    → cycles between Cancel and Download
    */
   import { onMount, onDestroy } from 'svelte';
+  import { nodeIdToDisplayHex } from '$lib/utils/nodeId';
 
   export interface MissingCdiNode {
     nodeId: string;
@@ -113,7 +114,7 @@
         <li class="cd-node-item">
           <div class="cd-node-info">
             <span class="cd-node-name">{node.nodeName}</span>
-            <span class="cd-node-id">{node.nodeId}</span>
+            <span class="cd-node-id">{nodeIdToDisplayHex(node.nodeId)}</span>
           </div>
           {#if node.downloadStatus === 'downloading'}
             <span class="cd-node-status cd-node-status--downloading" aria-label="Downloading">
