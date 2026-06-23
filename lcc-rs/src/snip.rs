@@ -150,12 +150,14 @@ async fn query_snip_handle_internal(
                         }
                     }
                     0x00 => {
-                        snip_payload.clear();
+                        // Some nodes (observed on MERG bridges) emit SNIP as a
+                        // sequence of "DatagramOnly" addressed frames, each
+                        // carrying the next payload chunk, instead of marking
+                        // first/middle/final. Be tolerant: append chunks and
+                        // parse once response traffic goes quiet.
                         snip_payload.extend_from_slice(payload_chunk);
-                        match parse_snip_payload(&snip_payload) {
-                            Ok(snip_data) => return Ok((Some(snip_data), SNIPStatus::Complete)),
-                            Err(e) => return Err(e),
-                        }
+                        receiving_datagram = true;
+                        continue;
                     }
                     _ => {
                         continue;
@@ -171,7 +173,15 @@ async fn query_snip_handle_internal(
                 return Ok((None, SNIPStatus::Timeout));
             }
             Err(_) => {
-                // Timeout — silence detected
+                // Timeout — silence detected.
+                // If we have buffered payload from DatagramOnly chunks, treat
+                // this as end-of-response and parse what we collected.
+                if received_first_frame && !snip_payload.is_empty() {
+                    if let Ok(snip_data) = parse_snip_payload(&snip_payload) {
+                        return Ok((Some(snip_data), SNIPStatus::Complete));
+                    }
+                }
+
                 eprintln!(
                     "[SNIP] Timeout waiting for SNIP response from alias 0x{:03X} (received_first_frame={}, payload_len={})",
                     dest_alias, received_first_frame, snip_payload.len()
@@ -460,6 +470,30 @@ mod tests {
         let snip = snip.unwrap();
         assert_eq!(snip.manufacturer, "A");
         assert_eq!(snip.model, "");
+    }
+
+    #[tokio::test]
+    async fn test_query_snip_chunked_datagram_only_frames() {
+        let our_alias: u16 = 0x825;
+        let node_alias: u16 = 0x3AE;
+        let payload = minimal_snip_payload();
+
+        let mut transport = MockTransport::new();
+        for chunk in payload.chunks(6) {
+            // MERG-style behavior observed in the field: each chunk arrives as
+            // a DatagramOnly addressed SNIP response (flag nibble 0x0).
+            transport.add_receive_frame(snip_reply_frame(node_alias, our_alias, 0x0, chunk));
+        }
+
+        let (mut actor, handle) = make_actor(transport);
+        let sem = Arc::new(Semaphore::new(5));
+        let (snip, status) = query_snip(&handle, our_alias, node_alias, sem).await.unwrap();
+        actor.shutdown().await;
+
+        assert_eq!(status, SNIPStatus::Complete);
+        let snip = snip.expect("must have SNIP data");
+        assert_eq!(snip.manufacturer, "ACME");
+        assert_eq!(snip.model, "Widget");
     }
 
     #[tokio::test]
