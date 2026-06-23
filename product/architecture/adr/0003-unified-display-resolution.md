@@ -48,3 +48,10 @@ Decision: node Display Name resolution now consults the edit layer first, consis
 - Dead inline fallbacks removed: `NodeList.svelte` `getFriendlyName()`, `getSecondaryInfo()`, `getDisplayName()` (duplicated the SNIP chain); `configAcquisitionOrchestrator` inline `snip_data.user_name || nodeId`.
 - Sidebar detail/tooltip now receive the effective node name so subtitle and tooltip decisions respect edit-layer renames.
 
+## 2026-06-23 extension: `buildElementSelection` centralizes ElementSelection construction
+
+Two call sites independently constructed `ElementSelection` objects (ElementPicker.doSelect and TreeLeafRow.handleCreateConnection). The second site had a latent bug (`nodeName: nodeId`) that bypassed point 4 and showed raw hex node IDs instead of display names.
+
+Decision: `buildElementSelection(leaf, nodeId)` added to the `$lib/layout` facade as the canonical single constructor for `ElementSelection`. It calls `resolveNodeName` and `buildElementLabel` (via `makeValueResolver`) in one place, structurally preventing the class of bug where one site forgets to resolve the display name or skips the tree lookup.
+
+Additionally, `buildElementLabel()` now includes the segment name as the root-most ancestor in the dot-joined label (e.g. `"Buttons.Button B (1).Event On"` instead of `"Button B (1).Event On"`), aligning the frontend with the Rust `element_label()` path format.

@@ -11,8 +11,6 @@
    * The tree's `modifiedValue` and `writeState` drive dirty/error display.
    */
   import type { LeafConfigNode, TreeConfigValue, TreeMapEntry } from '$lib/types/nodeTree';
-  import { buildElementLabel } from '$lib/types/nodeTree';
-  import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import type { BowtieCard } from '$lib/api/tauri';
   import { triggerAction } from '$lib/api/config';
   import { recomputeConnectorCompatibility } from '$lib/orchestration/connectorSelectionOrchestrator';
@@ -40,7 +38,7 @@
   import { isPlaceholderInput } from '$lib/utils/nodeKey';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
   import type { ConnectorConstraintState } from '$lib/utils/connectorConstraints';
-  import { effectiveLayoutStore, makeValueResolver } from '$lib/layout';
+  import { effectiveLayoutStore, buildElementSelection } from '$lib/layout';
   import { untrack } from 'svelte';
 
   let {
@@ -467,19 +465,7 @@
 
   /** T039: Open the bowties tab with this slot pre-filled as a connection side. */
   function handleCreateConnection() {
-    const tree = nodeTreeStore.getTree(nodeId);
-    const resolver = makeValueResolver(nodeId);
-    const selection = {
-      nodeId,
-      nodeName: nodeId,
-      elementLabel: tree ? buildElementLabel(tree, leaf, resolver) : leaf.name,
-      elementPath: leaf.path,
-      address: leaf.address,
-      space: leaf.space,
-      currentEventId: leaf.value?.type === 'eventId'
-        ? (leaf.value as { type: 'eventId'; bytes: number[]; hex: string }).hex
-        : '00.00.00.00.00.00.00.00',
-    };
+    const selection = buildElementSelection(leaf, nodeId);
     const effectiveRole = effectiveLayoutStore.effectiveRole(nodeId, leaf);
     connectionRequestStore.requestConnection(selection, effectiveRole ?? 'Ambiguous');
   }

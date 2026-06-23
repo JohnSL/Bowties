@@ -338,9 +338,9 @@ function findLeafInChildrenByPath(
 
 /**
  * Build a dot-joined element label for a leaf, mirroring the Rust `element_label()` logic.
- * Walks from segment root to the leaf, collecting non-empty group names as ancestors.
+ * Walks from segment root to the leaf, collecting the segment name and non-empty group names as ancestors.
  *
- * Format: `Ancestor1.Ancestor2.LeafLabel`
+ * Format: `SegmentName.Ancestor1.Ancestor2.LeafLabel`
  * Leaf label priority: `name` → first sentence of `description` → last path component.
  */
 export function buildElementLabel(
@@ -352,6 +352,9 @@ export function buildElementLabel(
   const ancestors: string[] = [];
   for (const seg of tree.segments) {
     if (collectAncestorNames(seg.children, leaf.address, ancestors, resolveValue)) {
+      // Prepend segment name as root-most ancestor
+      const segName = seg.name?.trim() ?? '';
+      if (segName) ancestors.unshift(segName);
       break;
     }
   }

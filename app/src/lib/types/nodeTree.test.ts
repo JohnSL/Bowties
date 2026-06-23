@@ -12,6 +12,7 @@ import {
   collectEventIdLeaves,
   groupReplicatedChildren,
   resolvePillSelectionsForPath,
+  buildElementLabel,
 } from '$lib/types/nodeTree';
 import type {
   NodeConfigTree,
@@ -506,5 +507,77 @@ describe('groupReplicatedChildren — wrapper group handling', () => {
     expect(result).toHaveLength(2);
     expect(result[0].type).toBe('group');
     expect(result[1].type).toBe('group');
+  });
+});
+
+// ─── buildElementLabel ───────────────────────────────────────────────────────
+
+describe('buildElementLabel', () => {
+  it('includes the segment name as the first ancestor', () => {
+    const leaf = makeLeaf({ name: 'Event On', address: 100 });
+    const group = makeGroup([leaf], {
+      name: 'Button B',
+      instance: 1,
+      instanceLabel: 'Button B 1',
+      path: ['seg:0', 'elem:0#1'],
+    });
+    const seg = makeSegment([group], { name: 'Buttons' });
+    const tree = makeTree([seg]);
+
+    const result = buildElementLabel(tree, leaf);
+    expect(result).toBe('Buttons.Button B 1.Event On');
+  });
+
+  it('omits segment name when it is empty', () => {
+    const leaf = makeLeaf({ name: 'Value', address: 50 });
+    const seg = makeSegment([leaf], { name: '' });
+    const tree = makeTree([seg]);
+
+    const result = buildElementLabel(tree, leaf);
+    expect(result).toBe('Value');
+  });
+
+  it('works with nested groups and includes segment prefix', () => {
+    const leaf = makeLeaf({ name: 'Producer Event ID', address: 200, elementType: 'eventId', size: 8 });
+    const innerGroup = makeGroup([leaf], {
+      name: 'Events',
+      instance: 1,
+      instanceLabel: 'Events 1',
+      path: ['seg:0', 'elem:0', 'elem:0'],
+    });
+    const outerGroup = makeGroup([innerGroup], {
+      name: 'Channel',
+      instance: 1,
+      instanceLabel: 'Channel 1',
+      path: ['seg:0', 'elem:0'],
+    });
+    const seg = makeSegment([outerGroup], { name: 'Configuration' });
+    const tree = makeTree([seg]);
+
+    const result = buildElementLabel(tree, leaf);
+    expect(result).toBe('Configuration.Channel 1.Events 1.Producer Event ID');
+  });
+
+  it('uses resolveValue for group instance display names', () => {
+    const nameLeaf = makeLeaf({
+      name: 'Description',
+      elementType: 'string',
+      address: 0,
+      size: 32,
+      value: { type: 'string', value: 'GPIO13' },
+    });
+    const eventLeaf = makeLeaf({ name: 'Event On', address: 32, elementType: 'eventId', size: 8 });
+    const group = makeGroup([nameLeaf, eventLeaf], {
+      name: 'Pin',
+      instance: 1,
+      instanceLabel: 'Pin 1',
+      path: ['seg:0', 'elem:0#1'],
+    });
+    const seg = makeSegment([group], { name: 'I/O Pins' });
+    const tree = makeTree([seg]);
+
+    const resolver = (l: LeafConfigNode) => l.value;
+    const result = buildElementLabel(tree, eventLeaf, resolver);
+    expect(result).toBe('I/O Pins.GPIO13 (1).Event On');
   });
 });

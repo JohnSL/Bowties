@@ -22,13 +22,11 @@
   import { nodeInfoStore } from '$lib/stores/nodeInfo';
   import { nodeRoster } from '$lib/stores/nodeRoster.svelte';
   import { isPlaceholderEventId } from '$lib/utils/eventIds';
-  import { resolveNodeName } from '$lib/layout';
-  import { effectiveLayoutStore, makeValueResolver } from '$lib/layout';
+  import { resolveNodeName, effectiveLayoutStore, makeValueResolver, buildElementSelection } from '$lib/layout';
   import {
     type SegmentNode,
     type ConfigNode,
     type LeafConfigNode,
-    buildElementLabel,
     isGroup,
     isLeaf,
   } from '$lib/types/nodeTree';
@@ -160,18 +158,7 @@
   }
 
   function doSelect(leaf: LeafConfigNode, nodeId: string): void {
-    const tree = nodeTreeStore.getTree(nodeId);
-    const resolver = makeValueResolver(nodeId);
-    const selection: ElementSelection = {
-      nodeId,
-      nodeName: getNodeDisplayName(nodeId),
-      elementPath: leaf.path,
-      elementLabel: tree ? buildElementLabel(tree, leaf, resolver) : leaf.name,
-      address: leaf.address,
-      space: leaf.space,
-      currentEventId: leaf.value?.type === 'eventId' ? leaf.value.hex : '00.00.00.00.00.00.00.00',
-    };
-    onSelect?.(selection);
+    onSelect?.(buildElementSelection(leaf, nodeId));
   }
 
   function handleAmbiguousClassify(role: 'Producer' | 'Consumer'): void {

@@ -29,9 +29,12 @@ import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { nodeInfoStore } from '$lib/stores/nodeInfo';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { editKeyForLeaf } from '$lib/utils/editKey';
+import { makeValueResolver } from '$lib/utils/displayResolution';
 import { resolveNodeDisplayName, resolveEffectiveUserName } from '$lib/utils/nodeDisplayName';
 import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
-import type { TreeConfigValue } from '$lib/types/nodeTree';
+import type { LeafConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
+import { buildElementLabel } from '$lib/types/nodeTree';
+import type { ElementSelection } from '$lib/types/bowtie';
 import { get } from 'svelte/store';
 
 // ── Read model ───────────────────────────────────────────────────────────────
@@ -50,7 +53,7 @@ export { effectiveNodeStore, type NodeOrigin } from './effectiveNodeStore.svelte
  * a single import surface (`$lib/layout`) and never reach into `$lib/utils`
  * for resolution semantics.
  */
-export { makeValueResolver } from '$lib/utils/displayResolution';
+export { makeValueResolver };
 
 /**
  * Resolve a node's Display Name, edit-layer-aware (ADR-0003 point 4):
@@ -76,6 +79,30 @@ export function resolveNodeName(nodeId: string): string {
   const nodes = get(nodeInfoStore);
   const key = toCanonicalNodeKey(nodeId);
   return resolveNodeDisplayName(nodeId, nodes.get(key));
+}
+
+/**
+ * Build a display-ready `ElementSelection` for a leaf node.
+ *
+ * Resolves nodeName via the canonical ADR-0003 waterfall (edit-layer → SNIP)
+ * and builds the element label from the live tree (including segment name).
+ *
+ * This is the single construction point for ElementSelection objects. Components
+ * must use this instead of inlining the object literal — prevents the class of
+ * bug where one site forgets to resolve the display name or skips the tree lookup.
+ */
+export function buildElementSelection(leaf: LeafConfigNode, nodeId: string): ElementSelection {
+  const tree = nodeTreeStore.getTree(nodeId);
+  const resolver = makeValueResolver(nodeId);
+  return {
+    nodeId,
+    nodeName: resolveNodeName(nodeId),
+    elementPath: leaf.path,
+    elementLabel: tree ? buildElementLabel(tree, leaf, resolver) : leaf.name,
+    address: leaf.address,
+    space: leaf.space,
+    currentEventId: leaf.value?.type === 'eventId' ? leaf.value.hex : '00.00.00.00.00.00.00.00',
+  };
 }
 
 // ── Save workflow ────────────────────────────────────────────────────────────
