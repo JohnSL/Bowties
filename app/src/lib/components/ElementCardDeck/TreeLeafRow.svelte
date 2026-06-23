@@ -709,7 +709,7 @@
       </span>
     {/if}
 
-    {#if isEventIdEditable && !usedIn && !isEventIdPlaceholder && !isPlaceholderNode}
+    {#if isEventIdEditable && !usedIn && !isEventIdPlaceholder && !isPlaceholderNode && !isNodeOffline}
       <button
         class="new-connection-btn"
         onclick={handleCreateConnection}

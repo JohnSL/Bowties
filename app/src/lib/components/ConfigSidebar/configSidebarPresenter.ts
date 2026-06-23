@@ -10,7 +10,7 @@ import {
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { editKeyForLeaf } from '$lib/utils/editKey';
 import { resolveNodeName } from '$lib/layout';
-import { isSavedOffBusNode, isUnsavedDiscoveredNode } from '$lib/utils/nodeRoster';
+import { isUnsavedDiscoveredNode } from '$lib/utils/nodeRoster';
 
 export interface SidebarNodeEntry {
   isOffline: boolean;
@@ -74,20 +74,6 @@ export function buildSidebarNodeEntries(
       };
     })
     .sort((left, right) => left.nodeName.localeCompare(right.nodeName));
-}
-
-/**
- * S8: returns canonical node IDs that are saved in the layout but NOT currently
- * visible on the bus. Routes/components can render placeholder entries for
- * these to make "saved but off-bus" status discoverable.
- */
-export function computeOffBusSavedNodeIds(
-  nodes: Map<string, DiscoveredNode>,
-  savedNodeIds: string[] | undefined,
-): string[] {
-  if (!savedNodeIds) return [];
-  const currentIds = [...nodes.keys()];
-  return savedNodeIds.filter((id) => isSavedOffBusNode(id, savedNodeIds, currentIds));
 }
 
 export function shouldShowConfigNotReadBadge(args: {

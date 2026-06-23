@@ -20,6 +20,7 @@
   // `effectiveLayoutStore` is already imported above from `$lib/layout`.
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { nodeInfoStore } from '$lib/stores/nodeInfo';
+  import { nodeRoster } from '$lib/stores/nodeRoster.svelte';
   import { isPlaceholderEventId } from '$lib/utils/eventIds';
   import { resolveNodeName } from '$lib/layout';
   import { effectiveLayoutStore, makeValueResolver } from '$lib/layout';
@@ -93,6 +94,9 @@
     const query = searchQuery.toLowerCase().trim();
 
     for (const [nodeId, tree] of trees) {
+      // Skip offline nodes — they are read-only and cannot participate in new connections.
+      if (nodeRoster.isOffline(nodeId)) continue;
+
       const nodeName = getNodeDisplayName(nodeId);
       const resolver = makeValueResolver(nodeId);
       const segments = tree.segments.filter(seg =>

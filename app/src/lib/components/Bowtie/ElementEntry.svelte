@@ -18,16 +18,21 @@
   interface Props {
     entry: EventSlotEntry;
     isNew?: boolean;
+    /** Node is not responding on the bus — show offline badge. */
+    isNodeOffline?: boolean;
   }
 
-  let { entry, isNew = false }: Props = $props();
+  let { entry, isNew = false, isNodeOffline = false }: Props = $props();
 
   const hasDescription = $derived(!!entry.element_description);
 </script>
 
-<div class="element-entry" class:has-description={hasDescription}>
+<div class="element-entry" class:has-description={hasDescription} class:offline={isNodeOffline}>
   <div class="entry-meta">
-    <span class="node-name">{entry.node_name}</span>
+    <span class="node-name">
+      {entry.node_name}
+      {#if isNodeOffline}<span class="offline-indicator" title="Node offline" aria-label="offline">⚠</span>{/if}
+    </span>
     <span class="element-label">
       <button
         class="element-label-link"
@@ -114,5 +119,15 @@
     line-height: 1.4;
     white-space: normal;
     overflow-wrap: break-word;
+  }
+
+  .element-entry.offline {
+    opacity: 0.7;
+  }
+
+  .offline-indicator {
+    margin-left: 4px;
+    color: var(--warning-color, #f59e0b);
+    font-size: 0.75rem;
   }
 </style>

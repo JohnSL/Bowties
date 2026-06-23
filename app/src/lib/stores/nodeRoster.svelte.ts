@@ -171,6 +171,15 @@ class NodeRoster {
     return this._info.has(toCanonical(nodeKey));
   }
 
+  /**
+   * True when the node is in the roster but not currently responding on the bus.
+   * Offline nodes should be treated as read-only across all UI surfaces.
+   */
+  isOffline(nodeKey: NodeKeyInput): boolean {
+    const info = this._info.get(toCanonical(nodeKey));
+    return info?.connection_status === 'NotResponding';
+  }
+
   // ─── Mutators ───────────────────────────────────────────────────────────
   //
   // Each mutator owns the fan-out across the four backing stores. Consumers
@@ -312,6 +321,69 @@ class NodeRoster {
     clearConfigReadStatus();
     this._profileStems = new Map();
     this._persistedRemovals = new Set();
+  }
+
+  /**
+   * Mark saved layout nodes that are NOT currently on the bus as offline.
+   *
+   * For saved IDs not yet in the roster, synthesizes a minimal
+   * `DiscoveredNode` with `connection_status: 'NotResponding'`.
+   *
+   * For saved IDs already in the roster with a non-confirmed status
+   * (`Unknown`), updates them to `NotResponding`. This handles nodes
+   * hydrated from offline snapshots that never responded to a probe —
+   * offline hydration sets status to `Unknown`, but the sidebar only
+   * renders ⚠ for `NotResponding`.
+   *
+   * Nodes already `Connected` or `Verifying` are left untouched.
+   * Placeholder keys are skipped.
+   */
+  injectOffBusSavedNodes(savedNodeIds: string[] | undefined): void {
+    if (!savedNodeIds || savedNodeIds.length === 0) return;
+    const current = get(nodeInfoStore);
+    const additions: [string, DiscoveredNode][] = [];
+    const upgrades: [string, DiscoveredNode][] = [];
+    for (const rawId of savedNodeIds) {
+      if (isPlaceholderInput(rawId)) continue;
+      const key = toCanonical(rawId);
+      const existing = current.get(key);
+      if (!existing) {
+        // Synthesize a minimal DiscoveredNode with NotResponding status
+        const hexPairs = key.match(/.{2}/g) ?? [];
+        const nodeIdBytes = hexPairs.map((h) => parseInt(h, 16));
+        additions.push([key, {
+          node_id: nodeIdBytes,
+          alias: 0,
+          snip_data: null,
+          snip_status: 'NotStarted' as any,
+          connection_status: 'NotResponding',
+          last_verified: null,
+          last_seen: '',
+          cdi: null,
+          pip_flags: null,
+          pip_status: 'NotSupported',
+        }]);
+      } else if (
+        existing.connection_status !== 'Connected'
+        && existing.connection_status !== 'Verifying'
+        && existing.connection_status !== 'NotResponding'
+      ) {
+        // Node exists from offline hydration with 'Unknown' status —
+        // mark it NotResponding so the sidebar shows ⚠.
+        upgrades.push([key, { ...existing, connection_status: 'NotResponding' }]);
+      }
+    }
+    if (additions.length === 0 && upgrades.length === 0) return;
+    nodeInfoStore.update((m) => {
+      const next = new Map(m);
+      for (const [key, info] of additions) {
+        next.set(key, info);
+      }
+      for (const [key, info] of upgrades) {
+        next.set(key, info);
+      }
+      return next;
+    });
   }
 }
 

@@ -15,6 +15,7 @@
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
   import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
+  import { nodeRoster } from '$lib/stores/nodeRoster.svelte';
   import { configEditor } from '$lib/stores/configEditor.svelte';
   import { flushDraftToBackend } from '$lib/orchestration/configDraftOrchestrator';
   import { editKeyForLeaf } from '$lib/utils/editKey';
@@ -354,6 +355,12 @@
   }
 
   let allKnownTags = $derived(bowtieMetadataStore.getAllTags());
+
+  // Disable "New Connection" when every live node is offline (NotResponding).
+  let allNodesOffline = $derived(
+    nodeRoster.liveEntries.length > 0
+      && nodeRoster.liveEntries.every((e) => e.info.connection_status === 'NotResponding'),
+  );
 </script>
 
 <div class="bowties-panel">
@@ -362,8 +369,9 @@
     <div class="panel-header">
       <button
         class="new-connection-btn"
+        disabled={allNodesOffline}
         onclick={() => { showNewConnectionDialog = true; }}
-        title="Create a new bowtie connection"
+        title={allNodesOffline ? 'Cannot create connection while all nodes are offline' : 'Create a new bowtie connection'}
       >
         + New Connection
       </button>

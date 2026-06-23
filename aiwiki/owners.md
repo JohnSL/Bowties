@@ -35,10 +35,10 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 ### Bowtie/ — Event-centric connection UI
 | File | Purpose | Test |
 |------|---------|------|
-| `BowtieCard.svelte` | Bowtie card with producer/consumer columns | `BowtieCard.test.ts` |
-| `BowtieCatalogPanel.svelte` | Full catalog panel with editable metadata | `BowtieCatalogPanel.test.ts` |
-| `ElementEntry.svelte` | Event slot entry (producer or consumer) | — |
-| `ElementPicker.svelte` | Searchable node/slot picker | `ElementPicker.test.ts` |
+| `BowtieCard.svelte` | Bowtie card with producer/consumer columns. Remove button hidden for slots whose node is offline (`nodeRoster.isOffline`). Offline badge shown via `ElementEntry` prop. | `BowtieCard.test.ts` |
+| `BowtieCatalogPanel.svelte` | Full catalog panel with editable metadata. "+ New Connection" button disabled when all nodes are offline. | `BowtieCatalogPanel.test.ts` |
+| `ElementEntry.svelte` | Event slot entry (producer or consumer). Accepts `isNodeOffline` prop to render ⚠ badge and faded styling. | — |
+| `ElementPicker.svelte` | Searchable node/slot picker. Filters out offline nodes (`nodeRoster.isOffline`). | `ElementPicker.test.ts` |
 | `PickerTreeNode.svelte` | Tree node in picker hierarchy | — |
 | `EmptyState.svelte` | Empty catalog prompt | `EmptyState.test.ts` |
 | `AddElementDialog.svelte` | Add node/slot to existing bowtie | — |
@@ -50,7 +50,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | File | Purpose | Test |
 |------|---------|------|
 | `ConfigSidebar.svelte` | Left-side nav; nodes and CDI segments | `ConfigSidebar.test.ts` |
-| `configSidebarPresenter.ts` | Presenter logic for sidebar state | `configSidebarPresenter.test.ts` |
+| `configSidebarPresenter.ts` | Presenter logic for sidebar state: `buildSidebarNodeEntries` (derives `SidebarNodeEntry[]` including `isOffline` from `connection_status === 'NotResponding'`), `shouldShowConfigNotReadBadge`, `getNodePendingState`, `getSegmentPendingState` | `configSidebarPresenter.test.ts` |
 | `NodeEntry.svelte` | Clickable node with status badge | `NodeEntry.test.ts` |
 | `SegmentEntry.svelte` | Clickable CDI segment entry | `SegmentEntry.test.ts` |
 | `ConnectorSlotSelector.svelte` | Daughterboard slot dropdown | — |
@@ -161,7 +161,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `saveProgress.svelte.ts` | Phase tracker for the three-phase save flow. Listens to `save-progress` Tauri events (`saving-layout` / `writing-config` / `reconciling` / `complete`) emitted by `save_layout_with_bus_writes` + per-iteration events from `write_modified_values`. Also exposes `begin()` / `apply()` / `fail()` / `reset()` so the offline-save path (driven by `+page.svelte`) can flip phases without backend events. Consumed by `SaveProgressDialog.svelte` and by `isMenuBusy()` to gate concurrent saves. | `saveProgress.svelte.test.ts` |
 | `nodes.ts` | Global discovered nodes list (Svelte 5 runes) | — |
 | `nodeInfo.ts` | nodeId → DiscoveredNode map for display-name resolution. **Spec 014 / S8.7:** kept as internal backing storage; the canonical single source of truth for "the set of nodes the user sees" is now `nodeRoster.svelte.ts`. New consumers should read from the roster facade. | — |
-| `nodeRoster.svelte.ts` | **Spec 014 / S8.7, S8.12:** Unified facade over `nodeInfoStore`, `configReadNodesStore`, `nodeTreeStore`, and an internal `_profileStems` map (S8.12 — previously `inMemoryPlaceholdersStore`, now deleted). Exposes `allEntries` / `liveEntries` / `placeholderEntries` / `liveNodes` / `hasAnyEntries` / `has(nodeKey)` as reactive views, and `upsertLive`, `replaceLiveRoster` (preserves placeholders), `addPlaceholder`, `removePlaceholder`, `markPlaceholdersPersisted`, `setTree`, `markRead`, `clearLayoutScope` as mutators. | `nodeRoster.svelte.test.ts` |
+| `nodeRoster.svelte.ts` | **Spec 014 / S8.7, S8.12:** Unified facade over `nodeInfoStore`, `configReadNodesStore`, `nodeTreeStore`, and an internal `_profileStems` map (S8.12 — previously `inMemoryPlaceholdersStore`, now deleted). Exposes `allEntries` / `liveEntries` / `placeholderEntries` / `liveNodes` / `hasAnyEntries` / `has(nodeKey)` / `isOffline(nodeKey)` as reactive views/queries, and `upsertLive`, `replaceLiveRoster` (preserves placeholders), `addPlaceholder`, `removePlaceholder`, `markPlaceholdersPersisted`, `setTree`, `markRead`, `clearLayoutScope`, `injectOffBusSavedNodes` (synthesizes `NotResponding` entries for saved layout nodes absent from bus) as mutators. `isOffline` is the canonical predicate for "should this node be treated as read-only" — consumed by `ElementPicker`, `BowtieCatalogPanel`. | `nodeRoster.svelte.test.ts` |
 | `pillSelection.ts` | Replicated group instance selections | `pillSelection.test.ts` |
 | `configSidebar.ts` | Sidebar UI state: selected node/segment, expanded nodes, card deck. `reset()` clears all; `pruneToAvailableNodes(keys)` keeps selection for surviving nodes and clears transient state (card deck, loading states, errors). | `configSidebar.test.ts` |
 | `sidebarWidth.ts` | App-wide sidebar panel width with localStorage persistence (`bowties:sidebarWidth`). Exposes `setWidth(px)` (clamped 160–600), `reset()`. Consumed by the config tab in `routes/+page.svelte` via the `--config-sidebar-width` CSS custom property on `.config-layout`; written by `SidebarResizeHandle.svelte` resize events. | `sidebarWidth.test.ts` |
@@ -194,7 +194,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 |------|---------|------|
 | `nodeId.ts` | Node ID normalization: dotted-hex ↔ canonical. `nodeIdToDisplayHex(input)` converts any format to dotted-hex for UI display. | — |
 | `nodeKey.ts` | **NodeKey** (Spec 014, ADR-0008, ADR-0010) — branded discriminated union covering live `NodeID` and `placeholder:<uuidv4>`. Exports `type NodeKey = LiveNodeKey | PlaceholderNodeKey`, constructor `nodeKey(input)`, `nodeKeyEquals`, `nodeKeyToString`, `nodeKeyToDisplay`, `toCanonicalNodeKey(input: string | NodeKey | null \| undefined)`, `isPlaceholderInput(input)`, and the transitional shim `NodeKeyInput = string \| NodeKey`. Mirrors the backend prefix predicate `layout::types::is_placeholder` exactly. Consumed by `configChanges.svelte.ts`, `editKey.ts`, and any store that legitimately widens to placeholders. | `nodeKey.test.ts` |
-| `nodeRoster.ts` | S8: pure helpers comparing the active layout's saved-node roster against the currently-visible node set — `canonicalizeNodeId`, `computeDiscoveredOnlyNodeIds` (badge predicate, no threshold), `computeUnsavedInMemoryNodeIds` (threshold-gated by full capture — feeds `layoutStore.isDirty` and `addNode` save deltas), `isUnsavedDiscoveredNode`, `isSavedOffBusNode`. Consumed by `+page.svelte` (sidebar badge + dirty signal + save deltas), `configSidebarPresenter` (unsaved-new badge), and any future "off-bus saved" surfaces. | `nodeRoster.test.ts` |
+| `nodeRoster.ts` | S8: pure helpers comparing the active layout's saved-node roster against the currently-visible node set — `canonicalizeNodeId`, `computeDiscoveredOnlyNodeIds` (badge predicate, no threshold), `computeUnsavedInMemoryNodeIds` (threshold-gated by full capture — feeds `layoutStore.isDirty` and `addNode` save deltas), `isUnsavedDiscoveredNode`, `isSavedOffBusNode`. Consumed by `+page.svelte` (sidebar badge + dirty signal + save deltas), `configSidebarPresenter` (unsaved-new badge), and `nodeRoster.svelte.ts` (`injectOffBusSavedNodes`). | `nodeRoster.test.ts` |
 | `nodeDisplayName.ts` | Display name resolution. `resolveNodeDisplayName` = SNIP fallback chain; `resolveEffectiveUserName(tree, resolveValue)` = edit-layer tier (ACDI User Name leaf, space 251, draft→offline→baseline). Node-name surfaces compose `resolveEffectiveUserName(...) ?? resolveNodeDisplayName(...)`. | `nodeDisplayName.test.ts` |
 | `formatters.ts` | Config value display formatting (int/string/eventId/float) | `formatters.test.ts` |
 | `serialize.ts` | Serialize TreeConfigValue to raw bytes for writes | `serialize.test.ts` |

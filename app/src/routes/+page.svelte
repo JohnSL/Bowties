@@ -885,6 +885,9 @@
           },
         });
         nodeRoster.replaceLiveRoster(result.nodes);
+        // Inject off-bus saved nodes so the sidebar shows them with ⚠.
+        // Idempotent — only adds entries for saved IDs not already present.
+        nodeRoster.injectOffBusSavedNodes(layoutStore.activeContext?.layoutNodeIds);
         if (result.skipped) return;
 
         // Reset the discovery settling timer — wait for 1s of silence after the
@@ -1060,6 +1063,11 @@
   async function probeForNodes() {
     try {
       await probeNodesApi();
+      // Immediately inject off-bus saved nodes so the sidebar shows them with ⚠
+      // even if no lcc-node-discovered events arrive (all saved nodes offline).
+      // If a node later responds, its lcc-node-discovered handler will overwrite
+      // the synthetic entry with a real Connected one.
+      nodeRoster.injectOffBusSavedNodes(layoutStore.activeContext?.layoutNodeIds);
     } catch (e) {
       console.error("Probe failed:", e);
     }
@@ -1087,6 +1095,8 @@
         });
 
         nodeRoster.replaceLiveRoster(refreshed.nodes);
+        // Inject off-bus saved nodes after cull so they reappear with ⚠.
+        nodeRoster.injectOffBusSavedNodes(layoutStore.activeContext?.layoutNodeIds);
         // Only clean up state for nodes that actually left — preserve config read
         // status and CDI data for nodes that are still present.
         removeNodesConfigRead(refreshed.removedNodeIds);

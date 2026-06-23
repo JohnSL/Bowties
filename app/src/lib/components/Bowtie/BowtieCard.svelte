@@ -22,6 +22,7 @@
   import ElementEntry from './ElementEntry.svelte';
   import ConnectorArrow from './ConnectorArrow.svelte';
   import RoleClassifyPrompt from './RoleClassifyPrompt.svelte';
+  import { nodeRoster } from '$lib/stores/nodeRoster.svelte';
   import { isWellKnownEvent } from '$lib/utils/formatters';
 
   /** Write feedback state for a bowtie card (FR-030) */
@@ -249,9 +250,10 @@
       {:else}
         {#each card.producers as entry (entry.node_key + entry.element_path.join('/'))}
           {@const isNew = newEntryKeys?.has(`${entry.node_key}:${entry.element_path.join('/')}`) ?? false}
+          {@const isEntryNodeOffline = nodeRoster.isOffline(entry.node_key)}
           <div class="entry-row">
-            <ElementEntry {entry} {isNew} />
-            {#if onRemoveElement}
+            <ElementEntry {entry} {isNew} isNodeOffline={isEntryNodeOffline} />
+            {#if onRemoveElement && !isEntryNodeOffline}
               <button
                 class="remove-btn"
                 onclick={() => onRemoveElement?.(entry)}
@@ -281,9 +283,10 @@
       {:else}
         {#each card.consumers as entry (entry.node_key + entry.element_path.join('/'))}
           {@const isNew = newEntryKeys?.has(`${entry.node_key}:${entry.element_path.join('/')}`) ?? false}
+          {@const isEntryNodeOffline = nodeRoster.isOffline(entry.node_key)}
           <div class="entry-row">
-            <ElementEntry {entry} {isNew} />
-            {#if onRemoveElement}
+            <ElementEntry {entry} {isNew} isNodeOffline={isEntryNodeOffline} />
+            {#if onRemoveElement && !isEntryNodeOffline}
               <button
                 class="remove-btn"
                 onclick={() => onRemoveElement?.(entry)}
@@ -309,6 +312,7 @@
       <div class="ambiguous-entries">
         {#each card.ambiguous_entries as entry (entry.node_key + entry.element_path.join('/'))}
           {@const entryKey = entry.node_key + entry.element_path.join('/')}
+          {@const isEntryNodeOffline = nodeRoster.isOffline(entry.node_key)}
           <div class:ambiguous-entry-row--open={reclassifyingKey === entryKey} class="ambiguous-entry-row">
             <button
               class="ambiguous-classify-btn"
@@ -319,7 +323,7 @@
               aria-haspopup="dialog"
             >
               <span class="ambiguous-question">?</span>
-              <ElementEntry {entry} />
+              <ElementEntry {entry} isNodeOffline={isEntryNodeOffline} />
             </button>
             {#if reclassifyingKey === entryKey}
               <div class="ambiguous-classify-sidecar">

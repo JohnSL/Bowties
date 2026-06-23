@@ -12,6 +12,7 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **Backend:** `commands/discovery.rs` (`discover_nodes`, `register_node`, `query_snip_*`, `query_pip_*`)
 - **lcc-rs:** `discovery.rs` (alias allocation, node probing)
 - **Invariant — live-only inputs:** `handleDiscoveredNode`, `refreshReinitializedNode`, and `reconcileRefreshState` must receive only live-node `DiscoveredNode[]` arrays (i.e. `liveNodes`, not `nodes`/`allEntries`). Placeholder entries have `node_id: []`, which crashes `keyOf()`→`nodeKey("")`. `replaceLiveRoster` also skips entries with empty `node_id` as a belt-and-braces defense.
+- **Invariant — off-bus saved node visibility:** After each `replaceLiveRoster` in the discovery and refresh handlers, `nodeRoster.injectOffBusSavedNodes(savedNodeIds)` synthesizes `NotResponding` entries for saved layout nodes not present on the bus. Also called after `probeForNodes()` to cover the "all nodes offline" case where no discovery events fire. Idempotent; overwritten when a node later responds.
 
 ## Disconnect / Offline Fallback
 - **Orchestrator:** `syncSessionOrchestrator.svelte.ts` (`disconnect()` → `disconnectWithOfflineFallback()`)
