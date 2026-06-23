@@ -3,11 +3,12 @@
   * Same for other data types
   * Have a check box that will show the byte data with the parsed results.
   * Show names for the message types
-* SPROG USB-LCC CDI read timeouts (Issue #14): Discovery works but multi-frame datagram reads
-  time out. Suspected causes: byte-at-a-time serial reads (vs JMRI's 128-byte buffered reads),
-  per-frame `flush()` adding latency, or datagram ACK timing issues under load. Diagnostic report
-  now includes per-chunk durations, retry counts, frame activity ring buffer, and structured error
-  capture — use `Tools → Copy Diagnostic Report` to capture a trace for analysis.
+* SPROG USB-LCC CDI read timeouts (Issue #14): RESOLVED. Root cause was insufficient
+  post-ACK pacing — Bowties sent the next datagram request before the gateway finished
+  forwarding the ACK on CAN. Fixed by introducing `datagram_reader.rs` (unified exchange
+  with configurable `post_ack_delay_ms` defaulting to 10ms), increasing the read timeout
+  from 2000ms → 3000ms, and capping resend retries at 3. Tunable via `tuning.toml` in the
+  app data directory.
 * MERG CAN ID configuration: JMRI exposes a CAN ID option (100–127, default 126) for MERG
   adapters as an advanced setting. Bowties doesn't expose this yet. Low priority — default 126
   works unless there's a conflict with another host on the same CAN bus.

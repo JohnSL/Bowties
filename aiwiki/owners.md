@@ -288,7 +288,7 @@ thin shim modules so existing `crate::` paths compile unchanged.
 |--------|---------|------|
 | `lib.rs` | Entry point: connection init, state setup, command registration. Window close is handled by the frontend (see `+page.svelte` `onCloseRequested`); the backend provides `disconnect_lcc` as an IPC command but does not intercept the close event. | — |
 | `main.rs` | Tauri desktop app launcher | — |
-| `state.rs` | Authoritative app state: connection, registry, caches. Re-exports `NodeRoles` from `bowties_core::node_tree` and bowtie catalog types from `bowties_core::bowtie::types`. | inline `#[cfg(test)]` |
+| `state.rs` | Authoritative app state: connection, registry, caches, `TuningConfig` (loaded from `tuning.toml` in app data dir). Re-exports `NodeRoles` from `bowties_core::node_tree` and bowtie catalog types from `bowties_core::bowtie::types`. | inline `#[cfg(test)]` |
 | `node_key.rs` | Re-export shim → `bowties_core::node_key` | — |
 | `node_registry.rs` | Re-export shim → `bowties_core::node_registry` | — |
 | `node_proxy.rs` | Re-export shim → `bowties_core::node_proxy` | — |
@@ -309,8 +309,9 @@ thin shim modules so existing `crate::` paths compile unchanged.
 |--------|---------|------|
 | `lib.rs` | Public crate API; re-exports types and protocol structs | — |
 | `types.rs` | Core types: NodeID, EventID, NodeAlias, SNIPData, ProtocolFlags | inline `#[cfg(test)]` |
-| `constants.rs` | Protocol constants (timeouts, buffer sizes) | — |
-| `discovery.rs` | LccConnection: protocol orchestrator, node probe, BatchReader | inline `#[cfg(test)]` |
+| `constants.rs` | Protocol constants (timeouts, buffer sizes, pacing delays) | — |
+| `datagram_reader.rs` | Unified datagram read exchange: sends request, handles ACK/reject/timeout-extension, assembles reply, ACKs, applies post-ACK pacing delay. Shared by BatchReader, CDI download, and single reads. Owns `MemoryReadConfig`, `ExchangeResult`, `ReadDescriptor`. | inline `#[cfg(test)]` — 9 tests |
+| `discovery.rs` | LccConnection: protocol orchestrator, node probe, BatchReader (thin wrapper over datagram_reader) | inline `#[cfg(test)]` |
 | `alias_allocation.rs` | CID7→CID4 alias allocation, conflict detection per S-9.7.2.1 | inline `#[cfg(test)]` |
 | `snip.rs` | SNIP query via datagram: manufacturer/model/version retrieval | inline `#[cfg(test)]` |
 | `pip.rs` | Protocol Identification Protocol capability query | inline `#[cfg(test)]` |
@@ -351,7 +352,9 @@ thin shim modules so existing `crate::` paths compile unchanged.
 
 ### Lifecycle Ownership Transitions
 - Discovery: lcc-rs probes → backend creates LiveNodeProxy actors → frontend receives events
-- Config read: frontend orchestrator → backend batch reads → lcc-rs memory config datagrams
+- Config read: frontend orchestrator → backend batch reads → `lcc-rs/datagram_reader.rs` (`datagram_read_exchange`)
+- CDI download: backend → `lcc-rs/discovery.rs` (`read_cdi_with_handle`) → `datagram_reader.rs`
+- All datagram reads share: `MemoryReadConfig` (timeout, retry cap, post-ACK pacing delay). Config loaded from `tuning.toml` at app startup.
 - Layout open: frontend orchestrator → backend hydrates snapshots → stores populated
 - Sync apply: frontend orchestrator → backend writes changes → lcc-rs memory config
 

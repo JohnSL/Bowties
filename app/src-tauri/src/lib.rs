@@ -277,6 +277,16 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
+            // Load tuning configuration from app data directory and construct state.
+            let tuning = if let Ok(data_dir) = app.path().app_data_dir() {
+                crate::state::TuningConfig::load_from_dir(&data_dir)
+            } else {
+                crate::state::TuningConfig::default()
+            };
+            let mut state = AppState::new();
+            state.tuning = tuning;
+            app.manage(state);
+
             // Build and set the native menu
             let (app_menu, menu_handles) = menu::build_app_menu(app.handle())?;
             app.set_menu(app_menu)?;
@@ -321,7 +331,6 @@ pub fn run() {
 
             Ok(())
         })
-        .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             connect_lcc,
             disconnect_lcc,

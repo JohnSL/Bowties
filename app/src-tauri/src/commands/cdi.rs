@@ -288,11 +288,14 @@ pub async fn download_cdi(
     state.cdi_download_cancel.store(false, std::sync::atomic::Ordering::Relaxed);
     let cancel_flag = state.cdi_download_cancel.clone();
 
-    // Download CDI from node (5 second timeout per chunk to accommodate slower nodes)
+    // Download CDI from node using the shared read config (with 5s timeout override
+    // for CDI since nodes may need extra time per chunk for large CDI trees).
     let xml_content = {
         let mut connection = connection_arc.lock().await;
+        let mut read_config = state.memory_read_config();
+        read_config.timeout_ms = 5000; // CDI chunks may be slower than config reads
         match connection
-            .read_cdi_cancellable_with_stats(alias, 5000, cancel_flag)
+            .read_cdi_cancellable_with_stats(alias, read_config, cancel_flag)
             .await
         {
             Ok(result) => result,
@@ -1651,7 +1654,7 @@ pub async fn read_config_value(
     element_path: Vec<String>,
     timeout_ms: Option<u64>,
 ) -> Result<ConfigValueWithMetadata, String> {
-    let timeout = timeout_ms.unwrap_or(2000);
+    let timeout = timeout_ms.unwrap_or(lcc_rs::constants::READ_MEMORY_TIMEOUT_MS);
     
     // Parse node ID
     let parsed_node_id = lcc_rs::NodeID::from_hex_string(&node_id)
@@ -2124,7 +2127,7 @@ pub async fn read_all_config_values(
     use std::time::Instant;
     
     let start_time = Instant::now();
-    let timeout = timeout_ms.unwrap_or(2000); // 2 second timeout per element
+    let timeout = timeout_ms.unwrap_or(lcc_rs::constants::READ_MEMORY_TIMEOUT_MS);
     let node_idx = node_index.unwrap_or(0);
     let total_node_count = total_nodes.unwrap_or(1);
     
@@ -2236,7 +2239,8 @@ pub async fn read_all_config_values(
 
     let mut reader = {
         let conn = connection.lock().await;
-        conn.batch_reader(alias).map_err(|e| e.to_string())?
+        let read_config = state.memory_read_config();
+        conn.batch_reader_with_config(alias, read_config).map_err(|e| e.to_string())?
     };
     let reads_start = Instant::now();
 

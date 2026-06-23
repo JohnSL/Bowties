@@ -37,3 +37,21 @@ pub const ALIAS_CONFLICT_LISTEN_MS: u64 = 400;
 /// relay frames immediately after the TCP handshake. JMRI applies a similar
 /// delay before beginning alias negotiation.
 pub const CONNECTION_STABILIZATION_MS: u64 = 500;
+
+/// Per-attempt timeout (ms) when waiting for a memory-config read reply.
+/// Matches the OpenLCB_Java DatagramMeteringBuffer default of 3000ms.
+pub const READ_MEMORY_TIMEOUT_MS: u64 = 3_000;
+
+/// Maximum number of retries for a single datagram exchange when the node
+/// rejects with the "resend OK" flag (0x2000). After this many retries the
+/// exchange returns an error. JMRI/OpenLCB_Java uses 3 total attempts.
+pub const MAX_DATAGRAM_RETRIES: u32 = 3;
+
+/// Default delay (ms) after sending a DatagramReceivedOk (ACK) for a reply
+/// datagram, before sending the next outbound request. This gives CAN
+/// gateways (e.g. SPROG USB-LCC) time to finish transmitting the ACK on
+/// the CAN segment before the next request arrives at the gateway's buffer.
+///
+/// Override at runtime via the `post_ack_delay_ms` field in a
+/// `tuning.toml` config file placed in the app data directory.
+pub const DEFAULT_POST_ACK_DELAY_MS: u64 = 10;

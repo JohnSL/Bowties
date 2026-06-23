@@ -66,6 +66,62 @@ pub struct OfflineBowtieData {
 
 // ── Application state ─────────────────────────────────────────────────────
 
+/// Runtime tuning parameters loaded from `tuning.toml` in the app data directory.
+/// All fields have sensible defaults from lcc-rs constants.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct TuningConfig {
+    /// Per-attempt timeout (ms) waiting for a memory-config read reply.
+    pub read_timeout_ms: u64,
+    /// Maximum retries when a node rejects with the resend-OK flag.
+    pub max_datagram_retries: u32,
+    /// Delay (ms) after ACK-ing a reply before sending the next request.
+    /// Gives CAN gateways time to finish forwarding the ACK frame.
+    pub post_ack_delay_ms: u64,
+}
+
+impl Default for TuningConfig {
+    fn default() -> Self {
+        Self {
+            read_timeout_ms: lcc_rs::constants::READ_MEMORY_TIMEOUT_MS,
+            max_datagram_retries: lcc_rs::constants::MAX_DATAGRAM_RETRIES,
+            post_ack_delay_ms: lcc_rs::constants::DEFAULT_POST_ACK_DELAY_MS,
+        }
+    }
+}
+
+impl TuningConfig {
+    /// Load from a `tuning.toml` file at `path`. Returns defaults if file is
+    /// missing or cannot be parsed.
+    pub fn load_from_dir(dir: &std::path::Path) -> Self {
+        let path = dir.join("tuning.toml");
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => {
+                match toml::from_str::<TuningConfig>(&contents) {
+                    Ok(cfg) => {
+                        eprintln!("[tuning] Loaded from {}", path.display());
+                        cfg
+                    }
+                    Err(e) => {
+                        eprintln!("[tuning] WARNING: Failed to parse {}: {} — using defaults", path.display(), e);
+                        Self::default()
+                    }
+                }
+            }
+            Err(_) => Self::default(),
+        }
+    }
+
+    /// Convert to lcc-rs `MemoryReadConfig`.
+    pub fn to_memory_read_config(&self) -> lcc_rs::MemoryReadConfig {
+        lcc_rs::MemoryReadConfig {
+            timeout_ms: self.read_timeout_ms,
+            max_retries: self.max_datagram_retries,
+            post_ack_delay_ms: self.post_ack_delay_ms,
+        }
+    }
+}
+
 /// Global application state shared across Tauri commands
 #[derive(Clone)]
 pub struct AppState {
@@ -131,6 +187,9 @@ pub struct AppState {
 
     /// Bounded ring buffer of recent frame activity (last 100 frames).
     pub frame_ring: crate::diagnostics::FrameRing,
+
+    /// Runtime tuning parameters (loaded from `tuning.toml` at startup).
+    pub tuning: TuningConfig,
 }
 
 impl AppState {
@@ -154,7 +213,13 @@ impl AppState {
             diag_log: crate::diagnostics::new_diag_log(),
             diag_stats: crate::diagnostics::new_diag_stats(),
             frame_ring: crate::diagnostics::new_frame_ring(),
+            tuning: TuningConfig::default(),
         }
+    }
+
+    /// Return a `MemoryReadConfig` from the current tuning parameters.
+    pub fn memory_read_config(&self) -> lcc_rs::MemoryReadConfig {
+        self.tuning.to_memory_read_config()
     }
 
     /// Check if connected to LCC network

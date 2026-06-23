@@ -76,13 +76,28 @@ pub struct BatchReader {
     our_alias: u16,
     dest_alias: u16,
     rx: broadcast::Receiver<ReceivedMessage>,
+    config: crate::datagram_reader::MemoryReadConfig,
 }
 
 impl BatchReader {
     /// Create a new reader.  The broadcast subscription is established immediately.
     pub fn new(handle: TransportHandle, our_alias: u16, dest_alias: u16) -> Self {
         let rx = handle.subscribe_all();
-        Self { handle, our_alias, dest_alias, rx }
+        Self {
+            handle, our_alias, dest_alias, rx,
+            config: crate::datagram_reader::MemoryReadConfig::default(),
+        }
+    }
+
+    /// Create a new reader with custom configuration.
+    pub fn with_config(
+        handle: TransportHandle,
+        our_alias: u16,
+        dest_alias: u16,
+        config: crate::datagram_reader::MemoryReadConfig,
+    ) -> Self {
+        let rx = handle.subscribe_all();
+        Self { handle, our_alias, dest_alias, rx, config }
     }
 
     /// Perform one pipelined memory read.
@@ -91,172 +106,34 @@ impl BatchReader {
     /// the assembled datagram reply on the shared subscription, ACKs via
     /// `send_direct`, and returns the result with timing data.
     pub async fn read_next(&mut self, desc: &BatchReadDescriptor, timeout_ms: u64) -> BatchReadResult {
-        use crate::protocol::{MemoryConfigCmd, AddressSpace, DatagramAssembler};
-
-        let space = match AddressSpace::from_u8(desc.address_space) {
-            Ok(s) => s,
-            Err(e) => return BatchReadResult {
-                data: Err(format!("Invalid address space: {}", e)),
-                timing: None,
-            },
+        let read_desc = crate::datagram_reader::ReadDescriptor {
+            address_space: desc.address_space,
+            address: desc.address,
+            count: desc.count,
+        };
+        // Use per-call timeout if different from config default.
+        let config = if timeout_ms != self.config.timeout_ms {
+            crate::datagram_reader::MemoryReadConfig {
+                timeout_ms,
+                ..self.config.clone()
+            }
+        } else {
+            self.config.clone()
         };
 
-        let read_frames = match MemoryConfigCmd::build_read(
-            self.our_alias, self.dest_alias, space, desc.address, desc.count,
-        ) {
-            Ok(f) => f,
-            Err(e) => return BatchReadResult {
-                data: Err(e.to_string()),
-                timing: None,
-            },
-        };
+        let result = crate::datagram_reader::datagram_read_exchange(
+            &self.handle,
+            &mut self.rx,
+            self.our_alias,
+            self.dest_alias,
+            &read_desc,
+            &config,
+            true, // use send_direct for batch reads
+        ).await;
 
-        let send_time = Instant::now();
-        for frame in read_frames.iter() {
-            if let Err(e) = self.handle.send_direct(frame).await {
-                return BatchReadResult {
-                    data: Err(e.to_string()),
-                    timing: None,
-                };
-            }
-        }
-
-        let mut max_duration = Duration::from_millis(timeout_ms);
-        let mut assembler = DatagramAssembler::new();
-        let mut first_frame_latency_ms: Option<u64> = None;
-        let mut last_frame_ms: u64 = 0;
-        let mut frame_gaps_ms: Vec<u32> = Vec::new();
-        let mut frame_count: u8 = 0;
-
-        loop {
-            match tokio::time::timeout(max_duration, self.rx.recv()).await {
-                Ok(Ok(msg)) => {
-                    let is_our_datagram = MTI::from_datagram_header(msg.frame.header)
-                        .map(|(mti, src, dst)| {
-                            let is_dg = matches!(
-                                mti,
-                                MTI::DatagramOnly
-                                    | MTI::DatagramFirst
-                                    | MTI::DatagramMiddle
-                                    | MTI::DatagramFinal
-                            );
-                            is_dg && src == self.dest_alias && dst == self.our_alias
-                        })
-                        .unwrap_or(false);
-
-                    if !is_our_datagram {
-                        if let Ok((mti, src)) = MTI::from_header(msg.frame.header) {
-                            if src == self.dest_alias && msg.frame.data.len() >= 2 {
-                                let dst = ((msg.frame.data[0] as u16) << 8)
-                                    | (msg.frame.data[1] as u16);
-                                if dst == self.our_alias {
-                                    if mti == MTI::DatagramRejected {
-                                        let error_code = if msg.frame.data.len() >= 4 {
-                                            ((msg.frame.data[2] as u16) << 8)
-                                                | (msg.frame.data[3] as u16)
-                                        } else {
-                                            0
-                                        };
-                                        if error_code & 0x2000 != 0 {
-                                            for frame in read_frames.iter() {
-                                                let _ = self.handle.send_direct(frame).await;
-                                            }
-                                            continue;
-                                        } else {
-                                            return BatchReadResult {
-                                                data: Err(format!(
-                                                    "Datagram rejected: error 0x{:04X}",
-                                                    error_code
-                                                )),
-                                                timing: None,
-                                            };
-                                        }
-                                    }
-                                    if mti == MTI::DatagramReceivedOk {
-                                        let flags = if msg.frame.data.len() >= 3 {
-                                            msg.frame.data[2]
-                                        } else {
-                                            0
-                                        };
-                                        let timeout_exp = flags & 0x0F;
-                                        if timeout_exp > 0 {
-                                            let extended_ms = (1u64 << timeout_exp) * 1000;
-                                            if extended_ms > max_duration.as_millis() as u64 {
-                                                max_duration = Duration::from_millis(extended_ms);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        continue;
-                    }
-
-                    let elapsed_ms = send_time.elapsed().as_millis() as u64;
-                    if first_frame_latency_ms.is_none() {
-                        first_frame_latency_ms = Some(elapsed_ms);
-                        last_frame_ms = elapsed_ms;
-                    } else {
-                        frame_gaps_ms.push((elapsed_ms.saturating_sub(last_frame_ms)) as u32);
-                        last_frame_ms = elapsed_ms;
-                    }
-                    frame_count = frame_count.saturating_add(1);
-
-                    if let Ok(Some(datagram_data)) = assembler.handle_frame(&msg.frame) {
-                        let ack_frame = match DatagramAssembler::send_acknowledgment(
-                            self.our_alias,
-                            self.dest_alias,
-                        ) {
-                            Ok(f) => f,
-                            Err(e) => return BatchReadResult {
-                                data: Err(e.to_string()),
-                                timing: None,
-                            },
-                        };
-                        let _ = self.handle.send_direct(&ack_frame).await;
-
-                        let total_duration_ms = send_time.elapsed().as_millis() as u64;
-                        let timing = MemoryReadTiming {
-                            first_frame_latency_ms: first_frame_latency_ms
-                                .unwrap_or(total_duration_ms),
-                            frame_gaps_ms,
-                            total_duration_ms,
-                            frame_count,
-                        };
-
-                        return match MemoryConfigCmd::parse_read_reply(&datagram_data) {
-                            Ok(crate::protocol::ReadReply::Success { data, .. }) => {
-                                BatchReadResult { data: Ok(data), timing: Some(timing) }
-                            }
-                            Ok(crate::protocol::ReadReply::Failed {
-                                error_code, message, ..
-                            }) => BatchReadResult {
-                                data: Err(format!(
-                                    "Memory read failed: error 0x{:04X} - {}",
-                                    error_code, message
-                                )),
-                                timing: Some(timing),
-                            },
-                            Err(e) => BatchReadResult {
-                                data: Err(e.to_string()),
-                                timing: Some(timing),
-                            },
-                        };
-                    }
-                }
-                Ok(Err(_)) => {
-                    return BatchReadResult {
-                        data: Err("Broadcast channel lagged during memory read".into()),
-                        timing: None,
-                    };
-                }
-                Err(_) => {
-                    return BatchReadResult {
-                        data: Err("Timeout waiting for memory read response".into()),
-                        timing: None,
-                    };
-                }
-            }
+        BatchReadResult {
+            data: result.data,
+            timing: result.timing,
         }
     }
 }
@@ -967,16 +844,16 @@ impl LccConnection {
     ///
     /// # Arguments
     /// * `dest_alias` - Target node's alias
-    /// * `timeout_ms` - Maximum time to wait for each response (recommended: 1000ms)
+    /// * `config` - Read configuration (timeout, retry cap, post-ACK delay)
     ///
     /// # Returns
     /// * `Ok(String)` - Complete CDI XML document
     /// * `Err(_)` - Protocol error or timeout
-    pub async fn read_cdi(&mut self, dest_alias: u16, timeout_ms: u64) -> Result<String> {
+    pub async fn read_cdi(&mut self, dest_alias: u16, config: crate::datagram_reader::MemoryReadConfig) -> Result<String> {
         let handle = self.handle.as_ref()
             .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?;
         let our_alias = self.our_alias.value();
-        let result = Self::read_cdi_with_handle(handle, our_alias, dest_alias, timeout_ms, None).await?;
+        let result = Self::read_cdi_with_handle(handle, our_alias, dest_alias, config, None).await?;
         Ok(result.xml)
     }
 
@@ -985,13 +862,13 @@ impl LccConnection {
     pub async fn read_cdi_cancellable(
         &mut self,
         dest_alias: u16,
-        timeout_ms: u64,
+        config: crate::datagram_reader::MemoryReadConfig,
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<String> {
         let handle = self.handle.as_ref()
             .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?;
         let our_alias = self.our_alias.value();
-        let result = Self::read_cdi_with_handle(handle, our_alias, dest_alias, timeout_ms, Some(cancel_flag)).await?;
+        let result = Self::read_cdi_with_handle(handle, our_alias, dest_alias, config, Some(cancel_flag)).await?;
         Ok(result.xml)
     }
 
@@ -999,13 +876,13 @@ impl LccConnection {
     pub async fn read_cdi_cancellable_with_stats(
         &mut self,
         dest_alias: u16,
-        timeout_ms: u64,
+        config: crate::datagram_reader::MemoryReadConfig,
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<CdiReadResult> {
         let handle = self.handle.as_ref()
             .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?;
         let our_alias = self.our_alias.value();
-        Self::read_cdi_with_handle(handle, our_alias, dest_alias, timeout_ms, Some(cancel_flag)).await
+        Self::read_cdi_with_handle(handle, our_alias, dest_alias, config, Some(cancel_flag)).await
     }
 
     /// Read CDI using the subscribe-before-send pattern.
@@ -1019,25 +896,21 @@ impl LccConnection {
         handle: &TransportHandle,
         our_alias: u16,
         dest_alias: u16,
-        timeout_ms: u64,
+        config: crate::datagram_reader::MemoryReadConfig,
         cancel_flag: Option<Arc<AtomicBool>>,
     ) -> Result<CdiReadResult> {
-        use crate::protocol::{MemoryConfigCmd, AddressSpace, DatagramAssembler};
+        use crate::datagram_reader::{datagram_read_exchange, ReadDescriptor};
 
         println!("[LCC] read_cdi_with_handle starting for alias 0x{:03X}", dest_alias);
 
         let mut cdi_data = Vec::new();
         let mut address = 0u32;
         const CHUNK_SIZE: u8 = 64;
-        const MAX_CHUNK_RETRIES: u8 = 3;
 
         let mut chunk_durations_ms: Vec<u32> = Vec::new();
         let mut total_retries: usize = 0;
 
-        // Subscribe once for the entire CDI download.  This eliminates the gap
-        // between chunks where a per-chunk subscription would be dropped and
-        // re-created, which could cause stale replies to leak across chunk
-        // boundaries.
+        // Subscribe once for the entire CDI download.
         let mut rx = handle.subscribe_all();
 
         loop {
@@ -1050,202 +923,24 @@ impl LccConnection {
 
             println!("[LCC] Reading CDI chunk at address {} (chunk size {})", address, CHUNK_SIZE);
 
-            let read_frames = MemoryConfigCmd::build_read(
-                our_alias,
-                dest_alias,
-                AddressSpace::Cdi,
-                address,
-                CHUNK_SIZE,
-            )?;
-
-            let mut chunk_reply: Option<Vec<u8>> = None;
             let chunk_start = Instant::now();
+            let desc = ReadDescriptor {
+                address_space: 0xFF, // CDI space
+                address,
+                count: CHUNK_SIZE,
+            };
 
-            'retry: for attempt in 0..MAX_CHUNK_RETRIES {
-                if attempt > 0 {
-                    total_retries += 1;
-                    println!(
-                        "[LCC] Retrying CDI chunk at address {} (attempt {}/{})",
-                        address,
-                        attempt + 1,
-                        MAX_CHUNK_RETRIES
-                    );
-                }
+            let result = datagram_read_exchange(
+                handle, &mut rx, our_alias, dest_alias,
+                &desc, &config, false,
+            ).await;
 
-                // Send the request.
-                {
-                    println!("[LCC] Sending {} frame(s) for CDI read command", read_frames.len());
-                    for (i, frame) in read_frames.iter().enumerate() {
-                        println!("[LCC] Sending frame {}/{}: {}", i + 1, read_frames.len(), frame.to_string());
-                        handle.send(frame).await?;
-                    }
-                }
-
-                // Wait on broadcast channel (no transport lock held).
-                let mut max_duration = Duration::from_millis(timeout_ms);
-                let mut assembler = DatagramAssembler::new();
-
-                loop {
-                    match tokio::time::timeout(max_duration, rx.recv()).await {
-                        Ok(Ok(msg)) => {
-                            // Is this a datagram from dest_alias addressed to us?
-                            let is_our_datagram = MTI::from_datagram_header(msg.frame.header)
-                                .map(|(mti, src, dst)| {
-                                    matches!(
-                                        mti,
-                                        MTI::DatagramOnly
-                                            | MTI::DatagramFirst
-                                            | MTI::DatagramMiddle
-                                            | MTI::DatagramFinal
-                                    ) && src == dest_alias
-                                        && dst == our_alias
-                                })
-                                .unwrap_or(false);
-
-                            if is_our_datagram {
-                                if let Ok(Some(datagram_data)) = assembler.handle_frame(&msg.frame) {
-                                    // Validate size before accepting: 6-byte header + at most 65
-                                    // data bytes. If oversized, a spurious extra middle frame
-                                    // leaked in — ACK so the node doesn't hang, then retry.
-                                    if datagram_data.len() > 71 {
-                                        eprintln!(
-                                            "[LCC] WARNING: CDI reply oversized ({} bytes) at address {} (attempt {}/{}) — discarding and retrying",
-                                            datagram_data.len(), address, attempt + 1, MAX_CHUNK_RETRIES
-                                        );
-                                        if let Ok(ack) = DatagramAssembler::send_acknowledgment(our_alias, dest_alias) {
-                                            let _ = handle.send(&ack).await;
-                                        }
-                                        continue 'retry;
-                                    }
-                                    // Validate reply address: if it's from a stale/previous
-                                    // chunk, ACK to free the node, reset the assembler, and
-                                    // keep listening for the correct reply in this same inner
-                                    // loop (the real reply should be right behind the stale one).
-                                    if datagram_data.len() >= 6 {
-                                        let reply_addr = u32::from_be_bytes([
-                                            datagram_data[2], datagram_data[3],
-                                            datagram_data[4], datagram_data[5],
-                                        ]);
-                                        if reply_addr != address {
-                                            eprintln!(
-                                                "[LCC] WARNING: CDI stale reply (addr {} != expected {}) — ACK and discard, waiting for correct reply",
-                                                reply_addr, address
-                                            );
-                                            if let Ok(ack) = DatagramAssembler::send_acknowledgment(our_alias, dest_alias) {
-                                                let _ = handle.send(&ack).await;
-                                            }
-                                            assembler = DatagramAssembler::new();
-                                            continue; // inner recv loop — keep listening
-                                        }
-                                    }
-                                    // Step 4: ACK the reply datagram.
-                                    let ack = DatagramAssembler::send_acknowledgment(our_alias, dest_alias)?;
-                                    handle.send(&ack).await?;
-                                    println!("[LCC] Received CDI reply at address {}", address);
-                                    chunk_reply = Some(datagram_data);
-                                    break; // inner receive loop — got reply
-                                }
-                                // Multi-frame: keep accumulating.
-                                continue;
-                            }
-
-                            // Check for addressed control frames (DatagramRejected / DatagramReceivedOk).
-                            if let Ok((mti, src)) = MTI::from_header(msg.frame.header) {
-                                if src == dest_alias && msg.frame.data.len() >= 2 {
-                                    let dst = ((msg.frame.data[0] as u16) << 8)
-                                        | (msg.frame.data[1] as u16);
-                                    if dst == our_alias {
-                                        // D9: DatagramRejected — retry if "resend OK" (0x2000).
-                                        if mti == MTI::DatagramRejected {
-                                            let error_code = if msg.frame.data.len() >= 4 {
-                                                ((msg.frame.data[2] as u16) << 8)
-                                                    | (msg.frame.data[3] as u16)
-                                            } else {
-                                                0
-                                            };
-                                            if error_code & 0x2000 != 0 {
-                                                continue 'retry; // resend the request
-                                            } else {
-                                                return Err(crate::Error::Protocol(format!(
-                                                    "CDI read datagram rejected: error 0x{:04X}",
-                                                    error_code
-                                                )));
-                                            }
-                                        }
-                                        // D12: DatagramReceivedOk — honour timeout extension.
-                                        if mti == MTI::DatagramReceivedOk {
-                                            let flags = if msg.frame.data.len() >= 3 {
-                                                msg.frame.data[2]
-                                            } else {
-                                                0
-                                            };
-                                            let timeout_exp = flags & 0x0F;
-                                            if timeout_exp > 0 {
-                                                let extended_ms = (1u64 << timeout_exp) * 1000;
-                                                if extended_ms > max_duration.as_millis() as u64 {
-                                                    max_duration = Duration::from_millis(extended_ms);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            // Other frame: ignore and keep waiting.
-                        }
-                        Ok(Err(_)) => {
-                            // Broadcast channel lagged — retry this chunk.
-                            eprintln!(
-                                "[LCC] WARNING: broadcast channel lagged during CDI read at address {} (attempt {}/{})",
-                                address, attempt + 1, MAX_CHUNK_RETRIES
-                            );
-                            continue 'retry;
-                        }
-                        Err(_) => {
-                            // Timeout — try next attempt.
-                            continue 'retry;
-                        }
-                    }
-                } // inner receive loop
-
-                if chunk_reply.is_some() {
-                    break 'retry;
-                }
-            } // retry loop
-
-            // Record chunk duration.
+            total_retries += result.retry_count as usize;
             chunk_durations_ms.push(chunk_start.elapsed().as_millis() as u32);
 
-            let reply_data = chunk_reply.ok_or_else(|| {
-                crate::Error::Timeout(format!(
-                    "Timeout waiting for CDI read reply at address {} after {} attempts",
-                    address, MAX_CHUNK_RETRIES
-                ))
-            })?;
-
-            // Sanity-check assembled datagram size: must have at least 6 header + 1 data byte.
-            // Oversized replies (> 71) are caught and retried in the inner recv loop above.
-            if reply_data.len() < 7 {
-                eprintln!(
-                    "[LCC] WARNING: CDI reply datagram size {} is too small (< 7) at address {}",
-                    reply_data.len(), address
-                );
-            }
-
-            let reply = MemoryConfigCmd::parse_read_reply(&reply_data)?;
-            match reply {
-                crate::protocol::ReadReply::Success { address: reply_addr, data, .. } => {
-                    if reply_addr != address {
-                        eprintln!(
-                            "[LCC] WARNING: CDI chunk address mismatch: expected {} got {} (data len {})",
-                            address, reply_addr, data.len()
-                        );
-                    }
-                    if data.len() > CHUNK_SIZE as usize {
-                        eprintln!(
-                            "[LCC] WARNING: CDI chunk data length {} exceeds CHUNK_SIZE {} at address {}",
-                            data.len(), CHUNK_SIZE, address
-                        );
-                    }
+            match result.data {
+                Ok(data) => {
+                    println!("[LCC] Received CDI reply at address {}", address);
                     if data.is_empty() {
                         break;
                     }
@@ -1257,14 +952,14 @@ impl LccConnection {
                         cdi_data.extend_from_slice(&data);
                     }
                 }
-                crate::protocol::ReadReply::Failed { error_code, message, .. } => {
-                    // 0x1082 = "address out of bounds" — end of CDI (same as read_cdi_impl).
-                    if error_code == 0x1082 {
+                Err(err_msg) => {
+                    // Check for "address out of bounds" (0x1082) in the error message.
+                    if err_msg.contains("0x1082") {
                         break;
                     }
-                    return Err(crate::Error::Protocol(format!(
-                        "CDI read failed at address {}: error 0x{:04X} - {}",
-                        address, error_code, message
+                    return Err(crate::Error::Timeout(format!(
+                        "CDI read failed at address {}: {}",
+                        address, err_msg
                     )));
                 }
             }
@@ -1379,140 +1074,40 @@ impl LccConnection {
         count: u8,
         timeout_ms: u64,
     ) -> Result<(Vec<u8>, MemoryReadTiming)> {
-        use crate::protocol::{MemoryConfigCmd, AddressSpace, DatagramAssembler};
+        use crate::datagram_reader::{datagram_read_exchange, ReadDescriptor, MemoryReadConfig};
 
-        let space = AddressSpace::from_u8(address_space)
-            .map_err(|e| crate::Error::Protocol(e))?;
+        let config = MemoryReadConfig {
+            timeout_ms,
+            // Single reads (continuation fills) don't need post-ACK delay since
+            // there's typically processing overhead between calls. Use 0 here;
+            // the BatchReader path provides the pacing.
+            post_ack_delay_ms: 0,
+            ..MemoryReadConfig::default()
+        };
 
-        let read_frames = MemoryConfigCmd::build_read(our_alias, dest_alias, space, address, count)?;
-
-        // Step 1: Subscribe BEFORE sending so we cannot miss the reply.
+        let desc = ReadDescriptor { address_space, address, count };
         let mut rx = handle.subscribe_all();
 
-        // Step 2: Send the request.
-        let send_time = Instant::now();
-        for frame in read_frames.iter() {
-            handle.send(frame).await?;
-        }
+        let result = datagram_read_exchange(
+            handle, &mut rx, our_alias, dest_alias,
+            &desc, &config, false,
+        ).await;
 
-        // Step 3: Wait for reply on the broadcast channel (no transport lock held).
-        let mut max_duration = Duration::from_millis(timeout_ms);
-        let mut assembler = DatagramAssembler::new();
-        let mut first_frame_latency_ms: Option<u64> = None;
-        let mut last_frame_ms: u64 = 0;
-        let mut frame_gaps_ms: Vec<u32> = Vec::new();
-        let mut frame_count: u8 = 0;
-
-        loop {
-            // Phase 2: idle timeout — reset on every received frame.
-            // As long as the node keeps sending frames within `timeout_ms` of the
-            // previous one the read succeeds, regardless of total elapsed time.
-            // A truly unresponsive node still fails after exactly `timeout_ms` of silence.
-            match tokio::time::timeout(max_duration, rx.recv()).await {
-                Ok(Ok(msg)) => {
-                    // Only process datagram frames from dest_alias addressed to us.
-                    let is_our_datagram = MTI::from_datagram_header(msg.frame.header)
-                        .map(|(mti, src, dst)| {
-                            let is_dg = matches!(
-                                mti,
-                                MTI::DatagramOnly
-                                    | MTI::DatagramFirst
-                                    | MTI::DatagramMiddle
-                                    | MTI::DatagramFinal
-                            );
-                            is_dg && src == dest_alias && dst == our_alias
-                        })
-                        .unwrap_or(false);
-
-                    if !is_our_datagram {
-                        if let Ok((mti, src)) = MTI::from_header(msg.frame.header) {
-                            if src == dest_alias && msg.frame.data.len() >= 2 {
-                                let dst = ((msg.frame.data[0] as u16) << 8) | (msg.frame.data[1] as u16);
-                                if dst == our_alias {
-                                    // D9: DatagramRejected handling
-                                    if mti == MTI::DatagramRejected {
-                                        let error_code = if msg.frame.data.len() >= 4 {
-                                            ((msg.frame.data[2] as u16) << 8) | (msg.frame.data[3] as u16)
-                                        } else {
-                                            0
-                                        };
-                                        // Bit 0x2000 = "resend OK" (temporary, buffer full)
-                                        if error_code & 0x2000 != 0 {
-                                            // Re-send the read request instead of timing out
-                                            for frame in read_frames.iter() {
-                                                handle.send(frame).await?;
-                                            }
-                                            continue;
-                                        } else {
-                                            return Err(crate::Error::Protocol(format!(
-                                                "Datagram rejected: error 0x{:04X}", error_code
-                                            )));
-                                        }
-                                    }
-                                    // D12: DatagramReceivedOk — parse flags for timeout extension
-                                    if mti == MTI::DatagramReceivedOk {
-                                        let flags = if msg.frame.data.len() >= 3 { msg.frame.data[2] } else { 0 };
-                                        let timeout_exp = flags & 0x0F;
-                                        if timeout_exp > 0 {
-                                            let extended_ms = (1u64 << timeout_exp) * 1000;
-                                            if extended_ms > max_duration.as_millis() as u64 {
-                                                max_duration = Duration::from_millis(extended_ms);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        continue;
-                    }
-
-                    // Record per-frame timing.
-                    let elapsed_ms = send_time.elapsed().as_millis() as u64;
-                    if first_frame_latency_ms.is_none() {
-                        first_frame_latency_ms = Some(elapsed_ms);
-                        last_frame_ms = elapsed_ms;
-                    } else {
-                        frame_gaps_ms.push((elapsed_ms.saturating_sub(last_frame_ms)) as u32);
-                        last_frame_ms = elapsed_ms;
-                    }
-                    frame_count = frame_count.saturating_add(1);
-
-                    if let Ok(Some(datagram_data)) = assembler.handle_frame(&msg.frame) {
-                        // Step 4: Send ACK (brief lock).
-                        let ack_frame = DatagramAssembler::send_acknowledgment(our_alias, dest_alias)?;
-                        handle.send(&ack_frame).await?;
-
-                        let total_duration_ms = send_time.elapsed().as_millis() as u64;
-                        let timing = MemoryReadTiming {
-                            first_frame_latency_ms: first_frame_latency_ms.unwrap_or(total_duration_ms),
-                            frame_gaps_ms,
-                            total_duration_ms,
-                            frame_count,
-                        };
-
-                        let reply = MemoryConfigCmd::parse_read_reply(&datagram_data)?;
-                        return match reply {
-                            crate::protocol::ReadReply::Success { data, .. } => Ok((data, timing)),
-                            crate::protocol::ReadReply::Failed { error_code, message, .. } => {
-                                Err(crate::Error::Protocol(format!(
-                                    "Memory read failed: error 0x{:04X} - {}",
-                                    error_code, message
-                                )))
-                            }
-                        };
-                    }
-                }
-                Ok(Err(_)) => {
-                    // Broadcast channel lagged (buffer full) — frames may have been dropped.
-                    // The reply might have been lost; surface a timeout rather than hanging.
-                    return Err(crate::Error::Timeout(
-                        "Broadcast channel lagged during memory read".to_string(),
-                    ));
-                }
-                Err(_) => {
-                    return Err(crate::Error::Timeout(
-                        "Timeout waiting for memory read response".to_string(),
-                    ));
+        match result.data {
+            Ok(data) => {
+                let timing = result.timing.unwrap_or(MemoryReadTiming {
+                    first_frame_latency_ms: 0,
+                    frame_gaps_ms: vec![],
+                    total_duration_ms: 0,
+                    frame_count: 0,
+                });
+                Ok((data, timing))
+            }
+            Err(msg) => {
+                if msg.contains("Timeout") || msg.contains("Broadcast channel lagged") {
+                    Err(crate::Error::Timeout(msg))
+                } else {
+                    Err(crate::Error::Protocol(msg))
                 }
             }
         }
@@ -1535,6 +1130,20 @@ impl LccConnection {
             .clone();
         let our_alias = self.our_alias.value();
         Ok(BatchReader::new(handle, our_alias, dest_alias))
+    }
+
+    /// Like [`batch_reader`](Self::batch_reader), but with custom read configuration
+    /// (timeout, retry cap, post-ACK delay).
+    pub fn batch_reader_with_config(
+        &self,
+        dest_alias: u16,
+        config: crate::datagram_reader::MemoryReadConfig,
+    ) -> crate::Result<BatchReader> {
+        let handle = self.handle.as_ref()
+            .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?
+            .clone();
+        let our_alias = self.our_alias.value();
+        Ok(BatchReader::with_config(handle, our_alias, dest_alias, config))
     }
 
     // ========================================================================
@@ -2428,6 +2037,15 @@ mod tests {
         GridConnectFrame { header, data }
     }
 
+    /// Test helper: build a MemoryReadConfig with a short timeout for tests.
+    fn cdi_test_config(timeout_ms: u64) -> crate::datagram_reader::MemoryReadConfig {
+        crate::datagram_reader::MemoryReadConfig {
+            timeout_ms,
+            post_ack_delay_ms: 0, // no delay in tests
+            ..crate::datagram_reader::MemoryReadConfig::default()
+        }
+    }
+
     // D14: All retry attempts fail → proper timeout error
     #[tokio::test]
     async fn test_d14_cdi_read_retries_exhausted() {
@@ -2440,7 +2058,7 @@ mod tests {
             &handle,
             0xAAA,
             0xBBB,
-            200, // short timeout
+            cdi_test_config(200), // short timeout
             None,
         ).await;
 
@@ -2466,7 +2084,7 @@ mod tests {
         let mut actor = TransportActor::new(Box::new(transport));
         let handle = actor.handle();
 
-        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000, None).await;
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, cdi_test_config(2000), None).await;
         actor.shutdown().await;
 
         assert!(result.is_ok(), "Zero-length reply should break CDI loop: {:?}", result);
@@ -2486,7 +2104,7 @@ mod tests {
         let mut actor = TransportActor::new(Box::new(transport));
         let handle = actor.handle();
 
-        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000, None).await;
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, cdi_test_config(2000), None).await;
         actor.shutdown().await;
 
         assert!(result.is_ok(), "CDI read should succeed: {:?}", result);
@@ -2598,7 +2216,7 @@ mod tests {
         let mut actor = TransportActor::new(Box::new(transport));
         let handle = actor.handle();
 
-        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000, None).await;
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, cdi_test_config(2000), None).await;
         actor.shutdown().await;
 
         assert!(result.is_ok(), "0x1082 should be treated as end-of-CDI: {:?}", result);
@@ -2622,7 +2240,7 @@ mod tests {
         let mut actor = TransportActor::new(Box::new(transport));
         let handle = actor.handle();
 
-        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000, None).await;
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, cdi_test_config(2000), None).await;
         actor.shutdown().await;
 
         assert!(result.is_err(), "Non-0x1082 error should propagate");
@@ -2652,7 +2270,7 @@ mod tests {
         let mut actor = TransportActor::new(Box::new(transport));
         let handle = actor.handle();
 
-        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000, None).await;
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, cdi_test_config(2000), None).await;
         actor.shutdown().await;
 
         assert!(result.is_ok(), "Multi-chunk CDI read should succeed: {:?}", result);
@@ -2687,7 +2305,7 @@ mod tests {
         let mut actor = TransportActor::new(Box::new(transport));
         let handle = actor.handle();
 
-        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000, None).await;
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, cdi_test_config(2000), None).await;
         actor.shutdown().await;
 
         assert!(result.is_ok(), "Stale reply should be discarded: {:?}", result);
@@ -2733,7 +2351,7 @@ mod tests {
             feeder.add_receive_frame(chunk1.to_string());
         });
 
-        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, 2000, None).await;
+        let result = LccConnection::read_cdi_with_handle(&handle, dst, src, cdi_test_config(2000), None).await;
         reply_task.await.unwrap();
         actor.shutdown().await;
 
@@ -2754,7 +2372,7 @@ mod tests {
             &handle,
             0xAAA,
             0xBBB,
-            2000,
+            cdi_test_config(2000),
             Some(cancel_flag),
         ).await;
 
