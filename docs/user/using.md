@@ -179,6 +179,36 @@ If Bowties is not confident the connected bus matches the saved layout, it asks 
 
 ---
 
+## Advanced Configuration
+
+Bowties reads an optional `tuning.toml` file from the application data directory at startup. This file lets you adjust datagram timing parameters without rebuilding the application — useful when troubleshooting CAN gateway connectivity issues.
+
+**File location:**
+
+| Platform | Path |
+|----------|------|
+| Windows  | `%APPDATA%\com.lcc.bowties\tuning.toml` |
+| macOS    | `~/Library/Application Support/com.lcc.bowties/tuning.toml` |
+| Linux    | `~/.config/com.lcc.bowties/tuning.toml` |
+
+**Example `tuning.toml`:**
+
+```toml
+# Delay (ms) after acknowledging a reply datagram before sending the next
+# request. Increase if reads through a CAN gateway time out intermittently.
+post_ack_delay_ms = 10
+
+# Per-attempt timeout (ms) waiting for a memory-config read reply.
+read_timeout_ms = 3000
+
+# Maximum retries when a node rejects with the resend-OK flag.
+max_datagram_retries = 3
+```
+
+All fields are optional — omitted fields use the built-in defaults shown above. Changes take effect the next time you launch the application.
+
+---
+
 ## Troubleshooting
 
 **No nodes appear after connecting**
