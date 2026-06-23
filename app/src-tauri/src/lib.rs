@@ -167,7 +167,19 @@ async fn connect_lcc(
         stats.connected_at = Some(chrono::Utc::now());
         stats.adapter_type = Some(format!("{:?}", config.adapter_type));
         stats.connection_label = Some(adapter_label);
-        stats.discovery.initial_probe_at = Some(chrono::Utc::now());
+        stats.baud_rate = config.baud_rate;
+        stats.flow_control = Some(format!("{:?}", config.flow_control));
+        stats.frame_encoding = Some(match &config.adapter_type {
+            AdapterType::Tcp => "Tcp",
+            AdapterType::GridConnectSerial => "GridConnect",
+            AdapterType::MergGridConnectSerial => "MergGridConnect",
+            AdapterType::SlcanSerial => "SLCAN",
+        }.to_string());
+        stats.discovery.probes.push(crate::diagnostics::ProbeRecord {
+            triggered_by: "connect".to_string(),
+            sent_at: chrono::Utc::now(),
+            nodes_responded_count: 0,
+        });
     }
 
     // Phase 1: For TCP connections, fire a second probe at T+2 s to pick up nodes
@@ -182,8 +194,11 @@ async fn connect_lcc(
                 bwlog!(state_clone, "TCP second probe fired at T+2s ({} nodes visible before probe)", node_count);
                 {
                     let mut stats = state_clone.diag_stats.write().await;
-                    stats.discovery.second_probe_at = Some(chrono::Utc::now());
-                    stats.discovery.second_probe_node_count = Some(node_count);
+                    stats.discovery.probes.push(crate::diagnostics::ProbeRecord {
+                        triggered_by: "tcp-second-probe".to_string(),
+                        sent_at: chrono::Utc::now(),
+                        nodes_responded_count: node_count,
+                    });
                 }
                 let mut conn = conn_arc.lock().await;
                 let _ = conn.probe_nodes().await;

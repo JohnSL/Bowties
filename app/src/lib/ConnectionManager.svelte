@@ -120,10 +120,18 @@
     },
   };
 
-  /** Ordered list for the dropdown. */
-  const DEVICE_ORDER: DevicePreset[] = [
-    'tcp', 'rrcirkits', 'sprog-usblcc', 'sprog-pilcc', 'merg-canrs', 'slcan', 'otherGc', 'otherSlcan',
+  /** Named device presets (alphabetical). */
+  const NAMED_DEVICES: DevicePreset[] = [
+    'slcan', 'merg-canrs', 'tcp', 'rrcirkits', 'sprog-pilcc', 'sprog-usblcc',
   ];
+
+  /** Generic / fallback presets. */
+  const OTHER_DEVICES: DevicePreset[] = [
+    'otherGc', 'otherSlcan',
+  ];
+
+  /** Full ordered list (named first, then generic). */
+  const DEVICE_ORDER: DevicePreset[] = [...NAMED_DEVICES, ...OTHER_DEVICES];
 
   interface ConnectionConfig {
     id: string;
@@ -136,7 +144,7 @@
     flowControl: FlowControl;
   }
 
-  const dispatch = createEventDispatcher<{ connected: { config: ConnectionConfig } }>();
+  const dispatch = createEventDispatcher<{ connected: { config: ConnectionConfig; device: string } }>();
 
   // crypto.randomUUID() requires Safari 15.4+ / WebKit 615+ (macOS 12+, Ubuntu 22.04+).
   // Use getRandomValues() which is available everywhere Tauri runs (Safari 11+, WebKit 606+).
@@ -356,7 +364,8 @@
     errorMessage = '';
     try {
       await invoke('connect_lcc', { config });
-      dispatch('connected', { config });
+      const preset = inferPreset(config);
+      dispatch('connected', { config, device: DEVICE_PRESETS[preset].label });
     } catch (e) {
       errorMessage = `Connection failed: ${e}`;
     } finally {
@@ -471,7 +480,11 @@
         <label class="cm-field">
           <span>Device</span>
           <select bind:value={formDevice}>
-            {#each DEVICE_ORDER as key}
+            {#each NAMED_DEVICES as key}
+              <option value={key}>{DEVICE_PRESETS[key].label}</option>
+            {/each}
+            <option disabled>──────────</option>
+            {#each OTHER_DEVICES as key}
               <option value={key}>{DEVICE_PRESETS[key].label}</option>
             {/each}
           </select>

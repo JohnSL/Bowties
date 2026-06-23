@@ -5,8 +5,9 @@
   * Show names for the message types
 * SPROG USB-LCC CDI read timeouts (Issue #14): Discovery works but multi-frame datagram reads
   time out. Suspected causes: byte-at-a-time serial reads (vs JMRI's 128-byte buffered reads),
-  per-frame `flush()` adding latency, or datagram ACK timing issues under load. Needs diagnostic
-  frame logging for the user to capture a trace, and/or switching to chunked buffered reads.
+  per-frame `flush()` adding latency, or datagram ACK timing issues under load. Diagnostic report
+  now includes per-chunk durations, retry counts, frame activity ring buffer, and structured error
+  capture — use `Tools → Copy Diagnostic Report` to capture a trace for analysis.
 * MERG CAN ID configuration: JMRI exposes a CAN ID option (100–127, default 126) for MERG
   adapters as an advanced setting. Bowties doesn't expose this yet. Low priority — default 126
   works unless there's a conflict with another host on the same CAN bus.

@@ -51,6 +51,19 @@ pub struct BatchReadResult {
     pub timing: Option<MemoryReadTiming>,
 }
 
+/// Result of a CDI download including per-chunk timing telemetry.
+#[derive(Debug, Clone)]
+pub struct CdiReadResult {
+    /// The complete CDI XML content.
+    pub xml: String,
+    /// Number of chunks downloaded.
+    pub chunks: usize,
+    /// Total retries across all chunks.
+    pub total_retries: usize,
+    /// Duration of each chunk in milliseconds (request sent → reply received).
+    pub chunk_durations_ms: Vec<u32>,
+}
+
 /// Performs pipelined memory reads on a single node, holding a single broadcast
 /// subscription across all reads.
 ///
@@ -963,7 +976,8 @@ impl LccConnection {
         let handle = self.handle.as_ref()
             .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?;
         let our_alias = self.our_alias.value();
-        Self::read_cdi_with_handle(handle, our_alias, dest_alias, timeout_ms, None).await
+        let result = Self::read_cdi_with_handle(handle, our_alias, dest_alias, timeout_ms, None).await?;
+        Ok(result.xml)
     }
 
     /// Like [`read_cdi`], but checks `cancel_flag` between chunks.
@@ -974,6 +988,20 @@ impl LccConnection {
         timeout_ms: u64,
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<String> {
+        let handle = self.handle.as_ref()
+            .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?;
+        let our_alias = self.our_alias.value();
+        let result = Self::read_cdi_with_handle(handle, our_alias, dest_alias, timeout_ms, Some(cancel_flag)).await?;
+        Ok(result.xml)
+    }
+
+    /// Like [`read_cdi_cancellable`], but also returns per-chunk timing metadata.
+    pub async fn read_cdi_cancellable_with_stats(
+        &mut self,
+        dest_alias: u16,
+        timeout_ms: u64,
+        cancel_flag: Arc<AtomicBool>,
+    ) -> Result<CdiReadResult> {
         let handle = self.handle.as_ref()
             .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?;
         let our_alias = self.our_alias.value();
@@ -993,7 +1021,7 @@ impl LccConnection {
         dest_alias: u16,
         timeout_ms: u64,
         cancel_flag: Option<Arc<AtomicBool>>,
-    ) -> Result<String> {
+    ) -> Result<CdiReadResult> {
         use crate::protocol::{MemoryConfigCmd, AddressSpace, DatagramAssembler};
 
         println!("[LCC] read_cdi_with_handle starting for alias 0x{:03X}", dest_alias);
@@ -1002,6 +1030,9 @@ impl LccConnection {
         let mut address = 0u32;
         const CHUNK_SIZE: u8 = 64;
         const MAX_CHUNK_RETRIES: u8 = 3;
+
+        let mut chunk_durations_ms: Vec<u32> = Vec::new();
+        let mut total_retries: usize = 0;
 
         // Subscribe once for the entire CDI download.  This eliminates the gap
         // between chunks where a per-chunk subscription would be dropped and
@@ -1028,9 +1059,11 @@ impl LccConnection {
             )?;
 
             let mut chunk_reply: Option<Vec<u8>> = None;
+            let chunk_start = Instant::now();
 
             'retry: for attempt in 0..MAX_CHUNK_RETRIES {
                 if attempt > 0 {
+                    total_retries += 1;
                     println!(
                         "[LCC] Retrying CDI chunk at address {} (attempt {}/{})",
                         address,
@@ -1179,6 +1212,9 @@ impl LccConnection {
                 }
             } // retry loop
 
+            // Record chunk duration.
+            chunk_durations_ms.push(chunk_start.elapsed().as_millis() as u32);
+
             let reply_data = chunk_reply.ok_or_else(|| {
                 crate::Error::Timeout(format!(
                     "Timeout waiting for CDI read reply at address {} after {} attempts",
@@ -1238,8 +1274,15 @@ impl LccConnection {
             }
         }
 
-        String::from_utf8(cdi_data).map_err(|e| {
+        let xml = String::from_utf8(cdi_data).map_err(|e| {
             crate::Error::Protocol(format!("CDI is not valid UTF-8: {}", e))
+        })?;
+        let chunks = chunk_durations_ms.len();
+        Ok(CdiReadResult {
+            xml,
+            chunks,
+            total_retries,
+            chunk_durations_ms,
         })
     }
     
@@ -2427,7 +2470,7 @@ mod tests {
         actor.shutdown().await;
 
         assert!(result.is_ok(), "Zero-length reply should break CDI loop: {:?}", result);
-        assert_eq!(result.unwrap(), "");
+        assert_eq!(result.unwrap().xml, "");
     }
 
     // CDI read: normal single-chunk with null terminator
@@ -2447,7 +2490,7 @@ mod tests {
         actor.shutdown().await;
 
         assert!(result.is_ok(), "CDI read should succeed: {:?}", result);
-        assert_eq!(result.unwrap(), "A");
+        assert_eq!(result.unwrap().xml, "A");
     }
 
     // D18: Alias conflict detection — send AMD with our alias but different NodeID
@@ -2559,7 +2602,7 @@ mod tests {
         actor.shutdown().await;
 
         assert!(result.is_ok(), "0x1082 should be treated as end-of-CDI: {:?}", result);
-        assert_eq!(result.unwrap(), "AB");
+        assert_eq!(result.unwrap().xml, "AB");
     }
 
     // CDI read: non-0x1082 failure is a real error
@@ -2613,7 +2656,7 @@ mod tests {
         actor.shutdown().await;
 
         assert!(result.is_ok(), "Multi-chunk CDI read should succeed: {:?}", result);
-        assert_eq!(result.unwrap(), "ABC");
+        assert_eq!(result.unwrap().xml, "ABC");
     }
 
     /// A stale reply (from a previous chunk's address) is discarded by the
@@ -2649,7 +2692,7 @@ mod tests {
 
         assert!(result.is_ok(), "Stale reply should be discarded: {:?}", result);
         assert_eq!(
-            result.unwrap(), "ABC",
+            result.unwrap().xml, "ABC",
             "CDI should contain only valid chunk data, not stale duplicate"
         );
     }
@@ -2695,7 +2738,7 @@ mod tests {
         actor.shutdown().await;
 
         assert!(result.is_ok(), "Multi-chunk CDI read should succeed on multi-thread runtime: {:?}", result);
-        assert_eq!(result.unwrap(), "ABC");
+        assert_eq!(result.unwrap().xml, "ABC");
     }
 
     // Cancel: flag pre-set to `true` → returns cancelled error before any I/O

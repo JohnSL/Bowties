@@ -51,6 +51,7 @@ pub use transport::{GridConnectSerialTransport, SlcanSerialTransport, FrameEncod
 pub use tokio_serial::FlowControl as SerialFlowControl;
 pub use discovery::LccConnection;
 pub use discovery::MemoryReadTiming;
+pub use discovery::CdiReadResult;
 pub use discovery::{BatchReadDescriptor, BatchReadResult, BatchReader};
 pub use snip::{query_snip, parse_snip_payload, encode_snip_payload};
 pub use cdi::{Cdi, Segment, DataElement, Group, IntElement, EventIdElement, StringElement, FloatElement, ActionElement, BlobElement, EventRole, classify_event_slot, walk_event_slots};

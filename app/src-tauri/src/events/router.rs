@@ -7,6 +7,7 @@ use tauri::{AppHandle, Emitter};
 use crate::node_key::NodeKey;
 use crate::node_registry::NodeRegistry;
 use crate::traffic::DecodedMessage;
+use crate::diagnostics::{DiagStats, FrameRing, NodeDiscoveryStat, FRAME_RING_CAPACITY, FrameEntry};
 
 /// Event payloads sent to the frontend
 
@@ -50,11 +51,13 @@ pub struct EventRouter {
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     our_alias: u16,
     registry: Arc<NodeRegistry>,
+    diag_stats: DiagStats,
+    frame_ring: FrameRing,
 }
 
 impl EventRouter {
     /// Create a new event router backed by a TransportHandle
-    pub fn from_handle(app: AppHandle, handle: TransportHandle, our_alias: u16, registry: Arc<NodeRegistry>) -> Self {
+    pub fn from_handle(app: AppHandle, handle: TransportHandle, our_alias: u16, registry: Arc<NodeRegistry>, diag_stats: DiagStats, frame_ring: FrameRing) -> Self {
         Self {
             app,
             handle: Some(handle),
@@ -62,6 +65,8 @@ impl EventRouter {
             shutdown_tx: None,
             our_alias,
             registry,
+            diag_stats,
+            frame_ring,
         }
     }
 
@@ -91,9 +96,11 @@ impl EventRouter {
         let app = self.app.clone();
         let our_alias = self.our_alias;
         let registry = self.registry.clone();
+        let diag_stats = self.diag_stats.clone();
+        let frame_ring = self.frame_ring.clone();
         
         let handle = tokio::spawn(async move {
-            Self::router_loop(app, all_rx, verified_node_rx, init_complete_rx, our_alias, registry, shutdown_rx).await;
+            Self::router_loop(app, all_rx, verified_node_rx, init_complete_rx, our_alias, registry, diag_stats, frame_ring, shutdown_rx).await;
         });
         
         self.router_task = Some(handle);
@@ -108,6 +115,8 @@ impl EventRouter {
         mut init_complete_rx: tokio::sync::broadcast::Receiver<lcc_rs::ReceivedMessage>,
         our_alias: u16,
         registry: Arc<NodeRegistry>,
+        diag_stats: DiagStats,
+        frame_ring: FrameRing,
         mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
     ) {
         eprintln!("[EventRouter] Router loop started with our_alias=0x{:03X}", our_alias);
@@ -122,12 +131,37 @@ impl EventRouter {
                 
                 // Handle all messages for monitor
                 Ok(msg) = all_rx.recv() => {
+                    // Record frame in the ring buffer for diagnostics.
+                    {
+                        // Determine direction: frames from our alias are TX (echoed), others are RX.
+                        let direction = if let Ok((_, src_alias)) = msg.frame.get_mti() {
+                            if src_alias == our_alias { "tx" } else { "rx" }
+                        } else {
+                            "rx"
+                        };
+                        let timestamp_ms = {
+                            let stats = diag_stats.read().await;
+                            stats.connected_at
+                                .map(|t| chrono::Utc::now().signed_duration_since(t).num_milliseconds().max(0) as u64)
+                                .unwrap_or(0)
+                        };
+                        if let Ok(mut ring) = frame_ring.try_lock() {
+                            if ring.len() >= FRAME_RING_CAPACITY {
+                                ring.pop_front();
+                            }
+                            ring.push_back(FrameEntry {
+                                direction: direction.to_string(),
+                                timestamp_ms,
+                                frame: msg.frame.to_string(),
+                            });
+                        }
+                    }
                     Self::handle_all_messages(&app, msg, our_alias);
                 }
                 
                 // Handle node discovery via VerifyNodeGlobal replies
                 Ok(msg) = verified_node_rx.recv() => {
-                    Self::handle_node_discovered(&app, &registry, msg, our_alias).await;
+                    Self::handle_node_discovered(&app, &registry, &diag_stats, msg, our_alias).await;
                 }
 
                 // Handle nodes that join mid-session (they announce via InitializationComplete)
@@ -164,7 +198,7 @@ impl EventRouter {
     }
 
     /// Handle node discovered events
-    async fn handle_node_discovered(app: &AppHandle, registry: &NodeRegistry, msg: ReceivedMessage, our_alias: u16) {
+    async fn handle_node_discovered(app: &AppHandle, registry: &NodeRegistry, diag_stats: &DiagStats, msg: ReceivedMessage, our_alias: u16) {
         eprintln!(
             "[EventRouter] handle_node_discovered: frame={} data_len={}",
             msg.frame.to_string(),
@@ -188,10 +222,29 @@ impl EventRouter {
                 let node_key = NodeKey::from_node_id(parsed_node_id);
 
                 let event = NodeDiscoveredEvent {
-                    node_id: node_key,
+                    node_id: node_key.clone(),
                     alias,
                     timestamp: chrono::Utc::now().to_rfc3339(),
                 };
+
+                // Record discovery timing in diagnostics
+                {
+                    let stats = diag_stats.read().await;
+                    let ms_after = stats.connected_at
+                        .map(|t| chrono::Utc::now().signed_duration_since(t).num_milliseconds().max(0) as u64)
+                        .unwrap_or(0);
+                    drop(stats);
+                    let mut stats = diag_stats.write().await;
+                    // Only record if this node hasn't been seen before
+                    if !stats.discovery.nodes.iter().any(|n| n.node_id == node_key.to_string()) {
+                        stats.discovery.nodes.push(NodeDiscoveryStat {
+                            node_id: node_key.to_string(),
+                            snip_name: None,
+                            ms_after_connect: ms_after,
+                            snip_query_duration_ms: None,
+                        });
+                    }
+                }
 
                 // Auto-register proxy for this node
                 let _ = registry.get_or_create(parsed_node_id, alias).await;

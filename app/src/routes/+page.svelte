@@ -970,7 +970,11 @@
         },
         diagnostics: async () => {
           try {
-            const report = await invoke('get_diagnostic_report');
+            const report = await invoke('get_diagnostic_report') as Record<string, unknown>;
+            // Enrich with frontend-only device info before clipboard copy.
+            if (connectedDeviceLabel && report.stats && typeof report.stats === 'object') {
+              (report.stats as Record<string, unknown>).device = connectedDeviceLabel;
+            }
             await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
             // Brief visual feedback via console — a toast could be added later.
             console.info('Diagnostic report copied to clipboard');
@@ -998,7 +1002,11 @@
     };
   });
 
-  function handleConnected(e: CustomEvent<{ config: any }>) {
+  /** Device preset label for the active connection (frontend-only, for diagnostics). */
+  let connectedDeviceLabel: string | null = null;
+
+  function handleConnected(e: CustomEvent<{ config: any; device: string }>) {
+    connectedDeviceLabel = e.detail.device;
     syncSessionOrchestrator.connect(e.detail.config);
   }
 
@@ -1032,6 +1040,7 @@
   }
 
   async function disconnect() {
+    connectedDeviceLabel = null;
     await syncSessionOrchestrator.disconnect();
   }
 

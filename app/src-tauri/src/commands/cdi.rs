@@ -291,19 +291,33 @@ pub async fn download_cdi(
     // Download CDI from node (5 second timeout per chunk to accommodate slower nodes)
     let xml_content = {
         let mut connection = connection_arc.lock().await;
-        connection
-            .read_cdi_cancellable(alias, 5000, cancel_flag)
+        match connection
+            .read_cdi_cancellable_with_stats(alias, 5000, cancel_flag)
             .await
-            .map_err(|e| {
+        {
+            Ok(result) => result,
+            Err(e) => {
                 println!("[CDI] Download failed: {}", e);
-                CdiError::RetrievalFailed(format!("CDI download failed: {}", e))
-            })?
+                // Record structured error in diagnostics.
+                {
+                    let mut stats = state.diag_stats.write().await;
+                    stats.errors.push(crate::diagnostics::DiagError {
+                        at: chrono::Utc::now(),
+                        phase: "cdi-download".to_string(),
+                        node_id: Some(node_id.clone()),
+                        error_type: if e.to_string().contains("Timeout") { "timeout" } else { "protocol-error" }.to_string(),
+                        detail: e.to_string(),
+                    });
+                }
+                return Err(CdiError::RetrievalFailed(format!("CDI download failed: {}", e)).into());
+            }
+        }
     };
 
     let dl_ms = dl_start.elapsed().as_millis() as u64;
-    println!("[CDI] Download complete, size: {} bytes", xml_content.len());
-    crate::bwlog!(state.inner(), "[cdi] CDI download complete for {}: {} bytes in {}ms",
-        snip_label, xml_content.len(), dl_ms);
+    println!("[CDI] Download complete, size: {} bytes", xml_content.xml.len());
+    crate::bwlog!(state.inner(), "[cdi] CDI download complete for {}: {} bytes in {}ms ({} chunks, {} retries)",
+        snip_label, xml_content.xml.len(), dl_ms, xml_content.chunks, xml_content.total_retries);
     
     let retrieved_at = Utc::now();
 
@@ -313,15 +327,17 @@ pub async fn download_cdi(
             node_id: node_id.clone(),
             snip_name: snip_data.as_ref().map(|_s| snip_label.clone()),
             from_cache: false,
-            total_bytes: xml_content.len(),
-            chunks: 0,  // not exposed by read_cdi
-            chunk_durations_ms: vec![],
+            total_bytes: xml_content.xml.len(),
+            chunks: xml_content.chunks,
+            chunk_durations_ms: xml_content.chunk_durations_ms.clone(),
+            retries: xml_content.total_retries,
             total_duration_ms: dl_ms,
         };
         state.diag_stats.write().await.cdi_downloads.insert(node_id.clone(), stats_entry);
     }
 
     // Create CdiData
+    let xml_content = xml_content.xml;
     let cdi_data = lcc_rs::CdiData {
         xml_content: xml_content.clone(),
         retrieved_at,
@@ -2759,6 +2775,12 @@ pub async fn read_all_config_values(
         });
         let successful_batches = batch_stats.iter().filter(|b| b.success).count();
         let failed_batches = batch_stats.iter().filter(|b| !b.success).count();
+        // Collect error details before batch_stats is moved.
+        let failed_batch_errors: Vec<Option<String>> = if error_count > 0 {
+            batch_stats.iter().filter(|b| !b.success).map(|b| b.error.clone()).collect()
+        } else {
+            Vec::new()
+        };
         let stats_entry = crate::diagnostics::NodeConfigReadStats {
             node_id: node_id.clone(),
             snip_name,
@@ -2776,7 +2798,23 @@ pub async fn read_all_config_values(
             "[config-read] {} complete: {}/{} elements ok, {}/{} batches ok, {}ms clock",
             node_id, success_count, total_count,
             stats_entry.successful_batches, stats_entry.total_batches, duration);
-        state.diag_stats.write().await.config_reads.insert(node_id.clone(), stats_entry);
+        let mut diag = state.diag_stats.write().await;
+        diag.config_reads.insert(node_id.clone(), stats_entry);
+        // Record structured errors for failed config read batches.
+        for err_detail in &failed_batch_errors {
+            let detail_str: &str = err_detail.as_deref().unwrap_or("unknown");
+            diag.errors.push(crate::diagnostics::DiagError {
+                at: chrono::Utc::now(),
+                phase: "config-read".to_string(),
+                node_id: Some(node_id.clone()),
+                error_type: if detail_str.contains("timeout") || detail_str.contains("Timeout") {
+                    "timeout"
+                } else {
+                    "protocol-error"
+                }.to_string(),
+                detail: detail_str.to_string(),
+            });
+        }
     }
 
     Ok(ReadAllConfigValuesResponse {

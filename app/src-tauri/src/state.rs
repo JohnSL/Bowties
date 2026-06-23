@@ -128,6 +128,9 @@ pub struct AppState {
 
     /// Aggregate diagnostic statistics (updated as operations complete).
     pub diag_stats: crate::diagnostics::DiagStats,
+
+    /// Bounded ring buffer of recent frame activity (last 100 frames).
+    pub frame_ring: crate::diagnostics::FrameRing,
 }
 
 impl AppState {
@@ -150,6 +153,7 @@ impl AppState {
             profiles: Arc::new(RwLock::new(HashMap::new())),
             diag_log: crate::diagnostics::new_diag_log(),
             diag_stats: crate::diagnostics::new_diag_stats(),
+            frame_ring: crate::diagnostics::new_frame_ring(),
         }
     }
 
@@ -188,7 +192,7 @@ impl AppState {
 
         // Start event router
         if let Some(ref h) = handle {
-            let mut router = EventRouter::from_handle(app, h.clone(), our_alias, self.node_registry.clone());
+            let mut router = EventRouter::from_handle(app, h.clone(), our_alias, self.node_registry.clone(), self.diag_stats.clone(), self.frame_ring.clone());
             router.start().await;
             *self.event_router.write().await = Some(router);
         }

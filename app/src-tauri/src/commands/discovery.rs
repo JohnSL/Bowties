@@ -3,6 +3,7 @@
 use crate::state::AppState;
 use lcc_rs::{ConnectionStatus, DiscoveredNode, MTI, NodeAlias, NodeID, PIPStatus, ProtocolFlags, SNIPData, SNIPStatus};
 use serde::Serialize;
+use std::time::Instant;
 
 /// Response from a SNIP query
 #[derive(Debug, Serialize)]
@@ -46,7 +47,10 @@ pub async fn discover_nodes(
     crate::bwlog!(state.inner(), "[discovery] initial probe complete: {} node(s) found", node_count);
     {
         let mut stats = state.diag_stats.write().await;
-        stats.discovery.initial_probe_node_count = node_count;
+        // Update the most recent probe's responded count
+        if let Some(last_probe) = stats.discovery.probes.last_mut() {
+            last_probe.nodes_responded_count = node_count;
+        }
     }
     
     Ok(nodes)
@@ -110,7 +114,26 @@ pub async fn query_snip_single(
 
     eprintln!("[SNIP] alias=0x{:03X}  node_id={}", alias, proxy.node_key());
 
+    let snip_start = Instant::now();
     let (snip_data, status) = proxy.query_snip().await?;
+    let snip_ms = snip_start.elapsed().as_millis() as u64;
+
+    // Record SNIP duration in discovery node stats
+    {
+        let node_key_str = proxy.node_key().to_string();
+        let snip_name = snip_data.as_ref().and_then(|s| {
+            if !s.user_name.is_empty() { Some(s.user_name.clone()) }
+            else if !s.model.is_empty() { Some(s.model.clone()) }
+            else { None }
+        });
+        let mut stats = state.diag_stats.write().await;
+        if let Some(node_stat) = stats.discovery.nodes.iter_mut().find(|n| n.node_id == node_key_str) {
+            node_stat.snip_query_duration_ms = Some(snip_ms);
+            if node_stat.snip_name.is_none() {
+                node_stat.snip_name = snip_name;
+            }
+        }
+    }
 
     Ok(QuerySnipResponse {
         alias,
@@ -149,15 +172,34 @@ pub async fn query_snip_batch(
     for (alias, proxy) in proxy_aliases {
         let proxy = proxy.clone();
         join_set.spawn(async move {
+            let start = Instant::now();
             let result = proxy.query_snip().await;
-            (alias, proxy.node_key(), result)
+            let duration_ms = start.elapsed().as_millis() as u64;
+            (alias, proxy.node_key(), result, duration_ms)
         });
     }
 
     let mut results = Vec::new();
     while let Some(join_result) = join_set.join_next().await {
-        let (alias, _node_id, result) = join_result.map_err(|e| e.to_string())?;
+        let (alias, node_key, result, duration_ms) = join_result.map_err(|e| e.to_string())?;
         let (snip_data, status) = result.unwrap_or((None, SNIPStatus::Error));
+
+        // Record SNIP duration in discovery node stats
+        {
+            let node_key_str = node_key.to_string();
+            let snip_name = snip_data.as_ref().and_then(|s| {
+                if !s.user_name.is_empty() { Some(s.user_name.clone()) }
+                else if !s.model.is_empty() { Some(s.model.clone()) }
+                else { None }
+            });
+            let mut stats = state.diag_stats.write().await;
+            if let Some(node_stat) = stats.discovery.nodes.iter_mut().find(|n| n.node_id == node_key_str) {
+                node_stat.snip_query_duration_ms = Some(duration_ms);
+                if node_stat.snip_name.is_none() {
+                    node_stat.snip_name = snip_name;
+                }
+            }
+        }
 
         results.push(QuerySnipResponse {
             alias,
@@ -269,6 +311,16 @@ pub async fn refresh_all_nodes(
         conn.probe_nodes().await.map_err(|e| format!("Probe failed: {}", e))?;
     }
 
+    // Record the user-refresh probe in diagnostics.
+    {
+        let mut stats = state.diag_stats.write().await;
+        stats.discovery.probes.push(crate::diagnostics::ProbeRecord {
+            triggered_by: "user-refresh".to_string(),
+            sent_at: chrono::Utc::now(),
+            nodes_responded_count: 0,
+        });
+    }
+
     // Collect respondents during the liveness window (500 ms, no early exit).
     const LIVENESS_MS: u64 = 500;
     let mut responded: std::collections::HashSet<NodeID> = std::collections::HashSet::new();
@@ -301,6 +353,14 @@ pub async fn refresh_all_nodes(
         .filter(|n| !responded.contains(&n.node_id))
         .map(|n| n.node_id)
         .collect();
+
+    // Update probe responded count now that we know the result.
+    {
+        let mut stats = state.diag_stats.write().await;
+        if let Some(last_probe) = stats.discovery.probes.last_mut() {
+            last_probe.nodes_responded_count = responded.len();
+        }
+    }
 
     // Remove stale nodes from the registry.
     if !stale.is_empty() {

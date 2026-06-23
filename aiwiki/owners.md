@@ -241,7 +241,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `sync_panel.rs` | `set_offline_change`, `revert_offline_change`, `list_offline_changes`, `compute_layout_match_status`, `build_sync_session`, `apply_sync_changes` | Offline sync panel commands. Thin coordinator: delegates pure scoring to `bowties_core::sync::classifier::compute_layout_match`, CDI field resolution to `bowties_core::sync::field_meta`, change helpers to `bowties_core::sync::changes`. Owns only AppState reads/writes, bus I/O, and CDI path resolution (Tauri-dependent). |
 | `connector_profiles.rs` | `get_connector_profile`, `preview_connector_compatibility` | Connector profile and slot constraints. Selection persistence (`get_connector_selections` / `put_connector_selections`) was removed in Spec 014; the replacement seam is `node_mode_selections` written through `placeholders.rs`. |
 | `placeholders.rs` | `add_placeholder_board`, `set_node_mode_selection`, `list_bundled_profiles_command` | Spec 014 / S8.10: `add_placeholder_board` calls the placeholder factory (`placeholder.rs::synthesize`), inserts the `Synthesized` variant into the registry, and returns `{ nodeKey }`. `set_node_mode_selection` persists mode selections via `save_layout_directory`. `list_bundled_profiles_command` returns board-model summaries for the placeholder picker. |
-| `diagnostics.rs` | `get_diagnostic_report` | Ring-buffer logs and troubleshooting |
+| `diagnostics.rs` | `get_diagnostic_report` | Ring-buffer logs, frame activity ring buffer, structured errors, and troubleshooting report with summary |
 
 ---
 
@@ -296,7 +296,7 @@ thin shim modules so existing `crate::` paths compile unchanged.
 | `profile/mod.rs` | Re-export shim → `bowties_core::profile` + keeps `loader` submodule | — |
 | `profile/loader.rs` | `.profile.yaml` loading; depends on `tauri::AppHandle` for resource-dir resolution. Bundled-profile listing for placeholder picker. | inline `#[cfg(test)]` |
 | `placeholder.rs` | **Placeholder factory orchestrator** (S8.10). Owns `synthesize`/`reconstitute` (Tauri-dependent). Re-exports pure helpers from `bowties_core::placeholder`. | — |
-| `diagnostics.rs` | Ring-buffer logging (`bwlog!`), diagnostic stats | — |
+| `diagnostics.rs` | Ring-buffer logging (`bwlog!`), diagnostic stats, frame activity ring buffer (`FrameRing`), structured errors (`DiagError`), human-readable summary | — |
 | `events/router.rs` | Event broadcast: transport frames → Tauri events | inline `#[cfg(test)]` |
 | `traffic/mod.rs` | Message decoding for traffic monitor display | — |
 | `menu.rs` | Desktop app menu | — |
