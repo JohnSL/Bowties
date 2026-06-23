@@ -26,6 +26,7 @@ export interface MenuActionHandlers {
   addPlaceholderBoard: () => void;
   deletePlaceholderBoard: () => void;
   diagnostics: () => void | Promise<void>;
+  about: () => void;
 }
 
 /** Subset of Tauri's `listen` used here; injectable for tests. */
@@ -50,6 +51,7 @@ export const MENU_EVENT_BINDINGS: ReadonlyArray<readonly [string, keyof MenuActi
   ['menu-add-placeholder-board', 'addPlaceholderBoard'],
   ['menu-delete-placeholder-board', 'deletePlaceholderBoard'],
   ['menu-diagnostics', 'diagnostics'],
+  ['menu-about', 'about'],
 ] as const;
 
 /**

@@ -45,6 +45,7 @@
   import ErrorDialog from '$lib/components/ErrorDialog.svelte';
   import SaveProgressDialog from '$lib/components/SaveProgressDialog.svelte';
   import AddBoardDialog from '$lib/components/AddBoardDialog.svelte';
+  import AboutDialog from '$lib/components/AboutDialog.svelte';
   import { saveProgressStore } from '$lib/stores/saveProgress.svelte';
   import MissingCaptureBadge from '$lib/components/Layout/MissingCaptureBadge.svelte';
   import ConnectionManager from '$lib/ConnectionManager.svelte';
@@ -110,6 +111,7 @@
   let unsavedDialog = $state<{ message: string; proceed: () => void; confirmLabel: string } | null>(null);
   let isForceClosing = false;
   let errorDialog = $state<{ title: string; message: string } | null>(null);
+  let showAboutDialog = $state(false);
 
   // Spec 014 / S8: placeholder picker modal visibility. Opened by the
   // "Add Placeholder Board…" menu item; closed on cancel or after a
@@ -982,6 +984,7 @@
             console.error('Failed to copy diagnostic report:', e);
           }
         },
+        about: () => { showAboutDialog = true; },
       }));
     })().finally(() => {
       startupBootstrapPending = false;
@@ -1594,6 +1597,10 @@
     message={errorDialog.message}
     onClose={() => { errorDialog = null; }}
   />
+{/if}
+
+{#if showAboutDialog}
+  <AboutDialog onClose={() => { showAboutDialog = false; }} />
 {/if}
 
 {#if showAddBoardDialog}

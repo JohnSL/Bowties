@@ -5,7 +5,7 @@
 //! `update_menu_state` Tauri command.
 
 use tauri::{AppHandle, Wry};
-use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItem, PredefinedMenuItem};
+use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItem};
 
 /// Handles to menu items whose enabled state must change at runtime.
 ///
@@ -93,8 +93,10 @@ pub fn build_app_menu(app: &AppHandle<Wry>) -> tauri::Result<(tauri::menu::Menu<
         .build()?;
 
     // ── Help ──────────────────────────────────────────────────────────────
+    let about_item = MenuItem::with_id(app, "menu-about", "About Bowties", true, None::<&str>)?;
+
     let help_submenu = SubmenuBuilder::new(app, "Help")
-        .item(&PredefinedMenuItem::about(app, None::<&str>, None::<tauri::menu::AboutMetadata<'_>>)?)
+        .item(&about_item)
         .build()?;
 
     // ── Assemble ──────────────────────────────────────────────────────────

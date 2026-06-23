@@ -299,6 +299,7 @@ pub fn run() {
                     "menu-delete-placeholder-board" => { let _ = app_h.emit("menu-delete-placeholder-board", ()); }
                     "menu-exit"           => { let _ = app_h.emit("menu-exit", ()); }
                     "menu-diagnostics"    => { let _ = app_h.emit("menu-diagnostics", ()); }
+                    "menu-about"          => { let _ = app_h.emit("menu-about", ()); }
                     _ => {}
                 }
             });

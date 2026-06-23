@@ -101,6 +101,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `TrafficMonitor.svelte` | Live traffic frame display | — |
 | `NodeList.svelte` | Discovered nodes with CDI viewer access | — |
 | `ErrorDialog.svelte` | Error modal with Escape-to-close. z-index 2000 — topmost overlay so errors are never hidden behind LayoutPicker (1200) or NewLayoutDialog (1600). | — |
+| `AboutDialog.svelte` | Help → About modal: shows app name, version (from `@tauri-apps/api/app`), copyright, license, and a clickable GitHub link. Escape/Enter → close. | — |
 | `DiscardConfirmDialog.svelte` | Confirm discard of unsaved edits | — |
 | `AddBoardDialog.svelte` | Spec 014 / S8: modal picker for adding a placeholder board to the active offline layout. Lists bundled board-model profiles via `listBundledProfiles()` and calls `placeholderBoardOrchestrator.addPlaceholderBoard` on submit. Entry point is the native `File → Add Placeholder Board…` menu item (gated on `offlineActive && !busy`); mounted from `+page.svelte` behind a `showAddBoardDialog` state flag. | — |
 | `DiscoveryProgressModal.svelte` | Progress during discovery phases (reading, building-catalog, complete, cancelled) | — |
@@ -299,7 +300,7 @@ thin shim modules so existing `crate::` paths compile unchanged.
 | `diagnostics.rs` | Ring-buffer logging (`bwlog!`), diagnostic stats, frame activity ring buffer (`FrameRing`), structured errors (`DiagError`), human-readable summary | — |
 | `events/router.rs` | Event broadcast: transport frames → Tauri events | inline `#[cfg(test)]` |
 | `traffic/mod.rs` | Message decoding for traffic monitor display | — |
-| `menu.rs` | Desktop app menu | — |
+| `menu.rs` | Native OS menu bar: builds File/View/Tools/Help submenus, returns `MenuHandles` for runtime enable/disable. Help → About is a custom `MenuItem` routed through `on_menu_event` to the frontend `AboutDialog`. | — |
 ---
 
 ## lcc-rs Protocol Library (`lcc-rs/src/`)

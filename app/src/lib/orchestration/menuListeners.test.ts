@@ -22,6 +22,7 @@ function makeActions() {
     addPlaceholderBoard: vi.fn(() => {}),
     deletePlaceholderBoard: vi.fn(() => {}),
     diagnostics: vi.fn(() => {}),
+    about: vi.fn(() => {}),
   };
 }
 
