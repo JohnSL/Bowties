@@ -151,6 +151,7 @@ Go to the **[Actions](https://github.com/JohnSL/Bowties/actions)** tab in GitHub
 - build the Windows NSIS installer
 - build the Linux `.deb` and AppImage packages for x86-64
 - build the Linux `.deb` package for ARM64
+- build the macOS universal `.dmg` package (Apple Silicon + Intel)
 - create a **draft** GitHub Release with all artifacts attached
 
 ### 4. Prepare end-user release notes markdown
@@ -216,8 +217,7 @@ Include, when relevant:
 | Windows x86-64 | `Bowties_x.y.z_x64-setup.exe` (NSIS installer) |
 | Linux x86-64 | `bowties_x.y.z_amd64.deb`, `Bowties_x.y.z_amd64.AppImage` |
 | Linux ARM64 | `bowties_x.y.z_arm64.deb` |
-
-macOS builds are not currently included in the workflow.
+| macOS Universal (Apple Silicon + Intel) | `Bowties_x.y.z_universal.dmg` |
 
 ## Hotfix releases
 
