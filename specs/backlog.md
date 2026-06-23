@@ -7,6 +7,9 @@
   time out. Suspected causes: byte-at-a-time serial reads (vs JMRI's 128-byte buffered reads),
   per-frame `flush()` adding latency, or datagram ACK timing issues under load. Needs diagnostic
   frame logging for the user to capture a trace, and/or switching to chunked buffered reads.
+* MERG CAN ID configuration: JMRI exposes a CAN ID option (100–127, default 126) for MERG
+  adapters as an advanced setting. Bowties doesn't expose this yet. Low priority — default 126
+  works unless there's a conflict with another host on the same CAN bus.
 * Cache Location: The current location on my computer is `C:\Users\john_\AppData\Roaming\com.john.app\cdi_cache`. But that does match what we have in the architecture.md, which calls for `com.bowtiesapp.bowties` to be the directory.
 * LCC Event Driver: Switch to always listening to LCC events, which we'll need for the event monitor anyway.
 * Add app icon

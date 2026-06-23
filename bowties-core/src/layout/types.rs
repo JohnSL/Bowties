@@ -61,6 +61,8 @@ pub enum FlowControl {
     None,
     /// RTS/CTS hardware flow control (required by SPROG USB-LCC / PI-LCC).
     RtsCts,
+    /// XON/XOFF software flow control (required by CAN2USBINO).
+    XonXoff,
 }
 
 /// A saved connection configuration entry.

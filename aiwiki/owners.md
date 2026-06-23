@@ -97,6 +97,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 ### Root-level components
 | File | Purpose | Test |
 |------|---------|------|
+| `ConnectionManager.svelte` | Add/edit/delete saved connections; connect to LCC network. Device presets with adapter-specific baud rate dropdowns (JMRI-aligned options), flow control per adapter, "Show additional settings" toggle for advanced presets (RR-CirKits, MERG). Supports TCP, GridConnect serial, MERG GridConnect serial (header encoding), SLCAN. Flow control options: None, RTS/CTS, XON/XOFF (only for "Other" presets). | `ConnectionManager.test.ts` |
 | `TrafficMonitor.svelte` | Live traffic frame display | — |
 | `NodeList.svelte` | Discovered nodes with CDI viewer access | — |
 | `ErrorDialog.svelte` | Error modal with Escape-to-close. z-index 2000 — topmost overlay so errors are never hidden behind LayoutPicker (1200) or NewLayoutDialog (1600). | — |

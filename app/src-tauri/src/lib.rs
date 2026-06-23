@@ -90,6 +90,7 @@ async fn connect_lcc(
             let flow = match &config.flow_control {
                 FlowControl::None => SerialFlowControl::None,
                 FlowControl::RtsCts => SerialFlowControl::Hardware,
+                FlowControl::XonXoff => SerialFlowControl::Software,
             };
             let transport = open_with_retry(
                 || GridConnectSerialTransport::open(serial_port, baud_rate, flow, FrameEncoding::Standard),
@@ -108,10 +109,11 @@ async fn connect_lcc(
                 .serial_port
                 .as_deref()
                 .ok_or_else(|| "serial_port is required for MERG GridConnect".to_string())?;
-            let baud_rate = config.baud_rate.unwrap_or(115200);
+            let baud_rate = config.baud_rate.unwrap_or(57600);
             let flow = match &config.flow_control {
                 FlowControl::None => SerialFlowControl::None,
                 FlowControl::RtsCts => SerialFlowControl::Hardware,
+                FlowControl::XonXoff => SerialFlowControl::Software,
             };
             let transport = open_with_retry(
                 || GridConnectSerialTransport::open(serial_port, baud_rate, flow, FrameEncoding::MergCanRs),

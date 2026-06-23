@@ -5,20 +5,37 @@
   import { layoutStore } from '$lib/stores/layout.svelte';
 
   type AdapterType = 'tcp' | 'gridConnectSerial' | 'mergGridConnectSerial' | 'slcanSerial';
-  type FlowControl = 'none' | 'rtsCts';
+  type FlowControl = 'none' | 'rtsCts' | 'xonXoff';
 
   /** Known device presets with auto-filled serial parameters. */
   type DevicePreset = 'tcp' | 'rrcirkits' | 'sprog-usblcc' | 'sprog-pilcc' | 'merg-canrs' | 'slcan' | 'otherGc' | 'otherSlcan';
+
+  /**
+   * Advanced settings visibility:
+   * - 'none': no baud/flow override (fixed preset — SPROG, SLCAN)
+   * - 'toggle': hidden by default, revealed by "Show additional settings" checkbox
+   * - 'always': always visible (for "Other" presets where user must configure)
+   */
+  type AdvancedMode = 'none' | 'toggle' | 'always';
 
   interface DeviceInfo {
     label: string;
     hint: string;
     adapterType: AdapterType;
     defaultBaud: number;
+    /** Valid baud rate options for the dropdown. */
+    baudOptions: number[];
     flowControl: FlowControl;
-    /** When true, show baud + flow control fields for user override. */
-    showAdvanced: boolean;
+    /** Whether the user can change flow control (only "Other" presets). */
+    flowControlOverridable: boolean;
+    /** Controls visibility of baud/flow fields. */
+    advancedMode: AdvancedMode;
   }
+
+  /** Standard baud rates supported by GridConnect adapters (matches JMRI). */
+  const GC_BAUD_OPTIONS = [57600, 115200, 230400, 250000, 333333, 460800];
+  /** Standard baud rates for SLCAN adapters. */
+  const SLCAN_BAUD_OPTIONS = [57600, 115200, 230400, 250000, 460800, 921600];
 
   const DEVICE_PRESETS: Record<DevicePreset, DeviceInfo> = {
     tcp: {
@@ -26,64 +43,80 @@
       hint: 'JMRI, WifiTrax, or standalone TCP/IP bridge',
       adapterType: 'tcp',
       defaultBaud: 0,
+      baudOptions: [],
       flowControl: 'none',
-      showAdvanced: false,
+      flowControlOverridable: false,
+      advancedMode: 'none',
     },
     rrcirkits: {
       label: 'RR-CirKits LCC Buffer-USB',
       hint: 'Also compatible with RR-CirKits LCC to Loconet Bridge',
       adapterType: 'gridConnectSerial',
       defaultBaud: 57600,
+      baudOptions: GC_BAUD_OPTIONS,
       flowControl: 'none',
-      showAdvanced: false,
+      flowControlOverridable: false,
+      advancedMode: 'toggle',
     },
     'sprog-usblcc': {
       label: 'SPROG USB-LCC',
       hint: 'SPROG DCC Ltd USB-LCC CAN adapter',
       adapterType: 'gridConnectSerial',
       defaultBaud: 460800,
+      baudOptions: [460800],
       flowControl: 'rtsCts',
-      showAdvanced: false,
+      flowControlOverridable: false,
+      advancedMode: 'none',
     },
     'sprog-pilcc': {
       label: 'SPROG PI-LCC',
       hint: 'SPROG DCC Ltd Raspberry Pi LCC hat',
       adapterType: 'gridConnectSerial',
       defaultBaud: 460800,
+      baudOptions: [460800],
       flowControl: 'rtsCts',
-      showAdvanced: false,
+      flowControlOverridable: false,
+      advancedMode: 'none',
     },
     'merg-canrs': {
       label: 'MERG CAN-RS / CANUSB4',
       hint: 'MERG CAN-RS, CANUSB4, or compatible adapter',
       adapterType: 'mergGridConnectSerial',
-      defaultBaud: 115200,
+      defaultBaud: 57600,
+      baudOptions: GC_BAUD_OPTIONS,
       flowControl: 'none',
-      showAdvanced: true,
+      flowControlOverridable: false,
+      advancedMode: 'toggle',
     },
     slcan: {
       label: 'Canable / Lawicell CANUSB',
       hint: 'SLCAN-compatible USB-CAN adapter',
       adapterType: 'slcanSerial',
       defaultBaud: 115200,
+      baudOptions: [115200],
       flowControl: 'none',
-      showAdvanced: false,
+      flowControlOverridable: false,
+      advancedMode: 'none',
     },
     otherGc: {
       label: 'Other GridConnect adapter',
       hint: 'CAN2USBINO or other GridConnect device',
       adapterType: 'gridConnectSerial',
       defaultBaud: 57600,
+      baudOptions: GC_BAUD_OPTIONS,
       flowControl: 'none',
-      showAdvanced: true,
+      flowControlOverridable: true,
+      advancedMode: 'always',
     },
     otherSlcan: {
       label: 'Other SLCAN adapter',
       hint: 'Any slcand-compatible adapter not listed above',
       adapterType: 'slcanSerial',
       defaultBaud: 115200,
+      baudOptions: SLCAN_BAUD_OPTIONS,
       flowControl: 'none',
-      showAdvanced: true,
+      flowControlOverridable: true,
+      advancedMode: 'always',
     },
   };
 
@@ -142,6 +175,7 @@
   let formSerialPort = $state('');
   let formBaudRate = $state(57600);
   let formFlowControl = $state<FlowControl>('none');
+  let formShowAdditional = $state(false);
 
   // Connection in progress
   let connectingId = $state<string | null>(null);
@@ -153,6 +187,11 @@
   // Derived: current device preset info
   let deviceInfo = $derived(DEVICE_PRESETS[formDevice]);
   let isSerial = $derived(deviceInfo.adapterType !== 'tcp');
+  /** Whether baud/flow fields are currently visible. */
+  let showBaudFields = $derived(
+    deviceInfo.advancedMode === 'always' ||
+    (deviceInfo.advancedMode === 'toggle' && formShowAdditional)
+  );
 
   // Apply preset defaults when device changes (only when adding, not editing)
   $effect(() => {
@@ -160,6 +199,7 @@
     if (editingId === null) {
       formBaudRate = preset.defaultBaud;
       formFlowControl = preset.flowControl;
+      formShowAdditional = false;
     }
   });
 
@@ -232,6 +272,7 @@
     formSerialPort = availablePorts[0] ?? '';
     formBaudRate = DEVICE_PRESETS['tcp'].defaultBaud;
     formFlowControl = 'none';
+    formShowAdditional = false;
     errorMessage = '';
     showModal = true;
   }
@@ -259,8 +300,11 @@
     formHost = conn.host ?? 'localhost';
     formTcpPort = conn.port ?? 12021;
     formSerialPort = conn.serialPort ?? (availablePorts[0] ?? '');
-    formBaudRate = conn.baudRate ?? DEVICE_PRESETS[formDevice].defaultBaud;
+    const preset = DEVICE_PRESETS[inferPreset(conn)];
+    formBaudRate = conn.baudRate ?? preset.defaultBaud;
     formFlowControl = conn.flowControl ?? 'none';
+    // Expand additional settings if saved baud differs from default
+    formShowAdditional = (conn.baudRate !== undefined && conn.baudRate !== preset.defaultBaud);
     errorMessage = '';
     showModal = true;
   }
@@ -278,7 +322,7 @@
         id: editingId ?? generateUUID(),
         name: formName.trim(),
         adapterType: preset.adapterType,
-        flowControl: isSerial ? formFlowControl : 'none',
+        flowControl: preset.flowControlOverridable ? formFlowControl : preset.flowControl,
       };
 
       if (preset.adapterType === 'tcp') {
@@ -472,18 +516,32 @@
             </button>
           </div>
 
-          {#if deviceInfo.showAdvanced}
+          {#if deviceInfo.advancedMode === 'toggle'}
+            <label class="cm-toggle-label">
+              <input type="checkbox" bind:checked={formShowAdditional} />
+              <span>Show additional connection settings</span>
+            </label>
+          {/if}
+
+          {#if showBaudFields}
             <label class="cm-field">
               <span>Baud rate</span>
-              <input type="number" bind:value={formBaudRate} min="1200" max="3000000" />
-            </label>
-            <label class="cm-field">
-              <span>Flow ctrl</span>
-              <select bind:value={formFlowControl}>
-                <option value="none">None</option>
-                <option value="rtsCts">RTS/CTS</option>
+              <select bind:value={formBaudRate}>
+                {#each deviceInfo.baudOptions as rate}
+                  <option value={rate}>{rate.toLocaleString()} baud</option>
+                {/each}
               </select>
             </label>
+            {#if deviceInfo.flowControlOverridable}
+              <label class="cm-field">
+                <span>Flow control</span>
+                <select bind:value={formFlowControl}>
+                  <option value="none">None</option>
+                  <option value="rtsCts">RTS/CTS</option>
+                  <option value="xonXoff">XON/XOFF</option>
+                </select>
+              </label>
+            {/if}
           {/if}
         {/if}
 
@@ -737,6 +795,20 @@
   .cm-port-row {
     align-items: center;
   }
+
+  .cm-toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.5rem 0 0.25rem calc(80px + 0.75rem);
+    font-size: 12px;
+    color: #6b7280;
+    cursor: pointer;
+  }
+  .cm-toggle-label input[type="checkbox"] {
+    margin: 0;
+  }
+
   .cm-field-inner {
     display: flex;
     align-items: center;
