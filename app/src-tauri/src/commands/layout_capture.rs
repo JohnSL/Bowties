@@ -582,6 +582,7 @@ mod tests {
             identity: None,
             connector_profile: None,
             connector_profile_warning: None,
+            profile_applied: false,
             unknown_variants: Vec::new(),
             segments: vec![SegmentNode {
                 name: "Config".into(),
