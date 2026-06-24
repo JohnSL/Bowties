@@ -1,0 +1,1441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bowties UX Vision — Wireframe Mockups</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; }
+    .mockup-frame { border: 2px solid #e2e8f0; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+    .sidebar-item { cursor: pointer; padding: 6px 12px; border-radius: 4px; }
+    .sidebar-item:hover { background: #f1f5f9; }
+    .sidebar-item.active { background: #eef2ff; color: #4338ca; font-weight: 500; }
+    .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 500; }
+    .badge-planned { background: #fef3c7; color: #92400e; }
+    .badge-wired { background: #dbeafe; color: #1e40af; }
+    .badge-active { background: #d1fae5; color: #065f46; }
+    .channel-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .dot-occupied { background: #ef4444; }
+    .dot-clear { background: #10b981; }
+    .dot-unknown { background: #9ca3af; }
+    .flow-arrow { color: #94a3b8; font-size: 24px; line-height: 1; }
+    .workspace-tab { padding: 8px 20px; border-radius: 6px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+    .workspace-tab.active { background: #4338ca; color: white; }
+    .workspace-tab:not(.active) { background: #f1f5f9; color: #475569; }
+    .workspace-tab:not(.active):hover { background: #e2e8f0; }
+    .template-req { border-left: 3px solid #e2e8f0; padding-left: 12px; }
+    .template-req.satisfied { border-left-color: #10b981; }
+    .template-req.missing { border-left-color: #ef4444; }
+    .section-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; font-weight: 600; margin-bottom: 4px; }
+    .node-icon { width: 16px; height: 16px; background: #6366f1; border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; color: white; font-size: 9px; font-weight: bold; }
+    .connector-icon { width: 14px; height: 14px; background: #94a3b8; border-radius: 2px; display: inline-block; }
+  </style>
+</head>
+<body class="bg-gray-100 p-8">
+
+  <header class="max-w-6xl mx-auto mb-8">
+    <h1 class="text-2xl font-bold text-gray-900">Bowties UX Vision — Wireframe Mockups</h1>
+    <p class="text-gray-500 mt-1">Low-fidelity wireframes for the Plan → Wire → Railroad → Operate experience. Open in browser to interact.</p>
+    <p class="text-xs text-gray-400 mt-2">Companion to: <code>specs/proposals/app-ux-vision.md</code></p>
+  </header>
+
+  <!-- ============================================================ -->
+  <!-- MOCKUP 1: Workspace Toggle & App Shell -->
+  <!-- ============================================================ -->
+  <section class="max-w-6xl mx-auto mb-12">
+    <h2 class="text-lg font-semibold text-gray-700 mb-3">1. App Shell — Workspace Toggle</h2>
+    <p class="text-sm text-gray-500 mb-2">The top-level navigation replaces today's Config/Bowties segmented control with Wiring/Railroad workspaces.</p>
+    <ul class="text-sm text-gray-500 mb-4 list-disc pl-5 space-y-1">
+      <li>Click the <strong>Wiring/Railroad toggle</strong> to switch workspace views.</li>
+      <li>Click <strong>"Board Settings"</strong> in the sidebar to see board-global (non-channel) configuration.</li>
+      <li>Click <strong>"Raw CDI"</strong> in the sidebar to expand the full CDI segment tree (escape hatch — same as today's Config experience).</li>
+      <li>The <strong>Daughter Board combo box</strong> at the top of the connector view sets the board type (Tier 1). Changing it removes existing channels.</li>
+      <li>Pins 5–8 show <strong>"Assign type →"</strong> — clicking these leads to the channel type picker in Mockup 2 (Tier 2, per-pin).</li>
+      <li>Click <strong>"▾ details"</strong> on a channel row to expand managed/unmanaged settings inline.</li>
+    </ul>
+
+    <div class="mockup-frame bg-white" style="height: 480px;">
+      <!-- Toolbar -->
+      <div class="flex items-center justify-between px-4 py-2 border-b bg-gray-50">
+        <div class="flex items-center gap-4">
+          <!-- App identity -->
+          <span class="font-bold text-indigo-700 text-base">🎀 Bowties</span>
+          <span class="text-gray-300">|</span>
+          <!-- Workspace toggle -->
+          <div class="flex gap-1 bg-gray-200 p-1 rounded-lg" id="ws-toggle-1">
+            <button class="workspace-tab active" onclick="switchWorkspace(this, 'wiring-1', 'railroad-1')">🔧 Wiring</button>
+            <button class="workspace-tab" onclick="switchWorkspace(this, 'railroad-1', 'wiring-1')">🚦 Railroad</button>
+          </div>
+        </div>
+        <div class="flex items-center gap-4 text-sm">
+          <!-- Connection indicators -->
+          <span class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-green-500"></span>
+            <span class="text-gray-600">LCC Online</span>
+          </span>
+          <span class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-green-500"></span>
+            <span class="text-gray-600">JMRI Connected</span>
+          </span>
+          <span class="text-gray-400">|</span>
+          <span class="text-gray-600">Eagle Creek Layout</span>
+        </div>
+      </div>
+
+      <!-- Content area: Wiring view -->
+      <div class="flex h-full" id="wiring-1">
+        <!-- Sidebar -->
+        <div class="w-60 border-r bg-gray-50 p-3 overflow-y-auto" style="height: 430px;">
+          <div class="section-label">Nodes</div>
+          <div class="space-y-0.5 text-sm">
+            <div class="sidebar-item active flex items-center gap-2">
+              <span class="node-icon">T</span> Tower-3
+            </div>
+            <div class="pl-6 space-y-0.5">
+              <div class="sidebar-item text-gray-600 flex items-center gap-2" onclick="showWiringLayer('channels-1')">
+                <span class="connector-icon"></span> Connector A <span class="text-xs text-gray-400">(BOD-4)</span>
+              </div>
+              <div class="sidebar-item text-gray-600 flex items-center gap-2" onclick="showWiringLayer('channels-1')">
+                <span class="connector-icon"></span> Connector B <span class="text-xs text-gray-400">(Signal)</span>
+              </div>
+              <div class="sidebar-item text-gray-600 flex items-center gap-2" onclick="showWiringLayer('settings-1')">
+                <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                Board Settings
+              </div>
+              <div class="sidebar-item text-gray-600 flex items-center gap-2 text-xs text-gray-400" onclick="showWiringLayer('channels-1')">
+                <svg class="w-3.5 h-3.5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+                Raw CDI
+              </div>
+              <div class="pl-5 space-y-0.5 text-xs text-gray-400">
+                <div class="sidebar-item py-0.5">Identification</div>
+                <div class="sidebar-item py-0.5">I/O Board #1</div>
+                <div class="sidebar-item py-0.5">I/O Board #2</div>
+                <div class="sidebar-item py-0.5">Logic</div>
+                <div class="sidebar-item py-0.5">User Events</div>
+              </div>
+            </div>
+            <div class="sidebar-item flex items-center gap-2">
+              <span class="node-icon">T</span> Tower-5
+            </div>
+            <div class="sidebar-item flex items-center gap-2">
+              <span class="node-icon">B</span> TurnoutBoss-1
+            </div>
+            <div class="sidebar-item flex items-center gap-2">
+              <span class="node-icon">B</span> TurnoutBoss-2
+            </div>
+          </div>
+        </div>
+        <!-- Main content: Channels layer (default) -->
+        <div class="flex-1 p-6 overflow-y-auto" id="channels-1" style="height: 430px;">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-semibold text-gray-800">Tower-3 — Connector A</h3>
+            <button class="text-xs bg-gray-100 border px-3 py-1.5 rounded hover:bg-gray-200">🖨️ Print Pin Doc</button>
+          </div>
+          <!-- Daughter board selector (combo box) -->
+          <div class="flex items-center gap-3 mb-4">
+            <label class="text-sm font-medium text-gray-600">Daughter Board:</label>
+            <select class="border border-gray-300 rounded px-3 py-1.5 text-sm w-72">
+              <option selected>BOD-4 (Block Occupancy × 4 + 4 I/O)</option>
+              <option>BOD-8 (Block Occupancy × 8)</option>
+              <option>Signal Driver (4 outputs)</option>
+              <option>Servo-8 (8 servo outputs)</option>
+              <option>Button/LED-8 (8 button inputs)</option>
+              <option>— Remove daughter board —</option>
+            </select>
+            <span class="text-xs text-gray-400">Changing removes existing channels</span>
+          </div>
+
+          <!-- Pin/Channel table -->
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-xs text-gray-400 uppercase border-b">
+                <th class="pb-2 w-12">Pin</th>
+                <th class="pb-2">Channel Name</th>
+                <th class="pb-2 w-32">Type</th>
+                <th class="pb-2 w-40">Facility</th>
+                <th class="pb-2 w-16">State</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+              <tr class="bg-indigo-50/30">
+                <td class="py-2 text-gray-500">1</td>
+                <td class="py-2 font-medium">Eagle Creek — East Approach <span class="text-xs text-gray-400 cursor-pointer ml-1" onclick="document.getElementById('channel-detail-1').classList.toggle('hidden')">▾ details</span></td>
+                <td class="py-2 text-gray-500">Occupancy</td>
+                <td class="py-2"><a href="#" class="text-indigo-600 hover:underline text-xs">Eagle Creek Siding</a></td>
+                <td class="py-2"><span class="channel-dot dot-clear"></span></td>
+              </tr>
+              <!-- Expanded channel detail: managed/unmanaged settings -->
+              <tr id="channel-detail-1">
+                <td></td>
+                <td colspan="4" class="py-3">
+                  <div class="bg-white border rounded-lg p-3 space-y-3 text-xs">
+                    <!-- Unmanaged settings (shown by default, freely editable) -->
+                    <div>
+                      <div class="flex items-center gap-1.5 mb-2">
+                        <span class="font-semibold text-gray-700">Wiring Settings</span>
+                        <span class="text-gray-400">(freely adjustable)</span>
+                      </div>
+                      <div class="grid grid-cols-2 gap-2">
+                        <div>
+                          <label class="block text-gray-500 mb-0.5">Polarity</label>
+                          <select class="w-full border rounded px-2 py-1 text-xs">
+                            <option selected>Active Low</option>
+                            <option>Active High</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label class="block text-gray-500 mb-0.5">Debounce</label>
+                          <div class="flex items-center gap-1">
+                            <input type="number" value="50" class="w-16 border rounded px-2 py-1 text-xs">
+                            <span class="text-gray-400">ms</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <!-- Managed settings (collapsed, expandable) -->
+                    <div class="border-t pt-2">
+                      <div class="flex items-center gap-1.5 cursor-pointer" onclick="document.getElementById('managed-fields-1').classList.toggle('hidden')">
+                        <span class="font-semibold text-gray-500">▸ Managed by channel type</span>
+                        <span class="bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">Occupancy</span>
+                      </div>
+                      <div id="managed-fields-1" class="hidden mt-2 pl-3 border-l-2 border-indigo-200 space-y-1.5 text-gray-500">
+                        <div class="flex justify-between"><span>Pin Function:</span> <span class="text-gray-700">Current Detect Input</span></div>
+                        <div class="flex justify-between"><span>Detection Mode:</span> <span class="text-gray-700">Block Occupancy</span></div>
+                        <p class="text-gray-400 italic mt-1">These values are set by the "Occupancy" channel type. Changing them may break channel behavior. Use Raw CDI to override.</p>
+                      </div>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td class="py-2 text-gray-500">2</td>
+                <td class="py-2 font-medium">Eagle Creek — Siding</td>
+                <td class="py-2 text-gray-500">Occupancy</td>
+                <td class="py-2"><a href="#" class="text-indigo-600 hover:underline text-xs">Eagle Creek Siding</a></td>
+                <td class="py-2"><span class="channel-dot dot-occupied"></span></td>
+              </tr>
+              <tr>
+                <td class="py-2 text-gray-500">3</td>
+                <td class="py-2 font-medium">Mainline Block 7</td>
+                <td class="py-2 text-gray-500">Occupancy</td>
+                <td class="py-2"><a href="#" class="text-indigo-600 hover:underline text-xs">Block 7 Signal</a></td>
+                <td class="py-2"><span class="channel-dot dot-clear"></span></td>
+              </tr>
+              <tr>
+                <td class="py-2 text-gray-500">4</td>
+                <td class="py-2 font-medium">Mainline Block 8</td>
+                <td class="py-2 text-gray-500">Occupancy</td>
+                <td class="py-2"><a href="#" class="text-indigo-600 hover:underline text-xs">Block 8 Signal</a></td>
+                <td class="py-2"><span class="channel-dot dot-clear"></span></td>
+              </tr>
+              <tr class="bg-gray-50">
+                <td class="py-2 text-gray-500">5</td>
+                <td class="py-2 text-gray-400 italic">Unconfigured — General I/O</td>
+                <td class="py-2"><a href="#" class="text-indigo-600 hover:underline text-xs font-medium">Assign type →</a></td>
+                <td class="py-2 text-gray-300">—</td>
+                <td class="py-2"><span class="channel-dot dot-unknown"></span></td>
+              </tr>
+              <tr class="bg-gray-50">
+                <td class="py-2 text-gray-500">6</td>
+                <td class="py-2 text-gray-400 italic">Unconfigured — General I/O</td>
+                <td class="py-2"><a href="#" class="text-indigo-600 hover:underline text-xs font-medium">Assign type →</a></td>
+                <td class="py-2 text-gray-300">—</td>
+                <td class="py-2"><span class="channel-dot dot-unknown"></span></td>
+              </tr>
+              <tr class="bg-gray-50">
+                <td class="py-2 text-gray-500">7</td>
+                <td class="py-2 text-gray-400 italic">Unconfigured — General I/O</td>
+                <td class="py-2"><a href="#" class="text-indigo-600 hover:underline text-xs font-medium">Assign type →</a></td>
+                <td class="py-2 text-gray-300">—</td>
+                <td class="py-2"><span class="channel-dot dot-unknown"></span></td>
+              </tr>
+              <tr class="bg-gray-50">
+                <td class="py-2 text-gray-500">8</td>
+                <td class="py-2 text-gray-400 italic">Unconfigured — General I/O</td>
+                <td class="py-2"><a href="#" class="text-indigo-600 hover:underline text-xs font-medium">Assign type →</a></td>
+                <td class="py-2 text-gray-300">—</td>
+                <td class="py-2"><span class="channel-dot dot-unknown"></span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <!-- Main content: Node Settings layer (hidden by default) -->
+        <div class="flex-1 p-6 overflow-y-auto hidden" id="settings-1" style="height: 430px;">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-gray-800">Tower-3 — Board-Global Settings</h3>
+            <span class="text-xs text-gray-400">Configuration not tied to any channel</span>
+          </div>
+
+          <!-- Detection Settings -->
+          <div class="mb-6">
+            <div class="flex items-center gap-2 mb-3">
+              <h4 class="text-sm font-semibold text-gray-700">Detection Parameters</h4>
+              <span class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded">BOD-8 board settings</span>
+            </div>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1">Detection Sensitivity</label>
+                <select class="w-64 border border-gray-300 rounded px-3 py-1.5 text-sm">
+                  <option>Normal (recommended)</option>
+                  <option>High (short trains, dirty track)</option>
+                  <option>Low (noisy environments)</option>
+                </select>
+                <p class="text-xs text-gray-400 mt-1">How aggressively the BOD reacts to current draw changes. Higher sensitivity detects lighter rolling stock but may produce false triggers.</p>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1">Turnoff Delay</label>
+                <div class="flex items-center gap-2">
+                  <input type="number" value="2000" class="w-24 border border-gray-300 rounded px-3 py-1.5 text-sm">
+                  <span class="text-xs text-gray-500">ms</span>
+                </div>
+                <p class="text-xs text-gray-400 mt-1">Time after current draw stops before reporting block as unoccupied. Prevents flicker from dirty wheels.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Network Settings -->
+          <div class="mb-6">
+            <div class="flex items-center gap-2 mb-3">
+              <h4 class="text-sm font-semibold text-gray-700">Network</h4>
+            </div>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1">Node Name (SNIP)</label>
+                <input type="text" value="Tower-3" class="w-64 border border-gray-300 rounded px-3 py-1.5 text-sm">
+                <p class="text-xs text-gray-400 mt-1">User-visible name broadcast on the LCC network.</p>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1">Node Description</label>
+                <input type="text" value="East end detection and signaling" class="w-full max-w-md border border-gray-300 rounded px-3 py-1.5 text-sm">
+              </div>
+            </div>
+          </div>
+
+          <!-- Power Management -->
+          <div class="mb-6">
+            <div class="flex items-center gap-2 mb-3">
+              <h4 class="text-sm font-semibold text-gray-700">Power Management</h4>
+            </div>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1">Blue/Gold Programming</label>
+                <select class="w-64 border border-gray-300 rounded px-3 py-1.5 text-sm">
+                  <option selected>Enabled</option>
+                  <option>Disabled (network config only)</option>
+                </select>
+                <p class="text-xs text-gray-400 mt-1">Whether the physical Blue/Gold buttons on the board can be used to teach events.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Drill-down link -->
+          <div class="pt-4 border-t">
+            <a href="#" class="text-xs text-indigo-600 hover:underline">View raw CDI fields →</a>
+            <span class="text-xs text-gray-400 ml-2">Advanced: see all fields including those managed by channels and templates</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Content area: Railroad view (hidden by default) -->
+      <div class="flex h-full hidden" id="railroad-1">
+        <div class="w-60 border-r bg-gray-50 p-3" style="height: 430px;">
+          <div class="section-label">Facilities</div>
+          <div class="space-y-1 text-sm">
+            <div class="sidebar-item active">
+              <div class="flex items-center justify-between">
+                <span>Eagle Creek Siding</span>
+                <span class="badge badge-active">Active</span>
+              </div>
+            </div>
+            <div class="sidebar-item">
+              <div class="flex items-center justify-between">
+                <span>Block 7 Signal</span>
+                <span class="badge badge-active">Active</span>
+              </div>
+            </div>
+            <div class="sidebar-item">
+              <div class="flex items-center justify-between">
+                <span>Block 8 Signal</span>
+                <span class="badge badge-wired">Wired</span>
+              </div>
+            </div>
+            <div class="sidebar-item">
+              <div class="flex items-center justify-between">
+                <span>CTC Panel — East</span>
+                <span class="badge badge-planned">Planned</span>
+              </div>
+            </div>
+          </div>
+          <div class="section-label mt-6">Ungrouped Channels</div>
+          <div class="space-y-0.5 text-sm text-gray-500">
+            <div class="sidebar-item">Mainline Block 9 (occ.)</div>
+            <div class="sidebar-item">Mainline Block 10 (occ.)</div>
+          </div>
+          <div class="mt-6">
+            <button class="w-full text-sm bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700">+ Apply Template</button>
+          </div>
+        </div>
+        <div class="flex-1 p-6" style="height: 430px;">
+          <!-- Facility detail shown in mockup 3 below -->
+          <p class="text-gray-400 text-sm italic">(See Mockup 3 for facility detail view)</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- MOCKUP 2: Wiring — Channel Type Application (Tier 2 per-pin) -->
+  <!-- ============================================================ -->
+  <section class="max-w-6xl mx-auto mb-12">
+    <h2 class="text-lg font-semibold text-gray-700 mb-3">2. Wiring — Channel Type Application (Per-Pin)</h2>
+    <p class="text-sm text-gray-500 mb-2">For boards where each pin can become a different channel type (Tier 2).</p>
+    <ul class="text-sm text-gray-500 mb-4 list-disc pl-5 space-y-1">
+      <li>Entry point: click "Assign type →" on an unconfigured pin in Mockup 1 (pins 5–8).</li>
+      <li>Card-based <strong>channel type picker</strong> shows compatible types with pin count and which pins will be claimed.</li>
+      <li>After selection: <strong>constraint confirmation</strong> shows which managed fields were set.</li>
+      <li><strong>Wiring settings</strong> (unmanaged) remain freely adjustable below.</li>
+      <li>"Create Channel" commits the channel; it immediately appears in both workspaces.</li>
+    </ul>
+
+    <div class="mockup-frame bg-white p-6">
+      <div class="max-w-2xl">
+        <h3 class="font-semibold text-gray-800 mb-1">Signal LCC — Output Group 2</h3>
+        <p class="text-sm text-gray-500 mb-4">Pin-first: select a channel type for this output group</p>
+
+        <!-- Channel type picker -->
+        <div class="mb-5">
+          <label class="block text-sm font-medium text-gray-700 mb-2">What should this output do?</label>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="border-2 border-indigo-500 bg-indigo-50 rounded-lg p-3 cursor-pointer">
+              <div class="font-medium text-sm text-indigo-900">3-Aspect Signal Head</div>
+              <div class="text-xs text-indigo-700 mt-1">Uses 3 pins (R/G/Y). Produces signal aspect channel.</div>
+              <div class="text-xs text-indigo-500 mt-1">Pins 4, 5, 6 will be claimed</div>
+            </div>
+            <div class="border rounded-lg p-3 cursor-pointer hover:border-gray-400">
+              <div class="font-medium text-sm text-gray-800">2-Aspect Signal Head</div>
+              <div class="text-xs text-gray-500 mt-1">Uses 2 pins (R/G). Produces signal aspect channel.</div>
+              <div class="text-xs text-gray-400 mt-1">Pins 4, 5 will be claimed</div>
+            </div>
+            <div class="border rounded-lg p-3 cursor-pointer hover:border-gray-400">
+              <div class="font-medium text-sm text-gray-800">LED Output</div>
+              <div class="text-xs text-gray-500 mt-1">Single pin. On/off control channel.</div>
+              <div class="text-xs text-gray-400 mt-1">Pin 4 only</div>
+            </div>
+            <div class="border rounded-lg p-3 cursor-pointer hover:border-gray-400">
+              <div class="font-medium text-sm text-gray-800">Button Input</div>
+              <div class="text-xs text-gray-500 mt-1">Single pin. Produces button press channel.</div>
+              <div class="text-xs text-gray-400 mt-1">Pin 4 only</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- After selection: constraint confirmation -->
+        <div class="border-t pt-4">
+          <div class="bg-indigo-50 border border-indigo-200 rounded p-4 mb-4">
+            <div class="flex items-center gap-2 text-indigo-800 font-medium text-sm mb-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+              Channel type: 3-Aspect Signal Head
+            </div>
+            <p class="text-xs text-indigo-700">Pins 4–6 claimed. Managed fields set: Drive Mode = Common Anode, Signal Type = 3-aspect searchlight. Constraints active.</p>
+          </div>
+
+          <!-- Unmanaged settings for the new channel -->
+          <div class="space-y-3 mb-4">
+            <div class="text-sm font-medium text-gray-700">Wiring Settings (freely adjustable):</div>
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Common wire</label>
+                <select class="w-full border rounded px-2 py-1.5 text-sm">
+                  <option selected>Common Anode (+)</option>
+                  <option>Common Cathode (−)</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Current limit</label>
+                <div class="flex items-center gap-1">
+                  <input type="number" value="20" class="w-16 border rounded px-2 py-1.5 text-sm">
+                  <span class="text-xs text-gray-400">mA</span>
+                </div>
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Brightness</label>
+                <select class="w-full border rounded px-2 py-1.5 text-sm">
+                  <option selected>100%</option>
+                  <option>75%</option>
+                  <option>50%</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Name -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Channel name</label>
+            <input type="text" value="Eagle Creek — East Signal" class="w-full border border-gray-300 rounded px-3 py-2 text-sm" placeholder="Name this signal...">
+          </div>
+
+          <div class="mt-4 flex gap-2">
+            <button class="bg-indigo-600 text-white px-4 py-2 rounded text-sm hover:bg-indigo-700">Create Channel</button>
+            <button class="bg-gray-100 border text-gray-600 px-4 py-2 rounded text-sm hover:bg-gray-200">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- MOCKUP 3: Railroad — Facility Comprehension View -->
+  <!-- ============================================================ -->
+  <section class="max-w-6xl mx-auto mb-12">
+    <h2 class="text-lg font-semibold text-gray-700 mb-3">3. Railroad — Facility Comprehension View</h2>
+    <p class="text-sm text-gray-500 mb-2">The primary debugging surface — the facility bowtie visualized.</p>
+    <ul class="text-sm text-gray-500 mb-4 list-disc pl-5 space-y-1">
+      <li><strong>Inputs</strong> (left): channels feeding in (occupancy, position feedback).</li>
+      <li><strong>Logic</strong> (center): behavior decisions, where they execute, current evaluation state.</li>
+      <li><strong>Outputs</strong> (right): channels the facility drives (signal aspects, turnout commands).</li>
+      <li>Each channel shows <strong>live state</strong> when connected.</li>
+      <li>Click any element to jump to its backing hardware in the Wiring workspace.</li>
+    </ul>
+
+    <div class="mockup-frame bg-white p-6">
+      <!-- Facility header -->
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h3 class="font-semibold text-gray-800 text-lg">Eagle Creek Signal Block</h3>
+          <p class="text-sm text-gray-500">ABS 3-Aspect Signal Block • Applied from template</p>
+        </div>
+        <span class="badge badge-active text-sm">Active — Live</span>
+      </div>
+
+      <!-- Flow diagram: Inputs → Logic → Outputs -->
+      <div class="flex items-start gap-4">
+        <!-- INPUTS column -->
+        <div class="flex-1">
+          <div class="section-label mb-3">Inputs</div>
+          <div class="space-y-3">
+            <!-- Input card: this block occupancy -->
+            <div class="border rounded-lg p-3 bg-gray-50">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-sm font-medium">Eagle Creek — East Approach</span>
+                <span class="flex items-center gap-1.5 text-xs">
+                  <span class="channel-dot dot-clear"></span> Clear
+                </span>
+              </div>
+              <div class="text-xs text-gray-400">Occupancy • Tower-3 Conn.A Pin 1</div>
+              <div class="text-xs text-gray-400 mt-0.5">Also used by: <a href="#" class="text-indigo-500">CTC Panel — East</a></div>
+            </div>
+            <!-- Input card: next block occupancy -->
+            <div class="border rounded-lg p-3 bg-gray-50">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-sm font-medium">Mainline Block 7</span>
+                <span class="flex items-center gap-1.5 text-xs">
+                  <span class="channel-dot dot-occupied"></span> <span class="text-red-600 font-medium">Occupied</span>
+                </span>
+              </div>
+              <div class="text-xs text-gray-400">Occupancy • Tower-3 Conn.A Pin 3</div>
+            </div>
+            <!-- Input card: turnout position -->
+            <div class="border rounded-lg p-3 bg-gray-50">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-sm font-medium">Eagle Creek — East Turnout</span>
+                <span class="flex items-center gap-1.5 text-xs">
+                  <span class="w-2 h-2 rounded-full bg-blue-500"></span> Normal
+                </span>
+              </div>
+              <div class="text-xs text-gray-400">Turnout Position • TurnoutBoss-1</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Arrow -->
+        <div class="flex items-center pt-16">
+          <span class="flow-arrow">→</span>
+        </div>
+
+        <!-- LOGIC column -->
+        <div class="w-56">
+          <div class="section-label mb-3">Logic</div>
+          <div class="border-2 border-indigo-200 rounded-lg p-4 bg-indigo-50">
+            <div class="text-sm font-medium text-indigo-800 mb-2">ABS 3-Aspect Rules</div>
+            <div class="text-xs text-gray-600 space-y-1">
+              <div>• Next block occupied → <span class="font-medium text-amber-700">Approach</span></div>
+              <div>• This block occupied → <span class="font-medium text-red-700">Stop</span></div>
+              <div>• Turnout diverging → <span class="font-medium text-red-700">Stop</span></div>
+              <div>• All clear → <span class="font-medium text-green-700">Clear</span></div>
+            </div>
+            <div class="mt-3 pt-2 border-t border-indigo-200">
+              <div class="text-xs text-indigo-600">Runs on: Tower-3 Logic Lines 1–2</div>
+              <div class="text-xs text-indigo-500 mt-0.5">Current evaluation: <strong class="text-amber-700">Approach</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Arrow -->
+        <div class="flex items-center pt-16">
+          <span class="flow-arrow">→</span>
+        </div>
+
+        <!-- OUTPUTS column -->
+        <div class="flex-1">
+          <div class="section-label mb-3">Outputs</div>
+          <div class="space-y-3">
+            <!-- Output card: signal aspect -->
+            <div class="border rounded-lg p-3 bg-amber-50 border-amber-200">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-sm font-medium">Eagle Creek — East Signal</span>
+                <span class="flex items-center gap-1.5 text-xs">
+                  <span class="w-3 h-3 rounded-full bg-amber-400"></span>
+                  <span class="font-medium text-amber-700">Approach</span>
+                </span>
+              </div>
+              <div class="text-xs text-gray-400">Signal Aspect • Tower-3 Conn.B Pin 1</div>
+              <div class="text-xs text-gray-400 mt-0.5">JMRI: IF$olm:basic:one-searchlight($1)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom context bar -->
+      <div class="mt-6 pt-4 border-t flex items-center justify-between text-xs text-gray-400">
+        <span>Participating nodes: Tower-3, TurnoutBoss-1</span>
+        <span>Template: ABS 3-Aspect Signal Block v1.0</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- MOCKUP 4: Template Apply — Side Panel Workflow -->
+  <!-- ============================================================ -->
+  <section class="max-w-6xl mx-auto mb-12">
+    <h2 class="text-lg font-semibold text-gray-700 mb-3">4. Template Apply — Side Panel Workflow</h2>
+    <p class="text-sm text-gray-500 mb-2">Template apply opens as a side panel alongside the existing layout view.</p>
+    <ul class="text-sm text-gray-500 mb-4 list-disc pl-5 space-y-1">
+      <li>Requirements are <strong>color-coded</strong>: green (matched), red (no match yet).</li>
+      <li>Unmapped requirements can be <strong>left pending</strong> — partial application creates an incomplete facility.</li>
+      <li>"Create new channel inline" lets the user create hardware channels without leaving the template flow.</li>
+      <li>The "Next" button advances even with pending slots.</li>
+    </ul>
+
+    <div class="mockup-frame bg-white" style="height: 520px;">
+      <!-- Toolbar -->
+      <div class="flex items-center px-4 py-2 border-b bg-gray-50">
+        <span class="font-bold text-indigo-700 text-sm">🎀 Bowties</span>
+        <span class="text-gray-300 mx-3">|</span>
+        <div class="flex gap-1 bg-gray-200 p-1 rounded-lg">
+          <button class="workspace-tab text-xs">🔧 Wiring</button>
+          <button class="workspace-tab active text-xs">🚦 Railroad</button>
+        </div>
+      </div>
+
+      <div class="flex h-full">
+        <!-- Left: existing layout context (dimmed) -->
+        <div class="flex-1 p-4 bg-gray-50 opacity-70" style="height: 480px;">
+          <div class="section-label">Your Channels</div>
+          <div class="space-y-2 text-sm mt-2">
+            <div class="flex items-center gap-2 p-2 bg-white rounded border">
+              <span class="channel-dot dot-clear"></span>
+              <span>Eagle Creek — East Approach</span>
+              <span class="text-xs text-gray-400 ml-auto">Occupancy</span>
+            </div>
+            <div class="flex items-center gap-2 p-2 bg-white rounded border">
+              <span class="channel-dot dot-clear"></span>
+              <span>Eagle Creek — Siding</span>
+              <span class="text-xs text-gray-400 ml-auto">Occupancy</span>
+            </div>
+            <div class="flex items-center gap-2 p-2 bg-white rounded border">
+              <span class="channel-dot dot-clear"></span>
+              <span>Mainline Block 7</span>
+              <span class="text-xs text-gray-400 ml-auto">Occupancy</span>
+            </div>
+            <div class="flex items-center gap-2 p-2 bg-white rounded border">
+              <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+              <span>Eagle Creek — East Turnout</span>
+              <span class="text-xs text-gray-400 ml-auto">Turnout Pos.</span>
+            </div>
+            <div class="flex items-center gap-2 p-2 bg-white rounded border border-dashed border-gray-300">
+              <span class="channel-dot dot-unknown"></span>
+              <span class="text-gray-400">Unnamed — Conn.B Pin 1</span>
+              <span class="text-xs text-gray-400 ml-auto">Signal</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Template apply panel -->
+        <div class="w-96 border-l p-5 overflow-y-auto" style="height: 480px;">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-gray-800">Apply Template</h3>
+            <button class="text-gray-400 hover:text-gray-600 text-lg">✕</button>
+          </div>
+
+          <!-- Template info -->
+          <div class="bg-indigo-50 rounded-lg p-3 mb-5">
+            <div class="font-medium text-indigo-900 text-sm">ABS 3-Aspect Signal Block</div>
+            <p class="text-xs text-indigo-700 mt-1">Implements approach-lit 3-aspect signaling for one block. Requires occupancy for this block and the next block ahead, plus a signal output.</p>
+          </div>
+
+          <!-- Step indicator -->
+          <div class="flex items-center gap-2 mb-5 text-xs">
+            <span class="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs">1</span>
+            <span class="font-medium text-indigo-700">Map Channels</span>
+            <span class="flex-1 h-px bg-gray-200"></span>
+            <span class="w-5 h-5 rounded-full bg-gray-200 text-gray-500 flex items-center justify-center text-xs">2</span>
+            <span class="text-gray-400">Logic Target</span>
+            <span class="flex-1 h-px bg-gray-200"></span>
+            <span class="w-5 h-5 rounded-full bg-gray-200 text-gray-500 flex items-center justify-center text-xs">3</span>
+            <span class="text-gray-400">Name & Apply</span>
+          </div>
+
+          <!-- Requirements mapping -->
+          <div class="space-y-4">
+            <div class="template-req satisfied">
+              <div class="text-xs text-gray-500 mb-1">This block occupancy (input)</div>
+              <select class="w-full border border-green-300 bg-green-50 rounded px-2 py-1.5 text-sm">
+                <option selected>Eagle Creek — East Approach</option>
+                <option>Eagle Creek — Siding</option>
+                <option>Mainline Block 7</option>
+              </select>
+              <div class="text-xs text-green-600 mt-1">✓ Type match: Occupancy</div>
+            </div>
+
+            <div class="template-req satisfied">
+              <div class="text-xs text-gray-500 mb-1">Next block occupancy (input)</div>
+              <select class="w-full border border-green-300 bg-green-50 rounded px-2 py-1.5 text-sm">
+                <option>Eagle Creek — East Approach</option>
+                <option selected>Mainline Block 7</option>
+                <option>Eagle Creek — Siding</option>
+              </select>
+              <div class="text-xs text-green-600 mt-1">✓ Type match: Occupancy</div>
+            </div>
+
+            <div class="template-req satisfied">
+              <div class="text-xs text-gray-500 mb-1">Turnout position (input, optional)</div>
+              <select class="w-full border border-green-300 bg-green-50 rounded px-2 py-1.5 text-sm">
+                <option selected>Eagle Creek — East Turnout</option>
+                <option>— None (skip) —</option>
+              </select>
+              <div class="text-xs text-green-600 mt-1">✓ Type match: Turnout Position</div>
+            </div>
+
+            <div class="template-req missing">
+              <div class="text-xs text-gray-500 mb-1">Signal aspect (output)</div>
+              <select class="w-full border border-red-200 bg-red-50 rounded px-2 py-1.5 text-sm">
+                <option selected>— Select or create —</option>
+                <option>Unnamed — Conn.B Pin 1 (signal)</option>
+                <option>➕ Create new channel inline...</option>
+              </select>
+              <div class="flex items-center gap-3 mt-1">
+                <span class="text-xs text-red-500">⚠ No named signal channel.</span>
+                <button class="text-xs text-indigo-600 hover:underline">Leave pending →</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-6 flex gap-2">
+            <button class="flex-1 bg-indigo-600 text-white py-2 rounded text-sm hover:bg-indigo-700">Next: Logic Target →</button>
+          </div>
+          <p class="text-xs text-gray-400 mt-2 text-center">Unmapped requirements can be left pending — apply creates the facility in an incomplete state</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- MOCKUP 5: Channel Inventory -->
+  <!-- ============================================================ -->
+  <section class="max-w-6xl mx-auto mb-12">
+    <h2 class="text-lg font-semibold text-gray-700 mb-3">5. Railroad — Channel Inventory</h2>
+    <p class="text-sm text-gray-500 mb-2">A flat/grouped view of all channels across the layout.</p>
+    <ul class="text-sm text-gray-500 mb-4 list-disc pl-5 space-y-1">
+      <li>Grouped by type (occupancy, turnout position, signal aspect).</li>
+      <li>Each channel shows its backing hardware and facility membership.</li>
+      <li>Useful for planning (“I have occupancy on 8 blocks but signals on only 3”) and for template apply mapping.</li>
+    </ul>
+
+    <div class="mockup-frame bg-white p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-semibold text-gray-800">All Channels</h3>
+        <div class="flex items-center gap-2">
+          <input type="text" placeholder="Filter channels..." class="border rounded px-3 py-1.5 text-sm w-56">
+          <select class="border rounded px-2 py-1.5 text-sm">
+            <option>Group by: Type</option>
+            <option>Group by: Node</option>
+            <option>Group by: Facility</option>
+            <option>Flat list</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Grouped by type -->
+      <div class="space-y-4">
+        <!-- Occupancy group -->
+        <div>
+          <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full bg-emerald-200 border border-emerald-400"></span>
+            Block Occupancy <span class="text-gray-400 font-normal">(8 channels)</span>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div class="flex items-center gap-2 p-2 border rounded text-sm">
+              <span class="channel-dot dot-clear"></span>
+              <div class="flex-1">
+                <div class="font-medium">Eagle Creek — East Approach</div>
+                <div class="text-xs text-gray-400">Tower-3 A1 • Eagle Creek Siding</div>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 p-2 border rounded text-sm">
+              <span class="channel-dot dot-occupied"></span>
+              <div class="flex-1">
+                <div class="font-medium">Eagle Creek — Siding</div>
+                <div class="text-xs text-gray-400">Tower-3 A2 • Eagle Creek Siding</div>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 p-2 border rounded text-sm">
+              <span class="channel-dot dot-clear"></span>
+              <div class="flex-1">
+                <div class="font-medium">Mainline Block 7</div>
+                <div class="text-xs text-gray-400">Tower-3 A3 • Block 7 Signal</div>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 p-2 border rounded text-sm">
+              <span class="channel-dot dot-clear"></span>
+              <div class="flex-1">
+                <div class="font-medium">Mainline Block 8</div>
+                <div class="text-xs text-gray-400">Tower-3 A4 • Block 8 Signal</div>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 p-2 border rounded border-dashed text-sm">
+              <span class="channel-dot dot-unknown"></span>
+              <div class="flex-1">
+                <div class="text-gray-400 italic">Unnamed — Input 5</div>
+                <div class="text-xs text-gray-300">Tower-3 A5 • no facility</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Turnout group -->
+        <div>
+          <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full bg-blue-200 border border-blue-400"></span>
+            Turnout Position <span class="text-gray-400 font-normal">(2 channels)</span>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div class="flex items-center gap-2 p-2 border rounded text-sm">
+              <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+              <div class="flex-1">
+                <div class="font-medium">Eagle Creek — East Turnout</div>
+                <div class="text-xs text-gray-400">TurnoutBoss-1 • Eagle Creek Siding</div>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 p-2 border rounded text-sm">
+              <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+              <div class="flex-1">
+                <div class="font-medium">Eagle Creek — West Turnout</div>
+                <div class="text-xs text-gray-400">TurnoutBoss-2 • Eagle Creek Siding</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Signal group -->
+        <div>
+          <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full bg-amber-200 border border-amber-400"></span>
+            Signal Aspect <span class="text-gray-400 font-normal">(2 channels)</span>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div class="flex items-center gap-2 p-2 border rounded text-sm bg-amber-50">
+              <span class="w-3 h-3 rounded-full bg-amber-400"></span>
+              <div class="flex-1">
+                <div class="font-medium">Eagle Creek — East Signal</div>
+                <div class="text-xs text-gray-400">Tower-3 B1 • Eagle Creek Signal Block</div>
+              </div>
+              <span class="text-xs text-amber-700 font-medium">Approach</span>
+            </div>
+            <div class="flex items-center gap-2 p-2 border rounded text-sm">
+              <span class="w-3 h-3 rounded-full bg-green-500"></span>
+              <div class="flex-1">
+                <div class="font-medium">Block 7 — East Signal</div>
+                <div class="text-xs text-gray-400">Tower-3 B2 • Block 7 Signal</div>
+              </div>
+              <span class="text-xs text-green-700 font-medium">Clear</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- MOCKUP 6: Template Library Browser -->
+  <!-- ============================================================ -->
+  <section class="max-w-6xl mx-auto mb-12">
+    <h2 class="text-lg font-semibold text-gray-700 mb-3">6. Template Library</h2>
+    <p class="text-sm text-gray-500 mb-2">Browsable by behavior category.</p>
+    <ul class="text-sm text-gray-500 mb-4 list-disc pl-5 space-y-1">
+      <li>Category filter tabs (Signaling, Detection, Turnout Control, Panel, Lighting).</li>
+      <li>Each card shows: name, one-sentence purpose, required channel types, and logic capacity.</li>
+      <li>Selecting a template starts the side-panel apply workflow (Mockup 4).</li>
+    </ul>
+
+    <div class="mockup-frame bg-white p-6">
+      <div class="flex items-center justify-between mb-5">
+        <h3 class="font-semibold text-gray-800">Behavior Templates</h3>
+        <input type="text" placeholder="Search templates..." class="border rounded px-3 py-1.5 text-sm w-64">
+      </div>
+
+      <!-- Category tabs -->
+      <div class="flex gap-2 mb-5 text-sm">
+        <button class="px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 font-medium">All</button>
+        <button class="px-3 py-1 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200">Signaling</button>
+        <button class="px-3 py-1 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200">Detection</button>
+        <button class="px-3 py-1 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200">Turnout Control</button>
+        <button class="px-3 py-1 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200">Panel / CTC</button>
+        <button class="px-3 py-1 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200">Lighting</button>
+      </div>
+
+      <!-- Template cards -->
+      <div class="grid grid-cols-2 gap-4">
+        <div class="border rounded-lg p-4 hover:border-indigo-300 hover:shadow-sm cursor-pointer transition">
+          <div class="flex items-start justify-between">
+            <h4 class="font-medium text-gray-800">ABS 3-Aspect Signal Block</h4>
+            <span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">Signaling</span>
+          </div>
+          <p class="text-xs text-gray-500 mt-2">Standard ABS block signaling with approach-lit 3-aspect logic. Handles occupied, approach, and clear indications.</p>
+          <div class="mt-3 pt-3 border-t text-xs text-gray-400">
+            <span class="font-medium text-gray-600">Needs:</span> 2× occupancy, 1× signal, logic capacity
+          </div>
+        </div>
+
+        <div class="border rounded-lg p-4 hover:border-indigo-300 hover:shadow-sm cursor-pointer transition">
+          <div class="flex items-start justify-between">
+            <h4 class="font-medium text-gray-800">Passing Siding with ABS</h4>
+            <span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">Signaling</span>
+          </div>
+          <p class="text-xs text-gray-500 mt-2">Complete passing siding with detection, two turnouts, and 3-aspect signaling at both ends. Includes approach lighting.</p>
+          <div class="mt-3 pt-3 border-t text-xs text-gray-400">
+            <span class="font-medium text-gray-600">Needs:</span> 3× occupancy, 2× turnout, 2× signal, logic capacity
+          </div>
+        </div>
+
+        <div class="border rounded-lg p-4 hover:border-indigo-300 hover:shadow-sm cursor-pointer transition">
+          <div class="flex items-start justify-between">
+            <h4 class="font-medium text-gray-800">CTC-Controlled Turnout</h4>
+            <span class="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">Panel / CTC</span>
+          </div>
+          <p class="text-xs text-gray-500 mt-2">Dispatcher-controlled turnout with indication, local override via pushbutton, and interlocking with adjacent blocks.</p>
+          <div class="mt-3 pt-3 border-t text-xs text-gray-400">
+            <span class="font-medium text-gray-600">Needs:</span> 1× turnout, 1× button, 2× occupancy, logic capacity
+          </div>
+        </div>
+
+        <div class="border rounded-lg p-4 hover:border-indigo-300 hover:shadow-sm cursor-pointer transition">
+          <div class="flex items-start justify-between">
+            <h4 class="font-medium text-gray-800">Approach Lighting</h4>
+            <span class="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded">Lighting</span>
+          </div>
+          <p class="text-xs text-gray-500 mt-2">Automatically illuminates a signal head only when a train is in the approach block. Reduces power consumption and adds realism.</p>
+          <div class="mt-3 pt-3 border-t text-xs text-gray-400">
+            <span class="font-medium text-gray-600">Needs:</span> 1× occupancy, 1× signal, logic capacity
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- MOCKUP 7: Facility Lifecycle / Plan Progress -->
+  <!-- ============================================================ -->
+  <section class="max-w-6xl mx-auto mb-12">
+    <h2 class="text-lg font-semibold text-gray-700 mb-3">7. Plan Progress — Facility Lifecycle</h2>
+    <p class="text-sm text-gray-500 mb-2">The layout plan as a progress checklist.</p>
+    <ul class="text-sm text-gray-500 mb-4 list-disc pl-5 space-y-1">
+      <li>Facilities show lifecycle badges: <strong>Active</strong>, <strong>Ready</strong>, <strong>Planned</strong>, <strong>Setup incomplete</strong>.</li>
+      <li>Each row shows what’s needed next (e.g., “Needs: signal output channel, logic target”).</li>
+      <li>Progress bar summarizes overall layout completeness.</li>
+    </ul>
+
+    <div class="mockup-frame bg-white p-6">
+      <div class="flex items-center justify-between mb-5">
+        <h3 class="font-semibold text-gray-800">Layout Plan — Eagle Creek Layout</h3>
+        <span class="text-sm text-gray-500">3 of 5 facilities active</span>
+      </div>
+
+      <!-- Progress bar -->
+      <div class="w-full h-2 bg-gray-200 rounded-full mb-6 overflow-hidden">
+        <div class="h-full rounded-full" style="width: 60%; background: linear-gradient(to right, #10b981 60%, #3b82f6 80%, #fbbf24 100%);"></div>
+      </div>
+
+      <div class="space-y-3">
+        <!-- Active facility -->
+        <div class="flex items-center gap-4 p-3 border rounded-lg">
+          <span class="badge badge-active">Active</span>
+          <div class="flex-1">
+            <div class="font-medium text-sm">Eagle Creek Siding</div>
+            <div class="text-xs text-gray-400">ABS signaling + passing siding behavior</div>
+          </div>
+          <div class="text-xs text-green-600">✓ All channels mapped • Logic running</div>
+        </div>
+
+        <!-- Active facility -->
+        <div class="flex items-center gap-4 p-3 border rounded-lg">
+          <span class="badge badge-active">Active</span>
+          <div class="flex-1">
+            <div class="font-medium text-sm">Block 7 Signal</div>
+            <div class="text-xs text-gray-400">ABS 3-aspect signal block</div>
+          </div>
+          <div class="text-xs text-green-600">✓ All channels mapped • Logic running</div>
+        </div>
+
+        <!-- Active facility -->
+        <div class="flex items-center gap-4 p-3 border rounded-lg">
+          <span class="badge badge-active">Active</span>
+          <div class="flex-1">
+            <div class="font-medium text-sm">Block 8 Signal</div>
+            <div class="text-xs text-gray-400">ABS 3-aspect signal block</div>
+          </div>
+          <div class="text-xs text-green-600">✓ All channels mapped • Logic running</div>
+        </div>
+
+        <!-- Wired but no template -->
+        <div class="flex items-center gap-4 p-3 border rounded-lg border-blue-200 bg-blue-50/30">
+          <span class="badge badge-wired">Wired</span>
+          <div class="flex-1">
+            <div class="font-medium text-sm">Block 9 Signal</div>
+            <div class="text-xs text-gray-400">ABS 3-aspect signal block</div>
+          </div>
+          <div class="text-xs text-blue-600">
+            2/3 channels named • <a href="#" class="underline">Apply template →</a>
+          </div>
+        </div>
+
+        <!-- Planned only -->
+        <div class="flex items-center gap-4 p-3 border rounded-lg border-amber-200 bg-amber-50/30">
+          <span class="badge badge-planned">Planned</span>
+          <div class="flex-1">
+            <div class="font-medium text-sm">CTC Panel — East End</div>
+            <div class="text-xs text-gray-400">Dispatcher panel for east-end turnouts and signals</div>
+          </div>
+          <div class="text-xs text-amber-700">
+            Waiting: 0/4 boards assigned • <a href="#" class="underline">Go to Wiring →</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- MOCKUP 8: Print Pin Documentation -->
+  <!-- ============================================================ -->
+  <section class="max-w-6xl mx-auto mb-12">
+    <h2 class="text-lg font-semibold text-gray-700 mb-3">8. Pin Documentation (Printable)</h2>
+    <p class="text-sm text-gray-500 mb-2">Generated from channel assignments. Designed to be physically printed and attached near the board.</p>
+    <ul class="text-sm text-gray-500 mb-4 list-disc pl-5 space-y-1">
+      <li>Shows complete pin/connector/channel layout for a single node.</li>
+      <li>Includes facility membership and usage status per pin.</li>
+      <li>Accessible from the Wiring workspace via the "🖨️ Print Pin Doc" button.</li>
+    </ul>
+
+    <div class="mockup-frame bg-white p-8 print-doc" style="max-width: 600px; margin: 0 auto;">
+      <!-- Header -->
+      <div class="border-b-2 border-gray-800 pb-3 mb-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h4 class="text-lg font-bold text-gray-900">Tower-3</h4>
+            <div class="text-sm text-gray-600">TowerLCC v4.2</div>
+          </div>
+          <div class="text-right text-sm text-gray-500">
+            <div>Node ID: <span class="font-mono">05.01.01.01.3A.00</span></div>
+            <div>Eagle Creek Layout</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Connector A -->
+      <div class="mb-5">
+        <div class="flex items-center gap-2 mb-2">
+          <div class="w-3 h-3 rounded-sm bg-emerald-500"></div>
+          <h5 class="font-semibold text-sm text-gray-800">Connector A — BOD-8</h5>
+          <span class="text-xs text-gray-400 ml-auto">4/8 used</span>
+        </div>
+        <table class="w-full text-xs border-collapse">
+          <tbody>
+            <tr class="border-b border-gray-100">
+              <td class="py-1 w-10 text-gray-400 font-mono">1</td>
+              <td class="py-1 font-medium">Eagle Creek — East Approach</td>
+              <td class="py-1 text-right text-gray-400 italic">Eagle Creek Siding</td>
+            </tr>
+            <tr class="border-b border-gray-100">
+              <td class="py-1 w-10 text-gray-400 font-mono">2</td>
+              <td class="py-1 font-medium">Eagle Creek — Siding</td>
+              <td class="py-1 text-right text-gray-400 italic">Eagle Creek Siding</td>
+            </tr>
+            <tr class="border-b border-gray-100">
+              <td class="py-1 w-10 text-gray-400 font-mono">3</td>
+              <td class="py-1 font-medium">Mainline Block 7</td>
+              <td class="py-1 text-right text-gray-400 italic">Block 7 Signal</td>
+            </tr>
+            <tr class="border-b border-gray-100">
+              <td class="py-1 w-10 text-gray-400 font-mono">4</td>
+              <td class="py-1 font-medium">Mainline Block 8</td>
+              <td class="py-1 text-right text-gray-400 italic">Block 8 Signal</td>
+            </tr>
+            <tr class="border-b border-gray-100">
+              <td class="py-1 w-10 text-gray-400 font-mono">5</td>
+              <td class="py-1 text-gray-300" colspan="2">— available —</td>
+            </tr>
+            <tr class="border-b border-gray-100">
+              <td class="py-1 w-10 text-gray-400 font-mono">6</td>
+              <td class="py-1 text-gray-300" colspan="2">— available —</td>
+            </tr>
+            <tr class="border-b border-gray-100">
+              <td class="py-1 w-10 text-gray-400 font-mono">7</td>
+              <td class="py-1 text-gray-300" colspan="2">— available —</td>
+            </tr>
+            <tr>
+              <td class="py-1 w-10 text-gray-400 font-mono">8</td>
+              <td class="py-1 text-gray-300" colspan="2">— available —</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Connector B -->
+      <div class="mb-5">
+        <div class="flex items-center gap-2 mb-2">
+          <div class="w-3 h-3 rounded-sm bg-amber-500"></div>
+          <h5 class="font-semibold text-sm text-gray-800">Connector B — Signal Driver</h5>
+          <span class="text-xs text-gray-400 ml-auto">3/4 used</span>
+        </div>
+        <table class="w-full text-xs border-collapse">
+          <tbody>
+            <tr class="border-b border-gray-100">
+              <td class="py-1 w-10 text-gray-400 font-mono">1</td>
+              <td class="py-1 font-medium">Eagle Creek — East Signal <span class="text-red-600">Red</span></td>
+              <td class="py-1 text-right text-gray-400 italic">Eagle Creek Signal</td>
+            </tr>
+            <tr class="border-b border-gray-100">
+              <td class="py-1 w-10 text-gray-400 font-mono">2</td>
+              <td class="py-1 font-medium">Eagle Creek — East Signal <span class="text-amber-600">Yellow</span></td>
+              <td class="py-1 text-right text-gray-400 italic">Eagle Creek Signal</td>
+            </tr>
+            <tr class="border-b border-gray-100">
+              <td class="py-1 w-10 text-gray-400 font-mono">3</td>
+              <td class="py-1 font-medium">Eagle Creek — East Signal <span class="text-green-600">Green</span></td>
+              <td class="py-1 text-right text-gray-400 italic">Eagle Creek Signal</td>
+            </tr>
+            <tr>
+              <td class="py-1 w-10 text-gray-400 font-mono">4</td>
+              <td class="py-1 text-gray-300" colspan="2">— available —</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Logic Lines -->
+      <div class="mb-5">
+        <div class="flex items-center gap-2 mb-2">
+          <div class="w-3 h-3 rounded-sm bg-indigo-500"></div>
+          <h5 class="font-semibold text-sm text-gray-800">Logic Lines</h5>
+          <span class="text-xs text-gray-400 ml-auto">2/16 used</span>
+        </div>
+        <table class="w-full text-xs border-collapse">
+          <tbody>
+            <tr class="border-b border-gray-100">
+              <td class="py-1 w-10 text-gray-400 font-mono">1–2</td>
+              <td class="py-1 font-medium">Eagle Creek signal logic</td>
+              <td class="py-1 text-right text-gray-400 italic">Eagle Creek Signal</td>
+            </tr>
+            <tr>
+              <td class="py-1 w-10 text-gray-400 font-mono">3–16</td>
+              <td class="py-1 text-gray-300" colspan="2">— available —</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Footer -->
+      <div class="border-t-2 border-gray-800 pt-3 mt-4 flex items-center justify-between text-xs text-gray-500">
+        <span>Generated: 2026-06-23</span>
+        <span>🎀 Bowties</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- MOCKUP 9: Planner Wizard -->
+  <!-- ============================================================ -->
+  <section class="max-w-6xl mx-auto mb-12">
+    <h2 class="text-lg font-semibold text-gray-700 mb-3">9. Planner Wizard</h2>
+    <p class="text-sm text-gray-500 mb-2">Full-page guided wizard that interviews the user in railroad vocabulary, then recommends hardware.</p>
+    <ul class="text-sm text-gray-500 mb-4 list-disc pl-5 space-y-1">
+      <li>Shows <strong>step 3 of 5</strong> (Signaling) with a visual signal-head illustration.</li>
+      <li>Left sidebar: progress stepper + running “So far” summary of previous answers.</li>
+      <li>Radio-card answers with the selected option highlighted.</li>
+      <li>Back/Next navigation; "Exit Planner" escape hatch in the toolbar.</li>
+    </ul>
+
+    <div class="mockup-frame bg-white" style="min-height: 560px;">
+      <!-- Toolbar (simplified during wizard) -->
+      <div class="flex items-center justify-between px-4 py-2 border-b bg-gray-50">
+        <div class="flex items-center gap-4">
+          <span class="font-bold text-indigo-700 text-base">🎀 Bowties</span>
+          <span class="text-gray-300">|</span>
+          <span class="text-sm font-medium text-gray-700">Layout Planner</span>
+        </div>
+        <button class="text-sm text-gray-500 hover:text-gray-700 border rounded px-3 py-1">Exit Planner</button>
+      </div>
+
+      <div class="flex h-full">
+        <!-- Left: Progress sidebar -->
+        <div class="w-56 border-r bg-gray-50 p-4" style="min-height: 520px;">
+          <div class="section-label mb-3">Progress</div>
+          <div class="space-y-3 text-sm">
+            <div class="flex items-center gap-2 text-green-700">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+              <span>Track blocks</span>
+            </div>
+            <div class="flex items-center gap-2 text-green-700">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+              <span>Turnouts</span>
+            </div>
+            <div class="flex items-center gap-2 text-indigo-700 font-medium">
+              <span class="w-4 h-4 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs">3</span>
+              <span>Signaling</span>
+            </div>
+            <div class="flex items-center gap-2 text-gray-400">
+              <span class="w-4 h-4 rounded-full bg-gray-200 text-gray-500 flex items-center justify-center text-xs">4</span>
+              <span>Detection method</span>
+            </div>
+            <div class="flex items-center gap-2 text-gray-400">
+              <span class="w-4 h-4 rounded-full bg-gray-200 text-gray-500 flex items-center justify-center text-xs">5</span>
+              <span>Review plan</span>
+            </div>
+          </div>
+
+          <!-- Running summary -->
+          <div class="mt-8 pt-4 border-t">
+            <div class="section-label mb-2">So far</div>
+            <div class="space-y-1.5 text-xs text-gray-600">
+              <div class="flex justify-between"><span>Track blocks:</span> <span class="font-medium">6</span></div>
+              <div class="flex justify-between"><span>Turnouts:</span> <span class="font-medium">2</span></div>
+              <div class="flex justify-between"><span>Sidings:</span> <span class="font-medium">1 (passing)</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Current question -->
+        <div class="flex-1 p-8 flex flex-col justify-center" style="max-width: 640px; margin: 0 auto;">
+          <!-- Question -->
+          <div class="mb-6">
+            <h3 class="text-xl font-semibold text-gray-900 mb-2">What kind of signaling do you want?</h3>
+            <p class="text-sm text-gray-500">This determines the signal hardware you'll need and how many outputs per signal location.</p>
+          </div>
+
+          <!-- Visual illustration -->
+          <div class="bg-gray-50 border rounded-lg p-4 mb-6">
+            <div class="flex items-center justify-around text-center">
+              <div class="space-y-2">
+                <div class="w-8 h-20 mx-auto rounded-full bg-gray-200 border-2 border-gray-300 flex flex-col items-center justify-around py-2">
+                  <span class="w-4 h-4 rounded-full bg-red-500"></span>
+                  <span class="w-4 h-4 rounded-full bg-gray-300"></span>
+                </div>
+                <div class="text-xs text-gray-600 font-medium">2-Aspect</div>
+                <div class="text-xs text-gray-400">Stop / Clear</div>
+              </div>
+              <div class="space-y-2">
+                <div class="w-8 h-24 mx-auto rounded-full bg-gray-200 border-2 border-indigo-400 flex flex-col items-center justify-around py-2">
+                  <span class="w-4 h-4 rounded-full bg-red-500"></span>
+                  <span class="w-4 h-4 rounded-full bg-amber-400"></span>
+                  <span class="w-4 h-4 rounded-full bg-green-500"></span>
+                </div>
+                <div class="text-xs text-indigo-700 font-medium">3-Aspect ✓</div>
+                <div class="text-xs text-gray-400">Stop / Approach / Clear</div>
+              </div>
+              <div class="space-y-2">
+                <div class="flex flex-col items-center gap-0.5">
+                  <div class="w-8 h-24 rounded-full bg-gray-200 border-2 border-gray-300 flex flex-col items-center justify-around py-2">
+                    <span class="w-4 h-4 rounded-full bg-red-500"></span>
+                    <span class="w-4 h-4 rounded-full bg-amber-400"></span>
+                    <span class="w-4 h-4 rounded-full bg-green-500"></span>
+                  </div>
+                  <div class="w-6 h-6 rounded-full bg-gray-200 border-2 border-gray-300 flex items-center justify-center">
+                    <span class="w-3 h-3 rounded-full bg-amber-400"></span>
+                  </div>
+                </div>
+                <div class="text-xs text-gray-600 font-medium">4-Aspect</div>
+                <div class="text-xs text-gray-400">+ Adv. Approach</div>
+              </div>
+              <div class="space-y-2">
+                <div class="w-12 h-16 mx-auto rounded bg-gray-200 border-2 border-gray-300 flex items-center justify-center">
+                  <span class="text-gray-400 text-lg">—</span>
+                </div>
+                <div class="text-xs text-gray-600 font-medium">None yet</div>
+                <div class="text-xs text-gray-400">Add later</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Answer options (radio cards) -->
+          <div class="space-y-2 mb-6">
+            <label class="flex items-center gap-3 p-3 border-2 border-indigo-500 rounded-lg bg-indigo-50/50 cursor-pointer">
+              <input type="radio" name="signaling" checked class="text-indigo-600">
+              <div>
+                <div class="text-sm font-medium text-indigo-900">3-aspect ABS (most common)</div>
+                <div class="text-xs text-indigo-700">Red / Yellow / Green. Trains get advance warning of the next block's status.</div>
+              </div>
+            </label>
+            <label class="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:border-gray-400">
+              <input type="radio" name="signaling" class="text-indigo-600">
+              <div>
+                <div class="text-sm font-medium text-gray-800">2-aspect (simple)</div>
+                <div class="text-xs text-gray-500">Red / Green only. Block is either occupied or clear.</div>
+              </div>
+            </label>
+            <label class="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:border-gray-400">
+              <input type="radio" name="signaling" class="text-indigo-600">
+              <div>
+                <div class="text-sm font-medium text-gray-800">No signaling for now</div>
+                <div class="text-xs text-gray-500">Skip signals. You can add them later as a separate section.</div>
+              </div>
+            </label>
+          </div>
+
+          <!-- Navigation -->
+          <div class="flex items-center justify-between">
+            <button class="text-sm text-gray-500 hover:text-gray-700">← Back: Turnouts</button>
+            <button class="bg-indigo-600 text-white px-6 py-2 rounded text-sm hover:bg-indigo-700">Next: Detection Method →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- MOCKUP 9b: Planner Wizard — Recommendation Output -->
+  <!-- ============================================================ -->
+  <section class="max-w-6xl mx-auto mb-12">
+    <h2 class="text-lg font-semibold text-gray-700 mb-3">9b. Planner — Hardware Recommendation</h2>
+    <p class="text-sm text-gray-500 mb-2">The planner’s output: a concrete bill of materials with rationale.</p>
+    <ul class="text-sm text-gray-500 mb-4 list-disc pl-5 space-y-1">
+      <li>Board cards show model, vendor, estimated cost, and connector assignments.</li>
+      <li>Rationale text explains <em>why</em> each board was recommended.</li>
+      <li>“Accept Plan” creates placeholder nodes and prospective facilities.</li>
+      <li>“Modify Answers” returns to the wizard to change inputs.</li>
+    </ul>
+
+    <div class="mockup-frame bg-white p-6">
+      <div class="flex items-center justify-between mb-5">
+        <div>
+          <h3 class="font-semibold text-gray-800 text-lg">Recommended Hardware</h3>
+          <p class="text-sm text-gray-500">Based on: 6 blocks, 2 turnouts, 1 passing siding, 3-aspect ABS, current-sense detection</p>
+        </div>
+        <div class="flex gap-2">
+          <button class="text-sm border rounded px-3 py-1.5 hover:bg-gray-100">← Modify Answers</button>
+          <button class="text-sm bg-indigo-600 text-white px-4 py-1.5 rounded hover:bg-indigo-700">Accept Plan →</button>
+        </div>
+      </div>
+
+      <!-- BOM cards -->
+      <div class="space-y-4">
+        <!-- Board 1 -->
+        <div class="border rounded-lg p-4">
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-3">
+              <span class="w-8 h-8 bg-indigo-100 rounded flex items-center justify-center text-indigo-700 font-bold text-sm">T</span>
+              <div>
+                <div class="font-medium text-gray-900">TowerLCC × 1</div>
+                <div class="text-xs text-gray-500">RR-CirKits • ~$85</div>
+              </div>
+            </div>
+            <span class="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">Detection + Signals</span>
+          </div>
+          <div class="text-sm text-gray-600 ml-11">
+            <div class="mb-1"><strong>Connector A:</strong> BOD-4 — detects blocks 1–4 + 4 I/O for signal heads</div>
+            <div class="mb-1"><strong>Connector B:</strong> Signal Driver — signal heads at blocks 1–3</div>
+            <div class="text-xs text-gray-400 mt-1">Rationale: Combines detection and signal output on one board. Handles the first 4 blocks and their signals.</div>
+          </div>
+        </div>
+
+        <!-- Board 2 -->
+        <div class="border rounded-lg p-4">
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-3">
+              <span class="w-8 h-8 bg-indigo-100 rounded flex items-center justify-center text-indigo-700 font-bold text-sm">T</span>
+              <div>
+                <div class="font-medium text-gray-900">TowerLCC × 1</div>
+                <div class="text-xs text-gray-500">RR-CirKits • ~$85</div>
+              </div>
+            </div>
+            <span class="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">Detection + Signals</span>
+          </div>
+          <div class="text-sm text-gray-600 ml-11">
+            <div class="mb-1"><strong>Connector A:</strong> BOD-4 — detects blocks 5–6, siding, and approach</div>
+            <div class="mb-1"><strong>Connector B:</strong> Signal Driver — signal heads at blocks 4–6</div>
+            <div class="text-xs text-gray-400 mt-1">Rationale: Covers remaining detection and signal outputs for the east end of the layout.</div>
+          </div>
+        </div>
+
+        <!-- Board 3 -->
+        <div class="border rounded-lg p-4">
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-3">
+              <span class="w-8 h-8 bg-blue-100 rounded flex items-center justify-center text-blue-700 font-bold text-sm">B</span>
+              <div>
+                <div class="font-medium text-gray-900">TurnoutBoss × 2</div>
+                <div class="text-xs text-gray-500">RR-CirKits • ~$60 each</div>
+              </div>
+            </div>
+            <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">Turnout Control</span>
+          </div>
+          <div class="text-sm text-gray-600 ml-11">
+            <div class="mb-1">One per turnout at each end of the passing siding. Controls stall motor + provides position feedback.</div>
+            <div class="text-xs text-gray-400 mt-1">Rationale: TurnoutBoss is one-board-per-turnout. Each provides both motor control and feedback channels.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Summary -->
+      <div class="mt-6 pt-4 border-t flex items-center justify-between">
+        <div class="text-sm text-gray-600">
+          <strong>Total:</strong> 4 boards • ~$290 estimated
+        </div>
+        <div class="text-xs text-gray-400">
+          Accepting creates: 4 placeholder nodes, 8 occupancy channels, 6 signal channels, 2 turnout channels
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Navigation hint -->
+  <footer class="max-w-6xl mx-auto text-sm text-gray-400 pb-12">
+    <p class="text-center">These are low-fidelity wireframes for directional feedback. Visual design, spacing, and styling are illustrative, not final.</p>
+  </footer>
+
+  <script>
+    function switchWorkspace(clickedTab, showId, hideId) {
+      // Update tab styles
+      const parent = clickedTab.parentElement;
+      parent.querySelectorAll('.workspace-tab').forEach(t => t.classList.remove('active'));
+      clickedTab.classList.add('active');
+
+      // Show/hide content
+      document.getElementById(showId).classList.remove('hidden');
+      document.getElementById(hideId).classList.add('hidden');
+    }
+
+    function showWiringLayer(layerId) {
+      // Toggle between channels and settings layers in the wiring workspace
+      const channels = document.getElementById('channels-1');
+      const settings = document.getElementById('settings-1');
+      if (layerId === 'settings-1') {
+        channels.classList.add('hidden');
+        settings.classList.remove('hidden');
+      } else {
+        settings.classList.add('hidden');
+        channels.classList.remove('hidden');
+      }
+    }
+  </script>
+</body>
+</html>
