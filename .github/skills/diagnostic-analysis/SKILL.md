@@ -16,6 +16,16 @@ description: >
 - You are triaging a connection, CDI download, or config-read failure
 - You need to understand what happened during a session based on the diagnostic snapshot
 
+## Tool requirement
+
+Always use the `lcc-trace` MCP server tools for frame decoding and diagnostic analysis:
+- `analyze_diagnostic` — pass the full report JSON for structured interpretation
+- `decode_diagnostic_frames` — pass `recentFrameActivity` for frame-by-frame decoding
+- `decode_frame` — decode individual frames when investigating specific messages
+
+Use `tool_search` to load these tools before calling them. Only fall back to the manual
+reference tables below if a tool call returns an error (not merely because the tables exist).
+
 ## Step 0 — Acquire the report
 
 | How they give it | What to do |
@@ -35,17 +45,43 @@ Pass the full JSON string as the `report` parameter. The tool returns:
 - **Anomalies** (mismatches, timing issues)
 - **Suggested next steps**
 
-If the MCP tool is unavailable, fall back to the manual reference tables in Step 2–5.
+Only fall back to the manual reference tables in Step 2–5 if the MCP tool returns an error.
 
 ## Step 2 — Determine session phase (manual fallback)
 
+### UX context for CDI vs config reads
+
+"Read Configuration" is the user-facing action (button or sidebar dot). Internally it is a two-phase workflow:
+1. **CDI XML download** — fetches the node's configuration schema (tracked in `cdiDownloads`). Skipped when the CDI is already cached.
+2. **Config value read** — reads actual field values from node memory using the CDI schema (tracked in `configReads`).
+
+The user never explicitly triggers "CDI download" — it happens automatically as a prerequisite of "Read Configuration". Discovery only queries SNIP/PIP metadata; clicking a node in the sidebar only selects it.
+
+### Sidebar node indicators
+
+The sidebar shows different indicators depending on node state. These help interpret what the user describes:
+
+| Node state | Sidebar indicator | Meaning |
+|---|---|---|
+| Discovered but not yet saved in layout | `[NEW]` amber pill badge | Node found on bus but not persisted in saved layout |
+| Saved in layout, config not yet read (online) | Amber clickable dot | Click triggers Read Configuration for that node |
+| Config values have been read | Clean (no badge) | Fully read |
+| Unsaved in-memory edits | Amber `pending-edits` dot | User changed values but hasn't saved |
+| Saved offline edits pending apply | Teal `pending-apply` dot | Offline edits ready to write to node |
+
+**Key:** `[NEW]` suppresses the not-read dot. A freshly discovered node shows `[NEW]`, never the dot. The dot only appears for nodes already persisted in the saved layout whose config values haven't been read this session (e.g., after reopening a saved layout and reconnecting).
+
+Neither indicator checks CDI cache status — CDI availability is invisible to the sidebar and handled internally when Read Configuration runs.
+
+### Phase table
+
 | Condition | Phase | Implication |
 |-----------|-------|-------------|
-| `cdiDownloads: {}` + `errors: []` + `eventRoleExchange: null` | Just connected | Report captured too early — CDI never attempted |
-| `cdiDownloads: {}` + `errors` has `phase: "cdi-download"` entries | CDI failed | Real failure — analyze error details |
-| `cdiDownloads` has entries + `configReads: {}` | CDI done, config not started | User hasn't opened node config panel |
-| `cdiDownloads` has entries + `configReads` has entries | Normal session | Everything working |
-| `eventRoleExchange` is non-null but `cdiDownloads: {}` | Post-event-roles | Connected and synced but no CDI read yet |
+| `cdiDownloads: {}` + `errors: []` + `eventRoleExchange: null` | Just connected | Report captured before user clicked Read Configuration |
+| `cdiDownloads: {}` + `errors` has `phase: "cdi-download"` entries | CDI XML download failed | Real failure during CDI fetch — analyze error details |
+| `cdiDownloads` has entries + `configReads: {}` | CDI XML downloaded, config not started | CDI fetch succeeded but config values not yet read (user may not have completed the Read Configuration flow, or the read phase failed) |
+| `cdiDownloads` has entries + `configReads` has entries | Normal session | Full Read Configuration flow completed successfully |
+| `eventRoleExchange` is non-null but `cdiDownloads: {}` | Post-event-roles | Connected and synced but user hasn't clicked Read Configuration yet |
 
 **Key insight:** The diagnostic is a point-in-time snapshot. Empty fields mean "not happened yet" — not necessarily "failed."
 
@@ -71,7 +107,7 @@ If the MCP tool is unavailable, fall back to the manual reference tables in Step
 
 Call `decode_diagnostic_frames` with the `recentFrameActivity` array and (optionally) the `discovery.nodes` array as `knownNodes`.
 
-If the MCP tool is unavailable, decode manually using this reference:
+Only if the MCP tool returns an error, decode manually using this reference:
 
 ### Key frame identification (by header bits 28-24, i.e. first 2 hex digits of header)
 | Top nibble (hex) | Frame type | Meaning |
@@ -125,20 +161,31 @@ For datagram frames (top nibble 0x1A–0x1D):
 
 ### If phase = "just connected" (too early)
 Tell the user:
-> "This diagnostic was captured immediately after connecting, before any CDI
-> download was attempted. To diagnose the read failure, please:
+> "This diagnostic was captured before any configuration read was attempted.
+> To diagnose the failure, please:
 > 1. Connect to the serial port
 > 2. Wait for nodes to appear in the sidebar
-> 3. Click a node to trigger CDI download
+> 3. Click **Read Configuration** — either the button shown when you select
+>    a node, or the **Read Remaining** toolbar button for all unread nodes.
+>    (If the node shows a `[NEW]` badge, select it first, then click the
+>    Read Configuration button that appears.)
 > 4. Wait for the error/timeout message to appear
 > 5. THEN copy the diagnostic report (⋮ menu → Copy Diagnostic Report)"
+>
+> Note: "Read Configuration" first downloads the CDI XML (if not cached),
+> then reads config values. The diagnostic tracks both phases separately.
 
-### If phase = "CDI failed"
+### If phase = "CDI XML download failed"
 Analyze the error entries and frame buffer to determine:
 - Were datagram request frames sent? (TX with header top nibble 0x1A–0x1D)
 - Were DatagramReceivedOk (0x19A28) frames received? (means node ACK'd the request)
 - Were any datagram reply frames received? (RX with matching aliases)
 - Was DatagramReceivedOk sent but no reply datagram followed? (node processing timeout)
+
+### If phase = "CDI done, config not started"
+The CDI XML was fetched successfully but config value reads haven't happened or failed:
+- If `errors` has `phase: "config-read"` entries → config read failed; analyze those errors
+- If `errors` is empty → user may not have completed the flow, or report was captured between phases
 
 ### If comparing serial vs TCP
 Key differences:
@@ -157,8 +204,9 @@ Look for patterns:
 Based on findings, suggest one of:
 | Finding | Suggestion |
 |---------|------------|
-| Report too early | Capture post-failure diagnostic |
-| CDI timeout, no datagrams in buffer | Capture with larger ring buffer or JMRI trace |
-| CDI timeout, request sent, no reply | Test same node via TCP; check SPROG firmware |
-| Serial works for SNIP but not CDI | Possible multi-frame datagram issue at adapter level |
+| Report too early | Capture post-failure diagnostic (after clicking Read Configuration and seeing the error) |
+| CDI XML timeout, no datagrams in buffer | Capture with larger ring buffer or JMRI trace |
+| CDI XML timeout, request sent, no reply | Test same node via TCP; check adapter firmware |
+| Config read timeout (CDI XML succeeded) | Node responds to CDI reads but not config reads — possible address-space issue |
+| Serial works for SNIP but not CDI/config | Possible multi-frame datagram issue at adapter level |
 | Everything works | No issue — inform user the session was healthy |
