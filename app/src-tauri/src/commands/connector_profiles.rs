@@ -304,6 +304,7 @@ mod tests {
                 display_name: "BOD4-CP".to_string(),
                 kind: Some("detector".to_string()),
                 description: Some("Tower-compatible input board".to_string()),
+                channel_inputs: vec![],
             }],
         });
 
