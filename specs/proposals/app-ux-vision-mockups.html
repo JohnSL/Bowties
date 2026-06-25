@@ -580,7 +580,7 @@
         <div class="flex-1">
           <div class="section-label mb-3">Outputs</div>
           <div class="space-y-3">
-            <!-- Output card: signal aspect -->
+            <!-- Output card: signal aspect (multi-pin channel) -->
             <div class="border rounded-lg p-3 bg-amber-50 border-amber-200">
               <div class="flex items-center justify-between mb-1">
                 <span class="text-sm font-medium">Eagle Creek — East Signal</span>
@@ -589,8 +589,12 @@
                   <span class="font-medium text-amber-700">Approach</span>
                 </span>
               </div>
-              <div class="text-xs text-gray-400">Signal Aspect • Tower-3 Conn.B Pin 1</div>
-              <div class="text-xs text-gray-400 mt-0.5">JMRI: IF$olm:basic:one-searchlight($1)</div>
+              <div class="text-xs text-gray-400">Signal Aspect • Tower-3 Conn.B (3-pin channel)</div>
+              <div class="text-xs text-gray-400 mt-1 pl-2 border-l-2 border-gray-200 space-y-0.5">
+                <div>Pin 1 — <span class="text-red-500">Red</span></div>
+                <div>Pin 2 — <span class="text-green-500">Green</span></div>
+                <div>Pin 3 — <span class="text-amber-500">Yellow</span></div>
+              </div>
             </div>
           </div>
         </div>

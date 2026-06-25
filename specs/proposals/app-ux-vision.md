@@ -167,6 +167,35 @@ Channels can be **connected** to express physical topology: "Block 7 is adjacent
 
 Topology can come from manual declaration in Bowties, import from JMRI's Layout Editor (where block connectivity is encoded in the panel drawing), or a future native track editor.
 
+### Channel Types and Directionality
+
+A channel is always either a **producer** (generates information) or a **consumer** (acts on information), never both. When physical hardware does both — a turnout motor that drives position and reports it — those are modeled as two separate channels that may share the same device. This maps directly to the facility comprehension view: producer channels appear as inputs (left), consumer channels as outputs (right).
+
+Channel types define the information semantics, not just pin assignments. A channel type determines which events are meaningful and which are implementation detail. For example, a two-button channel cares about "pressed" events; "released" events are filtered out at the channel level.
+
+The following are representative types, not an exhaustive list. Profiles declare which types a board supports.
+
+**Producer channels** — generate information about the layout:
+
+| Type | Pins | Information produced |
+|---|---|---|
+| **Block Occupancy** | 1 | Occupied / clear for a detection block |
+| **Turnout Position Feedback** | 1–2 | Normal / diverging position report |
+| **Two-Button Command** | 2 (one per direction) | Pressed events only — commands intent (e.g., "throw turnout left"). Released events are filtered |
+| **Single Button** | 1 | Pressed event — a momentary command or toggle |
+| **Current Sensor** | 1 | Analog or threshold-based current reading |
+
+**Consumer channels** — act on information to drive physical outputs:
+
+| Type | Pins | Information consumed |
+|---|---|---|
+| **Signal Aspect** | 2–3 (R/G/Y outputs) | Aspect value → drives the corresponding LED combination |
+| **Turnout Motor Command** | 1–2 | Normal/diverging command → drives servo or stall motor |
+| **LED Indicator** | 1 | On/off or color state → drives a single LED |
+| **Turnout Position Indicator** | 2 (LEDs) | Normal/diverging state → drives a pair of LEDs to show position on a fascia panel |
+
+**Key property:** Multiple channels of the same type can feed the same facility input. Two button-pair channels on opposite sides of a layout module — physically independent, on different nodes — can both serve as "turnout command" inputs to the same turnout facility. The facility is what unifies them logically; the channels remain physically grounded in their respective pin groups.
+
 ---
 
 ## Entry Points
