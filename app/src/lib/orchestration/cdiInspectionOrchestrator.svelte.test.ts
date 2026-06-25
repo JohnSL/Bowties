@@ -9,9 +9,9 @@ function makeDeps(overrides: Partial<CdiInspectionDeps> = {}): CdiInspectionDeps
   return {
     getCdiXml: vi.fn(async () => ({ xmlContent: '<cdi/>', sizeBytes: 5, retrievedAt: null })),
     downloadCdi: vi.fn(async () => ({ xmlContent: '<downloaded/>', sizeBytes: 13, retrievedAt: null })),
-    resolveNodeName: (nodeId: string) => {
+    resolveNodeName: (nodeId) => {
       if (nodeId === '02.01.57.00.00.01') return 'East Panel';
-      return nodeId;
+      return String(nodeId);
     },
     ...overrides,
   };
@@ -101,9 +101,9 @@ describe('CdiInspectionOrchestrator', () => {
 
   it('resolves name for canonical (no-dot) nodeId format', () => {
     const orch = new CdiInspectionOrchestrator(makeDeps({
-      resolveNodeName: (nodeId: string) => {
+      resolveNodeName: (nodeId) => {
         if (nodeId === '020157000001' || nodeId === '02.01.57.00.00.01') return 'East Panel';
-        return nodeId;
+        return String(nodeId);
       },
     }));
     // Canonical format (as stored in configSidebarStore)

@@ -1,9 +1,9 @@
 import {
   getConnectorProfile,
 } from '$lib/api/connectorProfiles';
-import { setNodeModeSelection } from '$lib/api/layout';
 import { layoutStore } from '$lib/stores/layout.svelte';
 import type { LayoutFile } from '$lib/types/bowtie';
+import type { LayoutEditDelta } from '$lib/types/bowtie';
 import type {
   ConnectorProfileView,
   ConnectorSelectionDocument,
@@ -122,6 +122,7 @@ function deriveUnknownSelectionWarnings(
 class ConnectorSelectionsStore {
   private _profiles = $state<Map<string, ConnectorProfileView>>(new Map());
   private _documents = $state<Map<string, ConnectorSelectionDocument>>(new Map());
+  private _baselineDocuments = new Map<string, ConnectorSelectionDocument>();
   private _loading = $state<Set<string>>(new Set());
   private _errors = $state<Map<string, string>>(new Map());
   private _previewWarnings = $state<Map<string, string[]>>(new Map());
@@ -184,6 +185,7 @@ class ConnectorSelectionsStore {
    */
   hydrateFromLayout(_layout: LayoutFile | null): void {
     this._documents = new Map();
+    this._baselineDocuments = new Map();
     this._previewWarnings = new Map();
     this.revision += 1;
   }
@@ -191,6 +193,7 @@ class ConnectorSelectionsStore {
   reset(): void {
     this._profiles = new Map();
     this._documents = new Map();
+    this._baselineDocuments = new Map();
     this._loading = new Set();
     this._errors = new Map();
     this._previewWarnings = new Map();
@@ -263,6 +266,11 @@ class ConnectorSelectionsStore {
         const nextDocuments = new Map(this._documents);
         nextDocuments.set(nodeKey, document);
         this._documents = nextDocuments;
+
+        // ADR-0012: set baseline on first load so isDirty/collectDeltas work
+        if (!this._baselineDocuments.has(nodeKey)) {
+          this._baselineDocuments.set(nodeKey, { ...document });
+        }
       } else {
         this.clearNodeState(nodeKey);
       }
@@ -284,16 +292,11 @@ class ConnectorSelectionsStore {
   }
 
   /**
-   * Persist a connector selection document by emitting one
-   * `set_node_mode_selection` IPC per slot that has a daughterboard set
-   * (Spec 014 / S6). The Tower-LCC profile uses an identity mapping so
-   * `slotId` is also `modeId` and `selectedDaughterboardId` is also
-   * `variantId`.
+   * Update the in-memory connector selection document (ADR-0012).
    *
-   * Note (deselection): there is no backend "clear selection" delta yet —
-   * a slot whose `selectedDaughterboardId` is undefined is preserved in
-   * the in-memory document but not pushed to the backend. Clearing must
-   * be handled by a future Configuration Mode delta variant.
+   * No IPC — changes are held as drafts until explicit save.
+   * The Tower-LCC profile uses an identity mapping so `slotId` is also
+   * `modeId` and `selectedDaughterboardId` is also `variantId`.
    */
   async saveDocument(document: ConnectorSelectionDocument): Promise<ConnectorSelectionDocument> {
     const saved: ConnectorSelectionDocument = {
@@ -307,28 +310,6 @@ class ConnectorSelectionsStore {
     this._documents = nextDocuments;
     this.revision += 1;
 
-    for (const selection of saved.slotSelections) {
-      if (!selection.selectedDaughterboardId) {
-        continue;
-      }
-      try {
-        await setNodeModeSelection(
-          nodeKey,
-          selection.slotId,
-          selection.selectedDaughterboardId,
-        );
-      } catch (error) {
-        // Save failures are surfaced as console warnings rather than the
-        // node-level error channel (which represents "can't load this
-        // connector" — a different concern). The in-memory document is
-        // already updated, so the UI continues to reflect user intent.
-        const message = error instanceof Error ? error.message : String(error);
-        console.warn(
-          `[connectorSelections] set_node_mode_selection failed for ${nodeKey}/${selection.slotId}: ${message}`,
-        );
-      }
-    }
-
     return saved;
   }
 
@@ -340,6 +321,13 @@ class ConnectorSelectionsStore {
     const current = this.getDocument(nodeId) ?? await this.loadNode(nodeId);
     if (!current) {
       return null;
+    }
+
+    // ADR-0012: suppress no-op — if the slot already has this selection, skip
+    const currentSlot = current.slotSelections.find((s) => s.slotId === slotId);
+    const currentId = currentSlot?.selectedDaughterboardId ?? null;
+    if (currentId === selectedDaughterboardId) {
+      return current;
     }
 
     const nextStatus: ConnectorSelectionStatus = selectedDaughterboardId ? 'selected' : 'none';
@@ -360,6 +348,99 @@ class ConnectorSelectionsStore {
     };
 
     return this.saveDocument(nextDocument);
+  }
+
+  // ── ADR-0012: Draft lifecycle ───────────────────────────────────────────
+
+  /**
+   * Whether any connector selection has been changed since the last save/open.
+   */
+  get isDirty(): boolean {
+    for (const [nodeKey, doc] of this._documents) {
+      const baseline = this._baselineDocuments.get(nodeKey);
+      if (!baseline) {
+        // Document exists but no baseline → was loaded after open, check if it differs from default
+        continue;
+      }
+      for (const selection of doc.slotSelections) {
+        const baselineSelection = baseline.slotSelections.find((s) => s.slotId === selection.slotId);
+        const currentId = selection.selectedDaughterboardId ?? null;
+        const baselineId = baselineSelection?.selectedDaughterboardId ?? null;
+        if (currentId !== baselineId) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Count of changed slot selections (for save controls display).
+   */
+  get editCount(): number {
+    let count = 0;
+    for (const [nodeKey, doc] of this._documents) {
+      const baseline = this._baselineDocuments.get(nodeKey);
+      if (!baseline) continue;
+      for (const selection of doc.slotSelections) {
+        const baselineSelection = baseline.slotSelections.find((s) => s.slotId === selection.slotId);
+        const currentId = selection.selectedDaughterboardId ?? null;
+        const baselineId = baselineSelection?.selectedDaughterboardId ?? null;
+        if (currentId !== baselineId) count++;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Produce SetNodeModeSelection / ClearNodeModeSelection deltas for all
+   * changed slots since last save/open (ADR-0002 + ADR-0012).
+   */
+  collectDeltas(): LayoutEditDelta[] {
+    const deltas: LayoutEditDelta[] = [];
+    for (const [nodeKey, doc] of this._documents) {
+      const baseline = this._baselineDocuments.get(nodeKey);
+      if (!baseline) continue;
+      for (const selection of doc.slotSelections) {
+        const baselineSelection = baseline.slotSelections.find((s) => s.slotId === selection.slotId);
+        const currentId = selection.selectedDaughterboardId ?? null;
+        const baselineId = baselineSelection?.selectedDaughterboardId ?? null;
+        if (currentId === baselineId) continue;
+
+        if (currentId) {
+          deltas.push({
+            type: 'setNodeModeSelection',
+            nodeKey,
+            modeId: selection.slotId,
+            variantId: currentId,
+          });
+        } else {
+          deltas.push({
+            type: 'clearNodeModeSelection',
+            nodeKey,
+            modeId: selection.slotId,
+          });
+        }
+      }
+    }
+    return deltas;
+  }
+
+  /**
+   * Revert all connector selections to their last-saved baseline.
+   */
+  discard(): void {
+    this._documents = new Map(this._baselineDocuments);
+    this._previewWarnings = new Map();
+    this.revision += 1;
+  }
+
+  /**
+   * Snapshot current documents as the baseline (called after save/open).
+   * Future `isDirty` / `collectDeltas()` compare against this.
+   */
+  hydrateBaseline(): void {
+    this._baselineDocuments = new Map(
+      [...this._documents].map(([k, v]) => [k, { ...v }]),
+    );
   }
 }
 

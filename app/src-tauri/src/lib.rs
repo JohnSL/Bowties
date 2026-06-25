@@ -377,7 +377,6 @@ pub fn run() {
             commands::replace_offline_changes,  // Spec 010: bulk replace offline changes cache
             commands::get_connector_profile,
             commands::preview_connector_compatibility,
-            commands::set_node_mode_selection,          // Spec 014 / S3: unified node_mode_selections
             commands::list_bundled_profiles_command,    // Spec 014 / S8: placeholder picker
             commands::add_placeholder_board,            // Spec 014 / S8.10: factory-backed placeholder synthesis
             commands::compute_layout_match_status,  // Spec 010: sync match scaffolding
@@ -400,6 +399,10 @@ pub fn run() {
             commands::get_known_layouts,        // Spec 013 / S5: known-layout registry
             commands::add_known_layout,         // Spec 013 / S5: known-layout registry
             commands::remove_known_layout,      // Spec 013 / S5: known-layout registry
+            commands::list_channels,               // Spec 015 / S1: information channel inventory
+            commands::create_channels,             // Spec 015 / S3: auto-create channels
+            commands::rename_channel,              // Spec 015 / S4: inline channel rename
+            commands::delete_channels,             // Spec 015 / S5: channel removal on board change
             diagnostics::get_diagnostic_report,
             update_menu_state,
         ])

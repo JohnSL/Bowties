@@ -53,6 +53,9 @@ const { treesRef, metaRef, layoutRef, offlineRef, configChangesRef, connectorSel
   connectorSelectionsRef: {
     hydrateFromLayout: vi.fn(),
     totalWarningCount: 0,
+    isDirty: false,
+    editCount: 0,
+    discard: vi.fn(),
   },
 }));
 
@@ -99,6 +102,10 @@ vi.mock('$lib/layout', () => ({
 
 vi.mock('$lib/stores/connectorSelections.svelte', () => ({
   connectorSelectionsStore: connectorSelectionsRef,
+}));
+
+vi.mock('$lib/stores/channels.svelte', () => ({
+  channelsStore: { isDirty: false, editCount: 0, discard: vi.fn() },
 }));
 
 vi.mock('$lib/stores/offlineChanges.svelte', () => ({

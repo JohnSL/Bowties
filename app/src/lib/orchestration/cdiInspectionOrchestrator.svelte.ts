@@ -12,12 +12,13 @@
  */
 
 import { getCdiErrorMessage, isCdiError, type GetCdiXmlResponse, type ViewerStatus } from '$lib/types/cdi';
+import type { NodeKeyInput } from '$lib/utils/nodeKey';
 
 export interface CdiInspectionDeps {
   getCdiXml: (nodeId: string) => Promise<GetCdiXmlResponse>;
   downloadCdi: (nodeId: string) => Promise<GetCdiXmlResponse>;
   /** Resolve a human-readable display name for a node (ADR-0003 edit-layer path). */
-  resolveNodeName: (nodeId: string) => string;
+  resolveNodeName: (nodeId: NodeKeyInput) => string;
 }
 
 /**

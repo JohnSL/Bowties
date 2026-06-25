@@ -1,91 +1,121 @@
-// Spec 014 / S6 integration test
+// Spec 014 / S6 + ADR-0012 integration test
 //
 // Asserts the unified Configuration Mode selection seam:
-//   selector change → `set_node_mode_selection` IPC → orchestrator
-//   triggers `nodeTreeStore.refreshTree` so the re-annotated tree
-//   replaces the stale one. Combined with the existing backend test
-//   that proves `annotate_tree` is invoked with selections on every
-//   read path, this completes the round-trip evidence for S6.
+//   selector change → in-memory draft → isDirty → collectDeltas →
+//   save workflow applies deltas to backend.
+//
+// ADR-0012: connector selections are in-memory drafts. No IPC is called
+// on user interaction — deltas are collected at save time.
 
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 
-const setNodeModeSelectionMock = vi.fn().mockResolvedValue({ ok: true });
 const getConnectorProfileMock = vi.fn();
-
-vi.mock('$lib/api/layout', () => ({
-  setNodeModeSelection: setNodeModeSelectionMock,
-}));
 
 vi.mock('$lib/api/connectorProfiles', () => ({
   getConnectorProfile: getConnectorProfileMock,
 }));
 
+vi.mock('$lib/api/layout', () => ({}));
+
 const { connectorSelectionsStore } = await import('./connectorSelections.svelte');
 
+const PROFILE = {
+  nodeId: '05.02.01.02.03.00',
+  carrierKey: 'rr-cirkits::tower-lcc',
+  slots: [
+    {
+      slotId: 'connector-a',
+      label: 'Connector A',
+      order: 0,
+      allowNoneInstalled: true,
+      supportedDaughterboardIds: ['BOD4-CP'],
+      affectedPaths: [],
+      resolvedAffectedPaths: [],
+      supportedDaughterboardConstraints: [],
+    },
+  ],
+  supportedDaughterboards: [{ daughterboardId: 'BOD4-CP', displayName: 'BOD4-CP' }],
+};
+
 beforeEach(() => {
-  setNodeModeSelectionMock.mockClear();
   getConnectorProfileMock.mockReset();
   connectorSelectionsStore.reset();
 });
 
-describe('connectorSelections store (Spec 014 / S6) — unified node_mode_selections seam', () => {
-  it('persists a selector change via the set_node_mode_selection IPC', async () => {
+describe('connectorSelections store (ADR-0012) — in-memory draft lifecycle', () => {
+  it('selecting a board updates in-memory and marks dirty', async () => {
     const nodeId = '05.02.01.02.03.00';
-    await connectorSelectionsStore.loadNode(nodeId, {
-      nodeId,
-      carrierKey: 'rr-cirkits::tower-lcc',
-      slots: [
-        {
-          slotId: 'connector-a',
-          label: 'Connector A',
-          order: 0,
-          allowNoneInstalled: true,
-          supportedDaughterboardIds: ['BOD4-CP'],
-          affectedPaths: [],
-          resolvedAffectedPaths: [],
-          supportedDaughterboardConstraints: [],
-        },
-      ],
-      supportedDaughterboards: [{ daughterboardId: 'BOD4-CP', displayName: 'BOD4-CP' }],
-    });
+    await connectorSelectionsStore.loadNode(nodeId, PROFILE);
 
-    const saved = await connectorSelectionsStore.updateSlotSelection(
-      nodeId,
-      'connector-a',
-      'BOD4-CP',
-    );
+    expect(connectorSelectionsStore.isDirty).toBe(false);
 
-    expect(saved?.slotSelections.find((s) => s.slotId === 'connector-a')?.selectedDaughterboardId)
-      .toBe('BOD4-CP');
-    expect(setNodeModeSelectionMock).toHaveBeenCalledWith(
-      '050201020300',
-      'connector-a',
-      'BOD4-CP',
-    );
+    await connectorSelectionsStore.updateSlotSelection(nodeId, 'connector-a', 'BOD4-CP');
+
+    expect(connectorSelectionsStore.isDirty).toBe(true);
+    expect(connectorSelectionsStore.editCount).toBe(1);
   });
 
-  it('does not call set_node_mode_selection when a slot is cleared (no Clear delta yet)', async () => {
+  it('collectDeltas produces SetNodeModeSelection for a selected board', async () => {
     const nodeId = '05.02.01.02.03.00';
-    await connectorSelectionsStore.loadNode(nodeId, {
-      nodeId,
-      carrierKey: 'rr-cirkits::tower-lcc',
-      slots: [
-        {
-          slotId: 'connector-a',
-          label: 'Connector A',
-          order: 0,
-          allowNoneInstalled: true,
-          supportedDaughterboardIds: ['BOD4-CP'],
-          affectedPaths: [],
-          resolvedAffectedPaths: [],
-          supportedDaughterboardConstraints: [],
-        },
-      ],
-      supportedDaughterboards: [{ daughterboardId: 'BOD4-CP', displayName: 'BOD4-CP' }],
-    });
+    await connectorSelectionsStore.loadNode(nodeId, PROFILE);
+    await connectorSelectionsStore.updateSlotSelection(nodeId, 'connector-a', 'BOD4-CP');
 
-    setNodeModeSelectionMock.mockClear();
+    const deltas = connectorSelectionsStore.collectDeltas();
+    expect(deltas).toEqual([
+      {
+        type: 'setNodeModeSelection',
+        nodeKey: '050201020300',
+        modeId: 'connector-a',
+        variantId: 'BOD4-CP',
+      },
+    ]);
+  });
+
+  it('clearing a slot produces ClearNodeModeSelection delta', async () => {
+    const nodeId = '05.02.01.02.03.00';
+    // Simulate: loaded from layout with BOD4-CP already selected
+    await connectorSelectionsStore.loadNode(nodeId, PROFILE);
+    // Manually set selection to simulate a persisted baseline
+    await connectorSelectionsStore.updateSlotSelection(nodeId, 'connector-a', 'BOD4-CP');
+    connectorSelectionsStore.hydrateBaseline(); // mark current as saved
+
+    // Now clear it
     await connectorSelectionsStore.updateSlotSelection(nodeId, 'connector-a', null);
-    expect(setNodeModeSelectionMock).not.toHaveBeenCalled();
+
+    expect(connectorSelectionsStore.isDirty).toBe(true);
+    const deltas = connectorSelectionsStore.collectDeltas();
+    expect(deltas).toEqual([
+      {
+        type: 'clearNodeModeSelection',
+        nodeKey: '050201020300',
+        modeId: 'connector-a',
+      },
+    ]);
+  });
+
+  it('discard reverts to baseline', async () => {
+    const nodeId = '05.02.01.02.03.00';
+    await connectorSelectionsStore.loadNode(nodeId, PROFILE);
+    await connectorSelectionsStore.updateSlotSelection(nodeId, 'connector-a', 'BOD4-CP');
+
+    expect(connectorSelectionsStore.isDirty).toBe(true);
+
+    connectorSelectionsStore.discard();
+
+    expect(connectorSelectionsStore.isDirty).toBe(false);
+    expect(connectorSelectionsStore.collectDeltas()).toEqual([]);
+  });
+
+  it('hydrateBaseline after save resets dirty state', async () => {
+    const nodeId = '05.02.01.02.03.00';
+    await connectorSelectionsStore.loadNode(nodeId, PROFILE);
+    await connectorSelectionsStore.updateSlotSelection(nodeId, 'connector-a', 'BOD4-CP');
+
+    expect(connectorSelectionsStore.isDirty).toBe(true);
+
+    connectorSelectionsStore.hydrateBaseline();
+
+    expect(connectorSelectionsStore.isDirty).toBe(false);
+    expect(connectorSelectionsStore.collectDeltas()).toEqual([]);
   });
 });

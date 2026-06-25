@@ -45,12 +45,18 @@ export interface ConnectorSlotView {
   supportedDaughterboardConstraints?: SlotSupportedDaughterboardView[];
 }
 
+export interface ChannelInputMapping {
+  channelType: string;
+  inputs: number[];
+}
+
 export interface DaughterboardView {
   daughterboardId: string;
   displayName: string;
   kind?: string;
   description?: string;
   validityRules?: ConnectorConstraintRuleView[];
+  channelInputs?: ChannelInputMapping[];
 }
 
 export interface ConnectorProfileView {

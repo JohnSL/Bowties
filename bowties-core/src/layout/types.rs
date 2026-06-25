@@ -186,6 +186,13 @@ pub enum LayoutEditDelta {
         mode_id: String,
         variant_id: String,
     },
+    /// Remove a Configuration Mode variant selection for a node.
+    /// Used when the user sets a connector slot to "None installed".
+    #[serde(rename_all = "camelCase")]
+    ClearNodeModeSelection {
+        node_key: String,
+        mode_id: String,
+    },
     /// Adopt a new event ID — move bowtie metadata from old key to new key.
     #[serde(rename_all = "camelCase")]
     AdoptEventId {
@@ -295,6 +302,17 @@ pub fn apply_layout_deltas(layout: &mut LayoutFile, deltas: Vec<LayoutEditDelta>
                     .entry(node_key)
                     .or_default()
                     .insert(mode_id, variant_id);
+            }
+            LayoutEditDelta::ClearNodeModeSelection {
+                node_key,
+                mode_id,
+            } => {
+                if let Some(modes) = layout.node_mode_selections.get_mut(&node_key) {
+                    modes.remove(&mode_id);
+                    if modes.is_empty() {
+                        layout.node_mode_selections.remove(&node_key);
+                    }
+                }
             }
             LayoutEditDelta::AdoptEventId {
                 old_event_id_hex,
@@ -962,5 +980,78 @@ mod tests {
     fn s3_validate_node_key_rejects_malformed() {
         assert!(validate_node_key("not-a-node").is_err());
         assert!(validate_node_key("placeholder:not-a-uuid").is_err());
+    }
+
+    #[test]
+    fn clear_node_mode_selection_removes_entry() {
+        let mut layout = LayoutFile::default();
+        apply_layout_deltas(
+            &mut layout,
+            vec![LayoutEditDelta::SetNodeModeSelection {
+                node_key: "020157000001".to_string(),
+                mode_id: "connector-a".to_string(),
+                variant_id: "BOD-8-SM".to_string(),
+            }],
+        );
+        assert_eq!(
+            layout.selections_for_node("020157000001").get("connector-a"),
+            Some(&"BOD-8-SM".to_string()),
+        );
+
+        apply_layout_deltas(
+            &mut layout,
+            vec![LayoutEditDelta::ClearNodeModeSelection {
+                node_key: "020157000001".to_string(),
+                mode_id: "connector-a".to_string(),
+            }],
+        );
+        assert!(layout.selections_for_node("020157000001").is_empty());
+        // Node entry is fully removed when its last mode is cleared.
+        assert!(!layout.node_mode_selections.contains_key("020157000001"));
+    }
+
+    #[test]
+    fn clear_node_mode_selection_preserves_other_slots() {
+        let mut layout = LayoutFile::default();
+        apply_layout_deltas(
+            &mut layout,
+            vec![
+                LayoutEditDelta::SetNodeModeSelection {
+                    node_key: "020157000001".to_string(),
+                    mode_id: "connector-a".to_string(),
+                    variant_id: "BOD-8-SM".to_string(),
+                },
+                LayoutEditDelta::SetNodeModeSelection {
+                    node_key: "020157000001".to_string(),
+                    mode_id: "connector-b".to_string(),
+                    variant_id: "BOD4".to_string(),
+                },
+            ],
+        );
+
+        apply_layout_deltas(
+            &mut layout,
+            vec![LayoutEditDelta::ClearNodeModeSelection {
+                node_key: "020157000001".to_string(),
+                mode_id: "connector-a".to_string(),
+            }],
+        );
+        let got = layout.selections_for_node("020157000001");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got.get("connector-b"), Some(&"BOD4".to_string()));
+    }
+
+    #[test]
+    fn clear_node_mode_selection_noop_for_missing_node() {
+        let mut layout = LayoutFile::default();
+        // Should not panic for a node that has no selections.
+        apply_layout_deltas(
+            &mut layout,
+            vec![LayoutEditDelta::ClearNodeModeSelection {
+                node_key: "020157000001".to_string(),
+                mode_id: "connector-a".to_string(),
+            }],
+        );
+        assert!(layout.node_mode_selections.is_empty());
     }
 }

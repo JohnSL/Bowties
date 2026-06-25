@@ -98,12 +98,13 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **lcc-rs:** `protocol/memory_config.rs` (applies writes)
 
 ## Connector Selection
-- **Route:** `config/+page.svelte`
+- **Route:** `+page.svelte` (confirmation dialog before board change when channels affected)
 - **Orchestrator:** `connectorSelectionOrchestrator.ts`
-- **Store:** `connectorSelections.svelte.ts`, `nodeTree.svelte.ts`
-- **Util:** `connectorConstraints.ts`, `connectorLeafDecision.ts`, `connectorSlotSelectors.ts`
-- **API:** `connectorProfiles.ts`
-- **Backend:** `commands/connector_profiles.rs`, `profile/loader.rs`, `profile/resolver.rs`
+- **Store:** `connectorSelections.svelte.ts`, `nodeTree.svelte.ts`, `channels.svelte.ts` (step 4)
+- **Util:** `connectorConstraints.ts`, `connectorLeafDecision.ts`, `connectorSlotSelectors.ts`, `channelDefaults.ts` (step 4)
+- **API:** `connectorProfiles.ts`, `channels.ts` (save-time only per ADR-0012)
+- **Backend:** `commands/connector_profiles.rs`, `commands/channels.rs` (`create_channels`, `rename_channel`, `delete_channels` — invoked only by save workflow), `profile/loader.rs`, `profile/resolver.rs`
+- **Steps:** 1. Update slot selection → 2. Refresh node tree → 3. Recompute compatibility → 4. Remove old channels for slot + auto-create new channels from board `channelInputs` metadata in-memory (Spec 015 / S3+S5, ADR-0012). Route shows confirmation dialog before step 1 when existing channels would be affected. Backend IPC is deferred to save.
 
 ## Bowtie Metadata Editing
 - **Store:** `bowtieMetadata.svelte.ts`
@@ -141,3 +142,13 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **Orchestrator:** `menuListeners.ts` (`registerMenuListeners` — owns the `menu-*` listen/teardown lifecycle)
 - **Keyboard:** `menuShortcuts.ts` (`installMenuShortcuts` — Ctrl/Cmd accelerator bindings)
 - **Backend:** `update_menu_state` IPC command (native menu item enable/disable)
+
+## Information Channel Inventory (Spec 015)
+- **Route:** `+page.svelte` — 3rd tab ("Railroad") in segmented control; renders `RailroadPanel`
+- **Component:** `Railroad/RailroadPanel.svelte` → `ChannelGroup.svelte` → `ChannelRow.svelte`
+- **Store:** `channels.svelte.ts` (`channelsStore` — hydrated on layout open, reset on close)
+- **API:** `channels.ts` (`listChannels`, `createChannels`, `renameChannel`, `deleteChannels`)
+- **Backend:** `commands/channels.rs` (`list_channels`, `create_channels`, `rename_channel`, `delete_channels`)
+- **Core:** `bowties-core/layout/channels.rs` (`InformationChannel`, `ChannelsDocument`)
+- **Lifecycle:** `layoutLifecycleOrchestrator.ts` resets `channelsStore` on layout close (S6)
+- **Save flush:** `+page.svelte` save handler calls `deleteChannels` → `createChannels` → `renameChannel` for pending drafts, then re-reads authoritative state

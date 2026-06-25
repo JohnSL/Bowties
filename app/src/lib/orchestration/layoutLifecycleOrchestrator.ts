@@ -32,6 +32,7 @@ import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
 import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
 import { configSidebarStore } from '$lib/stores/configSidebar';
 import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
+import { channelsStore } from '$lib/stores/channels.svelte';
 
 import type { CloseLayoutResult } from '$lib/api/layout';
 
@@ -85,6 +86,7 @@ class LayoutLifecycleOrchestrator {
     configChangesStore.clearAllDrafts();
     layoutStore.reset();
     connectorSelectionsStore.reset();
+    channelsStore.reset();
     configSidebarStore.reset();
     nodeTreeStore.reset();
 

@@ -10,6 +10,7 @@ import { layoutStore } from '$lib/stores/layout.svelte';
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
 import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
 import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+import { channelsStore } from '$lib/stores/channels.svelte';
 import { resetLayoutOpenPhase } from '$lib/stores/layoutOpenLifecycle';
 
 const {
@@ -114,6 +115,10 @@ vi.mock('$lib/api/bowties', () => ({
   buildBowtieCatalog: vi.fn(async () => ({ bowties: [], built_at: '', source_node_count: 0, total_slots_scanned: 0 })),
 }));
 
+vi.mock('$lib/api/channels', () => ({
+  listChannels: vi.fn(async () => []),
+}));
+
 vi.mock('$lib/api/layout', () => ({
   closeLayout: closeLayoutRef,
   saveLayoutDirectory: vi.fn(async () => ({ warnings: [] })),
@@ -187,6 +192,8 @@ vi.mock('$lib/components/Layout/OfflineBanner.svelte', async () => await import(
 
 vi.mock('$lib/components/LayoutPicker/LayoutPicker.svelte', async () => await import('$lib/test/StubComponent.svelte'));
 
+vi.mock('$lib/components/Railroad/RailroadPanel.svelte', async () => await import('$lib/test/StubComponent.svelte'));
+
 import Page from './+page.svelte';
 
 function makeOfflineLayout() {
@@ -220,6 +227,7 @@ beforeEach(() => {
   nodeInfoStore.set(new Map());
   nodeTreeStore.reset();
   connectorSelectionsStore.reset();
+  channelsStore.reset();
   layoutStore.reset();
   bowtieMetadataStore.clearAll();
   offlineChangesStore.clear();
@@ -668,5 +676,33 @@ describe('window close unsaved-changes guard', () => {
       expect(invokeRef).toHaveBeenCalledWith('disconnect_lcc');
       expect(appWindowMock.close).toHaveBeenCalled();
     });
+  });
+});
+
+describe('+page Railroad tab (Spec 015 / S1)', () => {
+  it('shows Railroad tab button in the toolbar', async () => {
+    render(Page);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /railroad/i })).toBeInTheDocument();
+    });
+  });
+
+  it('Railroad tab button appears after Bowties', async () => {
+    render(Page);
+    await waitFor(() => {
+      const buttons = screen.getAllByRole('button', { pressed: false })
+        .concat(screen.getAllByRole('button', { pressed: true }));
+      const bowties = buttons.find(b => b.textContent?.includes('Bowties'));
+      const railroad = buttons.find(b => b.textContent?.includes('Railroad'));
+      expect(bowties).toBeTruthy();
+      expect(railroad).toBeTruthy();
+    });
+  });
+
+  it('clicking Railroad tab switches active tab', async () => {
+    render(Page);
+    const railroadBtn = await waitFor(() => screen.getByRole('button', { name: /railroad/i }));
+    await fireEvent.click(railroadBtn);
+    expect(railroadBtn.getAttribute('aria-pressed')).toBe('true');
   });
 });

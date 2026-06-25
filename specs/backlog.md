@@ -45,3 +45,9 @@
   * Draft proposals exist (`specs/proposals/jmri-bridge-proposal.md`, `specs/proposals/behavior-templates-proposal.md`) exploring bidirectional sync between Bowties channels and JMRI objects (sensors, turnouts, signal masts) via a Jython bridge script.
   * Key design decisions still open: protocol-agnostic channel model (LCC + DCC/LocoNet via JMRI), LogixNG as alternative logic execution target, panel topology import for future layout editor, signal system metadata per channel.
   * No implementation work until proposals are reviewed and scoped.
+* Channel hardware references as navigable hyperlinks (ADR-0003 display-reference rule)
+  * Root cause: ADR-0003's 2026-06-25 extension establishes that any "node + path" reference in the UI must be a clickable hyperlink that navigates to the configuration field. The current `ChannelRow` hardware line shows resolved text but is not a link.
+  * Follow-up:
+    1. Design the navigation target: clicking a hardware ref on the Railroad tab should switch to Config tab, select the node, and focus the relevant field/connector.
+    2. Implement as a `<button>` that dispatches a navigation action (likely via `configFocusStore` or similar routing mechanism).
+    3. Add test coverage for navigation behavior (`ChannelRow.test.ts`).

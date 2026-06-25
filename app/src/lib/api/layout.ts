@@ -165,17 +165,11 @@ export async function buildOfflineNodeTree(nodeId: NodeKeyInput): Promise<NodeCo
  * Persist a single Configuration Mode variant selection for a node into the
  * active layout's `nodeModeSelections` map (Spec 014 / S6).
  *
- * `nodeKey` may be a canonical NodeID (uppercase, no dots) or a
- * `placeholder:<uuidv4>` key. Backend immediately writes through to disk
- * and returns the updated `SaveLayoutResult`.
+ * @deprecated ADR-0012: connector selections are now collected as deltas at
+ * save time. This function is retained only for reference; it has no backend
+ * command registered.
  */
-export async function setNodeModeSelection(
-  nodeKey: NodeKeyInput,
-  modeId: string,
-  variantId: string,
-): Promise<SaveLayoutResult> {
-  return invoke<SaveLayoutResult>('set_node_mode_selection', { nodeKey: toCanonicalNodeKey(nodeKey), modeId, variantId });
-}
+// export async function setNodeModeSelection(...)
 
 // ── Placeholder boards (Spec 014 / S8) ────────────────────────────────────
 

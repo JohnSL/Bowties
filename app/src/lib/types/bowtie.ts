@@ -74,7 +74,11 @@ export type LayoutEditDelta =
    * permitted-write set; the companion `nodes/<key>.yaml` file is then
    * pruned by the normal save flow.
    */
-  | { type: 'removeNode'; nodeKey: string };
+  | { type: 'removeNode'; nodeKey: string }
+  /** Upsert a connector slot selection for a node (ADR-0012). */
+  | { type: 'setNodeModeSelection'; nodeKey: string; modeId: string; variantId: string }
+  /** Clear a connector slot selection (set to "None installed") (ADR-0012). */
+  | { type: 'clearNodeModeSelection'; nodeKey: string; modeId: string };
 
 // ── Bowtie State ──────────────────────────────────────────────────────────────
 

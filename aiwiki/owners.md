@@ -5,13 +5,13 @@
 | Layer | Count | Key shared logic |
 |-------|-------|-----------------|
 | Routes | 3 pages + layout | Screen composition, tab wiring |
-| Components | ~37 across 8 dirs | Rendering, intent emission |
+| Components | ~40 across 9 dirs | Rendering, intent emission |
 | Orchestrators | 15 | Async workflows, lifecycle transitions |
-| Stores | ~21 | Durable frontend state, derived values |
+| Stores | ~22 | Durable frontend state, derived values |
 | Utils | ~14 | Normalization, formatting, serialization |
-| API | 8 | Tauri IPC bindings |
-| bowties-core | 19 modules | Node tree, layout persistence, profile, registry, placeholder, bowtie catalog |
-| Backend (Tauri shell) | ~15 modules | IPC commands, state, placeholder factory, events |
+| API | 9 | Tauri IPC bindings |
+| bowties-core | 20 modules | Node tree, layout persistence, profile, registry, placeholder, bowtie catalog, channels |
+| Backend (Tauri shell) | ~16 modules | IPC commands, state, placeholder factory, events |
 | lcc-rs | ~20 modules | Protocol encoding, transport, CDI parsing |
 
 Governing docs: `product/architecture/code-placement-and-ownership.md`, `product/architecture/frontend-boundaries.md`
@@ -22,7 +22,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 
 | File | Purpose | Test |
 |------|---------|------|
-| `+page.svelte` | Main app page; tabs for layout/discovery/config/traffic. **Picker gate (Spec 013 / S6):** when no layout is active (and bootstrap is finished and no open-in-progress), `+page.svelte` renders `LayoutPicker` instead of the toolbar + main-content; disconnecting does NOT re-show the picker (layout stays active). **Window-close lifecycle:** owns `onCloseRequested` handler — always prevents native close, shows unsaved-changes dialog when dirty, calls `disconnect_lcc` for graceful LCC teardown before exiting. Menu Exit follows the same path via `promptUnsaved`. | `page.route.test.ts` |
+| `+page.svelte` | Main app page; tabs for layout/discovery/config/traffic. **3-tab segmented control (Config | Bowties | Railroad)** with cycling keyboard nav. **Picker gate (Spec 013 / S6):** when no layout is active (and bootstrap is finished and no open-in-progress), `+page.svelte` renders `LayoutPicker` instead of the toolbar + main-content; disconnecting does NOT re-show the picker (layout stays active). **Window-close lifecycle:** owns `onCloseRequested` handler — always prevents native close, shows unsaved-changes dialog when dirty, calls `disconnect_lcc` for graceful LCC teardown before exiting. Menu Exit follows the same path via `promptUnsaved`. | `page.route.test.ts` |
 | `+layout.svelte` | Root layout wrapper | — |
 | `+layout.ts` | Disables SSR (SPA-only for Tauri) | — |
 | `config/+page.svelte` | Config editor; renders ConfigSidebar + ElementCardDeck | — |
@@ -94,6 +94,13 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `LayoutEntry.svelte` | Single known-layout row with name, path, locale-formatted `lastOpened`, and a Remove (✕) action. | — |
 | `NewLayoutDialog.svelte` | Modal for creating a new layout. Folder picker via `@tauri-apps/plugin-dialog`, sanitised folder name, preview of derived `<parent>/<name>` path. | — |
 
+### Railroad/ — Information channel inventory (Spec 015)
+| File | Purpose | Test |
+|------|---------|------|
+| `RailroadPanel.svelte` | Tab panel for channel inventory. Reads `channelsStore`; renders grouped channels or empty-state guidance. Receives `nodeName` prop (required) wired to `resolveNodeName` from the route. | `channels.svelte.test.ts` (store), `page.route.test.ts` (tab integration) |
+| `ChannelGroup.svelte` | Section for one channel type: header with count + list of `ChannelRow`. Threads `nodeName` and `onRename` callback. | — |
+| `ChannelRow.svelte` | Single channel row: name (inline-editable), hardware reference (node name resolved via required `nodeName` prop — ADR-0003). Follows BowtieCard inline-edit pattern: local `isEditingName` state, `onRename` callback prop, commit on blur/Enter, cancel on Escape, rejects empty names. | `ChannelRow.test.ts` |
+
 ### Root-level components
 | File | Purpose | Test |
 |------|---------|------|
@@ -121,7 +128,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `configAcquisitionOrchestrator.svelte.ts` | **Stateful owner of the acquire-config workflow**: CDI preflight → missing-CDI download dialog → config reads → per-node progress → cancel. Class with `$state` + reactive getters; route instantiates with constructor-injected deps (`new ConfigAcquisitionOrchestrator({...})`) and delegates intent (`readRemaining`, `readSingleNode`, `cancel`, `downloadMissingCdi`, `cancelDownload`, `applyProgressEvent`). Merges newly cached nodes into `cdiCacheStore` (its single owner; S6). | `configAcquisitionOrchestrator.svelte.test.ts` |
 | `configDraftOrchestrator.ts` | Mirrors config drafts to backend IPC or offline persistence | — |
 | `cdiInspectionOrchestrator.svelte.ts` | **Stateful owner of CDI inspection**: read-only XML viewer + menu re-download dialog. Class with `$state` + getters; route instantiates with injected deps and delegates `openViewer`/`closeViewer`/`openRedownload`/`closeRedownload`. Viewer load (cache → download fallback → error) hidden behind `openViewer`; `loadCdiViewerState` exported as a pure helper. Does NOT read config values. | `cdiInspectionOrchestrator.svelte.test.ts` |
-| `connectorSelectionOrchestrator.ts` | Connector slot selection + compatibility recompute | `connectorSelectionOrchestrator.test.ts` |
+| `connectorSelectionOrchestrator.ts` | Connector slot selection + compatibility recompute + channel auto-create/remove (Spec 015 / S3+S5: step 4 removes old channels for slot then creates new from board `channelInputs` metadata). Exports pure `buildAutoCreatedChannels(profile, document, nodeName)` and `buildAutoCreatedChannelsForSlot(profile, document, nodeName, slotId)` for testability. | `connectorSelectionOrchestrator.test.ts` |
 | `placeholderBoardOrchestrator.ts` | Spec 014 / S8.10: placeholder board lifecycle. Calls `addPlaceholderBoardIpc(profileStem)` (backend factory mints UUID, builds proxy, registers in backend), then reads tree via `getNodeTree` IPC and seeds `nodeRoster`. Delete gates on caller-supplied `confirm: () => Promise<boolean>` (FR-017a). UUID minting moved to backend factory in S8.10. | `placeholderBoardOrchestrator.test.ts` |
 | `offlineLayoutOrchestrator.ts` | Offline layout hydration and snapshot replay. Exposes `buildOfflineDiscoveryNodes`, `buildOfflineTreesFromSnapshots`, `rehydrateOfflineStateFromSnapshots`, `restoreRecentOfflineLayout`, `openOfflineLayoutWithReplay`. The legacy standalone `resetLayoutStateForNoLayout` / `resetFreshLiveSessionState` exports remain for back-compat but new code MUST go through `layoutLifecycleOrchestrator` (ADR-0011) — the route's two wrappers now delegate. | `offlineLayoutOrchestrator.test.ts` |
 | `layoutLifecycleOrchestrator.ts` | **Single owner of in-memory layout-lifecycle resets** (ADR-0011, Step 11). Three named entry points: `resetForNewLayout({connected, reprobeLiveNodes, probeForNodes, afterReset})` (full teardown — close, discard, new-layout, no-layout recovery; calls `nodeRoster.clearLayoutScope()` so placeholders do NOT bleed across layouts — R7 fix), `resetForFreshLiveSession()` (disconnect/reconnect within the same live session; preserves placeholders because they are layout-scoped), and `closeLayout({activeMode, closeLayoutIpc, clearRecentLayout, disconnectBeforeClose?, ...})` which sequences backend close → optional bus disconnect (via `disconnectBeforeClose` dep, called when `connected` is true) → frontend reset. The `disconnectBeforeClose` dep is required to prevent the connection indicator staying Online after layout close; the route passes `syncSessionOrchestrator.disconnectBeforeLayoutSwitch()`. Imports stores directly (not callback bags) so a new `effectiveNodeStore` input cannot be added without also extending the reset path. | `layoutLifecycleOrchestrator.test.ts` |
@@ -151,7 +158,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `layoutOpenLifecycle.ts` | Phase machine for layout open (opening→hydrating→ready) | — |
 | `offlineChanges.svelte.ts` | Offline change row tracking (persisted/draft layers) | `offlineChanges.store.test.ts` |
 | `syncPanel.svelte.ts` | Sync session state: conflict/clean row tracking | `syncPanel.store.test.ts` |
-| `connectorSelections.svelte.ts` | Connector slot selections per-node. **Spec 014 / S6:** writes through `set_node_mode_selection` IPC (`$lib/api/layout`) — the unified `node_mode_selections` seam on `LayoutFile`. Identity mapping for Tower-LCC: slot_id ≡ mode_id, daughterboardId ≡ variantId. `fromNodeModeSelections(nodeId, profile, selections)` projects the unified map back onto the slot list for display. IPC save failures are logged via `console.warn` (not stored in the node-level error channel, which is reserved for "can't load this connector"). Selector changes are wrapped by `connectorSelectionOrchestrator.applyConnectorSelectionChange` which awaits `nodeTreeStore.refreshTree(nodeId)` so the backend re-runs `annotate_tree` with the new selection and the rendered tree re-shapes. | `connectorSelections.s6.test.ts` |
+| `connectorSelections.svelte.ts` | Connector slot selections per-node. **Spec 014 / S6, ADR-0012:** in-memory draft layer — selections are held locally until save, when `collectDeltas()` produces `SetNodeModeSelection` / `ClearNodeModeSelection` deltas for `save_layout_directory`. Identity mapping for Tower-LCC: slot_id ≡ mode_id, daughterboardId ≡ variantId. `fromNodeModeSelections(nodeId, profile, selections)` projects the unified map back onto the slot list for display. Selector changes are wrapped by `connectorSelectionOrchestrator.applyConnectorSelectionChange` which awaits `nodeTreeStore.refreshTree(nodeId)` so the backend re-runs `annotate_tree` with the new selection and the rendered tree re-shapes. | `connectorSelections.s6.test.ts` |
 | `partialCaptureNodes.svelte.ts` | Canonical `NodeKey` set of live nodes whose config read finished with at least one missing/failed leaf (partial capture warnings). Promoted from a `+page.svelte` `$state<Set>` so `effectiveNodeStore` and `layoutLifecycleOrchestrator` share a single reactive source for the partial-capture half of the full-capture threshold (ADR-0007, ADR-0011). Exposes `has(key)`, `replace(keys)`, `clear()`. | — |
 | `cdiCache.svelte.ts` | Node-ID set of nodes whose CDI is present in the local cache. Promoted from a `+page.svelte` `$state<Set>` (S6) so the shared cached-CDI state has one owner. Written by `configAcquisitionOrchestrator` (preflight + post-download merge via `add`) and the refresh reconciler (`replace`); read by the native-menu enable effect (`has`) to gate "View CDI". Exposes `nodes`, `has(id)`, `add(ids)`, `replace(ids)`, `reset()`. | `cdiCache.svelte.test.ts` |
 | `bowtieFocus.svelte.ts` | Currently focused bowtie card (keyboard nav) | — |
@@ -167,6 +174,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `sidebarWidth.ts` | App-wide sidebar panel width with localStorage persistence (`bowties:sidebarWidth`). Exposes `setWidth(px)` (clamped 160–600), `reset()`. Consumed by the config tab in `routes/+page.svelte` via the `--config-sidebar-width` CSS custom property on `.config-layout`; written by `SidebarResizeHandle.svelte` resize events. | `sidebarWidth.test.ts` |
 | `traffic.ts` | Live traffic message stream | — |
 | `knownLayouts.svelte.ts` | `knownLayoutsStore` singleton — frontend mirror of `known-layouts.json` (Spec 013 / S6). Exposes `entries`, `loaded`, `busy`; setters tolerate undefined backend payloads. Entries store layout folder paths. Written through by `startupOrchestrator`; read by `LayoutPicker`. | — |
+| `channels.svelte.ts` | `channelsStore` singleton (Spec 015). Holds `InformationChannel[]` for the active layout. Exposes `channels`, `isEmpty`, `grouped` (by type), `loading`, `isDirty`, `editCount`, `pendingCreations`, `pendingRenames`, `pendingDeletions`; mutators `loadChannels()` (IPC), `addPendingChannels(ch[])`, `deleteChannels(ids[])`, `renameChannel(id, newName)` (rejects empty; returns bool), `setChannels(ch[])`, `discard()`, `hydrateBaseline(ch[])`, `reset()`. Draft layer (ADR-0012): tracks `_pendingCreations`, `_pendingRenames`, and `_pendingDeletions`; `channels` getter filters deletions and applies renames over baseline + creations. Hydrated on layout open (eager); reset on layout close via `layoutLifecycleOrchestrator`. | `channels.svelte.test.ts` |
 
 ---
 
@@ -176,7 +184,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 
 | File | Purpose | Test |
 |------|---------|------|
-| `index.ts` | Public facade. Re-exports `effectiveLayoutStore`, `effectiveNodeStore`, `bowtieCatalogStore`, `makeValueResolver`, `resolveNodeName`, `buildElementSelection`, `saveLayoutOrchestrated` + types, and the edit-recording commands (`recordBowtieDeletion`, `recordRoleClassification`, `recordConfigDraft`). `resolveNodeName(nodeId)` is the canonical single entry point for edit-layer-aware node Display Name resolution (ADR-0003 point 4). `buildElementSelection(leaf, nodeId)` is the canonical constructor for `ElementSelection` — resolves node name and element label through the edit layer in one call. | — |
+| `index.ts` | Public facade. Re-exports `effectiveLayoutStore`, `effectiveNodeStore`, `bowtieCatalogStore`, `makeValueResolver`, `resolveNodeName`, `buildElementSelection`, `saveLayoutOrchestrated` + types, and the edit-recording commands (`recordBowtieDeletion`, `recordRoleClassification`, `recordConfigDraft`). `resolveNodeName(key: NodeKeyInput)` is the canonical single entry point for edit-layer-aware node Display Name resolution (ADR-0003 + ADR-0010). Dispatches live vs placeholder variants. `buildElementSelection(leaf, nodeId: NodeKeyInput)` is the canonical constructor for `ElementSelection` — resolves node name and element label through the edit layer in one call. | — |
 | `effectiveLayoutStore.svelte.ts` | Single read model that merges all edit layers into the user-visible **value** view. `preview` / `effectiveBowties` (catalog × tree × metadata × layout, with `hasPendingDeletion` filter); `effectiveRole(nodeId, leaf)` (pending classify → catalog → leaf baseline); `effectiveValue(nodeId, leaf)` (draft override → leaf baseline); `slotsByRole(nodeId, role)`; `isSlotFree(nodeId, leaf)`; `usedInMap`. Composes `buildEffectiveBowtiePreview()` from `bowties.svelte.ts`. | `effectiveLayoutStore.svelte.test.ts` |
 | `effectiveNodeStore.svelte.ts` | **Per-node** layout facade sibling to `effectiveLayoutStore` (ADR-0011, Step 10). Projects `nodeTreeStore`, `nodeInfoStore`, `configReadNodesStore`, `partialCaptureNodesStore`, `layoutStore.activeContext`, and the edit-layer stores into `nodeOrigin(key)`, `isFullyCaptured(key)`, `isConfigRead(key)`, `isPersistableInLayout(key)` (= `isFullyCaptured ∧ (isConfigRead ∨ placeholder)` — R5 fix), `unsavedInMemoryNodeIds`, `unsavedRemovedNodeIds`, `isDirty` (R6 fix). Reads only — never writes through. The lifecycle reset path is `layoutLifecycleOrchestrator`, which MUST enumerate every store this facade reads. | `effectiveNodeStore.svelte.test.ts` |
 
@@ -206,6 +214,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `connectorLeafDecision.ts` | Leaf value compatibility under slot constraints | `connectorLeafDecision.test.ts` |
 | `connectorSlotSelectors.ts` | View model for connector slot selector UI | `connectorSlotSelectors.test.ts` |
 | `cardTitle.ts` | Card title from CDI group name + user names | `cardTitle.test.ts` |
+| `channelDefaults.ts` | Default channel name generation: `generateDefaultChannelName(nodeName, slotLabel, inputOrdinal)`. Pure function, no side effects. Spec 015 / S3. | `channelDefaults.test.ts` |
 | `treeLeafViewState.ts` | Display state for tree leaf rows (offline, compatibility) | `treeLeafViewState.test.ts` |
 | `treeConfigValuePersistence.ts` | TreeConfigValue ↔ offline-stored string format | — |
 | `layoutPath.ts` | Layout file path utilities: `normalizeLayoutTitle` strips extensions to get display name | `layoutPath.test.ts` |
@@ -225,6 +234,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `layout.ts` | Layout file open/close, offline snapshot hydration |
 | `sync.ts` | Sync session and offline change reconciliation IPC |
 | `connectorProfiles.ts` | Connector profile queries, slot selection, compatibility preview |
+| `channels.ts` | Information channel inventory IPC (Spec 015): `listChannels`, `createChannels`, `renameChannel`, `deleteChannels`. Backend persists to `channels.yaml`. Called by save workflow (create/rename/delete) and by `channelsStore.loadChannels()` (list). |
 | `types.ts` | Shared API type definitions |
 
 ---
@@ -241,7 +251,8 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `layout_capture.rs` | `capture_layout_snapshot`, `save_layout_directory`, `open_layout_directory`, `close_layout`, `create_new_layout_capture`, `build_offline_node_tree`, `save_layout_with_bus_writes` | Layout snapshot persistence. Thin command layer: fetches proxy data via `proxy_snapshot_data()` → delegates to `bowties_core::layout::capture::build_node_snapshot()`. Save commands accept `LayoutEditDelta[]` and return persisted `LayoutFile` plus (S8) `persistedNodeIds`. |
 | `sync_panel.rs` | `set_offline_change`, `revert_offline_change`, `list_offline_changes`, `compute_layout_match_status`, `build_sync_session`, `apply_sync_changes` | Offline sync panel commands. Thin coordinator: delegates pure scoring to `bowties_core::sync::classifier::compute_layout_match`, CDI field resolution to `bowties_core::sync::field_meta`, change helpers to `bowties_core::sync::changes`. Owns only AppState reads/writes, bus I/O, and CDI path resolution (Tauri-dependent). |
 | `connector_profiles.rs` | `get_connector_profile`, `preview_connector_compatibility` | Connector profile and slot constraints. Selection persistence (`get_connector_selections` / `put_connector_selections`) was removed in Spec 014; the replacement seam is `node_mode_selections` written through `placeholders.rs`. |
-| `placeholders.rs` | `add_placeholder_board`, `set_node_mode_selection`, `list_bundled_profiles_command` | Spec 014 / S8.10: `add_placeholder_board` calls the placeholder factory (`placeholder.rs::synthesize`), inserts the `Synthesized` variant into the registry, and returns `{ nodeKey }`. `set_node_mode_selection` persists mode selections via `save_layout_directory`. `list_bundled_profiles_command` returns board-model summaries for the placeholder picker. |
+| `placeholders.rs` | `add_placeholder_board`, `list_bundled_profiles_command` | Spec 014 / S8.10: `add_placeholder_board` calls the placeholder factory (`placeholder.rs::synthesize`), inserts the `Synthesized` variant into the registry, and returns `{ nodeKey }`. `list_bundled_profiles_command` returns board-model summaries for the placeholder picker. Note: `set_node_mode_selection` and `clear_node_mode_selection` were removed per ADR-0012 — connector selections are now in-memory drafts collected as deltas at save time. |
+| `channels.rs` | `list_channels`, `create_channels`, `rename_channel`, `delete_channels` | Spec 015: `list_channels` reads `channels.yaml` from active layout via `bowties_core::layout::read_channels()` (ADR-0005 intent-shaped API). Returns empty vec when no layout is open or file missing (pre-015 backward compat). `create_channels` (S3) appends channels and persists via `update_channels()`. `rename_channel` (S4) finds channel by ID, updates name, writes via journal. `delete_channels` (S5) filters out channels by ID list and writes via journal. ADR-0012: channels are held as in-memory pending creations/renames/deletions until save; backend commands are called only by the save workflow. |
 | `diagnostics.rs` | `get_diagnostic_report` | Ring-buffer logs, frame activity ring buffer, structured errors, and troubleshooting report with summary |
 
 ---
@@ -260,17 +271,18 @@ thin shim modules so existing `crate::` paths compile unchanged.
 | `node_tree.rs` | Unified config tree: CDI + addresses + values + roles. Also owns `NodeRoles` (per-event producer/consumer sets). | inline `#[cfg(test)]` (24+) |
 | `node_proxy.rs` | Polymorphic node handle (`NodeProxyHandle` enum: `Live` + `Synthesized`). `LiveNodeProxy` actor, `SynthesizedNodeProxy` passive state holder. | inline `#[cfg(test)]` |
 | `node_registry.rs` | Thread-safe `NodeKey → NodeProxyHandle` map. Owns `saved_trees` cache. | inline `#[cfg(test)]` |
-| `layout/mod.rs` | **Deep module** (ADR-0005). Sole owner of layout directory file structure. Public API: `save_capture`, `read_capture`, `read_node_snapshot`, `update_offline_changes`, etc. Layout identity = folder path. | inline `#[cfg(test)]` |
+| `layout/mod.rs` | **Deep module** (ADR-0005). Sole owner of layout directory file structure. Public API: `save_capture`, `read_capture`, `read_node_snapshot`, `update_offline_changes`, `update_channels`, `read_channels`, etc. Layout identity = folder path. | inline `#[cfg(test)]` (8 tests) |
 | `layout/types.rs` | YAML data structures, `ConnectionConfig`, `LayoutEditDelta`, `apply_layout_deltas`. | inline `#[cfg(test)]` |
-| `layout/io.rs` | Layout directory read/write, node-file path derivation, CDI XML resolution. `MANIFEST_FILE` constant. | inline `#[cfg(test)]` |
+| `layout/io.rs` | Layout directory read/write, node-file path derivation, CDI XML resolution. Constants: `MANIFEST_FILE`, `BOWTIES_FILE`, `CHANNELS_FILE`, etc. `LayoutDirectoryWriteData` / `LayoutDirectoryReadData` include all companion files. | inline `#[cfg(test)]` |
 | `layout/journal.rs` | **Write-ahead journal** (ADR-0006). In-place writes guarded by marker + backup. | inline `#[cfg(test)]` (8) |
 | `layout/manifest.rs` | Layout manifest (schema v4, no `companion_dir`), saved connections. | inline `#[cfg(test)]` |
 | `layout/known_layouts.rs` | App-level known-layout registry (Spec 013 / S5). | inline `#[cfg(test)]` (7) |
 | `layout/node_snapshot.rs` | Node config snapshot for offline use. | inline `#[cfg(test)]` |
 | `layout/offline_changes.rs` | Offline change staging (config diffs). | inline `#[cfg(test)]` |
+| `layout/channels.rs` | Information channel domain types (`InformationChannel`, `ChannelType`, `HardwareReference`, `ChannelsDocument`). Owns `channels.yaml` schema, serde, and round-trip. Persistence via `mod.rs` intent-shaped API (`read_channels`, `update_channels`). Spec 015. | inline `#[cfg(test)]` (3 tests) |
 | `layout/serde_node_id.rs` | Custom serde for NodeID (dotted-hex in YAML). | — |
 | `profile/mod.rs` | Profile tree annotation, overlay composition, cache types. | inline `#[cfg(test)]` |
-| `profile/types.rs` | Structure profile types (event roles, relevance, connectors). | — |
+| `profile/types.rs` | Structure profile types (event roles, relevance, connectors). Includes `ChannelInputMapping` (Spec 015 / S3) — pin-to-template capability map per daughterboard, carried through to frontend `DaughterboardView.channelInputs`. | — |
 | `profile/resolver.rs` | Profile conditional resolution (firmware checks). | inline `#[cfg(test)]` |
 | `placeholder.rs` | **Placeholder factory helpers** — CDI loading, EventId-zero collection, config-value merging, leaf-default population. All pure (no Tauri deps). | inline `#[cfg(test)]` (5 tests) |
 | `bowtie/mod.rs` | Bowtie catalog module root. | — |
@@ -394,16 +406,19 @@ thin shim modules so existing `crate::` paths compile unchanged.
 - `formatTreeConfigValue()` — resolves int enums to labels via mapEntries
 
 ### Fallback Chains
-**Canonical entry point:** `resolveNodeName(nodeId)` from `$lib/layout` (facade).
+**Canonical entry point:** `resolveNodeName(key: NodeKeyInput)` from `$lib/layout` (facade).
 **Implementation:** `app/src/lib/utils/nodeDisplayName.ts`
-- Display name (edit-layer tier first): effective ACDI User Name leaf (space 251, draft→offline→baseline) → SNIP user_name → manufacturer+model → model → Node ID hex
-- `resolveNodeName(nodeId)` — facade function; the **only** import callers should use for node display names. Composes `resolveEffectiveUserName` + `resolveNodeDisplayName` against the live stores.
-- `resolveNodeDisplayName(nodeId, node)` — SNIP-only fallback tiers (internal to the composition)
+- Accepts `NodeKeyInput` (ADR-0010 sum type: live 12-hex or `placeholder:<uuid>`). Dispatches by variant.
+- **Live nodes:** effective ACDI User Name leaf (space 251, draft→offline→baseline) → SNIP user_name → manufacturer+model → model → Node ID hex
+- **Placeholder nodes:** effective ACDI User Name leaf → CDI `<identification>` manufacturer+model → model → placeholder key literal
+- `resolveNodeName(key)` — facade function; the **only** import callers should use for node display names. Composes `resolveEffectiveUserName` + variant-specific fallback against the live stores.
+- `resolveNodeDisplayName(nodeId, node)` — SNIP-only fallback tiers (internal to the composition, live nodes only)
 - `resolveEffectiveUserName(tree, resolveValue)` — edit-layer tier (ADR-0003 point 4); pure, resolver injected
 - Anti-pattern: calling `resolveNodeDisplayName` directly from components — use `resolveNodeName` from `$lib/layout`
 - Anti-pattern: inline fallback `node.user_name || nodeId` — use `resolveNodeName`
+- Anti-pattern: displaying raw `hardwareRef.nodeKey` — always call `resolveNodeName(nodeKey)`
 - Anti-pattern: writing draft state back into `snip_data` (e.g. the removed `updateNodeSnipField`) — the snapshot is a hardware-reported mirror; drafts live in `configChangesStore`
-- Governing docs: `product/architecture/naming-and-normalization.md`, ADR-0003
+- Governing docs: `product/architecture/naming-and-normalization.md`, ADR-0003, ADR-0010
 - **Resolve late, on the consuming side.** Display names must be derived from
   the live `nodeInfoStore` at frontend derivation/render time, not consumed
   from a pre-baked upstream value. The config sidebar (`configSidebarPresenter`)

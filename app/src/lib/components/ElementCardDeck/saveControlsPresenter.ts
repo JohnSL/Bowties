@@ -22,7 +22,9 @@ export interface SaveControlsViewState {
 export function deriveSaveControlsViewState(args: {
   bowtieMetadataEditCount: number;
   bowtieMetadataIsDirty: boolean;
+  channelEditCount: number;
   configDraftCount: number;
+  connectorSelectionEditCount: number;
   connectorWarningCount: number;
   layoutIsDirty: boolean;
   layoutIsOfflineMode: boolean;
@@ -41,7 +43,9 @@ export function deriveSaveControlsViewState(args: {
   const {
     bowtieMetadataEditCount,
     bowtieMetadataIsDirty,
+    channelEditCount,
     configDraftCount,
+    connectorSelectionEditCount,
     connectorWarningCount,
     layoutIsDirty,
     layoutIsOfflineMode,
@@ -86,13 +90,14 @@ export function deriveSaveControlsViewState(args: {
     : 0;
   const hasRevertedPersisted = revertedPersistedCount > 0;
   const hasOfflineEdits = layoutIsOfflineMode && dirtyCount > 0;
-  const hasEdits = hasConfigEdits || hasMetadataEdits || hasOfflineEdits || hasRevertedPersisted || hasLayoutOrNewNodeEdits;
-  const pendingEditCount = dirtyCount + revertedPersistedCount + metadataEditCount + layoutOnlyEditCount;
+  const hasConnectorOrChannelEdits = connectorSelectionEditCount > 0 || channelEditCount > 0;
+  const hasEdits = hasConfigEdits || hasMetadataEdits || hasOfflineEdits || hasRevertedPersisted || hasLayoutOrNewNodeEdits || hasConnectorOrChannelEdits;
+  const pendingEditCount = dirtyCount + revertedPersistedCount + metadataEditCount + layoutOnlyEditCount + connectorSelectionEditCount + channelEditCount;
   const pendingHintText = `${pendingEditCount} ${layoutIsOfflineMode ? 'unsaved edit' : 'unsaved change'}${pendingEditCount === 1 ? '' : 's'}`;
   const isSaving = saveProgressState === 'saving';
   const baseDiscardFieldCount = dirtyCount + revertedPersistedCount;
   const baseDiscardNodeCount = dirtyNodeIds.size;
-  const discardFieldCount = baseDiscardFieldCount + metadataEditCount + layoutOnlyEditCount;
+  const discardFieldCount = baseDiscardFieldCount + metadataEditCount + layoutOnlyEditCount + connectorSelectionEditCount + channelEditCount;
   const discardNodeCount = discardFieldCount > 0 ? Math.max(1, baseDiscardNodeCount) : 0;
 
   return {

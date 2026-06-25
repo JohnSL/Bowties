@@ -14,7 +14,7 @@ const {
   treesRef: { map: new Map<string, NodeConfigTree>() },
   bowtieRef: { editCount: 0, isDirty: false },
   configChangesRef: { draftEntries: [] as any[] },
-  connectorRef: { totalWarningCount: 0 },
+  connectorRef: { totalWarningCount: 0, isDirty: false, editCount: 0 },
   layoutRef: { isDirty: false, isOfflineMode: false, unsavedInMemoryNodeIds: [] as string[] },
   offlineRef: { draftCount: 0, draftRows: [] as any[], revertedPersistedCount: 0 },
   presenterRef: {
@@ -56,6 +56,10 @@ vi.mock('$lib/stores/connectorSelections.svelte', () => ({
   connectorSelectionsStore: connectorRef,
 }));
 
+vi.mock('$lib/stores/channels.svelte', () => ({
+  channelsStore: { isDirty: false, editCount: 0 },
+}));
+
 vi.mock('$lib/stores/layout.svelte', () => ({
   layoutStore: layoutRef,
 }));
@@ -87,6 +91,8 @@ describe('changeTrackerStore', () => {
     bowtieRef.isDirty = false;
     configChangesRef.draftEntries = [];
     connectorRef.totalWarningCount = 0;
+    connectorRef.isDirty = false;
+    connectorRef.editCount = 0;
     layoutRef.isDirty = false;
     layoutRef.isOfflineMode = false;
     offlineRef.draftCount = 0;
@@ -127,7 +133,9 @@ describe('changeTrackerStore', () => {
     expect(presenterRef.deriveSaveControlsViewState).toHaveBeenCalledWith({
       bowtieMetadataEditCount: 2,
       bowtieMetadataIsDirty: true,
+      channelEditCount: 0,
       configDraftCount: 0,
+      connectorSelectionEditCount: 0,
       connectorWarningCount: 0,
       layoutIsDirty: true,
       layoutIsOfflineMode: true,

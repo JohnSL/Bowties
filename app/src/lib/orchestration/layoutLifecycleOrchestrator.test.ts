@@ -29,6 +29,7 @@ const { configReadNodesStore, markNodeConfigRead } = await import('$lib/stores/c
 const { nodeRoster } = await import('$lib/stores/nodeRoster.svelte');
 const { partialCaptureNodesStore } = await import('$lib/stores/partialCaptureNodes.svelte');
 const { layoutStore } = await import('$lib/stores/layout.svelte');
+const { channelsStore } = await import('$lib/stores/channels.svelte');
 const { layoutLifecycleOrchestrator } = await import('./layoutLifecycleOrchestrator');
 
 const LIVE_KEY = '020157000001';
@@ -139,6 +140,21 @@ describe('layoutLifecycleOrchestrator.resetForNewLayout', () => {
       probeForNodes: probe,
     });
     expect(probe).not.toHaveBeenCalled();
+  });
+
+  it('resets channelsStore so stale channels do not leak into next layout (S6)', async () => {
+    channelsStore.addPendingChannels([{
+      id: 'stale-ch',
+      name: 'Stale Channel',
+      channelType: 'block-occupancy',
+      hardwareRef: { nodeKey: LIVE_KEY, connector: 'connector-a', input: 1 },
+    }]);
+    expect(channelsStore.channels.length).toBe(1);
+
+    await layoutLifecycleOrchestrator.resetForNewLayout({ connected: false });
+
+    expect(channelsStore.channels.length).toBe(0);
+    expect(channelsStore.isEmpty).toBe(true);
   });
 });
 

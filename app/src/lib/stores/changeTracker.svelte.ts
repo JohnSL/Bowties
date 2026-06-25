@@ -1,4 +1,5 @@
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
+import { channelsStore } from '$lib/stores/channels.svelte';
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
 import { layoutStore } from '$lib/stores/layout.svelte';
@@ -20,7 +21,9 @@ class ChangeTrackerStore {
     const saveControls = deriveSaveControlsViewState({
       bowtieMetadataEditCount: bowtieMetadataStore.editCount,
       bowtieMetadataIsDirty: bowtieMetadataStore.isDirty,
+      channelEditCount: channelsStore.editCount,
       configDraftCount: configChangesStore.draftEntries().length,
+      connectorSelectionEditCount: connectorSelectionsStore.editCount,
       connectorWarningCount: connectorSelectionsStore.totalWarningCount,
       layoutIsDirty: layoutStore.isDirty,
       layoutIsOfflineMode: layoutStore.isOfflineMode,
@@ -40,7 +43,7 @@ class ChangeTrackerStore {
         offlineChangesStore.draftCount,
         effectiveNodeStore.isDirty,
         offlineChangesStore.revertedPersistedCount,
-      ),
+      ) || connectorSelectionsStore.isDirty || channelsStore.isDirty,
     };
   }
 

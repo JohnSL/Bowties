@@ -31,6 +31,8 @@
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
+  import { channelsStore } from '$lib/stores/channels.svelte';
+  import { createChannels, deleteChannels, renameChannel } from '$lib/api/channels';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { resolvePillSelectionsForPath } from '$lib/types/nodeTree';
   import type { NodeConfigTree } from '$lib/types/nodeTree';
@@ -88,23 +90,32 @@
   import { saveLayoutOrchestrated, type SaveLayoutOrchestratedArgs } from '$lib/orchestration/saveLayoutOrchestrator';
   import { stageDraftsForOfflineSave } from '$lib/orchestration/configDraftOrchestrator';
   import { normalizeLayoutTitle } from '$lib/utils/layoutPath';
-  import { formatNodeId, nodeIdStringToBytes } from '$lib/utils/nodeId';
+  import { formatNodeId, nodeIdStringToBytes, normalizeNodeId } from '$lib/utils/nodeId';
   import { canonicalizeNodeId } from '$lib/utils/nodeRoster';
   import { effectiveNodeStore, resolveNodeName } from '$lib/layout';
   import { partialCaptureNodesStore } from '$lib/stores/partialCaptureNodes.svelte';
   import { deletePlaceholderBoard } from '$lib/orchestration/placeholderBoardOrchestrator';
   import { isPlaceholderInput } from '$lib/utils/nodeKey';
+  import RailroadPanel from '$lib/components/Railroad/RailroadPanel.svelte';
 
-  // Active tab state — 'config' (default) or 'bowties'
-  let activeTab = $state<'config' | 'bowties'>('config');
+  // Active tab state — 'config' (default), 'bowties', or 'railroad'
+  let activeTab = $state<'config' | 'bowties' | 'railroad'>('config');
+
+  const TAB_ORDER: Array<typeof activeTab> = ['config', 'bowties', 'railroad'];
 
   // Ref to SaveControls for imperative save calls from menu shortcuts
   let saveControlsRef = $state<SaveControls | null>(null);
 
-  // Keyboard handler for the segmented mode control (ArrowLeft / ArrowRight)
+  // Keyboard handler for the segmented mode control (ArrowLeft / ArrowRight cycles 3 tabs)
   function handleModeKeydown(e: KeyboardEvent): void {
-    if (e.key === 'ArrowLeft')  { activeTab = 'config';  e.preventDefault(); }
-    else if (e.key === 'ArrowRight') { activeTab = 'bowties'; e.preventDefault(); }
+    const idx = TAB_ORDER.indexOf(activeTab);
+    if (e.key === 'ArrowLeft') {
+      activeTab = TAB_ORDER[(idx - 1 + TAB_ORDER.length) % TAB_ORDER.length];
+      e.preventDefault();
+    } else if (e.key === 'ArrowRight') {
+      activeTab = TAB_ORDER[(idx + 1) % TAB_ORDER.length];
+      e.preventDefault();
+    }
   }
 
   // T050: prompt-to-save guard state
@@ -112,6 +123,12 @@
   let isForceClosing = false;
   let errorDialog = $state<{ title: string; message: string } | null>(null);
   let showAboutDialog = $state(false);
+
+  // Spec 015 / S5: confirmation dialog for channel removal on board change
+  let channelRemovalDialog = $state<{
+    channelCount: number;
+    onConfirm: () => void;
+  } | null>(null);
 
   // Spec 014 / S8: placeholder picker modal visibility. Opened by the
   // "Add Placeholder Board…" menu item; closed on cancel or after a
@@ -197,6 +214,13 @@
   $effect(() => {
     if (connectionRequestStore.pendingRequest) {
       activeTab = 'bowties';
+    }
+  });
+
+  // Spec 015: Hydrate channel inventory when a layout becomes active
+  $effect(() => {
+    if (layoutStore.activeContext) {
+      channelsStore.loadChannels();
     }
   });
 
@@ -514,7 +538,10 @@
         targetPath = selected;
       }
 
-      const deltas = bowtieMetadataStore.collectDeltas();
+      const deltas = [
+        ...bowtieMetadataStore.collectDeltas(),
+        ...connectorSelectionsStore.collectDeltas(),
+      ];
 
       // Offline mode owns draft staging: promote config drafts into the
       // offline-change channel before the orchestrator runs. The component
@@ -525,7 +552,10 @@
       }
 
       const sharedOrchestratorArgs = {
-        clearMetadata: () => bowtieMetadataStore.clearAll(),
+        clearMetadata: () => {
+          bowtieMetadataStore.clearAll();
+          connectorSelectionsStore.hydrateBaseline();
+        },
         markClean: () => layoutStore.markClean(),
         hydrateLayout: (layout: import('$lib/types/bowtie').LayoutFile) =>
           layoutStore.hydrateFromBackend(layout),
@@ -579,6 +609,26 @@
       saveProgressStore.begin();
       try {
         const saveResult = await saveLayoutOrchestrated(orchestratorArgs);
+
+        // ADR-0012: persist pending channel edits to channels.yaml
+        const pendingChannels = channelsStore.pendingCreations;
+        const pendingRenames = new Map(channelsStore.pendingRenames);
+        const pendingDeletionIds = [...channelsStore.pendingDeletions];
+
+        if (pendingDeletionIds.length > 0) {
+          await deleteChannels(pendingDeletionIds);
+        }
+        if (pendingChannels.length > 0) {
+          await createChannels(pendingChannels);
+        }
+        if (pendingRenames.size > 0) {
+          for (const [id, newName] of pendingRenames) {
+            await renameChannel(id, newName);
+          }
+        }
+        // Re-read authoritative state from backend after all writes
+        await channelsStore.loadChannels();
+
         // Bug 2b fix: cache the snapshots from this save so the disconnect
         // transition matrix sees `hasSnapshots: true` and takes the
         // `rehydrated_offline` path instead of clearing everything.
@@ -1253,6 +1303,32 @@
     slotId: string;
     selectedDaughterboardId: string | null;
   }): Promise<void> {
+    // Spec 015 / S5: check if this slot has existing channels that would be removed
+    const normalizedNodeId = normalizeNodeId(detail.nodeId);
+    const affectedChannels = channelsStore.channels.filter(
+      (ch) => normalizeNodeId(ch.hardwareRef.nodeKey) === normalizedNodeId && ch.hardwareRef.connector === detail.slotId,
+    );
+
+    if (affectedChannels.length > 0) {
+      // Show confirmation dialog; proceed only on confirm
+      channelRemovalDialog = {
+        channelCount: affectedChannels.length,
+        onConfirm: () => {
+          channelRemovalDialog = null;
+          void proceedWithConnectorSelectionChange(detail);
+        },
+      };
+      return;
+    }
+
+    await proceedWithConnectorSelectionChange(detail);
+  }
+
+  async function proceedWithConnectorSelectionChange(detail: {
+    nodeId: string;
+    slotId: string;
+    selectedDaughterboardId: string | null;
+  }): Promise<void> {
     try {
       const saved = await applyConnectorSelectionChange(detail);
 
@@ -1336,6 +1412,17 @@
           >
             <span class="tb-icon">🎀</span>
             <span>Bowties</span>
+          </button>
+          <button
+            class="toolbar-seg"
+            class:toolbar-btn-active={activeTab === 'railroad'}
+            aria-pressed={activeTab === 'railroad'}
+            onclick={() => activeTab = 'railroad'}
+            onkeydown={handleModeKeydown}
+            title="Railroad information channels"
+          >
+            <span class="tb-icon">🚂</span>
+            <span>Railroad</span>
           </button>
         </div>
         {#if layoutStore.isConnected && (configAcquisition.readingRemaining || unreadCount > 0)}
@@ -1437,6 +1524,10 @@
         <p class="empty-status">No nodes found.</p>
         <p class="empty-hint">Click <strong>Refresh Nodes</strong> in the toolbar to scan the network again.</p>
       </div>
+
+    {:else if activeTab === 'railroad'}
+      <!-- Spec 015: Information channels inventory -->
+      <RailroadPanel nodeName={resolveNodeName} />
 
     {:else if activeTab === 'bowties'}
       <!-- Feature 006: Bowties catalog in-page tab (no navigation) -->
@@ -1607,6 +1698,30 @@
     message={errorDialog.message}
     onClose={() => { errorDialog = null; }}
   />
+{/if}
+
+{#if channelRemovalDialog}
+  <div
+    class="unsaved-overlay"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Channel removal confirmation"
+  >
+    <div class="unsaved-dialog">
+      <h3 class="unsaved-title">Remove Channels</h3>
+      <p class="unsaved-body">Changing the daughter board will remove {channelRemovalDialog.channelCount} channel{channelRemovalDialog.channelCount === 1 ? '' : 's'}. Continue?</p>
+      <div class="unsaved-actions">
+        <button
+          class="unsaved-btn unsaved-btn-secondary"
+          onclick={() => { channelRemovalDialog = null; }}
+        >Cancel</button>
+        <button
+          class="unsaved-btn unsaved-btn-danger"
+          onclick={() => { channelRemovalDialog?.onConfirm(); }}
+        >Continue</button>
+      </div>
+    </div>
+  </div>
 {/if}
 
 {#if showAboutDialog}

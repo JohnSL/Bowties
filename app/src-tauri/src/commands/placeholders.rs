@@ -13,64 +13,8 @@
 //! synthesized snapshot fields through the existing `save_layout_directory`
 //! path.
 
-use crate::layout::types::{is_placeholder, validate_node_key, LayoutEditDelta};
 use crate::profile::{list_bundled_profiles, BundledProfileSummary};
-use crate::state::{ActiveLayoutMode, AppState};
-
-use super::layout_capture::{save_layout_directory, SaveLayoutResult};
-
-async fn active_offline_layout_path(state: &tauri::State<'_, AppState>) -> Result<String, String> {
-    let active = state.active_layout.read().await.clone();
-    let ctx = active
-        .filter(|c| c.mode == ActiveLayoutMode::OfflineFile)
-        .ok_or_else(|| "No offline layout is active".to_string())?;
-    if ctx.root_path.is_empty() {
-        return Err("Active layout has no on-disk path yet".to_string());
-    }
-    Ok(ctx.root_path)
-}
-
-async fn apply_single_delta(
-    delta: LayoutEditDelta,
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-) -> Result<SaveLayoutResult, String> {
-    let path = active_offline_layout_path(&state).await?;
-    save_layout_directory(path, true, vec![delta], app, state).await
-}
-
-#[tauri::command]
-pub async fn set_node_mode_selection(
-    node_key: String,
-    mode_id: String,
-    variant_id: String,
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-) -> Result<SaveLayoutResult, String> {
-    validate_node_key(&node_key)?;
-    if mode_id.trim().is_empty() {
-        return Err("EmptyModeId".to_string());
-    }
-    if variant_id.trim().is_empty() {
-        return Err("EmptyVariantId".to_string());
-    }
-    // If the caller targets a placeholder key, ensure it parses as one even
-    // though `validate_node_key` already accepts both shapes — this keeps the
-    // error message specific when the prefix is present but malformed.
-    if node_key.starts_with("placeholder:") {
-        debug_assert!(is_placeholder(&node_key));
-    }
-    apply_single_delta(
-        LayoutEditDelta::SetNodeModeSelection {
-            node_key,
-            mode_id,
-            variant_id,
-        },
-        app,
-        state,
-    )
-    .await
-}
+use crate::state::AppState;
 
 /// Return picker-ready summaries of every bundled board-model profile.
 ///
@@ -129,7 +73,7 @@ pub struct AddPlaceholderResult {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::layout::types::validate_node_key;
 
     #[test]
     fn set_node_mode_selection_validates_both_node_key_shapes() {

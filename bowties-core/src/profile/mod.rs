@@ -53,6 +53,7 @@ pub use types::{
     DaughterboardDefinition,
     DaughterboardConstraintVariant,
     DaughterboardMetadata,
+    ChannelInputMapping,
 };
 pub use resolver::{ProfilePathMap, resolve_named_path, resolve_profile_paths};
 
@@ -351,6 +352,10 @@ pub fn build_connector_profile_with_diagnostics(
                         .as_ref()
                         .and_then(|metadata| metadata.notes.clone())
                 }),
+                channel_inputs: shared
+                    .and_then(|candidate| candidate.metadata.as_ref())
+                    .map(|metadata| metadata.channel_inputs.clone())
+                    .unwrap_or_default(),
             }
         })
         .collect();

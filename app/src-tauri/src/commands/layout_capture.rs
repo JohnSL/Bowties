@@ -474,6 +474,7 @@ pub async fn save_layout_directory(
         bowties,
         offline_changes,
         cdi_files,
+        channels: previous.as_ref().map(|p| p.channels.clone()).unwrap_or_default(),
     };
 
     crate::layout::save_capture(target, &write_data)?;

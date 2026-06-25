@@ -68,10 +68,11 @@ class BowtieMetadataStore {
     });
   }
 
-  /** Rename a bowtie. */
+  /** Rename a bowtie. No-op if the new name equals the current name (ADR-0012). */
   renameBowtie(eventIdHex: string, newName: string): void {
-    const id = this._makeId();
     const current = this._getEffectiveMetadata(eventIdHex);
+    if (current?.name === newName) return; // no-op suppression
+    const id = this._makeId();
     this._edits.set(`rename:${eventIdHex}`, {
       id,
       kind: { type: 'rename', eventIdHex, oldName: current?.name, newName },

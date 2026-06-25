@@ -147,3 +147,29 @@ and CDI path resolution (which depend on `tauri::AppHandle`).
 **Net result.** bowties-core grew from 287 to 310 tests (+23). The four
 extraction phases together brought the previously-untestable backend from
 0 runnable tests to 310 passing tests across domain modules.
+
+## 2026-06-25 extension: canonical form for persisted node references
+
+Any field that stores a node reference in a persisted file (YAML, JSON) or
+in an in-memory domain struct MUST use the canonical NodeKey wire form
+(`020157000002D9` for live, `placeholder:<uuid>` for placeholders) — never
+the dotted display form (`02.01.57.00.02.D9`).
+
+Where the branded `NodeKey` type cannot be used directly (e.g., serde struct
+fields that must remain `String` for schema compatibility), the code that
+**populates** the field MUST normalize at the boundary via
+`normalizeNodeId()` (frontend) or the equivalent backend normalization.
+Consumers SHOULD still normalize when comparing, as a safety net for legacy
+data written before this rule was codified.
+
+**Trigger.** Spec 015 S5: `HardwareReference.node_key` (a raw `String` field)
+was populated with `document.nodeId` in dotted format. When the sidebar
+emitted a connector-selection-change event with the canonical form, the
+`===` comparison silently failed — no confirmation dialog appeared and
+channel removal never executed. The bug persisted across sessions because
+the dotted value was written to `channels.yaml`.
+
+**Rule.** Treat any `String`-typed field whose semantic role is "identifies a
+node" as a deferred migration site for the branded `NodeKey` type. Until
+that migration reaches the field, normalize at the write site — do not rely
+on downstream normalization alone.

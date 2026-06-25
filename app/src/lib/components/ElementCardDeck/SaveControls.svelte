@@ -16,6 +16,7 @@
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { effectiveNodeStore } from '$lib/layout';
+  import { channelsStore } from '$lib/stores/channels.svelte';
   import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
@@ -61,7 +62,9 @@
   let viewState = $derived(deriveSaveControlsViewState({
     bowtieMetadataEditCount: bowtieMetadataStore.editCount,
     bowtieMetadataIsDirty: bowtieMetadataStore.isDirty,
+    channelEditCount: channelsStore.editCount,
     configDraftCount: configChangesStore.draftEntries().length,
+    connectorSelectionEditCount: connectorSelectionsStore.editCount,
     connectorWarningCount: connectorSelectionsStore.totalWarningCount,
     layoutIsDirty: layoutStore.isDirty,
     layoutIsOfflineMode: layoutStore.isOfflineMode,
@@ -142,6 +145,8 @@
       await offlineChangesStore.revertAllPending();
       discardAllConfigDrafts();
       bowtieMetadataStore.clearAll();
+      connectorSelectionsStore.discard();
+      channelsStore.discard();
       layoutStore.revertToSaved();
       rehydrateConnectorSelectionsFromLayout();
       saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
@@ -151,6 +156,8 @@
     await discardModifiedValues();
     discardAllConfigDrafts();
     bowtieMetadataStore.clearAll();
+    connectorSelectionsStore.discard();
+    channelsStore.discard();
     layoutStore.revertToSaved();
     rehydrateConnectorSelectionsFromLayout();
     saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };

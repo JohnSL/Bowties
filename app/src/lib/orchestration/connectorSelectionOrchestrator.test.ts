@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { ConnectorProfileView, ConnectorSelectionDocument } from '$lib/types/connectorProfile';
 import type { LeafConfigNode, NodeConfigTree } from '$lib/types/nodeTree';
 
-import { computeConnectorCompatibilityState } from './connectorSelectionOrchestrator';
+import { computeConnectorCompatibilityState, buildAutoCreatedChannels, buildAutoCreatedChannelsForSlot } from './connectorSelectionOrchestrator';
 
 function makeLeaf(overrides: Partial<LeafConfigNode> = {}): LeafConfigNode {
   return {
@@ -169,5 +169,286 @@ describe('computeConnectorCompatibilityState', () => {
 
     expect(state.stagedRepairs).toEqual([]);
     expect(state.warnings).toEqual([]);
+  });
+});
+
+describe('buildAutoCreatedChannels', () => {
+  function makeProfileWithChannelInputs(): ConnectorProfileView {
+    return {
+      nodeId: '05.02.01.02.03.00',
+      carrierKey: 'rr-cirkits::tower-lcc',
+      slots: [
+        {
+          slotId: 'connector-a',
+          label: 'Connector A',
+          order: 0,
+          allowNoneInstalled: true,
+          supportedDaughterboardIds: ['BOD-8-SM'],
+          affectedPaths: [],
+          supportedDaughterboardConstraints: [],
+        },
+        {
+          slotId: 'connector-b',
+          label: 'Connector B',
+          order: 1,
+          allowNoneInstalled: true,
+          supportedDaughterboardIds: ['BOD4'],
+          affectedPaths: [],
+          supportedDaughterboardConstraints: [],
+        },
+      ],
+      supportedDaughterboards: [
+        {
+          daughterboardId: 'BOD-8-SM',
+          displayName: 'BOD-8-SM',
+          kind: 'detection',
+          channelInputs: [
+            { channelType: 'block-occupancy', inputs: [1, 2, 3, 4, 5, 6, 7, 8] },
+          ],
+        },
+        {
+          daughterboardId: 'BOD4',
+          displayName: 'BOD4',
+          kind: 'mixed-io',
+          channelInputs: [
+            { channelType: 'block-occupancy', inputs: [1, 2, 3, 4] },
+          ],
+        },
+        {
+          daughterboardId: 'FOB-A',
+          displayName: 'FOB-A',
+          kind: 'breakout',
+          // no channelInputs — breakout board
+        },
+      ],
+    };
+  }
+
+  function makeDocumentWithSelections(
+    selections: { slotId: string; selectedDaughterboardId?: string }[],
+  ): ConnectorSelectionDocument {
+    return {
+      nodeId: '05.02.01.02.03.00',
+      carrierKey: 'rr-cirkits::tower-lcc',
+      slotSelections: selections.map((s) => ({
+        ...s,
+        status: s.selectedDaughterboardId ? 'selected' as const : 'none' as const,
+      })),
+    };
+  }
+
+  it('creates 8 block-occupancy channels for BOD-8-SM on connector-a', () => {
+    const profile = makeProfileWithChannelInputs();
+    const document = makeDocumentWithSelections([
+      { slotId: 'connector-a', selectedDaughterboardId: 'BOD-8-SM' },
+    ]);
+
+    const channels = buildAutoCreatedChannels(profile, document, 'West Yard');
+
+    expect(channels).toHaveLength(8);
+    for (let i = 0; i < 8; i++) {
+      expect(channels[i]).toMatchObject({
+        name: `West Yard — Connector A — Input ${i + 1}`,
+        channelType: 'block-occupancy',
+        hardwareRef: {
+          nodeKey: '050201020300',
+          connector: 'connector-a',
+          input: i + 1,
+        },
+      });
+      // Each channel gets a unique UUID
+      expect(channels[i].id).toBeTruthy();
+    }
+    // All IDs are unique
+    const ids = channels.map((c) => c.id);
+    expect(new Set(ids).size).toBe(8);
+  });
+
+  it('creates 4 channels for BOD4 (detection-half only)', () => {
+    const profile = makeProfileWithChannelInputs();
+    const document = makeDocumentWithSelections([
+      { slotId: 'connector-b', selectedDaughterboardId: 'BOD4' },
+    ]);
+
+    const channels = buildAutoCreatedChannels(profile, document, 'East Staging');
+
+    expect(channels).toHaveLength(4);
+    expect(channels[0]).toMatchObject({
+      name: 'East Staging — Connector B — Input 1',
+      channelType: 'block-occupancy',
+      hardwareRef: {
+        nodeKey: '050201020300',
+        connector: 'connector-b',
+        input: 1,
+      },
+    });
+    expect(channels[3]).toMatchObject({
+      name: 'East Staging — Connector B — Input 4',
+      hardwareRef: { input: 4 },
+    });
+  });
+
+  it('returns empty array when selected board has no channelInputs', () => {
+    const profile = makeProfileWithChannelInputs();
+    const document = makeDocumentWithSelections([
+      { slotId: 'connector-a', selectedDaughterboardId: 'FOB-A' },
+    ]);
+
+    const channels = buildAutoCreatedChannels(profile, document, 'Node 1');
+
+    expect(channels).toEqual([]);
+  });
+
+  it('returns empty array when no board is selected', () => {
+    const profile = makeProfileWithChannelInputs();
+    const document = makeDocumentWithSelections([
+      { slotId: 'connector-a' },
+    ]);
+
+    const channels = buildAutoCreatedChannels(profile, document, 'Node 1');
+
+    expect(channels).toEqual([]);
+  });
+
+  it('returns empty array when profile has no supportedDaughterboards', () => {
+    const profile = makeProfileWithChannelInputs();
+    profile.supportedDaughterboards = undefined;
+    const document = makeDocumentWithSelections([
+      { slotId: 'connector-a', selectedDaughterboardId: 'BOD-8-SM' },
+    ]);
+
+    const channels = buildAutoCreatedChannels(profile, document, 'Node 1');
+
+    expect(channels).toEqual([]);
+  });
+
+  it('creates channels for multiple slots with boards selected', () => {
+    const profile = makeProfileWithChannelInputs();
+    const document = makeDocumentWithSelections([
+      { slotId: 'connector-a', selectedDaughterboardId: 'BOD-8-SM' },
+      { slotId: 'connector-b', selectedDaughterboardId: 'BOD4' },
+    ]);
+
+    const channels = buildAutoCreatedChannels(profile, document, 'West Yard');
+
+    expect(channels).toHaveLength(12); // 8 + 4
+    // First 8 are connector-a
+    expect(channels[0].hardwareRef.connector).toBe('connector-a');
+    expect(channels[7].hardwareRef.connector).toBe('connector-a');
+    // Next 4 are connector-b
+    expect(channels[8].hardwareRef.connector).toBe('connector-b');
+    expect(channels[11].hardwareRef.connector).toBe('connector-b');
+  });
+});
+
+describe('buildAutoCreatedChannelsForSlot', () => {
+  function makeProfileWithChannelInputs(): ConnectorProfileView {
+    return {
+      nodeId: '05.02.01.02.03.00',
+      carrierKey: 'rr-cirkits::tower-lcc',
+      slots: [
+        {
+          slotId: 'connector-a',
+          label: 'Connector A',
+          order: 0,
+          allowNoneInstalled: true,
+          supportedDaughterboardIds: ['BOD-8-SM'],
+          affectedPaths: [],
+          supportedDaughterboardConstraints: [],
+        },
+        {
+          slotId: 'connector-b',
+          label: 'Connector B',
+          order: 1,
+          allowNoneInstalled: true,
+          supportedDaughterboardIds: ['BOD4'],
+          affectedPaths: [],
+          supportedDaughterboardConstraints: [],
+        },
+      ],
+      supportedDaughterboards: [
+        {
+          daughterboardId: 'BOD-8-SM',
+          displayName: 'BOD-8-SM',
+          kind: 'detection',
+          channelInputs: [
+            { channelType: 'block-occupancy', inputs: [1, 2, 3, 4, 5, 6, 7, 8] },
+          ],
+        },
+        {
+          daughterboardId: 'BOD4',
+          displayName: 'BOD4',
+          kind: 'mixed-io',
+          channelInputs: [
+            { channelType: 'block-occupancy', inputs: [1, 2, 3, 4] },
+          ],
+        },
+      ],
+    };
+  }
+
+  function makeDocumentWithSelections(
+    selections: { slotId: string; selectedDaughterboardId?: string | null }[],
+  ): ConnectorSelectionDocument {
+    return {
+      nodeId: '05.02.01.02.03.00',
+      carrierKey: 'rr-cirkits::tower-lcc',
+      slotSelections: selections.map((s) => ({
+        ...s,
+        selectedDaughterboardId: s.selectedDaughterboardId ?? undefined,
+        status: s.selectedDaughterboardId ? 'selected' as const : 'none' as const,
+      })),
+    };
+  }
+
+  it('creates channels only for the specified slot', () => {
+    const profile = makeProfileWithChannelInputs();
+    const document = makeDocumentWithSelections([
+      { slotId: 'connector-a', selectedDaughterboardId: 'BOD-8-SM' },
+      { slotId: 'connector-b', selectedDaughterboardId: 'BOD4' },
+    ]);
+
+    const channels = buildAutoCreatedChannelsForSlot(profile, document, 'West Yard', 'connector-a');
+
+    expect(channels).toHaveLength(8);
+    expect(channels.every((ch) => ch.hardwareRef.connector === 'connector-a')).toBe(true);
+  });
+
+  it('returns empty array when slot has no board selected', () => {
+    const profile = makeProfileWithChannelInputs();
+    const document = makeDocumentWithSelections([
+      { slotId: 'connector-a', selectedDaughterboardId: null },
+    ]);
+
+    const channels = buildAutoCreatedChannelsForSlot(profile, document, 'Node 1', 'connector-a');
+
+    expect(channels).toEqual([]);
+  });
+
+  it('returns empty array when selected board has no channelInputs', () => {
+    const profile = makeProfileWithChannelInputs();
+    // Override to remove channelInputs from the BOD-8-SM board
+    profile.supportedDaughterboards![0].channelInputs = undefined;
+    const document = makeDocumentWithSelections([
+      { slotId: 'connector-a', selectedDaughterboardId: 'BOD-8-SM' },
+    ]);
+
+    const channels = buildAutoCreatedChannelsForSlot(profile, document, 'Node 1', 'connector-a');
+
+    expect(channels).toEqual([]);
+  });
+
+  it('stores nodeKey in canonical wire form even when document.nodeId is dotted (ADR-0010)', () => {
+    const profile = makeProfileWithChannelInputs();
+    // document.nodeId is in dotted format (as returned by backend profile)
+    const document = makeDocumentWithSelections([
+      { slotId: 'connector-a', selectedDaughterboardId: 'BOD-8-SM' },
+    ]);
+    expect(document.nodeId).toBe('05.02.01.02.03.00'); // dotted
+
+    const channels = buildAutoCreatedChannelsForSlot(profile, document, 'Node 1', 'connector-a');
+
+    // hardwareRef.nodeKey must be canonical (no dots, uppercase)
+    expect(channels[0].hardwareRef.nodeKey).toBe('050201020300');
   });
 });

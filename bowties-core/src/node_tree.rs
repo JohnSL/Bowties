@@ -171,6 +171,8 @@ pub struct SupportedDaughterboard {
     pub kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub channel_inputs: Vec<crate::profile::types::ChannelInputMapping>,
 }
 
 /// One CDI segment — a contiguous memory space.

@@ -5,6 +5,7 @@
 pub mod discovery;
 pub mod cdi;
 pub mod bowties;
+pub mod channels;
 pub mod connector_profiles;
 pub mod connection;
 pub mod layout_capture;
@@ -16,6 +17,7 @@ pub mod sync_panel;
 pub use discovery::*;
 pub use cdi::*;
 pub use bowties::*;
+pub use channels::*;
 pub use connector_profiles::*;
 pub use connection::*;
 pub use layout_capture::*;

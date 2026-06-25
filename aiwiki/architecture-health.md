@@ -104,3 +104,12 @@ Each entry:
   2. The save path unconditionally preferred fresh (empty) snapshots over previous (complete) ones.
   3. ADR-0006's "files that did not change are not rewritten" was not implemented.
 - **Fix**: `node_registry` now holds `saved_trees` (populated during `open_layout_directory`, cleared on `clear_layout_scope`). `get_or_create` seeds new proxies with saved trees on bus rediscovery. Bulk emit scoped to only annotated nodes. Save path guards against partial-snapshot downgrades. Content-diff guard skips unchanged node files.
+
+### Companion file data loss in full save path (resolved)
+- **Area**: `commands/layout_capture.rs`, `connectorSelectionsStore`, `bowties-core/layout/types.rs`
+- **Risk** (resolved): Two related bugs where layout data changes were lost on full save:
+  1. `save_layout_directory` constructed `LayoutDirectoryWriteData` with `channels: ChannelsDocument::default()` instead of carrying forward `previous.channels`. Every full save wiped `channels.yaml`.
+  2. `connectorSelectionsStore.saveDocument()` skipped IPC for slots set to "None installed" (`selectedDaughterboardId` undefined). No `ClearNodeModeSelection` delta existed, so old selections were never removed from disk. Full save read the stale selection and preserved it.
+- **Fix**: (1) Use `previous.as_ref().map(|p| p.channels.clone()).unwrap_or_default()`. (2) Add `ClearNodeModeSelection` delta variant; `saveDocument` now calls `clearNodeModeSelection` IPC for cleared slots.
+- **Pattern**: When adding a new companion file or delta-persisted field, verify it flows through **both** the partial-update path (single IPC) **and** the full save path (`save_layout_directory`). The two paths diverge at the `LayoutDirectoryWriteData` construction point.
+- **Resolution (ADR-0012)**: The write-through pattern that caused both bugs was eliminated. All layout edits now flow through the in-memory draft layer. No user-interaction handler calls a backend mutation IPC directly. The save workflow is the single path that writes layout data to disk. `set_node_mode_selection` and `clear_node_mode_selection` IPC commands removed; their delta variants remain and are collected at save time by `connectorSelectionsStore.collectDeltas()`.

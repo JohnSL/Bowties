@@ -21,7 +21,9 @@ function makeState(overrides: Partial<Parameters<typeof deriveSaveControlsViewSt
   return deriveSaveControlsViewState({
     bowtieMetadataEditCount: 0,
     bowtieMetadataIsDirty: false,
+    channelEditCount: 0,
     configDraftCount: 0,
+    connectorSelectionEditCount: 0,
     connectorWarningCount: 0,
     layoutIsDirty: false,
     layoutIsOfflineMode: false,

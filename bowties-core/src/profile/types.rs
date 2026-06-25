@@ -389,6 +389,22 @@ pub struct DaughterboardMetadata {
     pub manufacturer_tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub channel_inputs: Vec<ChannelInputMapping>,
+}
+
+/// Declares which channel types a daughterboard supports on which input pins.
+///
+/// This is a capability mapping, not a creation instruction. Auto-create
+/// consumes it to bulk-create channels; future single-pin assignment uses
+/// it to present available templates per pin.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelInputMapping {
+    /// The channel type slug (e.g. `"block-occupancy"`).
+    pub channel_type: String,
+    /// 1-based input ordinals that support this channel type.
+    pub inputs: Vec<u32>,
 }
 
 #[cfg(test)]

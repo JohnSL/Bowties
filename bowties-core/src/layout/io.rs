@@ -19,11 +19,13 @@ use super::types::LayoutFile;
 use super::manifest::LayoutManifest;
 use super::node_snapshot::NodeSnapshot;
 use super::offline_changes::OfflineChange;
+use super::channels::ChannelsDocument;
 use super::journal::{self, PlannedWrite, PrunePlan, SavePlan, WriteOp};
 
 pub const BOWTIES_FILE: &str = "bowties.yaml";
 pub const OFFLINE_CHANGES_FILE: &str = "offline-changes.yaml";
 pub const EVENT_NAMES_FILE: &str = "event-names.yaml";
+pub const CHANNELS_FILE: &str = "channels.yaml";
 pub const NODES_DIR: &str = "nodes";
 pub const MANIFEST_FILE: &str = "manifest.yaml";
 const CDI_DIR: &str = "cdi";
@@ -136,6 +138,8 @@ pub struct LayoutDirectoryWriteData {
     pub offline_changes: Vec<OfflineChange>,
     /// List of (cache_key, source_path_to_cdi_file) pairs for CDI files to copy
     pub cdi_files: Vec<(String, std::path::PathBuf)>,
+    /// Information channel inventory for the layout.
+    pub channels: ChannelsDocument,
 }
 
 #[derive(Debug, Clone)]
@@ -149,6 +153,9 @@ pub struct LayoutDirectoryReadData {
     /// should surface a notice that the previous save was incomplete
     /// and has been restored.
     pub recovery_occurred: bool,
+    /// Information channel inventory loaded from `channels.yaml`.
+    /// Empty when the file is missing (pre-015 layouts).
+    pub channels: ChannelsDocument,
 }
 
 pub fn write_layout_capture(layout_dir: &Path, data: &LayoutDirectoryWriteData) -> Result<(), String> {
@@ -184,6 +191,10 @@ pub fn write_layout_capture(layout_dir: &Path, data: &LayoutDirectoryWriteData) 
     plan.writes.push(PlannedWrite {
         abs_path: layout_dir.join(EVENT_NAMES_FILE),
         op: WriteOp::Bytes(serialize_yaml(&std::collections::BTreeMap::<String, String>::new())?),
+    });
+    plan.writes.push(PlannedWrite {
+        abs_path: layout_dir.join(CHANNELS_FILE),
+        op: WriteOp::Bytes(serialize_yaml(&data.channels)?),
     });
 
     // Per-node snapshots: also prune extras left over from a previous
@@ -266,12 +277,21 @@ pub fn read_layout_capture(layout_dir: &Path) -> Result<LayoutDirectoryReadData,
 
     let (bowties, node_snapshots, offline_changes) = read_companion_contents(layout_dir, &manifest)?;
 
+    // channels.yaml is optional — pre-015 layouts won't have it.
+    let channels_path = layout_dir.join(CHANNELS_FILE);
+    let channels: ChannelsDocument = if channels_path.exists() {
+        read_yaml_file(&channels_path)?
+    } else {
+        ChannelsDocument::default()
+    };
+
     Ok(LayoutDirectoryReadData {
         manifest,
         node_snapshots,
         bowties,
         offline_changes,
         recovery_occurred,
+        channels,
     })
 }
 
@@ -515,6 +535,7 @@ mod tests {
             bowties: LayoutFile::default(),
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
+            channels: crate::layout::channels::ChannelsDocument::default(),
         };
 
         write_layout_capture(&layout_dir, &data).unwrap();
@@ -546,6 +567,7 @@ mod tests {
             bowties: LayoutFile::default(),
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
+            channels: crate::layout::channels::ChannelsDocument::default(),
         };
 
         write_layout_capture(&layout_dir, &data).unwrap();
@@ -603,6 +625,7 @@ mod tests {
             bowties: LayoutFile::default(),
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
+            channels: crate::layout::channels::ChannelsDocument::default(),
         };
 
         write_layout_capture(&layout_dir, &data).unwrap();
@@ -644,6 +667,7 @@ mod tests {
             bowties: LayoutFile::default(),
             offline_changes: Vec::new(),
             cdi_files: vec![("acme_modelx_1.0".to_string(), cdi_source)],
+            channels: crate::layout::channels::ChannelsDocument::default(),
         };
 
         write_layout_capture(&layout_dir, &data).unwrap();
@@ -724,6 +748,7 @@ mod tests {
             bowties: LayoutFile::default(),
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
+            channels: crate::layout::channels::ChannelsDocument::default(),
         };
 
         write_layout_capture(&layout_dir, &data).unwrap();
@@ -775,6 +800,7 @@ mod tests {
             bowties: LayoutFile::default(),
             offline_changes: Vec::new(),
             cdi_files: vec![("acme_modelx_1.0".to_string(), cdi_source)],
+            channels: crate::layout::channels::ChannelsDocument::default(),
         };
 
         write_layout_capture(&layout_dir, &initial_data).unwrap();
@@ -785,6 +811,7 @@ mod tests {
             bowties: LayoutFile::default(),
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
+            channels: crate::layout::channels::ChannelsDocument::default(),
         };
 
         write_layout_capture(&layout_dir, &resave_data).unwrap();
@@ -833,6 +860,7 @@ mod tests {
             bowties: LayoutFile::default(),
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
+            channels: crate::layout::channels::ChannelsDocument::default(),
         };
         write_layout_capture(&layout_dir, &data).unwrap();
 
@@ -872,6 +900,7 @@ mod tests {
             bowties: LayoutFile::default(),
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
+            channels: crate::layout::channels::ChannelsDocument::default(),
         };
         write_layout_capture(&layout_dir, &data).unwrap();
 
@@ -944,6 +973,7 @@ mod tests {
             bowties: LayoutFile::default(),
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
+            channels: crate::layout::channels::ChannelsDocument::default(),
         };
         write_layout_capture(&layout_dir, &initial).unwrap();
 
@@ -966,6 +996,7 @@ mod tests {
             bowties: LayoutFile::default(),
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
+            channels: crate::layout::channels::ChannelsDocument::default(),
         };
         write_layout_capture(&layout_dir, &resave).unwrap();
 
@@ -1074,6 +1105,7 @@ mod tests {
             bowties: LayoutFile::default(),
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
+            channels: crate::layout::channels::ChannelsDocument::default(),
         };
 
         write_layout_capture(&layout_dir, &data).unwrap();

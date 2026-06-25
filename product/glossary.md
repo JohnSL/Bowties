@@ -98,6 +98,22 @@ _Avoid_: node_id (ambiguous — could mean the 6-byte LCC Node ID or the string 
 A node that exists only in the Bowties layout, not on the physical LCC bus. Represented as a `NodeSnapshot` with `node_id: None` and `profile_stem: Some(...)`. In memory, a `SynthesizedNodeProxy` in the Proxy Registry. The placeholder factory (`placeholder.rs`) synthesizes what bus discovery would have produced. All event ID fields are pre-filled with `[0u8; 8]` (all-zero, excluded from bowtie binding by the zero-prefix rule). See ADR-0009.
 _Avoid_: virtual node (implies protocol presence), stub, mock
 
+**Information Channel**:
+A typed, named representation of a single piece of layout-meaningful information (e.g., "Block 7 Occupancy") independent of protocol details. Channels are the foundational data layer for railroad-level abstractions. Key attributes: unique ID (UUID v4), user-assigned name, channel type, hardware reference. Persisted in `channels.yaml` in the layout folder. See Spec 015.
+_Avoid_: sensor (protocol-specific), input (hardware-level), event (protocol-level)
+
+**Channel Type**:
+A well-known classification defining what kind of information a channel carries and its possible states. Initially only `block-occupancy` (occupied / clear). Future types will be added as more daughter board families are supported.
+_Avoid_: sensor type, input type, signal type
+
+**Hardware Reference**:
+The backing physical source for an information channel: which node, which connector, and which input ordinal produces the data. Stored as `{ nodeKey, connector (slug), input (1-based ordinal) }`. Displayed using `resolveNodeName(nodeKey)` — never the raw key.
+_Avoid_: source, origin, pin reference
+
+**Railroad Tab**:
+The third (rightmost) tab in the main application view, displaying the information channel inventory grouped by type. The future home for layout-level railroad abstractions (channels, facilities, behavior templates).
+_Avoid_: channel tab, inventory tab, layout tab (overloaded with "layout file")
+
 ## Architecture Roles
 
 **Route**:
@@ -199,6 +215,9 @@ _Avoid_: "node store" (overloaded), "dirty store"
 - **Relevance Rules** govern CDI sections (many-to-many: one rule may affect multiple sections; one section may be governed by multiple rules)
 - **Offline Changes** are a superset of **Pending Changes** (all pending changes are offline; not all offline changes are pending)
 - A **Sync Session** classifies **Offline Changes** into actionable rows
+- An **Information Channel** has exactly one **Hardware Reference** linking it to a node/connector/input
+- An **Information Channel** has exactly one **Channel Type** classifying the information it carries
+- A **Layout** contains zero or more **Information Channels** (persisted in `channels.yaml`)
 
 ## Flagged Ambiguities
 

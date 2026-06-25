@@ -14,6 +14,7 @@
 use std::path::Path;
 
 pub mod capture;
+pub mod channels;
 pub mod io;
 pub(crate) mod journal;
 pub mod known_layouts;
@@ -84,6 +85,44 @@ pub fn update_offline_changes(
         }],
         prune_dirs: Vec::new(),
     })
+}
+
+/// Replace the channels file in the layout directory.
+///
+/// The layout directory must already exist. Routed through the layout
+/// journal so a crash mid-write is recoverable (ADR-0006).
+pub fn update_channels(
+    layout_dir: &Path,
+    doc: &channels::ChannelsDocument,
+) -> Result<(), String> {
+    if !layout_dir.exists() {
+        return Err(format!(
+            "Layout directory not found: {}",
+            layout_dir.display()
+        ));
+    }
+    let path = layout_dir.join(io::CHANNELS_FILE);
+    let bytes = io::serialize_yaml(doc)?;
+    journal::execute(journal::SavePlan {
+        layout_dir: layout_dir.to_path_buf(),
+        writes: vec![journal::PlannedWrite {
+            abs_path: path,
+            op: journal::WriteOp::Bytes(bytes),
+        }],
+        prune_dirs: Vec::new(),
+    })
+}
+
+/// Read the channels document from the layout directory.
+///
+/// Returns an empty `ChannelsDocument` when the file does not exist
+/// (pre-015 layouts), matching the backward-compatibility rule.
+pub fn read_channels(layout_dir: &Path) -> Result<channels::ChannelsDocument, String> {
+    let path = layout_dir.join(io::CHANNELS_FILE);
+    if !path.exists() {
+        return Ok(channels::ChannelsDocument::default());
+    }
+    io::read_yaml_file(&path)
 }
 
 /// Write the given node snapshots into the layout directory.
@@ -259,6 +298,7 @@ mod tests {
             bowties: LayoutFile::default(),
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
+            channels: crate::layout::channels::ChannelsDocument::default(),
         };
         save_capture(layout_dir, &data).unwrap();
     }
@@ -343,6 +383,105 @@ mod tests {
         assert!(err.contains("not found"), "got: {}", err);
         let err = update_node_snapshots(&layout_dir, &[]).unwrap_err();
         assert!(err.contains("not found"), "got: {}", err);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── S2: Channel persistence ───────────────────────────────────────────
+
+    fn make_channel(id: &str, name: &str, input: u32) -> crate::layout::channels::InformationChannel {
+        crate::layout::channels::InformationChannel {
+            id: id.to_string(),
+            name: name.to_string(),
+            channel_type: crate::layout::channels::ChannelType::BlockOccupancy,
+            hardware_ref: crate::layout::channels::HardwareReference {
+                node_key: "05010101FF000001".to_string(),
+                connector: "connector-a".to_string(),
+                input,
+            },
+        }
+    }
+
+    #[test]
+    fn channels_roundtrip_through_save_and_read_capture() {
+        let root = fresh_dir("bowties_s2_channels_roundtrip");
+        let layout_dir = root.join("my-layout");
+
+        let channels = vec![
+            make_channel("ch-001", "Block 1", 1),
+            make_channel("ch-002", "Block 2", 2),
+        ];
+        let doc = crate::layout::channels::ChannelsDocument::new(channels.clone());
+
+        let manifest = LayoutManifest::new(
+            "layout".to_string(),
+            "2026-06-24T00:00:00Z".to_string(),
+            "2026-06-24T00:00:00Z".to_string(),
+        );
+        let data = LayoutDirectoryWriteData {
+            manifest,
+            node_snapshots: Vec::new(),
+            bowties: LayoutFile::default(),
+            offline_changes: Vec::new(),
+            cdi_files: Vec::new(),
+            channels: doc.clone(),
+        };
+        save_capture(&layout_dir, &data).unwrap();
+
+        let loaded = read_capture(&layout_dir).unwrap();
+        assert_eq!(loaded.channels.channels.len(), 2);
+        assert_eq!(loaded.channels.channels[0].id, "ch-001");
+        assert_eq!(loaded.channels.channels[1].name, "Block 2");
+        assert_eq!(loaded.channels.schema_version, "1.0");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn read_capture_returns_empty_channels_when_file_missing() {
+        let root = fresh_dir("bowties_s2_channels_missing_file");
+        let layout_dir = root.join("my-layout");
+
+        // Seed a layout without channels (simulates pre-015 layout)
+        let manifest = LayoutManifest::new(
+            "layout".to_string(),
+            "2026-06-24T00:00:00Z".to_string(),
+            "2026-06-24T00:00:00Z".to_string(),
+        );
+        let data = LayoutDirectoryWriteData {
+            manifest,
+            node_snapshots: Vec::new(),
+            bowties: LayoutFile::default(),
+            offline_changes: Vec::new(),
+            cdi_files: Vec::new(),
+            channels: crate::layout::channels::ChannelsDocument::default(),
+        };
+        save_capture(&layout_dir, &data).unwrap();
+
+        // Remove channels.yaml to simulate pre-015 layout
+        let channels_path = layout_dir.join("channels.yaml");
+        let _ = std::fs::remove_file(&channels_path);
+
+        let loaded = read_capture(&layout_dir).unwrap();
+        assert!(loaded.channels.channels.is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn update_channels_roundtrips_through_read_capture() {
+        let root = fresh_dir("bowties_s2_update_channels");
+        let layout_dir = root.join("my-layout");
+        seed_layout(&layout_dir, vec![]);
+
+        let doc = crate::layout::channels::ChannelsDocument::new(vec![
+            make_channel("ch-100", "Yard Lead", 1),
+        ]);
+        update_channels(&layout_dir, &doc).unwrap();
+
+        let loaded = read_capture(&layout_dir).unwrap();
+        assert_eq!(loaded.channels.channels.len(), 1);
+        assert_eq!(loaded.channels.channels[0].name, "Yard Lead");
 
         let _ = std::fs::remove_dir_all(&root);
     }

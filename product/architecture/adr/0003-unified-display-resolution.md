@@ -55,3 +55,33 @@ Two call sites independently constructed `ElementSelection` objects (ElementPick
 Decision: `buildElementSelection(leaf, nodeId)` added to the `$lib/layout` facade as the canonical single constructor for `ElementSelection`. It calls `resolveNodeName` and `buildElementLabel` (via `makeValueResolver`) in one place, structurally preventing the class of bug where one site forgets to resolve the display name or skips the tree lookup.
 
 Additionally, `buildElementLabel()` now includes the segment name as the root-most ancestor in the dot-joined label (e.g. `"Buttons.Button B (1).Event On"` instead of `"Button B (1).Event On"`), aligning the frontend with the Rust `element_label()` path format.
+
+## 2026-06-25 extension: NodeKey as the input to all display resolution
+
+ADR-0010 established `NodeKey` (a sum type: `Live(12-hex)` | `Placeholder(uuid)`) as the canonical node identifier everywhere in the system. This ADR's canonical entry point `resolveNodeName` predates that decision and accepts `nodeId: string`, implicitly assuming a live node. The tension:
+
+- `resolveNodeName` reads stores keyed by canonical 12-hex, looks up SNIP data from the `nodeInfo` store, and resolves the ACDI User Name leaf from a live tree. All of this assumes a connected node.
+- Placeholder nodes have no SNIP data and no live tree. Their display name comes from the layout file (user-assigned name on the placeholder entry) or falls back to the profile's model name. When placeholders become editable (with a bundled CDI tree and an edit layer), they will need the same edit-layer → baseline waterfall, just sourced from different backing stores.
+- Call sites already pass `NodeKey` wire-form strings (canonical 12-hex or `placeholder:<uuid>`) to `resolveNodeName` — the function must handle both without assuming "live".
+
+**Decision:** `resolveNodeName` accepts `NodeKeyInput` (the shim type that covers both branded `NodeKey` and raw strings during migration) and dispatches by variant:
+
+1. **Live variant:** same waterfall as today — effective User Name (edit layer) → SNIP fallback chain → raw node ID hex.
+2. **Placeholder variant:** placeholder display name from layout metadata (user-assigned name on the placeholder board entry) → profile model name → `placeholder:<uuid>` literal.
+
+The function signature widens from `resolveNodeName(nodeId: string)` to `resolveNodeName(key: NodeKeyInput)`. The return type remains `string`. The implementation branches on `isPlaceholderInput(key)` — identical to how IPC boundary functions already dispatch.
+
+**Display references (node + path) follow the same rule.** Any UI surface that shows a "node + element path" reference (bowtie element entries, channel hardware lines, etc.) must:
+
+1. Resolve the node portion through `resolveNodeName(key)` — never format `nodeKey` directly.
+2. Resolve the element/path portion through `buildElementLabel` or an equivalent profile-aware path formatter.
+3. Render the reference as a navigable hyperlink that jumps to the configuration field in the appropriate workspace.
+
+This extends point 4 ("display name resolution uses the effective-value path everywhere") from node names to the full `{node} · {path}` display unit.
+
+**Consequences:**
+
+- `resolveNodeName` gains a placeholder branch. Until placeholders become editable, this branch reads the user-assigned name from `effectiveLayoutStore` (the placeholder board's `name` field) and falls back to the profile model name. When edit-layer support lands for placeholders, the branch adds the same ACDI User Name waterfall against the placeholder's bundled tree.
+- `buildElementSelection` widens its `nodeId` parameter to `NodeKeyInput`, matching `resolveNodeName`.
+- `HardwareReference.nodeKey` (in the channels API) stores a `NodeKey` wire-form string. Display surfaces that show hardware references must call `resolveNodeName(ref.nodeKey)` — never display the raw key.
+- The `nodeName` prop pattern used in `RailroadPanel`/`ChannelGroup`/`ChannelRow` (a `(nodeKey: string) => string` function) is a thin adapter over `resolveNodeName` and remains valid — but it must be wired to `resolveNodeName` at the composition root, not left as an optional prop that falls back to showing raw keys.
