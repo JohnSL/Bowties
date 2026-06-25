@@ -252,19 +252,21 @@ pub fn parse_snip_payload(payload: &[u8]) -> Result<SNIPData> {
     let mut offset = 0;
 
     // Parse Section 1 (Manufacturer ACDI)
-    if offset >= payload.len() {
-        return Err(Error::Protocol("SNIP payload too short for Section 1 version byte".to_string()));
+    if payload.is_empty() {
+        return Err(Error::Protocol("SNIP payload empty".to_string()));
     }
 
-    let section1_version = payload[offset];
+    // Skip the version byte without validation.
+    //
+    // The LCC spec (S-9.7.4.3 §5.1) allows version 0x01 or 0x04 and says
+    // "0x01 should be interpreted as 0x04." JMRI's implementation goes
+    // further: it unconditionally skips byte 0 regardless of value.
+    //
+    // Real-world firmware (e.g. OpenLCB_Single_Thread library) sends 0x01,
+    // and some nodes send non-standard values due to firmware bugs. To
+    // match JMRI's interop level — "if JMRI can show it, we can too" — we
+    // skip byte 0 and parse the 4 null-terminated strings that follow.
     offset += 1;
-
-    if section1_version != 0x04 {
-        return Err(Error::Protocol(format!(
-            "Unexpected Section 1 version: {}, expected 0x04",
-            section1_version
-        )));
-    }
 
     // Extract 4 strings from Section 1
     let manufacturer = parse_section(payload, &mut offset)?;
@@ -274,18 +276,13 @@ pub fn parse_snip_payload(payload: &[u8]) -> Result<SNIPData> {
 
     // Parse Section 2 (User ACDI) - may be missing for some nodes
     let (user_name, user_description) = if offset < payload.len() {
-        let section2_version = payload[offset];
+        // Skip the user-section version byte without validation (same
+        // rationale: spec allows 0x01 or 0x02, JMRI skips unconditionally).
         offset += 1;
 
-        if section2_version != 0x02 {
-            // Section 2 exists but has wrong version - skip it
-            (String::new(), String::new())
-        } else {
-            // Extract 2 strings from Section 2
-            let name = parse_section(payload, &mut offset)?;
-            let description = parse_section(payload, &mut offset)?;
-            (name, description)
-        }
+        let name = parse_section(payload, &mut offset)?;
+        let description = parse_section(payload, &mut offset)?;
+        (name, description)
     } else {
         // Section 2 not present
         (String::new(), String::new())
@@ -675,14 +672,51 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_snip_invalid_version() {
-        // Wrong version byte in Section 1
-        let payload = vec![
-            0x05, // Wrong version (should be 0x04)
+    fn test_parse_snip_version_byte_skipped() {
+        // Any value in byte 0 is accepted (JMRI-compatible tolerance).
+        // Version 0x01 (OpenLCB_Single_Thread library default):
+        let payload_v1 = vec![
+            0x01,
             b'A', b'C', b'M', b'E', 0x00,
+            b'M', b'o', b'd', b'e', b'l', 0x00,
+            b'1', b'.', b'0', 0x00,
+            b'2', b'.', b'0', 0x00,
         ];
+        let result = parse_snip_payload(&payload_v1).unwrap();
+        assert_eq!(result.manufacturer, "ACME");
+        assert_eq!(result.model, "Model");
 
-        assert!(parse_snip_payload(&payload).is_err());
+        // Arbitrary value in byte 0 (firmware bug — still parseable):
+        let payload_garbage = vec![
+            0x43, // 'C' — wrong, but we skip it like JMRI does
+            b'C', b'B', 0x00,
+            b'E', b'S', b'P', 0x00,
+            b'1', b'.', b'0', 0x00,
+            b'0', b'.', b'7', 0x00,
+        ];
+        let result = parse_snip_payload(&payload_garbage).unwrap();
+        assert_eq!(result.manufacturer, "CB");
+        assert_eq!(result.model, "ESP");
+    }
+
+    #[test]
+    fn test_parse_snip_user_section_version_0x01() {
+        // OpenLCB_Single_Thread sends user-section version 0x01.
+        // Spec says 0x01 should be interpreted as 0x02. We skip it.
+        let payload = vec![
+            0x04,
+            b'M', b'f', b'g', 0x00,
+            b'M', b'o', b'd', 0x00,
+            b'1', b'.', b'0', 0x00,
+            b'2', b'.', b'0', 0x00,
+            0x01, // user section version 0x01
+            b'N', b'o', b'd', b'e', 0x00,
+            b'D', b'e', b's', b'c', 0x00,
+        ];
+        let result = parse_snip_payload(&payload).unwrap();
+        assert_eq!(result.manufacturer, "Mfg");
+        assert_eq!(result.user_name, "Node");
+        assert_eq!(result.user_description, "Desc");
     }
 
     #[test]

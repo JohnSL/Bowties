@@ -325,7 +325,7 @@ thin shim modules so existing `crate::` paths compile unchanged.
 | `datagram_reader.rs` | Unified datagram read exchange: sends request, handles ACK/reject/timeout-extension, assembles reply, ACKs, applies post-ACK pacing delay. Shared by BatchReader, CDI download, and single reads. Owns `MemoryReadConfig`, `ExchangeResult`, `ReadDescriptor`. | inline `#[cfg(test)]` — 9 tests |
 | `discovery.rs` | LccConnection: protocol orchestrator, node probe, BatchReader (thin wrapper over datagram_reader) | inline `#[cfg(test)]` |
 | `alias_allocation.rs` | CID7→CID4 alias allocation, conflict detection per S-9.7.2.1 | inline `#[cfg(test)]` |
-| `snip.rs` | SNIP query via datagram: manufacturer/model/version retrieval; tolerant of devices that emit SNIP payload as repeated addressed `DatagramOnly` chunks (parse at silence boundary). | inline `#[cfg(test)]` |
+| `snip.rs` | SNIP query via addressed message: manufacturer/model/version retrieval; tolerant of devices that emit SNIP payload as repeated `DatagramOnly` chunks (parse at silence boundary). Version byte (byte 0) is skipped without validation for JMRI-level interop — accepts 0x01, 0x04, or any value. User-section version byte likewise skipped. | inline `#[cfg(test)]` |
 | `pip.rs` | Protocol Identification Protocol capability query | inline `#[cfg(test)]` |
 | `transport_actor.rs` | Dual-path frame I/O actor: mpsc queue + direct send | inline `#[cfg(test)]` |
 | `dispatcher.rs` | Inbound frame routing by MTI & alias | inline `#[cfg(test)]` |

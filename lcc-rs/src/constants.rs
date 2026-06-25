@@ -54,4 +54,4 @@ pub const MAX_DATAGRAM_RETRIES: u32 = 3;
 ///
 /// Override at runtime via the `post_ack_delay_ms` field in a
 /// `tuning.toml` config file placed in the app data directory.
-pub const DEFAULT_POST_ACK_DELAY_MS: u64 = 10;
+pub const DEFAULT_POST_ACK_DELAY_MS: u64 = 0;
