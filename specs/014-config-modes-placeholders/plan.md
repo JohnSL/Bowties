@@ -62,7 +62,7 @@ app/
 ├── src-tauri/
 │   ├── profiles/
 │   │   ├── RR-CirKits_Tower-LCC.profile.yaml                  # Re-expressed under v2 schema
-│   │   ├── Mustangpeak-Engineering_TurnoutBoss.profile.yaml   # NEW (assembled from profiles/turnout-boss/)
+│   │   ├── Mustangpeak-Engineering_TurnoutBoss.profile.yaml   # NEW (assembled from profile-extractions/turnout-boss/)
 │   │   ├── Mustangpeak-Engineering_TurnoutBoss.cdi.xml        # NEW (bundled CDI for placeholders)
 │   │   └── RR-CirKits_Tower-LCC.cdi.xml                       # NEW (backfilled for placeholders)
 │   └── src/
@@ -119,7 +119,7 @@ Reviewed against `product/architecture/code-placement-and-ownership.md`, the ADR
 | `app/src-tauri/src/commands/cdi.rs` | Backend command | Modified | +`load_bundled_cdi(profile_stem)`. |
 | `app/src-tauri/src/commands/bowties.rs` | Backend command | Modified | Binding enumerations gain `exclude_placeholders` gated on `node_key.starts_with("placeholder:")`. |
 | `app/src-tauri/profiles/RR-CirKits_Tower-LCC.profile.yaml` + `.cdi.xml` | Profile bundle | Rewritten / backfilled | Re-expressed under v2; bundled CDI added. |
-| `Mustangpeak-Engineering_TurnoutBoss.profile.yaml` + `.cdi.xml` | Profile bundle | New | Assembled from `profiles/turnout-boss/`. |
+| `Mustangpeak-Engineering_TurnoutBoss.profile.yaml` + `.cdi.xml` | Profile bundle | New | Assembled from `profile-extractions/turnout-boss/`. |
 | `app/src/lib/stores/placeholderBoardsStore.svelte.ts` | Store | New | Durable placeholder state (identity, configValues, name). |
 | `app/src/lib/stores/connectorSelections.svelte.ts` | Store | Re-targeted | Reads/writes through the unified `nodeModeSelections` field via the same `NodeKey` accepted everywhere else. |
 | `app/src/lib/orchestration/placeholderBoardOrchestrator.ts` | Orchestrator | New | Add / delete / rename / configure lifecycle; wraps deletion in confirmation per FR-017a. |

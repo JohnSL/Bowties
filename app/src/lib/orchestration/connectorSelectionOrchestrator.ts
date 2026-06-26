@@ -28,7 +28,7 @@ import {
 } from '$lib/types/nodeTree';
 import { evaluateConnectorConstraintsForPath } from '$lib/utils/connectorConstraints';
 import { decideConnectorLeafValue } from '$lib/utils/connectorLeafDecision';
-import { formatEventIdHex, parseEventIdHex } from '$lib/utils/serialize';
+import { canonicalEventIdHex, parseEventIdHex } from '$lib/utils/serialize';
 
 interface CompatibilityState {
   stagedRepairs: StagedRepair[];
@@ -414,12 +414,12 @@ function toTreeConfigValue(rawValue: unknown, leaf: LeafConfigNode): TreeConfigV
   if (leaf.elementType === 'eventId') {
     if (Array.isArray(rawValue) && rawValue.length === 8 && rawValue.every((byte) => typeof byte === 'number')) {
       const bytes = rawValue.map((byte) => Number(byte));
-      return { type: 'eventId', bytes, hex: formatEventIdHex(bytes) };
+      return { type: 'eventId', bytes, hex: canonicalEventIdHex(bytes) };
     }
     if (typeof rawValue === 'string') {
       const bytes = parseEventIdHex(rawValue);
       if (bytes) {
-        return { type: 'eventId', bytes, hex: formatEventIdHex(bytes) };
+        return { type: 'eventId', bytes, hex: canonicalEventIdHex(bytes) };
       }
     }
   }

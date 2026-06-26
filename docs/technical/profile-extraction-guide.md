@@ -176,7 +176,7 @@ If validation fails, fix the identified errors in the relevant extraction output
 ## File Structure After Completion
 
 ```
-profiles/tower-lcc/
+profile-extractions/tower-lcc/
 ├── manual-outline.json            ← Step 0
 ├── event-roles.json               ← Step 1
 ├── relevance-rules.json           ← Step 2

@@ -97,6 +97,8 @@
   import { deletePlaceholderBoard } from '$lib/orchestration/placeholderBoardOrchestrator';
   import { isPlaceholderInput } from '$lib/utils/nodeKey';
   import RailroadPanel from '$lib/components/Railroad/RailroadPanel.svelte';
+  import { startEventStateListening, resolveChannelEventIds } from '$lib/orchestration/eventStateOrchestrator';
+  import { eventStateStore } from '$lib/stores/eventState.svelte';
 
   // Active tab state — 'config' (default), 'bowties', or 'railroad'
   let activeTab = $state<'config' | 'bowties' | 'railroad'>('config');
@@ -224,6 +226,41 @@
     }
   });
 
+  // Spec 016: Resolved channel event IDs for live occupancy indicators.
+  // Populated by resolveChannelEventIds() when channels exist and config trees are available.
+  let resolvedEventIds = $state<ReadonlyMap<string, { occupied?: string; clear?: string }>>(new Map());
+
+  // Spec 016: Default BOD event mapping — all block-occupancy BOD boards use the same
+  // producer leaf indices (occupied=0, clear=1) declared in shared-daughterboards.yaml.
+  const BOD_EVENT_MAPPING = {
+    occupied: { producerLeafIndex: 0 },
+    clear: { producerLeafIndex: 1 },
+  } as const;
+
+  // Spec 016: Re-resolve event IDs when channels change or after CDI reads
+  // populate the tree store.
+  //
+  // Spec 017 / S1: also re-resolve when the live roster grows. Saved nodes
+  // have their config tree stored in the backend `node_registry.saved_trees`
+  // map on layout open, and `register_node` seeds the live proxy with that
+  // tree the moment a discovery arrives — so resolution can succeed without
+  // any CDI read. The original effect only depended on `trees.size`, which
+  // does not change on registration, leaving channels stuck at 'unknown'
+  // until the user forced a CDI read. Both reactive reads stay load-bearing:
+  // an assigned-but-unused local does NOT work — build-time DCE may strip
+  // the read, leaving the effect frozen with the empty initial value.
+  $effect(() => {
+    const channels = channelsStore.channels;
+    const connected = layoutStore.isConnected;
+    const liveCount = nodeRoster.liveEntries.length;
+    const treesCount = nodeTreeStore.trees.size;
+    if (connected && channels.length > 0 && (liveCount > 0 || treesCount > 0)) {
+      resolveChannelEventIds(channels, BOD_EVENT_MAPPING).then((resolved) => {
+        resolvedEventIds = resolved;
+      });
+    }
+  });
+
   // Switch to bowties tab when a "Used in" link is clicked on the config page
   $effect(() => {
     if (bowtieFocusStore.highlightedEventIdHex) {
@@ -315,12 +352,18 @@
       await hydrateOfflineSnapshots(currentLayoutSnapshots);
       const availableKeys = new Set(nodeRoster.allEntries.map((e) => e.nodeKey));
       configSidebarStore.pruneToAvailableNodes(availableKeys);
+      // Spec 016 / S2: the bus session has ended even though the layout
+      // continues offline — drop any stale PCER events so indicators show ○.
+      eventStateStore.clear();
     },
     clearLiveState: () => {
       configSidebarStore.reset();
       clearConfigReadStatus();
       nodeRoster.replaceLiveRoster([]);
       nodeTreeStore.reset();
+      // Spec 016 / S2: PCER events are bus-session-scoped — clear so
+      // indicators revert to ○ on disconnect and start fresh on reconnect.
+      eventStateStore.clear();
     },
     resetSyncPanel: () => {
       syncPanelStore.reset();
@@ -907,6 +950,9 @@
       unlistens.push(await listen<ReadProgressState>('config-read-progress', (event) => {
         configAcquisition.applyProgressEvent(event.payload);
       }));
+
+      // Spec 016: Subscribe to PCER events for live channel state indicators
+      unlistens.push(await startEventStateListening());
 
       // Reactive node discovery: nodes appear one-by-one as VerifiedNode replies arrive.
       // Register in backend cache, add skeleton to local list, then fetch SNIP+PIP per node.
@@ -1527,7 +1573,7 @@
 
     {:else if activeTab === 'railroad'}
       <!-- Spec 015: Information channels inventory -->
-      <RailroadPanel nodeName={resolveNodeName} />
+      <RailroadPanel nodeName={resolveNodeName} {resolvedEventIds} />
 
     {:else if activeTab === 'bowties'}
       <!-- Feature 006: Bowties catalog in-page tab (no navigation) -->

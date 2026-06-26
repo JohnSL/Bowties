@@ -173,3 +173,87 @@ the dotted value was written to `channels.yaml`.
 node" as a deferred migration site for the branded `NodeKey` type. Until
 that migration reaches the field, normalize at the write site — do not rely
 on downstream normalization alone.
+
+## 2026-06-26 extension: canonical contiguous hex for event IDs
+
+The same canonical-vs-display split that applies to Node IDs now applies to
+Event IDs. The two identifier types follow the same convention:
+
+| Identifier | Canonical (storage / comparison / IPC) | Display (UI labels, tooltips) |
+|------------|----------------------------------------|-------------------------------|
+| Node ID    | 12-char contiguous: `020157000​2D9`     | Dotted: `02.01.57.00.02.D9`  |
+| Event ID   | 16-char contiguous: `0201570002D90100` | Dotted: `02.01.57.00.02.D9.01.00` |
+
+**Canonical form.** `ConfigValue::EventId.hex`, IPC payloads, map keys, and
+any field whose semantic role is "identifies an event" MUST store the
+16-character contiguous uppercase hex form. Parsing functions MUST accept
+both dotted and contiguous input and normalize to contiguous on output.
+
+**Display form.** UI components that show event IDs to users MUST convert to
+dotted hex at the display boundary using `displayEventIdHex()` (frontend) or
+`bytes_to_display_hex()` (backend). The dotted form matches the OpenLCB
+convention users see in manuals and other tools.
+
+**API surface.** `lcc-rs::EventID` now mirrors `NodeID` with both
+`to_hex_string()` (dotted, display) and `to_canonical()` (contiguous,
+storage). `bowties-core::node_tree` exports `parse_event_id_hex()` (accepts
+both formats → bytes), `normalize_event_id_hex()` (any format → canonical
+string), and `bytes_to_display_hex()` (bytes → dotted display).
+
+**Trigger.** Spec 016 S1: the PCER event handler (`handle_pcer` in
+`router.rs`) formatted event IDs as contiguous hex, while the config tree
+resolution path (`bytes_to_dotted_hex` in `node_tree.rs`) produced dotted
+hex. `deriveChannelState()` performed direct string equality between the
+two, so occupancy indicators never left the "unknown" state despite events
+arriving on the bus. The same bug class as the Node ID canonical-form
+mismatch in the 2026-06-25 extension.
+
+**Backward compatibility.** Existing layout files and snapshots that contain
+dotted event ID strings remain valid — all parsers accept both formats and
+normalize to contiguous on load. No data migration is required.
+
+## 2026-06-26 extension: shared HexId helpers (DRY follow-up)
+
+The canonical-form decision above produced three near-identical hex
+formatting implementations in Rust and several inline parsers in TypeScript.
+A subsequent DRY pass consolidated them.
+
+**Rust (`lcc-rs/src/types.rs`).** Module-private generic helpers own the
+rule once, parameterised by byte count:
+
+- `format_canonical_hex<const N: usize>(&[u8; N]) -> String` — uppercase contiguous
+- `format_dotted_hex<const N: usize>(&[u8; N]) -> String` — uppercase, `.`-separated
+- `parse_hex_id<const N: usize>(&str) -> Result<[u8; N], String>` — strips `.`/`-`/space, validates length
+
+`NodeID` and `EventID` remain as distinct newtype structs (so signatures
+keep their semantic distinction), but their `to_canonical`, `to_hex_string`,
+and `from_hex_string` methods now delegate to the generic helpers. Adding
+a third ID width (e.g. a future 12-byte UUID-like ID) is a one-line
+addition, not a re-implementation.
+
+**Rust app/backend.** `bowties-core::node_tree`'s
+`bytes_to_canonical_hex`, `bytes_to_display_hex`, `parse_event_id_hex`,
+and `normalize_event_id_hex` are kept as named entry points but delegate
+to `lcc_rs::EventID`. Inline `format!("{:02X}", b)` event-id sites in
+`bowties-core::sync::field_meta` and `bowties-core::placeholder` were
+replaced with calls to `lcc_rs::EventID::{to_canonical, to_hex_string}`.
+
+**TypeScript (`app/src/lib/utils/hexId.ts`).** Mirror of the Rust helpers:
+
+- `formatCanonicalHex(bytes)` / `formatDottedHex(bytes)` / `parseHexId(input, expectedBytes)`
+
+`serialize.ts` (`parseEventIdHex`, `canonicalEventIdHex`, `formatEventIdHex`,
+`normalizeEventIdHex`) and `nodeId.ts` (`formatNodeId`, `nodeIdToDisplayHex`,
+`nodeIdStringToBytes`) became thin wrappers. The duplicate `formatEventId`
+in `formatters.ts` was removed; its single caller now uses `formatEventIdHex`.
+Inline parsers in `editKey.ts::parseOfflineValueString`,
+`treeConfigValuePersistence.ts::parseOfflineStoredValueForLeaf`,
+`offlineLayoutOrchestrator.ts::parseOfflineValue`,
+`bowties.svelte.ts::eventIdHexToBytes`, and
+`eventIds.ts::generateFreshEventIdForNode` now route through the shared
+helpers.
+
+**Rule going forward.** Do not write a new `bytes.map(b => b.toString(16)…)`
+or `format!("{:02X}", b)` pair at any call site. Either reuse an existing
+named wrapper or add a new one in the appropriate domain module that
+delegates to `hexId.ts` / `lcc_rs::types`.

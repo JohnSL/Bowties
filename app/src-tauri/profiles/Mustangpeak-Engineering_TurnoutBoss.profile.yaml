@@ -3,8 +3,8 @@ schemaVersion: "2.0"
 # Structure profile for the Mustangpeak Engineering TurnoutBoss.
 #
 # Assembled from Phase 1 extraction outputs at:
-#   profiles/turnout-boss/event-roles.json
-#   profiles/turnout-boss/relevance-rules.json
+#   profile-extractions/turnout-boss/event-roles.json
+#   profile-extractions/turnout-boss/relevance-rules.json
 #
 # The TurnoutBoss is configured as either a "Left" or a "Right" board around a
 # siding. That single setup choice reshapes which Occupancy events the board

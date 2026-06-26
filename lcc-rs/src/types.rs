@@ -2,7 +2,53 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::fmt::{self, Write as _};
+
+// ─── Generic hex-ID helpers ───────────────────────────────────────────────────────────────
+//
+// `NodeID` (6 bytes) and `EventID` (8 bytes) share the same canonical/display
+// hex rules. The helpers below own those rules in one place; the type methods
+// delegate so neither width can drift from the other.
+//
+// Mirrored in TypeScript by `app/src/lib/utils/hexId.ts`.
+
+/// Format raw bytes as canonical contiguous uppercase hex (e.g. `"0102030405060708"`).
+fn format_canonical_hex<const N: usize>(bytes: &[u8; N]) -> String {
+    let mut s = String::with_capacity(N * 2);
+    for b in bytes {
+        let _ = write!(s, "{:02X}", b);
+    }
+    s
+}
+
+/// Format raw bytes as dotted uppercase hex (e.g. `"01.02.03.04.05.06.07.08"`).
+fn format_dotted_hex<const N: usize>(bytes: &[u8; N]) -> String {
+    let mut s = String::with_capacity(N * 3);
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 { s.push('.'); }
+        let _ = write!(s, "{:02X}", b);
+    }
+    s
+}
+
+/// Parse a hex-encoded ID string into a fixed-length byte array.
+///
+/// Accepts contiguous, dotted, dashed, and space-separated forms; strips
+/// `.`, `-`, and space characters before parsing. Returns `Err` when the
+/// stripped input is not exactly `N * 2` valid hex digits.
+fn parse_hex_id<const N: usize>(s: &str) -> Result<[u8; N], String> {
+    let stripped: String = s.chars().filter(|c| !matches!(c, '.' | '-' | ' ')).collect();
+    let expected = N * 2;
+    if stripped.len() != expected {
+        return Err(format!("Hex ID must be {} hex chars, got {}", expected, stripped.len()));
+    }
+    let mut bytes = [0u8; N];
+    for i in 0..N {
+        bytes[i] = u8::from_str_radix(&stripped[i * 2..i * 2 + 2], 16)
+            .map_err(|e| format!("Invalid hex: {}", e))?;
+    }
+    Ok(bytes)
+}
 
 /// A 48-bit (6-byte) unique Node ID in the LCC network
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -31,33 +77,17 @@ impl NodeID {
 
     /// Convert NodeID to a hex string (e.g., "01.02.03.04.05.06")
     pub fn to_hex_string(&self) -> String {
-        format!(
-            "{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}",
-            self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5]
-        )
+        format_dotted_hex(&self.0)
     }
 
     /// Parse a NodeID from a hex string (e.g., "01.02.03.04.05.06" or "010203040506")
     pub fn from_hex_string(s: &str) -> Result<Self, String> {
-        let s = s.replace(['.', ' ', '-'], "");
-        if s.len() != 12 {
-            return Err(format!("Invalid NodeID hex string length: {}", s.len()));
-        }
-        
-        let mut bytes = [0u8; 6];
-        for i in 0..6 {
-            bytes[i] = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
-                .map_err(|e| format!("Invalid hex: {}", e))?;
-        }
-        Ok(Self(bytes))
+        parse_hex_id::<6>(s).map(Self)
     }
 
     /// Convert NodeID to canonical uppercase hex without dots (e.g., "050201020200")
     pub fn to_canonical(&self) -> String {
-        format!(
-            "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
-            self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5]
-        )
+        format_canonical_hex(&self.0)
     }
 
     /// Hash the Node ID to derive a 12-bit alias using the OpenLCB algorithm
@@ -124,13 +154,23 @@ impl EventID {
         &self.0
     }
 
-    /// Convert EventID to a hex string (e.g., "01.02.03.04.05.06.07.08")
+    /// Convert EventID to a dotted hex string for display (e.g., "01.02.03.04.05.06.07.08")
     pub fn to_hex_string(&self) -> String {
-        format!(
-            "{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}",
-            self.0[0], self.0[1], self.0[2], self.0[3],
-            self.0[4], self.0[5], self.0[6], self.0[7]
-        )
+        format_dotted_hex(&self.0)
+    }
+
+    /// Convert EventID to canonical uppercase hex without dots (e.g., "0102030405060708")
+    ///
+    /// This is the canonical storage/comparison form, matching `NodeID::to_canonical()`.
+    pub fn to_canonical(&self) -> String {
+        format_canonical_hex(&self.0)
+    }
+
+    /// Parse an EventID from a hex string, accepting dotted, contiguous, or mixed formats.
+    ///
+    /// Strips dots, dashes, and spaces before parsing, matching `NodeID::from_hex_string()`.
+    pub fn from_hex_string(s: &str) -> Result<Self, String> {
+        parse_hex_id::<8>(s).map(Self)
     }
 }
 
@@ -428,6 +468,7 @@ mod tests {
     fn test_event_id() {
         let event_id = EventID::new([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
         assert_eq!(event_id.to_hex_string(), "01.02.03.04.05.06.07.08");
+        assert_eq!(event_id.to_canonical(), "0102030405060708");
     }
 
     #[test]
@@ -577,6 +618,23 @@ mod tests {
         // testEventID = [0x05, 0x02, 0x01, 0x02, 0x02, 0x00, 0x00, 0x00]
         let test_event = EventID::new([0x05, 0x02, 0x01, 0x02, 0x02, 0x00, 0x00, 0x00]);
         assert_eq!(test_event.to_hex_string(), "05.02.01.02.02.00.00.00");
+        assert_eq!(test_event.to_canonical(), "0502010202000000");
+    }
+
+    #[test]
+    fn event_id_from_hex_string_accepts_all_formats() {
+        let expected = EventID::new([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
+        assert_eq!(EventID::from_hex_string("01.02.03.04.05.06.07.08").unwrap(), expected);
+        assert_eq!(EventID::from_hex_string("0102030405060708").unwrap(), expected);
+        assert_eq!(EventID::from_hex_string("01-02-03-04-05-06-07-08").unwrap(), expected);
+        assert_eq!(EventID::from_hex_string("01 02 03 04 05 06 07 08").unwrap(), expected);
+    }
+
+    #[test]
+    fn event_id_from_hex_string_rejects_invalid() {
+        assert!(EventID::from_hex_string("01.02.03").is_err()); // too short
+        assert!(EventID::from_hex_string("").is_err());
+        assert!(EventID::from_hex_string("zz.02.03.04.05.06.07.08").is_err());
     }
     
     #[test]

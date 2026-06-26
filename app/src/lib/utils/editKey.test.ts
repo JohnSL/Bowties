@@ -31,7 +31,7 @@ function strVal(value: string): TreeConfigValue {
 }
 
 function eventVal(bytes: number[]): TreeConfigValue {
-  const hex = bytes.map((b) => b.toString(16).padStart(2, '0').toUpperCase()).join('.');
+  const hex = bytes.map((b) => b.toString(16).padStart(2, '0').toUpperCase()).join('');
   return { type: 'eventId', bytes, hex };
 }
 
@@ -194,7 +194,7 @@ describe('parseOfflineValueString', () => {
     expect(result.type).toBe('eventId');
     if (result.type === 'eventId') {
       expect(result.bytes).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
-      expect(result.hex).toBe('01.02.03.04.05.06.07.08');
+      expect(result.hex).toBe('0102030405060708');
     }
   });
 
@@ -203,7 +203,7 @@ describe('parseOfflineValueString', () => {
     expect(result.type).toBe('eventId');
     if (result.type === 'eventId') {
       expect(result.bytes).toEqual([1, 2, 3, 4, 5, 6, 7, 10]);
-      expect(result.hex).toBe('01.02.03.04.05.06.07.0A');
+      expect(result.hex).toBe('010203040506070A');
     }
   });
 
@@ -243,9 +243,9 @@ describe('configValueToOfflineString', () => {
     expect(configValueToOfflineString(strVal(''))).toBe('');
   });
 
-  it('serializes eventId as dotted-hex uppercase', () => {
+  it('serializes eventId as canonical contiguous hex (ADR-0010)', () => {
     const v = eventVal([1, 2, 3, 4, 5, 6, 7, 8]);
-    expect(configValueToOfflineString(v)).toBe('01.02.03.04.05.06.07.08');
+    expect(configValueToOfflineString(v)).toBe('0102030405060708');
   });
 
   it('round-trips int with parseOfflineValueString', () => {

@@ -6,6 +6,7 @@
 
 import type { ConfigValue } from '$lib/api/types';
 import type { TreeConfigValue, TreeMapEntry } from '$lib/types/nodeTree';
+import { formatEventIdHex } from '$lib/utils/serialize';
 
 /**
  * Format a configuration value for display (T038)
@@ -30,7 +31,7 @@ export function formatConfigValue(value: ConfigValue): string {
             return value.value;
         
         case 'EventId':
-            return formatEventId(value.value);
+            return value.value.length === 8 ? formatEventIdHex(value.value) : 'Invalid Event ID';
         
         case 'Float':
             return value.value.toFixed(2);
@@ -44,24 +45,17 @@ export function formatConfigValue(value: ConfigValue): string {
 }
 
 /**
- * Format Event ID as dotted hexadecimal (T039)
- * 
- * @param bytes - 8-byte event ID array
- * @returns Dotted hex string (e.g., "05.01.01.01.03.01.00.00")
- * 
- * @example
- * ```typescript
- * formatEventId([5, 1, 1, 1, 3, 1, 0, 0])  // "05.01.01.01.03.01.00.00"
- * formatEventId([0, 0, 0, 0, 0, 0, 0, 42])  // "00.00.00.00.00.00.00.2A"
- * ```
+ * Convert a canonical contiguous event ID hex string to dotted display form.
+ *
+ * @param hex  16-char uppercase hex, e.g. `"010000000000FFFF"`.
+ * @returns    Dotted display form, e.g. `"01.00.00.00.00.00.FF.FF"`.
+ *             Returns the input unchanged if it doesn't look like a 16-char hex string.
  */
-export function formatEventId(bytes: number[]): string {
-    if (bytes.length !== 8) {
-        return 'Invalid Event ID';
-    }
-    return bytes
-        .map(b => b.toString(16).toUpperCase().padStart(2, '0'))
-        .join('.');
+export function displayEventIdHex(hex: string): string {
+    // Already dotted? Return as-is.
+    if (hex.includes('.')) return hex;
+    if (hex.length !== 16) return hex;
+    return hex.match(/.{2}/g)!.join('.');
 }
 
 /**
@@ -90,24 +84,26 @@ export function getValueTypeLabel(value: ConfigValue): string {
 // ── Well-Known Event IDs (LCC Spec) ──────────────────────────────────────────
 
 const WELL_KNOWN_EVENT_HEX_SET = new Set<string>([
-  '01.00.00.00.00.00.FF.FF', // Emergency Off
-  '01.00.00.00.00.00.FF.FE', // Clear Emergency Off
-  '01.00.00.00.00.00.FF.FD', // Emergency Stop
-  '01.00.00.00.00.00.FF.FC', // Clear Emergency Stop
-  '01.00.00.00.00.00.FF.F8', // New Log Entry
-  '01.00.00.00.00.00.FE.00', // Ident Button Pressed
-  '01.00.00.00.00.00.FD.01', // Link Error 1
-  '01.00.00.00.00.00.FD.02', // Link Error 2
-  '01.00.00.00.00.00.FD.03', // Link Error 3
-  '01.00.00.00.00.00.FD.04', // Link Error 4
-  '01.01.00.00.00.00.02.01', // Duplicate Node ID
-  '01.01.00.00.00.00.03.03', // Is Train
-  '01.01.00.00.00.00.03.04', // Is Traction Proxy
+  '010000000000FFFF', // Emergency Off
+  '010000000000FFFE', // Clear Emergency Off
+  '010000000000FFFD', // Emergency Stop
+  '010000000000FFFC', // Clear Emergency Stop
+  '010000000000FFF8', // New Log Entry
+  '010000000000FE00', // Ident Button Pressed
+  '010000000000FD01', // Link Error 1
+  '010000000000FD02', // Link Error 2
+  '010000000000FD03', // Link Error 3
+  '010000000000FD04', // Link Error 4
+  '0101000000000201', // Duplicate Node ID
+  '0101000000000303', // Is Train
+  '0101000000000304', // Is Traction Proxy
 ]);
 
 /**
- * Returns true when the given dotted-hex event ID is a well-known LCC event.
+ * Returns true when the given canonical-hex event ID is a well-known LCC event.
  * Well-known events do not require producers/consumers to be catalogued.
+ *
+ * @param hex  Canonical contiguous hex (16 uppercase chars, e.g. "010000000000FFFF").
  */
 export function isWellKnownEvent(hex: string): boolean {
   return WELL_KNOWN_EVENT_HEX_SET.has(hex);

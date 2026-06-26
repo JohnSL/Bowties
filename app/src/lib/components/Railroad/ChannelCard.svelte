@@ -1,15 +1,26 @@
 <script lang="ts">
   import type { InformationChannel } from '$lib/api/channels';
+  import type { OccupancyState } from '$lib/utils/channelState';
 
   let {
     channel,
     nodeName,
+    occupancyState = 'unknown',
     onRename,
   }: {
     channel: InformationChannel;
     nodeName: (nodeKey: string) => string;
+    occupancyState?: OccupancyState;
     onRename?: (id: string, newName: string) => void;
   } = $props();
+
+  const INDICATOR_TOOLTIP: Record<OccupancyState, string> = {
+    'no-config': 'Configuration not available for this node',
+    unknown: 'Unknown — no events received',
+    clear: 'Clear',
+    occupied: 'Occupied',
+  };
+
 
   let isEditingName = $state(false);
   let nameEditValue = $state('');
@@ -39,6 +50,16 @@
 </script>
 
 <li class="channel-card">
+  <span
+    class="occupancy-indicator"
+    class:occupied={occupancyState === 'occupied'}
+    class:clear={occupancyState === 'clear'}
+    class:unknown={occupancyState === 'unknown'}
+    class:no-config={occupancyState === 'no-config'}
+    title={INDICATOR_TOOLTIP[occupancyState]}
+    aria-label={INDICATOR_TOOLTIP[occupancyState]}
+    data-testid="occupancy-indicator"
+  ></span>
   <div class="card-content">
     {#if isEditingName}
       <input
@@ -73,6 +94,32 @@
   }
   .channel-card:hover {
     border-color: var(--border-color, #ccc);
+  }
+  .occupancy-indicator {
+    flex-shrink: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1.5px solid var(--text-muted, #999);
+    background: transparent;
+  }
+  .occupancy-indicator.occupied {
+    width: 10px;
+    height: 10px;
+    border: none;
+    background: #d55e00; /* Okabe-Ito vermillion */
+  }
+  .occupancy-indicator.clear {
+    border: none;
+    background: #009e73; /* Okabe-Ito teal-green */
+  }
+  /* Spec 017 / S2: dashed border distinguishes "no resolvable config" from
+     the solid-bordered "unknown" state. Tooltip + aria-label carry the
+     full meaning; the shape change provides a non-colour perceptual channel. */
+  .occupancy-indicator.no-config {
+    border-style: dashed;
+    border-color: var(--text-muted, #999);
+    opacity: 0.6;
   }
   .card-content {
     flex: 1;

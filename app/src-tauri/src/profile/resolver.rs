@@ -513,6 +513,7 @@ mod tests {
                             target_path: "Port I/O/Line/Event#1".to_string(),
                             constraint_type: crate::profile::types::ConnectorConstraintType::HideSection,
                             line_ordinals: vec![],
+                            replication_ordinals: vec![],
                             allowed_values: vec![],
                             allowed_value_labels: vec![],
                             denied_values: vec![],

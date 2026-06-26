@@ -1,3 +1,5 @@
+import { formatDottedHex, parseHexId } from '$lib/utils/hexId';
+
 /** Normalize NodeID for comparisons across dotted/canonical forms. */
 export function normalizeNodeId(nodeId?: string): string {
   return (nodeId ?? '').replace(/\./g, '').toUpperCase();
@@ -5,7 +7,7 @@ export function normalizeNodeId(nodeId?: string): string {
 
 /** Format a 6-byte NodeID as dotted hex. */
 export function formatNodeId(nodeId: number[]): string {
-  return nodeId.map((byte) => byte.toString(16).toUpperCase().padStart(2, '0')).join('.');
+  return formatDottedHex(nodeId);
 }
 
 /** Convert any NodeID string (canonical or dotted) to dotted-hex display form. */
@@ -15,8 +17,12 @@ export function nodeIdToDisplayHex(nodeId: string): string {
   return (canonical.match(/.{1,2}/g) ?? []).join('.');
 }
 
-/** Convert canonical or dotted NodeID text into a 6-byte array. */
+/**
+ * Convert canonical or dotted NodeID text into a 6-byte array.
+ *
+ * Returns a 6-element array of zero bytes when the input is not a valid
+ * 6-byte hex ID (matches the legacy lenient behavior callers rely on).
+ */
 export function nodeIdStringToBytes(nodeId: string): number[] {
-  const pairs = normalizeNodeId(nodeId).match(/.{1,2}/g) ?? [];
-  return pairs.slice(0, 6).map((pair) => parseInt(pair, 16));
+  return parseHexId(nodeId, 6) ?? [0, 0, 0, 0, 0, 0];
 }

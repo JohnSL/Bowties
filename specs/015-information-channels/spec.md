@@ -9,7 +9,7 @@
 
 ## Context
 
-This feature introduces the **information channel** abstraction — a typed, named representation of a single piece of layout-meaningful information (e.g., "Block 7 Occupancy") independent of protocol details. Channels are the foundational data layer for the broader UX vision described in `specs/proposals/app-ux-vision.md`.
+This feature introduces the **information channel** abstraction — a typed, named representation of a single piece of layout-meaningful information (e.g., "Block 7 Occupancy") independent of protocol details. Channels are the foundational data layer for the broader UX vision described in `specs/proposals/app-ux-vision/app-ux-vision.md`.
 
 This first feature is deliberately narrow: channels are auto-created from Tier 1 hardware selection (BOD-family daughter boards — BOD4, BOD4-CP, BOD-8, BOD-8-SM — where all pins have a single fixed type), displayed in a new Railroad tab, and renamable. No behavior, no wiring between channels, no facilities, no templates. The scope is additive — nothing in the existing Config or Bowties tabs changes.
 

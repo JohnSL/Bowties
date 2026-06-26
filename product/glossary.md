@@ -29,7 +29,7 @@ A dynamically allocated 12-bit temporary address assigned during CAN startup, us
 _Avoid_: address (alone), Node ID (permanent vs dynamic), short ID
 
 **Event ID**:
-An 8-byte (64-bit) unique identifier in dotted-hex format used by producers and consumers to communicate without direct knowledge of each other.
+An 8-byte (64-bit) unique identifier used by producers and consumers to communicate without direct knowledge of each other. Stored and compared in canonical contiguous hex form (`0201570002D90100`); displayed to users in dotted-hex form (`02.01.57.00.02.D9.01.00`). See ADR-0010.
 _Avoid_: message ID, signal ID, event code
 
 **Producer**:
@@ -109,6 +109,18 @@ _Avoid_: sensor type, input type, signal type
 **Hardware Reference**:
 The backing physical source for an information channel: which node, which connector, and which input ordinal produces the data. Stored as `{ nodeKey, connector (slug), input (1-based ordinal) }`. Displayed using `resolveNodeName(nodeKey)` — never the raw key.
 _Avoid_: source, origin, pin reference
+
+**PCER (Producer/Consumer Event Report)**:
+An LCC message (MTI 0x195B4) carrying an 8-byte Event ID, broadcast on the bus when a producer fires. Every node on the bus receives every PCER. This is the primary mechanism for real-time state communication (e.g., a BOD board sending "block occupied").
+_Avoid_: event message (too vague), notification
+
+**Event State Store**:
+A session-scoped, transient frontend store that records every PCER event received from the LCC bus. Maintains a map from Event ID (hex) to last-seen timestamp. Channel-unaware — records all events regardless of whether they match a known channel. Channel state is derived at display time by joining the event ledger with resolved event IDs. See Spec 016.
+_Avoid_: event log (implies persistence), event monitor (that's a future UI), subscription store
+
+**Event Mapping**:
+Profile-declared mapping from a channel type's abstract states (e.g., occupied/clear) to specific CDI producer event leaf indices within the channel's hardware scope. Part of the `channelInputs` section in daughter board metadata. This is how the system knows which configured event ID means "occupied" vs "clear" for a given board model.
+_Avoid_: event binding, event wiring (that's bowtie creation)
 
 **Railroad Tab**:
 The third (rightmost) tab in the main application view, displaying the information channel inventory grouped by type. The future home for layout-level railroad abstractions (channels, facilities, behavior templates).

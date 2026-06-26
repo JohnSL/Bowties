@@ -236,12 +236,8 @@ pub fn raw_bytes_to_value_string(meta: &FieldMeta, raw: &[u8]) -> Option<String>
         }
         LeafType::EventId => {
             if raw.len() >= 8 {
-                let hex = raw[..8]
-                    .iter()
-                    .map(|b| format!("{:02X}", b))
-                    .collect::<Vec<_>>()
-                    .join(".");
-                Some(hex)
+                let bytes: [u8; 8] = raw[..8].try_into().unwrap();
+                Some(lcc_rs::EventID::new(bytes).to_canonical())
             } else {
                 None
             }
@@ -278,16 +274,9 @@ pub fn string_to_config_value(s: &str, leaf: &LeafNode) -> Option<ConfigValue> {
             Some(ConfigValue::Float { value: v })
         }
         LeafType::EventId => {
-            // Parse dotted-hex format: "01.02.03.04.05.06.07.08"
-            let parts: Vec<&str> = s.split('.').collect();
-            if parts.len() != 8 {
-                return None;
-            }
-            let mut bytes = [0u8; 8];
-            for (i, part) in parts.iter().enumerate() {
-                bytes[i] = u8::from_str_radix(part, 16).ok()?;
-            }
-            let hex = s.to_string();
+            // Accept both canonical contiguous and legacy dotted formats.
+            let bytes = crate::node_tree::parse_event_id_hex(s)?;
+            let hex = lcc_rs::EventID::new(bytes).to_canonical();
             Some(ConfigValue::EventId { bytes, hex })
         }
         _ => None,
@@ -481,7 +470,7 @@ mod tests {
         let raw = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
         assert_eq!(
             raw_bytes_to_value_string(&meta, &raw),
-            Some("01.02.03.04.05.06.07.08".to_string())
+            Some("0102030405060708".to_string())
         );
     }
 
@@ -515,7 +504,7 @@ mod tests {
         match cv {
             ConfigValue::EventId { bytes, hex } => {
                 assert_eq!(bytes, [1, 2, 3, 4, 5, 6, 7, 8]);
-                assert_eq!(hex, "01.02.03.04.05.06.07.08");
+                assert_eq!(hex, "0102030405060708");
             }
             _ => panic!("expected EventId"),
         }

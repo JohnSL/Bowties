@@ -1,16 +1,19 @@
 <script lang="ts">
   import type { InformationChannel } from '$lib/api/channels';
-  import ChannelRow from './ChannelRow.svelte';
+  import type { OccupancyState } from '$lib/utils/channelState';
+  import ChannelCard from './ChannelCard.svelte';
 
   let {
     typeName,
     channels,
     nodeName,
+    channelStates,
     onRename,
   }: {
     typeName: string;
     channels: InformationChannel[];
     nodeName: (nodeKey: string) => string;
+    channelStates?: ReadonlyMap<string, OccupancyState>;
     onRename?: (id: string, newName: string) => void;
   } = $props();
 </script>
@@ -23,7 +26,7 @@
   </h3>
   <div class="group-grid" role="list">
     {#each channels as channel (channel.id)}
-      <ChannelRow {channel} {nodeName} {onRename} />
+      <ChannelCard {channel} {nodeName} occupancyState={channelStates?.get(channel.id) ?? 'unknown'} {onRename} />
     {/each}
   </div>
 </section>

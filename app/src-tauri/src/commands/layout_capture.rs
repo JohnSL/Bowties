@@ -726,6 +726,39 @@ pub async fn open_layout_directory(
             let mut tree = crate::node_tree::build_node_config_tree(&dotted_id, &cdi);
             crate::node_tree::merge_snapshot_path_values(&mut tree, &snapshot.config);
 
+            // Spec 017 / S3: apply profile annotations so the seeded saved tree
+            // carries `event_role` on producer leaves + `profile_applied = true`.
+            // Without this, `bowties_core::channel_events::resolve_channel_event_ids`
+            // (which filters by `event_role == Some(Producer)`) returns empty for
+            // every channel on a saved node, and indicators stay at 'no-config'
+            // until the user forces a CDI read on the node. Mode selections come
+            // from `loaded.bowties` directly because `state.active_layout` is not
+            // yet set at this point in the open flow.
+            if let Some(identity) = &cdi.identification {
+                let manufacturer = identity.manufacturer.as_deref().unwrap_or("");
+                let model = identity.model.as_deref().unwrap_or("");
+                if !manufacturer.is_empty() || !model.is_empty() {
+                    if let Some(profile) = crate::profile::load_profile(
+                        manufacturer,
+                        model,
+                        &cdi,
+                        &app,
+                        &state.profiles,
+                    ).await {
+                        let shared_daughterboards = crate::profile::load_shared_daughterboards(&app).await;
+                        let selections = loaded.bowties.selections_for_node(&snapshot.node_key);
+                        crate::commands::cdi::apply_profile_metadata_to_tree(
+                            &mut tree,
+                            &dotted_id,
+                            &profile,
+                            shared_daughterboards.as_ref(),
+                            &cdi,
+                            &selections,
+                        );
+                    }
+                }
+            }
+
             // Cache the fully-populated tree so it can seed the live proxy
             // when this node is rediscovered on the bus.
             saved_trees.insert(nk, tree.clone());

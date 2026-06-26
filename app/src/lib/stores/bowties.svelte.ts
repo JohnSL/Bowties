@@ -18,6 +18,7 @@ import type { LeafConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { editKeyForLeaf } from '$lib/utils/editKey';
+import { parseEventIdHex } from '$lib/utils/serialize';
 import { layoutStore } from '$lib/stores/layout.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { resolveNodeName } from '$lib/layout';
@@ -516,11 +517,11 @@ function isEntryStillActive(entry: import('../api/tauri').EventSlotEntry, eventI
 }
 
 /**
- * Convert a dotted-hex event ID string to a bytes array.
- * E.g., "05.01.01.01.FF.00.00.01" → [5, 1, 1, 1, 255, 0, 0, 1]
+ * Convert an event ID hex string (dotted or contiguous) to a bytes array.
+ * Returns an empty array when the input is not a valid 8-byte hex ID.
  */
 function eventIdHexToBytes(hex: string): number[] {
-  return hex.split('.').map(h => parseInt(h, 16));
+  return parseEventIdHex(hex) ?? [];
 }
 
 function deriveBowtieState(producerCount: number, consumerCount: number): 'active' | 'incomplete' | 'planning' {

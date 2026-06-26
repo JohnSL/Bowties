@@ -53,6 +53,20 @@ Each entry:
 
 ## Historical entries
 
+### Event ID canonical-form mismatch between PCER handler and config tree (resolved)
+- **Area**: `app/src-tauri/src/events/router.rs` (`handle_pcer`), `bowties-core/src/node_tree.rs` (`bytes_to_dotted_hex`), `app/src/lib/utils/channelState.ts` (`deriveChannelState`)
+- **Risk** (resolved): PCER event handler produced contiguous hex (`0201570002D90100`), config tree resolution produced dotted hex (`02.01.57.00.02.D9.01.00`). `deriveChannelState()` used string equality to match them — occupancy indicators never left "unknown" state despite events arriving on the bus.
+- **Evidence**: Spec 016 S1: traffic monitor showed PCER events arriving, but channel indicators stayed ○ (unknown). Same bug class as the Node ID canonical-form mismatch in ADR-0010's 2026-06-25 extension.
+- **Resolution** (ADR-0010, 2026-06-26 extension): Adopted contiguous uppercase hex as the canonical form for all event IDs, matching the existing Node ID convention. `bytes_to_dotted_hex()` → `bytes_to_canonical_hex()` (private, contiguous). New public API: `parse_event_id_hex()` (both formats → bytes), `normalize_event_id_hex()` (→ canonical string), `bytes_to_display_hex()` (→ dotted display). All parsers accept both formats for backward compatibility with existing layout files.
+- **DRY follow-up** (resolved, ADR-0010 2026-06-26 extension): Generic byte ↔ hex helpers now live in `lcc-rs/src/types.rs` (`format_canonical_hex<const N>`, `format_dotted_hex<const N>`, `parse_hex_id<const N>`) and `app/src/lib/utils/hexId.ts` (`formatCanonicalHex`, `formatDottedHex`, `parseHexId`). `NodeID` and `EventID` methods delegate; `bowties-core::node_tree` helpers delegate to `lcc_rs::EventID`; the previous inline `format!("{:02X}", b)` sites in `field_meta.rs` and `placeholder.rs`, and the inline TypeScript parsers in `editKey.ts` / `treeConfigValuePersistence.ts` / `offlineLayoutOrchestrator.ts` / `bowties.svelte.ts` / `eventIds.ts`, all route through the shared helpers. The duplicate `formatters.ts::formatEventId` was removed.
+
+### Svelte 5 reactivity: assigned-but-unused dependencies are silently stripped (resolved)
+- **Area**: `app/src/routes/+page.svelte` (Spec 016 channel-event resolution effect)
+- **Risk** (resolved): A pattern like `const _trees = nodeTreeStore.trees; /* reactive dependency */` does NOT reliably create a reactive dependency in Svelte 5 effects. Build-time dead-code elimination (or the reactivity tracker itself) may treat the unused binding as dead. Result: the effect fires once on mount with the initial empty value and never re-runs when the underlying store updates.
+- **Evidence**: Spec 016 S1: channel occupancy indicators stayed ○ (unknown) even after the event-ID canonical-form bug was fixed. The resolution effect ran once when `nodeTreeStore.trees` was empty (CDI not yet loaded), returned empty event IDs, and never re-ran when CDI reads populated trees. Adding a `console.log(..., _trees.size)` accidentally fixed it by turning the dead assignment into a real property read.
+- **Resolution**: Read the property as part of a real expression — either the condition guard (`if (... && nodeTreeStore.trees.size > 0)`), a returned value, or a logged value. Never rely on a `const x = store.value;` assignment alone to register a dependency.
+- **Rule**: Inside `$effect` and `$derived.by`, every store property that should trigger re-evaluation must be **read in an expression whose value is used**. Comments like `// reactive dependency` are not enforced by the compiler.
+
 ### State proxy equality comparison broken in reactive loops (T037, resolved)
 - **Area**: `app/src/lib/components/Bowtie/BowtieCard.svelte`
 - **Risk** (resolved): Svelte 5's `$state(...)` wraps values in reactive proxies. Comparing a `$state` proxy with `===` against an object from a reactive loop variable (`{#each}`) always returns `false` because the proxy identity never matches the loop variable identity across re-renders. Result: `{#if reclassifyingEntry === entry}` conditionals always evaluate false, blocking UI state transitions (role classification prompt never renders).

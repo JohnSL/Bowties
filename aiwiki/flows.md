@@ -145,10 +145,21 @@ Which modules participate in each major workflow. For full ownership rules, see 
 
 ## Information Channel Inventory (Spec 015)
 - **Route:** `+page.svelte` — 3rd tab ("Railroad") in segmented control; renders `RailroadPanel`
-- **Component:** `Railroad/RailroadPanel.svelte` → `ChannelGroup.svelte` → `ChannelRow.svelte`
+- **Component:** `Railroad/RailroadPanel.svelte` → `ChannelGroup.svelte` → `ChannelCard.svelte`
 - **Store:** `channels.svelte.ts` (`channelsStore` — hydrated on layout open, reset on close)
 - **API:** `channels.ts` (`listChannels`, `createChannels`, `renameChannel`, `deleteChannels`)
 - **Backend:** `commands/channels.rs` (`list_channels`, `create_channels`, `rename_channel`, `delete_channels`)
 - **Core:** `bowties-core/layout/channels.rs` (`InformationChannel`, `ChannelsDocument`)
 - **Lifecycle:** `layoutLifecycleOrchestrator.ts` resets `channelsStore` on layout close (S6)
 - **Save flush:** `+page.svelte` save handler calls `deleteChannels` → `createChannels` → `renameChannel` for pending drafts, then re-reads authoritative state
+
+## Live Channel State (Spec 016)
+- **Protocol:** `lcc-rs/protocol/mti.rs` — `ProducerConsumerEventReport` (0x195B4) MTI variant
+- **Backend event pipeline:** `events/router.rs` — PCER subscription → parses 8-byte event ID → emits `lcc-event-state` Tauri event
+- **Backend command:** `commands/channel_events.rs` — `resolve_channel_event_ids` batch IPC: walks cached config trees + profile eventMapping to extract producer event IDs per channel
+- **Core domain:** `bowties-core/channel_events.rs` — `resolve_channel_event_ids(tree, connector, input, event_mapping)`: finds Producer-role EventId leaves under the slot's resolved path prefix, indexes by producerLeafIndex
+- **Profile schema:** `bowties-core/profile/types.rs` — `EventMappingEntry { producer_leaf_index }` + `event_mapping: HashMap<String, EventMappingEntry>` on `ChannelInputMapping`
+- **Frontend store:** `stores/eventState.svelte.ts` — transient, channel-unaware event ledger (eventId → timestamp)
+- **Frontend orchestrator:** `orchestration/eventStateOrchestrator.ts` — `startEventStateListening()` subscribes to backend events; `resolveChannelEventIds()` batch-resolves event IDs via IPC
+- **Frontend utility:** `utils/channelState.ts` — `deriveChannelState(events, occupiedId, clearId)` pure timestamp comparison
+- **Component:** `RailroadPanel.svelte` computes `channelStates` via `$derived.by()` + passes to `ChannelCard` as `occupancyState` prop

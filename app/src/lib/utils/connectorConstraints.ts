@@ -70,7 +70,7 @@ export function evaluateConnectorConstraintsForPath(
   const normalizedPath = stripInstanceSteps(path);
 
   for (const rule of validityRules) {
-    if (!ruleMatchesPath(rule, normalizedPath, affectedPathOrdinal)) {
+    if (!ruleMatchesPath(rule, normalizedPath, affectedPathOrdinal, path)) {
       continue;
     }
 
@@ -135,12 +135,56 @@ function ruleMatchesPath(
   rule: ConnectorConstraintRuleView,
   normalizedPath: string[],
   affectedPathOrdinal: number,
+  originalPath: string[],
 ): boolean {
   if (rule.lineOrdinals?.length && !rule.lineOrdinals.includes(affectedPathOrdinal)) {
     return false;
   }
 
-  return isPathPrefix(rule.resolvedPath, normalizedPath);
+  if (!isPathPrefix(rule.resolvedPath, normalizedPath)) {
+    return false;
+  }
+
+  if (rule.replicationOrdinals?.length) {
+    const replicationIndex = extractReplicationOrdinal(rule.resolvedPath, originalPath);
+    if (replicationIndex !== null && !rule.replicationOrdinals.includes(replicationIndex)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Extract the 1-based replication ordinal from the original (non-stripped)
+ * path at the position corresponding to the last step of the rule's
+ * resolvedPath. The resolvedPath targets the base element (e.g. `elem:5`)
+ * while the original path carries the instance suffix (e.g. `elem:5#2`).
+ * Returns null if the path is too short or has no instance suffix.
+ */
+function extractReplicationOrdinal(
+  resolvedPath: string[],
+  originalPath: string[],
+): number | null {
+  // The replication instance lives on the step in the original path that
+  // corresponds to the last group-level step in the resolvedPath (the one
+  // before the leaf field). For `Event#2/Upon this action` the resolvedPath
+  // is e.g. ['seg:2', 'elem:0', 'elem:5', 'elem:0'] — the replicated group
+  // is at index 2 ('elem:5'), and the leaf is at index 3.
+  // We look for the deepest step in the original path that has a `#N`
+  // suffix matching a resolvedPath step (after stripping the suffix).
+  for (let i = resolvedPath.length - 1; i >= 0; i--) {
+    if (i >= originalPath.length) continue;
+    const originalStep = originalPath[i];
+    const hashIndex = originalStep.indexOf('#');
+    if (hashIndex < 0) continue;
+    const base = originalStep.slice(0, hashIndex);
+    if (base === resolvedPath[i]) {
+      const ordinal = parseInt(originalStep.slice(hashIndex + 1), 10);
+      return Number.isNaN(ordinal) ? null : ordinal;
+    }
+  }
+  return null;
 }
 
 function applyRule(rule: ConnectorConstraintRuleView, state: ConnectorConstraintState): void {

@@ -154,17 +154,9 @@ pub fn slot_for_event_id<'a>(
     best_slot(slots, fallback_role)
 }
 
-/// Parse a dotted-hex event ID string into 8 bytes.
+/// Parse an event ID hex string (dotted or contiguous) into 8 bytes.
 pub fn parse_event_id_hex(hex: &str) -> Option<[u8; 8]> {
-    let parts: Vec<&str> = hex.split('.').collect();
-    if parts.len() != 8 {
-        return None;
-    }
-    let mut bytes = [0u8; 8];
-    for (i, part) in parts.iter().enumerate() {
-        bytes[i] = u8::from_str_radix(part, 16).ok()?;
-    }
-    Some(bytes)
+    crate::node_tree::parse_event_id_hex(hex)
 }
 
 // ── Core builder ─────────────────────────────────────────────────────────────

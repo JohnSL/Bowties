@@ -13,7 +13,6 @@
   adapters as an advanced setting. Bowties doesn't expose this yet. Low priority — default 126
   works unless there's a conflict with another host on the same CAN bus.
 * Cache Location: The current location on my computer is `C:\Users\john_\AppData\Roaming\com.john.app\cdi_cache`. But that does match what we have in the architecture.md, which calls for `com.bowtiesapp.bowties` to be the directory.
-* LCC Event Driver: Switch to always listening to LCC events, which we'll need for the event monitor anyway.
 * Add app icon
 * Dynamic SNIP & Config
   * If you modify SNIP information from LccPro, for example, the updates should appear right away
@@ -42,7 +41,7 @@
     1. Capture concrete Tower-LCC-compatible mappings for the BOD4-CP local lines 5-8 output modes and corresponding sampled input modes.
     2. Extend repair/constraint authoring if needed so Bowties can express output-function and input-function combinations for the BOD4-CP shared lines without hiding valid steady-output use cases.
 * JMRI Bridge integration (proposal stage)
-  * Draft proposals exist (`specs/proposals/jmri-bridge-proposal.md`, `specs/proposals/behavior-templates-proposal.md`) exploring bidirectional sync between Bowties channels and JMRI objects (sensors, turnouts, signal masts) via a Jython bridge script.
+  * Draft proposals exist (`specs/proposals/app-ux-vision/jmri-bridge-proposal.md`, `specs/proposals/app-ux-vision/behavior-templates-proposal.md`) exploring bidirectional sync between Bowties channels and JMRI objects (sensors, turnouts, signal masts) via a Jython bridge script.
   * Key design decisions still open: protocol-agnostic channel model (LCC + DCC/LocoNet via JMRI), LogixNG as alternative logic execution target, panel topology import for future layout editor, signal system metadata per channel.
   * No implementation work until proposals are reviewed and scoped.
 * Channel hardware references as navigable hyperlinks (ADR-0003 display-reference rule)
@@ -51,3 +50,13 @@
     1. Design the navigation target: clicking a hardware ref on the Railroad tab should switch to Config tab, select the node, and focus the relevant field/connector.
     2. Implement as a `<button>` that dispatches a navigation action (likely via `configFocusStore` or similar routing mechanism).
     3. Add test coverage for navigation behavior (`ChannelRow.test.ts`).
+* Channel resource model — generalize HardwareReference (proposal: `specs/proposals/app-ux-vision/channel-resource-model.md`)
+  * Root cause: the spec-015 `HardwareReference { nodeKey, slotId, inputOrdinal }` shape is Tower-LCC-specific and cannot represent Signal LCC lines, LED drivers, signal masts, or output channels generally. `ChannelCard.svelte` also renders the raw `connector-a` slug as a display label, leaking the storage form.
+  * Approach: introduce a purpose-typed Resource layer (system catalog: `occupancy`, `signal-aspect-3-color`, `led-output`, `button-input`, `mast`, …) with one-or-more signatures per type. Channels reference resources by id; the channel never sees CDI fields. Resources come from one of three paths: profile-pre-instantiated, profile-slot-template, or user-mapped (for unprofiled boards). See the proposal for the full three-layer model.
+  * Follow-up:
+    1. Review and refine the proposal; convert open questions to decisions.
+    2. Profile schema: declare a per-node resource catalog (pre-instantiated resources + slot templates) replacing the current `channelInputs` block. Fold the existing `eventMapping` into signature field roles.
+    3. `channels.yaml` schema: bump to 2.0; replace `hardwareRef` with `resourceRef`; one-shot migration for v1.0 Tower-LCC entries (`(connector-a, N)` → `ca-input-N`, `(connector-b, N)` → `cb-input-N`).
+    4. Backend: rewrite `resolve_channel_event_ids` as a resource lookup. Add a constraint engine that activates a resource's active-state rules when a channel binds it.
+    5. Frontend: render the profile-supplied `resource.label` in `ChannelCard.svelte` (fixes the original display leak). Reframe the Mockup 2 picker as resource-type/signature picker. Add a user-mapped resource flow for unprofiled boards.
+  * Note: the visible `connector-a` slug in the Railroad tab subtitle is deliberately deferred to this migration rather than patched separately. The display fix is one body-of-code change at the same call site as the data-model swap; doing it now would require a bridge helper with a `(connector, input)` signature we'd then back out. The Railroad tab is unreleased, so users aren't seeing the slug in any shipped build.

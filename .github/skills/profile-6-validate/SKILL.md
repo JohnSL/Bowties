@@ -119,4 +119,4 @@ List all CDI sections with **no extraction output** as uncovered sections.
 
 ## Output File
 
-Save the validation report as `profiles/<node-name>/validation-report.json` (e.g., `profiles/tower-lcc/validation-report.json`).
+Save the validation report as `profile-extractions/<node-name>/validation-report.json` (e.g., `profile-extractions/tower-lcc/validation-report.json`).

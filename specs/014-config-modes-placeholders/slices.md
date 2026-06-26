@@ -184,7 +184,7 @@ Re-target the existing `connectorSelections` store + `connectorSelectionOrchestr
 **Complexity**: small
 **User stories**: FR-009, FR-010, SC-002
 
-Assemble `Mustangpeak-Engineering_TurnoutBoss.profile.yaml` from `profiles/turnout-boss/` Phase 1 extraction outputs and bundle its `.cdi.xml`. The profile exercises a Left vs Right ConfigurationMode whose variant flip reshapes Detector 3 relevance and the Occupancy event role.
+Assemble `Mustangpeak-Engineering_TurnoutBoss.profile.yaml` from `profile-extractions/turnout-boss/` Phase 1 extraction outputs and bundle its `.cdi.xml`. The profile exercises a Left vs Right ConfigurationMode whose variant flip reshapes Detector 3 relevance and the Occupancy event role.
 
 **Acceptance criteria**:
 - [x] Assembled profile loads + validates under v2

@@ -319,6 +319,12 @@ pub struct ConnectorConstraintRule {
     pub constraint_type: ConnectorConstraintType,
     #[serde(default)]
     pub line_ordinals: Vec<u32>,
+    /// 1-based replication indices within the matched group. When empty,
+    /// the rule applies to all replications. When populated, only the
+    /// listed replications are constrained (e.g., `[1, 2]` targets the
+    /// first two replications of a replicated CDI group).
+    #[serde(default)]
+    pub replication_ordinals: Vec<u32>,
     #[serde(default)]
     pub allowed_values: Vec<ProfileScalarValue>,
     #[serde(default)]
@@ -405,6 +411,19 @@ pub struct ChannelInputMapping {
     pub channel_type: String,
     /// 1-based input ordinals that support this channel type.
     pub inputs: Vec<u32>,
+    /// Maps channel-type states to CDI producer event leaf indices.
+    /// Key = state name (e.g. "occupied", "clear"); value = leaf mapping.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub event_mapping: std::collections::HashMap<String, EventMappingEntry>,
+}
+
+/// A single entry in the event mapping: declares which producer event leaf
+/// index within a channel's CDI scope corresponds to a named state.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EventMappingEntry {
+    /// 0-based index of the producer event leaf within the channel's event group.
+    pub producer_leaf_index: u32,
 }
 
 #[cfg(test)]
@@ -509,5 +528,36 @@ mod tests {
         }
 
         assert_eq!(parsed.configuration_modes[1].variants[0].id, "db-8in");
+    }
+
+    #[test]
+    fn channel_input_mapping_with_event_mapping_deserializes() {
+        let yaml = r#"
+channelType: "block-occupancy"
+inputs: [1, 2, 3, 4]
+eventMapping:
+  occupied:
+    producerLeafIndex: 0
+  clear:
+    producerLeafIndex: 1
+"#;
+        let mapping: ChannelInputMapping = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(
+            mapping.event_mapping.get("occupied"),
+            Some(&EventMappingEntry { producer_leaf_index: 0 })
+        );
+        assert_eq!(
+            mapping.event_mapping.get("clear"),
+            Some(&EventMappingEntry { producer_leaf_index: 1 })
+        );
+    }
+
+    #[test]
+    fn channel_input_mapping_without_event_mapping_deserializes() {
+        let yaml = r#"
+channelType: "block-occupancy"
+inputs: [1, 2, 3, 4]
+"#;
+        let mapping: ChannelInputMapping = serde_yaml_ng::from_str(yaml).unwrap();
     }
 }

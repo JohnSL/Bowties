@@ -1,11 +1,16 @@
 <script lang="ts">
   import { channelsStore } from '$lib/stores/channels.svelte';
+  import { eventStateStore } from '$lib/stores/eventState.svelte';
+  import { deriveChannelState, type OccupancyState } from '$lib/utils/channelState';
   import ChannelGroup from './ChannelGroup.svelte';
 
   let {
     nodeName,
+    resolvedEventIds,
   }: {
     nodeName: (nodeKey: string) => string;
+    /** Map from channelId to { occupied, clear } event IDs. Supplied by parent/orchestrator. */
+    resolvedEventIds?: ReadonlyMap<string, { occupied?: string; clear?: string }>;
   } = $props();
 
   const CHANNEL_TYPE_LABELS: Record<string, string> = {
@@ -19,6 +24,17 @@
   function handleRename(id: string, newName: string) {
     channelsStore.renameChannel(id, newName);
   }
+
+  /** Derive occupancy states for all channels from event store + resolved IDs. */
+  let channelStates = $derived.by(() => {
+    const states = new Map<string, OccupancyState>();
+    if (!resolvedEventIds) return states;
+    const events = eventStateStore.events;
+    for (const [channelId, ids] of resolvedEventIds) {
+      states.set(channelId, deriveChannelState(events, ids.occupied, ids.clear));
+    }
+    return states;
+  });
 </script>
 
 <div class="railroad-panel" data-testid="railroad-panel">
@@ -30,7 +46,7 @@
   {:else}
     <h2 class="panel-title">All Channels</h2>
     {#each [...channelsStore.grouped.entries()] as [type, channels] (type)}
-      <ChannelGroup typeName={labelForType(type)} {channels} {nodeName} onRename={handleRename} />
+      <ChannelGroup typeName={labelForType(type)} {channels} {nodeName} {channelStates} onRename={handleRename} />
     {/each}
   {/if}
 </div>

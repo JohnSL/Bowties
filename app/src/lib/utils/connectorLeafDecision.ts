@@ -1,7 +1,7 @@
 import type { ConnectorConstraintScalar } from '$lib/types/connectorProfile';
 import type { LeafConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
 import type { ConnectorConstraintState } from '$lib/utils/connectorConstraints';
-import { formatEventIdHex, parseEventIdHex } from '$lib/utils/serialize';
+import { canonicalEventIdHex, parseEventIdHex } from '$lib/utils/serialize';
 
 export type ConnectorLeafDecision =
   | { kind: 'compatible' }
@@ -114,7 +114,7 @@ function scalarToTreeConfigValue(
   if (leaf.elementType === 'eventId' && typeof scalar === 'string') {
     const bytes = parseEventIdHex(scalar);
     if (bytes) {
-      return { type: 'eventId', bytes, hex: formatEventIdHex(bytes) };
+      return { type: 'eventId', bytes, hex: canonicalEventIdHex(bytes) };
     }
   }
 

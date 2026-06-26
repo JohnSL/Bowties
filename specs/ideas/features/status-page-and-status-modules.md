@@ -58,7 +58,7 @@ Other potential sources to keep in mind when shaping the schema: SNIP fields (al
 
 ### Related work and references
 
-- `profiles/tower-lcc/` and `profiles/async-blink/` — existing per-model profile bundle layout this idea extends.
+- `profile-extractions/tower-lcc/` and `profile-extractions/async-blink/` — existing per-model profile bundle layout this idea extends.
 - Spec 008 (guided configuration) and the `profile-*` skills — established the profile authoring pipeline this would plug into.
 - Spec 011 (consist throttle) — separate; status page only consumes throttle telemetry, does not own throttle control.
 - `product/architecture/code-placement-and-ownership.md` — status orchestrator belongs in `app/src/lib/orchestration/**`; polling/IPC in `app/src-tauri/src/**`; widget components in `app/src/lib/components/**`; profile YAML schema and loader in a shared utils/profile layer.

@@ -330,4 +330,4 @@ The bundled Tower-LCC profile must include at minimum:
 | Producer events irrelevant | RelevanceRule | `Port I/O/Line/Event#2` | `Input Function` | `[0]` (Disabled) |
 | Delay group irrelevant | RelevanceRule | `Port I/O/Line/Delay` | `Output Function` | `[0]` (No Function) |
 
-All other Tower-LCC event groups (Conditionals, Track Receiver, Track Transmitter, Node Power Monitor) require event role declarations. See `profiles/tower-lcc/event-roles.json` (Phase 1 extraction output) for the complete list.
+All other Tower-LCC event groups (Conditionals, Track Receiver, Track Transmitter, Node Power Monitor) require event role declarations. See `profile-extractions/tower-lcc/event-roles.json` (Phase 1 extraction output) for the complete list.

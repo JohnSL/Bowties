@@ -101,7 +101,7 @@ Produce a JSON object matching this schema:
 
 ## Output File
 
-Save the output as `manual-outline.json` in your profile directory (e.g., `profiles/tower-lcc/manual-outline.json`). All subsequent extraction skills will reference this file as shared context.
+Save the output as `manual-outline.json` in your profile directory (e.g., `profile-extractions/tower-lcc/manual-outline.json`). All subsequent extraction skills will reference this file as shared context.
 
 ## Downstream Usage
 

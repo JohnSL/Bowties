@@ -23,7 +23,7 @@
   import ConnectorArrow from './ConnectorArrow.svelte';
   import RoleClassifyPrompt from './RoleClassifyPrompt.svelte';
   import { nodeRoster } from '$lib/stores/nodeRoster.svelte';
-  import { isWellKnownEvent } from '$lib/utils/formatters';
+  import { isWellKnownEvent, displayEventIdHex } from '$lib/utils/formatters';
 
   /** Write feedback state for a bowtie card (FR-030) */
   type WriteStatus = 'idle' | 'writing' | 'success' | 'error' | 'rolled-back' | 'rollback-failed';
@@ -145,7 +145,7 @@
   class:is-dirty={isDirty}
   class:is-incomplete={cardState === 'incomplete' && !isWellKnownEvent(card.event_id_hex)}
   class:is-planning={cardState === 'planning'}
-  aria-label="Bowtie card for event {card.event_id_hex}"
+  aria-label="Bowtie card for event {displayEventIdHex(card.event_id_hex)}"
   data-event-id={card.event_id_hex}
 >
   <!-- Header: name (if set) or event_id_hex as fallback (FR-014) -->
@@ -164,9 +164,9 @@
       {:else}
         {#snippet titleContent()}
           {#if card.name}
-            {card.name} <span class="event-id-suffix">({card.event_id_hex})</span>
+            {card.name} <span class="event-id-suffix">({displayEventIdHex(card.event_id_hex)})</span>
           {:else}
-            {card.event_id_hex}
+            {displayEventIdHex(card.event_id_hex)}
           {/if}
           {#if isDirty}
             <span class="dirty-dot" title="Unsaved changes" aria-label="Unsaved changes">●</span>

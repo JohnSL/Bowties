@@ -8,6 +8,7 @@
  */
 
 import type { TreeConfigValue, LeafType } from '$lib/types/nodeTree';
+import { formatCanonicalHex, formatDottedHex, parseHexId } from '$lib/utils/hexId';
 
 /**
  * Serialize a `TreeConfigValue` to a raw byte array for writing to node memory.
@@ -149,32 +150,49 @@ function serializeFloat(value: number, size: number): number[] {
 // ─── Event ID utilities ───────────────────────────────────────────────────────
 
 /**
- * Parse a dotted-hex event ID string into an 8-byte array.
+ * Parse an event ID hex string into an 8-byte array.
  *
- * Valid format: `HH.HH.HH.HH.HH.HH.HH.HH` where each `HH` is a 2-digit hex pair.
- * Examples:
- *   `05.01.01.01.22.00.00.FF` → [0x05, 0x01, 0x01, 0x01, 0x22, 0x00, 0x00, 0xFF]
- *   `00.00.00.00.00.00.00.00` → [0, 0, 0, 0, 0, 0, 0, 0]
+ * Accepts both canonical contiguous (`05010101220000FF`) and legacy dotted
+ * (`05.01.01.01.22.00.00.FF`) formats, matching the backend's dual-format parsing.
  *
- * @param dottedHex  The dotted-hex string to parse.
- * @returns          An 8-element number array, or `null` if the input is invalid.
+ * Thin wrapper around `parseHexId(hex, 8)` — the byte-count rule lives in
+ * `$lib/utils/hexId`.
+ *
+ * @param hex  The hex string to parse (dotted or contiguous).
+ * @returns    An 8-element number array, or `null` if the input is invalid.
  */
-export function parseEventIdHex(dottedHex: string): number[] | null {
-  const PATTERN = /^[0-9A-Fa-f]{2}(\.[0-9A-Fa-f]{2}){7}$/;
-  if (!PATTERN.test(dottedHex)) return null;
-
-  const parts = dottedHex.split('.');
-  if (parts.length !== 8) return null;
-
-  return parts.map(p => parseInt(p, 16));
+export function parseEventIdHex(hex: string): number[] | null {
+  return parseHexId(hex, 8);
 }
 
 /**
- * Format an 8-byte array as a dotted-hex event ID string.
+ * Format an 8-byte array as a dotted-hex event ID string for display.
  *
  * @param bytes  Array of 8 bytes.
  * @returns      Dotted-hex string, e.g. `05.01.01.01.22.00.00.FF`.
  */
 export function formatEventIdHex(bytes: number[]): string {
-  return bytes.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('.');
+  return formatDottedHex(bytes);
+}
+
+/**
+ * Format an 8-byte array as a canonical contiguous hex string.
+ *
+ * This is the canonical storage/comparison form, matching `NodeID.to_canonical()`.
+ *
+ * @param bytes  Array of 8 bytes.
+ * @returns      16-char uppercase hex string, e.g. `05010101220000FF`.
+ */
+export function canonicalEventIdHex(bytes: number[]): string {
+  return formatCanonicalHex(bytes);
+}
+
+/**
+ * Normalize an event ID hex string to canonical contiguous form.
+ *
+ * Accepts dotted, contiguous, or mixed formats. Returns `null` if invalid.
+ */
+export function normalizeEventIdHex(hex: string): string | null {
+  const bytes = parseHexId(hex, 8);
+  return bytes ? formatCanonicalHex(bytes) : null;
 }

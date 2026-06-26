@@ -37,7 +37,7 @@ A profile author for a board like TurnoutBoss can express, in a single structure
 1. **Given** a profile that declares a Configuration Mode whose selector is an enum field path with two variants, **When** the schema validator runs, **Then** the profile is accepted and both variants' overlays are reported as parsed.
 2. **Given** a profile with a relevance rule whose controlling field lives in a different CDI segment from the affected target, **When** the schema validator runs, **Then** the rule is accepted (the v1 sibling-only restriction is removed).
 3. **Given** a profile that assigns Producer to some eventid leaves and Consumer to other eventid leaves within the same CDI group, **When** the schema validator runs, **Then** the per-leaf role overrides are accepted (the v1 group-uniform restriction is removed).
-4. **Given** the bundled TurnoutBoss profile assembled from `profiles/turnout-boss/`, **When** loaded through the production profile loader, **Then** it loads without warnings or errors.
+4. **Given** the bundled TurnoutBoss profile assembled from `profile-extractions/turnout-boss/`, **When** loaded through the production profile loader, **Then** it loads without warnings or errors.
 
 ---
 
@@ -102,7 +102,7 @@ Tower-LCC's connector + daughterboard configuration model is re-expressed under 
 
 **TurnoutBoss validation case**
 
-- **FR-009**: The Bowties build MUST bundle a TurnoutBoss structure profile assembled from `profiles/turnout-boss/` that exercises Configuration Modes (Left/Right), per-leaf event-role overrides (Occupancy, Turnout Control, Signal Controls), and all seven relevance rules (R001–R007) including the cross-segment cases.
+- **FR-009**: The Bowties build MUST bundle a TurnoutBoss structure profile assembled from `profile-extractions/turnout-boss/` that exercises Configuration Modes (Left/Right), per-leaf event-role overrides (Occupancy, Turnout Control, Signal Controls), and all seven relevance rules (R001–R007) including the cross-segment cases.
 - **FR-010**: The assembled TurnoutBoss profile MUST load through the production profile loader without warnings or errors and MUST render correctly in both `Left` and `Right` modes in the guided-configuration UI.
 
 **Placeholder boards in layouts**
@@ -160,5 +160,5 @@ Tower-LCC's connector + daughterboard configuration model is re-expressed under 
 - The current v1 schema at [specs/008-guided-configuration/contracts/profile-yaml-schema.json](../008-guided-configuration/contracts/profile-yaml-schema.json) is the baseline being extended.
 - The `profile-7-assemble` skill at [.github/skills/profile-7-assemble/SKILL.md](../../.github/skills/profile-7-assemble/SKILL.md) will need updating once the schema lands.
 - Tower-LCC's existing profile at [app/src-tauri/profiles/RR-CirKits_Tower-LCC.profile.yaml](../../app/src-tauri/profiles/RR-CirKits_Tower-LCC.profile.yaml) is the migration source.
-- TurnoutBoss source artifacts are staged at `profiles/turnout-boss/` (CDI XML, manual PDF, phase-1 extraction outputs); Tower-LCC's source CDI XML is not currently checked in and should be backfilled during this work.
-- The future hardware planner spec ([specs/proposals/planner-proposal.md](../proposals/planner-proposal.md)) is a downstream consumer of this work, not a dependency.
+- TurnoutBoss source artifacts are staged at `profile-extractions/turnout-boss/` (CDI XML, manual PDF, phase-1 extraction outputs); Tower-LCC's source CDI XML is not currently checked in and should be backfilled during this work.
+- The future hardware planner spec ([specs/proposals/app-ux-vision/planner-proposal.md](../proposals/app-ux-vision/planner-proposal.md)) is a downstream consumer of this work, not a dependency.

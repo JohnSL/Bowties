@@ -42,6 +42,14 @@ pub struct MessageReceivedEvent {
     pub dest_alias: Option<u16>,
 }
 
+/// Payload for lcc-event-state events (PCER)
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventStateEvent {
+    pub event_id: String,
+    pub timestamp: String,
+}
+
 /// Event router that subscribes to transport handle and emits Tauri events
 pub struct EventRouter {
     app: AppHandle,
@@ -80,11 +88,12 @@ impl EventRouter {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
         
         // Subscribe BEFORE spawning — guaranteed in place when start() returns.
-        let (all_rx, verified_node_rx, init_complete_rx) = if let Some(ref h) = self.handle {
+        let (all_rx, verified_node_rx, init_complete_rx, pcer_rx) = if let Some(ref h) = self.handle {
             (
                 h.subscribe_all(),
                 h.subscribe_mti(MTI::VerifiedNode).await,
                 h.subscribe_mti(MTI::InitializationComplete).await,
+                h.subscribe_mti(MTI::ProducerConsumerEventReport).await,
             )
         } else {
             eprintln!("[EventRouter] No transport handle — cannot start");
@@ -100,7 +109,7 @@ impl EventRouter {
         let frame_ring = self.frame_ring.clone();
         
         let handle = tokio::spawn(async move {
-            Self::router_loop(app, all_rx, verified_node_rx, init_complete_rx, our_alias, registry, diag_stats, frame_ring, shutdown_rx).await;
+            Self::router_loop(app, all_rx, verified_node_rx, init_complete_rx, pcer_rx, our_alias, registry, diag_stats, frame_ring, shutdown_rx).await;
         });
         
         self.router_task = Some(handle);
@@ -113,6 +122,7 @@ impl EventRouter {
         mut all_rx: tokio::sync::broadcast::Receiver<lcc_rs::ReceivedMessage>,
         mut verified_node_rx: tokio::sync::broadcast::Receiver<lcc_rs::ReceivedMessage>,
         mut init_complete_rx: tokio::sync::broadcast::Receiver<lcc_rs::ReceivedMessage>,
+        mut pcer_rx: tokio::sync::broadcast::Receiver<lcc_rs::ReceivedMessage>,
         our_alias: u16,
         registry: Arc<NodeRegistry>,
         diag_stats: DiagStats,
@@ -168,6 +178,11 @@ impl EventRouter {
                 // D15: Emit lcc-node-reinitialized so the frontend can refresh cached data.
                 Ok(msg) = init_complete_rx.recv() => {
                     Self::handle_node_reinitialized(&app, &registry, msg, our_alias).await;
+                }
+
+                // Handle Producer/Consumer Event Report — emit to frontend for live state
+                Ok(msg) = pcer_rx.recv() => {
+                    Self::handle_pcer(&app, msg, our_alias);
                 }
             }
         }
@@ -285,6 +300,28 @@ impl EventRouter {
 
                 // Also emit reinitialized so frontend refreshes stale cache
                 let _ = app.emit("lcc-node-reinitialized", event);
+            }
+        }
+    }
+
+    /// Handle Producer/Consumer Event Report — extract 8-byte event ID, emit to frontend.
+    fn handle_pcer(app: &AppHandle, msg: ReceivedMessage, our_alias: u16) {
+        // PCER frames carry 8 bytes of event ID in the data field
+        if msg.frame.data.len() >= 8 {
+            if let Ok((_, alias)) = msg.frame.get_mti() {
+                // Ignore echoes of our own PCER events
+                if alias == our_alias {
+                    return;
+                }
+                // Event ID is the 8-byte payload → canonical contiguous hex (ADR-0010)
+                let event_bytes: [u8; 8] = msg.frame.data[0..8].try_into().unwrap_or([0; 8]);
+                let event_id = lcc_rs::EventID::new(event_bytes).to_canonical();
+
+                let event = EventStateEvent {
+                    event_id,
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                };
+                let _ = app.emit("lcc-event-state", event);
             }
         }
     }

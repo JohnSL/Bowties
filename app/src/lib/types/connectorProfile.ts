@@ -22,6 +22,7 @@ export interface ConnectorConstraintRuleView {
   resolvedPath: string[];
   effect: ConnectorConstraintEffect;
   lineOrdinals?: number[];
+  replicationOrdinals?: number[];
   allowedValues?: ConnectorConstraintScalar[];
   allowedValueLabels?: string[];
   deniedValues?: ConnectorConstraintScalar[];
@@ -45,9 +46,14 @@ export interface ConnectorSlotView {
   supportedDaughterboardConstraints?: SlotSupportedDaughterboardView[];
 }
 
+export interface EventMappingEntry {
+  producerLeafIndex: number;
+}
+
 export interface ChannelInputMapping {
   channelType: string;
   inputs: number[];
+  eventMapping?: Record<string, EventMappingEntry>;
 }
 
 export interface DaughterboardView {

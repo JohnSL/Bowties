@@ -77,7 +77,7 @@ Profile authors get the same screen as a built-in preview tool for their work.
 
 The TurnoutBoss profile submitted in issue #8 is the validation case for the whole spec:
 
-1. Source files are already staged at `profiles/turnout-boss/` (CDI XML, manual PDF, all phase-1 extraction outputs).
+1. Source files are already staged at `profile-extractions/turnout-boss/` (CDI XML, manual PDF, all phase-1 extraction outputs).
 2. The spec must produce an assembled `app/src-tauri/profiles/Mustangpeak Engineering_TurnoutBoss.profile.yaml` (or the loader-matching filename variant) that expresses all of:
    - All eventRoles for groups whose leaves share a role, **including the per-leaf overrides** for Occupancy / Turnout Control / Signal Controls.
    - All seven relevance rules from `relevance-rules.json` (R001–R007), including the cross-segment and leaf-targeted cases.
@@ -100,7 +100,7 @@ Tower-LCC must migrate to the unified Configuration Mode shape without behaviora
 
 ## Non-Goals
 
-- **Hardware planner / pre-build wizard.** Captured separately in `planner-proposal.md` and to be filed as a `kind/idea` GitHub issue. This proposal must not bake in planner-specific metadata; the planner is expected to layer on top of profiles in a later spec.
+- **Hardware planner / pre-build wizard.** Captured separately in `app-ux-vision/planner-proposal.md` and to be filed as a `kind/idea` GitHub issue. This proposal must not bake in planner-specific metadata; the planner is expected to layer on top of profiles in a later spec.
 - **Profile-author tooling beyond the explorer.** No new authoring UI, no schema editor, no profile linter beyond what `profile-6-validate` already provides.
 - **Recipe execution from the explorer.** The explorer shows recipes as informational text; it does not run them. Recipe execution against a live node remains in the existing guided-configuration flow.
 - **Persisting explored configurations.** The explorer is read-only.
@@ -132,8 +132,8 @@ Tower-LCC must migrate to the unified Configuration Mode shape without behaviora
 
 ## Pointers
 
-- `profiles/turnout-boss/` — staged validation-case source files (CDI XML, manual PDF, phase-1 extraction outputs).
-- `profiles/tower-lcc/` — existing Tower-LCC extraction outputs (CDI XML and manual PDF are missing — backfill if convenient).
+- `profile-extractions/turnout-boss/` — staged validation-case source files (CDI XML, manual PDF, phase-1 extraction outputs).
+- `profile-extractions/tower-lcc/` — existing Tower-LCC extraction outputs (CDI XML and manual PDF are missing — backfill if convenient).
 - `app/src-tauri/profiles/RR-CirKits_Tower-LCC.profile.yaml` — current Tower-LCC profile, source of the existing connector/daughterboard shape to be generalized.
 - `specs/008-guided-configuration/contracts/profile-yaml-schema.json` — current v1 schema to extend.
 - `.github/skills/profile-7-assemble/SKILL.md` — current assembly skill; will need updating once schema lands.

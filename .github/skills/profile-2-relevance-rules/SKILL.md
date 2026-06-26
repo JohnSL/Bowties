@@ -89,4 +89,4 @@ Produce a JSON object matching this schema:
 
 ## Output File
 
-Save the output as `profiles/<node-name>/relevance-rules.json` (e.g., `profiles/tower-lcc/relevance-rules.json`). This file will be used as shared context by subsequent extraction skills (descriptions, recipes, etc.).
+Save the output as `profile-extractions/<node-name>/relevance-rules.json` (e.g., `profile-extractions/tower-lcc/relevance-rules.json`). This file will be used as shared context by subsequent extraction skills (descriptions, recipes, etc.).

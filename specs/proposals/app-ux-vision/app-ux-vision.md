@@ -125,7 +125,7 @@ The application provides two workspaces that correspond to the two real-world ac
 
 **Key difference from today's Config tab:** The guided view organizes fields by what they *do* (channel-producing vs. board-global) and uses the profile's constraint system to prevent invalid combinations. Users see only compatible options for channel-managed fields. Raw CDI remains available for overriding anything.
 
-**Boards without profiles** fall back to the raw CDI view — the same experience as today's Config tab. Profiles are what enable the guided view.
+**Boards without profiles** can still expose channels via user-authored resource mappings — the user picks a resource type from the system catalog and binds its required fields to CDI paths on the board. This is technical but bounded; it serves DIY and firmware-author scenarios where a shipped profile doesn't yet exist. Raw CDI remains as the ultimate escape hatch for anything outside the channel model. Profiles eliminate the manual mapping step for popular boards. See [Channel Resource Model](./channel-resource-model.md) for the underlying mechanism.
 
 ### Railroad Workspace
 
@@ -155,7 +155,7 @@ Channels are visible in both workspaces, viewed from different angles:
 
 | Workspace | Channel presentation |
 |---|---|
-| **Wiring** | "Pin 3 on Connector A of Tower-3" — shows what hardware backs the channel |
+| **Wiring** | The profile-supplied label for the channel's backing resource — e.g., "Tower-3 — Connector A — Input 1", "Signal LCC #1 — Line 3", or "Signal LCC #1 — Mast 2" — shows what hardware backs the channel |
 | **Railroad** | "Block 7 Occupancy, part of Eagle Creek Signal Block" — shows what the channel means |
 
 A dedicated **Channels view** (within the Railroad workspace) provides a flat or type-grouped list of all channels across the layout. This serves as the inventory: what information does my layout produce and consume? Useful for planning ("I have occupancy on 8 blocks but signals on only 3") and for the template apply workflow ("which channels should I map to this template requirement?").
@@ -198,6 +198,8 @@ The following are representative types, not an exhaustive list. Profiles declare
 | **Turnout Position Indicator** | 2 (LEDs) | Normal/diverging state → drives a pair of LEDs to show position on a fascia panel |
 
 **Key property:** Multiple channels of the same type can feed the same facility input. Two button-pair channels on opposite sides of a layout module — physically independent, on different nodes — can both serve as "turnout command" inputs to the same turnout facility. The facility is what unifies them logically; the channels remain physically grounded in their respective pin groups.
+
+**Implementation polymorphism is hidden from the channel.** A single channel type can be implemented by different hardware shapes on different boards. A `signal-aspect-3-color` channel binds to a single Mast resource on Signal LCC (one firmware-level resource that internally drives the LEDs by aspect rules); on a board exposing only raw LED drivers, the same channel type binds to a 3-LED resource that turns one LED on per aspect; on a board doing 2-LED color mixing it binds to a 2-LED resource. The channel doesn't know which — it sees only "a `signal-aspect-3-color` resource is here." See [Channel Resource Model](./channel-resource-model.md).
 
 ---
 

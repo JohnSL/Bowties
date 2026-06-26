@@ -30,6 +30,7 @@ const { nodeRoster } = await import('$lib/stores/nodeRoster.svelte');
 const { partialCaptureNodesStore } = await import('$lib/stores/partialCaptureNodes.svelte');
 const { layoutStore } = await import('$lib/stores/layout.svelte');
 const { channelsStore } = await import('$lib/stores/channels.svelte');
+const { eventStateStore } = await import('$lib/stores/eventState.svelte');
 const { layoutLifecycleOrchestrator } = await import('./layoutLifecycleOrchestrator');
 
 const LIVE_KEY = '020157000001';
@@ -177,6 +178,17 @@ describe('layoutLifecycleOrchestrator.resetForFreshLiveSession', () => {
 
     expect(nodeTreeStore.trees.size).toBe(0);
     expect(get(configReadNodesStore).size).toBe(0);
+  });
+
+  it('clears the event state store (spec 016 / S2)', () => {
+    eventStateStore.clear();
+    eventStateStore.record('0501010101000001', 1000);
+    eventStateStore.record('0501010101000002', 2000);
+    expect(eventStateStore.size).toBe(2);
+
+    layoutLifecycleOrchestrator.resetForFreshLiveSession();
+
+    expect(eventStateStore.size).toBe(0);
   });
 });
 

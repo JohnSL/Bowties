@@ -14,6 +14,7 @@
  */
 
 import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
+import { canonicalEventIdHex, parseEventIdHex } from '$lib/utils/serialize';
 import type { TreeConfigValue } from '$lib/types/nodeTree';
 
 // ─── Canonical key ────────────────────────────────────────────────────────────
@@ -99,15 +100,18 @@ export function offsetHexToAddress(offset: string): number {
  * - `parseOfflinePlannedValue` in TreeLeafRow.svelte
  */
 export function parseOfflineValueString(raw: string): TreeConfigValue {
+  // Event ID check first — 16-char hex or dotted format. Must precede the
+  // integer check because some canonical hex strings (e.g. "0102030405060708")
+  // are all-digits and would match /^[0-9]+$/.
+  const eventBytes = parseEventIdHex(raw);
+  if (eventBytes) {
+    return { type: 'eventId', bytes: eventBytes, hex: canonicalEventIdHex(eventBytes) };
+  }
   if (/^[0-9]+$/.test(raw)) {
     return { type: 'int', value: parseInt(raw, 10) };
   }
   if (/^[0-9]+\.[0-9]+$/.test(raw)) {
     return { type: 'float', value: parseFloat(raw) };
-  }
-  if (/^([0-9A-F]{2}\.){7}[0-9A-F]{2}$/i.test(raw)) {
-    const bytes = raw.split('.').map((b) => parseInt(b, 16));
-    return { type: 'eventId', bytes, hex: raw.toUpperCase() };
   }
   return { type: 'string', value: raw };
 }

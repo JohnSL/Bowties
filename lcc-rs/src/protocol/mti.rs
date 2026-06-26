@@ -58,6 +58,9 @@ pub enum MTI {
     
     /// Producer Identified (Unknown) (0x19547)
     ProducerIdentifiedUnknown,
+
+    /// Producer/Consumer Event Report (0x195B4)
+    ProducerConsumerEventReport,
     
     /// Identify Events - Global (0x19970)
     IdentifyEventsGlobal,
@@ -137,6 +140,7 @@ impl MTI {
             MTI::ProducerIdentifiedValid => 0x19544,
             MTI::ProducerIdentifiedInvalid => 0x19545,
             MTI::ProducerIdentifiedUnknown => 0x19547,
+            MTI::ProducerConsumerEventReport => 0x195B4,
             MTI::IdentifyEventsGlobal => 0x19970,
             MTI::IdentifyEventsAddressed => 0x19968,
             MTI::ConsumerRangeIdentified => 0x194A4,
@@ -178,6 +182,7 @@ impl MTI {
             0x19544 => MTI::ProducerIdentifiedValid,
             0x19545 => MTI::ProducerIdentifiedInvalid,
             0x19547 => MTI::ProducerIdentifiedUnknown,
+            0x195B4 => MTI::ProducerConsumerEventReport,
             0x19970 => MTI::IdentifyEventsGlobal,
             0x19968 => MTI::IdentifyEventsAddressed,
             0x194A4 => MTI::ConsumerRangeIdentified,
@@ -392,6 +397,7 @@ mod tests {
             MTI::ProducerIdentifiedValid,
             MTI::ProducerIdentifiedInvalid,
             MTI::ProducerIdentifiedUnknown,
+            MTI::ProducerConsumerEventReport,
             MTI::IdentifyEventsGlobal,
             MTI::IdentifyEventsAddressed,
             MTI::ConsumerRangeIdentified,
@@ -613,5 +619,23 @@ mod tests {
         let (mti, source) = MTI::from_header(nak_header).unwrap();
         assert_eq!(mti, MTI::DatagramRejected);
         assert_eq!(source, 0xAAA);
+    }
+
+    #[test]
+    fn test_producer_consumer_event_report() {
+        // PCER MTI value per OpenLCB spec: 0x195B4
+        assert_eq!(MTI::ProducerConsumerEventReport.value(), 0x195B4);
+
+        // Round-trip through from_value
+        assert_eq!(MTI::from_value(0x195B4), MTI::ProducerConsumerEventReport);
+
+        // Header encoding with alias 0xAAA
+        let header = MTI::ProducerConsumerEventReport.to_header(0xAAA).unwrap();
+        assert_eq!(header, 0x195B4AAA);
+
+        // Header decoding
+        let (mti, alias) = MTI::from_header(0x195B4AAA).unwrap();
+        assert_eq!(mti, MTI::ProducerConsumerEventReport);
+        assert_eq!(alias, 0xAAA);
     }
 }

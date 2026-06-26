@@ -331,6 +331,60 @@ describe('evaluateConnectorConstraintsForPath', () => {
     expect(indicatorState.hidden).toBe(false);
     expect(indicatorState.allowedValues).toBeNull();
   });
+
+  it('applies replicationOrdinals to constrain individual event replications', () => {
+    const profile = makeProfile();
+    // Replace the broad producer-action rule with two per-replication rules
+    const bod4 = profile.supportedDaughterboards!.find((d) => d.daughterboardId === 'BOD4')!;
+    bod4.validityRules = bod4.validityRules!.filter(
+      (r) => r.targetPath !== 'Port I/O/Line/Event#2/Upon this action',
+    );
+    bod4.validityRules.push(
+      {
+        targetPath: 'Port I/O/Line/Event#2/Upon this action',
+        resolvedPath: ['seg:2', 'elem:0', 'elem:5', 'elem:0'],
+        effect: 'allowValues',
+        lineOrdinals: [1],
+        replicationOrdinals: [1],
+        allowedValues: [6],
+        explanation: 'Slot 1 must be Input Off (occupied).',
+      },
+      {
+        targetPath: 'Port I/O/Line/Event#2/Upon this action',
+        resolvedPath: ['seg:2', 'elem:0', 'elem:5', 'elem:0'],
+        effect: 'allowValues',
+        lineOrdinals: [1],
+        replicationOrdinals: [2],
+        allowedValues: [5],
+        explanation: 'Slot 2 must be Input On (clear).',
+      },
+    );
+
+    const document = makeSelections([
+      { slotId: 'connector-a', selectedDaughterboardId: 'BOD4', status: 'selected' },
+    ]);
+
+    // Replication 1 (elem:5#1) — should be constrained to [6]
+    const rep1 = evaluateConnectorConstraintsForPath(profile, document, [
+      'seg:2', 'elem:0#1', 'elem:5#1', 'elem:0',
+    ]);
+    expect(rep1.allowedValues).toEqual([6]);
+    expect(rep1.explanations).toContain('Slot 1 must be Input Off (occupied).');
+
+    // Replication 2 (elem:5#2) — should be constrained to [5]
+    const rep2 = evaluateConnectorConstraintsForPath(profile, document, [
+      'seg:2', 'elem:0#1', 'elem:5#2', 'elem:0',
+    ]);
+    expect(rep2.allowedValues).toEqual([5]);
+    expect(rep2.explanations).toContain('Slot 2 must be Input On (clear).');
+
+    // Replication 3 (elem:5#3) — no constraint, should pass through
+    const rep3 = evaluateConnectorConstraintsForPath(profile, document, [
+      'seg:2', 'elem:0#1', 'elem:5#3', 'elem:0',
+    ]);
+    expect(rep3.allowedValues).toBeNull();
+    expect(rep3.explanations).toHaveLength(0);
+  });
 });
 
 describe('filterAllowedMapEntries', () => {

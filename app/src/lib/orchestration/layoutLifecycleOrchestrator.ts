@@ -33,6 +33,7 @@ import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
 import { configSidebarStore } from '$lib/stores/configSidebar';
 import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
 import { channelsStore } from '$lib/stores/channels.svelte';
+import { eventStateStore } from '$lib/stores/eventState.svelte';
 
 import type { CloseLayoutResult } from '$lib/api/layout';
 
@@ -101,6 +102,9 @@ class LayoutLifecycleOrchestrator {
    * Disconnect/reconnect path when no layout is loaded. Drops the live
    * roster but keeps placeholders (they are layout-scoped). Matches the
    * pre-refactor behavior of `resetFreshLiveSessionState`.
+   *
+   * Spec 016 / S2: also clears the event state store so PCER events from
+   * a prior bus session never bleed into a fresh connect.
    */
   resetForFreshLiveSession(): void {
     if (layoutStore.hasLayoutFile) return;
@@ -110,6 +114,7 @@ class LayoutLifecycleOrchestrator {
     configSidebarStore.reset();
     nodeTreeStore.reset();
     connectorSelectionsStore.reset();
+    eventStateStore.clear();
   }
 
   /**

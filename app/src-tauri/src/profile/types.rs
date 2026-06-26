@@ -319,6 +319,10 @@ pub struct ConnectorConstraintRule {
     pub constraint_type: ConnectorConstraintType,
     #[serde(default)]
     pub line_ordinals: Vec<u32>,
+    /// 1-based replication indices within the matched group. When empty,
+    /// the rule applies to all replications.
+    #[serde(default)]
+    pub replication_ordinals: Vec<u32>,
     #[serde(default)]
     pub allowed_values: Vec<ProfileScalarValue>,
     #[serde(default)]

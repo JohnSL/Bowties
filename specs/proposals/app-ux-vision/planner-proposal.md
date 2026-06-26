@@ -34,7 +34,7 @@ Output:
 
 - A recommended set of boards (e.g. *"2× TurnoutBoss for the passing siding, 1× Tower-LCC with BOD4 daughterboards for the mainline blocks"*).
 - A short rationale per recommended board grounded in the user's answers.
-- A wiring outline at the connector level (which board's connector goes to which physical feature).
+- A wiring outline at the resource level — for connectorized boards this reads as connector + input (e.g. "Tower-LCC Connector A Input 1"); for boards without daughter-board sockets it reads as line/LED/mast (e.g. "Signal LCC Line 3" or "Signal LCC Mast 2"). The vocabulary comes from the profile's resource catalog, not from the planner itself.
 - Optional: deep-link into the Profile Explorer for each recommended board so the user can immediately inspect what they'd be buying.
 
 ---

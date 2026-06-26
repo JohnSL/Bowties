@@ -11,6 +11,7 @@ import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
 import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
 import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
 import { channelsStore } from '$lib/stores/channels.svelte';
+import { eventStateStore } from '$lib/stores/eventState.svelte';
 import { resetLayoutOpenPhase } from '$lib/stores/layoutOpenLifecycle';
 
 const {
@@ -28,6 +29,7 @@ const {
   getCdiXmlRef,
   readAllConfigValuesRef,
   startListeningRef,
+  listChannelsRef,
   closeRequestedHandler,
   appWindowMock,
 } = vi.hoisted(() => ({
@@ -78,6 +80,7 @@ const {
   getCdiXmlRef: vi.fn(async () => ({ xmlContent: '<cdi />' })),
   readAllConfigValuesRef: vi.fn(async () => ({ failedReads: 0, totalElements: 0 })),
   startListeningRef: vi.fn(async () => {}),
+  listChannelsRef: vi.fn<() => Promise<unknown[]>>(async () => []),
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -116,7 +119,7 @@ vi.mock('$lib/api/bowties', () => ({
 }));
 
 vi.mock('$lib/api/channels', () => ({
-  listChannels: vi.fn(async () => []),
+  listChannels: listChannelsRef,
 }));
 
 vi.mock('$lib/api/layout', () => ({
@@ -244,6 +247,8 @@ beforeEach(() => {
   refreshAllNodesRef.mockImplementation(async () => []);
   getRecentLayoutRef.mockReset();
   getRecentLayoutRef.mockImplementation(async () => null);
+  listChannelsRef.mockReset();
+  listChannelsRef.mockImplementation(async () => []);
   openLayoutFileRef.mockReset();
   openLayoutFileRef.mockImplementation(async () => ({
     layoutId: 'restored-layout',
@@ -704,5 +709,86 @@ describe('+page Railroad tab (Spec 015 / S1)', () => {
     const railroadBtn = await waitFor(() => screen.getByRole('button', { name: /railroad/i }));
     await fireEvent.click(railroadBtn);
     expect(railroadBtn.getAttribute('aria-pressed')).toBe('true');
+  });
+});
+
+describe('+page disconnect lifecycle (Spec 016 / S2)', () => {
+  it('clears the event state store when disconnecting via the menu', async () => {
+    // Layout context seeded in beforeEach uses mode='legacy_file' →
+    // hasLayoutFile=false, so disconnect takes the no-layout branch which
+    // calls the `clearLiveState` lambda. This test exercises that wiring.
+    render(Page);
+    await waitFor(() => expect(eventHandlers.has('menu-disconnect')).toBe(true));
+
+    // Seed PCER events as if the bus had been active during this session.
+    eventStateStore.record('0501010101000001', 1000);
+    eventStateStore.record('0501010101000002', 2000);
+    expect(eventStateStore.size).toBe(2);
+
+    invokeRef.mockImplementation(async (command: string) => {
+      if (command === 'disconnect_lcc') return null;
+      if (command === 'list_offline_changes') return [];
+      return null;
+    });
+
+    await eventHandlers.get('menu-disconnect')!({ payload: null });
+
+    await waitFor(() => {
+      expect(eventStateStore.size).toBe(0);
+    });
+  });
+});
+
+describe('+page channel resolution timing (Spec 017 / S1)', () => {
+  it('re-resolves channel event IDs after live node discovery without a CDI read', async () => {
+    // Reproduces the Spec 016 timing gap: on connect with a saved layout, the
+    // resolve $effect ran once with empty backend state, then never re-ran
+    // because nodeTreeStore.trees.size did not change on discovery. Channels
+    // stayed at 'unknown' until the user forced a CDI read.
+    //
+    // S1 fix: depend on `nodeRoster.liveEntries.length` so the effect re-runs
+    // each time a live proxy is registered — backend proxies are seeded with
+    // the saved tree at register time (node_registry.rs L100), so resolution
+    // succeeds with no CDI read in the path.
+
+    invokeRef.mockImplementation(async (command: string) => {
+      if (command === 'get_connection_status') {
+        return { connected: true, config: { name: 'Bench Bus' } };
+      }
+      if (command === 'list_offline_changes') return [];
+      if (command === 'resolve_channel_event_ids') return [];
+      if (command === 'register_node') return null;
+      return null;
+    });
+
+    // Seed a channel via the listChannels IPC so it survives the route's
+    // automatic `channelsStore.loadChannels()` on layout mount.
+    listChannelsRef.mockImplementation(async () => [{
+      id: 'ch-1',
+      name: 'East Block',
+      channelType: 'block-occupancy',
+      hardwareRef: { nodeKey: '09.00.99.05.01.C1', connector: 'connector-a', input: 1 },
+    }]);
+
+    render(Page);
+    await waitFor(() => expect(eventHandlers.has('lcc-node-discovered')).toBe(true));
+    // Wait for the channels store to hydrate from the mocked IPC so the
+    // effect's `channels.length > 0` precondition holds before discovery.
+    await waitFor(() => expect(channelsStore.channels.length).toBeGreaterThan(0));
+
+    // Clear the invoke history so we only see calls triggered by discovery.
+    invokeRef.mockClear();
+
+    await discoverJmriNode();
+
+    // After discovery, the resolve effect must re-run and call the IPC.
+    await waitFor(() => {
+      const calls = invokeRef.mock.calls.map((c) => c[0]);
+      expect(calls).toContain('resolve_channel_event_ids');
+    });
+
+    // And no CDI read should be needed to make that happen.
+    const calls = invokeRef.mock.calls.map((c) => c[0]);
+    expect(calls).not.toContain('read_all_config_values');
   });
 });

@@ -453,7 +453,7 @@ describe('effectiveLayoutStore.preview (ADR-0004 / S2c)', () => {
       value: {
         type: 'eventId',
         bytes: [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF],
-        hex: '01.00.00.00.00.00.FF.FF',
+        hex: '010000000000FFFF',
       },
     });
     mockTreesMap.set('02.01.57.00.00.01', makeTree('02.01.57.00.00.01', [wellKnownLeaf]));
@@ -461,7 +461,7 @@ describe('effectiveLayoutStore.preview (ADR-0004 / S2c)', () => {
     const preview = editableBowtiePreviewStore.preview;
 
     expect(preview.bowties).toHaveLength(1);
-    expect(preview.bowties[0].eventIdHex).toBe('01.00.00.00.00.00.FF.FF');
+    expect(preview.bowties[0].eventIdHex).toBe('010000000000FFFF');
   });
 
   // ── Bug 3 regression: ambiguous entries must be enriched with element_label ──

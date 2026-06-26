@@ -130,4 +130,4 @@ recipes:
 
 ## Output File
 
-Save the output as `profiles/<node-name>/recipes.yaml` (e.g., `profiles/tower-lcc/recipes.yaml`). The .yaml extension enables easy rendering of Markdown content in the UX.
+Save the output as `profile-extractions/<node-name>/recipes.yaml` (e.g., `profile-extractions/tower-lcc/recipes.yaml`). The .yaml extension enables easy rendering of Markdown content in the UX.

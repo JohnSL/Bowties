@@ -25,7 +25,7 @@
   import { flushDraftToBackend } from '$lib/orchestration/configDraftOrchestrator';
   import { editKeyForLeaf } from '$lib/utils/editKey';
   import { formatTreeConfigValue } from '$lib/utils/formatters';
-  import { parseEventIdHex, formatEventIdHex } from '$lib/utils/serialize';
+  import { parseEventIdHex, formatEventIdHex, canonicalEventIdHex } from '$lib/utils/serialize';
   import {
     parseOfflineStoredValueForLeaf,
     treeConfigValueToOfflineString,
@@ -426,7 +426,7 @@
       return;
     }
 
-    const newVal: TreeConfigValue = { type: 'eventId', bytes: parsedBytes, hex: formatEventIdHex(parsedBytes) };
+    const newVal: TreeConfigValue = { type: 'eventId', bytes: parsedBytes, hex: canonicalEventIdHex(parsedBytes) };
 
     localInvalidValue = null;
     localValidationMessage = null;

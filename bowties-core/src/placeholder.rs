@@ -128,11 +128,7 @@ fn merge_leaves_recursive(
             ConfigNode::Leaf(leaf) => {
                 let path_key = leaf.path.join("/");
                 if let Some(bytes) = config_values.get(&path_key) {
-                    let hex = bytes
-                        .iter()
-                        .map(|b| format!("{:02X}", b))
-                        .collect::<Vec<_>>()
-                        .join(".");
+                    let hex = lcc_rs::EventID::new(*bytes).to_hex_string();
                     leaf.value = Some(ConfigValue::EventId {
                         bytes: *bytes,
                         hex,

@@ -5,6 +5,7 @@
 //! unit-tested with plain `cargo test`.
 
 pub mod bowtie;
+pub mod channel_events;
 pub mod node_key;
 pub mod layout;
 pub mod node_tree;

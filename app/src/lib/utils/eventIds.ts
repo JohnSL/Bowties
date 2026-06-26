@@ -5,17 +5,22 @@
 import { collectEventIdLeaves } from '$lib/types/nodeTree';
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { editKeyForLeaf } from '$lib/utils/editKey';
+import { nodeIdStringToBytes } from '$lib/utils/nodeId';
+import { canonicalEventIdHex } from '$lib/utils/serialize';
 
 /**
  * Returns true when an event ID hex string is a reserved leading-zero placeholder.
  *
  * Per the LCC Unique Identifiers Standard (S-9.7.0.3 §5.2), any event ID
  * whose first byte is 0x00 is reserved — it is never a valid routable event.
- * Nodes commonly store a leading-zero value (e.g. 00.00.00.00.00.00.00.FF) in
- * CDI event slots that have never been configured by the user.
+ * Nodes commonly store a leading-zero value in CDI event slots that have never
+ * been configured by the user.
+ *
+ * Accepts both canonical contiguous ("0000000000000FFF") and legacy dotted
+ * ("00.00.00.00.00.00.0F.FF") formats.
  */
 export function isPlaceholderEventId(hex: string): boolean {
-  return hex.startsWith('00.');
+  return hex.startsWith('00');
 }
 import type { NodeConfigTree } from '$lib/types/nodeTree';
 
@@ -24,14 +29,14 @@ import type { NodeConfigTree } from '$lib/types/nodeTree';
  * event IDs already used in that node's tree.
  *
  * Algorithm:
- *  1. Parse nodeId (dotted-hex "XX.XX.XX.XX.XX.XX") → 6 nodeBytes
+ *  1. Parse nodeId (canonical or dotted) → 6 nodeBytes
  *  2. Walk all eventId leaves via collectEventIdLeaves, extracting visible values
  *  3. Collect 16-bit counters (bytes[6]<<8 | bytes[7]) of IDs whose first 6 bytes match nodeBytes
  *  4. New counter = max + 1; if > 0xFFFF, scan backwards for first unused
- *  5. Return [...nodeBytes, counter >> 8, counter & 0xFF] as dotted-hex
+ *  5. Return canonical contiguous hex of [...nodeBytes, counter >> 8, counter & 0xFF]
  */
 export function generateFreshEventIdForNode(nodeId: string, tree: NodeConfigTree): string {
-  const nodeBytes = nodeId.split('.').map(h => parseInt(h, 16));
+  const nodeBytes = nodeIdStringToBytes(nodeId);
 
   const leaves = collectEventIdLeaves(tree);
   const usedCounters = new Set<number>();
@@ -66,6 +71,5 @@ export function generateFreshEventIdForNode(nodeId: string, tree: NodeConfigTree
     }
   }
 
-  const resultBytes = [...nodeBytes, counter >> 8, counter & 0xFF];
-  return resultBytes.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join('.');
+  return canonicalEventIdHex([...nodeBytes, counter >> 8, counter & 0xFF]);
 }

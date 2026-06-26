@@ -212,8 +212,8 @@ describe('T033: parseEventIdHex', () => {
     expect(parseEventIdHex('05.ZZ.01.01.22.00.00.FF')).toBeNull();
   });
 
-  it('returns null when dots are missing (run-on hex)', () => {
-    expect(parseEventIdHex('0501010122000000')).toBeNull();
+  it('accepts contiguous hex (ADR-0010 canonical form)', () => {
+    expect(parseEventIdHex('0501010122000000')).toEqual([0x05, 0x01, 0x01, 0x01, 0x22, 0x00, 0x00, 0x00]);
   });
 
   it('returns null for empty string', () => {

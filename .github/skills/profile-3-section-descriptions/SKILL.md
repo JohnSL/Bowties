@@ -89,4 +89,4 @@ sections:
 
 ## Output File
 
-Save the output as `profiles/<node-name>/section-descriptions.yaml` (e.g., `profiles/tower-lcc/section-descriptions.yaml`). The .yaml extension enables easy rendering of Markdown content in the UX. This file will be used as shared context by subsequent extraction skills (field descriptions, recipes).
+Save the output as `profile-extractions/<node-name>/section-descriptions.yaml` (e.g., `profile-extractions/tower-lcc/section-descriptions.yaml`). The .yaml extension enables easy rendering of Markdown content in the UX. This file will be used as shared context by subsequent extraction skills (field descriptions, recipes).

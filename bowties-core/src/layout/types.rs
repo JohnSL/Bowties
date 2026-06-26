@@ -343,13 +343,9 @@ pub struct RecentLayout {
     pub last_opened: String,
 }
 
-/// Check if a string is a valid dotted-hex event ID (e.g. "05.01.01.01.FF.00.00.01").
+/// Check if a string is a valid event ID hex (dotted or contiguous format).
 fn is_valid_event_id_hex(s: &str) -> bool {
-    let parts: Vec<&str> = s.split('.').collect();
-    if parts.len() != 8 {
-        return false;
-    }
-    parts.iter().all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()))
+    crate::node_tree::parse_event_id_hex(s).is_some()
 }
 
 /// Check if a bowtie key is acceptable: either a valid dotted-hex event ID or

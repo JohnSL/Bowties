@@ -403,6 +403,7 @@ pub fn run() {
             commands::create_channels,             // Spec 015 / S3: auto-create channels
             commands::rename_channel,              // Spec 015 / S4: inline channel rename
             commands::delete_channels,             // Spec 015 / S5: channel removal on board change
+            commands::channel_events::resolve_channel_event_ids,  // Spec 016 / S1: batch event ID resolution
             diagnostics::get_diagnostic_report,
             update_menu_state,
         ])

@@ -338,14 +338,14 @@ describe('BowtieCatalogPanel — catalog content (readComplete=true, hasUnreadNo
           value: {
             type: 'eventId',
             bytes: [0x05, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x02],
-            hex: '05.01.01.01.00.00.00.02',
+            hex: '0501010100000002',
           },
         }),
       ]),
     );
 
     mockPreviewCards.push({
-      eventIdHex: '05.01.01.01.00.00.00.01',
+      eventIdHex: '0501010100000001',
       eventIdBytes: [5, 1, 1, 1, 0, 0, 0, 1],
       producers: [
         {
@@ -404,7 +404,7 @@ describe('BowtieCatalogPanel — catalog content (readComplete=true, hasUnreadNo
     const [key, value] = mockApplyEdit.mock.calls[0];
     expect(key).toContain(nodeId.replace(/\./g, '').toUpperCase());
     expect(value.type).toBe('eventId');
-    expect(value.hex).toBe('00.00.00.00.00.00.00.00');
+    expect(value.hex).toBe('0000000000000000');
     // Should NOT use the old setModifiedValue IPC directly
     expect(mockSetModifiedValue).not.toHaveBeenCalled();
   });

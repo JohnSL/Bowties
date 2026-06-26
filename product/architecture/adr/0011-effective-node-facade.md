@@ -220,3 +220,20 @@ deltas writes zero snapshots.
 **Decision:** Bus disconnect is part of the layout-close lifecycle and belongs in `layoutLifecycleOrchestrator.closeLayout()`. The method accepts an optional `disconnectBeforeClose?: () => Promise<void>` dep. When `connected` is `true` and the dep is provided, it is called after the backend confirms the close but before the frontend stores are wiped. The route passes `syncSessionOrchestrator.disconnectBeforeLayoutSwitch()`, which tears down the bus and clears the connection indicator without triggering offline rehydration (the layout is being discarded anyway). When `connected` is `false` or the dep is absent, the method behaves as before.
 
 **Invariant:** After `closeLayout` returns `true`, `layoutStore.isConnected` is `false`.
+
+## 2026-06-26 extension: bus-session-scoped stores join the reset enumeration
+
+**Problem:** Spec 016 (live channel state) introduced `eventStateStore` — a session-scoped ledger of PCER events received from the LCC bus. The original wiring left the store uncleared on disconnect, so reconnect surfaced stale occupancy state from the prior session and channel indicators never reverted to ○ when the bus dropped.
+
+**Decision:** Bus-session-scoped stores belong in the lifecycle reset enumeration alongside layout-scoped stores. `eventStateStore.clear()` is invoked from three lifecycle seams that match the existing pattern:
+
+1. `layoutLifecycleOrchestrator.resetForFreshLiveSession()` — connect-side (no-layout reset).
+2. The route's `clearLiveState` lambda — disconnect with no offline snapshots, and the `preserved_layout` disconnect branch.
+3. The route's `rehydrateOffline` lambda — disconnect with offline snapshots (the bus session ends even though the layout view continues).
+
+The PCER listener itself stays subscribed across disconnect (always-listening per Spec 016); only the ledger is cleared.
+
+**Invariant:** After any disconnect path completes, `eventStateStore.size` is `0`. After `resetForFreshLiveSession()` returns, `eventStateStore.size` is `0` (defense-in-depth on the connect-side reset).
+
+**Why three sites instead of consolidating into the orchestrator alone:** `resetForFreshLiveSession()` early-returns when `hasLayoutFile`, so disconnects with a loaded layout would miss the clear. Rather than restructure the no-layout gate (which has its own correctness reasons), the two route-side disconnect lambdas mirror the connect-side enumeration. A future consolidation (e.g., a dedicated "bus session ended" orchestrator method) is reasonable when there is more than one bus-scoped store to clear; today there is one (YAGNI).
+

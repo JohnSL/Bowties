@@ -222,10 +222,13 @@ Logic blocks fit into the resource model:
 
 | Resource type | Example | How templates use it |
 |------|------|------|
-| I/O pin | Connector A pin 3 | Produces/consumes events |
+| Information-producing resource (e.g. occupancy, button input) | A `block-occupancy` resource on any compatible board — labelled `Connector A — Input 1` on Tower-LCC, `Line 3` on Signal LCC, etc. | Produces events the template consumes |
+| Information-consuming resource (e.g. signal aspect, LED output) | A `signal-aspect-3-color` resource — backed by a Mast on Signal LCC, or by a 3-LED group on a generic signal driver | Consumes events the template produces |
 | Logic block (fixed) | TowerLCC Logic Line 5 | Evaluates conditions, triggers outputs |
 | Logic program (STL) | TowerLCC+Q STL slot | Executes programmed behavior |
 | JMRI LogixNG conditional | LogixNG conditional tree | Evaluates conditions, controls JMRI objects |
+
+Resource identity comes from the profile's resource catalog (or, on unprofiled boards, from user-authored mappings) — see [Channel Resource Model](./channel-resource-model.md). The channel layer never sees pin numbers, connectors, or board-specific addressing.
 
 A behavior template's requirements would include logic resources:
 - "Requires: signal logic capacity (2× logic lines, or 1× STL slot, or LogixNG conditional)"
@@ -288,13 +291,15 @@ Profiles already encode this distinction via CDI structure and relevance rules.
 
 ### Auto-Creation from Hardware Selection
 
-When a daughter board is assigned (manually or via hardware template), e.g., BOD-8 to Connector A:
+When the profile pre-declares a fixed set of resources for a hardware choice — e.g., a BOD-8 daughter board on a Tower-LCC connector, or the 8 detector inputs on a hypothetical standalone BOD-8 node — the channels are auto-created with default names:
 - All pins have known, fixed function → immediately create information channels with default names
 - User's next step is just renaming: "which blocks are these?"
 - This bootstraps the information model from the hardware choice alone
 - These channels are now available for behavior templates to connect to
 
-If the board type is changed:
+For boards whose pins are general-purpose (e.g., Signal LCC's 8 I/O lines, where each can become an occupancy / button-input / led-output resource), the profile declares slot templates rather than pre-instantiated resources. The user picks a resource type per slot at hardware-setup time and the channel is created on that selection.
+
+If the hardware selection changes (e.g., daughter board swapped, slot resource type changed):
 - Bowties warns about affected channels and facilities
 - User confirms or cancels
 - Affected facilities flagged as incomplete if confirmed

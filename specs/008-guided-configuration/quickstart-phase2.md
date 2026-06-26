@@ -9,7 +9,7 @@ This guide provides a sequenced implementation walkthrough for Phase 2. Follow t
 
 ## Prerequisites
 
-- Phase 1 extraction complete: `profiles/tower-lcc/event-roles.json` and `profiles/tower-lcc/relevance-rules.json` exist and are validated.
+- Phase 1 extraction complete: `profile-extractions/tower-lcc/event-roles.json` and `profile-extractions/tower-lcc/relevance-rules.json` exist and are validated.
 - Rust toolchain: stable 1.75+. Verify with `cargo --version`.
 - Working `cargo build` and `cargo test` on the feature branch.
 - SvelteKit dev server compiles without errors: `npm run dev` from `app/`.
@@ -229,8 +229,8 @@ Add the relevance derived state and visual behavior per [group-node-updated.md](
 ### 7a. Use `profile-7-assemble` skill
 
 Run the `profile-7-assemble` Copilot skill with:
-- `profiles/tower-lcc/event-roles.json` (Phase 1 output)
-- `profiles/tower-lcc/relevance-rules.json` (Phase 1 output)
+- `profile-extractions/tower-lcc/event-roles.json` (Phase 1 output)
+- `profile-extractions/tower-lcc/relevance-rules.json` (Phase 1 output)
 - `temp/Tower LCC CDI.xml` (CDI XML for path notation conversion)
 
 The skill produces `RR-CirKits_Tower-LCC.profile.yaml`.

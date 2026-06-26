@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { toCanonicalNodeKey, type NodeKeyInput } from '$lib/utils/nodeKey';
+import { displayEventIdHex } from '$lib/utils/formatters';
 
 /**
  * Node ID represented as 6-byte array (serialized directly as array from Rust)
@@ -298,7 +299,7 @@ export interface CdiReadCompletePayload {
 
 /** Derived display name for a BowtieCard (FR-014). */
 export function bowtieName(card: BowtieCard): string {
-  return card.name ?? card.event_id_hex;
+  return card.name ?? displayEventIdHex(card.event_id_hex);
 }
 
 /**

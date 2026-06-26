@@ -70,4 +70,4 @@ Produce a JSON object matching this schema:
 
 ## Output File
 
-Save the output as `profiles/<node-name>/event-roles.json` (e.g., `profiles/tower-lcc/event-roles.json`). This file will be used as shared context by subsequent extraction skills (relevance rules, descriptions, etc.).
+Save the output as `profile-extractions/<node-name>/event-roles.json` (e.g., `profile-extractions/tower-lcc/event-roles.json`). This file will be used as shared context by subsequent extraction skills (relevance rules, descriptions, etc.).

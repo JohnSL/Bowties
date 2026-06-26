@@ -5,6 +5,7 @@
 pub mod discovery;
 pub mod cdi;
 pub mod bowties;
+pub mod channel_events;
 pub mod channels;
 pub mod connector_profiles;
 pub mod connection;

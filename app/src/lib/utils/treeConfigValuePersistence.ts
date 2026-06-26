@@ -1,4 +1,5 @@
 import type { LeafConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
+import { canonicalEventIdHex, parseEventIdHex } from '$lib/utils/serialize';
 
 export function treeConfigValueToOfflineString(value: TreeConfigValue): string {
   switch (value.type) {
@@ -29,11 +30,10 @@ export function parseOfflineStoredValueForLeaf(
     return Number.isNaN(parsed) ? null : { type: 'float', value: parsed };
   }
   if (leaf.elementType === 'eventId') {
-    const bytes = raw.split('.').map((part) => Number.parseInt(part, 16));
-    if (bytes.length !== 8 || bytes.some((part) => Number.isNaN(part) || part < 0 || part > 255)) {
-      return null;
-    }
-    return { type: 'eventId', bytes, hex: raw };
+    // Accept both canonical contiguous and legacy dotted formats
+    const bytes = parseEventIdHex(raw);
+    if (!bytes) return null;
+    return { type: 'eventId', bytes, hex: canonicalEventIdHex(bytes) };
   }
   return null;
 }

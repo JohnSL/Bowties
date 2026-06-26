@@ -120,6 +120,8 @@ pub struct ConnectorConstraint {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub line_ordinals: Vec<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replication_ordinals: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_values: Vec<ConnectorScalarValue>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_value_labels: Vec<String>,
@@ -327,7 +329,7 @@ pub enum ConfigValue {
     Int { value: i64 },
     /// String value (UTF-8)
     String { value: String },
-    /// Event ID (8 bytes, stored as dotted-hex string for JSON)
+    /// Event ID (8 bytes, stored as canonical contiguous hex for JSON)
     EventId { bytes: [u8; 8], hex: String },
     /// Float value
     Float { value: f64 },
@@ -758,13 +760,31 @@ fn f16_bits_to_f64(bits: u16) -> f64 {
     f32::from_bits(f32_bits) as f64
 }
 
-/// Format 8 bytes as dotted-hex string (e.g. "05.02.01.02.03.00.00.01").
-fn bytes_to_dotted_hex(bytes: &[u8; 8]) -> String {
-    bytes
-        .iter()
-        .map(|b| format!("{:02X}", b))
-        .collect::<Vec<_>>()
-        .join(".")
+/// Format 8 bytes as canonical contiguous hex (e.g. "0502010203000001").
+///
+/// This is the canonical storage/comparison form for event IDs,
+/// matching `NodeID::to_canonical()`. For display, use `bytes_to_display_hex()`.
+fn bytes_to_canonical_hex(bytes: &[u8; 8]) -> String {
+    lcc_rs::EventID::new(*bytes).to_canonical()
+}
+
+/// Format 8 bytes as dotted-hex string for human display (e.g. "05.02.01.02.03.00.00.01").
+pub fn bytes_to_display_hex(bytes: &[u8; 8]) -> String {
+    lcc_rs::EventID::new(*bytes).to_hex_string()
+}
+
+/// Parse an event ID hex string in any format (dotted or contiguous) into bytes.
+///
+/// Accepts "01.02.03.04.05.06.07.08" or "0102030405060708".
+pub fn parse_event_id_hex(hex: &str) -> Option<[u8; 8]> {
+    lcc_rs::EventID::from_hex_string(hex).ok().map(|e| e.0)
+}
+
+/// Normalize an event ID hex string to canonical contiguous form.
+///
+/// Accepts dotted, contiguous, or mixed formats. Returns `None` if invalid.
+pub fn normalize_event_id_hex(hex: &str) -> Option<String> {
+    lcc_rs::EventID::from_hex_string(hex).ok().map(|e| e.to_canonical())
 }
 
 /// Merge configuration values into an existing tree.
@@ -860,7 +880,7 @@ fn parse_leaf_value(leaf_type: LeafType, size: u32, raw: &[u8]) -> Option<Config
             if raw.len() >= 8 {
                 let mut bytes = [0u8; 8];
                 bytes.copy_from_slice(&raw[..8]);
-                let hex = bytes_to_dotted_hex(&bytes);
+                let hex = bytes_to_canonical_hex(&bytes);
                 Some(ConfigValue::EventId { bytes, hex })
             } else {
                 None
@@ -936,16 +956,10 @@ fn parse_snapshot_value(leaf_type: LeafType, s: &str) -> Option<ConfigValue> {
             value: s.to_owned(),
         }),
         LeafType::EventId => {
-            // Stored as dotted hex: "05.02.01.02.03.04.05.06"
-            let parts: Vec<&str> = s.split('.').collect();
-            if parts.len() != 8 {
-                return None;
-            }
-            let mut bytes = [0u8; 8];
-            for (i, part) in parts.iter().enumerate() {
-                bytes[i] = u8::from_str_radix(part, 16).ok()?;
-            }
-            let hex = bytes_to_dotted_hex(&bytes);
+            // Accepts both canonical contiguous ("0502010203040506") and
+            // legacy dotted ("05.02.01.02.03.04.05.06") formats.
+            let bytes = parse_event_id_hex(s)?;
+            let hex = bytes_to_canonical_hex(&bytes);
             Some(ConfigValue::EventId { bytes, hex })
         }
         LeafType::Float => s
@@ -1851,7 +1865,7 @@ mod tests {
         match &tree.segments[0].children[0] {
             ConfigNode::Leaf(l) => match &l.value {
                 Some(ConfigValue::EventId { hex, bytes }) => {
-                    assert_eq!(hex, "05.02.01.02.03.00.00.01");
+                    assert_eq!(hex, "0502010203000001");
                     assert_eq!(bytes[0], 0x05);
                 }
                 other => panic!("Expected EventId value, got {:?}", other),
@@ -2191,7 +2205,7 @@ mod tests {
         match result {
             Some(ConfigValue::EventId { bytes, hex }) => {
                 assert_eq!(bytes, [0x05, 0x02, 0x01, 0x02, 0x03, 0x00, 0x00, 0x01]);
-                assert_eq!(hex, "05.02.01.02.03.00.00.01");
+                assert_eq!(hex, "0502010203000001");
             }
             other => panic!("Expected EventId, got {:?}", other),
         }
@@ -3227,9 +3241,35 @@ mod tests {
     fn config_value_to_snapshot_string_event_id() {
         let v = ConfigValue::EventId {
             bytes: [0x05, 0x02, 0x01, 0x02, 0x03, 0x00, 0x00, 0x01],
-            hex: "05.02.01.02.03.00.00.01".to_string(),
+            hex: "0502010203000001".to_string(),
         };
-        assert_eq!(v.to_snapshot_string(), "05.02.01.02.03.00.00.01");
+        assert_eq!(v.to_snapshot_string(), "0502010203000001");
+    }
+
+    #[test]
+    fn parse_snapshot_value_accepts_dotted_event_id_backward_compat() {
+        // Legacy layout files store event IDs in dotted format.
+        // parse_snapshot_value must accept them and normalize to canonical contiguous.
+        let result = parse_snapshot_value(LeafType::EventId, "05.02.01.02.03.00.00.01");
+        match result {
+            Some(ConfigValue::EventId { bytes, hex }) => {
+                assert_eq!(bytes, [0x05, 0x02, 0x01, 0x02, 0x03, 0x00, 0x00, 0x01]);
+                assert_eq!(hex, "0502010203000001");
+            }
+            other => panic!("Expected EventId, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_snapshot_value_accepts_canonical_event_id() {
+        let result = parse_snapshot_value(LeafType::EventId, "0502010203000001");
+        match result {
+            Some(ConfigValue::EventId { bytes, hex }) => {
+                assert_eq!(bytes, [0x05, 0x02, 0x01, 0x02, 0x03, 0x00, 0x00, 0x01]);
+                assert_eq!(hex, "0502010203000001");
+            }
+            other => panic!("Expected EventId, got {:?}", other),
+        }
     }
 
     #[test]

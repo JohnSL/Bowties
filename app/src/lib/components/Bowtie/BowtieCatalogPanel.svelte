@@ -28,6 +28,8 @@
   import type { BowtieCard as BowtieCardType, EventSlotEntry } from '$lib/api/tauri';
   import { findLeafByAddress, findLeafByPath } from '$lib/types/nodeTree';
   import { generateFreshEventIdForNode } from '$lib/utils/eventIds';
+  import { parseEventIdHex, canonicalEventIdHex } from '$lib/utils/serialize';
+  import { displayEventIdHex } from '$lib/utils/formatters';
 
   // Optional: event ID hex to scroll to and highlight (FR-009)
   let {
@@ -201,11 +203,15 @@
     }
 
     // Parse event ID hex string to bytes
-    const eventIdBytes = eventIdHex.split('.').map(h => parseInt(h, 16));
+    const eventIdBytes = parseEventIdHex(eventIdHex);
+    if (!eventIdBytes) {
+      console.warn('[BowtieCatalogPanel] setEventIdOnLeaf: invalid event ID hex', eventIdHex);
+      return;
+    }
     const newValue = {
       type: 'eventId' as const,
       bytes: eventIdBytes,
-      hex: eventIdHex,
+      hex: canonicalEventIdHex(eventIdBytes),
     };
 
     const key = editKeyForLeaf(element.nodeId, element.space, element.address);
@@ -291,12 +297,16 @@
     }
 
     const newEventIdHex = generateFreshEventIdForNode(entry.node_key, tree);
-    const newEventIdBytes = newEventIdHex.split('.').map(h => parseInt(h, 16));
+    const newEventIdBytes = parseEventIdHex(newEventIdHex);
+    if (!newEventIdBytes) {
+      console.warn('[BowtieCatalogPanel] doRemoveElement: invalid generated event ID', newEventIdHex);
+      return;
+    }
 
     const newValue = {
       type: 'eventId' as const,
       bytes: newEventIdBytes,
-      hex: newEventIdHex,
+      hex: canonicalEventIdHex(newEventIdBytes),
     };
 
     const key = editKeyForLeaf(entry.node_key, leaf.space, leaf.address);
@@ -464,7 +474,7 @@
 <AddElementDialog
   visible={addElementDialog.visible}
   role={addElementDialog.role}
-  bowtieName={addElementDialog.card?.name ?? addElementDialog.card?.eventIdHex ?? ''}
+  bowtieName={addElementDialog.card?.name ?? (addElementDialog.card?.eventIdHex ? displayEventIdHex(addElementDialog.card.eventIdHex) : '')}
   onConfirm={handleAddElement}
   onCancel={() => { addElementDialog = { visible: false, role: 'Producer', card: null }; }}
 />
@@ -476,7 +486,7 @@
       <h3 class="confirm-title">Remove entry?</h3>
       <p class="confirm-body">
         Remove <strong>{removeConfirmDialog.entry.element_label}</strong> from
-        <strong>{removeConfirmDialog.card.name ?? removeConfirmDialog.card.eventIdHex}</strong>?
+        <strong>{removeConfirmDialog.card.name ?? displayEventIdHex(removeConfirmDialog.card.eventIdHex)}</strong>?
         A new unique event ID will be written to this slot on
         <strong>{removeConfirmDialog.entry.node_name}</strong>.
         {#if (removeConfirmDialog.entry.role === 'Producer' ? removeConfirmDialog.card.producers.length : removeConfirmDialog.card.consumers.length) === 1}

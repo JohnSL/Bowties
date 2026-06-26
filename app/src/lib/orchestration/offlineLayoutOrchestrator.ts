@@ -3,6 +3,7 @@ import type { DiscoveredNode } from '$lib/api/tauri';
 import type { LayoutFile } from '$lib/types/bowtie';
 import type { ConfigNode, NodeConfigTree, TreeConfigValue } from '$lib/types/nodeTree';
 import { isPlaceholderInput } from '$lib/utils/nodeKey';
+import { canonicalEventIdHex, parseEventIdHex } from '$lib/utils/serialize';
 import { buildBowtieCatalog } from '$lib/api/bowties';
 import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
 import { layoutStore } from '$lib/stores/layout.svelte';
@@ -252,9 +253,9 @@ function parseOfflineValue(value: string): TreeConfigValue {
   if (/^[0-9]+\.[0-9]+$/.test(value)) {
     return { type: 'float', value: parseFloat(value) };
   }
-  if (/^([0-9A-F]{2}\.){7}[0-9A-F]{2}$/i.test(value)) {
-    const bytes = value.split('.').map((byte) => parseInt(byte, 16));
-    return { type: 'eventId', bytes, hex: value.toUpperCase() };
+  const eventBytes = parseEventIdHex(value);
+  if (eventBytes) {
+    return { type: 'eventId', bytes: eventBytes, hex: canonicalEventIdHex(eventBytes) };
   }
   return { type: 'string', value };
 }

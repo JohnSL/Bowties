@@ -637,6 +637,7 @@ fn map_constraint_rule(
         resolved_path,
         effect: map_constraint_effect(rule.constraint_type),
         line_ordinals: rule.line_ordinals.clone(),
+        replication_ordinals: rule.replication_ordinals.clone(),
         allowed_values: rule.allowed_values.iter().cloned().map(map_scalar_value).collect(),
         allowed_value_labels: rule.allowed_value_labels.clone(),
         denied_values: rule.denied_values.iter().cloned().map(map_scalar_value).collect(),
@@ -1101,6 +1102,7 @@ mod tests {
                     target_path: "Port I/O/Line/Output Function".to_string(),
                     constraint_type: types::ConnectorConstraintType::AllowValues,
                     line_ordinals: vec![1, 2, 3, 4],
+                    replication_ordinals: vec![],
                     allowed_values: vec![types::ProfileScalarValue::Integer(0)],
                     allowed_value_labels: vec![],
                     denied_values: vec![],
@@ -1323,6 +1325,7 @@ mod tests {
                     target_path: "Port I/O/Line/Input Function".to_string(),
                     constraint_type: types::ConnectorConstraintType::AllowValues,
                     line_ordinals: vec![1, 2, 3, 4],
+                    replication_ordinals: vec![],
                     allowed_values: vec![types::ProfileScalarValue::Integer(2)],
                     allowed_value_labels: vec![],
                     denied_values: vec![],
@@ -1335,6 +1338,7 @@ mod tests {
                         target_path: "Port I/O/Line/Input Function".to_string(),
                         constraint_type: types::ConnectorConstraintType::AllowValues,
                         line_ordinals: vec![1, 2, 3, 4],
+                        replication_ordinals: vec![],
                         allowed_values: vec![types::ProfileScalarValue::Integer(1)],
                         allowed_value_labels: vec![],
                         denied_values: vec![],
@@ -1436,6 +1440,7 @@ mod tests {
                     target_path: "Port I/O/Line/Input Function".to_string(),
                     constraint_type: types::ConnectorConstraintType::AllowValues,
                     line_ordinals: vec![],
+                    replication_ordinals: vec![],
                     allowed_values: vec![types::ProfileScalarValue::Integer(1)],
                     allowed_value_labels: vec![],
                     denied_values: vec![],
@@ -1516,9 +1521,9 @@ mod tests {
         )
         .expect("CDI parse should succeed");
 
-        let profile: StructureProfile = serde_yaml_ng::from_str(include_str!("../../tests/fixtures/profiles/RR-CirKits_Tower-LCC.profile.yaml"))
+        let profile: StructureProfile = serde_yaml_ng::from_str(include_str!("../../../app/src-tauri/profiles/RR-CirKits_Tower-LCC.profile.yaml"))
             .expect("bundled Tower-LCC profile should parse");
-        let library: types::SharedDaughterboardLibrary = serde_yaml_ng::from_str(include_str!("../../tests/fixtures/profiles/RR-CirKits.shared-daughterboards.yaml"))
+        let library: types::SharedDaughterboardLibrary = serde_yaml_ng::from_str(include_str!("../../../app/src-tauri/profiles/RR-CirKits.shared-daughterboards.yaml"))
             .expect("bundled shared daughterboard library should parse");
 
         let connector_profile = build_connector_profile(
@@ -1553,9 +1558,9 @@ mod tests {
         )
         .expect("CDI parse should succeed");
 
-        let profile: StructureProfile = serde_yaml_ng::from_str(include_str!("../../tests/fixtures/profiles/RR-CirKits_Signal-LCC-P.profile.yaml"))
+        let profile: StructureProfile = serde_yaml_ng::from_str(include_str!("../../../app/src-tauri/profiles/RR-CirKits_Signal-LCC-P.profile.yaml"))
             .expect("bundled Signal-LCC-P profile should parse");
-        let library: types::SharedDaughterboardLibrary = serde_yaml_ng::from_str(include_str!("../../tests/fixtures/profiles/RR-CirKits.shared-daughterboards.yaml"))
+        let library: types::SharedDaughterboardLibrary = serde_yaml_ng::from_str(include_str!("../../../app/src-tauri/profiles/RR-CirKits.shared-daughterboards.yaml"))
             .expect("bundled shared daughterboard library should parse");
 
         let connector_profile = build_connector_profile(
@@ -1577,7 +1582,7 @@ mod tests {
 
     #[test]
     fn bundled_breakout_boards_do_not_add_line_constraints() {
-        let library: types::SharedDaughterboardLibrary = serde_yaml_ng::from_str(include_str!("../../tests/fixtures/profiles/RR-CirKits.shared-daughterboards.yaml"))
+        let library: types::SharedDaughterboardLibrary = serde_yaml_ng::from_str(include_str!("../../../app/src-tauri/profiles/RR-CirKits.shared-daughterboards.yaml"))
             .expect("bundled shared daughterboard library should parse");
 
         for daughterboard_id in ["FOB-A", "FOB-C", "BOB-S"] {
@@ -1590,6 +1595,66 @@ mod tests {
             assert!(
                 daughterboard.validity_rules.is_empty(),
                 "{daughterboard_id} should not add connector constraints because the manual allows per-line input or output use"
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_detector_boards_constrain_producer_actions_per_replication() {
+        let library: types::SharedDaughterboardLibrary = serde_yaml_ng::from_str(include_str!("../../../app/src-tauri/profiles/RR-CirKits.shared-daughterboards.yaml"))
+            .expect("bundled shared daughterboard library should parse");
+
+        for daughterboard_id in ["BOD4", "BOD4-CP", "BOD-8-SM"] {
+            let daughterboard = library
+                .daughterboards
+                .iter()
+                .find(|candidate| candidate.daughterboard_id == daughterboard_id)
+                .unwrap_or_else(|| panic!("{daughterboard_id} should exist in the bundled daughterboard library"));
+
+            let rules = match daughterboard_id {
+                "BOD4" | "BOD4-CP" => &daughterboard.constraint_variants[0].validity_rules,
+                _ => &daughterboard.validity_rules,
+            };
+
+            // Slot 1 (producerLeafIndex 0 = occupied) must be Input On
+            let slot1_rule = rules
+                .iter()
+                .find(|rule| {
+                    rule.target_path == "Port I/O/Line/Event#2/Upon this action"
+                        && rule.constraint_type == types::ConnectorConstraintType::AllowValues
+                        && rule.replication_ordinals == vec![1]
+                })
+                .unwrap_or_else(|| panic!("{daughterboard_id} should constrain producer slot 1"));
+            assert_eq!(
+                slot1_rule.allowed_values,
+                vec![types::ProfileScalarValue::Integer(5)],
+                "{daughterboard_id} slot 1 should be forced to Input On (occupied — detector output goes low, Active Lo / Low (0V) polarity makes logical input ON)"
+            );
+
+            // Slot 2 (producerLeafIndex 1 = clear) must be Input Off
+            let slot2_rule = rules
+                .iter()
+                .find(|rule| {
+                    rule.target_path == "Port I/O/Line/Event#2/Upon this action"
+                        && rule.constraint_type == types::ConnectorConstraintType::AllowValues
+                        && rule.replication_ordinals == vec![2]
+                })
+                .unwrap_or_else(|| panic!("{daughterboard_id} should constrain producer slot 2"));
+            assert_eq!(
+                slot2_rule.allowed_values,
+                vec![types::ProfileScalarValue::Integer(6)],
+                "{daughterboard_id} slot 2 should be forced to Input Off (clear — detector output goes high, Active Lo / Low (0V) polarity makes logical input OFF)"
+            );
+
+            // No broad all-replications rule should exist
+            let broad_rule = rules.iter().any(|rule| {
+                rule.target_path == "Port I/O/Line/Event#2/Upon this action"
+                    && rule.constraint_type == types::ConnectorConstraintType::AllowValues
+                    && rule.replication_ordinals.is_empty()
+            });
+            assert!(
+                !broad_rule,
+                "{daughterboard_id} should not have a broad constraint on all producer event replications"
             );
         }
     }
@@ -1984,14 +2049,14 @@ mod tests {
 
     fn load_bundled_tower_lcc_profile() -> StructureProfile {
         serde_yaml_ng::from_str(include_str!(
-            "../../tests/fixtures/profiles/RR-CirKits_Tower-LCC.profile.yaml"
+            "../../../app/src-tauri/profiles/RR-CirKits_Tower-LCC.profile.yaml"
         ))
         .expect("bundled Tower-LCC profile must load under v2")
     }
 
     fn load_bundled_shared_daughterboards() -> types::SharedDaughterboardLibrary {
         serde_yaml_ng::from_str(include_str!(
-            "../../tests/fixtures/profiles/RR-CirKits.shared-daughterboards.yaml"
+            "../../../app/src-tauri/profiles/RR-CirKits.shared-daughterboards.yaml"
         ))
         .expect("bundled shared daughterboard library must load")
     }
@@ -2137,8 +2202,8 @@ mod tests {
                 .expect("BOD4 entry must be present");
             assert_eq!(
                 bod4_constraints.validity_rules.len(),
-                4,
-                "BOD4 under legacy CDI must apply the four shared base validity rules"
+                5,
+                "BOD4 under legacy CDI must apply the five shared base validity rules"
             );
         }
     }
@@ -2146,7 +2211,7 @@ mod tests {
     /// Under the C7 Tower-LCC CDI, the firmware-revision selector matches the
     /// `tower-lcc-c7` variant and `build_connector_profile` swaps each
     /// daughterboard's base validity rules for the C7-specific replacement
-    /// set. BOD4 grows from 4 rules (legacy) to 6 (C7).
+    /// set. BOD4 grows from 5 rules (legacy) to 7 (C7).
     #[test]
     fn s5_tower_lcc_v2_parity_c7_cdi() {
         let cdi = make_tower_lcc_c7_cdi();
@@ -2173,8 +2238,8 @@ mod tests {
             .expect("BOD4 entry must be present");
         assert_eq!(
             bod4_constraints.validity_rules.len(),
-            6,
-            "BOD4 under C7 CDI must apply the six C7-specific validity rules"
+            7,
+            "BOD4 under C7 CDI must apply the seven C7-specific validity rules"
         );
     }
 

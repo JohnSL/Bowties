@@ -20,9 +20,17 @@ daughterboards:
       - targetPath: "Port I/O/Line/Event#2/Upon this action"
         lineOrdinals: [1, 2, 3, 4]
         constraintType: allowValues
-        allowedValues: [0, 5, 6, 7, 8]
-        allowedValueLabels: ["None", "Input On", "Input Off", "Gated On (Non Veto Input)", "Gated Off (Non Veto Input)"]
-        explanation: "BOD4 detector lines can only send producer indications from input transitions or gated input transitions."
+        replicationOrdinals: [1]
+        allowedValues: [5]
+        allowedValueLabels: ["Input On"]
+        explanation: "BOD4 detector producer event slot 1 must be Input On so the occupied channel state fires when the detector output goes low (Active Lo input inverts low → logical ON)."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        lineOrdinals: [1, 2, 3, 4]
+        constraintType: allowValues
+        replicationOrdinals: [2]
+        allowedValues: [6]
+        allowedValueLabels: ["Input Off"]
+        explanation: "BOD4 detector producer event slot 2 must be Input Off so the clear channel state fires when the detector output goes high (Active Lo input inverts high → logical OFF)."
       - targetPath: "Port I/O/Line/Event#1"
         lineOrdinals: [1, 2, 3, 4]
         constraintType: hideSection
@@ -56,9 +64,17 @@ daughterboards:
           - targetPath: "Port I/O/Line/Event#2/Upon this action"
             lineOrdinals: [1, 2, 3, 4]
             constraintType: allowValues
-            allowedValues: [0, 5, 6, 7, 8]
-            allowedValueLabels: ["None", "Input On", "Input Off", "Gated On (Non Veto Input)", "Gated Off (Non Veto Input)"]
-            explanation: "BOD4 detector lines can only send producer indications from input transitions or gated input transitions."
+            replicationOrdinals: [1]
+            allowedValues: [5]
+            allowedValueLabels: ["Input On"]
+            explanation: "BOD4 detector producer event slot 1 must be Input On so the occupied channel state fires when the detector output goes low (Low (0V) indication polarity makes the logical input ON at 0V)."
+          - targetPath: "Port I/O/Line/Event#2/Upon this action"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: allowValues
+            replicationOrdinals: [2]
+            allowedValues: [6]
+            allowedValueLabels: ["Input Off"]
+            explanation: "BOD4 detector producer event slot 2 must be Input Off so the clear channel state fires when the detector output goes high (Low (0V) indication polarity makes the logical input OFF at high)."
           - targetPath: "Port I/O/Line/Event#1"
             lineOrdinals: [1, 2, 3, 4]
             constraintType: hideSection
@@ -68,6 +84,11 @@ daughterboards:
       channelInputs:
         - channelType: "block-occupancy"
           inputs: [1, 2, 3, 4]
+          eventMapping:
+            occupied:
+              producerLeafIndex: 0
+            clear:
+              producerLeafIndex: 1
   - daughterboardId: "BOD4-CP"
     displayName: "BOD4-CP"
     kind: "mixed-io"
@@ -87,9 +108,17 @@ daughterboards:
       - targetPath: "Port I/O/Line/Event#2/Upon this action"
         lineOrdinals: [1, 2, 3, 4]
         constraintType: allowValues
-        allowedValues: [0, 5, 6, 7, 8]
-        allowedValueLabels: ["None", "Input On", "Input Off", "Gated On (Non Veto Input)", "Gated Off (Non Veto Input)"]
-        explanation: "BOD4-CP detector lines can only send producer indications from input transitions or gated input transitions."
+        replicationOrdinals: [1]
+        allowedValues: [5]
+        allowedValueLabels: ["Input On"]
+        explanation: "BOD4-CP detector producer event slot 1 must be Input On so the occupied channel state fires when the detector output goes low (Active Lo input inverts low → logical ON)."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        lineOrdinals: [1, 2, 3, 4]
+        constraintType: allowValues
+        replicationOrdinals: [2]
+        allowedValues: [6]
+        allowedValueLabels: ["Input Off"]
+        explanation: "BOD4-CP detector producer event slot 2 must be Input Off so the clear channel state fires when the detector output goes high (Active Lo input inverts high → logical OFF)."
       - targetPath: "Port I/O/Line/Event#1"
         lineOrdinals: [1, 2, 3, 4]
         constraintType: hideSection
@@ -123,9 +152,17 @@ daughterboards:
           - targetPath: "Port I/O/Line/Event#2/Upon this action"
             lineOrdinals: [1, 2, 3, 4]
             constraintType: allowValues
-            allowedValues: [0, 5, 6, 7, 8]
-            allowedValueLabels: ["None", "Input On", "Input Off", "Gated On (Non Veto Input)", "Gated Off (Non Veto Input)"]
-            explanation: "BOD4-CP detector lines can only send producer indications from input transitions or gated input transitions."
+            replicationOrdinals: [1]
+            allowedValues: [5]
+            allowedValueLabels: ["Input On"]
+            explanation: "BOD4-CP detector producer event slot 1 must be Input On so the occupied channel state fires when the detector output goes low (Low (0V) indication polarity makes the logical input ON at 0V)."
+          - targetPath: "Port I/O/Line/Event#2/Upon this action"
+            lineOrdinals: [1, 2, 3, 4]
+            constraintType: allowValues
+            replicationOrdinals: [2]
+            allowedValues: [6]
+            allowedValueLabels: ["Input Off"]
+            explanation: "BOD4-CP detector producer event slot 2 must be Input Off so the clear channel state fires when the detector output goes high (Low (0V) indication polarity makes the logical input OFF at high)."
           - targetPath: "Port I/O/Line/Event#1"
             lineOrdinals: [1, 2, 3, 4]
             constraintType: hideSection
@@ -135,6 +172,11 @@ daughterboards:
       channelInputs:
         - channelType: "block-occupancy"
           inputs: [1, 2, 3, 4]
+          eventMapping:
+            occupied:
+              producerLeafIndex: 0
+            clear:
+              producerLeafIndex: 1
   - daughterboardId: "BOD-8-SM"
     displayName: "BOD-8-SM"
     kind: "detection"
@@ -151,9 +193,16 @@ daughterboards:
         explanation: "BOD-8 outputs are low during detection, so governed Tower-LCC lines must use Active Lo input mode."
       - targetPath: "Port I/O/Line/Event#2/Upon this action"
         constraintType: allowValues
-        allowedValues: [0, 5, 6, 7, 8]
-        allowedValueLabels: ["None", "Input On", "Input Off", "Gated On (Non Veto Input)", "Gated Off (Non Veto Input)"]
-        explanation: "Detector daughterboards can only send producer indications from input transitions or gated input transitions."
+        replicationOrdinals: [1]
+        allowedValues: [5]
+        allowedValueLabels: ["Input On"]
+        explanation: "Detector producer event slot 1 must be Input On so the occupied channel state fires when the detector output goes low (Active Lo input inverts low → logical ON)."
+      - targetPath: "Port I/O/Line/Event#2/Upon this action"
+        constraintType: allowValues
+        replicationOrdinals: [2]
+        allowedValues: [6]
+        allowedValueLabels: ["Input Off"]
+        explanation: "Detector producer event slot 2 must be Input Off so the clear channel state fires when the detector output goes high (Active Lo input inverts high → logical OFF)."
       - targetPath: "Port I/O/Line/Event#1"
         constraintType: hideSection
         explanation: "Consumer output events do not apply to detector daughterboards."
@@ -181,9 +230,16 @@ daughterboards:
             explanation: "BOD-8-SM detector outputs are active low, so the producer indication polarity must stay Low (0V)."
           - targetPath: "Port I/O/Line/Event#2/Upon this action"
             constraintType: allowValues
-            allowedValues: [0, 5, 6, 7, 8]
-            allowedValueLabels: ["None", "Input On", "Input Off", "Gated On (Non Veto Input)", "Gated Off (Non Veto Input)"]
-            explanation: "Detector daughterboards can only send producer indications from input transitions or gated input transitions."
+            replicationOrdinals: [1]
+            allowedValues: [5]
+            allowedValueLabels: ["Input On"]
+            explanation: "Detector producer event slot 1 must be Input On so the occupied channel state fires when the detector output goes low (Low (0V) indication polarity makes the logical input ON at 0V)."
+          - targetPath: "Port I/O/Line/Event#2/Upon this action"
+            constraintType: allowValues
+            replicationOrdinals: [2]
+            allowedValues: [6]
+            allowedValueLabels: ["Input Off"]
+            explanation: "Detector producer event slot 2 must be Input Off so the clear channel state fires when the detector output goes high (Low (0V) indication polarity makes the logical input OFF at high)."
           - targetPath: "Port I/O/Line/Event#1"
             constraintType: hideSection
             explanation: "Consumer output events do not apply to detector daughterboards."
@@ -192,6 +248,11 @@ daughterboards:
       channelInputs:
         - channelType: "block-occupancy"
           inputs: [1, 2, 3, 4, 5, 6, 7, 8]
+          eventMapping:
+            occupied:
+              producerLeafIndex: 0
+            clear:
+              producerLeafIndex: 1
   - daughterboardId: "FOB-A"
     displayName: "FOB-A"
     kind: "breakout"
