@@ -92,7 +92,7 @@ A facility created by template application knows its template origin, which enab
 - Comprehension view (the bowtie diagram showing inputs → logic → outputs)
 - Debugging ("which rule is producing this aspect?")
 
-Facilities can also exist without templates (see Facility Lifecycle section, forthcoming). Users who configure logic directly can manually group their channels into a facility for the same comprehension and debugging benefits.
+Facilities are template-first: every facility originates from a template application. For advanced scenarios where a user has already configured logic directly (e.g., an experienced user with a pre-existing layout), a future workflow will allow attaching a template to existing configured elements — mapping what's already on the node into a facility structure. This path does not need to be as streamlined as starting fresh with a template; it serves technically proficient users who are willing to do more manual mapping.
 
 ### Capacity and Overflow
 
@@ -112,10 +112,122 @@ The template DSL is designed to cover the **majority** of railroad signaling and
 
 For **uncommon cases** that exceed the DSL's expressiveness (complex custom interlocking, non-standard logic, experimental configurations):
 - Users configure logic directly using the guided CDI editor or raw CDI view
-- Directly-configured logic can still be grouped into a facility manually, providing the same comprehension view and debugging surface
-- The facility model does not require template origin — it supports both template-created and manually-assembled facilities
+- A future workflow will allow attaching a template to existing configured elements, bringing directly-configured logic into the facility model for comprehension and debugging
+- The template DSL is designed to grow over time — patterns that start as uncommon can be formalized into templates as demand emerges
 
 This means the system does not need to solve every possible logic scenario in the DSL. It needs to make the common path effortless while keeping the advanced path accessible.
+
+---
+
+## JMRI Bridge Sync Philosophy
+
+### Strategy: Single Master First
+
+The v1 target user is a non-technical model railroader who uses Bowties as their sole configuration tool. For this user, there is no second master — Bowties creates channels and facilities, the JMRI bridge projects them into JMRI objects, and JMRI serves as the downstream display and operation platform.
+
+The two-master synchronization problem (what happens when both tools can write?) is a real concern for the secondary user — technically proficient people with existing JMRI layouts. That path is a deliberate later evolution, not a v1 constraint. The existing three-way sync model (shipping today for offline-edit → bus-connect reconciliation) provides the mechanism when that time comes.
+
+### The Bridge Creates Atoms; JMRI Connects Them
+
+The JMRI bridge's primary value is eliminating the tedious manual creation of JMRI objects. Today, a user must know to create a sensor with the right system name format, get the event IDs right, set up signal masts with the correct signal system and aspect mappings, then create Blocks and assign sensors to them. The bridge automates all of this.
+
+JMRI objects fall into two tiers:
+
+**Tier 1 — Bowties creates these** (event-backed, channel-mapped):
+
+| JMRI Bean | Created From | System Name Identity | Event IDs Mutable? |
+|---|---|---|---|
+| **Sensor** | Occupancy, button, or current channel | Event IDs embedded in system name | No — delete + recreate |
+| **Turnout** | Turnout position/command channel(s) | Event IDs embedded in system name | No — delete + recreate |
+| **Signal Mast** | Signal aspect channel | Type + ordinal (no event IDs) | Yes — aspect events updated via setters |
+| **Light** | LED state channel | Event IDs embedded in system name | No — delete + recreate |
+| **Block** | Auto-created alongside occupancy Sensor | Separate system name | N/A — references Sensor by name |
+
+**Tier 2 — JMRI connects these** (topology, logic — JMRI-owned):
+
+| JMRI Structure | What It Does | Who Owns It |
+|---|---|---|
+| **Path + BeanSetting** | Block adjacency + required turnout positions | JMRI (Layout Editor drawing) |
+| **LayoutBlock** | 1:1 wrapper around Block; runtime adjacency | JMRI (Layout Editor) |
+| **Signal Mast Logic** | Auto-discovered signal rules (source → destination) | JMRI (auto-discover from topology) |
+| **Section** | Ordered block sequence for dispatch/CTC | JMRI (manual or auto) |
+| **LogixNG** | Conditional logic expressions | JMRI or Bowties (when template targets LogixNG) |
+
+Bowties creates tier 1 objects. JMRI connects them via tier 2. The bridge reads tier 2 (via `GET /topology`) for comprehension and gap analysis but does not write it — with the exception of LogixNG when a template targets it as the logic execution platform.
+
+### Channel → JMRI Bean Mapping
+
+Each Bowties channel maps to a JMRI bean based on channel type:
+
+| Bowties Channel Type | Direction | JMRI Bean | Notes |
+|---|---|---|---|
+| Block Occupancy | Producer | Sensor + Block | Bridge auto-creates Block and assigns Sensor |
+| Turnout Position Feedback | Producer | Turnout (feedback side) | Combined into one Turnout bean with command |
+| Turnout Command | Consumer | Turnout (command side) | Same Turnout bean — JMRI merges both directions |
+| Signal Aspect | Consumer | Signal Mast | One event per aspect; events are mutable properties |
+| LED State | Consumer | Light | On/off event pair |
+| Button Press | Producer | Sensor | Pressed/released event pair |
+| Current Sensor | Producer | Sensor | Active/inactive event pair |
+
+The turnout case is notable: Bowties may model command and feedback as separate channels, but the bridge merges them into a single JMRI Turnout bean. This is a bridge-layer concern, not a channel-model concern — the internal representation can be resolved independently of the sync architecture.
+
+### Facility → JMRI Structure
+
+Facilities do not map to a single JMRI object. A facility spans multiple beans plus logic:
+
+| Bowties Facility | JMRI Beans Created | Logic Target | JMRI Topology Equivalent |
+|---|---|---|---|
+| ABS Signal Block | Sensors (occupancy) + Block + Signal Mast | On-node or LogixNG | SignalMastLogic (auto-discovered from panel) |
+| Turnout Control | Sensor (button) + Turnout | On-node or LogixNG | Turnout + triggering logic |
+| Yard Lighting | Sensor (button) + Lights | On-node or LogixNG | LogixNG conditional |
+
+JMRI has no general "facility" concept. The closest equivalents are Signal Mast Logic (for signal facilities) and Sections (for dispatch). Bowties' facility model is richer — it groups channels by behavioral intent, which JMRI doesn't represent.
+
+### Sync Surface Area
+
+For tier 1 beans (the only ones Bowties writes), the mutable properties are limited:
+
+| Property | Sensor/Turnout/Light | Signal Mast |
+|---|---|---|
+| System name | Immutable (contains event IDs) | Immutable (type + ordinal) |
+| User name | Mutable — sync target | Mutable — sync target |
+| Comment | Mutable — sync target | Mutable — sync target |
+| Event IDs | Immutable (in system name) | Mutable (per-aspect setters) |
+| Inverted flag | Mutable — rarely changed | N/A |
+| Feedback mode (turnout) | Mutable — rarely changed | N/A |
+
+**What could collide between Bowties and JMRI:**
+
+- **User name changes** — if renamed in both tools between syncs. Rare in the Bowties-first flow.
+- **Signal mast aspect events** — if re-mapped in JMRI. Very rare.
+- **Deletion** — if a user deletes a Bowties-managed bean in JMRI. Detectable via the `bowties.managed` property.
+
+**What cannot collide:**
+
+- Event IDs on sensors/turnouts/lights — immutable in the system name, and the system name IS the identity. If Bowties and JMRI both have a sensor with the same system name, they're referencing the same event IDs by definition.
+- Tier 2 structures (paths, topology, signal mast logic) — JMRI-owned, Bowties reads only.
+
+### Prior Art: Offline Sync Model
+
+Bowties already ships a three-way sync model for offline changes. The same conflict classification applies to JMRI sync:
+
+| Base → JMRI | Base → Bowties | Action |
+|---|---|---|
+| Unchanged | Unchanged | No action |
+| Changed | Unchanged | Accept JMRI change |
+| Unchanged | Changed | Push Bowties change |
+| Changed | Changed (same) | No action (convergent) |
+| Changed | Changed (different) | Conflict — present to user |
+
+The existing sync panel UI handles conflict presentation and resolution. The JMRI bridge would use the same pattern with the same UI treatment.
+
+### Structural Changes: Delete + Recreate
+
+When an event ID changes in Bowties (e.g., channel rewired to different hardware), the corresponding JMRI sensor or turnout must be deleted and recreated because the event IDs are baked into the system name.
+
+This has a downstream impact: any JMRI panel references to the old system name break. The bridge can detect this and warn the user ("changing this event ID will require recreating the JMRI sensor; panel references will need updating").
+
+In practice, event ID changes are rare in the Bowties-first flow — event IDs are assigned at channel creation and don't change unless the user deliberately rewires hardware. Signal masts are exempt from this concern entirely, since their event IDs are mutable properties.
 
 ---
 
