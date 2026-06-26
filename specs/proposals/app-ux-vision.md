@@ -5,7 +5,8 @@
 **Related:**  
 - [Behavior Templates & Information Channels](./behavior-templates-proposal.md)  
 - [Hardware Planner Wizard](./planner-proposal.md)  
-- [JMRI Bridge](./jmri-bridge-proposal.md)
+- [JMRI Bridge](./jmri-bridge-proposal.md)  
+- [Feasibility & Architecture Companion](./app-ux-vision-feasibility.md) — technical approach, existing infrastructure, and feasibility analysis
 
 ---
 
@@ -167,6 +168,8 @@ Channels can be **connected** to express physical topology: "Block 7 is adjacent
 
 Topology can come from manual declaration in Bowties, import from JMRI's Layout Editor (where block connectivity is encoded in the panel drawing), or a future native track editor.
 
+**Note:** Topology is a later-horizon feature. Until topology is available, template application requires the user to manually map each channel input (e.g., selecting which occupancy channel is the "next block ahead"). This is more explicit than the auto-wiring mockups suggest, but remains straightforward — the user picks from a filtered list of compatible channels.
+
 ### Channel Types and Directionality
 
 A channel is always either a **producer** (generates information) or a **consumer** (acts on information), never both. When physical hardware does both — a turnout motor that drives position and reports it — those are modeled as two separate channels that may share the same device. This maps directly to the facility comprehension view: producer channels appear as inputs (left), consumer channels as outputs (right).
@@ -284,8 +287,8 @@ The primary debugging and understanding surface.
 **Annotations:** Each element links to its physical backing (click an input to jump to its pin in the Wiring workspace) and to other facilities that share the channel.
 
 **Facility status:** Simple badge showing lifecycle state:
-- **Setup incomplete** — not all channel requirements are satisfied (e.g., "3/4 channels mapped")
-- **Ready** — fully configured, logic programmed
+- **Setup incomplete** — not all channel requirements are satisfied (e.g., "3/4 channels mapped"). Logic is not deployed to the target until all required inputs are mapped — the facility structure exists but the on-node or LogixNG logic is not programmed.
+- **Ready** — fully configured, all channels mapped, logic programmed on the target
 - **Live** — connected to bus and operational (when online)
 
 ### Planner Wizard
@@ -320,7 +323,7 @@ Channel creation supports multiple entry points — all converge on the same act
 
 All three paths produce the same result: a named channel with its type constraints active.
 
-**Multi-pin channels:** When a channel type requires multiple pins (e.g., a 3-aspect signal using R/G/Y outputs), the profile declares the pin group size. After the user selects the first pin, the system either auto-claims adjacent pins (when the board's physical layout makes this unambiguous) or asks the user to confirm which additional pins form the group. The resulting channel spans all constituent pins as a unit.
+**Multi-pin channels:** When a channel type requires multiple pins (e.g., a 3-aspect signal using R/G/Y outputs), the profile declares the pin group size. After the user selects the first pin, the system asks the user to confirm which additional pins form the group. The resulting channel spans all constituent pins as a unit.
 
 **Steps common to all entry points:**
 1. Channel type is selected (determines managed field constraints)
@@ -485,6 +488,6 @@ The vision is the north star. Implementation proceeds in phases that each delive
 
 ---
 
-## Open Design Questions
+## Resolved Design Questions
 
-1. **Channel-to-facility relationship when no template is used** — Power users who configure manually (without templates) still want facility grouping. How do they create facilities without a template? Manual grouping? System inference?
+1. **Channel-to-facility relationship when no template is used** — Facilities are template-first: every facility originates from applying a behavior template. For power users with existing configurations, a future workflow will allow attaching a template to already-configured elements, mapping existing CDI settings into a facility structure. This path prioritizes the primary user (non-technical, starting fresh with templates) while keeping the advanced path possible — it just requires more manual mapping.

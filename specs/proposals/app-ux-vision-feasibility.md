@@ -116,3 +116,107 @@ For **uncommon cases** that exceed the DSL's expressiveness (complex custom inte
 - The facility model does not require template origin — it supports both template-created and manually-assembled facilities
 
 This means the system does not need to solve every possible logic scenario in the DSL. It needs to make the common path effortless while keeping the advanced path accessible.
+
+---
+
+## Feasibility Assessment
+
+### Development Context
+
+Bowties is built by one experienced architect using AI-assisted development with a structured workflow (TDD-first, architecture enforcement via ADRs and placement rules, multi-session build tracking). The AI workflow includes profile extraction skills, subagent delegation, and enrichment gates that maintain architecture consistency automatically.
+
+Implementation velocity and architecture quality are not constraints. The profile authoring pipeline is itself AI-assisted — adding a new board profile is a ~2-hour guided session, not weeks of manual specification. The template DSL is designed to be AI-authorable. The JMRI bridge is well-specified enough for AI-assisted implementation.
+
+The primary remaining risk is **UX validation with the target audience** — will non-technical users actually find the experience accessible? This is only answerable by putting it in front of people.
+
+### Existing Infrastructure
+
+The vision builds on substantial existing infrastructure, not greenfield speculation:
+
+| Capability | Status |
+|---|---|
+| Profile system (v2 schema, loader, resolver, annotation) | **Shipping** — 5 bundled profiles |
+| AI profile extraction pipeline (8 skills, PDF → profile) | **Proven** — Tower-LCC and TurnoutBoss authored this way |
+| CDI signature-based firmware variant detection | **Shipping** — Tower-LCC legacy vs. rev-C7 |
+| Configuration Modes with variant overlays | **Shipping** — connector slots, Left/Right pairing |
+| Connector selection + constraint evaluation | **Shipping** — auto-stages compatible field values |
+| Offline change model + three-way sync | **Shipping** — full conflict classification and resolution |
+| Placeholder boards (pre-stage config without hardware) | **Early** — read-only view ships; editable placeholders and full testing are pending |
+| Channel data model + persistence | **In-flight** — architecture proven on branch |
+
+### Confidence Table: Bowties as Single Master (Primary User)
+
+Non-technical users who use Bowties as their sole configuration tool. JMRI is a downstream display/operation platform. No external writes to reconcile.
+
+| Capability | Confidence | Key Factor |
+|---|---|---|
+| Workspace toggle + guided wiring view | ~92% | Evolutionary over shipping code |
+| Channel abstraction + auto-creation | ~88% | Architecture proven; bounded types for v1 |
+| Profile system across v1 boards | ~82% | AI extraction pipeline is the authoring tool; adding boards is cheap |
+| Template DSL + ABS on Tower-LCC Logic | ~85% | Clear architecture (YAML DSL + Rust adapter); Tower-LCC logic was purpose-built for signal logic |
+| Facility model (template-first) | ~85% | Simplified by template-first decision; straightforward data model |
+| JMRI bridge (tier 1 bean creation) | ~75% | Well-specified API; small sync surface; no conflict resolution needed |
+| Template → LogixNG (via bridge) | ~60% | Two unbuilt systems in series; both well-documented |
+| Facility comprehension + live state | ~75% | Standard UI work with clear data model |
+| Planner wizard | ~65% | UX-heavy (needs user validation), implementation straightforward |
+
+### Confidence Table: Bidirectional with JMRI (Advanced User)
+
+Technically proficient users with existing JMRI layouts who edit in both tools. Requires conflict detection and resolution.
+
+| Capability | Confidence | Key Factor |
+|---|---|---|
+| Tier 1 bean sync (sensors, turnouts, masts, lights) | ~65% | Three-way merge model proven for offline sync; collision surface is small (user names, comments) |
+| Conflict detection + resolution UI | ~70% | Pattern exists in offline sync panel; same approach applies |
+| Signal mast event ID updates (mutable) | ~75% | JMRI setters exist; no delete+recreate needed |
+| Sensor/turnout event ID changes (immutable) | ~55% | Requires delete+recreate; panel references break; needs user warning flow |
+| LogixNG ownership (Bowties-created conditionals) | ~45% | Needs clear ownership marker; user could edit in JMRI's LogixNG editor |
+| JMRI topology import (read-only) | ~70% | Read-only from Bowties side; no write conflicts; well-specified GET endpoint |
+| Full bidirectional with concurrent editing | ~40% | Race conditions, snapshot window, thread safety in JMRI managers |
+
+### Comparison to External Review
+
+An external review estimated 30–40% confidence for "template-driven working signal logic across multiple board families." That assessment assumed:
+- The profile system was net-new (it ships today with 5 bundled profiles)
+- The template→logic path required a general-purpose compiler (it's a parameterized write plan for purpose-built hardware)
+- JMRI sync required solving a two-master conflict problem (it's single-master-first with a small sync surface)
+- A solo developer constraint implied both skill and velocity limitations
+
+With the actual context — existing infrastructure, decided architecture, AI-assisted implementation, and explicit v1 scoping to common patterns on Tower-LCC — confidence for the "Now" horizon (working ABS signal logic via templates) is **~85%**.
+
+### Remaining Risks
+
+| Risk | Mitigation |
+|---|---|
+| DSL expressiveness limits for patterns beyond ABS | Explicit deferral; DSL grows iteratively. APB and interlocking are v2 patterns. |
+| UX accessibility for non-technical users | Only validated by real user testing. Prototype early, iterate. |
+| JMRI bridge + LogixNG as two unbuilt systems in series | Decoupled: bridge works without LogixNG; LogixNG works without templates (manual channel push). |
+| Board count scaling beyond v1 | AI extraction pipeline keeps per-board cost low (~2 hours). Market is dominated by RR-CirKits; coverage is good with few profiles. |
+
+### Conclusion: Value vs. Risk by Audience
+
+The two target audiences have inverted risk profiles:
+
+**Primary user (non-technical, Bowties as single master):**
+
+| Dimension | Assessment |
+|---|---|
+| **Value** | High — market expansion. Makes LCC accessible to people who cannot use it today. This is the product's reason to exist. |
+| **Engineering risk** | Low (~85% confidence). Infrastructure exists, architecture is decided, implementation is bounded. |
+| **UX risk** | The real unknown. Will channels, facilities, and templates make sense to non-engineers? Only testable with real users. |
+
+**Advanced user (technically proficient, bidirectional with JMRI):**
+
+| Dimension | Assessment |
+|---|---|
+| **Value** | Moderate — productivity gain. Eliminates tedious manual work, adds comprehension and debugging. But these users *can* already do it manually; this is convenience, not enablement. |
+| **Engineering risk** | Higher (~40–70% depending on sync seam). Ownership boundaries, concurrent editing, delete+recreate flows. |
+| **UX risk** | Low. These users are technical and tolerant of rough edges. |
+
+**Strategic implication:** Invest v1 in the primary user, where the risk is UX-testable rather than engineering-blocking. The advanced user's sync complexity is solvable once the foundation is solid — and that audience tolerates interim limitations (read-only JMRI visibility, manual object creation in the meantime).
+
+This sequencing means:
+- v1 delivers the highest-value outcome (market expansion) with the lowest engineering risk
+- The UX risk is testable early — put the template apply workflow in front of non-technical users and iterate
+- Advanced user features build on the same infrastructure (channels, facilities, bridge) without requiring the foundation to change
+- The hard sync problems (bidirectional editing, LogixNG ownership) are deferred to a point where the product has users and feedback, not solved speculatively
