@@ -87,6 +87,22 @@ Produce a JSON object matching this schema:
 - Verify that all `irrelevantWhen` values actually exist in the CDI's `<map>` for the controlling field; verify that excluded values are also real map entries
 - Number rules sequentially: R001, R002, etc.
 
+## Finding candidate controlling fields
+
+Most relevance rules center on an enum field whose `value 0` means "None / Disabled / Off" or which has mutually exclusive modes. To get a complete list of enum fields and their `<map>` entries in one shot:
+
+```pwsh
+uv run .github/skills/_lib/profile_tools.py enum-fields profile-extractions/<node-name>
+```
+
+The output is JSON with one entry per enum leaf field — `cdiPath`, `name`, and every `{value, label}` pair from the CDI. Scan it for candidates ("None", "Disabled", "Off", priority/override modes) before reading the manual. To spot-check one path while drafting, use:
+
+```pwsh
+uv run .github/skills/_lib/profile_tools.py check profile-extractions/<node-name> "<cdiPath>" [--value N]
+```
+
+Run `profile-6-validate` once `relevance-rules.json` is complete to cross-check every path and `irrelevantWhen` value in bulk.
+
 ## Output File
 
 Save the output as `profile-extractions/<node-name>/relevance-rules.json` (e.g., `profile-extractions/tower-lcc/relevance-rules.json`). This file will be used as shared context by subsequent extraction skills (descriptions, recipes, etc.).

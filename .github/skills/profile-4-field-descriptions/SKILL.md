@@ -13,104 +13,83 @@ Use this skill when you need rich, user-facing descriptions for individual confi
 
 ## Required Inputs
 
-1. **manual-outline.json** — the structured index produced by `profile-0-manual-outline`. Contains `cdiFile` (path to CDI XML), `pdfFile` (path to PDF manual), and page ranges for each section.
-2. **event-roles.json** — from `profile-1-event-roles` (optional but recommended). Provides role context for eventid field descriptions (e.g., "This event ID is for a producer event that fires when...").
+1. **manual-outline.json** — produced by `profile-0-manual-outline`. Contains `cdiFile`, `pdfFile`, and page ranges.
+2. **event-roles.json** — from `profile-1-event-roles` (optional but recommended). Provides role context for eventid descriptions.
 3. **relevance-rules.json** — from `profile-2-relevance-rules` (optional but recommended). Helps note when a field only applies under certain conditions.
-4. **section-descriptions.json** — from `profile-3-section-descriptions` (optional but recommended). Provides section-level context that helps write more coherent field descriptions.
+4. **section-descriptions.yaml** — from `profile-3-section-descriptions` (optional but recommended). Provides section-level context.
 
-**No other file paths needed** — read the CDI XML and PDF file paths from `manual-outline.json`, then use the `pdf-utilities` `read_pdf` tool with `pageRange` parameter to extract configuration sections identified in the outline. For large CDIs, you may extract per-segment (e.g., Port I/O pages, then Conditionals) to avoid output truncation.
+All CDI/PDF paths are read from `manual-outline.json`.
 
-## Task
+## Workflow
 
-For every **leaf field** (int, string, eventid, float) in the CDI XML, produce a clear description of what the field controls. For enum fields (fields with `<map>` entries), additionally describe each option value.
+### Step 1 — generate the skeleton
 
-## Output Format
+Run the shared CLI to emit a complete-by-construction scaffold containing one entry per leaf field, with every enum `<map>` entry already enumerated under `options`:
 
-Produce a YAML file with embedded Markdown text. The file should be saved as `field-descriptions.yaml` in your profile directory.
-
-```yaml
-nodeType:
-  manufacturer: "RR-CirKits"
-  model: "Tower-LCC"
-
-fields:
-  - cdiPath: "Port I/O/Line/Output Function"
-    name: "Output Function"
-    elementType: "int"
-    description: |
-      Controls how this output line drives external devices. **Steady** modes 
-      hold the line at a constant level. **Pulse** modes briefly activate 
-      the line. **Blink** modes create repeating on/off cycles. Use **Sample** 
-      modes to modulate output based on track circuit activity.
-    units: null
-    validRange: null
-    typicalValues: null
-    options:
-      - value: 0
-        label: "No Function"
-        description: "Line is disabled and has no effect."
-        category: null
-      - value: 1
-        label: "Steady Active Hi"
-        description: "Line is continuously driven high (on state)."
-        category: "Steady"
-      - value: 2
-        label: "Steady Active Lo"
-        description: "Line is continuously driven low (off state)."
-        category: "Steady"
-      - value: 3
-        label: "Pulse Active Hi"
-        description: "Line briefly pulses high when an event triggers it; timing controlled by Delay Interval 1."
-        category: "Pulse"
-      - value: 5
-        label: "Blink A Active Hi"
-        description: "Line blinks continuously with the A timing pattern (on/off intervals from Delay section)."
-        category: "Blink"
-    citation: "Section 3.1: Output Function Field, pages 17-20"
+```pwsh
+uv run .github/skills/_lib/profile_tools.py skeleton fields profile-extractions/<node-name>
 ```
+
+This produces `field-descriptions.skeleton.yaml`. The skeleton already contains:
+
+- `cdiPath` (with `[N]` / `[N-M]` suffix where same-name siblings exist)
+- `name` (CDI element name)
+- `elementType` (`int`, `string`, or `eventid` — refine `int`↔`string` if the CDI uses `float`/`bit`)
+- For enum fields: every `value` + `label` from the CDI `<map>`
+- `TODO` placeholders for every narrative field you need to fill in
+
+### Step 2 — fill in narrative fields
+
+Use `pdf-utilities.read_pdf` with `pageRange` from the outline to read the relevant sections. Edit each entry's TODO placeholders:
+
+- `description` — what the field does in practical terms (Markdown supported).
+- For enum options: each option's `description` and optional `category`.
+- `units` / `validRange` / `typicalValues` for numeric fields (leave `null` if not applicable).
+- `maxLength` for strings (from CDI `<string size="N">`).
+- `role` for eventids (`Producer` | `Consumer` — match `event-roles.json`).
+- `citation` — manual section + page.
+
+### Step 3 — rename and validate
+
+Rename `field-descriptions.skeleton.yaml` to `field-descriptions.yaml`, then run `profile-6-validate` to confirm every path and enum value resolves.
 
 ## Guidelines
 
 ### For all fields
-- `description` should explain what the field does in practical terms, not just repeat the CDI label
-- **Descriptions support Markdown** — use `**bold**` for emphasis, `*italic*` for alternatives, and bullet points for lists of options/behaviors
-- If the CDI already has a good `<description>`, enhance it with manual context rather than replacing it
-- Write for model railroad hobbyists, not protocol engineers
-- If prior extraction context is available, use it to write more informed descriptions
+- Explain what the field does in practical terms; do not just repeat the CDI label.
+- **Descriptions support Markdown** — `**bold**`, `*italic*`, bullet points.
+- If the CDI already has a useful `<description>`, enhance it with manual context.
+- Write for model railroad hobbyists, not protocol engineers.
 
-### For enum fields (fields with `<map>`)
-- Include every option value from the CDI's `<map>` entries — do not skip any
-- `value` must exactly match the `<property>` integer from the CDI
-- `label` must exactly match the `<value>` string from the CDI
-- `description` for each option should explain what it does, not just restate the label (supports **Markdown**)
-- Use `category` to group related options when the manual describes them in families (e.g., Steady, Pulse, Blink, Sample mode families)
+### For enum fields
+- Do not change `value` or `label` — the skeleton copied them verbatim from the CDI `<map>`.
+- Write the `description` for each option (one short sentence is plenty).
+- Use `category` to group related options the manual treats as a family (e.g. Steady, Pulse, Blink, Sample).
 
 ### For numeric fields
-- Include `units` if the manual or CDI specifies them
-- Include `validRange` with min/max if the CDI or manual specifies bounds
-- Include `typicalValues` if the manual suggests common values
+- `units` only when the manual or CDI states them.
+- `validRange: { min, max }` only when the CDI/manual specifies bounds.
+- `typicalValues` only when the manual recommends specific values.
 
 ### For eventid fields
-- Describe the role this event ID plays in the node's operation
-- If event-roles.json is available, reference the producer/consumer classification
-- Note whether it's something the user assigns or something that's auto-generated
+- Describe the event's role in node operation.
+- `role` must match `event-roles.json` (Producer or Consumer).
 
 ### For string fields
-- Note the maximum length from CDI `size` attribute
-- Describe what the string is used for
+- `maxLength` from the CDI `<string size="N">` attribute.
 
 ## Important
 
-- Every leaf field in the CDI MUST have an entry — do not skip any
-- For replicated groups, describe the field template once (not per-instance) — it applies to all instances
-- Same-named sibling groups must be distinguished with index ranges
-- Do NOT invent option values that don't exist in the CDI's `<map>`
-- **YAML formatting**: Use the pipe (`|`) syntax for multiline description text. Quote values containing special characters. Use `- ` for bullet lists within description fields (supports Markdown).
+- Every leaf field in the CDI MUST appear (the skeleton guarantees this — do not remove entries).
+- For replicated groups, the skeleton emits one template entry — describe it once; it applies to every instance.
+- Same-named sibling groups are distinguished with `[N]` / `[N-M]` index suffixes already; do not rewrite the suffix.
+- Do NOT add option values that don't exist in the CDI `<map>`.
+- **YAML formatting**: use the pipe (`|`) syntax for multiline descriptions; quote values containing special characters.
 
 ## Output File
 
-Save the output as `profile-extractions/<node-name>/field-descriptions.yaml` (e.g., `profile-extractions/tower-lcc/field-descriptions.yaml`). The .yaml extension enables easy rendering of Markdown content in the UX. This file will be used as shared context by the recipes extraction skill.
+`profile-extractions/<node-name>/field-descriptions.yaml`. Used as shared context by the recipes extraction skill.
 
 ## Tip: Large CDIs
 
-If the CDI is large (many segments with many fields), the output may be too long for a single response. In that case, run this skill per-segment using page ranges from the outline: extract Port I/O fields first (pages from outline), then Conditionals (pages from outline), etc., and merge the results into a single JSON file.
+If the field list is very long, fill in entries in batches grouped by segment (Port I/O fields, then Conditionals, …). The skeleton groups entries in document order, so segment boundaries are easy to find.

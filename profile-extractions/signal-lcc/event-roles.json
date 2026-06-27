@@ -1,0 +1,96 @@
+{
+  "nodeType": {
+    "manufacturer": "RR-CirKits, Inc.",
+    "model": "Signal-LCC"
+  },
+  "roles": [
+    {
+      "cdiPath": "Node Power Monitor",
+      "role": "Producer",
+      "childFields": ["Message Options", "Power OK", "Power Not OK"],
+      "citation": "Segment 'Node Power Monitor' has 'Message Options' map: 'None' / 'Send Power OK only' / 'Send both Power OK and Power Not OK' — events are sent (produced) by this node when power state changes.",
+      "confidence": "High",
+      "notes": "Eventids are direct segment children, not nested in a sub-group. CDI descriptions only say 'EventID' / 'EventID (may be lost)'; role is established by the Message Options enum values, which describe sending behavior. Manual section 1.1.8 defines Producer as events 'created or produced by the node as a result of something related to the node' — power state change qualifies."
+    },
+    {
+      "cdiPath": "Port I/O-1/Line/Commands/Consumers",
+      "role": "Consumer",
+      "childFields": ["Command", "Action"],
+      "citation": "Manual section 6.3.4 Commands: 'Commands are consumer events that control the line. A command can directly control the line, for example by turning it on or off ... Each line has 6 consumer events associated with it.' CDI description on Command eventid: '(C) When this event occurs'.",
+      "confidence": "High",
+      "notes": "Replicated 6 times per Line; Line replicated 8 times. Group's literal CDI <name> contains a slash ('Commands/Consumers'); the path component is the literal group name."
+    },
+    {
+      "cdiPath": "Port I/O-1/Line/Actions/Producers",
+      "role": "Producer",
+      "childFields": ["Upon this action", "Indicator"],
+      "citation": "Manual section 6.3.5 Indications: 'Indications are the producer events that are sent out to the bus. Each line has 6 producer events associated with it.' CDI description on Indicator eventid: '(P) this event will be sent'.",
+      "confidence": "High",
+      "notes": "Replicated 6 times per Line; Line replicated 8 times. Literal CDI <name> is 'Actions/Producers' (slash is part of the name)."
+    },
+    {
+      "cdiPath": "Conditionals/Logic/Variable #1",
+      "role": "Consumer",
+      "childFields": ["Trigger", "Source", "Track Speed", "set true", "set false"],
+      "citation": "Manual section 7.4.2.1 Events: 'Normally each Variable is set to true or false by a pair of consumer EventIDs that follow this selection. (Event/s to set variable true/false)' CDI descriptions: '(C) Event to set variable #1 true.' / '(C) Event to set variable #1 false.'",
+      "confidence": "High",
+      "notes": "Both eventid children ('set true', 'set false') are Consumers. Logic replicated 32 times."
+    },
+    {
+      "cdiPath": "Conditionals/Logic/Variable #2",
+      "role": "Consumer",
+      "childFields": ["Trigger", "Source", "Track Speed", "set true", "set false"],
+      "citation": "Manual section 7.4: 'Each conditional statement contains one or two variables for identifying the required events...' Section 7.4.2.1 confirms both variables use consumer EventIDs. CDI descriptions: '(C) Event to set variable #2 true.' / '(C) Event to set variable #2 false.'",
+      "confidence": "High",
+      "notes": "Same structure and role as Variable #1; sibling group inside the same Logic template."
+    },
+    {
+      "cdiPath": "Conditionals/Logic/Action[1-4]",
+      "role": "Producer",
+      "childFields": ["Condition", "Action Event"],
+      "citation": "Manual section 7.10 Actions (Producers): 'Any logic conditional may generate up to four events when it is true. (or false) Each of these four events may be; ignored with none, sent Immediately, or sent After delay.' CDI description on Action Event eventid: '(P) this event will be sent'.",
+      "confidence": "High",
+      "notes": "Index range [1-4] disambiguates this replicated (replication=4) group from the earlier sibling group also named 'Action' (document index [0]) inside Logic, which contains the 'when true'/'when false' int fields and no eventids."
+    },
+    {
+      "cdiPath": "Rule to Aspect/Mast",
+      "role": "Producer",
+      "childFields": ["Mast Processing", "Mast Description", "Link Address", "Lamp Fade"],
+      "citation": "Manual section 8.3 (P) Track Circuit Link Address: 'This (read only) address is used by the virtual track circuit to send speed information to any other node that requires it. Copy this value into the associated track circuit speed table's (C) Remote Mast Up Link Address field.' CDI description: '(P) Track Circuit Link Address. Copy and Paste into linked Track Circuit (Limited Write)'.",
+      "confidence": "High",
+      "notes": "Only the direct eventid 'Link Address' of the Mast group is considered here; the nested Rule sub-group's eventids are separate entries. Mast replicated 8 times. Link Address is a 'limited write' (set up once during install via copy/paste); functionally the mast publishes (produces) speed indications keyed by this address."
+    },
+    {
+      "cdiPath": "Rule to Aspect/Mast/Rule",
+      "role": "Consumer",
+      "childFields": ["set aspect"],
+      "citation": "Manual section 8.5 Rules: '(C) Event to Set Aspect — This is the EventID that selects this rule.' CDI description on set aspect eventid: '(C) Event to Set Aspect. Note: Aspects are cleared automatically by the logic.'",
+      "confidence": "High",
+      "notes": "Rule sub-group mixes Consumer and Producer eventids; per the skill rule, classified separately. This entry covers the consumer eventid only. Rule replicated 8 times per Mast; Mast replicated 8 times."
+    },
+    {
+      "cdiPath": "Rule to Aspect/Mast/Rule",
+      "role": "Producer",
+      "childFields": ["aspect is set", "aspect cleared"],
+      "citation": "Manual section 8.5 Rules: '(P) Send this event when the Aspect is set ... (P) Send this event when when the Aspect clears.' CDI descriptions: '(P) Send this event when the Aspect is set.' and '(P) Send this event when the Aspect clears.'",
+      "confidence": "High",
+      "notes": "Producer eventid siblings of the consumer 'set aspect'. Two eventid children with the same Producer role grouped here."
+    },
+    {
+      "cdiPath": "Direct Lamp Control/Lamp",
+      "role": "Consumer",
+      "childFields": ["Lamp Description", "Lamp On", "Lamp Off", "Lamp Fade", "Lamp Selection", "Lamp Phase (A-B) - Flash Rate"],
+      "citation": "Manual section 1.1.6 Line: 'The current version firmware also allows each output LED to be individually controlled by two EventIDs. This makes it easy to use the LEDs for control panels or building lighting where each LED needs to respond to a single control.' CDI descriptions on the eventids: '(C) Event to set lamp on.' and '(C) Event to set lamp off.'",
+      "confidence": "High",
+      "notes": "Both eventids ('Lamp On', 'Lamp Off') are Consumers. Group replicated 16 times. Group description: 'Direct control of lamps that are not used by any mast.'"
+    },
+    {
+      "cdiPath": "Track Circuits/Circuit",
+      "role": "Consumer",
+      "childFields": ["Remote Mast Description", "Link Address"],
+      "citation": "Manual section 9.2 Linking Virtual Code Lines (Track Circuits): 'The EventID for the TX code set will always come from the transmitting node and be entered into the receiving node...' Manual section 7.4.2.2: 'Optionally a logic variable may be pointed to a Track Circuit Receive (RX) table.' CDI description: '(C) Remote Mast Link Address. Copy from Next Mast and Paste here.'",
+      "confidence": "High",
+      "notes": "The Track Circuit acts as the receive (RX) side; the eventid stores the remote Mast's published Link Address so this node can receive (consume) speed indications offset from it. Circuit replicated 8 times."
+    }
+  ]
+}

@@ -1,0 +1,267 @@
+nodeType:
+  manufacturer: "RR-CirKits, Inc."
+  model: "Signal-LCC"
+
+sections:
+  - cdiPath: "Node ID"
+    level: "segment"
+    name: "Node ID"
+    description: |
+      Stores the human-readable **name** and **description** for this Signal-LCC on the LCC bus.
+      Configuration tools such as JMRI show these strings in the node-selection window so you can
+      quickly identify which Signal-LCC you are editing — for example "Whitehead East — Masts 101L/102L".
+    citation: "Manual Section 6.1 Identification (page 20) and Section 6.2 NODE ID (page 20)."
+
+  - cdiPath: "Node ID/Your name and description for this node"
+    level: "group"
+    name: "Your name and description for this node"
+    description: |
+      Holds the **Node Name** (up to 63 chars) and **Node Description** (up to 64 chars) that
+      identify this board to humans. Keep entries short and meaningful — the manual recommends
+      using a location and the masts/lines this node controls.
+    citation: "Manual Section 6.2 NODE ID, page 20."
+
+  - cdiPath: "Node Power Monitor"
+    level: "segment"
+    name: "Node Power Monitor"
+    description: |
+      Configures this node's optional **Power OK / Power Not OK** producer events. When enabled,
+      the Signal-LCC reports its own power state on the LCC bus so other nodes or logic can react
+      to power loss and recovery. Use **Message Options** to choose whether nothing, only Power OK,
+      or both events are emitted.
+    citation: "CDI segment 'Node Power Monitor' (Message Options map); aligns with event-roles.json Producer classification for this segment."
+
+  - cdiPath: "Port I/O-1"
+    level: "segment"
+    name: "Port I/O-1"
+    description: |
+      Configures the **8 general-purpose I/O lines** on the Signal-LCC's I/O-1 connector. Each line
+      can be set as an input (e.g. block-occupancy detector, button), as an output (e.g. switch
+      machine, relay, LED), or — with a Sample mode — as a single-wire combined I/O. The port is
+      commonly configured as all inputs or all outputs to match RR-CirKits companion boards such as
+      the BOD-8 or SMD-8, but every line may be set individually.
+    citation: "Manual Section 6.3 Lines (I/O Port), pages 21–24."
+
+  - cdiPath: "Port I/O-1/Line"
+    level: "group"
+    name: "Line"
+    description: |
+      Represents **one of the 8 physical I/O lines** on the I/O-1 connector. Each line carries its
+      own description, output function (None / Steady / Pulse / Blink A / Blink B with polarity),
+      input function (None / Normal / Alternating with polarity), two delay timers, **6 consumer
+      commands** that drive the line, and **6 producer indicators** that report its activity.
+    citation: "Manual Sections 6.3.1 Lines, 6.3.2 I/O Configuration, 6.3.4 Commands, 6.3.5 Indications, pages 21–24."
+
+  - cdiPath: "Port I/O-1/Line/Delay"
+    level: "group"
+    name: "Delay"
+    description: |
+      Two independent delay timers used by this line: **Interval 1** controls the on-delay (or pulse
+      pre-delay), and **Interval 2** controls the off-delay (or pulse length). Each delay accepts a
+      count of 1–60,000 in Milliseconds, Seconds, or Minutes, with optional **Retrigger** to restart
+      the timer when a new event arrives before it finishes. For input debounce, retrigger is
+      always active and only the Milliseconds setting is used.
+    citation: "Manual Section 6.3.3 Delay, page 23."
+
+  - cdiPath: "Port I/O-1/Line/Commands/Consumers"
+    level: "group"
+    name: "Commands/Consumers"
+    description: |
+      One of **6 consumer-event slots** that drive this line's state. Each slot pairs a Command
+      EventID — listened for on the bus — with an **Action** that decides how the line reacts
+      (turn on/off, toggle, set/clear the veto register, or apply a gated change). Use these to
+      control outputs from panel buttons, JMRI sensors, or other nodes' producer events.
+    citation: "Manual Section 6.3.4 Commands, pages 23–24; event-roles.json classifies this group as Consumer. Relevance rule R001 marks the whole group irrelevant when Output Function is 'None'."
+
+  - cdiPath: "Port I/O-1/Line/Actions/Producers"
+    level: "group"
+    name: "Actions/Producers"
+    description: |
+      One of **6 producer-event slots** that report this line's activity. Each slot pairs a triggering
+      **Upon this action** condition (input edge, gated input, cascade, or an output-state change)
+      with an **Indicator** EventID that the node will emit. Use these to broadcast occupancy,
+      button presses, or output confirmations to other nodes or to JMRI.
+    citation: "Manual Section 6.3.5 Indications, page 24; event-roles.json classifies this group as Producer."
+
+  - cdiPath: "Conditionals"
+    level: "segment"
+    name: "Conditionals"
+    description: |
+      Holds up to **32 internal logic conditionals**, each combining one or two variables with a
+      logic operator (AND / OR / XOR / variants) to drive up to four producer events. Conditionals
+      are the Signal-LCC's on-board *vital logic* — they can compute signal rules, route logic, or
+      simple interlocks without external software, and may also be driven by speed information
+      from linked masts via the Track Circuit RX tables.
+    citation: "Manual Section 7 Signal LCC Logic, pages 25–31."
+
+  - cdiPath: "Conditionals/Logic"
+    level: "group"
+    name: "Logic"
+    description: |
+      One of the **32 conditional statements**. A Logic entry has a name, a **Function** that selects
+      how it participates in evaluation (*Blocked* skips it, *Group* makes it part of a mast group,
+      *Last (Single)* marks the end of a group or a stand-alone rule), two variables combined by a
+      **Logic Operation**, true/false exit actions, an optional delay, and up to four action events.
+    citation: "Manual Sections 7.2–7.10, pages 26–31. Relevance rule R009/R010/R011 etc. note that the whole logic body is inert while Function is 'Blocked'."
+
+  - cdiPath: "Conditionals/Logic/Variable #1"
+    level: "group"
+    name: "Variable #1"
+    description: |
+      The **first variable** of this conditional. Choose a **Trigger** (evaluate on variable change,
+      on a matching event, or never), a **Source** (this variable's own consumer events, or one of
+      the 8 Track Circuit RX tables), and — when the source is a track circuit — the **Track Speed**
+      to watch for. The paired consumer eventids set the variable true / false when Source uses
+      this variable's own events.
+    citation: "Manual Section 7.4 Variables, pages 27–29; event-roles.json marks this group as Consumer. Relevance rules R006, R012, R014, R016, R017 disable parts of it depending on Function/Trigger/Source."
+
+  - cdiPath: "Conditionals/Logic/Variable #2"
+    level: "group"
+    name: "Variable #2"
+    description: |
+      The **second variable** of this conditional, structured identically to Variable #1. Pairing
+      two variables with the Logic Operation lets a single conditional express interlocks such as
+      *"occupied AND turnout reversed"* or *"button pressed OR cab signal cleared"*. Set its
+      Trigger to *None* and choose **V1 Only** in Logic Operation when only one variable is needed.
+    citation: "Manual Section 7.4 Variables, pages 27–29; event-roles.json marks this group as Consumer. Relevance rules R007, R013, R015, R018, R019 mirror those for Variable #1."
+
+  - cdiPath: "Conditionals/Logic/Action[0]"
+    level: "group"
+    name: "Action"
+    description: |
+      Defines **what this conditional does next** after evaluation: the **when true** and **when
+      false** selectors choose whether to send action events and how to continue (exit the mast
+      group, evaluate the next conditional, AND/OR with the next, or send then continue). This is
+      the flow-control half of the conditional; the producer event payload lives in the four
+      Action slots below.
+    citation: "Manual Sections 7.7 Action when Conditional = True and 7.8 Action when Conditional = False, pages 29–31. Relevance rule R009 marks it inert when Function is 'Blocked'."
+
+  - cdiPath: "Conditionals/Logic/Time Delay before action"
+    level: "group"
+    name: "Time Delay before action"
+    description: |
+      Optional delay applied before this conditional's action events are produced. **Delay Time**
+      accepts 1–60,000 of the selected **Units** (Milliseconds / Seconds / Minutes), and
+      **Retriggerable** lets a fresh trigger restart the count instead of letting the original
+      one complete. Use this for timed releases such as approach lighting or delayed track
+      indications.
+    citation: "Manual Section 7.9 Delay, page 31. Relevance rule R010 marks it inert when Function is 'Blocked'."
+
+  - cdiPath: "Conditionals/Logic/Action[1-4]"
+    level: "group"
+    name: "Action"
+    description: |
+      One of **four producer-event slots** fired by this conditional. **Condition** chooses when
+      the slot fires (*none*, *Immediately*, *After delay*, *Immediate/Delayed if True*,
+      *Immediate/Delayed if False*) and **Action Event** is the EventID that will be sent. Four
+      slots per conditional support multi-lamp rule events or compound signal-aspect output.
+    citation: "Manual Section 7.10 Actions (Producers), page 31; event-roles.json classifies this group as Producer. Relevance rules R011 and R020 control its visibility."
+
+  - cdiPath: "Rule to Aspect"
+    level: "segment"
+    name: "Rule to Aspect"
+    description: |
+      Maps **signal rules (indications) to physical lamp appearances** for up to **8 signal masts**.
+      Each mast lists up to 8 rules (or up to 16 when chained with *Linked to Previous*); each rule
+      selects which of the 16 LED drivers light, which flash phase they use, and any special
+      effects. This is the heart of the Signal-LCC's signal-rendering capability.
+    citation: "Manual Section 8 Masts, pages 31–35."
+
+  - cdiPath: "Rule to Aspect/Mast"
+    level: "group"
+    name: "Mast"
+    description: |
+      Represents **one signal mast** (up to 8 per node). **Mast Processing** activates the mast or
+      links it to the previous mast for extended rule capacity. **Mast Description** is shown in
+      configuration-tool tabs, **Link Address** is the producer eventid that this mast publishes
+      its current speed indication on (copy/paste into a Track Circuit on the previous mast's
+      node), and **Lamp Fade** chooses between snap transitions and incandescent fade.
+    citation: "Manual Sections 8.1 Mast Processing through 8.4 Lamp Fade, pages 31–33; event-roles.json marks the Link Address eventid as Producer."
+
+  - cdiPath: "Rule to Aspect/Mast/Rule"
+    level: "group"
+    name: "Rule"
+    description: |
+      Defines **one rule (indication) shown by this mast** — up to 8 per mast. **Rule Name** picks
+      a standard NORAC indication (0-Stop through 31-Dark), **Track Speed** sets the approach
+      speed this rule reports to the previous mast via the Track Circuit RX table, **set aspect**
+      is the consumer event that selects the rule, and **aspect is set / aspect cleared** are the
+      producer events the node emits when the rule activates or is replaced.
+    citation: "Manual Section 8.5 Rules, page 33; event-roles.json splits this group into Consumer (set aspect) and Producer (aspect is set, aspect cleared)."
+
+  - cdiPath: "Rule to Aspect/Mast/Rule/Appearance"
+    level: "group"
+    name: "Appearance"
+    description: |
+      One of the **4 lamp slots** that light when this rule's aspect is shown. **Lamp Selection**
+      picks which of the 16 LED drivers (#1 H1-G through #16 H4-L) is used, and **Lamp Phase
+      (A-B) — Flash Rate** chooses Steady or one of three flash rates on phase A or B (phase
+      pairing keeps multi-lamp aspects in sync). Up to 4 lamps may be lit per aspect; for more,
+      use *Linked to Previous* on the next mast.
+    citation: "Manual Sections 8.6.1–8.6.3, pages 34–35."
+
+  - cdiPath: "Direct Lamp Control"
+    level: "segment"
+    name: "Direct Lamp Control"
+    description: |
+      Provides **per-lamp on/off control** of any of the 16 LED drivers that are *not* claimed by a
+      mast's Aspect-to-Appearance table. Use this when an LED is driving a panel indicator,
+      building light, or any non-signal use, so the same hardware can serve both signaling and
+      general lighting.
+    citation: "CDI segment 'Direct Lamp Control' description: 'Direct control of lamps that are not used by any mast.' Manual Section 1.1.6 Line confirms each output LED can be individually controlled by two EventIDs."
+
+  - cdiPath: "Direct Lamp Control/Lamp"
+    level: "group"
+    name: "Lamp"
+    description: |
+      One of the **16 direct-control lamp slots**. Set **Lamp Selection** to the specific lamp
+      driver (or *Used by Mast* to leave it to the Rule-to-Aspect table), give it a description,
+      choose **Lamp Fade** and **Lamp Phase (A-B) — Flash Rate**, then bind **Lamp On** and
+      **Lamp Off** consumer events to drive it directly.
+    citation: "CDI segment description; event-roles.json marks Lamp On / Lamp Off as Consumer events."
+
+  - cdiPath: "Track Circuits"
+    level: "segment"
+    name: "Track Circuits"
+    description: |
+      Holds the **8 receive (RX) tables** that pick up speed indications published by the *next*
+      mast on each route. Track circuits implement a virtual code line — instead of physical wires
+      between signals, each mast publishes its speed via its Link Address and downstream signals
+      subscribe by pasting that address here, then reference the RX table from a Logic variable.
+    citation: "Manual Section 9 Track Circuits, especially 9.1–9.2, pages 35–37."
+
+  - cdiPath: "Track Circuits/Circuit"
+    level: "group"
+    name: "Circuit"
+    description: |
+      One of **8 Track Circuit (RX) tables**. Provide a description for the remote mast and paste
+      its Link Address into the **Link Address** field — this is the consumer eventid pattern the
+      node will receive speed updates on. A Logic variable can then select this circuit as its
+      Source so the conditional reacts to the next signal's required approach speed.
+    citation: "Manual Section 9.2 Linking Virtual Code Lines (Track Circuits), pages 36–37; event-roles.json marks Link Address as Consumer."
+
+  - cdiPath: "Rules"
+    level: "segment"
+    name: "Rules"
+    description: |
+      Placeholder for **pre-canned logic presets** (ABS / APB / CTC). The manual notes that these
+      rule sets are *not yet implemented* in firmware — selecting one currently has no effect.
+      Configure signaling using the Conditionals segment instead.
+    citation: "Manual Section 10 Rules, page 48: 'It is planned to eventually include logic presets…' CDI description on Rule Selection: '(Rule sets are not implemented)'."
+
+  - cdiPath: "Brightness"
+    level: "segment"
+    name: "Brightness"
+    description: |
+      Adjusts the **per-lamp intensity** of all 16 LED drivers. Holds the single *Intensities*
+      group inside it.
+    citation: "Manual Section 11 Brightness, page 49."
+
+  - cdiPath: "Brightness/Intensities"
+    level: "group"
+    name: "Intensities"
+    description: |
+      Sets the **brightness (0–255)** for each of the 16 named lamps (#1 H1-G through #16 H4-L).
+      The minimum effective value is 8 — that floor preserves enough dynamic range for the
+      incandescent **Lamp Fade** effect to look smooth even at dim settings.
+    citation: "Manual Section 11 Brightness, page 49: 'Minimum brightness is set to 8 and maximum is 255. The brightness of 8 gives just enough dynamic range to allow for fading a lamp even when set to minimum intensity.'"

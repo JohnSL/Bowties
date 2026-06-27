@@ -13,80 +13,57 @@ Use this skill when you need rich, user-facing descriptions for each section of 
 
 ## Required Inputs
 
-1. **manual-outline.json** — the structured index produced by `profile-0-manual-outline`. Contains `cdiFile` (path to CDI XML), `pdfFile` (path to PDF manual), and page ranges for each section.
-2. **event-roles.json** — from `profile-1-event-roles` (optional but recommended). Allows descriptions to reference whether a section contains producer or consumer events.
-3. **relevance-rules.json** — from `profile-2-relevance-rules` (optional but recommended). Allows descriptions to note conditional relevance (e.g., "This section only applies when Output Function is set to a non-disabled value").
+1. **manual-outline.json** — produced by `profile-0-manual-outline`. Contains `cdiFile`, `pdfFile`, and page ranges.
+2. **event-roles.json** — from `profile-1-event-roles` (optional but recommended). Lets descriptions reference whether a section contains producer or consumer events.
+3. **relevance-rules.json** — from `profile-2-relevance-rules` (optional but recommended). Lets descriptions note conditional relevance.
 
-**No other file paths needed** — read the CDI XML and PDF file paths from `manual-outline.json`, then use the `pdf-utilities` `read_pdf` tool with `pageRange` parameter to extract all configuration sections identified in the outline.
+All CDI/PDF paths are read from `manual-outline.json`.
 
-## Task
+## Workflow
 
-For every **segment** and **group** in the CDI XML, extract or write a 1–3 sentence purpose statement that explains:
-- What this section is for
-- What physical function or hardware it corresponds to (if applicable)
-- When a user would configure it
+### Step 1 — generate the skeleton
 
-## Output Format
+Run the shared CLI to emit one entry per segment and group, with the `cdiPath` / `level` / `name` already populated and TODO placeholders for the narrative fields:
 
-Produce a YAML file with embedded Markdown text. The file should be saved as `section-descriptions.yaml` in your profile directory.
-
-```yaml
-nodeType:
-  manufacturer: "RR-CirKits"
-  model: "Tower-LCC"
-
-sections:
-  - cdiPath: "Port I/O"
-    level: "segment"
-    name: "Port I/O"
-    description: |
-      Configures the 16 physical I/O lines on the board. Each line can 
-      be independently configured as an input (sensing external signals) 
-      or output (controlling relays, LEDs, solenoids). This is the heart 
-      of the Tower-LCC — where you wire your physical layout devices.
-    citation: "Section 3: Port I/O Configuration, pages 15-45"
-
-  - cdiPath: "Port I/O/Line"
-    level: "group"
-    name: "Line"
-    description: |
-      Represents one physical I/O line on the board. Configure the output 
-      function (how the pin drives external devices), input function 
-      (how it reads external sensors), timing delays for pulses/blinks, 
-      and the events that trigger state changes. Each of the 16 lines 
-      operates independently.
-    citation: "Section 3.1: Configuring Individual Lines, pages 16-35"
-
-  - cdiPath: "Conditionals"
-    level: "segment"
-    name: "Conditionals"
-    description: |
-      Sets up conditional logic using two variables and combining logic 
-      (AND, OR, XOR, etc.). Use this to create complex behaviors — for example, 
-      "send this event only if both track circuits are occupied" or 
-      "blink this output when either of two conditions is true."
-    citation: "Section 4: Conditional Logic, pages 46-80"
+```pwsh
+uv run .github/skills/_lib/profile_tools.py skeleton sections profile-extractions/<node-name>
 ```
+
+This writes `section-descriptions.skeleton.yaml`. The skeleton:
+
+- Emits one entry per top-level segment.
+- Emits one entry per group template (not per replicated instance).
+- Adds `[N]` / `[N-M]` index suffixes only where same-name siblings exist (e.g., `Conditionals/Logic/Action[0]` vs `Conditionals/Logic/Action[1-4]`).
+- Preserves literal `/` inside element names (e.g., `Port I/O-1/Line/Commands/Consumers`).
+
+### Step 2 — fill in narrative fields
+
+Use `pdf-utilities.read_pdf` with `pageRange` values from the outline to read the relevant sections of the manual. Replace each TODO with:
+
+- `description` — a 1–3 sentence purpose statement (Markdown supported).
+- `citation` — manual section + page reference.
+
+### Step 3 — rename and validate
+
+Rename `section-descriptions.skeleton.yaml` to `section-descriptions.yaml`, then run `profile-6-validate` against the node directory to confirm every emitted path still resolves.
 
 ## Guidelines
 
-- Cover every segment (top-level) and every distinct group template (not every replicated instance — describe the template once)
-- For replicated groups (e.g., `Line` with `replication="16"`), describe what one instance represents (e.g., "one physical I/O line on the board")
-- **Descriptions support Markdown** — use `**bold**` for emphasis, `*italic*` for alternatives, and line breaks for readability
-- Write for model railroad hobbyists, not protocol engineers
-- Use present tense and active voice
-- If the CDI provides a `<description>` that is already clear and complete, you may use it as-is or enhance it with manual context
-- If the CDI provides no `<description>` or only a terse one, write a description from the manual's explanation
-- If event-roles.json is available, incorporate role context (e.g., "This group contains the consumer events for this I/O line — the events the node listens for to trigger actions")
-- If relevance-rules.json is available, note conditional relevance where applicable (e.g., "This section only applies when the Output Function is set to a pulse or blink mode")
+- Cover every segment and every distinct group template (the skeleton guarantees this — do not delete entries).
+- For replicated groups, describe what one instance represents (e.g., "one physical I/O line on the board").
+- **Descriptions support Markdown** — `**bold**` for emphasis, `*italic*` for alternatives, line breaks for readability.
+- Write for model railroad hobbyists, not protocol engineers.
+- Present tense, active voice.
+- If the CDI provides a clear `<description>` already, use it as-is or enhance with manual context.
+- If `event-roles.json` is available, mention role context (e.g., "contains the consumer events for this line").
+- If `relevance-rules.json` is available, note conditional relevance (e.g., "only applies when Output Function is set to pulse or blink").
 
 ## Important
 
-- Every segment and every group template in the CDI MUST have an entry — do not skip any
-- Paths must match CDI element names exactly
-- Same-named sibling groups must be distinguished with index ranges (e.g., `Event[0-5]` vs `Event[6-11]`)
-- **YAML formatting**: Use the pipe (`|`) syntax for multiline description text to preserve readability. Quote values containing special characters like quotes or colons. Example: `description: |` followed by indented text.
+- Every segment and every group template MUST have an entry (the skeleton enforces this).
+- Paths must match the skeleton — do not rewrite the `[N]` / `[N-M]` suffixes by hand.
+- **YAML formatting**: use the pipe (`|`) syntax for multiline `description` text; quote values containing special characters such as quotes or colons.
 
 ## Output File
 
-Save the output as `profile-extractions/<node-name>/section-descriptions.yaml` (e.g., `profile-extractions/tower-lcc/section-descriptions.yaml`). The .yaml extension enables easy rendering of Markdown content in the UX. This file will be used as shared context by subsequent extraction skills (field descriptions, recipes).
+`profile-extractions/<node-name>/section-descriptions.yaml`. The .yaml extension enables easy rendering of Markdown content in the UX. Used as shared context by field-descriptions and recipes extraction.

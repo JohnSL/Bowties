@@ -1,0 +1,236 @@
+{
+  "nodeType": {
+    "manufacturer": "RR-CirKits, Inc.",
+    "model": "Signal-LCC"
+  },
+  "rules": [
+    {
+      "id": "R001",
+      "affectedSection": "Port I/O-1/Line/Commands/Consumers",
+      "controllingField": "Port I/O-1/Line/Output Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["None"],
+      "explanation": "Commands (consumer events) control the line's output state, so they have no useful effect when Output Function is 'None' and the line is not configured as an output. To use Commands, set Output Function to Steady, Pulse, Blink A, or Blink B.",
+      "citation": "Manual Section 6.3.4 'Commands': 'Commands are consumer events that control the line. A command can directly control the line, for example by turning it on or off.' Section 6.3.2: 'Normally a line should only have output functions or input functions enabled.'"
+    },
+    {
+      "id": "R002",
+      "affectedSection": "Port I/O-1/Line/Receiving the configured Command (C) event(s) will drive or pulse the line:",
+      "controllingField": "Port I/O-1/Line/Output Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["None"],
+      "explanation": "The output drive polarity (Low/High) only matters when the line is configured as an output. With Output Function set to 'None', the line is not driven and the polarity setting has no effect.",
+      "citation": "Manual Section 6.3.2 'I/O Configuration' lists Output Function values as Steady/Pulse/Blink (each Active Hi or Active Lo). The polarity selector is meaningful only when an active Output Function is chosen."
+    },
+    {
+      "id": "R003",
+      "affectedSection": "Port I/O-1/Line/The configured Indication (P) event(s) will be sent when the line is driven:",
+      "controllingField": "Port I/O-1/Line/Input Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["None"],
+      "explanation": "The indication polarity (Low/High) determines at which line voltage input-driven indication events are sent. With Input Function set to 'None', no input-driven indications are produced and the polarity setting has no effect.",
+      "citation": "Manual Section 6.3.2 'I/O Configuration': Input Function values include 'Active Hi' and 'Active Lo'. The separate polarity field controls which voltage level triggers the configured indication producers."
+    },
+    {
+      "id": "R004",
+      "affectedSection": "Port I/O-1/Line/Output Function",
+      "controllingField": "Port I/O-1/Line/Input Function",
+      "irrelevantWhen": [1, 2],
+      "irrelevantValueLabels": ["Normal", "Alternating"],
+      "explanation": "When Input Function is enabled, the Signal LCC hardware uses the line as an input and any Output Function setting is overridden. To use this line as an output, first set Input Function to 'None'.",
+      "citation": "Manual Section 6.3.2 'I/O Configuration': 'For safety, any input function will over ride any output function so you must be sure to set an input to ''Disabled'' in order to use it as an output.'"
+    },
+    {
+      "id": "R005",
+      "affectedSection": "Port I/O-1/Line/Receiving the configured Command (C) event(s) will drive or pulse the line:",
+      "controllingField": "Port I/O-1/Line/Input Function",
+      "irrelevantWhen": [1, 2],
+      "irrelevantValueLabels": ["Normal", "Alternating"],
+      "explanation": "When Input Function is enabled, the line is used as an input and the output drive polarity has no effect because the hardware overrides the output. To use the output polarity, set Input Function to 'None'.",
+      "citation": "Manual Section 6.3.2 'I/O Configuration': 'For safety, any input function will over ride any output function...' Together with the rule that a line should only have output or input enabled."
+    },
+    {
+      "id": "R006",
+      "affectedSection": "Conditionals/Logic/Variable #1",
+      "controllingField": "Conditionals/Logic/Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Blocked"],
+      "explanation": "When a logic conditional is set to 'Blocked', the entire conditional is skipped during evaluation, so Variable #1's trigger, source, track speed, and events have no effect. To activate this variable, set Function to 'Group' or 'Last (Single)'.",
+      "citation": "Manual Section 7.3.1 'Blocked': 'This conditional is not used, and will not be evaluated.'"
+    },
+    {
+      "id": "R007",
+      "affectedSection": "Conditionals/Logic/Variable #2",
+      "controllingField": "Conditionals/Logic/Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Blocked"],
+      "explanation": "When a logic conditional is set to 'Blocked', the entire conditional is skipped during evaluation, so Variable #2's trigger, source, track speed, and events have no effect. To activate this variable, set Function to 'Group' or 'Last (Single)'.",
+      "citation": "Manual Section 7.3.1 'Blocked': 'This conditional is not used, and will not be evaluated.'"
+    },
+    {
+      "id": "R008",
+      "affectedSection": "Conditionals/Logic/Logic Operation",
+      "controllingField": "Conditionals/Logic/Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Blocked"],
+      "explanation": "The logic operator (V1 AND V2, V1 OR V2, etc.) is only evaluated when the conditional is active. A 'Blocked' conditional is never evaluated, so the operator has no effect.",
+      "citation": "Manual Section 7.3.1 'Blocked': 'This conditional is not used, and will not be evaluated.' Section 7.6 lists the logic operators that combine V1 and V2 during evaluation."
+    },
+    {
+      "id": "R009",
+      "affectedSection": "Conditionals/Logic/Action",
+      "controllingField": "Conditionals/Logic/Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Blocked"],
+      "explanation": "The 'when true' and 'when false' exit/send actions are only used when the conditional evaluates. A 'Blocked' conditional is never evaluated, so these settings have no effect.",
+      "citation": "Manual Section 7.3.1 'Blocked': 'This conditional is not used, and will not be evaluated.' Sections 7.7 and 7.8 describe the true/false action selections."
+    },
+    {
+      "id": "R010",
+      "affectedSection": "Conditionals/Logic/Time Delay before action",
+      "controllingField": "Conditionals/Logic/Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Blocked"],
+      "explanation": "The delay timer applied before action events is only used when the conditional fires. A 'Blocked' conditional is never evaluated, so the delay has no effect.",
+      "citation": "Manual Section 7.3.1 'Blocked': 'This conditional is not used, and will not be evaluated.' Section 7.9 describes the delay applied before action events."
+    },
+    {
+      "id": "R011",
+      "affectedSection": "Conditionals/Logic/Action[1-4]",
+      "controllingField": "Conditionals/Logic/Function",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Blocked"],
+      "explanation": "The up-to-four action (producer) events fired by this conditional only matter when the conditional is evaluated. A 'Blocked' conditional is never evaluated, so its action events are never sent.",
+      "citation": "Manual Section 7.3.1 'Blocked': 'This conditional is not used, and will not be evaluated.' Section 7.10 'Actions (Producers)': 'Any logic conditional may generate up to four events when it is true. (or false)'"
+    },
+    {
+      "id": "R012",
+      "affectedSection": "Conditionals/Logic/Variable #1",
+      "controllingField": "Conditionals/Logic/Variable #1/Trigger",
+      "irrelevantWhen": [2],
+      "irrelevantValueLabels": ["None"],
+      "explanation": "When Variable #1's Trigger is 'None', the variable does not trigger any conditional evaluation, so its source, track speed, and set true/false events have no effect. To use this variable, set Trigger to 'On Variable Change' or 'On Matching Event'.",
+      "citation": "Manual Section 7.4.1 'Variable Trigger' describes the trigger options that cause the conditional to be evaluated. With Trigger set to 'None', the variable does not participate in evaluation."
+    },
+    {
+      "id": "R013",
+      "affectedSection": "Conditionals/Logic/Variable #2",
+      "controllingField": "Conditionals/Logic/Variable #2/Trigger",
+      "irrelevantWhen": [2],
+      "irrelevantValueLabels": ["None"],
+      "explanation": "When Variable #2's Trigger is 'None', the variable does not trigger any conditional evaluation, so its source, track speed, and set true/false events have no effect. To use this variable, set Trigger to 'On Variable Change' or 'On Matching Event'.",
+      "citation": "Manual Section 7.4.1 'Variable Trigger' describes the trigger options that cause the conditional to be evaluated. With Trigger set to 'None', the variable does not participate in evaluation."
+    },
+    {
+      "id": "R014",
+      "affectedSection": "Conditionals/Logic/Variable #1/Track Speed",
+      "controllingField": "Conditionals/Logic/Variable #1/Source",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Use Variable #1's (C) Events"],
+      "explanation": "Track Speed selects which approach speed indication this variable monitors on a Track Circuit (RX) table. When the variable's Source is 'Use Variable #1's (C) Events', the variable is driven by its own consumer events instead, and Track Speed has no effect.",
+      "citation": "Manual Section 7.4.2.1 'Events': 'Normally each Variable is set to true or false by a pair of consumer EventIDs that follow this selection.' Section 7.4.2.2 'Track Circuit (RX)': describes Track Speed as 'The allowed speed approaching the next mast' for Track Circuit source only."
+    },
+    {
+      "id": "R015",
+      "affectedSection": "Conditionals/Logic/Variable #2/Track Speed",
+      "controllingField": "Conditionals/Logic/Variable #2/Source",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Use Variable #2's (C) Events"],
+      "explanation": "Track Speed selects which approach speed indication this variable monitors on a Track Circuit (RX) table. When the variable's Source is 'Use Variable #2's (C) Events', the variable is driven by its own consumer events instead, and Track Speed has no effect.",
+      "citation": "Manual Section 7.4.2.1 'Events': 'Normally each Variable is set to true or false by a pair of consumer EventIDs that follow this selection.' Section 7.4.2.2 'Track Circuit (RX)': describes Track Speed as 'The allowed speed approaching the next mast' for Track Circuit source only."
+    },
+    {
+      "id": "R016",
+      "affectedSection": "Conditionals/Logic/Variable #1/set true",
+      "controllingField": "Conditionals/Logic/Variable #1/Source",
+      "irrelevantWhen": [1, 2, 3, 4, 5, 6, 7, 8],
+      "irrelevantValueLabels": [
+        "Track Circuit 1", "Track Circuit 2", "Track Circuit 3", "Track Circuit 4",
+        "Track Circuit 5", "Track Circuit 6", "Track Circuit 7", "Track Circuit 8"
+      ],
+      "explanation": "The 'set true' consumer event is only used when the variable is driven by events. When Source points to a Track Circuit (RX) table, the variable follows the speed indication received from that circuit and this event has no effect. To use this event, set Source to 'Use Variable #1's (C) Events'.",
+      "citation": "Manual Section 7.4.2.1 'Events': 'Normally each Variable is set to true or false by a pair of consumer EventIDs that follow this selection.' Section 7.4.2.2 'Track Circuit (RX)' replaces the event-driven source with a Track Circuit lookup."
+    },
+    {
+      "id": "R017",
+      "affectedSection": "Conditionals/Logic/Variable #1/set false",
+      "controllingField": "Conditionals/Logic/Variable #1/Source",
+      "irrelevantWhen": [1, 2, 3, 4, 5, 6, 7, 8],
+      "irrelevantValueLabels": [
+        "Track Circuit 1", "Track Circuit 2", "Track Circuit 3", "Track Circuit 4",
+        "Track Circuit 5", "Track Circuit 6", "Track Circuit 7", "Track Circuit 8"
+      ],
+      "explanation": "The 'set false' consumer event is only used when the variable is driven by events. When Source points to a Track Circuit (RX) table, the variable follows the speed indication received from that circuit and this event has no effect. To use this event, set Source to 'Use Variable #1's (C) Events'.",
+      "citation": "Manual Section 7.4.2.1 'Events': 'Normally each Variable is set to true or false by a pair of consumer EventIDs that follow this selection.' Section 7.4.2.2 'Track Circuit (RX)' replaces the event-driven source with a Track Circuit lookup."
+    },
+    {
+      "id": "R018",
+      "affectedSection": "Conditionals/Logic/Variable #2/set true",
+      "controllingField": "Conditionals/Logic/Variable #2/Source",
+      "irrelevantWhen": [1, 2, 3, 4, 5, 6, 7, 8],
+      "irrelevantValueLabels": [
+        "Track Circuit 1", "Track Circuit 2", "Track Circuit 3", "Track Circuit 4",
+        "Track Circuit 5", "Track Circuit 6", "Track Circuit 7", "Track Circuit 8"
+      ],
+      "explanation": "The 'set true' consumer event is only used when the variable is driven by events. When Source points to a Track Circuit (RX) table, the variable follows the speed indication received from that circuit and this event has no effect. To use this event, set Source to 'Use Variable #2's (C) Events'.",
+      "citation": "Manual Section 7.4.2.1 'Events': 'Normally each Variable is set to true or false by a pair of consumer EventIDs that follow this selection.' Section 7.4.2.2 'Track Circuit (RX)' replaces the event-driven source with a Track Circuit lookup."
+    },
+    {
+      "id": "R019",
+      "affectedSection": "Conditionals/Logic/Variable #2/set false",
+      "controllingField": "Conditionals/Logic/Variable #2/Source",
+      "irrelevantWhen": [1, 2, 3, 4, 5, 6, 7, 8],
+      "irrelevantValueLabels": [
+        "Track Circuit 1", "Track Circuit 2", "Track Circuit 3", "Track Circuit 4",
+        "Track Circuit 5", "Track Circuit 6", "Track Circuit 7", "Track Circuit 8"
+      ],
+      "explanation": "The 'set false' consumer event is only used when the variable is driven by events. When Source points to a Track Circuit (RX) table, the variable follows the speed indication received from that circuit and this event has no effect. To use this event, set Source to 'Use Variable #2's (C) Events'.",
+      "citation": "Manual Section 7.4.2.1 'Events': 'Normally each Variable is set to true or false by a pair of consumer EventIDs that follow this selection.' Section 7.4.2.2 'Track Circuit (RX)' replaces the event-driven source with a Track Circuit lookup."
+    },
+    {
+      "id": "R020",
+      "affectedSection": "Conditionals/Logic/Action[1-4]/Action Event",
+      "controllingField": "Conditionals/Logic/Action[1-4]/Condition",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["none"],
+      "explanation": "When an action's Condition is set to 'none', no event is ever sent for this action slot, so the Action Event EventID has no effect. To send an event, choose a Condition such as 'Immediately', 'After delay', or one of the Immediate/Delayed if True/False options.",
+      "citation": "Manual Section 7.10 'Actions (Producers)': 'Each of these four events may be; ignored with ''none'', sent ''Immediately'', or sent ''After delay''.'"
+    },
+    {
+      "id": "R021",
+      "affectedSection": "Rule to Aspect/Mast",
+      "controllingField": "Rule to Aspect/Mast/Mast Processing",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Unused"],
+      "explanation": "When a mast's Mast Processing is set to 'Unused', the entire mast entry is disabled. Mast Description, Link Address, Lamp Fade, and all Rule/Appearance settings have no effect. To configure this mast, set Mast Processing to 'Normal' or 'Linked to Previous'.",
+      "citation": "Manual Section 8.1.1 'Unused': 'This signal Mast entry is not used.'"
+    },
+    {
+      "id": "R022",
+      "affectedSection": "Rule to Aspect/Mast/Rule/Appearance/Lamp Phase (A-B) - Flash Rate",
+      "controllingField": "Rule to Aspect/Mast/Rule/Appearance/Lamp Selection",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Unused"],
+      "explanation": "Lamp Phase / Flash Rate controls how the selected lamp flashes or stays steady for this aspect appearance slot. When Lamp Selection is 'Unused', no lamp is driven by this slot and the phase setting has no effect.",
+      "citation": "Manual Section 8.6.2 'Lamp Selection': 'Each of 4 lamps may be specified as one of the 16 outputs, or simply left ''Unused''.' Section 8.6.3 describes Lamp Phase as the flash behavior for the selected lamp."
+    },
+    {
+      "id": "R023",
+      "affectedSection": "Rule to Aspect/Mast/Rule/Effects Lamp",
+      "controllingField": "Rule to Aspect/Mast/Rule/Appearance Effects",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["None"],
+      "explanation": "Effects Lamp selects which lamp the special effect (Transition down, H2 Red Flash, Strobe) applies to. When Appearance Effects is 'None', no special effect is active and the Effects Lamp selection has no effect.",
+      "citation": "Manual Section 8.6.4 'Appearance Effects' describes the available special effects. Section 8.6.5 'Effects Lamp': 'This entry selects the lamp to be used for a special effect.'"
+    },
+    {
+      "id": "R024",
+      "affectedSection": "Direct Lamp Control/Lamp",
+      "controllingField": "Direct Lamp Control/Lamp/Lamp Selection",
+      "irrelevantWhen": [0],
+      "irrelevantValueLabels": ["Used by Mast"],
+      "explanation": "Direct Lamp Control entries drive lamps not used by any mast. When Lamp Selection is 'Used by Mast', this slot is unused for direct control because the lamp is already controlled by a mast aspect, so Lamp Description, Lamp On / Lamp Off events, Lamp Fade, and Lamp Phase have no effect.",
+      "citation": "CDI segment description: 'Direct control of lamps that are not used by any mast.' Lamp Selection map entry 0 is 'Used by Mast'."
+    }
+  ]
+}

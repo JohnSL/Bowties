@@ -13,27 +13,52 @@ Use this skill when you need to determine which event groups in an LCC node's co
 
 ## Required Inputs
 
-1. **manual-outline.json** — the structured index produced by `profile-0-manual-outline`. Contains `cdiFile` (path to CDI XML), `pdfFile` (path to PDF manual), and page ranges for each section.
+1. **manual-outline.json** — produced by `profile-0-manual-outline`. Contains `cdiFile` (path to CDI XML), `pdfFile` (path to PDF manual), and page ranges for each section.
 
-**No other file paths needed** — read the CDI XML and PDF file paths from `manual-outline.json`, then use the `pdf-utilities` `read_pdf` tool with `pageRange` parameter to extract the relevant pages. For Tower-LCC, this typically means pages covering event slot descriptions (usually in Port I/O and Conditionals sections from the outline).
+All CDI/PDF paths are read from `manual-outline.json` — do not ask for them.
 
-## Task
+## Workflow
 
-For every group in the CDI XML that contains `<eventid>` elements, determine whether the group represents:
+### Step 1 — generate the skeleton
 
-- **Producer** events — the node sends these events onto the network when a condition occurs
-- **Consumer** events — the node listens for these events from the network and acts on them
+Run the shared CLI to emit one entry per group containing `<eventid>` children, with `cdiPath` and `childFields` already populated:
+
+```pwsh
+uv run .github/skills/_lib/profile_tools.py skeleton events profile-extractions/<node-name>
+```
+
+This produces `event-roles.skeleton.json`. The skeleton:
+
+- Includes every segment or group that has at least one direct `<eventid>` child.
+- Pre-fills `cdiPath` (with `[N]` / `[N-M]` index suffixes where same-name siblings exist).
+- Pre-fills `childFields` with the eventid child names.
+- Leaves `role`, `citation`, `confidence`, and `notes` as `TODO` placeholders.
+
+### Step 2 — classify each entry
+
+Use `pdf-utilities.read_pdf` with the page ranges identified as relevant to event-bearing sections (typically Port I/O, Conditionals, Track Circuits) in the outline. For each entry in the skeleton, fill in:
+
+- `role` — `Producer` (the node sends) or `Consumer` (the node listens).
+- `citation` — quote or reference from the manual confirming the classification.
+- `confidence` — `High` (manual states it clearly) or `Medium` (inferred from CDI hints).
+- `notes` — `null` unless there's a useful caveat (e.g., split groups, replicated context).
+
+If a single skeleton group contains *both* producer and consumer eventids as separate children (e.g., a "Rule" group with a consumer `set aspect` and producer `aspect is set` / `aspect cleared`), split it into two entries — one Consumer (for the consumer eventids) and one Producer (for the producer eventids) — and list the relevant `childFields` in each.
+
+### Step 3 — rename and validate
+
+Rename `event-roles.skeleton.json` to `event-roles.json`, then run `profile-6-validate` to confirm every path and child field still resolves.
 
 ## Classification Rules
 
-1. **Consumer indicators**: CDI description contains "(C)", "When this event occurs", "Command", "set true/false"; manual describes the event as something the node *receives* or *reacts to*
-2. **Producer indicators**: CDI description contains "(P)", "this event will be sent", "Indicator", "Upon this action"; manual describes the event as something the node *emits*, *produces*, or *generates*
-3. If a group contains both producer and consumer eventid elements as separate children (not a mix within one group), classify each child separately
-4. When two sibling groups share the same `<name>`, distinguish them by document order (0-based indices) and list their child field names to confirm which is which
+1. **Consumer indicators**: CDI description contains `(C)`, "When this event occurs", "Command", "set true/false"; manual describes the event as something the node *receives* or *reacts to*.
+2. **Producer indicators**: CDI description contains `(P)`, "this event will be sent", "Indicator", "Upon this action"; manual describes the event as something the node *emits*, *produces*, or *generates*.
+3. If a group contains both producer and consumer eventid elements as separate children, classify each subset separately (as described in Step 2 above).
+4. When two sibling groups share the same `<name>`, the skeleton has already distinguished them with `[N]` / `[N-M]` suffixes — list their `childFields` in the skeleton to confirm which is which.
 
 ## Output Format
 
-Produce a JSON object matching this schema:
+The skeleton — and the final `event-roles.json` — matches this schema:
 
 ```json
 {
@@ -43,10 +68,10 @@ Produce a JSON object matching this schema:
   },
   "roles": [
     {
-      "cdiPath": "<slash-separated path, e.g., Port I/O/Line/Event[0-5]>",
+      "cdiPath": "Port I/O/Line/Event[0-5]",
       "role": "Producer | Consumer",
-      "childFields": ["<names of child elements in this group>"],
-      "citation": "<quote or reference from the manual confirming this classification>",
+      "childFields": ["<names of eventid child elements>"],
+      "citation": "<quote or reference from the manual>",
       "confidence": "High | Medium",
       "notes": "string | null"
     }
@@ -56,18 +81,17 @@ Produce a JSON object matching this schema:
 
 ### CDI Path Conventions
 
-- Use `/` to separate hierarchy levels
-- For replicated groups, use the template name (not instance-specific)
-- For same-named siblings, append index ranges: `Event[0-5]` for the first group (6 replications), `Event[6-11]` for the second
-- Index ranges reflect expanded instance indices (0-based, contiguous across the parent's replication)
+- `/` separates hierarchy levels.
+- Replicated groups use the template name (not instance-specific paths).
+- Same-named siblings are distinguished by `[N]` / `[N-M]` index suffix (the skeleton emits these automatically).
 
 ## Important
 
-- Every group containing `<eventid>` elements MUST appear in the output — do not skip any
-- The CDI XML is authoritative for structure and names; the manual is authoritative for role classification
-- If the manual does not clearly state the role, use CDI description hints ("(C)" = Consumer, "(P)" = Producer) and set confidence to "Medium"
-- Do NOT invent paths that don't exist in the CDI XML
+- Every group containing `<eventid>` elements MUST appear in the output — the skeleton enforces this; do not delete entries.
+- The CDI XML is authoritative for structure and names; the manual is authoritative for role classification.
+- If the manual does not clearly state the role, use CDI description hints (`(C)` / `(P)`) and set `confidence` to `Medium`.
+- Do NOT invent paths that don't exist in the CDI.
 
 ## Output File
 
-Save the output as `profile-extractions/<node-name>/event-roles.json` (e.g., `profile-extractions/tower-lcc/event-roles.json`). This file will be used as shared context by subsequent extraction skills (relevance rules, descriptions, etc.).
+`profile-extractions/<node-name>/event-roles.json`. Used as shared context by `profile-2`, `profile-3`, `profile-4`, and `profile-7`.

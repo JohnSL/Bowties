@@ -5,118 +5,75 @@ description: Validate extraction outputs against a CDI XML to verify all referen
 
 # Validate Extraction Outputs
 
-Cross-reference all extraction outputs (event roles, relevance rules, descriptions, recipes) against the CDI XML to verify structural correctness and completeness.
+Cross-reference every extraction output (event roles, relevance rules, descriptions, recipes) against the CDI XML to verify structural correctness and completeness.
 
 ## When to Use
 
-Use this skill after completing one or more extraction steps to verify that the output is structurally correct before using it to build a profile file. Run this as the final step in the extraction workflow.
+Use this skill after completing one or more extraction steps to verify that the output is structurally correct before using it to build a profile file. Run as the final step in the extraction workflow.
 
 ## Required Inputs
 
-1. **manual-outline.json** — the structured index produced by `profile-0-manual-outline`. Contains `cdiFile` (path to CDI XML file to validate against).
-2. **One or more extraction output JSON files** — files saved to `profiles/<node-name>/` from any or all of the prior skills:
+1. **manual-outline.json** — the structured index produced by `profile-0-manual-outline`. Contains `cdiFile` (path to the CDI XML to validate against).
+2. **One or more extraction output files** — saved to `profile-extractions/<node-name>/` by the prior skills:
    - `event-roles.json` (from `profile-1-event-roles`)
    - `relevance-rules.json` (from `profile-2-relevance-rules`)
-   - `section-descriptions.json` (from `profile-3-section-descriptions`)
-   - `field-descriptions.json` (from `profile-4-field-descriptions`)
-   - `recipes.json` (from `profile-5-recipes`)
+   - `section-descriptions.yaml` (from `profile-3-section-descriptions`)
+   - `field-descriptions.yaml` (from `profile-4-field-descriptions`)
+   - `recipes.yaml` (from `profile-5-recipes`)
 
-**No separate CDI XML needed** — read the CDI XML file path from `manual-outline.json` `cdiFile` field and load it for validation.
+The CDI file is read automatically from `manual-outline.json` `cdiFile` field — do not ask for it.
 
-## Validation Steps
+## How to Run
 
-### Step 1: Build CDI Path Registry
+Run the shared CLI from the repo root:
 
-Walk the CDI XML and build a registry of:
-- Every segment name → path
-- Every group name → path (accounting for nesting and replication)
-- Every leaf field name → path
-- Every enum map: field path → set of valid `<property>` integer values
-- Total counts: segments, groups, leaf fields, event slots
+```pwsh
+uv run .github/skills/_lib/profile_tools.py validate profile-extractions/<node-name>
+```
 
-### Step 2: Validate CDI Path References
+(See `.github/skills/_lib/README.md` for setup if `uv` is not installed.)
 
-For each extraction output file, check every `cdiPath` / `controllingField` / `affectedSection` / `field` / `scope` value:
-- Does the path exist in the CDI path registry?
-- If the path uses index ranges (e.g., `Event[0-5]`), does the referenced group exist at those indices?
+The CLI:
 
-Report every path that does not match as a **path error**.
+1. Loads the CDI XML referenced by `manual-outline.json`.
+2. Walks each extraction file present in the node directory and resolves every `cdiPath`, `controllingField`, `affectedSection`, recipe `field`, recipe `scope`, and `childField` against a CDI path registry that handles literal `/` inside element names, `[N]` / `[N-M]` index suffixes, and `<repname>` collapse.
+3. Validates every `irrelevantWhen` value, every `options[].value`, and every recipe `rawValue` against the controlling field's `<map>`.
+4. Computes coverage (segments, groups, leaf fields, eventids).
+5. Writes `validation-report.json` and exits non-zero on failure.
 
-### Step 3: Validate Enum Value References
+## Output File
 
-For each extraction output that references enum values (`irrelevantWhen`, `options[].value`, `steps[].rawValue`):
-- Look up the corresponding field path in the CDI path registry
-- Check that the referenced integer value exists in the CDI's `<map>` for that field
-- Check that the label (if provided) matches the CDI's `<value>` for that property
-
-Report every invalid value as an **enum error**.
-
-### Step 4: Coverage Analysis
-
-Compare the CDI path registry against all extraction outputs combined:
-- Which segments have section descriptions? (from section-descriptions.json)
-- Which groups have section descriptions? (from section-descriptions.json)
-- Which leaf fields have field descriptions? (from field-descriptions.json)
-- Which event groups have role classifications? (from event-roles.json)
-- Which sections have relevance rules? (from relevance-rules.json — not all need rules, so low coverage is expected)
-
-List all CDI sections with **no extraction output** as uncovered sections.
-
-### Step 5: Produce Validation Report
+`profile-extractions/<node-name>/validation-report.json` with this shape:
 
 ```json
 {
-  "nodeType": {
-    "manufacturer": "<from CDI>",
-    "model": "<from CDI>"
-  },
-  "cdiFile": "<path to CDI XML used>",
-  "extractionFiles": ["<paths to extraction JSON files validated>"],
+  "nodeType": { "manufacturer": "...", "model": "..." },
+  "cdiFile": "<path>",
+  "extractionFiles": ["event-roles.json", "..."],
   "pathErrors": [
-    {
-      "extractionFile": "<which file>",
-      "entryId": "<identifier of the entry>",
-      "referencedPath": "<CDI path cited>",
-      "error": "<what's wrong>"
-    }
+    { "extractionFile": "...", "entryId": "...", "referencedPath": "...", "error": "..." }
   ],
   "enumErrors": [
-    {
-      "extractionFile": "<which file>",
-      "entryId": "<identifier>",
-      "field": "<CDI path of the enum field>",
-      "referencedValue": 9,
-      "error": "<what's wrong>"
-    }
+    { "extractionFile": "...", "entryId": "...", "field": "...", "referencedValue": 9, "error": "..." }
   ],
   "coverage": {
-    "totalSegments": 0,
-    "coveredSegments": 0,
-    "totalGroups": 0,
-    "coveredGroups": 0,
-    "totalLeafFields": 0,
-    "coveredLeafFields": 0,
-    "totalEventSlots": 0,
-    "coveredEventSlots": 0,
+    "totalSegments": 0, "coveredSegments": 0,
+    "totalGroups": 0, "coveredGroups": 0,
+    "totalLeafFields": 0, "coveredLeafFields": 0,
+    "totalEventSlots": 0, "coveredEventSlots": 0,
     "overallPercentage": 0
   },
   "uncoveredSections": [
-    {
-      "cdiPath": "<path>",
-      "level": "segment | group | field",
-      "name": "<element name>"
-    }
+    { "cdiPath": "...", "level": "segment | group | field", "name": "..." }
   ],
-  "summary": "<pass/fail with key statistics>"
+  "summary": "<PASS/FAIL with key statistics>"
 }
 ```
 
 ## Pass Criteria
 
-- **Path errors**: 0 (all referenced paths must exist in CDI)
-- **Enum errors**: 0 (all referenced values must be valid)
-- **Coverage**: ≥90% of segments, groups, and leaf fields covered by descriptions; 100% of event groups covered by role classifications
+- **Path errors**: 0 — every referenced path must resolve in the CDI.
+- **Enum errors**: 0 — every referenced integer must exist in its field's `<map>`; provided labels must match the CDI label exactly.
+- **Coverage**: ≥ 90% across segments, groups, and leaf fields; 100% of event groups covered by role classifications.
 
-## Output File
-
-Save the validation report as `profile-extractions/<node-name>/validation-report.json` (e.g., `profile-extractions/tower-lcc/validation-report.json`).
+If the CLI exits non-zero, read the printed `pathErrors` / `enumErrors` and fix the offending extraction file before assembling the profile.

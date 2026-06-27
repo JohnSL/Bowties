@@ -128,6 +128,16 @@ recipes:
 - Write for model railroad hobbyists — avoid protocol jargon
 - **YAML formatting**: Use `|` for multiline text (descriptions, prerequisites, rationales). Use `- ` for bullet lists within these fields (supports Markdown). Preserve indentation for readability.
 
+## Verifying paths and enum values as you draft
+
+While drafting, you can spot-check any `field` path or enum `rawValue` against the CDI without waiting for `profile-6`:
+
+```pwsh
+uv run .github/skills/_lib/profile_tools.py check profile-extractions/<node-name> "<cdiPath>" [--value N]
+```
+
+The command prints the resolved node's kind, children, and enum map, and (with `--value`) confirms the integer is in the map. Run `profile-6-validate` once you're done drafting to cross-check every step in bulk.
+
 ## Output File
 
 Save the output as `profile-extractions/<node-name>/recipes.yaml` (e.g., `profile-extractions/tower-lcc/recipes.yaml`). The .yaml extension enables easy rendering of Markdown content in the UX.

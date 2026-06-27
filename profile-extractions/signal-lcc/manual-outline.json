@@ -1,0 +1,155 @@
+{
+  "nodeType": {
+    "manufacturer": "RR-CirKits, Inc.",
+    "model": "Signal-LCC"
+  },
+  "cdiFile": "D:/src/github/LCC/Bowties/docs/ref/RR-CirKits_Inc__Signal-LCC_rev-C7c.cdi.xml",
+  "pdfFile": "D:/src/github/LCC/Bowties/docs/ref/SignalLCC-manual-e.pdf",
+  "totalPages": 57,
+  "generatedDate": "2026-06-26",
+  "sections": [
+    {
+      "order": 1,
+      "name": "Front Matter (Cover, Copyright, Contents)",
+      "pages": "1-5",
+      "topics": ["cover page", "copyright and authors", "publication info", "table of contents"],
+      "relevantTo": [],
+      "notes": "Manual TOC lives on pages 3-5; use as cross-reference for later extractions."
+    },
+    {
+      "order": 2,
+      "name": "Overview",
+      "pages": "6-7",
+      "topics": ["product purpose", "Signal-LCC-S vs Signal-LCC-P variants", "signaling capabilities summary", "rule/aspect/appearance model"],
+      "relevantTo": ["profile-3"],
+      "notes": "Top-level description of what the node does."
+    },
+    {
+      "order": 3,
+      "name": "1 About LCC (Definitions)",
+      "pages": "8-10",
+      "topics": ["EventID", "State", "CAN bus", "Node", "Segment", "Line", "Consumer", "Producer"],
+      "relevantTo": ["profile-1", "profile-3"],
+      "notes": "Defines Producer/Consumer terminology that underpins event role classification."
+    },
+    {
+      "order": 4,
+      "name": "2 Signal LCC Features and Electrical Specifications",
+      "pages": "11",
+      "topics": ["feature list", "electrical specifications", "8 line I/O + 16 LED driver summary"],
+      "relevantTo": ["profile-3"],
+      "notes": null
+    },
+    {
+      "order": 5,
+      "name": "3 Line Details (Consumer/Producer)",
+      "pages": "12-13",
+      "topics": ["Consumer line behavior", "Producer line behavior", "command vs indication events on a line"],
+      "relevantTo": ["profile-1", "profile-3", "profile-4"],
+      "notes": "Critical for classifying Port I/O Line Command (C) vs Indicator (P) events."
+    },
+    {
+      "order": 6,
+      "name": "4 Connections and Indicators",
+      "pages": "14-17",
+      "topics": ["CAN LCC connector", "power connections", "status indicators (Power/COM/Activity)", "Blue/Gold buttons and LEDs", "setting up Virtual Code Lines", "Master Clock adjustment", "I/O-1 connector wiring", "Signal LED connections and polarity"],
+      "relevantTo": ["profile-3", "profile-5"],
+      "notes": "Hardware wiring; Virtual Code Line button procedure is a recipe candidate."
+    },
+    {
+      "order": 7,
+      "name": "5 Getting Started (CDI)",
+      "pages": "18-19",
+      "topics": ["CDI overview", "Configuration Description Information basics", "configuration tool workflow"],
+      "relevantTo": ["profile-3"],
+      "notes": null
+    },
+    {
+      "order": 8,
+      "name": "6 Input/Output Configuration",
+      "pages": "20-24",
+      "topics": ["Identification segment", "Node ID name/description", "Lines (I/O Port)", "I/O Configuration field", "Delay", "Commands (C events)", "Indications (P events)", "Signal LCC Secondary Messages"],
+      "relevantTo": ["profile-1", "profile-2", "profile-3", "profile-4", "profile-5"],
+      "notes": "Maps to CDI segments 'Node ID' and 'Port I/O-1'. Source for input/output mode field, command/indicator event roles, and field-level relevance (Output Function vs Input fields)."
+    },
+    {
+      "order": 9,
+      "name": "7 Signal LCC Logic (Conditionals)",
+      "pages": "25-30",
+      "topics": ["Logic Conditionals overview", "Logic Description", "Group function (Blocked/Group/Last)", "Variables", "Variable Trigger", "Variable Source", "Variables and 'Not'", "Logic Function", "Actions when Conditional True/False", "Delay", "Actions (Producers)"],
+      "relevantTo": ["profile-1", "profile-2", "profile-3", "profile-4", "profile-5"],
+      "notes": "Maps to CDI segment 'Conditionals' (32 Logic replication). Strong relevance rule territory (Function selection gates Variable/Action behavior)."
+    },
+    {
+      "order": 10,
+      "name": "8 Masts (Rule to Aspect)",
+      "pages": "31-34",
+      "topics": ["Mast Processing (Unused/Normal/Link to Previous)", "Mast ID", "Track Circuit Link Address (P)", "Lamp Fade", "Rules", "Aspect to Appearance", "Individual Aspect Lamps", "Lamp Selection", "Lamp Phase (A-B) Flash Rate", "Appearance Effects", "Effects Lamp"],
+      "relevantTo": ["profile-1", "profile-2", "profile-3", "profile-4", "profile-5"],
+      "notes": "Maps to CDI segment 'Rule to Aspect' (8 Mast replication). Mast Processing field gates the rest of the mast (relevance rule). Lamp Selection enum aligns with #1..#16 lamp names used in Brightness/Direct Lamp Control."
+    },
+    {
+      "order": 11,
+      "name": "9 Track Circuits and Signal Lamp Wiring",
+      "pages": "35-47",
+      "topics": ["simulating a code line with events", "linking virtual code lines (track circuits)", "prototype code line", "speed indications", "ABS and APB signal examples", "color light wiring", "color position light wiring", "position light wiring", "searchlight (bi-polar)", "searchlight (dual color)", "stall motor machine wiring", "switch machine connections", "semaphore machine connections"],
+      "relevantTo": ["profile-1", "profile-3", "profile-4", "profile-5"],
+      "notes": "Maps to CDI segment 'Track Circuits' (8 Circuit replication, Link Address is C). Sections 9.5-9.6 are rich recipe/example sources for profile-5."
+    },
+    {
+      "order": 12,
+      "name": "10 Rules",
+      "pages": "48",
+      "topics": ["planned logic presets", "ABS/APB/CTC rule sets (not yet implemented)"],
+      "relevantTo": ["profile-3", "profile-4"],
+      "notes": "Maps to CDI segment 'Rules'. Manual notes the rule sets are not implemented; useful caveat for field descriptions."
+    },
+    {
+      "order": 13,
+      "name": "11 Brightness",
+      "pages": "49",
+      "topics": ["per-lamp brightness range 8-255", "minimum brightness for fading"],
+      "relevantTo": ["profile-3", "profile-4"],
+      "notes": "Maps to CDI segment 'Brightness'. Direct Lamp Control segment (CDI) has no dedicated manual section; its purpose ('lamps not used by any mast') is described inline in the CDI and adjacent Masts/Brightness coverage."
+    },
+    {
+      "order": 14,
+      "name": "12 Signal LCC compatible Input/Output Cards",
+      "pages": "49-52",
+      "topics": ["BOD4-CP", "BOD4", "BOD-8", "OI-IB-8", "SMD-8", "RB-4", "BOB-S", "active-high vs active-low recommendations"],
+      "relevantTo": ["profile-5"],
+      "notes": "Companion hardware. Sections describe recommended Port I/O configurations (e.g., active-low for BOD/RB-4) which are recipe inputs."
+    },
+    {
+      "order": 15,
+      "name": "13 Trouble shooting",
+      "pages": "52-53",
+      "topics": ["Sanity Test", "Activity Test", "JMRI LCC Monitor verification"],
+      "relevantTo": [],
+      "notes": "Not directly used by profile extractions."
+    },
+    {
+      "order": 16,
+      "name": "14 Boot Loader",
+      "pages": "53-54",
+      "topics": ["Firmware upgrade procedure", "forced boot mode"],
+      "relevantTo": [],
+      "notes": null
+    },
+    {
+      "order": 17,
+      "name": "15-17 Grounding, Warranty, FCC",
+      "pages": "54-55",
+      "topics": ["grounding and isolation", "warranty", "FCC compliance"],
+      "relevantTo": [],
+      "notes": null
+    }
+  ],
+  "appendices": [
+    {
+      "name": "18 Signal LCC Work Sheets",
+      "pages": "56-57",
+      "purpose": "Sample Rule Sheet (Aspect -> Lamp A/B/C/D mapping per mast) and Sample Logic Sheet (32 conditional planning grid). Useful as worked-example skeletons for profile-5 recipes."
+    }
+  ]
+}

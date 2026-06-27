@@ -19,6 +19,10 @@ Thumbs.db
 /dist/
 node_modules/
 
+# Python artifacts
+__pycache__/
+*.pyc
+
 # Specs and documentation (keep versioned, but ignore temp files)
 *.md~
 *.md.bak

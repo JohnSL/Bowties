@@ -1,0 +1,2033 @@
+nodeType:
+  manufacturer: "RR-CirKits, Inc."
+  model: "Signal-LCC"
+
+fields:
+  # =========================================================================
+  # Segment: Node ID
+  # =========================================================================
+  - cdiPath: "Node ID/Your name and description for this node/Node Name"
+    name: "Node Name"
+    elementType: "string"
+    description: |
+      Human-readable **name** for this Signal-LCC, shown in the node-selection
+      window of configuration tools such as JMRI. Pick a short, location-anchored
+      label (for example *"Whitehead East — Masts 101L/102L"*) so you can find
+      this node quickly on a layout that has many.
+    units: null
+    validRange: null
+    typicalValues: null
+    maxLength: 63
+    citation: "Manual Section 6.2 NODE ID, page 20."
+
+  - cdiPath: "Node ID/Your name and description for this node/Node Description"
+    name: "Node Description"
+    elementType: "string"
+    description: |
+      Longer **description** for this Signal-LCC. The manual recommends recording
+      the masts, lines, or signal locations this node controls so future
+      maintenance does not require chasing wiring back to find the board.
+    units: null
+    validRange: null
+    typicalValues: null
+    maxLength: 64
+    citation: "Manual Section 6.2 NODE ID, page 20."
+
+  # =========================================================================
+  # Segment: Node Power Monitor
+  # =========================================================================
+  - cdiPath: "Node Power Monitor/Message Options"
+    name: "Message Options"
+    elementType: "int"
+    description: |
+      Chooses which **power-state producer events** this node emits onto the LCC
+      bus. Use *Send Power OK only* when downstream logic just needs to know the
+      node is alive again after a brownout, or *Send both* to also broadcast
+      power-loss notifications (these may be lost if the node dies before it
+      can transmit them).
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "None"
+        description: "No power-state events are produced. Use this if no other node needs to react to power events from this Signal-LCC."
+        category: null
+      - value: 1
+        label: "Send Power OK only"
+        description: "The node produces its **Power OK** event when power is good (typically after startup or recovery from a brownout)."
+        category: null
+      - value: 2
+        label: "Send both Power OK and Power Not OK"
+        description: "Produces both events. **Power Not OK** is best-effort — it may not arrive if the node loses power before it can transmit."
+        category: null
+    citation: "CDI segment 'Node Power Monitor' map."
+
+  - cdiPath: "Node Power Monitor/Power OK"
+    name: "Power OK"
+    elementType: "eventid"
+    description: |
+      Producer event sent by this node when its **power is good** (for example
+      after a clean startup or after recovery from a power dip). Assign an
+      EventID that other nodes or layout logic can consume to know this
+      Signal-LCC is online. Only emitted when **Message Options** is *Send
+      Power OK only* or *Send both Power OK and Power Not OK*.
+    units: null
+    validRange: null
+    typicalValues: null
+    role: "Producer"
+    citation: "CDI field description: 'EventID'. Event-role classification: producer (Node Power Monitor segment)."
+
+  - cdiPath: "Node Power Monitor/Power Not OK"
+    name: "Power Not OK"
+    elementType: "eventid"
+    description: |
+      Producer event sent by this node when its **power has failed**. This is
+      best-effort: if the node loses power before it can put the frame on the
+      bus, the event will not be delivered. Only emitted when **Message
+      Options** is *Send both Power OK and Power Not OK*.
+    units: null
+    validRange: null
+    typicalValues: null
+    role: "Producer"
+    citation: "CDI field description: 'EventID (may be lost)'. Event-role classification: producer (Node Power Monitor segment)."
+
+  # =========================================================================
+  # Segment: Port I/O-1  (Line group, replication=8)
+  # =========================================================================
+  - cdiPath: "Port I/O-1/Line/Line Description"
+    name: "Line Description"
+    elementType: "string"
+    description: |
+      Free-form label for **what is wired to this I/O line** — for example
+      *"Block 12 BOD"*, *"Yard ladder push-button"*, or *"Switch 7 motor"*.
+      Used by configuration tools as a friendly identifier and shown in tabs.
+    units: null
+    validRange: null
+    typicalValues: null
+    maxLength: 32
+    citation: "Manual Section 6.3.1 Lines, page 21."
+
+  - cdiPath: "Port I/O-1/Line/Output Function"
+    name: "Output Function"
+    elementType: "int"
+    description: |
+      Selects how this line **drives its output** when commanded. Choose *None*
+      if the line is unused as an output (it may still be an input). The four
+      active modes pair with the polarity field directly below to choose
+      whether the active state is High or Low. Pulse mode uses Delay Interval
+      timing; Blink A / Blink B share the same blink generator so multiple
+      lines can flash in or out of phase.
+
+      **Safety note:** any non-*None* **Input Function** value overrides
+      Output Function, so set Input Function to *None* before relying on this
+      line as an output.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "None"
+        description: "Line is not driven as an output. Use this for input-only lines or unused pins."
+        category: null
+      - value: 1
+        label: "Steady"
+        description: "Line is held continuously in the active state (Low or High per polarity) while commanded On."
+        category: "Steady"
+      - value: 2
+        label: "Pulse"
+        description: "Line briefly pulses to the active state when commanded On; timing is set by **Delay** Interval 1 (and Interval 2 for pulse width)."
+        category: "Pulse"
+      - value: 3
+        label: "Blink A"
+        description: "Line blinks continuously while commanded On, using the global **A-phase** rate. Pair with **B-phase** on another line for alternating flashes."
+        category: "Blink"
+      - value: 4
+        label: "Blink B"
+        description: "Line blinks continuously while commanded On, on the opposite phase from Blink A so the two flash in alternation."
+        category: "Blink"
+    citation: "Manual Section 6.3.2 I/O Configuration, page 22."
+
+  - cdiPath: "Port I/O-1/Line/Receiving the configured Command (C) event(s) will drive or pulse the line:"
+    name: "Output polarity"
+    elementType: "int"
+    description: |
+      Polarity used when the line is **driven as an output**. *Low (0V)* makes
+      the active state pull the line to ground (use this for most LEDs and
+      relays wired between V+ and the line). *High (5V)* makes the active state
+      drive 5V (use this when sinking through external NPN drivers).
+
+      Has no effect when **Output Function** is *None*, or when **Input
+      Function** is enabled (input always wins).
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Low  (0V)"
+        description: "Active state pulls the line to 0V. Common for direct-driven LEDs and many relays."
+        category: null
+      - value: 1
+        label: "High (5V)"
+        description: "Active state drives the line to 5V. Use with external drivers that expect a logic-high signal."
+        category: null
+    citation: "Manual Section 6.3.2 I/O Configuration, page 22. Relevance rules R002, R005."
+
+  - cdiPath: "Port I/O-1/Line/Input Function"
+    name: "Input Function"
+    elementType: "int"
+    description: |
+      Selects how this line is **read as an input**. *Normal* sends the matching
+      indication each time the input edge occurs in the configured polarity.
+      *Alternating* toggles between sending the On and Off indicator on each
+      successive input event, useful for momentary push-buttons that should
+      flip a state.
+
+      **Safety note:** when this field is anything other than *None*, the line
+      is forced to act as an input and any Output Function is overridden.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "None"
+        description: "Line is not read as an input. Use this to free the line for output duty."
+        category: null
+      - value: 1
+        label: "Normal"
+        description: "Each input edge in the active polarity drives the configured indicator event."
+        category: null
+      - value: 2
+        label: "Alternating"
+        description: "Successive input events toggle between sending On and Off indicators, useful for momentary panel buttons."
+        category: null
+    citation: "Manual Section 6.3.2 I/O Configuration, page 22. Relevance rule R004 (overrides Output Function)."
+
+  - cdiPath: "Port I/O-1/Line/The configured Indication (P) event(s) will be sent when the line is driven:"
+    name: "Input polarity"
+    elementType: "int"
+    description: |
+      Voltage at which this line **fires its indication** when read as an input.
+      *Low (0V)* is the typical setting for block-occupancy detectors and
+      grounded push-buttons; *High (5V)* matches sensors that pull the line up
+      when active.
+
+      Has no effect when **Input Function** is *None*.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Low  (0V)"
+        description: "Indication fires when the line is pulled to 0V (typical for grounded buttons and most BOD outputs)."
+        category: null
+      - value: 1
+        label: "High (5V)"
+        description: "Indication fires when the line is driven to 5V."
+        category: null
+    citation: "Manual Section 6.3.2 I/O Configuration, page 22. Relevance rule R003."
+
+  # ----- Port I/O-1/Line/Delay (replication=2) -----
+  - cdiPath: "Port I/O-1/Line/Delay/Delay Time (1-60000)"
+    name: "Delay Time (1-60000)"
+    elementType: "int"
+    description: |
+      Length of this delay interval. **Interval 1** acts as the on-delay or
+      pulse pre-delay; **Interval 2** acts as the off-delay or pulse width.
+      For input debounce both intervals are read in Milliseconds.
+    units: "selected by Units field"
+    validRange:
+      min: 1
+      max: 60000
+    typicalValues: null
+    citation: "Manual Section 6.3.3 Delay, page 23."
+
+  - cdiPath: "Port I/O-1/Line/Delay/Units"
+    name: "Units"
+    elementType: "int"
+    description: |
+      Time unit applied to **Delay Time** for this interval. Choose the largest
+      unit that still gives the resolution you need — using Seconds or Minutes
+      keeps the timer free for very long delays (up to 60,000 minutes ≈ 41
+      days).
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Milliseconds"
+        description: "Delay Time is interpreted as milliseconds (1 ms – 60 s)."
+        category: null
+      - value: 1
+        label: "Seconds"
+        description: "Delay Time is interpreted as seconds (1 s – 60,000 s ≈ 16.7 h)."
+        category: null
+      - value: 2
+        label: "Minutes"
+        description: "Delay Time is interpreted as minutes (1 min – 60,000 min ≈ 41 days)."
+        category: null
+    citation: "Manual Section 6.3.3 Delay, page 23."
+
+  - cdiPath: "Port I/O-1/Line/Delay/Retrigger"
+    name: "Retrigger"
+    elementType: "int"
+    description: |
+      Controls what happens when a **new event arrives before the timer
+      finishes**. *Yes* restarts the count from zero (handy for re-arming a
+      debounce or extending an approach-light timer). *No* lets the original
+      delay complete and ignores the new event. For input debounce, retrigger
+      is always treated as Yes regardless of this setting.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "No"
+        description: "Once the timer starts, new events are ignored until it expires."
+        category: null
+      - value: 1
+        label: "Yes"
+        description: "Every matching event restarts the timer from zero."
+        category: null
+    citation: "Manual Section 6.3.3 Delay, page 23."
+
+  # ----- Port I/O-1/Line/Commands/Consumers (replication=6) -----
+  - cdiPath: "Port I/O-1/Line/Commands/Consumers/Command"
+    name: "Command"
+    elementType: "eventid"
+    description: |
+      Consumer EventID that this Signal-LCC **listens for** to drive the line.
+      Bind it to a panel-button event, a JMRI sensor, or another node's
+      producer event. The paired **Action** field controls exactly how the
+      line reacts. Up to 6 command slots per line, so the same physical line
+      can respond to several different bus events.
+    units: null
+    validRange: null
+    typicalValues: null
+    role: "Consumer"
+    citation: "Manual Section 6.3.4 Commands, page 23. Relevance rule R001 disables the whole Commands group when Output Function is None."
+
+  - cdiPath: "Port I/O-1/Line/Commands/Consumers/Action"
+    name: "Action"
+    elementType: "int"
+    description: |
+      How the line reacts when its **Command** event arrives. *On / Off /
+      Toggle* are the everyday choices. *Veto On / Veto Off* set an internal
+      veto register that **Gated** actions consult — a Gated On only drives the
+      line if the veto register is Off, allowing a manual override to suppress
+      automated control without unbinding events.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "None"
+        description: "Slot is unused — the Command event is ignored."
+        category: null
+      - value: 1
+        label: "On  (Line Active)"
+        description: "Drive the line to its active state."
+        category: "Direct"
+      - value: 2
+        label: "Off (Line Inactive)"
+        description: "Drive the line to its inactive state."
+        category: "Direct"
+      - value: 3
+        label: "Change (Toggle)"
+        description: "Flip the line to the opposite state."
+        category: "Direct"
+      - value: 4
+        label: "Veto On  (Active)"
+        description: "Set the internal veto register **active**, blocking subsequent *Gated* commands until cleared."
+        category: "Veto"
+      - value: 5
+        label: "Veto Off (Inactive)"
+        description: "Clear the internal veto register, allowing *Gated* commands to take effect."
+        category: "Veto"
+      - value: 6
+        label: "Gated On  (Non Veto Output)"
+        description: "Drive the line On **only if** the veto register is currently inactive."
+        category: "Gated"
+      - value: 7
+        label: "Gated Off (Non Veto Output)"
+        description: "Drive the line Off **only if** the veto register is currently inactive."
+        category: "Gated"
+      - value: 8
+        label: "Gated Change (Non Veto Toggle)"
+        description: "Toggle the line **only if** the veto register is currently inactive."
+        category: "Gated"
+    citation: "Manual Section 6.3.4 Commands, pages 23–24."
+
+  # ----- Port I/O-1/Line/Actions/Producers (replication=6) -----
+  - cdiPath: "Port I/O-1/Line/Actions/Producers/Upon this action"
+    name: "Upon this action"
+    elementType: "int"
+    description: |
+      Selects **which line event triggers this producer slot**. *Input On / Off*
+      and *Gated On / Off* fire on input transitions (the gated forms respect
+      the veto register, so a panel button can be silenced without unbinding
+      it). *Cascade command* and *Output State* options report when a command
+      arrives, even before the line moves. *Output On / Off (Function hi/lo)*
+      fire when the physical line actually changes state, useful for confirming
+      a relay or LED responded.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "None"
+        description: "Slot is unused — no event is produced."
+        category: null
+      - value: 5
+        label: "Input On"
+        description: "Fire the indicator when the input edge becomes **active** (per Input polarity)."
+        category: "Input"
+      - value: 6
+        label: "Input Off"
+        description: "Fire the indicator when the input edge becomes **inactive**."
+        category: "Input"
+      - value: 7
+        label: "Gated On (Non Veto Input)"
+        description: "Like *Input On*, but only fires while the veto register is **inactive**."
+        category: "Input"
+      - value: 8
+        label: "Gated Off (Non Veto Input)"
+        description: "Like *Input Off*, but only fires while the veto register is **inactive**."
+        category: "Input"
+      - value: 9
+        label: "Cascade command"
+        description: "Re-emit the consumer command on this line as a producer event, useful to chain logic across nodes."
+        category: "Command"
+      - value: 1
+        label: "Output State On command"
+        description: "Fire when an **On** command arrives at the line (even before drive completes)."
+        category: "Command"
+      - value: 2
+        label: "Output State Off command"
+        description: "Fire when an **Off** command arrives at the line."
+        category: "Command"
+      - value: 3
+        label: "Output On (Function hi)"
+        description: "Fire when the line **physically reaches** its active output state."
+        category: "Output"
+      - value: 4
+        label: "Output Off (Function lo)"
+        description: "Fire when the line **physically reaches** its inactive output state."
+        category: "Output"
+    citation: "Manual Section 6.3.5 Indications, page 24."
+
+  - cdiPath: "Port I/O-1/Line/Actions/Producers/Indicator"
+    name: "Indicator"
+    elementType: "eventid"
+    description: |
+      Producer EventID **sent by this Signal-LCC** whenever the configured
+      *Upon this action* condition fires. Other nodes (or JMRI sensors)
+      consume this event to know the line changed state. Up to 6 producer
+      slots per line, so one input can broadcast several events for different
+      conditions.
+    units: null
+    validRange: null
+    typicalValues: null
+    role: "Producer"
+    citation: "Manual Section 6.3.5 Indications, page 24. CDI description: '(P) this event will be sent'."
+
+  # =========================================================================
+  # Segment: Conditionals  (Logic group, replication=32)
+  # =========================================================================
+  - cdiPath: "Conditionals/Logic/Description"
+    name: "Description"
+    elementType: "string"
+    description: |
+      Free-form label describing **what this conditional represents** — for
+      example *"Mast 101L Approach"* or *"OS section interlock"*. Helps you
+      navigate 32 slots that otherwise look identical in the configuration
+      tool.
+    units: null
+    validRange: null
+    typicalValues: null
+    maxLength: 32
+    citation: "Manual Section 7.2 Logic Description, page 26."
+
+  - cdiPath: "Conditionals/Logic/Function"
+    name: "Function"
+    elementType: "int"
+    description: |
+      How this conditional **participates in evaluation**. *Blocked* skips it
+      entirely (useful for disabling logic without losing its setup). *Group*
+      marks it as part of a multi-conditional group that flows top-down using
+      *Action when true / false* selectors. *Last (Single)* marks the end of a
+      group (or a stand-alone rule) — evaluation never falls past a *Last*
+      entry.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Blocked"
+        description: "Conditional is **not evaluated**. Use to temporarily disable logic without losing its variables and actions."
+        category: null
+      - value: 1
+        label: "Group"
+        description: "Part of a chained group. Evaluation may continue into the next conditional based on the *when true / when false* selectors."
+        category: null
+      - value: 2
+        label: "Last (Single)"
+        description: "End of a group or a stand-alone conditional. Evaluation does not fall through past this entry."
+        category: null
+    citation: "Manual Section 7.3 Group function, page 26."
+
+  # ----- Conditionals/Logic/Variable #1 -----
+  - cdiPath: "Conditionals/Logic/Variable #1/Trigger"
+    name: "Trigger"
+    elementType: "int"
+    description: |
+      Decides **when this variable causes the conditional to be re-evaluated**.
+      *On Variable Change* fires only when the variable's stored true/false
+      state actually flips; *On Matching Event* fires on every matching event
+      (even if the state is unchanged) — useful when a downstream action
+      should re-send on every trigger. *None* disables the variable
+      altogether, so it never participates in evaluation.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "On Variable Change"
+        description: "Re-evaluate the conditional only when this variable's stored value flips between true and false."
+        category: null
+      - value: 1
+        label: "On Matching Event"
+        description: "Re-evaluate the conditional on every matching consumer event, even when the variable's value does not change."
+        category: null
+      - value: 2
+        label: "None"
+        description: "Variable is inactive — it neither triggers evaluation nor contributes to the logic operation."
+        category: null
+    citation: "Manual Section 7.4.1 Variable Trigger, page 27. Relevance rule R012."
+
+  - cdiPath: "Conditionals/Logic/Variable #1/Source"
+    name: "Source"
+    elementType: "int"
+    description: |
+      Where the variable gets its **true/false value** from. *Use Variable
+      #1's (C) Events* drives it from the pair of consumer eventids below
+      (the classical Signal-LCC variable). *Track Circuit 1..8* instead reads
+      the variable from the corresponding Track Circuit RX table, comparing
+      its current speed indication against the **Track Speed** selector — true
+      when the speed permits the chosen state, false otherwise.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Use Variable #1's (C) Events"
+        description: "Variable is driven by the *set true* / *set false* consumer events configured below."
+        category: "Event-driven"
+      - value: 1
+        label: "Track Circuit 1"
+        description: "Variable mirrors Track Circuit 1's speed indication compared to **Track Speed**."
+        category: "Track Circuit"
+      - value: 2
+        label: "Track Circuit 2"
+        description: "Variable mirrors Track Circuit 2's speed indication compared to **Track Speed**."
+        category: "Track Circuit"
+      - value: 3
+        label: "Track Circuit 3"
+        description: "Variable mirrors Track Circuit 3's speed indication compared to **Track Speed**."
+        category: "Track Circuit"
+      - value: 4
+        label: "Track Circuit 4"
+        description: "Variable mirrors Track Circuit 4's speed indication compared to **Track Speed**."
+        category: "Track Circuit"
+      - value: 5
+        label: "Track Circuit 5"
+        description: "Variable mirrors Track Circuit 5's speed indication compared to **Track Speed**."
+        category: "Track Circuit"
+      - value: 6
+        label: "Track Circuit 6"
+        description: "Variable mirrors Track Circuit 6's speed indication compared to **Track Speed**."
+        category: "Track Circuit"
+      - value: 7
+        label: "Track Circuit 7"
+        description: "Variable mirrors Track Circuit 7's speed indication compared to **Track Speed**."
+        category: "Track Circuit"
+      - value: 8
+        label: "Track Circuit 8"
+        description: "Variable mirrors Track Circuit 8's speed indication compared to **Track Speed**."
+        category: "Track Circuit"
+    citation: "Manual Section 7.4.2 Variable Source, pages 27–29. Relevance rules R014, R016, R017."
+
+  - cdiPath: "Conditionals/Logic/Variable #1/Track Speed"
+    name: "Track Speed"
+    elementType: "int"
+    description: |
+      Approach-speed threshold used **only when Source is a Track Circuit**.
+      The variable is true while the linked circuit reports this speed (or
+      better, per NORAC ordering). Has no effect when Source is *Use Variable
+      #1's (C) Events*.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Stop"
+        description: "True while the linked circuit reports **Stop**."
+        category: null
+      - value: 1
+        label: "Restricting/Tumble Down"
+        description: "True while the linked circuit reports **Restricting** (a.k.a. Tumble Down)."
+        category: null
+      - value: 2
+        label: "Slow"
+        description: "True while the linked circuit reports **Slow**."
+        category: null
+      - value: 3
+        label: "Medium"
+        description: "True while the linked circuit reports **Medium**."
+        category: null
+      - value: 4
+        label: "Limited"
+        description: "True while the linked circuit reports **Limited**."
+        category: null
+      - value: 5
+        label: "Approach"
+        description: "True while the linked circuit reports **Approach**."
+        category: null
+      - value: 6
+        label: "Approach-Medium"
+        description: "True while the linked circuit reports **Approach-Medium**."
+        category: null
+      - value: 7
+        label: "Clear/Proceed"
+        description: "True while the linked circuit reports **Clear / Proceed**."
+        category: null
+    citation: "Manual Section 7.4.2.2 Track Circuit (RX), pages 28–29."
+
+  - cdiPath: "Conditionals/Logic/Variable #1/set true"
+    name: "set true"
+    elementType: "eventid"
+    description: |
+      Consumer event that **sets Variable #1 to true** when Source is *Use
+      Variable #1's (C) Events*. Bind to an occupancy detector's *clear*
+      indicator, a panel button, or any other producer that signals the
+      condition is met.
+    units: null
+    validRange: null
+    typicalValues: null
+    role: "Consumer"
+    citation: "CDI: '(C) Event to set variable #1 true.' Manual Section 7.4.2.1 Events, page 27. Relevance rule R016."
+
+  - cdiPath: "Conditionals/Logic/Variable #1/set false"
+    name: "set false"
+    elementType: "eventid"
+    description: |
+      Consumer event that **sets Variable #1 to false** when Source is *Use
+      Variable #1's (C) Events*. Typically the matching *occupied* / *button
+      released* counterpart to the *set true* event.
+    units: null
+    validRange: null
+    typicalValues: null
+    role: "Consumer"
+    citation: "CDI: '(C) Event to set variable #1 false.' Manual Section 7.4.2.1 Events, page 27. Relevance rule R017."
+
+  # Logic Operation
+  - cdiPath: "Conditionals/Logic/Logic Operation"
+    name: "Logic Operation"
+    elementType: "int"
+    description: |
+      How **Variable #1 and Variable #2 combine** to decide whether the
+      conditional is true or false. The *=> change* variants fire only on a
+      transition (not steady-state). Use *V1 Only* / *V2 Only* when one
+      variable is unused. *null => true* unconditionally evaluates true,
+      handy for conditionals whose job is purely to send action events on a
+      timer.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "V1 AND V2"
+        description: "True when both variables are true."
+        category: "Combine"
+      - value: 1
+        label: "V1 OR V2"
+        description: "True when either variable is true."
+        category: "Combine"
+      - value: 2
+        label: "V1 XOR V2"
+        description: "True when exactly one variable is true."
+        category: "Combine"
+      - value: 3
+        label: "V1 AND V2 => change"
+        description: "Like *V1 AND V2*, but fires only on the transition into the true state."
+        category: "Edge"
+      - value: 4
+        label: "V1 OR V2 => change"
+        description: "Like *V1 OR V2*, but fires only on the transition into the true state."
+        category: "Edge"
+      - value: 5
+        label: "V1 AND Then V2 => true"
+        description: "True only when V1 becomes true **before** V2 (a temporal AND)."
+        category: "Sequence"
+      - value: 7
+        label: "V1 Only"
+        description: "Use Variable #1 alone; ignore Variable #2."
+        category: "Single"
+      - value: 8
+        label: "V2 Only"
+        description: "Use Variable #2 alone; ignore Variable #1."
+        category: "Single"
+      - value: 6
+        label: "null => true"
+        description: "Unconditionally true — useful when the conditional exists only to fire delayed action events."
+        category: "Constant"
+    citation: "Manual Section 7.6 Logic Function, page 29."
+
+  # ----- Conditionals/Logic/Variable #2 -----
+  - cdiPath: "Conditionals/Logic/Variable #2/Trigger"
+    name: "Trigger"
+    elementType: "int"
+    description: |
+      Mirrors **Variable #1/Trigger** for the second variable. Set to *None*
+      (and choose *V1 Only* in Logic Operation) when this conditional only
+      needs one variable.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "On Variable Change"
+        description: "Re-evaluate only when this variable's stored value flips."
+        category: null
+      - value: 1
+        label: "On Matching Event"
+        description: "Re-evaluate on every matching consumer event."
+        category: null
+      - value: 2
+        label: "None"
+        description: "Variable is inactive."
+        category: null
+    citation: "Manual Section 7.4.1 Variable Trigger, page 27. Relevance rule R013."
+
+  - cdiPath: "Conditionals/Logic/Variable #2/Source"
+    name: "Source"
+    elementType: "int"
+    description: |
+      Mirrors **Variable #1/Source** for the second variable.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Use Variable #2's (C) Events"
+        description: "Variable is driven by Variable #2's *set true* / *set false* consumer events."
+        category: "Event-driven"
+      - value: 1
+        label: "Track Circuit 1"
+        description: "Variable mirrors Track Circuit 1's speed indication compared to **Track Speed**."
+        category: "Track Circuit"
+      - value: 2
+        label: "Track Circuit 2"
+        description: "Variable mirrors Track Circuit 2's speed indication compared to **Track Speed**."
+        category: "Track Circuit"
+      - value: 3
+        label: "Track Circuit 3"
+        description: "Variable mirrors Track Circuit 3's speed indication compared to **Track Speed**."
+        category: "Track Circuit"
+      - value: 4
+        label: "Track Circuit 4"
+        description: "Variable mirrors Track Circuit 4's speed indication compared to **Track Speed**."
+        category: "Track Circuit"
+      - value: 5
+        label: "Track Circuit 5"
+        description: "Variable mirrors Track Circuit 5's speed indication compared to **Track Speed**."
+        category: "Track Circuit"
+      - value: 6
+        label: "Track Circuit 6"
+        description: "Variable mirrors Track Circuit 6's speed indication compared to **Track Speed**."
+        category: "Track Circuit"
+      - value: 7
+        label: "Track Circuit 7"
+        description: "Variable mirrors Track Circuit 7's speed indication compared to **Track Speed**."
+        category: "Track Circuit"
+      - value: 8
+        label: "Track Circuit 8"
+        description: "Variable mirrors Track Circuit 8's speed indication compared to **Track Speed**."
+        category: "Track Circuit"
+    citation: "Manual Section 7.4.2 Variable Source, pages 27–29. Relevance rules R015, R018, R019."
+
+  - cdiPath: "Conditionals/Logic/Variable #2/Track Speed"
+    name: "Track Speed"
+    elementType: "int"
+    description: |
+      Mirrors **Variable #1/Track Speed** for the second variable. Has no
+      effect when Source is *Use Variable #2's (C) Events*.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Stop"
+        description: "True while the linked circuit reports **Stop**."
+        category: null
+      - value: 1
+        label: "Restricting/Tumble Down"
+        description: "True while the linked circuit reports **Restricting**."
+        category: null
+      - value: 2
+        label: "Slow"
+        description: "True while the linked circuit reports **Slow**."
+        category: null
+      - value: 3
+        label: "Medium"
+        description: "True while the linked circuit reports **Medium**."
+        category: null
+      - value: 4
+        label: "Limited"
+        description: "True while the linked circuit reports **Limited**."
+        category: null
+      - value: 5
+        label: "Approach"
+        description: "True while the linked circuit reports **Approach**."
+        category: null
+      - value: 6
+        label: "Approach-Medium"
+        description: "True while the linked circuit reports **Approach-Medium**."
+        category: null
+      - value: 7
+        label: "Clear/Proceed"
+        description: "True while the linked circuit reports **Clear / Proceed**."
+        category: null
+    citation: "Manual Section 7.4.2.2 Track Circuit (RX), pages 28–29."
+
+  - cdiPath: "Conditionals/Logic/Variable #2/set true"
+    name: "set true"
+    elementType: "eventid"
+    description: |
+      Consumer event that **sets Variable #2 to true** when Source is *Use
+      Variable #2's (C) Events*.
+    units: null
+    validRange: null
+    typicalValues: null
+    role: "Consumer"
+    citation: "CDI: '(C) Event to set variable #2 true.' Manual Section 7.4.2.1 Events, page 27. Relevance rule R018."
+
+  - cdiPath: "Conditionals/Logic/Variable #2/set false"
+    name: "set false"
+    elementType: "eventid"
+    description: |
+      Consumer event that **sets Variable #2 to false** when Source is *Use
+      Variable #2's (C) Events*.
+    units: null
+    validRange: null
+    typicalValues: null
+    role: "Consumer"
+    citation: "CDI: '(C) Event to set variable #2 false.' Manual Section 7.4.2.1 Events, page 27. Relevance rule R019."
+
+  # ----- Conditionals/Logic/Action[0] (singleton) -----
+  - cdiPath: "Conditionals/Logic/Action[0]/when true"
+    name: "when true"
+    elementType: "int"
+    description: |
+      Choose **how evaluation continues when this conditional is true**. *Send
+      then Exit Group* fires the action events (subject to their per-slot
+      Condition) and stops evaluating further conditionals in the group.
+      *Evaluate Next* and *AND / OR with Next* chain into the following
+      conditional, building larger Boolean expressions across multiple
+      Logic slots.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Send then Exit Group"
+        description: "Fire the action events for this conditional, then stop evaluating the group."
+        category: "Send + flow"
+      - value: 2
+        label: "Send then Evaluate Next"
+        description: "Fire the action events, then continue with the next conditional."
+        category: "Send + flow"
+      - value: 3
+        label: "Exit Group"
+        description: "Do not fire action events; stop evaluating the group."
+        category: "Flow only"
+      - value: 4
+        label: "Evaluate Next"
+        description: "Do not fire action events; continue with the next conditional."
+        category: "Flow only"
+      - value: 5
+        label: "AND with Next"
+        description: "Carry a logical AND of this result into the next conditional's evaluation."
+        category: "Chain"
+      - value: 6
+        label: "OR  with Next"
+        description: "Carry a logical OR of this result into the next conditional's evaluation."
+        category: "Chain"
+    citation: "Manual Section 7.7 Action when Conditional = True, page 29."
+
+  - cdiPath: "Conditionals/Logic/Action[0]/when false"
+    name: "when false"
+    elementType: "int"
+    description: |
+      Choose **how evaluation continues when this conditional is false**. Same
+      options as *when true*, so a single Logic slot can branch differently
+      on its two outcomes (for example *Send then Exit Group* on true,
+      *Evaluate Next* on false, to retry with another conditional only when
+      the first fails).
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Send then Exit Group"
+        description: "Fire the action events, then stop evaluating the group."
+        category: "Send + flow"
+      - value: 2
+        label: "Send then Evaluate Next"
+        description: "Fire the action events, then continue with the next conditional."
+        category: "Send + flow"
+      - value: 3
+        label: "Exit Group"
+        description: "Do not fire action events; stop evaluating the group."
+        category: "Flow only"
+      - value: 4
+        label: "Evaluate Next"
+        description: "Do not fire action events; continue with the next conditional."
+        category: "Flow only"
+      - value: 5
+        label: "AND with Next"
+        description: "Carry a logical AND of this (false) result into the next conditional."
+        category: "Chain"
+      - value: 6
+        label: "OR  with Next"
+        description: "Carry a logical OR of this (false) result into the next conditional."
+        category: "Chain"
+    citation: "Manual Section 7.8 Action when Conditional = False, page 30."
+
+  # ----- Conditionals/Logic/Time Delay before action -----
+  - cdiPath: "Conditionals/Logic/Time Delay before action/Delay Time (1-60000)"
+    name: "Delay Time (1-60000)"
+    elementType: "int"
+    description: |
+      How long to wait before this conditional's **delayed action events** are
+      sent. Used by per-slot Condition values *After delay*, *Delayed if
+      True*, and *Delayed if False*.
+    units: "selected by Units field"
+    validRange:
+      min: 1
+      max: 60000
+    typicalValues: null
+    citation: "Manual Section 7.9 Delay, page 31."
+
+  - cdiPath: "Conditionals/Logic/Time Delay before action/Units"
+    name: "Units"
+    elementType: "int"
+    description: |
+      Time unit applied to **Delay Time** for this conditional.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Milliseconds"
+        description: "Delay Time is interpreted as milliseconds."
+        category: null
+      - value: 1
+        label: "Seconds"
+        description: "Delay Time is interpreted as seconds."
+        category: null
+      - value: 2
+        label: "Minutes"
+        description: "Delay Time is interpreted as minutes."
+        category: null
+    citation: "Manual Section 7.9 Delay, page 31."
+
+  - cdiPath: "Conditionals/Logic/Time Delay before action/Retriggerable"
+    name: "Retriggerable"
+    elementType: "int"
+    description: |
+      Whether **new triggers restart the delay** while it is already running.
+      *Yes* resets the timer (useful for approach-light extension); *No* lets
+      the original delay complete and ignores intermediate triggers.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "No"
+        description: "Once the delay starts, additional triggers are ignored until it expires."
+        category: null
+      - value: 1
+        label: "Yes"
+        description: "Every new trigger restarts the delay from zero."
+        category: null
+    citation: "Manual Section 7.9 Delay, page 31."
+
+  # ----- Conditionals/Logic/Action[1-4] (replication=4) -----
+  - cdiPath: "Conditionals/Logic/Action[1-4]/Condition"
+    name: "Condition"
+    elementType: "int"
+    description: |
+      When this action slot fires its **Action Event**. *Immediately* sends at
+      evaluation time; *After delay* waits for the conditional's delay timer.
+      The *if True / if False* variants gate the send on the conditional's
+      result, letting one slot emit only on success and another only on
+      failure.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "none"
+        description: "Slot is unused — no event is ever sent for this action position."
+        category: null
+      - value: 1
+        label: "Immediately"
+        description: "Send the Action Event as soon as the conditional fires."
+        category: "Immediate"
+      - value: 2
+        label: "After delay"
+        description: "Send the Action Event after the conditional's **Time Delay before action**."
+        category: "Delayed"
+      - value: 3
+        label: "Immediate if True"
+        description: "Send the Action Event immediately, but only when the conditional evaluates true."
+        category: "Immediate (gated)"
+      - value: 4
+        label: "Immediate if False"
+        description: "Send the Action Event immediately, but only when the conditional evaluates false."
+        category: "Immediate (gated)"
+      - value: 5
+        label: "Delayed if True"
+        description: "Send the Action Event after the delay, but only when the conditional evaluates true."
+        category: "Delayed (gated)"
+      - value: 6
+        label: "Delayed if False"
+        description: "Send the Action Event after the delay, but only when the conditional evaluates false."
+        category: "Delayed (gated)"
+    citation: "Manual Section 7.10 Actions (Producers), page 31. Relevance rule R020."
+
+  - cdiPath: "Conditionals/Logic/Action[1-4]/Action Event"
+    name: "Action Event"
+    elementType: "eventid"
+    description: |
+      Producer EventID **sent by this Signal-LCC** when this action slot's
+      *Condition* fires. Four slots per conditional let one Logic entry drive
+      a multi-lamp aspect or distribute several follow-up events.
+    units: null
+    validRange: null
+    typicalValues: null
+    role: "Producer"
+    citation: "CDI: '(P) this event will be sent'. Manual Section 7.10 Actions (Producers), page 31."
+
+  # =========================================================================
+  # Segment: Rule to Aspect  (Mast group, replication=8)
+  # =========================================================================
+  - cdiPath: "Rule to Aspect/Mast/Mast Processing"
+    name: "Mast Processing"
+    elementType: "int"
+    description: |
+      Activates or extends this mast slot. *Unused* leaves it inert (saves
+      configuration noise for nodes that drive fewer than 8 masts). *Normal*
+      treats it as a stand-alone mast with its own 8 rules. *Linked to
+      Previous* chains it to the prior mast so the two share a single mast
+      identity with a combined 16 rules, useful for unusual aspect counts.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Unused"
+        description: "Mast slot is inactive. **Mast Description**, **Link Address**, **Lamp Fade**, and all Rules / Appearances have no effect."
+        category: null
+      - value: 1
+        label: "Normal"
+        description: "Stand-alone mast with up to 8 rules. Publishes its own **Link Address**."
+        category: null
+      - value: 2
+        label: "Linked to Previous"
+        description: "Extension of the previous mast — shares its identity and adds another 8 rule slots, giving 16 total."
+        category: null
+    citation: "Manual Section 8.1 Mast Processing, page 31. Relevance rule R021 (everything below is inert when Unused)."
+
+  - cdiPath: "Rule to Aspect/Mast/Mast Description"
+    name: "Mast Description"
+    elementType: "string"
+    description: |
+      Free-form label for **this mast** — for example *"Eastbound 101L"*. Shown
+      in configuration-tool tabs to identify the mast at a glance.
+    units: null
+    validRange: null
+    typicalValues: null
+    maxLength: 32
+    citation: "Manual Section 8.2 Mast ID, page 32."
+
+  - cdiPath: "Rule to Aspect/Mast/Link Address"
+    name: "Link Address"
+    elementType: "eventid"
+    description: |
+      Producer EventID this mast **publishes its current speed indication on**
+      (one of the eight NORAC speeds, derived from the active rule's **Track
+      Speed**). It is read-only / limited-write — generated by the node when
+      the mast is configured. To make the next signal in the route follow
+      this one, **copy this EventID** and paste it into the **Track Circuits
+      / Circuit / Link Address** field on the upstream node.
+    units: null
+    validRange: null
+    typicalValues: null
+    role: "Producer"
+    citation: "Manual Section 8.3 (P) Track Circuit Link Address, page 32. CDI: '(P) Track Circuit Link Address. Copy and Paste into linked Track Circuit (Limited Write)'."
+
+  - cdiPath: "Rule to Aspect/Mast/Lamp Fade"
+    name: "Lamp Fade"
+    elementType: "int"
+    description: |
+      Whether this mast's lamps **snap or fade** between aspects. *None* gives
+      crisp instant changes (typical for color-light heads). *Incandescent*
+      cross-fades using the warm-up / cool-down curve of an incandescent bulb,
+      so semaphore or older head models look prototypical.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "None"
+        description: "Lamps switch instantly between aspects."
+        category: null
+      - value: 1
+        label: "Incandescent"
+        description: "Lamps cross-fade with a prototypical incandescent warm-up / cool-down curve."
+        category: null
+    citation: "Manual Section 8.4 Lamp Fade, page 33."
+
+  # ----- Rule to Aspect/Mast/Rule (replication=8) -----
+  - cdiPath: "Rule to Aspect/Mast/Rule/Rule Name"
+    name: "Rule Name"
+    elementType: "int"
+    description: |
+      Which **NORAC rule (indication)** this slot represents. The Signal-LCC
+      uses these names to compute the speed published via the mast's Link
+      Address — for example *21-Approach* publishes Approach. Pick the rule
+      that matches the prototype indication you want this slot to display.
+
+      The full NORAC catalog is offered (0–31). Common picks for a four-aspect
+      color-light head are *0-Stop*, *21-Approach*, *25-Approach-Medium*, and
+      *29-Clear*.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "0-Stop"
+        description: "Absolute stop — the most restrictive indication."
+        category: null
+      - value: 1
+        label: "1-Take Siding"
+        description: "Take Siding."
+        category: null
+      - value: 2
+        label: "2-Stop Orders"
+        description: "Stop and obtain orders."
+        category: null
+      - value: 3
+        label: "3-Stop Proceed"
+        description: "Stop, then proceed at restricted speed."
+        category: null
+      - value: 4
+        label: "4-Restricting"
+        description: "Restricting — proceed prepared to stop within half the range of vision."
+        category: null
+      - value: 5
+        label: "5-Permissive"
+        description: "Permissive — pass at restricted speed without stopping."
+        category: null
+      - value: 6
+        label: "6-Slow-Approach"
+        description: "Slow-Approach."
+        category: null
+      - value: 7
+        label: "7-Slow"
+        description: "Slow."
+        category: null
+      - value: 8
+        label: "8-Slow-Medium"
+        description: "Slow then Medium beyond."
+        category: null
+      - value: 9
+        label: "9-Slow-Limited"
+        description: "Slow then Limited beyond."
+        category: null
+      - value: 10
+        label: "10-Slow-Clear"
+        description: "Slow then Clear beyond."
+        category: null
+      - value: 11
+        label: "11-Medium-Approach"
+        description: "Medium then Approach beyond."
+        category: null
+      - value: 12
+        label: "12-Medium-Slow"
+        description: "Medium then Slow beyond."
+        category: null
+      - value: 13
+        label: "13-Medium"
+        description: "Medium."
+        category: null
+      - value: 14
+        label: "14-Medium-Limited"
+        description: "Medium then Limited beyond."
+        category: null
+      - value: 15
+        label: "15-Medium-Clear"
+        description: "Medium then Clear beyond."
+        category: null
+      - value: 16
+        label: "16-Limited-Approach"
+        description: "Limited then Approach beyond."
+        category: null
+      - value: 17
+        label: "17-Limited-Slow"
+        description: "Limited then Slow beyond."
+        category: null
+      - value: 18
+        label: "18-Limited-Medium"
+        description: "Limited then Medium beyond."
+        category: null
+      - value: 19
+        label: "19-Limited"
+        description: "Limited."
+        category: null
+      - value: 20
+        label: "20-Limited-Clear"
+        description: "Limited then Clear beyond."
+        category: null
+      - value: 21
+        label: "21-Approach"
+        description: "Approach — proceed prepared to stop at next signal."
+        category: null
+      - value: 22
+        label: "22-Advance-Approach"
+        description: "Advance Approach — proceed prepared to stop at second signal."
+        category: null
+      - value: 23
+        label: "23-Approach-Slow"
+        description: "Approach Slow."
+        category: null
+      - value: 24
+        label: "24-Advance-Approach-Slow"
+        description: "Advance Approach Slow."
+        category: null
+      - value: 25
+        label: "25-Approach-Medium"
+        description: "Approach Medium."
+        category: null
+      - value: 26
+        label: "26-Advance-Approach-Medium"
+        description: "Advance Approach Medium."
+        category: null
+      - value: 27
+        label: "27-Approach-Limited"
+        description: "Approach Limited."
+        category: null
+      - value: 28
+        label: "28-Advance-Approach-Limited"
+        description: "Advance Approach Limited."
+        category: null
+      - value: 29
+        label: "29-Clear"
+        description: "Clear — proceed at maximum authorized speed."
+        category: null
+      - value: 30
+        label: "30-Cab-Speed"
+        description: "Cab Speed — proceed at the speed indicated by the cab signal."
+        category: null
+      - value: 31
+        label: "31-Dark"
+        description: "Dark — no aspect lit (commonly used for unused slots or to model an extinguished head)."
+        category: null
+    citation: "Manual Section 8.5 Rules, page 33 (NORAC indication list referenced throughout)."
+
+  - cdiPath: "Rule to Aspect/Mast/Rule/Track Speed"
+    name: "Track Speed"
+    elementType: "int"
+    description: |
+      The **approach speed this rule reports to the previous mast** via the
+      mast's Link Address. Choose the slowest speed the indication still
+      permits — for example *Approach* for a yellow-over-red indication. The
+      previous mast's Logic conditionals can then watch this Track Speed via
+      a Track Circuit RX table to compute their own aspect.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Stop"
+        description: "Reports **Stop** to the previous mast."
+        category: null
+      - value: 1
+        label: "Restricting/Tumble Down"
+        description: "Reports **Restricting** (Tumble Down)."
+        category: null
+      - value: 2
+        label: "Slow"
+        description: "Reports **Slow**."
+        category: null
+      - value: 3
+        label: "Medium"
+        description: "Reports **Medium**."
+        category: null
+      - value: 4
+        label: "Limited"
+        description: "Reports **Limited**."
+        category: null
+      - value: 5
+        label: "Approach"
+        description: "Reports **Approach**."
+        category: null
+      - value: 6
+        label: "Approach-Medium"
+        description: "Reports **Approach-Medium**."
+        category: null
+      - value: 7
+        label: "Clear/Proceed"
+        description: "Reports **Clear / Proceed** (full speed)."
+        category: null
+    citation: "Manual Section 8.5 Rules, page 33. CDI description: 'on approach to signal'."
+
+  - cdiPath: "Rule to Aspect/Mast/Rule/set aspect"
+    name: "set aspect"
+    elementType: "eventid"
+    description: |
+      Consumer EventID that **selects this rule** as the mast's active aspect.
+      Bind it to the producer event generated by your dispatcher logic
+      (typically a Conditional Action Event on this same node, or a JMRI
+      sensor). The node clears other rules on this mast automatically — no
+      separate "clear" event is needed.
+    units: null
+    validRange: null
+    typicalValues: null
+    role: "Consumer"
+    citation: "Manual Section 8.5 Rules, page 33. CDI: '(C) Event to Set Aspect. Note: Aspects are cleared automatically by the logic.'"
+
+  - cdiPath: "Rule to Aspect/Mast/Rule/aspect is set"
+    name: "aspect is set"
+    elementType: "eventid"
+    description: |
+      Producer EventID **sent when this rule becomes the active aspect**. Other
+      nodes (or JMRI panels) can consume it to mirror the indication or feed
+      it back to a dispatcher.
+    units: null
+    validRange: null
+    typicalValues: null
+    role: "Producer"
+    citation: "Manual Section 8.5 Rules, page 33. CDI: '(P) Send this event when the Aspect is set.'"
+
+  - cdiPath: "Rule to Aspect/Mast/Rule/aspect cleared"
+    name: "aspect cleared"
+    elementType: "eventid"
+    description: |
+      Producer EventID **sent when this rule stops being the active aspect**
+      (because another rule on the same mast was selected, or the mast went
+      Dark). Pair with *aspect is set* to track aspect transitions on
+      remote panels.
+    units: null
+    validRange: null
+    typicalValues: null
+    role: "Producer"
+    citation: "Manual Section 8.5 Rules, page 33. CDI: '(P) Send this event when the Aspect clears.'"
+
+  # ----- Rule to Aspect/Mast/Rule/Appearance (replication=4) -----
+  - cdiPath: "Rule to Aspect/Mast/Rule/Appearance/Lamp Selection"
+    name: "Lamp Selection"
+    elementType: "int"
+    description: |
+      Which of the **16 lamp drivers** this Appearance slot lights when the
+      rule is active. The names follow the I/O-2 connector layout: *#1 H1-G*
+      is Head 1 Green, *#4 H1-L* is Head 1 Lunar, *#5 H2-G* is Head 2 Green,
+      and so on through *#16 H4-L*. Set to *Unused* if this Appearance slot
+      isn't needed for the rule (each Appearance is independent).
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Unused"
+        description: "Slot is empty — no lamp is driven and Lamp Phase has no effect."
+        category: null
+      - value: 1
+        label: "#1 H1-G"
+        description: "Head 1 Green."
+        category: "Head 1"
+      - value: 2
+        label: "#2 H1-Y"
+        description: "Head 1 Yellow."
+        category: "Head 1"
+      - value: 3
+        label: "#3 H1-R"
+        description: "Head 1 Red."
+        category: "Head 1"
+      - value: 4
+        label: "#4 H1-L"
+        description: "Head 1 Lunar (white)."
+        category: "Head 1"
+      - value: 5
+        label: "#5 H2-G"
+        description: "Head 2 Green."
+        category: "Head 2"
+      - value: 6
+        label: "#6 H2-Y"
+        description: "Head 2 Yellow."
+        category: "Head 2"
+      - value: 7
+        label: "#7 H2-R"
+        description: "Head 2 Red."
+        category: "Head 2"
+      - value: 8
+        label: "#8 H2-L"
+        description: "Head 2 Lunar (white)."
+        category: "Head 2"
+      - value: 9
+        label: "#9 H3-G"
+        description: "Head 3 Green."
+        category: "Head 3"
+      - value: 10
+        label: "#10 H3-Y"
+        description: "Head 3 Yellow."
+        category: "Head 3"
+      - value: 11
+        label: "#11 H3-R"
+        description: "Head 3 Red."
+        category: "Head 3"
+      - value: 12
+        label: "#12 H3-L"
+        description: "Head 3 Lunar (white)."
+        category: "Head 3"
+      - value: 13
+        label: "#13 H4-G"
+        description: "Head 4 Green."
+        category: "Head 4"
+      - value: 14
+        label: "#14 H4-Y"
+        description: "Head 4 Yellow."
+        category: "Head 4"
+      - value: 15
+        label: "#15 H4-R"
+        description: "Head 4 Red."
+        category: "Head 4"
+      - value: 16
+        label: "#16 H4-L"
+        description: "Head 4 Lunar (white)."
+        category: "Head 4"
+    citation: "Manual Section 8.6.2 Lamp Selection, pages 34–35."
+
+  - cdiPath: "Rule to Aspect/Mast/Rule/Appearance/Lamp Phase (A-B) - Flash Rate"
+    name: "Lamp Phase (A-B) - Flash Rate"
+    elementType: "int"
+    description: |
+      Whether the chosen lamp **stays steady or flashes**, and on which phase.
+      Phase A and B share frequency but flash in opposite halves of the
+      cycle, so a yellow on phase A and a red on phase B alternate cleanly
+      for prototypical *Approach-flashing* / *Restricting* effects. Three
+      rates (Slow / Medium / Fast) cover most rule books.
+
+      *None (not used)* is a hold-over from older rev firmware — prefer
+      *Unused* on Lamp Selection to disable a slot.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Steady"
+        description: "Lamp stays on continuously while the rule is active."
+        category: "Steady"
+      - value: 1
+        label: "A-Slow"
+        description: "Flashes on phase **A** at the slow rate."
+        category: "A-phase"
+      - value: 2
+        label: "A-Medium"
+        description: "Flashes on phase **A** at the medium rate."
+        category: "A-phase"
+      - value: 3
+        label: "A-Fast"
+        description: "Flashes on phase **A** at the fast rate."
+        category: "A-phase"
+      - value: 4
+        label: "None (not used)"
+        description: "Lamp slot is inert. Prefer setting **Lamp Selection** to *Unused* to disable the slot."
+        category: null
+      - value: 5
+        label: "B-Slow"
+        description: "Flashes on phase **B** (opposite of A) at the slow rate."
+        category: "B-phase"
+      - value: 6
+        label: "B-Medium"
+        description: "Flashes on phase **B** at the medium rate."
+        category: "B-phase"
+      - value: 7
+        label: "B-Fast"
+        description: "Flashes on phase **B** at the fast rate."
+        category: "B-phase"
+    citation: "Manual Section 8.6.3 Lamp Phase (A-B) Flash Rate, page 35. Relevance rule R022."
+
+  - cdiPath: "Rule to Aspect/Mast/Rule/Appearance Effects"
+    name: "Appearance Effects"
+    elementType: "int"
+    description: |
+      Optional **special effect** applied to one lamp of the aspect. Use
+      *Transition down* to smoothly dim the previous aspect's lamp during a
+      change (most common for incandescent simulations), *H2 Red Flash* for
+      the prototype's red-flashing-on-Head-2 detail, and *Strobe* for high-
+      intensity warning lamps.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "None"
+        description: "No special effect."
+        category: null
+      - value: 1
+        label: "Transition down"
+        description: "Smoothly dim the **Effects Lamp** down during an aspect change (incandescent transition)."
+        category: null
+      - value: 2
+        label: "H2 Red Flash"
+        description: "Flash the **Effects Lamp** to mimic the prototype's Head-2 red flash on certain rules."
+        category: null
+      - value: 3
+        label: "Strobe"
+        description: "Strobe the **Effects Lamp** for a high-intensity warning."
+        category: null
+    citation: "Manual Section 8.6.4 Appearance Effects, page 35. Relevance rule R023."
+
+  - cdiPath: "Rule to Aspect/Mast/Rule/Effects Lamp"
+    name: "Effects Lamp"
+    elementType: "int"
+    description: |
+      Which of the **16 lamp drivers** receives the **Appearance Effects**
+      treatment. Has no effect when *Appearance Effects* is *None*. Same lamp
+      identifiers as the Appearance / Direct Lamp Control selectors so you
+      can target any LED on this Signal-LCC.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Unused"
+        description: "No effect lamp is selected."
+        category: null
+      - value: 1
+        label: "#1 H1-G"
+        description: "Head 1 Green."
+        category: "Head 1"
+      - value: 2
+        label: "#2 H1-Y"
+        description: "Head 1 Yellow."
+        category: "Head 1"
+      - value: 3
+        label: "#3 H1-R"
+        description: "Head 1 Red."
+        category: "Head 1"
+      - value: 4
+        label: "#4 H1-L"
+        description: "Head 1 Lunar."
+        category: "Head 1"
+      - value: 5
+        label: "#5 H2-G"
+        description: "Head 2 Green."
+        category: "Head 2"
+      - value: 6
+        label: "#6 H2-Y"
+        description: "Head 2 Yellow."
+        category: "Head 2"
+      - value: 7
+        label: "#7 H2-R"
+        description: "Head 2 Red."
+        category: "Head 2"
+      - value: 8
+        label: "#8 H2-L"
+        description: "Head 2 Lunar."
+        category: "Head 2"
+      - value: 9
+        label: "#9 H3-G"
+        description: "Head 3 Green."
+        category: "Head 3"
+      - value: 10
+        label: "#10 H3-Y"
+        description: "Head 3 Yellow."
+        category: "Head 3"
+      - value: 11
+        label: "#11 H3-R"
+        description: "Head 3 Red."
+        category: "Head 3"
+      - value: 12
+        label: "#12 H3-L"
+        description: "Head 3 Lunar."
+        category: "Head 3"
+      - value: 13
+        label: "#13 H4-G"
+        description: "Head 4 Green."
+        category: "Head 4"
+      - value: 14
+        label: "#14 H4-Y"
+        description: "Head 4 Yellow."
+        category: "Head 4"
+      - value: 15
+        label: "#15 H4-R"
+        description: "Head 4 Red."
+        category: "Head 4"
+      - value: 16
+        label: "#16 H4-L"
+        description: "Head 4 Lunar."
+        category: "Head 4"
+    citation: "Manual Section 8.6.5 Effects Lamp, page 35. Relevance rule R023."
+
+  # =========================================================================
+  # Segment: Direct Lamp Control  (Lamp group, replication=16)
+  # =========================================================================
+  - cdiPath: "Direct Lamp Control/Lamp/Lamp Description"
+    name: "Lamp Description"
+    elementType: "string"
+    description: |
+      Free-form label for **this directly-controlled lamp** — for example
+      *"Yard tower lamp"* or *"Switch 5 illumination"*. Helps distinguish 16
+      slots that otherwise carry only a lamp number.
+    units: null
+    validRange: null
+    typicalValues: null
+    maxLength: 32
+    citation: "CDI segment description: 'Direct control of lamps that are not used by any mast.'"
+
+  - cdiPath: "Direct Lamp Control/Lamp/Lamp On"
+    name: "Lamp On"
+    elementType: "eventid"
+    description: |
+      Consumer EventID that **turns the selected lamp on**. Use this when a
+      lamp is wired to the Signal-LCC's LED drivers for purposes other than
+      mast aspects (panel indicators, building lights, scene lighting).
+    units: null
+    validRange: null
+    typicalValues: null
+    role: "Consumer"
+    citation: "CDI: '(C) Event to set lamp on.' Relevance rule R024 disables when Lamp Selection is *Used by Mast*."
+
+  - cdiPath: "Direct Lamp Control/Lamp/Lamp Off"
+    name: "Lamp Off"
+    elementType: "eventid"
+    description: |
+      Consumer EventID that **turns the selected lamp off**.
+    units: null
+    validRange: null
+    typicalValues: null
+    role: "Consumer"
+    citation: "CDI: '(C) Event to set lamp off.' Relevance rule R024 disables when Lamp Selection is *Used by Mast*."
+
+  - cdiPath: "Direct Lamp Control/Lamp/Lamp Fade"
+    name: "Lamp Fade"
+    elementType: "int"
+    description: |
+      Whether this lamp **snaps or cross-fades** between on and off. *None* is
+      typical for LED panel lights; *Incandescent* gives a warm-up / cool-
+      down curve for prototypical bulb effects.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "None"
+        description: "Lamp switches instantly between on and off."
+        category: null
+      - value: 1
+        label: "Incandescent"
+        description: "Lamp cross-fades using an incandescent warm-up / cool-down curve."
+        category: null
+    citation: "Manual Section 8.4 Lamp Fade, page 33 (same field reused per direct-lamp slot)."
+
+  - cdiPath: "Direct Lamp Control/Lamp/Lamp Selection"
+    name: "Lamp Selection"
+    elementType: "int"
+    description: |
+      Which of the **16 LED drivers** this direct-control slot owns. Set to
+      *Used by Mast* to leave the lamp to the Rule-to-Aspect table (the slot
+      then has no effect). Otherwise pick a specific lamp identifier;
+      configuration tools warn if the same lamp is also claimed by an
+      Appearance, so each lamp should be controlled by exactly one path.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Used by Mast"
+        description: "Lamp is controlled by the Rule-to-Aspect table; this slot is inactive."
+        category: null
+      - value: 1
+        label: "#1 H1-G"
+        description: "Drive Head 1 Green directly."
+        category: "Head 1"
+      - value: 2
+        label: "#2 H1-Y"
+        description: "Drive Head 1 Yellow directly."
+        category: "Head 1"
+      - value: 3
+        label: "#3 H1-R"
+        description: "Drive Head 1 Red directly."
+        category: "Head 1"
+      - value: 4
+        label: "#4 H1-L"
+        description: "Drive Head 1 Lunar directly."
+        category: "Head 1"
+      - value: 5
+        label: "#5 H2-G"
+        description: "Drive Head 2 Green directly."
+        category: "Head 2"
+      - value: 6
+        label: "#6 H2-Y"
+        description: "Drive Head 2 Yellow directly."
+        category: "Head 2"
+      - value: 7
+        label: "#7 H2-R"
+        description: "Drive Head 2 Red directly."
+        category: "Head 2"
+      - value: 8
+        label: "#8 H2-L"
+        description: "Drive Head 2 Lunar directly."
+        category: "Head 2"
+      - value: 9
+        label: "#9 H3-G"
+        description: "Drive Head 3 Green directly."
+        category: "Head 3"
+      - value: 10
+        label: "#10 H3-Y"
+        description: "Drive Head 3 Yellow directly."
+        category: "Head 3"
+      - value: 11
+        label: "#11 H3-R"
+        description: "Drive Head 3 Red directly."
+        category: "Head 3"
+      - value: 12
+        label: "#12 H3-L"
+        description: "Drive Head 3 Lunar directly."
+        category: "Head 3"
+      - value: 13
+        label: "#13 H4-G"
+        description: "Drive Head 4 Green directly."
+        category: "Head 4"
+      - value: 14
+        label: "#14 H4-Y"
+        description: "Drive Head 4 Yellow directly."
+        category: "Head 4"
+      - value: 15
+        label: "#15 H4-R"
+        description: "Drive Head 4 Red directly."
+        category: "Head 4"
+      - value: 16
+        label: "#16 H4-L"
+        description: "Drive Head 4 Lunar directly."
+        category: "Head 4"
+    citation: "CDI Direct Lamp Control segment; Manual Section 1.1.6 Line, page 8 (per-LED direct control)."
+
+  - cdiPath: "Direct Lamp Control/Lamp/Lamp Phase (A-B) - Flash Rate"
+    name: "Lamp Phase (A-B) - Flash Rate"
+    elementType: "int"
+    description: |
+      Whether this directly-controlled lamp stays steady or flashes. Same A/B
+      phase and Slow/Medium/Fast rates as the mast Appearance form, so a
+      directly-controlled panel indicator can blink in sync with a flashing
+      mast aspect.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "Steady"
+        description: "Lamp stays on continuously while commanded On."
+        category: "Steady"
+      - value: 1
+        label: "A-Slow"
+        description: "Flashes on phase **A** at the slow rate."
+        category: "A-phase"
+      - value: 2
+        label: "A-Medium"
+        description: "Flashes on phase **A** at the medium rate."
+        category: "A-phase"
+      - value: 3
+        label: "A-Fast"
+        description: "Flashes on phase **A** at the fast rate."
+        category: "A-phase"
+      - value: 4
+        label: "None (not used)"
+        description: "Lamp slot is inert. Prefer setting **Lamp Selection** to *Used by Mast* to disable the slot."
+        category: null
+      - value: 5
+        label: "B-Slow"
+        description: "Flashes on phase **B** at the slow rate."
+        category: "B-phase"
+      - value: 6
+        label: "B-Medium"
+        description: "Flashes on phase **B** at the medium rate."
+        category: "B-phase"
+      - value: 7
+        label: "B-Fast"
+        description: "Flashes on phase **B** at the fast rate."
+        category: "B-phase"
+    citation: "Manual Section 8.6.3 Lamp Phase (A-B) Flash Rate, page 35 (same field reused per direct-lamp slot)."
+
+  # =========================================================================
+  # Segment: Track Circuits  (Circuit group, replication=8)
+  # =========================================================================
+  - cdiPath: "Track Circuits/Circuit/Remote Mast Description"
+    name: "Remote Mast Description"
+    elementType: "string"
+    description: |
+      Free-form label for the **upstream mast** whose Link Address is pasted
+      below — for example *"Mast 103L (on Signal-LCC at Whitehead West)"*.
+      Helps you recognise the RX side of a virtual code line without
+      decoding the EventID.
+    units: null
+    validRange: null
+    typicalValues: null
+    maxLength: 32
+    citation: "Manual Section 9.2 Linking Virtual Code Lines, pages 36–37."
+
+  - cdiPath: "Track Circuits/Circuit/Link Address"
+    name: "Link Address"
+    elementType: "eventid"
+    description: |
+      Consumer EventID copied from the **next** mast's *(P) Track Circuit Link
+      Address*. Once pasted, this Signal-LCC subscribes to that mast's speed
+      indications and any Logic variable that picks this circuit as its
+      Source will react to the upstream speed.
+    units: null
+    validRange: null
+    typicalValues: null
+    role: "Consumer"
+    citation: "Manual Section 9.2 Linking Virtual Code Lines, pages 36–37. CDI: '(C) Remote Mast Link Address. Copy from \"Next\" Mast and Paste here.'"
+
+  # =========================================================================
+  # Segment: Rules (planned auto-config; not implemented)
+  # =========================================================================
+  - cdiPath: "Rules/Rule Description"
+    name: "Rule Description"
+    elementType: "string"
+    description: |
+      Free-form description for the rule set chosen below. **Note:** the
+      built-in rule sets are not yet implemented in firmware, so this field is
+      cosmetic in the current revision.
+    units: null
+    validRange: null
+    typicalValues: null
+    maxLength: 32
+    citation: "Manual Section 10 Rules, page 48 (notes the rule sets are not yet implemented)."
+
+  - cdiPath: "Rules/Rule Selection"
+    name: "Rule Selection"
+    elementType: "int"
+    description: |
+      Selects a **planned auto-configuration preset** (ABS, APB, CTC). **Not
+      implemented in current firmware** — leave at *none* and configure
+      conditionals manually until RR-CirKits ship support.
+    units: null
+    validRange: null
+    typicalValues: null
+    options:
+      - value: 0
+        label: "none"
+        description: "No auto-configured rule set."
+        category: null
+      - value: 1
+        label: "ABS"
+        description: "Automatic Block Signaling preset (planned, not implemented)."
+        category: null
+      - value: 2
+        label: "APB"
+        description: "Absolute Permissive Block preset (planned, not implemented)."
+        category: null
+      - value: 3
+        label: "CTC"
+        description: "Centralized Traffic Control preset (planned, not implemented)."
+        category: null
+    citation: "Manual Section 10 Rules, page 48. CDI: 'Rule sets are not implemented'."
+
+  # =========================================================================
+  # Segment: Brightness  (Intensities group, 16 sibling int fields)
+  # =========================================================================
+  - cdiPath: "Brightness/Intensities/#1 H1-G"
+    name: "#1 H1-G"
+    elementType: "int"
+    description: |
+      Brightness of **lamp #1 (Head 1 Green)**. 0 is the minimum (off-ish for
+      fading) and 255 is full brightness. The manual recommends keeping
+      values at or above 8 if Lamp Fade is *Incandescent*, so the fade curve
+      has room to work.
+    units: "PWM duty (0–255)"
+    validRange:
+      min: 0
+      max: 255
+    typicalValues: "8–255 (8+ if Lamp Fade Incandescent)"
+    citation: "Manual Section 11 Brightness, page 49. CDI: 'Set individual lamp intensity (0 = min; 255 = max)'."
+
+  - cdiPath: "Brightness/Intensities/#2 H1-Y"
+    name: "#2 H1-Y"
+    elementType: "int"
+    description: "Brightness of **lamp #2 (Head 1 Yellow)**. 0 = minimum, 255 = full brightness; keep at or above 8 when Lamp Fade is *Incandescent*."
+    units: "PWM duty (0–255)"
+    validRange:
+      min: 0
+      max: 255
+    typicalValues: null
+    citation: "Manual Section 11 Brightness, page 49."
+
+  - cdiPath: "Brightness/Intensities/#3 H1-R"
+    name: "#3 H1-R"
+    elementType: "int"
+    description: "Brightness of **lamp #3 (Head 1 Red)**. 0 = minimum, 255 = full brightness; keep at or above 8 when Lamp Fade is *Incandescent*."
+    units: "PWM duty (0–255)"
+    validRange:
+      min: 0
+      max: 255
+    typicalValues: null
+    citation: "Manual Section 11 Brightness, page 49."
+
+  - cdiPath: "Brightness/Intensities/#4 H1-L"
+    name: "#4 H1-L"
+    elementType: "int"
+    description: "Brightness of **lamp #4 (Head 1 Lunar)**. 0 = minimum, 255 = full brightness; keep at or above 8 when Lamp Fade is *Incandescent*."
+    units: "PWM duty (0–255)"
+    validRange:
+      min: 0
+      max: 255
+    typicalValues: null
+    citation: "Manual Section 11 Brightness, page 49."
+
+  - cdiPath: "Brightness/Intensities/#5 H2-G"
+    name: "#5 H2-G"
+    elementType: "int"
+    description: "Brightness of **lamp #5 (Head 2 Green)**. 0 = minimum, 255 = full brightness; keep at or above 8 when Lamp Fade is *Incandescent*."
+    units: "PWM duty (0–255)"
+    validRange:
+      min: 0
+      max: 255
+    typicalValues: null
+    citation: "Manual Section 11 Brightness, page 49."
+
+  - cdiPath: "Brightness/Intensities/#6 H2-Y"
+    name: "#6 H2-Y"
+    elementType: "int"
+    description: "Brightness of **lamp #6 (Head 2 Yellow)**. 0 = minimum, 255 = full brightness; keep at or above 8 when Lamp Fade is *Incandescent*."
+    units: "PWM duty (0–255)"
+    validRange:
+      min: 0
+      max: 255
+    typicalValues: null
+    citation: "Manual Section 11 Brightness, page 49."
+
+  - cdiPath: "Brightness/Intensities/#7 H2-R"
+    name: "#7 H2-R"
+    elementType: "int"
+    description: "Brightness of **lamp #7 (Head 2 Red)**. 0 = minimum, 255 = full brightness; keep at or above 8 when Lamp Fade is *Incandescent*."
+    units: "PWM duty (0–255)"
+    validRange:
+      min: 0
+      max: 255
+    typicalValues: null
+    citation: "Manual Section 11 Brightness, page 49."
+
+  - cdiPath: "Brightness/Intensities/#8 H2-L"
+    name: "#8 H2-L"
+    elementType: "int"
+    description: "Brightness of **lamp #8 (Head 2 Lunar)**. 0 = minimum, 255 = full brightness; keep at or above 8 when Lamp Fade is *Incandescent*."
+    units: "PWM duty (0–255)"
+    validRange:
+      min: 0
+      max: 255
+    typicalValues: null
+    citation: "Manual Section 11 Brightness, page 49."
+
+  - cdiPath: "Brightness/Intensities/#9 H3-G"
+    name: "#9 H3-G"
+    elementType: "int"
+    description: "Brightness of **lamp #9 (Head 3 Green)**. 0 = minimum, 255 = full brightness; keep at or above 8 when Lamp Fade is *Incandescent*."
+    units: "PWM duty (0–255)"
+    validRange:
+      min: 0
+      max: 255
+    typicalValues: null
+    citation: "Manual Section 11 Brightness, page 49."
+
+  - cdiPath: "Brightness/Intensities/#10 H3-Y"
+    name: "#10 H3-Y"
+    elementType: "int"
+    description: "Brightness of **lamp #10 (Head 3 Yellow)**. 0 = minimum, 255 = full brightness; keep at or above 8 when Lamp Fade is *Incandescent*."
+    units: "PWM duty (0–255)"
+    validRange:
+      min: 0
+      max: 255
+    typicalValues: null
+    citation: "Manual Section 11 Brightness, page 49."
+
+  - cdiPath: "Brightness/Intensities/#11 H3-R"
+    name: "#11 H3-R"
+    elementType: "int"
+    description: "Brightness of **lamp #11 (Head 3 Red)**. 0 = minimum, 255 = full brightness; keep at or above 8 when Lamp Fade is *Incandescent*."
+    units: "PWM duty (0–255)"
+    validRange:
+      min: 0
+      max: 255
+    typicalValues: null
+    citation: "Manual Section 11 Brightness, page 49."
+
+  - cdiPath: "Brightness/Intensities/#12 H3-L"
+    name: "#12 H3-L"
+    elementType: "int"
+    description: "Brightness of **lamp #12 (Head 3 Lunar)**. 0 = minimum, 255 = full brightness; keep at or above 8 when Lamp Fade is *Incandescent*."
+    units: "PWM duty (0–255)"
+    validRange:
+      min: 0
+      max: 255
+    typicalValues: null
+    citation: "Manual Section 11 Brightness, page 49."
+
+  - cdiPath: "Brightness/Intensities/#13 H4-G"
+    name: "#13 H4-G"
+    elementType: "int"
+    description: "Brightness of **lamp #13 (Head 4 Green)**. 0 = minimum, 255 = full brightness; keep at or above 8 when Lamp Fade is *Incandescent*."
+    units: "PWM duty (0–255)"
+    validRange:
+      min: 0
+      max: 255
+    typicalValues: null
+    citation: "Manual Section 11 Brightness, page 49."
+
+  - cdiPath: "Brightness/Intensities/#14 H4-Y"
+    name: "#14 H4-Y"
+    elementType: "int"
+    description: "Brightness of **lamp #14 (Head 4 Yellow)**. 0 = minimum, 255 = full brightness; keep at or above 8 when Lamp Fade is *Incandescent*."
+    units: "PWM duty (0–255)"
+    validRange:
+      min: 0
+      max: 255
+    typicalValues: null
+    citation: "Manual Section 11 Brightness, page 49."
+
+  - cdiPath: "Brightness/Intensities/#15 H4-R"
+    name: "#15 H4-R"
+    elementType: "int"
+    description: "Brightness of **lamp #15 (Head 4 Red)**. 0 = minimum, 255 = full brightness; keep at or above 8 when Lamp Fade is *Incandescent*."
+    units: "PWM duty (0–255)"
+    validRange:
+      min: 0
+      max: 255
+    typicalValues: null
+    citation: "Manual Section 11 Brightness, page 49."
+
+  - cdiPath: "Brightness/Intensities/#16 H4-L"
+    name: "#16 H4-L"
+    elementType: "int"
+    description: "Brightness of **lamp #16 (Head 4 Lunar)**. 0 = minimum, 255 = full brightness; keep at or above 8 when Lamp Fade is *Incandescent*."
+    units: "PWM duty (0–255)"
+    validRange:
+      min: 0
+      max: 255
+    typicalValues: null
+    citation: "Manual Section 11 Brightness, page 49."

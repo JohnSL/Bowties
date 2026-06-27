@@ -1,0 +1,29 @@
+{
+  "nodeType": {
+    "manufacturer": "RR-CirKits, Inc.",
+    "model": "Signal-LCC"
+  },
+  "cdiFile": "D:\\src\\github\\LCC\\Bowties\\docs\\ref\\RR-CirKits_Inc__Signal-LCC_rev-C7c.cdi.xml",
+  "extractionFiles": [
+    "event-roles.json",
+    "relevance-rules.json",
+    "section-descriptions.yaml",
+    "field-descriptions.yaml",
+    "recipes.yaml"
+  ],
+  "pathErrors": [],
+  "enumErrors": [],
+  "coverage": {
+    "totalSegments": 9,
+    "coveredSegments": 9,
+    "totalGroups": 16,
+    "coveredGroups": 16,
+    "totalLeafFields": 60,
+    "coveredLeafFields": 60,
+    "totalEventSlots": 16,
+    "coveredEventSlots": 16,
+    "overallPercentage": 100.0
+  },
+  "uncoveredSections": [],
+  "summary": "PASS: 0 path errors, 0 enum errors, 100.0% coverage"
+}

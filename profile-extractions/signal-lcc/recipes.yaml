@@ -1,0 +1,1099 @@
+nodeType:
+  manufacturer: "RR-CirKits, Inc."
+  model: "Signal-LCC"
+
+recipes:
+  # =========================================================================
+  # Port I/O recipes (8 lines on I/O-1 connector)
+  # =========================================================================
+  - name: "Block-Occupancy Detector Input"
+    scope: "Port I/O-1/Line"
+    description: |
+      Wire a **block-occupancy detector** (BOD-4, BOD-8, BOD4-CP, OI-IB-8, or
+      similar current-sensing detector) to one of the eight I/O-1 lines and
+      have the Signal-LCC broadcast a *Block Occupied* event when a train
+      enters the block and a *Block Clear* event when it leaves.
+
+      The companion BOD boards pull their output **low when the block is
+      occupied**, so this recipe uses *Active Lo* polarity. Both transitions
+      are reported so dispatcher logic and conditionals on the same node can
+      react in either direction.
+    prerequisites: |
+      * BOD board wired to the chosen I/O-1 line (signal + common ground).
+      * Power applied to the BOD board and the Signal-LCC.
+      * Two unused EventIDs from your dispatcher (or the node's pre-allocated
+        block of EventIDs) — one for *occupied*, one for *clear*.
+    steps:
+      - order: 1
+        field: "Port I/O-1/Line/Line Description"
+        value: "Block 12 BOD"
+        rawValue: null
+        rationale: |
+          Friendly label that shows up in JMRI / config tools — make it
+          location-anchored (e.g. *"Block 12 BOD"* or *"Yard lead occ"*) so
+          this line is easy to identify in the I/O list.
+      - order: 2
+        field: "Port I/O-1/Line/Output Function"
+        value: "None"
+        rawValue: 0
+        rationale: |
+          Disable the output side. The BOD drives the line, so this Signal-LCC
+          must not also try to drive it. Section 6.3.2 of the manual: *a line
+          should only have output functions or input functions enabled*.
+      - order: 3
+        field: "Port I/O-1/Line/Input Function"
+        value: "Normal"
+        rawValue: 1
+        rationale: |
+          Read the line as an input. Each edge in the configured polarity
+          fires the matching indicator slot. *Normal* (not *Alternating*)
+          tracks the BOD's state directly — occupied stays occupied while
+          the block is occupied.
+      - order: 4
+        field: "Port I/O-1/Line/The configured Indication (P) event(s) will be sent when the line is driven:"
+        value: "Low  (0V)"
+        rawValue: 0
+        rationale: |
+          BOD boards pull the line **low** when a train is detected, so the
+          *occupied* indication should fire on the low edge. With *Low (0V)*
+          selected, the *Input On* producer fires on occupied and *Input Off*
+          fires on clear.
+      - order: 5
+        field: "Port I/O-1/Line/Delay/Interval[1]/Delay Time (1-60000)"
+        value: 30
+        rawValue: 30
+        rationale: |
+          Debounce time applied to input edges. 30 ms filters BOD chatter
+          caused by dirty rail or a single wheel rolling across an insulated
+          joint without losing real occupancy reports.
+      - order: 6
+        field: "Port I/O-1/Line/Delay/Interval[1]/Units"
+        value: "Milliseconds"
+        rawValue: 0
+        rationale: |
+          For input debounce, only the Milliseconds setting is honoured —
+          choose it explicitly so the value is read as 30 ms.
+      - order: 7
+        field: "Port I/O-1/Line/Commands/Consumers[1]/Action"
+        value: "None"
+        rawValue: 0
+        rationale: |
+          The line is being used as an input, so the Commands group is
+          irrelevant — leave the action set to *None* on every Commands slot
+          to keep the configuration tidy.
+      - order: 8
+        field: "Port I/O-1/Line/Actions/Producers[1]/Upon this action"
+        value: "Input On"
+        rawValue: 5
+        rationale: |
+          Slot 1 fires when the input goes **active** (low, per the polarity
+          chosen above) — i.e. the block becomes occupied.
+      - order: 9
+        field: "Port I/O-1/Line/Actions/Producers[1]/Indicator"
+        value: "<your Block-12 Occupied EventID>"
+        rawValue: null
+        rationale: |
+          Producer event broadcast when the block becomes occupied. Other
+          nodes, conditionals on this node, or JMRI can subscribe to it.
+      - order: 10
+        field: "Port I/O-1/Line/Actions/Producers[2]/Upon this action"
+        value: "Input Off"
+        rawValue: 6
+        rationale: |
+          Slot 2 fires when the input returns to inactive — i.e. the block
+          becomes clear.
+      - order: 11
+        field: "Port I/O-1/Line/Actions/Producers[2]/Indicator"
+        value: "<your Block-12 Clear EventID>"
+        rawValue: null
+        rationale: |
+          Producer event broadcast when the block clears. Pair with the
+          occupied event above for full state coverage.
+    citation: "Manual Section 6.3 Lines (pages 21–24) and Section 12 Companion I/O Cards (BOD-4 / BOD-8, page 49) — both recommend *active-low* input for current-sensing BODs."
+
+  - name: "Panel Push-Button Input (Toggle)"
+    scope: "Port I/O-1/Line"
+    description: |
+      Wire a momentary normally-open **push button** between an I/O-1 line and
+      ground. Each press toggles between sending an *On* event and an *Off*
+      event, so a single button can act as a sensor flip-flop for JMRI or for
+      a Signal-LCC conditional.
+    prerequisites: |
+      * Push button wired between the I/O-1 line and ground.
+      * Two unused EventIDs for the toggle's *On* and *Off* states.
+    steps:
+      - order: 1
+        field: "Port I/O-1/Line/Line Description"
+        value: "Panel button: Route 1"
+        rawValue: null
+        rationale: |
+          Label the button by purpose so configurators can find it without
+          chasing the panel wiring.
+      - order: 2
+        field: "Port I/O-1/Line/Output Function"
+        value: "None"
+        rawValue: 0
+        rationale: |
+          Free the line for input use. Input Function would override Output
+          Function anyway, but setting *None* keeps the config explicit.
+      - order: 3
+        field: "Port I/O-1/Line/Input Function"
+        value: "Alternating"
+        rawValue: 2
+        rationale: |
+          With *Alternating*, successive button presses fire the producer
+          slots in turn — first slot on press 1, second slot on press 2,
+          back to first slot on press 3, etc. This is the documented way
+          to make one momentary button act as an on/off toggle.
+      - order: 4
+        field: "Port I/O-1/Line/The configured Indication (P) event(s) will be sent when the line is driven:"
+        value: "Low  (0V)"
+        rawValue: 0
+        rationale: |
+          With the button wired to ground, each press pulls the line low.
+      - order: 5
+        field: "Port I/O-1/Line/Delay/Interval[1]/Delay Time (1-60000)"
+        value: 20
+        rawValue: 20
+        rationale: |
+          20 ms of debounce filters most mechanical-button bounce without a
+          noticeable delay.
+      - order: 6
+        field: "Port I/O-1/Line/Delay/Interval[1]/Units"
+        value: "Milliseconds"
+        rawValue: 0
+        rationale: "Input debounce always reads this field in milliseconds."
+      - order: 7
+        field: "Port I/O-1/Line/Actions/Producers[1]/Upon this action"
+        value: "Input On"
+        rawValue: 5
+        rationale: |
+          First press fires this slot's indicator (the "On" event).
+      - order: 8
+        field: "Port I/O-1/Line/Actions/Producers[1]/Indicator"
+        value: "<your Route-1 On EventID>"
+        rawValue: null
+        rationale: |
+          Producer event sent on odd-numbered presses (1, 3, 5…) — the "On"
+          half of the toggle.
+      - order: 9
+        field: "Port I/O-1/Line/Actions/Producers[2]/Upon this action"
+        value: "Input Off"
+        rawValue: 6
+        rationale: |
+          With *Alternating* input, the second press fires the *Input Off*
+          slot even though the button is still mechanically the same.
+      - order: 10
+        field: "Port I/O-1/Line/Actions/Producers[2]/Indicator"
+        value: "<your Route-1 Off EventID>"
+        rawValue: null
+        rationale: |
+          Producer event sent on even-numbered presses — the "Off" half of
+          the toggle.
+    citation: "Manual Section 6.3.2 I/O Configuration (page 22, *Alternating* description) and Section 6.3.5 Indications (page 24)."
+
+  - name: "Steady Output for LED or Relay"
+    scope: "Port I/O-1/Line"
+    description: |
+      Drive an **LED indicator or relay** from an I/O-1 line. The line holds
+      its active state until an *Off* command arrives, so this is the right
+      mode for status lamps, route lights, or relays that latch open routes.
+    prerequisites: |
+      * LED wired through a current-limiting resistor between the line and
+        the appropriate rail (V+ for active-low, GND for active-high), **or**
+      * A relay coil driven via an external transistor.
+      * Two unused EventIDs — one for *on*, one for *off*.
+    steps:
+      - order: 1
+        field: "Port I/O-1/Line/Line Description"
+        value: "Tower lamp"
+        rawValue: null
+        rationale: "Friendly label shown in configuration tools."
+      - order: 2
+        field: "Port I/O-1/Line/Input Function"
+        value: "None"
+        rawValue: 0
+        rationale: |
+          Disable the input side first — any non-*None* Input Function
+          overrides Output Function (manual safety rule, Section 6.3.2).
+      - order: 3
+        field: "Port I/O-1/Line/Output Function"
+        value: "Steady"
+        rawValue: 1
+        rationale: |
+          *Steady* holds the active state for as long as the line is commanded
+          On. Perfect for indicator lamps and latching relays.
+      - order: 4
+        field: "Port I/O-1/Line/Receiving the configured Command (C) event(s) will drive or pulse the line:"
+        value: "Low  (0V)"
+        rawValue: 0
+        rationale: |
+          For an LED wired from V+ through a resistor to the I/O pin, the LED
+          lights when the pin is **pulled low**. Use *High (5V)* instead if
+          you are sinking through an external NPN driver.
+      - order: 5
+        field: "Port I/O-1/Line/Commands/Consumers[1]/Command"
+        value: "<your Tower-Lamp-On EventID>"
+        rawValue: null
+        rationale: "Consumer event that turns the lamp on."
+      - order: 6
+        field: "Port I/O-1/Line/Commands/Consumers[1]/Action"
+        value: "On  (Line Active)"
+        rawValue: 1
+        rationale: |
+          Drive the line to its active state (low, per the polarity above) on
+          this event.
+      - order: 7
+        field: "Port I/O-1/Line/Commands/Consumers[2]/Command"
+        value: "<your Tower-Lamp-Off EventID>"
+        rawValue: null
+        rationale: "Consumer event that turns the lamp off."
+      - order: 8
+        field: "Port I/O-1/Line/Commands/Consumers[2]/Action"
+        value: "Off (Line Inactive)"
+        rawValue: 2
+        rationale: "Drive the line to its inactive state on this event."
+    citation: "Manual Section 6.3.2 I/O Configuration (page 22) and Section 6.3.4 Commands (pages 23–24)."
+
+  - name: "Blinking LED Output (Attention Indicator)"
+    scope: "Port I/O-1/Line"
+    description: |
+      Drive an **LED that blinks continuously** for as long as it is commanded
+      on — useful for *call-on* indicators, route-conflict warnings, or a
+      yard activity light. Uses the global blink generator so multiple lines
+      flash in sync.
+
+      The two **Blink A / Blink B** modes flash in opposite halves of the
+      cycle: pair a Blink A line with a Blink B line to alternate two lamps
+      (e.g. a grade-crossing simulation).
+    prerequisites: |
+      * LED with current-limiting resistor wired to the I/O-1 line.
+      * Two unused EventIDs — one to start blinking, one to stop.
+    steps:
+      - order: 1
+        field: "Port I/O-1/Line/Line Description"
+        value: "Call-on indicator"
+        rawValue: null
+        rationale: "Friendly label."
+      - order: 2
+        field: "Port I/O-1/Line/Input Function"
+        value: "None"
+        rawValue: 0
+        rationale: |
+          Disable input mode so Output Function takes effect.
+      - order: 3
+        field: "Port I/O-1/Line/Output Function"
+        value: "Blink A"
+        rawValue: 3
+        rationale: |
+          *Blink A* drives the line on/off using the global blink generator's
+          A phase. Use *Blink B* on a second line to flash out of phase.
+      - order: 4
+        field: "Port I/O-1/Line/Receiving the configured Command (C) event(s) will drive or pulse the line:"
+        value: "Low  (0V)"
+        rawValue: 0
+        rationale: |
+          Pick the polarity that matches your LED wiring; *Low (0V)* is the
+          common choice for an LED returned to V+.
+      - order: 5
+        field: "Port I/O-1/Line/Delay/Interval[1]/Delay Time (1-60000)"
+        value: 500
+        rawValue: 500
+        rationale: |
+          On-time of the blink cycle (Interval 1 is the on-delay). 500 ms is
+          a comfortable ~1 Hz blink — slow enough to read, fast enough to
+          catch the eye.
+      - order: 6
+        field: "Port I/O-1/Line/Delay/Interval[1]/Units"
+        value: "Milliseconds"
+        rawValue: 0
+        rationale: "Use millisecond resolution for blink timing."
+      - order: 7
+        field: "Port I/O-1/Line/Delay/Interval[2]/Delay Time (1-60000)"
+        value: 500
+        rawValue: 500
+        rationale: |
+          Off-time of the blink cycle (Interval 2 is the off-delay). Equal
+          on/off values produce a balanced 50% duty-cycle blink.
+      - order: 8
+        field: "Port I/O-1/Line/Delay/Interval[2]/Units"
+        value: "Milliseconds"
+        rawValue: 0
+        rationale: "Match Interval 1 so on/off times use the same scale."
+      - order: 9
+        field: "Port I/O-1/Line/Commands/Consumers[1]/Command"
+        value: "<your Start-Blink EventID>"
+        rawValue: null
+        rationale: "Event that starts the blink (e.g. *Route Conflict*)."
+      - order: 10
+        field: "Port I/O-1/Line/Commands/Consumers[1]/Action"
+        value: "On  (Line Active)"
+        rawValue: 1
+        rationale: |
+          *On* arms the Blink-A drive — the line then alternates on/off until
+          turned off again.
+      - order: 11
+        field: "Port I/O-1/Line/Commands/Consumers[2]/Command"
+        value: "<your Stop-Blink EventID>"
+        rawValue: null
+        rationale: "Event that stops the blink."
+      - order: 12
+        field: "Port I/O-1/Line/Commands/Consumers[2]/Action"
+        value: "Off (Line Inactive)"
+        rawValue: 2
+        rationale: "Stop the blink and leave the line at its inactive state."
+    citation: "Manual Section 6.3.2 I/O Configuration (page 22, Blink A/B descriptions) and Section 6.3.3 Delay (page 23, blink timing)."
+
+  - name: "Stall-Motor Switch Machine (Paired Output Lines)"
+    scope: "Port I/O-1/Line"
+    description: |
+      Drive a **stall-motor switch machine** (e.g. Tortoise) using **two
+      I/O-1 lines wired with opposite polarity** to the motor's two leads.
+      One throw event drives Line A active and Line B inactive (closed
+      route); the matching throw event in the opposite direction does the
+      reverse (thrown route).
+
+      Both lines stay in *Steady* mode and are driven by the **same pair of
+      events** so the machine always sees consistent polarity at the motor.
+    prerequisites: |
+      * Stall motor wired across two I/O-1 lines (no flyback diode needed
+        for a true stall motor, which limits its own current).
+      * One *Switch Closed* EventID and one *Switch Thrown* EventID.
+      * Both lines on the same Signal-LCC.
+    steps:
+      - order: 1
+        field: "Port I/O-1/Line[1]/Line Description"
+        value: "Sw 7 motor +"
+        rawValue: null
+        rationale: |
+          Label the **+** side of the stall motor (Line A).
+      - order: 2
+        field: "Port I/O-1/Line[1]/Output Function"
+        value: "Steady"
+        rawValue: 1
+        rationale: |
+          Stall motors need a continuous DC voltage — *Steady* holds the
+          drive until the next throw command.
+      - order: 3
+        field: "Port I/O-1/Line[1]/Receiving the configured Command (C) event(s) will drive or pulse the line:"
+        value: "High (5V)"
+        rawValue: 1
+        rationale: |
+          Line A drives high on *Closed* (and low on *Thrown*) so the motor
+          sees +5V on this terminal in the closed direction.
+      - order: 4
+        field: "Port I/O-1/Line[1]/Input Function"
+        value: "None"
+        rawValue: 0
+        rationale: |
+          Disable input mode so Output Function takes effect.
+      - order: 5
+        field: "Port I/O-1/Line[1]/Commands/Consumers[1]/Command"
+        value: "<your Switch-Closed EventID>"
+        rawValue: null
+        rationale: "Drives Line A active on the *Closed* command."
+      - order: 6
+        field: "Port I/O-1/Line[1]/Commands/Consumers[1]/Action"
+        value: "On  (Line Active)"
+        rawValue: 1
+        rationale: "Pull Line A to its active state (High, per polarity)."
+      - order: 7
+        field: "Port I/O-1/Line[1]/Commands/Consumers[2]/Command"
+        value: "<your Switch-Thrown EventID>"
+        rawValue: null
+        rationale: "Drives Line A inactive on the *Thrown* command."
+      - order: 8
+        field: "Port I/O-1/Line[1]/Commands/Consumers[2]/Action"
+        value: "Off (Line Inactive)"
+        rawValue: 2
+        rationale: "Pull Line A to its inactive state (Low)."
+      - order: 9
+        field: "Port I/O-1/Line[2]/Line Description"
+        value: "Sw 7 motor -"
+        rawValue: null
+        rationale: |
+          Label the **−** side of the stall motor (Line B), the line wired
+          to the other motor terminal.
+      - order: 10
+        field: "Port I/O-1/Line[2]/Output Function"
+        value: "Steady"
+        rawValue: 1
+        rationale: "Same Steady output mode as Line A."
+      - order: 11
+        field: "Port I/O-1/Line[2]/Receiving the configured Command (C) event(s) will drive or pulse the line:"
+        value: "Low  (0V)"
+        rawValue: 0
+        rationale: |
+          **Inverted polarity** versus Line A — on the *Closed* command this
+          line goes low, giving the motor a +5V / 0V differential. On
+          *Thrown* the polarities flip and the motor reverses.
+      - order: 12
+        field: "Port I/O-1/Line[2]/Input Function"
+        value: "None"
+        rawValue: 0
+        rationale: "Disable input mode."
+      - order: 13
+        field: "Port I/O-1/Line[2]/Commands/Consumers[1]/Command"
+        value: "<your Switch-Closed EventID — same as Line A>"
+        rawValue: null
+        rationale: |
+          Reuse the same EventID so both lines react to one throw command.
+      - order: 14
+        field: "Port I/O-1/Line[2]/Commands/Consumers[1]/Action"
+        value: "On  (Line Active)"
+        rawValue: 1
+        rationale: "Drive Line B active (Low, per inverted polarity)."
+      - order: 15
+        field: "Port I/O-1/Line[2]/Commands/Consumers[2]/Command"
+        value: "<your Switch-Thrown EventID — same as Line A>"
+        rawValue: null
+        rationale: "Reuse the *Thrown* EventID."
+      - order: 16
+        field: "Port I/O-1/Line[2]/Commands/Consumers[2]/Action"
+        value: "Off (Line Inactive)"
+        rawValue: 2
+        rationale: "Drive Line B inactive (High, per inverted polarity)."
+    citation: "Manual Section 9.7 Stall motor machine connections (pages 45–47): use two output lines with opposite polarity driven by the same pair of throw/close events."
+
+  # =========================================================================
+  # Signaling recipes (Rule to Aspect + Track Circuits)
+  # =========================================================================
+  - name: "Three-Aspect Color-Light Signal Mast"
+    scope: "Rule to Aspect/Mast"
+    description: |
+      Configure **one mast (8 LED drivers)** for a basic three-aspect
+      color-light head: **Red / Yellow / Green** corresponding to NORAC
+      rules *Stop*, *Approach*, and *Clear*. Each rule lights exactly one
+      lamp on Head 1 (lamps **#1 H1-G**, **#2 H1-Y**, **#3 H1-R**) and
+      reports the matching Track Speed so the previous signal in the route
+      can pick its own aspect.
+
+      Use this as the foundation for ABS chains — the **Link Address**
+      published by this mast feeds into the next-signal-back's Track
+      Circuit RX table (see the *Link Two Masts via Virtual Code Line*
+      recipe).
+    prerequisites: |
+      * Three signal LEDs wired to lamp drivers #1 (Green), #2 (Yellow),
+        and #3 (Red) on the I/O-2 connector — see Section 9 of the manual
+        for color-light wiring diagrams.
+      * Three dispatcher EventIDs that select each rule:
+        *Set Stop*, *Set Approach*, *Set Clear*. (Typically these come
+        from Logic conditionals on this same node.)
+    steps:
+      - order: 1
+        field: "Rule to Aspect/Mast[1]/Mast Processing"
+        value: "Normal"
+        rawValue: 1
+        rationale: |
+          Activate this mast slot as a stand-alone mast. *Unused* would
+          disable everything below; *Linked to Previous* is for masts that
+          need more than 8 rules.
+      - order: 2
+        field: "Rule to Aspect/Mast[1]/Mast Description"
+        value: "Mast 101L"
+        rawValue: null
+        rationale: |
+          Friendly label shown in configuration tools — name by location
+          (railroad direction and mast number is the prototype convention).
+      - order: 3
+        field: "Rule to Aspect/Mast[1]/Lamp Fade"
+        value: "Incandescent"
+        rawValue: 1
+        rationale: |
+          Smooth warm-up / cool-down between aspects gives a prototypical
+          look. Use *None* for searchlight LEDs that should snap.
+      # ---- Rule 1: Stop / Red ----
+      - order: 4
+        field: "Rule to Aspect/Mast[1]/Rule[1]/Rule Name"
+        value: "0-Stop"
+        rawValue: 0
+        rationale: |
+          NORAC rule 0 — the most restrictive aspect. Used when the block
+          ahead is occupied.
+      - order: 5
+        field: "Rule to Aspect/Mast[1]/Rule[1]/Track Speed"
+        value: "Stop"
+        rawValue: 0
+        rationale: |
+          The mast publishes **Stop** on its Link Address while this rule is
+          active, so the previous mast can compute *Approach* on its own.
+      - order: 6
+        field: "Rule to Aspect/Mast[1]/Rule[1]/set aspect"
+        value: "<your Set-Stop EventID>"
+        rawValue: null
+        rationale: |
+          Consumer event that activates the Stop rule. Bind it to the
+          dispatcher logic that detects block occupancy.
+      - order: 7
+        field: "Rule to Aspect/Mast[1]/Rule[1]/Appearance[1]/Lamp Selection"
+        value: "#3 H1-R"
+        rawValue: 3
+        rationale: |
+          Head 1 Red — the single lamp lit by this rule.
+      - order: 8
+        field: "Rule to Aspect/Mast[1]/Rule[1]/Appearance[1]/Lamp Phase (A-B) - Flash Rate"
+        value: "Steady"
+        rawValue: 0
+        rationale: |
+          Standard Stop is a steady red. Use *A-Slow* etc. for prototype
+          variants like flashing Stop-and-Proceed.
+      # ---- Rule 2: Approach / Yellow ----
+      - order: 9
+        field: "Rule to Aspect/Mast[1]/Rule[2]/Rule Name"
+        value: "21-Approach"
+        rawValue: 21
+        rationale: |
+          NORAC rule 21 — proceed prepared to stop at the next signal.
+      - order: 10
+        field: "Rule to Aspect/Mast[1]/Rule[2]/Track Speed"
+        value: "Approach"
+        rawValue: 5
+        rationale: |
+          Publish **Approach** on the Link Address. The previous mast sees
+          this and can compute *Advance Approach* or stay Clear.
+      - order: 11
+        field: "Rule to Aspect/Mast[1]/Rule[2]/set aspect"
+        value: "<your Set-Approach EventID>"
+        rawValue: null
+        rationale: "Consumer event that activates the Approach rule."
+      - order: 12
+        field: "Rule to Aspect/Mast[1]/Rule[2]/Appearance[1]/Lamp Selection"
+        value: "#2 H1-Y"
+        rawValue: 2
+        rationale: "Head 1 Yellow — the single lamp lit by this rule."
+      - order: 13
+        field: "Rule to Aspect/Mast[1]/Rule[2]/Appearance[1]/Lamp Phase (A-B) - Flash Rate"
+        value: "Steady"
+        rawValue: 0
+        rationale: "Standard Approach is a steady yellow."
+      # ---- Rule 3: Clear / Green ----
+      - order: 14
+        field: "Rule to Aspect/Mast[1]/Rule[3]/Rule Name"
+        value: "29-Clear"
+        rawValue: 29
+        rationale: |
+          NORAC rule 29 — proceed at maximum authorized speed.
+      - order: 15
+        field: "Rule to Aspect/Mast[1]/Rule[3]/Track Speed"
+        value: "Clear/Proceed"
+        rawValue: 7
+        rationale: |
+          Publish **Clear** on the Link Address (full-speed indication).
+      - order: 16
+        field: "Rule to Aspect/Mast[1]/Rule[3]/set aspect"
+        value: "<your Set-Clear EventID>"
+        rawValue: null
+        rationale: "Consumer event that activates the Clear rule."
+      - order: 17
+        field: "Rule to Aspect/Mast[1]/Rule[3]/Appearance[1]/Lamp Selection"
+        value: "#1 H1-G"
+        rawValue: 1
+        rationale: "Head 1 Green — the single lamp lit by this rule."
+      - order: 18
+        field: "Rule to Aspect/Mast[1]/Rule[3]/Appearance[1]/Lamp Phase (A-B) - Flash Rate"
+        value: "Steady"
+        rawValue: 0
+        rationale: "Standard Clear is a steady green."
+      # ---- Brightness floor for incandescent fade ----
+      - order: 19
+        field: "Brightness/Intensities/#1 H1-G"
+        value: 200
+        rawValue: 200
+        rationale: |
+          Drive the green at ~78% intensity — bright enough to read at
+          layout viewing distance, dim enough that the camera doesn't
+          bloom on photos. Keep ≥ 8 for *Incandescent* fading.
+      - order: 20
+        field: "Brightness/Intensities/#2 H1-Y"
+        value: 200
+        rawValue: 200
+        rationale: "Same nominal brightness for yellow."
+      - order: 21
+        field: "Brightness/Intensities/#3 H1-R"
+        value: 200
+        rawValue: 200
+        rationale: "Same nominal brightness for red."
+    citation: "Manual Section 8 Masts (pages 31–34), Section 9.5 ABS examples (pages 39–43), and Section 11 Brightness (page 49)."
+
+  - name: "Link Two Masts via Virtual Code Line"
+    scope: "Track Circuits"
+    description: |
+      Chain two color-light masts so the **upstream** signal automatically
+      shows *Approach* when the **downstream** signal is at *Stop*. The
+      downstream mast publishes its current Track Speed on its **Link
+      Address** producer event; the upstream node consumes it via a
+      **Track Circuit** RX slot, and a **Logic conditional** uses that
+      speed to set the upstream mast's aspect.
+
+      You configure the **upstream** Signal-LCC here. Run this recipe once
+      per RX link.
+
+      **The Link Address must be copied from the downstream node's mast and
+      pasted into the upstream node's Track Circuit. The CDI exposes
+      *Copy from "Next" Mast and Paste here* in the field's description as
+      a reminder.**
+    prerequisites: |
+      * Both Signal-LCC nodes powered up and joined to the same LCC bus.
+      * The downstream mast already configured (see *Three-Aspect Color-Light
+        Signal Mast*). Note the EventID shown read-only in its **Link
+        Address** field.
+      * The upstream mast also configured with at least *Stop* and
+        *Approach* rules, each with its own *Set Aspect* EventID.
+    steps:
+      - order: 1
+        field: "Track Circuits/Circuit[1]/Remote Mast Description"
+        value: "Mast 101L (downstream)"
+        rawValue: null
+        rationale: |
+          Free-form label for the upstream node's bookkeeping — say which
+          mast on which node is being received here.
+      - order: 2
+        field: "Track Circuits/Circuit[1]/Link Address"
+        value: "<paste the downstream mast's Link Address EventID>"
+        rawValue: null
+        rationale: |
+          Copy the EventID directly from the downstream mast's
+          *Rule to Aspect/Mast/Link Address* field (it is read-only there)
+          and paste it here. The upstream node now subscribes to that mast's
+          speed indications.
+      - order: 3
+        field: "Conditionals/Logic[1]/Description"
+        value: "Mast 102L: downstream at Stop → Approach"
+        rawValue: null
+        rationale: |
+          Label the conditional by its purpose so it is recognisable among
+          the 32 Logic slots.
+      - order: 4
+        field: "Conditionals/Logic[1]/Function"
+        value: "Last (Single)"
+        rawValue: 2
+        rationale: |
+          Stand-alone conditional — evaluation does not fall into the next
+          Logic slot.
+      - order: 5
+        field: "Conditionals/Logic[1]/Variable #1/Trigger"
+        value: "On Variable Change"
+        rawValue: 0
+        rationale: |
+          Re-evaluate only when the downstream mast's reported speed flips
+          across the Stop threshold.
+      - order: 6
+        field: "Conditionals/Logic[1]/Variable #1/Source"
+        value: "Track Circuit 1"
+        rawValue: 1
+        rationale: |
+          Read this variable from **Track Circuit 1**'s speed indication
+          (the one you populated in step 2) rather than from consumer
+          events.
+      - order: 7
+        field: "Conditionals/Logic[1]/Variable #1/Track Speed"
+        value: "Stop"
+        rawValue: 0
+        rationale: |
+          Variable is **true** while Track Circuit 1 reports *Stop* —
+          i.e. the downstream block is occupied.
+      - order: 8
+        field: "Conditionals/Logic[1]/Variable #2/Trigger"
+        value: "None"
+        rawValue: 2
+        rationale: |
+          This conditional only needs one variable; disable Variable #2.
+      - order: 9
+        field: "Conditionals/Logic[1]/Logic Operation"
+        value: "V1 Only"
+        rawValue: 7
+        rationale: |
+          Use Variable #1 alone — true when downstream is at Stop, false
+          otherwise.
+      - order: 10
+        field: "Conditionals/Logic[1]/Action[0]/when true"
+        value: "Send then Exit Group"
+        rawValue: 0
+        rationale: |
+          Fire the Action events and stop. (No chaining needed for a single
+          conditional.)
+      - order: 11
+        field: "Conditionals/Logic[1]/Action[0]/when false"
+        value: "Send then Exit Group"
+        rawValue: 0
+        rationale: |
+          Also fire the Action events on the false branch — different slots
+          will gate on True vs False.
+      - order: 12
+        field: "Conditionals/Logic[1]/Action[1]/Condition"
+        value: "Immediate if True"
+        rawValue: 3
+        rationale: |
+          When downstream is at Stop, send *Set Approach* on the upstream
+          mast.
+      - order: 13
+        field: "Conditionals/Logic[1]/Action[1]/Action Event"
+        value: "<upstream mast's Set-Approach EventID>"
+        rawValue: null
+        rationale: |
+          Producer event the upstream mast consumes to display Approach.
+      - order: 14
+        field: "Conditionals/Logic[1]/Action[2]/Condition"
+        value: "Immediate if False"
+        rawValue: 4
+        rationale: |
+          When downstream is **not** at Stop, send *Set Clear* on the
+          upstream mast.
+      - order: 15
+        field: "Conditionals/Logic[1]/Action[2]/Action Event"
+        value: "<upstream mast's Set-Clear EventID>"
+        rawValue: null
+        rationale: |
+          Producer event the upstream mast consumes to display Clear.
+    citation: "Manual Section 9.2 Linking Virtual Code Lines (pages 36–37) and Section 7.4.2.2 Track Circuit (RX) (pages 28–29)."
+
+  # =========================================================================
+  # Direct lamp control
+  # =========================================================================
+  - name: "Direct Lamp Control (Panel or Building Light)"
+    scope: "Direct Lamp Control"
+    description: |
+      Use one of the **16 LED drivers** for something other than a signal
+      head — for example a yard-tower lamp, a building light, or a
+      panel-mounted route indicator. Direct Lamp Control owns lamps that
+      are **not** claimed by the Rule-to-Aspect table, so each LED should
+      be either *Used by Mast* (driven by aspects) or assigned to a Direct
+      Lamp slot, never both.
+    prerequisites: |
+      * An LED driven by one of lamp drivers #1–#16 on the I/O-2 connector.
+      * Two unused EventIDs — one for *on*, one for *off*.
+      * That lamp must **not** also appear in any active Mast's Appearance.
+    steps:
+      - order: 1
+        field: "Direct Lamp Control/Lamp[1]/Lamp Description"
+        value: "Tower lamp #1"
+        rawValue: null
+        rationale: |
+          Friendly label so future maintenance knows which physical lamp
+          this slot drives.
+      - order: 2
+        field: "Direct Lamp Control/Lamp[1]/Lamp Selection"
+        value: "#4 H1-L"
+        rawValue: 4
+        rationale: |
+          Pick the driver number that matches the physical lamp wiring. Use
+          a driver **not** claimed by any active Mast Appearance — typically
+          a Lunar-position driver on a mast that doesn't need a Lunar
+          aspect.
+      - order: 3
+        field: "Direct Lamp Control/Lamp[1]/Lamp Fade"
+        value: "Incandescent"
+        rawValue: 1
+        rationale: |
+          Use *Incandescent* for prototypical bulb fade on a building light
+          or *None* for crisp LED panel indicators.
+      - order: 4
+        field: "Direct Lamp Control/Lamp[1]/Lamp Phase (A-B) - Flash Rate"
+        value: "Steady"
+        rawValue: 0
+        rationale: |
+          Hold the lamp steady while on. Pick an A/B-phase flash rate if you
+          want the lamp to blink (e.g. a strobe on a tall structure).
+      - order: 5
+        field: "Direct Lamp Control/Lamp[1]/Lamp On"
+        value: "<your Lamp-On EventID>"
+        rawValue: null
+        rationale: "Consumer event that lights this lamp."
+      - order: 6
+        field: "Direct Lamp Control/Lamp[1]/Lamp Off"
+        value: "<your Lamp-Off EventID>"
+        rawValue: null
+        rationale: "Consumer event that extinguishes this lamp."
+      - order: 7
+        field: "Brightness/Intensities/#4 H1-L"
+        value: 64
+        rawValue: 64
+        rationale: |
+          Dim the lamp to ~25% for a realistic incandescent appearance on a
+          building or tower light. Bump up to 200+ for a bright panel
+          indicator. Keep ≥ 8 for *Incandescent* fading.
+    citation: "Manual Section 1.1.6 Line (page 8, per-LED direct control) and Section 11 Brightness (page 49). CDI segment description: *Direct control of lamps that are not used by any mast.*"
+
+  # =========================================================================
+  # Logic recipes
+  # =========================================================================
+  - name: "Conditional: Two Inputs AND'd to Drive a Warning"
+    scope: "Conditionals"
+    description: |
+      Combine **two consumer events** with a Boolean AND so a warning lamp
+      or panel buzzer only fires when **both** conditions are present —
+      e.g. *Switch Thrown* AND *Block Occupied*. The conditional fires its
+      Action Event when both variables are true and a clearing event when
+      either becomes false.
+    prerequisites: |
+      * Two existing producer events on the LCC bus that mark the two
+        conditions you want to AND together.
+      * One unused EventID for the *warn-on* action; another for *warn-off*.
+    steps:
+      - order: 1
+        field: "Conditionals/Logic[1]/Description"
+        value: "Switch thrown + block occ → warn"
+        rawValue: null
+        rationale: |
+          Label this Logic slot so it is recognisable among the 32 slots.
+      - order: 2
+        field: "Conditionals/Logic[1]/Function"
+        value: "Last (Single)"
+        rawValue: 2
+        rationale: |
+          Stand-alone conditional — does not chain into the next Logic
+          slot. Use *Group* if you plan to chain multiple AND/OR
+          conditionals.
+      - order: 3
+        field: "Conditionals/Logic[1]/Variable #1/Trigger"
+        value: "On Variable Change"
+        rawValue: 0
+        rationale: |
+          Re-evaluate only when V1 actually flips between true and false —
+          avoids spurious re-fires on repeated events.
+      - order: 4
+        field: "Conditionals/Logic[1]/Variable #1/Source"
+        value: "Use Variable #1's (C) Events"
+        rawValue: 0
+        rationale: |
+          Drive V1 from a pair of consumer events (the classic Signal-LCC
+          variable).
+      - order: 5
+        field: "Conditionals/Logic[1]/Variable #1/set true"
+        value: "<your Switch-Thrown EventID>"
+        rawValue: null
+        rationale: "Consumer event that sets V1 = true."
+      - order: 6
+        field: "Conditionals/Logic[1]/Variable #1/set false"
+        value: "<your Switch-Closed EventID>"
+        rawValue: null
+        rationale: "Consumer event that sets V1 = false."
+      - order: 7
+        field: "Conditionals/Logic[1]/Variable #2/Trigger"
+        value: "On Variable Change"
+        rawValue: 0
+        rationale: "Edge-triggered evaluation, same as V1."
+      - order: 8
+        field: "Conditionals/Logic[1]/Variable #2/Source"
+        value: "Use Variable #2's (C) Events"
+        rawValue: 0
+        rationale: "Event-driven variable."
+      - order: 9
+        field: "Conditionals/Logic[1]/Variable #2/set true"
+        value: "<your Block-Occupied EventID>"
+        rawValue: null
+        rationale: "Consumer event that sets V2 = true."
+      - order: 10
+        field: "Conditionals/Logic[1]/Variable #2/set false"
+        value: "<your Block-Clear EventID>"
+        rawValue: null
+        rationale: "Consumer event that sets V2 = false."
+      - order: 11
+        field: "Conditionals/Logic[1]/Logic Operation"
+        value: "V1 AND V2"
+        rawValue: 0
+        rationale: |
+          Conditional is true only when **both** variables are true.
+      - order: 12
+        field: "Conditionals/Logic[1]/Action[0]/when true"
+        value: "Send then Exit Group"
+        rawValue: 0
+        rationale: "Fire the action events on true; do not chain further."
+      - order: 13
+        field: "Conditionals/Logic[1]/Action[0]/when false"
+        value: "Send then Exit Group"
+        rawValue: 0
+        rationale: "Also fire on false so the warning can clear."
+      - order: 14
+        field: "Conditionals/Logic[1]/Action[1]/Condition"
+        value: "Immediate if True"
+        rawValue: 3
+        rationale: "Send the warn-on event the instant the AND becomes true."
+      - order: 15
+        field: "Conditionals/Logic[1]/Action[1]/Action Event"
+        value: "<your Warn-On EventID>"
+        rawValue: null
+        rationale: |
+          Producer event consumed by the panel-warning lamp or buzzer (see
+          *Steady Output for LED or Relay* or *Blinking LED Output*).
+      - order: 16
+        field: "Conditionals/Logic[1]/Action[2]/Condition"
+        value: "Immediate if False"
+        rawValue: 4
+        rationale: |
+          Send the warn-off event as soon as either variable returns to
+          false.
+      - order: 17
+        field: "Conditionals/Logic[1]/Action[2]/Action Event"
+        value: "<your Warn-Off EventID>"
+        rawValue: null
+        rationale: "Producer event that clears the warning."
+    citation: "Manual Section 7 Signal LCC Logic (pages 25–31), Section 7.6 Logic function (page 29), and Section 7.10 Actions (Producers) (page 31)."
+
+  - name: "Approach Lighting Timer (Extend on Re-Trigger)"
+    scope: "Conditionals"
+    description: |
+      Light the **next signal ahead** for a configurable interval whenever a
+      train approaches, and **restart the timer** on each new approach
+      detection so the light stays on continuously while traffic passes —
+      classic prototype *approach lighting* behaviour.
+
+      The conditional fires the *lamp on* event immediately on each
+      approach detection, then sends the *lamp off* event after the delay
+      expires. The retriggerable delay extends automatically on every
+      additional approach event.
+    prerequisites: |
+      * An *Approach Detected* producer event (e.g. from a BOD or a track-
+        circuit speed conditional) that fires whenever a train is detected
+        approaching.
+      * A signal lamp wired to a *Steady* output line (see *Steady Output
+        for LED or Relay*).
+      * One EventID each for *lamp on* and *lamp off* (the same pair the
+        output line consumes).
+    steps:
+      - order: 1
+        field: "Conditionals/Logic[1]/Description"
+        value: "Approach lighting (60 s)"
+        rawValue: null
+        rationale: "Label the timer so configurators can find it later."
+      - order: 2
+        field: "Conditionals/Logic[1]/Function"
+        value: "Last (Single)"
+        rawValue: 2
+        rationale: "Stand-alone conditional; does not chain."
+      - order: 3
+        field: "Conditionals/Logic[1]/Variable #1/Trigger"
+        value: "On Matching Event"
+        rawValue: 1
+        rationale: |
+          Re-evaluate on **every** matching approach event, not just on
+          state changes. This is what lets each new approach restart the
+          timer.
+      - order: 4
+        field: "Conditionals/Logic[1]/Variable #1/Source"
+        value: "Use Variable #1's (C) Events"
+        rawValue: 0
+        rationale: "Event-driven variable."
+      - order: 5
+        field: "Conditionals/Logic[1]/Variable #1/set true"
+        value: "<your Approach-Detected EventID>"
+        rawValue: null
+        rationale: |
+          Consumer event that fires each time a train approaches —
+          typically a BOD entry edge.
+      - order: 6
+        field: "Conditionals/Logic[1]/Variable #1/set false"
+        value: "00.00.00.00.00.00.00.00"
+        rawValue: null
+        rationale: |
+          Leave the *set false* event unused (all zeros). With the trigger
+          on *Matching Event* the conditional fires on every approach event
+          regardless of variable state.
+      - order: 7
+        field: "Conditionals/Logic[1]/Variable #2/Trigger"
+        value: "None"
+        rawValue: 2
+        rationale: "Single-variable conditional; disable V2."
+      - order: 8
+        field: "Conditionals/Logic[1]/Logic Operation"
+        value: "V1 Only"
+        rawValue: 7
+        rationale: "Evaluate from V1 alone."
+      - order: 9
+        field: "Conditionals/Logic[1]/Action[0]/when true"
+        value: "Send then Exit Group"
+        rawValue: 0
+        rationale: "Send the action events on true; do not chain."
+      - order: 10
+        field: "Conditionals/Logic[1]/Time Delay before action/Delay Time (1-60000)"
+        value: 60
+        rawValue: 60
+        rationale: |
+          60-second timer — the lamp stays on for one minute past the last
+          approach detection. Adjust to taste; the same field also accepts
+          milliseconds or minutes via the Units field below.
+      - order: 11
+        field: "Conditionals/Logic[1]/Time Delay before action/Units"
+        value: "Seconds"
+        rawValue: 1
+        rationale: "Interpret the delay value above as seconds."
+      - order: 12
+        field: "Conditionals/Logic[1]/Time Delay before action/Retriggerable"
+        value: "Yes"
+        rawValue: 1
+        rationale: |
+          **Critical for approach lighting** — each new approach event
+          restarts the timer from zero, keeping the lamp on continuously
+          while traffic passes.
+      - order: 13
+        field: "Conditionals/Logic[1]/Action[1]/Condition"
+        value: "Immediately"
+        rawValue: 1
+        rationale: |
+          Fire the *lamp on* event the moment the approach is detected,
+          without waiting for the delay.
+      - order: 14
+        field: "Conditionals/Logic[1]/Action[1]/Action Event"
+        value: "<your Approach-Lamp-On EventID>"
+        rawValue: null
+        rationale: |
+          Producer event consumed by the lamp's Steady output line — turns
+          the signal lamp on.
+      - order: 15
+        field: "Conditionals/Logic[1]/Action[2]/Condition"
+        value: "After delay"
+        rawValue: 2
+        rationale: |
+          Send the *lamp off* event only after the delay (60 s) elapses
+          without another approach restarting it.
+      - order: 16
+        field: "Conditionals/Logic[1]/Action[2]/Action Event"
+        value: "<your Approach-Lamp-Off EventID>"
+        rawValue: null
+        rationale: |
+          Producer event consumed by the lamp's Steady output line — turns
+          the signal lamp off after the timer expires.
+    citation: "Manual Section 7.4.1 Variable Trigger (page 27, *On Matching Event*), Section 7.9 Delay (page 31, *Retriggerable*), and Section 7.10 Actions (Producers) (page 31)."
+
+  # =========================================================================
+  # Power-state announcement
+  # =========================================================================
+  - name: "Announce Power-State on the Bus"
+    scope: "Node Power Monitor"
+    description: |
+      Have this Signal-LCC emit a **Power OK** producer event whenever it
+      finishes its power-on sequence, and optionally a **Power Not OK**
+      event when it loses power. Other nodes or JMRI panels can subscribe
+      to know when the node is online (or has dropped), useful for layout-
+      wide status displays and "node alive" interlocks.
+
+      **Power Not OK is best-effort:** the node may lose power before it
+      can put the frame on the bus, so do not rely on it for safety-critical
+      logic.
+    prerequisites: |
+      * One unused EventID for *Power OK*.
+      * Optionally a second unused EventID for *Power Not OK* (skip if you
+        only need power-up notification).
+    steps:
+      - order: 1
+        field: "Node Power Monitor/Message Options"
+        value: "Send both Power OK and Power Not OK"
+        rawValue: 2
+        rationale: |
+          Emit both events. Choose *Send Power OK only* (raw 1) instead if
+          you only care about power-up notification.
+      - order: 2
+        field: "Node Power Monitor/Power OK"
+        value: "<your Power-OK EventID>"
+        rawValue: null
+        rationale: |
+          Producer event broadcast when the node's power becomes good
+          (after power-on or recovery from a brownout).
+      - order: 3
+        field: "Node Power Monitor/Power Not OK"
+        value: "<your Power-Not-OK EventID>"
+        rawValue: null
+        rationale: |
+          Producer event broadcast when the node loses power. Best-effort —
+          may be dropped if the node dies before it can transmit.
+    citation: "CDI segment *Node Power Monitor* (Message Options map). Manual Section 1.1.8 Producer (page 11) defines producer events as those a node emits when something related to its own state changes."
