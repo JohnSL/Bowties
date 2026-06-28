@@ -24,6 +24,7 @@ The procedure to run before editing code for a bugfix, behavior change, or mid-i
 - Which layer(s) own the affected behavior, per `product/architecture/code-placement-and-ownership.md`.
 - Which ADR(s) in `product/architecture/adr/` govern the seam. If none apply, say so.
 - Which `aiwiki/owners.md` modules are involved, and which test files cover them.
+- Whether the affected behavior corresponds to a documented seam in `aiwiki/seams.md`. If yes, list current Owner, Contributors, and Consumers (with file:line). Symmetry violations at the Owner are the most common failure mode here — see "Asymmetric dirty tracking" below.
 
 ### 2. Distinguish symptom from root cause
 
@@ -59,6 +60,8 @@ Tradeoff: {scope, risk, what this option defers or leaves for later, what it pre
 Frame the options for an architect / product owner who understands design patterns but does not know the code. Recommend one and explain why.
 
 **Naming the principle is required, not optional.** Without it the options drift into "technically correct fixes" without diagnostic clarity. Use the same vocabulary as the `design` skill and `build` HITL decisions so the language is consistent across the workflow.
+
+**Seam-symmetry rule.** When the bug touches a seam in `aiwiki/seams.md`, every option in the set must address Owner / Contributor / Consumer symmetry at the documented Owner — not at the symptom site. A patch at one Consumer that leaves other Consumers diverging from the Owner is not an option; it is a stopgap (subject to the rules in step 4).
 
 ### 4. Stopgap rule
 

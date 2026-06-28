@@ -19,6 +19,15 @@ Only include when they add genuine value. Most ADRs won't need them.
 - **Status** frontmatter (`proposed | accepted | deprecated | superseded by ADR-NNNN`) — useful when decisions are revisited
 - **Considered Options** — only when rejected alternatives are worth remembering
 - **Consequences** — only when non-obvious downstream effects need to be called out
+- **Invariants** — when the ADR establishes a single-owner / single-source / aggregate-signal / single-import-surface pattern. See "Invariants section" below.
+
+## Invariants section
+
+When an ADR establishes a single-owner, single-source, aggregate-signal, or single-import-surface pattern, add a `## Invariants` section at the **end** of the ADR (after all extensions) listing the testable invariants. Each invariant is a self-contained statement that the `/design` skill's audit can resolve to OK / Drift / Unknown with file:line evidence. Include an Audit hint ("grep for X", "check Y matches Z") where the seam is not obvious.
+
+When extending the ADR with a new commitment, add the new invariant to the same `## Invariants` block at the end rather than scattering it across the file. Inline "**Invariant:** …" callouts in extensions remain for reading context, but the consolidated block is the audit target.
+
+The corresponding `aiwiki/seams.md` entry (when one exists) lists the Owner, Contributors, and Consumers; the ADR `## Invariants` block lists the rules. The skills consult both: `seams.md` for participants, the ADR for invariants.
 
 ## Numbering
 

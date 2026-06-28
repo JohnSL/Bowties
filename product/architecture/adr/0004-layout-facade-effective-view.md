@@ -50,3 +50,13 @@ The four edit-layer stores (`bowtieMetadataStore`, `configChangesStore`, `bowtie
 - `resolveValue`/`resolveRole` from ADR-0003 become the **internals** of `effectiveLayoutStore`. They do not move; the facade exposes the higher-level API.
 - Tests targeting `EditableBowtiePreviewStore`'s preview shape retarget to `effectiveLayoutStore`. Tests for the orchestrator's transition rules stay where they are.
 - The aiwiki `owners.md` Stores section gains a "Layout facade" subsection that names the public surface and lists the internal stores it composes.
+
+## Invariants
+
+Structured testable rules for the `/design` audit. Each invariant resolves to OK / Drift / Unknown with file:line evidence.
+
+- `$lib/layout` is the only layout-state import surface for components and routes. The four edit-layer stores (`bowtieMetadataStore`, `configChangesStore`, `bowtieCatalogStore`, `layoutStore`) are not imported by files under `app/src/lib/components/**` or `app/src/routes/**`. Audit: grep imports of those store paths from those directories.
+- All display sites for bowtie cards, role filters, slot occupancy, and effective values read through `effectiveLayoutStore`'s composed projections (`effectiveBowties`, `effectiveRole`, `effectiveValue`, `slotsByRole`, `isSlotFree`) — never directly from raw stores. The fast/slow path branch in `EditableBowtiePreviewStore` does not return; any new equivalent is a regression.
+- Write entry points (including draft-recording commands like "record a bowtie deletion", "record a role classification", "record a draft value") are re-exported through the facade. Components do not call edit-layer store mutation methods directly.
+
+When extending this ADR, add or amend invariants in this section rather than scattering them across the file.

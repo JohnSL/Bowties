@@ -170,3 +170,15 @@ not deferred — that is the failure mode ADR-0011 was written to prevent.
   pipeline) is orchestrator-driven on the *effective* state, not on
   persisted state — bowtie creation is a save-time action because it
   depends on the saved facility shape, not on intermediate drafts.
+
+## Invariants
+
+Structured testable rules for the `/design` audit. Each invariant resolves to OK / Drift / Unknown with file:line evidence.
+
+- The only code path that writes layout data to disk is the save workflow triggered by an explicit user action (Save button / menu). No store implements write-through to a backend IPC from a user-interaction handler. Audit: grep for backend mutation commands invoked outside the save orchestrator.
+- Every store with editable layout data implements the draft-layer contract: `isDirty`, `collectDeltas(): LayoutEditDelta[]`, `discard()`, `hydrateBaseline(...)`. Audit: list editable-layout stores and confirm all four methods exist.
+- Every editable-layout store's `isDirty` signal feeds the aggregate via `effectiveNodeStore.dirtyBreakdown` (this joins ADR-0011's first invariant). A store with a draft layer that does not appear in `dirtyBreakdown` is drift.
+- Backend layout-mutation commands (`save_layout_directory`, future equivalents) are invoked exclusively from the save orchestrator. Standalone Tauri commands that mutate layout files from user-interaction handlers (`set_node_mode_selection`, `clear_node_mode_selection`, `create_channels`, etc.) are not exposed as IPC endpoints called from interaction code.
+- Stores suppress no-op edits at the mutation entry point (2026-06-25 extension). `isDirty = true` means a real semantic difference between in-memory state and the last-saved baseline — not merely that an edit gesture occurred. Audit: for each draft-layer store, confirm its mutation methods compare against the current effective value before recording a draft.
+
+When extending this ADR, add or amend invariants in this section rather than scattering them across the file.

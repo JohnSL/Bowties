@@ -34,6 +34,7 @@ Update the affected product/ files inline.
 Check whether the AI knowledge base needs updates for the touched modules:
 
 - **aiwiki/owners.md**: Are all new or changed modules listed? Are test file mappings current? Are shared conventions updated if a new pattern was established?
+- **aiwiki/seams.md**: For every seam the feature touched, confirm Contributors and Consumers are current. If the feature added either, the entry should have been updated during `/build` post-implementation — confirm here as a safety net. If the feature introduced a **new** seam (a contract with one Owner and ≥2 Contributors or ≥2 Consumers where none existed before), add a new entry. Bump `Last-audited` if you re-greped during this audit.
 - **aiwiki/flows.md**: Did any workflow's module participation change?
 - **aiwiki/architecture-health.md**: Were any coupling risks, architecture debt items, or depth assessments affected?
 

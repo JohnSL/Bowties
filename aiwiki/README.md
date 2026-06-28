@@ -8,6 +8,7 @@ Help AI agents quickly answer:
 - **Where does X live?** → [owners.md](owners.md)
 - **Does this already exist?** → [owners.md](owners.md) shared conventions section
 - **What's involved in this workflow?** → [flows.md](flows.md)
+- **Which cross-cutting contracts must I keep in sync?** → [seams.md](seams.md)
 - **Is there coupling or debt to watch?** → [architecture-health.md](architecture-health.md)
 - **What are the layers, seams, and deep modules?** → [architecture-diagrams.md](architecture-diagrams.md)
 
@@ -36,6 +37,7 @@ What to read at each phase of a feature:
 | Phase | Read | Why |
 |-------|------|-----|
 | Orientation | `aiwiki/owners.md` summary → relevant layer section | Find the owning module and its tests |
+| Cross-cutting contracts | `aiwiki/seams.md` | Identify Owner / Contributors / Consumers for any seam the work touches |
 | Prior work | `specs/ideas/` (scan area tags) | Reuse prior analysis, avoid re-discovery |
 | Placement | `product/architecture/code-placement-and-ownership.md` | Verify new logic goes in the right layer |
 | Vocabulary | `product/glossary.md` | Use canonical terms in code and output |

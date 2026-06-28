@@ -13,12 +13,12 @@ Use [LANGUAGE.md](../improve-codebase-architecture/LANGUAGE.md) vocabulary for a
 
 ### 1. Load context
 
-**Delegate to an `Explore` subagent** to conserve main-conversation context. The subagent should fetch all of the following and return a structured summary (affected modules, relevant ADRs, terminology notes, prior `kind/idea` issues, placement rules excerpt):
+**Delegate to an `Explore` subagent** to conserve main-conversation context. The subagent should fetch all of the following and return a structured summary (affected modules, relevant ADRs, terminology notes, prior `kind/idea` issues, placement rules excerpt, touched seams):
 
 1. Detect current feature from branch name or `$env:SPECIFY_FEATURE`
 2. Read `specs/<feature>/plan.md` and `specs/<feature>/spec.md`
 3. Read `product/architecture/code-placement-and-ownership.md`, `product/architecture/adr/`, `product/glossary.md`
-4. Read `aiwiki/owners.md` (module inventory, shared conventions) and `aiwiki/flows.md`
+4. Read `aiwiki/owners.md` (module inventory, shared conventions), `aiwiki/flows.md`, and `aiwiki/seams.md` (cross-cutting contracts — Owner / Contributors / Consumers per seam)
 5. Search open GitHub issues labeled `kind/idea` filtered by the feature's `area/*` labels (`gh issue list --repo JohnSL/Bowties --label kind/idea --state open`) for prior work. Also glance at any residual `specs/ideas/**` files until migration completes.
 
 Work from the subagent's summary for subsequent steps.
@@ -33,6 +33,16 @@ From plan.md, identify which existing modules the feature touches. For each:
 ### 3. Assess
 
 Evaluate each affected and proposed module using the criteria in [ASSESSMENT.md](ASSESSMENT.md). The assessment covers depth, locality, seam placement, placement compliance, ADR compliance, duplication, cross-layer coupling, testability, existing debt, and deepening opportunities.
+
+**Seams audit.** For every seam the feature touches per `aiwiki/seams.md` (identified from the affected modules in step 2), perform a current-state audit of Owner / Contributors / Consumers and audit the governing ADR(s) **whether or not the feature explicitly cites them** — the seam entry is the index; author citation is not a prerequisite.
+
+For every ADR with an `## Invariants` section in scope (cited or surfaced via a touched seam), output a fixed table per ADR:
+
+| Invariant | Status | Evidence |
+|---|---|---|
+| <invariant text from the ADR> | OK / Drift / Unknown | <file:line> or "no readers found" |
+
+Flag any Drift or Unknown row as an architectural finding (Section 2 in the presentation). After the audit, bump the touched seams' `Last-audited` date in `aiwiki/seams.md`. The fixed-table format is required — freeform prose lets the audit silently degrade to "looks fine."
 
 ### 4. Define vertical slices
 

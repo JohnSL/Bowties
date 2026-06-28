@@ -269,4 +269,17 @@ DirtyBreakdown {
 
 **Coupling note:** `dirtyBreakdown` reads ten store getters per access. Each access is O(1) per store plus one O(n) scan over `configChangesStore.draftEntries()` for `configNodes`. Svelte 5 `$derived` callers that read the getter several times per render rely on Svelte's signal memoisation; consumers that need a stable snapshot (e.g. the dialog) should capture once and pass the value down.
 
+## Invariants
+
+Structured testable rules for the `/design` audit. Each invariant resolves to OK / Drift / Unknown with file:line evidence.
+
+- `effectiveNodeStore.isDirty` and `effectiveNodeStore.dirtyBreakdown` are the sole aggregate dirty signals for the layout. Adding a new edit-bearing store requires extending the `DirtyBreakdown` shape AND the breakdown computation in the same slice. Audit: grep for additional `isDirty`-style aggregations across stores.
+- Consumers asking "is anything unsaved?" read through the `$lib/layout` facade exclusively. Components, routes, and other orchestrators do not re-derive the aggregate from raw stores. Audit: grep for `editCount` / `draftCount` / `isDirty` reads outside `effectiveNodeStore`.
+- `layoutLifecycleOrchestrator.resetForNewLayout()` is the single resetter of every layout-scoped store the facade reads. Every input to `effectiveNodeStore` has a matching reset entry in the orchestrator, pinned by [layoutLifecycleOrchestrator.test.ts](../../../app/src/lib/orchestration/layoutLifecycleOrchestrator.test.ts).
+- `layoutLifecycleOrchestrator.closeLayout()` is the single entry point for closing a layout across the IPC boundary. Routes and orchestrators call it; they do not assemble the close sequence (backend `close_layout` + frontend store wipe + disconnect) at the call site.
+- After `closeLayout()` returns `true`, `layoutStore.isConnected` is `false`. (2026-06-20 extension.)
+- After any disconnect path completes, `eventStateStore.size === 0`. After `resetForFreshLiveSession()` returns, `eventStateStore.size === 0`. (2026-06-26 extension; bus-session-scoped stores join the reset enumeration.)
+- `isPersistableInLayout(key) ≡ isFullyCaptured(key) ∧ (isConfigRead(key) ∨ key.kind === 'placeholder')` is the sole predicate for "may this node go into the saved layout?". Save (`canSaveLayoutAction`), the orange in-memory-changes dot, the unsaved-changes count, and the unsaved-new badge all derive from it through the facade.
+
+When extending this ADR with new commitments, add or amend invariants in this section rather than scattering them across the file. Inline "**Invariant:** …" callouts in the extensions remain for reading context, but the `## Invariants` block is the audit target.
 

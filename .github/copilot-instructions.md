@@ -115,6 +115,7 @@ After completing a change:
 
 - Update `aiwiki/owners.md` for any modules, conventions, or test files you added or changed.
 - Update `aiwiki/flows.md` if the change affects workflow module participation.
+- Update `aiwiki/seams.md` if you added a Contributor or Consumer to a documented seam, introduced a new aggregate / single-source pattern, or audited an existing entry (bump its `Last-modified` on edits; bump `Last-audited` only after a full Owner/Contributors/Consumers re-grep).
 - Note architecture risks or coupling observations in `aiwiki/architecture-health.md`.
 - Prefer extending the relevant seam-scoped ADR in `product/architecture/adr/` with a dated section (`## YYYY-MM-DD extension: <short title>`). Write a new ADR only when the work introduces a genuinely new seam, reverses an existing commitment (mark the old ADR `superseded by ADR-NNNN`), or crosses a boundary the existing ADR explicitly excluded. See `product/architecture/adr/README.md`.
 - If you discover a module, convention, or flow not listed in `aiwiki/`, add it before completing the change.

@@ -28,7 +28,7 @@ From the Architecture Assessment's Vertical Slices section, build the **roadmap*
 3. **Boundary** — the set of layers it cuts
 4. **Label** — HITL / AFK / REFACTOR
 5. **Blocked by** — slice dependencies
-6. **Acceptance criteria** — the behavioral, product-manager-verifiable outcomes that say what you'll be able to test/demo (for `[REFACTOR]`, the invariants preserved)
+6. **Acceptance criteria** — the behavioral, product-manager-verifiable outcomes that say what you'll be able to test/demo (for `[REFACTOR]`, the invariants preserved). **For every seam this slice contributes to per `aiwiki/seams.md`, include at least one behavioural assertion per documented Consumer surface.** If a slice adds a Contributor to the Dirty Aggregation seam, the criteria must cover the Save toolbar AND the close prompt — not just the new store's internal state. The seam entry's Consumer list is the checklist.
 7. **Architecture note** — *for HITL / new-seam slices only*: 1–2 lines naming the pattern the slice introduces or the seam it changes, and why it needs review. Omit for AFK/REFACTOR slices that reuse an established pattern.
 8. **Status** — `sketched` (every slice starts here)
 

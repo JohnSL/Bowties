@@ -28,6 +28,7 @@ Model routing rule: start this pre-check pass on a faster model (retrieval and m
 2. Check `product/architecture/code-placement-and-ownership.md` — is each file in the right layer?
 3. Check `product/architecture/adr/` — does the approach conflict with past decisions?
 4. Check open GitHub issues labeled `kind/idea` filtered by relevant `area/*` labels (`gh issue list --repo JohnSL/Bowties --label kind/idea --state open`) for prior work on this area. Also glance at any residual `specs/ideas/**` files until migration completes.
+5. Check `aiwiki/seams.md` — does this slice touch any documented seams? For each touched seam, the `Explore` subagent produces a **wiring trace**: current Owner location, current Contributors (with file:line), current Consumers including user-visible surfaces (with file:line). Use the trace to inform structure-replication decisions — copying a similar store's structure without also copying its wiring is the failure mode the seam index exists to prevent.
 
 ## Just-In-Time Tasking
 
@@ -100,6 +101,7 @@ Rules:
 - Design interfaces for [testability](interface-design.md) and [depth](deep-modules.md)
 - Mock at [system boundaries only](mocking.md)
 - Tests should verify [behavior, not implementation](tests.md)
+- **Seam-aware red phase**: when the slice contributes to a seam per `aiwiki/seams.md`, T1's integration test MUST exercise at least one user-visible Consumer surface — not only the Owner or the new Contributor's internal state. Asserting only on a store's internal `isDirty` flag is not sufficient if the seam has UI Consumers; the test must reach a Consumer the user sees.
 
 #### Delegating the loop to the TDD coordinator (optional, context-saving)
 
@@ -151,6 +153,7 @@ Summarize: what was completed, what's next, any issues found.
 After completing all slices (or at session end if substantial work was done):
 
 1. **aiwiki/owners.md** — add new modules, update test mappings, document new conventions
-2. **aiwiki/flows.md** — update workflow module participation if changed
-3. **product/architecture/adr/** — write ADRs for architecture decisions made during build
-4. **specs/backlog.md** — resolve completed items, add newly revealed items
+2. **aiwiki/seams.md** — if this slice added a Contributor or Consumer to a documented seam, update the entry's lists and bump `Last-modified` (bump `Last-audited` only if you re-grepped the full participant lists). If the slice introduced a new aggregate / single-source pattern, propose a new entry.
+3. **aiwiki/flows.md** — update workflow module participation if changed
+4. **product/architecture/adr/** — write ADRs for architecture decisions made during build
+5. **specs/backlog.md** — resolve completed items, add newly revealed items
