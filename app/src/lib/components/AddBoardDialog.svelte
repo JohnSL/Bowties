@@ -9,20 +9,20 @@
    * sidebar falls back to `{manufacturer} — {model}` until the CDI User
    * Name leaf is edited.
    *
-   * Keyboard behaviour:
-   *   Enter  → confirm (when a profile is selected)
-   *   Escape → cancel
-   *   Tab    → focus-trapped inside the dialog
-   *
-   * Visual style mirrors `DiscardConfirmDialog.svelte` for consistency
-   * with other Bowties modals.
+   * dialog-shell-refactor (Slice 4): wraps the Fluent `Dialog` shell.
+   * Body uses a native `<form>` so Enter on the focused select submits via
+   * the primary `Add board` button. Esc / overlay / × → cancel (shell).
    */
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { listBundledProfiles, type BundledProfileSummary } from '$lib/api/layout';
   import { addPlaceholderBoard } from '$lib/orchestration/placeholderBoardOrchestrator';
+  import Dialog from './Dialog/Dialog.svelte';
+  import DialogTitle from './Dialog/DialogTitle.svelte';
+  import DialogActions from './Dialog/DialogActions.svelte';
+  import Button from './Dialog/Button.svelte';
 
   interface Props {
-    /** Called when the user cancels (Escape, backdrop click, or Cancel). */
+    /** Called when the user cancels (Escape, backdrop click, ×, or Cancel). */
     onCancel: () => void;
     /** Called after a successful add, with the new `placeholder:<uuidv4>` NodeKey. */
     onAdded: (nodeKey: string) => void;
@@ -40,8 +40,6 @@
 
   const canSubmit = $derived(selectedStem !== null && !submitting);
 
-  // ── Load profiles on mount ──────────────────────────────────────────────
-
   async function loadProfiles() {
     try {
       const result = await listBundledProfiles();
@@ -53,8 +51,6 @@
       loadError = String(err);
     }
   }
-
-  // ── Submit ──────────────────────────────────────────────────────────────
 
   async function handleSubmit() {
     if (!canSubmit || selectedStem === null) return;
@@ -70,258 +66,119 @@
     }
   }
 
-  // ── Keyboard handling ───────────────────────────────────────────────────
-
-  function handleKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      onCancel();
-    } else if (event.key === 'Enter' && canSubmit) {
-      // Only intercept Enter when not inside a multi-line/textarea control.
-      const target = event.target as HTMLElement | null;
-      if (target?.tagName !== 'TEXTAREA') {
-        event.preventDefault();
-        void handleSubmit();
-      }
-    }
-  }
-
-  function handleOverlayClick(event: MouseEvent) {
-    if (event.target === event.currentTarget) onCancel();
-  }
-
-  function trapFocus(event: KeyboardEvent) {
-    if (event.key !== 'Tab') return;
-    const dialog = document.getElementById('add-board-dialog');
-    if (!dialog) return;
-    const focusable = Array.from(
-      dialog.querySelectorAll<HTMLElement>(
-        'input:not([disabled]), select:not([disabled]), button:not([disabled])',
-      ),
-    );
-    if (focusable.length < 2) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  }
-
   onMount(() => {
     void loadProfiles();
     profileSelect?.focus();
-    window.addEventListener('keydown', handleKeydown);
-    window.addEventListener('keydown', trapFocus);
-  });
-
-  onDestroy(() => {
-    window.removeEventListener('keydown', handleKeydown);
-    window.removeEventListener('keydown', trapFocus);
   });
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
-<div class="abd-overlay" role="presentation" onclick={handleOverlayClick}>
-  <div
-    id="add-board-dialog"
-    class="abd-dialog"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="abd-title"
+<Dialog
+  open
+  width="md"
+  ariaLabel="Add placeholder board"
+  initialFocus="none"
+  onCancel={submitting ? () => {} : onCancel}
+>
+  {#snippet title()}
+    <DialogTitle>Add placeholder board</DialogTitle>
+  {/snippet}
+
+  <form
+    class="abd-form"
+    onsubmit={(e) => { e.preventDefault(); void handleSubmit(); }}
   >
-    <div class="abd-header">
-      <h2 id="abd-title" class="abd-title">Add placeholder board</h2>
-    </div>
-
-    <div class="abd-body">
-      <label class="abd-field">
-        <span class="abd-label">Board model</span>
-        {#if loadError}
-          <div class="abd-error">Failed to load profiles: {loadError}</div>
-        {:else if profiles === null}
-          <div class="abd-loading">Loading…</div>
-        {:else if profiles.length === 0}
-          <div class="abd-empty">No bundled board profiles are available.</div>
-        {:else}
-          <select
-            bind:this={profileSelect}
-            bind:value={selectedStem}
-            class="abd-input"
-            disabled={submitting}
-          >
-            {#each profiles as profile (profile.stem)}
-              <option value={profile.stem}>
-                {profile.manufacturer} — {profile.model}
-              </option>
-            {/each}
-          </select>
-        {/if}
-      </label>
-
-      {#if submitError}
-        <div class="abd-error">{submitError}</div>
+    <label class="abd-field">
+      <span class="abd-label">Board model</span>
+      {#if loadError}
+        <div class="abd-error">Failed to load profiles: {loadError}</div>
+      {:else if profiles === null}
+        <div class="abd-loading">Loading…</div>
+      {:else if profiles.length === 0}
+        <div class="abd-empty">No bundled board profiles are available.</div>
+      {:else}
+        <select
+          bind:this={profileSelect}
+          bind:value={selectedStem}
+          class="abd-input"
+          disabled={submitting}
+        >
+          {#each profiles as profile (profile.stem)}
+            <option value={profile.stem}>
+              {profile.manufacturer} — {profile.model}
+            </option>
+          {/each}
+        </select>
       {/if}
-    </div>
+    </label>
 
-    <div class="abd-actions">
-      <button class="abd-btn abd-btn--cancel" onclick={onCancel} disabled={submitting}>
+    {#if submitError}
+      <div class="abd-error">{submitError}</div>
+    {/if}
+
+    <button type="submit" class="abd-hidden-submit" tabindex="-1" aria-hidden="true"></button>
+  </form>
+
+  {#snippet actions()}
+    <DialogActions>
+      <Button appearance="secondary" onclick={onCancel} disabled={submitting}>
         Cancel
-      </button>
-      <button
-        class="abd-btn abd-btn--primary"
-        onclick={handleSubmit}
-        disabled={!canSubmit}
-      >
+      </Button>
+      <Button appearance="primary" onclick={handleSubmit} disabled={!canSubmit}>
         Add board
-      </button>
-    </div>
-  </div>
-</div>
+      </Button>
+    </DialogActions>
+  {/snippet}
+</Dialog>
 
 <style>
-  .abd-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 1100;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.35);
-    animation: abd-fade-in 0.15s ease-out;
-  }
-
-  @keyframes abd-fade-in {
-    from { opacity: 0; }
-    to   { opacity: 1; }
-  }
-
-  .abd-dialog {
-    background: #ffffff;
-    border-radius: 8px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
-    width: 420px;
-    max-width: 90vw;
-    padding: 20px 24px 16px;
+  .abd-form {
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    animation: abd-slide-in 0.18s ease-out;
-    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
-    font-size: 13px;
-  }
-
-  @keyframes abd-slide-in {
-    from { transform: translateY(-12px); opacity: 0; }
-    to   { transform: translateY(0);     opacity: 1; }
-  }
-
-  .abd-header { display: flex; align-items: center; }
-
-  .abd-title {
+    gap: 14px;
     margin: 0;
-    font-size: 14px;
-    font-weight: 600;
-    color: #201f1e;
-    line-height: 1.3;
   }
-
-  .abd-body {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
   .abd-field {
     display: flex;
     flex-direction: column;
     gap: 4px;
   }
-
   .abd-label {
-    font-size: 12px;
-    font-weight: 600;
-    color: #323130;
+    font-size: var(--fluent-fontSizeBase200);
+    color: var(--fluent-neutralForeground2);
+    font-weight: 500;
   }
-
   .abd-input {
-    padding: 6px 8px;
-    font-size: 13px;
-    font-family: inherit;
-    color: #201f1e;
-    background: #ffffff;
-    border: 1px solid #c8c6c4;
+    padding: 6px 10px;
+    border: 1px solid var(--fluent-neutralStroke1);
     border-radius: 4px;
+    background: var(--fluent-neutralBackground1);
+    color: var(--fluent-neutralForeground1);
+    font-family: var(--fluent-fontFamily);
+    font-size: var(--fluent-fontSizeBase300);
   }
-
-  .abd-input:focus-visible {
-    outline: 2px solid #0078d4;
-    outline-offset: 1px;
+  .abd-input:focus {
+    outline: none;
+    border-color: var(--fluent-strokeFocus2);
+    box-shadow: 0 0 0 2px var(--fluent-strokeFocusHalo);
   }
-
   .abd-loading,
   .abd-empty {
-    color: #605e5c;
+    color: var(--fluent-neutralForeground3);
     font-style: italic;
-    padding: 4px 0;
+    padding: 6px 0;
   }
-
   .abd-error {
-    color: #a4262c;
-    background: #fde7e9;
-    padding: 6px 8px;
-    border-radius: 4px;
-    border: 1px solid #f1bbbc;
+    color: var(--fluent-dangerBackground);
+    font-size: var(--fluent-fontSizeBase200);
   }
-
-  .abd-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding-top: 4px;
-  }
-
-  .abd-btn {
-    padding: 5px 16px;
-    font-size: 13px;
-    font-weight: 500;
-    font-family: inherit;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: background-color 0.1s ease, border-color 0.1s ease;
-    white-space: nowrap;
-  }
-
-  .abd-btn:disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
-  }
-
-  .abd-btn--cancel {
-    background: #ffffff;
-    color: #323130;
-    border: 1px solid #c8c6c4;
-  }
-
-  .abd-btn--cancel:hover:not(:disabled) {
-    background: #f3f2f1;
-    border-color: #a19f9d;
-  }
-
-  .abd-btn--primary {
-    background: #0078d4;
-    color: #ffffff;
-    border: 1px solid transparent;
-  }
-
-  .abd-btn--primary:hover:not(:disabled) { background: #106ebe; }
-  .abd-btn--primary:active:not(:disabled) { background: #005a9e; }
-
-  .abd-btn--primary:focus-visible {
-    outline: 2px solid #0078d4;
-    outline-offset: 2px;
+  .abd-hidden-submit {
+    position: absolute;
+    width: 0;
+    height: 0;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
   }
 </style>

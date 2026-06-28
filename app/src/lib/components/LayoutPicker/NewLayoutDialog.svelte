@@ -5,8 +5,15 @@
    * Collects a display name + parent directory, builds the layout folder
    * path (`<parent>/<name>/`), and emits a single `onCreate` event with
    * both. The picker's orchestrator owns the actual folder/registry work.
+   *
+   * dialog-shell-refactor (Slice 4): wraps the Fluent `Dialog` shell.
+   * While `busy`, the dialog locks (no Esc, overlay, or × — `closable={false}`).
    */
   import { open } from '@tauri-apps/plugin-dialog';
+  import Dialog from '$lib/components/Dialog/Dialog.svelte';
+  import DialogTitle from '$lib/components/Dialog/DialogTitle.svelte';
+  import DialogActions from '$lib/components/Dialog/DialogActions.svelte';
+  import Button from '$lib/components/Dialog/Button.svelte';
 
   interface Props {
     visible: boolean;
@@ -81,193 +88,144 @@
   $effect(() => {
     if (!visible) reset();
   });
-
-  function handleKeydown(e: KeyboardEvent): void {
-    if (e.key === 'Escape' && !busy) {
-      e.preventDefault();
-      cancel();
-    }
-  }
 </script>
 
-{#if visible}
-  <div class="nl-overlay" role="presentation">
-    <div
-      class="nl-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="nl-title"
-      onkeydown={handleKeydown}
-      tabindex="-1"
-    >
-      <h2 id="nl-title" class="nl-title">New Layout</h2>
+<Dialog
+  open={visible}
+  width="md"
+  ariaLabel="New layout"
+  closable={!busy}
+  initialFocus="none"
+  zIndex={1600}
+  onCancel={cancel}
+>
+  {#snippet title()}
+    <DialogTitle>New Layout</DialogTitle>
+  {/snippet}
 
-      <div class="nl-field">
-        <label for="nl-name">Name</label>
+  <form
+    class="nl-form"
+    onsubmit={(e) => { e.preventDefault(); submit(); }}
+  >
+    <div class="nl-field">
+      <label for="nl-name">Name</label>
+      <input
+        id="nl-name"
+        type="text"
+        bind:value={name}
+        disabled={busy}
+        placeholder="e.g. Yard"
+        autocomplete="off"
+        data-testid="new-layout-name"
+      />
+    </div>
+
+    <div class="nl-field">
+      <label for="nl-dir">Location</label>
+      <div class="nl-dir-row">
         <input
-          id="nl-name"
+          id="nl-dir"
           type="text"
-          bind:value={name}
+          bind:value={directory}
           disabled={busy}
-          placeholder="e.g. Yard"
-          autocomplete="off"
-          data-testid="new-layout-name"
+          placeholder="Folder where the layout will be created"
+          data-testid="new-layout-directory"
         />
-      </div>
-
-      <div class="nl-field">
-        <label for="nl-dir">Location</label>
-        <div class="nl-dir-row">
-          <input
-            id="nl-dir"
-            type="text"
-            bind:value={directory}
-            disabled={busy}
-            placeholder="Folder where the layout will be created"
-            data-testid="new-layout-directory"
-          />
-          <button
-            type="button"
-            class="nl-browse"
-            onclick={pickDirectory}
-            disabled={busy}
-          >Browse…</button>
-        </div>
-      </div>
-
-      {#if derivedPath}
-        <p class="nl-preview" title={derivedPath}>Will create folder: <code>{derivedPath}</code></p>
-      {/if}
-
-      {#if errorMessage}
-        <p class="nl-error" role="alert">{errorMessage}</p>
-      {/if}
-
-      <div class="nl-actions">
-        <button type="button" class="nl-cancel" onclick={cancel} disabled={busy}>Cancel</button>
-        <button
-          type="button"
-          class="nl-create"
-          onclick={submit}
-          disabled={busy || !name.trim() || !directory}
-          data-testid="new-layout-create"
-        >Create Layout</button>
+        <Button appearance="secondary" onclick={pickDirectory} disabled={busy}>
+          Browse…
+        </Button>
       </div>
     </div>
-  </div>
-{/if}
+
+    {#if derivedPath}
+      <p class="nl-preview" title={derivedPath}>
+        Will create folder: <code>{derivedPath}</code>
+      </p>
+    {/if}
+
+    {#if errorMessage}
+      <p class="nl-error" role="alert">{errorMessage}</p>
+    {/if}
+
+    <button type="submit" class="nl-hidden-submit" tabindex="-1" aria-hidden="true"></button>
+  </form>
+
+  {#snippet actions()}
+    <DialogActions>
+      <Button appearance="secondary" onclick={cancel} disabled={busy}>Cancel</Button>
+      <Button
+        appearance="primary"
+        onclick={submit}
+        disabled={busy || !name.trim() || !directory}
+        dataTestid="new-layout-create"
+      >Create Layout</Button>
+    </DialogActions>
+  {/snippet}
+</Dialog>
 
 <style>
-  .nl-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.35);
+  .nl-form {
     display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1600;
-  }
-  .nl-dialog {
-    background: #ffffff;
-    border-radius: 6px;
-    padding: 20px 24px;
-    min-width: 360px;
-    max-width: 520px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
-    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
-  }
-  .nl-title {
-    margin: 0 0 16px 0;
-    font-size: 18px;
-    font-weight: 600;
-    color: #111827;
+    flex-direction: column;
+    gap: 12px;
+    margin: 0;
   }
   .nl-field {
-    display: block;
-    margin-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
   .nl-field label {
-    display: block;
-    font-size: 12px;
-    color: #4b5563;
-    margin-bottom: 4px;
+    font-size: var(--fluent-fontSizeBase200);
+    color: var(--fluent-neutralForeground2);
+    font-weight: 500;
   }
-  .nl-field input[type='text'] {
-    width: 100%;
-    padding: 6px 8px;
-    font-size: 14px;
-    border: 1px solid #d0d5dd;
+  .nl-field input {
+    padding: 6px 10px;
+    border: 1px solid var(--fluent-neutralStroke1);
     border-radius: 4px;
-    box-sizing: border-box;
+    background: var(--fluent-neutralBackground1);
+    color: var(--fluent-neutralForeground1);
+    font-family: var(--fluent-fontFamily);
+    font-size: var(--fluent-fontSizeBase300);
+  }
+  .nl-field input:focus {
+    outline: none;
+    border-color: var(--fluent-strokeFocus2);
+    box-shadow: 0 0 0 2px var(--fluent-strokeFocusHalo);
   }
   .nl-dir-row {
     display: flex;
     gap: 8px;
+    align-items: stretch;
   }
   .nl-dir-row input {
-    flex: 1 1 auto;
-  }
-  .nl-browse {
-    flex: 0 0 auto;
-    padding: 6px 12px;
-    border: 1px solid #d0d5dd;
-    border-radius: 4px;
-    background: #f9fafb;
-    cursor: pointer;
-    font-size: 13px;
-  }
-  .nl-browse:hover:not(:disabled) {
-    background: #f3f4f6;
+    flex: 1;
   }
   .nl-preview {
-    font-size: 12px;
-    color: #6b7280;
-    margin: 4px 0 0;
+    margin: 0;
+    font-size: var(--fluent-fontSizeBase200);
+    color: var(--fluent-neutralForeground3);
     word-break: break-all;
   }
   .nl-preview code {
-    background: #f3f4f6;
+    background: var(--fluent-neutralBackground3);
     padding: 1px 4px;
     border-radius: 3px;
   }
   .nl-error {
-    color: #b91c1c;
-    font-size: 13px;
-    margin: 12px 0 0;
+    margin: 0;
+    color: var(--fluent-dangerBackground);
+    font-size: var(--fluent-fontSizeBase200);
   }
-  .nl-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    margin-top: 18px;
-  }
-  .nl-cancel,
-  .nl-create {
-    padding: 6px 14px;
-    border-radius: 4px;
-    font-size: 13px;
-    cursor: pointer;
-    border: 1px solid #d0d5dd;
-  }
-  .nl-cancel {
-    background: #ffffff;
-    color: #374151;
-  }
-  .nl-cancel:hover:not(:disabled) {
-    background: #f3f4f6;
-  }
-  .nl-create {
-    background: #2563eb;
-    color: #ffffff;
-    border-color: #2563eb;
-  }
-  .nl-create:hover:not(:disabled) {
-    background: #1d4ed8;
-  }
-  .nl-create:disabled,
-  .nl-cancel:disabled,
-  .nl-browse:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+  .nl-hidden-submit {
+    position: absolute;
+    width: 0;
+    height: 0;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
   }
 </style>

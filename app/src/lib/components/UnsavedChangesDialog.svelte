@@ -1,20 +1,29 @@
 <script lang="ts">
   /**
-   * UnsavedChangesDialog — modal that lists per-bucket counts when the user
-   * tries to open/close/disconnect/exit with unsaved edits in the layout.
+   * UnsavedChangesDialog — modal shown when the user tries to
+   * open / close / disconnect / exit with unsaved edits in the layout.
    *
-   * Spec 018 / S1.2 — replaces the inline `<div class="unsaved-dialog">`
-   * markup that used to live in `+page.svelte` and the parallel
-   * `changeTrackerStore` aggregation path. All counts come from
-   * `effectiveNodeStore.dirtyBreakdown` (ADR-0011 extension 2026-06-28).
+   * Spec 018 / S1.2 + dialog-shell-refactor (Slice 2): now wraps the
+   * Fluent `Dialog` shell. All chrome (overlay, focus trap, Esc, ×,
+   * header/footer dividers) lives in the shell; this component only
+   * formats the per-bucket breakdown and wires action buttons.
    *
-   * Keyboard:
-   *   Enter  → Confirm (the destructive action — focuses the confirm button)
-   *   Escape → Cancel (safe default)
-   *   Tab    → cycles Cancel ↔ Confirm
+   * Keyboard (provided by `Dialog`):
+   *   Esc / overlay click / × → Cancel (safe default)
+   *   Tab / Shift+Tab         → cycles within Cancel ↔ Confirm
+   *   Enter on a focused button → triggers that button
+   *
+   * Note: initial focus is now on Cancel (Fluent norm for destructive
+   * alertdialogs). The previous implementation focused Confirm.
+   *
+   * All counts come from `effectiveNodeStore.dirtyBreakdown`
+   * (ADR-0011 extension 2026-06-28).
    */
-  import { onMount, onDestroy } from 'svelte';
   import type { DirtyBreakdown } from '$lib/layout';
+  import Dialog from './Dialog/Dialog.svelte';
+  import DialogTitle from './Dialog/DialogTitle.svelte';
+  import DialogActions from './Dialog/DialogActions.svelte';
+  import Button from './Dialog/Button.svelte';
 
   interface Props {
     message: string;
@@ -25,8 +34,6 @@
   }
 
   let { message, breakdown, confirmLabel, onConfirm, onCancel }: Props = $props();
-
-  let confirmBtn: HTMLButtonElement | undefined = $state();
 
   const lines = $derived(formatBreakdown(breakdown));
 
@@ -80,219 +87,48 @@
     }
     return out;
   }
-
-  // ── Keyboard handling ────────────────────────────────────────────────────
-
-  function handleKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      onCancel();
-    }
-  }
-
-  function handleOverlayClick(event: MouseEvent) {
-    if (event.target === event.currentTarget) {
-      onCancel();
-    }
-  }
-
-  function trapFocus(event: KeyboardEvent) {
-    if (event.key !== 'Tab') return;
-    const dialog = document.getElementById('unsaved-changes-dialog');
-    if (!dialog) return;
-    const focusable = Array.from(
-      dialog.querySelectorAll<HTMLElement>('button:not([disabled])'),
-    );
-    if (focusable.length < 2) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  }
-
-  onMount(() => {
-    confirmBtn?.focus();
-    window.addEventListener('keydown', handleKeydown);
-    window.addEventListener('keydown', trapFocus);
-  });
-
-  onDestroy(() => {
-    window.removeEventListener('keydown', handleKeydown);
-    window.removeEventListener('keydown', trapFocus);
-  });
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
-<div
-  class="uc-overlay"
-  role="presentation"
-  onclick={handleOverlayClick}
+<Dialog
+  open
+  width="sm"
+  role="alertdialog"
+  {onCancel}
 >
-  <div
-    id="unsaved-changes-dialog"
-    class="uc-dialog"
-    role="alertdialog"
-    aria-modal="true"
-    aria-labelledby="uc-title"
-    aria-describedby="uc-body"
-  >
-    <div class="uc-header">
-      <span class="uc-warning-icon" aria-hidden="true">⚠</span>
-      <h2 id="uc-title" class="uc-title">Unsaved Changes</h2>
-    </div>
+  {#snippet title()}
+    <DialogTitle glyph="warning">Unsaved Changes</DialogTitle>
+  {/snippet}
 
-    <div id="uc-body" class="uc-body">
-      <p class="uc-message">{message}</p>
-      {#if lines.length > 0}
-        <ul class="uc-breakdown">
-          {#each lines as line}
-            <li>{line}</li>
-          {/each}
-        </ul>
-      {/if}
-    </div>
+  <p class="uc-message">{message}</p>
+  {#if lines.length > 0}
+    <ul class="uc-breakdown">
+      {#each lines as line}
+        <li>{line}</li>
+      {/each}
+    </ul>
+  {/if}
 
-    <div class="uc-actions">
-      <button class="uc-btn uc-btn--cancel" onclick={onCancel}>Cancel</button>
-      <button
-        class="uc-btn uc-btn--confirm"
-        bind:this={confirmBtn}
-        onclick={onConfirm}
-      >{confirmLabel}</button>
-    </div>
-  </div>
-</div>
+  {#snippet actions()}
+    <DialogActions>
+      <Button appearance="secondary" onclick={onCancel}>Cancel</Button>
+      <Button appearance="primary" intent="danger" onclick={onConfirm}>
+        {confirmLabel}
+      </Button>
+    </DialogActions>
+  {/snippet}
+</Dialog>
 
 <style>
-  .uc-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 1500;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.35);
-    animation: uc-fade-in 0.15s ease-out;
-  }
-
-  @keyframes uc-fade-in {
-    from { opacity: 0; }
-    to   { opacity: 1; }
-  }
-
-  .uc-dialog {
-    background: #ffffff;
-    border-radius: 8px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
-    width: 400px;
-    max-width: 90vw;
-    padding: 20px 24px 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    animation: uc-slide-in 0.18s ease-out;
-    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
-    font-size: 13px;
-  }
-
-  @keyframes uc-slide-in {
-    from { transform: translateY(-12px); opacity: 0; }
-    to   { transform: translateY(0);     opacity: 1; }
-  }
-
-  .uc-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .uc-warning-icon {
-    font-size: 16px;
-    color: #ca5010;
-    flex-shrink: 0;
-  }
-
-  .uc-title {
-    margin: 0;
-    font-size: 14px;
-    font-weight: 600;
-    color: #201f1e;
-    line-height: 1.3;
-  }
-
-  .uc-body {
-    color: #323130;
-    line-height: 1.5;
-  }
-
   .uc-message {
-    margin: 0 0 8px 0;
+    margin: 0 0 12px 0;
+    color: var(--fluent-neutralForeground1);
   }
-
   .uc-breakdown {
     margin: 0;
     padding-left: 20px;
-    color: #605e5c;
+    color: var(--fluent-neutralForeground2);
   }
-
   .uc-breakdown li {
     margin: 2px 0;
-  }
-
-  .uc-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding-top: 4px;
-  }
-
-  .uc-btn {
-    padding: 5px 16px;
-    font-size: 13px;
-    font-weight: 500;
-    font-family: inherit;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: background-color 0.1s ease, border-color 0.1s ease;
-    white-space: nowrap;
-  }
-
-  .uc-btn--cancel {
-    background: #ffffff;
-    color: #323130;
-    border: 1px solid #c8c6c4;
-  }
-
-  .uc-btn--cancel:hover {
-    background: #f3f2f1;
-    border-color: #a19f9d;
-  }
-
-  .uc-btn--cancel:active {
-    background: #edebe9;
-  }
-
-  .uc-btn--confirm {
-    background: #ca5010;
-    color: #ffffff;
-    border: 1px solid transparent;
-  }
-
-  .uc-btn--confirm:hover {
-    background: #a33d0a;
-  }
-
-  .uc-btn--confirm:active {
-    background: #862f06;
-  }
-
-  .uc-btn--confirm:focus-visible {
-    outline: 2px solid #ca5010;
-    outline-offset: 2px;
   }
 </style>

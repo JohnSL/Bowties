@@ -28,6 +28,8 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `config/+page.svelte` | Config editor; renders ConfigSidebar + ElementCardDeck | — |
 | `traffic/+page.svelte` | Live CAN traffic monitor | — |
 
+**Global font stack** lives in `+page.svelte`'s `:global(html, body)` block and is mirrored by `.toast-wrap` in `+layout.svelte`. Canonical stack: `'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif` (Fluent v9). Many components redeclare the same stack locally to work around form-control non-inheritance (`<button>`, `<input>`, `<select>`, `<textarea>`); these are being retired as components migrate to the `Dialog/` shell — see [specs/018-block-indicator-facility/dialog-shell-refactor.md](../specs/018-block-indicator-facility/dialog-shell-refactor.md).
+
 ---
 
 ## Components (`app/src/lib/components/`)
@@ -41,8 +43,8 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `ElementPicker.svelte` | Searchable node/slot picker. Filters out offline nodes (`nodeRoster.isOffline`). | `ElementPicker.test.ts` |
 | `PickerTreeNode.svelte` | Tree node in picker hierarchy | — |
 | `EmptyState.svelte` | Empty catalog prompt | `EmptyState.test.ts` |
-| `AddElementDialog.svelte` | Add node/slot to existing bowtie | — |
-| `NewConnectionDialog.svelte` | Create new bowtie connection | — |
+| `AddElementDialog.svelte` | **dialog-shell-refactor Slice 5:** picker for adding a producer or consumer element to an existing bowtie, wrapping the `Dialog/` shell. 520px wide; title contains a role badge (Producer / Consumer) and the bowtie name. Body is a fixed-height (`min(60vh, 520px)`) flex column so the inner `ElementPicker` scroll container sizes correctly. | — |
+| `NewConnectionDialog.svelte` | **dialog-shell-refactor Slice 4:** dual element picker wrapping the `Dialog/` shell (replaced the prior native `<dialog>` + custom backdrop). 960px wide; body is a fixed-height (`min(72vh, 640px)`) flex column so the inner `ElementPicker` scroll containers size correctly. | — |
 | `ConnectorArrow.svelte` | Visual arrow connecting producers to consumers | — |
 | `RoleClassifyPrompt.svelte` | Sidecar prompt for resolving ambiguous event roles without hiding the slot row | — |
 
@@ -92,7 +94,7 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 |------|---------|------|
 | `LayoutPicker.svelte` | Fullscreen startup picker. Renders known-layout list + `New Layout` + `Browse…`. Emits `onOpen` / `onBrowse` / `onCreate` / `onRemove` — no async work owned here. | — |
 | `LayoutEntry.svelte` | Single known-layout row with name, path, locale-formatted `lastOpened`, and a Remove (✕) action. | — |
-| `NewLayoutDialog.svelte` | Modal for creating a new layout. Folder picker via `@tauri-apps/plugin-dialog`, sanitised folder name, preview of derived `<parent>/<name>` path. | — |
+| `NewLayoutDialog.svelte` | **dialog-shell-refactor Slice 4:** modal for creating a new layout, wrapping the `Dialog/` shell. Folder picker via `@tauri-apps/plugin-dialog`, sanitised folder name, preview of derived `<parent>/<name>` path. While `busy`, the shell locks (no Esc, overlay, or ×) via `closable={false}`. `zIndex={1600}` preserves the prior stacking. Submit data-testids preserved (`new-layout-name`, `new-layout-directory`, `new-layout-create`). | — |
 
 ### Railroad/ — Information channel inventory (Spec 015) + Live channel state (Spec 016)
 | File | Purpose | Test |
@@ -101,22 +103,39 @@ Governing docs: `product/architecture/code-placement-and-ownership.md`, `product
 | `ChannelGroup.svelte` | Section for one channel type: header with count + list of `ChannelCard`. Threads `nodeName`, `channelStates`, and `onRename` callback. | — |
 | `ChannelCard.svelte` | Single channel card: name (inline-editable), hardware reference, + occupancy indicator (four-state: `'no-config'` dashed ○ / `'unknown'` solid ○ / `'clear'` ● teal / `'occupied'` ● vermillion). Receives `occupancyState` prop. Follows BowtieCard inline-edit pattern. **Spec 017 / S2:** added `'no-config'` visual + tooltip. | `ChannelCard.test.ts` |
 
+### Dialog/ — Fluent v9 dialog shell (canonical design language)
+
+New shared shell + tokens, introduced by `specs/018-block-indicator-facility/dialog-shell-refactor.md` (Slice 2). Per-dialog migrations from the prior bespoke chrome land in subsequent slices.
+
+| File | Purpose | Test |
+|------|---------|------|
+| `Dialog/Dialog.svelte` | The shell. Owns overlay, surface, focus trap, Esc / overlay-click / × → `onCancel`, header divider + filled footer. Props: `{ open, width?, closable?, role?, ariaLabel?, initialFocus?, onCancel, title?, children, actions? }`. Stays declarative — callers own workflow per `frontend-components.instructions.md`. | `Dialog/Dialog.test.ts` |
+| `Dialog/DialogTitle.svelte` | Header content helper used inside `Dialog`'s `title` snippet. Optional `glyph='warning'|'error'|'info'` renders ⚠ / ❌ / ⓘ in Fluent palette (severeWarning orange for warning — glyph only, never on buttons). | — |
+| `Dialog/DialogActions.svelte` | Right-aligned footer button cluster used inside `Dialog`'s `actions` snippet. Cancel-style first, primary last (Fluent v9). | — |
+| `Dialog/Button.svelte` | Fluent v9 button. `appearance='primary'|'secondary'|'subtle'|'outline'` × `intent='default'|'danger'` × `size='sm'|'md'`. `primary + danger` is the destructive red used in confirms. Replaces the bespoke `.uc-btn--*`, `.dc-btn--*`, `.ed-btn--*`, etc. families as dialogs migrate. | `Dialog/Button.test.ts` |
+| `Dialog/tokens.css` | Fluent v9 design tokens (`--fluent-*` prefix). Imported once in `+layout.svelte`. Additive — legacy `--accent-blue` / `--text-*` family untouched. | — |
+| `Dialog/README.md` | Canonical authoring guide: when to use which variant, button-order convention, destructive-label rule, keyboard contract, what the shell does NOT do. **First stop for anyone authoring a new dialog.** | — |
+
 ### Root-level components
 | File | Purpose | Test |
 |------|---------|------|
-| `ConnectionManager.svelte` | Add/edit/delete saved connections; connect to LCC network. Device presets with adapter-specific baud rate dropdowns (JMRI-aligned options), flow control per adapter, "Show additional settings" toggle for advanced presets (RR-CirKits, MERG). Supports TCP, GridConnect serial, MERG GridConnect serial (header encoding), SLCAN. Flow control options: None, RTS/CTS, XON/XOFF (only for "Other" presets). | `ConnectionManager.test.ts` |
+| `ConnectionManager.svelte` | Add/edit/delete saved connections; connect to LCC network. Device presets with adapter-specific baud rate dropdowns (JMRI-aligned options), flow control per adapter, "Show additional settings" toggle for advanced presets (RR-CirKits, MERG). Supports TCP, GridConnect serial, MERG GridConnect serial (header encoding), SLCAN. Flow control options: None, RTS/CTS, XON/XOFF (only for "Other" presets). **dialog-shell-refactor Slice 4:** the Add/Edit modal now wraps the `Dialog/` shell (replaced the prior native `<dialog>` element). The connection list and "add saved connection" affordances remain in the component's main body, not the shell. | `ConnectionManager.test.ts` |
 | `TrafficMonitor.svelte` | Live traffic frame display | — |
 | `NodeList.svelte` | Discovered nodes with CDI viewer access | — |
-| `ErrorDialog.svelte` | Error modal with Escape-to-close. z-index 2000 — topmost overlay so errors are never hidden behind LayoutPicker (1200) or NewLayoutDialog (1600). | — |
-| `AboutDialog.svelte` | Help → About modal: shows app name, version (from `@tauri-apps/api/app`), copyright, license, and a clickable GitHub link. Escape/Enter → close. | — |
-| `DiscardConfirmDialog.svelte` | Confirm discard of unsaved edits | — |
-| `UnsavedChangesDialog.svelte` | **Spec 018 / S1.2 (ADR-0011 extension 2026-06-28):** modal shown on open / close / disconnect / exit with unsaved edits. Props: `{ message, breakdown: DirtyBreakdown, confirmLabel, onConfirm, onCancel }`. Renders one line per non-zero bucket from `dirtyBreakdown`; zero-count buckets are suppressed. Mirrors `DiscardConfirmDialog`'s alertdialog a11y pattern (focus trap, Escape cancels, Enter confirms, z-index 1500). The route captures `effectiveNodeStore.dirtyBreakdown` at the moment the dialog opens and passes the snapshot in, so counts do not change while the dialog is up. Replaces the inline `<div class="unsaved-dialog">` markup formerly in `+page.svelte`. | `UnsavedChangesDialog.test.ts` |
-| `AddBoardDialog.svelte` | Spec 014 / S8: modal picker for adding a placeholder board to the active offline layout. Lists bundled board-model profiles via `listBundledProfiles()` and calls `placeholderBoardOrchestrator.addPlaceholderBoard` on submit. Entry point is the native `File → Add Placeholder Board…` menu item (gated on `offlineActive && !busy`); mounted from `+page.svelte` behind a `showAddBoardDialog` state flag. | — |
+| `ErrorDialog.svelte` | **dialog-shell-refactor Slice 3:** error modal wrapping the `Dialog/` shell. Passes `zIndex={2000}` so errors stay above other dialogs (preserves the prior stacking behavior). Glyph is ❌ (Fluent danger red). Has a secondary `Copy Error` button + inline copy-status feedback. Enter is intentionally not bound so users can select and copy text. Esc / overlay / × → close. | — |
+| `AboutDialog.svelte` | **dialog-shell-refactor Slice 7:** Help → About modal, wrapping the `Dialog/` shell. Shows app name, version (from `@tauri-apps/api/app`), copyright, license, and a clickable GitHub link, all centered in the body. `initialFocus="last"` puts focus on the action Close button so Enter on the focused button closes the dialog (preserves the prior "Esc or Enter → close" contract). `zIndex={2000}` preserves the prior stacking. | — |
+| `DiscardConfirmDialog.svelte` | **dialog-shell-refactor Slice 3:** confirm-modal for discarding unsaved edits, wrapping the `Dialog/` shell. Renders ⚠ + "Discard unsaved changes" title and a destructive-red "Revert" primary button. The verb "Revert" is preserved because `SaveControls.test.ts` queries for it and the consuming UI labels the trigger action with that verb. | — |
+| `UnsavedChangesDialog.svelte` | **Spec 018 / S1.2 + dialog-shell-refactor Slice 2:** modal shown on open / close / disconnect / exit with unsaved edits. Wraps the `Dialog/` shell (no longer owns overlay, focus trap, Esc, or chrome). Props: `{ message, breakdown: DirtyBreakdown, confirmLabel, onConfirm, onCancel }`. Renders one line per non-zero bucket from `dirtyBreakdown`; zero-count buckets are suppressed. Cancel is the initial focus target (Fluent norm for destructive alertdialogs — the previous implementation focused Confirm). Confirm uses `appearance="primary" intent="danger"` (Fluent red `#c50f1f`), replacing the prior severeWarning orange `#ca5010`. All counts come from `effectiveNodeStore.dirtyBreakdown` (ADR-0011 extension 2026-06-28); the route captures the snapshot when the dialog opens. | `UnsavedChangesDialog.test.ts` |
+| `AddBoardDialog.svelte` | Spec 014 / S8: modal picker for adding a placeholder board to the active offline layout. Lists bundled board-model profiles via `listBundledProfiles()` and calls `placeholderBoardOrchestrator.addPlaceholderBoard` on submit. Entry point is the native `File → Add Placeholder Board…` menu item (gated on `offlineActive && !busy`); mounted from `+page.svelte` behind a `showAddBoardDialog` state flag. **dialog-shell-refactor Slice 4:** wraps the `Dialog/` shell. While `submitting`, the shell suppresses Cancel via a no-op `onCancel` so the in-flight add can't be aborted mid-write. | — |
 | `DiscoveryProgressModal.svelte` | Progress during discovery phases (reading, building-catalog, complete, cancelled) | — |
-| `SaveProgressDialog.svelte` | Modal during the three-phase save flow; reads phase + per-field bus-write counters from `saveProgressStore`. Auto-dismisses on `complete` / `error` after 2 s. | — |
+| `SaveProgressDialog.svelte` | **dialog-shell-refactor Slice 6:** modal during the three-phase save flow, wrapping the `Dialog/` shell. Reads phase + per-field bus-write counters from `saveProgressStore`. `closable={phase === 'error'}` — in-flight phases lock the shell (no Esc/overlay/×); only the failure state can be dismissed (Dismiss action button + Esc/×/overlay). Auto-dismisses on `complete`. | `saveProgress.svelte.test.ts` (store) |
 | `RefreshButton.svelte` | Refresh discovered nodes | — |
-| `CdiDownloadDialog.svelte` | CDI download prompt | — |
-| `CdiXmlViewer.svelte` | Syntax-highlighted CDI XML viewer | — |
+| `CdiDownloadDialog.svelte` | **dialog-shell-refactor Slice 6:** CDI download prompt, wrapping the `Dialog/` shell with `glyph="info"` title. `closable={!downloading}` — Esc/overlay/× dismiss only before the download starts; once in flight the shell locks. Renders per-node spinner / ✓ / ✗ status indicators and a global "Downloading CDI… (N of M)" line. | `CdiDownloadDialog.test.ts` |
+| `CdiXmlViewer.svelte` | **dialog-shell-refactor Slice 7:** syntax-highlighted CDI XML viewer, wrapping the `Dialog/` shell at `width="lg"` (large). Body is a fixed-height (`min(70vh, 600px)`) scroll container for the `<pre>` with Prism highlighting. Footer shows a contextual Copy button (only when XML is loaded) plus Close. Converted from pre-runes `export let` syntax to `$props()` + `$derived` during the migration. | — |
+| `CdiRedownloadDialog.svelte` | **dialog-shell-refactor Slice 6:** compact dialog shown while re-downloading CDI for a single node via the "Re-download CDI" menu item. Wraps the `Dialog/` shell with `glyph="info"`. `closable={status === 'downloading' && !cancelling}` — Esc/overlay/× trigger Cancel only during in-flight download; failed and done states use explicit action buttons (Close + Retry / auto-close after 800 ms). | `CdiRedownloadDialog.test.ts` |
+| `LayoutLoadingDialog.svelte` | **dialog-shell-refactor Slice 6 (extracted from `+page.svelte`):** non-dismissible "Opening layout" progress dialog. Wraps the `Dialog/` shell with `closable={false}` and `zIndex={2200}` (above `ErrorDialog`'s 2000). Body shows a spinner + status text fed from the route's `$layoutOpenStatusText`. | — |
+| `ChannelRemovalDialog.svelte` | **dialog-shell-refactor Slice 3 (extracted from `+page.svelte`):** confirm-modal for discarding channels already wired to a slot when changing a daughter board. Props: `{ channelCount, onConfirm, onCancel }`. Spec 015 / S5 callsite is the connector-selection orchestrator. | — |
+| `DeletePlaceholderDialog.svelte` | **dialog-shell-refactor Slice 3 (extracted from `+page.svelte`):** confirm-modal for deleting a placeholder board. Spec 014 / S8.5 / T11. The Delete button keeps `data-testid="confirm-delete-placeholder"` for integration-test selectors. | — |
 
 ---
 

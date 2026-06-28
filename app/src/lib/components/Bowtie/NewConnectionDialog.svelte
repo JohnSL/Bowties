@@ -2,25 +2,10 @@
   T025 + T026: NewConnectionDialog.svelte — Dual element picker dialog for
   creating a new bowtie connection.
 
-  Props:
-    visible: boolean — whether the dialog is shown
-    onConfirm: callback when user creates a connection
-    onCancel: callback when user cancels
-    prefillProducer: optional pre-filled producer selection (config-first entry US3)
-    prefillConsumer: optional pre-filled consumer selection (config-first entry US3)
-
-  Layout (FR-034):
-    ┌──────────────────────────────────────────────────────────┐
-    │  New Connection                                          │
-    ├──────────────────────────────────────────────────────────┤
-    │  Name: [optional input field]                            │
-    ├──────────────────────────────────────────────────────────┤
-    │  ┌─ Producer ────────┐  ┌─ Consumer ────────┐           │
-    │  │  [ElementPicker]  │  │  [ElementPicker]  │           │
-    │  └───────────────────┘  └───────────────────┘           │
-    ├──────────────────────────────────────────────────────────┤
-    │  [Cancel]                        [Create Connection]     │
-    └──────────────────────────────────────────────────────────┘
+  dialog-shell-refactor (Slice 4): wraps the Fluent `Dialog` shell, replacing
+  the prior native `<dialog>` + custom backdrop. Wide surface (960 px) with
+  the picker panels filling a fixed-height body so internal scroll containers
+  in `<ElementPicker>` still work.
 -->
 
 <script lang="ts">
@@ -29,6 +14,10 @@
   // ADR-0004 / S2c: read bowtie preview through the layout facade.
   import { effectiveLayoutStore } from '$lib/layout';
   import { isPlaceholderEventId } from '$lib/utils/eventIds';
+  import Dialog from '$lib/components/Dialog/Dialog.svelte';
+  import DialogTitle from '$lib/components/Dialog/DialogTitle.svelte';
+  import DialogActions from '$lib/components/Dialog/DialogActions.svelte';
+  import Button from '$lib/components/Dialog/Button.svelte';
 
   interface Props {
     visible: boolean;
@@ -164,59 +153,61 @@
   }
 </script>
 
-{#if visible}
-  <!-- Backdrop -->
-  <div class="dialog-backdrop" onclick={handleCancel} role="presentation"></div>
+<Dialog
+  open={visible}
+  width={960}
+  ariaLabel="New Connection"
+  initialFocus="none"
+  onCancel={handleCancel}
+>
+  {#snippet title()}
+    <DialogTitle>New Connection</DialogTitle>
+  {/snippet}
 
-  <dialog class="connection-dialog" open aria-label="New Connection">
-    <header class="dialog-header">
-      <h2>New Connection</h2>
-      <button class="close-btn" onclick={handleCancel} aria-label="Close">✕</button>
-    </header>
+  <div class="ncd-body">
+    <!-- Name input -->
+    <div class="name-field">
+      <label for="connection-name">Connection name (optional)</label>
+      <input
+        id="connection-name"
+        type="text"
+        placeholder="e.g., Yard Entry Signal"
+        bind:value={name}
+        class="name-input"
+      />
+    </div>
 
-    <div class="dialog-body">
-      <!-- Name input -->
-      <div class="name-field">
-        <label for="connection-name">Connection name (optional)</label>
-        <input
-          id="connection-name"
-          type="text"
-          placeholder="e.g., Yard Entry Signal"
-          bind:value={name}
-          class="name-input"
+    <!-- Dual picker panels -->
+    <div class="picker-panels">
+      <div class="picker-panel">
+        <h3 class="panel-label panel-label--producer">Producer</h3>
+        <ElementPicker
+          roleFilter="Producer"
+          onSelect={handleProducerSelect}
+          selectedElement={producerSelection}
         />
       </div>
 
-      <!-- Dual picker panels -->
-      <div class="picker-panels">
-        <div class="picker-panel">
-          <h3 class="panel-label panel-label--producer">Producer</h3>
-          <ElementPicker
-            roleFilter="Producer"
-            onSelect={handleProducerSelect}
-            selectedElement={producerSelection}
-          />
-        </div>
+      <div class="picker-divider" aria-hidden="true">
+        <span class="arrow">→</span>
+      </div>
 
-        <div class="picker-divider" aria-hidden="true">
-          <span class="arrow">→</span>
-        </div>
-
-        <div class="picker-panel">
-          <h3 class="panel-label panel-label--consumer">Consumer</h3>
-          <ElementPicker
-            roleFilter="Consumer"
-            onSelect={handleConsumerSelect}
-            selectedElement={consumerSelection}
-          />
-        </div>
+      <div class="picker-panel">
+        <h3 class="panel-label panel-label--consumer">Consumer</h3>
+        <ElementPicker
+          roleFilter="Consumer"
+          onSelect={handleConsumerSelect}
+          selectedElement={consumerSelection}
+        />
       </div>
     </div>
+  </div>
 
-    <footer class="dialog-footer">
-      <button class="btn btn-secondary" onclick={handleCancel}>Cancel</button>
-      <button
-        class="btn btn-primary"
+  {#snippet actions()}
+    <DialogActions>
+      <Button appearance="secondary" onclick={handleCancel}>Cancel</Button>
+      <Button
+        appearance="primary"
         disabled={!canCreate}
         onclick={handleCreate}
         title={canCreate
@@ -224,76 +215,20 @@
           : 'Enter a name or select both a producer and consumer'}
       >
         {isNameOnly ? 'Create Planning Bowtie' : 'Create Connection'}
-      </button>
-    </footer>
-  </dialog>
-{/if}
+      </Button>
+    </DialogActions>
+  {/snippet}
+</Dialog>
 
 <style>
-  .dialog-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    z-index: 100;
-  }
-
-  .connection-dialog {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 101;
-    width: min(90vw, 960px);
-    height: 85vh;
-    display: flex;
-    flex-direction: column;
-    background: #fff;
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.16);
-    padding: 0;
-    overflow: hidden;
-    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
-  }
-
-  .dialog-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 18px;
-    border-bottom: 1px solid #e5e7eb;
-    background: #fafafa;
-  }
-
-  .dialog-header h2 {
-    margin: 0;
-    font-size: 1rem;
-    font-weight: 600;
-    color: #1f2937;
-  }
-
-  .close-btn {
-    background: none;
-    border: none;
-    font-size: 1.1rem;
-    cursor: pointer;
-    color: #6b7280;
-    padding: 2px 6px;
-    border-radius: 4px;
-  }
-
-  .close-btn:hover {
-    background: #f3f4f6;
-    color: #374151;
-  }
-
-  .dialog-body {
-    flex: 1;
-    overflow: hidden;
-    padding: 16px 18px;
+  /* Body fills a fixed height so the inner ElementPicker scroll containers
+     can size correctly. The shell's body overflow stays auto (default) but
+     never triggers because this fills it exactly. */
+  .ncd-body {
     display: flex;
     flex-direction: column;
     gap: 14px;
+    height: min(72vh, 640px);
     min-height: 0;
   }
 
@@ -302,25 +237,24 @@
     flex-direction: column;
     gap: 4px;
   }
-
   .name-field label {
-    font-size: 0.82rem;
+    font-size: var(--fluent-fontSizeBase200);
     font-weight: 500;
-    color: #374151;
+    color: var(--fluent-neutralForeground2);
   }
-
   .name-input {
-    border: 1px solid #d1d5db;
+    border: 1px solid var(--fluent-neutralStroke1);
     border-radius: 4px;
     padding: 6px 10px;
-    font-size: 0.88rem;
-    font-family: inherit;
+    font-size: var(--fluent-fontSizeBase300);
+    font-family: var(--fluent-fontFamily);
     outline: none;
+    background: var(--fluent-neutralBackground1);
+    color: var(--fluent-neutralForeground1);
   }
-
   .name-input:focus {
-    border-color: #0078d4;
-    box-shadow: 0 0 0 1px rgba(0, 120, 212, 0.3);
+    border-color: var(--fluent-strokeFocus2);
+    box-shadow: 0 0 0 2px var(--fluent-strokeFocusHalo);
   }
 
   .picker-panels {
@@ -330,7 +264,6 @@
     min-height: 0;
     overflow: hidden;
   }
-
   .picker-panel {
     flex: 1;
     display: flex;
@@ -340,7 +273,6 @@
     min-height: 0;
     overflow: hidden;
   }
-
   .panel-label {
     margin: 0;
     font-size: 0.78rem;
@@ -352,77 +284,21 @@
     display: inline-block;
     width: fit-content;
   }
-
   .panel-label--producer {
     color: #0b6a0b;
     background: #dff6dd;
   }
-
   .panel-label--consumer {
     color: #0078d4;
     background: #deecf9;
   }
-
   .picker-divider {
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
     width: 40px;
-    color: #d1d5db;
+    color: var(--fluent-neutralForeground3);
     font-size: 1.2rem;
-  }
-
-  .arrow {
-    color: #9ca3af;
-  }
-
-  .dialog-footer {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 8px;
-    padding: 12px 18px;
-    border-top: 1px solid #e5e7eb;
-    background: #fafafa;
-    flex-shrink: 0;
-  }
-
-  .btn {
-    padding: 6px 16px;
-    font-size: 0.88rem;
-    font-family: inherit;
-    border-radius: 4px;
-    cursor: pointer;
-    border: 1px solid transparent;
-    font-weight: 500;
-    transition: background 0.12s, border-color 0.12s;
-  }
-
-  .btn-secondary {
-    background: #fff;
-    border-color: #d1d5db;
-    color: #374151;
-  }
-
-  .btn-secondary:hover {
-    background: #f3f4f6;
-  }
-
-  .btn-primary {
-    background: #0078d4;
-    color: #fff;
-    border-color: #0078d4;
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    background: #106ebe;
-  }
-
-  .btn-primary:disabled {
-    background: #e5e7eb;
-    border-color: #e5e7eb;
-    color: #9ca3af;
-    cursor: not-allowed;
   }
 </style>

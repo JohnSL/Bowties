@@ -1,0 +1,59 @@
+/*
+ * Fluent v9 design tokens for Bowties dialogs.
+ *
+ * Imported once at the app root (`+layout.svelte`). All Dialog and Button
+ * components read from these variables. Existing `--accent-blue` / `--text-*`
+ * variables in other components are intentionally left alone; a later sweep
+ * can drop the `--fluent-*` prefix once Fluent is the only token system.
+ *
+ * See specs/018-block-indicator-facility/dialog-shell-refactor.md.
+ */
+
+:root {
+  /* Neutrals */
+  --fluent-neutralBackground1:  #ffffff;  /* dialog surface, header, body */
+  --fluent-neutralBackground2:  #fafafa;  /* dialog footer fill           */
+  --fluent-neutralBackground3:  #f5f5f5;  /* page background, hover fill  */
+  --fluent-subtleBackgroundHover: #f5f5f5;
+  --fluent-subtleBackgroundPressed: #e0e0e0;
+  --fluent-neutralStroke1:      #d1d1d1;  /* dividers, default borders   */
+  --fluent-neutralStroke1Hover: #c7c7c7;
+  --fluent-neutralForeground1:  #242424;  /* titles, primary text         */
+  --fluent-neutralForeground2:  #424242;  /* body text                    */
+  --fluent-neutralForeground3:  #616161;  /* metadata, subdued text       */
+  --fluent-neutralForegroundOnBrand: #ffffff;
+
+  /* Brand */
+  --fluent-brandBackground:         #0f6cbd;
+  --fluent-brandBackgroundHover:    #115ea3;
+  --fluent-brandBackgroundPressed:  #0c3b5e;
+
+  /* Danger (destructive primary) */
+  --fluent-dangerBackground:        #c50f1f;
+  --fluent-dangerBackgroundHover:   #b10e1c;
+  --fluent-dangerBackgroundPressed: #960b17;
+
+  /* Severe warning — GLYPH ONLY, never on buttons */
+  --fluent-warningGlyph:            #bc4b09;
+
+  /* Focus */
+  --fluent-strokeFocus2:            #2886de;
+  --fluent-strokeFocusHalo:         rgba(40, 134, 222, 0.25);
+
+  /* Typography */
+  --fluent-fontFamily: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --fluent-fontSizeBase200: 12px;   /* metadata */
+  --fluent-fontSizeBase300: 14px;   /* body */
+  --fluent-fontSizeBase400: 16px;   /* dialog title */
+  --fluent-fontWeightRegular: 400;
+  --fluent-fontWeightSemibold: 600;
+  --fluent-lineHeightBase200: 16px;
+  --fluent-lineHeightBase300: 20px;
+  --fluent-lineHeightBase400: 22px;
+
+  /* Shadows */
+  --fluent-shadow16: 0 8px 24px rgba(0, 0, 0, 0.18), 0 0 2px rgba(0, 0, 0, 0.12);
+
+  /* Overlay */
+  --fluent-dialogOverlay: rgba(0, 0, 0, 0.35);
+}

@@ -78,6 +78,9 @@
   import { CdiInspectionOrchestrator } from '$lib/orchestration/cdiInspectionOrchestrator.svelte';
   import { handleDiscoveredNode, reconcileRefreshState, refreshReinitializedNode } from '$lib/orchestration/discoveryOrchestrator';
   import UnsavedChangesDialog from '$lib/components/UnsavedChangesDialog.svelte';
+  import ChannelRemovalDialog from '$lib/components/ChannelRemovalDialog.svelte';
+  import DeletePlaceholderDialog from '$lib/components/DeletePlaceholderDialog.svelte';
+  import LayoutLoadingDialog from '$lib/components/LayoutLoadingDialog.svelte';
   import type { DirtyBreakdown } from '$lib/layout';
   import { configChangesStore } from '$lib/stores/configChanges.svelte';
   import {
@@ -1547,13 +1550,7 @@
   <SyncPanel bind:visible={syncPanelVisible} />
 
   {#if $layoutOpenInProgress}
-    <div class="layout-loading-backdrop" role="presentation">
-      <div class="layout-loading-dialog" role="dialog" aria-modal="true" aria-live="polite" aria-label="Loading layout">
-        <div class="layout-loading-spinner" aria-hidden="true"></div>
-        <h2>Opening layout</h2>
-        <p>{$layoutOpenStatusText}</p>
-      </div>
-    </div>
+    <LayoutLoadingDialog statusText={$layoutOpenStatusText} />
   {/if}
 
   <!-- ═══ ERROR BANNER ═══ -->
@@ -1760,27 +1757,11 @@
 {/if}
 
 {#if channelRemovalDialog}
-  <div
-    class="unsaved-overlay"
-    role="dialog"
-    aria-modal="true"
-    aria-label="Channel removal confirmation"
-  >
-    <div class="unsaved-dialog">
-      <h3 class="unsaved-title">Remove Channels</h3>
-      <p class="unsaved-body">Changing the daughter board will remove {channelRemovalDialog.channelCount} channel{channelRemovalDialog.channelCount === 1 ? '' : 's'}. Continue?</p>
-      <div class="unsaved-actions">
-        <button
-          class="unsaved-btn unsaved-btn-secondary"
-          onclick={() => { channelRemovalDialog = null; }}
-        >Cancel</button>
-        <button
-          class="unsaved-btn unsaved-btn-danger"
-          onclick={() => { channelRemovalDialog?.onConfirm(); }}
-        >Continue</button>
-      </div>
-    </div>
-  </div>
+  <ChannelRemovalDialog
+    channelCount={channelRemovalDialog.channelCount}
+    onCancel={() => { channelRemovalDialog = null; }}
+    onConfirm={() => { channelRemovalDialog?.onConfirm(); }}
+  />
 {/if}
 
 {#if showAboutDialog}
@@ -1795,50 +1776,20 @@
 {/if}
 
 {#if pendingDeletePlaceholderKey}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
-  <div
-    class="unsaved-overlay"
-    role="presentation"
-    onclick={(e) => { if (e.target === e.currentTarget) pendingDeletePlaceholderKey = null; }}
-  >
-    <div
-      class="unsaved-dialog"
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="delete-placeholder-title"
-    >
-      <h3 id="delete-placeholder-title" class="unsaved-title">Delete placeholder board?</h3>
-      <p class="unsaved-body">
-        This will remove the placeholder board and any unsaved configuration
-        changes for it. This cannot be undone.
-      </p>
-      <div class="unsaved-actions">
-        <button
-          class="unsaved-btn unsaved-btn-secondary"
-          onclick={() => { pendingDeletePlaceholderKey = null; }}
-        >
-          Cancel
-        </button>
-        <button
-          class="unsaved-btn unsaved-btn-danger"
-          data-testid="confirm-delete-placeholder"
-          onclick={async () => {
-            const key = pendingDeletePlaceholderKey;
-            pendingDeletePlaceholderKey = null;
-            if (!key) return;
-            try {
-              await deletePlaceholderBoard({ nodeKey: key, confirm: async () => true });
-            } catch (e) {
-              console.error('Failed to delete placeholder board:', e);
-              errorDialog = { title: 'Delete failed', message: String(e) };
-            }
-          }}
-        >
-          Delete
-        </button>
-      </div>
-    </div>
-  </div>
+  <DeletePlaceholderDialog
+    onCancel={() => { pendingDeletePlaceholderKey = null; }}
+    onConfirm={async () => {
+      const key = pendingDeletePlaceholderKey;
+      pendingDeletePlaceholderKey = null;
+      if (!key) return;
+      try {
+        await deletePlaceholderBoard({ nodeKey: key, confirm: async () => true });
+      } catch (e) {
+        console.error('Failed to delete placeholder board:', e);
+        errorDialog = { title: 'Delete failed', message: String(e) };
+      }
+    }}
+  />
 {/if}
 
 <SaveProgressDialog />
@@ -1848,7 +1799,8 @@
     margin: 0;
     padding: 0;
     height: 100%;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    /* Fluent v9 type stack (see specs/018-block-indicator-facility/dialog-shell-refactor.md). */
+    font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     background: white;
     overflow: hidden;
   }
@@ -2021,54 +1973,8 @@
     gap: 8px;
   }
 
-  .layout-loading-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 2200;
-    background: rgba(15, 23, 42, 0.24);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-  }
-
-  .layout-loading-dialog {
-    width: min(360px, calc(100vw - 40px));
-    background: #fff;
-    color: #1f2937;
-    border: 1px solid #d1d5db;
-    border-radius: 10px;
-    box-shadow: 0 16px 38px rgba(15, 23, 42, 0.24);
-    padding: 18px 18px 16px;
-    text-align: center;
-  }
-
-  .layout-loading-dialog h2 {
-    margin: 0;
-    font-size: 16px;
-    font-weight: 600;
-    letter-spacing: 0.01em;
-  }
-
-  .layout-loading-dialog p {
-    margin: 8px 0 0;
-    font-size: 13px;
-    color: #4b5563;
-  }
-
-  .layout-loading-spinner {
-    width: 18px;
-    height: 18px;
-    margin: 0 auto 10px;
-    border-radius: 50%;
-    border: 2px solid #dbeafe;
-    border-top-color: #2563eb;
-    animation: layout-loading-spin 0.85s linear infinite;
-  }
-
-  @keyframes layout-loading-spin {
-    to { transform: rotate(360deg); }
-  }
+  /* layout-loading-* styles retired in dialog-shell-refactor (Slice 6)
+     when the inline markup was extracted to `LayoutLoadingDialog.svelte`. */
 
   .toolbar-btn {
     display: flex;
@@ -2273,75 +2179,10 @@
     flex-direction: column;
   }
 
-  /* T050: Unsaved changes dialog (FR-024) */
-  .unsaved-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.45);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
-  .unsaved-dialog {
-    background: #fff;
-    border-radius: 8px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-    padding: 20px 24px;
-    width: 380px;
-    max-width: 95vw;
-  }
-
-  .unsaved-title {
-    margin: 0 0 10px;
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: #1f2937;
-  }
-
-  .unsaved-body {
-    margin: 0 0 16px;
-    font-size: 0.85rem;
-    color: #6b7280;
-    line-height: 1.5;
-  }
-
-  .unsaved-actions {
-    display: flex;
-    gap: 8px;
-    justify-content: flex-end;
-  }
-
-  .unsaved-btn {
-    padding: 6px 14px;
-    font-size: 0.82rem;
-    font-weight: 500;
-    border-radius: 4px;
-    cursor: pointer;
-    border: 1px solid transparent;
-    transition: background 0.15s;
-  }
-
-  .unsaved-btn-secondary {
-    color: #374151;
-    background: #fff;
-    border-color: #d1d5db;
-  }
-
-  .unsaved-btn-secondary:hover {
-    background: #f9fafb;
-  }
-
-  .unsaved-btn-danger {
-    color: #fff;
-    background: #dc2626;
-    border-color: #dc2626;
-  }
-
-  .unsaved-btn-danger:hover {
-    background: #b91c1c;
-  }
+  /* T050: Unsaved changes dialog (FR-024) styles retired in
+     dialog-shell-refactor (Slice 3) — the inline `.unsaved-*` markup was
+     replaced by `UnsavedChangesDialog`, `ChannelRemovalDialog`, and
+     `DeletePlaceholderDialog`, all of which use the Fluent `Dialog` shell. */
 
   /* Spec 014 / S8.5 / T11: in-pane "Delete Placeholder Board" action. */
   .placeholder-pane-actions {

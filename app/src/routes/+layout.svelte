@@ -1,5 +1,6 @@
 <script lang="ts">
   import '../app.css';
+  import '$lib/components/Dialog/tokens.css';
   import { SvelteToast } from '@zerodevx/svelte-toast';
   import type { Snippet } from 'svelte';
 
@@ -26,7 +27,7 @@
     --toastWidth: 22rem;
     --toastBorderRadius: 4px;
     --toastMsgPadding: 0.6rem 0.75rem;
-    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+    font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     font-size: 13px;
   }
 

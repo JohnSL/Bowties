@@ -3,6 +3,10 @@
   import { createEventDispatcher, onMount } from 'svelte';
   import { getLayoutConnections, saveLayoutConnections } from '$lib/api/layout';
   import { layoutStore } from '$lib/stores/layout.svelte';
+  import Dialog from '$lib/components/Dialog/Dialog.svelte';
+  import DialogTitle from '$lib/components/Dialog/DialogTitle.svelte';
+  import DialogActions from '$lib/components/Dialog/DialogActions.svelte';
+  import Button from '$lib/components/Dialog/Button.svelte';
 
   type AdapterType = 'tcp' | 'gridConnectSerial' | 'mergGridConnectSerial' | 'slcanSerial';
   type FlowControl = 'none' | 'rtsCts' | 'xonXoff';
@@ -458,115 +462,120 @@
   {/if}
 </div>
 
-<!-- ── Modal dialog ──────────────────────────────────────── -->
+<!-- ── Modal dialog (dialog-shell-refactor Slice 4: native <dialog> retired) ── -->
 {#if showModal}
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="cm-overlay" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) closeModal(); }}>
-    <dialog class="cm-dialog" open aria-modal="true" aria-label={editingId === null ? 'Add connection' : 'Edit connection'}>
-      <div class="cm-dialog-header">
-        <h3>{editingId === null ? 'Add connection' : 'Edit connection'}</h3>
-        <button class="cm-close-btn" onclick={closeModal} aria-label="Close">×</button>
-      </div>
+  <Dialog
+    open
+    width="md"
+    ariaLabel={editingId === null ? 'Add connection' : 'Edit connection'}
+    initialFocus="none"
+    onCancel={closeModal}
+  >
+    {#snippet title()}
+      <DialogTitle>{editingId === null ? 'Add connection' : 'Edit connection'}</DialogTitle>
+    {/snippet}
 
-      <form class="cm-form" onsubmit={(e) => { e.preventDefault(); submitForm(); }}>
-        <!-- Name -->
+    <form class="cm-form" onsubmit={(e) => { e.preventDefault(); void submitForm(); }}>
+      <!-- Name -->
+      <label class="cm-field">
+        <span>Name</span>
+        <input type="text" bind:value={formName} placeholder="My layout hub" required />
+      </label>
+
+      <!-- Device picker -->
+      <label class="cm-field">
+        <span>Device</span>
+        <select bind:value={formDevice}>
+          {#each NAMED_DEVICES as key}
+            <option value={key}>{DEVICE_PRESETS[key].label}</option>
+          {/each}
+          <option disabled>──────────</option>
+          {#each OTHER_DEVICES as key}
+            <option value={key}>{DEVICE_PRESETS[key].label}</option>
+          {/each}
+        </select>
+      </label>
+      <p class="cm-hint cm-device-hint">{deviceInfo.hint}</p>
+
+      <!-- TCP fields -->
+      {#if !isSerial}
         <label class="cm-field">
-          <span>Name</span>
-          <input type="text" bind:value={formName} placeholder="My layout hub" required />
+          <span>Host</span>
+          <input type="text" bind:value={formHost} placeholder="localhost" />
         </label>
-
-        <!-- Device picker -->
         <label class="cm-field">
-          <span>Device</span>
-          <select bind:value={formDevice}>
-            {#each NAMED_DEVICES as key}
-              <option value={key}>{DEVICE_PRESETS[key].label}</option>
-            {/each}
-            <option disabled>──────────</option>
-            {#each OTHER_DEVICES as key}
-              <option value={key}>{DEVICE_PRESETS[key].label}</option>
-            {/each}
-          </select>
+          <span>Port</span>
+          <input type="number" bind:value={formTcpPort} min="1" max="65535" />
         </label>
-        <p class="cm-hint cm-device-hint">{deviceInfo.hint}</p>
+      {/if}
 
-        <!-- TCP fields -->
-        {#if !isSerial}
-          <label class="cm-field">
-            <span>Host</span>
-            <input type="text" bind:value={formHost} placeholder="localhost" />
-          </label>
-          <label class="cm-field">
-            <span>Port</span>
-            <input type="number" bind:value={formTcpPort} min="1" max="65535" />
-          </label>
-        {/if}
-
-        <!-- Serial fields -->
-        {#if isSerial}
-          <div class="cm-field cm-port-row">
-            <div class="cm-field-inner">
-              <span>COM port</span>
-              {#if availablePorts.length > 0}
-                <select bind:value={formSerialPort}>
-                  {#each availablePorts as p}
-                    <option value={p}>{p}</option>
-                  {/each}
-                </select>
-              {:else}
-                <input type="text" bind:value={formSerialPort} placeholder="COM3" />
-              {/if}
-            </div>
-            <button
-              type="button"
-              class="btn-secondary cm-refresh-btn"
-              onclick={refreshPorts}
-              disabled={portsLoading}
-              title="Refresh port list"
-            >
-              {portsLoading ? '…' : '⟳'}
-            </button>
-          </div>
-
-          {#if deviceInfo.advancedMode === 'toggle'}
-            <label class="cm-toggle-label">
-              <input type="checkbox" bind:checked={formShowAdditional} />
-              <span>Show additional connection settings</span>
-            </label>
-          {/if}
-
-          {#if showBaudFields}
-            <label class="cm-field">
-              <span>Baud rate</span>
-              <select bind:value={formBaudRate}>
-                {#each deviceInfo.baudOptions as rate}
-                  <option value={rate}>{rate.toLocaleString()} baud</option>
+      <!-- Serial fields -->
+      {#if isSerial}
+        <div class="cm-field cm-port-row">
+          <div class="cm-field-inner">
+            <span>COM port</span>
+            {#if availablePorts.length > 0}
+              <select bind:value={formSerialPort}>
+                {#each availablePorts as p}
+                  <option value={p}>{p}</option>
                 {/each}
               </select>
-            </label>
-            {#if deviceInfo.flowControlOverridable}
-              <label class="cm-field">
-                <span>Flow control</span>
-                <select bind:value={formFlowControl}>
-                  <option value="none">None</option>
-                  <option value="rtsCts">RTS/CTS</option>
-                  <option value="xonXoff">XON/XOFF</option>
-                </select>
-              </label>
+            {:else}
+              <input type="text" bind:value={formSerialPort} placeholder="COM3" />
             {/if}
-          {/if}
-        {/if}
-
-        <div class="cm-dialog-footer">
-          <button type="button" class="btn-secondary" onclick={closeModal}>Cancel</button>
-          <button type="submit" class="btn-primary" disabled={!formName.trim()}>
-            {editingId === null ? 'Add' : 'Save'}
+          </div>
+          <button
+            type="button"
+            class="btn-secondary cm-refresh-btn"
+            onclick={refreshPorts}
+            disabled={portsLoading}
+            title="Refresh port list"
+          >
+            {portsLoading ? '…' : '⟳'}
           </button>
         </div>
-      </form>
-    </dialog>
-  </div>
+
+        {#if deviceInfo.advancedMode === 'toggle'}
+          <label class="cm-toggle-label">
+            <input type="checkbox" bind:checked={formShowAdditional} />
+            <span>Show additional connection settings</span>
+          </label>
+        {/if}
+
+        {#if showBaudFields}
+          <label class="cm-field">
+            <span>Baud rate</span>
+            <select bind:value={formBaudRate}>
+              {#each deviceInfo.baudOptions as rate}
+                <option value={rate}>{rate.toLocaleString()} baud</option>
+              {/each}
+            </select>
+          </label>
+          {#if deviceInfo.flowControlOverridable}
+            <label class="cm-field">
+              <span>Flow control</span>
+              <select bind:value={formFlowControl}>
+                <option value="none">None</option>
+                <option value="rtsCts">RTS/CTS</option>
+                <option value="xonXoff">XON/XOFF</option>
+              </select>
+            </label>
+          {/if}
+        {/if}
+      {/if}
+
+      <button type="submit" class="cm-hidden-submit" tabindex="-1" aria-hidden="true"></button>
+    </form>
+
+    {#snippet actions()}
+      <DialogActions>
+        <Button appearance="secondary" onclick={closeModal}>Cancel</Button>
+        <Button appearance="primary" disabled={!formName.trim()} onclick={submitForm}>
+          {editingId === null ? 'Add' : 'Save'}
+        </Button>
+      </DialogActions>
+    {/snippet}
+  </Dialog>
 {/if}
 
 <style>
@@ -710,60 +719,17 @@
     padding: 0.2rem 0.5rem;
   }
 
-  /* ── Modal overlay ── */
-  .cm-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
+  /* Modal overlay/dialog/header/close styles retired in dialog-shell-refactor
+     Slice 4 — the native <dialog> was replaced with the Fluent `Dialog` shell.
+     The form, field, hint, port-row, toggle-label, and refresh-button styles
+     below remain because they style the form body content that lives inside
+     the shell. */
 
-  .cm-dialog {
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 10px;
-    padding: 0;
-    width: min(480px, 96vw);
-    max-height: 90vh;
-    overflow-y: auto;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.18);
-  }
-
-  .cm-dialog-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1rem 1.25rem 0.75rem;
-    border-bottom: 1px solid #e5e7eb;
-  }
-
-  .cm-dialog-header h3 {
-    margin: 0;
-    font-size: 1rem;
-    color: #111827;
-  }
-
-  .cm-close-btn {
-    background: none;
-    border: none;
-    font-size: 20px;
-    line-height: 1;
-    color: #9ca3af;
-    cursor: pointer;
-    padding: 2px 6px;
-    border-radius: 4px;
-  }
-  .cm-close-btn:hover { color: #111827; background: #f3f4f6; }
-
-  /* ── Form (shared in modal) ── */
+  /* ── Form (inside the modal shell) ── */
   .cm-form {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-    padding: 1rem 1.25rem;
   }
 
   .cm-field {
@@ -845,13 +811,15 @@
     flex-shrink: 0;
   }
 
-  .cm-dialog-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.5rem;
-    padding-top: 0.5rem;
-    border-top: 1px solid #e5e7eb;
-    margin-top: 0.25rem;
+  .cm-hidden-submit {
+    position: absolute;
+    width: 0;
+    height: 0;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
   }
 </style>
 
