@@ -101,3 +101,72 @@ bowtieMetadataStore, and any future layout-scoped editable store).
 Spec 015 S5: pressing Escape after entering channel rename mode (without
 changing the value) recorded a spurious rename draft, causing `isDirty` to
 report unsaved changes when none existed.
+
+## 2026-06-27 extension: facilities.yaml joins the draft-layer family
+
+### Context
+
+Spec 018 (Block Indicator Facility) adds **Facilities** as a new
+first-class persisted entity in the layout folder, with their own file
+`facilities.yaml` sibling to `bowties.yaml`, `channels.yaml`,
+`offline-changes.yaml`, and `manifest.yaml`. Facility CRUD and slot
+bind/unbind are user-initiated edits that must participate in the same
+edit lifecycle as channels and bowtie metadata, or every interaction would
+recreate the write-through bugs ADR-0012 was written to prevent.
+
+### Decision
+
+`facilitiesStore` (frontend, `app/src/lib/stores/facilities.svelte.ts`)
+implements the same four-method draft-layer contract: `isDirty`,
+`collectDeltas()`, `discard()`, `hydrateBaseline(facilities)`. The save
+orchestrator collects facility deltas alongside channels / connectors /
+bowtie-metadata and passes them to `save_layout_directory`, which applies
+them to `facilities.yaml` through the journaled writer (ADR-0006). No
+backend `bind_slot` / `add_facility` IPC writes to disk from a user
+interaction handler; only `collectDeltas()` on save does.
+
+The companion read-only `behaviorTemplatesStore` is **not** an editable
+store — behavior templates are hardcoded in `bowties-core` for this slice
+— so it does not implement the draft contract. It is hydrated once on app
+start from a `list_behavior_templates` IPC and treated as a registry
+mirror.
+
+### Pattern
+
+Mirrors the channelsStore / connectorSelectionsStore convention:
+
+- `addFacility(templateId, name): facilityId` — records an `AddFacility`
+  delta entry; returns the new UUID v4 facility ID.
+- `bindSlot(facilityId, slotLabel, channelId): boolean` — records a
+  `BindSlot` delta; returns false on no-op (already bound to that
+  channel).
+- `unbindSlot(facilityId, slotLabel): boolean` — records an `UnbindSlot`
+  delta; returns false on no-op (already empty).
+- `renameFacility`, `deleteFacility` — analogous.
+
+The no-op-suppression rule from the 2026-06-25 extension applies: an
+attempt to bind a slot to the channel it is already bound to records no
+draft and leaves `isDirty` unchanged.
+
+### Lifecycle reset enumeration
+
+Both `facilitiesStore` and `behaviorTemplatesStore` are layout-scoped and
+MUST be enumerated in `layoutLifecycleOrchestrator.resetForNewLayout()`
+per ADR-0011, with assertions in the orchestrator's test that both clear.
+The enumeration is added in the same slice that introduces each store,
+not deferred — that is the failure mode ADR-0011 was written to prevent.
+
+### Consequences
+
+- Facility CRUD shows the unsaved-change indicator and gains a working
+  Discard path automatically by reusing the existing save/discard UI.
+- Atomic slot operations (e.g., *Add channel* on the lamp output slot,
+  which creates a user-owned channel + claims a Direct Lamp Control row +
+  binds the slot) collect as multiple deltas in a single save and apply
+  in order; partial failure during apply rolls back the file via the
+  journal.
+- The Wired ↔ Incomplete transition (creating or freeing underlying
+  bowtie(s) via the existing bowtie creation mechanism + slot-detach
+  pipeline) is orchestrator-driven on the *effective* state, not on
+  persisted state — bowtie creation is a save-time action because it
+  depends on the saved facility shape, not on intermediate drafts.

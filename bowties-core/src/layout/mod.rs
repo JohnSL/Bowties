@@ -15,6 +15,7 @@ use std::path::Path;
 
 pub mod capture;
 pub mod channels;
+pub mod facilities;
 pub mod io;
 pub(crate) mod journal;
 pub mod known_layouts;
@@ -121,6 +122,44 @@ pub fn read_channels(layout_dir: &Path) -> Result<channels::ChannelsDocument, St
     let path = layout_dir.join(io::CHANNELS_FILE);
     if !path.exists() {
         return Ok(channels::ChannelsDocument::default());
+    }
+    io::read_yaml_file(&path)
+}
+
+/// Replace the facilities file in the layout directory.
+///
+/// The layout directory must already exist. Routed through the layout
+/// journal so a crash mid-write is recoverable (ADR-0006).
+pub fn update_facilities(
+    layout_dir: &Path,
+    doc: &facilities::FacilitiesDocument,
+) -> Result<(), String> {
+    if !layout_dir.exists() {
+        return Err(format!(
+            "Layout directory not found: {}",
+            layout_dir.display()
+        ));
+    }
+    let path = layout_dir.join(io::FACILITIES_FILE);
+    let bytes = io::serialize_yaml(doc)?;
+    journal::execute(journal::SavePlan {
+        layout_dir: layout_dir.to_path_buf(),
+        writes: vec![journal::PlannedWrite {
+            abs_path: path,
+            op: journal::WriteOp::Bytes(bytes),
+        }],
+        prune_dirs: Vec::new(),
+    })
+}
+
+/// Read the facilities document from the layout directory.
+///
+/// Returns an empty `FacilitiesDocument` when the file does not exist
+/// (pre-018 layouts), matching the backward-compatibility rule.
+pub fn read_facilities(layout_dir: &Path) -> Result<facilities::FacilitiesDocument, String> {
+    let path = layout_dir.join(io::FACILITIES_FILE);
+    if !path.exists() {
+        return Ok(facilities::FacilitiesDocument::default());
     }
     io::read_yaml_file(&path)
 }
@@ -299,6 +338,7 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
+            facilities: crate::layout::facilities::FacilitiesDocument::default(),
         };
         save_capture(layout_dir, &data).unwrap();
     }
@@ -425,6 +465,7 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: doc.clone(),
+            facilities: crate::layout::facilities::FacilitiesDocument::default(),
         };
         save_capture(&layout_dir, &data).unwrap();
 
@@ -455,6 +496,7 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
+            facilities: crate::layout::facilities::FacilitiesDocument::default(),
         };
         save_capture(&layout_dir, &data).unwrap();
 

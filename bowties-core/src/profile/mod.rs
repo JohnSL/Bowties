@@ -1543,42 +1543,13 @@ mod tests {
             .any(|candidate| candidate.daughterboard_id == "BOD4"));
     }
 
-    #[test]
-    fn bundled_signal_profile_builds_aux_port_slot_without_governed_paths() {
-        let cdi = parse_cdi(
-            r#"<cdi>
-                <segment space="253" origin="0">
-                    <name>Signals</name>
-                    <group>
-                        <name>Mast</name>
-                        <int size="1"><name>Aspect</name></int>
-                    </group>
-                </segment>
-            </cdi>"#,
-        )
-        .expect("CDI parse should succeed");
-
-        let profile: StructureProfile = serde_yaml_ng::from_str(include_str!("../../../app/src-tauri/profiles/RR-CirKits_Signal-LCC-P.profile.yaml"))
-            .expect("bundled Signal-LCC-P profile should parse");
-        let library: types::SharedDaughterboardLibrary = serde_yaml_ng::from_str(include_str!("../../../app/src-tauri/profiles/RR-CirKits.shared-daughterboards.yaml"))
-            .expect("bundled shared daughterboard library should parse");
-
-        let connector_profile = build_connector_profile(
-            "05.02.01.02.03.00.00.02",
-            &profile,
-            Some(&library),
-            &cdi,
-        )
-        .expect("Signal-LCC-P connector profile should be built");
-
-        assert_eq!(connector_profile.slots.len(), 1);
-        assert_eq!(connector_profile.slots[0].slot_id, "aux-port");
-        assert!(connector_profile.slots[0].resolved_affected_paths.is_empty());
-        assert!(connector_profile
-            .supported_daughterboards
-            .iter()
-            .any(|candidate| candidate.daughterboard_id == "SMD-8"));
-    }
+    // Deleted 2026-06-28 — `bundled_signal_profile_builds_aux_port_slot_without_governed_paths`
+    // pinned `RR-CirKits_Signal-LCC-P.profile.yaml`, which was removed when
+    // the `-P` / `-S` / AI-fabricated `-32H` variants were superseded by the
+    // generic `RR-CirKits_Inc._Signal-LCC.profile.yaml`. The test's intent
+    // (empty-`affectedPaths` structural slot smoke test) is reinstated under
+    // a hand-crafted capability fixture in spec 018 / S1.1
+    // (Two-tier profile-test fixtures + bundled-profile smoke validation).
 
     #[test]
     fn bundled_breakout_boards_do_not_add_line_constraints() {

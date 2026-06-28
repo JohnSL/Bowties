@@ -40,7 +40,7 @@ import { get } from 'svelte/store';
 // ── Read model ───────────────────────────────────────────────────────────────
 
 export { effectiveLayoutStore } from './effectiveLayoutStore.svelte';
-export { effectiveNodeStore, type NodeOrigin } from './effectiveNodeStore.svelte';
+export { effectiveNodeStore, type NodeOrigin, type DirtyBreakdown } from './effectiveNodeStore.svelte';
 
 /**
  * `makeValueResolver(nodeId)` returns a `(leaf) → value` closure suitable for

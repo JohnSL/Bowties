@@ -369,6 +369,8 @@ pub async fn save_layout_directory(
 
     // ADR-0002: read disk-authoritative layout, apply frontend deltas.
     let mut bowties = previous.as_ref().map(|p| p.bowties.clone()).unwrap_or_default();
+    let mut facilities = previous.as_ref().map(|p| p.facilities.clone()).unwrap_or_default();
+    crate::layout::facilities::apply_facility_deltas(&mut facilities, &deltas);
     crate::layout::types::apply_layout_deltas(&mut bowties, deltas);
     let mut offline_changes = Vec::<OfflineChange>::new();
 
@@ -475,6 +477,7 @@ pub async fn save_layout_directory(
         offline_changes,
         cdi_files,
         channels: previous.as_ref().map(|p| p.channels.clone()).unwrap_or_default(),
+        facilities,
     };
 
     crate::layout::save_capture(target, &write_data)?;

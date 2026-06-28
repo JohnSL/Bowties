@@ -78,7 +78,13 @@ export type LayoutEditDelta =
   /** Upsert a connector slot selection for a node (ADR-0012). */
   | { type: 'setNodeModeSelection'; nodeKey: string; modeId: string; variantId: string }
   /** Clear a connector slot selection (set to "None installed") (ADR-0012). */
-  | { type: 'clearNodeModeSelection'; nodeKey: string; modeId: string };
+  | { type: 'clearNodeModeSelection'; nodeKey: string; modeId: string }
+  /** Add a facility to `facilities.yaml` (Spec 018 / S1). */
+  | { type: 'addFacility'; facility: import('$lib/api/facilities').Facility }
+  /** Rename a facility (Spec 018 / S1). */
+  | { type: 'renameFacility'; facilityId: string; newName: string }
+  /** Delete a facility (Spec 018 / S1). */
+  | { type: 'deleteFacility'; facilityId: string };
 
 // ── Bowtie State ──────────────────────────────────────────────────────────────
 

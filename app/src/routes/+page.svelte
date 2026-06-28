@@ -33,6 +33,8 @@
   import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
   import { channelsStore } from '$lib/stores/channels.svelte';
   import { createChannels, deleteChannels, renameChannel } from '$lib/api/channels';
+  import { facilitiesStore } from '$lib/stores/facilities.svelte';
+  import { behaviorTemplatesStore } from '$lib/stores/behaviorTemplates.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { resolvePillSelectionsForPath } from '$lib/types/nodeTree';
   import type { NodeConfigTree } from '$lib/types/nodeTree';
@@ -75,7 +77,8 @@
   import { ConfigAcquisitionOrchestrator } from '$lib/orchestration/configAcquisitionOrchestrator.svelte';
   import { CdiInspectionOrchestrator } from '$lib/orchestration/cdiInspectionOrchestrator.svelte';
   import { handleDiscoveredNode, reconcileRefreshState, refreshReinitializedNode } from '$lib/orchestration/discoveryOrchestrator';
-  import { hasUnsavedPromptChanges } from '$lib/orchestration/unsavedChangesGuard';
+  import UnsavedChangesDialog from '$lib/components/UnsavedChangesDialog.svelte';
+  import type { DirtyBreakdown } from '$lib/layout';
   import { configChangesStore } from '$lib/stores/configChanges.svelte';
   import {
     bootstrapStartupLifecycle,
@@ -97,6 +100,7 @@
   import { deletePlaceholderBoard } from '$lib/orchestration/placeholderBoardOrchestrator';
   import { isPlaceholderInput } from '$lib/utils/nodeKey';
   import RailroadPanel from '$lib/components/Railroad/RailroadPanel.svelte';
+  import FacilitiesSection from '$lib/components/Facilities/FacilitiesSection.svelte';
   import { startEventStateListening, resolveChannelEventIds } from '$lib/orchestration/eventStateOrchestrator';
   import { eventStateStore } from '$lib/stores/eventState.svelte';
 
@@ -120,8 +124,17 @@
     }
   }
 
-  // T050: prompt-to-save guard state
-  let unsavedDialog = $state<{ message: string; proceed: () => void; confirmLabel: string } | null>(null);
+  // T050: prompt-to-save guard state.
+  // ADR-0011 extension 2026-06-28 (Spec 018 / S1.2): the dialog captures a
+  // `DirtyBreakdown` snapshot at open time so the per-bucket counts render
+  // exactly what was dirty when the user invoked the close action, even if
+  // background work changes a count while the dialog is up.
+  let unsavedDialog = $state<{
+    message: string;
+    proceed: () => void;
+    confirmLabel: string;
+    breakdown: DirtyBreakdown;
+  } | null>(null);
   let isForceClosing = false;
   let errorDialog = $state<{ title: string; message: string } | null>(null);
   let showAboutDialog = $state(false);
@@ -143,15 +156,15 @@
   let pendingDeletePlaceholderKey = $state<string | null>(null);
 
   function promptUnsaved(message: string, proceed: () => void, confirmLabel = 'Discard & Continue'): void {
-    const hasUnsaved = hasUnsavedPromptChanges(
-      nodeTreeStore.trees.keys(),
-      bowtieMetadataStore.isDirty,
-      offlineChangesStore.draftCount,
-      effectiveNodeStore.isDirty,
-      offlineChangesStore.revertedPersistedCount,
-    );
-    if (hasUnsaved) {
-      unsavedDialog = { message, proceed, confirmLabel };
+    // ADR-0011 single-owner: the facade's dirtyBreakdown is the only source
+    // for the unsaved-changes decision.
+    if (effectiveNodeStore.isDirty) {
+      unsavedDialog = {
+        message,
+        proceed,
+        confirmLabel,
+        breakdown: effectiveNodeStore.dirtyBreakdown,
+      };
     } else {
       proceed();
     }
@@ -223,6 +236,13 @@
   $effect(() => {
     if (layoutStore.activeContext) {
       channelsStore.loadChannels();
+    }
+  });
+
+  // Spec 018 / S1: Hydrate facility inventory when a layout becomes active.
+  $effect(() => {
+    if (layoutStore.activeContext) {
+      facilitiesStore.loadFacilities();
     }
   });
 
@@ -584,6 +604,7 @@
       const deltas = [
         ...bowtieMetadataStore.collectDeltas(),
         ...connectorSelectionsStore.collectDeltas(),
+        ...facilitiesStore.collectDeltas(),
       ];
 
       // Offline mode owns draft staging: promote config drafts into the
@@ -671,6 +692,10 @@
         }
         // Re-read authoritative state from backend after all writes
         await channelsStore.loadChannels();
+        // Spec 018 / S1: facility deltas were already applied inside
+        // save_layout_directory (D1 = B, pure-delta). Re-hydrate the
+        // baseline so any pending drafts clear.
+        await facilitiesStore.loadFacilities();
 
         // Bug 2b fix: cache the snapshots from this save so the disconnect
         // transition matrix sees `hasSnapshots: true` and takes the
@@ -828,6 +853,9 @@
   onMount(() => {
     // Spec 013 / S3: keep the save-progress modal in sync with backend phases.
     void saveProgressStore.startListening();
+    // Spec 018 / S1: load the application-scoped behavior template registry
+    // once at app start. Templates are code-level and never reload.
+    void behaviorTemplatesStore.loadBehaviorTemplates();
     const unlistens: Array<() => void> = [];
     unlistens.push(
       installMenuShortcuts({
@@ -920,18 +948,11 @@
         if (isForceClosing) return;
         event.preventDefault();
 
-        const hasUnsaved =
-          hasUnsavedPromptChanges(
-            nodeTreeStore.trees.keys(),
-            bowtieMetadataStore.isDirty,
-            offlineChangesStore.draftCount,
-            effectiveNodeStore.isDirty,
-            offlineChangesStore.revertedPersistedCount,
-          );
-        if (hasUnsaved) {
+        if (effectiveNodeStore.isDirty) {
           unsavedDialog = {
             message: 'You have unsaved changes. Exit without saving?',
             confirmLabel: 'Exit Without Saving',
+            breakdown: effectiveNodeStore.dirtyBreakdown,
             proceed: async () => {
               isForceClosing = true;
               bowtieMetadataStore.clearAll();
@@ -1572,8 +1593,12 @@
       </div>
 
     {:else if activeTab === 'railroad'}
-      <!-- Spec 015: Information channels inventory -->
-      <RailroadPanel nodeName={resolveNodeName} {resolvedEventIds} />
+      <!-- Spec 018 / S1: Facility scaffolding (no-channel CRUD) above the channel inventory. -->
+      <div class="railroad-tab-content">
+        <FacilitiesSection />
+        <!-- Spec 015: Information channels inventory -->
+        <RailroadPanel nodeName={resolveNodeName} {resolvedEventIds} />
+      </div>
 
     {:else if activeTab === 'bowties'}
       <!-- Feature 006: Bowties catalog in-page tab (no navigation) -->
@@ -1709,33 +1734,21 @@
   />
 {/if}
 
-<!-- T050: Prompt-to-save guard dialog (FR-024) -->
+<!-- T050: Prompt-to-save guard dialog (FR-024). Spec 018 / S1.2: replaced
+     the inline markup with the per-bucket `UnsavedChangesDialog` component
+     fed by `effectiveNodeStore.dirtyBreakdown` (ADR-0011 extension). -->
 {#if unsavedDialog}
-  <div
-    class="unsaved-overlay"
-    role="dialog"
-    aria-modal="true"
-    aria-label="Unsaved changes warning"
-  >
-    <div class="unsaved-dialog">
-      <h3 class="unsaved-title">Unsaved Changes</h3>
-      <p class="unsaved-body">{unsavedDialog.message}</p>
-      <div class="unsaved-actions">
-        <button
-          class="unsaved-btn unsaved-btn-secondary"
-          onclick={() => { unsavedDialog = null; }}
-        >Cancel</button>
-        <button
-          class="unsaved-btn unsaved-btn-danger"
-          onclick={() => {
-            const proceed = unsavedDialog?.proceed;
-            unsavedDialog = null;
-            proceed?.();
-          }}
-        >{unsavedDialog.confirmLabel}</button>
-      </div>
-    </div>
-  </div>
+  <UnsavedChangesDialog
+    message={unsavedDialog.message}
+    breakdown={unsavedDialog.breakdown}
+    confirmLabel={unsavedDialog.confirmLabel}
+    onCancel={() => { unsavedDialog = null; }}
+    onConfirm={() => {
+      const proceed = unsavedDialog?.proceed;
+      unsavedDialog = null;
+      proceed?.();
+    }}
+  />
 {/if}
 
 {#if errorDialog}
@@ -2221,6 +2234,15 @@
     justify-content: center;
     color: #6b7280;
     gap: 4px;
+  }
+
+  /* ─── Railroad tab content (Spec 018 / S1) ───────────── */
+
+  .railroad-tab-content {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
   }
 
   .empty-status {

@@ -75,3 +75,48 @@ functions are removed. The layout's identity is now its directory path.
 
 **Breaking:** Existing `.layout` files and `.layout.d/` companion directories are
 not supported. Users must recreate layouts. No migration path is provided.
+
+## 2026-06-27 extension: facilities.yaml joins the intent-shaped API
+
+### Context
+
+Spec 018 adds a new layout file `facilities.yaml` (per-layout, sibling of
+`channels.yaml` and `bowties.yaml`) carrying facility CRUD state and slot
+bindings. The same single-owner principle applies: no other module knows
+this file exists, and no other write path may touch it.
+
+### Decision
+
+The `layout/` module's intent-shaped public API grows two functions:
+
+- `read_facilities(folder) -> FacilitiesDocument` — full read of
+  `facilities.yaml`. Treats a missing file as "no facilities" (the default
+  for any layout created before Spec 018 lands on disk).
+- `update_facilities(folder, &FacilitiesDocument)` — full write of
+  `facilities.yaml` through the existing journaled writer. Partial-update
+  semantics are not required: facility persistence is small (tens of
+  entries) and the save workflow already replaces the whole document
+  after applying deltas.
+
+`FacilitiesDocument`, `Facility`, `FacilitySlot`, and the
+`schemaVersion: "1.0"` marker live in `bowties-core/src/layout/facilities.rs`,
+which is `pub(crate)` to keep file-structure knowledge inside the layout
+module. The path constant (`FACILITIES_FILE`) and the YAML serde shape
+are not exported. Callers see only the two intent-shaped functions above,
+mirroring the existing pattern for channels and bowtie metadata.
+
+The save workflow (`save_layout_directory`) calls `update_facilities`
+after applying facility deltas; the load workflow calls `read_facilities`
+during layout open and routes the result through the `facilitiesStore`
+draft-layer baseline (ADR-0012).
+
+### Consequences
+
+- Adding `facilities.yaml` does not introduce a new write code path —
+  it flows through the same journaled writer as every other layout file.
+- A future facility schema change (e.g., adding a `notes` field) is a
+  single change inside `layout/facilities.rs` plus a `schemaVersion`
+  bump, with no command-layer churn.
+- The "no migration" stance (Spec 018 FR-009, pre-1.0 single-user
+  context) is honoured by treating a missing `facilities.yaml` as "zero
+  facilities" rather than as an error.

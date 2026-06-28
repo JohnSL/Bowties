@@ -237,3 +237,36 @@ The PCER listener itself stays subscribed across disconnect (always-listening pe
 
 **Why three sites instead of consolidating into the orchestrator alone:** `resetForFreshLiveSession()` early-returns when `hasLayoutFile`, so disconnects with a loaded layout would miss the clear. Rather than restructure the no-layout gate (which has its own correctness reasons), the two route-side disconnect lambdas mirror the connect-side enumeration. A future consolidation (e.g., a dedicated "bus session ended" orchestrator method) is reasonable when there is more than one bus-scoped store to clear; today there is one (YAGNI).
 
+## 2026-06-28 extension: dirtyBreakdown and per-bucket aggregation (Spec 018 / S1.2)
+
+**Problem:** The original ADR-0011 named `effectiveNodeStore.isDirty` as the aggregate dirty signal across the three layout layers and the `$lib/layout/` facade (ADR-0004) as the single import surface. The implementation never delivered on that promise: `channelsStore` (Spec 015) and `connectorSelectionsStore` (Spec 014) landed without being wired into the aggregate; `SaveControls.svelte` re-derived counts locally via `deriveSaveControlsViewState` with per-store params; a parallel `changeTrackerStore` was built as an alternate consolidation point and never adopted (its only callers were its own tests); and the close/disconnect/exit prompts called `hasUnsavedPromptChanges` with a mix of aggregate + raw-store flags. Result: closing a layout with channel-only or connector-only edits silently bypassed the unsaved-changes prompt, and the Save/Discard toolbar did not light up on facility-only edits.
+
+**Decision:** The facade owns the question. `effectiveNodeStore.dirtyBreakdown: DirtyBreakdown` is the single typed snapshot of every edit-bearing store; `effectiveNodeStore.isDirty` is derived from it as "any bucket > 0". The shape:
+
+```
+DirtyBreakdown {
+  config: number;                    // configChangesStore.draftEntries().length
+  configNodes: number;               // distinct nodes contributing to config
+  metadata: number;                  // bowtieMetadataStore.editCount
+  channels: number;                  // channelsStore.editCount
+  facilities: number;                // facilitiesStore.editCount
+  connectorSelections: number;       // connectorSelectionsStore.editCount
+  offlineDrafts: number;             // offlineChangesStore.draftCount
+  offlineRevertedPersisted: number;  // offlineChangesStore.revertedPersistedCount
+  layoutStruct: number;              // layoutStore.isDirty ? 1 : 0
+  unsavedNewNodes: number;           // effectiveNodeStore.unsavedInMemoryNodeIds.length
+  unsavedRemovedNodes: number;       // effectiveNodeStore.unsavedRemovedNodeIds.length
+}
+```
+
+`SaveControls.svelte`, `saveControlsPresenter`, and the route's `promptUnsaved` / window-close handler all consume `effectiveNodeStore.dirtyBreakdown` exclusively. The new `UnsavedChangesDialog.svelte` renders one line per non-zero bucket so the user sees what they are about to discard. The legacy `changeTrackerStore`, `unsavedChangesGuard`, and per-store reads in `SaveControls` are deleted; the inline unsaved-changes dialog markup in `+page.svelte` is replaced by the component.
+
+**Invariant — Single-owner rule:** Every new edit-bearing store MUST be wired into `effectiveNodeStore.dirtyBreakdown` in the same slice it lands. Reviewers reject a store-introducing PR that does not extend the breakdown. The structural prevention is the type: `DirtyBreakdown` is a closed shape, so a new store either has a bucket or is forgotten loudly, not silently.
+
+**Invariant — Snapshot at open:** The dialog captures the breakdown at the moment the user invokes the close action; counts displayed do not change while the dialog is up. `+page.svelte` stores `unsavedDialog.breakdown` alongside the message and proceed callback.
+
+**Why a flat shape rather than nested per-layer:** Buckets correspond to user-meaningful surfaces (config, channels, facilities, …), not to ADR-0004 layers (in-memory drafts / saved baseline / on-bus state). The dialog renders user-facing language; the layered model is an implementation detail of how each bucket is computed. Keeping the shape flat means UI consumers do not need to know which layer a count came from.
+
+**Coupling note:** `dirtyBreakdown` reads ten store getters per access. Each access is O(1) per store plus one O(n) scan over `configChangesStore.draftEntries()` for `configNodes`. Svelte 5 `$derived` callers that read the getter several times per render rely on Svelte's signal memoisation; consumers that need a stable snapshot (e.g. the dialog) should capture once and pass the value down.
+
+

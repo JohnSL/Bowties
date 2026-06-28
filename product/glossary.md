@@ -98,17 +98,17 @@ _Avoid_: node_id (ambiguous — could mean the 6-byte LCC Node ID or the string 
 A node that exists only in the Bowties layout, not on the physical LCC bus. Represented as a `NodeSnapshot` with `node_id: None` and `profile_stem: Some(...)`. In memory, a `SynthesizedNodeProxy` in the Proxy Registry. The placeholder factory (`placeholder.rs`) synthesizes what bus discovery would have produced. All event ID fields are pre-filled with `[0u8; 8]` (all-zero, excluded from bowtie binding by the zero-prefix rule). See ADR-0009.
 _Avoid_: virtual node (implies protocol presence), stub, mock
 
-**Information Channel**:
-A typed, named representation of a single piece of layout-meaningful information (e.g., "Block 7 Occupancy") independent of protocol details. Channels are the foundational data layer for railroad-level abstractions. Key attributes: unique ID (UUID v4), user-assigned name, channel type, hardware reference. Persisted in `channels.yaml` in the layout folder. See Spec 015.
-_Avoid_: sensor (protocol-specific), input (hardware-level), event (protocol-level)
+**Information Channel** (a.k.a. **Channel**):
+A typed, named representation of a single piece of layout-meaningful information (e.g., "Block 7 Occupancy", "Block 5 Indicator LED") independent of protocol details. Channels are the foundational binding entity for railroad-level abstractions — facilities bind channels by **Role**, not pins. Persisted in `channels.yaml`. Key attributes: stable ID (UUID v4), user-assigned name, **Role**, **Style**, **Ownership**, **Binding**. See Spec 015 (original shape) and Spec 018 (role/style/ownership extension). Every channel is bound to specific hardware; channels without a binding are not a persistable state.
+_Avoid_: sensor (protocol-specific), input (hardware-level), event (protocol-level), "logical channel" (channels always have a binding), "resource" (Style is the implementation-shape concept)
 
-**Channel Type**:
-A well-known classification defining what kind of information a channel carries and its possible states. Initially only `block-occupancy` (occupied / clear). Future types will be added as more daughter board families are supported.
-_Avoid_: sensor type, input type, signal type
+**Channel Type** _(retired by Spec 018; superseded by **Role**)_:
+Pre-018 classification on a channel. Replaced by the **Role** + **Style** pair: Role replaces the state-vocabulary part; Style replaces the hardware-shape part. Removed from the persistent schema in the final implementation slice of Spec 018.
+_Avoid_: using `channelType` in new code or new specs — say **Role** for state vocabulary and **Style** for hardware shape.
 
-**Hardware Reference**:
-The backing physical source for an information channel: which node, which connector, and which input ordinal produces the data. Stored as `{ nodeKey, connector (slug), input (1-based ordinal) }`. Displayed using `resolveNodeName(nodeKey)` — never the raw key.
-_Avoid_: source, origin, pin reference
+**Hardware Reference** _(extended by Spec 018; renamed to **Binding**)_:
+The backing physical source for a channel. Pre-018: `{ nodeKey, connector, input }`. Post-018: a discriminated `Binding` shape — `{ kind: 'connectorInput', nodeKey, connector, input }` for BOD-style inputs, `{ kind: 'lampRow', nodeKey, rowOrdinal }` for Direct Lamp Control rows, with the discriminator chosen by the channel's **Style**. Displayed via `resolveNodeName(nodeKey)` — never the raw key.
+_Avoid_: source, origin, pin reference, `hardwareRef` (in new code, use `binding`)
 
 **PCER (Producer/Consumer Event Report)**:
 An LCC message (MTI 0x195B4) carrying an 8-byte Event ID, broadcast on the bus when a producer fires. Every node on the bus receives every PCER. This is the primary mechanism for real-time state communication (e.g., a BOD board sending "block occupied").
@@ -123,8 +123,56 @@ Profile-declared mapping from a channel type's abstract states (e.g., occupied/c
 _Avoid_: event binding, event wiring (that's bowtie creation)
 
 **Railroad Tab**:
-The third (rightmost) tab in the main application view, displaying the information channel inventory grouped by type. The future home for layout-level railroad abstractions (channels, facilities, behavior templates).
+The third (rightmost) tab in the main application view. Hosts the **Channels Panel** (hardware-organised list of every channel in the layout) and the **Facilities Section** (named instances of behavior templates). The home for layout-level railroad abstractions.
 _Avoid_: channel tab, inventory tab, layout tab (overloaded with "layout file")
+
+**Channels Panel**:
+The hardware-organised list of every channel in the layout, rendered in the **Railroad Tab**. Grouped by node + subsystem (not by **Channel Type**). Each row shows ownership, role, style, identity (the pin(s) claimed), name, live state, and the slot/facility currently bound to it (or "unbound"). Functions standalone — hardware verification needs no facility. See Spec 018 (FR-031).
+_Avoid_: channel inventory (pre-018 surface, retired), channel list, hardware panel
+
+## Facilities System
+
+**Facility**:
+A named, persisted instance of a **Behavior Template**, with one **Facility Slot** per template-declared slot. Each slot is optionally bound to one **Channel** by role. A facility has exactly one **Facility Status** (`Incomplete` if any slot empty; `Wired` if all slots filled, with the underlying bowtie(s) created via the existing bowtie creation mechanism). Persisted in `facilities.yaml`. A facility is a **UI veneer** over bowties — Spec 018 introduces no new sync, persistence, or deployment machinery for facilities themselves.
+_Avoid_: arrangement, signal, device, behavior, automation (these describe future template families; "facility" is the generic noun)
+
+**Behavior Template**:
+A declared template for a **Facility**. Carries a stable template ID, display name, ordered list of slot declarations (each with a slot label, producer/consumer designation, and required **Role**), and a mapping from producer-side semantic states to consumer-side commands. The first template is **Block Indicator** (`occupied → lit`, `clear → unlit`). Hardcoded in `bowties-core/src/behavior_templates/` in Spec 018; future declarative YAML loader is Future Considerations.
+_Avoid_: template (alone — ambiguous with structure profile), scenario, recipe (recipes are profile-level), preset
+
+**Facility Slot**:
+A named position within a **Facility**, carrying a producer/consumer designation, a required **Role**, and an optional bound **Channel** reference. Empty slots are first-class — they are how an incomplete plan is represented. A channel is bound to at most one facility slot in this slice. Distinct from **CDI Slot** / CDI group (which is a config structure, not a binding).
+_Avoid_: "slot" alone (qualify as "facility slot" or "CDI slot"), placeholder, hole
+
+**Role** (Channel Role):
+What a **Channel** does in the layout — its state vocabulary plus the slot-binding contract. A **Facility Slot** binds by role. Examples: `block-occupancy` (states `unknown` / `occupied` / `clear`); `lamp-indicator` (states `unknown` / `lit` / `unlit`); future `signal-aspect-3-color`. Every role includes `unknown` as a first-class state for "no observation yet". State values name real-world intent, never electrical or boolean abstractions (`true`/`false`, `on`/`off`). Roles are declared in Rust code (typed enums for exhaustive match safety); state-vocabulary changes are a code change, not a YAML change. Internally a role corresponds to an interface in the OO sense; user-facing language is always "role".
+_Avoid_: channel type (pre-018 term, retired), kind, classification, role (in another sense — e.g., "event role" is a separate Spec 014 concept; qualify when both are in scope)
+
+**Style** (Channel Style):
+The specific hardware-shape realisation of a **Role** — the pins claimed, the producer/consumer event-leaf mapping, the constraint contract over the claimed pins' CDI fields, and whether instances are user-creatable. Multiple styles may realise the same role (e.g., a future `2-led-bicolor-aspect` and `3-led-direct-aspect` both realising a `signal-aspect-3-color` role). Examples: `bod-block-detector-input` (1 input pin → `block-occupancy`, auto-created by BOD daughter-board selection); `single-led-direct-lamp` (1 Direct Lamp Control row → `lamp-indicator`, user-creatable via Add channel). Declared in profile YAML; the in-code registry maps `styleId → realisation`. Internally a style corresponds to an implementation class realising the role's interface; user-facing language is always "style".
+_Avoid_: implementation, variant, hardware kind, role-impl, "resource" (Style replaces the older "resource type" framing)
+
+**Channel Ownership**:
+The lifecycle classification of a **Channel**, deciding who may destroy it. Two values: `hardware-owned` (auto-created when a hardware-config choice fixes the role of pins — e.g., BOD daughter-board selection — and auto-deleted when that selection is cleared or changed; user rename does not change ownership) and `user-owned` (created via a **Facility Slot**'s *Add channel* action and deleted when removed from its only slot in this slice — no ref-counting yet). When a channel is destroyed, any facility slot bound to it becomes empty; if the facility was **Wired** it returns to **Incomplete**.
+_Avoid_: provenance, source, origin, "system channel" / "manual channel" (vague)
+
+**Binding** (Channel Binding):
+The discriminated reference from a **Channel** to the specific pin(s) it claims on a specific subsystem on a specific node. Shape: `{ kind: 'connectorInput' | 'lampRow' | …, …style-specific fields }`. The `kind` MUST match the **Style**'s declared binding shape. Replaces the pre-018 `hardwareRef` field; see also that entry.
+_Avoid_: hardware reference (pre-018 term), wiring (wiring is the bowtie/bus side), target, anchor
+
+**Facility Status**:
+The derived lifecycle status of a **Facility**, computed by a pure function over slot fullness — never stored on persistence (ADR-0004). Two values: `Incomplete` (at least one slot empty; no underlying bowtie(s) exist for the template's mapping) and `Wired` (all slots filled; underlying bowtie(s) exist, created via the existing bowtie creation mechanism). Transitions are automatic; there is no separate "deploy" action in Spec 018.
+_Avoid_: "Live" (the original Spec 018 draft used this; renamed to **Wired** to distinguish structural completeness from bus-sync state, which the existing layered storage system owns), "state" (Channel has state; Facility has status), "ready" / "complete" (vague)
+
+**Style Constraint Contract**:
+A declaration on a **Style** describing how its **Channel**s manage the CDI fields of the pins they claim — fix a field to a specific value, restrict it to a subset of allowed values, or hide it entirely. Unmanaged fields stay freely user-editable. Spec 018 repositions the existing BOD-family `validityRules` (today on daughter-board entries) onto the `bod-block-detector-input` style; the renderer (the existing profile-driven relevance/validity surface) is unchanged. The user cannot put a managed field into a state that would invalidate the channel's semantics.
+_Avoid_: validity rules (the renderer mechanism; the contract is the source declaration), restrictions, locks, schema
+
+**Hardware-owned Channel**:
+See **Channel Ownership**.
+
+**User-owned Channel**:
+See **Channel Ownership**.
 
 ## Architecture Roles
 
@@ -227,9 +275,16 @@ _Avoid_: "node store" (overloaded), "dirty store"
 - **Relevance Rules** govern CDI sections (many-to-many: one rule may affect multiple sections; one section may be governed by multiple rules)
 - **Offline Changes** are a superset of **Pending Changes** (all pending changes are offline; not all offline changes are pending)
 - A **Sync Session** classifies **Offline Changes** into actionable rows
-- An **Information Channel** has exactly one **Hardware Reference** linking it to a node/connector/input
-- An **Information Channel** has exactly one **Channel Type** classifying the information it carries
+- An **Information Channel** has exactly one **Binding** linking it to pin(s) on a subsystem on a node (replaces the pre-018 **Hardware Reference**)
+- An **Information Channel** has exactly one **Role** (state vocabulary + slot-binding contract) and exactly one **Style** (hardware-shape realisation); every channel's Style realises its Role
+- An **Information Channel** has exactly one **Channel Ownership** (`hardware-owned` or `user-owned`) deciding its lifecycle
 - A **Layout** contains zero or more **Information Channels** (persisted in `channels.yaml`)
+- A **Layout** contains zero or more **Facilities** (persisted in `facilities.yaml`)
+- A **Facility** has exactly one **Behavior Template** and one **Facility Slot** per template-declared slot
+- A **Facility Slot** is either empty or bound to exactly one **Channel** whose **Role** matches the slot's required role
+- A **Channel** is bound to at most one **Facility Slot** at a time (Spec 018; ref-counting + fan-out are Future Considerations)
+- A **Facility** has exactly one derived **Facility Status** (`Incomplete` or `Wired`) computed from its slot fullness; status is never persisted (ADR-0004)
+- A **Style** has exactly one **Style Constraint Contract** governing its claimed pins' CDI fields
 
 ## Flagged Ambiguities
 

@@ -220,6 +220,24 @@ pub enum LayoutEditDelta {
     /// corresponding `<key>.yaml` file.
     #[serde(rename_all = "camelCase")]
     RemoveNode { node_key: String },
+    /// Add a facility to `facilities.yaml` (Spec 018 / S1).
+    ///
+    /// `apply_layout_deltas` is a no-op for this variant — facilities live
+    /// in the companion `facilities.yaml` document. `apply_facility_deltas`
+    /// (in `layout::facilities`) handles the actual mutation.
+    #[serde(rename_all = "camelCase")]
+    AddFacility {
+        facility: crate::layout::facilities::Facility,
+    },
+    /// Rename a facility (no-op if `facility_id` is unknown).
+    #[serde(rename_all = "camelCase")]
+    RenameFacility {
+        facility_id: String,
+        new_name: String,
+    },
+    /// Delete a facility (no-op if `facility_id` is unknown).
+    #[serde(rename_all = "camelCase")]
+    DeleteFacility { facility_id: String },
 }
 
 impl LayoutEditDelta {
@@ -330,6 +348,13 @@ pub fn apply_layout_deltas(layout: &mut LayoutFile, deltas: Vec<LayoutEditDelta>
                 // Same as AddNode — node membership lives outside LayoutFile.
                 // Handled in save_layout_directory by subtracting from the
                 // permitted-write set.
+            }
+            LayoutEditDelta::AddFacility { .. }
+            | LayoutEditDelta::RenameFacility { .. }
+            | LayoutEditDelta::DeleteFacility { .. } => {
+                // Facilities live outside LayoutFile (facilities.yaml).
+                // Handled by `layout::facilities::apply_facility_deltas`,
+                // called from save_layout_directory alongside this function.
             }
         }
     }

@@ -16,9 +16,11 @@
  *   - `isPersistableInLayout(key)`  → fullyCaptured ∧ (configRead ∨ placeholder)
  *   - `unsavedInMemoryNodeIds`      → live persistable additions absent from
  *                                       `layoutStore.activeContext.layoutNodeIds`
- *   - `isDirty`                     → any persistable addition OR any
- *                                       draft / metadata / offline-change /
- *                                       layout-struct edit
+ *   - `dirtyBreakdown`              → per-bucket count snapshot (ADR-0011
+ *                                       extension 2026-06-28) consumed by
+ *                                       SaveControls + UnsavedChangesDialog
+ *   - `isDirty`                     → derived from dirtyBreakdown; true when
+ *                                       any bucket > 0
  *
  * Inputs are reads only; the facade never writes through to underlying
  * stores. The lifecycle owner (`layoutLifecycleOrchestrator`) is the
@@ -33,7 +35,11 @@ import { layoutStore } from '$lib/stores/layout.svelte';
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
 import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+import { facilitiesStore } from '$lib/stores/facilities.svelte';
+import { channelsStore } from '$lib/stores/channels.svelte';
+import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
 import { nodeRoster } from '$lib/stores/nodeRoster.svelte';
+import { parseEditKey } from '$lib/utils/editKey';
 import {
   isPlaceholderInput,
   toCanonicalNodeKey,
@@ -41,6 +47,39 @@ import {
 } from '$lib/utils/nodeKey';
 
 export type NodeOrigin = 'live-only' | 'layout-only' | 'both' | 'placeholder';
+
+/**
+ * Per-bucket dirty snapshot (ADR-0011 extension 2026-06-28).
+ *
+ * `SaveControls` and `UnsavedChangesDialog` consume this to render counts
+ * without re-reading each edit-bearing store. Adding a new edit-bearing
+ * store in a future spec means adding one field here and one accumulator
+ * in `dirtyBreakdown` — the lifecycle reset path stays unchanged.
+ */
+export interface DirtyBreakdown {
+  /** Config-tree draft edits (overlay layer, per leaf). */
+  config: number;
+  /** Distinct node count contributing to `config` (for "across N nodes"). */
+  configNodes: number;
+  /** Bowtie metadata edits (deletes / role classifications / …). */
+  metadata: number;
+  /** Pending channel creations + renames + deletions. */
+  channels: number;
+  /** Pending facility creations + renames + deletions. */
+  facilities: number;
+  /** Connector slot selections diverging from baseline. */
+  connectorSelections: number;
+  /** Offline-changes draft rows (Spec 013). */
+  offlineDrafts: number;
+  /** Persisted offline rows that have been reverted in-memory. */
+  offlineRevertedPersisted: number;
+  /** LayoutFile struct edits (element-deck reorder, etc.). */
+  layoutStruct: number;
+  /** Fully-captured live nodes absent from the saved layout roster. */
+  unsavedNewNodes: number;
+  /** NodeKeys removed from the saved layout but not yet flushed. */
+  unsavedRemovedNodes: number;
+}
 
 class EffectiveNodeStore {
   // ── Vanilla-writable bridges (mirror into $state for reactive reads) ────
@@ -139,21 +178,56 @@ class EffectiveNodeStore {
   // ── Aggregate dirty signal ───────────────────────────────────────────────
 
   /**
-   * True when there are any in-memory changes that a Save would persist:
-   * a fully-captured live addition, a config draft, a bowtie metadata
-   * edit, an offline change (draft or persisted-then-reverted), or a
-   * LayoutFile-struct edit. Mirrors the contract `saveControlsPresenter`
-   * already enforces, sourced from a single predicate instead of four.
+   * Per-bucket dirty count snapshot. The single read surface for the
+   * UnsavedChangesDialog and SaveControls — every edit-bearing store
+   * contributes exactly one accumulator here. Adding a new edit-bearing
+   * store in a future spec requires extending this method, not scattering
+   * `store.isDirty` reads across the UI.
+   */
+  get dirtyBreakdown(): DirtyBreakdown {
+    const drafts = configChangesStore.draftEntries();
+    let configNodes = 0;
+    if (drafts.length > 0) {
+      const seen = new Set<string>();
+      for (const { key } of drafts) {
+        const { normalizedNodeId } = parseEditKey(key);
+        seen.add(normalizedNodeId);
+      }
+      configNodes = seen.size;
+    }
+    return {
+      config: drafts.length,
+      configNodes,
+      metadata: bowtieMetadataStore.editCount,
+      channels: channelsStore.editCount,
+      facilities: facilitiesStore.editCount,
+      connectorSelections: connectorSelectionsStore.editCount,
+      offlineDrafts: offlineChangesStore.draftCount,
+      offlineRevertedPersisted: offlineChangesStore.revertedPersistedCount,
+      layoutStruct: layoutStore.isDirty ? 1 : 0,
+      unsavedNewNodes: this.unsavedInMemoryNodeIds.length,
+      unsavedRemovedNodes: this.unsavedRemovedNodeIds.length,
+    };
+  }
+
+  /**
+   * True when there are any in-memory changes that a Save would persist.
+   * Derived from `dirtyBreakdown` so the two predicates can never drift.
    */
   get isDirty(): boolean {
-    if (this.unsavedInMemoryNodeIds.length > 0) return true;
-    if (this.unsavedRemovedNodeIds.length > 0) return true;
-    if (layoutStore.isDirty) return true;
-    if (bowtieMetadataStore.isDirty) return true;
-    if (configChangesStore.draftEntries().length > 0) return true;
-    if (offlineChangesStore.draftCount > 0) return true;
-    if (offlineChangesStore.revertedPersistedCount > 0) return true;
-    return false;
+    const bd = this.dirtyBreakdown;
+    return (
+      bd.config > 0
+      || bd.metadata > 0
+      || bd.channels > 0
+      || bd.facilities > 0
+      || bd.connectorSelections > 0
+      || bd.offlineDrafts > 0
+      || bd.offlineRevertedPersisted > 0
+      || bd.layoutStruct > 0
+      || bd.unsavedNewNodes > 0
+      || bd.unsavedRemovedNodes > 0
+    );
   }
 
   // ── Internals ────────────────────────────────────────────────────────────

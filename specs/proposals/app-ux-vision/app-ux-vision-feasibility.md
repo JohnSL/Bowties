@@ -85,7 +85,7 @@ Applying a template produces a **facility** — a named, live functional unit in
 - The input channels the user mapped during application
 - The logic rules instantiated on the target
 - The output channels driven by the logic
-- The target and resource allocation (e.g., "Tower-3, Logic Lines 5–7")
+- The target and channel/logic-line allocation (e.g., "Tower-3, Logic Lines 5–7")
 
 A facility created by template application knows its template origin, which enables:
 - Re-application if the template is updated
@@ -106,6 +106,8 @@ For the Tower-LCC Logic adapter specifically, capacity management includes:
 - Optionally defragmenting — shifting existing grouped logic lines to consolidate free space
 - Chaining rules that exceed the 2-variable-per-line limit across multiple lines
 
+**Defrag safety and v1 policy.** Defragmenting active logic lines is safe only within Bowties' ownership boundary — the lines Bowties itself allocated and tracks. Within that region Bowties is the only writer, so shifting lines is an internal bookkeeping operation that happens to flush to the board. The risk that defrag could perturb another facility's working logic only arises if Bowties shifts lines it doesn't own (lines configured by hand, by another tool, or by an earlier non-Bowties workflow). v1 takes the simplest correct stance: do not defragment. When a template apply would otherwise succeed but for fragmentation, the apply fails with "not enough contiguous capacity — choose a different node or use LogixNG." This is more conservative than necessary within Bowties' own ownership region, but it is the safest behavior for a tool whose value depends on non-engineers being able to trust that an apply will not perturb other facilities. Scoped defrag — defragmenting only Bowties-owned lines and refusing if non-Bowties lines would need to move — is a later-horizon enhancement, not a v1 commitment.
+
 ### Scoping: Common Cases Easy, Uncommon Possible
 
 The template DSL is designed to cover the **majority** of railroad signaling and automation patterns — ABS, APB, simple interlocking, detection-based automation. These are well-established, standardized patterns with bounded complexity.
@@ -116,6 +118,75 @@ For **uncommon cases** that exceed the DSL's expressiveness (complex custom inte
 - The template DSL is designed to grow over time — patterns that start as uncommon can be formalized into templates as demand emerges
 
 This means the system does not need to solve every possible logic scenario in the DSL. It needs to make the common path effortless while keeping the advanced path accessible.
+
+---
+
+## Channel Model: Data & Persistence
+
+The UX vision describes channels in terms of role, style, binding, and ownership ([Channel Roles, Styles, and Bindings](./app-ux-vision.md#channel-roles-styles-and-bindings)). This section captures how that model is persisted and how the constraint contract is implemented.
+
+### Persisted Shape
+
+`channels.yaml` records only what's needed to identify and re-bind a channel. Each channel is `{ id, name, role, style, binding, owner }`:
+
+```yaml
+schemaVersion: '2.0'
+channels:
+  # Hardware-owned: auto-created when the BOD-4 daughter board was selected on Tower-3 Connector A.
+  - id: 2b8dc48f-a9b0-45d6-b394-39f11d55de2c
+    name: "Eagle Creek — East Approach"
+    role: block-occupancy
+    style: bod-block-detector-input
+    owner: hardware-config
+    binding:
+      nodeKey: 0201570002D9
+      pin: ca-input-1
+
+  # User-owned: created via a facility slot's "Add channel" action,
+  # binding picked as part of channel creation.
+  - id: 9f1ad22e-7d40-4d44-bb88-6c1c8b2f9e10
+    name: "Eagle Creek — East Lamp"
+    role: lamp-indicator
+    style: single-led-direct-lamp
+    owner: user
+    binding:
+      nodeKey: 0201570002D9
+      pin: lamp-row-3
+```
+
+That's the entire shape. No copies of CDI values, no field-binding details, no override state, no constraint cache. The CDI tree is the truth; the style catalog (system + profile) is the binding contract; the channel is the identity.
+
+The `owner` discriminator drives lifecycle: `hardware-config` channels disappear when the underlying hardware-configuration choice is cleared or changed (any facility slot bound to one becomes empty); `user` channels persist until the user removes them (which in this first slice means removal from their only slot — future scope adds ref-counting + delete-on-zero across multiple slots).
+
+### Constraint Contract
+
+The constraint rules live on the **style**, not on the channel and not on a cross-product of role × hardware-kind. A style declares which CDI fields it manages, with two natural tiers:
+
+| Layer | What it pins | Editor presentation |
+|---|---|---|
+| **Shape / mode** — the CDI field that determines what the bound hardware is right now | Fixed to a specific value when the style is active (e.g., `Pin Function = Output`, `Lamp Selection = Direct Command`) | Primary managed field; presented first |
+| **Leaf rules** — values under the established shape | Locked or restricted to a subset (e.g., `Output Function = Steady Active Hi`); brightness, fade, polarity = unmanaged | Secondary managed fields + unmanaged fields below |
+
+The shape constraint matters because it determines which other CDI fields are even relevant under the bound subtree. The relevance-rule machinery the profile system already uses for daughter-board selection extends naturally to this case.
+
+A style's constraints are in force for the entire life of the channel — from the moment it is created (hardware-owned: daughter-board selection; user-owned: Add channel completes) until the moment it is destroyed. The only path to override a managed field is **Raw CDI** (the existing escape hatch). There is no per-channel override flag in `channels.yaml`: drift detection — already in the vision — flags managed fields that are out of range and offers a one-click repair. A per-channel override would add stored state, sync complexity, and a third constraint mechanism without enabling anything Raw CDI doesn't already enable.
+
+### Resolution and Display
+
+- `resolve_channel_event_ids` becomes a style lookup: find the channel's style → read its producer/consumer event-leaf mapping → return event IDs against the bound pin. No connector/input arithmetic at the call site.
+- Channel display labels come from the profile's binding label (`Tower-3 — Connector A — Input 1`, `Signal LCC #1 — Mast 2`). The shape is profile-supplied per binding, not built from slot slugs at render time.
+- The Channels panel (hardware-organised, ships in the first slice) groups channels by node + subsystem + pin and shows role, style, live state, and the slot/facility binding. A later layout-organised view (Channels-by-name) lands with ref-counting + multi-slot binding.
+
+### Implementation Surface
+
+| Area | Change |
+|---|---|
+| **Channel record** | `{ id, name, role, style, owner, binding }`. `owner` is `hardware-config` or `user`. `binding` is always non-null — every channel is tied to specific hardware. |
+| **Profile schema (`.profile.yaml`)** | Declares which roles a board can host, which styles realise them on which subsystems, and for each style: the constraint contract (managed-field rules), the event-leaf mapping, and the binding-label shape. |
+| **`channels.yaml` schema** | `schemaVersion: '2.0'`, the shape shown above. |
+| **Constraint engine** | Given a node's channels, compute the set of active style rules and feed them to ConfigEditor's relevance-rule machinery. Existing relevance rules handle the actual UI filtering. |
+| **Hardware-owned creation** | When a hardware-configuration choice fixes the role of pins, create one channel per pin with the implied role + style + binding, default-named. Clearing or changing the choice deletes those channels. |
+| **User-owned creation** | The facility slot's Add channel action picks the style (when more than one realises the slot's role on the available hardware) and the binding target, and creates the channel already bound. |
 
 ---
 
@@ -140,7 +211,7 @@ JMRI objects fall into two tiers:
 | **Sensor** | Occupancy, button, or current channel | Event IDs embedded in system name | No — delete + recreate |
 | **Turnout** | Turnout position/command channel(s) | Event IDs embedded in system name | No — delete + recreate |
 | **Signal Mast** | Signal aspect channel | Type + ordinal (no event IDs) | Yes — aspect events updated via setters |
-| **Light** | LED state channel | Event IDs embedded in system name | No — delete + recreate |
+| **Light** | `lamp-indicator` channel | Event IDs embedded in system name | No — delete + recreate |
 | **Block** | Auto-created alongside occupancy Sensor | Separate system name | N/A — references Sensor by name |
 
 **Tier 2 — JMRI connects these** (topology, logic — JMRI-owned):
@@ -157,15 +228,15 @@ Bowties creates tier 1 objects. JMRI connects them via tier 2. The bridge reads 
 
 ### Channel → JMRI Bean Mapping
 
-Each Bowties channel maps to a JMRI bean based on channel type:
+Each Bowties channel maps to a JMRI bean based on the channel's role:
 
-| Bowties Channel Type | Direction | JMRI Bean | Notes |
+| Bowties Channel Role | Direction | JMRI Bean | Notes |
 |---|---|---|---|
 | Block Occupancy | Producer | Sensor + Block | Bridge auto-creates Block and assigns Sensor |
 | Turnout Position Feedback | Producer | Turnout (feedback side) | Combined into one Turnout bean with command |
 | Turnout Command | Consumer | Turnout (command side) | Same Turnout bean — JMRI merges both directions |
 | Signal Aspect | Consumer | Signal Mast | One event per aspect; events are mutable properties |
-| LED State | Consumer | Light | On/off event pair |
+| Lamp Indicator | Consumer | Light | Lit/unlit event pair |
 | Button Press | Producer | Sensor | Pressed/released event pair |
 | Current Sensor | Producer | Sensor | Active/inactive event pair |
 
@@ -228,6 +299,32 @@ When an event ID changes in Bowties (e.g., channel rewired to different hardware
 This has a downstream impact: any JMRI panel references to the old system name break. The bridge can detect this and warn the user ("changing this event ID will require recreating the JMRI sensor; panel references will need updating").
 
 In practice, event ID changes are rare in the Bowties-first flow — event IDs are assigned at channel creation and don't change unless the user deliberately rewires hardware. Signal masts are exempt from this concern entirely, since their event IDs are mutable properties.
+
+---
+
+## Placeholder Reconciliation
+
+Placeholder nodes let users pre-stage configuration for boards they don't yet own. The user creates a placeholder, configures it (daughter boards, channel names, possibly facility membership), and then promotes it to a real node when the physical hardware connects. The question this raises is what happens to whatever configuration is already on the physical board at promotion time.
+
+### Promote With Overwrite Confirmation
+
+Promoting a placeholder to a real node uses the same UX pattern as overwriting an existing file or installing software over a prior install: the user is asked to confirm a replacement, shown what will be replaced, and the action is committed atomically. That is the entire purpose of a placeholder — let a user configure before they own the hardware, then promote that configuration onto the real board when it arrives.
+
+When the user maps a physical node to a placeholder, Bowties shows a confirmation prompt listing what will be written: channels, daughter board assignments, named events, and any facility-driven logic. If the physical board already has meaningful configuration on the affected CDI fields, that configuration is listed as what will be replaced. The user confirms, and Bowties writes.
+
+That is the entire model. There is deliberately no per-field merge, no "keep the board's value here, the placeholder's value there" picker, no diff-and-pick UI. Those would add real implementation complexity — per-field provenance tracking, merge UI, conflict semantics — in exchange for very limited value. A user who pre-staged configuration on a placeholder has already decided what the board should look like. Users who want to start from existing board state instead use a separate workflow entirely (connect the board, let Bowties discover and adopt its configuration); that path does not involve a placeholder.
+
+Keeping promotion as a single overwrite-with-confirmation step is the design choice, not a limitation. It matches the user's mental model ("the placeholder is what I want; promote it") and resists the complexity that would otherwise accumulate around two-master reconciliation and field-level conflict resolution.
+
+---
+
+## Adopting Existing Configurations
+
+The vision describes a separate entry point for users who already have configured LCC hardware — migrated from LccPro, or set up directly in JMRI. This audience is distinct from the primary persona: they are existing LCC users adopting Bowties as a more comprehensible front-end, not new users being introduced to LCC. Adoption is a different goal from market expansion.
+
+The mechanism for this path is **manual mapping**: the user defines channels and facilities in Bowties, then explicitly binds each channel's style to existing CDI fields and event assignments on the already-configured boards. Bowties doesn't try to infer the mapping from board state — the user knows what their layout does, and the bound concepts produce the same comprehension view and debugging surface that a from-scratch layout would.
+
+This path is intentionally less streamlined than the placeholder + template flow. That flow is optimized for users who want LCC to be easy; the adoption flow is for users who already speak LCC and want comprehension and tooling on top of what they have. They can tolerate explicit mapping steps because they understand what is being mapped. v1's commitment to this audience is that the manual mapping path exists and works — not that it matches the placeholder path's polish.
 
 ---
 

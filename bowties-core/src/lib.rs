@@ -4,6 +4,7 @@
 //! Tauri or UI framework dependency.  Extracted so that domain modules can be
 //! unit-tested with plain `cargo test`.
 
+pub mod behavior_templates;
 pub mod bowtie;
 pub mod channel_events;
 pub mod node_key;

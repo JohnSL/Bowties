@@ -30,6 +30,7 @@ const { nodeRoster } = await import('$lib/stores/nodeRoster.svelte');
 const { partialCaptureNodesStore } = await import('$lib/stores/partialCaptureNodes.svelte');
 const { layoutStore } = await import('$lib/stores/layout.svelte');
 const { channelsStore } = await import('$lib/stores/channels.svelte');
+const { facilitiesStore } = await import('$lib/stores/facilities.svelte');
 const { eventStateStore } = await import('$lib/stores/eventState.svelte');
 const { layoutLifecycleOrchestrator } = await import('./layoutLifecycleOrchestrator');
 
@@ -156,6 +157,28 @@ describe('layoutLifecycleOrchestrator.resetForNewLayout', () => {
 
     expect(channelsStore.channels.length).toBe(0);
     expect(channelsStore.isEmpty).toBe(true);
+  });
+
+  it('resets facilitiesStore so stale facilities do not leak into next layout (Spec 018 / S1)', async () => {
+    facilitiesStore.addFacility(
+      {
+        templateId: 'block-indicator',
+        displayName: 'Block Indicator',
+        slots: [
+          { label: 'input', kind: 'producer', requiredRole: 'block-occupancy' },
+          { label: 'output', kind: 'consumer', requiredRole: 'lamp-indicator' },
+        ],
+        mapping: [],
+      },
+      'Stale Block',
+    );
+    expect(facilitiesStore.facilities.length).toBe(1);
+
+    await layoutLifecycleOrchestrator.resetForNewLayout({ connected: false });
+
+    expect(facilitiesStore.facilities.length).toBe(0);
+    expect(facilitiesStore.isEmpty).toBe(true);
+    expect(facilitiesStore.isDirty).toBe(false);
   });
 });
 

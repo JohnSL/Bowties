@@ -1,0 +1,1424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Spec 018 — Block Indicator Facility Mockups</title>
+<style>
+  :root {
+    /* ── Fluent v9 neutrals ─────────────────────────────────────────── */
+    --bg-app:        #f5f5f5;  /* colorNeutralBackground3   */
+    --bg-panel:      #ffffff;  /* colorNeutralBackground1   */
+    --bg-subtle:     #fafafa;  /* colorNeutralBackground2   */
+    --bg-hover:      #f5f5f5;  /* colorSubtleBackgroundHover*/
+    --bg-selected:   #ebf3fc;  /* colorBrandBackground2     */
+    --border:        #d1d1d1;  /* colorNeutralStroke1       */
+    --border-strong: #c7c7c7;  /* colorNeutralStroke1Hover  */
+    --border-focus:  #2886de;  /* colorStrokeFocus2 (brand) */
+    --text-primary:  #242424;  /* colorNeutralForeground1   */
+    --text-secondary:#424242;  /* colorNeutralForeground2   */
+    --text-muted:    #616161;  /* colorNeutralForeground3   */
+    /* ── Fluent v9 brand + status ───────────────────────────────────── */
+    --accent-blue:        #0f6cbd;  /* colorBrandBackground        */
+    --accent-blue-hover:  #115ea3;  /* colorBrandBackgroundHover   */
+    --accent-blue-pressed:#0c3b5e;  /* colorBrandBackgroundPressed */
+    --accent-amber:    #bc4b09;  /* colorStatusWarningForeground3 */
+    --accent-amber-bg: #fff4ce;  /* colorStatusWarningBackground1 */
+    --color-danger:        #c50f1f;  /* colorStatusDangerBackground3        */
+    --color-danger-hover:  #b10e1c;  /* colorStatusDangerBackground3Hover   */
+    --color-warn-glyph:    #bc4b09;  /* severeWarning, glyph only (not buttons) */
+    /* ── Okabe-Ito (domain state) ──────────────────────────────────── */
+    --state-occupied: #d55e00;
+    --state-clear:    #009e73;
+    --state-lit:      #f0a500;
+    --state-unlit:    #6b7280;
+    --status-live-bg: #dcfce7;
+    --status-live-fg: #166534;
+    --status-incomplete-bg: #fff4ce;
+    --status-incomplete-fg: #bc4b09;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px;
+    background: var(--bg-app);
+    /* Fluent v9 type ramp uses Segoe UI Variable; fall back to system. */
+    font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  h1.page-title {
+    font-size: 22px;
+    margin: 0 0 6px 0;
+  }
+  p.page-sub {
+    margin: 0 0 32px 0;
+    color: var(--text-secondary);
+  }
+  .toc {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin-bottom: 28px;
+    max-width: 1200px;
+  }
+  .toc h2 { font-size: 13px; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+  .toc ol { margin: 0; padding-left: 22px; }
+  .toc li { padding: 2px 0; }
+  .toc a { color: var(--accent-blue); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  .mockup-section {
+    margin-bottom: 48px;
+    max-width: 1200px;
+  }
+  .mockup-section h2 {
+    font-size: 16px;
+    margin: 0 0 4px 0;
+    padding-bottom: 6px;
+    border-bottom: 2px solid var(--border);
+  }
+  .mockup-caption {
+    color: var(--text-secondary);
+    margin: 0 0 14px 0;
+    font-size: 12px;
+  }
+  .mockup-caption code {
+    background: #eef0f3; padding: 1px 5px; border-radius: 3px; font-size: 11px;
+  }
+
+  /* --- Window chrome --- */
+  .window {
+    background: var(--bg-app);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+  }
+  .titlebar {
+    background: #2c3038;
+    color: #e8eaed;
+    padding: 6px 12px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .titlebar .dots { display: flex; gap: 6px; }
+  .titlebar .dots span { width: 10px; height: 10px; border-radius: 50%; background: #5a5f66; display: inline-block; }
+  .tabbar {
+    display: flex;
+    background: #fff;
+    border-bottom: 1px solid var(--border);
+    padding: 0 16px;
+  }
+  .tab {
+    padding: 10px 18px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: default;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--accent-blue);
+    font-weight: 500;
+  }
+
+  /* --- Layout: full-width main (Railroad has no sidebar) --- */
+  .layout {
+    display: grid;
+    grid-template-columns: 1fr;
+    min-height: 560px;
+    background: #fff;
+  }
+  .sidebar {
+    background: #fafbfc;
+    border-right: 1px solid var(--border);
+    padding: 12px 8px;
+  }
+  .sidebar-section-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text-muted);
+    padding: 6px 10px;
+  }
+  .sidebar-item {
+    padding: 7px 10px;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: default;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .sidebar-item.active { background: var(--bg-selected); font-weight: 500; }
+  .sidebar-item:not(.active):hover { background: var(--bg-hover); }
+  .sidebar-item .node-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--state-clear);
+  }
+
+  .main {
+    padding: 18px 22px;
+    overflow-y: auto;
+  }
+  .main h3.section-heading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 15px;
+    margin: 0 0 12px 0;
+  }
+  .main h3.section-heading + .section-actions {
+    margin-bottom: 14px;
+  }
+  .section-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .section-block { margin-bottom: 28px; }
+
+  /* --- "New" tag --- */
+  .new-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    background: var(--accent-amber-bg);
+    color: var(--accent-amber);
+    padding: 2px 7px;
+    border-radius: 10px;
+    cursor: help;
+    border: 1px solid #fcd34d;
+  }
+  .new-tag::before {
+    content: "★";
+    font-size: 9px;
+  }
+
+  /* --- Buttons --- */
+  .btn {
+    font: inherit;
+    font-size: 12px;
+    padding: 5px 12px;
+    border-radius: 4px;
+    border: 1px solid var(--border-strong);
+    background: #fff;
+    color: var(--text-primary);
+    cursor: pointer;
+    line-height: 1.4;
+  }
+  .btn:hover { background: var(--bg-hover); }
+  .btn-primary {
+    background: var(--accent-blue);
+    color: #fff;
+    border-color: var(--accent-blue);
+  }
+  .btn-primary:hover { background: var(--accent-blue-hover); border-color: var(--accent-blue-hover); }
+  .btn-primary:active { background: var(--accent-blue-pressed); border-color: var(--accent-blue-pressed); }
+  .btn-danger {
+    background: var(--color-danger);
+    color: #fff;
+    border-color: var(--color-danger);
+  }
+  .btn-danger:hover { background: var(--color-danger-hover); border-color: var(--color-danger-hover); }
+  .btn-link {
+    background: none;
+    border: none;
+    color: var(--accent-blue);
+    padding: 2px 4px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .btn-link:hover { text-decoration: underline; }
+  .btn-danger-link {
+    background: none;
+    border: none;
+    color: #b91c1c;
+    padding: 2px 4px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .btn-danger-link:hover { text-decoration: underline; }
+  .btn-sm { font-size: 11px; padding: 3px 8px; }
+
+  /* --- Facility cards --- */
+  .facility-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .facility-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .facility-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .facility-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .facility-name {
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .facility-template {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .facility-actions {
+    display: flex;
+    gap: 4px;
+  }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+  .status-pill.live { background: var(--status-live-bg); color: var(--status-live-fg); }
+  .status-pill.incomplete { background: var(--status-incomplete-bg); color: var(--status-incomplete-fg); }
+  .status-pill .pulse {
+    width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+  }
+
+  .slot-grid {
+    display: grid;
+    grid-template-columns: 1fr 28px 1fr;
+    align-items: center;
+    gap: 8px;
+  }
+  .slot {
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 10px 12px;
+    min-height: 78px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .slot.empty {
+    border-style: dashed;
+    background: #fafbfc;
+  }
+  .slot-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    margin-bottom: 6px;
+  }
+  .slot-empty-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .slot-empty-text {
+    color: var(--text-muted);
+    font-style: italic;
+  }
+  .slot-empty-actions { display: flex; gap: 6px; }
+  .slot-filled .channel-binding {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .slot-filled .channel-name {
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+  .slot-filled .channel-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .slot-filled .channel-state-row {
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+  .slot-filled-actions {
+    display: flex;
+    gap: 4px;
+    margin-top: 8px;
+  }
+  .slot-arrow {
+    color: var(--text-muted);
+    text-align: center;
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  /* --- State indicators --- */
+  .state-dot {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    border: 1.5px solid var(--text-muted);
+    background: transparent;
+    flex-shrink: 0;
+  }
+  .state-dot.occupied { background: var(--state-occupied); border-color: var(--state-occupied); }
+  .state-dot.clear    { background: var(--state-clear);    border-color: var(--state-clear); }
+  .state-dot.lit      { background: var(--state-lit);      border-color: var(--state-lit); }
+  .state-dot.unlit    { background: #d1d5db;               border-color: #9ca3af; }
+  .state-dot.unknown  { background: transparent;           border-color: var(--text-muted); }
+  .state-dot.no-config {
+    background: transparent;
+    border-color: var(--text-muted);
+    border-style: dashed;
+    opacity: 0.6;
+  }
+  .state-label { font-size: 11px; color: var(--text-secondary); text-transform: capitalize; }
+  .state-label.consumer-note {
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  /* --- Channels panel --- */
+  /* Wrapper keeps the rounded border around the table; the table itself
+     flows in normal page scroll (the outer .main is the scroll surface),
+     and the sticky thead pins to the top of that surface while scrolling. */
+  .channels-scroll {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .channels-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    font-size: 12px;
+  }
+  .channels-table thead th {
+    position: sticky;
+    top: 0;
+    background: #f3f4f6;
+    text-align: left;
+    padding: 8px 10px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    z-index: 1;
+  }
+  .channels-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #eef0f3;
+    vertical-align: middle;
+  }
+  .channels-table tr.group-header td {
+    background: #f8f9fa;
+    font-weight: 600;
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    padding: 6px 10px;
+  }
+  .channels-table tbody tr:last-child td { border-bottom: none; }
+  .ownership-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 8px;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+  }
+  .ownership-badge.hw { background: #dbeafe; color: #1e40af; }
+  .ownership-badge.user { background: #ede9fe; color: #5b21b6; }
+  .role-style {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .role-style .role { font-weight: 500; }
+  .role-style .style { font-size: 10px; color: var(--text-muted); font-family: 'Cascadia Mono', Consolas, monospace; }
+  .binding-cell {
+    font-size: 11px;
+  }
+  .binding-cell.unbound { color: var(--text-muted); font-style: italic; }
+  .binding-cell.bound {
+    color: var(--accent-blue);
+  }
+  .binding-cell .bound-target { font-weight: 500; }
+  .last-cmd-tag {
+    display: inline-block;
+    font-size: 9px;
+    color: var(--text-muted);
+    font-style: italic;
+    margin-left: 6px;
+  }
+
+  /* --- Modal (Fluent v9 tokens, with v8-style header/footer dividers) --- */
+  .modal-backdrop {
+    position: relative;
+    background: rgba(0,0,0,0.35);
+    border-radius: 6px;
+    padding: 28px;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 300px;
+  }
+  .modal {
+    background: var(--bg-panel);
+    border-radius: 8px;
+    /* Fluent v9 shadow16, lightened slightly so the overlay does the lift */
+    box-shadow: 0 8px 24px rgba(0,0,0,0.18), 0 0 2px rgba(0,0,0,0.12);
+    width: 480px;
+    overflow: hidden;
+  }
+  .modal-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .modal-title {
+    font-weight: 600;
+    font-size: 16px;        /* Fluent fontSizeBase400 */
+    line-height: 22px;      /* Fluent lineHeightBase400 */
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .modal-glyph {
+    font-size: 16px;
+    line-height: 1;
+  }
+  .modal-glyph.warn { color: var(--color-warn-glyph); }
+  /* Fluent v9 Dismiss button: bare 28×28 icon, hover surface fill. */
+  .dialog-close {
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-secondary);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+  }
+  .dialog-close:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+  .modal-body {
+    padding: 16px 18px;
+    font-size: 14px;        /* Fluent fontSizeBase300 (dialog body) */
+    line-height: 20px;
+    color: var(--text-secondary);
+  }
+  .modal-footer {
+    padding: 12px 18px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-subtle);
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .form-group { margin-bottom: 14px; }
+  .form-group label {
+    display: block;
+    font-weight: 500;
+    font-size: 12px;
+    margin-bottom: 5px;
+    color: var(--text-secondary);
+  }
+  .form-group input[type=text] {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    font: inherit;
+    font-size: 13px;
+  }
+  .form-group input[type=text]:focus {
+    outline: none;
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 2px rgba(40, 134, 222, 0.25);
+  }
+  .template-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    cursor: pointer;
+    margin-bottom: 6px;
+  }
+  .template-option.selected {
+    border-color: var(--accent-blue);
+    background: var(--bg-selected);
+  }
+  .template-option input { margin-top: 3px; }
+  .template-option .t-name { font-weight: 500; }
+  .template-option .t-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+  /* Picker list rows */
+  .picker-search {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    margin-bottom: 10px;
+    font-size: 13px;
+  }
+  .picker-list {
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    max-height: 260px;
+    overflow-y: auto;
+  }
+  .picker-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-bottom: 1px solid #eef0f3;
+    cursor: pointer;
+  }
+  .picker-item:last-child { border-bottom: none; }
+  .picker-item:hover { background: var(--bg-hover); }
+  .picker-item.selected { background: var(--bg-selected); }
+  .picker-item .pi-main { flex: 1; }
+  .picker-item .pi-name { font-weight: 500; font-size: 13px; }
+  .picker-item .pi-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .picker-empty {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  /* Config tab row */
+  .config-tab {
+    background: #fff;
+    padding: 16px 18px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .cdi-row {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 14px;
+    padding: 8px 0;
+    align-items: center;
+    border-bottom: 1px solid #eef0f3;
+  }
+  .cdi-row:last-child { border-bottom: none; }
+  .cdi-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+  .cdi-value {
+    font-size: 12px;
+    padding: 4px 8px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+  }
+  .cdi-value.managed {
+    background: #f3f4f6;
+    color: var(--text-muted);
+    cursor: not-allowed;
+  }
+  .cdi-value select {
+    font: inherit;
+    font-size: 12px;
+    border: none;
+    background: transparent;
+    padding: 0;
+    width: 100%;
+  }
+  .claim-status {
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+  .claim-status.claimed { color: var(--accent-blue); }
+  .claim-status.unclaimed { color: var(--text-muted); font-style: italic; }
+  .managed-hint {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-style: italic;
+    margin-top: 2px;
+  }
+  .section-divider {
+    margin: 18px 0 10px 0;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+
+  /* Toast / callouts inside mockup */
+  .annotation {
+    background: #fff8e1;
+    border-left: 3px solid #f5b400;
+    padding: 8px 12px;
+    margin-top: 10px;
+    font-size: 11px;
+    color: #5b4900;
+    border-radius: 0 4px 4px 0;
+  }
+  .annotation strong { color: #3d3100; }
+
+  .narrow { max-width: 720px; }
+  .pair-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+</style>
+</head>
+<body>
+
+<h1 class="page-title">Spec 018 — Block Indicator Facility · UX Mockups</h1>
+<p class="page-sub">Illustrative mockups showing the new <strong>Facilities</strong> and <strong>Channels</strong> surfaces in the Railroad tab plus the supporting pickers. These are static design references; final styling will use the existing Bowties component set.</p>
+<p class="page-sub" style="font-size: 11px; color: var(--text-muted);">Tab labels match the current app (<code>Config</code> · <code>Bowties</code> · <code>Railroad</code>). The Railroad tab has no sidebar in this slice — facility cards already serve as their own detail view, the Channels section sits below on the same scrolling page, and adding sidebar nav doesn't earn its keep at this scale. Traffic Monitor is a separate window and not a tab.</p>
+
+<div class="toc">
+  <h2>Tour</h2>
+  <ol>
+    <li><a href="#m1">Railroad tab — overview (empty layout)</a></li>
+    <li><a href="#m2">"Add facility" dialog</a></li>
+    <li><a href="#m3">Facility scaffolded, both slots empty (Incomplete)</a></li>
+    <li><a href="#m4">Channels panel — hardware verification standalone</a></li>
+    <li><a href="#m5">"Select channel" picker (input slot)</a></li>
+    <li><a href="#m6">Input slot bound, output slot empty (still Incomplete)</a></li>
+    <li><a href="#m7">"Add channel" sub-picker (lamp row)</a></li>
+    <li><a href="#m8">Both slots filled — facility Live</a></li>
+    <li><a href="#m9">Edge state — no compatible channels / no hardware target</a></li>
+    <li><a href="#m10">"Unsaved Changes" dialog — mixed node + facility edits</a></li>
+  </ol>
+</div>
+
+<!-- ============================================================= -->
+<!-- 1. Railroad tab overview, empty layout                       -->
+<!-- ============================================================= -->
+<section class="mockup-section" id="m1">
+  <h2>1. Railroad tab — overview, empty layout</h2>
+  <p class="mockup-caption">Facilities and Channels sections appear in the Railroad tab as plain functional content — no in-product expectation-setting chrome (FR-035). Expectation-setting is delivered out-of-product via release notes and user docs (FR-034).</p>
+  <div class="window">
+    <div class="titlebar"><span class="dots"><span></span><span></span><span></span></span> Bowties — MyLayout.yaml</div>
+    <div class="tabbar">
+      <div class="tab">Config</div>
+      <div class="tab">Bowties</div>
+      <div class="tab active">Railroad</div>
+    </div>
+    <div class="layout">
+      <div class="main">
+        <div class="section-block">
+          <h3 class="section-heading">
+            Facilities
+          </h3>
+          <div class="section-actions">
+            <button class="btn btn-primary">+ Add facility</button>
+          </div>
+          <div style="padding: 24px; text-align: center; color: var(--text-muted); background: var(--bg-subtle); border: 1px dashed var(--border); border-radius: 5px;">
+            No facilities yet. Click <strong>Add facility</strong> to scaffold a Block Indicator.
+          </div>
+        </div>
+
+        <div class="section-block">
+          <h3 class="section-heading">Channels</h3>
+          <div style="padding: 24px; text-align: center; color: var(--text-muted); background: var(--bg-subtle); border: 1px dashed var(--border); border-radius: 5px;">
+            No channels yet. Configure hardware that hosts channels (e.g., a daughter board on a connector) to populate this section.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= -->
+<!-- 2. Add Facility dialog                                       -->
+<!-- ============================================================= -->
+<section class="mockup-section" id="m2">
+  <h2>2. "Add facility" dialog</h2>
+  <p class="mockup-caption">Pick a behavior template and provide a name (FR-016). Block Indicator is the only template in this slice; the picker is shaped to grow later.</p>
+  <div class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header"><span class="modal-title">Add facility</span><button class="dialog-close" aria-label="Close">×</button></div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Behavior template</label>
+          <div class="template-option selected">
+            <input type="radio" checked />
+            <div>
+              <div class="t-name">Block Indicator</div>
+              <div class="t-desc">Reports block occupancy on a single LED. Producer: <code>block-occupancy</code> · Consumer: <code>lamp-indicator</code>.</div>
+            </div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Name</label>
+          <input type="text" value="Block 5" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn">Cancel</button>
+        <button class="btn btn-primary">Add facility</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= -->
+<!-- 3. Facility scaffolded, both slots empty                     -->
+<!-- ============================================================= -->
+<section class="mockup-section" id="m3">
+  <h2>3. Facility scaffolded — both slots empty (Incomplete)</h2>
+  <p class="mockup-caption">The facility persists with empty slots (FR-003). Each slot offers operations appropriate to the current state of the layout. Note the <span class="status-pill incomplete"><span class="pulse"></span>Incomplete</span> status pill.</p>
+  <div class="window">
+    <div class="titlebar"><span class="dots"><span></span><span></span><span></span></span> Bowties — MyLayout.yaml</div>
+    <div class="tabbar">
+      <div class="tab">Config</div>
+      <div class="tab">Bowties</div>
+      <div class="tab active">Railroad</div>
+    </div>
+    <div class="layout">
+      <div class="main">
+        <h3 class="section-heading">Facilities</h3>
+        <div class="section-actions"><button class="btn btn-primary">+ Add facility</button></div>
+
+        <div class="facility-list">
+          <div class="facility-card">
+            <div class="facility-header">
+              <div class="facility-title">
+                <span class="facility-name">Block 5</span>
+                <span class="facility-template">Block Indicator</span>
+                <span class="status-pill incomplete"><span class="pulse"></span>Incomplete</span>
+              </div>
+              <div class="facility-actions">
+                <button class="btn-link">Rename</button>
+                <button class="btn-danger-link">Delete</button>
+              </div>
+            </div>
+            <div class="slot-grid">
+              <div class="slot empty">
+                <div class="slot-label">Block (input)</div>
+                <div class="slot-empty-row">
+                  <span class="slot-empty-text">empty</span>
+                  <div class="slot-empty-actions">
+                    <button class="btn btn-sm">Select channel…</button>
+                    <button class="btn btn-sm" disabled title="No hardware available to create a block-occupancy channel.">Add channel…</button>
+                  </div>
+                </div>
+              </div>
+              <div class="slot-arrow">→</div>
+              <div class="slot empty">
+                <div class="slot-label">Indicator (output)</div>
+                <div class="slot-empty-row">
+                  <span class="slot-empty-text">empty</span>
+                  <div class="slot-empty-actions">
+                    <button class="btn btn-sm" disabled title="No lamp-indicator channels available.">Select channel…</button>
+                    <button class="btn btn-sm" disabled title="No hardware available to create a lamp-indicator channel.">Add channel…</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= -->
+<!-- 4. Channels panel — hardware verification standalone         -->
+<!-- ============================================================= -->
+<section class="mockup-section" id="m4">
+  <h2>4. Channels panel — hardware verification standalone (US2)</h2>
+  <p class="mockup-caption">8 hardware-owned BOD-8 channels appear when the daughter board is selected (FR-007, FR-008, FR-031). All are <em>unbound</em>; live state tracks the bus immediately. No facility is required for this view to be useful.</p>
+  <div class="window">
+    <div class="titlebar"><span class="dots"><span></span><span></span><span></span></span> Bowties — MyLayout.yaml</div>
+    <div class="tabbar">
+      <div class="tab">Config</div>
+      <div class="tab">Bowties</div>
+      <div class="tab active">Railroad</div>
+    </div>
+    <div class="layout">
+      <div class="main">
+        <h3 class="section-heading" style="color: var(--text-muted); font-weight: 500">Facilities</h3>
+        <div style="padding: 16px; text-align: center; color: var(--text-muted); background: var(--bg-subtle); border: 1px dashed var(--border); border-radius: 5px; margin-bottom: 22px; font-size: 12px;">
+          No facilities yet — but the Channels panel below works without any facility.
+        </div>
+        <h3 class="section-heading">Channels</h3>
+        <div class="channels-scroll">
+        <table class="channels-table">
+          <thead>
+            <tr>
+              <th style="width:30px"></th>
+              <th>Name</th>
+              <th>Role / Style</th>
+              <th>Location</th>
+              <th>State</th>
+              <th>Binding</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="group-header"><td colspan="6">TowerLCC-1 · Connector A · BOD-8</td></tr>
+            <tr>
+              <td><span class="state-dot occupied"></span></td>
+              <td>TowerLCC-1 BOD A1 <span class="ownership-badge hw">HW</span></td>
+              <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
+              <td>Connector A · Input 1</td>
+              <td><span class="state-label">Occupied</span></td>
+              <td class="binding-cell unbound">unbound</td>
+            </tr>
+            <tr>
+              <td><span class="state-dot clear"></span></td>
+              <td>TowerLCC-1 BOD A2 <span class="ownership-badge hw">HW</span></td>
+              <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
+              <td>Connector A · Input 2</td>
+              <td><span class="state-label">Clear</span></td>
+              <td class="binding-cell unbound">unbound</td>
+            </tr>
+            <tr>
+              <td><span class="state-dot clear"></span></td>
+              <td>TowerLCC-1 BOD A3 <span class="ownership-badge hw">HW</span></td>
+              <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
+              <td>Connector A · Input 3</td>
+              <td><span class="state-label">Clear</span></td>
+              <td class="binding-cell unbound">unbound</td>
+            </tr>
+            <tr>
+              <td><span class="state-dot unknown"></span></td>
+              <td>TowerLCC-1 BOD A4 <span class="ownership-badge hw">HW</span></td>
+              <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
+              <td>Connector A · Input 4</td>
+              <td><span class="state-label">Unknown</span></td>
+              <td class="binding-cell unbound">unbound</td>
+            </tr>
+            <tr>
+              <td><span class="state-dot no-config" title="No configuration data — channel cannot resolve event IDs yet."></span></td>
+              <td>TowerLCC-1 BOD A5 <span class="ownership-badge hw">HW</span></td>
+              <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
+              <td>Connector A · Input 5</td>
+              <td><span class="state-label">No config</span></td>
+              <td class="binding-cell unbound">unbound</td>
+            </tr>
+            <tr>
+              <td><span class="state-dot clear"></span></td>
+              <td>TowerLCC-1 BOD A6 <span class="ownership-badge hw">HW</span></td>
+              <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
+              <td>Connector A · Input 6</td>
+              <td><span class="state-label">Clear</span></td>
+              <td class="binding-cell unbound">unbound</td>
+            </tr>
+            <tr>
+              <td><span class="state-dot clear"></span></td>
+              <td>TowerLCC-1 BOD A7 <span class="ownership-badge hw">HW</span></td>
+              <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
+              <td>Connector A · Input 7</td>
+              <td><span class="state-label">Clear</span></td>
+              <td class="binding-cell unbound">unbound</td>
+            </tr>
+            <tr>
+              <td><span class="state-dot unknown"></span></td>
+              <td>TowerLCC-1 BOD A8 <span class="ownership-badge hw">HW</span></td>
+              <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
+              <td>Connector A · Input 8</td>
+              <td><span class="state-label">Unknown</span></td>
+              <td class="binding-cell unbound">unbound</td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= -->
+<!-- 5. Select channel picker                                     -->
+<!-- ============================================================= -->
+<section class="mockup-section" id="m5">
+  <h2>5. "Select channel" picker — input slot</h2>
+  <p class="mockup-caption">Lists unbound channels whose role matches the slot's required role (FR-018). For the Block Indicator's input slot, that's <code>block-occupancy</code>. Channels already bound elsewhere are hidden.</p>
+  <div class="modal-backdrop">
+    <div class="modal" style="width: 540px">
+      <div class="modal-header"><span class="modal-title">Select channel for "Block (input)"</span><button class="dialog-close" aria-label="Close">×</button></div>
+      <div class="modal-body">
+        <input class="picker-search" type="text" placeholder="Search by name or location…" value="" />
+        <div class="picker-list">
+          <div class="picker-item selected">
+            <span class="state-dot occupied"></span>
+            <div class="pi-main">
+              <div class="pi-name">TowerLCC-1 BOD A1 <span class="ownership-badge hw">HW</span></div>
+              <div class="pi-meta">Block occupancy · Connector A · Input 1 · currently <strong>occupied</strong></div>
+            </div>
+            <input type="radio" checked />
+          </div>
+          <div class="picker-item">
+            <span class="state-dot clear"></span>
+            <div class="pi-main">
+              <div class="pi-name">TowerLCC-1 BOD A2 <span class="ownership-badge hw">HW</span></div>
+              <div class="pi-meta">Block occupancy · Connector A · Input 2 · currently <strong>clear</strong></div>
+            </div>
+            <input type="radio" />
+          </div>
+          <div class="picker-item">
+            <span class="state-dot clear"></span>
+            <div class="pi-main">
+              <div class="pi-name">TowerLCC-1 BOD A3 <span class="ownership-badge hw">HW</span></div>
+              <div class="pi-meta">Block occupancy · Connector A · Input 3 · currently <strong>clear</strong></div>
+            </div>
+            <input type="radio" />
+          </div>
+          <div class="picker-item">
+            <span class="state-dot unknown"></span>
+            <div class="pi-main">
+              <div class="pi-name">TowerLCC-1 BOD A4 <span class="ownership-badge hw">HW</span></div>
+              <div class="pi-meta">Block occupancy · Connector A · Input 4 · no observation yet</div>
+            </div>
+            <input type="radio" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn">Cancel</button>
+        <button class="btn btn-primary">Bind to slot</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= -->
+<!-- 6. Input bound, output empty                                 -->
+<!-- ============================================================= -->
+<section class="mockup-section" id="m6">
+  <h2>6. Input slot bound, output empty — still Incomplete</h2>
+  <p class="mockup-caption">After Select channel on the input slot. The slot shows the channel's live state. The output slot is still empty; the facility remains Incomplete (FR-020). Filled-slot actions: Rename, Rebind, Remove from slot (FR-019).</p>
+  <div class="window narrow">
+    <div class="titlebar"><span class="dots"><span></span><span></span><span></span></span> Bowties — MyLayout.yaml</div>
+    <div class="layout" style="grid-template-columns: 1fr; min-height: auto">
+      <div class="main">
+        <div class="facility-list">
+          <div class="facility-card">
+            <div class="facility-header">
+              <div class="facility-title">
+                <span class="facility-name">Block 5</span>
+                <span class="facility-template">Block Indicator</span>
+                <span class="status-pill incomplete"><span class="pulse"></span>Incomplete</span>
+              </div>
+              <div class="facility-actions">
+                <button class="btn-link">Rename</button>
+                <button class="btn-danger-link">Delete</button>
+              </div>
+            </div>
+            <div class="slot-grid">
+              <div class="slot slot-filled">
+                <div class="slot-label">Block (input)</div>
+                <div class="channel-binding">
+                  <span class="state-dot occupied"></span>
+                  <div>
+                    <div class="channel-name">TowerLCC-1 BOD A1 <span class="ownership-badge hw">HW</span></div>
+                    <div class="channel-meta">Connector A · Input 1</div>
+                  </div>
+                </div>
+                <div class="slot-filled-actions">
+                  <button class="btn-link">Rename</button>
+                  <button class="btn-link">Rebind…</button>
+                  <button class="btn-danger-link">Remove from slot</button>
+                </div>
+              </div>
+              <div class="slot-arrow">→</div>
+              <div class="slot empty">
+                <div class="slot-label">Indicator (output)</div>
+                <div class="slot-empty-row">
+                  <span class="slot-empty-text">empty</span>
+                  <div class="slot-empty-actions">
+                    <button class="btn btn-sm" disabled title="No lamp-indicator channels exist yet.">Select channel…</button>
+                    <button class="btn btn-sm btn-primary">Add channel…</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= -->
+<!-- 7. Add channel sub-picker                                    -->
+<!-- ============================================================= -->
+<section class="mockup-section" id="m7">
+  <h2>7. "Add channel" sub-picker — Direct Lamp Control row</h2>
+  <p class="mockup-caption">Lists unclaimed, constraint-compatible Direct Lamp Control rows (FR-018, FR-030). Rows where <code>Lamp Selection = "Used by Mast"</code> are hidden, not greyed out. On confirm, Bowties atomically creates the channel, binds it to the row, and binds it to the slot.</p>
+  <div class="modal-backdrop">
+    <div class="modal" style="width: 560px">
+      <div class="modal-header"><span class="modal-title">Add lamp-indicator channel for "Indicator (output)"</span><button class="dialog-close" aria-label="Close">×</button></div>
+      <div class="modal-body">
+        <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 10px;">
+          Pick a Direct Lamp Control row. Bowties will create a new <code>lamp-indicator</code> channel
+          bound to that row (style <code>single-led-direct-lamp</code>) and bind it to this slot.
+        </div>
+        <input class="picker-search" type="text" placeholder="Search rows…" />
+        <div class="picker-list">
+          <div class="picker-item selected">
+            <input type="radio" checked />
+            <div class="pi-main">
+              <div class="pi-name">Signal-LCC-1 · Direct Lamp Control · Row 7</div>
+              <div class="pi-meta">Unclaimed · Lamp Selection: Direct Command</div>
+            </div>
+          </div>
+          <div class="picker-item">
+            <input type="radio" />
+            <div class="pi-main">
+              <div class="pi-name">Signal-LCC-1 · Direct Lamp Control · Row 8</div>
+              <div class="pi-meta">Unclaimed · Lamp Selection: Direct Command</div>
+            </div>
+          </div>
+          <div class="picker-item">
+            <input type="radio" />
+            <div class="pi-main">
+              <div class="pi-name">Signal-LCC-1 · Direct Lamp Control · Row 12</div>
+              <div class="pi-meta">Unclaimed · Lamp Selection: Direct Command</div>
+            </div>
+          </div>
+        </div>
+        <div class="annotation">
+          <strong>Filtered out:</strong> rows where <em>Lamp Selection</em> is <em>Used by Mast</em>
+          (incompatible with direct lamp control), or rows already claimed by another channel.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn">Cancel</button>
+        <button class="btn btn-primary">Create &amp; bind</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= -->
+<!-- 8. Both slots filled — Live                                  -->
+<!-- ============================================================= -->
+<section class="mockup-section" id="m8">
+  <h2>8. Both slots filled — facility Live</h2>
+  <p class="mockup-caption">All slots bound, the facility auto-deploys event-bowtie wiring and transitions to <span class="status-pill live"><span class="pulse"></span>Live</span> (FR-020, FR-021). Below, the Channels panel reflects the new binding and the new <span class="ownership-badge user">USER</span>-owned channel. The window's content area is clipped to show how the page-level scroll behaves once content exceeds the viewport.</p>
+  <div class="window">
+    <div class="titlebar"><span class="dots"><span></span><span></span><span></span></span> Bowties — MyLayout.yaml</div>
+    <div class="tabbar">
+      <div class="tab">Config</div>
+      <div class="tab">Bowties</div>
+      <div class="tab active">Railroad</div>
+    </div>
+    <div class="layout" style="min-height: 0; height: 520px">
+      <div class="main">
+        <h3 class="section-heading">Facilities</h3>
+        <div class="section-actions"><button class="btn btn-primary">+ Add facility</button></div>
+
+        <div class="facility-list">
+          <div class="facility-card">
+            <div class="facility-header">
+              <div class="facility-title">
+                <span class="facility-name">Block 5</span>
+                <span class="facility-template">Block Indicator</span>
+                <span class="status-pill live"><span class="pulse"></span>Live</span>
+              </div>
+              <div class="facility-actions">
+                <button class="btn-link">Rename</button>
+                <button class="btn-danger-link">Delete</button>
+              </div>
+            </div>
+            <div class="slot-grid">
+              <div class="slot slot-filled">
+                <div class="slot-label">Block (input)</div>
+                <div class="channel-binding">
+                  <span class="state-dot occupied"></span>
+                  <div>
+                    <div class="channel-name">TowerLCC-1 BOD A1 <span class="ownership-badge hw">HW</span></div>
+                    <div class="channel-meta">Connector A · Input 1 · occupied</div>
+                  </div>
+                </div>
+                <div class="slot-filled-actions">
+                  <button class="btn-link">Rename</button>
+                  <button class="btn-link">Rebind…</button>
+                  <button class="btn-danger-link">Remove from slot</button>
+                </div>
+              </div>
+              <div class="slot-arrow">→</div>
+              <div class="slot slot-filled">
+                <div class="slot-label">Indicator (output)</div>
+                <div class="channel-binding">
+                  <span class="state-dot lit"></span>
+                  <div>
+                    <div class="channel-name">Block 5 Indicator <span class="ownership-badge user">USER</span></div>
+                    <div class="channel-meta">Signal-LCC-1 · Lamp Row 7 · lit</div>
+                  </div>
+                </div>
+                <div class="slot-filled-actions">
+                  <button class="btn-link">Rename</button>
+                  <button class="btn-link">Rebind…</button>
+                  <button class="btn-danger-link">Remove from slot</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <h3 class="section-heading" style="margin-top: 28px">Channels</h3>
+        <div class="channels-scroll">
+        <table class="channels-table">
+          <thead>
+            <tr>
+              <th style="width:30px"></th>
+              <th>Name</th>
+              <th>Role / Style</th>
+              <th>Location</th>
+              <th>State</th>
+              <th>Binding</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="group-header"><td colspan="6">TowerLCC-1 · Connector A · BOD-8</td></tr>
+            <tr>
+              <td><span class="state-dot occupied"></span></td>
+              <td>TowerLCC-1 BOD A1 <span class="ownership-badge hw">HW</span></td>
+              <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
+              <td>Connector A · Input 1</td>
+              <td><span class="state-label">Occupied</span></td>
+              <td class="binding-cell bound">→ <span class="bound-target">Block 5</span> / Block</td>
+            </tr>
+            <tr>
+              <td><span class="state-dot clear"></span></td>
+              <td>TowerLCC-1 BOD A2 <span class="ownership-badge hw">HW</span></td>
+              <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
+              <td>Connector A · Input 2</td>
+              <td><span class="state-label">Clear</span></td>
+              <td class="binding-cell unbound">unbound</td>
+            </tr>
+            <tr>
+              <td><span class="state-dot clear"></span></td>
+              <td>TowerLCC-1 BOD A3 <span class="ownership-badge hw">HW</span></td>
+              <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
+              <td>Connector A · Input 3</td>
+              <td><span class="state-label">Clear</span></td>
+              <td class="binding-cell unbound">unbound</td>
+            </tr>
+            <tr>
+              <td><span class="state-dot occupied"></span></td>
+              <td>TowerLCC-1 BOD A4 <span class="ownership-badge hw">HW</span></td>
+              <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
+              <td>Connector A · Input 4</td>
+              <td><span class="state-label">Occupied</span></td>
+              <td class="binding-cell unbound">unbound</td>
+            </tr>
+            <tr>
+              <td><span class="state-dot clear"></span></td>
+              <td>TowerLCC-1 BOD A5 <span class="ownership-badge hw">HW</span></td>
+              <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
+              <td>Connector A · Input 5</td>
+              <td><span class="state-label">Clear</span></td>
+              <td class="binding-cell unbound">unbound</td>
+            </tr>
+            <tr>
+              <td><span class="state-dot clear"></span></td>
+              <td>TowerLCC-1 BOD A6 <span class="ownership-badge hw">HW</span></td>
+              <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
+              <td>Connector A · Input 6</td>
+              <td><span class="state-label">Clear</span></td>
+              <td class="binding-cell unbound">unbound</td>
+            </tr>
+            <tr>
+              <td><span class="state-dot clear"></span></td>
+              <td>TowerLCC-1 BOD A7 <span class="ownership-badge hw">HW</span></td>
+              <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
+              <td>Connector A · Input 7</td>
+              <td><span class="state-label">Clear</span></td>
+              <td class="binding-cell unbound">unbound</td>
+            </tr>
+            <tr>
+              <td><span class="state-dot unknown"></span></td>
+              <td>TowerLCC-1 BOD A8 <span class="ownership-badge hw">HW</span></td>
+              <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
+              <td>Connector A · Input 8</td>
+              <td><span class="state-label">Unknown</span></td>
+              <td class="binding-cell unbound">unbound</td>
+            </tr>
+            <tr class="group-header"><td colspan="6">Signal-LCC-1 · Direct Lamp Control</td></tr>
+            <tr>
+              <td><span class="state-dot lit"></span></td>
+              <td>Block 5 Indicator <span class="ownership-badge user">USER</span></td>
+              <td><div class="role-style"><span class="role">Lamp indicator</span><span class="style">single-led-direct-lamp</span></div></td>
+              <td>Row 7</td>
+              <td><span class="state-label">Lit</span></td>
+              <td class="binding-cell bound">→ <span class="bound-target">Block 5</span> / Indicator</td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= -->
+<!-- 9. Edge state                                                -->
+<!-- ============================================================= -->
+<section class="mockup-section" id="m9">
+  <h2>9. Edge states — no compatible channels / no hardware target</h2>
+  <p class="mockup-caption">Slot operations are disabled with hover tooltips that say what's missing in <em>role</em> terms. Both "Select" and "Add" can be unavailable at the same time; the slot still accepts no-op state (Acceptance Scenario 2, Edge Cases). Richer slot-hint UX (recommending which specific hardware to add) is a vision-level concern, not a spec 018 deliverable.</p>
+  <div class="pair-grid">
+    <div class="facility-card">
+      <div class="facility-header">
+        <div class="facility-title">
+          <span class="facility-name">Yard ladder #2</span>
+          <span class="facility-template">Block Indicator</span>
+          <span class="status-pill incomplete"><span class="pulse"></span>Incomplete</span>
+        </div>
+      </div>
+      <div class="slot-grid">
+        <div class="slot empty">
+          <div class="slot-label">Block (input)</div>
+          <div class="slot-empty-row">
+            <span class="slot-empty-text">empty</span>
+            <div class="slot-empty-actions">
+              <button class="btn btn-sm" disabled title="No block-occupancy channels available.">Select channel…</button>
+              <button class="btn btn-sm" disabled title="No hardware available to create a block-occupancy channel.">Add channel…</button>
+            </div>
+          </div>
+        </div>
+        <div class="slot-arrow">→</div>
+        <div class="slot empty">
+          <div class="slot-label">Indicator (output)</div>
+          <div class="slot-empty-row">
+            <span class="slot-empty-text">empty</span>
+            <div class="slot-empty-actions">
+              <button class="btn btn-sm" disabled title="No lamp-indicator channels available.">Select channel…</button>
+              <button class="btn btn-sm" disabled title="No hardware available to create a lamp-indicator channel.">Add channel…</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="facility-card">
+      <div class="facility-header">
+        <div class="facility-title">
+          <span class="facility-name">Block 5</span>
+          <span class="facility-template">Block Indicator</span>
+          <span class="status-pill incomplete"><span class="pulse"></span>Incomplete</span>
+        </div>
+      </div>
+      <div class="slot-grid">
+        <div class="slot slot-filled">
+          <div class="slot-label">Block (input)</div>
+          <div class="channel-binding">
+            <span class="state-dot no-config"></span>
+            <div>
+              <div class="channel-name">TowerLCC-1 BOD A1 <span class="ownership-badge hw">HW</span></div>
+              <div class="channel-meta">Connector A · Input 1 · no config data yet</div>
+            </div>
+          </div>
+          <div class="slot-filled-actions">
+            <button class="btn-link">Rename</button>
+            <button class="btn-link">Rebind…</button>
+            <button class="btn-danger-link">Remove from slot</button>
+          </div>
+        </div>
+        <div class="slot-arrow">→</div>
+        <div class="slot empty">
+          <div class="slot-label">Indicator (output)</div>
+          <div class="slot-empty-row">
+            <span class="slot-empty-text">empty</span>
+            <div class="slot-empty-actions">
+              <button class="btn btn-sm" disabled title="No lamp-indicator channels available.">Select channel…</button>
+              <button class="btn btn-sm btn-primary">Add channel…</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="annotation">
+        <strong>Input bound, output ready to fill.</strong> The dashed indicator on the input slot reflects the spec 017 "no config data" progression — it resolves to <em>clear</em> or <em>occupied</em> once CDI is fetched. Add channel will open the lamp-row sub-picker.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= -->
+<!-- 10. Unsaved Changes dialog — mixed node + facility edits      -->
+<!-- ============================================================= -->
+<section class="mockup-section" id="m10">
+  <h2>10. "Unsaved Changes" dialog — mixed node + facility edits</h2>
+  <p class="mockup-caption">
+    Confirm shown when the user tries to close, disconnect, or exit with edits pending across
+    both node-level surfaces (CDI config, bowtie metadata, connector selections, offline drafts)
+    and the new facility/channel surfaces from spec 018. The breakdown is one bullet per non-empty
+    bucket — quiet when nothing changed, dense only when something did. Destructive action is
+    Fluent <em>danger red</em>; the orange ⚠ glyph labels the dialog as a warning, the button
+    color names the action. Esc, overlay click, and the bare × all map to <em>Cancel</em>.
+  </p>
+  <div class="modal-backdrop">
+    <div class="modal" style="width: 440px">
+      <div class="modal-header">
+        <span class="modal-title">
+          <span class="modal-glyph warn" aria-hidden="true">⚠</span>
+          Unsaved Changes
+        </span>
+        <button class="dialog-close" aria-label="Cancel">×</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin: 0 0 12px 0; color: var(--text-primary);">
+          Closing the layout will discard unsaved changes. Continue?
+        </p>
+        <ul style="margin: 0; padding-left: 20px; color: var(--text-secondary);">
+          <li>3 config edits across 2 nodes</li>
+          <li>1 bowtie metadata edit</li>
+          <li>2 facility edits</li>
+          <li>1 channel edit</li>
+          <li>1 connector selection change</li>
+        </ul>
+      </div>
+      <div class="modal-footer">
+        <button class="btn">Cancel</button>
+        <button class="btn btn-danger">Discard &amp; Close</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+</body>
+</html>

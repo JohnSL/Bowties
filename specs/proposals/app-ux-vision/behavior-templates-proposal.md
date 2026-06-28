@@ -37,26 +37,26 @@ This transforms a search/reconciliation problem into a lookup. Bowties can apply
 
 An **information channel** represents a single piece of meaningful information (e.g., "block occupancy", "turnout position") independent of protocol or wiring. Each channel:
 
-- Has a **type** (from a well-known set or user-defined)
-- Has **states** (e.g., occupied/clear, normal/diverging, red/yellow/green)
-- Has a **backing implementation** — LCC event ID pairs (bowties), DCC addresses via JMRI, LocoNet messages, or other protocols
+- Has a **role** (from a well-known catalog or user-defined) that names what it does in the layout and fixes its state vocabulary
+- Has a **style** — the specific hardware-shape realisation of that role on a specific subsystem (pins claimed, event-leaf mapping, CDI-field constraints)
+- Has a **binding** to concrete hardware — LCC event ID pairs (bowties) on a specific pin, DCC addresses via JMRI, LocoNet messages, or other protocols
 - Has **directionality** — full bidirectional (LCC, LocoNet), command-only (basic DCC), or mixed (DCC command + separate LCC feedback sensor)
 - Reduces cognitive load: users think "occupancy" once; the system handles protocol-specific details
 
-Channels are **protocol-agnostic at the abstraction level.** A "Block 7 Occupancy" channel works the same way in templates and facilities regardless of whether it's backed by an LCC BOD, a LocoNet BDL168, or any other detector. The protocol and directionality are implementation properties, not identity.
+Channels are **protocol-agnostic at the role level.** A "Block 7 Occupancy" channel works the same way in templates and facilities regardless of whether it's backed by an LCC BOD, a LocoNet BDL168, or any other detector. The protocol and directionality are properties of the style and binding, not of the role.
 
-**Examples of well-known channel types:**
+**Examples of well-known channel roles:**
 - Block Occupancy (binary: occupied / clear)
 - Turnout Position (binary: normal / diverging)
 - Turnout Command (binary: throw normal / throw diverging)
 - Signal Aspect (enum: red / yellow / green / dark / flashing variants)
 - Button Press (binary: pressed / released)
-- LED State (binary: on / off)
+- Lamp Indicator (binary: lit / unlit)
 - Route Request / Route Active
 
-Each well-known type defines: state count, state names, default naming pattern, and compatible pin/slot types.
+Each well-known role defines: state count, state names, default naming pattern, and compatible binding shapes.
 
-User-defined types handle anything custom or board-specific.
+User-defined roles handle anything custom or board-specific.
 
 ### Facilities
 
@@ -65,7 +65,7 @@ A **facility** is a named, live instance of applied behavior — the result of a
 Facilities provide:
 - A higher-level grouping than bowties for understanding layout configuration
 - Traceability: which information channels were created by which facility
-- Navigation: see all the resources, channels, and nodes involved in a functional unit
+- Navigation: see all the channels and nodes involved in a functional unit
 - Future: association with physical locations on a track diagram
 
 ### Two Types of Template
@@ -160,9 +160,9 @@ Topology can come from:
 
 A behavior template is NOT "clone this node." It's "here's how to implement a passing siding" — independent of which physical nodes host the behavior. The same template can be deployed across one node or split across many, depending on physical layout. It doesn't care what hardware created the channels — only that channels of the right type exist.
 
-### Templates Claim Resources; Nodes Provide Them
+### Templates Claim Channels; Nodes Provide Capacity
 
-A node is a shared resource pool. Multiple templates can compose onto the same node without conflict, each claiming different resources. A single TowerLCC might host parts of three different facilities, each using different lines/connectors.
+A node is a shared capacity pool. Multiple templates can compose onto the same node without conflict, each claiming different hardware capacity (different connectors, lines, lamp rows, or logic blocks) to materialise the channels they need.
 
 ### Information Channels Exist Independently
 
@@ -195,7 +195,7 @@ However, a user can also start from intent: browse the behavior template library
 
 When a behavior template needs to set Tier 3 CDI values (logic line configuration, general-purpose pin modes), it can include bindings for multiple board types — so the same behavior template works whether the user has a TowerLCC or a TowerLCC+Q.
 
-### Logic Blocks as Template Resources
+### Logic Blocks as Channels
 
 Some nodes provide internal logic capabilities that enable complex behavior without external software:
 
@@ -216,22 +216,22 @@ A behavior template for "ABS 3-Aspect Signal Block" needs to:
 
 Without #3, the template is just wiring — the user still has to figure out the hard part. With #3, the template encodes the actual railroad engineering.
 
-#### Logic as a Typed Resource
+#### Logic as a Channel Style
 
-Logic blocks fit into the resource model:
+Logic blocks fit into the channel model: each logic-line or STL-slot is a binding target for a channel whose style declares how a logic block is configured, the same way a Direct Lamp Control row is a binding target for a `single-led-direct-lamp` style.
 
-| Resource type | Example | How templates use it |
+| Channel role / style | Example | How templates use it |
 |------|------|------|
-| Information-producing resource (e.g. occupancy, button input) | A `block-occupancy` resource on any compatible board — labelled `Connector A — Input 1` on Tower-LCC, `Line 3` on Signal LCC, etc. | Produces events the template consumes |
-| Information-consuming resource (e.g. signal aspect, LED output) | A `signal-aspect-3-color` resource — backed by a Mast on Signal LCC, or by a 3-LED group on a generic signal driver | Consumes events the template produces |
-| Logic block (fixed) | TowerLCC Logic Line 5 | Evaluates conditions, triggers outputs |
-| Logic program (STL) | TowerLCC+Q STL slot | Executes programmed behavior |
-| JMRI LogixNG conditional | LogixNG conditional tree | Evaluates conditions, controls JMRI objects |
+| Information-producing channel (e.g., `block-occupancy`, button input) | A `block-occupancy` channel on any compatible board — bound to `Connector A — Input 1` on Tower-LCC via `bod-block-detector-input`, or to `Line 3` on Signal LCC via a Signal-LCC input style, etc. | Produces events the template consumes |
+| Information-consuming channel (e.g., `signal-aspect-3-color`, `lamp-indicator`) | A `signal-aspect-3-color` channel — backed by a Mast-driven style on Signal LCC, or by a `3-led-direct-aspect` style on a generic signal driver | Consumes events the template produces |
+| Logic block (fixed) | TowerLCC Logic Line 5 — a channel whose style binds to one logic line | Evaluates conditions, triggers outputs |
+| Logic program (STL) | TowerLCC+Q STL slot — a channel whose style binds to one STL slot | Executes programmed behavior |
+| JMRI LogixNG conditional | LogixNG conditional tree — a channel whose style binds to one conditional | Evaluates conditions, controls JMRI objects |
 
-Resource identity comes from the profile's resource catalog (or, on unprofiled boards, from user-authored mappings) — see [Channel Resource Model](./channel-resource-model.md). The channel layer never sees pin numbers, connectors, or board-specific addressing.
+Channel identity comes from the profile's role + style declarations (or, on unprofiled boards, from user-authored styles) — see [Channel Roles, Styles, and Bindings](./app-ux-vision.md#channel-roles-styles-and-bindings). The role layer never sees pin numbers, connectors, or board-specific addressing.
 
-A behavior template's requirements would include logic resources:
-- "Requires: signal logic capacity (2× logic lines, or 1× STL slot, or LogixNG conditional)"
+A behavior template's requirements would include logic-capacity channels:
+- "Requires: signal logic capacity (2× logic-line channels, or 1× STL-slot channel, or 1× LogixNG conditional)"
 
 At apply time, the user chooses the **execution target**:
 - **On-node (TowerLCC logic lines):** "Use logic lines 3-4 on Tower-3" — works without a computer running, lowest latency
@@ -291,25 +291,25 @@ Profiles already encode this distinction via CDI structure and relevance rules.
 
 ### Auto-Creation from Hardware Selection
 
-When the profile pre-declares a fixed set of resources for a hardware choice — e.g., a BOD-8 daughter board on a Tower-LCC connector, or the 8 detector inputs on a hypothetical standalone BOD-8 node — the channels are auto-created with default names:
+When the profile pre-declares a fixed set of channels for a hardware choice — e.g., a BOD-8 daughter board on a Tower-LCC connector, or the 8 detector inputs on a hypothetical standalone BOD-8 node — the channels are auto-created with default names:
 - All pins have known, fixed function → immediately create information channels with default names
 - User's next step is just renaming: "which blocks are these?"
 - This bootstraps the information model from the hardware choice alone
 - These channels are now available for behavior templates to connect to
 
-For boards whose pins are general-purpose (e.g., Signal LCC's 8 I/O lines, where each can become an occupancy / button-input / led-output resource), the profile declares slot templates rather than pre-instantiated resources. The user picks a resource type per slot at hardware-setup time and the channel is created on that selection.
+For boards whose pins are general-purpose (e.g., Signal LCC's 8 I/O lines, where each can host a `block-occupancy`, button-input, or `lamp-indicator` channel via different styles), the profile declares slot templates rather than pre-instantiated channels. The user picks a role + style per slot at hardware-setup time and the channel is created on that selection.
 
-If the hardware selection changes (e.g., daughter board swapped, slot resource type changed):
+If the hardware selection changes (e.g., daughter board swapped, slot style changed):
 - Bowties warns about affected channels and facilities
 - User confirms or cancels
 - Affected facilities flagged as incomplete if confirmed
 
 ### Profile Integration
 
-Profiles encode which pin configurations produce which channel types. The daughter board selection field in the CDI, combined with profile relevance rules, tells Bowties:
-- What channel types each pin can support
+Profiles encode which pin configurations produce which channel roles + styles. The daughter board selection field in the CDI, combined with profile relevance rules, tells Bowties:
+- What roles each pin can host and which styles realise them
 - Whether constraint is board-level (Tier 1) or per-pin (Tier 2)
-- What CDI field values correspond to each channel type
+- What CDI field values correspond to each style
 
 ### The Typical Setup Sequence
 
@@ -322,7 +322,7 @@ Profiles encode which pin configurations produce which channel types. The daught
 2. Behavior template applied
    → "I want ABS signaling for these blocks"
    → Picks from existing channels: "which occupancy?", "which signal heads?"
-   → Assigns logic resources: "use logic lines 3-4 on Tower-3"
+   → Assigns logic-capacity channels: "use logic lines 3-4 on Tower-3"
    → Programs the logic blocks / STL with the signal engineering rules
    → Creates a facility grouping
 ```
@@ -349,14 +349,14 @@ The two layers are independent: hardware setup can happen without ever applying 
    - Pick from existing layout channels that match the type, OR
    - Create a new one (guided to set up hardware first if needed)
 4. User provides substitution variables for naming (e.g., `location = "Eagle Creek"`)
-5. User selects target node(s) for logic resources — assigns logic lines or STL program slots
+5. User selects target node(s) for logic-capacity channels — assigns logic lines or STL program slots
 6. Bowties writes configuration: sets CDI values, programs logic blocks/STL, creates information channels and bowties, applies facility grouping
 7. Optionally: validates result — "here's the event flow, does this look right?"
 
 ### Capture a Behavior Template from a Working Layout
 
 1. User identifies the behavior scope — manually select channels/bowties, or use a grouping to identify them
-2. Bowties reads the current config for all involved channels and resources
+2. Bowties reads the current config for all involved channels
 3. Classifies each channel:
    - Channels within the selection whose connections are all internal → intra-template (auto-wired at apply time)
    - Channels that connect to things outside the selection → become parameters (requirements)
@@ -372,7 +372,7 @@ Templates support layered application:
 2. Apply "ABS Signal Block" behavior template to each → finds existing occupancy channels, adds signaling
 3. Later: apply "CTC Panel" behavior template → connects to existing signal and occupancy channels
 
-Each step adds without disturbing what's already there. Multiple behavior templates can compose onto the same nodes without conflict, each claiming different resources.
+Each step adds without disturbing what's already there. Multiple behavior templates can compose onto the same nodes without conflict, each claiming different hardware capacity.
 
 ---
 
@@ -391,7 +391,7 @@ Hardware templates are board-specific by nature. Behavior templates declare chan
 | Feature | Relationship |
 |---------|-------------|
 | **Bowties (named events)** | Information channels group bowties into higher-level meaning |
-| **Profiles** | Provide the data for pin type classification, relevance rules, and channel type derivation |
+| **Profiles** | Provide the data for pin role classification, relevance rules, and style declarations |
 | **Event tags** | Could represent facility membership or logical grouping |
 | **Daughter board selection** | Triggers auto-creation of information channels (Tier 1 and 2) |
 | **Logic blocks / STL** | Behavior templates program these to implement decision rules |
@@ -432,7 +432,7 @@ Printable, stickable-to-the-underside-of-the-layout documentation that comes for
 
 - "Line 3 is already used by Mainline Block 7" (conflict)
 - "Tower-3 has 4 logic lines remaining" (capacity planning)
-- Resource allocation tracked per-facility
+- Hardware-capacity allocation tracked per-facility
 
 ### Validation After Apply
 

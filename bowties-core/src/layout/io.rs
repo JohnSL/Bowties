@@ -20,12 +20,14 @@ use super::manifest::LayoutManifest;
 use super::node_snapshot::NodeSnapshot;
 use super::offline_changes::OfflineChange;
 use super::channels::ChannelsDocument;
+use super::facilities::FacilitiesDocument;
 use super::journal::{self, PlannedWrite, PrunePlan, SavePlan, WriteOp};
 
 pub const BOWTIES_FILE: &str = "bowties.yaml";
 pub const OFFLINE_CHANGES_FILE: &str = "offline-changes.yaml";
 pub const EVENT_NAMES_FILE: &str = "event-names.yaml";
 pub const CHANNELS_FILE: &str = "channels.yaml";
+pub const FACILITIES_FILE: &str = "facilities.yaml";
 pub const NODES_DIR: &str = "nodes";
 pub const MANIFEST_FILE: &str = "manifest.yaml";
 const CDI_DIR: &str = "cdi";
@@ -140,6 +142,8 @@ pub struct LayoutDirectoryWriteData {
     pub cdi_files: Vec<(String, std::path::PathBuf)>,
     /// Information channel inventory for the layout.
     pub channels: ChannelsDocument,
+    /// Facility inventory for the layout (spec 018).
+    pub facilities: FacilitiesDocument,
 }
 
 #[derive(Debug, Clone)]
@@ -156,6 +160,9 @@ pub struct LayoutDirectoryReadData {
     /// Information channel inventory loaded from `channels.yaml`.
     /// Empty when the file is missing (pre-015 layouts).
     pub channels: ChannelsDocument,
+    /// Facility inventory loaded from `facilities.yaml`.
+    /// Empty when the file is missing (pre-018 layouts).
+    pub facilities: FacilitiesDocument,
 }
 
 pub fn write_layout_capture(layout_dir: &Path, data: &LayoutDirectoryWriteData) -> Result<(), String> {
@@ -195,6 +202,10 @@ pub fn write_layout_capture(layout_dir: &Path, data: &LayoutDirectoryWriteData) 
     plan.writes.push(PlannedWrite {
         abs_path: layout_dir.join(CHANNELS_FILE),
         op: WriteOp::Bytes(serialize_yaml(&data.channels)?),
+    });
+    plan.writes.push(PlannedWrite {
+        abs_path: layout_dir.join(FACILITIES_FILE),
+        op: WriteOp::Bytes(serialize_yaml(&data.facilities)?),
     });
 
     // Per-node snapshots: also prune extras left over from a previous
@@ -285,6 +296,14 @@ pub fn read_layout_capture(layout_dir: &Path) -> Result<LayoutDirectoryReadData,
         ChannelsDocument::default()
     };
 
+    // facilities.yaml is optional — pre-018 layouts won't have it.
+    let facilities_path = layout_dir.join(FACILITIES_FILE);
+    let facilities: FacilitiesDocument = if facilities_path.exists() {
+        read_yaml_file(&facilities_path)?
+    } else {
+        FacilitiesDocument::default()
+    };
+
     Ok(LayoutDirectoryReadData {
         manifest,
         node_snapshots,
@@ -292,6 +311,7 @@ pub fn read_layout_capture(layout_dir: &Path) -> Result<LayoutDirectoryReadData,
         offline_changes,
         recovery_occurred,
         channels,
+        facilities,
     })
 }
 
@@ -536,6 +556,7 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
+            facilities: crate::layout::facilities::FacilitiesDocument::default(),
         };
 
         write_layout_capture(&layout_dir, &data).unwrap();
@@ -568,6 +589,7 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
+            facilities: crate::layout::facilities::FacilitiesDocument::default(),
         };
 
         write_layout_capture(&layout_dir, &data).unwrap();
@@ -626,6 +648,7 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
+            facilities: crate::layout::facilities::FacilitiesDocument::default(),
         };
 
         write_layout_capture(&layout_dir, &data).unwrap();
@@ -668,6 +691,7 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: vec![("acme_modelx_1.0".to_string(), cdi_source)],
             channels: crate::layout::channels::ChannelsDocument::default(),
+            facilities: crate::layout::facilities::FacilitiesDocument::default(),
         };
 
         write_layout_capture(&layout_dir, &data).unwrap();
@@ -749,6 +773,7 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
+            facilities: crate::layout::facilities::FacilitiesDocument::default(),
         };
 
         write_layout_capture(&layout_dir, &data).unwrap();
@@ -801,6 +826,7 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: vec![("acme_modelx_1.0".to_string(), cdi_source)],
             channels: crate::layout::channels::ChannelsDocument::default(),
+            facilities: crate::layout::facilities::FacilitiesDocument::default(),
         };
 
         write_layout_capture(&layout_dir, &initial_data).unwrap();
@@ -812,6 +838,7 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
+            facilities: crate::layout::facilities::FacilitiesDocument::default(),
         };
 
         write_layout_capture(&layout_dir, &resave_data).unwrap();
@@ -861,6 +888,7 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
+            facilities: crate::layout::facilities::FacilitiesDocument::default(),
         };
         write_layout_capture(&layout_dir, &data).unwrap();
 
@@ -901,6 +929,7 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
+            facilities: crate::layout::facilities::FacilitiesDocument::default(),
         };
         write_layout_capture(&layout_dir, &data).unwrap();
 
@@ -974,6 +1003,7 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
+            facilities: crate::layout::facilities::FacilitiesDocument::default(),
         };
         write_layout_capture(&layout_dir, &initial).unwrap();
 
@@ -997,6 +1027,7 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
+            facilities: crate::layout::facilities::FacilitiesDocument::default(),
         };
         write_layout_capture(&layout_dir, &resave).unwrap();
 
@@ -1106,6 +1137,7 @@ mod tests {
             offline_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
+            facilities: crate::layout::facilities::FacilitiesDocument::default(),
         };
 
         write_layout_capture(&layout_dir, &data).unwrap();

@@ -18,11 +18,21 @@ import type { NodeConfigTree, LeafConfigNode, SegmentNode } from '$lib/types/nod
 
 // ── Hoisted mock references ───────────────────────────────────────────────────
 // vi.hoisted ensures these are available inside vi.mock() factories.
-const { treesRef, metaRef, layoutRef, offlineRef, configChangesRef, connectorSelectionsRef, effectiveNodeRef } = vi.hoisted(() => ({
-  treesRef: { map: new Map<string, NodeConfigTree>() },
-  configChangesRef: { draftCount: 0, hasDraftsForNode: false },
-  metaRef: { isDirty: false, editCount: 0, clearAll: vi.fn() },
-  layoutRef: {
+const {
+  treesRef,
+  metaRef,
+  layoutRef,
+  offlineRef,
+  configChangesRef,
+  connectorSelectionsRef,
+  channelsRef,
+  facilitiesRef,
+  effectiveNodeRef,
+} = vi.hoisted(() => {
+  const trees = { map: new Map<string, NodeConfigTree>() };
+  const configChanges = { draftCount: 0, hasDraftsForNode: false };
+  const meta = { isDirty: false, editCount: 0, clearAll: vi.fn() };
+  const layout = {
     layout: null as any,
     isOfflineMode: false,
     hasLayoutFile: false,
@@ -34,12 +44,8 @@ const { treesRef, metaRef, layoutRef, offlineRef, configChangesRef, connectorSel
     saveCurrentLayout: vi.fn().mockResolvedValue(undefined) as any,
     saveLayoutAs: vi.fn().mockResolvedValue(undefined) as any,
     revertToSaved: vi.fn(),
-  },
-  effectiveNodeRef: {
-    unsavedInMemoryNodeIds: [] as string[],
-    isDirty: false,
-  },
-  offlineRef: {
+  };
+  const offline = {
     draftCount: 0,
     draftRows: [] as any[],
     pendingCount: 0,
@@ -49,15 +55,58 @@ const { treesRef, metaRef, layoutRef, offlineRef, configChangesRef, connectorSel
     revertAllPending: vi.fn().mockResolvedValue(undefined) as any,
     flushPendingToBackend: vi.fn().mockResolvedValue(0) as any,
     clear: vi.fn(),
-  },
-  connectorSelectionsRef: {
+  };
+  const connectorSelections = {
     hydrateFromLayout: vi.fn(),
     totalWarningCount: 0,
     isDirty: false,
     editCount: 0,
     discard: vi.fn(),
-  },
-}));
+  };
+  const channels = { isDirty: false, editCount: 0, discard: vi.fn() };
+  const facilities = { isDirty: false, editCount: 0, discard: vi.fn() };
+  // dirtyBreakdown is a live getter that derives from the other refs so each
+  // test can dirty individual stores via the existing refs without also
+  // having to mutate the breakdown shape by hand.
+  const effectiveNode = {
+    unsavedInMemoryNodeIds: [] as string[],
+    get isDirty(): boolean {
+      const bd = this.dirtyBreakdown;
+      return (
+        bd.config > 0 || bd.metadata > 0 || bd.channels > 0 || bd.facilities > 0
+        || bd.connectorSelections > 0 || bd.offlineDrafts > 0
+        || bd.offlineRevertedPersisted > 0 || bd.layoutStruct > 0
+        || bd.unsavedNewNodes > 0 || bd.unsavedRemovedNodes > 0
+      );
+    },
+    get dirtyBreakdown() {
+      return {
+        config: configChanges.draftCount,
+        configNodes: configChanges.draftCount > 0 ? 1 : 0,
+        metadata: meta.editCount,
+        channels: channels.editCount,
+        facilities: facilities.editCount,
+        connectorSelections: connectorSelections.editCount,
+        offlineDrafts: offline.draftCount,
+        offlineRevertedPersisted: offline.revertedPersistedCount,
+        layoutStruct: layout.isDirty ? 1 : 0,
+        unsavedNewNodes: effectiveNode.unsavedInMemoryNodeIds.length,
+        unsavedRemovedNodes: 0,
+      };
+    },
+  };
+  return {
+    treesRef: trees,
+    metaRef: meta,
+    layoutRef: layout,
+    offlineRef: offline,
+    configChangesRef: configChanges,
+    connectorSelectionsRef: connectorSelections,
+    channelsRef: channels,
+    facilitiesRef: facilities,
+    effectiveNodeRef: effectiveNode,
+  };
+});
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
@@ -105,7 +154,11 @@ vi.mock('$lib/stores/connectorSelections.svelte', () => ({
 }));
 
 vi.mock('$lib/stores/channels.svelte', () => ({
-  channelsStore: { isDirty: false, editCount: 0, discard: vi.fn() },
+  channelsStore: channelsRef,
+}));
+
+vi.mock('$lib/stores/facilities.svelte', () => ({
+  facilitiesStore: facilitiesRef,
 }));
 
 vi.mock('$lib/stores/offlineChanges.svelte', () => ({
@@ -163,13 +216,18 @@ beforeEach(() => {
   layoutRef.isLoaded = false;
   layoutRef.isDirty = false;
   effectiveNodeRef.unsavedInMemoryNodeIds = [];
-  effectiveNodeRef.isDirty = false;
   offlineRef.draftCount = 0;
   offlineRef.draftRows = [];
   offlineRef.pendingCount = 0;
   offlineRef.revertedPersistedCount = 0;
   connectorSelectionsRef.hydrateFromLayout.mockReset();
   connectorSelectionsRef.totalWarningCount = 0;
+  connectorSelectionsRef.editCount = 0;
+  connectorSelectionsRef.isDirty = false;
+  channelsRef.editCount = 0;
+  channelsRef.isDirty = false;
+  facilitiesRef.editCount = 0;
+  facilitiesRef.isDirty = false;
   vi.clearAllMocks();
 });
 
@@ -881,7 +939,9 @@ describe('SaveControls.svelte', () => {
       layoutRef.isDirty = false;
       layoutRef.isOfflineMode = false;
       effectiveNodeRef.unsavedInMemoryNodeIds = ['nodeA'];
-      effectiveNodeRef.isDirty = true;
+      // isDirty is a derived getter now — setting `unsavedInMemoryNodeIds`
+      // is sufficient to make `dirtyBreakdown.unsavedNewNodes > 0` and
+      // therefore flip the derived isDirty.
 
       const mockSave = vi.fn().mockResolvedValue(true);
       render(SaveControls, { props: { onSave: mockSave, onSaveAs: vi.fn() } });

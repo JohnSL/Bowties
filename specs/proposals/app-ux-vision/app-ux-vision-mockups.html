@@ -51,7 +51,7 @@
       <li>Click <strong>"Board Settings"</strong> in the sidebar to see board-global (non-channel) configuration.</li>
       <li>Click <strong>"Raw CDI"</strong> in the sidebar to expand the full CDI segment tree (escape hatch — same as today's Config experience).</li>
       <li>The <strong>Daughter Board combo box</strong> at the top of the connector view sets the board type (Tier 1). Changing it removes existing channels.</li>
-      <li>Pins 5–8 show <strong>"Assign type →"</strong> — clicking these leads to the channel type picker in Mockup 2 (Tier 2, per-pin).</li>
+      <li>Pins 5–8 show <strong>"Assign role →"</strong> — clicking these leads to the channel role picker in Mockup 2 (Tier 2, per-pin).</li>
       <li>Click <strong>"▾ details"</strong> on a channel row to expand managed/unmanaged settings inline.</li>
     </ul>
 
@@ -152,7 +152,7 @@
               <tr class="text-left text-xs text-gray-400 uppercase border-b">
                 <th class="pb-2 w-12">Pin</th>
                 <th class="pb-2">Channel Name</th>
-                <th class="pb-2 w-32">Type</th>
+                <th class="pb-2 w-32">Role</th>
                 <th class="pb-2 w-40">Facility</th>
                 <th class="pb-2 w-16">State</th>
               </tr>
@@ -196,13 +196,13 @@
                     <!-- Managed settings (collapsed, expandable) -->
                     <div class="border-t pt-2">
                       <div class="flex items-center gap-1.5 cursor-pointer" onclick="document.getElementById('managed-fields-1').classList.toggle('hidden')">
-                        <span class="font-semibold text-gray-500">▸ Managed by channel type</span>
+                        <span class="font-semibold text-gray-500">▸ Managed by channel style</span>
                         <span class="bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">Occupancy</span>
                       </div>
                       <div id="managed-fields-1" class="hidden mt-2 pl-3 border-l-2 border-indigo-200 space-y-1.5 text-gray-500">
                         <div class="flex justify-between"><span>Pin Function:</span> <span class="text-gray-700">Current Detect Input</span></div>
                         <div class="flex justify-between"><span>Detection Mode:</span> <span class="text-gray-700">Block Occupancy</span></div>
-                        <p class="text-gray-400 italic mt-1">These values are set by the "Occupancy" channel type. Changing them may break channel behavior. Use Raw CDI to override.</p>
+                        <p class="text-gray-400 italic mt-1">These values are fixed by the <code>bod-block-detector-input</code> style for the <code>block-occupancy</code> role. Changing them may break channel behavior. Use Raw CDI to override.</p>
                       </div>
                     </div>
                   </div>
@@ -232,28 +232,28 @@
               <tr class="bg-gray-50">
                 <td class="py-2 text-gray-500">5</td>
                 <td class="py-2 text-gray-400 italic">Unconfigured — General I/O</td>
-                <td class="py-2"><a href="#" class="text-indigo-600 hover:underline text-xs font-medium">Assign type →</a></td>
+                <td class="py-2"><a href="#" class="text-indigo-600 hover:underline text-xs font-medium">Assign role →</a></td>
                 <td class="py-2 text-gray-300">—</td>
                 <td class="py-2"><span class="channel-dot dot-unknown"></span></td>
               </tr>
               <tr class="bg-gray-50">
                 <td class="py-2 text-gray-500">6</td>
                 <td class="py-2 text-gray-400 italic">Unconfigured — General I/O</td>
-                <td class="py-2"><a href="#" class="text-indigo-600 hover:underline text-xs font-medium">Assign type →</a></td>
+                <td class="py-2"><a href="#" class="text-indigo-600 hover:underline text-xs font-medium">Assign role →</a></td>
                 <td class="py-2 text-gray-300">—</td>
                 <td class="py-2"><span class="channel-dot dot-unknown"></span></td>
               </tr>
               <tr class="bg-gray-50">
                 <td class="py-2 text-gray-500">7</td>
                 <td class="py-2 text-gray-400 italic">Unconfigured — General I/O</td>
-                <td class="py-2"><a href="#" class="text-indigo-600 hover:underline text-xs font-medium">Assign type →</a></td>
+                <td class="py-2"><a href="#" class="text-indigo-600 hover:underline text-xs font-medium">Assign role →</a></td>
                 <td class="py-2 text-gray-300">—</td>
                 <td class="py-2"><span class="channel-dot dot-unknown"></span></td>
               </tr>
               <tr class="bg-gray-50">
                 <td class="py-2 text-gray-500">8</td>
                 <td class="py-2 text-gray-400 italic">Unconfigured — General I/O</td>
-                <td class="py-2"><a href="#" class="text-indigo-600 hover:underline text-xs font-medium">Assign type →</a></td>
+                <td class="py-2"><a href="#" class="text-indigo-600 hover:underline text-xs font-medium">Assign role →</a></td>
                 <td class="py-2 text-gray-300">—</td>
                 <td class="py-2"><span class="channel-dot dot-unknown"></span></td>
               </tr>
@@ -385,14 +385,14 @@
   </section>
 
   <!-- ============================================================ -->
-  <!-- MOCKUP 2: Wiring — Channel Type Application (Tier 2 per-pin) -->
+  <!-- MOCKUP 2: Wiring — Channel Role Application (Tier 2 per-pin) -->
   <!-- ============================================================ -->
   <section class="max-w-6xl mx-auto mb-12">
-    <h2 class="text-lg font-semibold text-gray-700 mb-3">2. Wiring — Channel Type Application (Per-Pin)</h2>
-    <p class="text-sm text-gray-500 mb-2">For boards where each pin can become a different channel type (Tier 2).</p>
+    <h2 class="text-lg font-semibold text-gray-700 mb-3">2. Wiring — Channel Role Application (Per-Pin)</h2>
+    <p class="text-sm text-gray-500 mb-2">For boards where each pin can host a different channel role (Tier 2).</p>
     <ul class="text-sm text-gray-500 mb-4 list-disc pl-5 space-y-1">
-      <li>Entry point: click "Assign type →" on an unconfigured pin in Mockup 1 (pins 5–8).</li>
-      <li>Card-based <strong>channel type picker</strong> shows compatible types with pin count and which pins will be claimed.</li>
+      <li>Entry point: click "Assign role →" on an unconfigured pin in Mockup 1 (pins 5–8).</li>
+      <li>Card-based <strong>channel role picker</strong> shows compatible roles with pin count and which pins will be claimed.</li>
       <li>After selection: <strong>constraint confirmation</strong> shows which managed fields were set.</li>
       <li><strong>Wiring settings</strong> (unmanaged) remain freely adjustable below.</li>
       <li>"Create Channel" commits the channel; it immediately appears in both workspaces.</li>
@@ -401,9 +401,9 @@
     <div class="mockup-frame bg-white p-6">
       <div class="max-w-2xl">
         <h3 class="font-semibold text-gray-800 mb-1">Signal LCC — Output Group 2</h3>
-        <p class="text-sm text-gray-500 mb-4">Pin-first: select a channel type for this output group</p>
+        <p class="text-sm text-gray-500 mb-4">Pin-first: select a channel role for this output group</p>
 
-        <!-- Channel type picker -->
+        <!-- Channel role picker -->
         <div class="mb-5">
           <label class="block text-sm font-medium text-gray-700 mb-2">What should this output do?</label>
           <div class="grid grid-cols-2 gap-3">
@@ -418,8 +418,8 @@
               <div class="text-xs text-gray-400 mt-1">Pins 4, 5 will be claimed</div>
             </div>
             <div class="border rounded-lg p-3 cursor-pointer hover:border-gray-400">
-              <div class="font-medium text-sm text-gray-800">LED Output</div>
-              <div class="text-xs text-gray-500 mt-1">Single pin. On/off control channel.</div>
+              <div class="font-medium text-sm text-gray-800">Lamp Indicator</div>
+              <div class="text-xs text-gray-500 mt-1">Single pin. Lit/unlit channel (LED, incandescent, anything).</div>
               <div class="text-xs text-gray-400 mt-1">Pin 4 only</div>
             </div>
             <div class="border rounded-lg p-3 cursor-pointer hover:border-gray-400">
@@ -435,7 +435,7 @@
           <div class="bg-indigo-50 border border-indigo-200 rounded p-4 mb-4">
             <div class="flex items-center gap-2 text-indigo-800 font-medium text-sm mb-2">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-              Channel type: 3-Aspect Signal Head
+              Channel role: 3-Aspect Signal Head
             </div>
             <p class="text-xs text-indigo-700">Pins 4–6 claimed. Managed fields set: Drive Mode = Common Anode, Signal Type = 3-aspect searchlight. Constraints active.</p>
           </div>
@@ -699,7 +699,7 @@
                 <option>Eagle Creek — Siding</option>
                 <option>Mainline Block 7</option>
               </select>
-              <div class="text-xs text-green-600 mt-1">✓ Type match: Occupancy</div>
+              <div class="text-xs text-green-600 mt-1">✓ Role match: block-occupancy</div>
             </div>
 
             <div class="template-req satisfied">
@@ -709,7 +709,7 @@
                 <option selected>Mainline Block 7</option>
                 <option>Eagle Creek — Siding</option>
               </select>
-              <div class="text-xs text-green-600 mt-1">✓ Type match: Occupancy</div>
+              <div class="text-xs text-green-600 mt-1">✓ Role match: block-occupancy</div>
             </div>
 
             <div class="template-req satisfied">
@@ -718,7 +718,7 @@
                 <option selected>Eagle Creek — East Turnout</option>
                 <option>— None (skip) —</option>
               </select>
-              <div class="text-xs text-green-600 mt-1">✓ Type match: Turnout Position</div>
+              <div class="text-xs text-green-600 mt-1">✓ Role match: turnout-position</div>
             </div>
 
             <div class="template-req missing">
@@ -878,7 +878,7 @@
     <p class="text-sm text-gray-500 mb-2">Browsable by behavior category.</p>
     <ul class="text-sm text-gray-500 mb-4 list-disc pl-5 space-y-1">
       <li>Category filter tabs (Signaling, Detection, Turnout Control, Panel, Lighting).</li>
-      <li>Each card shows: name, one-sentence purpose, required channel types, and logic capacity.</li>
+      <li>Each card shows: name, one-sentence purpose, required channel roles, and logic capacity.</li>
       <li>Selecting a template starts the side-panel apply workflow (Mockup 4).</li>
     </ul>
 

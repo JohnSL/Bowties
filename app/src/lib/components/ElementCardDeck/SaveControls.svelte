@@ -17,10 +17,9 @@
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { effectiveNodeStore } from '$lib/layout';
   import { channelsStore } from '$lib/stores/channels.svelte';
+  import { facilitiesStore } from '$lib/stores/facilities.svelte';
   import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
-  import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
-  import { configChangesStore } from '$lib/stores/configChanges.svelte';
   import { discardAllConfigDrafts } from '$lib/orchestration/configDraftOrchestrator';
   import { deriveSaveControlsViewState } from '$lib/components/ElementCardDeck/saveControlsPresenter';
   import DiscardConfirmDialog from '$lib/components/DiscardConfirmDialog.svelte';
@@ -60,20 +59,11 @@
   });
 
   let viewState = $derived(deriveSaveControlsViewState({
-    bowtieMetadataEditCount: bowtieMetadataStore.editCount,
-    bowtieMetadataIsDirty: bowtieMetadataStore.isDirty,
-    channelEditCount: channelsStore.editCount,
-    configDraftCount: configChangesStore.draftEntries().length,
-    connectorSelectionEditCount: connectorSelectionsStore.editCount,
+    breakdown: effectiveNodeStore.dirtyBreakdown,
     connectorWarningCount: connectorSelectionsStore.totalWarningCount,
-    layoutIsDirty: layoutStore.isDirty,
     layoutIsOfflineMode: layoutStore.isOfflineMode,
-    offlineDraftCount: offlineChangesStore.draftCount,
     offlineDraftRows: offlineChangesStore.draftRows,
-    revertedPersistedCount: offlineChangesStore.revertedPersistedCount,
     saveProgressState: saveProgress.state,
-    treeNodeIds: [...nodeTreeStore.trees.keys()],
-    unsavedInMemoryNodeCount: effectiveNodeStore.unsavedInMemoryNodeIds.length,
   }));
 
   // Whether the discard confirmation dialog is open.
@@ -147,6 +137,7 @@
       bowtieMetadataStore.clearAll();
       connectorSelectionsStore.discard();
       channelsStore.discard();
+      facilitiesStore.discard();
       layoutStore.revertToSaved();
       rehydrateConnectorSelectionsFromLayout();
       saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
@@ -158,6 +149,7 @@
     bowtieMetadataStore.clearAll();
     connectorSelectionsStore.discard();
     channelsStore.discard();
+    facilitiesStore.discard();
     layoutStore.revertToSaved();
     rehydrateConnectorSelectionsFromLayout();
     saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
