@@ -5,6 +5,18 @@
   import AddFacilityDialog from './AddFacilityDialog.svelte';
   import FacilityCard from './FacilityCard.svelte';
 
+  let {
+    resolvedEventIds,
+    onSelectChannel,
+    onRebindChannel,
+    onRemoveFromSlot,
+  }: {
+    resolvedEventIds?: ReadonlyMap<string, { occupied?: string; clear?: string }>;
+    onSelectChannel?: (facilityId: string, slotLabel: string) => void;
+    onRebindChannel?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
+    onRemoveFromSlot?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
+  } = $props();
+
   let showAddDialog = $state(false);
 
   function templateFor(templateId: string): BehaviorTemplate | undefined {
@@ -52,8 +64,12 @@
           <FacilityCard
             {facility}
             template={templateFor(facility.templateId)}
+            {resolvedEventIds}
             onRename={handleRename}
             onDelete={handleDelete}
+            {onSelectChannel}
+            {onRebindChannel}
+            {onRemoveFromSlot}
           />
         </li>
       {/each}

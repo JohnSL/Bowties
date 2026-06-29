@@ -766,8 +766,10 @@ describe('+page channel resolution timing (Spec 017 / S1)', () => {
     listChannelsRef.mockImplementation(async () => [{
       id: 'ch-1',
       name: 'East Block',
-      channelType: 'block-occupancy',
-      hardwareRef: { nodeKey: '09.00.99.05.01.C1', connector: 'connector-a', input: 1 },
+      role: 'block-occupancy',
+      style: 'bod-block-detector-input',
+      ownership: 'hardware-owned',
+      binding: { kind: 'connectorInput', nodeKey: '09.00.99.05.01.C1', connector: 'connector-a', input: 1 },
     }]);
 
     render(Page);

@@ -59,3 +59,15 @@
     2. Surface a hardware-requirements aggregate over current bindings to placeholder nodes ("buy 3 more LED outputs").
     3. Specify the promote/reconcile UX for binding migration when a real node arrives.
   * Note: the spec-015 `HardwareReference` migration (originally tracked under the now-folded "Channel resource model" backlog entry) is absorbed into spec 018's channel/role/style/binding rebuild and is no longer a separate backlog item. The Railroad-tab `connector-a` slug display fix lands as part of that rebuild.
+* Channel/facility persistence atomicity — fold into the atomic save (ADR-0002 follow-up)
+  * Root cause: channel CRUD (`createChannels` / `deleteChannels` / `renameChannel`) and `facilitiesStore.loadFacilities` run as separate IPC calls *after* the save orchestrator returns, violating ADR-0002's promise that the backend owns layout-file persistence as one unit. A partial failure in any of these post-save IPCs leaves the layout in a torn state with no rollback.
+  * Approach: move channel/facility CRUD inside the backend's atomic save, behind a single IPC. The route stops doing `await deleteChannels()` / etc. after the orchestrator; channel + facility deltas flow into `save_layout_directory` alongside bowtie deltas; partial failure rolls back the whole save.
+  * Natural follow-on to the `LayoutState` work ([ADR-0015](../product/architecture/adr/0015-backend-layout-state-single-owner.md)): `LayoutState` already owns channels and facilities in memory, so atomicity falls out of a future `LayoutState::save()` once that method's surface is filled in.
+* Channels-panel "Used by" cell — multi-binding overflow ergonomics
+  * Root cause: Spec 018 / S3 renders the **Used by** cell as a `; `-separated list of `{facility} / {slot}` pairs to handle multi-binding scenarios (e.g. ABS, where one block-occupancy channel feeds the home signal plus distant and rear-protect signals on adjacent blocks). The format is correct grammatically, but a row with three or more bindings will overflow the cell and force horizontal scroll on the table.
+  * Approach: when a binding list exceeds N entries (or measured width), collapse to `Block 5 / Block (input); +2 more` with a hover tooltip listing all entries; allow click-to-expand if the user wants the full list inline. Decide N empirically once multi-binding ships.
+  * Prerequisite: Spec 018 / S4 (landed) lights up the column for real (single binding); a future ABS-related feature surfaces the first multi-binding case.
+  * Follow-up:
+    1. Decide the overflow threshold (count + width).
+    2. Implement the collapse + tooltip + click-to-expand affordance in `ChannelRow.svelte`.
+    3. Test against the first real multi-binding scenario.

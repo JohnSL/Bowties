@@ -9,6 +9,10 @@ export interface SlotDefinition {
   label: string;
   kind: SlotKind;
   requiredRole: ChannelRole;
+  /** Minimum channels required for the slot to be considered complete (Spec 018 / S4 — D8). */
+  minChannels: number;
+  /** Maximum channels accepted; `null` = unbounded. Block Indicator declares both slots `1` in S4. */
+  maxChannels: number | null;
 }
 
 export interface StateMapping {

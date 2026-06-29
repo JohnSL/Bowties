@@ -23,6 +23,7 @@ pub mod manifest;
 pub mod node_snapshot;
 pub mod offline_changes;
 pub mod serde_node_id;
+pub mod state;
 pub mod types;
 
 use node_snapshot::NodeSnapshot;
@@ -433,8 +434,10 @@ mod tests {
         crate::layout::channels::InformationChannel {
             id: id.to_string(),
             name: name.to_string(),
-            channel_type: crate::layout::channels::ChannelType::BlockOccupancy,
-            hardware_ref: crate::layout::channels::HardwareReference {
+            role: crate::layout::channels::ChannelRole::BlockOccupancy,
+            style: "bod-block-detector-input".to_string(),
+            ownership: crate::layout::channels::ChannelOwnership::HardwareOwned,
+            binding: crate::layout::channels::ChannelBinding::ConnectorInput {
                 node_key: "05010101FF000001".to_string(),
                 connector: "connector-a".to_string(),
                 input,
@@ -473,7 +476,7 @@ mod tests {
         assert_eq!(loaded.channels.channels.len(), 2);
         assert_eq!(loaded.channels.channels[0].id, "ch-001");
         assert_eq!(loaded.channels.channels[1].name, "Block 2");
-        assert_eq!(loaded.channels.schema_version, "1.0");
+        assert_eq!(loaded.channels.schema_version, "2.0");
 
         let _ = std::fs::remove_dir_all(&root);
     }

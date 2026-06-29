@@ -52,6 +52,12 @@ export interface EventMappingEntry {
 
 export interface ChannelInputMapping {
   channelType: string;
+  /**
+   * Spec 018 / S2 (ADR-0013): style id used to populate the channel's
+   * `style` field at auto-create time. Required for any subsystem whose
+   * channels are auto-created; optional in the type for older fixtures.
+   */
+  style?: string;
   inputs: number[];
   eventMapping?: Record<string, EventMappingEntry>;
 }

@@ -28,6 +28,8 @@ import { buildEffectiveBowtiePreview, bowtieCatalogStore } from '$lib/stores/bow
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
+import { channelsStore } from '$lib/stores/channels.svelte';
+import { facilitiesStore } from '$lib/stores/facilities.svelte';
 import { isLeaf, isGroup, collectEventIdLeaves } from '$lib/types/nodeTree';
 import type {
   ConfigNode,
@@ -39,6 +41,7 @@ import type {
   EditableBowtiePreview,
   PreviewBowtieCard,
 } from '$lib/types/bowtie';
+import type { ChannelRole, InformationChannel } from '$lib/api/channels';
 import { editKeyForLeaf } from '$lib/utils/editKey';
 import { isPlaceholderEventId } from '$lib/utils/eventIds';
 
@@ -150,6 +153,55 @@ class EffectiveLayoutStore {
     return true;
   }
 
+  // ── Channel ↔ Facility-slot usage (Spec 018 / S4 — D1, D2) ─────────────
+
+  /**
+   * Map of channelId → facility-slot entries currently consuming the
+   * channel (flattened from every facility's `slotBindings`, regardless
+   * of slot cardinality). Per ADR-0004 this is the single owner of
+   * `usedBy` derivation; `ChannelsPanel` / `ChannelRow` consume it via
+   * a resolver prop wired by the route. Empty channels are absent from
+   * the map (the row renders em-dash).
+   */
+  get channelUsageMap(): Map<string, ChannelUsageEntry[]> {
+    const map = new Map<string, ChannelUsageEntry[]>();
+    for (const facility of facilitiesStore.facilities) {
+      for (const [slotLabel, channelIds] of Object.entries(facility.slotBindings)) {
+        for (const channelId of channelIds) {
+          const entry: ChannelUsageEntry = {
+            facilityId: facility.facilityId,
+            facilityName: facility.name,
+            slotLabel,
+          };
+          const list = map.get(channelId);
+          if (list) list.push(entry);
+          else map.set(channelId, [entry]);
+        }
+      }
+    }
+    return map;
+  }
+
+  /**
+   * Unbound channels filtered by `role` (Spec 018 / S4 — D2: one-slot-
+   * per-channel invariant). A channel is "unbound" when it does not
+   * appear in any facility's slot bindings. The optional `excludeIds`
+   * set lets Rebind include the currently-bound channel as the pre-
+   * selected option even though it is technically bound.
+   */
+  unboundChannelsForRole(
+    role: ChannelRole,
+    opts?: { excludeIds?: ReadonlySet<string> },
+  ): InformationChannel[] {
+    const usage = this.channelUsageMap;
+    const exclude = opts?.excludeIds;
+    return channelsStore.channels.filter((ch) => {
+      if (ch.role !== role) return false;
+      if (usage.has(ch.id)) return exclude?.has(ch.id) ?? false;
+      return true;
+    });
+  }
+
   // ── Internals ────────────────────────────────────────────────────────────
 
   private _roleMatches(nodeId: string, leaf: LeafConfigNode, filter: EventRole): boolean {
@@ -157,6 +209,13 @@ class EffectiveLayoutStore {
     if (effective === null || effective === 'Ambiguous') return true;
     return effective === filter;
   }
+}
+
+/** A single facility-slot consumer of a channel. */
+export interface ChannelUsageEntry {
+  facilityId: string;
+  facilityName: string;
+  slotLabel: string;
 }
 
 /** Singleton effective-layout read model. */

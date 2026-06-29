@@ -112,8 +112,8 @@ const TEMPLATE: BehaviorTemplate = {
   templateId: 'block-indicator',
   displayName: 'Block Indicator',
   slots: [
-    { label: 'Detector', kind: 'producer', requiredRole: 'block-occupancy' },
-    { label: 'Lamp', kind: 'consumer', requiredRole: 'lamp-indicator' },
+    { label: 'Detector', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
+    { label: 'Lamp', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 1, maxChannels: 1 },
   ],
   mapping: [],
 };
@@ -121,8 +121,10 @@ const TEMPLATE: BehaviorTemplate = {
 const CHANNEL_A: InformationChannel = {
   id: 'ch-1',
   name: 'BOD A1',
-  channelType: 'block-occupancy',
-  hardwareRef: { nodeKey: LIVE_A, connector: 'A', input: 1 },
+  role: 'block-occupancy',
+  style: 'bod-block-detector-input',
+  ownership: 'hardware-owned',
+  binding: { kind: 'connectorInput', nodeKey: LIVE_A, connector: 'A', input: 1 },
 };
 
 const CONNECTOR_PROFILE = {

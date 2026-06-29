@@ -148,8 +148,10 @@ describe('layoutLifecycleOrchestrator.resetForNewLayout', () => {
     channelsStore.addPendingChannels([{
       id: 'stale-ch',
       name: 'Stale Channel',
-      channelType: 'block-occupancy',
-      hardwareRef: { nodeKey: LIVE_KEY, connector: 'connector-a', input: 1 },
+      role: 'block-occupancy',
+      style: 'bod-block-detector-input',
+      ownership: 'hardware-owned',
+      binding: { kind: 'connectorInput', nodeKey: LIVE_KEY, connector: 'connector-a', input: 1 },
     }]);
     expect(channelsStore.channels.length).toBe(1);
 
@@ -165,8 +167,8 @@ describe('layoutLifecycleOrchestrator.resetForNewLayout', () => {
         templateId: 'block-indicator',
         displayName: 'Block Indicator',
         slots: [
-          { label: 'input', kind: 'producer', requiredRole: 'block-occupancy' },
-          { label: 'output', kind: 'consumer', requiredRole: 'lamp-indicator' },
+          { label: 'input', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
+          { label: 'output', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 1, maxChannels: 1 },
         ],
         mapping: [],
       },

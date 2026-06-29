@@ -11,7 +11,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { eventStateStore } from '$lib/stores/eventState.svelte';
 import type { InformationChannel } from '$lib/api/channels';
-import type { EventMappingEntry } from '$lib/types/connectorProfile';
+import { getStyleEventMapping } from '$lib/utils/channelStyles';
 
 interface EventStatePayload {
   eventId: string;
@@ -54,27 +54,35 @@ export async function startEventStateListening(): Promise<UnlistenFn> {
 /**
  * Resolve event IDs for a batch of channels via the backend.
  *
+ * Spec 018 / S2 (ADR-0013): the producer/consumer event-leaf mapping is
+ * sourced from the channel's `style` field via the style registry, not
+ * from a single per-call mapping argument. Channels whose style is unknown
+ * to the registry, or whose binding does not address a per-input target
+ * (i.e. not `connectorInput`), are silently skipped.
+ *
  * @param channels - The channels to resolve
- * @param eventMapping - The profile-declared event mapping (state → producerLeafIndex)
  * @returns Map from channelId → { occupied?: eventId, clear?: eventId }
  */
 export async function resolveChannelEventIds(
   channels: InformationChannel[],
-  eventMapping: Record<string, EventMappingEntry>,
 ): Promise<ReadonlyMap<string, { occupied?: string; clear?: string }>> {
-  // Convert eventMapping to the flat form the backend expects (state → leafIndex)
-  const flatMapping: Record<string, number> = {};
-  for (const [state, entry] of Object.entries(eventMapping)) {
-    flatMapping[state] = entry.producerLeafIndex;
+  const requests: ChannelResolutionRequest[] = [];
+  for (const ch of channels) {
+    if (ch.binding.kind !== 'connectorInput') continue;
+    const mapping = getStyleEventMapping(ch.style);
+    if (!mapping) continue;
+    const flatMapping: Record<string, number> = {};
+    for (const [state, entry] of Object.entries(mapping)) {
+      flatMapping[state] = entry.producerLeafIndex;
+    }
+    requests.push({
+      channelId: ch.id,
+      nodeKey: ch.binding.nodeKey,
+      connector: ch.binding.connector,
+      input: ch.binding.input,
+      eventMapping: flatMapping,
+    });
   }
-
-  const requests: ChannelResolutionRequest[] = channels.map((ch) => ({
-    channelId: ch.id,
-    nodeKey: ch.hardwareRef.nodeKey,
-    connector: ch.hardwareRef.connector,
-    input: ch.hardwareRef.input,
-    eventMapping: flatMapping,
-  }));
 
   const results = await invoke<ChannelResolutionResult[]>('resolve_channel_event_ids', {
     requests,

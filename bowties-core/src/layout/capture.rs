@@ -493,4 +493,41 @@ mod tests {
 
         assert_eq!(snap.producer_identified_events, events);
     }
+
+    // ADR-0015 contract: the src-tauri `proxy_snapshot_data` helper
+    // composes `proxy.cdi.is_none()` with `LayoutState::cdi_xml(key)` to
+    // fill `cdi_xml_len`. The structural rule that makes that fix work is
+    // asserted here: `cdi_xml_len: Some` ⇒ fingerprint never collapses to
+    // `"missing"`. Without that, the legacy `.retain(fingerprint != "missing")`
+    // silently dropped saved nodes from disk when their proxy didn't
+    // currently hold CDI.
+    #[test]
+    fn cdi_xml_len_some_produces_len_fingerprint_not_missing() {
+        let mut data = make_live_proxy_data(None);
+        data.cdi_xml_len = Some(1234);
+        // Even when PIP hasn't completed, a known XML length must win
+        // over a "missing" classification.
+        data.pip_status = lcc_rs::PIPStatus::Unknown;
+        data.pip_cdi_flag = false;
+        let (snap, _logs) =
+            build_node_snapshot(&data, "2026-06-01T00:00:00Z", vec![]).unwrap();
+
+        assert_eq!(snap.cdi_ref.fingerprint, "len:1234");
+        assert_ne!(snap.cdi_ref.fingerprint, "missing");
+    }
+
+    #[test]
+    fn cdi_xml_len_none_with_unknown_pip_falls_through_to_missing() {
+        let mut data = make_live_proxy_data(None);
+        data.cdi_xml_len = None;
+        data.pip_status = lcc_rs::PIPStatus::Unknown;
+        data.pip_cdi_flag = false;
+        let (snap, _logs) =
+            build_node_snapshot(&data, "2026-06-01T00:00:00Z", vec![]).unwrap();
+
+        // The truly-no-data case is the only path that should ever
+        // produce `"missing"` after slice 2 lands. Save-time logging in
+        // `save_layout_directory` flags this and does not persist.
+        assert_eq!(snap.cdi_ref.fingerprint, "missing");
+    }
 }

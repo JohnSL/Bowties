@@ -2,13 +2,18 @@
 //!
 //! A **facility** is a named instance of a behavior template (spec 018):
 //! it owns a slot map keyed by template slot label, with each slot
-//! holding either a channel ID (bound) or `None` (empty). Facility
-//! status (`Incomplete` / `Wired`) is derived from slot fullness — it
-//! is never persisted on the facility entity itself.
+//! holding a list of channel ids. Empty `Vec` means the slot is
+//! unbound. Multi-element bindings are valid in the wire form (D8
+//! forward-compat for ABS aspect-slot repeaters); cardinality is bounded
+//! per slot by the template's `max_channels`. Facility status
+//! (`Incomplete` / `Wired`) is derived from slot fullness — it is never
+//! persisted on the facility entity itself.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+
+use crate::behavior_templates;
 
 /// A single facility persisted in `facilities.yaml`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -21,10 +26,11 @@ pub struct Facility {
     pub template_id: String,
     /// User-assigned display name.
     pub name: String,
-    /// Slot bindings keyed by template slot label.
-    /// `None` means the slot is empty; `Some(channel_id)` means
-    /// it is bound to a channel by id.
-    pub slot_bindings: BTreeMap<String, Option<String>>,
+    /// Slot bindings keyed by template slot label. Empty `Vec` means
+    /// the slot is unbound; one or more entries means it is bound to
+    /// the listed channel ids. The cap is enforced per template slot
+    /// by `max_channels` (Spec 018 / S4 — D8).
+    pub slot_bindings: BTreeMap<String, Vec<String>>,
 }
 
 /// Root structure for `facilities.yaml` persistence.
@@ -49,6 +55,66 @@ impl FacilitiesDocument {
     }
 }
 
+/// Errors `apply_facility_deltas` may return per delta.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FacilityApplyError {
+    /// Referenced facility id is not in the document.
+    UnknownFacility { facility_id: String },
+    /// Referenced slot label is not in the facility's bindings map.
+    UnknownSlot {
+        facility_id: String,
+        slot_label: String,
+    },
+    /// Attach would exceed the slot's `max_channels` cap.
+    SlotAtMax {
+        facility_id: String,
+        slot_label: String,
+        max_channels: u32,
+    },
+    /// The facility's template was not found in the registry.
+    UnknownTemplate {
+        facility_id: String,
+        template_id: String,
+    },
+}
+
+impl std::fmt::Display for FacilityApplyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownFacility { facility_id } => {
+                write!(f, "unknown facility id: {}", facility_id)
+            }
+            Self::UnknownSlot {
+                facility_id,
+                slot_label,
+            } => write!(
+                f,
+                "unknown slot '{}' on facility {}",
+                slot_label, facility_id
+            ),
+            Self::SlotAtMax {
+                facility_id,
+                slot_label,
+                max_channels,
+            } => write!(
+                f,
+                "slot '{}' on facility {} is already at max ({} channels)",
+                slot_label, facility_id, max_channels
+            ),
+            Self::UnknownTemplate {
+                facility_id,
+                template_id,
+            } => write!(
+                f,
+                "facility {} references unknown template {}",
+                facility_id, template_id
+            ),
+        }
+    }
+}
+
+impl std::error::Error for FacilityApplyError {}
+
 /// Apply the facility-relevant variants of [`LayoutEditDelta`] to a
 /// `FacilitiesDocument`, mutating it in place.
 ///
@@ -60,10 +126,18 @@ impl FacilitiesDocument {
 /// Non-facility deltas are skipped silently. Always ensures `schema_version`
 /// is set to the current schema after applying any change, so a previously
 /// empty / pre-018 document is upgraded on first write.
+///
+/// Cardinality enforcement (Spec 018 / S4 — D8):
+///   * `AttachChannelToSlot` rejects if the slot is already at the
+///     template's `max_channels` cap, or if the facility / slot is unknown.
+///     Idempotent on re-attach of an already-present channel id.
+///   * `DetachChannelFromSlot` removes the channel id from the slot's
+///     `Vec` if present; idempotent when the channel id is absent. Returns
+///     an error for an unknown facility / slot.
 pub fn apply_facility_deltas(
     doc: &mut FacilitiesDocument,
     deltas: &[crate::layout::types::LayoutEditDelta],
-) {
+) -> Result<(), FacilityApplyError> {
     use crate::layout::types::LayoutEditDelta;
 
     let mut touched = false;
@@ -99,12 +173,79 @@ pub fn apply_facility_deltas(
                     touched = true;
                 }
             }
+            LayoutEditDelta::AttachChannelToSlot {
+                facility_id,
+                slot_label,
+                channel_id,
+            } => {
+                let facility = doc
+                    .facilities
+                    .iter_mut()
+                    .find(|f| &f.facility_id == facility_id)
+                    .ok_or_else(|| FacilityApplyError::UnknownFacility {
+                        facility_id: facility_id.clone(),
+                    })?;
+                let template = behavior_templates::find_template(&facility.template_id)
+                    .ok_or_else(|| FacilityApplyError::UnknownTemplate {
+                        facility_id: facility_id.clone(),
+                        template_id: facility.template_id.clone(),
+                    })?;
+                let slot_def = template.find_slot(slot_label).ok_or_else(|| {
+                    FacilityApplyError::UnknownSlot {
+                        facility_id: facility_id.clone(),
+                        slot_label: slot_label.clone(),
+                    }
+                })?;
+                let bindings = facility
+                    .slot_bindings
+                    .entry(slot_label.clone())
+                    .or_default();
+                if bindings.iter().any(|id| id == channel_id) {
+                    // Already present — idempotent.
+                    touched = true;
+                    continue;
+                }
+                if slot_def.is_at_max(bindings.len()) {
+                    return Err(FacilityApplyError::SlotAtMax {
+                        facility_id: facility_id.clone(),
+                        slot_label: slot_label.clone(),
+                        max_channels: slot_def.max_channels.unwrap_or(0),
+                    });
+                }
+                bindings.push(channel_id.clone());
+                touched = true;
+            }
+            LayoutEditDelta::DetachChannelFromSlot {
+                facility_id,
+                slot_label,
+                channel_id,
+            } => {
+                let facility = doc
+                    .facilities
+                    .iter_mut()
+                    .find(|f| &f.facility_id == facility_id)
+                    .ok_or_else(|| FacilityApplyError::UnknownFacility {
+                        facility_id: facility_id.clone(),
+                    })?;
+                let bindings = facility.slot_bindings.get_mut(slot_label).ok_or_else(|| {
+                    FacilityApplyError::UnknownSlot {
+                        facility_id: facility_id.clone(),
+                        slot_label: slot_label.clone(),
+                    }
+                })?;
+                let before = bindings.len();
+                bindings.retain(|id| id != channel_id);
+                if bindings.len() != before {
+                    touched = true;
+                }
+            }
             _ => {}
         }
     }
     if touched && doc.schema_version.is_empty() {
         doc.schema_version = FacilitiesDocument::SCHEMA_VERSION.to_string();
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -113,8 +254,8 @@ mod tests {
 
     fn block_indicator_with_empty_slots(facility_id: &str, name: &str) -> Facility {
         let mut slot_bindings = BTreeMap::new();
-        slot_bindings.insert("input".to_string(), None);
-        slot_bindings.insert("output".to_string(), None);
+        slot_bindings.insert("input".to_string(), Vec::<String>::new());
+        slot_bindings.insert("output".to_string(), Vec::<String>::new());
         Facility {
             facility_id: facility_id.to_string(),
             template_id: "block-indicator".to_string(),
@@ -147,17 +288,36 @@ mod tests {
         );
         facility.slot_bindings.insert(
             "input".to_string(),
-            Some("0c3e5cfa-1d54-4e3e-9c12-7c6c8b5b6f01".to_string()),
+            vec!["0c3e5cfa-1d54-4e3e-9c12-7c6c8b5b6f01".to_string()],
         );
         let doc = FacilitiesDocument::new(vec![facility.clone()]);
 
         let yaml = serde_yaml_ng::to_string(&doc).unwrap();
         let parsed: FacilitiesDocument = serde_yaml_ng::from_str(&yaml).unwrap();
 
-        assert_eq!(parsed.facilities[0].slot_bindings.get("input"), Some(&Some(
-            "0c3e5cfa-1d54-4e3e-9c12-7c6c8b5b6f01".to_string(),
-        )));
-        assert_eq!(parsed.facilities[0].slot_bindings.get("output"), Some(&None));
+        assert_eq!(
+            parsed.facilities[0].slot_bindings.get("input"),
+            Some(&vec!["0c3e5cfa-1d54-4e3e-9c12-7c6c8b5b6f01".to_string()])
+        );
+        assert_eq!(
+            parsed.facilities[0].slot_bindings.get("output"),
+            Some(&Vec::<String>::new())
+        );
+    }
+
+    #[test]
+    fn facility_round_trips_yaml_with_multi_element_binding() {
+        // D8 forward-compat: multi-element bindings parse and re-serialise.
+        let mut facility =
+            block_indicator_with_empty_slots("id-multi", "Multi");
+        facility.slot_bindings.insert(
+            "input".to_string(),
+            vec!["ch-1".to_string(), "ch-2".to_string()],
+        );
+        let doc = FacilitiesDocument::new(vec![facility.clone()]);
+        let yaml = serde_yaml_ng::to_string(&doc).unwrap();
+        let parsed: FacilitiesDocument = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(parsed.facilities[0].slot_bindings.get("input"), Some(&vec!["ch-1".to_string(), "ch-2".to_string()]));
     }
 
     #[test]
@@ -201,7 +361,8 @@ mod tests {
         apply_facility_deltas(
             &mut doc,
             &[LayoutEditDelta::AddFacility { facility: f.clone() }],
-        );
+        )
+        .unwrap();
         assert_eq!(doc.schema_version, "1.0");
         assert_eq!(doc.facilities, vec![f]);
     }
@@ -213,7 +374,8 @@ mod tests {
         apply_facility_deltas(
             &mut doc,
             &[LayoutEditDelta::AddFacility { facility: f.clone() }],
-        );
+        )
+        .unwrap();
         assert_eq!(doc.facilities.len(), 1);
     }
 
@@ -227,7 +389,8 @@ mod tests {
                 facility_id: "id-1".into(),
                 new_name: "Block 7".into(),
             }],
-        );
+        )
+        .unwrap();
         assert_eq!(doc.facilities[0].name, "Block 7");
     }
 
@@ -241,7 +404,8 @@ mod tests {
                 facility_id: "nope".into(),
                 new_name: "x".into(),
             }],
-        );
+        )
+        .unwrap();
         assert_eq!(doc.facilities, vec![f]);
     }
 
@@ -255,7 +419,8 @@ mod tests {
             &[LayoutEditDelta::DeleteFacility {
                 facility_id: "id-1".into(),
             }],
-        );
+        )
+        .unwrap();
         assert_eq!(doc.facilities, vec![f2]);
     }
 
@@ -274,7 +439,8 @@ mod tests {
                     name: None,
                 },
             ],
-        );
+        )
+        .unwrap();
         assert_eq!(doc.facilities, vec![f]);
     }
 
@@ -291,7 +457,8 @@ mod tests {
                     new_name: "Block 7".into(),
                 },
             ],
-        );
+        )
+        .unwrap();
         assert_eq!(doc.facilities.len(), 1);
         assert_eq!(doc.facilities[0].name, "Block 7");
 
@@ -300,7 +467,171 @@ mod tests {
             &[LayoutEditDelta::DeleteFacility {
                 facility_id: "id-1".into(),
             }],
-        );
+        )
+        .unwrap();
         assert!(doc.facilities.is_empty());
+    }
+
+    // ── attach / detach (S4 — D8 cardinality) ────────────────────────────
+
+    #[test]
+    fn apply_attach_appends_channel_to_empty_slot() {
+        let f = block_indicator_with_empty_slots("id-1", "Block 5");
+        let mut doc = FacilitiesDocument::new(vec![f]);
+        apply_facility_deltas(
+            &mut doc,
+            &[LayoutEditDelta::AttachChannelToSlot {
+                facility_id: "id-1".into(),
+                slot_label: "input".into(),
+                channel_id: "ch-1".into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            doc.facilities[0].slot_bindings.get("input"),
+            Some(&vec!["ch-1".to_string()])
+        );
+    }
+
+    #[test]
+    fn apply_attach_at_max_is_rejected() {
+        let mut f = block_indicator_with_empty_slots("id-1", "Block 5");
+        f.slot_bindings
+            .insert("input".to_string(), vec!["ch-1".to_string()]);
+        let mut doc = FacilitiesDocument::new(vec![f]);
+        let err = apply_facility_deltas(
+            &mut doc,
+            &[LayoutEditDelta::AttachChannelToSlot {
+                facility_id: "id-1".into(),
+                slot_label: "input".into(),
+                channel_id: "ch-2".into(),
+            }],
+        )
+        .unwrap_err();
+        match err {
+            FacilityApplyError::SlotAtMax {
+                facility_id,
+                slot_label,
+                max_channels,
+            } => {
+                assert_eq!(facility_id, "id-1");
+                assert_eq!(slot_label, "input");
+                assert_eq!(max_channels, 1);
+            }
+            other => panic!("expected SlotAtMax, got {:?}", other),
+        }
+        // Document untouched.
+        assert_eq!(
+            doc.facilities[0].slot_bindings.get("input"),
+            Some(&vec!["ch-1".to_string()])
+        );
+    }
+
+    #[test]
+    fn apply_attach_same_channel_twice_is_idempotent() {
+        let f = block_indicator_with_empty_slots("id-1", "Block 5");
+        let mut doc = FacilitiesDocument::new(vec![f]);
+        let deltas = [
+            LayoutEditDelta::AttachChannelToSlot {
+                facility_id: "id-1".into(),
+                slot_label: "input".into(),
+                channel_id: "ch-1".into(),
+            },
+            LayoutEditDelta::AttachChannelToSlot {
+                facility_id: "id-1".into(),
+                slot_label: "input".into(),
+                channel_id: "ch-1".into(),
+            },
+        ];
+        apply_facility_deltas(&mut doc, &deltas).unwrap();
+        assert_eq!(
+            doc.facilities[0].slot_bindings.get("input"),
+            Some(&vec!["ch-1".to_string()])
+        );
+    }
+
+    #[test]
+    fn apply_detach_removes_existing_channel() {
+        let mut f = block_indicator_with_empty_slots("id-1", "Block 5");
+        f.slot_bindings
+            .insert("input".to_string(), vec!["ch-1".to_string()]);
+        let mut doc = FacilitiesDocument::new(vec![f]);
+        apply_facility_deltas(
+            &mut doc,
+            &[LayoutEditDelta::DetachChannelFromSlot {
+                facility_id: "id-1".into(),
+                slot_label: "input".into(),
+                channel_id: "ch-1".into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            doc.facilities[0].slot_bindings.get("input"),
+            Some(&Vec::<String>::new())
+        );
+    }
+
+    #[test]
+    fn apply_detach_absent_channel_is_idempotent() {
+        let f = block_indicator_with_empty_slots("id-1", "Block 5");
+        let mut doc = FacilitiesDocument::new(vec![f.clone()]);
+        apply_facility_deltas(
+            &mut doc,
+            &[LayoutEditDelta::DetachChannelFromSlot {
+                facility_id: "id-1".into(),
+                slot_label: "input".into(),
+                channel_id: "ch-1".into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(doc.facilities, vec![f]);
+    }
+
+    #[test]
+    fn apply_attach_to_unknown_facility_is_an_error() {
+        let mut doc = FacilitiesDocument::default();
+        let err = apply_facility_deltas(
+            &mut doc,
+            &[LayoutEditDelta::AttachChannelToSlot {
+                facility_id: "nope".into(),
+                slot_label: "input".into(),
+                channel_id: "ch-1".into(),
+            }],
+        )
+        .unwrap_err();
+        assert!(matches!(err, FacilityApplyError::UnknownFacility { .. }));
+    }
+
+    #[test]
+    fn apply_attach_to_unknown_slot_is_an_error() {
+        // The slot is unknown because the template doesn't define it,
+        // even though the bindings map happens to seed it via or_default.
+        let f = block_indicator_with_empty_slots("id-1", "Block 5");
+        let mut doc = FacilitiesDocument::new(vec![f]);
+        let err = apply_facility_deltas(
+            &mut doc,
+            &[LayoutEditDelta::AttachChannelToSlot {
+                facility_id: "id-1".into(),
+                slot_label: "nope".into(),
+                channel_id: "ch-1".into(),
+            }],
+        )
+        .unwrap_err();
+        assert!(matches!(err, FacilityApplyError::UnknownSlot { .. }));
+    }
+
+    #[test]
+    fn apply_detach_from_unknown_facility_is_an_error() {
+        let mut doc = FacilitiesDocument::default();
+        let err = apply_facility_deltas(
+            &mut doc,
+            &[LayoutEditDelta::DetachChannelFromSlot {
+                facility_id: "nope".into(),
+                slot_label: "input".into(),
+                channel_id: "ch-1".into(),
+            }],
+        )
+        .unwrap_err();
+        assert!(matches!(err, FacilityApplyError::UnknownFacility { .. }));
     }
 }

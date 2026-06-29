@@ -52,3 +52,17 @@ The pre-018 `channelType` field is **retired** in the same family of changes (ch
 ## Status
 
 Accepted (2026-06-27) — Spec 018 design assessment.
+
+## 2026-06-28 extension: interim style declaration split during S2
+
+Spec 018 / S2 landed the channel schema (`role` / `style` / `ownership` / `binding`) and retired `channelType` / `hardwareRef`, but only the **style identifier** was promoted into profile YAML (each `channelInputs` entry gained `style: "bod-block-detector-input"`). The style's producer event-leaf mapping continues to live in code, in the new frontend registry `app/src/lib/utils/channelStyles.ts`, mirroring the same shape ADR-0013 prescribes for the eventual YAML style catalog. The legacy daughter-board `validityRules` were not touched in S2.
+
+This is an intentional interim split, not a divergence:
+
+- S2's scope was the schema and its first read path. Introducing a full `styles:` YAML section would have forced a parallel structure for one field (event mapping) with no second consumer, violating YAGNI.
+- S3 will reorganise the YAML to introduce the style catalog when `validityRules` move (the Style Constraint Contract makes the catalog earn its keep with multiple co-located fields per style).
+- S5 will add the `single-led-direct-lamp` style; at that point the catalog has two real entries and a second role binding shape (`lampRow`) — both ADR-0013 anticipates.
+
+The Rust `ChannelRole` and `ChannelBinding` enums declare the lamp-side variants now (`LampIndicator`, `LampRow`) so the enum reads as the role/binding **universe** rather than a one-element list. S5 constructs them; S2 only round-trips them through serde tests.
+
+The frontend registry exposes the same `Record<string, EventMappingEntry>` shape the future YAML catalog will, so the migration in S3/S5 is a relocation, not a rewrite.

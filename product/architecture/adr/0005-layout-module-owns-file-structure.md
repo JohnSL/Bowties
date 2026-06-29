@@ -120,3 +120,33 @@ draft-layer baseline (ADR-0012).
 - The "no migration" stance (Spec 018 FR-009, pre-1.0 single-user
   context) is honoured by treating a missing `facilities.yaml` as "zero
   facilities" rather than as an error.
+
+## 2026-06-28 extension: stateful `LayoutState` sibling (ADR-0015)
+
+### Context
+
+The intent-shaped file functions above (`save_capture`, `read_capture`,
+`read_node_snapshot`, `update_offline_changes`, `update_node_snapshots`,
+`update_channels`, `update_facilities`, `resolve_cdi_xml_for_snapshot`) own *file*
+structure. They do not own *in-memory* structure. The R1/R2 silent-save regressions
+(see [ADR-0015](0015-backend-layout-state-single-owner.md)) traced to scattered
+in-memory caches across `LiveNodeProxy`, `node_registry.saved_trees`, and
+`AppState.offline_bowtie_data`, none of which had the complete picture.
+
+### Decision
+
+The `layout/` module's public surface grows a stateful sibling type, `LayoutState`,
+living in `bowties-core/src/layout/state.rs`. It owns the single in-memory
+projection of one open layout in three layers (`saved` mirrors disk, `captured`
+carries fresh-from-bus data not yet persisted, `drafts` mirrors frontend-side
+edits awaiting save). The file-IO functions remain unchanged; `LayoutState` is
+built by `LayoutState::from_loaded` consuming the same `LayoutDirectoryReadData`
+shape `read_capture` returns, and `LayoutState::save()` (to be filled in as the
+save flow continues to absorb channel/facility CRUD) will go through the same
+journaled writer.
+
+The `layout/` module is now a deep module in two senses: it hides the on-disk
+structure (the original ADR commitment), and it hides the in-memory three-layer
+projection (the ADR-0015 commitment). Both are visible to the rest of the backend
+only through intent-shaped functions and the `LayoutState` query / mutation
+surface. See ADR-0015 for the full surface, invariants, and rationale.

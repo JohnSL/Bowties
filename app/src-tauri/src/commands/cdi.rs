@@ -339,16 +339,24 @@ pub async fn download_cdi(
         state.diag_stats.write().await.cdi_downloads.insert(node_id.clone(), stats_entry);
     }
 
-    // Create CdiData
     let xml_content = xml_content.xml;
-    let cdi_data = lcc_rs::CdiData {
-        xml_content: xml_content.clone(),
-        retrieved_at,
-    };
 
-    // Store in proxy (primary)
-    if let Some(proxy) = state.node_registry.get(&parsed_node_id).await {
-        let _ = proxy.set_cdi_data(cdi_data.clone()).await;
+    // Mirror into LayoutState.captured so the save path has the CDI XML even
+    // if no proxy field would: live proxies no longer hold CDI bytes
+    // (ADR-0015; ADR-0009's 2026-06-28 amendment). Best-effort: silent when
+    // no layout is open.
+    {
+        let mut layout_guard = state.layout_state.write().await;
+        if let Some(ls) = layout_guard.as_mut() {
+            let key = crate::node_key::NodeKey::from_node_id(parsed_node_id);
+            ls.record_captured(
+                key,
+                bowties_core::layout::state::CapturedNode {
+                    cdi_xml: Some(xml_content.clone()),
+                    ..Default::default()
+                },
+            );
+        }
     }
 
     // Write to file cache if we have SNIP data
@@ -388,7 +396,9 @@ pub async fn get_cdi_xml(
     let parsed_node_id = lcc_rs::NodeID::from_hex_string(&node_id)
         .map_err(|e| format!("InvalidNodeId: {}", e))?;
 
-    // Check proxy first (primary source)
+    // Check proxy first (covers synthesized placeholders, whose CDI lives in
+    // the proxy struct). For live proxies this returns `Ok(None)` since slice
+    // 3a — live CDI is owned by `LayoutState`, checked next.
     if let Some(proxy) = state.node_registry.get(&parsed_node_id).await {
         if let Ok(Some(cdi_data)) = proxy.get_cdi_data().await {
             return Ok(GetCdiXmlResponse {
@@ -396,6 +406,25 @@ pub async fn get_cdi_xml(
                 size_bytes: Some(cdi_data.xml_content.len()),
                 retrieved_at: Some(cdi_data.retrieved_at.to_rfc3339()),
             });
+        }
+    }
+
+    // Check LayoutState (saved + captured) — single in-memory owner of an
+    // open layout's CDI bytes. Replaces the older "scan active_layout's
+    // companion directory" path: LayoutState already loaded the XML at
+    // layout-open time.
+    {
+        let layout_guard = state.layout_state.read().await;
+        if let Some(ls) = layout_guard.as_ref() {
+            let key = crate::node_key::NodeKey::from_node_id(parsed_node_id);
+            if let Some(xml) = ls.cdi_xml(&key) {
+                let retrieved_at = Utc::now();
+                return Ok(GetCdiXmlResponse {
+                    xml_content: Some(xml.to_string()),
+                    size_bytes: Some(xml.len()),
+                    retrieved_at: Some(retrieved_at.to_rfc3339()),
+                });
+            }
         }
     }
 
@@ -466,14 +495,21 @@ pub async fn get_cdi_xml(
 
         if let Some(xml_content) = read_cdi_from_cache(&cache_path).await {
             let retrieved_at = Utc::now();
-            let cdi_data = lcc_rs::CdiData {
-                xml_content: xml_content.clone(),
-                retrieved_at,
-            };
 
-            // Store in proxy
-            if let Some(proxy) = state.node_registry.get(&parsed_node_id).await {
-                let _ = proxy.set_cdi_data(cdi_data).await;
+            // Mirror into LayoutState.captured. Slice 3a: the proxy no
+            // longer holds CDI bytes; `LayoutState` is the in-memory home.
+            {
+                let mut layout_guard = state.layout_state.write().await;
+                if let Some(ls) = layout_guard.as_mut() {
+                    let key = crate::node_key::NodeKey::from_node_id(parsed_node_id);
+                    ls.record_captured(
+                        key,
+                        bowties_core::layout::state::CapturedNode {
+                            cdi_xml: Some(xml_content.clone()),
+                            ..Default::default()
+                        },
+                    );
+                }
             }
 
             return Ok(GetCdiXmlResponse {
@@ -1439,12 +1475,13 @@ async fn get_cdi_from_cache(
     
     let parsed_cdi = lcc_rs::cdi::parser::parse_cdi(&xml_content)
         .map_err(CdiError::InvalidXml)?;
-    
-    // Store in proxy
-    if let Some(proxy) = state.node_registry.get(&parsed_node_id).await {
-        let _ = proxy.set_cdi_parsed(parsed_cdi.clone()).await;
-    }
-    
+
+    // The live proxy no longer memoizes parsed CDI (ADR-0015; ADR-0009's
+    // 2026-06-28 amendment). Re-parsing on each call is acceptable for the
+    // UI-navigation paths that call `get_cdi_from_cache`; if profiling shows
+    // a hot spot, lift the memo into `LayoutState`.
+    let _ = parsed_node_id;
+
     Ok(parsed_cdi)
 }
 

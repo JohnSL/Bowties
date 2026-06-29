@@ -54,6 +54,8 @@ pub use types::{
     DaughterboardConstraintVariant,
     DaughterboardMetadata,
     ChannelInputMapping,
+    Style,
+    StyleConstraintVariant,
 };
 pub use resolver::{ProfilePathMap, resolve_named_path, resolve_profile_paths};
 
@@ -589,15 +591,54 @@ fn collect_validity_rules(
 ) -> Vec<ConnectorConstraint> {
     let mut rules = Vec::new();
 
-    let Some(shared_definition) = library.and_then(|shared_library| {
-        shared_library
-            .daughterboards
-            .iter()
-            .find(|candidate| candidate.daughterboard_id == daughterboard_id)
-    }) else {
+    let Some(shared_library) = library else {
         return rules;
     };
 
+    let Some(shared_definition) = shared_library
+        .daughterboards
+        .iter()
+        .find(|candidate| candidate.daughterboard_id == daughterboard_id)
+    else {
+        return rules;
+    };
+
+    // Spec 018 / S3 (ADR-0013): if any of the daughterboard's
+    // `channel_inputs[].style` entries resolve against the library's
+    // top-level `styles[]` catalog, the style owns the constraint contract
+    // and the daughterboard's inline `validity_rules` are intentionally
+    // ignored. "No transitional double-source" — the rule moves, it does
+    // not duplicate.
+    let channel_inputs: &[types::ChannelInputMapping] = shared_definition
+        .metadata
+        .as_ref()
+        .map(|metadata| metadata.channel_inputs.as_slice())
+        .unwrap_or_default();
+
+    let any_style_resolves = channel_inputs.iter().any(|mapping| {
+        mapping
+            .style
+            .as_deref()
+            .is_some_and(|style_id| shared_library.styles.iter().any(|s| s.style_id == style_id))
+    });
+
+    if any_style_resolves {
+        for mapping in channel_inputs {
+            let Some(style_id) = mapping.style.as_deref() else { continue };
+            let Some(style) = shared_library
+                .styles
+                .iter()
+                .find(|candidate| candidate.style_id == style_id)
+            else {
+                continue;
+            };
+            collect_style_rules(style, &mapping.inputs, active_variant_id, cdi, &mut rules);
+        }
+        return rules;
+    }
+
+    // Fallback: legacy daughterboard-owned rules. Non-styled daughterboards
+    // (e.g. OI-IB-8, OI-OB-8) continue to declare their rules inline.
     let matched_shared_variant = active_variant_id.and_then(|variant_id| {
         shared_definition
             .constraint_variants
@@ -625,6 +666,54 @@ fn collect_validity_rules(
     }
 
     rules
+}
+
+fn collect_style_rules(
+    style: &types::Style,
+    constrained_inputs: &[u32],
+    active_variant_id: Option<&str>,
+    cdi: &lcc_rs::cdi::Cdi,
+    rules: &mut Vec<ConnectorConstraint>,
+) {
+    let matched_variant = active_variant_id.and_then(|variant_id| {
+        style
+            .constraint_variants
+            .iter()
+            .find(|candidate| candidate.variant_id == variant_id)
+    });
+    let replace_base = matched_variant
+        .map(|candidate| candidate.replace_base_constraints)
+        .unwrap_or(false);
+
+    if !replace_base {
+        for rule in &style.constraints {
+            push_style_rule(rule, constrained_inputs, cdi, rules);
+        }
+    }
+
+    if let Some(variant) = matched_variant {
+        for rule in &variant.constraints {
+            push_style_rule(rule, constrained_inputs, cdi, rules);
+        }
+    }
+}
+
+/// Map a style-owned constraint rule into the slot projection. When the rule
+/// does not declare its own `line_ordinals`, the daughterboard's
+/// `channel_inputs[].inputs` for the style supplies them so a shared style
+/// can constrain only the inputs the daughterboard binds it to (e.g. BOD4 /
+/// BOD4-CP bind the style to inputs 1..=4 while BOD-8-SM binds it to 1..=8).
+fn push_style_rule(
+    rule: &ConnectorConstraintRule,
+    constrained_inputs: &[u32],
+    cdi: &lcc_rs::cdi::Cdi,
+    rules: &mut Vec<ConnectorConstraint>,
+) {
+    let Some(mut mapped) = map_constraint_rule(rule, cdi) else { return };
+    if mapped.line_ordinals.is_empty() {
+        mapped.line_ordinals = constrained_inputs.to_vec();
+    }
+    rules.push(mapped);
 }
 
 fn map_constraint_rule(
@@ -1111,6 +1200,7 @@ mod tests {
                 constraint_variants: vec![],
                 metadata: None,
             }],
+            styles: vec![],
         };
 
         let connector_profile = build_connector_profile(
@@ -1347,6 +1437,7 @@ mod tests {
                 }],
                 metadata: None,
             }],
+            styles: vec![],
         };
 
         let connector_profile = build_connector_profile(
@@ -1360,6 +1451,220 @@ mod tests {
         let rules = &connector_profile.slots[0].supported_daughterboard_constraints[0].validity_rules;
         assert_eq!(rules.len(), 1, "variant rules should replace base rules");
         assert_eq!(rules[0].allowed_values, vec![ConnectorScalarValue::Integer(1)]);
+    }
+
+    /// Spec 018 / S3 (ADR-0013): when a daughterboard's `channel_inputs[].style`
+    /// resolves against the library's top-level `styles[]` catalog, the
+    /// **style's** `constraints` (and matching `constraint_variants`) are the
+    /// source of truth — the daughterboard's inline `validity_rules` are
+    /// ignored to honour the "no transitional double-source" rule.
+    #[test]
+    fn build_connector_profile_sources_validity_rules_from_style_when_present() {
+        let cdi = parse_cdi(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Port I/O</name>
+                    <group replication="8">
+                        <name>Line</name>
+                        <repname>Line</repname>
+                        <int size="1"><name>Output Function</name></int>
+                    </group>
+                </segment>
+            </cdi>"#,
+        )
+        .expect("CDI parse should succeed");
+
+        let profile = StructureProfile {
+            schema_version: "2.0".to_string(),
+            node_type: types::ProfileNodeType {
+                manufacturer: "RR-CirKits".to_string(),
+                model: "Tower-LCC".to_string(),
+            },
+            firmware_version_range: None,
+            event_roles: vec![],
+            relevance_rules: vec![],
+            configuration_modes: vec![types::ConfigurationMode {
+                id: "connector-a".to_string(),
+                label: "Connector A".to_string(),
+                selector: types::Selector::StructuralSlot {
+                    slot_id: "connector-a".to_string(),
+                    slot_label: Some("Connector A".to_string()),
+                    slot_order: 0,
+                    affected_paths: vec!["Port I/O/Line#1".to_string()],
+                    allow_none_installed: true,
+                    base_behavior_when_empty: None,
+                },
+                variants: vec![types::Variant {
+                    id: "BOD-8-SM".to_string(),
+                    label: "BOD-8-SM".to_string(),
+                    overlay: types::Overlay::default(),
+                }],
+            }],
+        };
+
+        // Library: BOD-8-SM declares a channel_inputs[] entry with
+        // style="bod-block-detector-input" and NO inline validity_rules.
+        // The library's top-level `styles` catalog carries the constraint.
+        let library = types::SharedDaughterboardLibrary {
+            schema_version: "1.0".to_string(),
+            manufacturer: "RR-CirKits".to_string(),
+            daughterboards: vec![types::DaughterboardDefinition {
+                daughterboard_id: "BOD-8-SM".to_string(),
+                display_name: "BOD-8-SM".to_string(),
+                kind: Some("detection".to_string()),
+                validity_rules: vec![], // intentionally empty — style owns the rules
+                constraint_variants: vec![],
+                metadata: Some(types::DaughterboardMetadata {
+                    manual_citations: vec![],
+                    manufacturer_tags: vec![],
+                    notes: None,
+                    channel_inputs: vec![types::ChannelInputMapping {
+                        channel_type: "block-occupancy".to_string(),
+                        style: Some("bod-block-detector-input".to_string()),
+                        inputs: vec![1, 2, 3, 4, 5, 6, 7, 8],
+                        event_mapping: std::collections::HashMap::new(),
+                    }],
+                }),
+            }],
+            styles: vec![types::Style {
+                style_id: "bod-block-detector-input".to_string(),
+                binding_kind: "connectorInput".to_string(),
+                constraints: vec![types::ConnectorConstraintRule {
+                    target_path: "Port I/O/Line/Output Function".to_string(),
+                    constraint_type: types::ConnectorConstraintType::AllowValues,
+                    line_ordinals: vec![1, 2, 3, 4],
+                    replication_ordinals: vec![],
+                    allowed_values: vec![types::ProfileScalarValue::Integer(0)],
+                    allowed_value_labels: vec![],
+                    denied_values: vec![],
+                    explanation: Some("Block-detector input from style".to_string()),
+                }],
+                constraint_variants: vec![],
+            }],
+        };
+
+        let connector_profile = build_connector_profile(
+            "05.02.01.02.03.00.00.01",
+            &profile,
+            Some(&library),
+            &cdi,
+        )
+        .expect("connector profile should be built");
+
+        let rules = &connector_profile.slots[0].supported_daughterboard_constraints[0].validity_rules;
+        assert_eq!(rules.len(), 1, "style-sourced rule should land on the slot projection");
+        assert_eq!(
+            rules[0].explanation.as_deref(),
+            Some("Block-detector input from style"),
+            "rule must come from the style, not the (empty) daughterboard.validity_rules"
+        );
+        assert_eq!(rules[0].allowed_values, vec![ConnectorScalarValue::Integer(0)]);
+    }
+
+    /// Spec 018 / S3 (ADR-0013): a shared style declares its rules without
+    /// `line_ordinals`; the daughterboard's `channel_inputs[].inputs` supplies
+    /// them so a single style entry can constrain only the lines the
+    /// daughterboard actually binds to it (e.g. BOD4 binds inputs 1..=4 only
+    /// while BOD-8-SM binds inputs 1..=8).
+    #[test]
+    fn build_connector_profile_inherits_line_ordinals_from_channel_inputs_for_style_rules() {
+        let cdi = parse_cdi(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Port I/O</name>
+                    <group replication="8">
+                        <name>Line</name>
+                        <repname>Line</repname>
+                        <int size="1"><name>Output Function</name></int>
+                    </group>
+                </segment>
+            </cdi>"#,
+        )
+        .expect("CDI parse should succeed");
+
+        let profile = StructureProfile {
+            schema_version: "2.0".to_string(),
+            node_type: types::ProfileNodeType {
+                manufacturer: "RR-CirKits".to_string(),
+                model: "Tower-LCC".to_string(),
+            },
+            firmware_version_range: None,
+            event_roles: vec![],
+            relevance_rules: vec![],
+            configuration_modes: vec![types::ConfigurationMode {
+                id: "connector-a".to_string(),
+                label: "Connector A".to_string(),
+                selector: types::Selector::StructuralSlot {
+                    slot_id: "connector-a".to_string(),
+                    slot_label: Some("Connector A".to_string()),
+                    slot_order: 0,
+                    affected_paths: vec!["Port I/O/Line#1".to_string()],
+                    allow_none_installed: true,
+                    base_behavior_when_empty: None,
+                },
+                variants: vec![types::Variant {
+                    id: "BOD4".to_string(),
+                    label: "BOD4".to_string(),
+                    overlay: types::Overlay::default(),
+                }],
+            }],
+        };
+
+        // BOD4 binds the style to inputs 1..=4 only (mixed-I/O board).
+        let library = types::SharedDaughterboardLibrary {
+            schema_version: "1.0".to_string(),
+            manufacturer: "RR-CirKits".to_string(),
+            daughterboards: vec![types::DaughterboardDefinition {
+                daughterboard_id: "BOD4".to_string(),
+                display_name: "BOD4".to_string(),
+                kind: Some("mixed-io".to_string()),
+                validity_rules: vec![],
+                constraint_variants: vec![],
+                metadata: Some(types::DaughterboardMetadata {
+                    manual_citations: vec![],
+                    manufacturer_tags: vec![],
+                    notes: None,
+                    channel_inputs: vec![types::ChannelInputMapping {
+                        channel_type: "block-occupancy".to_string(),
+                        style: Some("bod-block-detector-input".to_string()),
+                        inputs: vec![1, 2, 3, 4],
+                        event_mapping: std::collections::HashMap::new(),
+                    }],
+                }),
+            }],
+            // Style rule has no line_ordinals — daughterboard's inputs supply them.
+            styles: vec![types::Style {
+                style_id: "bod-block-detector-input".to_string(),
+                binding_kind: "connectorInput".to_string(),
+                constraints: vec![types::ConnectorConstraintRule {
+                    target_path: "Port I/O/Line/Output Function".to_string(),
+                    constraint_type: types::ConnectorConstraintType::AllowValues,
+                    line_ordinals: vec![],
+                    replication_ordinals: vec![],
+                    allowed_values: vec![types::ProfileScalarValue::Integer(0)],
+                    allowed_value_labels: vec![],
+                    denied_values: vec![],
+                    explanation: None,
+                }],
+                constraint_variants: vec![],
+            }],
+        };
+
+        let connector_profile = build_connector_profile(
+            "05.02.01.02.03.00.00.01",
+            &profile,
+            Some(&library),
+            &cdi,
+        )
+        .expect("connector profile should be built");
+
+        let rules = &connector_profile.slots[0].supported_daughterboard_constraints[0].validity_rules;
+        assert_eq!(rules.len(), 1);
+        assert_eq!(
+            rules[0].line_ordinals,
+            vec![1, 2, 3, 4],
+            "style rules without line_ordinals must inherit channel_inputs.inputs"
+        );
     }
 
     #[test]
@@ -1449,6 +1754,7 @@ mod tests {
                 constraint_variants: vec![],
                 metadata: None,
             }],
+            styles: vec![],
         };
 
         let connector_profile = build_connector_profile(
@@ -1468,6 +1774,61 @@ mod tests {
             "elem:0".to_string(),
         ]);
         assert_eq!(slot_rules.validity_rules[0].allowed_values, vec![ConnectorScalarValue::Integer(1)]);
+    }
+
+    /// Capability test (spec 018 S1.1): when a `StructuralSlot` mode declares
+    /// an empty `affectedPaths` list (no governed CDI paths, as happens when a
+    /// manufacturer ships a connector slot without published CDI evidence),
+    /// `build_connector_profile` must still produce a connector profile with a
+    /// slot whose `resolved_affected_paths` is empty and whose supported
+    /// daughterboards list is populated from the slot's variants.
+    ///
+    /// Reinstates coverage of the algorithm code path that the deleted
+    /// `bundled_signal_profile_builds_aux_port_slot_without_governed_paths`
+    /// test exercised before S1 had to drop it. Uses a minimal hand-crafted
+    /// fixture instead of a shipping profile, so future profile renames
+    /// cannot orphan this test.
+    #[test]
+    fn build_connector_profile_handles_empty_affected_paths_slot() {
+        let cdi = parse_cdi(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Signals</name>
+                    <group>
+                        <name>Mast</name>
+                        <int size="1"><name>Aspect</name></int>
+                    </group>
+                </segment>
+            </cdi>"#,
+        )
+        .expect("synthetic CDI must parse");
+
+        let profile: StructureProfile = serde_yaml_ng::from_str(include_str!(
+            "../../tests/fixtures/structure-profiles/empty_affected_paths_slot.profile.yaml"
+        ))
+        .expect("empty-affectedPaths-slot fixture must parse as a v2 StructureProfile");
+
+        let connector_profile = build_connector_profile(
+            "05.02.01.02.03.00.00.02",
+            &profile,
+            None,
+            &cdi,
+        )
+        .expect("connector profile must build even when the slot has no governed paths");
+
+        assert_eq!(connector_profile.slots.len(), 1, "single declared slot expected");
+        assert_eq!(connector_profile.slots[0].slot_id, "aux-port");
+        assert!(
+            connector_profile.slots[0].resolved_affected_paths.is_empty(),
+            "slot with empty affectedPaths must resolve to zero governed CDI paths"
+        );
+        assert!(
+            connector_profile
+                .supported_daughterboards
+                .iter()
+                .any(|candidate| candidate.daughterboard_id == "SMD-8"),
+            "supported daughterboards must include each declared variant id"
+        );
     }
 
     #[test]
@@ -1575,16 +1936,28 @@ mod tests {
         let library: types::SharedDaughterboardLibrary = serde_yaml_ng::from_str(include_str!("../../../app/src-tauri/profiles/RR-CirKits.shared-daughterboards.yaml"))
             .expect("bundled shared daughterboard library should parse");
 
-        for daughterboard_id in ["BOD4", "BOD4-CP", "BOD-8-SM"] {
-            let daughterboard = library
-                .daughterboards
-                .iter()
-                .find(|candidate| candidate.daughterboard_id == daughterboard_id)
-                .unwrap_or_else(|| panic!("{daughterboard_id} should exist in the bundled daughterboard library"));
+        // Spec 018 / S3 (ADR-0013): producer-action constraints for BOD-family
+        // detector boards live on the `bod-block-detector-input` style, not on
+        // the daughterboard entries (which retired their inline `validity_rules`
+        // when the style catalog landed). The active CDI variant the user has
+        // selected determines which rule set applies — base for legacy CDIs,
+        // `tower-lcc-c7` for the rev-C7 firmware.
+        let style = library
+            .styles
+            .iter()
+            .find(|candidate| candidate.style_id == "bod-block-detector-input")
+            .expect("library must declare bod-block-detector-input style");
 
-            let rules = match daughterboard_id {
-                "BOD4" | "BOD4-CP" => &daughterboard.constraint_variants[0].validity_rules,
-                _ => &daughterboard.validity_rules,
+        for variant_id in ["base", "tower-lcc-c7"] {
+            let rules: &[types::ConnectorConstraintRule] = if variant_id == "base" {
+                &style.constraints
+            } else {
+                &style
+                    .constraint_variants
+                    .iter()
+                    .find(|candidate| candidate.variant_id == variant_id)
+                    .unwrap_or_else(|| panic!("style must declare a {variant_id} variant"))
+                    .constraints
             };
 
             // Slot 1 (producerLeafIndex 0 = occupied) must be Input On
@@ -1595,11 +1968,11 @@ mod tests {
                         && rule.constraint_type == types::ConnectorConstraintType::AllowValues
                         && rule.replication_ordinals == vec![1]
                 })
-                .unwrap_or_else(|| panic!("{daughterboard_id} should constrain producer slot 1"));
+                .unwrap_or_else(|| panic!("{variant_id} should constrain producer slot 1"));
             assert_eq!(
                 slot1_rule.allowed_values,
                 vec![types::ProfileScalarValue::Integer(5)],
-                "{daughterboard_id} slot 1 should be forced to Input On (occupied — detector output goes low, Active Lo / Low (0V) polarity makes logical input ON)"
+                "{variant_id} slot 1 should be forced to Input On (occupied — detector output goes low, Active Lo / Low (0V) polarity makes logical input ON)"
             );
 
             // Slot 2 (producerLeafIndex 1 = clear) must be Input Off
@@ -1610,14 +1983,14 @@ mod tests {
                         && rule.constraint_type == types::ConnectorConstraintType::AllowValues
                         && rule.replication_ordinals == vec![2]
                 })
-                .unwrap_or_else(|| panic!("{daughterboard_id} should constrain producer slot 2"));
+                .unwrap_or_else(|| panic!("{variant_id} should constrain producer slot 2"));
             assert_eq!(
                 slot2_rule.allowed_values,
                 vec![types::ProfileScalarValue::Integer(6)],
-                "{daughterboard_id} slot 2 should be forced to Input Off (clear — detector output goes high, Active Lo / Low (0V) polarity makes logical input OFF)"
+                "{variant_id} slot 2 should be forced to Input Off (clear — detector output goes high, Active Lo / Low (0V) polarity makes logical input OFF)"
             );
 
-            // No broad all-replications rule should exist
+            // No broad all-replications rule should exist on the producer action path.
             let broad_rule = rules.iter().any(|rule| {
                 rule.target_path == "Port I/O/Line/Event#2/Upon this action"
                     && rule.constraint_type == types::ConnectorConstraintType::AllowValues
@@ -1625,7 +1998,7 @@ mod tests {
             });
             assert!(
                 !broad_rule,
-                "{daughterboard_id} should not have a broad constraint on all producer event replications"
+                "{variant_id} should not have a broad constraint on all producer event replications"
             );
         }
     }

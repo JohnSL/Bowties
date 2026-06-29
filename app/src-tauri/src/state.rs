@@ -50,20 +50,6 @@ pub struct ActiveLayoutContext {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Accumulated offline node data for catalog building without a live node_registry.
-///
-/// Populated incrementally by `build_offline_node_tree` as each node's tree is built.
-/// Consumed by `build_bowtie_catalog_command` when the node_registry is empty.
-#[derive(Debug, Clone, Default)]
-pub struct OfflineBowtieData {
-    /// Config values: NodeKey → (path_key → event_id_bytes).
-    pub config_values: HashMap<NodeKey, HashMap<String, [u8; 8]>>,
-    /// Profile group roles: "{canonical_node_key}:{path}" → EventRole.
-    pub profile_roles: HashMap<String, lcc_rs::EventRole>,
-    /// CDI XML per NodeKey (for slot walk in catalog builder).
-    pub cdi_xml: HashMap<NodeKey, String>,
-}
-
 // ── Application state ─────────────────────────────────────────────────────
 
 /// Runtime tuning parameters loaded from `tuning.toml` in the app data directory.
@@ -162,14 +148,12 @@ pub struct AppState {
     /// User-selected sync mode when bus match is uncertain.
     pub sync_mode: Arc<RwLock<Option<SyncMode>>>,
 
-    // ── Offline bowtie catalog data ───────────────────────────────────────
-
-    /// Accumulated data from `build_offline_node_tree` calls, used by
-    /// `build_bowtie_catalog_command` when no live node_registry is available.
-    /// Cleared when a layout is closed.
-    pub offline_bowtie_data: Arc<RwLock<OfflineBowtieData>>,
-
-
+    /// Single in-memory owner of the open layout (saved → captured → drafts).
+    /// Owns the persisted-in-memory projection of the layout file: bowties,
+    /// channels, facilities, offline changes, and per-node snapshot/CDI/tree.
+    /// Source of truth for the save flow's per-node snapshot building and for
+    /// the offline catalog rebuild. See ADR-0015.
+    pub layout_state: Arc<RwLock<Option<bowties_core::layout::state::LayoutState>>>,
 
     // ── Spec 008: Structure profile cache ─────────────────────────────────
 
@@ -207,7 +191,7 @@ impl AppState {
             active_layout: Arc::new(RwLock::new(None)),
             offline_changes_cache: Arc::new(RwLock::new(Vec::new())),
             sync_mode: Arc::new(RwLock::new(None)),
-            offline_bowtie_data: Arc::new(RwLock::new(OfflineBowtieData::default())),
+            layout_state: Arc::new(RwLock::new(None)),
 
             profiles: Arc::new(RwLock::new(HashMap::new())),
             diag_log: crate::diagnostics::new_diag_log(),

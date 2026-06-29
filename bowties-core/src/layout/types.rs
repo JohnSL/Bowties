@@ -238,6 +238,26 @@ pub enum LayoutEditDelta {
     /// Delete a facility (no-op if `facility_id` is unknown).
     #[serde(rename_all = "camelCase")]
     DeleteFacility { facility_id: String },
+    /// Attach a channel to a facility slot (Spec 018 / S4 — D8 cardinality contract).
+    ///
+    /// `apply_layout_deltas` is a no-op; the mutation lives in
+    /// `apply_facility_deltas`, which enforces the slot's `max_channels`.
+    #[serde(rename_all = "camelCase")]
+    AttachChannelToSlot {
+        facility_id: String,
+        slot_label: String,
+        channel_id: String,
+    },
+    /// Detach a channel from a facility slot (Spec 018 / S4).
+    ///
+    /// Idempotent at the apply layer when the channel is already absent
+    /// from the slot; only an unknown facility / slot is an error.
+    #[serde(rename_all = "camelCase")]
+    DetachChannelFromSlot {
+        facility_id: String,
+        slot_label: String,
+        channel_id: String,
+    },
 }
 
 impl LayoutEditDelta {
@@ -351,7 +371,9 @@ pub fn apply_layout_deltas(layout: &mut LayoutFile, deltas: Vec<LayoutEditDelta>
             }
             LayoutEditDelta::AddFacility { .. }
             | LayoutEditDelta::RenameFacility { .. }
-            | LayoutEditDelta::DeleteFacility { .. } => {
+            | LayoutEditDelta::DeleteFacility { .. }
+            | LayoutEditDelta::AttachChannelToSlot { .. }
+            | LayoutEditDelta::DetachChannelFromSlot { .. } => {
                 // Facilities live outside LayoutFile (facilities.yaml).
                 // Handled by `layout::facilities::apply_facility_deltas`,
                 // called from save_layout_directory alongside this function.

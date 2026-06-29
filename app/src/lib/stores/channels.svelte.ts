@@ -1,5 +1,20 @@
 import { listChannels, type InformationChannel } from '$lib/api/channels';
 
+/**
+ * Hardware-locality grouping key for the Spec 018 / S3 Channels panel.
+ * `connectorInput` channels group per (node, connector); `lampRow` channels
+ * group per (node, "direct-lamp-control") so S5's lamp-indicator channels
+ * land in their own subsystem row without further changes.
+ */
+export function hardwareGroupKey(channel: InformationChannel): string {
+  switch (channel.binding.kind) {
+    case 'connectorInput':
+      return `${channel.binding.nodeKey}|connector:${channel.binding.connector}`;
+    case 'lampRow':
+      return `${channel.binding.nodeKey}|direct-lamp-control`;
+  }
+}
+
 class ChannelsStore {
   /** Channels loaded from disk (baseline). */
   private _baseline = $state<InformationChannel[]>([]);
@@ -32,13 +47,31 @@ class ChannelsStore {
     return this.channels.length === 0;
   }
 
-  /** Group channels by their channelType. */
+  /** Group channels by their role (Spec 018 / S2 — ADR-0013). */
   get grouped(): Map<string, InformationChannel[]> {
     const map = new Map<string, InformationChannel[]>();
     for (const ch of this.channels) {
-      const group = map.get(ch.channelType) ?? [];
+      const group = map.get(ch.role) ?? [];
       group.push(ch);
-      map.set(ch.channelType, group);
+      map.set(ch.role, group);
+    }
+    return map;
+  }
+
+  /**
+   * Group channels by hardware locality for the Spec 018 / S3 Channels panel.
+   * Key shape is `${nodeKey}|${subsystemKey}` where `subsystemKey` is
+   * `connector:${connector}` for `connectorInput` bindings and
+   * `direct-lamp-control` for `lampRow` bindings (S5). Insertion-ordered
+   * iteration follows the order channels first land in `channels`.
+   */
+  get groupedByHardware(): Map<string, InformationChannel[]> {
+    const map = new Map<string, InformationChannel[]>();
+    for (const ch of this.channels) {
+      const key = hardwareGroupKey(ch);
+      const group = map.get(key) ?? [];
+      group.push(ch);
+      map.set(key, group);
     }
     return map;
   }

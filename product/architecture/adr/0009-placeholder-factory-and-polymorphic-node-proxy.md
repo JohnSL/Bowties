@@ -209,3 +209,69 @@ implementors.
 - **Renames:** `NodeProxy` → `LiveNodeProxy`.  This is a one-time
   migration touching internal references only; the external-facing
   `NodeProxyHandle` name is unchanged.
+
+## 2026-06-28 extension: NodeProxy scope narrowed to bus-session state (ADR-0015)
+
+### Context
+
+The slice-3a removals codified by [ADR-0015](0015-backend-layout-state-single-owner.md)
+require scoping `LiveNodeProxy` to per-actor bus-session state only. The persistent
+in-memory projection of an open layout (saved + captured CDI bytes, profile-annotated
+trees, offline catalog inputs) is owned by `bowties_core::layout::state::LayoutState`;
+any duplicate cache on `LiveNodeProxy` would re-introduce the R1/R2 save-time
+data-loss bug class that ADR-0015 eliminates.
+
+### Decision (narrowing of section 1 above)
+
+`LiveNodeProxy` retains:
+
+- Identity, transport handle, alias, our_alias, last_seen, last_verified, connection_status.
+- `snip` / `snip_status` / `pip_flags` / `pip_status` plus their in-flight `*_waiters` dedup state — working state for the SNIP/PIP query actors.
+- `config_values: HashMap<String, [u8; 8]>` and `config_tree: Option<NodeConfigTree>` — working buffers for in-progress bus operations (partial-read accumulators during `read_all_config_values`, `set_modified_value` pending-write tracking, per-space merge buffers during write phase).
+
+`LiveNodeProxy` no longer holds:
+
+- `cdi_data: Option<CdiData>` — along with the `ProxyMessage::GetCdiData` /
+  `SetCdiData` variants, their handler arms, and the `LiveNodeProxyHandle::get_cdi_data`
+  / `set_cdi_data` accessors. `LiveNodeProxy::snapshot()` emits `cdi: None`.
+- `cdi_parsed: Option<lcc_rs::cdi::Cdi>` — along with the matching `ProxyMessage`
+  variants and accessors. Parsed CDI is re-parsed on demand from `LayoutState`'s
+  XML; if profiling shows a hot spot, lift the memo into `LayoutState` (see the
+  ADR-0015 invariants).
+
+`NodeProxyHandle::get_cdi_data` and `get_cdi_parsed` survive on the enum: for
+`Live` they return `Ok(None)`; for `Synthesized` they return the proxy struct's
+field. `set_cdi_data` and `set_cdi_parsed` are removed from the enum entirely —
+callers route freshly-downloaded CDI through `LayoutState::record_captured`.
+
+### Why placeholders keep their CDI on the proxy struct
+
+`SynthesizedNodeProxy::cdi_data` / `cdi_parsed` remain populated by the placeholder
+factory at construction time. Placeholders have **no `LayoutState` entry** until a
+save promotes them — the in-memory home for an unsaved placeholder's bundled CDI is
+the proxy struct itself. This asymmetry is principled, not a wart: synthesized
+proxies are factory-produced passive holders (ADR-0009 sections 1, 3); their fields
+*are* the truth, not a cache of it.
+
+### Deferred consideration
+
+Moving `config_tree` / `config_values` into `LayoutState` was considered and
+deferred (see ADR-0015 "Option C"). The principle test — "is this a duplicate cache
+of persistent data that the save flow could read out-of-sync?" — returns *no* for
+these fields. They are working buffers consumed only by the per-actor mailbox; the
+save flow's source is `LayoutState`, so they cannot drift into a data-loss bug.
+Moving them would introduce a new concurrency surface (writeable in-flight target
+for concurrent CDI reads) with no offsetting bug class prevented. Revisit only when
+there is an actual driver.
+
+## Invariants
+
+Structured testable rules for the `/design` audit. Each invariant resolves to
+OK / Drift / Unknown with file:line evidence.
+
+- `NodeProxyHandle` is an enum of `Live(LiveNodeProxyHandle)` and `Synthesized(SynthesizedNodeProxy)`. New node-state kinds (e.g., a future "shadow" or "offline-twin" variant) require extending this enum, not adding a parallel registry. Audit: grep for `enum NodeProxyHandle` — single declaration in `bowties-core/src/node_proxy.rs`.
+- The Proxy Registry (`NodeRegistry`) is keyed by `NodeKey`, not `NodeID`. Real-node lookups convert to `NodeKey` at the boundary. Audit: grep for `HashMap<NodeID,` / `BTreeMap<NodeID,` in `bowties-core/` and `app/src-tauri/`.
+- `LiveNodeProxy` does NOT hold `cdi_data` or `cdi_parsed`. `LiveNodeProxy::snapshot()` emits `cdi: None`. `NodeProxyHandle::set_cdi_data` and `set_cdi_parsed` do not exist on the enum. CDI for live nodes lives in `LayoutState` (ADR-0015). Audit: grep `bowties-core/src/node_proxy.rs` for `cdi_data` outside the `SynthesizedNodeProxy` struct + the `Synthesized` arm of `NodeProxyHandle::get_cdi_data`; grep `app/src-tauri/` for `set_cdi_data` / `set_cdi_parsed` — must return zero matches.
+- `SynthesizedNodeProxy::cdi_data` and `cdi_parsed` ARE the source of truth for an unsaved placeholder's CDI. Placeholder reconstitution + the factory write these; readers route through `NodeProxyHandle::get_cdi_data` / `get_cdi_parsed`'s `Synthesized` arm. Audit: grep for `SynthesizedNodeProxy { ... cdi_data:` construction sites — only the factory (`placeholder.rs::synthesize` + `reconstitute`) is legitimate.
+- The placeholder factory (`app/src-tauri/src/placeholder.rs`) is the single owner of placeholder construction: UUID minting, bundled-CDI resolution, EventId-zero pre-population, profile overlay. No other module mints `placeholder:<uuid>` keys or builds a `SynthesizedNodeProxy`. Audit: grep for `placeholder:` literal prefix construction; grep for `SynthesizedNodeProxy {` — only `placeholder.rs` is legitimate.
+- `NodeSnapshot.validate()` enforces the typed invariant `node_id: None ⇒ profile_stem: Some`; the layout layer does not sniff key prefixes. Audit: grep for `node_key.starts_with("placeholder:")` outside `node_key.rs` and the encoding / transport carve-outs documented in section 6.

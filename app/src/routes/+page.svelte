@@ -103,9 +103,13 @@
   import { deletePlaceholderBoard } from '$lib/orchestration/placeholderBoardOrchestrator';
   import { isPlaceholderInput } from '$lib/utils/nodeKey';
   import RailroadPanel from '$lib/components/Railroad/RailroadPanel.svelte';
-  import FacilitiesSection from '$lib/components/Facilities/FacilitiesSection.svelte';
   import { startEventStateListening, resolveChannelEventIds } from '$lib/orchestration/eventStateOrchestrator';
   import { eventStateStore } from '$lib/stores/eventState.svelte';
+  import * as facilityOrchestrator from '$lib/orchestration/facilityOrchestrator';
+  import SelectChannelPicker from '$lib/components/Facilities/SelectChannelPicker.svelte';
+  import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
+  import type { ChannelRole, InformationChannel } from '$lib/api/channels';
+  import { deriveChannelState, type OccupancyState } from '$lib/utils/channelState';
 
   // Active tab state — 'config' (default), 'bowties', or 'railroad'
   let activeTab = $state<'config' | 'bowties' | 'railroad'>('config');
@@ -253,13 +257,6 @@
   // Populated by resolveChannelEventIds() when channels exist and config trees are available.
   let resolvedEventIds = $state<ReadonlyMap<string, { occupied?: string; clear?: string }>>(new Map());
 
-  // Spec 016: Default BOD event mapping — all block-occupancy BOD boards use the same
-  // producer leaf indices (occupied=0, clear=1) declared in shared-daughterboards.yaml.
-  const BOD_EVENT_MAPPING = {
-    occupied: { producerLeafIndex: 0 },
-    clear: { producerLeafIndex: 1 },
-  } as const;
-
   // Spec 016: Re-resolve event IDs when channels change or after CDI reads
   // populate the tree store.
   //
@@ -272,13 +269,16 @@
   // until the user forced a CDI read. Both reactive reads stay load-bearing:
   // an assigned-but-unused local does NOT work — build-time DCE may strip
   // the read, leaving the effect frozen with the empty initial value.
+  //
+  // Spec 018 / S2 (ADR-0013): the event mapping is sourced from each
+  // channel's style via the style registry; no per-call mapping argument.
   $effect(() => {
     const channels = channelsStore.channels;
     const connected = layoutStore.isConnected;
     const liveCount = nodeRoster.liveEntries.length;
     const treesCount = nodeTreeStore.trees.size;
     if (connected && channels.length > 0 && (liveCount > 0 || treesCount > 0)) {
-      resolveChannelEventIds(channels, BOD_EVENT_MAPPING).then((resolved) => {
+      resolveChannelEventIds(channels).then((resolved) => {
         resolvedEventIds = resolved;
       });
     }
@@ -1375,9 +1375,13 @@
   }): Promise<void> {
     // Spec 015 / S5: check if this slot has existing channels that would be removed
     const normalizedNodeId = normalizeNodeId(detail.nodeId);
-    const affectedChannels = channelsStore.channels.filter(
-      (ch) => normalizeNodeId(ch.hardwareRef.nodeKey) === normalizedNodeId && ch.hardwareRef.connector === detail.slotId,
-    );
+    const affectedChannels = channelsStore.channels.filter((ch) => {
+      if (ch.binding.kind !== 'connectorInput') return false;
+      return (
+        normalizeNodeId(ch.binding.nodeKey) === normalizedNodeId &&
+        ch.binding.connector === detail.slotId
+      );
+    });
 
     if (affectedChannels.length > 0) {
       // Show confirmation dialog; proceed only on confirm
@@ -1433,6 +1437,80 @@
     && !$layoutOpenInProgress
     && !layoutStore.activeContext
   );
+
+  // ── Spec 018 / S4: Slot Binding workflow — Select / Rebind picker ──────
+  // Route owns the picker open/close + mode state. Component-layer slot
+  // intent bubbles up via `<RailroadPanel>` → `<FacilitiesSection>` →
+  // `<FacilityCard>` → `<FacilitySlot>` callbacks; this route resolves
+  // candidates from `effectiveLayoutStore.unboundChannelsForRole` and
+  // dispatches confirmations through `facilityOrchestrator`.
+  type SlotPickerState = {
+    facilityId: string;
+    slotLabel: string;
+    requiredRole: string;
+    mode: 'select' | 'rebind';
+    currentChannelId?: string;
+  };
+  let slotPicker = $state<SlotPickerState | null>(null);
+
+  function slotChannelUsedBy(channelId: string): ReadonlyArray<{ facilityName: string; slotLabel: string }> {
+    return effectiveLayoutStore.channelUsageMap.get(channelId) ?? [];
+  }
+
+  function pickerSlotRequiredRole(facilityId: string, slotLabel: string): string | undefined {
+    const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+    if (!facility) return undefined;
+    const template = behaviorTemplatesStore.findByTemplateId(facility.templateId);
+    return template?.slots.find((s) => s.label === slotLabel)?.requiredRole;
+  }
+
+  function handleSelectChannelIntent(facilityId: string, slotLabel: string) {
+    const requiredRole = pickerSlotRequiredRole(facilityId, slotLabel);
+    if (!requiredRole) return;
+    slotPicker = { facilityId, slotLabel, requiredRole, mode: 'select' };
+  }
+  function handleRebindChannelIntent(facilityId: string, slotLabel: string, currentChannelId: string) {
+    const requiredRole = pickerSlotRequiredRole(facilityId, slotLabel);
+    if (!requiredRole) return;
+    slotPicker = { facilityId, slotLabel, requiredRole, mode: 'rebind', currentChannelId };
+  }
+  function handleRemoveFromSlot(facilityId: string, slotLabel: string, currentChannelId: string) {
+    facilityOrchestrator.removeFromSlot({ facilityId, slotLabel, channelId: currentChannelId });
+  }
+  function closeSlotPicker() {
+    slotPicker = null;
+  }
+  function handlePickerConfirm(channelId: string) {
+    const picker = slotPicker;
+    if (!picker) return;
+    try {
+      facilityOrchestrator.selectChannelForSlot({
+        facilityId: picker.facilityId,
+        slotLabel: picker.slotLabel,
+        channelId,
+        mode: picker.mode,
+        previousChannelId: picker.currentChannelId,
+      });
+    } finally {
+      closeSlotPicker();
+    }
+  }
+
+  let pickerCandidates = $derived.by(() => {
+    if (!slotPicker) return [] as InformationChannel[];
+    const exclude = slotPicker.currentChannelId
+      ? new Set([slotPicker.currentChannelId])
+      : undefined;
+    return effectiveLayoutStore.unboundChannelsForRole(
+      slotPicker.requiredRole as ChannelRole,
+      exclude ? { excludeIds: exclude } : undefined,
+    );
+  });
+
+  function pickerChannelState(channelId: string): OccupancyState {
+    const ids = resolvedEventIds.get(channelId);
+    return deriveChannelState(eventStateStore.events, ids?.occupied, ids?.clear);
+  }
 </script>
 
 
@@ -1590,11 +1668,16 @@
       </div>
 
     {:else if activeTab === 'railroad'}
-      <!-- Spec 018 / S1: Facility scaffolding (no-channel CRUD) above the channel inventory. -->
+      <!-- Spec 018 / S3: RailroadPanel composes Facilities + Channels sections. -->
       <div class="railroad-tab-content">
-        <FacilitiesSection />
-        <!-- Spec 015: Information channels inventory -->
-        <RailroadPanel nodeName={resolveNodeName} {resolvedEventIds} />
+        <RailroadPanel
+          nodeName={resolveNodeName}
+          {resolvedEventIds}
+          usedBy={slotChannelUsedBy}
+          onSelectChannel={handleSelectChannelIntent}
+          onRebindChannel={handleRebindChannelIntent}
+          onRemoveFromSlot={handleRemoveFromSlot}
+        />
       </div>
 
     {:else if activeTab === 'bowties'}
@@ -1745,6 +1828,19 @@
       unsavedDialog = null;
       proceed?.();
     }}
+  />
+{/if}
+
+<!-- Spec 018 / S4: Slot Binding picker (Select channel / Rebind). -->
+{#if slotPicker}
+  <SelectChannelPicker
+    slotLabel={slotPicker.slotLabel}
+    requiredRole={slotPicker.requiredRole}
+    currentChannelId={slotPicker.currentChannelId}
+    candidateChannels={pickerCandidates}
+    channelState={pickerChannelState}
+    onConfirm={handlePickerConfirm}
+    onCancel={closeSlotPicker}
   />
 {/if}
 

@@ -1,7 +1,7 @@
 //! Offline layout capture/open commands.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use tauri::{Emitter, Manager};
 
 use crate::layout::node_snapshot::{
@@ -102,11 +102,20 @@ pub struct SaveWithBusWriteResult {
 
 
 use bowties_core::layout::capture::ProxySnapshotData;
+use bowties_core::layout::state::LayoutState;
 
 /// Fetch pre-computed data from a `NodeProxyHandle` and build the
 /// `ProxySnapshotData` struct needed by the pure bowties-core snapshot builder.
+///
+/// When `layout_state` is provided and the proxy has no in-memory CDI data,
+/// the CDI XML length is filled in from `LayoutState` (saved or captured
+/// layer). This is the fix for the regression where a freshly-spawned
+/// proxy after reconnect produced a snapshot with `fingerprint == "missing"`
+/// even though the bytes were on disk or had just been downloaded
+/// (see ADR-0015).
 async fn proxy_snapshot_data(
     handle: &crate::node_proxy::NodeProxyHandle,
+    layout_state: Option<&LayoutState>,
 ) -> Result<ProxySnapshotData, String> {
     let discovered = handle.get_snapshot().await?;
     let tree = handle.get_config_tree().await?;
@@ -118,13 +127,22 @@ async fn proxy_snapshot_data(
         _ => (false, None, None),
     };
 
+    let mut cdi_xml_len = discovered.cdi.as_ref().map(|c| c.xml_content.len());
+    if cdi_xml_len.is_none() {
+        if let Some(ls) = layout_state {
+            if let Ok(key) = crate::node_key::NodeKey::parse(&handle.node_key()) {
+                cdi_xml_len = ls.cdi_xml(&key).map(|s| s.len());
+            }
+        }
+    }
+
     Ok(ProxySnapshotData {
         is_synthesized,
         synthesized_node_key,
         profile_stem,
         node_id: if is_synthesized { None } else { Some(discovered.node_id) },
         snip_data: discovered.snip_data,
-        cdi_xml_len: discovered.cdi.as_ref().map(|c| c.xml_content.len()),
+        cdi_xml_len,
         pip_status: discovered.pip_status,
         pip_cdi_flag: discovered.pip_flags.as_ref().is_some_and(|f| f.cdi),
         config_tree: tree,
@@ -138,8 +156,9 @@ async fn build_node_snapshot(
     captured_at: &str,
     producer_events: Vec<String>,
     state: &AppState,
+    layout_state: Option<&LayoutState>,
 ) -> Result<NodeSnapshot, String> {
-    let data = proxy_snapshot_data(handle).await?;
+    let data = proxy_snapshot_data(handle, layout_state).await?;
     let (snapshot, log_messages) =
         bowties_core::layout::capture::build_node_snapshot(&data, captured_at, producer_events)?;
     for msg in &log_messages {
@@ -175,13 +194,21 @@ pub async fn capture_layout_snapshot(
     let mut complete_count = 0usize;
     let mut partial_count = 0usize;
 
+    let layout_state_snapshot = state.layout_state.read().await.clone();
     for handle in handles {
         let node_key = handle.node_key();
         let producer_events = producer_events_by_node
             .get(&node_key)
             .cloned()
             .unwrap_or_default();
-        let snap = build_node_snapshot(&handle, &captured_at, producer_events, state.inner()).await?;
+        let snap = build_node_snapshot(
+            &handle,
+            &captured_at,
+            producer_events,
+            state.inner(),
+            layout_state_snapshot.as_ref(),
+        )
+        .await?;
         node_count += 1;
         if snap.capture_status == CaptureStatus::Complete {
             complete_count += 1;
@@ -265,6 +292,7 @@ pub async fn save_layout_directory(
         .collect();
 
     let handles = state.node_registry.get_all_handles().await;
+    let layout_state_snapshot = state.layout_state.read().await.clone();
     let mut snapshots = if !handles.is_empty() {
         let mut producer_events_by_node: BTreeMap<String, Vec<String>> = BTreeMap::new();
         if let Some(catalog) = state.bowties_catalog.read().await.clone() {
@@ -302,7 +330,14 @@ pub async fn save_layout_directory(
                 .get(&node_key)
                 .cloned()
                 .unwrap_or_default();
-            let fresh = build_node_snapshot(handle, &captured_at, producer_events, state.inner()).await?;
+            let fresh = build_node_snapshot(
+                handle,
+                &captured_at,
+                producer_events,
+                state.inner(),
+                layout_state_snapshot.as_ref(),
+            )
+            .await?;
 
             // Never persist a partial snapshot when a more-complete previous
             // snapshot exists. This prevents data loss when a previously-saved
@@ -344,8 +379,29 @@ pub async fn save_layout_directory(
         Vec::new()
     };
 
+    // After the proxy walk, any snapshot still carrying `fingerprint == "missing"`
+    // means neither the proxy nor `LayoutState` has CDI bytes for this node —
+    // the user has nothing meaningful to persist for it yet. Log and drop so
+    // the save stays "no data ⇒ no snapshot" without silently destroying
+    // previously-saved data (`LayoutState` fallback in `proxy_snapshot_data`
+    // already covers the saved + captured cases; see ADR-0015).
+    let dropped_for_missing: Vec<String> = snapshots
+        .iter()
+        .filter(|s| s.cdi_ref.fingerprint == "missing")
+        .map(|s| s.node_key.clone())
+        .collect();
+    if !dropped_for_missing.is_empty() {
+        crate::bwlog!(
+            state.inner(),
+            "[layout save] {} snapshot(s) had no CDI data in proxy or LayoutState; not persisted: {:?}",
+            dropped_for_missing.len(),
+            dropped_for_missing,
+        );
+    }
+
     // Filter out nodes that do not support CDI — they cannot be usefully saved
-    // and cause "(Not captured)" banners on re-open.
+    // and cause "(Not captured)" banners on re-open. The "missing" branch is
+    // still filtered as a safety net for the truly-no-data case above.
     snapshots.retain(|s| {
         s.cdi_ref.fingerprint != "not_supported" && s.cdi_ref.fingerprint != "missing"
     });
@@ -370,7 +426,8 @@ pub async fn save_layout_directory(
     // ADR-0002: read disk-authoritative layout, apply frontend deltas.
     let mut bowties = previous.as_ref().map(|p| p.bowties.clone()).unwrap_or_default();
     let mut facilities = previous.as_ref().map(|p| p.facilities.clone()).unwrap_or_default();
-    crate::layout::facilities::apply_facility_deltas(&mut facilities, &deltas);
+    crate::layout::facilities::apply_facility_deltas(&mut facilities, &deltas)
+        .map_err(|e| format!("Failed to apply facility deltas: {}", e))?;
     crate::layout::types::apply_layout_deltas(&mut bowties, deltas);
     let mut offline_changes = Vec::<OfflineChange>::new();
 
@@ -551,7 +608,7 @@ mod tests {
         let handle = crate::node_proxy::NodeProxyHandle::Synthesized(proxy);
         let state = AppState::new();
 
-        let snap = build_node_snapshot(&handle, "2026-05-31T00:00:00Z", vec![], &state)
+        let snap = build_node_snapshot(&handle, "2026-05-31T00:00:00Z", vec![], &state, None)
             .await
             .expect("build_node_snapshot should succeed for placeholder");
 
@@ -643,7 +700,7 @@ mod tests {
         let handle = crate::node_proxy::NodeProxyHandle::Synthesized(proxy);
         let state = AppState::new();
 
-        let snap = build_node_snapshot(&handle, "2026-05-31T00:00:00Z", vec![], &state)
+        let snap = build_node_snapshot(&handle, "2026-05-31T00:00:00Z", vec![], &state, None)
             .await
             .expect("build_node_snapshot");
 
@@ -679,10 +736,16 @@ pub async fn open_layout_directory(
     // Load offline changes into cache
     *state.offline_changes_cache.write().await = loaded.offline_changes.clone();
 
-    // Populate offline bowtie data from snapshots so offline catalog rebuilds
-    // can discover event slots and merge saved role classifications.
+    // Build the per-node CDI XML + profile-annotated tree maps that feed
+    // `LayoutState`. These trees also seed `node_registry.saved_trees` for
+    // fresh proxies when this layout's nodes are rediscovered on the bus
+    // (Spec 017 / S3 contract: trees must carry `event_role` annotations and
+    // `profile_applied = true` so channel resolution works without a CDI read).
+    let mut cdi_xml_by_key: std::collections::HashMap<crate::node_key::NodeKey, String> =
+        std::collections::HashMap::new();
+    let mut saved_trees_for_state: std::collections::HashMap<crate::node_key::NodeKey, crate::node_tree::NodeConfigTree> =
+        std::collections::HashMap::new();
     {
-        let mut offline_data = crate::state::OfflineBowtieData::default();
         let mut saved_trees: std::collections::HashMap<crate::node_key::NodeKey, crate::node_tree::NodeConfigTree> =
             std::collections::HashMap::new();
         let app_data_dir = app
@@ -719,7 +782,7 @@ pub async fn open_layout_directory(
                 Ok(xml) => xml,
                 Err(_) => continue,
             };
-            offline_data.cdi_xml.insert(nk, xml.clone());
+            cdi_xml_by_key.insert(nk, xml.clone());
 
             // Parse CDI, build minimal tree, merge snapshot values, extract event ID leaves
             let cdi = match lcc_rs::cdi::parser::parse_cdi(&xml) {
@@ -765,30 +828,24 @@ pub async fn open_layout_directory(
             // Cache the fully-populated tree so it can seed the live proxy
             // when this node is rediscovered on the bus.
             saved_trees.insert(nk, tree.clone());
-
-            let mut node_config: std::collections::HashMap<String, [u8; 8]> = std::collections::HashMap::new();
-            for leaf in crate::node_tree::collect_event_id_leaves(&tree) {
-                if let Some(bytes) = leaf.value {
-                    node_config.insert(leaf.path.join("/"), bytes);
-                }
-            }
-            if !node_config.is_empty() {
-                offline_data.config_values.insert(nk, node_config);
-            }
+            saved_trees_for_state.insert(nk, tree.clone());
         }
 
-        // Convert saved role_classifications into profile_roles format
-        for (key, rc) in &loaded.bowties.role_classifications {
-            let role = match rc.role.as_str() {
-                "Producer" => lcc_rs::EventRole::Producer,
-                "Consumer" => lcc_rs::EventRole::Consumer,
-                _ => continue,
-            };
-            offline_data.profile_roles.insert(key.clone(), role);
-        }
-
-        *state.offline_bowtie_data.write().await = offline_data;
         state.node_registry.set_saved_trees(saved_trees).await;
+    }
+
+    // Build the single-owner `LayoutState` from the same loaded data + per-node
+    // CDI/tree maps assembled above. This is the in-memory home consulted by
+    // the save flow's `proxy_snapshot_data` fallback and the offline catalog
+    // rebuild (ADR-0015).
+    {
+        let layout_state = bowties_core::layout::state::LayoutState::from_loaded(
+            input_path.to_path_buf(),
+            loaded.clone(),
+            cdi_xml_by_key,
+            saved_trees_for_state,
+        );
+        *state.layout_state.write().await = Some(layout_state);
     }
 
     // S9: Reconstitute placeholder nodes into the registry so they're
@@ -887,7 +944,7 @@ pub async fn close_layout(
 
     *state.active_layout.write().await = None;
     *state.offline_changes_cache.write().await = Vec::new();
-    *state.offline_bowtie_data.write().await = Default::default();
+    *state.layout_state.write().await = None;
     state.node_registry.clear_layout_scope().await;
     crate::commands::bowties::clear_recent_layout(app).await?;
 
@@ -1088,33 +1145,6 @@ pub async fn build_offline_node_tree(
                     report.warnings.len()
                 );
             }
-        }
-    }
-
-    // ── Accumulate offline bowtie data for later catalog build ────────────────
-    {
-        let mut offline_data = state.offline_bowtie_data.write().await;
-        let nk = crate::node_key::NodeKey::parse(&dotted_id)
-            .unwrap_or_else(|_| crate::node_key::NodeKey::from_node_id(parsed_nid));
-
-        // Store CDI XML for slot walking
-        offline_data.cdi_xml.insert(nk, xml);
-
-        // Extract EventId config values from the tree
-        let mut node_config: HashMap<String, [u8; 8]> = HashMap::new();
-        for leaf in crate::node_tree::collect_event_id_leaves(&tree) {
-            if let Some(role) = leaf.event_role {
-                if role != lcc_rs::EventRole::Ambiguous {
-                    let key = format!("{}:{}", nk, leaf.path.join("/"));
-                    offline_data.profile_roles.insert(key, role);
-                }
-            }
-            if let Some(bytes) = leaf.value {
-                node_config.insert(leaf.path.join("/"), bytes);
-            }
-        }
-        if !node_config.is_empty() {
-            offline_data.config_values.insert(nk, node_config);
         }
     }
 

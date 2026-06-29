@@ -9,8 +9,9 @@ import { normalizeNodeId } from '$lib/utils/nodeId';
 import { editKeyForLeaf } from '$lib/utils/editKey';
 import { generateDefaultChannelName } from '$lib/utils/channelDefaults';
 import { resolveNodeName } from '$lib/layout';
-import type { InformationChannel } from '$lib/api/channels';
+import type { ChannelRole, InformationChannel } from '$lib/api/channels';
 import type {
+  ChannelInputMapping,
   ConnectorConstraintScalar,
   ConnectorProfileView,
   ConnectorSelectionDocument,
@@ -137,9 +138,13 @@ export async function recomputeConnectorCompatibility(nodeId: string): Promise<v
 async function autoCreateChannelsForSelection(nodeId: string, slotId: string): Promise<void> {
   // S5: remove channels associated with the slot being changed
   const normalizedNodeId = normalizeNodeId(nodeId);
-  const existingForSlot = channelsStore.channels.filter(
-    (ch) => normalizeNodeId(ch.hardwareRef.nodeKey) === normalizedNodeId && ch.hardwareRef.connector === slotId,
-  );
+  const existingForSlot = channelsStore.channels.filter((ch) => {
+    if (ch.binding.kind !== 'connectorInput') return false;
+    return (
+      normalizeNodeId(ch.binding.nodeKey) === normalizedNodeId &&
+      ch.binding.connector === slotId
+    );
+  });
   if (existingForSlot.length > 0) {
     channelsStore.deleteChannels(existingForSlot.map((ch) => ch.id));
   }
@@ -485,12 +490,17 @@ export function buildAutoCreatedChannels(
     const slotLabel = slot?.label ?? selection.slotId;
 
     for (const mapping of board.channelInputs) {
+      const role = mappingToRole(mapping);
+      const style = requireStyle(mapping, board.daughterboardId);
       for (const input of mapping.inputs) {
         channels.push({
           id: crypto.randomUUID(),
           name: generateDefaultChannelName(nodeName, slotLabel, input),
-          channelType: mapping.channelType,
-          hardwareRef: {
+          role,
+          style,
+          ownership: 'hardware-owned',
+          binding: {
+            kind: 'connectorInput',
             nodeKey: canonicalNodeKey,
             connector: selection.slotId,
             input,
@@ -528,12 +538,17 @@ export function buildAutoCreatedChannelsForSlot(
   const canonicalNodeKey = normalizeNodeId(document.nodeId);
   const channels: InformationChannel[] = [];
   for (const mapping of board.channelInputs) {
+    const role = mappingToRole(mapping);
+    const style = requireStyle(mapping, board.daughterboardId);
     for (const input of mapping.inputs) {
       channels.push({
         id: crypto.randomUUID(),
         name: generateDefaultChannelName(nodeName, slotLabel, input),
-        channelType: mapping.channelType,
-        hardwareRef: {
+        role,
+        style,
+        ownership: 'hardware-owned',
+        binding: {
+          kind: 'connectorInput',
           nodeKey: canonicalNodeKey,
           connector: slotId,
           input,
@@ -542,4 +557,33 @@ export function buildAutoCreatedChannelsForSlot(
     }
   }
   return channels;
+}
+
+/**
+ * Spec 018 / S2 (ADR-0013) — role / style derivation from the profile
+ * YAML `channelInputs` entry. Roles live in code; in S2 the only role is
+ * `block-occupancy`. Unknown role slugs throw so a YAML typo surfaces
+ * loudly at auto-create time rather than producing a silently-malformed
+ * channel record.
+ */
+function mappingToRole(mapping: ChannelInputMapping): ChannelRole {
+  switch (mapping.channelType) {
+    case 'block-occupancy':
+      return 'block-occupancy';
+    case 'lamp-indicator':
+      return 'lamp-indicator';
+    default:
+      throw new Error(
+        `Unknown channel role "${mapping.channelType}" in profile YAML; expected one of: block-occupancy, lamp-indicator.`,
+      );
+  }
+}
+
+function requireStyle(mapping: ChannelInputMapping, daughterboardId: string): string {
+  if (!mapping.style) {
+    throw new Error(
+      `Daughterboard "${daughterboardId}" channelInputs entry for "${mapping.channelType}" is missing required \`style\` field (Spec 018 / S2, ADR-0013).`,
+    );
+  }
+  return mapping.style;
 }

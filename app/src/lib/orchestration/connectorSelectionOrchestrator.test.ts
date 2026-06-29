@@ -203,7 +203,7 @@ describe('buildAutoCreatedChannels', () => {
           displayName: 'BOD-8-SM',
           kind: 'detection',
           channelInputs: [
-            { channelType: 'block-occupancy', inputs: [1, 2, 3, 4, 5, 6, 7, 8] },
+            { channelType: 'block-occupancy', style: 'bod-block-detector-input', inputs: [1, 2, 3, 4, 5, 6, 7, 8] },
           ],
         },
         {
@@ -211,7 +211,7 @@ describe('buildAutoCreatedChannels', () => {
           displayName: 'BOD4',
           kind: 'mixed-io',
           channelInputs: [
-            { channelType: 'block-occupancy', inputs: [1, 2, 3, 4] },
+            { channelType: 'block-occupancy', style: 'bod-block-detector-input', inputs: [1, 2, 3, 4] },
           ],
         },
         {
@@ -249,8 +249,11 @@ describe('buildAutoCreatedChannels', () => {
     for (let i = 0; i < 8; i++) {
       expect(channels[i]).toMatchObject({
         name: `West Yard — Connector A — Input ${i + 1}`,
-        channelType: 'block-occupancy',
-        hardwareRef: {
+        role: 'block-occupancy',
+        style: 'bod-block-detector-input',
+        ownership: 'hardware-owned',
+        binding: {
+          kind: 'connectorInput',
           nodeKey: '050201020300',
           connector: 'connector-a',
           input: i + 1,
@@ -275,8 +278,11 @@ describe('buildAutoCreatedChannels', () => {
     expect(channels).toHaveLength(4);
     expect(channels[0]).toMatchObject({
       name: 'East Staging — Connector B — Input 1',
-      channelType: 'block-occupancy',
-      hardwareRef: {
+      role: 'block-occupancy',
+      style: 'bod-block-detector-input',
+      ownership: 'hardware-owned',
+      binding: {
+        kind: 'connectorInput',
         nodeKey: '050201020300',
         connector: 'connector-b',
         input: 1,
@@ -284,7 +290,7 @@ describe('buildAutoCreatedChannels', () => {
     });
     expect(channels[3]).toMatchObject({
       name: 'East Staging — Connector B — Input 4',
-      hardwareRef: { input: 4 },
+      binding: { kind: 'connectorInput', input: 4 },
     });
   });
 
@@ -333,11 +339,11 @@ describe('buildAutoCreatedChannels', () => {
 
     expect(channels).toHaveLength(12); // 8 + 4
     // First 8 are connector-a
-    expect(channels[0].hardwareRef.connector).toBe('connector-a');
-    expect(channels[7].hardwareRef.connector).toBe('connector-a');
+    expect(channels[0].binding.kind === 'connectorInput' && channels[0].binding.connector).toBe('connector-a');
+    expect(channels[7].binding.kind === 'connectorInput' && channels[7].binding.connector).toBe('connector-a');
     // Next 4 are connector-b
-    expect(channels[8].hardwareRef.connector).toBe('connector-b');
-    expect(channels[11].hardwareRef.connector).toBe('connector-b');
+    expect(channels[8].binding.kind === 'connectorInput' && channels[8].binding.connector).toBe('connector-b');
+    expect(channels[11].binding.kind === 'connectorInput' && channels[11].binding.connector).toBe('connector-b');
   });
 });
 
@@ -372,7 +378,7 @@ describe('buildAutoCreatedChannelsForSlot', () => {
           displayName: 'BOD-8-SM',
           kind: 'detection',
           channelInputs: [
-            { channelType: 'block-occupancy', inputs: [1, 2, 3, 4, 5, 6, 7, 8] },
+            { channelType: 'block-occupancy', style: 'bod-block-detector-input', inputs: [1, 2, 3, 4, 5, 6, 7, 8] },
           ],
         },
         {
@@ -380,7 +386,7 @@ describe('buildAutoCreatedChannelsForSlot', () => {
           displayName: 'BOD4',
           kind: 'mixed-io',
           channelInputs: [
-            { channelType: 'block-occupancy', inputs: [1, 2, 3, 4] },
+            { channelType: 'block-occupancy', style: 'bod-block-detector-input', inputs: [1, 2, 3, 4] },
           ],
         },
       ],
@@ -411,7 +417,7 @@ describe('buildAutoCreatedChannelsForSlot', () => {
     const channels = buildAutoCreatedChannelsForSlot(profile, document, 'West Yard', 'connector-a');
 
     expect(channels).toHaveLength(8);
-    expect(channels.every((ch) => ch.hardwareRef.connector === 'connector-a')).toBe(true);
+    expect(channels.every((ch) => ch.binding.kind === 'connectorInput' && ch.binding.connector === 'connector-a')).toBe(true);
   });
 
   it('returns empty array when slot has no board selected', () => {
@@ -448,7 +454,7 @@ describe('buildAutoCreatedChannelsForSlot', () => {
 
     const channels = buildAutoCreatedChannelsForSlot(profile, document, 'Node 1', 'connector-a');
 
-    // hardwareRef.nodeKey must be canonical (no dots, uppercase)
-    expect(channels[0].hardwareRef.nodeKey).toBe('050201020300');
+    // binding.nodeKey must be canonical (no dots, uppercase)
+    expect(channels[0].binding.kind === 'connectorInput' && channels[0].binding.nodeKey).toBe('050201020300');
   });
 });

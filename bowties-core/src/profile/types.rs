@@ -359,6 +359,13 @@ pub struct SharedDaughterboardLibrary {
     pub manufacturer: String,
     #[serde(default)]
     pub daughterboards: Vec<DaughterboardDefinition>,
+    /// Spec 018 / S3 (ADR-0013): catalog of channel styles owned by this
+    /// library. A daughterboard's `channel_inputs[].style` references an
+    /// entry here; the entry owns the **Style Constraint Contract** (the
+    /// rules that used to live inline on each BOD-* daughterboard's
+    /// `validity_rules`). Single source per channel; no double-source.
+    #[serde(default)]
+    pub styles: Vec<Style>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -409,6 +416,12 @@ pub struct DaughterboardMetadata {
 pub struct ChannelInputMapping {
     /// The channel type slug (e.g. `"block-occupancy"`).
     pub channel_type: String,
+    /// The style id (e.g. `"bod-block-detector-input"`) used to populate
+    /// the channel's `style` field at auto-create time. Optional during the
+    /// Spec 018 / S2 transition; required for any subsystem whose channels
+    /// are auto-created via this mapping. ADR-0013.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
     /// 1-based input ordinals that support this channel type.
     pub inputs: Vec<u32>,
     /// Maps channel-type states to CDI producer event leaf indices.
@@ -424,6 +437,39 @@ pub struct ChannelInputMapping {
 pub struct EventMappingEntry {
     /// 0-based index of the producer event leaf within the channel's event group.
     pub producer_leaf_index: u32,
+}
+
+/// Spec 018 / S3 (ADR-0013): a channel style declared in the shared library's
+/// top-level `styles:` catalog. Owns the **Style Constraint Contract** for
+/// every channel of this style.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Style {
+    /// Style identifier (e.g. `"bod-block-detector-input"`).
+    pub style_id: String,
+    /// The `ChannelBinding.kind` discriminator that channels of this style use
+    /// (e.g. `"connectorInput"`, `"lampRow"`). Frontends enforce match at
+    /// channel creation; backend currently treats this as documentation.
+    pub binding_kind: String,
+    /// Base constraint rules contributed to the slot projection whenever a
+    /// daughterboard's `channel_inputs[].style` resolves to this entry.
+    #[serde(default)]
+    pub constraints: Vec<ConnectorConstraintRule>,
+    /// Optional per-CDI-variant overrides, mirroring `DaughterboardConstraintVariant`.
+    #[serde(default)]
+    pub constraint_variants: Vec<StyleConstraintVariant>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StyleConstraintVariant {
+    pub variant_id: String,
+    /// When `true`, the variant's `constraints` replace the style's base
+    /// `constraints` for this variant; when `false` they are additive.
+    #[serde(default)]
+    pub replace_base_constraints: bool,
+    #[serde(default)]
+    pub constraints: Vec<ConnectorConstraintRule>,
 }
 
 #[cfg(test)]
@@ -559,5 +605,35 @@ channelType: "block-occupancy"
 inputs: [1, 2, 3, 4]
 "#;
         let mapping: ChannelInputMapping = serde_yaml_ng::from_str(yaml).unwrap();
+        assert!(mapping.event_mapping.is_empty());
+    }
+
+    #[test]
+    fn channel_input_mapping_with_style_roundtrips() {
+        // Spec 018 / S2 (ADR-0013): the optional `style` field is preserved
+        // through a serialize/deserialize cycle so the orchestrator can
+        // populate the channel's `style` field from the profile YAML.
+        let yaml = r#"
+channelType: "block-occupancy"
+style: "bod-block-detector-input"
+inputs: [1, 2, 3, 4]
+"#;
+        let mapping: ChannelInputMapping = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(mapping.style.as_deref(), Some("bod-block-detector-input"));
+
+        let serialized = serde_yaml_ng::to_string(&mapping).unwrap();
+        assert!(serialized.contains("style: bod-block-detector-input"));
+        let reparsed: ChannelInputMapping = serde_yaml_ng::from_str(&serialized).unwrap();
+        assert_eq!(reparsed.style.as_deref(), Some("bod-block-detector-input"));
+    }
+
+    #[test]
+    fn channel_input_mapping_without_style_deserializes_as_none() {
+        let yaml = r#"
+channelType: "block-occupancy"
+inputs: [1, 2, 3, 4]
+"#;
+        let mapping: ChannelInputMapping = serde_yaml_ng::from_str(yaml).unwrap();
+        assert!(mapping.style.is_none());
     }
 }

@@ -356,7 +356,13 @@ pub async fn build_bowtie_catalog_command(
     let nodes_snap = state.node_registry.get_all_snapshots().await;
     let use_offline = nodes_snap.is_empty();
 
-    // Gather config values: from live proxies (online) or offline cache
+    // Offline-mode projections sourced from LayoutState's saved layer
+    // (ADR-0015 — replaces the former parallel `AppState.offline_bowtie_data`
+    // cache that was deleted in the same change).
+    let layout_state_guard = state.layout_state.read().await;
+    let layout_state_ref = layout_state_guard.as_ref();
+
+    // Gather config values: from live proxies (online) or LayoutState (offline)
     let mut config_cache_snap: HashMap<NodeKey, HashMap<String, [u8; 8]>> = if !use_offline {
         let handles = state.node_registry.get_all_handles().await;
         let mut map = HashMap::new();
@@ -371,7 +377,23 @@ pub async fn build_bowtie_catalog_command(
         }
         map
     } else {
-        state.offline_bowtie_data.read().await.config_values.clone()
+        let mut map: HashMap<NodeKey, HashMap<String, [u8; 8]>> = HashMap::new();
+        if let Some(ls) = layout_state_ref {
+            for key in ls.persisted_node_keys() {
+                if let Some(tree) = ls.config_tree(key) {
+                    let mut node_config: HashMap<String, [u8; 8]> = HashMap::new();
+                    for leaf in crate::node_tree::collect_event_id_leaves(tree) {
+                        if let Some(bytes) = leaf.value {
+                            node_config.insert(leaf.path.join("/"), bytes);
+                        }
+                    }
+                    if !node_config.is_empty() {
+                        map.insert(key.clone(), node_config);
+                    }
+                }
+            }
+        }
+        map
     };
 
     // Merge pending offline config changes into snapshot-based config values
@@ -387,10 +409,9 @@ pub async fn build_bowtie_catalog_command(
             .collect();
 
         if !pending_config.is_empty() {
-            let offline_data = state.offline_bowtie_data.read().await;
-
             // Build (space, address) → element-path maps from CDI XML,
-            // only for nodes that have pending changes.
+            // only for nodes that have pending changes. Sourced from
+            // LayoutState (slice 3a — replaces `offline_bowtie_data.cdi_xml`).
             let affected_nodes: std::collections::HashSet<String> = pending_config.iter()
                 .filter_map(|c| c.node_key.clone())
                 .collect();
@@ -401,15 +422,17 @@ pub async fn build_bowtie_catalog_command(
                     Ok(k) => k,
                     Err(_) => continue,
                 };
-                if let Some(xml) = offline_data.cdi_xml.get(&nk) {
-                    if let Ok(cdi) = lcc_rs::cdi::parser::parse_cdi(xml) {
-                        let tree = crate::node_tree::build_node_config_tree(&nk.to_string(), &cdi);
-                        let mut map = HashMap::new();
-                        for leaf in crate::node_tree::collect_event_id_leaves(&tree) {
-                            map.insert((leaf.space, leaf.address), leaf.path.join("/"));
-                        }
-                        address_to_path.insert(node_key_str.clone(), map);
+                let xml = match layout_state_ref.and_then(|ls| ls.cdi_xml(&nk)) {
+                    Some(xml) => xml,
+                    None => continue,
+                };
+                if let Ok(cdi) = lcc_rs::cdi::parser::parse_cdi(xml) {
+                    let tree = crate::node_tree::build_node_config_tree(&nk.to_string(), &cdi);
+                    let mut map = HashMap::new();
+                    for leaf in crate::node_tree::collect_event_id_leaves(&tree) {
+                        map.insert((leaf.space, leaf.address), leaf.path.join("/"));
                     }
+                    address_to_path.insert(node_key_str.clone(), map);
                 }
             }
 
@@ -462,7 +485,24 @@ pub async fn build_bowtie_catalog_command(
         }
         map
     } else {
-        state.offline_bowtie_data.read().await.profile_roles.clone()
+        // Offline: derive profile group roles from LayoutState's saved trees,
+        // which already carry `event_role` annotations from open_layout_directory.
+        let mut map: HashMap<String, lcc_rs::EventRole> = HashMap::new();
+        if let Some(ls) = layout_state_ref {
+            for key in ls.persisted_node_keys() {
+                if let Some(tree) = ls.config_tree(key) {
+                    for leaf in crate::node_tree::collect_event_id_leaves(tree) {
+                        if let Some(role) = leaf.event_role {
+                            if role != lcc_rs::EventRole::Ambiguous {
+                                let group_key = format!("{}:{}", key, leaf.path.join("/"));
+                                map.insert(group_key, role);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        map
     };
 
     // Build synthetic DiscoveredNode list for offline (CDI-only, for slot walking)
@@ -470,27 +510,35 @@ pub async fn build_bowtie_catalog_command(
     let nodes_for_catalog: &[lcc_rs::DiscoveredNode] = if !use_offline {
         &nodes_snap
     } else {
-        let offline_data = state.offline_bowtie_data.read().await;
-        offline_nodes = offline_data.cdi_xml.iter().enumerate().map(|(i, (node_key, xml))| {
-            let node_id = node_key.as_node_id()
-                .unwrap_or_else(|| lcc_rs::NodeID::new([0; 6]));
-            lcc_rs::DiscoveredNode {
-                node_id,
-                alias: lcc_rs::NodeAlias::new((0x100 + i) as u16)
-                    .unwrap_or_else(|_| lcc_rs::NodeAlias::new(1).unwrap()),
-                snip_data: None,
-                snip_status: lcc_rs::types::SNIPStatus::Unknown,
-                connection_status: lcc_rs::types::ConnectionStatus::Unknown,
-                last_verified: None,
-                last_seen: chrono::Utc::now(),
-                cdi: Some(lcc_rs::types::CdiData {
-                    xml_content: xml.clone(),
-                    retrieved_at: chrono::Utc::now(),
-                }),
-                pip_flags: None,
-                pip_status: lcc_rs::types::PIPStatus::Unknown,
-            }
-        }).collect();
+        offline_nodes = match layout_state_ref {
+            Some(ls) => ls
+                .persisted_node_keys()
+                .filter_map(|key| ls.cdi_xml(key).map(|xml| (key, xml.to_string())))
+                .enumerate()
+                .map(|(i, (node_key, xml))| {
+                    let node_id = node_key
+                        .as_node_id()
+                        .unwrap_or_else(|| lcc_rs::NodeID::new([0; 6]));
+                    lcc_rs::DiscoveredNode {
+                        node_id,
+                        alias: lcc_rs::NodeAlias::new((0x100 + i) as u16)
+                            .unwrap_or_else(|_| lcc_rs::NodeAlias::new(1).unwrap()),
+                        snip_data: None,
+                        snip_status: lcc_rs::types::SNIPStatus::Unknown,
+                        connection_status: lcc_rs::types::ConnectionStatus::Unknown,
+                        last_verified: None,
+                        last_seen: chrono::Utc::now(),
+                        cdi: Some(lcc_rs::types::CdiData {
+                            xml_content: xml,
+                            retrieved_at: chrono::Utc::now(),
+                        }),
+                        pip_flags: None,
+                        pip_status: lcc_rs::types::PIPStatus::Unknown,
+                    }
+                })
+                .collect(),
+            None => Vec::new(),
+        };
         &offline_nodes
     };
 

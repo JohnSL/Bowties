@@ -84,7 +84,11 @@ export type LayoutEditDelta =
   /** Rename a facility (Spec 018 / S1). */
   | { type: 'renameFacility'; facilityId: string; newName: string }
   /** Delete a facility (Spec 018 / S1). */
-  | { type: 'deleteFacility'; facilityId: string };
+  | { type: 'deleteFacility'; facilityId: string }
+  /** Attach a channel to a facility slot (Spec 018 / S4 — D8 cardinality). */
+  | { type: 'attachChannelToSlot'; facilityId: string; slotLabel: string; channelId: string }
+  /** Detach a channel from a facility slot (Spec 018 / S4). */
+  | { type: 'detachChannelFromSlot'; facilityId: string; slotLabel: string; channelId: string };
 
 // ── Bowtie State ──────────────────────────────────────────────────────────────
 

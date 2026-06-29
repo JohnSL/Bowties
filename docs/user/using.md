@@ -160,6 +160,26 @@ You can also start a connection from the Configuration View: click **→ New Con
 
 ---
 
+## Facilities (preview)
+
+The **Railroad** tab includes a **Facilities** section for grouping the channels that make up a higher-level layout feature — for example, a *Block Indicator* that ties a block-occupancy input to an indicator-lamp output.
+
+> **Preview feature.** Facilities are an early, evolving area of Bowties. The shape of facilities — what templates exist, how their slots are filled, and what they do once complete — is expected to change in upcoming releases. Feedback on this area is especially welcome.
+
+### What you can do today
+
+- **Add a facility** from the Railroad tab. Pick the **Block Indicator** template and give the facility a name (e.g., *Block 5*). The facility appears with status **Incomplete** and one empty slot per role declared by the template.
+- **Rename** a facility at any time.
+- **Delete** a facility you no longer want.
+
+Facilities and their names are saved with the layout. Closing and reopening Bowties restores them exactly as you left them.
+
+### What is not yet wired
+
+Empty slots are placeholders only in this release. The workflows for binding a channel to a slot, creating a new channel from a slot, and watching a Block Indicator follow a real block on the bus are still under construction and will land in subsequent releases.
+
+---
+
 ## Reconnecting with pending offline changes
 
 If you saved a layout with pending offline changes and later reconnect with that layout, Bowties opens the **Sync Offline Changes** flow so you can review and apply them safely.

@@ -21,8 +21,11 @@ function makeChannel(overrides: Partial<InformationChannel> = {}): InformationCh
   return {
     id: '550e8400-e29b-41d4-a716-446655440000',
     name: 'West Yard — Connector A — Input 1',
-    channelType: 'block-occupancy',
-    hardwareRef: {
+    role: 'block-occupancy',
+    style: 'bod-block-detector-input',
+    ownership: 'hardware-owned',
+    binding: {
+      kind: 'connectorInput',
       nodeKey: '05010101FF000001',
       connector: 'connector-a',
       input: 1,
@@ -38,7 +41,7 @@ describe('channelsStore', () => {
   });
 
   it('loadChannels fetches from backend and populates state', async () => {
-    const channels = [makeChannel(), makeChannel({ id: 'second', name: 'Input 2', hardwareRef: { nodeKey: '05010101FF000001', connector: 'connector-a', input: 2 } })];
+    const channels = [makeChannel(), makeChannel({ id: 'second', name: 'Input 2', binding: { kind: 'connectorInput', nodeKey: '05010101FF000001', connector: 'connector-a', input: 2 } })];
     listChannelsMock.mockResolvedValue(channels);
 
     await channelsStore.loadChannels();
@@ -58,6 +61,98 @@ describe('channelsStore', () => {
     const grouped = channelsStore.grouped;
     expect(grouped.size).toBe(1);
     expect(grouped.get('block-occupancy')?.length).toBe(2);
+  });
+
+  describe('groupedByHardware (Spec 018 / S3)', () => {
+    it('returns an empty map when no channels are present', () => {
+      expect(channelsStore.groupedByHardware.size).toBe(0);
+    });
+
+    it('groups connectorInput channels by node + connector', () => {
+      const ch1 = makeChannel({
+        id: '1',
+        binding: { kind: 'connectorInput', nodeKey: 'nodeA', connector: 'connector-a', input: 1 },
+      });
+      const ch2 = makeChannel({
+        id: '2',
+        binding: { kind: 'connectorInput', nodeKey: 'nodeA', connector: 'connector-a', input: 2 },
+      });
+      channelsStore.setChannels([ch1, ch2]);
+
+      const groups = channelsStore.groupedByHardware;
+      expect(groups.size).toBe(1);
+      const onlyGroup = [...groups.values()][0];
+      expect(onlyGroup.length).toBe(2);
+    });
+
+    it('separates channels on different connectors of the same node', () => {
+      const chA = makeChannel({
+        id: 'a',
+        binding: { kind: 'connectorInput', nodeKey: 'nodeA', connector: 'connector-a', input: 1 },
+      });
+      const chB = makeChannel({
+        id: 'b',
+        binding: { kind: 'connectorInput', nodeKey: 'nodeA', connector: 'connector-b', input: 1 },
+      });
+      channelsStore.setChannels([chA, chB]);
+
+      const groups = channelsStore.groupedByHardware;
+      expect(groups.size).toBe(2);
+    });
+
+    it('separates channels on the same connector across different nodes', () => {
+      const chA = makeChannel({
+        id: 'a',
+        binding: { kind: 'connectorInput', nodeKey: 'nodeA', connector: 'connector-a', input: 1 },
+      });
+      const chB = makeChannel({
+        id: 'b',
+        binding: { kind: 'connectorInput', nodeKey: 'nodeB', connector: 'connector-a', input: 1 },
+      });
+      channelsStore.setChannels([chA, chB]);
+
+      expect(channelsStore.groupedByHardware.size).toBe(2);
+    });
+
+    it('groups lampRow channels under a per-node "direct-lamp-control" subsystem (S5-ready)', () => {
+      const lamp1: InformationChannel = {
+        id: 'lamp-1',
+        name: 'Block 5 Indicator',
+        role: 'lamp-indicator',
+        style: 'single-led-direct-lamp',
+        ownership: 'user-owned',
+        binding: { kind: 'lampRow', nodeKey: 'nodeC', rowOrdinal: 7 },
+      };
+      const lamp2: InformationChannel = { ...lamp1, id: 'lamp-2', name: 'Block 6 Indicator', binding: { kind: 'lampRow', nodeKey: 'nodeC', rowOrdinal: 8 } };
+      const detector = makeChannel({
+        id: 'd1',
+        binding: { kind: 'connectorInput', nodeKey: 'nodeA', connector: 'connector-a', input: 1 },
+      });
+      channelsStore.setChannels([detector, lamp1, lamp2]);
+
+      const groups = channelsStore.groupedByHardware;
+      expect(groups.size).toBe(2);
+      // One group has the two lamp-indicator channels.
+      const lampGroup = [...groups.values()].find((g) => g.length === 2);
+      expect(lampGroup).toBeDefined();
+      expect(lampGroup!.every((ch) => ch.binding.kind === 'lampRow')).toBe(true);
+    });
+
+    it('preserves insertion order across groups (first-seen wins)', () => {
+      const chA = makeChannel({
+        id: 'a',
+        binding: { kind: 'connectorInput', nodeKey: 'nodeA', connector: 'connector-a', input: 1 },
+      });
+      const chB = makeChannel({
+        id: 'b',
+        binding: { kind: 'connectorInput', nodeKey: 'nodeB', connector: 'connector-a', input: 1 },
+      });
+      channelsStore.setChannels([chB, chA]);
+
+      const keys = [...channelsStore.groupedByHardware.keys()];
+      expect(keys[0]).toContain('nodeB');
+      expect(keys[1]).toContain('nodeA');
+    });
   });
 
   it('reset clears all state', async () => {

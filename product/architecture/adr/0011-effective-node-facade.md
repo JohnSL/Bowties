@@ -269,6 +269,14 @@ DirtyBreakdown {
 
 **Coupling note:** `dirtyBreakdown` reads ten store getters per access. Each access is O(1) per store plus one O(n) scan over `configChangesStore.draftEntries()` for `configNodes`. Svelte 5 `$derived` callers that read the getter several times per render rely on Svelte's signal memoisation; consumers that need a stable snapshot (e.g. the dialog) should capture once and pass the value down.
 
+## 2026-06-28 extension: backend now mirrors the three-layer projection (ADR-0015)
+
+ADR-0011 named the frontend facade and the three-layer model (saved baseline / in-memory drafts / live-derived) it projects. [ADR-0015](0015-backend-layout-state-single-owner.md) introduces the symmetric backend owner: `bowties_core::layout::state::LayoutState` projects the **same three layers** in the backend (`saved` mirrors disk, `captured` carries fresh-from-bus data not yet persisted, `drafts` mirrors frontend-side edits awaiting save).
+
+The two facades have different shapes — the frontend's is render-oriented (`effectiveValue`, `effectiveRole`, `dirtyBreakdown`, `isPersistableInLayout`); the backend's is persistence-oriented (`cdi_xml`, `config_tree`, `snapshot_for_save`, `record_captured`) — but the underlying ownership pattern is the same: one deep module per side hides the layer-merging logic, and consumers route through the facade instead of re-deriving from the raw layers. Captured-vs-saved precedence on the backend (`captured` wins over `saved` when both have data for a key) is the symmetric counterpart to the frontend's draft-over-baseline precedence (drafts win over the layout file when both have data for a field).
+
+This symmetry is the ADR-0011 invariant scaled to the whole product, not a new commitment in this file; it's recorded here to make the cross-layer pattern explicit for future readers. The actual backend invariants are in ADR-0015's `## Invariants` section.
+
 ## Invariants
 
 Structured testable rules for the `/design` audit. Each invariant resolves to OK / Drift / Unknown with file:line evidence.

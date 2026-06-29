@@ -1,0 +1,34 @@
+schemaVersion: "2.0"
+
+# Capability fixture for spec 018 S1.1.
+#
+# Proves that build_connector_profile() handles a StructuralSlot mode whose
+# affectedPaths list is empty — the case where a manufacturer ships a
+# connector slot without published CDI evidence for the lines that slot
+# governs. The fixture is intentionally minimal: one nodeType, one
+# configuration mode, two variants (the reserved __none__ + a single
+# daughterboard id), and nothing else.
+#
+# Owned by the test that loads it. Do NOT add fields that are not directly
+# exercised by build_connector_profile_handles_empty_affected_paths_slot in
+# bowties-core/src/profile/mod.rs.
+
+nodeType:
+  manufacturer: "Capability Fixtures"
+  model: "Empty Affected Paths Slot"
+
+configurationModes:
+  - id: "aux-port"
+    label: "Aux Port"
+    selector:
+      kind: "structuralSlot"
+      slotId: "aux-port"
+      affectedPaths: []
+      allowNoneInstalled: true
+    variants:
+      - id: "__none__"
+        label: "(none installed)"
+        overlay: {}
+      - id: "SMD-8"
+        label: "SMD-8"
+        overlay: {}

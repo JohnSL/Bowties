@@ -37,20 +37,6 @@ pub enum ProxyMessage {
         reply: oneshot::Sender<DiscoveredNode>,
     },
 
-    // ── CDI ───────────────────────────────────────────────────────────────
-    GetCdiData {
-        reply: oneshot::Sender<Option<CdiData>>,
-    },
-    SetCdiData {
-        cdi_data: CdiData,
-    },
-    GetCdiParsed {
-        reply: oneshot::Sender<Option<lcc_rs::cdi::Cdi>>,
-    },
-    SetCdiParsed {
-        cdi: lcc_rs::cdi::Cdi,
-    },
-
     // ── Config values ─────────────────────────────────────────────────────
     GetConfigValues {
         reply: oneshot::Sender<HashMap<String, [u8; 8]>>,
@@ -124,10 +110,6 @@ pub struct LiveNodeProxy {
     last_seen: chrono::DateTime<chrono::Utc>,
     last_verified: Option<chrono::DateTime<chrono::Utc>>,
 
-    // CDI (was in CDI_PARSE_CACHE + node.cdi)
-    cdi_data: Option<CdiData>,
-    cdi_parsed: Option<lcc_rs::cdi::Cdi>,
-
     // Config values (was in AppState.config_value_cache)
     config_values: HashMap<String, [u8; 8]>,
 
@@ -163,8 +145,6 @@ impl LiveNodeProxy {
             connection_status: ConnectionStatus::Connected,
             last_seen: chrono::Utc::now(),
             last_verified: None,
-            cdi_data: None,
-            cdi_parsed: None,
             config_values: HashMap::new(),
             config_tree: None,
             snip_waiters: None,
@@ -227,20 +207,6 @@ impl LiveNodeProxy {
                 // ── Snapshot ─────────────────────────────────────────────
                 ProxyMessage::GetSnapshot { reply } => {
                     let _ = reply.send(self.snapshot());
-                }
-
-                // ── CDI data ─────────────────────────────────────────────
-                ProxyMessage::GetCdiData { reply } => {
-                    let _ = reply.send(self.cdi_data.clone());
-                }
-                ProxyMessage::SetCdiData { cdi_data } => {
-                    self.cdi_data = Some(cdi_data);
-                }
-                ProxyMessage::GetCdiParsed { reply } => {
-                    let _ = reply.send(self.cdi_parsed.clone());
-                }
-                ProxyMessage::SetCdiParsed { cdi } => {
-                    self.cdi_parsed = Some(cdi);
                 }
 
                 // ── Config values ────────────────────────────────────────
@@ -311,6 +277,12 @@ impl LiveNodeProxy {
     }
 
     /// Build a DiscoveredNode snapshot from current state.
+    ///
+    /// `cdi` is always `None` on a `LiveNodeProxy` snapshot: persistent CDI
+    /// state lives in `LayoutState` (ADR-0015). Callers needing CDI bytes
+    /// must consult `LayoutState::cdi_xml`. Synthesized placeholders still
+    /// carry CDI in their own struct field (see ADR-0009's 2026-06-28
+    /// amendment).
     fn snapshot(&self) -> DiscoveredNode {
         DiscoveredNode {
             node_id: self.node_id,
@@ -320,7 +292,7 @@ impl LiveNodeProxy {
             connection_status: self.connection_status,
             last_verified: self.last_verified,
             last_seen: self.last_seen,
-            cdi: self.cdi_data.clone(),
+            cdi: None,
             pip_flags: self.pip_flags.clone(),
             pip_status: self.pip_status,
         }
@@ -439,46 +411,6 @@ impl LiveNodeProxyHandle {
             .await
             .map_err(|_| "NodeProxy actor stopped".to_string())?;
         reply_rx
-            .await
-            .map_err(|_| "NodeProxy actor stopped".to_string())
-    }
-
-    /// Get cached CDI data (raw XML).
-    pub async fn get_cdi_data(&self) -> Result<Option<CdiData>, String> {
-        let (reply_tx, reply_rx) = oneshot::channel();
-        self.tx
-            .send(ProxyMessage::GetCdiData { reply: reply_tx })
-            .await
-            .map_err(|_| "NodeProxy actor stopped".to_string())?;
-        reply_rx
-            .await
-            .map_err(|_| "NodeProxy actor stopped".to_string())
-    }
-
-    /// Store CDI data in the proxy.
-    pub async fn set_cdi_data(&self, cdi_data: CdiData) -> Result<(), String> {
-        self.tx
-            .send(ProxyMessage::SetCdiData { cdi_data })
-            .await
-            .map_err(|_| "NodeProxy actor stopped".to_string())
-    }
-
-    /// Get cached parsed CDI.
-    pub async fn get_cdi_parsed(&self) -> Result<Option<lcc_rs::cdi::Cdi>, String> {
-        let (reply_tx, reply_rx) = oneshot::channel();
-        self.tx
-            .send(ProxyMessage::GetCdiParsed { reply: reply_tx })
-            .await
-            .map_err(|_| "NodeProxy actor stopped".to_string())?;
-        reply_rx
-            .await
-            .map_err(|_| "NodeProxy actor stopped".to_string())
-    }
-
-    /// Store parsed CDI in the proxy.
-    pub async fn set_cdi_parsed(&self, cdi: lcc_rs::cdi::Cdi) -> Result<(), String> {
-        self.tx
-            .send(ProxyMessage::SetCdiParsed { cdi })
             .await
             .map_err(|_| "NodeProxy actor stopped".to_string())
     }
@@ -717,35 +649,27 @@ impl NodeProxyHandle {
         }
     }
 
-    /// Get cached CDI data (raw XML).
+    /// Get cached CDI data.
+    ///
+    /// Returns the synthesized proxy's bundled CDI for placeholders. Returns
+    /// `Ok(None)` for live proxies — their CDI lives in `LayoutState`, not on
+    /// the actor (ADR-0015; ADR-0009's 2026-06-28 amendment).
     pub async fn get_cdi_data(&self) -> Result<Option<CdiData>, String> {
         match self {
-            Self::Live(h) => h.get_cdi_data().await,
+            Self::Live(_) => Ok(None),
             Self::Synthesized(s) => Ok(s.cdi_data.clone()),
         }
     }
 
-    /// Store CDI data.
-    pub async fn set_cdi_data(&self, cdi_data: CdiData) -> Result<(), String> {
-        match self {
-            Self::Live(h) => h.set_cdi_data(cdi_data).await,
-            Self::Synthesized(_) => Err("Cannot set CDI data on a synthesized node".into()),
-        }
-    }
-
     /// Get cached parsed CDI.
+    ///
+    /// Same ownership rules as [`Self::get_cdi_data`]: synthesized placeholders
+    /// carry the parse; live proxies return `Ok(None)` and callers must parse
+    /// from `LayoutState`'s XML.
     pub async fn get_cdi_parsed(&self) -> Result<Option<lcc_rs::cdi::Cdi>, String> {
         match self {
-            Self::Live(h) => h.get_cdi_parsed().await,
+            Self::Live(_) => Ok(None),
             Self::Synthesized(s) => Ok(s.cdi_parsed.clone()),
-        }
-    }
-
-    /// Store parsed CDI.
-    pub async fn set_cdi_parsed(&self, cdi: lcc_rs::cdi::Cdi) -> Result<(), String> {
-        match self {
-            Self::Live(h) => h.set_cdi_parsed(cdi).await,
-            Self::Synthesized(_) => Err("Cannot set parsed CDI on a synthesized node".into()),
         }
     }
 
