@@ -50,7 +50,9 @@ Only **one** slice is `tasked` at a time. Do not author the task breakdown for a
 
 Present the slice to the user as a **single chat message** with two parts. Do NOT use `vscode_askQuestions` — batch presentation enables the user to spot cross-cutting architectural smells across decisions that sequential questioning destroys.
 
-**Part 1 — Architectural context** (for the architect / product owner):
+**Audience framing.** The user reviewing a HITL slice is **the architect**, not the implementer. They understand the system's shape and ADRs deeply but do not need to know your specific code paths. They care about preventing regressions, preserving flexibility, and honoring principles over expedience. Frame Parts 1 and 2 accordingly: surface architectural shape, principle trade-offs, and regression / flexibility consequences — not implementation tactics, not scope-minimisation arguments.
+
+**Part 1 — Architectural context:**
 
 - **Before/after mermaid diagrams** showing the module-level shape change this slice introduces. Show responsibilities and data flow, not code details.
 - **Pattern names** — name each architectural pattern being introduced or changed, with a one-sentence explanation of what it means in this context.
@@ -61,11 +63,20 @@ Present the slice to the user as a **single chat message** with two parts. Do NO
 Present ALL decisions for the slice as a numbered list. Each entry follows this structure:
 
 ```
-**D{N}: {Short title}** — {Principle at stake: DRY / SOLID / YAGNI / Depth / Locality / ADR-compliance / etc.}
-Options: (A) {option} | (B) {option}
-Recommend: {A|B} — {why, tied to the named principle}
-Impact: {scope — which downstream slices, how many modules, load-bearing or contained}
+**D{N}: {Short title}** — {Principle at stake: DRY / SOLID / YAGNI / Depth / Locality / ADR-compliance / non-regression / flexibility / etc.}
+Options: (A) {option} | (B) {option} | (optionally C, D, … including a deferral option when applicable}
+For each option, name: what regression class it enables or forecloses, what future flexibility it grants or constrains, and what architectural debt it adds or pays down. Do not argue from scope or implementation effort.
+Recommend: {A|B|…} — {why, tied to the named principle and to non-regression / flexibility consequences — never to "smallest move" or "tactical scope"}
+Impact: {scope of the change + the downstream risk if a different option is chosen}
 ```
+
+**Recommendation guidance for the architect's lens:**
+
+- **Principle over expedience.** When the "smallest move that ships" creates a known regression hazard, entrenches existing technical debt, or forecloses a near-term architectural direction, recommend the principle-honoring path and name what the smaller move would cost. Do not present "scope-minimal" as a virtue in itself — it is only a virtue when it is also principle-honoring.
+- **Type-level safety over runtime cleverness.** Prefer designs that make invalid states unrepresentable in the type system over designs that rely on runtime conventions, callers "knowing not to," or flat enums that mix vocabularies. The architect's question is "what stops the next contributor from writing the wrong thing?" not "what's the fewest lines of code today?"
+- **Consider deferral as a first-class option.** Before presenting D-options, ask whether the spec acceptance criterion this decision serves is load-bearing for the slice or negotiable. If implementing it forces an architectural shortcut (a sibling pass grafted into a function, a duplicated derivation path, a constraint hard-coded somewhere it shouldn't live), surface deferral as an option (e.g., "(D) Defer this acceptance criterion to a follow-up slice; document the known limitation; preserve the option to land the clean architecture later when there's a real driver"). The user, as the architect, can choose to relax the acceptance — but only if the option is on the table.
+- **Reject options that violate ADRs or known invariants.** When an option would violate an active ADR or a documented invariant, mark it as rejected with the reference and remove it from real consideration; do not present it as a peer trade-off.
+- **Name the principle, not the implementation.** "ADR-0012 compliance" beats "uses delta pattern"; "non-regression of single-source-of-truth invariant" beats "doesn't duplicate the derivation"; "forecloses generic active-style refactor" beats "sibling pass inside the function."
 
 The user reviews the full picture and responds with approvals, overrides, or questions — e.g., "1: approved, 2: option B instead, 3: question — doesn't this violate ADR-0002?"
 
