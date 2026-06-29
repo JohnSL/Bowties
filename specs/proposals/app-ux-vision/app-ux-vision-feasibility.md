@@ -139,6 +139,7 @@ channels:
     style: bod-block-detector-input
     owner: hardware-config
     binding:
+      kind: node-pin
       nodeKey: 0201570002D9
       pin: ca-input-1
 
@@ -150,11 +151,44 @@ channels:
     style: single-led-direct-lamp
     owner: user
     binding:
+      kind: node-pin
       nodeKey: 0201570002D9
       pin: lamp-row-3
+
+  # On-node firmware resource (not a physical pin): a Tower-LCC Logic block
+  # used as the binding target for a derived-signal channel.
+  - id: 4f2c1e88-3a55-44c7-b1d9-7e0a2b6e1c44
+    name: "Westbound Approach Lit"
+    role: lamp-indicator
+    style: tower-lcc-logic-output
+    owner: user
+    binding:
+      kind: node-logic-block
+      nodeKey: 0201570002D9
+      block: logic-line-7
+
+  # Virtual binding: DCC accessory channel. Not on any node; the address is the binding.
+  - id: 6cd0e0b1-8a3a-4d2e-9d4d-2a3b8a0d7e21
+    name: "Yard Ladder T-15"
+    role: turnout-command
+    style: dcc-accessory-turnout
+    owner: user
+    binding:
+      kind: dcc-accessory
+      address: 15
 ```
 
 That's the entire shape. No copies of CDI values, no field-binding details, no override state, no constraint cache. The CDI tree is the truth; the style catalog (system + profile) is the binding contract; the channel is the identity.
+
+Every binding carries a `kind` discriminator plus the fields that `kind` requires. Three families are anticipated:
+
+| Family | Example `kind` values | Required fields | Notes |
+|---|---|---|---|
+| **On-node physical** | `node-pin` | `nodeKey`, `pin` | Pins on real or placeholder nodes — detector inputs, lamp rows, signal outputs. |
+| **On-node firmware** | `node-logic-block`, `node-stl-slot`, `node-mast`, … | `nodeKey` + a resource id (`block`, `slot`, `mast`, …) | Resources allocated inside a node's firmware that are not a pin: a Logic line, an STL program slot, a firmware-managed signal mast, etc. The exact set is open and grows as profiles declare new resource kinds. |
+| **Virtual** | `dcc-accessory` | `address` (no `nodeKey`) | Addresses in a protocol namespace that no Bowties-managed node owns; a gateway translates to wire-level packets. |
+
+Styles declare which `kind` they expect. `bod-block-detector-input` rejects anything but `node-pin`; `tower-lcc-logic-output` rejects anything but `node-logic-block`; `dcc-accessory-turnout` rejects anything but `dcc-accessory`. The validation happens at channel-creation time, so an invalid pairing is impossible to persist. The schema deliberately does not enumerate the set of on-node firmware `kind`s — new ones can be added by a profile without a schema bump.
 
 The `owner` discriminator drives lifecycle: `hardware-config` channels disappear when the underlying hardware-configuration choice is cleared or changed (any facility slot bound to one becomes empty); `user` channels persist until the user removes them (which in this first slice means removal from their only slot — future scope adds ref-counting + delete-on-zero across multiple slots).
 
@@ -173,16 +207,18 @@ A style's constraints are in force for the entire life of the channel — from t
 
 ### Resolution and Display
 
-- `resolve_channel_event_ids` becomes a style lookup: find the channel's style → read its producer/consumer event-leaf mapping → return event IDs against the bound pin. No connector/input arithmetic at the call site.
-- Channel display labels come from the profile's binding label (`Tower-3 — Connector A — Input 1`, `Signal LCC #1 — Mast 2`). The shape is profile-supplied per binding, not built from slot slugs at render time.
-- The Channels panel (hardware-organised, ships in the first slice) groups channels by node + subsystem + pin and shows role, style, live state, and the slot/facility binding. A later layout-organised view (Channels-by-name) lands with ref-counting + multi-slot binding.
+- `resolve_channel_event_ids` becomes a style lookup: find the channel's style → read its producer/consumer event-leaf mapping → return event IDs against the bound resource (pin, Logic block, STL slot, mast, …). No connector/input arithmetic at the call site.
+- For virtual-binding styles (DCC accessory), `resolve_channel_event_ids` instead computes the event IDs deterministically from the binding's address per the OpenLCB DCC accessory event allocation. There is no node CDI to read; the address is the input and the event pair is the output. Bowties displays these event IDs in the channel detail view as read-only.
+- Event bowties wired to a virtual-binding channel use those computed IDs on the consumer side and have **no consumer-side CDI write** to emit — the gateway listens on the bus instead. The bowtie writer treats this as a normal "no-op" for that endpoint.
+- Channel display labels come from the profile's binding label (`Tower-3 — Connector A — Input 1`, `Signal LCC #1 — Mast 2`, `Tower-3 — Logic Line 7`). The shape is profile-supplied per binding `kind`, not built from slot slugs at render time. Virtual bindings supply their own label shape (`DCC Layout — Accessory #15`).
+- The Channels panel (hardware-organised, ships in the first slice) groups channels by node + subsystem + resource and shows role, style, live state, and the slot/facility binding. A later layout-organised view (Channels-by-name) lands with ref-counting + multi-slot binding.
 
 ### Implementation Surface
 
 | Area | Change |
 |---|---|
-| **Channel record** | `{ id, name, role, style, owner, binding }`. `owner` is `hardware-config` or `user`. `binding` is always non-null — every channel is tied to specific hardware. |
-| **Profile schema (`.profile.yaml`)** | Declares which roles a board can host, which styles realise them on which subsystems, and for each style: the constraint contract (managed-field rules), the event-leaf mapping, and the binding-label shape. |
+| **Channel record** | `{ id, name, role, style, owner, binding }`. `owner` is `hardware-config` or `user`. `binding` is always non-null and carries a `kind` discriminator — every channel is tied to a specific resource, whether a physical pin, an on-node firmware resource (Logic block, STL slot, mast, …), or a virtual address. |
+| **Profile schema (`.profile.yaml`)** | Declares which roles a board can host, which styles realise them on which subsystems, and for each style: the binding `kind` it expects, the constraint contract (managed-field rules), the event-leaf mapping, and the binding-label shape. New on-node `kind`s can be introduced by a profile without a schema bump. |
 | **`channels.yaml` schema** | `schemaVersion: '2.0'`, the shape shown above. |
 | **Constraint engine** | Given a node's channels, compute the set of active style rules and feed them to ConfigEditor's relevance-rule machinery. Existing relevance rules handle the actual UI filtering. |
 | **Hardware-owned creation** | When a hardware-configuration choice fixes the role of pins, create one channel per pin with the implied role + style + binding, default-named. Clearing or changing the choice deletes those channels. |

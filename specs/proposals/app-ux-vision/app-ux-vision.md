@@ -110,7 +110,7 @@ The application provides two workspaces that correspond to the two real-world ac
 
 **Primary object:** Nodes. You pick a node (board) and work with everything about it.
 
-**Sidebar:** Node tree (similar to today's Config sidebar). Nodes expand to show connectors, assigned daughter boards, a "Settings" entry for board-global configuration, and a "Raw CDI" drill-down.
+**Sidebar:** Node tree (similar to today's Config sidebar). Nodes expand to show connectors, assigned daughter boards, a "Settings" entry for board-global configuration, and a "Raw CDI" drill-down. A virtual **"DCC Layout"** entry sits alongside the real nodes and groups every DCC accessory channel in the layout (see [Virtual Bindings: DCC Accessories](#virtual-bindings-dcc-accessories)).
 
 **Main area — two presentation modes:**
 
@@ -178,7 +178,7 @@ Every channel is described by three orthogonal facts: its **role**, its **style*
 
 - The **role** is what the channel does in the layout — its state vocabulary plus the slot-binding contract. Examples: `block-occupancy` (states `unknown` / `occupied` / `clear`), `lamp-indicator` (states `unknown` / `lit` / `unlit`), `signal-aspect-3-color` (states `unknown` / `stop` / `approach` / `clear`). Facility slots bind **by role** — any channel of the slot's required role can fill it, regardless of which style implements it. State vocabularies name real-world intent (`occupied` / `clear`, `lit` / `unlit`), never electrical or boolean abstractions (`true` / `false`, `on` / `off`).
 - The **style** is the specific hardware shape that realises a role on a specific subsystem — pins claimed, event-leaf mapping, CDI-field constraints. Examples: `bod-block-detector-input` (1 input pin on a BOD daughter board, realises `block-occupancy`); `single-led-direct-lamp` (1 Direct Lamp Control row, realises `lamp-indicator`); `3-led-direct-aspect` and `2-led-bicolor-aspect` (both realise `signal-aspect-3-color` on different pin counts and wiring shapes); a future Mast-driven style would realise the same role through a single firmware mast resource that hides per-LED management entirely. A role may be realised by one style or by several; the channel layer is permanently insulated from the difference.
-- The **binding** is the concrete hardware target a channel's style is wired to: a specific pin on a real node, a specific Logic block, or (in the broader vision) a pin on a placeholder node. Every channel always has a binding — there are no logical, unbound channels. Planning before hardware arrives uses placeholder nodes whose pins/Logic-blocks back channels exactly the way real-node pins do (see [Placeholder Nodes](#placeholder-nodes-pre-arrival-configuration)).
+- The **binding** is the concrete target a channel's style is wired to. Most bindings are **physical**: a specific pin on a real node, a specific Logic block, or (in the broader vision) a pin on a placeholder node. A small number of styles use **virtual bindings** — addresses in a protocol namespace that no Bowties-managed node owns, but that gateway hardware translates to wire-level packets (see [Virtual Bindings: DCC Accessories](#virtual-bindings-dcc-accessories)). Every channel always has a binding — there are no logical, unbound channels. Planning before hardware arrives uses placeholder nodes whose pins/Logic-blocks back channels exactly the way real-node pins do (see [Placeholder Nodes](#placeholder-nodes-pre-arrival-configuration)).
 
 > *Code-mapping note (for implementers only).* The OO analogues are: role ≈ interface (state-vocabulary contract), style ≈ implementation class, channel ≈ instance. User-facing language is `role` and `style`; `interface` and `implementation class` should not surface in the UI or in product-facing docs except as this single anchor.
 
@@ -208,6 +208,7 @@ The following are representative roles, not an exhaustive list. Profiles declare
 | **Turnout Motor Command** | 1–2 | Normal/diverging command → drives servo or stall motor |
 | **Lamp Indicator** | 1 | Lit/unlit state → drives a single lamp (LED, incandescent, anything) |
 | **Turnout Position Indicator** | 2 (lamps) | Normal/diverging state → drives a pair of lamps to show position on a fascia panel |
+| **DCC Accessory Command** | 0 (virtual binding to a DCC address) | Normal/reverse (or on/off) command → emitted as the well-known LCC events for that DCC accessory address; a gateway converts to a DCC accessory packet on the track |
 
 **Key property:** Multiple channels of the same role can feed the same facility input. Two button-pair channels on opposite sides of a layout module — physically independent, on different nodes — can both serve as "turnout command" inputs to the same turnout facility. The facility is what unifies them logically; the channels remain physically grounded in their respective pin groups.
 
@@ -231,6 +232,26 @@ A channel comes into existence through one of three paths. All three produce the
 | **User-mapped** (user-owned, DIY) | User authors a channel style on an unprofiled board — picks the role, selects (or authors) a style shape from the system catalog, and binds its field roles to CDI fields by hand | DIY boards or firmware where a shipped profile doesn't exist |
 
 The user-mapped path is what makes the channel model viable on boards without profiles. It does *not* introduce new roles — those stay in a closed system catalog. The user authors only the field signature for one specific channel style on one specific board.
+
+#### Virtual Bindings: DCC Accessories
+
+Not every channel is backed by a pin on an LCC board. **DCC accessories** — turnouts and stationary decoders controlled by DCC packets on the track bus — are addressed by a DCC accessory address (1–2044), not by a node and pin. Bowties supports them as first-class consumer channels through a **virtual binding** model that reuses the rest of the channel machinery unchanged.
+
+**The mechanism.** The OpenLCB standard defines a well-known event range for DCC accessories: each DCC accessory address has a deterministic pair of LCC event IDs (one for each command state). Gateway hardware — JMRI's LCC↔DCC bridge, the TCS CS-105, and the TCS LT-50 — listens for those events on the LCC bus and emits the corresponding DCC accessory packet on the track. The events are the contract; the gateway is the wire-level translator.
+
+**What the user sees.** In the Wiring workspace, DCC accessory channels live under a virtual **"DCC Layout"** node in the node tree — a single grouping for every DCC-addressed output in the layout, not tied to any physical LCC board. Adding one prompts for:
+
+- **DCC address** (the only user-editable identity field)
+- **Channel name** (e.g., "Yard Ladder T-15")
+- **Style** (`dcc-accessory-turnout` or `dcc-accessory-signal`, when more than one applies)
+
+The channel's **LCC event IDs are computed from the DCC address per the OpenLCB DCC accessory event allocation and shown as read-only values** in the channel detail view. The user never picks event IDs by hand for a DCC accessory channel — changing the DCC address re-derives them, and any event bowties wired to the channel re-resolve to the new IDs.
+
+**How facilities and templates consume them.** A DCC accessory channel exposes a standard consumer role (`turnout-command`, `signal-aspect-2-color`, etc., depending on its style). Facility slots and behavior templates bind by role and never need to know that the binding is virtual — a CTC panel template applied to a DCC-controlled turnout produces the same bowties as it would for an LCC-controlled turnout, except that the consumer side of each bowtie uses the computed DCC-accessory event IDs and there is no consumer-side CDI write (no node to write to).
+
+**What's missing on purpose.** Basic DCC accessories have no feedback. A DCC accessory channel is consumer-only; if the user wants position feedback they wire a separate producer channel (LCC microswitch, current sensor, or — once supported — a DCC + RailCom feedback channel) and the facility consumes both. The vision's directionality rule (one role per direction) handles this naturally.
+
+**Why this fits.** Virtual bindings don't change the channel record shape or the facility slot model — only the binding payload differs (a DCC address instead of a node-scoped resource id like a pin or a Logic block). Style polymorphism already insulates facility slots from binding shape, so a `turnout-command` slot accepts a stall-motor channel, a servo channel, and a DCC accessory channel interchangeably. The gateway hardware is configured separately (in JMRI or via the gateway's own setup tool); Bowties does not own its configuration.
 
 ---
 
@@ -480,6 +501,15 @@ When something goes wrong during operation, the user returns to Bowties for comp
 - See live channel states (fed from the bus, or from JMRI via bridge for non-LCC channels)
 - Identify which input is unexpected or which logic isn't producing the right output
 - If a channel is backed by JMRI (non-LCC protocol), Bowties shows its current state as reported by the bridge
+
+### DCC Accessory Gateways
+
+DCC accessory channels (see [Virtual Bindings: DCC Accessories](#virtual-bindings-dcc-accessories)) reach the track through a gateway that converts the well-known LCC events into DCC accessory packets. Three gateways are recognized:
+
+- **JMRI** — when the JMRI bridge is connected, JMRI's own LCC↔DCC translation can serve as the gateway. No extra setup beyond the bridge itself.
+- **TCS CS-105** (command station) and **TCS LT-50** (LCC-to-DCC translator) — listen on the LCC bus and emit DCC accessory packets directly, with no computer required.
+
+Bowties does not own the gateway's configuration. From Bowties' point of view the gateway is implicit: emit the right LCC event on the bus and the gateway does its job. The Wiring workspace surfaces gateway status as a layout-level indicator (which gateway is present, whether it's reachable) so the user has somewhere to look when a DCC accessory channel isn't taking effect on the track.
 
 ---
 

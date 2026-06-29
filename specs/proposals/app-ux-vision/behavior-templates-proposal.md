@@ -39,7 +39,7 @@ An **information channel** represents a single piece of meaningful information (
 
 - Has a **role** (from a well-known catalog or user-defined) that names what it does in the layout and fixes its state vocabulary
 - Has a **style** — the specific hardware-shape realisation of that role on a specific subsystem (pins claimed, event-leaf mapping, CDI-field constraints)
-- Has a **binding** to concrete hardware — LCC event ID pairs (bowties) on a specific pin, DCC addresses via JMRI, LocoNet messages, or other protocols
+- Has a **binding** to concrete hardware — LCC event ID pairs (bowties) on a specific pin, a DCC accessory address (events derived from the OpenLCB DCC accessory allocation; emitted on the bus and translated to track packets by a gateway like JMRI, TCS CS-105, or TCS LT-50), LocoNet messages via JMRI, or other protocols
 - Has **directionality** — full bidirectional (LCC, LocoNet), command-only (basic DCC), or mixed (DCC command + separate LCC feedback sensor)
 - Reduces cognitive load: users think "occupancy" once; the system handles protocol-specific details
 

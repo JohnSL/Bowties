@@ -66,6 +66,8 @@ This enables:
 - **Gap analysis** — "This DCC turnout has no position feedback; add a microswitch sensor or switch to an LCC turnout for reliable signal logic"
 - **Migration visibility** — "Upgrading this turnout from DCC to LCC would give you confirmed position feedback"
 
+**Note on DCC accessory channels.** DCC accessories controlled through the OpenLCB well-known DCC accessory event allocation are first-class consumer channels in Bowties with a virtual binding (see the vision document's [Virtual Bindings: DCC Accessories](./app-ux-vision.md#virtual-bindings-dcc-accessories) section). They do not require JMRI: any compliant gateway (JMRI itself, TCS CS-105, TCS LT-50) listens on the LCC bus and emits the DCC packet. The JMRI bridge is only one of several gateways; Bowties is gateway-agnostic and the channel-level event wiring is the same in all cases.
+
 ---
 
 ## Architecture: The Bridge Is a Projection Layer
