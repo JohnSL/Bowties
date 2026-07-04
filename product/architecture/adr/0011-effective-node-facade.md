@@ -277,13 +277,23 @@ The two facades have different shapes — the frontend's is render-oriented (`ef
 
 This symmetry is the ADR-0011 invariant scaled to the whole product, not a new commitment in this file; it's recorded here to make the cross-layer pattern explicit for future readers. The actual backend invariants are in ADR-0015's `## Invariants` section.
 
+## 2026-07-03 extension: registry-driven lifecycle dispatch replaces manual enumeration
+
+**Problem:** `layoutLifecycleOrchestrator.resetForNewLayout()` and `resetForFreshLiveSession()` used manual per-store call lists. Adding a new layout-scoped store required remembering to add its reset call to each lifecycle method separately. Six stores had been missed over time (`bowtieCatalogStore`, `saveProgressStore`, `syncPanelStore`, `cdiCacheStore`, `connectorSlotFocusStore`, `eventStateStore` for `resetForNewLayout`), causing stale state to bleed across layout close/open — most visibly, the previous layout's bowtie catalog appeared briefly when opening a new layout.
+
+**Decision:** Replace the manual call lists with a `LayoutScopedParticipant` interface and a registry array. Every layout-scoped store or orchestrator implements the interface (with optional `resetForNewLayout()` and `resetForFreshLiveSession()` methods) and is appended to the `layoutScopedParticipants` array. The orchestrator dispatches to each participant via loop. Adding a new store requires implementing the interface and registering once — the loop handles all lifecycle events, making it structurally impossible to forget an individual event.
+
+The `configReadStatusParticipant` wraps the standalone `clearConfigReadStatus()` function in a thin adapter object to fit the interface.
+
+**Invariant:** Every layout-scoped store or orchestrator that holds state which must not survive a layout close MUST implement `LayoutScopedParticipant` and be appended to the `layoutScopedParticipants` array. The registry-based dispatch tests in `layoutLifecycleOrchestrator.test.ts` spy on every registered participant and assert each is called.
+
 ## Invariants
 
 Structured testable rules for the `/design` audit. Each invariant resolves to OK / Drift / Unknown with file:line evidence.
 
 - `effectiveNodeStore.isDirty` and `effectiveNodeStore.dirtyBreakdown` are the sole aggregate dirty signals for the layout. Adding a new edit-bearing store requires extending the `DirtyBreakdown` shape AND the breakdown computation in the same slice. Audit: grep for additional `isDirty`-style aggregations across stores.
 - Consumers asking "is anything unsaved?" read through the `$lib/layout` facade exclusively. Components, routes, and other orchestrators do not re-derive the aggregate from raw stores. Audit: grep for `editCount` / `draftCount` / `isDirty` reads outside `effectiveNodeStore`.
-- `layoutLifecycleOrchestrator.resetForNewLayout()` is the single resetter of every layout-scoped store the facade reads. Every input to `effectiveNodeStore` has a matching reset entry in the orchestrator, pinned by [layoutLifecycleOrchestrator.test.ts](../../../app/src/lib/orchestration/layoutLifecycleOrchestrator.test.ts).
+- `layoutLifecycleOrchestrator.resetForNewLayout()` is the single resetter of every layout-scoped store the facade reads. Every layout-scoped store or orchestrator implements `LayoutScopedParticipant` and is registered in the `layoutScopedParticipants` array; the dispatch loop handles lifecycle events and save-delta collection automatically. Adding a new layout-scoped store requires implementing the interface and appending to the array — you cannot forget an individual lifecycle event. Edit-bearing stores also implement `collectDeltas()` on the same interface, and `collectAllSaveDeltas()` dispatches via the same registry. Pinned by the registry-based dispatch tests in [layoutLifecycleOrchestrator.test.ts](../../../app/src/lib/orchestration/layoutLifecycleOrchestrator.test.ts) and [collectSaveDeltas.test.ts](../../../app/src/lib/layout/collectSaveDeltas.test.ts). (Updated 2026-07-03: registry-driven dispatch replaced manual enumeration for both lifecycle resets and save-delta collection.)
 - `layoutLifecycleOrchestrator.closeLayout()` is the single entry point for closing a layout across the IPC boundary. Routes and orchestrators call it; they do not assemble the close sequence (backend `close_layout` + frontend store wipe + disconnect) at the call site.
 - After `closeLayout()` returns `true`, `layoutStore.isConnected` is `false`. (2026-06-20 extension.)
 - After any disconnect path completes, `eventStateStore.size === 0`. After `resetForFreshLiveSession()` returns, `eventStateStore.size === 0`. (2026-06-26 extension; bus-session-scoped stores join the reset enumeration.)

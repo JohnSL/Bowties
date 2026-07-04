@@ -3,7 +3,13 @@
   import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
   import { channelsStore } from '$lib/stores/channels.svelte';
   import { eventStateStore } from '$lib/stores/eventState.svelte';
-  import { deriveChannelState, type OccupancyState } from '$lib/utils/channelState';
+  import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
+  import {
+    deriveChannelState,
+    channelStateLabel,
+    roleForChannelState,
+    type ChannelState,
+  } from '$lib/utils/channelState';
   import FacilitySlot from './FacilitySlot.svelte';
 
   let {
@@ -13,25 +19,27 @@
     onRename,
     onDelete,
     onSelectChannel,
-    onRebindChannel,
+    onAddChannel,
     onRemoveFromSlot,
   }: {
     facility: Facility;
     template?: BehaviorTemplate;
-    /** Map from channelId to { occupied, clear } event IDs — supplied by route. */
-    resolvedEventIds?: ReadonlyMap<string, { occupied?: string; clear?: string }>;
+    /** Map from channelId to state-name → eventId (Spec 018 / S5 D6). */
+    resolvedEventIds?: ReadonlyMap<string, Record<string, string>>;
     onRename?: (facilityId: string, newName: string) => void;
     onDelete?: (facilityId: string) => void;
-    /** Spec 018 / S4 — emits intent up to the route's picker state. */
+    /** Spec 018 / S4 — producer-side input slot's Select channel intent. */
     onSelectChannel?: (facilityId: string, slotLabel: string) => void;
-    onRebindChannel?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
+    /** Spec 018 / S5 — consumer-side output slot's Add channel intent. */
+    onAddChannel?: (facilityId: string, slotLabel: string) => void;
     onRemoveFromSlot?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
   } = $props();
 
-  // Spec 018 / S1 → S4: derived from slot fullness; never persisted on the entity.
-  // A slot is "full" when its Vec is non-empty (D8 — plural binding shape).
+  // Spec 018 / S6 (D5): status is derived by the effectiveLayoutStore facade
+  // per ADR-0004 (single-owner derivation). FacilityCard renders the pill
+  // from the facade call — no local slot-fullness check.
   let status = $derived<FacilityStatus>(
-    Object.values(facility.slotBindings).every((v) => v.length > 0) ? 'Wired' : 'Incomplete',
+    effectiveLayoutStore.facilityStatus(facility.facilityId),
   );
 
   let isEditingName = $state(false);
@@ -67,13 +75,6 @@
     return Object.entries(facility.slotBindings);
   }
 
-  function stateLabel(s: OccupancyState): string {
-    return s === 'occupied' ? 'Occupied'
-      : s === 'clear' ? 'Clear'
-      : s === 'no-config' ? 'No config'
-      : 'Unknown';
-  }
-
   function formatConnectorLabel(connectorId: string): string {
     const match = connectorId.match(/^connector-([a-z])$/i);
     if (match) return `Connector ${match[1].toUpperCase()}`;
@@ -86,7 +87,7 @@
    * rendering to a future slice when ABS aspect-slot repeaters arrive.
    */
   function displayFor(binding: string[]):
-    | { currentChannelId: string; currentChannelDisplay: { name: string; ownership: 'hardware-owned' | 'user-owned'; groupLabel: string; locationLabel: string; state: OccupancyState; stateLabel: string } }
+    | { currentChannelId: string; currentChannelDisplay: { name: string; ownership: 'hardware-owned' | 'user-owned'; groupLabel: string; locationLabel: string; state: ChannelState; stateLabel: string } }
     | { currentChannelId: undefined; currentChannelDisplay: undefined } {
     if (binding.length === 0) {
       return { currentChannelId: undefined, currentChannelDisplay: undefined };
@@ -97,8 +98,10 @@
       return { currentChannelId: undefined, currentChannelDisplay: undefined };
     }
     const ids = resolvedEventIds?.get(id);
-    const state = deriveChannelState(eventStateStore.events, ids?.occupied, ids?.clear);
-    // Group label: per-binding human-readable hardware locality.
+    const role = roleForChannelState(channel.role);
+    const positiveId = role === 'lamp-indicator' ? ids?.['lit'] : ids?.['occupied'];
+    const negativeId = role === 'lamp-indicator' ? ids?.['unlit'] : ids?.['clear'];
+    const state = deriveChannelState(eventStateStore.events, positiveId, negativeId, role);
     const groupLabel = channel.binding.kind === 'connectorInput'
       ? formatConnectorLabel(channel.binding.connector)
       : 'Direct Lamp Control';
@@ -113,7 +116,7 @@
         groupLabel,
         locationLabel,
         state,
-        stateLabel: stateLabel(state),
+        stateLabel: channelStateLabel(state),
       },
     };
   }
@@ -160,7 +163,7 @@
         currentChannelId={d.currentChannelId}
         currentChannelDisplay={d.currentChannelDisplay}
         onSelectChannel={(slot) => onSelectChannel?.(facility.facilityId, slot)}
-        onRebindChannel={(slot, currentId) => onRebindChannel?.(facility.facilityId, slot, currentId)}
+        onAddChannel={(slot) => onAddChannel?.(facility.facilityId, slot)}
         onRemoveFromSlot={(slot, currentId) => onRemoveFromSlot?.(facility.facilityId, slot, currentId)}
       />
     {/each}

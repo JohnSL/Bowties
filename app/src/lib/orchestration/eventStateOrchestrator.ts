@@ -18,12 +18,20 @@ interface EventStatePayload {
   timestamp: string;
 }
 
+interface ChannelResolutionBinding {
+  kind: 'connectorInput' | 'lampRow';
+  connector?: string;
+  input?: number;
+  rowOrdinal?: number;
+}
+
 interface ChannelResolutionRequest {
   channelId: string;
   nodeKey: string;
-  connector: string;
-  input: number;
-  eventMapping: Record<string, number>;
+  binding: ChannelResolutionBinding;
+  role: 'producer' | 'consumer';
+  /** State-name → leaf ordinal (producerLeafIndex / consumerLeafIndex). */
+  leafIndexMap: Record<string, number>;
 }
 
 interface ChannelResolutionResult {
@@ -55,32 +63,55 @@ export async function startEventStateListening(): Promise<UnlistenFn> {
  * Resolve event IDs for a batch of channels via the backend.
  *
  * Spec 018 / S2 (ADR-0013): the producer/consumer event-leaf mapping is
- * sourced from the channel's `style` field via the style registry, not
- * from a single per-call mapping argument. Channels whose style is unknown
- * to the registry, or whose binding does not address a per-input target
- * (i.e. not `connectorInput`), are silently skipped.
+ * sourced from the channel's `style` field via the style registry. Spec 018
+ * / S5 (D6) generalises the IPC payload to (binding, role, leafIndexMap)
+ * so consumer-side lamp-indicator channels resolve through the same shape-
+ * agnostic backend resolver as producer-side block-occupancy channels.
+ * Channels whose style is unknown to the registry are silently skipped.
  *
- * @param channels - The channels to resolve
- * @returns Map from channelId → { occupied?: eventId, clear?: eventId }
+ * @returns Map from `channelId` → state-name → eventId. State names vary by
+ * role: `block-occupancy` produces `{occupied, clear}`; `lamp-indicator`
+ * produces `{lit, unlit}`.
  */
 export async function resolveChannelEventIds(
   channels: InformationChannel[],
-): Promise<ReadonlyMap<string, { occupied?: string; clear?: string }>> {
+): Promise<ReadonlyMap<string, Record<string, string>>> {
   const requests: ChannelResolutionRequest[] = [];
   for (const ch of channels) {
-    if (ch.binding.kind !== 'connectorInput') continue;
     const mapping = getStyleEventMapping(ch.style);
     if (!mapping) continue;
-    const flatMapping: Record<string, number> = {};
+
+    const role: 'producer' | 'consumer' = ch.role === 'lamp-indicator' ? 'consumer' : 'producer';
+    const leafIndexMap: Record<string, number> = {};
     for (const [state, entry] of Object.entries(mapping)) {
-      flatMapping[state] = entry.producerLeafIndex;
+      const idx = role === 'consumer' ? entry.consumerLeafIndex : entry.producerLeafIndex;
+      if (idx === undefined) continue;
+      leafIndexMap[state] = idx;
     }
+    if (Object.keys(leafIndexMap).length === 0) continue;
+
+    let binding: ChannelResolutionBinding;
+    if (ch.binding.kind === 'connectorInput') {
+      binding = {
+        kind: 'connectorInput',
+        connector: ch.binding.connector,
+        input: ch.binding.input,
+      };
+    } else if (ch.binding.kind === 'lampRow') {
+      binding = {
+        kind: 'lampRow',
+        rowOrdinal: ch.binding.rowOrdinal,
+      };
+    } else {
+      continue;
+    }
+
     requests.push({
       channelId: ch.id,
       nodeKey: ch.binding.nodeKey,
-      connector: ch.binding.connector,
-      input: ch.binding.input,
-      eventMapping: flatMapping,
+      binding,
+      role,
+      leafIndexMap,
     });
   }
 
@@ -88,12 +119,9 @@ export async function resolveChannelEventIds(
     requests,
   });
 
-  const resolved = new Map<string, { occupied?: string; clear?: string }>();
+  const resolved = new Map<string, Record<string, string>>();
   for (const r of results) {
-    resolved.set(r.channelId, {
-      occupied: r.eventIds['occupied'],
-      clear: r.eventIds['clear'],
-    });
+    resolved.set(r.channelId, r.eventIds);
   }
   return resolved;
 }

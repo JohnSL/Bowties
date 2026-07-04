@@ -1,34 +1,45 @@
 <script lang="ts">
   import type { InformationChannel } from '$lib/api/channels';
-  import type { OccupancyState } from '$lib/utils/channelState';
+  import {
+    channelStateClass,
+    channelStateLabel,
+    type ChannelState,
+  } from '$lib/utils/channelState';
 
   const ROLE_LABELS: Record<string, string> = {
     'block-occupancy': 'Block occupancy',
     'lamp-indicator': 'Lamp indicator',
   };
 
-  const STATE_LABELS: Record<OccupancyState, string> = {
-    'no-config': 'No config',
-    unknown: 'Unknown',
-    clear: 'Clear',
-    occupied: 'Occupied',
-  };
+  /**
+   * Spec 018 / S5 — lamp-indicator info-tooltip text. Made discoverable on
+   * every consumer row to satisfy AC #5 (D5 deferral: the user must set Lamp
+   * Selection manually before the lamp will follow the bowtie's commands).
+   */
+  const LAMP_INDICATOR_TOOLTIP =
+    'Live state is derived from observed Lamp On / Lamp Off commands on the bus. ' +
+    'Set Lamp Selection on this row in the Config tab to drive the lamp.';
 
-  const STATE_TOOLTIPS: Record<OccupancyState, string> = {
+  const STATE_TOOLTIPS: Record<string, string> = {
     'no-config': 'No configuration data — channel cannot resolve event IDs yet.',
     unknown: 'Unknown — no events received',
     clear: 'Clear',
     occupied: 'Occupied',
+    lit: 'Lit',
+    unlit: 'Unlit',
   };
+
+  const DEFAULT_STATE: ChannelState = { kind: 'unknown' };
 
   let {
     channel,
-    occupancyState = 'unknown',
+    channelState = DEFAULT_STATE,
     usedBy,
     onRename,
   }: {
     channel: InformationChannel;
-    occupancyState?: OccupancyState;
+    /** Spec 018 / S5 D3 — typed discriminated state for this channel. */
+    channelState?: ChannelState;
     /**
      * Slot bindings consuming this channel as `{facility, slot}` pairs.
      * Empty / undefined → rendered as em-dash (Spec 018 / S3 baseline).
@@ -74,8 +85,10 @@
   }
 
   let roleLabel = $derived(ROLE_LABELS[channel.role] ?? channel.role);
-  let stateLabel = $derived(STATE_LABELS[occupancyState]);
-  let stateTooltip = $derived(STATE_TOOLTIPS[occupancyState]);
+  let stateClass = $derived(channelStateClass(channelState));
+  let stateLabel = $derived(channelStateLabel(channelState));
+  let stateTooltip = $derived(STATE_TOOLTIPS[stateClass] ?? stateLabel);
+  let isLampIndicator = $derived(channel.role === 'lamp-indicator');
   let ownershipLabel = $derived(channel.ownership === 'hardware-owned' ? 'HW' : 'USER');
   let ownershipTitle = $derived(
     channel.ownership === 'hardware-owned'
@@ -102,10 +115,12 @@
   <td class="state-cell">
     <span
       class="occupancy-indicator"
-      class:occupied={occupancyState === 'occupied'}
-      class:clear={occupancyState === 'clear'}
-      class:unknown={occupancyState === 'unknown'}
-      class:no-config={occupancyState === 'no-config'}
+      class:occupied={stateClass === 'occupied'}
+      class:clear={stateClass === 'clear'}
+      class:lit={stateClass === 'lit'}
+      class:unlit={stateClass === 'unlit'}
+      class:unknown={stateClass === 'unknown'}
+      class:no-config={stateClass === 'no-config'}
       title={stateTooltip}
       aria-label={stateTooltip}
       data-testid="occupancy-indicator"
@@ -145,6 +160,14 @@
   <td class="location-cell">{location}</td>
   <td class="state-label-cell">
     <span class="state-label">{stateLabel}</span>
+    {#if isLampIndicator}
+      <span
+        class="lamp-indicator-info"
+        title={LAMP_INDICATOR_TOOLTIP}
+        aria-label={LAMP_INDICATOR_TOOLTIP}
+        data-testid="lamp-indicator-info"
+      >ⓘ</span>
+    {/if}
   </td>
   <td class="used-by-cell" class:unbound={!usedBy || usedBy.length === 0}>
     {usedByText}
@@ -180,6 +203,17 @@
   .occupancy-indicator.clear {
     border: none;
     background: #009e73;
+  }
+  .occupancy-indicator.lit {
+    width: 10px;
+    height: 10px;
+    border: none;
+    background: #e6c200;
+    box-shadow: 0 0 4px rgba(230, 194, 0, 0.6);
+  }
+  .occupancy-indicator.unlit {
+    border: none;
+    background: #555;
   }
   .occupancy-indicator.no-config {
     border-style: dashed;
@@ -260,6 +294,12 @@
   .state-label-cell {
     padding: 0.5rem 0.6rem;
     font-size: 0.8rem;
+  }
+  .lamp-indicator-info {
+    margin-left: 0.35rem;
+    color: var(--text-muted, #999);
+    cursor: help;
+    user-select: none;
   }
   .used-by-cell {
     padding: 0.5rem 0.6rem;

@@ -293,6 +293,10 @@ class OfflineChangesStore {
     this._busy = false;
   }
 
+  resetForNewLayout(): void {
+    this.clear();
+  }
+
   applyConnectorCompatibilityConfigChanges(nodeId: string, repairs: StagedRepair[]): void {
     for (const repair of repairs) {
       if (repair.space == null || !repair.offset) {

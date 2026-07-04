@@ -94,6 +94,8 @@ describe('openOfflineLayoutWithReplay', () => {
       pendingOfflineChangeCount: 2,
       partialNodes: [],
       nodeSnapshots: [],
+      recoveryOccurred: false,
+      loadWarnings: [],
     };
 
     const opened = await openOfflineLayoutWithReplay({
@@ -132,6 +134,8 @@ describe('openOfflineLayoutWithReplay', () => {
       pendingOfflineChangeCount: 0,
       partialNodes: [],
       nodeSnapshots: [],
+      recoveryOccurred: false,
+      loadWarnings: [],
     };
 
     await openOfflineLayoutWithReplay({
@@ -367,6 +371,9 @@ describe('offline snapshot helpers', () => {
         partialNodes: [],
         pendingOfflineChangeCount: 0,
         nodeSnapshots: [makeSnapshot()],
+        layout: makeLayout(),
+        recoveryOccurred: false,
+        loadWarnings: [],
       })),
       clearRecentLayout: vi.fn(async () => {}),
       resetLayoutStateForNoLayout: vi.fn(async () => {}),

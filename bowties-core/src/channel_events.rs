@@ -1,7 +1,9 @@
 //! Channel event ID resolution — maps a channel's hardware reference to its
 //! producer event IDs using the cached config tree and profile annotations.
 
-use crate::node_tree::{ConfigNode, ConfigValue, LeafNode, LeafType, NodeConfigTree};
+use crate::node_tree::{
+    replication_instances, ConfigNode, ConfigValue, LeafNode, LeafType, NodeConfigTree,
+};
 use lcc_rs::cdi::EventRole;
 use std::collections::HashMap;
 
@@ -14,47 +16,26 @@ pub struct ChannelEventIds {
     pub event_ids: HashMap<String, String>,
 }
 
-/// Resolve event IDs for a batch of channels from their cached config trees.
+/// Shape-agnostic event-id resolver. Collects EventId leaves under `path_prefix`
+/// whose `event_role` matches `role` (in CDI declaration order), then indexes
+/// them by `leaf_index_map` (state name → leaf ordinal within the role-filtered
+/// subset). Returns a map from state name to canonical event-ID hex.
 ///
-/// For each channel:
-/// 1. Find the connector slot matching the channel's connector
-/// 2. Use `resolved_affected_paths[input - 1]` as the Line group path prefix
-/// 3. Find all EventId leaves with `event_role == Producer` under that prefix
-/// 4. Index into them with the eventMapping's `producerLeafIndex`
-///
-/// Channels whose tree isn't available, whose config hasn't been read, or whose
-/// event IDs can't be resolved are returned with an empty `event_ids` map.
-pub fn resolve_channel_event_ids(
+/// The two binding shapes built on top of this helper are:
+/// - `connectorInput` + `Producer` — via [`resolve_channel_event_ids`].
+/// - `lampRow` + `Consumer` — via the IPC adapter that calls
+///   [`resolve_lamp_row_path_prefix`] and dispatches to this function.
+pub fn resolve_event_ids(
     tree: &NodeConfigTree,
-    connector: &str,
-    input: u32,
-    event_mapping: &HashMap<String, u32>, // state_name → producerLeafIndex
+    path_prefix: &[String],
+    role: EventRole,
+    leaf_index_map: &HashMap<String, u32>,
 ) -> HashMap<String, String> {
     let mut result = HashMap::new();
+    let leaves = collect_event_leaves_under_prefix(tree, path_prefix, role);
 
-    // Find the connector slot
-    let profile = match &tree.connector_profile {
-        Some(p) => p,
-        None => return result,
-    };
-
-    let slot = match profile.slots.iter().find(|s| s.slot_id == connector) {
-        Some(s) => s,
-        None => return result,
-    };
-
-    // Get the resolved path prefix for this input (1-based → 0-based index)
-    let path_prefix = match slot.resolved_affected_paths.get((input as usize).saturating_sub(1)) {
-        Some(p) => p,
-        None => return result,
-    };
-
-    // Collect all producer EventId leaves under this path prefix
-    let producer_leaves = collect_producer_leaves_under_prefix(tree, path_prefix);
-
-    // Index into the producer leaves by producerLeafIndex for each state
-    for (state_name, &leaf_index) in event_mapping {
-        if let Some(leaf) = producer_leaves.get(leaf_index as usize) {
+    for (state_name, &leaf_index) in leaf_index_map {
+        if let Some(leaf) = leaves.get(leaf_index as usize) {
             if let Some(ConfigValue::EventId { hex, .. }) = &leaf.value {
                 result.insert(state_name.clone(), hex.clone());
             }
@@ -64,15 +45,76 @@ pub fn resolve_channel_event_ids(
     result
 }
 
-/// Collect all EventId leaves marked as Producer under the given path prefix,
-/// in tree-traversal order (which matches CDI declaration order).
-fn collect_producer_leaves_under_prefix<'a>(
+/// Resolve event IDs for a `connectorInput` + `Producer` channel.
+///
+/// Thin wrapper around [`resolve_event_ids`] that:
+/// 1. Finds the connector slot matching the channel's connector
+/// 2. Uses `resolved_affected_paths[input - 1]` as the Line group path prefix
+/// 3. Calls [`resolve_event_ids`] with `EventRole::Producer`
+pub fn resolve_channel_event_ids(
+    tree: &NodeConfigTree,
+    connector: &str,
+    input: u32,
+    event_mapping: &HashMap<String, u32>, // state_name → producerLeafIndex
+) -> HashMap<String, String> {
+    let path_prefix = match resolve_connector_input_path_prefix(tree, connector, input) {
+        Some(p) => p,
+        None => return HashMap::new(),
+    };
+    resolve_event_ids(tree, &path_prefix, EventRole::Producer, event_mapping)
+}
+
+/// Compute the CDI path prefix for a connector input.
+///
+/// Returns `None` if the tree has no connector profile, the connector id is
+/// unknown, or the input ordinal is out of range.
+pub fn resolve_connector_input_path_prefix(
+    tree: &NodeConfigTree,
+    connector: &str,
+    input: u32,
+) -> Option<Vec<String>> {
+    let profile = tree.connector_profile.as_ref()?;
+    let slot = profile.slots.iter().find(|s| s.slot_id == connector)?;
+    slot.resolved_affected_paths
+        .get((input as usize).saturating_sub(1))
+        .cloned()
+}
+
+/// Compute the CDI path prefix for a `Direct Lamp Control` row.
+///
+/// Walks the tree for a segment named `"Direct Lamp Control"` and returns the
+/// path of its `Lamp` group whose 1-based replication `instance` equals
+/// `row_ordinal`. Returns `None` if the segment is absent or the ordinal is
+/// past the last replication.
+///
+/// Uses [`replication_instances`] so the wrapper/sibling shape produced by
+/// `build_children` is handled in one place.
+pub fn resolve_lamp_row_path_prefix(
+    tree: &NodeConfigTree,
+    row_ordinal: u32,
+) -> Option<Vec<String>> {
+    for seg in &tree.segments {
+        if seg.name != "Direct Lamp Control" {
+            continue;
+        }
+        return replication_instances(&seg.children, "Lamp")
+            .into_iter()
+            .find(|g| g.instance == row_ordinal)
+            .map(|g| g.path.clone());
+    }
+    None
+}
+
+/// Collect EventId leaves matching `role` under `path_prefix`, in tree-traversal
+/// order (which matches CDI declaration order).
+fn collect_event_leaves_under_prefix<'a>(
     tree: &'a NodeConfigTree,
     path_prefix: &[String],
+    role: EventRole,
 ) -> Vec<&'a LeafNode> {
     let mut results = Vec::new();
     for seg in &tree.segments {
-        collect_from_children(&seg.children, path_prefix, &mut results);
+        collect_from_children(&seg.children, path_prefix, role, &mut results);
     }
     results
 }
@@ -80,20 +122,21 @@ fn collect_producer_leaves_under_prefix<'a>(
 fn collect_from_children<'a>(
     children: &'a [ConfigNode],
     path_prefix: &[String],
+    role: EventRole,
     results: &mut Vec<&'a LeafNode>,
 ) {
     for child in children {
         match child {
             ConfigNode::Leaf(leaf) => {
                 if leaf.element_type == LeafType::EventId
-                    && leaf.event_role == Some(EventRole::Producer)
+                    && leaf.event_role == Some(role)
                     && path_starts_with(&leaf.path, path_prefix)
                 {
                     results.push(leaf);
                 }
             }
             ConfigNode::Group(group) => {
-                collect_from_children(&group.children, path_prefix, results);
+                collect_from_children(&group.children, path_prefix, role, results);
             }
         }
     }
@@ -367,5 +410,187 @@ mod tests {
             result.is_empty(),
             "without event_role annotations, resolve must return empty — this is the gap S3 fixes at the layout-open seam"
         );
+    }
+
+    // -- Shape-agnostic resolver tests (Spec 018 / S5) --
+
+    /// Build a tree with a `Direct Lamp Control` segment containing N replicated
+    /// `Lamp` groups, each carrying a consumer "Lamp On" + "Lamp Off" event pair.
+    fn make_lamp_tree(lamp_count: u32) -> NodeConfigTree {
+        let mut children = Vec::new();
+        for instance in 1..=lamp_count {
+            let group_path = vec![
+                "seg:0".to_string(),
+                format!("elem:0#{instance}"),
+            ];
+            children.push(ConfigNode::Group(GroupNode {
+                name: format!("Lamp {instance}"),
+                has_name: true,
+                description: None,
+                instance,
+                instance_label: format!("Lamp {instance}"),
+                replication_of: "Lamp".to_string(),
+                replication_count: lamp_count,
+                path: group_path.clone(),
+                children: vec![
+                    make_eventid_leaf(
+                        vec![
+                            "seg:0",
+                            &format!("elem:0#{instance}"),
+                            "elem:0",
+                        ],
+                        Some(EventRole::Consumer),
+                        &format!("050101010100A{instance:03}"),
+                    ),
+                    make_eventid_leaf(
+                        vec![
+                            "seg:0",
+                            &format!("elem:0#{instance}"),
+                            "elem:1",
+                        ],
+                        Some(EventRole::Consumer),
+                        &format!("050101010100B{instance:03}"),
+                    ),
+                ],
+                display_name: None,
+                hideable: false,
+                hidden_by_default: false,
+                read_only: false,
+            }));
+        }
+
+        NodeConfigTree {
+            node_id: "050101010100".to_string(),
+            identity: None,
+            connector_profile: None,
+            connector_profile_warning: None,
+            unknown_variants: vec![],
+            profile_applied: true,
+            segments: vec![SegmentNode {
+                name: "Direct Lamp Control".to_string(),
+                description: None,
+                origin: 0,
+                space: 253,
+                children,
+            }],
+        }
+    }
+
+    #[test]
+    fn resolve_event_ids_with_consumer_role_collects_consumer_leaves_only() {
+        let tree = make_lamp_tree(4);
+        let path_prefix = resolve_lamp_row_path_prefix(&tree, 2)
+            .expect("Lamp#2 path must resolve");
+        let mut mapping = HashMap::new();
+        mapping.insert("lit".to_string(), 0u32);
+        mapping.insert("unlit".to_string(), 1u32);
+
+        let result = resolve_event_ids(&tree, &path_prefix, EventRole::Consumer, &mapping);
+
+        assert_eq!(result.get("lit"), Some(&"050101010100A002".to_string()));
+        assert_eq!(result.get("unlit"), Some(&"050101010100B002".to_string()));
+    }
+
+    #[test]
+    fn resolve_event_ids_with_producer_role_skips_consumer_leaves() {
+        let tree = make_lamp_tree(1);
+        let path_prefix = resolve_lamp_row_path_prefix(&tree, 1)
+            .expect("Lamp#1 path must resolve");
+        let mut mapping = HashMap::new();
+        mapping.insert("lit".to_string(), 0u32);
+
+        let result = resolve_event_ids(&tree, &path_prefix, EventRole::Producer, &mapping);
+
+        assert!(
+            result.is_empty(),
+            "consumer-only tree must yield zero hits when asked for producer leaves"
+        );
+    }
+
+    #[test]
+    fn resolve_lamp_row_path_prefix_returns_path_for_instance() {
+        let tree = make_lamp_tree(8);
+
+        let prefix_1 = resolve_lamp_row_path_prefix(&tree, 1).expect("Lamp#1");
+        assert_eq!(prefix_1, vec!["seg:0".to_string(), "elem:0#1".to_string()]);
+
+        let prefix_8 = resolve_lamp_row_path_prefix(&tree, 8).expect("Lamp#8");
+        assert_eq!(prefix_8, vec!["seg:0".to_string(), "elem:0#8".to_string()]);
+    }
+
+    #[test]
+    fn resolve_lamp_row_path_prefix_returns_none_past_last_replication() {
+        let tree = make_lamp_tree(4);
+        assert!(resolve_lamp_row_path_prefix(&tree, 5).is_none());
+        assert!(resolve_lamp_row_path_prefix(&tree, 999).is_none());
+    }
+
+    #[test]
+    fn resolve_lamp_row_path_prefix_returns_none_when_segment_absent() {
+        // make_test_tree() has only a "Port I/O" segment.
+        let tree = make_test_tree();
+        assert!(resolve_lamp_row_path_prefix(&tree, 1).is_none());
+    }
+
+    #[test]
+    fn resolve_connector_input_path_prefix_matches_byte_identical_legacy() {
+        // The wrapper's behaviour must be unchanged: resolve_channel_event_ids and
+        // the standalone path-prefix helper agree on the prefix for input 1.
+        let tree = make_test_tree();
+        let prefix = resolve_connector_input_path_prefix(&tree, "connector-a", 1)
+            .expect("connector-a input 1 prefix");
+        assert_eq!(prefix, vec!["seg:0".to_string(), "elem:0#1".to_string()]);
+
+        let prefix_4 = resolve_connector_input_path_prefix(&tree, "connector-a", 4)
+            .expect("connector-a input 4 prefix");
+        assert_eq!(prefix_4, vec!["seg:0".to_string(), "elem:0#4".to_string()]);
+
+        assert!(resolve_connector_input_path_prefix(&tree, "connector-a", 99).is_none());
+        assert!(resolve_connector_input_path_prefix(&tree, "connector-z", 1).is_none());
+    }
+
+    /// Regression: a real `build_children` output for `<group replication="N">`
+    /// emits a wrapper at segment level with the N instances as the wrapper's
+    /// children. The old hand-rolled traversal inside
+    /// `resolve_lamp_row_path_prefix` only inspected segment-level siblings and
+    /// silently returned `None` for every ordinal against this real shape.
+    /// Spec 018 quickchange — go through `replication_instances`.
+    #[test]
+    fn resolve_lamp_row_path_prefix_walks_real_build_children_wrapper_shape() {
+        use crate::node_tree::build_node_config_tree;
+        use lcc_rs::cdi::parser::parse_cdi;
+
+        let cdi = parse_cdi(
+            r#"<cdi>
+                <segment space="253" origin="8192">
+                    <name>Direct Lamp Control</name>
+                    <group replication="16">
+                        <name>Lamp</name>
+                        <repname>Lamp</repname>
+                        <string size="32"><name>Lamp Description</name></string>
+                        <eventid><name>Lamp On</name></eventid>
+                        <eventid><name>Lamp Off</name></eventid>
+                    </group>
+                </segment>
+            </cdi>"#,
+        )
+        .expect("CDI parse");
+        let tree = build_node_config_tree("05.01.01.01.FF.10", &cdi);
+
+        // Sanity: real build_children emits the wrapper shape.
+        let seg = &tree.segments[0];
+        assert_eq!(seg.children.len(), 1, "wrapper-shape: one wrapper");
+
+        for ordinal in 1..=16u32 {
+            let prefix = resolve_lamp_row_path_prefix(&tree, ordinal)
+                .unwrap_or_else(|| panic!("no path for Lamp#{ordinal}"));
+            assert_eq!(prefix[0], "seg:0");
+            assert_eq!(
+                prefix[1],
+                format!("elem:0#{ordinal}"),
+                "Lamp#{ordinal} path step"
+            );
+        }
+        assert!(resolve_lamp_row_path_prefix(&tree, 17).is_none());
     }
 }

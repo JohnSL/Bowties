@@ -200,6 +200,14 @@ class ConnectorSelectionsStore {
     this.revision += 1;
   }
 
+  resetForNewLayout(): void {
+    this.reset();
+  }
+
+  resetForFreshLiveSession(): void {
+    this.reset();
+  }
+
   setCompatibilityWarnings(nodeId: string, warnings: string[]): void {
     const nodeKey = normalizeNodeId(nodeId);
 

@@ -17,11 +17,14 @@
  *                                  (placeholders are layout-scoped, not
  *                                  bus-scoped).
  *
- * Imports stores directly rather than taking callback bags so the next
- * facade input cannot be added without also extending the reset path —
- * the orchestrator is the single resetter `effectiveNodeStore` depends on.
+ * Dispatch is registry-driven: every layout-scoped store or orchestrator
+ * implements `LayoutScopedParticipant` and is registered in the
+ * `layoutScopedParticipants` array. Adding a new participant means
+ * implementing the interface and appending to the array — the dispatch
+ * loop handles both lifecycle events automatically.
  */
 
+import type { LayoutEditDelta } from '$lib/types/bowtie';
 import { nodeRoster } from '$lib/stores/nodeRoster.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { clearConfigReadStatus } from '$lib/stores/configReadStatus';
@@ -35,8 +38,56 @@ import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte
 import { channelsStore } from '$lib/stores/channels.svelte';
 import { facilitiesStore } from '$lib/stores/facilities.svelte';
 import { eventStateStore } from '$lib/stores/eventState.svelte';
+import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
+import { saveProgressStore } from '$lib/stores/saveProgress.svelte';
+import { syncPanelStore } from '$lib/stores/syncPanel.svelte';
+import { cdiCacheStore } from '$lib/stores/cdiCache.svelte';
+import { connectorSlotFocusStore } from '$lib/stores/connectorSlotFocus.svelte';
+import { facilityCascadeOrchestrator } from '$lib/orchestration/facilityCascadeOrchestrator.svelte';
+import { configDraftMirrorOrchestrator } from '$lib/orchestration/configDraftMirrorOrchestrator.svelte';
 
 import type { CloseLayoutResult } from '$lib/api/layout';
+
+// ─── Lifecycle participant interface ─────────────────────────────────────────
+
+export interface LayoutScopedParticipant {
+  resetForNewLayout?(): void;
+  resetForFreshLiveSession?(): void;
+  collectDeltas?(): LayoutEditDelta[];
+}
+
+const configReadStatusParticipant: LayoutScopedParticipant = {
+  resetForNewLayout() { clearConfigReadStatus(); },
+  resetForFreshLiveSession() { clearConfigReadStatus(); },
+};
+
+/**
+ * Registry of all stores and orchestrators that participate in layout-scoped
+ * lifecycle resets. The orchestrator dispatches to each participant via the
+ * `LayoutScopedParticipant` interface instead of manual enumeration.
+ */
+export const layoutScopedParticipants: LayoutScopedParticipant[] = [
+  partialCaptureNodesStore,
+  nodeRoster,
+  bowtieMetadataStore,
+  offlineChangesStore,
+  configChangesStore,
+  layoutStore,
+  connectorSelectionsStore,
+  channelsStore,
+  facilitiesStore,
+  facilityCascadeOrchestrator,
+  configDraftMirrorOrchestrator,
+  configSidebarStore,
+  nodeTreeStore,
+  bowtieCatalogStore,
+  saveProgressStore,
+  syncPanelStore,
+  cdiCacheStore,
+  connectorSlotFocusStore,
+  eventStateStore,
+  configReadStatusParticipant,
+];
 
 export interface ResetForNewLayoutOptions {
   /** Whether the bus is currently connected (drives `probeForNodes`). */
@@ -80,18 +131,9 @@ class LayoutLifecycleOrchestrator {
   async resetForNewLayout(opts: ResetForNewLayoutOptions): Promise<void> {
     const { connected, reprobeLiveNodes = true, probeForNodes, afterReset } = opts;
 
-    partialCaptureNodesStore.clear();
-    nodeRoster.clearLayoutScope(); // clears nodeInfoStore + nodeTreeStore + configReadStatus + profile stems
-    clearConfigReadStatus();         // belt-and-braces; clearLayoutScope already does this
-    bowtieMetadataStore.clearAll();
-    offlineChangesStore.clear();
-    configChangesStore.clearAllDrafts();
-    layoutStore.reset();
-    connectorSelectionsStore.reset();
-    channelsStore.reset();
-    facilitiesStore.reset();
-    configSidebarStore.reset();
-    nodeTreeStore.reset();
+    for (const p of layoutScopedParticipants) {
+      p.resetForNewLayout?.();
+    }
 
     afterReset?.();
 
@@ -111,12 +153,9 @@ class LayoutLifecycleOrchestrator {
   resetForFreshLiveSession(): void {
     if (layoutStore.hasLayoutFile) return;
 
-    nodeRoster.replaceLiveRoster([]);
-    clearConfigReadStatus();
-    configSidebarStore.reset();
-    nodeTreeStore.reset();
-    connectorSelectionsStore.reset();
-    eventStateStore.clear();
+    for (const p of layoutScopedParticipants) {
+      p.resetForFreshLiveSession?.();
+    }
   }
 
   /**

@@ -7,6 +7,7 @@
 pub mod behavior_templates;
 pub mod bowtie;
 pub mod channel_events;
+pub mod facility_bowties;
 pub mod node_key;
 pub mod layout;
 pub mod node_tree;

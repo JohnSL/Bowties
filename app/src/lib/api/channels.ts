@@ -32,18 +32,3 @@ export interface InformationChannel {
 export async function listChannels(): Promise<InformationChannel[]> {
   return invoke<InformationChannel[]>('list_channels');
 }
-
-/** Append new channels to the active layout's channel inventory. */
-export async function createChannels(channels: InformationChannel[]): Promise<InformationChannel[]> {
-  return invoke<InformationChannel[]>('create_channels', { channels });
-}
-
-/** Rename a single channel by ID. Persists immediately to channels.yaml. */
-export async function renameChannel(id: string, newName: string): Promise<void> {
-  return invoke<void>('rename_channel', { id, newName });
-}
-
-/** Delete channels by their IDs from the active layout's channel inventory. */
-export async function deleteChannels(ids: string[]): Promise<void> {
-  return invoke<void>('delete_channels', { ids });
-}

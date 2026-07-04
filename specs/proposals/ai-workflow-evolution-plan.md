@@ -134,6 +134,21 @@ Cross-cutting, every session:
 - [x] B3. Refactor worker bound to `architecture-first-fix`: it stops and surfaces options (principle named) when cleanup reveals a wrong-layer/ADR-conflict/broken-invariant seam problem, instead of patching.
 - [x] B4. Operates within `slices.md` multi-session tracking: coordinator checks off tasks, sets `status: done`, updates the status line, writes session notes, and hands back to `/build` to task the next slice. Wired into the `build` skill's TDD Loop section as an optional context-saving delegation.
 
+> **2026 evolution — R1 (context-budget rework).** The per-phase worker topology
+> above proved too chatty in practice (~2N+1 hand-offs per slice for a slice of
+> N behaviors) and delegation stayed opt-in, so main-window growth was still
+> the norm. Reworked to:
+> - **`tdd-cycle`** merges Red+Green and accepts a **batch of 1–3 behaviors**
+>   (module-cluster split, auto-narrow to 1 for risky behaviors). Sequential
+>   red-then-green per behavior inside the batch, audit-trail return.
+> - **`tdd-refactor`** slimmed; still separate and bound to
+>   `architecture-first-fix`.
+> - **`tdd-red`** and **`tdd-green`** retired to deprecation stubs.
+> - **`tdd-build`** rewritten as batching coordinator with session-memory
+>   pruning of per-batch summaries.
+> - Delegation is now the **default** in the `build` skill; inline is the
+>   escape hatch for trivial single-behavior slices.
+
 ### Workstream F — Thin vertical slices + just-in-time tasking
 - [x] F1. Added an explicit **Vertical-Slice Gate** to `SLICING.md` (design skill) and referenced it from the `design` and `slices` SKILLs: a slice is valid only if it cuts all needed layers **and** yields a user-exercisable behavior; horizontal slices ("just the store", "all the backend", "all the tests") are rejected and folded forward. "Testable" defined as *user-demoable*, not merely *test-covered*.
 - [x] F2. `/slices` now emits a **two-tier file**: Tier 1 roadmap (an overview table + one **slice card** each — title, one-line intent, layer boundary, HITL/AFK, blocked-by, **acceptance criteria**, and an **architecture note** for HITL/new-seam slices; `status: sketched`) and Tier 2 per-layer task breakdown authored one slice at a time. Acceptance criteria + arch note stay in the roadmap (the slice's reviewable contract + impact); only the pivot-fragile per-layer task list is deferred. `SLICE-FORMAT.md` rewritten with the card model, status lifecycle, and a two-tier example. `slices/SKILL.md` updated to author the cards.

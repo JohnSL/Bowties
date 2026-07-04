@@ -66,3 +66,16 @@ This is an intentional interim split, not a divergence:
 The Rust `ChannelRole` and `ChannelBinding` enums declare the lamp-side variants now (`LampIndicator`, `LampRow`) so the enum reads as the role/binding **universe** rather than a one-element list. S5 constructs them; S2 only round-trips them through serde tests.
 
 The frontend registry exposes the same `Record<string, EventMappingEntry>` shape the future YAML catalog will, so the migration in S3/S5 is a relocation, not a rewrite.
+
+## 2026-06-30 extension: replication-instance traversal seam
+
+Background: S5's first user-facing run of the consumer-side Add-channel picker showed only one Direct Lamp Control row for a Signal-LCC whose CDI declares sixteen (`<group replication="16">`). Two parallel pieces of code were walking the wrong level of the tree: `effectiveLayoutStore.eligibleLampRowsForStyle` (frontend) and `bowties_core::channel_events::resolve_lamp_row_path_prefix` (backend) both iterated `segment.children` looking for sibling groups, but `node_tree::build_children` actually emits a single *wrapper* `GroupNode { instance: 0, replicationOf: name }` whose children are the 1..N instance groups. The wrapper's `instance_label === "Lamp"` masqueraded as a real row labelled "Lamp". S5's test fixtures hand-built the sibling shape and so never reproduced the bug.
+
+Rule, codified now and binding on every binding shape that addresses a replicated CDI group:
+
+- **Single sanctioned helper per layer.** Rust enumeration of replicated instances goes through `bowties_core::node_tree::replication_instances(parent, name) -> Vec<&GroupNode>`; TypeScript goes through `replicationInstances(parent, name): GroupConfigNode[]` in `app/src/lib/types/nodeTree.ts`. Both encapsulate the wrapper invariant produced by `build_children` and also accept the sibling-only shape that hand-built test fixtures sometimes use.
+- **No hand-rolled wrapper detection at call sites.** New `binding.kind` variants that need to address replicated instances (the S6+ roadmap explicitly names signal masts and aspect rows) MUST use the helpers. Hand-rolled `for child in segment.children` loops that filter on `replication_of == name` are a regression in waiting because they silently match the wrapper (`instance == 0`) when the real instances live one level deeper.
+- **Test fixtures should model the real shape.** New tests for code that enumerates replicated groups SHOULD construct the wrapper-plus-instances shape so the sibling-only bug class can't regress. The helpers' sibling-shape fallback exists for legacy fixtures, not as a target.
+- **Owners and consumers are tracked in `aiwiki/seams.md` → "Replication Instance Traversal".** Future shape additions update that entry.
+
+This extension does not change the channel schema, the role/style/ownership decomposition, or the constraint-source rules. It only names the seam that the open-ended `binding.kind` universe was always going to need.

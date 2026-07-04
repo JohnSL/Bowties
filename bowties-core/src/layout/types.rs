@@ -137,6 +137,13 @@ pub struct BowtieMetadata {
     pub name: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Facility ID that composed this bowtie (Spec 018 / S6 — D1).
+    /// Set only when the bowtie was created by `facilityOrchestrator.composeBowtiesIfWired`;
+    /// user-created bowties leave this `None`. Filtered by
+    /// `bowtieMetadataStore.bowtiesForFacility(facilityId)` for teardown +
+    /// catalog grouping.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_facility: Option<String>,
 }
 
 /// User-provided role classification for an ambiguous event slot.
@@ -160,6 +167,11 @@ pub enum LayoutEditDelta {
         event_id_hex: String,
         #[serde(default)]
         name: Option<String>,
+        /// Spec 018 / S6 (D1) — set when the bowtie was composed by the
+        /// facility orchestrator (`composeBowtiesIfWired`). User-created
+        /// bowties omit this field.
+        #[serde(default)]
+        created_by_facility: Option<String>,
     },
     /// Delete a bowtie entry.
     #[serde(rename_all = "camelCase")]
@@ -258,6 +270,28 @@ pub enum LayoutEditDelta {
         slot_label: String,
         channel_id: String,
     },
+    /// Create an information channel — hardware-owned or user-owned
+    /// (Spec 018 / S5, generalized in the atomic-save fold).
+    ///
+    /// `apply_layout_deltas` is a no-op for this variant — channels live
+    /// in the companion `channels.yaml` document. `apply_channel_deltas`
+    /// (in `layout::channels`) handles the actual mutation. Ownership is
+    /// carried on the `InformationChannel` value; hardware- and user-owned
+    /// channels share this delta so all channel edits ride one atomic save.
+    #[serde(rename_all = "camelCase")]
+    CreateChannel {
+        channel: crate::layout::channels::InformationChannel,
+    },
+    /// Rename an existing information channel (no-op if `channel_id` is
+    /// unknown, matching the facility rename semantics).
+    #[serde(rename_all = "camelCase")]
+    RenameChannel {
+        channel_id: String,
+        new_name: String,
+    },
+    /// Delete an information channel (no-op if `channel_id` is unknown).
+    #[serde(rename_all = "camelCase")]
+    DeleteChannel { channel_id: String },
 }
 
 impl LayoutEditDelta {
@@ -287,6 +321,7 @@ pub fn apply_layout_deltas(layout: &mut LayoutFile, deltas: Vec<LayoutEditDelta>
             LayoutEditDelta::CreateBowtie {
                 event_id_hex,
                 name,
+                created_by_facility,
             } => {
                 layout
                     .bowties
@@ -294,6 +329,7 @@ pub fn apply_layout_deltas(layout: &mut LayoutFile, deltas: Vec<LayoutEditDelta>
                     .or_insert_with(|| BowtieMetadata {
                         name,
                         tags: vec![],
+                        created_by_facility,
                     });
             }
             LayoutEditDelta::DeleteBowtie { event_id_hex } => {
@@ -310,6 +346,7 @@ pub fn apply_layout_deltas(layout: &mut LayoutFile, deltas: Vec<LayoutEditDelta>
                         .or_insert_with(|| BowtieMetadata {
                             name: None,
                             tags: vec![],
+                            created_by_facility: None,
                         });
                 entry.name = Some(new_name);
             }
@@ -373,10 +410,15 @@ pub fn apply_layout_deltas(layout: &mut LayoutFile, deltas: Vec<LayoutEditDelta>
             | LayoutEditDelta::RenameFacility { .. }
             | LayoutEditDelta::DeleteFacility { .. }
             | LayoutEditDelta::AttachChannelToSlot { .. }
-            | LayoutEditDelta::DetachChannelFromSlot { .. } => {
+            | LayoutEditDelta::DetachChannelFromSlot { .. }
+            | LayoutEditDelta::CreateChannel { .. }
+            | LayoutEditDelta::RenameChannel { .. }
+            | LayoutEditDelta::DeleteChannel { .. } => {
                 // Facilities live outside LayoutFile (facilities.yaml).
                 // Handled by `layout::facilities::apply_facility_deltas`,
                 // called from save_layout_directory alongside this function.
+                // Channel variants live in channels.yaml and are handled
+                // by `layout::channels::apply_channel_deltas`.
             }
         }
     }
@@ -555,6 +597,7 @@ mod tests {
         layout.bowties.insert("not-hex".to_string(), BowtieMetadata {
             name: None,
             tags: vec![],
+            created_by_facility: None,
         });
         assert!(layout.validate().unwrap_err().contains("Invalid bowtie key"));
     }
@@ -565,6 +608,7 @@ mod tests {
         layout.bowties.insert("planning-1774043332542".to_string(), BowtieMetadata {
             name: Some("My planning bowtie".to_string()),
             tags: vec![],
+            created_by_facility: None,
         });
         assert!(layout.validate().is_ok());
     }
@@ -587,6 +631,7 @@ mod tests {
             BowtieMetadata {
                 name: Some("Test Bowtie".to_string()),
                 tags: vec!["yard".to_string()],
+            created_by_facility: None,
             },
         );
         layout.role_classifications.insert(
@@ -623,6 +668,7 @@ mod tests {
             LayoutEditDelta::CreateBowtie {
                 event_id_hex: "05.01.01.01.FF.00.00.01".to_string(),
                 name: Some("Yard Entry".to_string()),
+                created_by_facility: None,
             },
         ]);
         assert_eq!(layout.bowties.len(), 1);
@@ -637,11 +683,13 @@ mod tests {
         layout.bowties.insert("05.01.01.01.FF.00.00.01".to_string(), BowtieMetadata {
             name: Some("Original".to_string()),
             tags: vec!["yard".to_string()],
+            created_by_facility: None,
         });
         apply_layout_deltas(&mut layout, vec![
             LayoutEditDelta::CreateBowtie {
                 event_id_hex: "05.01.01.01.FF.00.00.01".to_string(),
                 name: Some("Overwrite Attempt".to_string()),
+                created_by_facility: None,
             },
         ]);
         // Should not overwrite
@@ -654,6 +702,7 @@ mod tests {
         layout.bowties.insert("05.01.01.01.FF.00.00.01".to_string(), BowtieMetadata {
             name: Some("Doomed".to_string()),
             tags: vec![],
+            created_by_facility: None,
         });
         apply_layout_deltas(&mut layout, vec![
             LayoutEditDelta::DeleteBowtie { event_id_hex: "05.01.01.01.FF.00.00.01".to_string() },
@@ -667,6 +716,7 @@ mod tests {
         layout.bowties.insert("05.01.01.01.FF.00.00.01".to_string(), BowtieMetadata {
             name: Some("Old Name".to_string()),
             tags: vec!["yard".to_string()],
+            created_by_facility: None,
         });
         apply_layout_deltas(&mut layout, vec![
             LayoutEditDelta::RenameBowtie {
@@ -698,6 +748,7 @@ mod tests {
         layout.bowties.insert("05.01.01.01.FF.00.00.01".to_string(), BowtieMetadata {
             name: None,
             tags: vec!["yard".to_string()],
+            created_by_facility: None,
         });
         apply_layout_deltas(&mut layout, vec![
             LayoutEditDelta::AddTag {
@@ -718,6 +769,7 @@ mod tests {
         layout.bowties.insert("05.01.01.01.FF.00.00.01".to_string(), BowtieMetadata {
             name: None,
             tags: vec!["yard".to_string()],
+            created_by_facility: None,
         });
         apply_layout_deltas(&mut layout, vec![
             LayoutEditDelta::AddTag {
@@ -753,6 +805,7 @@ mod tests {
         layout.bowties.insert("planning-123".to_string(), BowtieMetadata {
             name: Some("My Bowtie".to_string()),
             tags: vec!["yard".to_string()],
+            created_by_facility: None,
         });
         apply_layout_deltas(&mut layout, vec![
             LayoutEditDelta::AdoptEventId {
@@ -792,6 +845,7 @@ mod tests {
             LayoutEditDelta::CreateBowtie {
                 event_id_hex: "05.01.01.01.FF.00.00.01".to_string(),
                 name: Some("Signal A".to_string()),
+                created_by_facility: None,
             },
             LayoutEditDelta::AddTag {
                 event_id_hex: "05.01.01.01.FF.00.00.01".to_string(),
@@ -818,6 +872,7 @@ mod tests {
         layout.bowties.insert("05.01.01.01.FF.00.00.01".to_string(), BowtieMetadata {
             name: Some("Untouched".to_string()),
             tags: vec![],
+            created_by_facility: None,
         });
         apply_layout_deltas(&mut layout, vec![]);
         assert_eq!(layout.bowties.get("05.01.01.01.FF.00.00.01").unwrap().name.as_deref(), Some("Untouched"));
@@ -829,6 +884,7 @@ mod tests {
             LayoutEditDelta::CreateBowtie {
                 event_id_hex: "05.01.01.01.FF.00.00.01".to_string(),
                 name: Some("Test".to_string()),
+                created_by_facility: None,
             },
             LayoutEditDelta::ClassifyRole {
                 key: "node:path".to_string(),
@@ -884,6 +940,7 @@ mod tests {
         layout.bowties.insert("05.01.01.01.FF.00.00.01".to_string(), BowtieMetadata {
             name: Some("Existing".to_string()),
             tags: vec!["yard".to_string()],
+            created_by_facility: None,
         });
         let bowties_before: Vec<String> = layout.bowties.keys().cloned().collect();
         let roles_before = layout.role_classifications.len();
@@ -1096,5 +1153,76 @@ mod tests {
             }],
         );
         assert!(layout.node_mode_selections.is_empty());
+    }
+
+    // ── Spec 018 / S6 (D1) — createdByFacility back-reference ────────────
+
+    #[test]
+    fn s6_bowtie_metadata_roundtrips_created_by_facility() {
+        let mut layout = LayoutFile::default();
+        layout.bowties.insert(
+            "0501010101FF0001".to_string(),
+            BowtieMetadata {
+                name: Some("Block 5 — lit".to_string()),
+                tags: vec![],
+                created_by_facility: Some("f-block-5".to_string()),
+            },
+        );
+        let yaml = serde_yaml_ng::to_string(&layout).unwrap();
+        assert!(yaml.contains("createdByFacility: f-block-5"));
+        let parsed: LayoutFile = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(
+            parsed.bowties.get("0501010101FF0001").unwrap().created_by_facility.as_deref(),
+            Some("f-block-5"),
+        );
+    }
+
+    #[test]
+    fn s6_bowtie_metadata_created_by_facility_absent_deserializes_as_none() {
+        let yaml = r#"
+schemaVersion: "2.0"
+bowties:
+  "0501010101FF0001":
+    name: "Manual bowtie"
+"#;
+        let parsed: LayoutFile = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(
+            parsed
+                .bowties
+                .get("0501010101FF0001")
+                .unwrap()
+                .created_by_facility,
+            None,
+        );
+    }
+
+    #[test]
+    fn s6_apply_create_bowtie_preserves_created_by_facility() {
+        let mut layout = LayoutFile::default();
+        apply_layout_deltas(
+            &mut layout,
+            vec![LayoutEditDelta::CreateBowtie {
+                event_id_hex: "0501010101FF0001".to_string(),
+                name: Some("Block 5 — lit".to_string()),
+                created_by_facility: Some("f-block-5".to_string()),
+            }],
+        );
+        let entry = layout.bowties.get("0501010101FF0001").unwrap();
+        assert_eq!(entry.name.as_deref(), Some("Block 5 — lit"));
+        assert_eq!(entry.created_by_facility.as_deref(), Some("f-block-5"));
+    }
+
+    #[test]
+    fn s6_create_bowtie_delta_from_frontend_json_with_created_by_facility() {
+        let json = r#"[
+            {"type":"createBowtie","eventIdHex":"0501010101FF0001","name":"Block 5 — lit","createdByFacility":"f-block-5"}
+        ]"#;
+        let parsed: Vec<LayoutEditDelta> = serde_json::from_str(json).unwrap();
+        match &parsed[0] {
+            LayoutEditDelta::CreateBowtie { created_by_facility, .. } => {
+                assert_eq!(created_by_facility.as_deref(), Some("f-block-5"));
+            }
+            _ => panic!("expected CreateBowtie"),
+        }
     }
 }

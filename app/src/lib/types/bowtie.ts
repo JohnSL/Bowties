@@ -33,6 +33,13 @@ export interface LayoutFile {
 export interface BowtieMetadata {
   name?: string;
   tags: string[];
+  /**
+   * Facility ID that composed this bowtie (Spec 018 / S6 — D1).
+   * Set only when the bowtie was created by the facility orchestrator's
+   * compose-on-Wired hook. `bowtieMetadataStore.bowtiesForFacility` filters
+   * by this field for teardown + catalog surfaces.
+   */
+  createdByFacility?: string;
 }
 
 /** User-provided role for an ambiguous event slot */
@@ -55,7 +62,7 @@ export interface RecentLayout {
  * The backend applies them to its disk-authoritative copy (ADR-0002).
  */
 export type LayoutEditDelta =
-  | { type: 'createBowtie'; eventIdHex: string; name?: string | null }
+  | { type: 'createBowtie'; eventIdHex: string; name?: string | null; createdByFacility?: string | null }
   | { type: 'deleteBowtie'; eventIdHex: string }
   | { type: 'renameBowtie'; eventIdHex: string; newName: string }
   | { type: 'addTag'; eventIdHex: string; tag: string }
@@ -88,7 +95,17 @@ export type LayoutEditDelta =
   /** Attach a channel to a facility slot (Spec 018 / S4 — D8 cardinality). */
   | { type: 'attachChannelToSlot'; facilityId: string; slotLabel: string; channelId: string }
   /** Detach a channel from a facility slot (Spec 018 / S4). */
-  | { type: 'detachChannelFromSlot'; facilityId: string; slotLabel: string; channelId: string };
+  | { type: 'detachChannelFromSlot'; facilityId: string; slotLabel: string; channelId: string }
+  /**
+   * Create an information channel — hardware- or user-owned. All channel
+   * edits travel one delta path so they land atomically inside
+   * `save_layout_directory` (ADR-0002). Backend rejects duplicate ids.
+   */
+  | { type: 'createChannel'; channel: import('$lib/api/channels').InformationChannel }
+  /** Rename an existing channel (backend rejects unknown ids). */
+  | { type: 'renameChannel'; channelId: string; newName: string }
+  /** Delete an information channel (idempotent for unknown ids). */
+  | { type: 'deleteChannel'; channelId: string };
 
 // ── Bowtie State ──────────────────────────────────────────────────────────────
 
@@ -99,7 +116,7 @@ export type BowtieState = 'active' | 'incomplete' | 'planning';
 
 /** Discriminated union for bowtie metadata edit operations */
 export type BowtieEditKind =
-  | { type: 'create'; eventIdHex: string; name?: string }
+  | { type: 'create'; eventIdHex: string; name?: string; createdByFacility?: string }
   | { type: 'delete'; eventIdHex: string }
   | { type: 'rename'; eventIdHex: string; oldName?: string; newName: string }
   | { type: 'addTag'; eventIdHex: string; tag: string }

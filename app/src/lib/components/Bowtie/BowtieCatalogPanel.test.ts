@@ -21,6 +21,10 @@ const {
   mockTreeByNodeId,
   mockDraftConfigChange,
   mockUpsertConfigChange,
+  mockCatalogState,
+  mockLayoutState,
+  mockClassifications,
+  mockMetadata,
 } = vi.hoisted(() => {
   const draftConfigChange = { value: null as any };
   return {
@@ -35,6 +39,12 @@ const {
         ...change,
       };
     }),
+    // Stateful mock backing for the real `buildEffectiveBowtiePreview` merge
+    // when a test opts in by calling it directly via `vi.importActual`.
+    mockCatalogState: { catalog: null as any },
+    mockLayoutState: { layout: null as any },
+    mockClassifications: new Map<string, { role: 'Producer' | 'Consumer' }>(),
+    mockMetadata: new Map<string, any>(),
   };
 });
 
@@ -53,7 +63,7 @@ const mockPreviewCards: any[] = [];
 
 vi.mock('$lib/stores/bowties.svelte', () => ({
   bowtieCatalogStore: {
-    get catalog() { return null; },
+    get catalog() { return mockCatalogState.catalog; },
     get readComplete() { return mockReadComplete.value; },
     get displayableBowties() { return []; },
   },
@@ -67,6 +77,7 @@ vi.mock('$lib/stores/layout.svelte', () => ({
   layoutStore: {
     get hasLayoutFile() { return mockHasLayoutFile.value; },
     get isOfflineMode() { return mockIsOfflineMode.value; },
+    get layout() { return mockLayoutState.layout; },
   },
 }));
 
@@ -82,12 +93,19 @@ vi.mock('$lib/stores/bowtieMetadata.svelte', () => ({
   bowtieMetadataStore: {
     getAllTags: () => [],
     hasPendingDeletion: () => false,
+    get isDirty() { return false; },
+    getMetadata: (id: string) => mockMetadata.get(id),
+    getDirtyFields: () => new Set<string>(),
+    getRoleClassification: (key: string) => mockClassifications.get(key),
+    get allEventIds() { return [] as string[]; },
+    classifyRole: (key: string, role: 'Producer' | 'Consumer') =>
+      mockClassifications.set(key, { role }),
   },
 }));
 
 vi.mock('$lib/stores/nodeTree.svelte', () => ({
   nodeTreeStore: {
-    get trees() { return new Map(); },
+    get trees() { return mockTreeByNodeId; },
     getTree: (nodeId: string) => mockTreeByNodeId.get(nodeId),
   },
 }));
@@ -122,9 +140,13 @@ vi.mock('$lib/orchestration/configDraftOrchestrator', () => ({
   flushDraftToBackend: vi.fn(),
 }));
 
-vi.mock('$lib/utils/eventIds', () => ({
-  generateFreshEventIdForNode: vi.fn(() => '00.00.00.00.00.00.00.00'),
-}));
+vi.mock('$lib/utils/eventIds', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('$lib/utils/eventIds')>();
+  return {
+    ...actual,
+    generateFreshEventIdForNode: vi.fn(() => '00.00.00.00.00.00.00.00'),
+  };
+});
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -135,6 +157,10 @@ beforeEach(() => {
   mockPreviewCards.length = 0;
   mockTreeByNodeId.clear();
   mockDraftConfigChange.value = null;
+  mockCatalogState.catalog = null;
+  mockLayoutState.layout = null;
+  mockClassifications.clear();
+  mockMetadata.clear();
   vi.clearAllMocks();
 });
 
@@ -407,5 +433,112 @@ describe('BowtieCatalogPanel — catalog content (readComplete=true, hasUnreadNo
     expect(value.hex).toBe('0000000000000000');
     // Should NOT use the old setModifiedValue IPC directly
     expect(mockSetModifiedValue).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Reclassified-ambiguous → last-consumer remove flow ─────────────────────
+//
+// Regression pin for the merge-Owner symmetry fix in
+// `buildEffectiveBowtiePreview`. Before the fix, an entry moved from
+// `card.ambiguous_entries` into `consumers` via a pending role classification
+// kept `role: 'Ambiguous'`, so `confirmRemove`'s
+// `isLastConsumer = ... && entry.role === 'Consumer'` was false,
+// `willBecomeEmpty` was false, and the "Remove last element?" delete-bowtie
+// dialog was skipped — the removal silently fell into `doRemoveElement`.
+//
+// This test drives the panel through the REAL merge (via `vi.importActual`)
+// so it observes whatever role the current implementation of the merge Owner
+// produces.
+
+describe('BowtieCatalogPanel — reclassified-ambiguous last-consumer remove', () => {
+  const CARD_HEX = '0201570002D90006';
+  const CARD_BYTES = [0x02, 0x01, 0x57, 0x00, 0x02, 0xD9, 0x00, 0x06];
+
+  it('reaches the delete-bowtie confirmation when removing a reclassified last consumer', async () => {
+    mockReadComplete.value = true;
+
+    const consumerNodeId = '020157000001';
+    const consumerPath = ['seg:0', 'elem:9#1', 'elem:0'];
+    const producerNodeId = '020157000002';
+
+    // Catalog: 1 producer + 1 ambiguous entry that the user will classify as Consumer.
+    const catalog = {
+      bowties: [{
+        event_id_hex: CARD_HEX,
+        event_id_bytes: CARD_BYTES,
+        producers: [{
+          node_key: producerNodeId,
+          node_name: 'Producer Peer',
+          element_path: ['seg:0', 'elem:0'],
+          element_label: 'Producer Slot',
+          element_description: null,
+          event_id: CARD_BYTES,
+          role: 'Producer',
+        }],
+        consumers: [],
+        ambiguous_entries: [{
+          node_key: consumerNodeId,
+          node_name: 'Consumer Node',
+          element_path: consumerPath,
+          element_label: 'Unknown Slot',
+          element_description: 'Ambiguous slot on consumer node',
+          event_id: CARD_BYTES,
+          role: 'Ambiguous',
+        }],
+        name: 'Reclassify Bowtie',
+        tags: [],
+        state: 'Incomplete',
+      }],
+      built_at: '2026-07-03T00:00:00Z',
+      source_node_count: 2,
+      total_slots_scanned: 2,
+    };
+    mockCatalogState.catalog = catalog;
+
+    // Tree for the consumer node so the entry survives leaf reconciliation.
+    mockTreeByNodeId.set(consumerNodeId, makeTree(consumerNodeId, [
+      makeEventLeaf({
+        address: 900,
+        path: consumerPath,
+        eventRole: null,
+        value: { type: 'eventId', bytes: CARD_BYTES, hex: CARD_HEX },
+      }),
+    ]));
+
+    // Pending role classification: user picked Consumer.
+    const slotKey = `${consumerNodeId}:${consumerPath.join('/')}`;
+    mockClassifications.set(slotKey, { role: 'Consumer' });
+
+    // Invoke the REAL merge (bypassing the module-level stub that returns
+    // `mockPreviewCards`) so the test observes whatever shape the current
+    // merge Owner produces. Before the fix, the reclassified entry keeps
+    // `role: 'Ambiguous'`; after the fix, it becomes `role: 'Consumer'`.
+    //
+    // `vi.importActual` returns the real module with its own store singleton
+    // — seed that singleton so the real merge's `bowtieCatalogStore.catalog`
+    // read finds the test catalog.
+    const bowties = await vi.importActual<typeof import('$lib/stores/bowties.svelte')>(
+      '$lib/stores/bowties.svelte',
+    );
+    bowties.bowtieCatalogStore.setCatalog(catalog as any);
+    mockPreviewCards.push(...bowties.buildEffectiveBowtiePreview().bowties);
+
+    render(BowtieCatalogPanel, {
+      props: {
+        hasUnreadNodes: false,
+        readingConfig: false,
+      },
+    });
+
+    // Click the remove-× on the reclassified consumer row, then the
+    // "Remove" button in the entry-removal confirmation dialog.
+    // element_label is tree-enriched to "Configuration.Event ID" by the merge.
+    await fireEvent.click(screen.getByRole('button', { name: /remove consumer configuration\.event id/i }));
+    expect(screen.getByText(/remove entry\?/i)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: /^remove$/i }));
+
+    // The card had exactly 1 producer + 1 (reclassified) consumer, so removing
+    // the consumer triggers the last-element delete-bowtie confirmation.
+    expect(screen.getByText(/remove last element\?/i)).toBeInTheDocument();
   });
 });

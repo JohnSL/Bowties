@@ -38,6 +38,7 @@ function makeOpenResult(over: Partial<OpenLayoutResult> = {}): OpenLayoutResult 
     partialNodes: [],
     nodeSnapshots: [],
     recoveryOccurred: false,
+    loadWarnings: [],
     ...over,
   };
 }

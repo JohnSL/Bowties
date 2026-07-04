@@ -922,6 +922,7 @@ mod tests {
             ],
             relevance_rules: vec![],
             configuration_modes: vec![],
+            styles: vec![],
         };
 
         let report = annotate_tree(&mut tree, &profile, &std::collections::BTreeMap::new(), &cdi);
@@ -988,6 +989,7 @@ mod tests {
             ],
             relevance_rules: vec![],
             configuration_modes: vec![],
+            styles: vec![],
         };
 
         let report = annotate_tree(&mut tree, &profile, &std::collections::BTreeMap::new(), &cdi);
@@ -1041,6 +1043,7 @@ mod tests {
             }],
             relevance_rules: vec![],
             configuration_modes: vec![],
+            styles: vec![],
         };
 
         let report = annotate_tree(&mut tree, &profile, &std::collections::BTreeMap::new(), &cdi);
@@ -1088,6 +1091,7 @@ mod tests {
             }],
             relevance_rules: vec![],
             configuration_modes: vec![],
+            styles: vec![],
         };
 
         let report = annotate_tree(&mut tree, &profile, &std::collections::BTreeMap::new(), &cdi);
@@ -1127,6 +1131,7 @@ mod tests {
             }],
             relevance_rules: vec![],
             configuration_modes: vec![],
+            styles: vec![],
         };
 
         let report = annotate_tree(&mut tree, &profile, &std::collections::BTreeMap::new(), &cdi);
@@ -1178,6 +1183,7 @@ mod tests {
                     overlay: types::Overlay::default(),
                 }],
             }],
+            styles: vec![],
         };
 
         let library = types::SharedDaughterboardLibrary {
@@ -1320,6 +1326,7 @@ mod tests {
                     }],
                 },
             ],
+            styles: vec![],
         };
 
         let outcome = build_connector_profile_with_diagnostics(
@@ -1402,6 +1409,7 @@ mod tests {
                     }],
                 },
             ],
+            styles: vec![],
         };
 
         let library = types::SharedDaughterboardLibrary {
@@ -1500,6 +1508,7 @@ mod tests {
                     overlay: types::Overlay::default(),
                 }],
             }],
+            styles: vec![],
         };
 
         // Library: BOD-8-SM declares a channel_inputs[] entry with
@@ -1608,6 +1617,7 @@ mod tests {
                     overlay: types::Overlay::default(),
                 }],
             }],
+            styles: vec![],
         };
 
         // BOD4 binds the style to inputs 1..=4 only (mixed-I/O board).
@@ -1732,6 +1742,7 @@ mod tests {
                     }],
                 },
             ],
+            styles: vec![],
         };
 
         let library = types::SharedDaughterboardLibrary {
@@ -2020,6 +2031,7 @@ mod tests {
             event_roles: vec![],
             relevance_rules: vec![],
             configuration_modes: modes,
+            styles: vec![],
         }
     }
 

@@ -13,7 +13,7 @@
  *   (b) Select channel opens picker with all 8 unbound role-compatible
  *   (c) confirm fills slot + lights up the Channels-panel cell
  *   (d) `effectiveNodeStore.dirtyBreakdown.facilities === 1`
- *   (e) Rebind atomic swap
+ *   (e) [retired in S6 D4 — Rebind removed; swap = Remove + Select]
  *   (f) Remove-from-slot empties + clears Used by
  *   (g) Channels-panel rename flows through to slot display
  *   (h) save → close → reopen round-trips the binding
@@ -42,9 +42,20 @@ vi.mock('$lib/api/facilities', () => ({
 }));
 vi.mock('$lib/api/channels', () => ({
   listChannels: listChannelsMock,
-  createChannels: async (channels: InformationChannel[]) => channels,
-  renameChannel: async () => undefined,
-  deleteChannels: async () => undefined,
+}));
+// S6 compose-on-Wired hook triggers this IPC; stub it out because the S4
+// select-only tests here don't reach Wired, but the compose call still runs
+// on the input-slot fill path (it's a cheap Incomplete no-op) so the IPC
+// import must resolve to something.
+vi.mock('$lib/api/facilityBowties', () => ({
+  composeFacilityBowties: async () => [],
+}));
+// Spec 018 / S6 bugfix — orchestrator syncs drafts to LayoutState before
+// each compose (when Wired). Stub for safety even though most select-only
+// paths don't cross the Wired guard.
+vi.mock('$lib/api/layout', () => ({
+  syncLayoutDrafts: async () => undefined,
+  clearLayoutDrafts: async () => undefined,
 }));
 
 const { facilitiesStore } = await import('$lib/stores/facilities.svelte');
@@ -130,13 +141,12 @@ beforeEach(async () => {
 });
 
 describe('Spec 018 / S4 — Select-channel user journey (integration)', () => {
-  function mountPanel(opts: { onSelectChannel?: (fId: string, slot: string) => void; onRebindChannel?: (fId: string, slot: string, cur: string) => void; onRemoveFromSlot?: (fId: string, slot: string, cur: string) => void } = {}) {
+  function mountPanel(opts: { onSelectChannel?: (fId: string, slot: string) => void; onRemoveFromSlot?: (fId: string, slot: string, cur: string) => void } = {}) {
     return render(RailroadPanel, {
       props: {
         nodeName: stubNodeName,
         usedBy: (channelId: string) => effectiveLayoutStore.channelUsageMap.get(channelId) ?? [],
         onSelectChannel: opts.onSelectChannel,
-        onRebindChannel: opts.onRebindChannel,
         onRemoveFromSlot: opts.onRemoveFromSlot,
       },
     });
@@ -161,7 +171,7 @@ describe('Spec 018 / S4 — Select-channel user journey (integration)', () => {
 
     // Simulate the route's picker confirm → orchestrator dispatch.
     orch.selectChannelForSlot({
-      facilityId: 'f-block-5', slotLabel: 'input', channelId: 'ch-bod-1', mode: 'select',
+      facilityId: 'f-block-5', slotLabel: 'input', channelId: 'ch-bod-1',
     });
     await tick();
 
@@ -179,7 +189,7 @@ describe('Spec 018 / S4 — Select-channel user journey (integration)', () => {
     expect(effectiveNodeStore.dirtyBreakdown.facilities).toBe(1);
   });
 
-  it('AC(e): Rebind atomically swaps the bound channel (old Used by reverts, new lights up)', async () => {
+  it('AC(e) [retired in S6 D4]: swapping a channel is Remove + Select — no atomic Rebind action', async () => {
     // Start with ch-bod-1 already attached (simulating "saved baseline").
     facilitiesStore.hydrateBaseline([
       {
@@ -192,10 +202,22 @@ describe('Spec 018 / S4 — Select-channel user journey (integration)', () => {
     mountPanel();
     expect(usedByCell('TowerLCC-1 BOD A1').textContent?.trim()).toBe('Block 5 / input');
 
-    // Rebind to ch-bod-2.
-    orch.selectChannelForSlot({
-      facilityId: 'f-block-5', slotLabel: 'input', channelId: 'ch-bod-2', mode: 'rebind', previousChannelId: 'ch-bod-1',
-    });
+    // The filled-state slot no longer offers a Rebind button.
+    const filledSlot = slotByLabel('input');
+    expect(within(filledSlot).queryByTestId('rebind-channel-button')).toBeNull();
+
+    // Attempting to attach a second channel into the max=1 slot is rejected
+    // by the orchestrator's cardinality guard — the user MUST Remove first.
+    expect(() =>
+      orch.selectChannelForSlot({
+        facilityId: 'f-block-5', slotLabel: 'input', channelId: 'ch-bod-2',
+      }),
+    ).toThrow(orch.SlotAtMaxError);
+
+    // Two-step swap: Remove then Select. Both actions ship in S6 as the
+    // sole swap flow (D4).
+    await orch.removeFromSlot({ facilityId: 'f-block-5', slotLabel: 'input', channelId: 'ch-bod-1' });
+    await orch.selectChannelForSlot({ facilityId: 'f-block-5', slotLabel: 'input', channelId: 'ch-bod-2' });
     await tick();
 
     expect(usedByCell('TowerLCC-1 BOD A1').textContent?.trim()).toBe('—');
@@ -255,7 +277,7 @@ describe('Spec 018 / S4 — Select-channel user journey (integration)', () => {
   it('AC(h): save → close → reopen round-trips the slot binding', async () => {
     // Simulate the post-save hydrate cycle.
     orch.selectChannelForSlot({
-      facilityId: 'f-block-5', slotLabel: 'input', channelId: 'ch-bod-1', mode: 'select',
+      facilityId: 'f-block-5', slotLabel: 'input', channelId: 'ch-bod-1',
     });
     expect(facilitiesStore.collectDeltas()).toEqual([
       { type: 'attachChannelToSlot', facilityId: 'f-block-5', slotLabel: 'input', channelId: 'ch-bod-1' },

@@ -541,6 +541,48 @@ export function groupReplicatedChildren(children: ConfigNode[]): GroupedChild[] 
   return result;
 }
 
+/**
+ * Enumerate the replicated instances of a named group under `parent`.
+ *
+ * `build_children` (Rust) emits a two-level shape for any CDI group with
+ * `replication > 1`: a single wrapper `GroupNode { instance: 0, replicationOf: name }`
+ * is inserted directly under the parent, with the 1..N instance groups as the
+ * wrapper's children. Hand-built test fixtures sometimes emit instances as
+ * direct siblings of the parent instead. This helper recognises both shapes
+ * so consumers (lamp-row enumeration, signal-mast row enumeration, etc.) do
+ * not have to re-encode the wrapper invariant.
+ *
+ * Returns instances in 1-based ordinal order; the array is empty when the
+ * named group is not present under `parent`.
+ */
+export function replicationInstances(
+  parent: ConfigNode[],
+  name: string,
+): GroupConfigNode[] {
+  // Wrapper shape first: wrapper has `instance === 0`.
+  for (const child of parent) {
+    if (
+      isGroup(child) &&
+      child.instance === 0 &&
+      child.replicationOf === name
+    ) {
+      const instances = child.children.filter(
+        (c): c is GroupConfigNode =>
+          isGroup(c) && c.replicationOf === name && c.instance > 0,
+      );
+      instances.sort((a, b) => a.instance - b.instance);
+      return instances;
+    }
+  }
+  // Sibling shape: instance groups appear directly under the parent.
+  const siblings = parent.filter(
+    (c): c is GroupConfigNode =>
+      isGroup(c) && c.replicationOf === name && c.instance > 0,
+  );
+  siblings.sort((a, b) => a.instance - b.instance);
+  return siblings;
+}
+
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
 /** Parse "seg:N" into N, or null on failure. */

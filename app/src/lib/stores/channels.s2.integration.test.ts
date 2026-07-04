@@ -1,31 +1,24 @@
 // Spec 018 / S2 integration test for the new channel schema (role / style /
 // ownership / binding). Drives the BOD-select auto-create path through the
-// orchestrator's pure builder, the draft store, the legacy create/list IPCs,
+// orchestrator's pure builder, the draft store, the atomic-save delta path,
 // and back. Asserts the new schema is preserved end-to-end and that
 // `channelType` / `hardwareRef` are GONE (ADR-0013 retirement).
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { InformationChannel } from '$lib/api/channels';
+import type { LayoutEditDelta } from '$lib/types/bowtie';
 import type {
   ConnectorProfileView,
   ConnectorSelectionDocument,
 } from '$lib/types/connectorProfile';
 
 const listChannelsMock = vi.fn<() => Promise<InformationChannel[]>>(async () => []);
-const createChannelsMock = vi.fn<(channels: InformationChannel[]) => Promise<InformationChannel[]>>(
-  async (channels) => channels,
-);
-const renameChannelMock = vi.fn<(id: string, newName: string) => Promise<void>>(async () => {});
-const deleteChannelsMock = vi.fn<(ids: string[]) => Promise<void>>(async () => {});
 
 vi.mock('$lib/api/channels', async (importOriginal) => {
   const actual = await importOriginal<typeof import('$lib/api/channels')>();
   return {
     ...actual,
     listChannels: listChannelsMock,
-    createChannels: createChannelsMock,
-    renameChannel: renameChannelMock,
-    deleteChannels: deleteChannelsMock,
   };
 });
 
@@ -81,10 +74,6 @@ beforeEach(() => {
   channelsStore.reset();
   listChannelsMock.mockReset();
   listChannelsMock.mockResolvedValue([]);
-  createChannelsMock.mockReset();
-  createChannelsMock.mockImplementation(async (channels) => channels);
-  renameChannelMock.mockReset();
-  deleteChannelsMock.mockReset();
 });
 
 describe('Spec 018 / S2: channel schema (role/style/ownership/binding) end-to-end', () => {
@@ -126,19 +115,18 @@ describe('Spec 018 / S2: channel schema (role/style/ownership/binding) end-to-en
       expect((ch as unknown as Record<string, unknown>).hardwareRef).toBeUndefined();
     }
 
-    // ── 4. Push to the draft store, then run the legacy save flush
-    //      (createChannels IPC) — the on-wire shape must be the new schema. ─
+    // ── 4. Push to the draft store, then collect the atomic-save deltas —
+    //      the on-wire shape must be the new schema. ─────────────────────────
     channelsStore.addPendingChannels(channels);
     expect(channelsStore.isDirty).toBe(true);
     expect(channelsStore.channels).toHaveLength(8);
     expect(channelsStore.grouped.get('block-occupancy')).toHaveLength(8);
 
-    const { createChannels } = await import('$lib/api/channels');
-    await createChannels(channelsStore.pendingCreations);
-    expect(createChannelsMock).toHaveBeenCalledTimes(1);
-    const sent = createChannelsMock.mock.calls[0][0];
-    expect(sent).toHaveLength(8);
-    expect(sent[0]).toEqual(channels[0]);
+    const deltas = channelsStore.collectDeltas();
+    expect(deltas).toHaveLength(8);
+    expect(deltas.every((d) => d.type === 'createChannel')).toBe(true);
+    const firstCreate = deltas[0] as Extract<LayoutEditDelta, { type: 'createChannel' }>;
+    expect(firstCreate.channel).toEqual(channels[0]);
 
     // ── 5. Close + reopen: reset, then reload from a backend that returns
     //      the same shape. SC-002 — schema round-trip exact. ────────────────

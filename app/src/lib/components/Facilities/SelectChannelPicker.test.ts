@@ -1,7 +1,7 @@
 /**
  * Spec 018 / S4 component test for `SelectChannelPicker`. Verifies the
  * picker dialog's contract: candidate rendering, search filter, Confirm
- * gating (especially Rebind-vs-same disabled), Cancel via Esc / button.
+ * gating (Confirm enables once any candidate is selected), Cancel via Esc / button.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -20,7 +20,7 @@ function bod(input: number, name = `BOD A${input}`): InformationChannel {
   };
 }
 
-const baseChannelState = () => 'unknown' as const;
+const baseChannelState = () => ({ kind: 'unknown' as const });
 
 describe('SelectChannelPicker — select mode', () => {
   let onConfirm: ReturnType<typeof vi.fn<(channelId: string) => void>>;
@@ -118,30 +118,30 @@ describe('SelectChannelPicker — select mode', () => {
   });
 });
 
-describe('SelectChannelPicker — rebind mode', () => {
-  it('title says Rebind and pre-selects the current channel', () => {
+describe('SelectChannelPicker — Rebind retired (S6 D4)', () => {
+  it('renders the Select-channel title only (no Rebind title branch)', () => {
     render(SelectChannelPicker, {
       props: {
         slotLabel: 'input',
         requiredRole: 'block-occupancy',
-        currentChannelId: 'ch-1',
         candidateChannels: [bod(1), bod(2)],
         channelState: baseChannelState,
         onConfirm: vi.fn<(channelId: string) => void>(),
         onCancel: vi.fn<() => void>(),
       },
     });
-    expect(screen.getByText(/Rebind 'input'/)).toBeInTheDocument();
+    expect(screen.getByText(/Select channel for 'input'/)).toBeInTheDocument();
+    expect(screen.queryByText(/Rebind/)).toBeNull();
+    // No pre-selection — the radio group starts empty.
     const radios = within(screen.getByRole('radiogroup')).getAllByRole('radio') as HTMLInputElement[];
-    expect(radios[0].checked).toBe(true); // ch-1 pre-selected
+    expect(radios.every((r) => !r.checked)).toBe(true);
   });
 
-  it('Confirm stays disabled until a different channel is selected', async () => {
+  it('Confirm enables as soon as any candidate is selected', async () => {
     render(SelectChannelPicker, {
       props: {
         slotLabel: 'input',
         requiredRole: 'block-occupancy',
-        currentChannelId: 'ch-1',
         candidateChannels: [bod(1), bod(2)],
         channelState: baseChannelState,
         onConfirm: vi.fn<(channelId: string) => void>(),
@@ -149,9 +149,9 @@ describe('SelectChannelPicker — rebind mode', () => {
       },
     });
     const confirmBtn = screen.getByRole('button', { name: /confirm/i });
-    expect(confirmBtn).toBeDisabled(); // current selection equals currentChannelId
+    expect(confirmBtn).toBeDisabled(); // nothing selected yet
     const radios = within(screen.getByRole('radiogroup')).getAllByRole('radio');
-    await fireEvent.change(radios[1]);
+    await fireEvent.change(radios[0]);
     expect(confirmBtn).not.toBeDisabled();
   });
 });

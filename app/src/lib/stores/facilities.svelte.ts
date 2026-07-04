@@ -176,7 +176,8 @@ class FacilitiesStore {
 
   /** Load facilities from the backend baseline. */
   async loadFacilities(): Promise<void> {
-    this._baseline = await listFacilities();
+    const result = await listFacilities();
+    this._baseline = Array.isArray(result) ? result : [];
     this._pendingCreations = [];
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();
@@ -369,6 +370,10 @@ class FacilitiesStore {
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
+  }
+
+  resetForNewLayout(): void {
+    this.reset();
   }
 }
 

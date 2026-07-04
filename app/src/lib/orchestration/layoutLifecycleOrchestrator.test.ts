@@ -32,7 +32,11 @@ const { layoutStore } = await import('$lib/stores/layout.svelte');
 const { channelsStore } = await import('$lib/stores/channels.svelte');
 const { facilitiesStore } = await import('$lib/stores/facilities.svelte');
 const { eventStateStore } = await import('$lib/stores/eventState.svelte');
-const { layoutLifecycleOrchestrator } = await import('./layoutLifecycleOrchestrator');
+const { facilityCascadeOrchestrator } = await import(
+  './facilityCascadeOrchestrator.svelte'
+);
+const { layoutLifecycleOrchestrator, layoutScopedParticipants } = await import('./layoutLifecycleOrchestrator');
+const { bowtieCatalogStore } = await import('$lib/stores/bowties.svelte');
 
 const LIVE_KEY = '020157000001';
 const PLACEHOLDER_KEY = 'placeholder:11111111-2222-4333-8444-555555555555';
@@ -124,6 +128,13 @@ describe('layoutLifecycleOrchestrator.resetForNewLayout', () => {
     expect(partialCaptureNodesStore.nodes.size).toBe(0);
   });
 
+  it('stops the facility cascade orchestrator (S6 D3)', async () => {
+    const stopSpy = vi.spyOn(facilityCascadeOrchestrator, 'stopCascade');
+    await layoutLifecycleOrchestrator.resetForNewLayout({ connected: false });
+    expect(stopSpy).toHaveBeenCalledOnce();
+    stopSpy.mockRestore();
+  });
+
   it('reprobes for live nodes when connected and reprobeLiveNodes is true', async () => {
     const probe = vi.fn().mockResolvedValue(undefined);
     await layoutLifecycleOrchestrator.resetForNewLayout({
@@ -181,6 +192,17 @@ describe('layoutLifecycleOrchestrator.resetForNewLayout', () => {
     expect(facilitiesStore.facilities.length).toBe(0);
     expect(facilitiesStore.isEmpty).toBe(true);
     expect(facilitiesStore.isDirty).toBe(false);
+  });
+
+  it('clears bowtieCatalogStore catalog on layout close (regression)', async () => {
+    bowtieCatalogStore.setCatalog({ bowties: [], node_id: '020157000001' } as never);
+    expect(bowtieCatalogStore.catalog).not.toBeNull();
+    expect(bowtieCatalogStore.readComplete).toBe(true);
+
+    await layoutLifecycleOrchestrator.resetForNewLayout({ connected: false });
+
+    expect(bowtieCatalogStore.catalog).toBeNull();
+    expect(bowtieCatalogStore.readComplete).toBe(false);
   });
 });
 
@@ -356,5 +378,35 @@ describe('layoutLifecycleOrchestrator.closeLayout', () => {
 
     expect(closed).toBe(false);
     expect(disconnectBeforeClose).not.toHaveBeenCalled();
+  });
+});
+
+describe('registry-based dispatch', () => {
+  it('resetForNewLayout dispatches to all registered participants', async () => {
+    const spies = layoutScopedParticipants
+      .filter((p: { resetForNewLayout?: unknown }) => typeof p.resetForNewLayout === 'function')
+      .map((p: { resetForNewLayout: () => void }) => vi.spyOn(p, 'resetForNewLayout'));
+
+    await layoutLifecycleOrchestrator.resetForNewLayout({ connected: false });
+
+    for (const spy of spies) {
+      expect(spy).toHaveBeenCalledOnce();
+      spy.mockRestore();
+    }
+    expect(spies.length).toBeGreaterThan(0);
+  });
+
+  it('resetForFreshLiveSession dispatches to all registered participants', () => {
+    const spies = layoutScopedParticipants
+      .filter((p: { resetForFreshLiveSession?: unknown }) => typeof p.resetForFreshLiveSession === 'function')
+      .map((p: { resetForFreshLiveSession: () => void }) => vi.spyOn(p, 'resetForFreshLiveSession'));
+
+    layoutLifecycleOrchestrator.resetForFreshLiveSession();
+
+    for (const spy of spies) {
+      expect(spy).toHaveBeenCalledOnce();
+      spy.mockRestore();
+    }
+    expect(spies.length).toBeGreaterThan(0);
   });
 });

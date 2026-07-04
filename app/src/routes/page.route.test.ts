@@ -49,11 +49,14 @@ const {
   openLayoutFileRef: vi.fn<(path: string) => Promise<OpenLayoutResult>>(async () => ({
     layoutId: 'restored-layout',
     capturedAt: '2026-04-25T00:00:00.000Z',
+    layout: { schemaVersion: '1.0', bowties: {}, roleClassifications: {} } as OpenLayoutResult['layout'],
     offlineMode: true,
     nodeCount: 0,
     pendingOfflineChangeCount: 0,
     partialNodes: [],
     nodeSnapshots: [],
+    recoveryOccurred: false,
+    loadWarnings: [],
   })),
   closeLayoutRef: vi.fn<(decision: 'discard') => Promise<CloseLayoutResult>>(async () => ({ closed: true })),
   probeNodesRef: vi.fn(async () => {}),
@@ -138,7 +141,11 @@ vi.mock('$lib/api/layout', () => ({
     pendingOfflineChangeCount: 0,
     partialNodes: [],
     nodeSnapshots: [],
+    recoveryOccurred: false,
+    loadWarnings: [],
   })),
+  syncLayoutDrafts: vi.fn(async () => undefined),
+  clearLayoutDrafts: vi.fn(async () => undefined),
 }));
 
 vi.mock('$lib/api/startup', () => ({
@@ -259,6 +266,8 @@ beforeEach(() => {
     pendingOfflineChangeCount: 0,
     partialNodes: [],
     nodeSnapshots: [],
+    recoveryOccurred: false,
+    loadWarnings: [],
   }));
 
   // Spec 013 / S6: pre-seed an active layout context so the picker gate
@@ -545,6 +554,8 @@ describe('+page route discovery CTA', () => {
       pendingOfflineChangeCount: 0,
       partialNodes: [],
       nodeSnapshots: [],
+      recoveryOccurred: false,
+      loadWarnings: [],
     });
 
     render(Page);

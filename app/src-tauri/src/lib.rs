@@ -399,12 +399,12 @@ pub fn run() {
             commands::get_known_layouts,        // Spec 013 / S5: known-layout registry
             commands::add_known_layout,         // Spec 013 / S5: known-layout registry
             commands::remove_known_layout,      // Spec 013 / S5: known-layout registry
-            commands::list_channels,               // Spec 015 / S1: information channel inventory
-            commands::create_channels,             // Spec 015 / S3: auto-create channels
-            commands::rename_channel,              // Spec 015 / S4: inline channel rename
-            commands::delete_channels,             // Spec 015 / S5: channel removal on board change
+            commands::list_channels,               // Spec 015 / S1: information channel inventory (writes ride LayoutEditDelta via save_layout_directory)
             commands::list_behavior_templates,     // Spec 018 / S1: hardcoded behavior template registry
             commands::list_facilities,             // Spec 018 / S1: facility inventory (read-only; CRUD via delta save)
+            commands::compose_facility_bowties,    // Spec 018 / S6 (D2): compose bowtie ops for a Wired facility
+            commands::sync_layout_drafts,          // Spec 018 / S6 bugfix: mirror frontend drafts into LayoutState
+            commands::clear_layout_drafts,         // Spec 018 / S6 bugfix: drop LayoutState drafts on Discard / after Save
             commands::channel_events::resolve_channel_event_ids,  // Spec 016 / S1: batch event ID resolution
             diagnostics::get_diagnostic_report,
             update_menu_state,

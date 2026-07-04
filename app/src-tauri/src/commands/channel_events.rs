@@ -4,6 +4,37 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::state::AppState;
+use lcc_rs::cdi::EventRole;
+
+/// Binding-shape discriminator for `ChannelResolutionRequest` — mirrors the
+/// frontend `ChannelBinding` discriminated union, restricted to fields the
+/// resolver needs.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ChannelResolutionBinding {
+    #[serde(rename_all = "camelCase")]
+    ConnectorInput { connector: String, input: u32 },
+    #[serde(rename_all = "camelCase")]
+    LampRow { row_ordinal: u32 },
+}
+
+/// Role the resolver should match against the CDI tree (`producer` for
+/// hardware-input channels, `consumer` for output channels driving the bus).
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResolutionRole {
+    Producer,
+    Consumer,
+}
+
+impl From<ResolutionRole> for EventRole {
+    fn from(role: ResolutionRole) -> Self {
+        match role {
+            ResolutionRole::Producer => EventRole::Producer,
+            ResolutionRole::Consumer => EventRole::Consumer,
+        }
+    }
+}
 
 /// Request payload for batch channel event ID resolution.
 #[derive(Debug, Clone, Deserialize)]
@@ -11,10 +42,12 @@ use crate::state::AppState;
 pub struct ChannelResolutionRequest {
     pub channel_id: String,
     pub node_key: String,
-    pub connector: String,
-    pub input: u32,
-    /// State name → producerLeafIndex
-    pub event_mapping: HashMap<String, u32>,
+    pub binding: ChannelResolutionBinding,
+    pub role: ResolutionRole,
+    /// State name → leaf ordinal within the role-filtered leaves under the
+    /// binding's resolved path prefix (e.g. `producerLeafIndex` for
+    /// connectorInput / Producer, `consumerLeafIndex` for lampRow / Consumer).
+    pub leaf_index_map: HashMap<String, u32>,
 }
 
 /// Response payload for a single channel's resolved event IDs.
@@ -28,11 +61,14 @@ pub struct ChannelResolutionResult {
 
 /// Resolve event IDs for a batch of channels using their cached config trees.
 ///
-/// For each channel, looks up the tree in the node registry's proxy cache,
-/// then uses the bowties-core resolution logic to extract producer event IDs
-/// at the positions declared by the channel's event mapping.
+/// Dispatches on `binding.kind`:
+/// - `connectorInput` — uses the connector profile's `resolved_affected_paths`
+///   to find the Line group prefix, then collects leaves matching `role`.
+/// - `lampRow` — walks the `Direct Lamp Control` segment for `Lamp#N`, then
+///   collects leaves matching `role`.
 ///
-/// Channels whose trees are not yet available return empty event_ids maps.
+/// Channels whose trees are not yet available — or whose binding does not
+/// resolve to a CDI path — return empty `event_ids` maps.
 #[tauri::command]
 pub async fn resolve_channel_event_ids(
     requests: Vec<ChannelResolutionRequest>,
@@ -44,19 +80,36 @@ pub async fn resolve_channel_event_ids(
         let parsed_key = crate::node_key::NodeKey::parse(&req.node_key)
             .map_err(|e| format!("InvalidNodeKey: {}", e))?;
 
-        let event_ids = if let Some(proxy) = state.node_registry.get_by_node_key(&parsed_key).await {
-            if let Ok(Some(tree)) = proxy.get_config_tree().await {
-                bowties_core::channel_events::resolve_channel_event_ids(
-                    &tree,
-                    &req.connector,
-                    req.input,
-                    &req.event_mapping,
-                )
+        let event_ids = {
+            let layout_guard = state.layout_state.read().await;
+            let tree_opt = layout_guard.as_ref().and_then(|ls| ls.config_tree(&parsed_key));
+            if let Some(tree) = tree_opt {
+                let path_prefix = match &req.binding {
+                    ChannelResolutionBinding::ConnectorInput { connector, input } => {
+                        bowties_core::channel_events::resolve_connector_input_path_prefix(
+                            tree, connector, *input,
+                        )
+                    }
+                    ChannelResolutionBinding::LampRow { row_ordinal } => {
+                        bowties_core::channel_events::resolve_lamp_row_path_prefix(
+                            tree,
+                            *row_ordinal,
+                        )
+                    }
+                };
+
+                match path_prefix {
+                    Some(prefix) => bowties_core::channel_events::resolve_event_ids(
+                        tree,
+                        &prefix,
+                        req.role.into(),
+                        &req.leaf_index_map,
+                    ),
+                    None => HashMap::new(),
+                }
             } else {
                 HashMap::new()
             }
-        } else {
-            HashMap::new()
         };
 
         results.push(ChannelResolutionResult {

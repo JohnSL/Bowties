@@ -40,6 +40,10 @@ class CdiCacheStore {
     if (this._set.size === 0) return;
     this._set = new Set();
   }
+
+  resetForNewLayout(): void {
+    this.reset();
+  }
 }
 
 export const cdiCacheStore = new CdiCacheStore();

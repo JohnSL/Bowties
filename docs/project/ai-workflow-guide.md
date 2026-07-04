@@ -70,13 +70,15 @@ Slices are classified as **HITL** (needs your pattern-level input), **AFK** (AI 
 
 The AI judges how many slices fit in a session based on complexity. It always stops at a slice boundary — never mid-slice — so every session ends with tests passing.
 
-### The TDD coordinator (optional, for long slices)
+### The TDD coordinator (default for `/build`)
 
-The red→green→refactor loop generates a lot of failing-test output and abandoned attempts that fill the chat window fast. For a long or test-heavy slice, the AI can run the loop through the **`tdd-build` coordinator agent**, which delegates each phase to a context-isolated worker (`tdd-red` writes one failing test, `tdd-green` writes the minimal code to pass, `tdd-refactor` cleans up) and returns just a summary per cycle — so your main conversation stays lean.
+The red→green→refactor loop generates a lot of failing-test output and abandoned attempts that fill the chat window fast. By default `/build` runs the loop through the **`tdd-build` coordinator agent**, which delegates work to context-isolated workers and returns just a slice-summary to your main conversation.
 
-Model selection for the coordinator follows a fast-first rule: start workers on a faster model for routine red/green cycles and escalate only if confidence is low, diagnostics conflict, or the refactor phase hits an ambiguous seam question.
+The coordinator batches red+green cycles into **`tdd-cycle` worker invocations of 1–3 behaviors each** (module-cluster split; auto-narrow to 1 for risky behaviors flagged in the slice's architecture note), then runs a single **`tdd-refactor` worker** at the end. Compared to per-phase delegation this roughly halves the hand-offs per slice while keeping every layer's context bounded well below session scale. Compared to inline running, the main window growth per slice drops from tens of thousands of tokens to about a thousand.
 
-The coordinator runs **strictly inside an already-designed, already-tasked slice** — it never re-decides architecture or re-cuts slices. Its Refactor worker is bound to `architecture-first-fix`: if cleanup reveals a deeper seam problem (wrong layer, ADR conflict, broken invariant), it stops and surfaces options to you instead of patching through. For a small slice it's often cheaper to just run the loop inline; the coordinator is there when context is the constraint.
+Model selection follows a fast-first rule: start workers on a faster model for routine cycles and escalate only if a cycle worker returns an ambiguous escalation or the refactor phase hits a deeper seam question.
+
+The coordinator runs **strictly inside an already-designed, already-tasked slice** — it never re-decides architecture or re-cuts slices. Both workers are bound to `architecture-first-fix`: if a green requires wrong-layer placement or cleanup reveals a deeper seam problem, they stop and surface option drafts to you rather than patching through. For a slice with a single trivial behavior, running the loop inline is fine — that's the escape hatch.
 
 ### When context gets long
 

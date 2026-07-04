@@ -111,6 +111,10 @@ class SaveProgressStore {
     this._errorMessage = null;
   }
 
+  resetForNewLayout(): void {
+    this.reset();
+  }
+
   /** Register a Tauri listener for `save-progress`. */
   async startListening(): Promise<void> {
     if (this._unlisten) return;

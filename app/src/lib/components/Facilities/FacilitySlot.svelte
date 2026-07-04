@@ -6,9 +6,10 @@
    * vertical card with an uppercase slot label on top. Empty state
    * pairs an italic "empty" label with the Select-channel button.
    * Filled state shows the bound channel's state dot, name +
-   * ownership badge, location meta, and Rebind / Remove link actions
-   * (no Rename per S4 D6 — channel rename lives in the Channels
-   * panel).
+   * ownership badge, location meta, and a Remove-from-slot link
+   * action (no Rename per S4 D6 — channel rename lives in the
+   * Channels panel; Rebind was retired in S6 D4 — swap a channel
+   * via Remove-from-slot followed by Select/Add).
    *
    * Vec-shaped bindings (Spec 018 / S4 — D8): the component takes
    * the parent-resolved `currentChannelId` / `currentChannelDisplay`
@@ -18,7 +19,7 @@
    * plural.
    */
   import type { BehaviorTemplate, SlotDefinition } from '$lib/api/behaviorTemplates';
-  import type { OccupancyState } from '$lib/utils/channelState';
+  import { channelStateClass, type ChannelState } from '$lib/utils/channelState';
 
   let {
     slotLabel,
@@ -26,7 +27,7 @@
     currentChannelId,
     currentChannelDisplay,
     onSelectChannel,
-    onRebindChannel,
+    onAddChannel,
     onRemoveFromSlot,
   }: {
     slotLabel: string;
@@ -39,11 +40,13 @@
       ownership: 'hardware-owned' | 'user-owned';
       groupLabel: string;
       locationLabel: string;
-      state: OccupancyState;
+      state: ChannelState;
       stateLabel: string;
     };
+    /** Spec 018 / S4 — producer-side input slot's Select channel handler. */
     onSelectChannel?: (slotLabel: string) => void;
-    onRebindChannel?: (slotLabel: string, currentChannelId: string) => void;
+    /** Spec 018 / S5 — consumer-side output slot's Add channel handler. */
+    onAddChannel?: (slotLabel: string) => void;
     onRemoveFromSlot?: (slotLabel: string, currentChannelId: string) => void;
   } = $props();
 
@@ -70,6 +73,10 @@
   }
 
   const filled = $derived(currentChannelId !== undefined && currentChannelDisplay !== undefined);
+
+  // Spec 018 / S5 — role-branched empty-state action: producer slots show
+  // "Select channel" (S4); consumer slots show "Add channel" (this slice).
+  const slotIsConsumer = $derived(definition()?.kind === 'consumer');
 </script>
 
 <div class="slot" class:filled class:empty={!filled} data-testid="facility-slot" data-slot-label={slotLabel}>
@@ -79,24 +86,37 @@
     <div class="slot-empty-row">
       <span class="slot-empty-text">empty</span>
       <div class="slot-empty-actions">
-        <button
-          type="button"
-          class="btn btn-sm"
-          onclick={() => onSelectChannel?.(slotLabel)}
-          title={requiredRoleHint()}
-          data-testid="select-channel-button"
-        >Select channel…</button>
+        {#if slotIsConsumer}
+          <button
+            type="button"
+            class="btn btn-sm"
+            onclick={() => onAddChannel?.(slotLabel)}
+            title={requiredRoleHint()}
+            data-testid="add-channel-button"
+          >Add channel…</button>
+        {:else}
+          <button
+            type="button"
+            class="btn btn-sm"
+            onclick={() => onSelectChannel?.(slotLabel)}
+            title={requiredRoleHint()}
+            data-testid="select-channel-button"
+          >Select channel…</button>
+        {/if}
       </div>
     </div>
   {:else}
     {@const ch = currentChannelDisplay!}
+    {@const stateClass = channelStateClass(ch.state)}
     <div class="slot-filled" data-testid="filled-slot">
       <span
         class="state-dot"
-        class:occupied={ch.state === 'occupied'}
-        class:clear={ch.state === 'clear'}
-        class:unknown={ch.state === 'unknown'}
-        class:no-config={ch.state === 'no-config'}
+        class:occupied={stateClass === 'occupied'}
+        class:clear={stateClass === 'clear'}
+        class:lit={stateClass === 'lit'}
+        class:unlit={stateClass === 'unlit'}
+        class:unknown={stateClass === 'unknown'}
+        class:no-config={stateClass === 'no-config'}
         title={ch.stateLabel}
         aria-hidden="true"
       ></span>
@@ -113,12 +133,6 @@
       </div>
     </div>
     <div class="slot-filled-actions" data-testid="filled-slot-actions">
-      <button
-        type="button"
-        class="btn-link"
-        onclick={() => onRebindChannel?.(slotLabel, currentChannelId!)}
-        data-testid="rebind-channel-button"
-      >Rebind…</button>
       <button
         type="button"
         class="btn-link danger"
@@ -237,6 +251,12 @@
   }
   .state-dot.occupied { background: #d55e00; border-color: #d55e00; }
   .state-dot.clear { background: #009e73; border-color: #009e73; }
+  .state-dot.lit {
+    background: #e6c200;
+    border-color: #e6c200;
+    box-shadow: 0 0 4px rgba(230, 194, 0, 0.6);
+  }
+  .state-dot.unlit { background: #555; border-color: #555; }
   .state-dot.no-config {
     background: transparent;
     border-style: dashed;

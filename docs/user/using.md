@@ -171,12 +171,49 @@ The **Railroad** tab includes a **Facilities** section for grouping the channels
 - **Add a facility** from the Railroad tab. Pick the **Block Indicator** template and give the facility a name (e.g., *Block 5*). The facility appears with status **Incomplete** and one empty slot per role declared by the template.
 - **Rename** a facility at any time.
 - **Delete** a facility you no longer want.
+- **Select a channel** for an input slot. The picker lists block-occupancy channels that aren't already bound elsewhere. Filled input slots offer **Remove from slot**.
+- **Add a channel** for an output slot (Block Indicator's *output*). The picker lists unclaimed **Direct Lamp Control** rows on connected Signal-LCC nodes; selecting one creates a new lamp-indicator channel, claims that row, and binds it to the slot — all atomically. Filled output slots offer **Remove from slot**.
+- **Swap a slot's channel.** Bowties does not offer a one-click *Rebind* action — to change which channel fills a slot, **Remove from slot** first and then **Select** or **Add** a different channel. The two-step sequence is intentional so the same primitives apply to both slot types.
 
-Facilities and their names are saved with the layout. Closing and reopening Bowties restores them exactly as you left them.
+Facilities and their names — along with every channel binding — are saved with the layout. Closing and reopening Bowties restores them exactly as you left them.
 
-### What is not yet wired
+### Setting Lamp Selection (required manual step)
 
-Empty slots are placeholders only in this release. The workflows for binding a channel to a slot, creating a new channel from a slot, and watching a Block Indicator follow a real block on the bus are still under construction and will land in subsequent releases.
+Adding a lamp-indicator channel to a Block Indicator output slot **claims** a Direct Lamp Control row on the chosen Signal-LCC node, but it does **not** configure which physical pin the lamp is wired to. You must do that yourself before the lamp will follow the bowtie's commands.
+
+1. After confirming **Add channel**, switch to the **Config** tab on the Signal-LCC node you chose.
+2. Navigate to the claimed *Direct Lamp Control* row (e.g., *Lamp 3* for `rowOrdinal: 3`).
+3. Set **Lamp Selection** to the physical pin driving your lamp.
+4. Save the configuration to the node.
+
+Until you complete this step the Channels-panel row for the new channel will show *Lit* / *Unlit* state from the bus commands, but the physical lamp itself will not respond. A small **ⓘ** icon next to the state cell on every lamp-indicator row repeats this reminder.
+
+This manual step is a temporary contract for this release. A future release plans to auto-lock *Lamp Selection* the moment a channel claims a row, so the choice the user makes in the Add channel picker becomes the only place the pin assignment lives.
+
+### When a facility becomes Wired
+
+The moment both slots of a Block Indicator are filled, Bowties **composes** the underlying bowties that tie the block-occupancy input to the lamp-indicator output. This all happens in the draft layer, so you can see the result immediately and revert it with **Discard** if you change your mind:
+
+- The facility's status pill flips from **Incomplete** to **Wired**.
+- Two new cards appear in the **Bowties** catalog (one for *occupied → lit*, one for *clear → unlit*). The composition adopts the BOD channel's existing event IDs and writes them onto the lamp row's *Lamp On* / *Lamp Off* CDI fields — so the LCC bus does the wiring on its own once the edits are saved to the Signal-LCC node.
+- On **Save**, the composed CDI edits reach the bus through the ordinary layered-storage flow. Assuming you have set **Lamp Selection** (see above), occupying the physical block now lights the physical lamp; clearing it turns the lamp off.
+
+### Reversing a Wired facility
+
+To change or tear down a Wired facility, use **Remove from slot** on either bound channel or **Delete** the facility. In every case the composed bowties are torn down in the draft layer **before** the slot detach or facility delete completes:
+
+- The two catalog cards disappear.
+- The lamp row's *Lamp On* / *Lamp Off* fields get fresh, unused event IDs written into them, so the LCC bus no longer routes the block's occupancy events to the lamp.
+- The facility flips back to **Incomplete** (or vanishes entirely, for **Delete**).
+- Input-slot removal returns the BOD channel to *unbound*; output-slot removal deletes the user-owned lamp-indicator channel and releases the Direct Lamp Control row for another facility.
+
+### Hardware changes cascade automatically
+
+If you clear a BOD daughter-board selection or reselect it as an incompatible board type while a facility referencing one of its channels is Wired, Bowties **cascades** the change in the draft layer:
+
+- The facility's slot that pointed at the lost channel is detached automatically.
+- If that transitions the facility out of Wired, the composed bowties are torn down at the same time (same mechanism as **Remove from slot**).
+- All cascade side effects appear in the toolbar's unsaved-change count and can be reverted with **Discard**, or committed with **Save**.
 
 ---
 

@@ -187,3 +187,46 @@ fn bundled_shared_daughterboards_library_declares_bod_block_detector_input_style
         );
     }
 }
+
+/// Spec 018 / S5 (D4): the shipping `RR-CirKits_Inc._Signal-LCC.profile.yaml`
+/// must declare a `single-led-direct-lamp` style with `bindingKind: "lampRow"`.
+/// The empty `constraints` list codifies the D5 deferral — when D5 is closed in
+/// a follow-up (style-driven Lamp Selection auto-lock) this assertion flips.
+#[test]
+fn bundled_signal_lcc_profile_declares_single_led_direct_lamp_style() {
+    let dir = bundled_profiles_dir();
+    let profile_path = dir.join("RR-CirKits_Inc._Signal-LCC.profile.yaml");
+
+    assert!(
+        profile_path.is_file(),
+        "expected Signal-LCC profile at {} (Spec 018 / S5 D4)",
+        profile_path.display()
+    );
+
+    let yaml = fs::read_to_string(&profile_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", profile_path.display()));
+    let profile: StructureProfile = serde_yaml_ng::from_str(&yaml)
+        .unwrap_or_else(|err| panic!("Signal-LCC profile must parse: {err}"));
+
+    let style = profile
+        .styles
+        .iter()
+        .find(|s| s.style_id == "single-led-direct-lamp")
+        .unwrap_or_else(|| {
+            panic!(
+                "Signal-LCC profile must declare a `single-led-direct-lamp` style \
+                 in its top-level `styles:` catalog (Spec 018 / S5 D4)"
+            )
+        });
+
+    assert_eq!(
+        style.binding_kind, "lampRow",
+        "single-led-direct-lamp style must declare bindingKind: \"lampRow\""
+    );
+    assert!(
+        style.constraints.is_empty(),
+        "single-led-direct-lamp style constraints must be empty in this release \
+         (Spec 018 / S5 D5 deferral — manual Lamp Selection). When the future \
+         style-driven Lamp Selection auto-lock lands, this assertion flips."
+    );
+}

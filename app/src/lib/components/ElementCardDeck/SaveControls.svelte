@@ -12,6 +12,7 @@
    */
   import type { SaveProgress, SaveState } from '$lib/types/nodeTree';
   import { discardModifiedValues } from '$lib/api/config';
+  import { clearLayoutDrafts } from '$lib/api/layout';
   import { toast } from '@zerodevx/svelte-toast';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
@@ -140,6 +141,9 @@
       facilitiesStore.discard();
       layoutStore.revertToSaved();
       rehydrateConnectorSelectionsFromLayout();
+      // Spec 018 / S6 bugfix — drop any facility/channel drafts mirrored
+      // into LayoutState so the next compose reads a clean saved-only view.
+      await clearLayoutDrafts();
       saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
       return;
     }
@@ -152,6 +156,8 @@
     facilitiesStore.discard();
     layoutStore.revertToSaved();
     rehydrateConnectorSelectionsFromLayout();
+    // Spec 018 / S6 bugfix — see offline branch above.
+    await clearLayoutDrafts();
     saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
   }
 

@@ -388,6 +388,14 @@ function createConfigSidebarStore() {
     reset(): void {
       set(initialState);
     },
+
+    resetForNewLayout(): void {
+      set(initialState);
+    },
+
+    resetForFreshLiveSession(): void {
+      set(initialState);
+    },
   };
 }
 

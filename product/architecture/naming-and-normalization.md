@@ -183,8 +183,96 @@ The normalization and display-name helpers are covered by unit tests. Any change
 
 ---
 
+## Event ID Normalization
+
+Event IDs (8 bytes / 16 hex chars) follow the same identity-vs-display rule
+as Node IDs, and — because they are used as map keys in many places — carry
+a compile-time-enforced identity type.
+
+### Canonical Form
+
+**Uppercase hex, no separators.** Example: `02.01.57.00.02.D9.04.D2`
+normalizes to `0201570002D904D2`.
+
+### Two Forms
+
+- **Dotted display** — `02.01.57.00.02.D9.04.D2` — used only for UI display.
+  Produced by `lcc_rs::EventID::to_hex_string()` and the frontend
+  `formatEventIdKey(key)` / `displayEventIdHex(hex)` helpers.
+- **Canonical**      — `0201570002D904D2` — the identity form. Used as map
+  keys, set membership, layout YAML keys under `bowties:`, and the wire
+  contract for `BowtieCard.event_id_hex`. Produced by
+  `lcc_rs::EventID::to_canonical()` and `canonicalEventIdHex(bytes)`.
+
+### `EventIdKey` — the identity type
+
+Frontend code that uses an event ID as identity must use the branded
+`EventIdKey` type from `app/src/lib/utils/eventIdKey.ts`:
+
+```ts
+import { toEventIdKey, eventIdKeyFromBytes, formatEventIdKey, type EventIdKey } from '$lib/utils/eventIdKey';
+
+// At the IPC / layout-YAML / user-input boundary:
+const key: EventIdKey | null = toEventIdKey(rawHex);   // accepts dotted or canonical
+const key2: EventIdKey       = eventIdKeyFromBytes(bytes);
+
+// Internal:  identity comparisons, map keys, set membership.
+// Display:   render dotted form for humans.
+const display: string = formatEventIdKey(key);
+```
+
+The phantom brand prevents raw `string` values from being assigned to
+`EventIdKey` — the compiler forces every incoming string to go through
+`toEventIdKey()`. This is the same discipline as `NodeKey` (ADR-0010),
+applied to event IDs.
+
+### Where To Apply
+
+| Operation | Rule |
+|---|---|
+| Map key or set membership for an event ID | Type as `EventIdKey`; normalize incoming strings via `toEventIdKey` |
+| Comparing two event IDs for equality | Compare `EventIdKey` values, or normalize both sides |
+| Storing an event ID in a store (e.g. `bowtieMetadataStore` edit prefix) | Canonical form |
+| Layout YAML `bowties:` map keys | Canonical form (writer emits canonical; loader normalizes legacy dotted keys) |
+| `BowtieCard.event_id_hex` from the backend | Canonical form — see `build_bowtie_catalog` |
+| Displaying an event ID to the user | `formatEventIdKey(key)` (dotted) |
+| Backend `[u8; 8]` bytes | Already canonical; do not need a string form for identity |
+
+### Backwards Compatibility
+
+Layout YAML files written before the canonical migration have dotted keys
+under `bowties:`. The load path (`merge_layout_metadata`,
+`buildEffectiveBowtiePreview`) normalizes on read, and the next save writes
+canonical form — a silent one-time migration per file.
+
+### Future Extension
+
+The `EventIdKey` type is intentionally a **single-variant branded string**
+today (real 8-byte event IDs only). When placeholder proxies get wired up
+(ADR-0009 follow-up) and the layout needs to reference "the event slot at
+path X of placeholder Y" before the proxy is applied to a real node, we
+may widen this to a sum type mirroring `NodeKey` (`Live | Placeholder`).
+Keeping identity behind the branded type today means the TypeScript
+compiler will enumerate every seam that needs updating when that variant
+lands.
+
+### Anti-Patterns
+
+| Anti-pattern | Why it causes bugs |
+|---|---|
+| `hex.replace(/\./g, '').toUpperCase()` inline | Duplicates `toEventIdKey`; misses invalid input handling |
+| Comparing `card.event_id_hex` to `treeConfigValue.hex` as raw strings | Historical duplication bug — dotted vs canonical mismatch produced two preview cards per event ID |
+| Writing dotted-form keys into new layout YAML files | Legacy shape; canonical is authoritative going forward |
+| Using `event_id_hex` string as a map key without going through `toEventIdKey` | Bypasses the compile-time guard; regressions creep in silently |
+
+---
+
 ## Sources
 
 - `app/src/lib/utils/nodeId.ts`
 - `app/src/lib/utils/nodeDisplayName.ts`
+- `app/src/lib/utils/eventIdKey.ts`
+- `bowties-core/src/bowtie/catalog.rs` (`build_bowtie_catalog`, `merge_layout_metadata`)
+- `bowties-core/src/node_tree.rs` (`bytes_to_canonical_hex`, `normalize_event_id_hex`)
+- ADR-0010 (NodeKey sum type — the precedent this discipline extends)
 - `specs/010-offline-layout-editing/refactoring-roadmap.md` (Track A, A2 NodeID Normalization Boundary)

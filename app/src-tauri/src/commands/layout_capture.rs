@@ -53,6 +53,11 @@ pub struct OpenLayoutResult {
     /// interrupted prior save before this open. The frontend surfaces
     /// a one-line notice when set.
     pub recovery_occurred: bool,
+    /// Human-readable warnings from load-time schema normalization
+    /// (e.g. facility slot bindings referencing channels absent from
+    /// `channels.yaml`). The frontend surfaces these as a toast on
+    /// open; the cleaned documents reach disk on the next save.
+    pub load_warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,7 +123,16 @@ async fn proxy_snapshot_data(
     layout_state: Option<&LayoutState>,
 ) -> Result<ProxySnapshotData, String> {
     let discovered = handle.get_snapshot().await?;
-    let tree = handle.get_config_tree().await?;
+    // Config tree: prefer LayoutState (captured-over-saved) when available.
+    let tree = if let Some(ls) = layout_state {
+        if let Ok(key) = crate::node_key::NodeKey::parse(&handle.node_key()) {
+            ls.config_tree(&key).cloned()
+        } else {
+            handle.get_config_tree().await?
+        }
+    } else {
+        handle.get_config_tree().await?
+    };
 
     let (is_synthesized, synthesized_node_key, profile_stem) = match handle {
         crate::node_proxy::NodeProxyHandle::Synthesized(synth) => {
@@ -426,8 +440,14 @@ pub async fn save_layout_directory(
     // ADR-0002: read disk-authoritative layout, apply frontend deltas.
     let mut bowties = previous.as_ref().map(|p| p.bowties.clone()).unwrap_or_default();
     let mut facilities = previous.as_ref().map(|p| p.facilities.clone()).unwrap_or_default();
+    let mut channels_doc = previous
+        .as_ref()
+        .map(|p| p.channels.clone())
+        .unwrap_or_default();
     crate::layout::facilities::apply_facility_deltas(&mut facilities, &deltas)
         .map_err(|e| format!("Failed to apply facility deltas: {}", e))?;
+    crate::layout::channels::apply_channel_deltas(&mut channels_doc, &deltas)
+        .map_err(|e| format!("Failed to apply channel deltas: {}", e))?;
     crate::layout::types::apply_layout_deltas(&mut bowties, deltas);
     let mut offline_changes = Vec::<OfflineChange>::new();
 
@@ -448,22 +468,16 @@ pub async fn save_layout_directory(
         }
     }
 
-    if let Some(catalog) = state.bowties_catalog.read().await.clone() {
-        // Persist all resolved (non-ambiguous) role classifications from the live catalog.
-        let resolved_roles = crate::commands::bowties::extract_catalog_role_classifications(&catalog);
-        for (key, rc) in resolved_roles {
-            bowties.role_classifications.insert(key, rc);
-        }
-
-        for b in catalog.bowties {
-            if !b.tags.is_empty() || b.name.is_some() {
-                bowties.bowties.insert(
-                    b.event_id_hex,
-                    crate::layout::types::BowtieMetadata {
-                        name: b.name,
-                        tags: b.tags,
-                    },
-                );
+    // Merge protocol-discovered role classifications from LayoutState.
+    // These were recorded by the catalog rebuild sites via
+    // LayoutState::record_discovered_roles(), not from a stale catalog cache.
+    // or_insert_with ensures user-explicit classifications (from deltas or
+    // saved baseline) are NOT overwritten by protocol discoveries.
+    {
+        let layout_guard = state.layout_state.read().await;
+        if let Some(layout_state) = layout_guard.as_ref() {
+            for (key, rc) in layout_state.discovered_roles() {
+                bowties.role_classifications.entry(key.clone()).or_insert_with(|| rc.clone());
             }
         }
     }
@@ -533,13 +547,30 @@ pub async fn save_layout_directory(
         bowties,
         offline_changes,
         cdi_files,
-        channels: previous.as_ref().map(|p| p.channels.clone()).unwrap_or_default(),
+        channels: channels_doc,
         facilities,
     };
 
     crate::layout::save_capture(target, &write_data)?;
 
     let _ = crate::commands::bowties::set_recent_layout(path.clone(), app.clone()).await;
+
+    // Spec 018 / S6 bugfix — refresh `LayoutState.saved` to match what we
+    // just wrote to disk, and drop the drafts layer. Otherwise subsequent
+    // reads through `effective_facilities()` / `effective_channels()`
+    // would base their merge on a stale saved layer (the pre-save state
+    // captured at open time) — see ADR-0015 §"Draft-layer sync".
+    {
+        let mut layout_guard = state.layout_state.write().await;
+        if let Some(layout_state) = layout_guard.as_mut() {
+            *layout_state.facilities_mut() = write_data.facilities.clone();
+            *layout_state.channels_mut() = write_data.channels.clone();
+            *layout_state.bowties_mut() = write_data.bowties.clone();
+            layout_state.set_offline_changes(write_data.offline_changes.clone());
+            layout_state.clear_drafts();
+            layout_state.clear_discovered_roles();
+        }
+    }
 
     let layout_node_keys: Vec<crate::node_key::NodeKey> = write_data
         .node_snapshots
@@ -580,6 +611,61 @@ mod tests {
 
     use super::*;
 
+    /// Regression: a delta-deleted bowtie must not be resurrected.
+    /// After the catalog merge elimination, the save flow only reads
+    /// discovered roles from LayoutState (using or_insert_with, which
+    /// won't re-add deleted bowtie entries). This test pins the invariant
+    /// at the LayoutFile level: once DeleteBowtie removes an entry,
+    /// role-classification merges via or_insert_with on
+    /// `role_classifications` cannot create a bowtie entry.
+    #[test]
+    fn delta_deleted_bowtie_not_resurrected_by_catalog_merge() {
+        use crate::layout::types::{BowtieMetadata, LayoutEditDelta, RoleClassification};
+
+        let mut bowties = bowties_core::layout::types::LayoutFile::default();
+
+        // Simulate a delta-created bowtie with facility provenance.
+        bowties.bowties.insert(
+            "01.02.03.04.05.06.07.08".to_string(),
+            BowtieMetadata {
+                name: Some("Signal A".to_string()),
+                tags: vec!["yard".to_string()],
+                created_by_facility: Some("f-1".to_string()),
+            },
+        );
+
+        // User deletes the bowtie via a delta.
+        let deltas = vec![LayoutEditDelta::DeleteBowtie {
+            event_id_hex: "01.02.03.04.05.06.07.08".to_string(),
+        }];
+        bowties_core::layout::types::apply_layout_deltas(&mut bowties, deltas);
+        assert!(
+            bowties.bowties.get("01.02.03.04.05.06.07.08").is_none(),
+            "delete delta must remove the bowtie"
+        );
+
+        // Simulate what the save flow does: merge discovered role
+        // classifications using or_insert_with. This must NOT recreate
+        // a bowtie entry — role_classifications is a separate map.
+        let mut discovered = std::collections::BTreeMap::new();
+        discovered.insert(
+            "01.02.03.04.05.06.07.08:some/path".to_string(),
+            RoleClassification { role: "Producer".to_string() },
+        );
+        for (key, rc) in &discovered {
+            bowties.role_classifications.entry(key.clone()).or_insert_with(|| rc.clone());
+        }
+
+        // The bowtie entry must still be absent — role classification
+        // merge must not create bowtie metadata entries.
+        assert!(
+            bowties.bowties.get("01.02.03.04.05.06.07.08").is_none(),
+            "role classification merge must not resurrect a delta-deleted bowtie"
+        );
+        // Role classification IS present (separate map, fine).
+        assert!(bowties.role_classifications.contains_key("01.02.03.04.05.06.07.08:some/path"));
+    }
+
     #[tokio::test]
     async fn s9_build_node_snapshot_placeholder_uses_bundled_cdi_ref() {
         // Synthesized placeholders must produce a CdiReference with
@@ -601,7 +687,6 @@ mod tests {
                 retrieved_at: chrono::Utc::now(),
             }),
             cdi_parsed: None,
-            config_values: std::collections::HashMap::new(),
             config_tree: None,
             producer_identified_events: Vec::new(),
         };
@@ -693,7 +778,6 @@ mod tests {
                 retrieved_at: chrono::Utc::now(),
             }),
             cdi_parsed: None,
-            config_values: std::collections::HashMap::new(),
             config_tree: Some(tree),
             producer_identified_events: Vec::new(),
         };
@@ -737,17 +821,14 @@ pub async fn open_layout_directory(
     *state.offline_changes_cache.write().await = loaded.offline_changes.clone();
 
     // Build the per-node CDI XML + profile-annotated tree maps that feed
-    // `LayoutState`. These trees also seed `node_registry.saved_trees` for
-    // fresh proxies when this layout's nodes are rediscovered on the bus
-    // (Spec 017 / S3 contract: trees must carry `event_role` annotations and
-    // `profile_applied = true` so channel resolution works without a CDI read).
+    // `LayoutState` (ADR-0015). Trees carry `event_role` annotations and
+    // `profile_applied = true` so channel resolution works without a CDI
+    // read (Spec 017 / S3 contract).
     let mut cdi_xml_by_key: std::collections::HashMap<crate::node_key::NodeKey, String> =
         std::collections::HashMap::new();
     let mut saved_trees_for_state: std::collections::HashMap<crate::node_key::NodeKey, crate::node_tree::NodeConfigTree> =
         std::collections::HashMap::new();
     {
-        let mut saved_trees: std::collections::HashMap<crate::node_key::NodeKey, crate::node_tree::NodeConfigTree> =
-            std::collections::HashMap::new();
         let app_data_dir = app
             .path()
             .app_data_dir()
@@ -827,11 +908,8 @@ pub async fn open_layout_directory(
 
             // Cache the fully-populated tree so it can seed the live proxy
             // when this node is rediscovered on the bus.
-            saved_trees.insert(nk, tree.clone());
-            saved_trees_for_state.insert(nk, tree.clone());
+            saved_trees_for_state.insert(nk, tree);
         }
-
-        state.node_registry.set_saved_trees(saved_trees).await;
     }
 
     // Build the single-owner `LayoutState` from the same loaded data + per-node
@@ -926,6 +1004,7 @@ pub async fn open_layout_directory(
         pending_offline_change_count: loaded.offline_changes.len(),
         node_snapshots: loaded.node_snapshots,
         recovery_occurred: loaded.recovery_occurred,
+        load_warnings: loaded.load_warnings,
     })
 }
 

@@ -1776,45 +1776,73 @@ pub async fn get_node_tree(
     let parsed_key = crate::node_key::NodeKey::parse(node_key)
         .map_err(|e| format!("InvalidNodeKey: {}", e))?;
 
-    // ── Fast path: proxy in registry with cached tree ────────────────────
+    // ── Fast path: LayoutState tree (captured-over-saved precedence) ────
     {
-        if let Some(proxy) = state.node_registry.get_by_node_key(&parsed_key).await {
-            if let Ok(Some(mut tree)) = proxy.get_config_tree().await {
-                // The cached tree may have been stored by `read_all_config_values`
-                // with config values merged but without profile annotation (the
-                // config-read path doesn't load profiles). If the tree has no
-                // profile annotation yet, apply it now so connector controls and
-                // event-role overlays appear on the first `get_node_tree` fetch
-                // after a config read.
-                if !tree.profile_applied {
-                    if let Ok(cdi) = get_cdi_from_cache(node_key, &app_handle, &state).await {
-                        if let Some(identity) = &cdi.identification {
-                            let manufacturer = identity.manufacturer.as_deref().unwrap_or("");
-                            let model = identity.model.as_deref().unwrap_or("");
-                            if !manufacturer.is_empty() || !model.is_empty() {
-                                if let Some(profile) = crate::profile::load_profile(
-                                    manufacturer,
-                                    model,
-                                    &cdi,
-                                    &app_handle,
-                                    &state.profiles,
-                                ).await {
-                                    let shared_daughterboards = crate::profile::load_shared_daughterboards(&app_handle).await;
-                                    let selections = active_node_mode_selections(&state, &node_id).await;
-                                    apply_profile_metadata_to_tree(
-                                        &mut tree,
-                                        &node_id,
-                                        &profile,
-                                        shared_daughterboards.as_ref(),
-                                        &cdi,
-                                        &selections,
-                                    );
-                                    let _ = proxy.set_config_tree(tree.clone()).await;
-                                }
-                            }
+        let needs_profile = {
+            let layout_guard = state.layout_state.read().await;
+            if let Some(ls) = layout_guard.as_ref() {
+                if let Some(tree) = ls.config_tree(&parsed_key) {
+                    if tree.profile_applied {
+                        // Tree is ready — clone and return
+                        return Ok(tree.clone());
+                    }
+                    true // has tree but needs profile annotation
+                } else {
+                    false // no tree
+                }
+            } else {
+                false // no layout
+            }
+        };
+
+        if needs_profile {
+            // Apply profile annotation: build outside write lock since
+            // get_cdi_from_cache acquires layout_state.read().
+            let profile_data = if let Ok(cdi) = get_cdi_from_cache(node_key, &app_handle, &state).await {
+                if let Some(identity) = &cdi.identification {
+                    let manufacturer = identity.manufacturer.as_deref().unwrap_or("");
+                    let model = identity.model.as_deref().unwrap_or("");
+                    if !manufacturer.is_empty() || !model.is_empty() {
+                        crate::profile::load_profile(
+                            manufacturer, model, &cdi, &app_handle, &state.profiles,
+                        ).await.map(|profile| (cdi, profile))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            let mut layout_guard = state.layout_state.write().await;
+            if let Some(ls) = layout_guard.as_mut() {
+                if let Some(tree) = ls.config_tree_mut(&parsed_key) {
+                    if !tree.profile_applied {
+                        if let Some((cdi, profile)) = &profile_data {
+                            let shared_daughterboards = crate::profile::load_shared_daughterboards(&app_handle).await;
+                            let selections = active_node_mode_selections(&state, &node_id).await;
+                            apply_profile_metadata_to_tree(
+                                tree,
+                                &node_id,
+                                profile,
+                                shared_daughterboards.as_ref(),
+                                cdi,
+                                &selections,
+                            );
                         }
                     }
+                    return Ok(tree.clone());
                 }
+            }
+        }
+    }
+
+    // ── Fallback: proxy in registry (for synthesized/placeholder nodes) ──
+    {
+        if let Some(proxy) = state.node_registry.get_by_node_key(&parsed_key).await {
+            if let Ok(Some(tree)) = proxy.get_config_tree().await {
                 return Ok(tree);
             }
         }
@@ -1856,9 +1884,7 @@ pub async fn get_node_tree(
         return Ok(tree);
     }
 
-    // ── Real node: not in registry or no cached tree ─────────────────────
-    let parsed_node_id = lcc_rs::NodeID::from_hex_string(node_key)
-        .map_err(|e| format!("InvalidNodeId: {}", e))?;
+    // ── Real node: not in LayoutState or registry ─────────────────────
 
     // Build from CDI
     let cdi = get_cdi_from_cache(node_key, &app_handle, &state).await?;
@@ -1897,9 +1923,12 @@ pub async fn get_node_tree(
         }
     }
 
-    // Store in proxy
-    if let Some(proxy) = state.node_registry.get(&parsed_node_id).await {
-        let _ = proxy.set_config_tree(tree.clone()).await;
+    // Store in LayoutState captured layer
+    {
+        let mut layout_guard = state.layout_state.write().await;
+        if let Some(ls) = layout_guard.as_mut() {
+            ls.set_config_tree(parsed_key, tree.clone());
+        }
     }
 
     Ok(tree)
@@ -2564,48 +2593,28 @@ pub async fn read_all_config_values(
     
     let duration = start_time.elapsed().as_millis() as u64;
 
-    // Store EventId values in proxy
-    if let Some(proxy) = state.node_registry.get(&parsed_node_id).await {
-        let event_map: HashMap<String, [u8; 8]> = values.iter()
-            .filter_map(|(cache_key, meta)| {
-                if let ConfigValue::EventId { value: event_bytes } = meta.value {
-                    let path_key = cache_key
-                        .strip_prefix(&format!("{}:", node_id))
-                        .unwrap_or(cache_key.as_str())
-                        .to_string();
-                    Some((path_key, event_bytes))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        let event_count = event_map.len();
-        let _ = proxy.merge_config_values(event_map).await;
-        eprintln!("[bowties][cache] node {} — {} EventId slots cached in proxy", node_id, event_count);
-    }
-
     // Spec 007: build (or update) the unified node tree with config values.
     {
-        let proxy = state.node_registry.get(&parsed_node_id).await;
-        if let Some(proxy) = &proxy {
-            let mut tree = proxy
-                .get_config_tree()
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| crate::node_tree::build_node_config_tree(&node_id, &cdi));
-            crate::node_tree::merge_config_values_by_space(&mut tree, &raw_data_by_space_address);
-            let leaf_count = crate::node_tree::count_leaves(&tree);
-            eprintln!("[node_tree] node {} — tree updated with {} values ({} leaves total)",
-                node_id, raw_data_by_space_address.len(), leaf_count);
+        let node_key_parsed = crate::node_key::NodeKey::from_node_id(parsed_node_id);
+        let mut layout_guard = state.layout_state.write().await;
+        if let Some(ls) = layout_guard.as_mut() {
+            let needs_new_tree = ls.config_tree(&node_key_parsed).is_none();
+            if needs_new_tree {
+                let tree = crate::node_tree::build_node_config_tree(&node_id, &cdi);
+                ls.set_config_tree(node_key_parsed, tree);
+            }
+            if let Some(tree) = ls.config_tree_mut(&node_key_parsed) {
+                crate::node_tree::merge_config_values_by_space(tree, &raw_data_by_space_address);
+                let leaf_count = crate::node_tree::count_leaves(tree);
+                eprintln!("[node_tree] node {} — tree updated with {} values ({} leaves total)",
+                    node_id, raw_data_by_space_address.len(), leaf_count);
 
-            let _ = proxy.set_config_tree(tree).await;
-
-            // Emit node-tree-updated event so the frontend can refresh.
-            let _ = app_handle.emit("node-tree-updated", serde_json::json!({
-                "nodeId": node_id,
-                "leafCount": leaf_count,
-            }));
+                // Emit node-tree-updated event so the frontend can refresh.
+                let _ = app_handle.emit("node-tree-updated", serde_json::json!({
+                    "nodeId": node_id,
+                    "leafCount": leaf_count,
+                }));
+            }
         }
     }
 
@@ -2639,15 +2648,21 @@ pub async fn read_all_config_values(
         let nodes_snap = state.node_registry.get_all_snapshots().await;
         let node_count = nodes_snap.len();
 
-        // Gather config values from all proxies
+        // Gather config values from all nodes (reading from LayoutState trees)
         let config_cache_snap: HashMap<crate::node_key::NodeKey, HashMap<String, [u8; 8]>> = {
-            let handles = state.node_registry.get_all_handles().await;
+            let layout_guard = state.layout_state.read().await;
             let mut map = HashMap::new();
-            for h in &handles {
-                if let Ok(vals) = h.get_config_values().await {
-                    if !vals.is_empty() {
-                        if let Some(nid) = h.node_id() {
-                            map.insert(crate::node_key::NodeKey::from_node_id(nid), vals);
+            if let Some(ls) = layout_guard.as_ref() {
+                for key in ls.all_tree_keys() {
+                    if let Some(tree) = ls.config_tree(&key) {
+                        let mut node_config: HashMap<String, [u8; 8]> = HashMap::new();
+                        for leaf in crate::node_tree::collect_event_id_leaves(tree) {
+                            if let Some(bytes) = leaf.value {
+                                node_config.insert(leaf.path.join("/"), bytes);
+                            }
+                        }
+                        if !node_config.is_empty() {
+                            map.insert(key, node_config);
                         }
                     }
                 }
@@ -2655,23 +2670,21 @@ pub async fn read_all_config_values(
             map
         };
 
-        // Spec 007: merge protocol-level event roles into every node tree via proxies.
+        // Spec 007: merge protocol-level event roles into every node tree via LayoutState.
         {
-            let handles = state.node_registry.get_all_handles().await;
-            for h in &handles {
-                if let Ok(Some(mut tree)) = h.get_config_tree().await {
-                    let nid = match h.node_id() {
-                        Some(id) => id.to_hex_string(),
-                        None => continue,
-                    };
-                    let path_roles = crate::node_tree::classify_leaf_roles_from_protocol(
-                        &tree,
-                        &event_roles,
-                    );
-                    if !path_roles.is_empty() {
-                        crate::node_tree::merge_event_roles(&mut tree, &path_roles);
-                        eprintln!("[node_tree] node {} — {} event roles merged", nid, path_roles.len());
-                        let _ = h.set_config_tree(tree).await;
+            let mut layout_guard = state.layout_state.write().await;
+            if let Some(ls) = layout_guard.as_mut() {
+                for key in ls.all_tree_keys() {
+                    let nid = key.to_string();
+                    if let Some(tree) = ls.config_tree_mut(&key) {
+                        let path_roles = crate::node_tree::classify_leaf_roles_from_protocol(
+                            tree,
+                            &event_roles,
+                        );
+                        if !path_roles.is_empty() {
+                            crate::node_tree::merge_event_roles(tree, &path_roles);
+                            eprintln!("[node_tree] node {} — {} event roles merged", nid, path_roles.len());
+                        }
                     }
                 }
             }
@@ -2680,13 +2693,13 @@ pub async fn read_all_config_values(
         // Apply structure profiles to every node tree (must be AFTER merge_event_roles
         // so profile-declared roles take precedence over protocol-exchange heuristics).
         {
-            let handles = state.node_registry.get_all_handles().await;
+            let tree_keys = {
+                let layout_guard = state.layout_state.read().await;
+                layout_guard.as_ref().map(|ls| ls.all_tree_keys()).unwrap_or_default()
+            };
             let mut annotated_node_ids: Vec<String> = Vec::new();
-            for h in &handles {
-                let nid = match h.node_id() {
-                    Some(id) => id.to_hex_string(),
-                    None => continue,
-                };
+            for key in &tree_keys {
+                let nid = key.to_string();
                 let cdi = match get_cdi_from_cache(&nid, &app_handle, &state).await {
                     Ok(c) => c,
                     Err(_) => continue,
@@ -2702,19 +2715,21 @@ pub async fn read_all_config_values(
                             &app_handle,
                             &state.profiles,
                         ).await {
-                            if let Ok(Some(mut tree)) = h.get_config_tree().await {
-                                let selections = active_node_mode_selections(&state, &nid).await;
-                                let report = crate::profile::annotate_tree(&mut tree, &profile, &selections, &cdi);
-                                tree.unknown_variants = report.unknown_variants.clone();
-                                eprintln!(
-                                    "[profile] {} — {} event roles, {} rules applied, {} warnings",
-                                    nid,
-                                    report.event_roles_applied,
-                                    report.rules_applied,
-                                    report.warnings.len()
-                                );
-                                let _ = h.set_config_tree(tree).await;
-                                annotated_node_ids.push(nid);
+                            let mut layout_guard = state.layout_state.write().await;
+                            if let Some(ls) = layout_guard.as_mut() {
+                                if let Some(tree) = ls.config_tree_mut(key) {
+                                    let selections = active_node_mode_selections(&state, &nid).await;
+                                    let report = crate::profile::annotate_tree(tree, &profile, &selections, &cdi);
+                                    tree.unknown_variants = report.unknown_variants.clone();
+                                    eprintln!(
+                                        "[profile] {} — {} event roles, {} rules applied, {} warnings",
+                                        nid,
+                                        report.event_roles_applied,
+                                        report.rules_applied,
+                                        report.warnings.len()
+                                    );
+                                    annotated_node_ids.push(nid.clone());
+                                }
                             }
                         }
                     }
@@ -2722,24 +2737,15 @@ pub async fn read_all_config_values(
             }
 
             // Notify the frontend to refresh trees only for nodes that were
-            // actually annotated by a profile. Previously this emitted for
-            // ALL handles, which triggered re-fetches for nodes whose proxy
-            // had no config tree — returning a zero-filled tree from CDI and
-            // overwriting good data loaded from saved layout snapshots.
+            // actually annotated by a profile.
             for nid in &annotated_node_ids {
-                let parsed_key = match crate::node_key::NodeKey::parse(nid) {
-                    Ok(k) => k,
-                    Err(_) => continue,
-                };
-                let leaf_count = if let Some(proxy) = state.node_registry.get_by_node_key(
-                    &parsed_key
-                ).await {
-                    proxy.get_config_tree().await
-                        .ok().flatten()
-                        .map(|t| crate::node_tree::count_leaves(&t))
-                        .unwrap_or(0)
-                } else {
-                    0
+                let leaf_count = {
+                    let layout_guard = state.layout_state.read().await;
+                    layout_guard.as_ref().and_then(|ls| {
+                        crate::node_key::NodeKey::parse(nid).ok().and_then(|k| {
+                            ls.config_tree(&k).map(|t| crate::node_tree::count_leaves(t))
+                        })
+                    }).unwrap_or(0)
                 };
                 let _ = app_handle.emit("node-tree-updated", serde_json::json!({
                     "nodeId": nid,
@@ -2748,25 +2754,19 @@ pub async fn read_all_config_values(
             }
         }
 
-        // Build the bowtie catalog AFTER profile annotation so profile-declared event roles
-        // feed the same-node classification step (FR-016, FR-017).
-        //
-        // Collect profile_group_roles: all EventId leaves with a non-Ambiguous role from the
-        // now-annotated trees, keyed by "{node_id}:{element_path.join("/")}".
+        // Collect profile_group_roles from LayoutState trees.
         let profile_group_roles: std::collections::HashMap<String, lcc_rs::EventRole> = {
-            let handles = state.node_registry.get_all_handles().await;
+            let layout_guard = state.layout_state.read().await;
             let mut map = std::collections::HashMap::new();
-            for h in &handles {
-                let nk = match h.node_id() {
-                    Some(id) => crate::node_key::NodeKey::from_node_id(id),
-                    None => continue,
-                };
-                if let Ok(Some(tree)) = h.get_config_tree().await {
-                    for leaf in crate::node_tree::collect_event_id_leaves(&tree) {
-                        if let Some(role) = leaf.event_role {
-                            if role != lcc_rs::EventRole::Ambiguous {
-                                let key = format!("{}:{}", nk, leaf.path.join("/"));
-                                map.insert(key, role);
+            if let Some(ls) = layout_guard.as_ref() {
+                for key in ls.all_tree_keys() {
+                    if let Some(tree) = ls.config_tree(&key) {
+                        for leaf in crate::node_tree::collect_event_id_leaves(tree) {
+                            if let Some(role) = leaf.event_role {
+                                if role != lcc_rs::EventRole::Ambiguous {
+                                    let entry_key = format!("{}:{}", key, leaf.path.join("/"));
+                                    map.insert(entry_key, role);
+                                }
                             }
                         }
                     }
@@ -2791,6 +2791,16 @@ pub async fn read_all_config_values(
 
         // Store catalog in AppState.
         *state.bowties_catalog.write().await = Some(catalog.clone());
+
+        // Record protocol-discovered role classifications in LayoutState
+        // so the save flow can persist them without reading the stale catalog.
+        {
+            let resolved_roles = crate::commands::bowties::extract_catalog_role_classifications(&catalog);
+            let mut layout_guard = state.layout_state.write().await;
+            if let Some(layout_state) = layout_guard.as_mut() {
+                layout_state.record_discovered_roles(resolved_roles);
+            }
+        }
 
         // Emit `cdi-read-complete` event to the frontend.
         let _ = app_handle.emit(
@@ -3354,6 +3364,11 @@ pub async fn send_update_complete(
 /// available for display and catalog building.  If the new value matches
 /// the committed value the modification is automatically cleared (revert).
 ///
+/// The tree lives in `LayoutState` (ADR-0015). Mutations happen under
+/// the `layout_state` write lock, which serializes concurrent callers
+/// and eliminates the TOCTOU race that existed when the tree was cloned
+/// from the NodeProxy actor mailbox.
+///
 /// Emits `node-tree-updated` so the frontend reactively picks up the change.
 #[tauri::command]
 pub async fn set_modified_value(
@@ -3366,57 +3381,74 @@ pub async fn set_modified_value(
 ) -> Result<bool, String> {
     let parsed_node_id = lcc_rs::NodeID::from_hex_string(&node_id)
         .map_err(|e| format!("InvalidNodeId: {}", e))?;
-    let proxy = state.node_registry.get(&parsed_node_id).await
-        .ok_or_else(|| format!("No proxy for node {}", node_id))?;
+    let node_key = crate::node_key::NodeKey::from_node_id(parsed_node_id);
 
-    // Get the tree from the proxy, falling back to building from CDI cache.
-    // This handles the "online with layout" case where layout trees exist only
-    // in the frontend nodeTreeStore — the proxy has no tree until the CDI is
-    // explicitly re-read from the live node.
-    let mut tree = match proxy.get_config_tree().await {
-        Ok(Some(t)) => t,
-        _ => {
-            let cdi = get_cdi_from_cache(&node_id, &app_handle, &state).await
-                .map_err(|e| format!(
-                    "No tree loaded and CDI not available for node {}: {}",
-                    node_id, e
-                ))?;
-            let mut t = crate::node_tree::build_node_config_tree(&node_id, &cdi);
-            if let Some(identity) = &cdi.identification {
-                let manufacturer = identity.manufacturer.as_deref().unwrap_or("");
-                let model = identity.model.as_deref().unwrap_or("");
-                if !manufacturer.is_empty() || !model.is_empty() {
-                    if let Some(profile) = crate::profile::load_profile(
-                        manufacturer, model, &cdi, &app_handle, &state.profiles,
-                    ).await {
-                        let selections = active_node_mode_selections(&state, &node_id).await;
-                        let report = crate::profile::annotate_tree(&mut t, &profile, &selections, &cdi);
-                        t.unknown_variants = report.unknown_variants.clone();
-                    }
-                }
-            }
-            // Populate config values from the layout snapshot so that other
-            // segments don't show empty values after the frontend refreshes
-            // from node-tree-updated.  This mirrors what build_offline_node_tree
-            // does during layout hydration.
-            if let Some(context) = state.active_layout.read().await.as_ref() {
-                let base_file = std::path::Path::new(&context.root_path);
-                let canonical = node_id.replace('.', "").to_uppercase();
-                if let Ok(snapshot) =
-                    crate::layout::read_node_snapshot(base_file, &canonical)
-                {
-                    crate::node_tree::merge_snapshot_path_values(
-                        &mut t,
-                        &snapshot.config,
-                    );
-                }
-            }
-            let _ = proxy.set_config_tree(t.clone()).await;
-            t
-        }
+    // Check if we need to build a tree first (read lock only).
+    let needs_tree = {
+        let layout_guard = state.layout_state.read().await;
+        let ls = layout_guard
+            .as_ref()
+            .ok_or_else(|| "No layout open".to_string())?;
+        ls.config_tree(&node_key).is_none()
     };
 
-    let found = crate::node_tree::set_modified_value(&mut tree, space, address, value);
+    // Build the tree outside any layout_state lock to avoid deadlock:
+    // get_cdi_from_cache → get_cdi_xml acquires layout_state.read().
+    if needs_tree {
+        let cdi = get_cdi_from_cache(&node_id, &app_handle, &state).await
+            .map_err(|e| format!(
+                "No tree loaded and CDI not available for node {}: {}",
+                node_id, e
+            ))?;
+        let mut t = crate::node_tree::build_node_config_tree(&node_id, &cdi);
+        if let Some(identity) = &cdi.identification {
+            let manufacturer = identity.manufacturer.as_deref().unwrap_or("");
+            let model = identity.model.as_deref().unwrap_or("");
+            if !manufacturer.is_empty() || !model.is_empty() {
+                if let Some(profile) = crate::profile::load_profile(
+                    manufacturer, model, &cdi, &app_handle, &state.profiles,
+                ).await {
+                    let selections = active_node_mode_selections(&state, &node_id).await;
+                    let report = crate::profile::annotate_tree(&mut t, &profile, &selections, &cdi);
+                    t.unknown_variants = report.unknown_variants.clone();
+                }
+            }
+        }
+        // Populate config values from the layout snapshot so that other
+        // segments don't show empty values after the frontend refreshes
+        // from node-tree-updated.
+        if let Some(context) = state.active_layout.read().await.as_ref() {
+            let base_file = std::path::Path::new(&context.root_path);
+            let canonical = node_id.replace('.', "").to_uppercase();
+            if let Ok(snapshot) =
+                crate::layout::read_node_snapshot(base_file, &canonical)
+            {
+                crate::node_tree::merge_snapshot_path_values(
+                    &mut t,
+                    &snapshot.config,
+                );
+            }
+        }
+        // Now acquire write lock to store the tree
+        let mut layout_guard = state.layout_state.write().await;
+        if let Some(ls) = layout_guard.as_mut() {
+            // Re-check: another concurrent call may have stored a tree
+            if ls.config_tree(&node_key).is_none() {
+                ls.set_config_tree(node_key, t);
+            }
+        }
+    }
+
+    // Acquire write lock for the mutation (the tree is guaranteed to exist)
+    let mut layout_guard = state.layout_state.write().await;
+    let ls = layout_guard
+        .as_mut()
+        .ok_or_else(|| "No layout open".to_string())?;
+
+    let tree = ls.config_tree_mut(&node_key)
+        .ok_or_else(|| format!("Tree not available for node {}", node_id))?;
+
+    let found = crate::node_tree::set_modified_value(tree, space, address, value);
     if !found {
         return Err(format!(
             "Leaf not found at space={}, address={} in node {}",
@@ -3424,21 +3456,8 @@ pub async fn set_modified_value(
         ));
     }
 
-    // Also update config values in proxy for EventId modifications so the
-    // bowtie catalog builder sees them.
-    for leaf_info in crate::node_tree::collect_event_id_leaves(&tree) {
-        if leaf_info.address == address && leaf_info.space == space {
-            if let Some(bytes) = leaf_info.value {
-                let mut update = HashMap::new();
-                update.insert(leaf_info.path.join("/"), bytes);
-                let _ = proxy.merge_config_values(update).await;
-            }
-            break;
-        }
-    }
-
-    // Store updated tree back to proxy
-    let _ = proxy.set_config_tree(tree).await;
+    // Drop the write lock before emitting events
+    drop(layout_guard);
 
     let _ = app_handle.emit(
         "node-tree-updated",
@@ -3458,58 +3477,47 @@ pub async fn discard_modified_values(
     node_id: Option<String>,
 ) -> Result<u32, String> {
     let mut count = 0u32;
+    let mut affected_node_ids: Vec<String> = Vec::new();
 
-    if let Some(nid) = node_id {
-        // Discard for a specific node
-        let parsed = lcc_rs::NodeID::from_hex_string(&nid)
-            .map_err(|e| format!("InvalidNodeId: {}", e))?;
-        if let Some(proxy) = state.node_registry.get(&parsed).await {
-            if let Ok(Some(mut tree)) = proxy.get_config_tree().await {
-                if crate::node_tree::has_modified_values(&tree) {
-                    crate::node_tree::discard_all_modified(&mut tree);
+    {
+        let mut layout_guard = state.layout_state.write().await;
+        let ls = match layout_guard.as_mut() {
+            Some(ls) => ls,
+            None => return Ok(0),
+        };
+
+        if let Some(nid) = &node_id {
+            // Discard for a specific node
+            let parsed = lcc_rs::NodeID::from_hex_string(nid)
+                .map_err(|e| format!("InvalidNodeId: {}", e))?;
+            let key = crate::node_key::NodeKey::from_node_id(parsed);
+            if let Some(tree) = ls.config_tree_mut(&key) {
+                if crate::node_tree::has_modified_values(tree) {
+                    crate::node_tree::discard_all_modified(tree);
                     count += 1;
-
-                    // Rebuild config values from committed values
-                    let rebuilt: HashMap<String, [u8; 8]> = crate::node_tree::collect_event_id_leaves(&tree)
-                        .into_iter().filter_map(|l| l.value.map(|v| (l.path.join("/"), v)))
-                        .collect();
-                    let _ = proxy.set_config_values(rebuilt).await;
-                    let _ = proxy.set_config_tree(tree).await;
-
-                    let _ = app_handle.emit(
-                        "node-tree-updated",
-                        serde_json::json!({ "nodeId": nid }),
-                    );
+                    affected_node_ids.push(nid.clone());
+                }
+            }
+        } else {
+            // Discard across all nodes
+            for key in ls.all_tree_keys() {
+                if let Some(tree) = ls.config_tree_mut(&key) {
+                    if crate::node_tree::has_modified_values(tree) {
+                        crate::node_tree::discard_all_modified(tree);
+                        count += 1;
+                        affected_node_ids.push(key.to_string());
+                    }
                 }
             }
         }
-    } else {
-        // Discard across all nodes
-        let handles = state.node_registry.get_all_handles().await;
-        for h in &handles {
-            if let Ok(Some(mut tree)) = h.get_config_tree().await {
-                if crate::node_tree::has_modified_values(&tree) {
-                    crate::node_tree::discard_all_modified(&mut tree);
-                    count += 1;
+    }
 
-                    // Rebuild config values from committed values
-                    let rebuilt: HashMap<String, [u8; 8]> = crate::node_tree::collect_event_id_leaves(&tree)
-                        .into_iter().filter_map(|l| l.value.map(|v| (l.path.join("/"), v)))
-                        .collect();
-                    let _ = h.set_config_values(rebuilt).await;
-                    let _ = h.set_config_tree(tree).await;
-
-                    let nid = match h.node_id() {
-                        Some(id) => id.to_hex_string(),
-                        None => continue,
-                    };
-                    let _ = app_handle.emit(
-                        "node-tree-updated",
-                        serde_json::json!({ "nodeId": nid }),
-                    );
-                }
-            }
-        }
+    // Emit events after releasing the write lock
+    for nid in &affected_node_ids {
+        let _ = app_handle.emit(
+            "node-tree-updated",
+            serde_json::json!({ "nodeId": nid }),
+        );
     }
 
     Ok(count)
@@ -3525,18 +3533,16 @@ pub async fn write_modified_values(
     state: tauri::State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<WriteModifiedResult, String> {
-    // Collect all modifications across all nodes from proxies
+    // Collect all modifications across all nodes from LayoutState
     let mut work: Vec<(String, crate::node_tree::ModifiedLeafInfo)> = Vec::new();
     {
-        let handles = state.node_registry.get_all_handles().await;
-        for h in &handles {
-            if let Ok(Some(tree)) = h.get_config_tree().await {
-                let nid = match h.node_id() {
-                    Some(id) => id.to_hex_string(),
-                    None => continue,
-                };
-                for leaf in crate::node_tree::collect_modified_leaves(&tree) {
-                    work.push((nid.clone(), leaf));
+        let layout_guard = state.layout_state.read().await;
+        if let Some(ls) = layout_guard.as_ref() {
+            for key in ls.all_tree_keys() {
+                if let Some(tree) = ls.config_tree(&key) {
+                    for leaf in crate::node_tree::collect_modified_leaves(tree) {
+                        work.push((key.to_string(), leaf));
+                    }
                 }
             }
         }
@@ -3580,20 +3586,25 @@ pub async fn write_modified_values(
 
         let parsed_nid = lcc_rs::NodeID::from_hex_string(node_id)
             .map_err(|e| format!("Invalid node ID: {}", e))?;
+        let node_key = crate::node_key::NodeKey::from_node_id(parsed_nid);
         let proxy = state.node_registry.get(&parsed_nid).await
             .ok_or_else(|| format!("Node not found: {}", node_id))?;
         let alias = proxy.alias();
 
-        // Mark as writing via proxy
-        if let Ok(Some(mut tree)) = proxy.get_config_tree().await {
-            crate::node_tree::set_leaf_write_state(
-                &mut tree,
-                leaf_info.space,
-                leaf_info.address,
-                crate::node_tree::WriteState::Writing,
-                None,
-            );
-            let _ = proxy.set_config_tree(tree).await;
+        // Mark as writing in LayoutState
+        {
+            let mut layout_guard = state.layout_state.write().await;
+            if let Some(ls) = layout_guard.as_mut() {
+                if let Some(tree) = ls.config_tree_mut(&node_key) {
+                    crate::node_tree::set_leaf_write_state(
+                        tree,
+                        leaf_info.space,
+                        leaf_info.address,
+                        crate::node_tree::WriteState::Writing,
+                        None,
+                    );
+                }
+            }
         }
 
         // Serialize and write
@@ -3602,49 +3613,50 @@ pub async fn write_modified_values(
         let result = conn.write_memory(alias, leaf_info.space, leaf_info.address, &bytes).await;
         drop(conn);
 
-        if let Ok(Some(mut tree)) = proxy.get_config_tree().await {
-            match result {
-                Ok(()) => {
-                    // Commit: promote modified_value → value
-                    crate::node_tree::commit_leaf_value(&mut tree, leaf_info.space, leaf_info.address);
-                    succeeded += 1;
-                    success_node_ids.insert(node_id.clone());
-                    written_leaves.push((
-                        node_id.clone(),
-                        leaf_info.space,
-                        leaf_info.address,
-                        leaf_info.value.to_snapshot_string(),
-                    ));
-                }
-                Err(e) => {
-                    let err_str = e.to_string();
-                    // Error 0x1083 = OpenLCB "address is read-only / cannot be written".
-                    // Revert the modification silently and mark the leaf read-only so the
-                    // control is disabled for the rest of the session.
-                    if err_str.contains("1083") {
-                        crate::node_tree::revert_and_mark_leaf_read_only(
-                            &mut tree,
-                            leaf_info.space,
-                            leaf_info.address,
-                        );
-                        read_only_rejected += 1;
-                        eprintln!(
-                            "[write] {} @{:#010x}: read-only rejection (0x1083), reverting '{}'",
-                            node_id, leaf_info.address, leaf_info.name
-                        );
-                    } else {
-                        crate::node_tree::set_leaf_write_state(
-                            &mut tree,
-                            leaf_info.space,
-                            leaf_info.address,
-                            crate::node_tree::WriteState::Error,
-                            Some(err_str),
-                        );
-                        failed += 1;
+        {
+            let mut layout_guard = state.layout_state.write().await;
+            if let Some(ls) = layout_guard.as_mut() {
+                if let Some(tree) = ls.config_tree_mut(&node_key) {
+                    match result {
+                        Ok(()) => {
+                            // Commit: promote modified_value → value
+                            crate::node_tree::commit_leaf_value(tree, leaf_info.space, leaf_info.address);
+                            succeeded += 1;
+                            success_node_ids.insert(node_id.clone());
+                            written_leaves.push((
+                                node_id.clone(),
+                                leaf_info.space,
+                                leaf_info.address,
+                                leaf_info.value.to_snapshot_string(),
+                            ));
+                        }
+                        Err(e) => {
+                            let err_str = e.to_string();
+                            if err_str.contains("1083") {
+                                crate::node_tree::revert_and_mark_leaf_read_only(
+                                    tree,
+                                    leaf_info.space,
+                                    leaf_info.address,
+                                );
+                                read_only_rejected += 1;
+                                eprintln!(
+                                    "[write] {} @{:#010x}: read-only rejection (0x1083), reverting '{}'",
+                                    node_id, leaf_info.address, leaf_info.name
+                                );
+                            } else {
+                                crate::node_tree::set_leaf_write_state(
+                                    tree,
+                                    leaf_info.space,
+                                    leaf_info.address,
+                                    crate::node_tree::WriteState::Error,
+                                    Some(err_str),
+                                );
+                                failed += 1;
+                            }
+                        }
                     }
                 }
             }
-            let _ = proxy.set_config_tree(tree).await;
         }
     }
 
@@ -3725,6 +3737,21 @@ pub async fn write_modified_values(
                 }
             }
         }
+
+        // Also update LayoutState.saved[].snapshot.config so Phase 3
+        // reconcile re-save doesn't overwrite the disk with stale baselines.
+        {
+            let mut layout_guard = state.layout_state.write().await;
+            if let Some(ls) = layout_guard.as_mut() {
+                for (node_id, space, address, value_str) in &written_leaves {
+                    let canonical = node_id.replace('.', "").to_uppercase();
+                    if let Ok(key) = crate::node_key::NodeKey::parse(&canonical) {
+                        let offset_hex = format!("0x{:08X}", address);
+                        ls.update_snapshot_config(&key, *space, &offset_hex, value_str);
+                    }
+                }
+            }
+        }
     }
 
     Ok(WriteModifiedResult {
@@ -3752,11 +3779,13 @@ pub struct WriteModifiedResult {
 pub async fn has_modified_values(
     state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
-    let handles = state.node_registry.get_all_handles().await;
-    for h in &handles {
-        if let Ok(Some(tree)) = h.get_config_tree().await {
-            if crate::node_tree::has_modified_values(&tree) {
-                return Ok(true);
+    let layout_guard = state.layout_state.read().await;
+    if let Some(ls) = layout_guard.as_ref() {
+        for key in ls.all_tree_keys() {
+            if let Some(tree) = ls.config_tree(&key) {
+                if crate::node_tree::has_modified_values(tree) {
+                    return Ok(true);
+                }
             }
         }
     }
@@ -4678,6 +4707,7 @@ mod profile_metadata_tests {
             event_roles: vec![],
             relevance_rules: vec![],
             configuration_modes: vec![],
+            styles: vec![],
         };
 
         let report = apply_profile_metadata_to_tree(&mut tree, "05.02.01.02.03.00", &profile, None, &cdi, &std::collections::BTreeMap::new());
@@ -4930,7 +4960,6 @@ mod node_key_lookup_tests {
             snip: None,
             cdi_data: None,
             cdi_parsed: None,
-            config_values: HashMap::new(),
             config_tree: Some(tree),
             producer_identified_events: Vec::new(),
         })

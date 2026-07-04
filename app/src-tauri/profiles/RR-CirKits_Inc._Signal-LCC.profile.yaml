@@ -64,6 +64,32 @@ eventRoles:
   - groupPath: "Track Circuits/Circuit"
     role: Consumer
 
+# Channel styles
+#
+# Per Spec 018 / ADR-0013, a style is the hardware-shape realisation that
+# pairs with a role. `single-led-direct-lamp` realises the `lamp-indicator`
+# role over a single Direct Lamp Control row; lit/unlit live state is
+# derived from observed Lamp On / Lamp Off PCERs on the bus.
+#
+# `constraints` is intentionally empty in this release: Bowties does NOT
+# auto-lock the claimed row's `Lamp Selection` field. The user must set
+# Lamp Selection manually in the Config tab. The future automatic lock is
+# tracked in specs/backlog.md (style-driven Lamp Selection auto-lock).
+#
+# `eventMapping` is informational — the authoritative source for state →
+# leaf-index resolution is `app/src/lib/utils/channelStyles.ts`
+# (`STYLE_EVENT_MAPPINGS`). When the catalog moves into YAML the backend
+# will start reading this field.
+styles:
+  - styleId: "single-led-direct-lamp"
+    bindingKind: "lampRow"
+    eventMapping:
+      lit:
+        consumerLeafIndex: 0
+      unlit:
+        consumerLeafIndex: 1
+    constraints: []
+
 # Relevance rules
 #
 # Each rule declares that a CDI section becomes irrelevant when the

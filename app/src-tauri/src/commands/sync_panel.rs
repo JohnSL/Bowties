@@ -949,10 +949,14 @@ pub async fn apply_sync_changes(
                     ));
                 }
 
-                // Commit the value in the tree if it's been populated
-                if let Ok(Some(mut tree)) = proxy.get_config_tree().await {
-                    crate::node_tree::update_leaf_value(&mut tree, space, address, config_val);
-                    let _ = proxy.set_config_tree(tree).await;
+                // Commit the value in the LayoutState tree
+                if let Ok(nk) = crate::node_key::NodeKey::parse(&parsed_node_key) {
+                    let mut layout_guard = state.layout_state.write().await;
+                    if let Some(ls) = layout_guard.as_mut() {
+                        if let Some(tree) = ls.config_tree_mut(&nk) {
+                            crate::node_tree::update_leaf_value(tree, space, address, config_val);
+                        }
+                    }
                 }
             }
             Err(e) => {
@@ -960,10 +964,14 @@ pub async fn apply_sync_changes(
                 // Error 0x1083 = read-only field (FR-017b)
                 if err_str.contains("1083") {
                     read_only_cleared.push(change_id.clone());
-                    // Mark leaf as read-only in tree if available
-                    if let Ok(Some(mut tree)) = proxy.get_config_tree().await {
-                        crate::node_tree::revert_and_mark_leaf_read_only(&mut tree, space, address);
-                        let _ = proxy.set_config_tree(tree).await;
+                    // Mark leaf as read-only in LayoutState tree
+                    if let Ok(nk) = crate::node_key::NodeKey::parse(&parsed_node_key) {
+                        let mut layout_guard = state.layout_state.write().await;
+                        if let Some(ls) = layout_guard.as_mut() {
+                            if let Some(tree) = ls.config_tree_mut(&nk) {
+                                crate::node_tree::revert_and_mark_leaf_read_only(tree, space, address);
+                            }
+                        }
                     }
                 } else {
                     failed.push(ApplySyncFailure {

@@ -4,16 +4,17 @@
    * slot (Spec 018 / S4). Mockup §5.
    *
    * Modelled on `AddFacilityDialog` (Dialog shell + native <form> for
-   * Enter-to-submit). Two modes:
-   *  - 'select': empty slot → list of unbound role-compatible channels;
-   *              Confirm enabled as soon as a row is selected.
-   *  - 'rebind': filled slot → list includes the currently-bound channel
-   *              (pre-selected), plus other unbound role-compatible
-   *              channels; Confirm disabled until a *different* row is
-   *              selected (rebind-to-self is a no-op the picker hides).
+   * Enter-to-submit). Lists unbound role-compatible channels; Confirm
+   * enables as soon as a row is selected. Rebind was retired in
+   * S6 D4 — changing a slot's channel is now a two-step Remove +
+   * Select flow.
    */
   import type { InformationChannel } from '$lib/api/channels';
-  import type { OccupancyState } from '$lib/utils/channelState';
+  import {
+    channelStateClass,
+    channelStateLabel,
+    type ChannelState,
+  } from '$lib/utils/channelState';
   import Dialog from '$lib/components/Dialog/Dialog.svelte';
   import DialogTitle from '$lib/components/Dialog/DialogTitle.svelte';
   import DialogActions from '$lib/components/Dialog/DialogActions.svelte';
@@ -22,7 +23,6 @@
   let {
     slotLabel,
     requiredRole: _requiredRole,
-    currentChannelId,
     candidateChannels,
     channelState,
     onConfirm,
@@ -35,25 +35,15 @@
      * by the route via `effectiveLayoutStore.unboundChannelsForRole`.
      */
     requiredRole: string;
-    /** When set, the picker is in Rebind mode and pre-selects this id. */
-    currentChannelId?: string;
     candidateChannels: InformationChannel[];
-    channelState: (channelId: string) => OccupancyState;
+    channelState: (channelId: string) => ChannelState;
     onConfirm: (channelId: string) => void;
     onCancel: () => void;
   } = $props();
 
-  const isRebind = $derived(currentChannelId !== undefined);
-  const dialogTitle = $derived(
-    isRebind ? `Rebind '${slotLabel}'` : `Select channel for '${slotLabel}'`,
-  );
+  const dialogTitle = $derived(`Select channel for '${slotLabel}'`);
 
-  // Pre-seed on Rebind mode; intentionally a one-shot capture of the prop —
-  // the picker is mounted/unmounted per open, so re-syncing on a prop change
-  // would only fire if the parent retains the dialog open across slot
-  // changes (which it does not).
-  // svelte-ignore state_referenced_locally
-  let selectedId = $state<string | undefined>(currentChannelId);
+  let selectedId = $state<string | undefined>(undefined);
   let searchText = $state('');
 
   const filteredChannels = $derived.by(() => {
@@ -66,11 +56,7 @@
     });
   });
 
-  const confirmDisabled = $derived.by(() => {
-    if (selectedId === undefined) return true;
-    if (isRebind && selectedId === currentChannelId) return true;
-    return false;
-  });
+  const confirmDisabled = $derived(selectedId === undefined);
 
   function describeLocation(ch: InformationChannel): string {
     if (ch.binding.kind === 'connectorInput') {
@@ -84,22 +70,12 @@
     return '';
   }
 
-  function stateLabel(state: OccupancyState): string {
-    switch (state) {
-      case 'occupied':
-        return 'Occupied';
-      case 'clear':
-        return 'Clear';
-      case 'unknown':
-        return 'Unknown';
-      case 'no-config':
-        return 'No config';
-    }
+  function stateLabel(state: ChannelState): string {
+    return channelStateLabel(state);
   }
 
   function handleConfirm() {
     if (selectedId === undefined) return;
-    if (isRebind && selectedId === currentChannelId) return;
     onConfirm(selectedId);
   }
 </script>
@@ -130,7 +106,8 @@
       <ul class="scp-list" role="radiogroup" aria-label="Channel candidates">
         {#each filteredChannels as ch (ch.id)}
           {@const state = channelState(ch.id)}
-          <li>
+          {@const stateClass = channelStateClass(state)}
+          <li class="scp-list-item">
             <label class="scp-row" class:selected={selectedId === ch.id}>
               <input
                 type="radio"
@@ -141,17 +118,16 @@
               />
               <span
                 class="scp-state-dot"
-                class:occupied={state === 'occupied'}
-                class:clear={state === 'clear'}
-                class:unknown={state === 'unknown'}
-                class:no-config={state === 'no-config'}
+                class:occupied={stateClass === 'occupied'}
+                class:clear={stateClass === 'clear'}
+                class:lit={stateClass === 'lit'}
+                class:unlit={stateClass === 'unlit'}
+                class:unknown={stateClass === 'unknown'}
+                class:no-config={stateClass === 'no-config'}
                 aria-hidden="true"
               ></span>
               <span class="scp-name">{ch.name}</span>
               <span class="scp-meta">{describeLocation(ch)} · {stateLabel(state)}</span>
-              {#if isRebind && ch.id === currentChannelId}
-                <span class="scp-current-pill">currently bound</span>
-              {/if}
             </label>
           </li>
         {/each}
@@ -254,15 +230,6 @@
   .scp-meta {
     font-size: var(--fluent-fontSizeBase200);
     color: var(--fluent-neutralForeground2);
-  }
-  .scp-current-pill {
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    padding: 0.1rem 0.4rem;
-    border-radius: 999px;
-    border: 1px solid currentColor;
-    color: var(--accent-color, #2563eb);
   }
   .scp-hidden-submit {
     position: absolute;

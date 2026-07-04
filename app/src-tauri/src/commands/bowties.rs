@@ -362,25 +362,12 @@ pub async fn build_bowtie_catalog_command(
     let layout_state_guard = state.layout_state.read().await;
     let layout_state_ref = layout_state_guard.as_ref();
 
-    // Gather config values: from live proxies (online) or LayoutState (offline)
-    let mut config_cache_snap: HashMap<NodeKey, HashMap<String, [u8; 8]>> = if !use_offline {
-        let handles = state.node_registry.get_all_handles().await;
+    // Gather config values: from LayoutState trees (unified online/offline)
+    let mut config_cache_snap: HashMap<NodeKey, HashMap<String, [u8; 8]>> = {
         let mut map = HashMap::new();
-        for h in &handles {
-            if let Ok(vals) = h.get_config_values().await {
-                if !vals.is_empty() {
-                    if let Some(nid) = h.node_id() {
-                        map.insert(NodeKey::from_node_id(nid), vals);
-                    }
-                }
-            }
-        }
-        map
-    } else {
-        let mut map: HashMap<NodeKey, HashMap<String, [u8; 8]>> = HashMap::new();
         if let Some(ls) = layout_state_ref {
-            for key in ls.persisted_node_keys() {
-                if let Some(tree) = ls.config_tree(key) {
+            for key in ls.all_tree_keys() {
+                if let Some(tree) = ls.config_tree(&key) {
                     let mut node_config: HashMap<String, [u8; 8]> = HashMap::new();
                     for leaf in crate::node_tree::collect_event_id_leaves(tree) {
                         if let Some(bytes) = leaf.value {
@@ -388,7 +375,7 @@ pub async fn build_bowtie_catalog_command(
                         }
                     }
                     if !node_config.is_empty() {
-                        map.insert(key.clone(), node_config);
+                        map.insert(key, node_config);
                     }
                 }
             }
@@ -463,34 +450,12 @@ pub async fn build_bowtie_catalog_command(
         }
     }
 
-    // Gather profile group roles: from live proxy trees or offline cache
-    let profile_group_roles: HashMap<String, lcc_rs::EventRole> = if !use_offline {
-        let handles = state.node_registry.get_all_handles().await;
-        let mut map = HashMap::new();
-        for h in &handles {
-            let nk = match h.node_id() {
-                Some(id) => NodeKey::from_node_id(id),
-                None => continue, // skip synthesized placeholders
-            };
-            if let Ok(Some(tree)) = h.get_config_tree().await {
-                for leaf in crate::node_tree::collect_event_id_leaves(&tree).into_iter() {
-                    if let Some(role) = leaf.event_role {
-                        if role != lcc_rs::EventRole::Ambiguous {
-                            let key = format!("{}:{}", nk, leaf.path.join("/"));
-                            map.insert(key, role);
-                        }
-                    }
-                }
-            }
-        }
-        map
-    } else {
-        // Offline: derive profile group roles from LayoutState's saved trees,
-        // which already carry `event_role` annotations from open_layout_directory.
+    // Gather profile group roles: from LayoutState trees (unified online/offline)
+    let profile_group_roles: HashMap<String, lcc_rs::EventRole> = {
         let mut map: HashMap<String, lcc_rs::EventRole> = HashMap::new();
         if let Some(ls) = layout_state_ref {
-            for key in ls.persisted_node_keys() {
-                if let Some(tree) = ls.config_tree(key) {
+            for key in ls.all_tree_keys() {
+                if let Some(tree) = ls.config_tree(&key) {
                     for leaf in crate::node_tree::collect_event_id_leaves(tree) {
                         if let Some(role) = leaf.event_role {
                             if role != lcc_rs::EventRole::Ambiguous {
@@ -570,6 +535,21 @@ pub async fn build_bowtie_catalog_command(
     // Store in AppState
     let node_count = nodes_for_catalog.len();
     *state.bowties_catalog.write().await = Some(catalog.clone());
+
+    // Drop the layout_state read guard before acquiring the write lock below.
+    // The read guard was held since line 362 for offline-mode projections;
+    // keeping it alive across the write() call would deadlock (Tokio RwLock).
+    drop(layout_state_guard);
+
+    // Record protocol-discovered role classifications in LayoutState
+    // so the save flow can persist them without reading the stale catalog.
+    {
+        let resolved_roles = extract_catalog_role_classifications(&catalog);
+        let mut layout_guard = state.layout_state.write().await;
+        if let Some(layout_state) = layout_guard.as_mut() {
+            layout_state.record_discovered_roles(resolved_roles);
+        }
+    }
 
     // Emit to frontend
     let _ = app.emit(

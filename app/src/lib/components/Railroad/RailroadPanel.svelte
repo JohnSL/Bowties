@@ -8,12 +8,15 @@
     daughterboardName,
     usedBy,
     onSelectChannel,
-    onRebindChannel,
+    onAddChannel,
     onRemoveFromSlot,
   }: {
     nodeName: (nodeKey: string) => string;
-    /** Map from channelId to { occupied, clear } event IDs. Supplied by parent/orchestrator. */
-    resolvedEventIds?: ReadonlyMap<string, { occupied?: string; clear?: string }>;
+    /**
+     * Map from channelId to state-name → eventId (Spec 018 / S5 D6).
+     * State names vary by channel role.
+     */
+    resolvedEventIds?: ReadonlyMap<string, Record<string, string>>;
     /**
      * Resolves the daughterboard display name for a (nodeKey, connector) pair —
      * used in `ChannelsPanel` group headers (e.g. "TowerLCC-1 · Connector A · BOD-8").
@@ -26,7 +29,8 @@
     usedBy?: (channelId: string) => ReadonlyArray<{ facilityName: string; slotLabel: string }>;
     /** Spec 018 / S4 — slot-binding intent emitters; pass-through to `FacilitiesSection`. */
     onSelectChannel?: (facilityId: string, slotLabel: string) => void;
-    onRebindChannel?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
+    /** Spec 018 / S5 — consumer-side Add-channel intent emitter. */
+    onAddChannel?: (facilityId: string, slotLabel: string) => void;
     onRemoveFromSlot?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
   } = $props();
 </script>
@@ -35,7 +39,7 @@
   <FacilitiesSection
     {resolvedEventIds}
     {onSelectChannel}
-    {onRebindChannel}
+    {onAddChannel}
     {onRemoveFromSlot}
   />
   <ChannelsPanel {nodeName} {resolvedEventIds} {daughterboardName} {usedBy} />

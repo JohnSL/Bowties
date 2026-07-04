@@ -2,18 +2,20 @@
   import { facilitiesStore } from '$lib/stores/facilities.svelte';
   import { behaviorTemplatesStore } from '$lib/stores/behaviorTemplates.svelte';
   import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
+  import * as facilityOrchestrator from '$lib/orchestration/facilityOrchestrator';
   import AddFacilityDialog from './AddFacilityDialog.svelte';
   import FacilityCard from './FacilityCard.svelte';
 
   let {
     resolvedEventIds,
     onSelectChannel,
-    onRebindChannel,
+    onAddChannel,
     onRemoveFromSlot,
   }: {
-    resolvedEventIds?: ReadonlyMap<string, { occupied?: string; clear?: string }>;
+    resolvedEventIds?: ReadonlyMap<string, Record<string, string>>;
     onSelectChannel?: (facilityId: string, slotLabel: string) => void;
-    onRebindChannel?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
+    /** Spec 018 / S5 — consumer-side Add-channel intent emitter. */
+    onAddChannel?: (facilityId: string, slotLabel: string) => void;
     onRemoveFromSlot?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
   } = $props();
 
@@ -34,7 +36,13 @@
     facilitiesStore.renameFacility(facilityId, newName);
   }
   function handleDelete(facilityId: string) {
-    facilitiesStore.deleteFacility(facilityId);
+    // Spec 018 / S6 — route through the orchestrator so composed
+    // bowties are torn down before the facility is removed. Calling
+    // `facilitiesStore.deleteFacility` directly would leave orphan
+    // bowtie metadata rows tagged with `createdByFacility === id`.
+    facilityOrchestrator.deleteFacility(facilityId).catch((err) => {
+      console.error('[facility] deleteFacility failed', err);
+    });
   }
 </script>
 
@@ -68,7 +76,7 @@
             onRename={handleRename}
             onDelete={handleDelete}
             {onSelectChannel}
-            {onRebindChannel}
+            {onAddChannel}
             {onRemoveFromSlot}
           />
         </li>

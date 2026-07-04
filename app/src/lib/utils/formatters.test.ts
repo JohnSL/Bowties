@@ -86,7 +86,16 @@ describe('formatTreeConfigValue — eventId', () => {
     expect(formatTreeConfigValue(v)).toBe('01.02.03.04.05.06.07.08');
   });
 
-  it('returns the hex field from the eventId value', () => {
+  it('converts undotted hex to dotted display form', () => {
+    const v: TreeConfigValue = {
+      type: 'eventId',
+      bytes: [2, 1, 0x57, 0x10, 0x09, 0x97, 2, 0xc1],
+      hex: '02015710099702C1',
+    };
+    expect(formatTreeConfigValue(v)).toBe('02.01.57.10.09.97.02.C1');
+  });
+
+  it('returns already-dotted hex unchanged', () => {
     const v: TreeConfigValue = {
       type: 'eventId',
       bytes: [5, 1, 1, 1, 3, 1, 0, 0],

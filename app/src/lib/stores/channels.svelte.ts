@@ -1,4 +1,5 @@
-import { listChannels, type InformationChannel } from '$lib/api/channels';
+import { listChannels, type ChannelBinding, type ChannelRole, type InformationChannel } from '$lib/api/channels';
+import type { LayoutEditDelta } from '$lib/types/bowtie';
 
 /**
  * Hardware-locality grouping key for the Spec 018 / S3 Channels panel.
@@ -18,7 +19,13 @@ export function hardwareGroupKey(channel: InformationChannel): string {
 class ChannelsStore {
   /** Channels loaded from disk (baseline). */
   private _baseline = $state<InformationChannel[]>([]);
-  /** Channels created in-memory since last save (drafts). */
+  /**
+   * Channels created in-memory since last save. Populated by both the
+   * hardware-owned auto-create path (BOD daughterboard selection) and
+   * `createUserOwnedChannel`. Both are emitted from `collectDeltas` as
+   * `createChannel` deltas so all channel edits ride one atomic save
+   * (ADR-0002 fold).
+   */
   private _pendingCreations = $state<InformationChannel[]>([]);
   /** Pending renames: channel ID → new name. */
   private _pendingRenames = $state<Map<string, string>>(new Map());
@@ -80,12 +87,20 @@ class ChannelsStore {
 
   /** Whether there are unsaved channel changes (creations, renames, or deletions). */
   get isDirty(): boolean {
-    return this._pendingCreations.length > 0 || this._pendingRenames.size > 0 || this._pendingDeletions.size > 0;
+    return (
+      this._pendingCreations.length > 0 ||
+      this._pendingRenames.size > 0 ||
+      this._pendingDeletions.size > 0
+    );
   }
 
   /** Count of pending channel edits (creations + renames + deletions). */
   get editCount(): number {
-    return this._pendingCreations.length + this._pendingRenames.size + this._pendingDeletions.size;
+    return (
+      this._pendingCreations.length +
+      this._pendingRenames.size +
+      this._pendingDeletions.size
+    );
   }
 
   /** Return the pending channels to persist at save time. */
@@ -142,6 +157,72 @@ class ChannelsStore {
    */
   addPendingChannels(channels: InformationChannel[]): void {
     this._pendingCreations = [...this._pendingCreations, ...channels];
+  }
+
+  /**
+   * User-owned channel creation. Constructs a channel with
+   * `ownership: 'user-owned'`, appends it to the same pending-creation
+   * bucket as hardware-owned channels, and returns it so the caller
+   * (orchestrator) can immediately attach it to a facility slot in the
+   * same draft transaction. Both variants emit `createChannel` deltas at
+   * save time.
+   */
+  createUserOwnedChannel(opts: {
+    role: ChannelRole;
+    style: string;
+    binding: ChannelBinding;
+    name: string;
+  }): InformationChannel {
+    const channel: InformationChannel = {
+      id: crypto.randomUUID(),
+      name: opts.name,
+      role: opts.role,
+      style: opts.style,
+      ownership: 'user-owned',
+      binding: opts.binding,
+    };
+    this._pendingCreations = [...this._pendingCreations, channel];
+    return channel;
+  }
+
+  /**
+   * Reverse of `createUserOwnedChannel`. If the channel is still in the
+   * in-session pending-creations bucket, drop it there (and clear any
+   * pending rename) so no delta is emitted. Otherwise route through the
+   * standard delete path so a previously-persisted user-owned channel
+   * gets a baseline deletion on the next save.
+   */
+  removeUserOwnedChannel(id: string): void {
+    const draftIdx = this._pendingCreations.findIndex((ch) => ch.id === id);
+    if (draftIdx >= 0) {
+      this._pendingCreations = this._pendingCreations.filter((ch) => ch.id !== id);
+      if (this._pendingRenames.has(id)) {
+        const next = new Map(this._pendingRenames);
+        next.delete(id);
+        this._pendingRenames = next;
+      }
+      return;
+    }
+    this.deleteChannels([id]);
+  }
+
+  /**
+   * Emit `LayoutEditDelta`s for every pending channel edit. All three
+   * variants — create, rename, delete — travel `save_layout_directory`
+   * as part of one atomic delta list (ADR-0002 atomic-save fold).
+   */
+  collectDeltas(): LayoutEditDelta[] {
+    const deltas: LayoutEditDelta[] = [];
+    for (const channel of this._pendingCreations) {
+      deltas.push({ type: 'createChannel', channel });
+    }
+    for (const [channelId, newName] of this._pendingRenames) {
+      deltas.push({ type: 'renameChannel', channelId, newName });
+    }
+    for (const channelId of this._pendingDeletions) {
+      deltas.push({ type: 'deleteChannel', channelId });
+    }
+    return deltas;
   }
 
   /**
@@ -213,6 +294,10 @@ class ChannelsStore {
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();
     this._loading = false;
+  }
+
+  resetForNewLayout(): void {
+    this.reset();
   }
 }
 

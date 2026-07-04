@@ -323,6 +323,14 @@ class NodeRoster {
     this._persistedRemovals = new Set();
   }
 
+  resetForNewLayout(): void {
+    this.clearLayoutScope();
+  }
+
+  resetForFreshLiveSession(): void {
+    this.replaceLiveRoster([]);
+  }
+
   /**
    * Mark saved layout nodes that are NOT currently on the bus as offline.
    *

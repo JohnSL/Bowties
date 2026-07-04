@@ -11,19 +11,12 @@ use tokio::sync::RwLock;
 
 use crate::node_key::NodeKey;
 use crate::node_proxy::{LiveNodeProxy, NodeProxyHandle};
-use crate::node_tree::NodeConfigTree;
 
 /// Thread-safe registry mapping NodeKey → NodeProxyHandle.
 pub struct NodeRegistry {
     proxies: RwLock<HashMap<NodeKey, NodeProxyHandle>>,
     transport_handle: RwLock<Option<TransportHandle>>,
     our_alias: RwLock<u16>,
-    /// Config trees loaded from a saved layout, keyed by NodeKey.
-    /// Populated during `open_layout_directory`, consumed during node
-    /// discovery to seed freshly-spawned proxies so they start with the
-    /// previously-captured config rather than an empty tree.
-    /// Cleared on `close_layout` / `clear_saved_trees`.
-    saved_trees: RwLock<HashMap<NodeKey, NodeConfigTree>>,
 }
 
 impl NodeRegistry {
@@ -33,7 +26,6 @@ impl NodeRegistry {
             proxies: RwLock::new(HashMap::new()),
             transport_handle: RwLock::new(None),
             our_alias: RwLock::new(0),
-            saved_trees: RwLock::new(HashMap::new()),
         }
     }
 
@@ -92,14 +84,6 @@ impl NodeRegistry {
 
         let live_handle = LiveNodeProxy::spawn(node_id, alias, transport.clone(), our_alias);
         let handle = NodeProxyHandle::Live(live_handle);
-
-        // Seed the proxy with a previously-saved config tree if one exists.
-        // This makes the saved layout data the base layer for this node's
-        // config, so `get_node_tree` returns complete data without requiring
-        // a fresh bus read.
-        if let Some(tree) = self.saved_trees.read().await.get(&key).cloned() {
-            let _ = handle.set_config_tree(tree).await;
-        }
 
         proxies.insert(key, handle.clone());
         Ok(handle)
@@ -204,13 +188,6 @@ impl NodeRegistry {
                 handle.shutdown().await;
             }
         }
-        self.saved_trees.write().await.clear();
-    }
-
-    /// Replace the saved trees cache with trees built from a layout's
-    /// saved node snapshots. Called during `open_layout_directory`.
-    pub async fn set_saved_trees(&self, trees: HashMap<NodeKey, NodeConfigTree>) {
-        *self.saved_trees.write().await = trees;
     }
 }
 
@@ -238,7 +215,6 @@ mod tests {
             snip: None,
             cdi_data: None,
             cdi_parsed: None,
-            config_values: StdHashMap::new(),
             config_tree: None,
             producer_identified_events: Vec::new(),
         })
@@ -330,73 +306,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn clear_layout_scope_clears_saved_trees() {
-        let registry = NodeRegistry::new();
-        let tree = crate::node_tree::NodeConfigTree {
-            node_id: "0201570002D9".to_string(),
-            identity: None,
-            connector_profile: None,
-            connector_profile_warning: None,
-            segments: Vec::new(),
-            unknown_variants: Vec::new(),
-            profile_applied: false,
-        };
-        let key = NodeKey::parse("0201570002D9").unwrap();
-        let mut trees = HashMap::new();
-        trees.insert(key, tree);
-        registry.set_saved_trees(trees).await;
-
-        assert!(!registry.saved_trees.read().await.is_empty());
-        registry.clear_layout_scope().await;
-        assert!(registry.saved_trees.read().await.is_empty());
-    }
-
-    #[tokio::test]
-    async fn get_or_create_seeds_proxy_with_saved_tree() {
-        let registry = NodeRegistry::new();
-        registry.set_transport(dummy_transport_handle(), 0x001).await;
-
-        let node_id = NodeID::new([0x05, 0x02, 0x01, 0x02, 0x02, 0x00]);
-        let key = NodeKey::from_node_id(node_id);
-
-        // Pre-populate a saved tree with a segment containing a leaf
-        let tree = crate::node_tree::NodeConfigTree {
-            node_id: key.to_string(),
-            identity: None,
-            connector_profile: None,
-            connector_profile_warning: None,
-            segments: vec![crate::node_tree::SegmentNode {
-                name: "Test".to_string(),
-                origin: 0,
-                description: None,
-                space: 253,
-                children: vec![],
-            }],
-            unknown_variants: Vec::new(),
-            profile_applied: false,
-        };
-        let mut trees = HashMap::new();
-        trees.insert(key, tree.clone());
-        registry.set_saved_trees(trees).await;
-
-        // When the node is created via get_or_create, the proxy should be seeded
-        let handle = registry.get_or_create(node_id, 0x100).await.unwrap();
-        let proxy_tree = handle.get_config_tree().await.unwrap();
-        assert!(proxy_tree.is_some(), "proxy should have been seeded with saved tree");
-        let proxy_tree = proxy_tree.unwrap();
-        assert_eq!(proxy_tree.segments.len(), 1);
-        assert_eq!(proxy_tree.segments[0].name, "Test");
-    }
-
-    #[tokio::test]
-    async fn get_or_create_without_saved_tree_leaves_proxy_empty() {
+    async fn get_or_create_spawns_empty_proxy() {
         let registry = NodeRegistry::new();
         registry.set_transport(dummy_transport_handle(), 0x001).await;
 
         let node_id = NodeID::new([0x05, 0x02, 0x01, 0x02, 0x02, 0x00]);
 
         let handle = registry.get_or_create(node_id, 0x100).await.unwrap();
+        // Live proxy no longer carries config_tree (ADR-0015) — it returns Ok(None).
         let proxy_tree = handle.get_config_tree().await.unwrap();
-        assert!(proxy_tree.is_none(), "proxy without saved tree should have no config tree");
+        assert!(proxy_tree.is_none(), "live proxy should have no config tree (lives in LayoutState)");
     }
 }

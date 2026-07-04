@@ -35,6 +35,14 @@ class EventStateStore {
   clear(): void {
     this._events = new Map();
   }
+
+  resetForNewLayout(): void {
+    this.clear();
+  }
+
+  resetForFreshLiveSession(): void {
+    this.clear();
+  }
 }
 
 export const eventStateStore = new EventStateStore();

@@ -30,7 +30,14 @@ import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { channelsStore } from '$lib/stores/channels.svelte';
 import { facilitiesStore } from '$lib/stores/facilities.svelte';
-import { isLeaf, isGroup, collectEventIdLeaves } from '$lib/types/nodeTree';
+import { behaviorTemplatesStore } from '$lib/stores/behaviorTemplates.svelte';
+import { nodeRoster } from '$lib/stores/nodeRoster.svelte';
+import {
+  isLeaf,
+  collectEventIdLeaves,
+  replicationInstances,
+  getInstanceDisplayName,
+} from '$lib/types/nodeTree';
 import type {
   ConfigNode,
   EventRole,
@@ -44,6 +51,7 @@ import type {
 import type { ChannelRole, InformationChannel } from '$lib/api/channels';
 import { editKeyForLeaf } from '$lib/utils/editKey';
 import { isPlaceholderEventId } from '$lib/utils/eventIds';
+import { makeValueResolver } from '$lib/utils/displayResolution';
 
 // Re-export the catalog store so consumers of the facade can drive it in tests
 // without reaching into the legacy bowties.svelte module directly.
@@ -202,12 +210,96 @@ class EffectiveLayoutStore {
     });
   }
 
-  // ── Internals ────────────────────────────────────────────────────────────
+  /**
+   * Spec 018 / S5 (D1) — eligible Direct Lamp Control rows for the
+   * given style id, grouped by node, across every node in the roster
+   * whose CDI tree declares a `Direct Lamp Control` segment.
+   *
+   * Today only `single-led-direct-lamp` resolves to non-empty groups.
+   * Rows already claimed by a `lampRow`-binding channel are excluded;
+   * `excludeChannelId` puts a row back into the picker when Rebind
+   * needs it as the pre-selected option (Rebind on output is itself
+   * deferred to S6; the opts shape is forward-compatible).
+   *
+   * Row labels reuse [`getInstanceDisplayName`] (the Config-tab helper):
+   * when the row's `Lamp Description` field has a non-empty value the
+   * label reads `"My Block 5 (7)"`, otherwise it falls back to
+   * `instanceLabel` (`"Lamp 7"`). Draft and offline-pending edits to the
+   * description flow through `makeValueResolver`, so a renamed-but-not-yet-
+   * saved lamp shows the new name immediately.
+   *
+   * D5 deferral: this slice does NOT apply the constraint-based
+   * filter (`Lamp Selection != "Used by Mast"`). When the future
+   * `compute_active_styles` driver lands, that filter slots in here.
+   */
+  eligibleLampRowsForStyle(
+    styleId: string,
+    opts?: { excludeChannelId?: string },
+  ): EligibleLampRowGroup[] {
+    if (styleId !== 'single-led-direct-lamp') return [];
+
+    const claims = new Set<string>();
+    for (const ch of channelsStore.channels) {
+      if (ch.binding.kind !== 'lampRow') continue;
+      if (opts?.excludeChannelId && ch.id === opts.excludeChannelId) continue;
+      claims.add(`${ch.binding.nodeKey}|${ch.binding.rowOrdinal}`);
+    }
+
+    const groups: EligibleLampRowGroup[] = [];
+    for (const entry of nodeRoster.allEntries) {
+      const tree = entry.tree;
+      if (!tree) continue;
+      const segment = tree.segments.find((s) => s.name === 'Direct Lamp Control');
+      if (!segment) continue;
+      const nodeName = resolveNodeNameForKey(entry.nodeKey);
+      const resolveValue = makeValueResolver(tree.nodeId);
+      const rows: EligibleLampRow[] = [];
+      for (const instance of replicationInstances(segment.children, 'Lamp')) {
+        const ordinal = instance.instance;
+        if (claims.has(`${entry.nodeKey}|${ordinal}`)) continue;
+        const rowLabel =
+          instance.displayName ?? getInstanceDisplayName(instance, resolveValue);
+        rows.push({
+          nodeKey: entry.nodeKey,
+          nodeName,
+          rowOrdinal: ordinal,
+          rowLabel,
+        });
+      }
+      if (rows.length === 0) continue;
+      groups.push({ nodeKey: entry.nodeKey, nodeName, rows });
+    }
+    return groups;
+  }
 
   private _roleMatches(nodeId: string, leaf: LeafConfigNode, filter: EventRole): boolean {
     const effective = this.effectiveRole(nodeId, leaf);
     if (effective === null || effective === 'Ambiguous') return true;
     return effective === filter;
+  }
+
+  /**
+   * Spec 018 / S6 (D5) — derived facility status from slot fullness.
+   *
+   * `'Wired'` iff, for every slot declared by the facility's template,
+   * `facility.slotBindings[slot.label].length >= slot.minChannels`. Unknown
+   * facility ids return `'Incomplete'` (defensive default). Slots with
+   * `minChannels === 0` are always considered satisfied (forward-compat
+   * with future optional slots — Block Indicator does not exercise this).
+   *
+   * This is the sole reader for the FacilityCard status pill per ADR-0004.
+   */
+  facilityStatus(facilityId: string): 'Wired' | 'Incomplete' {
+    const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+    if (!facility) return 'Incomplete';
+    const template = behaviorTemplatesStore.findByTemplateId(facility.templateId);
+    // If the template is missing we cannot verify fullness — default to Incomplete.
+    if (!template) return 'Incomplete';
+    for (const slot of template.slots) {
+      const bound = facility.slotBindings[slot.label]?.length ?? 0;
+      if (bound < slot.minChannels) return 'Incomplete';
+    }
+    return 'Wired';
   }
 }
 
@@ -216,6 +308,44 @@ export interface ChannelUsageEntry {
   facilityId: string;
   facilityName: string;
   slotLabel: string;
+}
+
+/** Spec 018 / S5 (D1) — one eligible Direct Lamp Control row, ready for the AddChannelPicker. */
+export interface EligibleLampRow {
+  nodeKey: string;
+  nodeName: string;
+  rowOrdinal: number;
+  rowLabel: string;
+}
+
+/**
+ * Spec 018 / S5 — eligible lamp rows grouped by their owning node. The picker
+ * renders one section header per group so the user can tell which Signal-LCC a
+ * row lives on; the row labels themselves drop the redundant node prefix.
+ */
+export interface EligibleLampRowGroup {
+  nodeKey: string;
+  nodeName: string;
+  rows: EligibleLampRow[];
+}
+
+/**
+ * Lightweight node-name resolver used inside `effectiveLayoutStore`.
+ *
+ * Falls back to a SNIP-based display because we can't import the canonical
+ * `resolveNodeName` from `$lib/layout` (that module re-exports us, so the
+ * import would be circular). The caller-supplied `nodeName` prop on the
+ * route is still preferred when the result reaches the UI.
+ */
+function resolveNodeNameForKey(nodeKey: string): string {
+  const entry = nodeRoster.allEntries.find((e) => e.nodeKey === nodeKey);
+  if (!entry) return nodeKey;
+  const snip = entry.info?.snip_data ?? null;
+  const userName = snip?.user_name?.trim();
+  if (userName) return userName;
+  const model = snip?.model?.trim();
+  if (model) return model;
+  return nodeKey;
 }
 
 /** Singleton effective-layout read model. */

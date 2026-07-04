@@ -141,6 +141,10 @@ vi.mock('$lib/api/config', () => ({
   discardModifiedValues: vi.fn().mockResolvedValue(0),
 }));
 
+vi.mock('$lib/api/layout', () => ({
+  clearLayoutDrafts: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('$lib/stores/layout.svelte', () => ({
   layoutStore: layoutRef,
 }));

@@ -1122,6 +1122,55 @@ fn count_children_leaves(children: &[ConfigNode]) -> usize {
         .sum()
 }
 
+/// Enumerate the replicated instances of a named group under `parent`.
+///
+/// [`build_children`] emits a two-level shape for any CDI group with
+/// `replication > 1`: a single wrapper [`GroupNode`] with `instance == 0` sits
+/// directly under the parent, with the 1..N instance groups as its children.
+/// Hand-built test fixtures sometimes emit instances as direct siblings of the
+/// parent instead. This helper recognises both shapes so consumers (lamp-row
+/// enumeration, signal-mast row enumeration, etc.) do not have to re-encode
+/// the wrapper invariant.
+///
+/// Returns instances in 1-based ordinal order; the iterator is empty when the
+/// named group is not present under `parent`.
+pub fn replication_instances<'a>(
+    parent: &'a [ConfigNode],
+    name: &str,
+) -> Vec<&'a GroupNode> {
+    // Wrapper shape: a single wrapper with instance == 0 holds the instances.
+    for child in parent {
+        if let ConfigNode::Group(g) = child {
+            if g.instance == 0 && g.replication_of == name {
+                let mut instances: Vec<&GroupNode> = g
+                    .children
+                    .iter()
+                    .filter_map(|c| match c {
+                        ConfigNode::Group(inst)
+                            if inst.replication_of == name && inst.instance > 0 =>
+                        {
+                            Some(inst)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                instances.sort_by_key(|g| g.instance);
+                return instances;
+            }
+        }
+    }
+    // Sibling shape: instance groups appear directly under the parent.
+    let mut siblings: Vec<&GroupNode> = parent
+        .iter()
+        .filter_map(|c| match c {
+            ConfigNode::Group(g) if g.replication_of == name && g.instance > 0 => Some(g),
+            _ => None,
+        })
+        .collect();
+    siblings.sort_by_key(|g| g.instance);
+    siblings
+}
+
 /// Classify EventId leaves using protocol-level node roles.
 ///
 /// Given the protocol-level `event_roles` map (event_id bytes → `NodeRoles`),
@@ -1959,6 +2008,41 @@ mod tests {
         assert_eq!(leaves[0].name, "Evt A");
         assert_eq!(leaves[1].name, "Evt B"); // instance 1
         assert_eq!(leaves[2].name, "Evt B"); // instance 2
+    }
+
+    /// Regression: after commit_leaf_value promotes modified_value → value,
+    /// collect_event_id_leaves must return the committed bytes, not stale/None.
+    #[test]
+    fn collect_event_leaves_sees_committed_value() {
+        let mut tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <eventid><name>Evt</name></eventid>
+                </segment>
+            </cdi>"#,
+        );
+
+        let new_bytes: [u8; 8] = [0x05, 0x02, 0x01, 0x02, 0x00, 0x00, 0xFF, 0x01];
+        let new_value = ConfigValue::EventId {
+            bytes: new_bytes,
+            hex: "0502010200 00FF01".to_string(),
+        };
+
+        // Stage a user edit
+        assert!(set_modified_value(&mut tree, 253, 0, new_value));
+
+        // Commit (simulates successful bus write)
+        assert!(commit_leaf_value(&mut tree, 253, 0));
+
+        // The catalog builder's data source must see the committed bytes
+        let leaves = collect_event_id_leaves(&tree);
+        assert_eq!(leaves.len(), 1);
+        assert_eq!(
+            leaves[0].value,
+            Some(new_bytes),
+            "collect_event_id_leaves must return committed value after commit_leaf_value"
+        );
     }
 
     // ── count_leaves ────────────────────────────────────────────────────
@@ -3690,5 +3774,111 @@ mod tests {
             }
             _ => panic!("Expected leaf"),
         }
+    }
+
+    // ── replication_instances ───────────────────────────────────────────────
+
+    #[test]
+    fn replication_instances_returns_instances_under_wrapper_real_build_children_shape() {
+        // Real backend output for <group replication="16"><name>Lamp</name>...
+        // Single wrapper at segment level; instances are the wrapper's children.
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Direct Lamp Control</name>
+                    <group replication="16">
+                        <name>Lamp</name>
+                        <repname>Lamp</repname>
+                        <string size="32"><name>Lamp Description</name></string>
+                    </group>
+                </segment>
+            </cdi>"#,
+        );
+        let seg = &tree.segments[0];
+        // Sanity: backend really did emit a single wrapper at segment level.
+        assert_eq!(seg.children.len(), 1);
+        if let ConfigNode::Group(g) = &seg.children[0] {
+            assert_eq!(g.instance, 0, "wrapper must have instance=0");
+            assert_eq!(g.replication_of, "Lamp");
+            assert_eq!(g.children.len(), 16);
+        } else {
+            panic!("expected a group at segment level");
+        }
+
+        let instances = replication_instances(&seg.children, "Lamp");
+
+        assert_eq!(instances.len(), 16);
+        let ordinals: Vec<u32> = instances.iter().map(|g| g.instance).collect();
+        assert_eq!(ordinals, (1..=16).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn replication_instances_returns_instances_when_present_as_direct_siblings() {
+        // Hand-built sibling shape (some test fixtures predate the wrapper layout).
+        let make_inst = |ordinal: u32| {
+            ConfigNode::Group(GroupNode {
+                name: format!("Lamp {ordinal}"),
+                has_name: true,
+                description: None,
+                instance: ordinal,
+                instance_label: format!("Lamp {ordinal}"),
+                replication_of: "Lamp".into(),
+                replication_count: 4,
+                path: vec!["seg:0".into(), format!("elem:0#{ordinal}")],
+                children: vec![],
+                display_name: None,
+                hideable: false,
+                hidden_by_default: false,
+                read_only: false,
+            })
+        };
+        let siblings = vec![make_inst(1), make_inst(2), make_inst(3), make_inst(4)];
+
+        let instances = replication_instances(&siblings, "Lamp");
+
+        assert_eq!(instances.len(), 4);
+        let ordinals: Vec<u32> = instances.iter().map(|g| g.instance).collect();
+        assert_eq!(ordinals, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn replication_instances_returns_empty_when_named_group_absent() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Config</name>
+                    <int size="1"><name>Speed</name></int>
+                </segment>
+            </cdi>"#,
+        );
+        let seg = &tree.segments[0];
+
+        let instances = replication_instances(&seg.children, "Lamp");
+
+        assert!(instances.is_empty());
+    }
+
+    #[test]
+    fn replication_instances_skips_wrapper_itself() {
+        let tree = tree_from_xml(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Direct Lamp Control</name>
+                    <group replication="2">
+                        <name>Lamp</name>
+                        <int size="1"><name>Marker</name></int>
+                    </group>
+                </segment>
+            </cdi>"#,
+        );
+        let seg = &tree.segments[0];
+
+        let instances = replication_instances(&seg.children, "Lamp");
+
+        assert_eq!(instances.len(), 2);
+        assert!(
+            instances.iter().all(|g| g.instance != 0),
+            "wrapper (instance=0) must not appear among returned instances"
+        );
     }
 }

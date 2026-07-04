@@ -22,6 +22,13 @@ const STYLE_EVENT_MAPPINGS: Readonly<Record<string, StyleEventMapping>> = Object
     occupied: { producerLeafIndex: 0 },
     clear: { producerLeafIndex: 1 },
   },
+  // Spec 018 / S5 — consumer-side mapping. Lit/unlit map to the Direct Lamp
+  // Control row's two EventId consumer leaves (Lamp On is leaf #0, Lamp Off
+  // is leaf #1). If the Signal-LCC CDI ever flips ordering, flip these.
+  'single-led-direct-lamp': {
+    lit: { consumerLeafIndex: 0 },
+    unlit: { consumerLeafIndex: 1 },
+  },
 });
 
 /**

@@ -47,7 +47,18 @@ export interface ConnectorSlotView {
 }
 
 export interface EventMappingEntry {
-  producerLeafIndex: number;
+  /**
+   * Producer-side leaf ordinal under the resolved binding path prefix. Set by
+   * styles whose role is producer-flavoured (e.g. `bod-block-detector-input`).
+   * Mutually exclusive with `consumerLeafIndex`.
+   */
+  producerLeafIndex?: number;
+  /**
+   * Consumer-side leaf ordinal under the resolved binding path prefix. Set by
+   * styles whose role is consumer-flavoured (e.g. `single-led-direct-lamp`).
+   * Mutually exclusive with `producerLeafIndex`.
+   */
+  consumerLeafIndex?: number;
 }
 
 export interface ChannelInputMapping {

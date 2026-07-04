@@ -163,6 +163,12 @@ pub struct LayoutDirectoryReadData {
     /// Facility inventory loaded from `facilities.yaml`.
     /// Empty when the file is missing (pre-018 layouts).
     pub facilities: FacilitiesDocument,
+    /// Human-readable warnings from load-time schema normalization
+    /// (e.g. facility slot bindings referencing channels that no
+    /// longer exist in `channels.yaml`). Empty on a clean load.
+    /// Consumers surface these to the user; the cleaned documents
+    /// are written back on the next save.
+    pub load_warnings: Vec<String>,
 }
 
 pub fn write_layout_capture(layout_dir: &Path, data: &LayoutDirectoryWriteData) -> Result<(), String> {
@@ -298,11 +304,18 @@ pub fn read_layout_capture(layout_dir: &Path) -> Result<LayoutDirectoryReadData,
 
     // facilities.yaml is optional — pre-018 layouts won't have it.
     let facilities_path = layout_dir.join(FACILITIES_FILE);
-    let facilities: FacilitiesDocument = if facilities_path.exists() {
+    let mut facilities: FacilitiesDocument = if facilities_path.exists() {
         read_yaml_file(&facilities_path)?
     } else {
         FacilitiesDocument::default()
     };
+
+    // Referential integrity between facilities.yaml and channels.yaml is
+    // enforced at read time so every downstream consumer sees a valid
+    // schema (composer, cardinality guards, catalog rebuild, sync). Any
+    // repaired references are surfaced through `load_warnings`.
+    let load_warnings =
+        crate::layout::facilities::normalize_facility_channel_refs(&mut facilities, &channels);
 
     Ok(LayoutDirectoryReadData {
         manifest,
@@ -312,6 +325,7 @@ pub fn read_layout_capture(layout_dir: &Path) -> Result<LayoutDirectoryReadData,
         recovery_occurred,
         channels,
         facilities,
+        load_warnings,
     })
 }
 
@@ -493,6 +507,7 @@ mod tests {
             BowtieMetadata {
                 name: Some("Test Signal".to_string()),
                 tags: vec!["signals".to_string(), "yard".to_string()],
+            created_by_facility: None,
             },
         );
         layout.role_classifications.insert(

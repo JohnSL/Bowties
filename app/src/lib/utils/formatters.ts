@@ -146,7 +146,7 @@ export function formatTreeConfigValue(
     case 'string':
       return value.value;
     case 'eventId':
-      return value.hex;
+      return displayEventIdHex(value.hex);
     case 'float':
       return value.value.toFixed(2);
   }

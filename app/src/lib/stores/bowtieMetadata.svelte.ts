@@ -47,11 +47,20 @@ class BowtieMetadataStore {
   // ── Mutations ──────────────────────────────────────────────────────────────
 
   /** Record a bowtie creation. */
-  createBowtie(eventIdHex: string, name?: string): void {
+  createBowtie(
+    eventIdHex: string,
+    name?: string,
+    opts?: { createdByFacility?: string },
+  ): void {
     const id = this._makeId();
     this._edits.set(`create:${eventIdHex}`, {
       id,
-      kind: { type: 'create', eventIdHex, name },
+      kind: {
+        type: 'create',
+        eventIdHex,
+        name,
+        createdByFacility: opts?.createdByFacility,
+      },
       timestamp: Date.now(),
     });
   }
@@ -148,7 +157,12 @@ class BowtieMetadataStore {
       });
       this._edits.set(`create:${realEventIdHex}`, {
         id: this._makeId(),
-        kind: { type: 'create', eventIdHex: realEventIdHex, name: existingMeta?.name },
+        kind: {
+          type: 'create',
+          eventIdHex: realEventIdHex,
+          name: existingMeta?.name,
+          createdByFacility: existingMeta?.createdByFacility,
+        },
         timestamp: Date.now(),
       });
     }
@@ -212,7 +226,12 @@ class BowtieMetadataStore {
     // Create a fresh planning entry preserving the bowtie's name and tags
     this._edits.set(`create:${placeholderHex}`, {
       id: this._makeId(),
-      kind: { type: 'create', eventIdHex: placeholderHex, name: existingMeta?.name },
+      kind: {
+        type: 'create',
+        eventIdHex: placeholderHex,
+        name: existingMeta?.name,
+        createdByFacility: existingMeta?.createdByFacility,
+      },
       timestamp: Date.now(),
     });
     for (const tag of existingMeta?.tags ?? []) {
@@ -228,6 +247,10 @@ class BowtieMetadataStore {
   clearAll(): void {
     // SvelteMap.clear() is natively reactive — all subscribers re-evaluate.
     this._edits.clear();
+  }
+
+  resetForNewLayout(): void {
+    this.clearAll();
   }
 
   // ── Queries ────────────────────────────────────────────────────────────────
@@ -292,7 +315,12 @@ class BowtieMetadataStore {
     for (const edit of this._edits.values()) {
       switch (edit.kind.type) {
         case 'create':
-          deltas.push({ type: 'createBowtie', eventIdHex: edit.kind.eventIdHex, name: edit.kind.name });
+          deltas.push({
+            type: 'createBowtie',
+            eventIdHex: edit.kind.eventIdHex,
+            name: edit.kind.name,
+            createdByFacility: edit.kind.createdByFacility ?? null,
+          });
           break;
         case 'delete':
           deltas.push({ type: 'deleteBowtie', eventIdHex: edit.kind.eventIdHex });
@@ -369,7 +397,11 @@ class BowtieMetadataStore {
 
     const createEdit = this._edits.get(`create:${eventIdHex}`);
     if (createEdit && createEdit.kind.type === 'create') {
-      meta = { name: createEdit.kind.name, tags: [] };
+      meta = {
+        name: createEdit.kind.name,
+        tags: [],
+        createdByFacility: createEdit.kind.createdByFacility,
+      };
     }
 
     // Apply rename
@@ -398,6 +430,40 @@ class BowtieMetadataStore {
     return meta;
   }
 
+  /**
+   * Spec 018 / S6 (D1) — return the event-id hex strings of every bowtie whose
+   * effective metadata carries `createdByFacility === facilityId`. Merges the
+   * loaded layout with pending create/delete edits so the reader is a single
+   * source of truth for teardown + the composed-cards catalog surface.
+   */
+  bowtiesForFacility(facilityId: string): string[] {
+    const seen = new Set<string>();
+    const results: string[] = [];
+
+    // Layout baseline.
+    const layout = layoutStore.layout;
+    if (layout) {
+      for (const [hex, meta] of Object.entries(layout.bowties)) {
+        if (meta.createdByFacility === facilityId && !this.hasPendingDeletion(hex)) {
+          seen.add(hex);
+          results.push(hex);
+        }
+      }
+    }
+
+    // Pending create edits.
+    for (const edit of this._edits.values()) {
+      if (edit.kind.type !== 'create') continue;
+      if (edit.kind.createdByFacility !== facilityId) continue;
+      const hex = edit.kind.eventIdHex;
+      if (seen.has(hex)) continue;
+      if (this.hasPendingDeletion(hex)) continue;
+      seen.add(hex);
+      results.push(hex);
+    }
+
+    return results;
+  }
 }
 
 // ─── Singleton export ─────────────────────────────────────────────────────────

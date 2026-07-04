@@ -264,3 +264,188 @@ OK / Drift / Unknown with file:line evidence.
   (per-node config values, profile group roles, synthetic `DiscoveredNode` list)
   from `state.layout_state` directly. Audit: grep `offline_bowtie_data` /
   `OfflineBowtieData` — must return zero matches in production source.
+
+## 2026-07-03 extension: draft-layer activation (Spec 018 / S6 bugfix)
+
+**Problem.** ADR-0015 sketched `LayoutState.drafts` as a `DraftLayer` struct
+with a `touched: bool` stub and named `merge_drafts` as the placeholder
+population point. No caller ever populated it. Spec 018 / S6 was the first
+backend read that actually needed drafts visibility: the frontend orchestrator
+called `compose_facility_bowties` right after a draft facility/channel
+mutation, but the IPC read `LayoutState.facilities()` / `.channels()` — the
+saved layer only — and returned `unknown facility` because the facility was
+still a frontend draft. The picker-confirm handlers swallowed the resulting
+promise rejection, so the failure surfaced as "no bowties compose when the
+facility becomes Wired" with no error visible.
+
+**Decision.** The drafts layer becomes real:
+
+- `DraftLayer` gains `pending_facilities: Option<FacilitiesDocument>` and
+  `pending_channels: Option<ChannelsDocument>`. Bowtie metadata drafts stay
+  frontend-only until a backend read needs them here (YAGNI).
+- `LayoutState::sync_drafts(deltas: &[LayoutEditDelta])` replaces the
+  placeholder `merge_drafts`. It clones the *saved* facilities + channels
+  documents, applies the frontend's collected delta set through the same
+  `apply_facility_deltas` / `apply_channel_deltas` functions the save flow
+  uses, and stores the results in `drafts.pending_*`. Idempotent w.r.t. any
+  delta set — callers ship the *complete* current set on every sync (matches
+  frontend `collectDeltas()` semantics).
+- `LayoutState::effective_facilities()` and `effective_channels()` accessors
+  return the pending document when set, else fall back to saved. Same
+  precedence pattern as `cdi_xml(key)` / `config_tree(key)`.
+- `LayoutState::clear_drafts()` drops the drafts layer. Called on frontend
+  Discard (via the `clear_layout_drafts` IPC) and inline at the end of
+  `save_layout_directory` after the write completes.
+- Two new IPCs: `sync_layout_drafts(deltas)` and `clear_layout_drafts()` in
+  `app/src-tauri/src/commands/layout_drafts.rs`.
+- The frontend `facilityOrchestrator.composeBowtiesIfWired` and
+  `tearDownFacilityBowties` call `syncLayoutDrafts([...facilitiesStore.collectDeltas(),
+  ...channelsStore.collectDeltas()])` before every `composeFacilityBowties`
+  IPC. `compose_facility_bowties` reads through `effective_facilities()` /
+  `effective_channels()` and sees the merged view.
+- `save_layout_directory` inline-refreshes `LayoutState`'s saved facilities /
+  channels / bowties from what it just wrote to disk, then calls
+  `clear_drafts()`. Without this, post-save reads through the effective
+  accessors would base their merge on a stale saved layer (captured at
+  open time only) and any subsequent compose would diff against wrong
+  ground state.
+
+**Invariants added.**
+
+- Every backend read path that needs to observe frontend-side pending edits
+  goes through `LayoutState::effective_facilities()` / `effective_channels()`.
+  Direct reads of `.facilities()` / `.channels()` are for the saved-only
+  view (persistence, catalog snapshots) and are legal only when the caller
+  documents that stale-vs-drafts is the intended semantics.
+- Every frontend orchestrator that will invoke a backend read of the
+  effective view first calls `syncLayoutDrafts(collectDeltas...)`. The
+  frontend still owns the draft layer per ADR-0012; `LayoutState.drafts`
+  is a mirror, not a duplicate source of truth.
+- `save_layout_directory` clears drafts and refreshes the saved layer from
+  the just-written documents in the same critical section. Audit: grep for
+  `apply_facility_deltas(&mut facilities` — every callsite must be followed
+  by either (a) a disk write + `LayoutState.saved` refresh, or (b) a
+  `LayoutState.drafts` store.
+- Frontend Discard fires `clearLayoutDrafts()`. Audit: `SaveControls.svelte`
+  `handleConfirmDiscard` in both offline and online branches.
+
+**What this does not yet do (backlog).**
+
+- Bowtie metadata drafts do not flow through `LayoutState.drafts` — the
+  compose IPC does not read them. If a future backend read of bowtie
+  metadata needs to observe frontend-side pending edits, extend
+  `DraftLayer` with `pending_bowties: Option<LayoutFile>` and wire
+  `sync_drafts` to apply `apply_layout_deltas` into that field.
+- Every draft mutation still requires an explicit `syncLayoutDrafts` before
+  a backend effective-view read. An eager per-mutation sync (or a
+  save-flow-adjacent auto-sync on IPC boundary) is a separate design
+  question; the current on-demand model is right-sized for the compose
+  seam and keeps the frontend as the draft-layer owner.
+
+## 2026-07-04 extension: discovered-roles layer — catalog side-channel elimination
+
+**Problem.** The save flow in `save_layout_directory` read protocol-discovered
+role classifications directly from `AppState.bowties_catalog` (a stale
+in-memory cache of the live bowtie catalog) and merged them into
+`LayoutFile.role_classifications` alongside a `merge_catalog_bowties_into`
+call that also re-injected bowtie metadata entries from the catalog. This
+side-channel bypassed ADR-0002's delta authority: when a `DeleteBowtie` delta
+removed a bowtie, `apply_layout_deltas` correctly removed the entry, but the
+catalog merge immediately re-inserted it because `or_insert_with` found the
+key absent. The result was that delta-encoded bowtie deletions were silently
+undone — the deletion-resurrection bug class. Online saves compounded this
+because Phase 3 (reconcile) called `save_layout_directory` with empty deltas,
+so the catalog merge ran without any `DeleteBowtie` to counteract it.
+
+**Decision.** Eliminate the catalog as a persistence input entirely. Route
+protocol-discovered role classifications through `LayoutState`:
+
+- `LayoutState` gains `discovered_roles: BTreeMap<String, RoleClassification>`.
+- `record_discovered_roles(roles)` merges incoming classifications
+  (last-write-wins per key). Called by catalog rebuild sites in `bowties.rs`
+  (`build_bowtie_catalog_command`) and `cdi.rs` (CDI completion) immediately
+  after building the live catalog — same call sites that write
+  `AppState.bowties_catalog`.
+- `discovered_roles()` returns an immutable reference for the save flow.
+- `clear_discovered_roles()` resets the accumulator after save.
+- Save flow in `save_layout_directory` reads `LayoutState::discovered_roles()`
+  and merges into `bowties.role_classifications` using `entry().or_insert_with()`.
+  User-explicit classifications (from deltas or saved baseline) win because
+  they're already in the map when the merge runs.
+- `merge_catalog_bowties_into` function and call removed entirely. Bowtie
+  metadata (names, tags, `created_by_facility`) is now exclusively
+  delta-backed.
+- After save, the post-write `LayoutState` refresh block (which already
+  updates `bowties_mut`, `facilities_mut`, `channels_mut`, `clear_drafts`)
+  now also calls `clear_discovered_roles()`.
+
+**Invariants added.**
+
+- The save flow MUST NOT read from `AppState.bowties_catalog` for
+  persistence purposes. The catalog is a UI-only view (feeds the Bowties
+  panel), never a write-back source.
+- All bowtie metadata persistence flows through the delta pipeline
+  (`CreateBowtie`, `DeleteBowtie`, `RenameBowtie`, `AddTag`, `RemoveTag`,
+  `ClassifyRole`). No other path may create, modify, or delete entries in
+  `LayoutFile.bowties`.
+- Protocol-discovered role classifications enter `LayoutState` via
+  `record_discovered_roles()` at catalog rebuild time. The save flow
+  merges them with user-explicit-wins precedence.
+
+**Bug class eliminated.** Stale-catalog resurrection of delta-deleted entries.
+Any `LayoutEditDelta` variant that removes a key from a `LayoutFile` map
+is now the final word — no subsequent merge can contradict it.
+
+**Future direction.** The `discovered_roles` layer establishes the pattern
+for accumulating protocol-discovered data with clear provenance. Future
+roadmap items (drift detection, paging fields like LT-50 macros, status
+values like track current/voltage) will add a `live` layer to `LayoutState`
+following the same pattern: explicit recording at discovery time, clean
+separation from the saved layer, no save-time side-channel merges.
+
+## 2026-07-04 extension: config_tree ownership moved to LayoutState (Option C adopted)
+
+**Problem.** ADR-0015's original decision (2026-06-28) explicitly deferred
+moving `LiveNodeProxy::config_tree` into `LayoutState` (Option C), noting:
+*"If a future driver appears (concurrency bug, new feature requiring a
+writeable in-flight surface in LayoutState), revisit then."*
+
+The driver appeared: a TOCTOU race in `set_modified_value`. The Tauri
+command cloned the tree from the proxy actor mailbox, modified one leaf,
+and stored the clone back. When `configDraftMirrorOrchestrator` fired
+concurrent `setModifiedValue` IPCs for different leaves on the same node
+(a normal occurrence during a reactive tick), each IPC cloned the same
+baseline — the second store overwrote the first's edit. The race was
+structural, not timing-dependent: every same-node batch lost edits.
+
+**Decision.** Adopt Option C for `config_tree` specifically. The tree
+moves from `LiveNodeProxy` to `LayoutState`'s captured layer. Mutations
+happen under the `layout_state` `RwLock::write()` guard, which serializes
+concurrent writers. The clone-modify-store round-trip is eliminated.
+
+**What moved:**
+
+- `LiveNodeProxy::config_tree` field — **deleted**.
+- `ProxyMessage::GetConfigTree` / `SetConfigTree` / `UpdateConfigTree` —
+  retained as no-ops in the actor handler. `GetConfigTree` returns `None`
+  for live proxies.
+- `LiveNodeProxyHandle` config_tree methods — **deleted**.
+- `NodeProxyHandle::get_config_tree()` — returns `Ok(None)` for `Live`
+  (same pattern as `get_cdi_data`). Retained for `Synthesized`.
+- `NodeProxyHandle::set_config_tree()` / `update_config_tree()` — **deleted**.
+- `node_registry.saved_trees` — **deleted** (seeding cache obsolete).
+
+**New LayoutState API:**
+
+- `config_tree_mut(key)` — mutable access, captured-over-saved precedence.
+- `set_config_tree(key, tree)` — stores in captured layer.
+- `all_tree_keys()` — deduplicated keys with trees in either layer.
+
+**Bug class eliminated.** TOCTOU race in `set_modified_value`: concurrent
+`setModifiedValue` IPCs for different leaves on the same node no longer
+lose edits. The `RwLock::write()` guard serializes all mutations.
+
+**What `LiveNodeProxy` still owns:** `snip`, `pip_flags`, bus presence
+state, alias. These are pure bus-IO working buffers with no concurrent-
+mutation race (actor mailbox serializes them) and no save-flow concern.
+Moving them is not warranted (YAGNI).

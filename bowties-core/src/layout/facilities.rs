@@ -115,6 +115,49 @@ impl std::fmt::Display for FacilityApplyError {
 
 impl std::error::Error for FacilityApplyError {}
 
+/// Normalize `facilities.yaml` referential integrity against the loaded
+/// `channels.yaml`. Drops any slot-binding channel id that is not present
+/// in `channels.channels`. Returns one warning string per removed
+/// reference so the caller can surface the cleanup to the user.
+///
+/// This runs at read time so every backend consumer of the effective
+/// layout view (`compose_facility_bowties`, catalog rebuild, sync) sees
+/// a referentially-consistent shape. Without this normalization the
+/// composer's `UnknownChannel` error, the cardinality guard's
+/// slot-binding count, and the "Used by" render path each treat a
+/// dangling reference differently — a seam-symmetry violation observed
+/// in practice after the split-write channel save bug left orphan slot
+/// bindings behind.
+///
+/// The normalization only touches in-memory state. The cleaned facilities
+/// document reaches disk the next time the user saves — the read path
+/// deliberately does not write back so a read is side-effect free with
+/// respect to the layout directory.
+pub fn normalize_facility_channel_refs(
+    facilities: &mut FacilitiesDocument,
+    channels: &crate::layout::channels::ChannelsDocument,
+) -> Vec<String> {
+    let known_ids: std::collections::HashSet<&str> =
+        channels.channels.iter().map(|c| c.id.as_str()).collect();
+    let mut warnings = Vec::<String>::new();
+    for facility in facilities.facilities.iter_mut() {
+        for (slot_label, bindings) in facility.slot_bindings.iter_mut() {
+            bindings.retain(|channel_id| {
+                if known_ids.contains(channel_id.as_str()) {
+                    true
+                } else {
+                    warnings.push(format!(
+                        "Facility '{}' slot '{}': removed reference to unknown channel '{}'",
+                        facility.name, slot_label, channel_id,
+                    ));
+                    false
+                }
+            });
+        }
+    }
+    warnings
+}
+
 /// Apply the facility-relevant variants of [`LayoutEditDelta`] to a
 /// `FacilitiesDocument`, mutating it in place.
 ///
@@ -437,6 +480,7 @@ mod tests {
                 LayoutEditDelta::CreateBowtie {
                     event_id_hex: "01.00.00.00.00.00.00.01".into(),
                     name: None,
+                created_by_facility: None,
                 },
             ],
         )
@@ -633,5 +677,115 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, FacilityApplyError::UnknownFacility { .. }));
+    }
+
+    // ── normalize_facility_channel_refs (referential integrity on read) ────
+
+    fn channel_stub(id: &str) -> crate::layout::channels::InformationChannel {
+        use crate::layout::channels::{
+            ChannelBinding, ChannelOwnership, ChannelRole, InformationChannel,
+        };
+        InformationChannel {
+            id: id.to_string(),
+            name: id.to_string(),
+            role: ChannelRole::BlockOccupancy,
+            style: "bod-block-detector-input".to_string(),
+            ownership: ChannelOwnership::HardwareOwned,
+            binding: ChannelBinding::ConnectorInput {
+                node_key: "05010101FF000001".to_string(),
+                connector: "connector-a".to_string(),
+                input: 1,
+            },
+        }
+    }
+
+    #[test]
+    fn normalize_leaves_valid_bindings_untouched_and_returns_no_warnings() {
+        use crate::layout::channels::ChannelsDocument;
+
+        let mut facility = block_indicator_with_empty_slots("f-1", "Block 5");
+        facility
+            .slot_bindings
+            .insert("input".into(), vec!["ch-a".into()]);
+        let mut facilities = FacilitiesDocument::new(vec![facility]);
+        let channels = ChannelsDocument::new(vec![channel_stub("ch-a")]);
+
+        let warnings = normalize_facility_channel_refs(&mut facilities, &channels);
+
+        assert!(warnings.is_empty());
+        assert_eq!(
+            facilities.facilities[0].slot_bindings["input"],
+            vec!["ch-a".to_string()]
+        );
+    }
+
+    #[test]
+    fn normalize_drops_dangling_channel_ids_and_reports_warnings() {
+        use crate::layout::channels::ChannelsDocument;
+
+        let mut facility = block_indicator_with_empty_slots("f-1", "Block 5");
+        facility
+            .slot_bindings
+            .insert("input".into(), vec!["ch-a".into(), "ch-ghost".into()]);
+        facility
+            .slot_bindings
+            .insert("output".into(), vec!["ch-orphan".into()]);
+        let mut facilities = FacilitiesDocument::new(vec![facility]);
+        let channels = ChannelsDocument::new(vec![channel_stub("ch-a")]);
+
+        let warnings = normalize_facility_channel_refs(&mut facilities, &channels);
+
+        assert_eq!(
+            facilities.facilities[0].slot_bindings["input"],
+            vec!["ch-a".to_string()]
+        );
+        assert!(facilities.facilities[0].slot_bindings["output"].is_empty());
+        assert_eq!(warnings.len(), 2);
+        for warning in &warnings {
+            assert!(warning.contains("Block 5"), "warning names the facility: {}", warning);
+            assert!(
+                warning.contains("ch-ghost") || warning.contains("ch-orphan"),
+                "warning names the missing channel id: {}",
+                warning,
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_leaves_empty_slot_bindings_alone() {
+        use crate::layout::channels::ChannelsDocument;
+
+        let facility = block_indicator_with_empty_slots("f-1", "Block 5");
+        let mut facilities = FacilitiesDocument::new(vec![facility]);
+        let channels = ChannelsDocument::default();
+
+        let warnings = normalize_facility_channel_refs(&mut facilities, &channels);
+
+        assert!(warnings.is_empty());
+        assert!(facilities.facilities[0].slot_bindings["input"].is_empty());
+        assert!(facilities.facilities[0].slot_bindings["output"].is_empty());
+    }
+
+    #[test]
+    fn normalize_handles_multiple_facilities_independently() {
+        use crate::layout::channels::ChannelsDocument;
+
+        let mut a = block_indicator_with_empty_slots("f-a", "A");
+        a.slot_bindings.insert("input".into(), vec!["ch-a".into()]);
+        let mut b = block_indicator_with_empty_slots("f-b", "B");
+        b.slot_bindings
+            .insert("output".into(), vec!["ch-missing".into()]);
+        let mut facilities = FacilitiesDocument::new(vec![a, b]);
+        let channels = ChannelsDocument::new(vec![channel_stub("ch-a")]);
+
+        let warnings = normalize_facility_channel_refs(&mut facilities, &channels);
+
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("B"));
+        assert_eq!(
+            facilities.facilities[0].slot_bindings["input"],
+            vec!["ch-a".to_string()]
+        );
+        assert!(facilities.facilities[1].slot_bindings["output"].is_empty());
     }
 }

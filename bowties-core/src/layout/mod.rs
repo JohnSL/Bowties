@@ -530,4 +530,73 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&root);
     }
+
+    #[test]
+    fn read_capture_normalizes_dangling_facility_channel_refs_and_reports_warnings() {
+        use crate::layout::facilities::{Facility, FacilitiesDocument};
+        use std::collections::BTreeMap;
+
+        let root = fresh_dir("bowties_dangling_facility_refs");
+        let layout_dir = root.join("my-layout");
+
+        // Persist a layout whose facility slot binding references a channel
+        // id that never made it to `channels.yaml` (mirrors the state left
+        // behind by the pre-fix split-write channel save bug).
+        let channels = crate::layout::channels::ChannelsDocument::new(vec![
+            make_channel("ch-real", "Real Channel", 1),
+        ]);
+        let mut slot_bindings = BTreeMap::new();
+        slot_bindings.insert("input".to_string(), vec!["ch-real".to_string()]);
+        slot_bindings.insert("output".to_string(), vec!["ch-ghost".to_string()]);
+        let facilities = FacilitiesDocument::new(vec![Facility {
+            facility_id: "f-1".to_string(),
+            template_id: "block-indicator".to_string(),
+            name: "Block 5".to_string(),
+            slot_bindings,
+        }]);
+
+        let manifest = LayoutManifest::new(
+            "layout".to_string(),
+            "2026-07-03T00:00:00Z".to_string(),
+            "2026-07-03T00:00:00Z".to_string(),
+        );
+        let data = LayoutDirectoryWriteData {
+            manifest,
+            node_snapshots: Vec::new(),
+            bowties: LayoutFile::default(),
+            offline_changes: Vec::new(),
+            cdi_files: Vec::new(),
+            channels,
+            facilities,
+        };
+        save_capture(&layout_dir, &data).unwrap();
+
+        let loaded = read_capture(&layout_dir).unwrap();
+        // Dangling binding removed from the in-memory facility.
+        let out_bindings = &loaded.facilities.facilities[0].slot_bindings["output"];
+        assert!(out_bindings.is_empty(), "dangling output binding was not cleared: {:?}", out_bindings);
+        // Valid binding preserved.
+        assert_eq!(
+            loaded.facilities.facilities[0].slot_bindings["input"],
+            vec!["ch-real".to_string()]
+        );
+        // Warning surfaced to the caller.
+        assert_eq!(loaded.load_warnings.len(), 1);
+        assert!(loaded.load_warnings[0].contains("Block 5"));
+        assert!(loaded.load_warnings[0].contains("ch-ghost"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn read_capture_reports_no_warnings_on_a_clean_layout() {
+        let root = fresh_dir("bowties_clean_read_no_warnings");
+        let layout_dir = root.join("my-layout");
+        seed_layout(&layout_dir, vec![]);
+
+        let loaded = read_capture(&layout_dir).unwrap();
+        assert!(loaded.load_warnings.is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

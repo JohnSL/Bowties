@@ -17,6 +17,10 @@ class ConnectorSlotFocusStore {
   reset(): void {
     this._focusedByNode = new Map();
   }
+
+  resetForNewLayout(): void {
+    this.reset();
+  }
 }
 
 export const connectorSlotFocusStore = new ConnectorSlotFocusStore();

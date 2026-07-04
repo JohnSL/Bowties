@@ -38,6 +38,13 @@ pub struct StructureProfile {
     /// order, last-write-wins per target (FR-006).
     #[serde(default)]
     pub configuration_modes: Vec<ConfigurationMode>,
+
+    /// Spec 018 / S5: node-specific channel styles. Mirrors the shared library's
+    /// top-level `styles:` catalog — the convention is "node-specific styles in
+    /// node profiles, shared styles in shared libraries." Empty for profiles
+    /// that don't declare any styles.
+    #[serde(default)]
+    pub styles: Vec<Style>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -533,6 +540,7 @@ mod tests {
                     }],
                 },
             ],
+            styles: vec![],
         };
 
         let yaml = serde_yaml_ng::to_string(&profile).expect("profile should serialize");
@@ -635,5 +643,37 @@ inputs: [1, 2, 3, 4]
 "#;
         let mapping: ChannelInputMapping = serde_yaml_ng::from_str(yaml).unwrap();
         assert!(mapping.style.is_none());
+    }
+
+    #[test]
+    fn structure_profile_styles_roundtrip() {
+        let yaml = r#"
+schemaVersion: "2.0"
+nodeType:
+  manufacturer: "RR-CirKits"
+  model: "Signal-LCC"
+styles:
+  - styleId: "single-led-direct-lamp"
+    bindingKind: "lampRow"
+    constraints: []
+"#;
+        let profile: StructureProfile = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(profile.styles.len(), 1);
+        assert_eq!(profile.styles[0].style_id, "single-led-direct-lamp");
+        assert_eq!(profile.styles[0].binding_kind, "lampRow");
+        assert!(profile.styles[0].constraints.is_empty());
+        assert!(profile.styles[0].constraint_variants.is_empty());
+    }
+
+    #[test]
+    fn structure_profile_styles_default_to_empty() {
+        let yaml = r#"
+schemaVersion: "2.0"
+nodeType:
+  manufacturer: "RR-CirKits"
+  model: "Tower-LCC"
+"#;
+        let profile: StructureProfile = serde_yaml_ng::from_str(yaml).unwrap();
+        assert!(profile.styles.is_empty());
     }
 }

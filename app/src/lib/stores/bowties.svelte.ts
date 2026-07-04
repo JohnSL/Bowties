@@ -19,6 +19,7 @@ import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { editKeyForLeaf } from '$lib/utils/editKey';
 import { parseEventIdHex } from '$lib/utils/serialize';
+import { toEventIdKey, type EventIdKey } from '$lib/utils/eventIdKey';
 import { layoutStore } from '$lib/stores/layout.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { resolveNodeName } from '$lib/layout';
@@ -195,6 +196,10 @@ class BowtieCatalogStore {
     this._readComplete = false;
   }
 
+  resetForNewLayout(): void {
+    this.reset();
+  }
+
   // ── Listener lifecycle ────────────────────────────────────────────────────
 
   /**
@@ -274,7 +279,11 @@ export function buildEffectiveBowtiePreview(): EditableBowtiePreview {
   }
 
   const previews: PreviewBowtieCard[] = [];
-  const seenEventIds = new Set<string>();
+  // Identity is compared as `EventIdKey` (canonical uppercase undotted).
+  // The catalog historically emitted dotted hex; normalize on entry so
+  // callers can't accidentally mix representations. See ADR-0010 and
+  // `product/architecture/naming-and-normalization.md`.
+  const seenEventIds = new Set<EventIdKey>();
 
   // Pre-compute tree entries index: eventIdHex → { producers, consumers }
   // Single-pass scan that builds an O(1) lookup map for all event entries.
@@ -282,15 +291,29 @@ export function buildEffectiveBowtiePreview(): EditableBowtiePreview {
 
   if (catalog) {
     for (const card of catalog.bowties) {
-      const meta = bowtieMetadataStore.getMetadata(card.event_id_hex);
+      // Normalize the catalog's event-ID hex to canonical form for all
+      // identity operations. `card.event_id_hex` may arrive in dotted form
+      // from older backend builds; the tree index (below) and every other
+      // seam here is keyed by canonical.
+      const cardKey = toEventIdKey(card.event_id_hex);
+      if (!cardKey) continue; // unparseable — drop rather than duplicate.
+      // Owner-level uniqueness invariant: each EventIdKey appears at most
+      // once in `previews`. Mirrors the `seenEventIds.has()` gate used by
+      // the layout / metadata / tree phases below. Without this the catalog
+      // phase could push two previews for the same event id if any upstream
+      // contributor emitted duplicate `BowtieCard`s, crashing the Svelte
+      // keyed `#each` in `BowtieCatalogPanel` (2026-07-03 regression).
+      if (seenEventIds.has(cardKey)) continue;
+
+      const meta = bowtieMetadataStore.getMetadata(cardKey);
       const dirtyFields = new Set<string>();
 
-      for (const f of bowtieMetadataStore.getDirtyFields(card.event_id_hex)) {
+      for (const f of bowtieMetadataStore.getDirtyFields(cardKey)) {
         dirtyFields.add(f);
       }
 
       // Use pre-computed index instead of per-card tree scan
-      const treeEntries = treeEntriesIndex.get(card.event_id_hex);
+      const treeEntries = treeEntriesIndex.get(cardKey);
       const treeProducers = treeEntries?.producers ?? [];
       const treeConsumers = treeEntries?.consumers ?? [];
 
@@ -308,13 +331,18 @@ export function buildEffectiveBowtiePreview(): EditableBowtiePreview {
 
       // Display filter: only show bowties with ≥2 entries, a name, or
       // an explicit entry in the layout file (user-created bowties).
+      // Layout-file keys may be dotted (legacy) or canonical — check both
+      // via toEventIdKey to avoid missing a legacy dotted match.
       const totalEntries = card.producers.length + card.consumers.length + card.ambiguous_entries.length
         + newProducers.length + newConsumers.length;
       const effectiveName = meta?.name ?? card.name;
-      const inLayout = layout && card.event_id_hex in layout.bowties;
+      const inLayout = !!layout && (
+        cardKey in layout.bowties
+        || Object.keys(layout.bowties).some(k => toEventIdKey(k) === cardKey)
+      );
       if (totalEntries < 2 && !effectiveName && !inLayout) continue;
 
-      seenEventIds.add(card.event_id_hex);
+      seenEventIds.add(cardKey);
 
       if (newProducers.length > 0 || newConsumers.length > 0) {
         dirtyFields.add('elements');
@@ -327,11 +355,17 @@ export function buildEffectiveBowtiePreview(): EditableBowtiePreview {
 
       // Apply pending role classifications to ambiguous entries (T037).
       // Move any ambiguous entry with a pending classification to producers or consumers.
+      // Mirror `bowties-core/src/bowtie/catalog.rs::merge_layout_metadata`:
+      // stale entries (leaf value no longer matches cardKey) are dropped,
+      // and reclassified entries have `role` rewritten so downstream
+      // Consumers (e.g., BowtieCatalogPanel.confirmRemove) branch correctly.
       const stillAmbiguous: EventSlotEntry[] = [];
       let reclassifiedProducers: EventSlotEntry[] = [];
       let reclassifiedConsumers: EventSlotEntry[] = [];
 
       for (const entry of card.ambiguous_entries) {
+        if (!isEntryStillActive(entry, cardKey)) continue;
+
         const slotKey = `${entry.node_key}:${entry.element_path.join('/')}`;
         const classification = bowtieMetadataStore.getRoleClassification(slotKey);
 
@@ -339,9 +373,9 @@ export function buildEffectiveBowtiePreview(): EditableBowtiePreview {
           // This entry has been classified; move it to the appropriate list.
           const enriched = enrichEntryLabel(entry);
           if (classification.role === 'Producer') {
-            reclassifiedProducers.push(enriched);
+            reclassifiedProducers.push({ ...enriched, role: 'Producer' });
           } else {
-            reclassifiedConsumers.push(enriched);
+            reclassifiedConsumers.push({ ...enriched, role: 'Consumer' });
           }
         } else {
           // Still ambiguous; keep it in the ambiguous list.
@@ -350,15 +384,15 @@ export function buildEffectiveBowtiePreview(): EditableBowtiePreview {
       }
 
       previews.push({
-        eventIdHex: card.event_id_hex,
+        eventIdHex: cardKey,
         eventIdBytes: card.event_id_bytes,
         producers: [
-          ...card.producers.filter(e => isEntryStillActive(e, card.event_id_hex)).map(enrichEntryLabel),
+          ...card.producers.filter(e => isEntryStillActive(e, cardKey)).map(enrichEntryLabel),
           ...newProducers,
           ...reclassifiedProducers,
         ],
         consumers: [
-          ...card.consumers.filter(e => isEntryStillActive(e, card.event_id_hex)).map(enrichEntryLabel),
+          ...card.consumers.filter(e => isEntryStillActive(e, cardKey)).map(enrichEntryLabel),
           ...newConsumers,
           ...reclassifiedConsumers,
         ],
@@ -375,16 +409,18 @@ export function buildEffectiveBowtiePreview(): EditableBowtiePreview {
 
   // Layout-only bowties
   if (layout) {
-    for (const [eventIdHex, meta] of Object.entries(layout.bowties)) {
-      if (seenEventIds.has(eventIdHex)) continue;
-      seenEventIds.add(eventIdHex);
-      const metaOverride = bowtieMetadataStore.getMetadata(eventIdHex);
-      const treeEntries = treeEntriesIndex.get(eventIdHex);
-      const dirtyFields = bowtieMetadataStore.getDirtyFields(eventIdHex);
+    for (const [rawEventIdHex, meta] of Object.entries(layout.bowties)) {
+      const layoutKey = toEventIdKey(rawEventIdHex);
+      if (!layoutKey) continue; // skip legacy planning placeholders / invalid keys.
+      if (seenEventIds.has(layoutKey)) continue;
+      seenEventIds.add(layoutKey);
+      const metaOverride = bowtieMetadataStore.getMetadata(layoutKey);
+      const treeEntries = treeEntriesIndex.get(layoutKey);
+      const dirtyFields = bowtieMetadataStore.getDirtyFields(layoutKey);
 
       previews.push({
-        eventIdHex,
-        eventIdBytes: eventIdHexToBytes(eventIdHex),
+        eventIdHex: layoutKey,
+        eventIdBytes: eventIdHexToBytes(layoutKey),
         producers: treeEntries?.producers ?? [],
         consumers: treeEntries?.consumers ?? [],
         ambiguousEntries: [],
@@ -399,15 +435,17 @@ export function buildEffectiveBowtiePreview(): EditableBowtiePreview {
   }
 
   // Metadata-only bowties
-  for (const eventIdHex of bowtieMetadataStore.allEventIds) {
-    if (seenEventIds.has(eventIdHex)) continue;
-    seenEventIds.add(eventIdHex);
-    const meta = bowtieMetadataStore.getMetadata(eventIdHex);
-    const treeEntries = treeEntriesIndex.get(eventIdHex);
+  for (const rawEventIdHex of bowtieMetadataStore.allEventIds) {
+    const metaKey = toEventIdKey(rawEventIdHex);
+    if (!metaKey) continue;
+    if (seenEventIds.has(metaKey)) continue;
+    seenEventIds.add(metaKey);
+    const meta = bowtieMetadataStore.getMetadata(metaKey);
+    const treeEntries = treeEntriesIndex.get(metaKey);
 
     previews.push({
-      eventIdHex,
-      eventIdBytes: eventIdHexToBytes(eventIdHex),
+      eventIdHex: metaKey,
+      eventIdBytes: eventIdHexToBytes(metaKey),
       producers: treeEntries?.producers ?? [],
       consumers: treeEntries?.consumers ?? [],
       ambiguousEntries: [],
@@ -420,19 +458,20 @@ export function buildEffectiveBowtiePreview(): EditableBowtiePreview {
     });
   }
 
-  // Tree-discovered events not in catalog, layout, or metadata
-  for (const [eventIdHex, entries] of treeEntriesIndex) {
-    if (seenEventIds.has(eventIdHex)) continue;
+  // Tree-discovered events not in catalog, layout, or metadata.
+  // The tree index is already keyed by EventIdKey (see buildTreeEntriesIndex).
+  for (const [treeKey, entries] of treeEntriesIndex) {
+    if (seenEventIds.has(treeKey)) continue;
     const totalEntries = entries.producers.length + entries.consumers.length;
-    if (totalEntries < 2 && !isWellKnownEvent(eventIdHex)) continue;
+    if (totalEntries < 2 && !isWellKnownEvent(treeKey)) continue;
 
-    seenEventIds.add(eventIdHex);
-    const meta = bowtieMetadataStore.getMetadata(eventIdHex);
-    const dirtyFields = bowtieMetadataStore.getDirtyFields(eventIdHex);
+    seenEventIds.add(treeKey);
+    const meta = bowtieMetadataStore.getMetadata(treeKey);
+    const dirtyFields = bowtieMetadataStore.getDirtyFields(treeKey);
 
     previews.push({
-      eventIdHex,
-      eventIdBytes: eventIdHexToBytes(eventIdHex),
+      eventIdHex: treeKey,
+      eventIdBytes: eventIdHexToBytes(treeKey),
       producers: entries.producers,
       consumers: entries.consumers,
       ambiguousEntries: [],
@@ -547,12 +586,17 @@ function collectTreeEventIds(): string[] {
 
 /**
  * Build an index of all event ID entries from all trees in a single pass.
- * Returns a Map<eventIdHex, { producers, consumers }>.
+ * Returns a Map keyed by `EventIdKey` (canonical uppercase 16-char hex).
  *
  * One O(trees × leaves) scan upfront gives O(1) lookups per card thereafter.
+ *
+ * NOTE: `TreeConfigValue.hex` populated on the frontend uses `canonicalEventIdHex`
+ * and the backend uses `bytes_to_canonical_hex` — both already canonical. We
+ * still route through `toEventIdKey` at the boundary so any drift is normalized
+ * once, not scattered across every consumer.
  */
-function buildTreeEntriesIndex(): Map<string, { producers: EventSlotEntry[]; consumers: EventSlotEntry[] }> {
-  const index = new Map<string, { producers: EventSlotEntry[]; consumers: EventSlotEntry[] }>();
+function buildTreeEntriesIndex(): Map<EventIdKey, { producers: EventSlotEntry[]; consumers: EventSlotEntry[] }> {
+  const index = new Map<EventIdKey, { producers: EventSlotEntry[]; consumers: EventSlotEntry[] }>();
 
   for (const [nodeId, tree] of nodeTreeStore.trees) {
     const leaves = collectEventIdLeaves(tree);
@@ -569,6 +613,9 @@ function buildTreeEntriesIndex(): Map<string, { producers: EventSlotEntry[]; con
       const val = configChangesStore.visibleValue(key) ?? leaf.value;
       if (val?.type !== 'eventId' || isPlaceholderEventId(val.hex)) continue;
 
+      const eventKey = toEventIdKey(val.hex);
+      if (!eventKey) continue;
+
       const slotKey = `${nodeId}:${leaf.path.join('/')}`;
       const classifiedRole = bowtieMetadataStore.getRoleClassification(slotKey)?.role;
       const entry: EventSlotEntry = {
@@ -581,10 +628,10 @@ function buildTreeEntriesIndex(): Map<string, { producers: EventSlotEntry[]; con
         role: classifiedRole ?? leaf.eventRole ?? 'Ambiguous',
       };
 
-      let bucket = index.get(val.hex);
+      let bucket = index.get(eventKey);
       if (!bucket) {
         bucket = { producers: [], consumers: [] };
-        index.set(val.hex, bucket);
+        index.set(eventKey, bucket);
       }
 
       if (entry.role === 'Producer') {

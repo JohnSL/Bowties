@@ -221,6 +221,10 @@ class ConfigChangesStore {
     this._drafts = new Map();
   }
 
+  resetForNewLayout(): void {
+    this.clearAllDrafts();
+  }
+
   /**
    * Atomic save commit: clear all drafts.
    *

@@ -1,7 +1,11 @@
 <script lang="ts">
   import { channelsStore } from '$lib/stores/channels.svelte';
   import { eventStateStore } from '$lib/stores/eventState.svelte';
-  import { deriveChannelState, type OccupancyState } from '$lib/utils/channelState';
+  import {
+    deriveChannelState,
+    roleForChannelState,
+    type ChannelState,
+  } from '$lib/utils/channelState';
   import type { InformationChannel } from '$lib/api/channels';
   import ChannelRow from './ChannelRow.svelte';
 
@@ -12,8 +16,12 @@
     usedBy,
   }: {
     nodeName: (nodeKey: string) => string;
-    /** Map from channelId to { occupied, clear } event IDs. Supplied by parent/orchestrator. */
-    resolvedEventIds?: ReadonlyMap<string, { occupied?: string; clear?: string }>;
+    /**
+     * Map from channelId to state-name → eventId. State names vary by role:
+     * `block-occupancy` channels carry `{occupied, clear}`; `lamp-indicator`
+     * channels carry `{lit, unlit}` (Spec 018 / S5 D6).
+     */
+    resolvedEventIds?: ReadonlyMap<string, Record<string, string>>;
     /**
      * Resolves the daughterboard display name for a (nodeKey, connector) pair —
      * used in connectorInput group headers (e.g. "TowerLCC-1 · Connector A · BOD-8").
@@ -29,13 +37,18 @@
     usedBy?: (channelId: string) => ReadonlyArray<{ facilityName: string; slotLabel: string }>;
   } = $props();
 
-  /** Derive occupancy states for all channels from event store + resolved IDs. */
+  /** Derive `ChannelState` for all channels from event store + resolved IDs + role. */
   let channelStates = $derived.by(() => {
-    const states = new Map<string, OccupancyState>();
+    const states = new Map<string, ChannelState>();
     if (!resolvedEventIds) return states;
     const events = eventStateStore.events;
-    for (const [channelId, ids] of resolvedEventIds) {
-      states.set(channelId, deriveChannelState(events, ids.occupied, ids.clear));
+    for (const ch of channelsStore.channels) {
+      const ids = resolvedEventIds.get(ch.id);
+      if (!ids) continue;
+      const role = roleForChannelState(ch.role);
+      const positiveId = role === 'lamp-indicator' ? ids['lit'] : ids['occupied'];
+      const negativeId = role === 'lamp-indicator' ? ids['unlit'] : ids['clear'];
+      states.set(ch.id, deriveChannelState(events, positiveId, negativeId, role));
     }
     return states;
   });
@@ -92,7 +105,7 @@
             {#each channels as channel (channel.id)}
               <ChannelRow
                 {channel}
-                occupancyState={channelStates.get(channel.id) ?? 'unknown'}
+                channelState={channelStates.get(channel.id) ?? { kind: 'unknown' }}
                 usedBy={usedBy?.(channel.id)}
                 onRename={handleRename}
               />

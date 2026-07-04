@@ -353,3 +353,76 @@ describe('demoteToPlanningBowtie', () => {
     expect(allIds).not.toContain(REAL_ID);
   });
 });
+
+// ─── Spec 018 / S6 (D1) — createdByFacility back-reference ─────────────────
+
+describe('createdByFacility back-reference (Spec 018 / S6)', () => {
+  const HEX_A = '05010101FF010001';
+  const HEX_B = '05010101FF010101';
+
+  it('createBowtie(hex, name, { createdByFacility }) carries the back-ref into the delta', () => {
+    bowtieMetadataStore.createBowtie(HEX_A, 'Block 5 — lit', { createdByFacility: 'f-block-5' });
+    const deltas = bowtieMetadataStore.collectDeltas();
+    const create = deltas.find((d) => d.type === 'createBowtie');
+    expect(create).toBeDefined();
+    if (create?.type === 'createBowtie') {
+      expect(create.createdByFacility).toBe('f-block-5');
+    }
+  });
+
+  it('getMetadata exposes createdByFacility from an in-session create edit', () => {
+    bowtieMetadataStore.createBowtie(HEX_A, 'Block 5 — lit', { createdByFacility: 'f-block-5' });
+    expect(bowtieMetadataStore.getMetadata(HEX_A)?.createdByFacility).toBe('f-block-5');
+  });
+
+  it('bowtiesForFacility returns pending-create ids for the given facility', () => {
+    bowtieMetadataStore.createBowtie(HEX_A, 'Block 5 — lit', { createdByFacility: 'f-block-5' });
+    bowtieMetadataStore.createBowtie(HEX_B, 'Block 5 — unlit', { createdByFacility: 'f-block-5' });
+    // A user-created bowtie without a facility back-ref is excluded.
+    bowtieMetadataStore.createBowtie('05010101FF020000', 'User Bowtie');
+    const ids = bowtieMetadataStore.bowtiesForFacility('f-block-5');
+    expect(new Set(ids)).toEqual(new Set([HEX_A, HEX_B]));
+  });
+
+  it('bowtiesForFacility filters by facility id', () => {
+    bowtieMetadataStore.createBowtie(HEX_A, 'Block 5 — lit', { createdByFacility: 'f-block-5' });
+    bowtieMetadataStore.createBowtie(HEX_B, 'Block 7 — lit', { createdByFacility: 'f-block-7' });
+    expect(bowtieMetadataStore.bowtiesForFacility('f-block-5')).toEqual([HEX_A]);
+    expect(bowtieMetadataStore.bowtiesForFacility('f-block-7')).toEqual([HEX_B]);
+  });
+
+  it('bowtiesForFacility reads the layout baseline when there are no pending edits', () => {
+    mockLayout.current = {
+      schemaVersion: '2.0',
+      bowties: {
+        [HEX_A]: { name: 'Block 5 — lit', tags: [], createdByFacility: 'f-block-5' },
+        [HEX_B]: { name: 'Block 5 — unlit', tags: [], createdByFacility: 'f-block-5' },
+      },
+      roleClassifications: {},
+    };
+    const ids = bowtieMetadataStore.bowtiesForFacility('f-block-5');
+    expect(new Set(ids)).toEqual(new Set([HEX_A, HEX_B]));
+  });
+
+  it('bowtiesForFacility excludes ids with a pending deletion', () => {
+    mockLayout.current = {
+      schemaVersion: '2.0',
+      bowties: {
+        [HEX_A]: { name: 'Block 5 — lit', tags: [], createdByFacility: 'f-block-5' },
+        [HEX_B]: { name: 'Block 5 — unlit', tags: [], createdByFacility: 'f-block-5' },
+      },
+      roleClassifications: {},
+    };
+    bowtieMetadataStore.deleteBowtie(HEX_A);
+    expect(bowtieMetadataStore.bowtiesForFacility('f-block-5')).toEqual([HEX_B]);
+  });
+
+  it('adoptEventId preserves createdByFacility when re-keying an in-session create', () => {
+    const placeholder = 'planning-999';
+    bowtieMetadataStore.createBowtie(placeholder, 'Block 5 — lit', {
+      createdByFacility: 'f-block-5',
+    });
+    bowtieMetadataStore.adoptEventId(placeholder, HEX_A);
+    expect(bowtieMetadataStore.getMetadata(HEX_A)?.createdByFacility).toBe('f-block-5');
+  });
+});

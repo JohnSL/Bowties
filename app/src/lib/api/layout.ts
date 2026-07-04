@@ -43,6 +43,13 @@ export interface OpenLayoutResult {
    * restored.
    */
   recoveryOccurred: boolean;
+  /**
+   * Human-readable warnings from load-time schema normalization —
+   * e.g. facility slot bindings referencing channels absent from
+   * `channels.yaml`. The route surfaces these to the user; the
+   * cleaned in-memory documents reach disk on the next save.
+   */
+  loadWarnings: string[];
 }
 
 export interface SnapshotLeafValue {
@@ -133,6 +140,29 @@ export async function saveLayoutDirectory(
   deltas: LayoutEditDelta[] = [],
 ): Promise<SaveLayoutResult> {
   return invoke<SaveLayoutResult>('save_layout_directory', { path, overwrite, deltas });
+}
+
+/**
+ * Spec 018 / S6 bugfix — mirror the frontend's currently-collected
+ * `LayoutEditDelta`s into `LayoutState.drafts` on the backend so read
+ * paths that need the effective (drafts-over-saved) view can serve
+ * merged reads. Idempotent w.r.t. any given delta set; callers send
+ * the *complete* current delta set on every sync.
+ *
+ * Used by the facility bowtie composition path (`composeFacilityBowties`),
+ * which reads facility + channel state through `LayoutState.effective_*`.
+ */
+export async function syncLayoutDrafts(deltas: LayoutEditDelta[]): Promise<void> {
+  await invoke('sync_layout_drafts', { deltas });
+}
+
+/**
+ * Spec 018 / S6 bugfix — drop the backend's mirrored drafts layer.
+ * Called on frontend Discard and after a successful Save (both leave
+ * the backend authoritative in the saved layer).
+ */
+export async function clearLayoutDrafts(): Promise<void> {
+  await invoke('clear_layout_drafts');
 }
 
 /** Three-phase save: layout first, then bus writes (if connected), then reconcile. */

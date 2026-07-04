@@ -455,6 +455,7 @@ mod tests {
             }],
             relevance_rules: vec![],
             configuration_modes: vec![],
+            styles: vec![],
         };
 
         let map = resolve_profile_paths(&profile, &cdi);
@@ -522,6 +523,7 @@ mod tests {
                     },
                 }],
             }],
+            styles: vec![],
         };
 
         let map = resolve_profile_paths(&profile, &cdi);
@@ -759,6 +761,7 @@ mod tests {
                 explanation: "Detector 3 is irrelevant when Side is Right".to_string(),
             }],
             configuration_modes: vec![],
+            styles: vec![],
         };
 
         let map = resolve_profile_paths(&profile, &cdi);
@@ -817,6 +820,7 @@ mod tests {
                     },
                 }],
             }],
+            styles: vec![],
         };
 
         let map = resolve_profile_paths(&profile, &cdi);

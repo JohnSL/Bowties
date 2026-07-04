@@ -12,7 +12,10 @@
  * Design constraints (from refactor plan):
  * - Purely synchronous. No IPC, no async.
  * - Writes only to configChangesStore, never to the Rust backend.
- * - Online IPC flush is handled by a separate reactive orchestrator.
+ * - Online IPC flush is handled by `configDraftMirrorOrchestrator`, mounted
+ *   in the layout-open lifecycle (see `+page.svelte`, ADR-0012 2026-07-03
+ *   extension). Callers of `applyEdit` do nothing else — the mirror
+ *   observes the draft and forwards it to the backend.
  * - Lives in stores/ because its primary job is coordinating writes into a store.
  */
 

@@ -23,8 +23,11 @@ import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { editKeyForLeaf } from '$lib/utils/editKey';
 
 // ─── Shared test event ID ────────────────────────────────────────────────────
+//
+// Bowtie identity is `EventIdKey` (canonical uppercase 16-char undotted).
+// Tests should compare preview.eventIdHex against the canonical form.
 
-const TEST_EVENT_HEX = '02.01.57.00.02.D9.00.06';
+const TEST_EVENT_HEX = '0201570002D90006';
 const TEST_EVENT_BYTES = [0x02, 0x01, 0x57, 0x00, 0x02, 0xD9, 0x00, 0x06];
 
 // ─── Mock setup ──────────────────────────────────────────────────────────────
@@ -282,6 +285,221 @@ describe('effectiveLayoutStore.preview (ADR-0004 / S2c)', () => {
     expect(card).toBeDefined();
     expect(card!.producers.length).toBe(1);
     expect(card!.consumers.length).toBe(0);
+  });
+
+  // ── Merge-Owner symmetry with backend `merge_layout_metadata` ─────────────
+  //
+  // When a pending role classification promotes a `card.ambiguous_entries`
+  // entry into `producers` / `consumers`, the emitted `EventSlotEntry` must
+  // have its `role` field rewritten to match the destination bucket.
+  //
+  // The backend twin (`bowties-core/src/bowtie/catalog.rs::merge_layout_metadata`)
+  // sets `classified.role = Producer/Consumer` before pushing to the bucket.
+  // The frontend Owner (`buildEffectiveBowtiePreview`) must do the same, or
+  // downstream Consumers that branch on `entry.role` (e.g., BowtieCatalogPanel's
+  // `confirmRemove`) misfire and silently rewrite the leaf instead of showing
+  // the delete-bowtie confirmation.
+
+  it('reclassified ambiguous entry has role rewritten to Consumer (merge-Owner symmetry)', () => {
+    // Arrange: catalog card with a single ambiguous entry, tree loaded so
+    // the entry is enrichable but not filtered as stale.
+    const nodeId = '020157000001';
+    const leafPath = ['seg:0', 'elem:0#1', 'elem:0'];
+    const ambiguousEntry: EventSlotEntry = {
+      node_key: nodeId,
+      node_name: 'Test Node',
+      element_path: leafPath,
+      element_description: 'Unknown role slot',
+      event_id: TEST_EVENT_BYTES,
+      role: 'Ambiguous',
+    };
+    bowtieCatalogStore.setCatalog({
+      bowties: [{
+        event_id_hex: TEST_EVENT_HEX,
+        event_id_bytes: TEST_EVENT_BYTES,
+        producers: [{
+          node_key: '020157000002',
+          node_name: 'Producer Peer',
+          element_path: ['seg:0', 'elem:9#1', 'elem:0'],
+          element_description: null,
+          event_id: TEST_EVENT_BYTES,
+          role: 'Producer',
+        }],
+        consumers: [],
+        ambiguous_entries: [ambiguousEntry],
+        name: 'Test Bowtie',
+        tags: [],
+        state: 'Incomplete',
+      }],
+      built_at: '2026-01-01T00:00:00Z',
+      source_node_count: 2,
+      total_slots_scanned: 5,
+    });
+    // Load a matching tree so isEntryStillActive keeps the entry.
+    const leaf = makeEventIdLeaf({ path: leafPath, eventRole: null });
+    mockTreesMap.set(nodeId, makeTree(nodeId, [leaf]));
+
+    // Pending classification: user picked Consumer.
+    mockRoleClassificationsMap.set(`${nodeId}:${leafPath.join('/')}`, { role: 'Consumer' });
+
+    // Act
+    const preview = editableBowtiePreviewStore.preview;
+    const card = preview.bowties.find(b => b.eventIdHex === TEST_EVENT_HEX);
+
+    // Assert: entry moved into consumers with role rewritten. This mirrors
+    // the backend twin's `classified.role = Consumer` assignment.
+    expect(card).toBeDefined();
+    expect(card!.consumers).toHaveLength(1);
+    expect(card!.ambiguousEntries).toHaveLength(0);
+    expect(card!.consumers[0].role).toBe('Consumer');
+  });
+
+  it('reclassified ambiguous entry has role rewritten to Producer (merge-Owner symmetry)', () => {
+    const nodeId = '020157000001';
+    const leafPath = ['seg:0', 'elem:0#1', 'elem:0'];
+    const ambiguousEntry: EventSlotEntry = {
+      node_key: nodeId,
+      node_name: 'Test Node',
+      element_path: leafPath,
+      element_description: 'Unknown role slot',
+      event_id: TEST_EVENT_BYTES,
+      role: 'Ambiguous',
+    };
+    bowtieCatalogStore.setCatalog({
+      bowties: [{
+        event_id_hex: TEST_EVENT_HEX,
+        event_id_bytes: TEST_EVENT_BYTES,
+        producers: [],
+        consumers: [{
+          node_key: '020157000002',
+          node_name: 'Consumer Peer',
+          element_path: ['seg:0', 'elem:9#1', 'elem:0'],
+          element_description: null,
+          event_id: TEST_EVENT_BYTES,
+          role: 'Consumer',
+        }],
+        ambiguous_entries: [ambiguousEntry],
+        name: 'Test Bowtie',
+        tags: [],
+        state: 'Incomplete',
+      }],
+      built_at: '2026-01-01T00:00:00Z',
+      source_node_count: 2,
+      total_slots_scanned: 5,
+    });
+    const leaf = makeEventIdLeaf({ path: leafPath, eventRole: null });
+    mockTreesMap.set(nodeId, makeTree(nodeId, [leaf]));
+    mockRoleClassificationsMap.set(`${nodeId}:${leafPath.join('/')}`, { role: 'Producer' });
+
+    const preview = editableBowtiePreviewStore.preview;
+    const card = preview.bowties.find(b => b.eventIdHex === TEST_EVENT_HEX);
+    expect(card).toBeDefined();
+    expect(card!.producers).toHaveLength(1);
+    expect(card!.ambiguousEntries).toHaveLength(0);
+    expect(card!.producers[0].role).toBe('Producer');
+  });
+
+  // ── Stale ambiguous entry filtered by leaf-reconciliation ─────────────────
+  //
+  // `card.producers` / `card.consumers` are already filtered through
+  // `isEntryStillActive` so a stale entry whose leaf value has drifted away
+  // from the card's event id is dropped from the preview. The parallel
+  // filter is missing on `card.ambiguous_entries`, so a stale Unknown-role
+  // entry lingers on the card even after the user changes the leaf.
+
+  it('filters stale ambiguous entry whose leaf value no longer matches the card event id', () => {
+    const nodeId = '020157000001';
+    const leafPath = ['seg:0', 'elem:0#1', 'elem:0'];
+    const ambiguousEntry: EventSlotEntry = {
+      node_key: nodeId,
+      node_name: 'Test Node',
+      element_path: leafPath,
+      element_description: 'Stale unknown slot',
+      event_id: TEST_EVENT_BYTES,
+      role: 'Ambiguous',
+    };
+    bowtieCatalogStore.setCatalog({
+      bowties: [{
+        event_id_hex: TEST_EVENT_HEX,
+        event_id_bytes: TEST_EVENT_BYTES,
+        producers: [{
+          node_key: '020157000002',
+          node_name: 'Producer Peer',
+          element_path: ['seg:0', 'elem:9#1', 'elem:0'],
+          element_description: null,
+          event_id: TEST_EVENT_BYTES,
+          role: 'Producer',
+        }],
+        consumers: [],
+        ambiguous_entries: [ambiguousEntry],
+        name: 'Test Bowtie',
+        tags: [],
+        state: 'Incomplete',
+      }],
+      built_at: '2026-01-01T00:00:00Z',
+      source_node_count: 2,
+      total_slots_scanned: 5,
+    });
+    // Load a tree whose leaf value has drifted to a DIFFERENT event id.
+    const driftedHex = 'FFFF000000000000';
+    const driftedBytes = [0xff, 0xff, 0, 0, 0, 0, 0, 0];
+    const leaf = makeEventIdLeaf({
+      path: leafPath,
+      eventRole: null,
+      value: { type: 'eventId', bytes: driftedBytes, hex: driftedHex },
+    });
+    mockTreesMap.set(nodeId, makeTree(nodeId, [leaf]));
+
+    const preview = editableBowtiePreviewStore.preview;
+    const card = preview.bowties.find(b => b.eventIdHex === TEST_EVENT_HEX);
+
+    // The stale ambiguous entry must be filtered, mirroring the existing
+    // `isEntryStillActive` contract on producers/consumers.
+    expect(card).toBeDefined();
+    expect(card!.ambiguousEntries).toHaveLength(0);
+  });
+
+  it('keeps ambiguous entry when tree or leaf is missing (conservative default)', () => {
+    // Symmetric with `isEntryStillActive` returning true when the tree or
+    // leaf cannot be found — we don't want to drop entries just because the
+    // tree hasn't loaded yet.
+    const nodeId = '020157000001';
+    const leafPath = ['seg:0', 'elem:0#1', 'elem:0'];
+    const ambiguousEntry: EventSlotEntry = {
+      node_key: nodeId,
+      node_name: 'Test Node',
+      element_path: leafPath,
+      element_description: 'Unknown slot',
+      event_id: TEST_EVENT_BYTES,
+      role: 'Ambiguous',
+    };
+    bowtieCatalogStore.setCatalog({
+      bowties: [{
+        event_id_hex: TEST_EVENT_HEX,
+        event_id_bytes: TEST_EVENT_BYTES,
+        producers: [{
+          node_key: '020157000002',
+          node_name: 'Producer Peer',
+          element_path: ['seg:0', 'elem:9#1', 'elem:0'],
+          element_description: null,
+          event_id: TEST_EVENT_BYTES,
+          role: 'Producer',
+        }],
+        consumers: [],
+        ambiguous_entries: [ambiguousEntry],
+        name: 'Test Bowtie',
+        tags: [],
+        state: 'Incomplete',
+      }],
+      built_at: '2026-01-01T00:00:00Z',
+      source_node_count: 2,
+      total_slots_scanned: 5,
+    });
+    // No tree loaded for nodeId — the ambiguous entry must survive.
+    const preview = editableBowtiePreviewStore.preview;
+    const card = preview.bowties.find(b => b.eventIdHex === TEST_EVENT_HEX);
+    expect(card).toBeDefined();
+    expect(card!.ambiguousEntries).toHaveLength(1);
   });
 
   // ── Scenario 4: Catalog card merges with tree entries ─────────────────────
@@ -542,12 +760,113 @@ describe('effectiveLayoutStore.preview (ADR-0004 / S2c)', () => {
     expect(card!.ambiguousEntries[0].element_label).toBeDefined();
     expect(card!.ambiguousEntries[0].element_label).not.toBe('');
   });
+
+  // ── Regression: catalog hex ≠ tree hex representation must still dedupe ────
+  //
+  // Backend `build_bowtie_catalog` historically emitted `event_id_hex` in
+  // dotted-uppercase form (`02.01.57.00.02.D9.00.06`) while the frontend
+  // TreeConfigValue.hex (from `bytes_to_canonical_hex` on the backend, or
+  // `canonicalEventIdHex` when the frontend rebuilds it) is canonical
+  // uppercase undotted (`0201570002D90006`). If identity comparisons treat
+  // the two forms as different strings, the same event ends up rendered as
+  // TWO preview cards — one from the catalog, one from the tree fallback.
+  // This test locks in the "same 8-byte event ID → one preview card"
+  // invariant, regardless of which string form each source uses.
+
+  it('dedupes catalog vs tree entries for the same event ID across hex representations', () => {
+    // Same 8 bytes, different string forms:
+    const DOTTED = '02.01.57.00.02.D9.00.06';
+    const CANONICAL = '0201570002D90006';
+
+    // Catalog card as the backend emits it today (dotted).
+    // Fake catalog has ONLY the card scaffold — no producers/consumers yet.
+    const catalog: BowtieCatalog = {
+      bowties: [{
+        event_id_hex: DOTTED,
+        event_id_bytes: TEST_EVENT_BYTES,
+        producers: [],
+        consumers: [],
+        ambiguous_entries: [],
+        name: 'Named Bowtie',
+        tags: [],
+        state: 'Planning',
+      }],
+      built_at: '2026-01-01T00:00:00Z',
+      source_node_count: 1,
+      total_slots_scanned: 1,
+    };
+    bowtieCatalogStore.setCatalog(catalog);
+
+    // Tree leaves that reference the same event ID in canonical form
+    // (matches production behavior of the Rust `parse_leaf_value` path).
+    const producerLeaf = makeEventIdLeaf({
+      path: ['seg:0', 'elem:0#1', 'elem:0'],
+      eventRole: 'Producer',
+      value: { type: 'eventId', bytes: TEST_EVENT_BYTES, hex: CANONICAL },
+    });
+    const consumerLeaf = makeEventIdLeaf({
+      address: 200,
+      path: ['seg:0', 'elem:1#1', 'elem:0'],
+      eventRole: 'Consumer',
+      value: { type: 'eventId', bytes: TEST_EVENT_BYTES, hex: CANONICAL },
+    });
+    mockTreesMap.set(
+      '020157000001',
+      makeTree('020157000001', [producerLeaf, consumerLeaf])
+    );
+
+    const preview = editableBowtiePreviewStore.preview;
+
+    // Invariant: one 8-byte event ID → one preview card. Regardless of which
+    // string form each source uses, the merge must treat them as identical.
+    expect(preview.bowties).toHaveLength(1);
+    const card = preview.bowties[0];
+    expect(card.producers).toHaveLength(1);
+    expect(card.consumers).toHaveLength(1);
+    expect(card.name).toBe('Named Bowtie');
+  });
+
+  // ── Regression: duplicate catalog cards must dedupe (Owner-level invariant) ─
+  //
+  // `buildEffectiveBowtiePreview` is the single merge derivation (ADR-0004)
+  // and its documented invariant is "each EventIdKey appears at most once in
+  // preview.bowties." That invariant is enforced by `seenEventIds` in the
+  // layout / metadata / tree phases but historically NOT in the catalog phase
+  // itself — any upstream regression that produced two BowtieCards with the
+  // same event_id_hex surfaced as a Svelte `each_key_duplicate` crash in
+  // BowtieCatalogPanel (2026-07-03 report; specs/backlog.md).
+  //
+  // Contract: the FIRST card wins. This matches the ordering already used by
+  // the other three merge phases (first phase to add to seenEventIds keeps
+  // its card; later phases skip).
+  it('dedupes duplicate catalog cards with the same event id (first wins)', () => {
+    const first = makeCatalogWithCard(TEST_EVENT_HEX);
+    first.bowties[0].name = 'First card';
+
+    // Structurally-cloned second card with the same event_id_hex but a
+    // distinguishing name so we can assert first-wins.
+    const duplicate: (typeof first)['bowties'][number] = {
+      ...first.bowties[0],
+      name: 'Second card',
+      producers: first.bowties[0].producers.map((p) => ({ ...p, node_name: 'DUP source' })),
+      consumers: first.bowties[0].consumers.map((c) => ({ ...c })),
+      ambiguous_entries: [],
+    };
+    first.bowties.push(duplicate);
+
+    bowtieCatalogStore.setCatalog(first);
+
+    const preview = editableBowtiePreviewStore.preview;
+    const cards = preview.bowties.filter((b) => b.eventIdHex === TEST_EVENT_HEX);
+    expect(cards).toHaveLength(1);
+    expect(cards[0].name).toBe('First card');
+  });
 });
 
 // ─── Display threshold: single-slot unnamed cards are classification-only ────
 
 describe('display threshold for single-slot unnamed catalog cards', () => {
-  const SINGLE_SLOT_EVENT_HEX = '05.02.01.02.02.00.01.00';
+  const SINGLE_SLOT_EVENT_HEX = '0502010202000100';
   const SINGLE_SLOT_EVENT_BYTES = [0x05, 0x02, 0x01, 0x02, 0x02, 0x00, 0x01, 0x00];
 
   function makeCatalogWithSingleSlotCard(): BowtieCatalog {
@@ -643,7 +962,7 @@ describe('display threshold for single-slot unnamed catalog cards', () => {
 // ─── getRoleForSlot: authoritative role lookup across all catalog cards ──────
 
 describe('getRoleForSlot', () => {
-  const SINGLE_SLOT_EVENT_HEX = '05.02.01.02.02.00.01.00';
+  const SINGLE_SLOT_EVENT_HEX = '0502010202000100';
   const SINGLE_SLOT_EVENT_BYTES = [0x05, 0x02, 0x01, 0x02, 0x02, 0x00, 0x01, 0x00];
 
   it('returns Producer for a slot in a catalog card\'s producers list', () => {

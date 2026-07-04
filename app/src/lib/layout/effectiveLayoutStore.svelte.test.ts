@@ -25,8 +25,11 @@ import type { LayoutFile, RoleClassification } from '$lib/types/bowtie';
 import { editKeyForLeaf } from '$lib/utils/editKey';
 
 // ─── Shared event ID ─────────────────────────────────────────────────────────
+//
+// Bowtie identity is `EventIdKey` (canonical uppercase undotted). This matches
+// what the backend `bytes_to_canonical_hex` emits for `TreeConfigValue.hex`.
 
-const EVENT_HEX = '02.01.57.00.02.D9.00.06';
+const EVENT_HEX = '0201570002D90006';
 const EVENT_BYTES = [0x02, 0x01, 0x57, 0x00, 0x02, 0xD9, 0x00, 0x06];
 const NODE_ID = '020157000001';
 

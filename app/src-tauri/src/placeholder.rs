@@ -82,7 +82,6 @@ pub async fn synthesize(
         snip: Some(snip),
         cdi_data: Some(cdi_data),
         cdi_parsed: Some(cdi),
-        config_values,
         config_tree: Some(tree),
         producer_identified_events: Vec::new(),
     };
@@ -139,7 +138,6 @@ pub async fn reconstitute(
         snip: Some(snip),
         cdi_data: Some(cdi_data),
         cdi_parsed: Some(cdi),
-        config_values,
         config_tree: Some(tree),
         producer_identified_events: Vec::new(),
     })

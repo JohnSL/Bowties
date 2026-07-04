@@ -11,6 +11,7 @@ import {
   countLeaves,
   collectEventIdLeaves,
   groupReplicatedChildren,
+  replicationInstances,
   resolvePillSelectionsForPath,
   buildElementLabel,
 } from '$lib/types/nodeTree';
@@ -205,6 +206,91 @@ describe('collectEventIdLeaves', () => {
   it('returns empty for tree with no eventId leaves', () => {
     const tree = makeTree([makeSegment([makeLeaf({ elementType: 'int' })])]);
     expect(collectEventIdLeaves(tree)).toHaveLength(0);
+  });
+});
+
+// ─── replicationInstances ────────────────────────────────────────────────────
+
+describe('replicationInstances', () => {
+  function makeLampInstance(ordinal: number): GroupConfigNode {
+    return makeGroup([], {
+      name: 'Lamp',
+      instance: ordinal,
+      instanceLabel: `Lamp ${ordinal}`,
+      replicationOf: 'Lamp',
+      replicationCount: 16,
+      path: ['seg:0', `elem:0#${ordinal}`],
+    });
+  }
+
+  function makeLampWrapper(instances: GroupConfigNode[]): GroupConfigNode {
+    return makeGroup(instances, {
+      name: 'Lamp',
+      instance: 0,
+      instanceLabel: 'Lamp',
+      replicationOf: 'Lamp',
+      replicationCount: instances.length,
+      path: ['seg:0', 'elem:0'],
+    });
+  }
+
+  it('returns instances under a wrapper group (real backend shape)', () => {
+    const instances = Array.from({ length: 16 }, (_, i) => makeLampInstance(i + 1));
+    const wrapper = makeLampWrapper(instances);
+
+    const result = replicationInstances([wrapper], 'Lamp');
+
+    expect(result).toHaveLength(16);
+    expect(result.map((g) => g.instance)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+    ]);
+  });
+
+  it('returns instances when they appear as direct siblings (hand-built fixtures)', () => {
+    const siblings = Array.from({ length: 4 }, (_, i) => makeLampInstance(i + 1));
+
+    const result = replicationInstances(siblings, 'Lamp');
+
+    expect(result).toHaveLength(4);
+    expect(result.map((g) => g.instance)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('returns empty when the named group is not present', () => {
+    const other = makeGroup([], {
+      name: 'Channel',
+      instance: 1,
+      instanceLabel: 'Channel 1',
+      replicationOf: 'Channel',
+      replicationCount: 1,
+    });
+    expect(replicationInstances([other], 'Lamp')).toEqual([]);
+  });
+
+  it('ignores leaves and groups with a different replicationOf name', () => {
+    const lamp = makeLampInstance(1);
+    const channel = makeGroup([], {
+      name: 'Channel',
+      instance: 1,
+      instanceLabel: 'Channel 1',
+      replicationOf: 'Channel',
+      replicationCount: 1,
+    });
+    const leaf = makeLeaf();
+
+    const result = replicationInstances([lamp, channel, leaf], 'Lamp');
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toBe(lamp);
+  });
+
+  it('does not return the wrapper itself among the instances', () => {
+    const instances = [makeLampInstance(1), makeLampInstance(2)];
+    const wrapper = makeLampWrapper(instances);
+
+    const result = replicationInstances([wrapper], 'Lamp');
+
+    expect(result.every((g) => g.instance !== 0)).toBe(true);
+    expect(result).toHaveLength(2);
   });
 });
 

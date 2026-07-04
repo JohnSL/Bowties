@@ -257,3 +257,81 @@ helpers.
 or `format!("{:02X}", b)` pair at any call site. Either reuse an existing
 named wrapper or add a new one in the appropriate domain module that
 delegates to `hexId.ts` / `lcc_rs::types`.
+
+## 2026-07-03 extension: `EventIdKey` branded type (compile-time identity)
+
+The 2026-06-25 event-ID canonicalization extension established
+canonical-vs-display forms for event IDs. In production it was not enough:
+`build_bowtie_catalog` was still emitting dotted `event_id_hex` while
+`bytes_to_canonical_hex` was emitting canonical for `TreeConfigValue.hex`,
+and the frontend `buildEffectiveBowtiePreview` compared them as raw
+strings. Same 8-byte event ID → two preview cards. Same bug class as the
+original ADR (string identity with two shapes, honour-system contract).
+
+**Fix.** The catalog now emits canonical `event_id_hex`
+(`lcc_rs::EventID::to_canonical()`), and the frontend introduces a
+branded `EventIdKey` type in `app/src/lib/utils/eventIdKey.ts`. All
+identity operations for event IDs on the frontend — `seenEventIds`,
+`treeEntriesIndex` keys, `bowtieMetadataStore` edit prefixes, the
+`buildEffectiveBowtiePreview` catalog / layout / metadata / tree phase
+merges — go through `toEventIdKey(hex)` at the boundary, producing an
+`EventIdKey` that cannot be constructed from a raw string thanks to the
+phantom brand. `formatEventIdKey(key)` renders the dotted form for
+display; the two directions never mix.
+
+**Why branded string, not sum type.** Event IDs today have a single
+variant (`Real`) — a real 8-byte protocol event ID. A future
+placeholder-proxy "wire up" workflow may introduce a `PlaceholderSlot`
+variant (a reference to an event slot on a placeholder before the proxy
+is applied to a real node); at that point the branded string widens to
+a sum type mirroring `NodeKey`. Committing to the sum-type shape now
+would pre-decide a design that hasn't been made. The branded type gives
+us the immediate compile-time seam enumeration benefit without locking
+in the future variant.
+
+**Backwards compatibility.** Legacy layout files with dotted `bowties:`
+keys still load — `merge_layout_metadata` normalizes via
+`normalize_event_id_hex` and the frontend normalizes via `toEventIdKey`.
+Next save writes canonical, one-time silent migration per file.
+
+**Trigger.** A user with a freshly-read layout observed every event ID
+appearing twice on the Bowties page — once from the catalog path (dotted
+key, protocol-derived roles) and once from the frontend tree-scan Phase 4
+(canonical key, tree-derived roles), because `seenEventIds` compared
+different string forms. Regression encoded as
+`bowties.svelte.test.ts::dedupes catalog vs tree entries for the same
+event ID across hex representations`.
+
+**Rule going forward.** Event ID string identities are `EventIdKey`.
+Do not compare, hash, or set-add a raw `string` when the semantic role
+is "which event". If a `string` arrives from the outside (IPC, YAML,
+user input), route it through `toEventIdKey` and drop the invalid case.
+The compiler now enforces this at every seam that types its parameter
+as `EventIdKey`.
+
+## 2026-07-03 addendum: symmetric dedup across all merge phases
+
+The `EventIdKey` extension above unified string identity across the four
+merge phases in `buildEffectiveBowtiePreview` (catalog / layout / metadata
+/ tree). It closed the *string-representation* half of "same event id →
+two preview cards" but left the *cardinality* half unaddressed: the
+Owner's output invariant is "each `EventIdKey` appears at most once in
+`preview.bowties`", enforced by `seenEventIds`, and three of the four
+phases (layout / metadata / tree) gated on `seenEventIds.has(key)` before
+pushing — but the catalog phase itself did not. If any upstream
+contributor (backend `build_bowtie_catalog`, `merge_layout_metadata`, a
+future save-time re-emitter, or a `cdi-read-complete` race) produced two
+`BowtieCard`s with the same `event_id_hex`, both surfaced as preview
+cards and crashed the Svelte keyed `#each` in `BowtieCatalogPanel` with
+`each_key_duplicate`.
+
+**Fix.** The catalog phase now runs the same `seenEventIds.has(cardKey)`
+gate as the other three phases before doing any per-card work. First
+card wins, matching the ordering the other phases already commit to.
+Regression encoded as `bowties.svelte.test.ts::dedupes duplicate catalog
+cards with the same event id (first wins)`.
+
+**Rule going forward.** The merge Owner enforces its own uniqueness
+invariant symmetrically at every phase. Adding a new merge phase means
+adding the same `seenEventIds.has(...)` gate — the invariant is not
+delegated to upstream contributors.

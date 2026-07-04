@@ -266,6 +266,10 @@ class SyncPanelStore {
     this._error = null;
     this._dismissed = false;
   }
+
+  resetForNewLayout(): void {
+    this.reset();
+  }
 }
 
 export const syncPanelStore = new SyncPanelStore();

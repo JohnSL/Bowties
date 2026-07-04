@@ -392,3 +392,123 @@ describe('channelsStore deleteChannels', () => {
     expect(channelsStore.isEmpty).toBe(true);
   });
 });
+
+describe('channelsStore createUserOwnedChannel (Spec 018 / S5 D2)', () => {
+  it('appends a user-owned lamp-indicator channel to the new draft bucket', () => {
+    const ch = channelsStore.createUserOwnedChannel({
+      role: 'lamp-indicator',
+      style: 'single-led-direct-lamp',
+      binding: { kind: 'lampRow', nodeKey: '05010101FF000010', rowOrdinal: 3 },
+      name: 'Block 5 Output Lamp',
+    });
+
+    expect(ch.id).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(ch.ownership).toBe('user-owned');
+    expect(ch.role).toBe('lamp-indicator');
+    expect(ch.style).toBe('single-led-direct-lamp');
+    expect(ch.binding).toEqual({ kind: 'lampRow', nodeKey: '05010101FF000010', rowOrdinal: 3 });
+    expect(channelsStore.channels.map((c) => c.id)).toContain(ch.id);
+    expect(channelsStore.isDirty).toBe(true);
+    expect(channelsStore.editCount).toBe(1);
+  });
+
+  it('emits one createChannel delta per user-owned draft', () => {
+    const a = channelsStore.createUserOwnedChannel({
+      role: 'lamp-indicator',
+      style: 'single-led-direct-lamp',
+      binding: { kind: 'lampRow', nodeKey: '05010101FF000010', rowOrdinal: 1 },
+      name: 'Lamp A',
+    });
+    const b = channelsStore.createUserOwnedChannel({
+      role: 'lamp-indicator',
+      style: 'single-led-direct-lamp',
+      binding: { kind: 'lampRow', nodeKey: '05010101FF000010', rowOrdinal: 2 },
+      name: 'Lamp B',
+    });
+
+    const deltas = channelsStore.collectDeltas();
+    expect(deltas).toHaveLength(2);
+    expect(deltas.map((d) => d.type)).toEqual(['createChannel', 'createChannel']);
+    expect(deltas.map((d) => (d.type === 'createChannel' ? d.channel.id : null))).toEqual([
+      a.id,
+      b.id,
+    ]);
+  });
+
+  it('hydrateBaseline clears the new bucket too', () => {
+    channelsStore.createUserOwnedChannel({
+      role: 'lamp-indicator',
+      style: 'single-led-direct-lamp',
+      binding: { kind: 'lampRow', nodeKey: '05010101FF000010', rowOrdinal: 4 },
+      name: 'Lamp',
+    });
+    expect(channelsStore.isDirty).toBe(true);
+
+    channelsStore.hydrateBaseline([]);
+
+    expect(channelsStore.isDirty).toBe(false);
+    expect(channelsStore.collectDeltas()).toEqual([]);
+  });
+
+  it('discard clears the new bucket', () => {
+    channelsStore.createUserOwnedChannel({
+      role: 'lamp-indicator',
+      style: 'single-led-direct-lamp',
+      binding: { kind: 'lampRow', nodeKey: '05010101FF000010', rowOrdinal: 5 },
+      name: 'Lamp',
+    });
+
+    channelsStore.discard();
+
+    expect(channelsStore.isDirty).toBe(false);
+    expect(channelsStore.collectDeltas()).toEqual([]);
+  });
+});
+
+describe('channelsStore removeUserOwnedChannel (Spec 018 / S5)', () => {
+  it('drops a same-session draft without producing a delta or a deletion', () => {
+    const ch = channelsStore.createUserOwnedChannel({
+      role: 'lamp-indicator',
+      style: 'single-led-direct-lamp',
+      binding: { kind: 'lampRow', nodeKey: '05010101FF000010', rowOrdinal: 1 },
+      name: 'Lamp',
+    });
+
+    channelsStore.removeUserOwnedChannel(ch.id);
+
+    expect(channelsStore.channels.map((c) => c.id)).not.toContain(ch.id);
+    expect(channelsStore.isDirty).toBe(false);
+    expect(channelsStore.collectDeltas()).toEqual([]);
+    expect(channelsStore.pendingDeletions.has(ch.id)).toBe(false);
+  });
+
+  it('also clears any pending rename on a same-session draft when removed', () => {
+    const ch = channelsStore.createUserOwnedChannel({
+      role: 'lamp-indicator',
+      style: 'single-led-direct-lamp',
+      binding: { kind: 'lampRow', nodeKey: '05010101FF000010', rowOrdinal: 2 },
+      name: 'Original',
+    });
+    channelsStore.renameChannel(ch.id, 'Renamed');
+    expect(channelsStore.pendingRenames.has(ch.id)).toBe(true);
+
+    channelsStore.removeUserOwnedChannel(ch.id);
+
+    expect(channelsStore.pendingRenames.has(ch.id)).toBe(false);
+    expect(channelsStore.isDirty).toBe(false);
+  });
+
+  it('routes a baseline user-owned channel through the standard deletion delta path', () => {
+    const persisted = makeChannel({ id: 'persisted-lamp', ownership: 'user-owned' });
+    channelsStore.setChannels([persisted]);
+    expect(channelsStore.isDirty).toBe(false);
+
+    channelsStore.removeUserOwnedChannel(persisted.id);
+
+    expect(channelsStore.pendingDeletions.has(persisted.id)).toBe(true);
+    expect(channelsStore.isDirty).toBe(true);
+    expect(channelsStore.collectDeltas()).toEqual([
+      { type: 'deleteChannel', channelId: persisted.id },
+    ]);
+  });
+});

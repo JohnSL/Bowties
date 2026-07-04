@@ -320,6 +320,10 @@ class LayoutStore {
     this._offlineMode = false;
   }
 
+  resetForNewLayout(): void {
+    this.reset();
+  }
+
   /**
    * Update the bus connection status.
    * When connected, isOfflineMode returns false even if a layout file is open,

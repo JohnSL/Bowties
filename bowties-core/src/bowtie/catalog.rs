@@ -241,11 +241,11 @@ pub fn build_bowtie_catalog(
         let config_slot_count = config_slots.map(|v| v.len()).unwrap_or(0);
         let roles_opt = event_roles.get(event_id_bytes);
 
-        let event_id_hex = format!(
-            "{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}",
-            event_id_bytes[0], event_id_bytes[1], event_id_bytes[2], event_id_bytes[3],
-            event_id_bytes[4], event_id_bytes[5], event_id_bytes[6], event_id_bytes[7]
-        );
+        // Canonical uppercase 16-char undotted — the identity form for event IDs
+        // across IPC / storage. Dotted display form is derived on the frontend
+        // via `formatEventIdKey` when rendering. See ADR-0010 and
+        // `product/architecture/naming-and-normalization.md`.
+        let event_id_hex = lcc_rs::EventID::new(*event_id_bytes).to_canonical();
 
         let mut producers: Vec<EventSlotEntry> = Vec::new();
         let mut consumers: Vec<EventSlotEntry> = Vec::new();
@@ -516,11 +516,8 @@ pub fn build_bowtie_catalog(
 
     // Well-known events: build cards solely from config_value_cache.
     for &(wk_bytes, wk_name) in WELL_KNOWN_EVENT_IDS {
-        let event_id_hex = format!(
-            "{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}.{:02X}",
-            wk_bytes[0], wk_bytes[1], wk_bytes[2], wk_bytes[3],
-            wk_bytes[4], wk_bytes[5], wk_bytes[6], wk_bytes[7]
-        );
+        // Canonical identity form; see the main event loop above.
+        let event_id_hex = lcc_rs::EventID::new(wk_bytes).to_canonical();
 
         let mut wk_producers: Vec<EventSlotEntry> = Vec::new();
         let mut wk_consumers: Vec<EventSlotEntry> = Vec::new();
@@ -647,15 +644,25 @@ pub fn merge_layout_metadata(
     catalog: &mut BowtieCatalog,
     layout: &crate::layout::types::LayoutFile,
 ) {
-    // Build a lookup for fast event-ID → card-index matching
+    // Build a lookup for fast event-ID → card-index matching. Catalog cards
+    // are always keyed by the canonical event-ID hex form; normalize the
+    // lookup so comparisons are format-agnostic (belt-and-suspenders for the
+    // layout-YAML side, which may still contain dotted legacy keys).
     let mut hex_to_idx: HashMap<String, usize> = HashMap::new();
     for (i, card) in catalog.bowties.iter().enumerate() {
-        hex_to_idx.insert(card.event_id_hex.clone(), i);
+        let key = crate::node_tree::normalize_event_id_hex(&card.event_id_hex)
+            .unwrap_or_else(|| card.event_id_hex.clone());
+        hex_to_idx.insert(key, i);
     }
 
     // Merge names and tags onto matching cards
     for (event_id_hex, meta) in &layout.bowties {
-        if let Some(&idx) = hex_to_idx.get(event_id_hex) {
+        // Normalize legacy dotted keys to canonical before lookup so files
+        // written by older Bowties versions (which stored dotted-hex keys)
+        // still merge onto the correct catalog card.
+        let lookup_key = crate::node_tree::normalize_event_id_hex(event_id_hex)
+            .unwrap_or_else(|| event_id_hex.clone());
+        if let Some(&idx) = hex_to_idx.get(&lookup_key) {
             let card = &mut catalog.bowties[idx];
             if meta.name.is_some() {
                 card.name = meta.name.clone();
@@ -665,9 +672,9 @@ pub fn merge_layout_metadata(
             }
         } else {
             // Create planning-state card for unmatched layout entry.
-            let upper = event_id_hex.to_uppercase();
-            let (hex_used, bytes) = if let Some(b) = parse_event_id_hex(&upper) {
-                (upper, b)
+            // Emit canonical form so this card matches the identity contract.
+            let (hex_used, bytes) = if let Some(b) = parse_event_id_hex(event_id_hex) {
+                (lcc_rs::EventID::new(b).to_canonical(), b)
             } else {
                 (event_id_hex.clone(), [0u8; 8])
             };

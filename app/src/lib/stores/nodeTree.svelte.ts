@@ -275,6 +275,14 @@ class NodeTreeStore {
     this._loading = new Set();
     this._errors = new Map();
   }
+
+  resetForNewLayout(): void {
+    this.reset();
+  }
+
+  resetForFreshLiveSession(): void {
+    this.reset();
+  }
 }
 
 // ─── Internal helper ─────────────────────────────────────────────────────────

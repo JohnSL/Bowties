@@ -11,7 +11,6 @@ use lcc_rs::{
     CdiData, ConnectionStatus, DiscoveredNode, NodeAlias, NodeID, PIPStatus, ProtocolFlags,
     SNIPData, SNIPStatus, TransportHandle,
 };
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 
@@ -35,17 +34,6 @@ pub enum ProxyMessage {
     },
     GetSnapshot {
         reply: oneshot::Sender<DiscoveredNode>,
-    },
-
-    // ── Config values ─────────────────────────────────────────────────────
-    GetConfigValues {
-        reply: oneshot::Sender<HashMap<String, [u8; 8]>>,
-    },
-    SetConfigValues {
-        values: HashMap<String, [u8; 8]>,
-    },
-    MergeConfigValues {
-        values: HashMap<String, [u8; 8]>,
     },
 
     // ── Config tree ───────────────────────────────────────────────────────
@@ -110,11 +98,7 @@ pub struct LiveNodeProxy {
     last_seen: chrono::DateTime<chrono::Utc>,
     last_verified: Option<chrono::DateTime<chrono::Utc>>,
 
-    // Config values (was in AppState.config_value_cache)
-    config_values: HashMap<String, [u8; 8]>,
 
-    // Config tree (was in AppState.node_trees)
-    config_tree: Option<NodeConfigTree>,
 
     // In-flight SNIP query: Some(waiters) while a network query is running
     snip_waiters: Option<Vec<oneshot::Sender<SnipResult>>>,
@@ -145,8 +129,6 @@ impl LiveNodeProxy {
             connection_status: ConnectionStatus::Connected,
             last_seen: chrono::Utc::now(),
             last_verified: None,
-            config_values: HashMap::new(),
-            config_tree: None,
             snip_waiters: None,
             pip_waiters: None,
         };
@@ -209,28 +191,15 @@ impl LiveNodeProxy {
                     let _ = reply.send(self.snapshot());
                 }
 
-                // ── Config values ────────────────────────────────────────
-                ProxyMessage::GetConfigValues { reply } => {
-                    let _ = reply.send(self.config_values.clone());
-                }
-                ProxyMessage::SetConfigValues { values } => {
-                    self.config_values = values;
-                }
-                ProxyMessage::MergeConfigValues { values } => {
-                    self.config_values.extend(values);
-                }
-
-                // ── Config tree ──────────────────────────────────────────
+                // ── Config tree (removed — lives in LayoutState, ADR-0015) ──
                 ProxyMessage::GetConfigTree { reply } => {
-                    let _ = reply.send(self.config_tree.clone());
+                    let _ = reply.send(None);
                 }
-                ProxyMessage::SetConfigTree { tree } => {
-                    self.config_tree = Some(tree);
+                ProxyMessage::SetConfigTree { tree: _ } => {
+                    // No-op: tree ownership moved to LayoutState.
                 }
-                ProxyMessage::UpdateConfigTree { update_fn } => {
-                    if let Some(ref mut tree) = self.config_tree {
-                        update_fn(tree);
-                    }
+                ProxyMessage::UpdateConfigTree { update_fn: _ } => {
+                    // No-op: tree ownership moved to LayoutState.
                 }
 
                 // ── External state updates ───────────────────────────────
@@ -415,70 +384,6 @@ impl LiveNodeProxyHandle {
             .map_err(|_| "NodeProxy actor stopped".to_string())
     }
 
-    /// Get cached config values (event ID bytes by element path).
-    pub async fn get_config_values(&self) -> Result<HashMap<String, [u8; 8]>, String> {
-        let (reply_tx, reply_rx) = oneshot::channel();
-        self.tx
-            .send(ProxyMessage::GetConfigValues { reply: reply_tx })
-            .await
-            .map_err(|_| "NodeProxy actor stopped".to_string())?;
-        reply_rx
-            .await
-            .map_err(|_| "NodeProxy actor stopped".to_string())
-    }
-
-    /// Replace all config values in the proxy.
-    pub async fn set_config_values(&self, values: HashMap<String, [u8; 8]>) -> Result<(), String> {
-        self.tx
-            .send(ProxyMessage::SetConfigValues { values })
-            .await
-            .map_err(|_| "NodeProxy actor stopped".to_string())
-    }
-
-    /// Merge additional config values into the proxy's cache.
-    pub async fn merge_config_values(
-        &self,
-        values: HashMap<String, [u8; 8]>,
-    ) -> Result<(), String> {
-        self.tx
-            .send(ProxyMessage::MergeConfigValues { values })
-            .await
-            .map_err(|_| "NodeProxy actor stopped".to_string())
-    }
-
-    /// Get cached config tree.
-    pub async fn get_config_tree(&self) -> Result<Option<NodeConfigTree>, String> {
-        let (reply_tx, reply_rx) = oneshot::channel();
-        self.tx
-            .send(ProxyMessage::GetConfigTree { reply: reply_tx })
-            .await
-            .map_err(|_| "NodeProxy actor stopped".to_string())?;
-        reply_rx
-            .await
-            .map_err(|_| "NodeProxy actor stopped".to_string())
-    }
-
-    /// Store a config tree in the proxy.
-    pub async fn set_config_tree(&self, tree: NodeConfigTree) -> Result<(), String> {
-        self.tx
-            .send(ProxyMessage::SetConfigTree { tree })
-            .await
-            .map_err(|_| "NodeProxy actor stopped".to_string())
-    }
-
-    /// Apply a mutation to the config tree inside the proxy.
-    pub async fn update_config_tree(
-        &self,
-        update_fn: impl FnOnce(&mut NodeConfigTree) + Send + 'static,
-    ) -> Result<(), String> {
-        self.tx
-            .send(ProxyMessage::UpdateConfigTree {
-                update_fn: Box::new(update_fn),
-            })
-            .await
-            .map_err(|_| "NodeProxy actor stopped".to_string())
-    }
-
     /// Update SNIP data in the proxy's cache (external update, e.g. from EventRouter).
     pub async fn update_snip(
         &self,
@@ -560,9 +465,6 @@ pub struct SynthesizedNodeProxy {
     pub cdi_data: Option<CdiData>,
     /// Parsed CDI tree.
     pub cdi_parsed: Option<lcc_rs::cdi::Cdi>,
-    /// Config values (path → event ID bytes).  Factory pre-fills EventId leaves
-    /// with all-zero bytes.
-    pub config_values: HashMap<String, [u8; 8]>,
     /// Assembled config tree (populated after tree build).
     pub config_tree: Option<NodeConfigTree>,
     /// Producer-identified events for this placeholder (typically empty).
@@ -673,61 +575,15 @@ impl NodeProxyHandle {
         }
     }
 
-    /// Get cached config values (event ID bytes by element path).
-    pub async fn get_config_values(&self) -> Result<HashMap<String, [u8; 8]>, String> {
-        match self {
-            Self::Live(h) => h.get_config_values().await,
-            Self::Synthesized(s) => Ok(s.config_values.clone()),
-        }
-    }
-
-    /// Replace all config values.
-    pub async fn set_config_values(&self, values: HashMap<String, [u8; 8]>) -> Result<(), String> {
-        match self {
-            Self::Live(h) => h.set_config_values(values).await,
-            Self::Synthesized(_) => Err("Cannot set config values on a synthesized node".into()),
-        }
-    }
-
-    /// Merge additional config values into the cache.
-    pub async fn merge_config_values(
-        &self,
-        values: HashMap<String, [u8; 8]>,
-    ) -> Result<(), String> {
-        match self {
-            Self::Live(h) => h.merge_config_values(values).await,
-            Self::Synthesized(_) => {
-                Err("Cannot merge config values on a synthesized node".into())
-            }
-        }
-    }
-
     /// Get cached config tree.
+    ///
+    /// Returns `Ok(None)` for live proxies — their config tree lives in
+    /// `LayoutState`, not on the actor (ADR-0015). Synthesized placeholders
+    /// carry their own tree (they have no LayoutState entry until promoted).
     pub async fn get_config_tree(&self) -> Result<Option<NodeConfigTree>, String> {
         match self {
-            Self::Live(h) => h.get_config_tree().await,
+            Self::Live(_) => Ok(None),
             Self::Synthesized(s) => Ok(s.config_tree.clone()),
-        }
-    }
-
-    /// Store a config tree.
-    pub async fn set_config_tree(&self, tree: NodeConfigTree) -> Result<(), String> {
-        match self {
-            Self::Live(h) => h.set_config_tree(tree).await,
-            Self::Synthesized(_) => Err("Cannot set config tree on a synthesized node".into()),
-        }
-    }
-
-    /// Apply a mutation to the config tree.
-    pub async fn update_config_tree(
-        &self,
-        update_fn: impl FnOnce(&mut NodeConfigTree) + Send + 'static,
-    ) -> Result<(), String> {
-        match self {
-            Self::Live(h) => h.update_config_tree(update_fn).await,
-            Self::Synthesized(_) => {
-                Err("Cannot update config tree on a synthesized node".into())
-            }
         }
     }
 
@@ -800,6 +656,7 @@ mod tests {
     use crate::node_tree::{
         ConfigNode, ConfigValue, LeafNode, LeafType, NodeConfigTree, SegmentNode,
     };
+    use std::collections::HashMap;
 
     /// Create a dummy TransportHandle that doesn't connect to anything.
     fn dummy_transport_handle() -> TransportHandle {
@@ -851,139 +708,15 @@ mod tests {
         }
     }
 
-    /// Regression: NodeReinitialised must preserve config_tree and config_values.
-    ///
-    /// Previously the handler cleared both, which meant the next
-    /// set_modified_value / get_node_tree rebuilt from CDI without values,
-    /// zeroing every field the user hadn't just edited.
+    /// Live proxy no longer holds config_tree (ADR-0015) — get_config_tree
+    /// returns None.
     #[tokio::test]
-    async fn reinitialised_preserves_config_tree_and_values() {
+    async fn live_proxy_config_tree_returns_none() {
         let node_id = NodeID::new([0x05, 0x02, 0x01, 0x02, 0x03, 0x00]);
         let handle = NodeProxyHandle::Live(LiveNodeProxy::spawn(node_id, 0x100, dummy_transport_handle(), 0x001));
-
-        // Populate config values
-        let mut vals = HashMap::new();
-        vals.insert(
-            "seg:0/elem:0".into(),
-            [0x05, 0x01, 0x01, 0x01, 0x22, 0x00, 0x00, 0xFF],
-        );
-        handle.set_config_values(vals.clone()).await.unwrap();
-
-        // Populate config tree
-        let tree = tree_with_event_id(
-            "05.01.01.01.22.00.00.FF",
-            [0x05, 0x01, 0x01, 0x01, 0x22, 0x00, 0x00, 0xFF],
-        );
-        handle.set_config_tree(tree.clone()).await.unwrap();
-
-        // Simulate node reinitialization (e.g. after Update Complete)
-        handle.node_reinitialised().await.unwrap();
-
-        // Config tree must survive
-        let after_tree = handle.get_config_tree().await.unwrap();
-        assert!(
-            after_tree.is_some(),
-            "config_tree must not be cleared on reinit"
-        );
-        let after_tree = after_tree.unwrap();
-        assert_eq!(after_tree.segments.len(), 1);
-        if let ConfigNode::Leaf(ref leaf) = after_tree.segments[0].children[0] {
-            assert_eq!(
-                leaf.value,
-                Some(ConfigValue::EventId {
-                    bytes: [0x05, 0x01, 0x01, 0x01, 0x22, 0x00, 0x00, 0xFF],
-                    hex: "05.01.01.01.22.00.00.FF".into(),
-                }),
-                "leaf value must survive reinit"
-            );
-        } else {
-            panic!("expected a leaf node");
-        }
-
-        // Config values must survive
-        let after_vals = handle.get_config_values().await.unwrap();
-        assert_eq!(after_vals, vals, "config_values must not be cleared on reinit");
-
-        // SNIP/PIP volatile state must be cleared (correct behavior)
-        let snapshot = handle.get_snapshot().await.unwrap();
-        assert_eq!(snapshot.snip_status, SNIPStatus::Unknown);
-        assert_eq!(snapshot.pip_status, PIPStatus::Unknown);
-
-        handle.shutdown().await;
-    }
-
-    /// MergeConfigValues must extend existing entries, not replace the map.
-    ///
-    /// The event-router and write pipeline both rely on additive merges to
-    /// update individual event-ID values without losing unrelated entries.
-    #[tokio::test]
-    async fn merge_config_values_extends_existing() {
-        let node_id = NodeID::new([0x05, 0x02, 0x01, 0x02, 0x03, 0x00]);
-        let handle = NodeProxyHandle::Live(LiveNodeProxy::spawn(node_id, 0x100, dummy_transport_handle(), 0x001));
-
-        let mut initial = HashMap::new();
-        initial.insert("seg:0/elem:0".into(), [1u8; 8]);
-        initial.insert("seg:0/elem:1".into(), [2u8; 8]);
-        handle.set_config_values(initial).await.unwrap();
-
-        let mut merge = HashMap::new();
-        merge.insert("seg:0/elem:1".into(), [3u8; 8]); // overwrite
-        merge.insert("seg:0/elem:2".into(), [4u8; 8]); // new entry
-        handle.merge_config_values(merge).await.unwrap();
-
-        let result = handle.get_config_values().await.unwrap();
-        assert_eq!(result.len(), 3, "merge should add new keys");
-        assert_eq!(result["seg:0/elem:0"], [1u8; 8], "untouched key preserved");
-        assert_eq!(result["seg:0/elem:1"], [3u8; 8], "overlapping key updated");
-        assert_eq!(result["seg:0/elem:2"], [4u8; 8], "new key added");
-
-        handle.shutdown().await;
-    }
-
-    /// UpdateConfigTree must be a safe no-op when no tree has been set.
-    ///
-    /// Callers (e.g. set_modified_value) may send UpdateConfigTree
-    /// optimistically; the actor must not panic if config_tree is None.
-    #[tokio::test]
-    async fn update_config_tree_noop_without_tree() {
-        let node_id = NodeID::new([0x05, 0x02, 0x01, 0x02, 0x03, 0x00]);
-        let handle = NodeProxyHandle::Live(LiveNodeProxy::spawn(node_id, 0x100, dummy_transport_handle(), 0x001));
-
-        // No tree set — update should silently complete
-        handle
-            .update_config_tree(|tree| {
-                tree.node_id = "should-not-be-reachable".into();
-            })
-            .await
-            .unwrap();
 
         let tree = handle.get_config_tree().await.unwrap();
-        assert!(tree.is_none(), "tree should still be None");
-
-        handle.shutdown().await;
-    }
-
-    /// UpdateConfigTree applies the mutation when a tree exists.
-    #[tokio::test]
-    async fn update_config_tree_applies_mutation() {
-        let node_id = NodeID::new([0x05, 0x02, 0x01, 0x02, 0x03, 0x00]);
-        let handle = NodeProxyHandle::Live(LiveNodeProxy::spawn(node_id, 0x100, dummy_transport_handle(), 0x001));
-
-        let tree = tree_with_event_id(
-            "05.01.01.01.22.00.00.FF",
-            [0x05, 0x01, 0x01, 0x01, 0x22, 0x00, 0x00, 0xFF],
-        );
-        handle.set_config_tree(tree).await.unwrap();
-
-        handle
-            .update_config_tree(|tree| {
-                tree.segments[0].name = "Mutated".into();
-            })
-            .await
-            .unwrap();
-
-        let updated = handle.get_config_tree().await.unwrap().unwrap();
-        assert_eq!(updated.segments[0].name, "Mutated");
+        assert!(tree.is_none(), "live proxy config_tree lives in LayoutState, not on the actor");
 
         handle.shutdown().await;
     }

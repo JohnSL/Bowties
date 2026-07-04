@@ -35,6 +35,10 @@ class PartialCaptureNodesStore {
     if (this._set.size === 0) return;
     this._set = new Set();
   }
+
+  resetForNewLayout(): void {
+    this.clear();
+  }
 }
 
 export const partialCaptureNodesStore = new PartialCaptureNodesStore();
