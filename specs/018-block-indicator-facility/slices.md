@@ -2,7 +2,7 @@
 
 Branch: 018-block-indicator-facility
 Generated: 2026-06-28
-Status: 8/9 slices complete
+Status: 9/9 slices complete
 
 ## Architecture
 
@@ -202,7 +202,7 @@ The ordered slice set. The overview table is for at-a-glance scanning; each slic
 | S6 | Facility becomes Wired + end-to-end + retire Rebind | HITL | S5 | done |
 | S7 | Retire the Spec 015 BOD-8 channel inventory | REFACTOR | S6 | sketched |
 | S8 | Iteration ergonomics *(optional)* | HITL | S6 | sketched |
-| S9 | Top-level tab chrome refresh *(optional, orthogonal)* | HITL | None | sketched |
+| S9 | Top-level tab chrome refresh *(optional, orthogonal)* | HITL | None | done |
 
 ### S1: Facility CRUD with empty slots (+ lifecycle reset wiring) [HITL]
 

@@ -696,30 +696,43 @@ describe('window close unsaved-changes guard', () => {
 });
 
 describe('+page Railroad tab (Spec 015 / S1)', () => {
-  it('shows Railroad tab button in the toolbar', async () => {
+  it('shows Railroad tab in the toolbar with correct ARIA roles', async () => {
     render(Page);
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /railroad/i })).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: /railroad/i })).toBeInTheDocument();
     });
   });
 
-  it('Railroad tab button appears after Bowties', async () => {
+  it('tab strip has tablist role and contains Config, Bowties, Railroad in order', async () => {
     render(Page);
     await waitFor(() => {
-      const buttons = screen.getAllByRole('button', { pressed: false })
-        .concat(screen.getAllByRole('button', { pressed: true }));
-      const bowties = buttons.find(b => b.textContent?.includes('Bowties'));
-      const railroad = buttons.find(b => b.textContent?.includes('Railroad'));
-      expect(bowties).toBeTruthy();
-      expect(railroad).toBeTruthy();
+      const tablist = screen.getByRole('tablist', { name: /view mode/i });
+      expect(tablist).toBeInTheDocument();
+      const tabs = screen.getAllByRole('tab');
+      expect(tabs.map(t => t.textContent?.trim())).toEqual(['Config', 'Bowties', 'Railroad']);
+    });
+  });
+
+  it('no icon spans exist in the tab strip', async () => {
+    render(Page);
+    await waitFor(() => {
+      const tablist = screen.getByRole('tablist', { name: /view mode/i });
+      expect(tablist.querySelectorAll('.tb-icon')).toHaveLength(0);
     });
   });
 
   it('clicking Railroad tab switches active tab', async () => {
     render(Page);
-    const railroadBtn = await waitFor(() => screen.getByRole('button', { name: /railroad/i }));
-    await fireEvent.click(railroadBtn);
-    expect(railroadBtn.getAttribute('aria-pressed')).toBe('true');
+    const railroadTab = await waitFor(() => screen.getByRole('tab', { name: /railroad/i }));
+    await fireEvent.click(railroadTab);
+    expect(railroadTab.getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('active tab has tab-active class', async () => {
+    render(Page);
+    const railroadTab = await waitFor(() => screen.getByRole('tab', { name: /railroad/i }));
+    await fireEvent.click(railroadTab);
+    expect(railroadTab.classList.contains('tab-active')).toBe(true);
   });
 });
 

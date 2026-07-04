@@ -122,7 +122,7 @@
   // Ref to SaveControls for imperative save calls from menu shortcuts
   let saveControlsRef = $state<SaveControls | null>(null);
 
-  // Keyboard handler for the segmented mode control (ArrowLeft / ArrowRight cycles 3 tabs)
+  // Keyboard handler for the tab strip (ArrowLeft / ArrowRight cycles 3 tabs)
   function handleModeKeydown(e: KeyboardEvent): void {
     const idx = TAB_ORDER.indexOf(activeTab);
     if (e.key === 'ArrowLeft') {
@@ -1611,45 +1611,39 @@
   {#if layoutStore.isConnected || layoutStore.isOfflineMode}
     <div class="toolbar" role="toolbar" aria-label="Main toolbar">
       <div class="toolbar-left">
-        <!-- Segmented mode control: Config | Bowties -->
+        <!-- Tab strip: Config | Bowties | Railroad -->
         <div
-          class="mode-control"
-          role="group"
+          class="tab-strip"
+          role="tablist"
           aria-label="View mode"
         >
           <button
-            class="toolbar-seg"
-            class:toolbar-btn-active={activeTab === 'config'}
-            aria-pressed={activeTab === 'config'}
+            class="tab-item"
+            class:tab-active={activeTab === 'config'}
+            role="tab"
+            aria-selected={activeTab === 'config'}
             onclick={() => activeTab = 'config'}
             onkeydown={handleModeKeydown}
             title="Configuration view"
-          >
-            <span class="tb-icon">⚙</span>
-            <span>Config</span>
-          </button>
+          >Config</button>
           <button
-            class="toolbar-seg"
-            class:toolbar-btn-active={activeTab === 'bowties'}
-            aria-pressed={activeTab === 'bowties'}
+            class="tab-item"
+            class:tab-active={activeTab === 'bowties'}
+            role="tab"
+            aria-selected={activeTab === 'bowties'}
             onclick={() => activeTab = 'bowties'}
             onkeydown={handleModeKeydown}
             title="Bowtie connections view"
-          >
-            <span class="tb-icon">🎀</span>
-            <span>Bowties</span>
-          </button>
+          >Bowties</button>
           <button
-            class="toolbar-seg"
-            class:toolbar-btn-active={activeTab === 'railroad'}
-            aria-pressed={activeTab === 'railroad'}
+            class="tab-item"
+            class:tab-active={activeTab === 'railroad'}
+            role="tab"
+            aria-selected={activeTab === 'railroad'}
             onclick={() => activeTab = 'railroad'}
             onkeydown={handleModeKeydown}
             title="Railroad information channels"
-          >
-            <span class="tb-icon">🚂</span>
-            <span>Railroad</span>
-          </button>
+          >Railroad</button>
         </div>
         {#if layoutStore.isConnected && (configAcquisition.readingRemaining || unreadCount > 0)}
           <span class="toolbar-sep" aria-hidden="true"></span>
@@ -2213,51 +2207,33 @@
     margin: 0 4px;
   }
 
-  /* Active (pressed) state for toggle toolbar buttons */
-  .toolbar-btn-active {
-    background: #eff6ff;
-    border-color: #6366f1 !important;
-    color: #4338ca !important;
+  /* ── Tab strip (Config | Bowties | Railroad) ── */
+
+  .tab-strip {
+    display: flex;
+    gap: 0;
   }
 
-  /* ── Segmented mode control (Config | Bowties capsule) ── */
-
-  .mode-control {
-    display: flex;
-    border: 1px solid #e0e0e0;
-    border-radius: 4px;
-    overflow: hidden;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-  }
-
-  .toolbar-seg {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    padding: 4px 10px;
-    background: #ffffff;
+  .tab-item {
+    padding: 6px 14px;
+    background: none;
     border: none;
-    border-radius: 0;
+    border-bottom: 2px solid transparent;
     font-size: 13px;
-    color: #374151;
+    color: #6b7280;
     cursor: pointer;
     white-space: nowrap;
-    transition: background 0.12s, color 0.12s;
+    transition: color 0.12s, border-color 0.12s;
   }
 
-  .toolbar-seg + .toolbar-seg {
-    border-left: 1px solid #e0e0e0;
-  }
-
-  .toolbar-seg:hover:not(:disabled) {
-    background: #f0f4ff;
+  .tab-item:hover:not(:disabled) {
     color: #4338ca;
   }
 
-  .toolbar-seg.toolbar-btn-active {
-    background: #eff6ff;
+  .tab-item.tab-active {
     color: #4338ca;
     font-weight: 500;
+    border-bottom-color: #4338ca;
   }
 
 
