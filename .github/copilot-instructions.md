@@ -20,6 +20,7 @@ These instructions are the always-on implementation contract for Bowties.
 - Apply DRY by reusing shared helpers for normalization, fallback rules, formatting, and translation logic instead of creating local variants.
 - Apply YAGNI by preferring the smallest explicit abstraction that solves the current problem. Do not add generic frameworks or speculative layers without multiple real call sites.
 - Apply TDD for production behavior changes: add or update a focused test around the behavior seam first when practical, then implement the smallest change that makes it pass.
+- **Delegate the Red+Green loop to the `tdd-cycle` subagent by default.** Any time TDD is used — whether via `/build`, `/bugfix`, `/quickchange`, or a freeform "add a test and implement" request — invoke `tdd-cycle` with a batch of 1–3 behaviors (test location + framework per behavior). Work only from its returned audit summary. Do **not** run Red/Green inline in the main conversation. Inline TDD is the exception, reserved for a single trivial one-line behavior where subagent overhead exceeds the savings.
 - When fixing a regression, encode the regression as a behavior contract in tests and update the durable product docs if the user-visible behavior or ownership rule is part of the fix.
 
 ## Context Conservation

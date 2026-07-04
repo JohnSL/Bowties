@@ -60,23 +60,60 @@ Present the slice to the user as a **single chat message** with two parts. Do NO
 
 **Part 2 — Numbered decisions** (for principle-level trade-offs):
 
-Present ALL decisions for the slice as a numbered list. Each entry follows this structure:
+For each principle-level decision the slice raises, **invoke
+[`change-analyze`](../../agents/change-analyze.agent.md) with mode
+`hitl-decision`**. Do not draft the options inline in the main
+conversation. Each invocation returns a structured decision block plus an
+investigation audit; concatenate them into the numbered list you present
+to the user.
+
+Per-decision input to `change-analyze`:
+
+- **Mode**: `hitl-decision`.
+- **Problem statement**: the single decision under consideration (not the
+  whole slice).
+- **Seam context**: the slice's architecture note plus any cached brief
+  from the session-start pre-checks.
+- **User context**: any prior user direction that constrains this decision
+  (e.g. "reuse the existing pattern from ADR-0012").
+
+Present each returned decision in this format:
 
 ```
-**D{N}: {Short title}** — {Principle at stake: DRY / SOLID / YAGNI / Depth / Locality / ADR-compliance / non-regression / flexibility / etc.}
-Options: (A) {option} | (B) {option} | (optionally C, D, … including a deferral option when applicable}
-For each option, name: what regression class it enables or forecloses, what future flexibility it grants or constrains, and what architectural debt it adds or pays down. Do not argue from scope or implementation effort.
-Recommend: {A|B|…} — {why, tied to the named principle and to non-regression / flexibility consequences — never to "smallest move" or "tactical scope"}
-Impact: {scope of the change + the downstream risk if a different option is chosen}
+**D{N}: {short title}** — {principle at stake}
+
+Options:
+(A) {title} — Regression class prevented: {…} | Tradeoff: {…}
+(B) {title} — Regression class prevented: {…} | Tradeoff: {…}
+(optionally C, D, … including a deferral option when applicable)
+
+Recommend: {A|B|…} — {justification: prevention breadth + named principle}
+Impact: {scope + downstream risk if a different option is chosen}
 ```
 
-**Recommendation guidance for the architect's lens:**
+`change-analyze` enforces the required-field discipline and the
+banned-language filter; you present its output as-is. Keep the audit
+metadata in your context for follow-up questions but do not show it to the
+user by default.
 
-- **Principle over expedience.** When the "smallest move that ships" creates a known regression hazard, entrenches existing technical debt, or forecloses a near-term architectural direction, recommend the principle-honoring path and name what the smaller move would cost. Do not present "scope-minimal" as a virtue in itself — it is only a virtue when it is also principle-honoring.
-- **Type-level safety over runtime cleverness.** Prefer designs that make invalid states unrepresentable in the type system over designs that rely on runtime conventions, callers "knowing not to," or flat enums that mix vocabularies. The architect's question is "what stops the next contributor from writing the wrong thing?" not "what's the fewest lines of code today?"
-- **Consider deferral as a first-class option.** Before presenting D-options, ask whether the spec acceptance criterion this decision serves is load-bearing for the slice or negotiable. If implementing it forces an architectural shortcut (a sibling pass grafted into a function, a duplicated derivation path, a constraint hard-coded somewhere it shouldn't live), surface deferral as an option (e.g., "(D) Defer this acceptance criterion to a follow-up slice; document the known limitation; preserve the option to land the clean architecture later when there's a real driver"). The user, as the architect, can choose to relax the acceptance — but only if the option is on the table.
-- **Reject options that violate ADRs or known invariants.** When an option would violate an active ADR or a documented invariant, mark it as rejected with the reference and remove it from real consideration; do not present it as a peer trade-off.
-- **Name the principle, not the implementation.** "ADR-0012 compliance" beats "uses delta pattern"; "non-regression of single-source-of-truth invariant" beats "doesn't duplicate the derivation"; "forecloses generic active-style refactor" beats "sibling pass inside the function."
+### Additional HITL guidance (framing you apply when presenting)
+
+- **Consider deferral as a first-class option.** Before invoking
+  `change-analyze` for a decision, ask whether the spec acceptance
+  criterion this decision serves is load-bearing for the slice or
+  negotiable. If implementing it would force an architectural shortcut
+  (a sibling pass grafted into a function, a duplicated derivation path,
+  a constraint hard-coded somewhere it shouldn't live), include
+  "deferral" as one of the option candidates you pass in the problem
+  statement — the subagent will draft it with the same
+  Regression-class-prevented discipline as the other options. The user
+  can choose to relax the acceptance, but only if the option is on the
+  table.
+- **Name the principle, not the implementation.** "ADR-0012 compliance"
+  beats "uses delta pattern"; "non-regression of single-source-of-truth
+  invariant" beats "doesn't duplicate the derivation"; "forecloses
+  generic active-style refactor" beats "sibling pass inside the function."
+  (`change-analyze` enforces this; call it out when reviewing its return.)
 
 The user reviews the full picture and responds with approvals, overrides, or questions — e.g., "1: approved, 2: option B instead, 3: question — doesn't this violate ADR-0002?"
 
@@ -86,13 +123,13 @@ Wait for user direction on all decisions, then proceed with TDD.
 
 Implement autonomously following established patterns. Present the result when done.
 
-**Mid-slice stop condition.** If during implementation you discover the planned approach conflicts with an ADR, sits in the wrong layer per `product/architecture/code-placement-and-ownership.md`, requires coordinating state across layers that the slice did not anticipate, or duplicates logic that already has a shared owner, **stop**. Load and follow the `architecture-first-fix` skill to present options to the user before continuing. Do not patch through the surprise to keep the slice moving — unanticipated complications usually mean the slice's design needs to be revisited, not worked around.
+**Mid-slice stop condition.** If during implementation you discover the planned approach conflicts with an ADR, sits in the wrong layer per `product/architecture/code-placement-and-ownership.md`, requires coordinating state across layers that the slice did not anticipate, or duplicates logic that already has a shared owner, **stop**. Invoke `change-analyze` with mode `mid-slice-escalation` to present options to the user before continuing. Do not patch through the surprise to keep the slice moving — unanticipated complications usually mean the slice's design needs to be revisited, not worked around.
 
 ### REFACTOR Slices
 
 Implement autonomously. These slices produce no user-visible change — they restructure internals while preserving existing behavior. Present the result with a focus on what invariant was preserved and what architectural debt was reduced.
 
-**Mid-slice stop condition.** Same as AFK slices: if the refactor reveals a deeper seam problem than the slice anticipated (an invariant that doesn't actually hold, a layer boundary that's wrong, a duplication wider than the slice's scope), load and follow the `architecture-first-fix` skill before continuing. A refactor that quietly absorbs a bug or scope creep defeats its own purpose.
+**Mid-slice stop condition.** Same as AFK slices: if the refactor reveals a deeper seam problem than the slice anticipated (an invariant that doesn't actually hold, a layer boundary that's wrong, a duplication wider than the slice's scope), invoke `change-analyze` with mode `mid-slice-escalation` before continuing. A refactor that quietly absorbs a bug or scope creep defeats its own purpose.
 
 ### TDD Loop (both types)
 
@@ -114,27 +151,42 @@ Rules:
 - Tests should verify [behavior, not implementation](tests.md)
 - **Seam-aware red phase**: when the slice contributes to a seam per `aiwiki/seams.md`, T1's integration test MUST exercise at least one user-visible Consumer surface — not only the Owner or the new Contributor's internal state. Asserting only on a store's internal `isDirty` flag is not sufficient if the seam has UI Consumers; the test must reach a Consumer the user sees.
 
-#### Delegating the loop to the TDD coordinator (optional, context-saving)
+#### Delegating the loop to the TDD coordinator (default)
 
 Red→green→refactor accumulates failing-test output, stack traces, and abandoned
-attempts that fill the main window fast. To keep the main conversation lean, you
-may run the loop for the **current, already-tasked slice** through the `tdd-build`
-coordinator agent, which delegates each phase to a context-isolated worker
-(`tdd-red`, `tdd-green`, `tdd-refactor`) and returns one summary per cycle.
+attempts that fill the main window fast. **Delegate the loop to the
+[`tdd-build`](../../agents/tdd-build.agent.md) coordinator by default** so the
+main conversation grows by one slice-summary rather than by per-phase transcripts.
 
-Constraints when delegating:
+The coordinator batches red+green cycles into
+[`tdd-cycle`](../../agents/tdd-cycle.agent.md) worker invocations of **1–3
+behaviors each** (module-cluster split; auto-narrow to 1 for risky behaviors),
+then runs [`tdd-refactor`](../../agents/tdd-refactor.agent.md) once at the end.
+This gives ~N/3 hand-offs per slice instead of ~2N+1, while keeping every
+layer's context bounded well below session scale.
+
+Constraints:
+
 - The coordinator runs **strictly downstream of `/design`** and **inside** a
   single slice that is already `status: tasked` (and, for HITL slices, already
   approved). It never re-decides architecture or re-cuts slices — that stays here.
-- The **Refactor** worker is bound to `architecture-first-fix`: if cleanup reveals
-  a deeper seam problem, it stops and surfaces options instead of patching.
-- The coordinator stops at the slice boundary and writes back to `slices.md`, then
-  hands control here to re-read the roadmap and task the next slice (per
+- Each `tdd-cycle` invocation handles behaviors sequentially: red → green → run
+  suite → next behavior. Horizontal slicing (all reds then all greens) is
+  forbidden and is caught by the per-behavior audit trail in the worker's return.
+- Both workers are bound to `architecture-first-fix`: if a green requires wrong-
+  layer placement or cleanup reveals a deeper seam problem, they stop and surface
+  option drafts rather than patching. The coordinator forwards them to the user
+  via `/build` and waits.
+- The coordinator prunes per-batch summaries to
+  `/memories/session/build-<feature>-slice-<N>.md` so its own context stays
+  bounded on long slices.
+- The coordinator stops at the slice boundary and writes back to `slices.md`,
+  then hands control here to re-read the roadmap and task the next slice (per
   [Just-In-Time Tasking](#just-in-time-tasking)).
 
-Delegation is optional. For a small slice it is often cheaper to run the loop
-inline; for a long or test-heavy slice, prefer the coordinator. Either way the
-TDD rules above are unchanged.
+**Inline exception.** For a slice with a single trivial behavior, running the
+loop inline in the main conversation is fine — the delegation overhead outweighs
+the savings. Default is delegation; inline is the escape hatch.
 
 ### After Each Slice
 

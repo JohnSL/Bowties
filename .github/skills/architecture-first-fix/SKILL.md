@@ -3,98 +3,115 @@ name: architecture-first-fix
 description: Stop-and-propose-options procedure for bugfixes, behavior changes, and mid-implementation surprises. Forces root-cause analysis at the right seam, with options named in terms of the principle at stake (DRY / SOLID / YAGNI / Depth / Locality / ADR-compliance). Use for any bugfix or behavior change (chat or slash-commanded), and any mid-slice surprise during /build.
 ---
 
-# Architecture-First Fix
+# Architecture-First Fix — Spine
 
-The procedure to run before editing code for a bugfix, behavior change, or mid-implementation surprise. The goal is to prevent the slow architectural decay that results from a sequence of locally-reasonable patches at symptom sites.
+The procedure to run before editing code for a bugfix, behavior change, or
+mid-implementation surprise. The goal is to prevent the slow architectural
+decay that results from a sequence of locally-reasonable patches at symptom
+sites.
+
+This file is the always-loaded **spine**: when this skill applies, the
+required outputs, the delegation contract, and the stop-and-wait gate.
+The detailed option format, self-check, banned-language list, philosophy,
+and failure-mode catalogue live in the companion file
+[option-drafting.md](option-drafting.md), which is loaded only by the
+`change-analyze` subagent when it actually composes options.
 
 ## When this skill applies
 
-- Any bugfix request, whether triggered by `/bugfix`, `/quickchange`, or a freeform chat message ("fix this", "this is wrong", "it should…").
-- Any behavior change to existing code (as opposed to net-new feature work, which uses `design` + `slices` + `build`).
-- Any mid-slice surprise during `build`: a planned approach conflicts with an ADR, a test fails because the slice's design violates an invariant, or coordinating state across layers turns out to be more involved than the slice anticipated.
+- Any bugfix request, whether triggered by `/bugfix`, `/quickchange`, or a
+  freeform chat message ("fix this", "this is wrong", "it should…").
+- Any behavior change to existing code (as opposed to net-new feature work,
+  which uses `design` + `slices` + `build`).
+- Any mid-slice surprise during `build`: a planned approach conflicts with
+  an ADR, a test fails because the slice's design violates an invariant, or
+  coordinating state across layers turns out to be more involved than the
+  slice anticipated.
 
-**Exempt:** trivial mechanical edits (typo, comment, import sort, formatting), and cases where the user has explicitly said "just patch it", "skip the architecture check", or equivalent.
+**Exempt:** trivial mechanical edits (typo, comment, import sort,
+formatting), and cases where the user has explicitly said "just patch it",
+"skip the architecture check", or equivalent.
 
-## Procedure
+## Delegation contract — invoke `change-analyze`
 
-### 1. Identify the seam
+Do **not** perform seam identification, options-drafting, or the self-check
+inline in the main conversation. Delegate to the
+[`change-analyze`](../../agents/change-analyze.agent.md) subagent, which:
 
-**Delegate the research to an `Explore` subagent** to conserve main-conversation context. The subagent should gather module ownership, ADR coverage, and test file mapping, then return a structured summary. Work from that summary to state, explicitly:
+- Loads the option-drafting companion internally.
+- Runs seam identification via Explore subagents (dead-end reads stay
+  inside).
+- Drafts options with the required fields, including the mandatory
+  `Regression class prevented:` field.
+- Runs the pre-present self-check and rewrites options that fail it.
+- Returns a single structured summary block plus investigation audit
+  metadata (hypotheses ruled out, ADRs scanned, options rejected by
+  self-check, prior-work issues, assumptions).
 
-- Which layer(s) own the affected behavior, per `product/architecture/code-placement-and-ownership.md`.
-- Which ADR(s) in `product/architecture/adr/` govern the seam. If none apply, say so.
-- Which `aiwiki/owners.md` modules are involved, and which test files cover them.
-- Whether the affected behavior corresponds to a documented seam in `aiwiki/seams.md`. If yes, list current Owner, Contributors, and Consumers (with file:line). Symmetry violations at the Owner are the most common failure mode here — see "Asymmetric dirty tracking" below.
+Pass the appropriate **mode** (`bugfix`, `quickchange`, `hitl-decision`,
+`mid-slice-escalation`) so the return contract matches how you'll present
+it to the user. See the agent file for the mode-specific behavior.
 
-### 2. Distinguish symptom from root cause
+The main conversation never reads source files, ADRs, or `aiwiki/` files
+during architecture-first analysis. Every investigation lives inside the
+subagent.
 
-The root cause is the point where a contract, invariant, or ownership rule was violated — not the place where the wrong value surfaces. Common patterns:
+## Required properties of every option
 
-- Symptom in a component or render site, root cause in a missing facade contract or a store that exposes raw state.
-- Symptom in a route's menu/button state, root cause in an orchestrator whose lifecycle transition is incomplete.
-- Symptom in a "the user did X and nothing happened" complaint, root cause in a mutation that didn't flip a dirty/persist flag.
-- Symptom in a duplicated guard at three call sites, root cause in a missing shared helper or an invariant that should hold at the source.
+The subagent enforces these; the main conversation must not accept a
+returned option that lacks them:
 
-If symptom site and root cause are the same place, say so explicitly with the reasoning — do not assume.
+- **Named principle** — DRY / SOLID/SRP / SOLID/other / YAGNI / Depth /
+  Locality / ADR-compliance.
+- **`Regression class prevented:`** — a named class of future bugs the
+  option makes impossible or materially harder to write, and *why*. This
+  is the load-bearing field. Missing or vague → the option is a stopgap.
+- **Seam-symmetry at the Owner** when the change touches a documented seam
+  in `aiwiki/seams.md`. Consumer-side patches without Owner-side symmetry
+  are stopgaps.
 
-### 3. Present options at the root cause
+## Recommendation criterion — prevention breadth, not scope
 
-Present **two or more options** that fix the bug at its architectural root cause. Options differ in depth/scope, **not** in "shallow patch vs. real fix" — every option must be an honest fix at the right seam. Typical axes:
+The recommendation must be justified by **prevention breadth and named
+principle**. Cost/scope/risk minimization is not a valid justification.
+The subagent enforces the banned-language list; the main conversation must
+not weaken it when presenting.
 
-- Repair at the facade vs. push the invariant to the store boundary vs. generalize the mutation pattern.
-- Pull the lifecycle fixup into the orchestrator vs. introduce a derived store the orchestrator updates.
-- Add a typed pending-set today vs. introduce a general mutation log (YAGNI tension).
+## Stop and wait
 
-Each option uses this format:
+After presenting the returned block to the user, **stop**. Do not start
+implementing the recommended option speculatively. Wait for the user to
+choose an option (or override the recommendation).
 
-```
-**Option N — {short title}**
-
-Seam: {layer / module / file the option repairs}
-ADR(s) upheld: {ADR numbers, or "none directly applicable"}
-Principle(s) at stake: {DRY | SOLID/SRP | SOLID/<other> | YAGNI | Depth | Locality | ADR-compliance}
-  — one-line explanation of how the current code violates this principle, and how the option restores it.
-Tradeoff: {scope, risk, what this option defers or leaves for later, what it preserves}
-```
-
-Frame the options for an architect / product owner who understands design patterns but does not know the code. Recommend one and explain why.
-
-**Naming the principle is required, not optional.** Without it the options drift into "technically correct fixes" without diagnostic clarity. Use the same vocabulary as the `design` skill and `build` HITL decisions so the language is consistent across the workflow.
-
-**Seam-symmetry rule.** When the bug touches a seam in `aiwiki/seams.md`, every option in the set must address Owner / Contributor / Consumer symmetry at the documented Owner — not at the symptom site. A patch at one Consumer that leaves other Consumers diverging from the Owner is not an option; it is a stopgap (subject to the rules in step 4).
-
-### 4. Stopgap rule
-
-Do **not** include a "just patch the symptom" option unless one of:
-
-- The analysis shows the symptom site genuinely *is* the root cause, and the small change is the correct fix. Say so explicitly with reasoning.
-- The user has explicitly asked for a quick patch.
-- A stopgap is unavoidable for external reasons (release pressure, demo). In that case label it as a stopgap, state the underlying issue it leaves unresolved, and propose the follow-up as a `kind/idea` issue.
-
-"Cheapness" is not a reason to include a shallow option. Treat "the cheapest local change" as a red flag, not a default.
-
-### 5. Stop and wait
-
-Stop and wait for the user to choose an option before editing code. Do not start implementing the recommended option speculatively.
-
-## Common failure modes this skill prevents
-
-- **Render-site guard accretion (DRY).** Adding a fourth `if (isPlaceholder)` check at a render site because the previous three "looked fine in context."
-- **Incomplete lifecycle ownership (SOLID/SRP).** Orchestrator owns the data mutation; route owns the post-mutation menu/selection fixup; nothing owns the coordination. Bugs surface as stale UI state after the orchestrator finishes.
-- **Asymmetric dirty tracking (SOLID/SRP + ADR-compliance).** Mutation A flips `isDirty`; symmetric mutation B doesn't. Caused by deriving dirty from one side of the state shape only.
-- **Over-correction (YAGNI).** Replacing a typed pending-set with a "general mutation log framework" because it sounds principled. Match the depth of the seam to the depth of the actual problem.
-- **Shallow module accretion (Depth).** Adding a thin pass-through to "centralize" something with one caller. A real centralization has multiple call sites today.
-- **Resurrecting a rejected approach (ADR-compliance).** Re-proposing a design that an ADR already evaluated and rejected. The ADR check in step 1 is what catches this.
+If the user's choice materially changes the direction (picks Option B over
+your recommendation, or asks for a hybrid), it is fine to proceed — the
+options are peers, not a preference ranking. If the user asks a follow-up
+question the returned summary can't answer, re-invoke `change-analyze` with
+the corrected framing rather than reconstructing an answer inline.
 
 ## Relationship to other skills and prompts
 
-- `bugfix.prompt.md` and `quickchange.prompt.md` — both load this skill at the analysis step. Those prompts add workflow concerns around it (TDD regression encoding, test runs, aiwiki/backlog updates).
-- `build` SKILL — loads this skill mid-slice when an AFK or REFACTOR slice surfaces an unanticipated complication that touches a seam.
-- `design` SKILL — uses the same option/principle format for slice planning. The vocabulary here matches `design` deliberately.
-- `improve-codebase-architecture` SKILL — when this skill identifies that a seam is broken across many sites (not just the bug under investigation), recommend invoking `improve-codebase-architecture` on that seam as part of the recommended option or as a follow-up `kind/idea` issue.
+- [bugfix.prompt.md](../../prompts/bugfix.prompt.md) and
+  [quickchange.prompt.md](../../prompts/quickchange.prompt.md) — both
+  invoke `change-analyze` at their options step (mode `bugfix` /
+  `quickchange`). The prompts add workflow concerns around it (TDD
+  regression encoding, test runs, enrichment).
+- [`build` SKILL](../build/SKILL.md) — HITL Part 2 invokes `change-analyze`
+  once per numbered decision (mode `hitl-decision`). Mid-slice surprises
+  from `tdd-cycle` invoke it with mode `mid-slice-escalation`.
+- `design` SKILL — uses the same option/principle vocabulary for slice
+  planning.
+- `improve-codebase-architecture` SKILL — when the analysis identifies that
+  a seam is broken across many sites (not just the change under
+  investigation), the recommendation may cite `improve-codebase-architecture`
+  as a follow-up.
 
 ## What this skill does not do
 
-- It does not implement the fix. Implementation happens after the user picks an option, under the chosen prompt (`/bugfix`, `/quickchange`, `/build`).
+- It does not implement the fix. Implementation happens after the user
+  picks an option, under the chosen prompt (`/bugfix`, `/quickchange`,
+  `/build`).
 - It does not run tests. The calling prompt owns the test loop.
-- It does not write ADRs by itself. If the chosen option warrants an ADR extension or new ADR, that happens during post-implementation enrichment in the calling prompt.
+- It does not write ADRs by itself. If the chosen option warrants an ADR
+  extension, that happens during post-implementation enrichment in the
+  calling prompt.
