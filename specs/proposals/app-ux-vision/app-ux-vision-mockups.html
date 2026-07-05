@@ -491,19 +491,20 @@
     <h2 class="text-lg font-semibold text-gray-700 mb-3">3. Railroad — Facility Comprehension View</h2>
     <p class="text-sm text-gray-500 mb-2">The primary debugging surface — the facility bowtie visualized.</p>
     <ul class="text-sm text-gray-500 mb-4 list-disc pl-5 space-y-1">
-      <li><strong>Inputs</strong> (left): channels feeding in (occupancy, position feedback).</li>
+      <li><strong>Inputs</strong> (left): channels feeding in (occupancy, downstream signal aspect).</li>
       <li><strong>Logic</strong> (center): behavior decisions, where they execute, current evaluation state.</li>
-      <li><strong>Outputs</strong> (right): channels the facility drives (signal aspects, turnout commands).</li>
+      <li><strong>Outputs</strong> (right): channels the facility drives (signal aspects via the style's aspect-to-event map).</li>
       <li>Each channel shows <strong>live state</strong> when connected.</li>
       <li>Click any element to jump to its backing hardware in the Wiring workspace.</li>
+      <li>Real ABS determines aspect from (1) the next block's occupancy and (2) the <strong>downstream signal's aspect</strong>, not just the next block's occupancy. The cascade chain is visible in the inputs.</li>
     </ul>
 
     <div class="mockup-frame bg-white p-6">
       <!-- Facility header -->
       <div class="flex items-center justify-between mb-6">
         <div>
-          <h3 class="font-semibold text-gray-800 text-lg">Eagle Creek Signal Block</h3>
-          <p class="text-sm text-gray-500">ABS 3-Aspect Signal Block • Applied from template</p>
+          <h3 class="font-semibold text-gray-800 text-lg">Block 7 Signal</h3>
+          <p class="text-sm text-gray-500">ABS 3-Aspect Signal • Applied from template</p>
         </div>
         <span class="badge badge-active text-sm">Active — Live</span>
       </div>
@@ -514,36 +515,29 @@
         <div class="flex-1">
           <div class="section-label mb-3">Inputs</div>
           <div class="space-y-3">
-            <!-- Input card: this block occupancy -->
-            <div class="border rounded-lg p-3 bg-gray-50">
-              <div class="flex items-center justify-between mb-1">
-                <span class="text-sm font-medium">Eagle Creek — East Approach</span>
-                <span class="flex items-center gap-1.5 text-xs">
-                  <span class="channel-dot dot-clear"></span> Clear
-                </span>
-              </div>
-              <div class="text-xs text-gray-400">Occupancy • Tower-3 Conn.A Pin 1</div>
-              <div class="text-xs text-gray-400 mt-0.5">Also used by: <a href="#" class="text-indigo-500">CTC Panel — East</a></div>
-            </div>
             <!-- Input card: next block occupancy -->
             <div class="border rounded-lg p-3 bg-gray-50">
               <div class="flex items-center justify-between mb-1">
-                <span class="text-sm font-medium">Mainline Block 7</span>
+                <span class="text-sm font-medium">Block 8 Occupancy</span>
                 <span class="flex items-center gap-1.5 text-xs">
                   <span class="channel-dot dot-occupied"></span> <span class="text-red-600 font-medium">Occupied</span>
                 </span>
               </div>
-              <div class="text-xs text-gray-400">Occupancy • Tower-3 Conn.A Pin 3</div>
+              <div class="text-xs text-gray-400">Block Occupancy • Tower-3 Conn.A Pin 3</div>
+              <div class="text-xs text-gray-400 mt-0.5">Also used by: <a href="#" class="text-indigo-500">Block 8 Signal</a> (protected block)</div>
             </div>
-            <!-- Input card: turnout position -->
+            <!-- Input card: downstream signal aspect -->
             <div class="border rounded-lg p-3 bg-gray-50">
               <div class="flex items-center justify-between mb-1">
-                <span class="text-sm font-medium">Eagle Creek — East Turnout</span>
+                <span class="text-sm font-medium">Block 8 Signal</span>
                 <span class="flex items-center gap-1.5 text-xs">
-                  <span class="w-2 h-2 rounded-full bg-blue-500"></span> Normal
+                  <span class="w-3 h-3 rounded-full bg-red-500"></span>
+                  <span class="font-medium text-red-600">Stop</span>
                 </span>
               </div>
-              <div class="text-xs text-gray-400">Turnout Position • TurnoutBoss-1</div>
+              <div class="text-xs text-gray-400">Signal Aspect (downstream) • Tower-3 Logic Lines 3–5</div>
+              <div class="text-xs text-gray-400 mt-0.5">Cascade link: <a href="#" class="text-indigo-500">Block 8 Signal</a> → this signal</div>
+              <div class="text-xs text-indigo-500 mt-0.5">via Track Circuit 2 (same node — no network traffic)</div>
             </div>
           </div>
         </div>
@@ -559,14 +553,14 @@
           <div class="border-2 border-indigo-200 rounded-lg p-4 bg-indigo-50">
             <div class="text-sm font-medium text-indigo-800 mb-2">ABS 3-Aspect Rules</div>
             <div class="text-xs text-gray-600 space-y-1">
-              <div>• Next block occupied → <span class="font-medium text-amber-700">Approach</span></div>
-              <div>• This block occupied → <span class="font-medium text-red-700">Stop</span></div>
-              <div>• Turnout diverging → <span class="font-medium text-red-700">Stop</span></div>
-              <div>• All clear → <span class="font-medium text-green-700">Clear</span></div>
+              <div class="bg-red-50 rounded px-1.5 py-0.5 -mx-1 border border-red-100">• Next block occupied → <span class="font-medium text-red-700">Stop</span></div>
+              <div>• Downstream signal at Stop → <span class="font-medium text-amber-700">Approach</span></div>
+              <div>• Otherwise → <span class="font-medium text-green-700">Clear</span></div>
             </div>
             <div class="mt-3 pt-2 border-t border-indigo-200">
               <div class="text-xs text-indigo-600">Runs on: Tower-3 Logic Lines 1–2</div>
-              <div class="text-xs text-indigo-500 mt-0.5">Current evaluation: <strong class="text-amber-700">Approach</strong></div>
+              <div class="text-xs text-indigo-600">Publishes aspect to: Track Circuit 1</div>
+              <div class="text-xs text-indigo-500 mt-0.5">Current evaluation: <strong class="text-red-700">Stop</strong> (next block occupied)</div>
             </div>
           </div>
         </div>
@@ -580,21 +574,21 @@
         <div class="flex-1">
           <div class="section-label mb-3">Outputs</div>
           <div class="space-y-3">
-            <!-- Output card: signal aspect (multi-pin channel) -->
-            <div class="border rounded-lg p-3 bg-amber-50 border-amber-200">
+            <!-- Output card: signal aspect -->
+            <div class="border rounded-lg p-3 bg-red-50 border-red-200">
               <div class="flex items-center justify-between mb-1">
-                <span class="text-sm font-medium">Eagle Creek — East Signal</span>
+                <span class="text-sm font-medium">Block 7 East Signal</span>
                 <span class="flex items-center gap-1.5 text-xs">
-                  <span class="w-3 h-3 rounded-full bg-amber-400"></span>
-                  <span class="font-medium text-amber-700">Approach</span>
+                  <span class="w-3 h-3 rounded-full bg-red-500"></span>
+                  <span class="font-medium text-red-700">Stop</span>
                 </span>
               </div>
-              <div class="text-xs text-gray-400">Signal Aspect • Tower-3 Conn.B (3-pin channel)</div>
+              <div class="text-xs text-gray-400">Signal Aspect • style: 2-led-bicolor-aspect</div>
               <div class="text-xs text-gray-400 mt-1 pl-2 border-l-2 border-gray-200 space-y-0.5">
-                <div>Pin 1 — <span class="text-red-500">Red</span></div>
-                <div>Pin 2 — <span class="text-green-500">Green</span></div>
-                <div>Pin 3 — <span class="text-amber-500">Yellow</span></div>
+                <div>Lamp Row 5 — <span class="text-red-500">Red: ON</span></div>
+                <div>Lamp Row 6 — <span class="text-green-500">Green: off</span></div>
               </div>
+              <div class="text-xs text-gray-300 mt-1">Aspect map: stop → R on/G off · approach → R on/G on · clear → R off/G on</div>
             </div>
           </div>
         </div>
@@ -602,8 +596,8 @@
 
       <!-- Bottom context bar -->
       <div class="mt-6 pt-4 border-t flex items-center justify-between text-xs text-gray-400">
-        <span>Participating nodes: Tower-3, TurnoutBoss-1</span>
-        <span>Template: ABS 3-Aspect Signal Block v1.0</span>
+        <span>Participating nodes: Tower-3</span>
+        <span>Template: ABS 3-Aspect Signal v1.0 · Cascade: Block 8 Signal → this → Block 6 Signal</span>
       </div>
     </div>
   </section>
@@ -616,12 +610,14 @@
     <p class="text-sm text-gray-500 mb-2">Template apply opens as a side panel alongside the existing layout view.</p>
     <ul class="text-sm text-gray-500 mb-4 list-disc pl-5 space-y-1">
       <li>Requirements are <strong>color-coded</strong>: green (matched), red (no match yet).</li>
+      <li>ABS requires the <strong>next block's occupancy</strong> and the <strong>downstream signal's aspect</strong> — not "this block" and "next block" occupancy.</li>
+      <li>The downstream signal input binds to another facility's signal output, forming the ABS cascade chain.</li>
       <li>Unmapped requirements can be <strong>left pending</strong> — partial application creates an incomplete facility.</li>
       <li>"Create new channel inline" lets the user create hardware channels without leaving the template flow.</li>
       <li>The "Next" button advances even with pending slots.</li>
     </ul>
 
-    <div class="mockup-frame bg-white" style="height: 520px;">
+    <div class="mockup-frame bg-white" style="height: 560px;">
       <!-- Toolbar -->
       <div class="flex items-center px-4 py-2 border-b bg-gray-50">
         <span class="font-bold text-indigo-700 text-sm">🎀 Bowties</span>
@@ -634,39 +630,37 @@
 
       <div class="flex h-full">
         <!-- Left: existing layout context (dimmed) -->
-        <div class="flex-1 p-4 bg-gray-50 opacity-70" style="height: 480px;">
+        <div class="flex-1 p-4 bg-gray-50 opacity-70" style="height: 520px;">
           <div class="section-label">Your Channels</div>
           <div class="space-y-2 text-sm mt-2">
             <div class="flex items-center gap-2 p-2 bg-white rounded border">
               <span class="channel-dot dot-clear"></span>
-              <span>Eagle Creek — East Approach</span>
-              <span class="text-xs text-gray-400 ml-auto">Occupancy</span>
+              <span>Block 7 Occupancy</span>
+              <span class="text-xs text-gray-400 ml-auto">Block Occupancy</span>
+            </div>
+            <div class="flex items-center gap-2 p-2 bg-white rounded border">
+              <span class="channel-dot dot-occupied"></span>
+              <span>Block 8 Occupancy</span>
+              <span class="text-xs text-gray-400 ml-auto">Block Occupancy</span>
             </div>
             <div class="flex items-center gap-2 p-2 bg-white rounded border">
               <span class="channel-dot dot-clear"></span>
-              <span>Eagle Creek — Siding</span>
-              <span class="text-xs text-gray-400 ml-auto">Occupancy</span>
+              <span>Block 9 Occupancy</span>
+              <span class="text-xs text-gray-400 ml-auto">Block Occupancy</span>
             </div>
+          </div>
+          <div class="section-label mt-4">Your Facilities</div>
+          <div class="space-y-2 text-sm mt-2">
             <div class="flex items-center gap-2 p-2 bg-white rounded border">
-              <span class="channel-dot dot-clear"></span>
-              <span>Mainline Block 7</span>
-              <span class="text-xs text-gray-400 ml-auto">Occupancy</span>
-            </div>
-            <div class="flex items-center gap-2 p-2 bg-white rounded border">
-              <span class="w-2 h-2 rounded-full bg-blue-500"></span>
-              <span>Eagle Creek — East Turnout</span>
-              <span class="text-xs text-gray-400 ml-auto">Turnout Pos.</span>
-            </div>
-            <div class="flex items-center gap-2 p-2 bg-white rounded border border-dashed border-gray-300">
-              <span class="channel-dot dot-unknown"></span>
-              <span class="text-gray-400">Unnamed — Conn.B Pin 1</span>
-              <span class="text-xs text-gray-400 ml-auto">Signal</span>
+              <span class="w-3 h-3 rounded-full bg-green-500"></span>
+              <span>Block 8 Signal</span>
+              <span class="text-xs text-gray-400 ml-auto">ABS 3-Aspect</span>
             </div>
           </div>
         </div>
 
         <!-- Right: Template apply panel -->
-        <div class="w-96 border-l p-5 overflow-y-auto" style="height: 480px;">
+        <div class="w-96 border-l p-5 overflow-y-auto" style="height: 520px;">
           <div class="flex items-center justify-between mb-4">
             <h3 class="font-semibold text-gray-800">Apply Template</h3>
             <button class="text-gray-400 hover:text-gray-600 text-lg">✕</button>
@@ -674,8 +668,8 @@
 
           <!-- Template info -->
           <div class="bg-indigo-50 rounded-lg p-3 mb-5">
-            <div class="font-medium text-indigo-900 text-sm">ABS 3-Aspect Signal Block</div>
-            <p class="text-xs text-indigo-700 mt-1">Implements approach-lit 3-aspect signaling for one block. Requires occupancy for this block and the next block ahead, plus a signal output.</p>
+            <div class="font-medium text-indigo-900 text-sm">ABS 3-Aspect Signal</div>
+            <p class="text-xs text-indigo-700 mt-1">Protects a single block with 3-aspect signaling. Shows Stop when the next block is occupied, Approach when the downstream signal shows Stop, and Clear otherwise. Publishes its own aspect for upstream signal cascade.</p>
           </div>
 
           <!-- Step indicator -->
@@ -693,45 +687,37 @@
           <!-- Requirements mapping -->
           <div class="space-y-4">
             <div class="template-req satisfied">
-              <div class="text-xs text-gray-500 mb-1">This block occupancy (input)</div>
-              <select class="w-full border border-green-300 bg-green-50 rounded px-2 py-1.5 text-sm">
-                <option selected>Eagle Creek — East Approach</option>
-                <option>Eagle Creek — Siding</option>
-                <option>Mainline Block 7</option>
-              </select>
-              <div class="text-xs text-green-600 mt-1">✓ Role match: block-occupancy</div>
-            </div>
-
-            <div class="template-req satisfied">
               <div class="text-xs text-gray-500 mb-1">Next block occupancy (input)</div>
               <select class="w-full border border-green-300 bg-green-50 rounded px-2 py-1.5 text-sm">
-                <option>Eagle Creek — East Approach</option>
-                <option selected>Mainline Block 7</option>
-                <option>Eagle Creek — Siding</option>
+                <option>Block 7 Occupancy</option>
+                <option selected>Block 8 Occupancy</option>
+                <option>Block 9 Occupancy</option>
               </select>
               <div class="text-xs text-green-600 mt-1">✓ Role match: block-occupancy</div>
             </div>
 
             <div class="template-req satisfied">
-              <div class="text-xs text-gray-500 mb-1">Turnout position (input, optional)</div>
+              <div class="text-xs text-gray-500 mb-1">Downstream signal aspect (input)</div>
               <select class="w-full border border-green-300 bg-green-50 rounded px-2 py-1.5 text-sm">
-                <option selected>Eagle Creek — East Turnout</option>
-                <option>— None (skip) —</option>
+                <option selected>Block 8 Signal → signal output</option>
+                <option>— None (end of line — no cascade) —</option>
               </select>
-              <div class="text-xs text-green-600 mt-1">✓ Role match: turnout-position</div>
+              <div class="text-xs text-green-600 mt-1">✓ Role match: signal-aspect · reads Stop aspect for Approach cascade</div>
+              <div class="text-xs text-gray-400 mt-0.5">Same node as logic target → will use shared Track Circuit (no transmitter/receiver needed)</div>
             </div>
 
             <div class="template-req missing">
-              <div class="text-xs text-gray-500 mb-1">Signal aspect (output)</div>
+              <div class="text-xs text-gray-500 mb-1">Signal head (output) · role: signal-aspect · aspects: stop, approach, clear</div>
               <select class="w-full border border-red-200 bg-red-50 rounded px-2 py-1.5 text-sm">
                 <option selected>— Select or create —</option>
-                <option>Unnamed — Conn.B Pin 1 (signal)</option>
-                <option>➕ Create new channel inline...</option>
+                <option>➕ Add channel (2-led-bicolor-aspect)...</option>
+                <option>➕ Add channel (3-led-direct-aspect)...</option>
               </select>
               <div class="flex items-center gap-3 mt-1">
-                <span class="text-xs text-red-500">⚠ No named signal channel.</span>
+                <span class="text-xs text-red-500">⚠ No signal-aspect channel available.</span>
                 <button class="text-xs text-indigo-600 hover:underline">Leave pending →</button>
               </div>
+              <div class="text-xs text-gray-400 mt-1">Style determines how aspects map to lamps: bicolor (R+G both on = yellow) vs tricolor (separate Y LED).</div>
             </div>
           </div>
 
@@ -902,12 +888,12 @@
       <div class="grid grid-cols-2 gap-4">
         <div class="border rounded-lg p-4 hover:border-indigo-300 hover:shadow-sm cursor-pointer transition">
           <div class="flex items-start justify-between">
-            <h4 class="font-medium text-gray-800">ABS 3-Aspect Signal Block</h4>
+            <h4 class="font-medium text-gray-800">ABS 3-Aspect Signal</h4>
             <span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">Signaling</span>
           </div>
-          <p class="text-xs text-gray-500 mt-2">Standard ABS block signaling with approach-lit 3-aspect logic. Handles occupied, approach, and clear indications.</p>
+          <p class="text-xs text-gray-500 mt-2">Standard ABS signaling for one signal head. Stop when next block occupied, Approach when downstream signal shows Stop, Clear otherwise. Publishes aspect for upstream cascade.</p>
           <div class="mt-3 pt-3 border-t text-xs text-gray-400">
-            <span class="font-medium text-gray-600">Needs:</span> 2× occupancy, 1× signal, logic capacity
+            <span class="font-medium text-gray-600">Needs:</span> 1× occupancy (next block), 1× signal-aspect (downstream, cascade), 1× signal output, logic capacity
           </div>
         </div>
 
@@ -986,7 +972,7 @@
           <span class="badge badge-active">Active</span>
           <div class="flex-1">
             <div class="font-medium text-sm">Block 7 Signal</div>
-            <div class="text-xs text-gray-400">ABS 3-aspect signal block</div>
+            <div class="text-xs text-gray-400">ABS 3-aspect signal</div>
           </div>
           <div class="text-xs text-green-600">✓ All channels mapped • Logic running</div>
         </div>
@@ -996,7 +982,7 @@
           <span class="badge badge-active">Active</span>
           <div class="flex-1">
             <div class="font-medium text-sm">Block 8 Signal</div>
-            <div class="text-xs text-gray-400">ABS 3-aspect signal block</div>
+            <div class="text-xs text-gray-400">ABS 3-aspect signal</div>
           </div>
           <div class="text-xs text-green-600">✓ All channels mapped • Logic running</div>
         </div>
@@ -1006,7 +992,7 @@
           <span class="badge badge-wired">Wired</span>
           <div class="flex-1">
             <div class="font-medium text-sm">Block 9 Signal</div>
-            <div class="text-xs text-gray-400">ABS 3-aspect signal block</div>
+            <div class="text-xs text-gray-400">ABS 3-aspect signal</div>
           </div>
           <div class="text-xs text-blue-600">
             2/3 channels named • <a href="#" class="underline">Apply template →</a>

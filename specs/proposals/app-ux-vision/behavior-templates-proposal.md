@@ -49,7 +49,7 @@ Channels are **protocol-agnostic at the role level.** A "Block 7 Occupancy" chan
 - Block Occupancy (binary: occupied / clear)
 - Turnout Position (binary: normal / diverging)
 - Turnout Command (binary: throw normal / throw diverging)
-- Signal Aspect (enum: red / yellow / green / dark / flashing variants)
+- Signal Aspect (enum: parameterized by signal system — e.g. stop / approach / clear for 3-aspect ABS, or stop / restricting / approach / medium-clear / clear for 5-aspect, or expect-stop / expect-proceed for European distant signals)
 - Button Press (binary: pressed / released)
 - Lamp Indicator (binary: lit / unlit)
 - Route Request / Route Active
@@ -128,7 +128,7 @@ Facility (behavior instance — "Eagle Creek Siding")
   │    │    └── Slot (one pin/field on one node participating in that event)
   │    ├── Backing: JMRI object (sensor/turnout/mast of any protocol)
   │    └── Properties: directionality, signal system, connectivity
-  └── Logic (decision rules — "if next block occupied → show yellow")
+  └── Logic (decision rules — "if downstream signal shows stop → show approach")
        ├── On-node: Logic block / STL program on a specific node
        └── JMRI: LogixNG conditional (for mixed-protocol or computer-hosted logic)
 ```
@@ -223,7 +223,7 @@ Logic blocks fit into the channel model: each logic-line or STL-slot is a bindin
 | Channel role / style | Example | How templates use it |
 |------|------|------|
 | Information-producing channel (e.g., `block-occupancy`, button input) | A `block-occupancy` channel on any compatible board — bound to `Connector A — Input 1` on Tower-LCC via `bod-block-detector-input`, or to `Line 3` on Signal LCC via a Signal-LCC input style, etc. | Produces events the template consumes |
-| Information-consuming channel (e.g., `signal-aspect-3-color`, `lamp-indicator`) | A `signal-aspect-3-color` channel — backed by a Mast-driven style on Signal LCC, or by a `3-led-direct-aspect` style on a generic signal driver | Consumes events the template produces |
+| Information-consuming channel (e.g., `signal-aspect`, `lamp-indicator`) | A `signal-aspect` channel — backed by a Mast-driven style on Signal LCC, a `3-led-direct-aspect` style on a generic signal driver, or a `2-led-bicolor-aspect` style that simulates yellow by lighting both R and G | Consumes events the template produces; the style's aspect-to-event map translates abstract aspects (stop, approach, clear) into concrete lamp events at compile time |
 | Logic block (fixed) | TowerLCC Logic Line 5 — a channel whose style binds to one logic line | Evaluates conditions, triggers outputs |
 | Logic program (STL) | TowerLCC+Q STL slot — a channel whose style binds to one STL slot | Executes programmed behavior |
 | JMRI LogixNG conditional | LogixNG conditional tree — a channel whose style binds to one conditional | Evaluates conditions, controls JMRI objects |

@@ -27,37 +27,49 @@ id: abs-3-aspect
 name: "ABS 3-Aspect Signaling"
 description: >
   Automatic Block Signaling with three aspects. Protects a single block
-  by displaying Stop when occupied, Approach when the next block is
-  occupied, and Clear when both blocks are clear.
+  by displaying Stop when the next block is occupied, Approach when the
+  downstream signal shows Stop, and Clear otherwise. Each signal also
+  publishes its own aspect so that the next upstream signal can read it
+  for cascade.
 
 inputs:
-  - id: this_block
-    type: block-occupancy
-    label: "Protected block"
   - id: next_block
-    type: block-occupancy
+    role: block-occupancy
     label: "Next block ahead"
+  - id: downstream_signal
+    role: signal-aspect
+    aspects: [stop]               # only needs to read "stop" from downstream
+    label: "Downstream signal aspect"
+    source: facility-output       # binds to another facility's signal output
 
 outputs:
   - id: signal
-    type: signal-aspect
+    role: signal-aspect
     aspects: [stop, approach, clear]
     label: "Protecting signal"
 
 rules:
-  - when: { this_block: occupied }
+  # Evaluated most-to-least restrictive (mast group order).
+  # First matching rule fires and exits the group.
+  - when: { next_block: occupied }
     then: { signal: stop }
-  - when: { this_block: clear, next_block: occupied }
+  - when: { downstream_signal: stop }
     then: { signal: approach }
-  - when: { this_block: clear, next_block: clear }
+  - default:
     then: { signal: clear }
 
 targets: [tower-lcc-logic, stl, logixng]
 ```
 
-Templates are human-readable and human-verifiable: "when this block is occupied, signal shows stop" is auditable by anyone who understands ABS. They are also straightforward for AI to generate or update when adding new signaling patterns.
+Templates are human-readable and human-verifiable: "when next block is occupied, signal shows stop; when downstream signal shows stop, signal shows approach" is auditable by anyone who understands ABS. They are also straightforward for AI to generate or update when adding new signaling patterns.
+
+**Key ABS design insight.** Real ABS signaling determines a signal's aspect from two things: (1) the occupancy of the block immediately ahead, and (2) the **aspect of the next signal downstream** (not just the next block's occupancy). This cascade is what makes ABS work — each signal looks one block ahead for Stop, and reads the downstream signal's aspect for Approach. The template DSL models this explicitly: `downstream_signal` is a `signal-aspect` input that binds to another facility's output, forming the cascade chain.
+
+**Aspect-to-event compilation.** The template's rules produce abstract aspects (`stop`, `approach`, `clear`). The bound output channel's style provides an **aspect-to-event map** that translates each aspect into concrete hardware actions at compile time. For example, a `2-led-bicolor-aspect` style maps `approach` to "red on + green on" (simulating yellow); a `3-led-direct-aspect` style maps it to "yellow on." The template never knows about lamps — the style is the hardware adapter. The number of action slots the compiler needs per conditional line depends on the style's pin count (2 actions for bicolor, 3 for tricolor; Tower LCC supports 4 actions per line).
 
 The DSL design will require further iteration to handle the full range of common signaling patterns (APB with directional authority, CTC interlocking, timed sequences). The goal is not to handle every possible scenario — it is to make the majority of cases expressible in the DSL, with uncommon cases handled through direct configuration.
+
+**Signal system diversity.** JMRI supports 48+ signal systems ranging from 6 aspects (basic) to 100+ aspects (French SNCF). The `signal-aspect` role is parameterized — it is a single role whose state vocabulary is declared per channel and per template slot, not a family of fixed roles. US systems emphasize finely-graduated speed commands within a single mast; European systems emphasize mast separation (main/distant/shunting) with simpler per-mast vocabularies. The template DSL handles both: a US 5-aspect template declares `aspects: [stop, restricting, approach, medium-clear, clear]`; a European distant-signal template declares `aspects: [expect-stop, expect-proceed, expect-slow]`. Style compatibility is checked at bind time: the bound channel's style must support all aspects the template produces.
 
 ### Target Adapters
 
@@ -77,7 +89,34 @@ An adapter provides:
 The adapter handles target-specific concerns internally. For example, the Tower-LCC Logic adapter manages:
 - **Allocation** — finding free logic lines (lines with no wired producer events on their variables)
 - **Chaining** — rules with more than 2 conditions are split across multiple logic lines, with intermediate action events feeding the next line's variables
+- **Track Circuit linking** — inter-signal aspect cascading, transparently handling same-node vs cross-node scenarios (see below)
 - **Defragmentation** — optionally shifting existing grouped logic lines to consolidate free space when allocation would otherwise fail
+
+#### Track Circuit Management (Tower-LCC Logic Adapter)
+
+ABS signaling requires signals to be aware of each other's aspects. Each signal publishes its own aspect for the upstream signal to read. On Tower-LCC, this is implemented via **Track Circuits** — virtual code lines that carry speed/aspect information between logic conditionals.
+
+**Architecture:** Each Tower-LCC node has 8 Track Receiver circuits (consumer) and 8 Track Transmitter circuits (producer). Each carries 8 speed codes: Stop, Restricting, Slow, Medium, Limited, Approach, Approach-Medium, Clear. Conditionals read Track Circuits via the Variable Source field (`Track Circuit 1–8`) and write to them via Action Destination fields (`Track Circuit 1–8`).
+
+**Same-node vs cross-node:** When two signals are on the same Tower-LCC node, they share Track Circuits directly — a conditional writes `Destination = Track Circuit 3, Speed = Stop`, and another conditional on the same node reads `Source = Track Circuit 3, Speed = Stop`. No network traffic, zero latency. When signals are on different nodes, the Track Transmitter on the source node publishes a Link Address (producer event ID) carrying all 8 speed codes, and the Track Receiver on the destination node subscribes by pasting that Link Address (consumer event ID).
+
+**The template compiler handles this transparently.** The template DSL expresses `downstream_signal` as a signal-aspect input. At apply time, the compiler determines whether the source and destination signals are on the same node:
+
+| Scenario | Compiler action | Resources consumed |
+|---|---|---|
+| **Same node** | Allocate a shared Track Circuit (1–8) on the node; source signal's conditional writes to it, destination signal's conditional reads from it | 1 Track Circuit (shared, no transmitter/receiver) |
+| **Different nodes** | Allocate a Track Transmitter circuit on the source node; allocate a Track Receiver circuit on the destination node; copy the Transmitter's Link Address into the Receiver | 1 Transmitter on source + 1 Receiver on destination |
+
+**Capacity limits:**
+- 8 Track Circuits per node (shared for same-node signals)
+- 8 Track Transmitter circuits per node (for outbound cross-node links)
+- 8 Track Receiver circuits per node (for inbound cross-node links)
+- One-to-many is supported: multiple receivers can subscribe to the same transmitter's Link Address
+- Many-to-one is not supported: each receiver listens to exactly one transmitter
+
+**Capacity surfacing:** Bowties reports Track Circuit / Transmitter / Receiver availability at feasibility-check time: "Node Tower-3 has 2/8 Track Transmitter circuits remaining." When a template apply would exceed a node's capacity, the adapter reports the constraint and offers alternatives (choose a different node, use LogixNG).
+
+**Allocation tracking:** Bowties tracks which Track Circuits, Transmitters, and Receivers are allocated per facility, so deletion can reclaim them. This allocation metadata is stored alongside the facility record, not in the channel model — Track Circuits are an implementation detail of the Tower-LCC Logic adapter, not a user-visible concept.
 
 ### Template Application Creates a Facility
 
@@ -93,6 +132,51 @@ A facility created by template application knows its template origin, which enab
 - Debugging ("which rule is producing this aspect?")
 
 Facilities are template-first: every facility originates from a template application. For advanced scenarios where a user has already configured logic directly (e.g., an experienced user with a pre-existing layout), a future workflow will allow attaching a template to existing configured elements — mapping what's already on the node into a facility structure. This path does not need to be as streamlined as starting fresh with a template; it serves technically proficient users who are willing to do more manual mapping.
+
+### Multi-Head Masts and Composite Indication
+
+At junctions, a single signal mast often carries multiple heads — one per route (e.g., mainline head + diverging head). Each head is an independent `signal-aspect` channel with its own style and hardware binding, but the mast introduces two interactions that go beyond per-head independence:
+
+1. **Route interlocking between heads.** Each head's rules depend on the turnout position — the mainline head shows Stop when the route is set to diverging, and vice versa. A multi-head template encodes these per-head rule sets within a single facility.
+
+2. **Composite mast indication for upstream cascade.** The upstream signal needs to know the mast's composite state, not individual head states. For example, an upstream signal shows Approach only when *all* heads on the downstream mast show Stop (meaning no route is available). If any head shows a permissive aspect, the upstream signal shows Clear. On Tower-LCC, this is handled by publishing all heads' aspects to the same Track Circuit — the circuit naturally carries the most permissive indication across the mast group.
+
+**Template DSL extension for masts:**
+
+```yaml
+# Multi-head mast template (junction signal)
+outputs:
+  - id: mainline_head
+    role: signal-aspect
+    aspects: [stop, approach, clear]
+  - id: diverging_head
+    role: signal-aspect
+    aspects: [stop, approach, clear]
+
+rules:
+  # Mainline head rules (route-aware)
+  - when: { turnout_position: diverging }
+    then: { mainline_head: stop }
+  - when: { mainline_block: occupied }
+    then: { mainline_head: stop }
+  - when: { downstream_mainline: stop }
+    then: { mainline_head: approach }
+  - default:
+    then: { mainline_head: clear }
+
+  # Diverging head rules (route-aware)
+  - when: { turnout_position: normal }
+    then: { diverging_head: stop }
+  # ... (parallel structure)
+
+mast:
+  heads: [mainline_head, diverging_head]
+  composite_rule: most-permissive
+```
+
+The `mast` section tells the Tower-LCC adapter to place all heads' conditional groups within the same mast group and publish to the same Track Circuit. The `composite_rule: most-permissive` means the upstream signal's cascade input reads the least restrictive aspect any head is currently showing.
+
+**Scope.** Multi-head masts are not required for the first ABS slice (single-head signals on straight track). They become necessary when junction signals are implemented. The template DSL's `mast` section and the adapter's mast-group compilation are designed as an extension that does not change the single-head model — a single-head template is simply a mast with one head.
 
 ### Capacity and Overflow
 
