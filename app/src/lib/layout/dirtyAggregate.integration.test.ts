@@ -112,8 +112,8 @@ const TEMPLATE: BehaviorTemplate = {
   templateId: 'block-indicator',
   displayName: 'Block Indicator',
   slots: [
-    { label: 'Detector', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
-    { label: 'Lamp', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 1, maxChannels: 1 },
+    { label: 'Detector', displayLabel: 'Detector', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
+    { label: 'Lamp', displayLabel: 'Lamp', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 1, maxChannels: 1 },
   ],
   mapping: [],
 };

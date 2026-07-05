@@ -24,8 +24,8 @@ const BLOCK_INDICATOR: BehaviorTemplate = {
   templateId: 'block-indicator',
   displayName: 'Block Indicator',
   slots: [
-    { label: 'input', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
-    { label: 'output', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 1, maxChannels: 1 },
+    { label: 'input', displayLabel: 'block', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
+    { label: 'output', displayLabel: 'indicator', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 1, maxChannels: 1 },
   ],
   mapping: [
     { producerState: 'occupied', consumerCommand: 'lit' },
@@ -37,9 +37,9 @@ const OPTIONAL_SLOT_TEMPLATE: BehaviorTemplate = {
   templateId: 'block-indicator-with-optional',
   displayName: 'Block Indicator (optional)',
   slots: [
-    { label: 'input', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
+    { label: 'input', displayLabel: 'block', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
     // minChannels: 0 → forward-compat with future optional slots.
-    { label: 'aux', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 0, maxChannels: 4 },
+    { label: 'aux', displayLabel: 'aux', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 0, maxChannels: 4 },
   ],
   mapping: [],
 };

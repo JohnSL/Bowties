@@ -21,6 +21,8 @@ pub enum SlotKind {
 pub struct SlotDefinition {
     /// Slot label, unique within the template (e.g. `input`, `output`).
     pub label: &'static str,
+    /// Human-readable name shown in the UI header (e.g. `block`, `indicator`).
+    pub display_label: &'static str,
     /// Producer or consumer role for this slot.
     pub kind: SlotKind,
     /// The channel role a binding to this slot MUST carry
@@ -67,6 +69,7 @@ pub struct BehaviorTemplate {
 const BLOCK_INDICATOR_SLOTS: &[SlotDefinition] = &[
     SlotDefinition {
         label: "input",
+        display_label: "block",
         kind: SlotKind::Producer,
         required_role: "block-occupancy",
         min_channels: 1,
@@ -74,6 +77,7 @@ const BLOCK_INDICATOR_SLOTS: &[SlotDefinition] = &[
     },
     SlotDefinition {
         label: "output",
+        display_label: "indicator",
         kind: SlotKind::Consumer,
         required_role: "lamp-indicator",
         min_channels: 1,
@@ -189,6 +193,7 @@ mod tests {
     fn is_at_max_respects_cap_and_unbounded() {
         let bounded = SlotDefinition {
             label: "x",
+            display_label: "x",
             kind: SlotKind::Producer,
             required_role: "r",
             min_channels: 0,
@@ -201,6 +206,7 @@ mod tests {
 
         let unbounded = SlotDefinition {
             label: "y",
+            display_label: "y",
             kind: SlotKind::Consumer,
             required_role: "r",
             min_channels: 0,

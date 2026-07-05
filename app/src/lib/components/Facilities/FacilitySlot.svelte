@@ -61,7 +61,9 @@
   }
 
   function headerLabel(): string {
-    const capitalized = slotLabel.charAt(0).toUpperCase() + slotLabel.slice(1);
+    const def = definition();
+    const name = def?.displayLabel ?? slotLabel;
+    const capitalized = name.charAt(0).toUpperCase() + name.slice(1);
     const kind = slotKindLabel();
     return kind ? `${capitalized} ${kind}` : capitalized;
   }

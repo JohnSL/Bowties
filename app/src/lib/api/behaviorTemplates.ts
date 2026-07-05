@@ -7,6 +7,7 @@ export type ChannelRole = 'block-occupancy' | 'lamp-indicator' | string;
 
 export interface SlotDefinition {
   label: string;
+  displayLabel: string;
   kind: SlotKind;
   requiredRole: ChannelRole;
   /** Minimum channels required for the slot to be considered complete (Spec 018 / S4 — D8). */

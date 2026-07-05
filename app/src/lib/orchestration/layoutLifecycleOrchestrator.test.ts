@@ -178,8 +178,8 @@ describe('layoutLifecycleOrchestrator.resetForNewLayout', () => {
         templateId: 'block-indicator',
         displayName: 'Block Indicator',
         slots: [
-          { label: 'input', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
-          { label: 'output', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 1, maxChannels: 1 },
+          { label: 'input', displayLabel: 'block', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
+          { label: 'output', displayLabel: 'indicator', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 1, maxChannels: 1 },
         ],
         mapping: [],
       },

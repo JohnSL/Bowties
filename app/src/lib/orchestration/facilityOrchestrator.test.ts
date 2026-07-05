@@ -32,8 +32,8 @@ const BLOCK_INDICATOR: BehaviorTemplate = {
   templateId: 'block-indicator',
   displayName: 'Block Indicator',
   slots: [
-    { label: 'input', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
-    { label: 'output', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 1, maxChannels: 1 },
+    { label: 'input', displayLabel: 'block', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
+    { label: 'output', displayLabel: 'indicator', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 1, maxChannels: 1 },
   ],
   mapping: [
     { producerState: 'occupied', consumerCommand: 'lit' },
@@ -283,8 +283,8 @@ describe('composeBowtiesIfWired (Spec 018 / S6 — D2)', () => {
     // A fresh draft facility that only lives on the frontend.
     facilitiesStore.addFacility(
       { templateId: 'block-indicator', displayName: 'Block Indicator', slots: [
-        { label: 'input', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
-        { label: 'output', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 1, maxChannels: 1 },
+        { label: 'input', displayLabel: 'block', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
+        { label: 'output', displayLabel: 'indicator', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 1, maxChannels: 1 },
       ], mapping: [] },
       'Block 5',
     );

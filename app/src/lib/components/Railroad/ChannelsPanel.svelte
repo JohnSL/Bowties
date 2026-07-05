@@ -187,9 +187,9 @@
     background: var(--bg-table-header, #f7f7f7);
   }
   .group-header td {
-    font-size: 0.72rem;
+    font-size: 0.85rem;
     font-weight: 600;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.02em;
     color: var(--text-secondary, #444);
     background: var(--bg-table-group, #f0f3f7);
     padding: 0.4rem 0.6rem;
