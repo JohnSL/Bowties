@@ -52,6 +52,8 @@ import type { ChannelRole, InformationChannel } from '$lib/api/channels';
 import { editKeyForLeaf } from '$lib/utils/editKey';
 import { isPlaceholderEventId } from '$lib/utils/eventIds';
 import { makeValueResolver } from '$lib/utils/displayResolution';
+import { resolveNodePartsFromSnip, type NodeDisplayParts } from '$lib/utils/nodeDisplayName';
+import { nodeIdToDisplayHex } from '$lib/utils/nodeId';
 
 // Re-export the catalog store so consumers of the facade can drive it in tests
 // without reaching into the legacy bowties.svelte module directly.
@@ -252,6 +254,7 @@ class EffectiveLayoutStore {
       const segment = tree.segments.find((s) => s.name === 'Direct Lamp Control');
       if (!segment) continue;
       const nodeName = resolveNodeNameForKey(entry.nodeKey);
+      const nodeParts = resolveNodePartsForKey(entry.nodeKey);
       const resolveValue = makeValueResolver(tree.nodeId);
       const rows: EligibleLampRow[] = [];
       for (const instance of replicationInstances(segment.children, 'Lamp')) {
@@ -267,7 +270,7 @@ class EffectiveLayoutStore {
         });
       }
       if (rows.length === 0) continue;
-      groups.push({ nodeKey: entry.nodeKey, nodeName, rows });
+      groups.push({ nodeKey: entry.nodeKey, nodeName, nodeParts, rows });
     }
     return groups;
   }
@@ -326,6 +329,7 @@ export interface EligibleLampRow {
 export interface EligibleLampRowGroup {
   nodeKey: string;
   nodeName: string;
+  nodeParts: NodeDisplayParts;
   rows: EligibleLampRow[];
 }
 
@@ -339,13 +343,23 @@ export interface EligibleLampRowGroup {
  */
 function resolveNodeNameForKey(nodeKey: string): string {
   const entry = nodeRoster.allEntries.find((e) => e.nodeKey === nodeKey);
-  if (!entry) return nodeKey;
+  if (!entry) return nodeIdToDisplayHex(nodeKey) || nodeKey;
   const snip = entry.info?.snip_data ?? null;
   const userName = snip?.user_name?.trim();
   if (userName) return userName;
   const model = snip?.model?.trim();
   if (model) return model;
-  return nodeKey;
+  return nodeIdToDisplayHex(nodeKey) || nodeKey;
+}
+
+/**
+ * Structured-parts variant for internal use — same circular-import
+ * constraint as `resolveNodeNameForKey` above.
+ */
+function resolveNodePartsForKey(nodeKey: string): NodeDisplayParts {
+  const entry = nodeRoster.allEntries.find((e) => e.nodeKey === nodeKey);
+  if (!entry) return { name: nodeIdToDisplayHex(nodeKey) || nodeKey, model: null, manufacturer: null, isUserNamed: false };
+  return resolveNodePartsFromSnip(nodeKey, entry.info);
 }
 
 /** Singleton effective-layout read model. */

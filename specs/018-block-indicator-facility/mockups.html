@@ -700,6 +700,29 @@
   }
   .annotation strong { color: #3d3100; }
 
+  /* --- Node label (shared display pattern) --- */
+  /* Inline mode: name + product on one line (table headers, wide contexts) */
+  .node-label {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .node-label .nl-name {
+    font-weight: 600;
+  }
+  .node-label .nl-product {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 400;
+  }
+  /* Compact mode: name on line 1, product on line 2 (sidebar, narrow pickers) */
+  .node-label.compact {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+  }
+
   .narrow { max-width: 720px; }
   .pair-grid {
     display: grid;
@@ -714,6 +737,7 @@
 <h1 class="page-title">Spec 018 — Block Indicator Facility · UX Mockups</h1>
 <p class="page-sub">Illustrative mockups showing the new <strong>Facilities</strong> and <strong>Channels</strong> surfaces in the Railroad tab plus the supporting pickers. These are static design references; final styling will use the existing Bowties component set.</p>
 <p class="page-sub" style="font-size: 11px; color: var(--text-muted);">Tab labels match the current app (<code>Config</code> · <code>Bowties</code> · <code>Railroad</code>). The Railroad tab has no sidebar in this slice — facility cards already serve as their own detail view, the Channels section sits below on the same scrolling page, and adding sidebar nav doesn't earn its keep at this scale. Traffic Monitor is a separate window and not a tab.</p>
+<p class="page-sub" style="font-size: 11px; color: var(--text-muted);"><strong>Node display pattern.</strong> Nodes are identified with up to three parts: <em>user name</em> (bold), <em>model</em>, and <em>manufacturer</em> (muted, model first). A shared <code>&lt;NodeLabel&gt;</code> component renders these in <strong>inline</strong> mode (one line, for wide contexts like table group headers) or <strong>compact</strong> mode (stacked, for narrow contexts like the sidebar). Channel names no longer bake in the node name — the node context appears in the meta/detail line or group header instead.</p>
 
 <div class="toc">
   <h2>Tour</h2>
@@ -896,10 +920,10 @@
             </tr>
           </thead>
           <tbody>
-            <tr class="group-header"><td colspan="6">TowerLCC-1 · Connector A · BOD-8</td></tr>
+            <tr class="group-header"><td colspan="6"><span class="node-label"><span class="nl-name">TowerLCC-1</span><span class="nl-product">Tower-LCC · RR-CirKits</span></span> › Connector A · BOD-8</td></tr>
             <tr>
               <td><span class="state-dot occupied"></span></td>
-              <td>TowerLCC-1 BOD A1 <span class="ownership-badge hw">HW</span></td>
+              <td>BOD A1 <span class="ownership-badge hw">HW</span></td>
               <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
               <td>Connector A · Input 1</td>
               <td><span class="state-label">Occupied</span></td>
@@ -907,7 +931,7 @@
             </tr>
             <tr>
               <td><span class="state-dot clear"></span></td>
-              <td>TowerLCC-1 BOD A2 <span class="ownership-badge hw">HW</span></td>
+              <td>BOD A2 <span class="ownership-badge hw">HW</span></td>
               <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
               <td>Connector A · Input 2</td>
               <td><span class="state-label">Clear</span></td>
@@ -915,7 +939,7 @@
             </tr>
             <tr>
               <td><span class="state-dot clear"></span></td>
-              <td>TowerLCC-1 BOD A3 <span class="ownership-badge hw">HW</span></td>
+              <td>BOD A3 <span class="ownership-badge hw">HW</span></td>
               <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
               <td>Connector A · Input 3</td>
               <td><span class="state-label">Clear</span></td>
@@ -923,7 +947,7 @@
             </tr>
             <tr>
               <td><span class="state-dot unknown"></span></td>
-              <td>TowerLCC-1 BOD A4 <span class="ownership-badge hw">HW</span></td>
+              <td>BOD A4 <span class="ownership-badge hw">HW</span></td>
               <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
               <td>Connector A · Input 4</td>
               <td><span class="state-label">Unknown</span></td>
@@ -931,7 +955,7 @@
             </tr>
             <tr>
               <td><span class="state-dot no-config" title="No configuration data — channel cannot resolve event IDs yet."></span></td>
-              <td>TowerLCC-1 BOD A5 <span class="ownership-badge hw">HW</span></td>
+              <td>BOD A5 <span class="ownership-badge hw">HW</span></td>
               <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
               <td>Connector A · Input 5</td>
               <td><span class="state-label">No config</span></td>
@@ -939,7 +963,7 @@
             </tr>
             <tr>
               <td><span class="state-dot clear"></span></td>
-              <td>TowerLCC-1 BOD A6 <span class="ownership-badge hw">HW</span></td>
+              <td>BOD A6 <span class="ownership-badge hw">HW</span></td>
               <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
               <td>Connector A · Input 6</td>
               <td><span class="state-label">Clear</span></td>
@@ -947,7 +971,7 @@
             </tr>
             <tr>
               <td><span class="state-dot clear"></span></td>
-              <td>TowerLCC-1 BOD A7 <span class="ownership-badge hw">HW</span></td>
+              <td>BOD A7 <span class="ownership-badge hw">HW</span></td>
               <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
               <td>Connector A · Input 7</td>
               <td><span class="state-label">Clear</span></td>
@@ -955,7 +979,7 @@
             </tr>
             <tr>
               <td><span class="state-dot unknown"></span></td>
-              <td>TowerLCC-1 BOD A8 <span class="ownership-badge hw">HW</span></td>
+              <td>BOD A8 <span class="ownership-badge hw">HW</span></td>
               <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
               <td>Connector A · Input 8</td>
               <td><span class="state-label">Unknown</span></td>
@@ -984,32 +1008,32 @@
           <div class="picker-item selected">
             <span class="state-dot occupied"></span>
             <div class="pi-main">
-              <div class="pi-name">TowerLCC-1 BOD A1 <span class="ownership-badge hw">HW</span></div>
-              <div class="pi-meta">Block occupancy · Connector A · Input 1 · currently <strong>occupied</strong></div>
+              <div class="pi-name">BOD A1 <span class="ownership-badge hw">HW</span></div>
+              <div class="pi-meta">TowerLCC-1 <span class="nl-product" style="font-size:10px;color:#616161">Tower-LCC · RR-CirKits</span> · Connector A · Input 1 · currently <strong>occupied</strong></div>
             </div>
             <input type="radio" checked />
           </div>
           <div class="picker-item">
             <span class="state-dot clear"></span>
             <div class="pi-main">
-              <div class="pi-name">TowerLCC-1 BOD A2 <span class="ownership-badge hw">HW</span></div>
-              <div class="pi-meta">Block occupancy · Connector A · Input 2 · currently <strong>clear</strong></div>
+              <div class="pi-name">BOD A2 <span class="ownership-badge hw">HW</span></div>
+              <div class="pi-meta">TowerLCC-1 <span class="nl-product" style="font-size:10px;color:#616161">Tower-LCC · RR-CirKits</span> · Connector A · Input 2 · currently <strong>clear</strong></div>
             </div>
             <input type="radio" />
           </div>
           <div class="picker-item">
             <span class="state-dot clear"></span>
             <div class="pi-main">
-              <div class="pi-name">TowerLCC-1 BOD A3 <span class="ownership-badge hw">HW</span></div>
-              <div class="pi-meta">Block occupancy · Connector A · Input 3 · currently <strong>clear</strong></div>
+              <div class="pi-name">BOD A3 <span class="ownership-badge hw">HW</span></div>
+              <div class="pi-meta">TowerLCC-1 <span class="nl-product" style="font-size:10px;color:#616161">Tower-LCC · RR-CirKits</span> · Connector A · Input 3 · currently <strong>clear</strong></div>
             </div>
             <input type="radio" />
           </div>
           <div class="picker-item">
             <span class="state-dot unknown"></span>
             <div class="pi-main">
-              <div class="pi-name">TowerLCC-1 BOD A4 <span class="ownership-badge hw">HW</span></div>
-              <div class="pi-meta">Block occupancy · Connector A · Input 4 · no observation yet</div>
+              <div class="pi-name">BOD A4 <span class="ownership-badge hw">HW</span></div>
+              <div class="pi-meta">TowerLCC-1 <span class="nl-product" style="font-size:10px;color:#616161">Tower-LCC · RR-CirKits</span> · Connector A · Input 4 · no observation yet</div>
             </div>
             <input type="radio" />
           </div>
@@ -1052,8 +1076,8 @@
                 <div class="channel-binding">
                   <span class="state-dot occupied"></span>
                   <div>
-                    <div class="channel-name">TowerLCC-1 BOD A1 <span class="ownership-badge hw">HW</span></div>
-                    <div class="channel-meta">Connector A · Input 1</div>
+                  <div class="channel-name">BOD A1 <span class="ownership-badge hw">HW</span></div>
+                    <div class="channel-meta"><span class="node-label"><span class="nl-name">TowerLCC-1</span> <span class="nl-product">Tower-LCC · RR-CirKits</span></span> · Connector A · Input 1</div>
                   </div>
                 </div>
                 <div class="slot-filled-actions">
@@ -1100,22 +1124,22 @@
           <div class="picker-item selected">
             <input type="radio" checked />
             <div class="pi-main">
-              <div class="pi-name">Signal-LCC-1 · Direct Lamp Control · Row 7</div>
-              <div class="pi-meta">Unclaimed · Lamp Selection: Direct Command</div>
+              <div class="pi-name">Direct Lamp Control · Row 7</div>
+              <div class="pi-meta"><span class="node-label"><span class="nl-name">Signal-LCC-1</span> <span class="nl-product" style="font-size:10px;color:#616161">Signal-LCC · RR-CirKits</span></span> · Unclaimed · Lamp Selection: Direct Command</div>
             </div>
           </div>
           <div class="picker-item">
             <input type="radio" />
             <div class="pi-main">
-              <div class="pi-name">Signal-LCC-1 · Direct Lamp Control · Row 8</div>
-              <div class="pi-meta">Unclaimed · Lamp Selection: Direct Command</div>
+              <div class="pi-name">Direct Lamp Control · Row 8</div>
+              <div class="pi-meta"><span class="node-label"><span class="nl-name">Signal-LCC-1</span> <span class="nl-product" style="font-size:10px;color:#616161">Signal-LCC · RR-CirKits</span></span> · Unclaimed · Lamp Selection: Direct Command</div>
             </div>
           </div>
           <div class="picker-item">
             <input type="radio" />
             <div class="pi-main">
-              <div class="pi-name">Signal-LCC-1 · Direct Lamp Control · Row 12</div>
-              <div class="pi-meta">Unclaimed · Lamp Selection: Direct Command</div>
+              <div class="pi-name">Direct Lamp Control · Row 12</div>
+              <div class="pi-meta"><span class="node-label"><span class="nl-name">Signal-LCC-1</span> <span class="nl-product" style="font-size:10px;color:#616161">Signal-LCC · RR-CirKits</span></span> · Unclaimed · Lamp Selection: Direct Command</div>
             </div>
           </div>
         </div>
@@ -1169,8 +1193,8 @@
                 <div class="channel-binding">
                   <span class="state-dot occupied"></span>
                   <div>
-                    <div class="channel-name">TowerLCC-1 BOD A1 <span class="ownership-badge hw">HW</span></div>
-                    <div class="channel-meta">Connector A · Input 1 · occupied</div>
+                    <div class="channel-name">BOD A1 <span class="ownership-badge hw">HW</span></div>
+                    <div class="channel-meta"><span class="node-label"><span class="nl-name">TowerLCC-1</span> <span class="nl-product">Tower-LCC · RR-CirKits</span></span> · Connector A · Input 1 · occupied</div>
                   </div>
                 </div>
                 <div class="slot-filled-actions">
@@ -1186,7 +1210,7 @@
                   <span class="state-dot lit"></span>
                   <div>
                     <div class="channel-name">Block 5 Indicator <span class="ownership-badge user">USER</span></div>
-                    <div class="channel-meta">Signal-LCC-1 · Lamp Row 7 · lit</div>
+                    <div class="channel-meta"><span class="node-label"><span class="nl-name">Signal-LCC-1</span> <span class="nl-product">Signal-LCC · RR-CirKits</span></span> · Lamp Row 7 · lit</div>
                   </div>
                 </div>
                 <div class="slot-filled-actions">
@@ -1213,10 +1237,10 @@
             </tr>
           </thead>
           <tbody>
-            <tr class="group-header"><td colspan="6">TowerLCC-1 · Connector A · BOD-8</td></tr>
+            <tr class="group-header"><td colspan="6"><span class="node-label"><span class="nl-name">TowerLCC-1</span><span class="nl-product">Tower-LCC · RR-CirKits</span></span> › Connector A · BOD-8</td></tr>
             <tr>
               <td><span class="state-dot occupied"></span></td>
-              <td>TowerLCC-1 BOD A1 <span class="ownership-badge hw">HW</span></td>
+              <td>BOD A1 <span class="ownership-badge hw">HW</span></td>
               <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
               <td>Connector A · Input 1</td>
               <td><span class="state-label">Occupied</span></td>
@@ -1224,7 +1248,7 @@
             </tr>
             <tr>
               <td><span class="state-dot clear"></span></td>
-              <td>TowerLCC-1 BOD A2 <span class="ownership-badge hw">HW</span></td>
+              <td>BOD A2 <span class="ownership-badge hw">HW</span></td>
               <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
               <td>Connector A · Input 2</td>
               <td><span class="state-label">Clear</span></td>
@@ -1232,7 +1256,7 @@
             </tr>
             <tr>
               <td><span class="state-dot clear"></span></td>
-              <td>TowerLCC-1 BOD A3 <span class="ownership-badge hw">HW</span></td>
+              <td>BOD A3 <span class="ownership-badge hw">HW</span></td>
               <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
               <td>Connector A · Input 3</td>
               <td><span class="state-label">Clear</span></td>
@@ -1240,7 +1264,7 @@
             </tr>
             <tr>
               <td><span class="state-dot occupied"></span></td>
-              <td>TowerLCC-1 BOD A4 <span class="ownership-badge hw">HW</span></td>
+              <td>BOD A4 <span class="ownership-badge hw">HW</span></td>
               <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
               <td>Connector A · Input 4</td>
               <td><span class="state-label">Occupied</span></td>
@@ -1248,7 +1272,7 @@
             </tr>
             <tr>
               <td><span class="state-dot clear"></span></td>
-              <td>TowerLCC-1 BOD A5 <span class="ownership-badge hw">HW</span></td>
+              <td>BOD A5 <span class="ownership-badge hw">HW</span></td>
               <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
               <td>Connector A · Input 5</td>
               <td><span class="state-label">Clear</span></td>
@@ -1256,7 +1280,7 @@
             </tr>
             <tr>
               <td><span class="state-dot clear"></span></td>
-              <td>TowerLCC-1 BOD A6 <span class="ownership-badge hw">HW</span></td>
+              <td>BOD A6 <span class="ownership-badge hw">HW</span></td>
               <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
               <td>Connector A · Input 6</td>
               <td><span class="state-label">Clear</span></td>
@@ -1264,7 +1288,7 @@
             </tr>
             <tr>
               <td><span class="state-dot clear"></span></td>
-              <td>TowerLCC-1 BOD A7 <span class="ownership-badge hw">HW</span></td>
+              <td>BOD A7 <span class="ownership-badge hw">HW</span></td>
               <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
               <td>Connector A · Input 7</td>
               <td><span class="state-label">Clear</span></td>
@@ -1272,13 +1296,13 @@
             </tr>
             <tr>
               <td><span class="state-dot unknown"></span></td>
-              <td>TowerLCC-1 BOD A8 <span class="ownership-badge hw">HW</span></td>
+              <td>BOD A8 <span class="ownership-badge hw">HW</span></td>
               <td><div class="role-style"><span class="role">Block occupancy</span><span class="style">bod-block-detector-input</span></div></td>
               <td>Connector A · Input 8</td>
               <td><span class="state-label">Unknown</span></td>
               <td class="binding-cell unbound">unbound</td>
             </tr>
-            <tr class="group-header"><td colspan="6">Signal-LCC-1 · Direct Lamp Control</td></tr>
+            <tr class="group-header"><td colspan="6"><span class="node-label"><span class="nl-name">Signal-LCC-1</span><span class="nl-product">Signal-LCC · RR-CirKits</span></span> › Direct Lamp Control</td></tr>
             <tr>
               <td><span class="state-dot lit"></span></td>
               <td>Block 5 Indicator <span class="ownership-badge user">USER</span></td>
@@ -1349,8 +1373,8 @@
           <div class="channel-binding">
             <span class="state-dot no-config"></span>
             <div>
-              <div class="channel-name">TowerLCC-1 BOD A1 <span class="ownership-badge hw">HW</span></div>
-              <div class="channel-meta">Connector A · Input 1 · no config data yet</div>
+              <div class="channel-name">BOD A1 <span class="ownership-badge hw">HW</span></div>
+              <div class="channel-meta"><span class="node-label"><span class="nl-name">TowerLCC-1</span> <span class="nl-product">Tower-LCC · RR-CirKits</span></span> · Connector A · Input 1 · no config data yet</div>
             </div>
           </div>
           <div class="slot-filled-actions">

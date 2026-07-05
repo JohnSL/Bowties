@@ -165,7 +165,7 @@
           <NodeEntry
             {nodeId}
             nodeName={entry.nodeName}
-            nodeDetail={entry.nodeDetail}
+            nodeParts={entry.nodeParts}
             nodeTooltip={entry.nodeTooltip}
             {isExpanded}
             isOffline={entry.isOffline}

@@ -103,7 +103,7 @@ describe('ConfigSidebar.svelte', () => {
     ]]);
 
     render(ConfigSidebar);
-    expect(screen.getByText(canonicalId)).toBeInTheDocument();
+    expect(screen.getByText('02.01.57.00.00.01')).toBeInTheDocument();
 
     setNodeInfo([[
       nodeId,
@@ -139,7 +139,9 @@ describe('ConfigSidebar.svelte', () => {
 
     render(ConfigSidebar);
 
-    expect(screen.getByText('RR-CirKits — Tower-LCC')).toBeInTheDocument();
+    // NodeLabel renders the model as the primary name and manufacturer as product context
+    expect(screen.getByText('Tower-LCC')).toBeInTheDocument();
+    expect(screen.getByText('RR-CirKits')).toBeInTheDocument();
     expect(screen.queryByText('Panel description')).not.toBeInTheDocument();
   });
 
@@ -160,9 +162,8 @@ describe('ConfigSidebar.svelte', () => {
 
     render(ConfigSidebar);
 
-    // Canonical form is what's stored; resolveNodeName returns it as-is when
-    // no SNIP name fields are present.
-    expect(screen.getByText('020157000001')).toBeInTheDocument();
+    // Dotted-hex form is displayed when no SNIP name fields are present.
+    expect(screen.getByText('02.01.57.00.00.01')).toBeInTheDocument();
     expect(screen.queryByText('Offline note')).not.toBeInTheDocument();
   });
 

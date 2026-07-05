@@ -7,13 +7,63 @@ import {
   type NodeConfigTree,
   type TreeConfigValue,
 } from '$lib/types/nodeTree';
+import { nodeIdToDisplayHex } from '$lib/utils/nodeId';
+
+/**
+ * Structured node display parts returned by `resolveNodeParts`.
+ * Consumers choose how to render these (inline, compact, tooltip, etc.).
+ */
+export interface NodeDisplayParts {
+  /** The resolved primary display name (user name, or fallback). */
+  name: string;
+  /** The product model (e.g. "Tower-LCC"). Null when SNIP is absent. */
+  model: string | null;
+  /** The manufacturer (e.g. "RR-CirKits"). Null when SNIP is absent. */
+  manufacturer: string | null;
+  /**
+   * True when `name` came from a user-assigned source (edit-layer ACDI
+   * or SNIP `user_name`) rather than the model/manufacturer fallback.
+   */
+  isUserNamed: boolean;
+}
+
+/**
+ * Resolve structured display parts for a node from SNIP data alone
+ * (no edit-layer awareness). Use `resolveNodeParts` from `$lib/layout`
+ * for the full edit-layer-aware version.
+ *
+ * The returned `name` follows the same waterfall as `resolveNodeDisplayName`:
+ *   user_name → model → Node ID hex
+ *
+ * Unlike `resolveNodeDisplayName`, `manufacturer` is never baked into `name`.
+ * Callers compose the display from the structured parts instead.
+ */
+export function resolveNodePartsFromSnip(
+  nodeId: string,
+  node: Pick<DiscoveredNode, 'snip_data'> | null | undefined,
+): NodeDisplayParts {
+  const snip = node?.snip_data;
+  if (!snip) return { name: nodeIdToDisplayHex(nodeId) || nodeId, model: null, manufacturer: null, isUserNamed: false };
+
+  const userName = snip.user_name?.trim() ?? '';
+  const manufacturer = snip.manufacturer?.trim() || null;
+  const model = snip.model?.trim() || null;
+
+  if (userName) {
+    return { name: userName, model, manufacturer, isUserNamed: true };
+  }
+  if (model) {
+    return { name: model, model, manufacturer, isUserNamed: false };
+  }
+  return { name: nodeIdToDisplayHex(nodeId) || nodeId, model: null, manufacturer, isUserNamed: false };
+}
 
 export function resolveNodeDisplayName(
   nodeId: string,
   node: Pick<DiscoveredNode, 'snip_data'> | null | undefined
 ): string {
   const snip = node?.snip_data;
-  if (!snip) return nodeId;
+  if (!snip) return nodeIdToDisplayHex(nodeId) || nodeId;
 
   const userName = snip.user_name?.trim() ?? '';
   if (userName) return userName;
@@ -23,7 +73,7 @@ export function resolveNodeDisplayName(
   if (manufacturer && model) return `${manufacturer} — ${model}`;
   if (model) return model;
 
-  return nodeId;
+  return nodeIdToDisplayHex(nodeId) || nodeId;
 }
 
 /**

@@ -7,15 +7,20 @@
     type ChannelState,
   } from '$lib/utils/channelState';
   import type { InformationChannel } from '$lib/api/channels';
+  import type { NodeDisplayParts } from '$lib/utils/nodeDisplayName';
+  import NodeLabel from '$lib/components/NodeLabel.svelte';
   import ChannelRow from './ChannelRow.svelte';
 
   let {
     nodeName,
+    nodeParts: nodePartsResolver,
     resolvedEventIds,
     daughterboardName,
     usedBy,
   }: {
     nodeName: (nodeKey: string) => string;
+    /** Resolve structured display parts for a node key. Used in group headers. */
+    nodeParts?: (nodeKey: string) => NodeDisplayParts;
     /**
      * Map from channelId to state-name → eventId. State names vary by role:
      * `block-occupancy` channels carry `{occupied, clear}`; `lamp-indicator`
@@ -68,12 +73,18 @@
     if (sample.binding.kind === 'connectorInput') {
       const connector = formatConnectorLabel(sample.binding.connector);
       const board = daughterboardName?.(sample.binding.nodeKey, sample.binding.connector);
-      return board ? `${node} · ${connector} · ${board}` : `${node} · ${connector}`;
+      return board ? `${connector} · ${board}` : connector;
     }
     if (sample.binding.kind === 'lampRow') {
-      return `${node} · Direct Lamp Control`;
+      return 'Direct Lamp Control';
     }
     return groupKey;
+  }
+
+  function groupNodeKey(sample: InformationChannel): string {
+    return sample.binding.kind === 'connectorInput' || sample.binding.kind === 'lampRow'
+      ? sample.binding.nodeKey
+      : '';
   }
 </script>
 
@@ -99,8 +110,18 @@
         </thead>
         <tbody>
           {#each [...channelsStore.groupedByHardware.entries()] as [groupKey, channels] (groupKey)}
+            {@const sample = channels[0]}
+            {@const nk = groupNodeKey(sample)}
             <tr class="group-header">
-              <td colspan="6">{groupLabel(groupKey, channels[0])}</td>
+              <td colspan="6">
+                {#if nodePartsResolver && nk}
+                  <NodeLabel parts={nodePartsResolver(nk)} orientation="inline" />
+                  <span class="gh-separator">›</span>
+                {:else if nk}
+                  {nodeName(nk)} ›
+                {/if}
+                {groupLabel(groupKey, sample)}
+              </td>
             </tr>
             {#each channels as channel (channel.id)}
               <ChannelRow
@@ -168,11 +189,14 @@
   .group-header td {
     font-size: 0.72rem;
     font-weight: 600;
-    text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text-secondary, #444);
     background: var(--bg-table-group, #f0f3f7);
     padding: 0.4rem 0.6rem;
     border-bottom: 1px solid var(--border-subtle, #e2e2e2);
+  }
+  .gh-separator {
+    margin: 0 0.3em;
+    color: var(--text-muted, #999);
   }
 </style>

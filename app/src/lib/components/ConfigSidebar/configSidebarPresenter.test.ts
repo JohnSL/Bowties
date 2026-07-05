@@ -131,7 +131,9 @@ describe('buildSidebarNodeEntries', () => {
       'East Panel (0001)',
       'East Panel (0002)',
     ]);
-    expect(entries[0].nodeDetail).toBe('ACME Node-8');
+    expect(entries[0].nodeParts).toEqual(
+      expect.objectContaining({ name: 'East Panel (0001)', model: 'Node-8', manufacturer: 'ACME', isUserNamed: true }),
+    );
     expect(entries[0].nodeTooltip).toContain('Alias: 0x123');
     expect(entries[0].nodeTooltip).toContain('Manufacturer: ACME');
   });

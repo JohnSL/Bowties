@@ -9,13 +9,14 @@ import {
 } from '$lib/types/nodeTree';
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { editKeyForLeaf } from '$lib/utils/editKey';
-import { resolveNodeName } from '$lib/layout';
+import { resolveNodeName, resolveNodeParts, type NodeDisplayParts } from '$lib/layout';
 import { isUnsavedDiscoveredNode } from '$lib/utils/nodeRoster';
+import { nodeIdToDisplayHex } from '$lib/utils/nodeId';
 
 export interface SidebarNodeEntry {
   isOffline: boolean;
   node: DiscoveredNode;
-  nodeDetail: string | null;
+  nodeParts: NodeDisplayParts;
   nodeId: string;
   nodeName: string;
   nodeTooltip: string;
@@ -55,11 +56,17 @@ export function buildSidebarNodeEntries(
       const nodeName = duplicateCount > 1
         ? `${baseName} (${nodeId.replace(/\./g, '').slice(-4)})`
         : baseName;
+      const rawParts = resolveNodeParts(nodeId);
+      // When duplicate-disambiguation appends a hex suffix, propagate it
+      // into parts.name so NodeLabel renders the disambiguated name.
+      const nodeParts = duplicateCount > 1
+        ? { ...rawParts, name: `${rawParts.name} (${nodeId.replace(/\./g, '').slice(-4)})` }
+        : rawParts;
 
       return {
         isOffline: node.connection_status === 'NotResponding',
         node,
-        nodeDetail: getNodeDetail(node, baseName),
+        nodeParts,
         nodeId,
         nodeName,
         nodeTooltip: getNodeTooltip(nodeId, node, baseName),
@@ -130,25 +137,8 @@ export function getSegmentPendingState(
   };
 }
 
-function getNodeDetail(node: DiscoveredNode, effectiveNodeName: string): string | null {
-  const snip = node.snip_data;
-  if (!snip) return null;
-  // Show manufacturer+model as a subtitle when the resolved display name
-  // is the user-assigned name (SNIP or edit-layer) rather than the
-  // manufacturer+model itself. This mirrors the intent of the original
-  // check but respects edit-layer renames.
-  if (snip.manufacturer && snip.model) {
-    const mfgModel = `${snip.manufacturer} ${snip.model}`;
-    // Only show as detail if the effective name is NOT the manufacturer+model
-    if (effectiveNodeName !== `${snip.manufacturer} — ${snip.model}` && effectiveNodeName !== snip.model) {
-      return mfgModel;
-    }
-  }
-  return null;
-}
-
 function getNodeTooltip(nodeId: string, node: DiscoveredNode, effectiveNodeName: string): string {
-  const parts: string[] = [`Node ID: ${nodeId}`];
+  const parts: string[] = [`Node ID: ${nodeIdToDisplayHex(nodeId) || nodeId}`];
   if (node.alias != null) {
     parts.push(`Alias: 0x${node.alias.toString(16).toUpperCase().padStart(3, '0')}`);
   }

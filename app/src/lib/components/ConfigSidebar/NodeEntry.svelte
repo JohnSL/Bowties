@@ -1,10 +1,12 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import NodeLabel from '$lib/components/NodeLabel.svelte';
+  import type { NodeDisplayParts } from '$lib/utils/nodeDisplayName';
 
   export let nodeId: string;
   export let nodeName: string;
-  /** Optional secondary detail (e.g. manufacturer/model for disambiguation) */
-  export let nodeDetail: string | null = null;
+  /** Structured parts for NodeLabel rendering (model · manufacturer context). */
+  export let nodeParts: NodeDisplayParts;
   /** Full node details for the hover tooltip */
   export let nodeTooltip: string | null = null;
   export let isExpanded: boolean = false;
@@ -57,10 +59,7 @@
   <span class="expand-icon" aria-hidden="true">{isExpanded ? '▾' : '▸'}</span>
 
   <span class="node-info">
-    <span class="node-name">{nodeName}</span>
-    {#if nodeDetail}
-      <span class="node-detail">{nodeDetail}</span>
-    {/if}
+    <NodeLabel parts={nodeParts} orientation="compact" />
   </span>
 
   {#if isOffline}
@@ -165,21 +164,6 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-  }
-
-  .node-name {
-    font-weight: 500;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .node-detail {
-    font-size: 11px;
-    color: var(--text-secondary, #666);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .offline-indicator {

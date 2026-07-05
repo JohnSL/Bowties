@@ -14,6 +14,7 @@ describe('NodeEntry.svelte – pending edits badge (T036)', () => {
   const baseProps = {
     nodeId: '05.01.01.01.03.00',
     nodeName: 'Test Node',
+    nodeParts: { name: 'Test Node', model: 'Node-8', manufacturer: 'ACME', isUserNamed: true },
   };
 
   it('shows no pending edits badge by default', () => {

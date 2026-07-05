@@ -30,7 +30,7 @@ import { nodeInfoStore } from '$lib/stores/nodeInfo';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { editKeyForLeaf } from '$lib/utils/editKey';
 import { makeValueResolver } from '$lib/utils/displayResolution';
-import { resolveNodeDisplayName, resolveEffectiveUserName } from '$lib/utils/nodeDisplayName';
+import { resolveNodeDisplayName, resolveEffectiveUserName, resolveNodePartsFromSnip, type NodeDisplayParts } from '$lib/utils/nodeDisplayName';
 import { toCanonicalNodeKey, isPlaceholderInput, type NodeKeyInput } from '$lib/utils/nodeKey';
 import type { LeafConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
 import { buildElementLabel } from '$lib/types/nodeTree';
@@ -101,6 +101,56 @@ export function resolveNodeName(nodeId: NodeKeyInput): string {
   const nodes = get(nodeInfoStore);
   const key = toCanonicalNodeKey(nodeId);
   return resolveNodeDisplayName(canonical, nodes.get(key));
+}
+
+// Re-export the parts type for consumers.
+export type { NodeDisplayParts };
+
+/**
+ * Resolve structured display parts for a node, edit-layer-aware.
+ *
+ * Returns `{ name, model, manufacturer, isUserNamed }` following the same
+ * priority waterfall as `resolveNodeName`:
+ *   edit-layer ACDI User Name → SNIP user_name → model → Node ID hex
+ *
+ * Unlike `resolveNodeName`, the manufacturer is never baked into `name`.
+ * Callers compose the display from structured parts (e.g. via `<NodeLabel>`).
+ */
+export function resolveNodeParts(nodeId: NodeKeyInput): NodeDisplayParts {
+  const canonical = toCanonicalNodeKey(nodeId);
+  if (!canonical) return { name: '', model: null, manufacturer: null, isUserNamed: false };
+
+  const tree = nodeTreeStore.getTree(canonical);
+
+  // Edit-layer User Name (draft → offline → baseline).
+  const editedName = resolveEffectiveUserName(
+    tree,
+    (leaf) => configChangesStore.overrideValue(editKeyForLeaf(canonical, leaf.space, leaf.address)) ?? leaf.value,
+  );
+
+  // Gather SNIP model/manufacturer regardless of name source.
+  if (isPlaceholderInput(canonical)) {
+    const identity = tree?.identity;
+    const manufacturer = identity?.manufacturer?.trim() || null;
+    const model = identity?.model?.trim() || null;
+    if (editedName) return { name: editedName, model, manufacturer, isUserNamed: true };
+    if (model) return { name: model, model, manufacturer, isUserNamed: false };
+    return { name: canonical, model: null, manufacturer, isUserNamed: false };
+  }
+
+  // Live node: read SNIP from nodeInfoStore.
+  const nodes = get(nodeInfoStore);
+  const key = toCanonicalNodeKey(nodeId);
+  const node = nodes.get(key);
+
+  if (editedName) {
+    const snip = node?.snip_data;
+    const manufacturer = snip?.manufacturer?.trim() || null;
+    const model = snip?.model?.trim() || null;
+    return { name: editedName, model, manufacturer, isUserNamed: true };
+  }
+
+  return resolveNodePartsFromSnip(canonical, node);
 }
 
 /**

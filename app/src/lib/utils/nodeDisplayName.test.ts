@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { DiscoveredNode } from '$lib/api/tauri';
 import type { LeafConfigNode, NodeConfigTree, TreeConfigValue } from '$lib/types/nodeTree';
-import { resolveNodeDisplayName, resolveEffectiveUserName } from './nodeDisplayName';
+import { resolveNodeDisplayName, resolveEffectiveUserName, resolveNodePartsFromSnip } from './nodeDisplayName';
 
 /**
  * Canonical Display Name Fallback chain:
@@ -159,5 +159,85 @@ describe('resolveEffectiveUserName', () => {
       }],
     };
     expect(resolveEffectiveUserName(tree, l => l.value)).toBe('Nested Name');
+  });
+});
+
+/**
+ * resolveNodePartsFromSnip — returns structured { name, model, manufacturer,
+ * isUserNamed } for UI rendering without baking manufacturer into the name.
+ */
+describe('resolveNodePartsFromSnip', () => {
+  it('returns node ID with nulls when node is null', () => {
+    const parts = resolveNodePartsFromSnip(NODE_ID, null);
+    expect(parts).toEqual({ name: NODE_ID, model: null, manufacturer: null, isUserNamed: false });
+  });
+
+  it('returns node ID with nulls when SNIP is absent', () => {
+    const parts = resolveNodePartsFromSnip(NODE_ID, { snip_data: null });
+    expect(parts).toEqual({ name: NODE_ID, model: null, manufacturer: null, isUserNamed: false });
+  });
+
+  it('uses user_name as name and exposes model and manufacturer separately', () => {
+    const parts = resolveNodePartsFromSnip(NODE_ID, withSnip({
+      user_name: 'Blocks Detection',
+      manufacturer: 'RR-CirKits',
+      model: 'Tower-LCC',
+    }));
+    expect(parts).toEqual({
+      name: 'Blocks Detection',
+      model: 'Tower-LCC',
+      manufacturer: 'RR-CirKits',
+      isUserNamed: true,
+    });
+  });
+
+  it('falls back to model as name when user_name is empty', () => {
+    const parts = resolveNodePartsFromSnip(NODE_ID, withSnip({
+      manufacturer: 'RR-CirKits',
+      model: 'Tower-LCC',
+    }));
+    expect(parts).toEqual({
+      name: 'Tower-LCC',
+      model: 'Tower-LCC',
+      manufacturer: 'RR-CirKits',
+      isUserNamed: false,
+    });
+  });
+
+  it('falls back to node ID when both user_name and model are empty', () => {
+    const parts = resolveNodePartsFromSnip(NODE_ID, withSnip({
+      manufacturer: 'RR-CirKits',
+    }));
+    expect(parts).toEqual({
+      name: NODE_ID,
+      model: null,
+      manufacturer: 'RR-CirKits',
+      isUserNamed: false,
+    });
+  });
+
+  it('marks isUserNamed true even when user_name equals model', () => {
+    const parts = resolveNodePartsFromSnip(NODE_ID, withSnip({
+      user_name: 'modulino_io',
+      manufacturer: 'OpenMRN',
+      model: 'modulino_io',
+    }));
+    expect(parts).toEqual({
+      name: 'modulino_io',
+      model: 'modulino_io',
+      manufacturer: 'OpenMRN',
+      isUserNamed: true,
+    });
+  });
+
+  it('trims whitespace from all fields', () => {
+    const parts = resolveNodePartsFromSnip(NODE_ID, withSnip({
+      user_name: '  East Panel  ',
+      manufacturer: '  Acme  ',
+      model: '  IO16  ',
+    }));
+    expect(parts.name).toBe('East Panel');
+    expect(parts.model).toBe('IO16');
+    expect(parts.manufacturer).toBe('Acme');
   });
 });

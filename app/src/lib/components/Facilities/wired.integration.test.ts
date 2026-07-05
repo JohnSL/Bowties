@@ -69,6 +69,7 @@ const {
       [] as Array<{
         nodeKey: string;
         nodeName: string;
+        nodeParts: { name: string; model: string | null; manufacturer: string | null; isUserNamed: boolean };
         rows: Array<{
           nodeKey: string;
           nodeName: string;
@@ -315,6 +316,7 @@ beforeEach(async () => {
     {
       nodeKey: SIGNAL_NODE_KEY,
       nodeName: 'Signal-LCC-1',
+      nodeParts: { name: 'Signal-LCC-1', model: 'Signal-LCC', manufacturer: 'RR-CirKits', isUserNamed: true },
       rows: [
         { nodeKey: SIGNAL_NODE_KEY, nodeName: 'Signal-LCC-1', rowOrdinal: 1, rowLabel: 'Lamp 1' },
         { nodeKey: SIGNAL_NODE_KEY, nodeName: 'Signal-LCC-1', rowOrdinal: 2, rowLabel: 'Lamp 2' },

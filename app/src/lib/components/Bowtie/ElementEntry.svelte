@@ -14,6 +14,9 @@
 <script lang="ts">
   import type { EventSlotEntry } from '$lib/api/tauri';
   import { configFocusStore } from '$lib/stores/configFocus.svelte';
+  import { resolveNodeParts } from '$lib/layout';
+  import type { NodeDisplayParts } from '$lib/utils/nodeDisplayName';
+  import NodeLabel from '$lib/components/NodeLabel.svelte';
 
   interface Props {
     entry: EventSlotEntry;
@@ -25,12 +28,30 @@
   let { entry, isNew = false, isNodeOffline = false }: Props = $props();
 
   const hasDescription = $derived(!!entry.element_description);
+
+  /** Build NodeDisplayParts using the entry's pre-resolved node_name as primary,
+   *  augmented with model/manufacturer from live stores when available. */
+  const nodeParts = $derived.by((): NodeDisplayParts => {
+    const live = resolveNodeParts(entry.node_key);
+    // If live resolution found model/manufacturer, use them with the
+    // entry's node_name (which may include disambiguation suffixes).
+    if (live.model || live.manufacturer) {
+      return {
+        name: entry.node_name,
+        model: live.model,
+        manufacturer: live.manufacturer,
+        isUserNamed: live.isUserNamed,
+      };
+    }
+    // Fallback: just the pre-resolved name, no product context.
+    return { name: entry.node_name, model: null, manufacturer: null, isUserNamed: false };
+  });
 </script>
 
 <div class="element-entry" class:has-description={hasDescription} class:offline={isNodeOffline}>
   <div class="entry-meta">
     <span class="node-name">
-      {entry.node_name}
+      <NodeLabel parts={nodeParts} orientation="inline" />
       {#if isNodeOffline}<span class="offline-indicator" title="Node offline" aria-label="offline">⚠</span>{/if}
     </span>
     <span class="element-label">
@@ -68,12 +89,14 @@
   }
 
   .node-name {
-    font-weight: 600;
     font-size: 0.85rem;
     color: #242424;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
   }
 
   .element-label {

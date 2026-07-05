@@ -1,9 +1,11 @@
 <script lang="ts">
   import FacilitiesSection from '$lib/components/Facilities/FacilitiesSection.svelte';
   import ChannelsPanel from './ChannelsPanel.svelte';
+  import type { NodeDisplayParts } from '$lib/utils/nodeDisplayName';
 
   let {
     nodeName,
+    nodeParts,
     resolvedEventIds,
     daughterboardName,
     usedBy,
@@ -12,6 +14,8 @@
     onRemoveFromSlot,
   }: {
     nodeName: (nodeKey: string) => string;
+    /** Resolve structured display parts for a node key. */
+    nodeParts?: (nodeKey: string) => NodeDisplayParts;
     /**
      * Map from channelId to state-name → eventId (Spec 018 / S5 D6).
      * State names vary by channel role.
@@ -42,7 +46,7 @@
     {onAddChannel}
     {onRemoveFromSlot}
   />
-  <ChannelsPanel {nodeName} {resolvedEventIds} {daughterboardName} {usedBy} />
+  <ChannelsPanel {nodeName} {nodeParts} {resolvedEventIds} {daughterboardName} {usedBy} />
 </div>
 
 <style>

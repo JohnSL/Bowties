@@ -98,7 +98,7 @@
   import { normalizeLayoutTitle } from '$lib/utils/layoutPath';
   import { formatNodeId, nodeIdStringToBytes, normalizeNodeId } from '$lib/utils/nodeId';
   import { canonicalizeNodeId } from '$lib/utils/nodeRoster';
-  import { effectiveNodeStore, resolveNodeName } from '$lib/layout';
+  import { effectiveNodeStore, resolveNodeName, resolveNodeParts } from '$lib/layout';
   import { partialCaptureNodesStore } from '$lib/stores/partialCaptureNodes.svelte';
   import { deletePlaceholderBoard } from '$lib/orchestration/placeholderBoardOrchestrator';
   import { isPlaceholderInput } from '$lib/utils/nodeKey';
@@ -1744,6 +1744,7 @@
       <div class="railroad-tab-content">
         <RailroadPanel
           nodeName={resolveNodeName}
+          nodeParts={resolveNodeParts}
           {resolvedEventIds}
           usedBy={slotChannelUsedBy}
           onSelectChannel={handleSelectChannelIntent}

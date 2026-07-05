@@ -23,6 +23,8 @@
   import DialogTitle from '$lib/components/Dialog/DialogTitle.svelte';
   import DialogActions from '$lib/components/Dialog/DialogActions.svelte';
   import Button from '$lib/components/Dialog/Button.svelte';
+  import NodeLabel from '$lib/components/NodeLabel.svelte';
+  import type { NodeDisplayParts } from '$lib/utils/nodeDisplayName';
 
   export interface CandidateRow {
     nodeKey: string;
@@ -34,6 +36,7 @@
   export interface CandidateGroup {
     nodeKey: string;
     nodeName: string;
+    nodeParts?: NodeDisplayParts;
     rows: CandidateRow[];
   }
 
@@ -149,7 +152,11 @@
             data-testid="lamp-group-header"
             data-node-key={group.nodeKey}
           >
-            {group.nodeName}
+            {#if group.nodeParts}
+              <NodeLabel parts={group.nodeParts} orientation="inline" />
+            {:else}
+              {group.nodeName}
+            {/if}
           </li>
           {#each group.rows as row (rowKey(row))}
             {@const key = rowKey(row)}
