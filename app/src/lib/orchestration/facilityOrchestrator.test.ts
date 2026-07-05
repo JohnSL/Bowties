@@ -543,4 +543,36 @@ describe('deleteFacility (Spec 018 / S6 — D2 wrapper)', () => {
 
     expect(facilitiesStore.facilities.some((f) => f.facilityId === 'f-1')).toBe(false);
   });
+
+  it('removes user-owned channels bound to facility slots', async () => {
+    channelsStore.hydrateBaseline([bod(1), lamp()]);
+    facilitiesStore.hydrateBaseline([
+      { facilityId: 'f-1', templateId: 'block-indicator', name: 'Block 5',
+        slotBindings: { input: ['ch-bod-1'], output: ['ch-lamp-1'] } },
+    ]);
+    vi.mocked(composeFacilityBowties).mockResolvedValue([]);
+    const removeSpy = vi.spyOn(channelsStore, 'removeUserOwnedChannel');
+
+    await orch.deleteFacility('f-1');
+
+    expect(removeSpy).toHaveBeenCalledWith('ch-lamp-1');
+    expect(facilitiesStore.facilities.some((f) => f.facilityId === 'f-1')).toBe(false);
+    removeSpy.mockRestore();
+  });
+
+  it('does NOT delete hardware-owned channels bound to facility slots', async () => {
+    channelsStore.hydrateBaseline([bod(1), lamp()]);
+    facilitiesStore.hydrateBaseline([
+      { facilityId: 'f-1', templateId: 'block-indicator', name: 'Block 5',
+        slotBindings: { input: ['ch-bod-1'], output: ['ch-lamp-1'] } },
+    ]);
+    vi.mocked(composeFacilityBowties).mockResolvedValue([]);
+    const removeSpy = vi.spyOn(channelsStore, 'removeUserOwnedChannel');
+
+    await orch.deleteFacility('f-1');
+
+    expect(removeSpy).not.toHaveBeenCalledWith('ch-bod-1');
+    expect(facilitiesStore.facilities.some((f) => f.facilityId === 'f-1')).toBe(false);
+    removeSpy.mockRestore();
+  });
 });

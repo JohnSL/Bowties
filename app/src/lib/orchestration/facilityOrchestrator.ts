@@ -357,14 +357,38 @@ export async function tearDownFacilityBowties(facilityId: string): Promise<void>
 }
 
 /**
- * Delete the facility, first tearing down its composed bowties. Called
- * by the facility card's Delete action; the S5 removeFromSlot flow
- * still runs for the user-owned bound channels via the store's own
- * cleanup on facility deletion.
+ * Delete the facility, first tearing down its composed bowties and
+ * removing any user-owned channels that were bound to its slots.
+ * Hardware-owned channels are left alone — their lifecycle follows
+ * hardware config, not facility membership.
+ *
+ * Ordering matters: channel removal MUST happen AFTER facility deletion
+ * so the cascade orchestrator (which watches `channelsStore.channels`)
+ * cannot find slot bindings referencing the disappearing channel and
+ * interfere with our teardown/delete sequence.
  */
 export async function deleteFacility(facilityId: string): Promise<void> {
+  // Snapshot user-owned channel IDs before the facility is deleted.
+  const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+  const userOwnedChannelIds: string[] = [];
+  if (facility) {
+    for (const channelId of Object.values(facility.slotBindings).flat()) {
+      const channel = channelsStore.channels.find((c) => c.id === channelId);
+      if (channel?.ownership === 'user-owned') {
+        userOwnedChannelIds.push(channelId);
+      }
+    }
+  }
+
   await tearDownFacilityBowties(facilityId);
   facilitiesStore.deleteFacility(facilityId);
+
+  // Remove user-owned channels after the facility is gone from the
+  // effective view — the cascade sees the channel disappear but finds
+  // no slot bindings, so it no-ops.
+  for (const channelId of userOwnedChannelIds) {
+    channelsStore.removeUserOwnedChannel(channelId);
+  }
 }
 
 // ── Private helpers ─────────────────────────────────────────────────────
