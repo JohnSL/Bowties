@@ -1,0 +1,255 @@
+# Slices: ABS Signaling
+
+Branch: 020-abs-signaling
+Generated: 2026-07-07
+Status: 0/6 slices complete
+
+## Architecture
+
+### Before
+
+```mermaid
+graph TD
+    subgraph Route["+page.svelte"]
+        PageState["Page state & layout lifecycle"]
+    end
+
+    subgraph Components["Components"]
+        FacilityCard["FacilityCard"]
+        FacilitySlot["FacilitySlot"]
+        RailroadPanel["RailroadPanel / ChannelRow"]
+    end
+
+    subgraph Orchestration["Orchestration"]
+        FacilityOrch["facilityOrchestrator"]
+        CascadeOrch["facilityCascadeOrchestrator"]
+        EventStateOrch["eventStateOrchestrator"]
+    end
+
+    subgraph Stores["Stores"]
+        FacilitiesStore["facilitiesStore"]
+        ChannelsStore["channelsStore"]
+        BehaviorTemplates["behaviorTemplatesStore"]
+        ConfigChanges["configChangesStore"]
+        EventState["eventStateStore"]
+    end
+
+    subgraph Backend["Backend Domain"]
+        BehaviorTemplateMod["behavior_templates.rs"]
+        FacilityBowties["facility_bowties/mod.rs"]
+        ChannelEvents["channel_events.rs"]
+        LayoutState["layout/state.rs"]
+    end
+
+    PageState --> FacilityCard
+    FacilityCard --> FacilitySlot
+    PageState --> RailroadPanel
+    FacilityOrch --> FacilitiesStore
+    FacilityOrch --> ChannelsStore
+    FacilityOrch --> FacilityBowties
+    CascadeOrch --> FacilitiesStore
+    EventStateOrch --> EventState
+    EventStateOrch --> ChannelEvents
+    FacilitiesStore --> LayoutState
+    ChannelsStore --> LayoutState
+```
+
+### After
+
+```mermaid
+graph TD
+    subgraph Route["+page.svelte"]
+        PageState["Page state & layout lifecycle"]
+        LogicTargetDialog["Logic target selection dialog"]
+    end
+
+    subgraph Components["Components"]
+        FacilityCard["FacilityCard"]
+        FacilitySlot["FacilitySlot"]
+        RailroadPanel["RailroadPanel / ChannelRow"]
+        LogicTargetSelector["LogicTargetSelector (NEW)"]
+    end
+
+    subgraph Orchestration["Orchestration"]
+        FacilityOrch["facilityOrchestrator<br/>(+ compile-before-compose)"]
+        CascadeOrch["facilityCascadeOrchestrator"]
+        EventStateOrch["eventStateOrchestrator"]
+    end
+
+    subgraph Stores["Stores"]
+        FacilitiesStore["facilitiesStore<br/>(+ logic allocation field)"]
+        ChannelsStore["channelsStore<br/>(+ signal-aspect role)"]
+        BehaviorTemplates["behaviorTemplatesStore"]
+        ConfigChanges["configChangesStore"]
+        EventState["eventStateStore"]
+    end
+
+    subgraph Backend["Backend Domain"]
+        BehaviorTemplateMod["behavior_templates.rs<br/>(+ ABS template + rules)"]
+        FacilityBowties["facility_bowties/mod.rs"]
+        ChannelEvents["channel_events.rs<br/>(+ signal-aspect resolution)"]
+        LayoutState["layout/state.rs<br/>(+ allocation persistence)"]
+        LogicAdapter["logic_adapter/ (NEW)<br/>compiler.rs + allocation.rs"]
+    end
+
+    PageState --> FacilityCard
+    PageState --> LogicTargetDialog
+    LogicTargetDialog --> LogicTargetSelector
+    FacilityCard --> FacilitySlot
+    PageState --> RailroadPanel
+    FacilityOrch --> FacilitiesStore
+    FacilityOrch --> ChannelsStore
+    FacilityOrch --> LogicAdapter
+    FacilityOrch --> FacilityBowties
+    CascadeOrch --> FacilitiesStore
+    EventStateOrch --> EventState
+    EventStateOrch --> ChannelEvents
+    FacilitiesStore --> LayoutState
+    ChannelsStore --> LayoutState
+    LogicAdapter --> LayoutState
+```
+
+### Patterns
+
+- **Compile-before-compose** — Compiled behavior templates produce CDI field writes directly via the logic adapter, instead of relying on bowtie composition for event wiring. The compiler expands abstract rules into concrete conditional line configurations with resolved event IDs.
+- **Stub-and-widen** — S1 wires the full vertical path with a stubbed compiler; S2 replaces the stub with real compilation logic. The IPC contract is proven end-to-end before the backend is built.
+- **Function-level adapter seam** — `logic_adapter/` is a concrete module with function-level interface. No trait/dynamic dispatch until a second compilation target (STL, LogixNG) arrives (YAGNI).
+- **Per-facility allocation field** — Logic allocation is a field on the facility record in `facilitiesStore`, not a separate store. Avoids a new dirty bucket, a new `LayoutScopedParticipant`, and a new `collectDeltas()` implementor.
+
+### Module Changes
+
+| Module | Today | After |
+|---|---|---|
+| `bowties-core/src/behavior_templates.rs` | Template registry with slot definitions and state mappings | Gains `ConditionActionRule`, `RuleCondition`, `compilation_target` field; ABS 3-Aspect template registered |
+| `bowties-core/src/logic_adapter/` | Does not exist | NEW: Tower LCC compiler (template→conditional lines), allocation tracking, capacity enforcement |
+| `bowties-core/src/layout/types.rs` | `LayoutEditDelta` with facility/channel/bowtie variants | Gains `AllocateLogic` / `FreeLogic` delta variants |
+| `bowties-core/src/layout/state.rs` | Saved/captured/drafts three-layer projection | Gains logic allocation persistence in saved layer |
+| `bowties-core/src/channel_events.rs` | Producer (connector-input) + consumer (lampRow) event resolution | Gains signal-aspect channel resolution path |
+| `app/src/lib/orchestration/facilityOrchestrator.ts` | Compose-if-wired apply workflow | Gains compile-before-compose path for compiled templates; logic-target selection step |
+| `app/src/lib/stores/facilities.svelte.ts` | Facility records with slot bindings | Gains logic allocation field per facility; `AllocateLogic`/`FreeLogic` in `collectDeltas()` |
+| `app/src/lib/stores/channels.svelte.ts` | block-occupancy + lamp-indicator channel roles | Gains signal-aspect channel role |
+| `app/src/lib/utils/channelStyles.ts` | `STYLE_EVENT_MAPPINGS` for BOD + lamp styles | Gains `2-led-bicolor-aspect` style entry |
+| `app/src/lib/components/Facilities/LogicTargetSelector.svelte` | Does not exist | NEW: Node picker with capacity display |
+
+### Behavior Summary
+
+| Slice | User-visible change | Demoable? |
+|---|---|---|
+| S1: ABS template + full vertical apply (stub compile) | User creates ABS signal facility, binds channels, selects logic target, applies — CDI changes staged as drafts | Yes |
+| S2: Real Tower LCC compiler | Compiled conditional lines match Tower LCC CDI exactly — correct signal behavior on hardware | Yes |
+| S3: Fix channel state display + signal-aspect event resolution | Channel state dots work for block-occupancy (regression fix) and signal-aspect channels | Yes |
+| S4: ABS cascade via same-node Track Circuits | Chaining signals produces Stop → Approach → Clear cascade | Yes |
+| S5: Facility deletion + resource reclamation | Delete reclaims conditional lines and Track Circuits | Yes |
+| S6: Capacity display + target node suggestion | Capacity numbers visible per candidate node before apply | Yes |
+
+---
+
+## Roadmap
+
+The ordered slice set. An overview table for at-a-glance scanning, followed by one **roadmap card** per slice. `/build` appends a task breakdown to a card when it implements that slice; it does not pre-author tasks.
+
+| # | Slice title | Label | Blocked by | Status |
+|---|---|---|---|---|
+| S1 | ABS template + signal-aspect style + full vertical apply path (stub compile) | HITL | None | sketched |
+| S2 | Real Tower LCC conditional line compiler | HITL | S1 | sketched |
+| S3 | Fix channel state display + signal-aspect event resolution | AFK | S1 | sketched |
+| S4 | ABS cascade via same-node Track Circuits | HITL | S2 | sketched |
+| S5 | Facility deletion + resource reclamation | AFK | S2 | sketched |
+| S6 | Capacity display + target node suggestion | AFK | S1 | sketched |
+
+### S1: ABS template + signal-aspect style + full vertical apply path (stub compile) [HITL]
+
+**Intent**: User can create an ABS 3-Aspect Signal facility, bind channels, select a logic target node, and apply — seeing compiled CDI changes staged as drafts.
+**Boundary**: Route → Component → Orchestrator → Store → API → Backend command → Backend domain (stubbed compiler)
+**Blocked by**: None
+**Status**: sketched
+
+**Acceptance criteria**:
+- [ ] User selects "ABS 3-Aspect Signal" template when creating a facility; input slot accepts block-occupancy channels, output slot accepts signal-aspect channels
+- [ ] User creates a signal-aspect output channel via Add-channel, bound to 2 Direct Lamp Control rows on a Signal LCC node (2-LED bicolor style)
+- [ ] User selects a Tower LCC logic target node during the apply step
+- [ ] Apply produces CDI config drafts (conditional line values) via the stubbed compiler — Save toolbar shows dirty; close prompt warns about unsaved changes
+- [ ] Logic allocation record is persisted — Save + reopen layout shows allocation intact
+- [ ] Discard reverts all compiled CDI changes and frees the allocation
+- [ ] Delete-facility removes the user-owned signal-aspect channel alongside the facility (no orphan channels)
+- [ ] Facility status shows Wired after all slots are filled (existing `facilityStatus` derivation)
+
+**Architecture note**: Introduces the **compile-before-compose** workflow pattern — compiled templates produce CDI writes directly via the logic adapter module, instead of bowtie composition for event wiring. Establishes `logic_adapter/` as a function-level module seam (no trait/dynamic dispatch until a second adapter arrives — YAGNI). Logic allocation is a per-facility field in `facilitiesStore` — no new dirty bucket in the Dirty Aggregation seam, no new `LayoutScopedParticipant` registration.
+
+### S2: Real Tower LCC conditional line compiler [HITL]
+
+**Intent**: Compiled conditional lines match Tower LCC CDI structure exactly — Save + bus write produces correct signal behavior on hardware.
+**Boundary**: Backend domain (`logic_adapter/`)
+**Blocked by**: S1
+**Status**: sketched
+
+**Acceptance criteria**:
+- [ ] Compiler produces 3 contiguous conditional lines for a standalone 3-aspect signal in correct mast group structure (Group/Group/Last flags)
+- [ ] Evaluation order is most-restrictive-first: Stop (priority 1) → Approach (priority 2) → Clear (priority 3)
+- [ ] Variable inputs reference the block-occupancy channel's event IDs (occupied = set-true, clear = set-false)
+- [ ] Aspect-to-event map expansion: each aspect's compiled actions contain the correct lamp On/Off event IDs from the 2-LED bicolor style
+- [ ] End-of-line signal (no downstream input): Approach rule omitted, compiler produces 2 conditional lines (Stop + Clear) with Group/Last structure
+- [ ] Compiler rejects configurations that exceed 32 conditional lines per node with a clear `InsufficientCapacity` error
+- [ ] Compiler rejects styles whose action count per aspect exceeds 4 (Tower LCC line limit)
+- [ ] Compiled values round-trip through Save + bus write — CDI on target node matches expected field values
+
+**Architecture note**: Compiler is a pure function (`template + bindings + style + allocated lines → Result<Vec<CompiledConditionalLine>, CompileError>`). Capacity enforcement is compiler-owned — the orchestrator surfaces the error, but the compiler is the single place that knows the allocation rules. This concentrates capacity knowledge in one module rather than distributing pre-guards.
+
+### S3: Fix channel state display + signal-aspect event resolution [AFK]
+
+**Intent**: Channel state dots on the Railroad panel work correctly for both block-occupancy channels (regression fix) and signal-aspect channels (new).
+**Boundary**: Component → Store → Utils → API → Backend (`channel_events.rs`)
+**Blocked by**: S1
+**Status**: sketched
+
+**Acceptance criteria**:
+- [ ] Block-occupancy channel rows show correct occupied/clear state dots on the Railroad panel (regression fix — currently broken)
+- [ ] `2-led-bicolor-aspect` style has entries in `STYLE_EVENT_MAPPINGS` with correct consumer leaf indices
+- [ ] Event resolution returns correct state-name → eventId map for signal-aspect channels (via existing `resolve_channel_event_ids` IPC)
+- [ ] Signal-aspect channels appear in Railroad panel grouped under their Signal LCC Direct Lamp Control subsystem
+- [ ] State dots on signal-aspect channel rows show lit/unlit based on live event state
+
+### S4: ABS cascade via same-node Track Circuits [HITL]
+
+**Intent**: User can chain multiple ABS signal facilities so that occupying a block cascades Stop → Approach → Clear backward through the block system.
+**Boundary**: Orchestrator → Store → API → Backend domain (`logic_adapter/` compiler extension)
+**Blocked by**: S2
+**Status**: sketched
+
+**Acceptance criteria**:
+- [ ] User binds an upstream signal's downstream-signal input slot to a downstream signal facility's output
+- [ ] Compiler allocates a Track Circuit (1–8) for the cascade connection and records it in the logic allocation
+- [ ] Upstream signal's Approach rule compiles to a Track Circuit read variable (TC source + speed threshold match)
+- [ ] Downstream signal's compiled actions include a Track Circuit write action publishing its current aspect as a speed value
+- [ ] 3-signal cascade compiles correctly: occupied block → protecting signal Stop, one behind → Approach, two behind → Clear
+- [ ] Compiler rejects cascade wiring when all 8 Track Circuits on the target node are allocated, with a clear capacity error
+
+**Architecture note**: Track Circuits are an internal Tower LCC communication primitive (8 per node) that carry aspect/speed values between conditional groups. This slice extends the compiler's variable resolution to include TC-sourced reads and the action expansion to include TC-destination writes. Cross-node cascade (via Track Transmitter/Receiver linking) is explicitly deferred.
+
+### S5: Facility deletion + resource reclamation [AFK]
+
+**Intent**: Deleting a signal facility fully reclaims all allocated conditional lines and Track Circuits — resources are immediately available for reuse.
+**Boundary**: Orchestrator → Backend (`logic_adapter/` + `LayoutState`)
+**Blocked by**: S2
+**Status**: sketched
+
+**Acceptance criteria**:
+- [ ] Deleting an applied facility resets its conditional lines to disabled/default state (all variable and action fields cleared as CDI drafts)
+- [ ] Logic allocation record is removed — conditional lines and Track Circuits freed for reuse
+- [ ] A subsequent facility can reuse the same lines and circuits without manual intervention
+- [ ] When deleting a facility referenced as a downstream signal by other facilities, Bowties warns listing affected upstream facilities and requires confirmation before proceeding
+- [ ] Save toolbar and close prompt reflect the deletion-related CDI changes (Dirty Aggregation seam — Save toolbar + close prompt consumers)
+- [ ] User-owned signal-aspect channel is removed alongside the facility (no orphan channels; User-Owned Channel Lifecycle seam)
+
+### S6: Capacity display + target node suggestion [AFK]
+
+**Intent**: User sees available conditional line and Track Circuit capacity per candidate node before applying a signal facility.
+**Boundary**: Route → Component → Store → Backend
+**Blocked by**: S1
+**Status**: sketched
+
+**Acceptance criteria**:
+- [ ] LogicTargetSelector displays "X/32 conditional lines used, Y/8 Track Circuits used" per candidate node
+- [ ] Capacity numbers update correctly after applying or deleting a facility
+- [ ] Bowties suggests the node hosting the most input channels as the default target, with an option to override
+- [ ] Attempting to apply when the target node has insufficient conditional lines surfaces the compiler's `InsufficientCapacity` error with a clear message in the UI
