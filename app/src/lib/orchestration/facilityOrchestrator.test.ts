@@ -39,6 +39,8 @@ const BLOCK_INDICATOR: BehaviorTemplate = {
     { producerState: 'occupied', consumerCommand: 'lit' },
     { producerState: 'clear', consumerCommand: 'unlit' },
   ],
+  compilationTarget: 'composed',
+  rules: [],
 };
 
 function bod(input: number): InformationChannel {
@@ -285,7 +287,7 @@ describe('composeBowtiesIfWired (Spec 018 / S6 — D2)', () => {
       { templateId: 'block-indicator', displayName: 'Block Indicator', slots: [
         { label: 'input', displayLabel: 'block', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
         { label: 'output', displayLabel: 'indicator', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 1, maxChannels: 1 },
-      ], mapping: [] },
+      ], mapping: [], compilationTarget: 'composed' as const, rules: [] },
       'Block 5',
     );
     const facilityId = facilitiesStore.pendingCreations[0].facilityId;

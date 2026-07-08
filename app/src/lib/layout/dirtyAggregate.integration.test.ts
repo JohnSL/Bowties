@@ -116,6 +116,8 @@ const TEMPLATE: BehaviorTemplate = {
     { label: 'Lamp', displayLabel: 'Lamp', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 1, maxChannels: 1 },
   ],
   mapping: [],
+  compilationTarget: 'composed' as const,
+  rules: [],
 };
 
 const CHANNEL_A: InformationChannel = {

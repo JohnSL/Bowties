@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { LogicAllocation } from '$lib/api/logicAdapter';
 
 /**
  * Per-slot binding list (Spec 018 / S4 — D8 cardinality contract).
@@ -13,6 +14,9 @@ export interface Facility {
   templateId: string;
   name: string;
   slotBindings: Record<string, SlotBinding>;
+  /** Logic allocation for compiled templates (Spec 020 / S1). Undefined
+   *  for composed templates or when no compilation has been applied. */
+  logicAllocation?: LogicAllocation;
 }
 
 /// Derived status of a facility (never persisted on the entity).

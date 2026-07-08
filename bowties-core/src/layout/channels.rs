@@ -22,6 +22,10 @@ pub enum ChannelRole {
     /// `lamp-indicator` lands with Spec 018 / S5; declared here so the
     /// enum reads as the role universe rather than as a one-element list.
     LampIndicator,
+    /// `signal-aspect` — a multi-lamp signal head driven by logic
+    /// compilation (Spec 020 / S1). Bound to 2+ Direct Lamp Control
+    /// rows on a Signal LCC node.
+    SignalAspect,
 }
 
 /// Lifecycle classification: who creates and destroys this channel.

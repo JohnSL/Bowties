@@ -292,6 +292,20 @@ pub enum LayoutEditDelta {
     /// Delete an information channel (no-op if `channel_id` is unknown).
     #[serde(rename_all = "camelCase")]
     DeleteChannel { channel_id: String },
+    /// Allocate logic resources for a facility on a target node (Spec 020 / S1).
+    ///
+    /// Persists the `LogicAllocation` record alongside the facility.
+    /// `apply_facility_deltas` handles the mutation.
+    #[serde(rename_all = "camelCase")]
+    AllocateLogic {
+        allocation: crate::logic_adapter::LogicAllocation,
+    },
+    /// Free previously allocated logic resources for a facility (Spec 020 / S1).
+    ///
+    /// Removes the `LogicAllocation` record for the given facility.
+    /// `apply_facility_deltas` handles the mutation.
+    #[serde(rename_all = "camelCase")]
+    FreeLogic { facility_id: String },
 }
 
 impl LayoutEditDelta {
@@ -413,7 +427,9 @@ pub fn apply_layout_deltas(layout: &mut LayoutFile, deltas: Vec<LayoutEditDelta>
             | LayoutEditDelta::DetachChannelFromSlot { .. }
             | LayoutEditDelta::CreateChannel { .. }
             | LayoutEditDelta::RenameChannel { .. }
-            | LayoutEditDelta::DeleteChannel { .. } => {
+            | LayoutEditDelta::DeleteChannel { .. }
+            | LayoutEditDelta::AllocateLogic { .. }
+            | LayoutEditDelta::FreeLogic { .. } => {
                 // Facilities live outside LayoutFile (facilities.yaml).
                 // Handled by `layout::facilities::apply_facility_deltas`,
                 // called from save_layout_directory alongside this function.

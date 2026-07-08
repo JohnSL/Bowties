@@ -1,6 +1,7 @@
 import { listFacilities, type Facility, type SlotBinding } from '$lib/api/facilities';
 import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
 import type { LayoutEditDelta } from '$lib/types/bowtie';
+import type { LogicAllocation } from '$lib/api/logicAdapter';
 import { generateUuidV4 } from '$lib/utils/uuid';
 
 /**
@@ -41,6 +42,16 @@ class FacilitiesStore {
    * produce attach / detach deltas (set diff, order-insensitive).
    */
   private _pendingSlotBindings = $state<Map<string, Map<string, string[]>>>(new Map());
+  /**
+   * Pending logic allocations: facilityId → LogicAllocation (Spec 020 / S1).
+   * Recorded when the compiler produces a plan; emitted as `allocateLogic`
+   * deltas at save time. Per-facility field, no new dirty bucket.
+   */
+  private _pendingLogicAllocations = $state<Map<string, LogicAllocation>>(new Map());
+  /**
+   * Facility IDs whose baseline logic allocation should be freed on save.
+   */
+  private _pendingLogicFrees = $state<Set<string>>(new Set());
 
   /** Effective view: baseline (minus deletions) + pending creations, with pending renames + slot edits applied. */
   get facilities(): Facility[] {
@@ -62,6 +73,10 @@ class FacilitiesStore {
         ...f,
         ...(newName !== undefined ? { name: newName } : {}),
         slotBindings,
+        // Overlay pending logic allocation if present.
+        ...(this._pendingLogicAllocations.has(f.facilityId)
+          ? { logicAllocation: this._pendingLogicAllocations.get(f.facilityId) }
+          : {}),
       };
     });
   }
@@ -78,6 +93,8 @@ class FacilitiesStore {
       || this._pendingRenames.size > 0
       || this._pendingDeletions.size > 0
       || this._pendingSlotBindings.size > 0
+      || this._pendingLogicAllocations.size > 0
+      || this._pendingLogicFrees.size > 0
     );
   }
 
@@ -89,6 +106,8 @@ class FacilitiesStore {
       + this._pendingRenames.size
       + this._pendingDeletions.size
       + slotEdits
+      + this._pendingLogicAllocations.size
+      + this._pendingLogicFrees.size
     );
   }
 
@@ -111,6 +130,8 @@ class FacilitiesStore {
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
+    this._pendingLogicAllocations = new Map();
+    this._pendingLogicFrees = new Set();
   }
 
   /** Replace the baseline after a successful save; clear all drafts. */
@@ -120,6 +141,8 @@ class FacilitiesStore {
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
+    this._pendingLogicAllocations = new Map();
+    this._pendingLogicFrees = new Set();
   }
 
   /** Collect deltas for the save orchestrator. */
@@ -169,6 +192,13 @@ class FacilitiesStore {
         }
       }
     }
+    // Logic allocation deltas (Spec 020 / S1).
+    for (const [facilityId, allocation] of this._pendingLogicAllocations) {
+      deltas.push({ type: 'allocateLogic', allocation });
+    }
+    for (const facilityId of this._pendingLogicFrees) {
+      deltas.push({ type: 'freeLogic', facilityId });
+    }
     return deltas;
   }
 
@@ -182,6 +212,8 @@ class FacilitiesStore {
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
+    this._pendingLogicAllocations = new Map();
+    this._pendingLogicFrees = new Set();
   }
 
   /**
@@ -267,6 +299,17 @@ class FacilitiesStore {
       const next = new Map(this._pendingSlotBindings);
       next.delete(facilityId);
       this._pendingSlotBindings = next;
+    }
+    // Clean up any pending logic allocation for the deleted facility.
+    if (this._pendingLogicAllocations.has(facilityId)) {
+      const next = new Map(this._pendingLogicAllocations);
+      next.delete(facilityId);
+      this._pendingLogicAllocations = next;
+    }
+    // If the baseline had a logic allocation, schedule a free delta.
+    const baselineFacility = this._baseline.find((f) => f.facilityId === facilityId);
+    if (baselineFacility?.logicAllocation) {
+      this._pendingLogicFrees = new Set([...this._pendingLogicFrees, facilityId]);
     }
   }
 
@@ -363,6 +406,68 @@ class FacilitiesStore {
     return true;
   }
 
+  // ── Logic allocation (Spec 020 / S1) ────────────────────────────────────
+
+  /**
+   * Record a logic allocation for a facility. Called after the compiler
+   * produces a plan. Also updates the in-memory facility view so the
+   * effective view reflects the allocation immediately.
+   */
+  setLogicAllocation(facilityId: string, allocation: LogicAllocation): void {
+    // Update pending-creation facility in place if it exists.
+    const creationIdx = this._pendingCreations.findIndex((f) => f.facilityId === facilityId);
+    if (creationIdx >= 0) {
+      const arr = this._pendingCreations.slice();
+      arr[creationIdx] = { ...arr[creationIdx], logicAllocation: allocation };
+      this._pendingCreations = arr;
+    }
+    this._pendingLogicAllocations = new Map(this._pendingLogicAllocations).set(facilityId, allocation);
+    // If there was a pending free for this facility (e.g. re-compile after discard), cancel it.
+    if (this._pendingLogicFrees.has(facilityId)) {
+      const next = new Set(this._pendingLogicFrees);
+      next.delete(facilityId);
+      this._pendingLogicFrees = next;
+    }
+  }
+
+  /**
+   * Free the logic allocation for a facility. Called during discard or
+   * facility deletion to mark the allocation for removal on save.
+   */
+  freeLogicAllocation(facilityId: string): void {
+    // Drop any pending allocation.
+    if (this._pendingLogicAllocations.has(facilityId)) {
+      const next = new Map(this._pendingLogicAllocations);
+      next.delete(facilityId);
+      this._pendingLogicAllocations = next;
+    }
+    // Update pending-creation facility in place if it exists.
+    const creationIdx = this._pendingCreations.findIndex((f) => f.facilityId === facilityId);
+    if (creationIdx >= 0) {
+      const arr = this._pendingCreations.slice();
+      const { logicAllocation: _, ...rest } = arr[creationIdx];
+      arr[creationIdx] = rest;
+      this._pendingCreations = arr;
+      return; // Pending creation — no baseline to free.
+    }
+    // Only schedule a free delta if the baseline had an allocation.
+    const baseline = this._baseline.find((f) => f.facilityId === facilityId);
+    if (baseline?.logicAllocation) {
+      this._pendingLogicFrees = new Set([...this._pendingLogicFrees, facilityId]);
+    }
+  }
+
+  /**
+   * Return the logic target node key for a facility, if one is set
+   * (either from a pending allocation or from the baseline).
+   */
+  getLogicTargetNodeKey(facilityId: string): string | undefined {
+    const pending = this._pendingLogicAllocations.get(facilityId);
+    if (pending) return pending.targetNodeKey;
+    const facility = this._baseline.find((f) => f.facilityId === facilityId);
+    return facility?.logicAllocation?.targetNodeKey;
+  }
+
   /** Clear all facility state. Called on layout close. */
   reset(): void {
     this._baseline = [];
@@ -370,6 +475,8 @@ class FacilitiesStore {
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
+    this._pendingLogicAllocations = new Map();
+    this._pendingLogicFrees = new Set();
   }
 
   resetForNewLayout(): void {

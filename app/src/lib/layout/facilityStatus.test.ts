@@ -31,6 +31,8 @@ const BLOCK_INDICATOR: BehaviorTemplate = {
     { producerState: 'occupied', consumerCommand: 'lit' },
     { producerState: 'clear', consumerCommand: 'unlit' },
   ],
+  compilationTarget: 'composed' as const,
+  rules: [],
 };
 
 const OPTIONAL_SLOT_TEMPLATE: BehaviorTemplate = {

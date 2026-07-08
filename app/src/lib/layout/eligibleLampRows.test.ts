@@ -341,3 +341,83 @@ describe('effectiveLayoutStore.eligibleLampRowsForStyle (Spec 018 / S5 D1)', () 
     expect(groups[1].rows).toHaveLength(2);
   });
 });
+
+describe('effectiveLayoutStore.eligibleLampRowsForStyle (Spec 020 / S1 — bicolor)', () => {
+  it('returns pairs of consecutive rows for 2-led-bicolor-aspect', () => {
+    allEntriesSpy.mockReturnValue([
+      makeRosterEntry({
+        nodeKey: SIGNAL_NODE_KEY,
+        tree: makeSignalLccTree({ lampCount: 4 }),
+        userName: 'Signal-LCC-1',
+      }),
+    ]);
+
+    const groups = effectiveLayoutStore.eligibleLampRowsForStyle('2-led-bicolor-aspect');
+
+    expect(groups).toHaveLength(1);
+    // 4 rows (1,2,3,4) → 3 eligible start positions (1,2,3) since each needs row+1
+    expect(groups[0].rows).toHaveLength(3);
+    expect(groups[0].rows.map((r) => r.rowOrdinal)).toEqual([1, 2, 3]);
+    // Labels should indicate the pair
+    expect(groups[0].rows[0].rowLabel).toContain('+1 row');
+  });
+
+  it('excludes rows where the consecutive partner is already claimed', () => {
+    allEntriesSpy.mockReturnValue([
+      makeRosterEntry({
+        nodeKey: SIGNAL_NODE_KEY,
+        tree: makeSignalLccTree({ lampCount: 4 }),
+      }),
+    ]);
+    // Claim row 2 — this makes row 1 (needs 2) and row 2 (needs 3) ineligible
+    channelsStore.hydrateBaseline([lampChannel(2)]);
+
+    const groups = effectiveLayoutStore.eligibleLampRowsForStyle('2-led-bicolor-aspect');
+
+    expect(groups).toHaveLength(1);
+    // Row 1: needs rows 1+2, but 2 is claimed → excluded
+    // Row 2: claimed → excluded
+    // Row 3: needs rows 3+4, both free → eligible
+    expect(groups[0].rows.map((r) => r.rowOrdinal)).toEqual([3]);
+  });
+
+  it('excludes rows claimed by an existing bicolor channel (both rows)', () => {
+    allEntriesSpy.mockReturnValue([
+      makeRosterEntry({
+        nodeKey: SIGNAL_NODE_KEY,
+        tree: makeSignalLccTree({ lampCount: 6 }),
+      }),
+    ]);
+    // A bicolor channel claims rows 1 and 2
+    channelsStore.hydrateBaseline([{
+      id: 'ch-bicolor-1',
+      name: 'Signal 1',
+      role: 'signal-aspect',
+      style: '2-led-bicolor-aspect',
+      ownership: 'user-owned',
+      binding: { kind: 'lampRow', nodeKey: SIGNAL_NODE_KEY, rowOrdinal: 1 },
+    }]);
+
+    const groups = effectiveLayoutStore.eligibleLampRowsForStyle('2-led-bicolor-aspect');
+
+    expect(groups).toHaveLength(1);
+    // Rows 1,2 claimed → rows 1,2 ineligible as start
+    // Row 3: needs 3+4 → eligible
+    // Row 4: needs 4+5 → eligible
+    // Row 5: needs 5+6 → eligible
+    expect(groups[0].rows.map((r) => r.rowOrdinal)).toEqual([3, 4, 5]);
+  });
+
+  it('returns empty when fewer than 2 consecutive rows are available', () => {
+    allEntriesSpy.mockReturnValue([
+      makeRosterEntry({
+        nodeKey: SIGNAL_NODE_KEY,
+        tree: makeSignalLccTree({ lampCount: 1 }),
+      }),
+    ]);
+
+    const groups = effectiveLayoutStore.eligibleLampRowsForStyle('2-led-bicolor-aspect');
+
+    expect(groups).toEqual([]);
+  });
+});

@@ -5,6 +5,7 @@
     channelStateLabel,
     type ChannelState,
   } from '$lib/utils/channelState';
+  import { getStyleRowCount } from '$lib/utils/channelStyles';
 
   const ROLE_LABELS: Record<string, string> = {
     'block-occupancy': 'Block occupancy',
@@ -101,7 +102,11 @@
       return `${connectorLabel} · Input ${channel.binding.input}`;
     }
     if (channel.binding.kind === 'lampRow') {
-      return `Row ${channel.binding.rowOrdinal}`;
+      const rowCount = getStyleRowCount(channel.style);
+      const start = channel.binding.rowOrdinal;
+      return rowCount > 1
+        ? `Rows ${start}\u2013${start + rowCount - 1}`
+        : `Row ${start}`;
     }
     return '';
   });

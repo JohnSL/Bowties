@@ -10,6 +10,7 @@
     roleForChannelState,
     type ChannelState,
   } from '$lib/utils/channelState';
+  import { getStyleRowCount } from '$lib/utils/channelStyles';
   import FacilitySlot from './FacilitySlot.svelte';
 
   let {
@@ -107,7 +108,13 @@
       : 'Direct Lamp Control';
     const locationLabel = channel.binding.kind === 'connectorInput'
       ? `Input ${channel.binding.input}`
-      : `Row ${channel.binding.rowOrdinal}`;
+      : (() => {
+          const rowCount = getStyleRowCount(channel.style);
+          const start = channel.binding.rowOrdinal;
+          return rowCount > 1
+            ? `Rows ${start}–${start + rowCount - 1}`
+            : `Row ${start}`;
+        })();
     return {
       currentChannelId: id,
       currentChannelDisplay: {

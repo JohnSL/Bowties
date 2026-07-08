@@ -7,7 +7,7 @@ import { invoke } from '@tauri-apps/api/core';
  */
 
 /** The state-vocabulary contract a facility slot binds by. */
-export type ChannelRole = 'block-occupancy' | 'lamp-indicator';
+export type ChannelRole = 'block-occupancy' | 'lamp-indicator' | 'signal-aspect';
 
 /** Lifecycle classification — who creates and destroys this channel. */
 export type ChannelOwnership = 'hardware-owned' | 'user-owned';

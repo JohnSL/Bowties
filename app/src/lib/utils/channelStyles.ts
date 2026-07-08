@@ -29,6 +29,18 @@ const STYLE_EVENT_MAPPINGS: Readonly<Record<string, StyleEventMapping>> = Object
     lit: { consumerLeafIndex: 0 },
     unlit: { consumerLeafIndex: 1 },
   },
+  // Spec 020 / S1 — 2-LED bicolor signal aspect. Each aspect maps two lamp
+  // rows (red and green LEDs of a bicolor head). Leaf indices reference the
+  // Direct Lamp Control row pairs: row N is the first LED, row N+1 the second.
+  // The compiler resolves aspects to per-lamp On/Off events at compile time;
+  // this mapping declares the style's consumer leaf layout for event-state
+  // display and channel creation.
+  '2-led-bicolor-aspect': {
+    stop: { consumerLeafIndex: 0 },    // Red on, Green off
+    approach: { consumerLeafIndex: 2 }, // Red on, Green on (yellow)
+    clear: { consumerLeafIndex: 4 },    // Red off, Green on
+    dark: { consumerLeafIndex: 6 },     // Red off, Green off
+  },
 });
 
 /**
@@ -37,4 +49,18 @@ const STYLE_EVENT_MAPPINGS: Readonly<Record<string, StyleEventMapping>> = Object
  */
 export function getStyleEventMapping(styleId: string): StyleEventMapping | undefined {
   return STYLE_EVENT_MAPPINGS[styleId];
+}
+
+/**
+ * Number of Direct Lamp Control rows a style claims. `single-led-direct-lamp`
+ * claims 1 row; `2-led-bicolor-aspect` claims 2 consecutive rows. Returns 0
+ * for unknown or non-lamp styles.
+ */
+const STYLE_ROW_COUNTS: Readonly<Record<string, number>> = Object.freeze({
+  'single-led-direct-lamp': 1,
+  '2-led-bicolor-aspect': 2,
+});
+
+export function getStyleRowCount(styleId: string): number {
+  return STYLE_ROW_COUNTS[styleId] ?? 0;
 }

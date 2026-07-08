@@ -52,6 +52,8 @@ const BLOCK_INDICATOR: BehaviorTemplate = {
     { label: 'Lamp', displayLabel: 'Lamp', kind: 'consumer', requiredRole: 'lamp-indicator', minChannels: 1, maxChannels: 1 },
   ],
   mapping: [],
+  compilationTarget: 'composed' as const,
+  rules: [],
 };
 
 const HW_CHANNEL: InformationChannel = {

@@ -76,6 +76,8 @@ const BLOCK_INDICATOR: BehaviorTemplate = {
     { producerState: 'occupied', consumerCommand: 'lit' },
     { producerState: 'clear', consumerCommand: 'unlit' },
   ],
+  compilationTarget: 'composed' as const,
+  rules: [],
 };
 
 function bod(input: number): InformationChannel {

@@ -2,7 +2,7 @@
 
 Branch: 020-abs-signaling
 Generated: 2026-07-07
-Status: 0/6 slices complete
+Status: 1/6 slices complete
 
 ## Architecture
 
@@ -150,7 +150,7 @@ The ordered slice set. An overview table for at-a-glance scanning, followed by o
 
 | # | Slice title | Label | Blocked by | Status |
 |---|---|---|---|---|
-| S1 | ABS template + signal-aspect style + full vertical apply path (stub compile) | HITL | None | sketched |
+| S1 | ABS template + signal-aspect style + full vertical apply path (stub compile) | HITL | None | done |
 | S2 | Real Tower LCC conditional line compiler | HITL | S1 | sketched |
 | S3 | Fix channel state display + signal-aspect event resolution | AFK | S1 | sketched |
 | S4 | ABS cascade via same-node Track Circuits | HITL | S2 | sketched |
@@ -162,7 +162,9 @@ The ordered slice set. An overview table for at-a-glance scanning, followed by o
 **Intent**: User can create an ABS 3-Aspect Signal facility, bind channels, select a logic target node, and apply — seeing compiled CDI changes staged as drafts.
 **Boundary**: Route → Component → Orchestrator → Store → API → Backend command → Backend domain (stubbed compiler)
 **Blocked by**: None
-**Status**: sketched
+**Status**: done
+**Complexity**: large
+**User stories**: US1, US3
 
 **Acceptance criteria**:
 - [ ] User selects "ABS 3-Aspect Signal" template when creating a facility; input slot accepts block-occupancy channels, output slot accepts signal-aspect channels
@@ -175,6 +177,18 @@ The ordered slice set. An overview table for at-a-glance scanning, followed by o
 - [ ] Facility status shows Wired after all slots are filled (existing `facilityStatus` derivation)
 
 **Architecture note**: Introduces the **compile-before-compose** workflow pattern — compiled templates produce CDI writes directly via the logic adapter module, instead of bowtie composition for event wiring. Establishes `logic_adapter/` as a function-level module seam (no trait/dynamic dispatch until a second adapter arrives — YAGNI). Logic allocation is a per-facility field in `facilitiesStore` — no new dirty bucket in the Dirty Aggregation seam, no new `LayoutScopedParticipant` registration.
+
+**Tasks**:
+- [x] S1-T1: Write integration test — end-to-end: create ABS facility → bind channels → select logic target → apply → verify CDI drafts staged + allocation record persisted
+- [x] S1-T2: bowties-core domain — Register ABS 3-Aspect Signal behavior template with `ConditionActionRule` types, `signal-aspect` channel role enum, `compilation_target` field; create `logic_adapter/` module with stub compiler returning structurally valid `CompiledLogicPlan`; add allocation types and `InsufficientCapacity` error
+- [x] S1-T3: bowties-core layout — Add `AllocateLogic`/`FreeLogic` `LayoutEditDelta` variants (camelCase serde); extend layout state to persist logic allocation records in saved facility layer
+- [x] S1-T4: Tauri IPC — Add `compile_logic_for_facility` command (calls stub compiler, returns plan); add `get_logic_capacity` query command
+- [x] S1-T5: Frontend utils + stores — Add `2-led-bicolor-aspect` style to `channelStyles.ts`; extend `facilities.svelte.ts` with `logicAllocation` field + `logicTargetNodeKey` + `collectDeltas` for logic state; extend `channels.svelte.ts` for `signal-aspect` role
+- [x] S1-T6: Frontend orchestrator — Extend `facilityOrchestrator` with compile-before-compose workflow: after slots wired → compile → stage CDI drafts → compose bowties; add logic target node selection step
+- [x] S1-T7: Frontend components + route — `LogicTargetSelector` component with capacity display; integrate into apply workflow in `+page.svelte`
+- [x] S1-T8: Validate — `cargo test -p bowties-core` green; `vitest run` green; save/discard/reopen round-trip verified
+
+<!-- Session: 2026-07-07 — Completed S1. Next: S2 (HITL). -->
 
 ### S2: Real Tower LCC conditional line compiler [HITL]
 

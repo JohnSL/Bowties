@@ -105,7 +105,11 @@ export type LayoutEditDelta =
   /** Rename an existing channel (backend rejects unknown ids). */
   | { type: 'renameChannel'; channelId: string; newName: string }
   /** Delete an information channel (idempotent for unknown ids). */
-  | { type: 'deleteChannel'; channelId: string };
+  | { type: 'deleteChannel'; channelId: string }
+  /** Allocate logic resources for a facility on a target node (Spec 020 / S1). */
+  | { type: 'allocateLogic'; allocation: import('$lib/api/logicAdapter').LogicAllocation }
+  /** Free previously allocated logic resources for a facility (Spec 020 / S1). */
+  | { type: 'freeLogic'; facilityId: string };
 
 // ── Bowtie State ──────────────────────────────────────────────────────────────
 

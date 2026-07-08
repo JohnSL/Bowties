@@ -14,6 +14,8 @@ export interface SlotDefinition {
   minChannels: number;
   /** Maximum channels accepted; `null` = unbounded. Block Indicator declares both slots `1` in S4. */
   maxChannels: number | null;
+  /** When true, the picker shows all role-compatible channels even if already bound elsewhere. */
+  shared: boolean;
 }
 
 export interface StateMapping {
@@ -21,11 +23,30 @@ export interface StateMapping {
   consumerCommand: string;
 }
 
+/** How a template's runtime behavior is realised (Spec 020 / S1). */
+export type CompilationTarget = 'composed' | 'compiled';
+
+/** A condition in a rule — what must be true for the rule's actions to fire. */
+export interface RuleCondition {
+  inputSlot: string;
+  producerState: string;
+}
+
+/** A condition → action rule declared by a compiled behavior template. */
+export interface ConditionActionRule {
+  label: string;
+  priority: number;
+  condition: RuleCondition;
+  aspect: string;
+}
+
 export interface BehaviorTemplate {
   templateId: string;
   displayName: string;
   slots: SlotDefinition[];
   mapping: StateMapping[];
+  compilationTarget: CompilationTarget;
+  rules: ConditionActionRule[];
 }
 
 /// Fetch the hardcoded behavior template registry from the backend.

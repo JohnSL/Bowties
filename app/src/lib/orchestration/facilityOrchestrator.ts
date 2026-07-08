@@ -22,6 +22,7 @@ import { configEditor } from '$lib/stores/configEditor.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
 import { composeFacilityBowties, type CompositionOp } from '$lib/api/facilityBowties';
+import { compileLogicForFacility } from '$lib/api/logicAdapter';
 import { syncLayoutDrafts } from '$lib/api/layout';
 import { canonicalEventIdHex } from '$lib/utils/serialize';
 import { editKeyForLeaf } from '$lib/utils/editKey';
@@ -195,7 +196,7 @@ export async function addChannelForSlot(
   const slot = template.slots.find((s) => s.label === slotLabel);
   if (!slot) throw new UnknownReferenceError('slot');
 
-  if (slot.requiredRole !== 'lamp-indicator') {
+  if (slot.requiredRole !== 'lamp-indicator' && slot.requiredRole !== 'signal-aspect') {
     throw new RoleMismatchError('lamp-indicator', slot.requiredRole as ChannelRole);
   }
 
@@ -206,9 +207,15 @@ export async function addChannelForSlot(
     throw new SlotAtMaxError(slotLabel, slot.maxChannels);
   }
 
+  // Derive channel role and style from the slot's required role.
+  const channelRole = slot.requiredRole as ChannelRole;
+  const channelStyle = channelRole === 'signal-aspect'
+    ? '2-led-bicolor-aspect'
+    : 'single-led-direct-lamp';
+
   const channel = channelsStore.createUserOwnedChannel({
-    role: 'lamp-indicator',
-    style: 'single-led-direct-lamp',
+    role: channelRole,
+    style: channelStyle,
     binding: { kind: 'lampRow', nodeKey: lampRowNodeKey, rowOrdinal },
     name: name ?? `${facility.name} ${slotLabel}`,
   });
@@ -255,6 +262,11 @@ async function syncDraftsForComposition(): Promise<void> {
  * has become Wired. No-op when `facilityStatus !== 'Wired'` — cheap to
  * call from every attach path since the guard runs before any IPC.
  *
+ * Spec 020 / S1 extension: for `compiled` templates, runs the
+ * compile-before-compose workflow — calls the stub compiler IPC,
+ * records the allocation, and stages CDI field writes as drafts.
+ * Composed templates follow the existing composition path.
+ *
  * On Wired, first mirrors the frontend draft state into
  * `LayoutState.drafts` (Spec 018 / S6 bugfix — the compose IPC reads
  * facility + channel data through the effective drafts-over-saved
@@ -267,9 +279,57 @@ async function syncDraftsForComposition(): Promise<void> {
 export async function composeBowtiesIfWired(facilityId: string): Promise<void> {
   if (effectiveLayoutStore.facilityStatus(facilityId) !== 'Wired') return;
 
+  const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+  if (!facility) return;
+  const template = behaviorTemplatesStore.findByTemplateId(facility.templateId);
+  if (!template) return;
+
+  if (template.compilationTarget === 'compiled') {
+    await compileIfWired(facilityId);
+  } else {
+    await syncDraftsForComposition();
+    const ops = await composeFacilityBowties(facilityId);
+    applyCompositionOps(ops);
+  }
+}
+
+/**
+ * Compile-before-compose path for `compiled` templates (Spec 020 / S1 — D1:A).
+ *
+ * 1. Determine the logic target node (from existing allocation or pending selection).
+ * 2. Call the compiler IPC to get a `CompiledLogicPlan`.
+ * 3. Record the allocation in `facilitiesStore`.
+ * 4. Stage the field writes as CDI draft edits via `configEditor`.
+ *
+ * The target node must be set before this function is called — if no
+ * target is known, the caller (route/component) must prompt the user.
+ */
+async function compileIfWired(facilityId: string): Promise<void> {
+  const targetNodeKey = facilitiesStore.getLogicTargetNodeKey(facilityId);
+  if (!targetNodeKey) {
+    // No target selected yet — the UI should prompt the user.
+    return;
+  }
+
   await syncDraftsForComposition();
-  const ops = await composeFacilityBowties(facilityId);
-  applyCompositionOps(ops);
+  const plan = await compileLogicForFacility(facilityId, targetNodeKey);
+
+  // Record the allocation in the facilities store.
+  facilitiesStore.setLogicAllocation(facilityId, plan.allocation);
+
+  // Stage each compiled field write as a CDI draft edit.
+  // The stub compiler produces label bytes; the real compiler (S2) will
+  // produce int values. For now we interpret the value as an int when it
+  // fits in 4 bytes, otherwise as a string.
+  for (const write of plan.fieldWrites) {
+    const value = write.value.length <= 4
+      ? { type: 'int' as const, value: write.value.reduce((acc, b) => (acc << 8) | b, 0) }
+      : { type: 'string' as const, value: String.fromCharCode(...write.value) };
+    configEditor.applyEdit(
+      editKeyForLeaf(targetNodeKey, write.space, write.address),
+      value,
+    );
+  }
 }
 
 /**

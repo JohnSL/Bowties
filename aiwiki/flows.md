@@ -163,3 +163,15 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **Frontend orchestrator:** `orchestration/eventStateOrchestrator.ts` — `startEventStateListening()` subscribes to backend events; `resolveChannelEventIds()` batch-resolves event IDs via IPC
 - **Frontend utility:** `utils/channelState.ts` — `deriveChannelState(events, occupiedId, clearId)` pure timestamp comparison
 - **Component:** `RailroadPanel.svelte` computes `channelStates` via `$derived.by()` + passes to `ChannelCard` as `occupancyState` prop
+
+## Facility Logic Compilation (Spec 020)
+- **Route:** `+page.svelte` — `LogicTargetSelector` dialog state, wires `onConfirm` through `facilityOrchestrator`
+- **Component:** `Facilities/LogicTargetSelector.svelte` — modal picker showing per-candidate-node capacity (conditional lines, Track Circuits); suggests default target by input channel proximity
+- **Orchestrator:** `facilityOrchestrator.ts` — `compileLogicIfNeeded(facilityId)`: for templates with `compilationTarget`, calls `compile_logic_for_facility` IPC after draft sync, stages CDI conditional-line drafts via `configEditor.applyEdit`, records logic allocation on the facility. Runs as a separate phase **before** `composeBowtiesIfWired` (compile-before-compose pattern, D1). Teardown clears by allocation record (independent of bowtie teardown).
+- **Store:** `facilities.svelte.ts` — `logicAllocation` + `logicTargetNodeKey` per-facility fields; `collectDeltas()` emits `AllocateLogic` / `FreeLogic` deltas alongside slot-binding diffs (D3 — no new dirty bucket / LayoutScopedParticipant)
+- **Util:** `channelStyles.ts` — `2-led-bicolor-aspect` style entry in `STYLE_EVENT_MAPPINGS`
+- **API:** `logicAdapter.ts` (`compileLogicForFacility`, `getLogicCapacity`)
+- **Backend command:** `commands/logic_adapter.rs` — thin IPC; reads through `LayoutState.effective_*`, delegates to `bowties_core::logic_adapter`
+- **Core domain:** `bowties-core/logic_adapter/mod.rs` — `compile_tower_lcc(...)` pure function. S1 stub; S2 real compiler. Capacity enforcement (`InsufficientCapacity`) is compiler-owned.
+- **Layout types:** `bowties-core/layout/types.rs` — `AllocateLogic` / `FreeLogic` `LayoutEditDelta` variants (camelCase serde)
+- **Steps:** 1. All slots wired (facilityStatus === 'Wired') → 2. User selects logic target node (LogicTargetSelector) → 3. Orchestrator syncs drafts + calls compile IPC → 4. Stages CDI field writes as drafts → 5. Records logic allocation on facility → 6. Proceeds to bowtie composition

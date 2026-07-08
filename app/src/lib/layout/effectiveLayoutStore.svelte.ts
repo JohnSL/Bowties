@@ -52,6 +52,7 @@ import type { ChannelRole, InformationChannel } from '$lib/api/channels';
 import { editKeyForLeaf } from '$lib/utils/editKey';
 import { isPlaceholderEventId } from '$lib/utils/eventIds';
 import { makeValueResolver } from '$lib/utils/displayResolution';
+import { getStyleRowCount } from '$lib/utils/channelStyles';
 import { resolveNodePartsFromSnip, type NodeDisplayParts } from '$lib/utils/nodeDisplayName';
 import { nodeIdToDisplayHex } from '$lib/utils/nodeId';
 
@@ -193,58 +194,55 @@ class EffectiveLayoutStore {
   }
 
   /**
-   * Unbound channels filtered by `role` (Spec 018 / S4 — D2: one-slot-
-   * per-channel invariant). A channel is "unbound" when it does not
-   * appear in any facility's slot bindings. The optional `excludeIds`
+   * Channels filtered by `role` that are available for slot binding.
+   * By default (Spec 018 / S4 — D2: one-slot-per-channel invariant), a
+   * channel already bound to any facility is excluded. When `shared` is
+   * true (Spec 020 — ABS input slots), all role-compatible channels are
+   * returned regardless of existing bindings. The optional `excludeIds`
    * set lets Rebind include the currently-bound channel as the pre-
    * selected option even though it is technically bound.
    */
   unboundChannelsForRole(
     role: ChannelRole,
-    opts?: { excludeIds?: ReadonlySet<string> },
+    opts?: { excludeIds?: ReadonlySet<string>; shared?: boolean },
   ): InformationChannel[] {
     const usage = this.channelUsageMap;
     const exclude = opts?.excludeIds;
+    const isShared = opts?.shared ?? false;
     return channelsStore.channels.filter((ch) => {
       if (ch.role !== role) return false;
+      if (isShared) return true;
       if (usage.has(ch.id)) return exclude?.has(ch.id) ?? false;
       return true;
     });
   }
 
   /**
-   * Spec 018 / S5 (D1) — eligible Direct Lamp Control rows for the
-   * given style id, grouped by node, across every node in the roster
-   * whose CDI tree declares a `Direct Lamp Control` segment.
+   * Spec 018 / S5 (D1), Spec 020 / S1 — eligible Direct Lamp Control
+   * rows for the given style id, grouped by node.
    *
-   * Today only `single-led-direct-lamp` resolves to non-empty groups.
-   * Rows already claimed by a `lampRow`-binding channel are excluded;
-   * `excludeChannelId` puts a row back into the picker when Rebind
-   * needs it as the pre-selected option (Rebind on output is itself
-   * deferred to S6; the opts shape is forward-compatible).
-   *
-   * Row labels reuse [`getInstanceDisplayName`] (the Config-tab helper):
-   * when the row's `Lamp Description` field has a non-empty value the
-   * label reads `"My Block 5 (7)"`, otherwise it falls back to
-   * `instanceLabel` (`"Lamp 7"`). Draft and offline-pending edits to the
-   * description flow through `makeValueResolver`, so a renamed-but-not-yet-
-   * saved lamp shows the new name immediately.
-   *
-   * D5 deferral: this slice does NOT apply the constraint-based
-   * filter (`Lamp Selection != "Used by Mast"`). When the future
-   * `compute_active_styles` driver lands, that filter slots in here.
+   * For single-row styles (`single-led-direct-lamp`), each unclaimed row
+   * is eligible. For multi-row styles (`2-led-bicolor-aspect`), only rows
+   * whose consecutive partner(s) are also unclaimed are eligible — the
+   * returned `rowOrdinal` is the first row of the group.
    */
   eligibleLampRowsForStyle(
     styleId: string,
     opts?: { excludeChannelId?: string },
   ): EligibleLampRowGroup[] {
-    if (styleId !== 'single-led-direct-lamp') return [];
+    const rowCount = getStyleRowCount(styleId);
+    if (rowCount === 0) return [];
 
     const claims = new Set<string>();
     for (const ch of channelsStore.channels) {
       if (ch.binding.kind !== 'lampRow') continue;
       if (opts?.excludeChannelId && ch.id === opts.excludeChannelId) continue;
       claims.add(`${ch.binding.nodeKey}|${ch.binding.rowOrdinal}`);
+      // For multi-row channels, also claim the consecutive rows.
+      const chRowCount = getStyleRowCount(ch.style);
+      for (let i = 1; i < chRowCount; i++) {
+        claims.add(`${ch.binding.nodeKey}|${ch.binding.rowOrdinal + i}`);
+      }
     }
 
     const groups: EligibleLampRowGroup[] = [];
@@ -256,17 +254,31 @@ class EffectiveLayoutStore {
       const nodeName = resolveNodeNameForKey(entry.nodeKey);
       const nodeParts = resolveNodePartsForKey(entry.nodeKey);
       const resolveValue = makeValueResolver(tree.nodeId);
+      const allInstances = replicationInstances(segment.children, 'Lamp');
+      const ordinalSet = new Set(allInstances.map((inst) => inst.instance));
       const rows: EligibleLampRow[] = [];
-      for (const instance of replicationInstances(segment.children, 'Lamp')) {
+      for (const instance of allInstances) {
         const ordinal = instance.instance;
-        if (claims.has(`${entry.nodeKey}|${ordinal}`)) continue;
+        // Check that this row and all consecutive partners are unclaimed and exist.
+        let eligible = true;
+        for (let i = 0; i < rowCount; i++) {
+          if (claims.has(`${entry.nodeKey}|${ordinal + i}`)) {
+            eligible = false;
+            break;
+          }
+          if (i > 0 && !ordinalSet.has(ordinal + i)) {
+            eligible = false;
+            break;
+          }
+        }
+        if (!eligible) continue;
         const rowLabel =
           instance.displayName ?? getInstanceDisplayName(instance, resolveValue);
         rows.push({
           nodeKey: entry.nodeKey,
           nodeName,
           rowOrdinal: ordinal,
-          rowLabel,
+          rowLabel: rowCount > 1 ? `${rowLabel} (+${rowCount - 1} row${rowCount > 2 ? 's' : ''})` : rowLabel,
         });
       }
       if (rows.length === 0) continue;

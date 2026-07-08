@@ -41,6 +41,10 @@ pub struct FacilitiesDocument {
     pub schema_version: String,
     #[serde(default)]
     pub facilities: Vec<Facility>,
+    /// Logic allocation records (Spec 020 / S1). Persisted per-facility
+    /// so that save + reopen preserves allocation state.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub logic_allocations: Vec<crate::logic_adapter::LogicAllocation>,
 }
 
 impl FacilitiesDocument {
@@ -51,6 +55,7 @@ impl FacilitiesDocument {
         Self {
             schema_version: Self::SCHEMA_VERSION.to_string(),
             facilities,
+            logic_allocations: Vec::new(),
         }
     }
 }
@@ -279,6 +284,22 @@ pub fn apply_facility_deltas(
                 let before = bindings.len();
                 bindings.retain(|id| id != channel_id);
                 if bindings.len() != before {
+                    touched = true;
+                }
+            }
+            LayoutEditDelta::AllocateLogic { allocation } => {
+                // Replace any existing allocation for the same facility,
+                // then insert the new one.
+                doc.logic_allocations
+                    .retain(|a| a.facility_id != allocation.facility_id);
+                doc.logic_allocations.push(allocation.clone());
+                touched = true;
+            }
+            LayoutEditDelta::FreeLogic { facility_id } => {
+                let before = doc.logic_allocations.len();
+                doc.logic_allocations
+                    .retain(|a| &a.facility_id != facility_id);
+                if doc.logic_allocations.len() != before {
                     touched = true;
                 }
             }

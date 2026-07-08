@@ -1475,6 +1475,7 @@
     facilityId: string;
     slotLabel: string;
     requiredRole: string;
+    shared: boolean;
   };
   let slotPicker = $state<SlotPickerState | null>(null);
 
@@ -1489,10 +1490,17 @@
     return template?.slots.find((s) => s.label === slotLabel)?.requiredRole;
   }
 
+  function pickerSlotShared(facilityId: string, slotLabel: string): boolean {
+    const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+    if (!facility) return false;
+    const template = behaviorTemplatesStore.findByTemplateId(facility.templateId);
+    return template?.slots.find((s) => s.label === slotLabel)?.shared ?? false;
+  }
+
   function handleSelectChannelIntent(facilityId: string, slotLabel: string) {
     const requiredRole = pickerSlotRequiredRole(facilityId, slotLabel);
     if (!requiredRole) return;
-    slotPicker = { facilityId, slotLabel, requiredRole };
+    slotPicker = { facilityId, slotLabel, requiredRole, shared: pickerSlotShared(facilityId, slotLabel) };
   }
   function handleRemoveFromSlot(facilityId: string, slotLabel: string, currentChannelId: string) {
     facilityOrchestrator
@@ -1533,6 +1541,7 @@
     if (!slotPicker) return [] as InformationChannel[];
     return effectiveLayoutStore.unboundChannelsForRole(
       slotPicker.requiredRole as ChannelRole,
+      { shared: slotPicker.shared },
     );
   });
 
@@ -1550,20 +1559,35 @@
     );
   }
 
-  // ── Spec 018 / S5 — Add-channel picker state ────────────────────────────
+  // ── Spec 018 / S5, Spec 020 / S1 — Add-channel picker state ──────────
   type AddChannelPickerState = {
     facilityId: string;
     slotLabel: string;
+    requiredRole: string;
+    requiredStyle: string;
   };
   let addChannelPicker = $state<AddChannelPickerState | null>(null);
 
   let addChannelCandidates = $derived.by(() => {
     if (!addChannelPicker) return [];
-    return effectiveLayoutStore.eligibleLampRowsForStyle('single-led-direct-lamp');
+    return effectiveLayoutStore.eligibleLampRowsForStyle(addChannelPicker.requiredStyle);
   });
 
+  function deriveAddChannelStyle(facilityId: string, slotLabel: string): { role: string; style: string } | undefined {
+    const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+    if (!facility) return undefined;
+    const template = behaviorTemplatesStore.findByTemplateId(facility.templateId);
+    const slot = template?.slots.find((s) => s.label === slotLabel);
+    if (!slot) return undefined;
+    const role = slot.requiredRole;
+    const style = role === 'signal-aspect' ? '2-led-bicolor-aspect' : 'single-led-direct-lamp';
+    return { role, style };
+  }
+
   function handleAddChannelIntent(facilityId: string, slotLabel: string) {
-    addChannelPicker = { facilityId, slotLabel };
+    const derived = deriveAddChannelStyle(facilityId, slotLabel);
+    if (!derived) return;
+    addChannelPicker = { facilityId, slotLabel, requiredRole: derived.role, requiredStyle: derived.style };
   }
 
   function closeAddChannelPicker() {
@@ -1916,12 +1940,12 @@
   />
 {/if}
 
-<!-- Spec 018 / S5: Add channel picker (consumer-side, lamp-indicator slots). -->
+<!-- Spec 018 / S5, Spec 020 / S1: Add channel picker (consumer-side slots). -->
 {#if addChannelPicker}
   <AddChannelPicker
     slotLabel={addChannelPicker.slotLabel}
-    requiredRole="lamp-indicator"
-    requiredStyle="single-led-direct-lamp"
+    requiredRole={addChannelPicker.requiredRole}
+    requiredStyle={addChannelPicker.requiredStyle}
     candidateGroups={addChannelCandidates}
     onConfirm={handleAddChannelConfirm}
     onCancel={closeAddChannelPicker}

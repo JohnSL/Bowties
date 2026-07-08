@@ -49,16 +49,10 @@
     onCancel,
   }: {
     slotLabel: string;
-    /**
-     * Role the slot requires. Always `'lamp-indicator'` in S5; carried for
-     * documentation + future filter hooks.
-     */
-    requiredRole: 'lamp-indicator';
-    /**
-     * Style that the new channel will adopt. Always `'single-led-direct-lamp'`
-     * in S5; carried for parity with `requiredRole`.
-     */
-    requiredStyle: 'single-led-direct-lamp';
+    /** Role the slot requires (e.g. `'lamp-indicator'`, `'signal-aspect'`). */
+    requiredRole: string;
+    /** Style that the new channel will adopt (e.g. `'single-led-direct-lamp'`, `'2-led-bicolor-aspect'`). */
+    requiredStyle: string;
     candidateGroups: CandidateGroup[];
     onConfirm: (lampRowNodeKey: string, rowOrdinal: number) => void;
     onCancel: () => void;
