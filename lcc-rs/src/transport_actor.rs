@@ -29,8 +29,10 @@ use crate::protocol::{GridConnectFrame, MTI};
 use crate::transport::{LccTransport, TransportReader, TransportWriter};
 use crate::{Error, Result};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
+use std::time::Duration;
+use tokio::sync::{broadcast, mpsc, oneshot, watch, RwLock};
 use tokio::task::JoinHandle;
 
 /// Channel capacity for the broadcast (inbound) channel.
@@ -38,6 +40,37 @@ const BROADCAST_CAPACITY: usize = 2048;
 
 /// Channel capacity for the outbound mpsc channel.
 const OUTBOUND_CAPACITY: usize = 64;
+
+/// Per-frame send timeout for serial (SPROG USB-LCC and similar TTY-backed)
+/// transports. Exceeding this publishes `TransportHealth::Wedged` on the
+/// health watch and drops the current frame instead of blocking the writer
+/// loop indefinitely.
+pub const SERIAL_SEND_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// Per-frame send timeout for TCP transports. TCP path is more forgiving than
+/// serial (kernel-level buffering, socket-level retry), so the wedge threshold
+/// is 4× higher than serial.
+pub const TCP_SEND_TIMEOUT: Duration = Duration::from_millis(2000);
+
+/// Health of the outbound transport writer, published on a `watch` channel by
+/// the writer task. `PeerSession` (S2+) and the UI connection-status surface
+/// subscribe; `TransportHandle::send()` short-circuits when the observed
+/// state is `Wedged`.
+///
+/// `Degraded` is reserved for future high-latency-but-not-wedged conditions
+/// and is not emitted in the S1 implementation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransportHealth {
+    /// Recent sends completed within their per-transport timeout.
+    Healthy,
+    /// Reserved for future: high-latency-but-not-wedged conditions.
+    /// Not currently emitted.
+    Degraded { reason: String },
+    /// A recent send exceeded the transport's `send_timeout()`. The writer
+    /// dropped that frame and continues draining; the underlying transport
+    /// may or may not recover.
+    Wedged { reason: String },
+}
 
 /// A message received from (or sent to) the LCC network with metadata.
 #[derive(Debug, Clone)]
@@ -64,14 +97,29 @@ pub struct TransportHandle {
     /// When `Some`, `send_direct` writes inline without going through the mpsc
     /// queue, eliminating the writer-task-wakeup latency (~13 ms on Windows).
     direct_writer: Option<Arc<tokio::sync::Mutex<Box<dyn TransportWriter>>>>,
+    /// Observability counter incremented on every `send_direct` call.
+    /// Used by tests and diagnostics to confirm the direct-write path is
+    /// actually being taken by latency-sensitive code (e.g. CDI download).
+    direct_write_count: Arc<AtomicUsize>,
+    /// Transport-health watch sender. `None` when constructed via `from_parts`
+    /// (legacy bridge path — the bridge does not publish health).
+    /// Cloning the handle shares the sender; publishing goes through the
+    /// writer task, subscription via `subscribe_health()`.
+    health_tx: Option<watch::Sender<TransportHealth>>,
 }
 
 impl TransportHandle {
     /// Send a frame to the LCC network.
     ///
     /// Returns immediately once the frame is queued; the actor task performs
-    /// the actual I/O.
+    /// the actual I/O. Short-circuits with `Error::TransportUnhealthy` when
+    /// the observed transport health is `Wedged` — no frame is enqueued.
     pub async fn send(&self, frame: &GridConnectFrame) -> Result<()> {
+        if let Some(ref health_tx) = self.health_tx {
+            if let TransportHealth::Wedged { ref reason } = *health_tx.borrow() {
+                return Err(Error::TransportUnhealthy(reason.clone()));
+            }
+        }
         self.tx.send(frame.clone()).await.map_err(|_| {
             Error::Transport("Transport actor shut down".to_string())
         })
@@ -101,11 +149,16 @@ impl TransportHandle {
     /// `TransportActor::new`), this locks the writer mutex and writes inline,
     /// eliminating the writer-task-wakeup latency of the mpsc path.  Falls
     /// back to the mpsc path when no direct writer is present.
+    ///
+    /// The inline send participates in the transport-health seam via the
+    /// shared `send_frame_with_timeout` helper: a stall here publishes
+    /// `TransportHealth::Wedged` and returns `Error::TransportUnhealthy`.
     pub async fn send_direct(&self, frame: &GridConnectFrame) -> Result<()> {
+        self.direct_write_count.fetch_add(1, Ordering::Relaxed);
         if let Some(ref writer_lock) = self.direct_writer {
             {
                 let mut writer = writer_lock.lock().await;
-                writer.send(frame).await?;
+                send_frame_with_timeout(&mut **writer, frame, self.health_tx.as_ref()).await?;
             }
             // Echo to the broadcast channel so the traffic monitor sees it.
             let _ = self.all_tx.send(ReceivedMessage {
@@ -129,7 +182,26 @@ impl TransportHandle {
             all_tx,
             mti_senders,
             direct_writer: None,
+            direct_write_count: Arc::new(AtomicUsize::new(0)),
+            health_tx: None,
         }
+    }
+
+    /// Number of times `send_direct` has been invoked on this handle (or any
+    /// clone). Backed by an `Arc<AtomicUsize>`, so clones share the counter.
+    pub fn direct_write_count(&self) -> usize {
+        self.direct_write_count.load(Ordering::Relaxed)
+    }
+
+    /// Subscribe to transport-health transitions. Returns a `watch::Receiver`
+    /// whose current value is the latest published `TransportHealth`. Callers
+    /// typically use `rx.borrow()` to read the current state and
+    /// `rx.changed().await` to await the next transition.
+    ///
+    /// Returns `None` for handles constructed via `from_parts` (the legacy
+    /// bridge path does not publish health).
+    pub fn subscribe_health(&self) -> Option<watch::Receiver<TransportHealth>> {
+        self.health_tx.as_ref().map(|tx| tx.subscribe())
     }
 
     /// Clone of the broadcast sender (for bridging to legacy `MessageDispatcher`).
@@ -173,11 +245,15 @@ impl TransportActor {
         let (reader, writer) = transport.into_halves();
         let direct_writer = Arc::new(tokio::sync::Mutex::new(writer));
 
+        let (health_tx, _health_rx) = watch::channel(TransportHealth::Healthy);
+
         let handle = TransportHandle {
             tx: outbound_tx,
             all_tx: all_tx.clone(),
             mti_senders: mti_senders.clone(),
             direct_writer: Some(direct_writer.clone()),
+            direct_write_count: Arc::new(AtomicUsize::new(0)),
+            health_tx: Some(health_tx.clone()),
         };
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -196,7 +272,12 @@ impl TransportActor {
         };
 
         let writer_handle = {
-            tokio::spawn(Self::writer_loop(direct_writer, outbound_rx, all_tx.clone()))
+            tokio::spawn(Self::writer_loop(
+                direct_writer,
+                outbound_rx,
+                all_tx.clone(),
+                health_tx,
+            ))
         };
 
         Self {
@@ -285,24 +366,40 @@ impl TransportActor {
     /// Also broadcasts sent frames to the all_tx channel so subscribers see both directions.
     /// The writer is behind an `Arc<Mutex>` so `send_direct` callers can also write
     /// inline without going through this loop.
+    ///
+    /// Every send is wrapped in the writer's per-transport `send_timeout()`
+    /// via `send_frame_with_timeout`; a timeout publishes `TransportHealth::Wedged`
+    /// on the shared watch channel and continues draining rather than blocking
+    /// on the failed frame.
     async fn writer_loop(
         writer: Arc<tokio::sync::Mutex<Box<dyn TransportWriter>>>,
         mut rx: mpsc::Receiver<GridConnectFrame>,
         all_tx: broadcast::Sender<ReceivedMessage>,
+        health_tx: watch::Sender<TransportHealth>,
     ) {
         while let Some(frame) = rx.recv().await {
-            {
+            let send_result = {
                 let mut w = writer.lock().await;
-                if let Err(e) = w.send(&frame).await {
+                send_frame_with_timeout(&mut **w, &frame, Some(&health_tx)).await
+            };
+            match send_result {
+                Ok(()) => {
+                    // Echo sent frames to the broadcast channel so the traffic monitor sees them.
+                    let _ = all_tx.send(ReceivedMessage {
+                        frame,
+                        timestamp: std::time::Instant::now(),
+                    });
+                }
+                Err(Error::TransportUnhealthy(_)) => {
+                    // Wedged: current frame was dropped; the health seam has been
+                    // updated. Continue draining — the underlying transport may
+                    // recover on a subsequent frame.
+                }
+                Err(e) => {
                     eprintln!("TransportActor writer: send error: {}", e);
                     break;
                 }
             }
-            // Echo sent frames to the broadcast channel so the traffic monitor sees them.
-            let _ = all_tx.send(ReceivedMessage {
-                frame,
-                timestamp: std::time::Instant::now(),
-            });
         }
     }
 
@@ -337,6 +434,60 @@ impl Drop for TransportActor {
     fn drop(&mut self) {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
+        }
+    }
+}
+
+/// Send a frame through the given writer bounded by the writer's own
+/// `send_timeout()`. Publishes `TransportHealth::Wedged` on timeout and
+/// `TransportHealth::Healthy` after a subsequent success (dedup handled by
+/// the `watch` channel's `send_if_modified` semantics).
+///
+/// Shared by `writer_loop` (mpsc drain) and `TransportHandle::send_direct`
+/// (D2 — every writer-holding path participates in the health seam). This
+/// helper survives the retirement of `send_direct` in S5.
+///
+/// On timeout, returns `Error::TransportUnhealthy(reason)` so the caller can
+/// distinguish a wedge from a "hard" transport error. The current frame is
+/// dropped; the caller decides whether to keep draining.
+async fn send_frame_with_timeout(
+    writer: &mut dyn TransportWriter,
+    frame: &GridConnectFrame,
+    health_tx: Option<&watch::Sender<TransportHealth>>,
+) -> Result<()> {
+    let timeout_dur = writer.send_timeout();
+    match tokio::time::timeout(timeout_dur, writer.send(frame)).await {
+        Ok(Ok(())) => {
+            if let Some(tx) = health_tx {
+                tx.send_if_modified(|state| {
+                    if matches!(state, TransportHealth::Healthy) {
+                        false
+                    } else {
+                        *state = TransportHealth::Healthy;
+                        true
+                    }
+                });
+            }
+            Ok(())
+        }
+        Ok(Err(e)) => Err(e),
+        Err(_elapsed) => {
+            let reason = format!(
+                "send timeout after {}ms: {}",
+                timeout_dur.as_millis(),
+                frame.to_string()
+            );
+            if let Some(tx) = health_tx {
+                let new_reason = reason.clone();
+                tx.send_if_modified(|state| match state {
+                    TransportHealth::Wedged { reason: existing } if existing == &new_reason => false,
+                    _ => {
+                        *state = TransportHealth::Wedged { reason: new_reason };
+                        true
+                    }
+                });
+            }
+            Err(Error::TransportUnhealthy(reason))
         }
     }
 }
@@ -458,6 +609,181 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
 
         assert_eq!(actor.lookup_alias(0x456).await, None);
+
+        actor.shutdown().await;
+    }
+
+    // ---------- Transport health seam (S1) ----------
+
+    /// Slack over SEND_TIMEOUT before we call the wedge test failed.
+    const WEDGE_SLACK: tokio::time::Duration = tokio::time::Duration::from_millis(300);
+
+    #[tokio::test]
+    async fn writer_bounded_send_emits_wedged_on_stall() {
+        // Behavior: a writer that never returns from send() must cause the
+        // writer task to publish TransportHealth::Wedged on the watch channel
+        // within SERIAL_SEND_TIMEOUT + slack, without deadlocking other
+        // subscribers (subscribe_all still works).
+        let transport = MockTransport::new();
+        let stall = transport.stall_handle();
+        stall.store(true, Ordering::Relaxed);
+
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
+
+        let mut health_rx = handle.subscribe_health().expect("health seam wired");
+        assert_eq!(*health_rx.borrow(), TransportHealth::Healthy);
+
+        // Second subscriber to prove no deadlock on the seam.
+        let _health_rx2 = handle.subscribe_health().expect("health seam wired");
+        let _all_rx = handle.subscribe_all();
+
+        let frame =
+            GridConnectFrame::from_mti(MTI::VerifyNodeGlobal, 0xAAA, vec![]).unwrap();
+        handle.send(&frame).await.expect("send() must enqueue");
+
+        let deadline = SERIAL_SEND_TIMEOUT + WEDGE_SLACK;
+        tokio::time::timeout(deadline, health_rx.changed())
+            .await
+            .expect("no health transition within timeout+slack")
+            .expect("health watch closed unexpectedly");
+
+        match &*health_rx.borrow_and_update() {
+            TransportHealth::Wedged { reason } => {
+                assert!(
+                    reason.contains("timeout"),
+                    "expected timeout reason, got {reason}"
+                );
+            }
+            other => panic!("expected Wedged, got {:?}", other),
+        }
+
+        actor.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn writer_returns_to_healthy_after_stall_clears() {
+        // Behavior: after a stall publishes Wedged, clearing the stall and
+        // pushing another frame must publish Healthy exactly once
+        // (send_if_modified dedups repeats).
+        let transport = MockTransport::new();
+        let stall = transport.stall_handle();
+        stall.store(true, Ordering::Relaxed);
+
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
+        let mut health_rx = handle.subscribe_health().expect("health seam wired");
+
+        let frame =
+            GridConnectFrame::from_mti(MTI::VerifyNodeGlobal, 0xAAA, vec![]).unwrap();
+        handle.send(&frame).await.expect("send() must enqueue");
+
+        // Wait for Wedged.
+        tokio::time::timeout(SERIAL_SEND_TIMEOUT + WEDGE_SLACK, health_rx.changed())
+            .await
+            .expect("no Wedged transition")
+            .unwrap();
+        assert!(matches!(
+            *health_rx.borrow_and_update(),
+            TransportHealth::Wedged { .. }
+        ));
+
+        // Clear the stall — the next drained frame should succeed and heal.
+        stall.store(false, Ordering::Relaxed);
+        // send() short-circuits while Wedged, so use the mpsc path via a
+        // fresh handle clone that reads its own health borrow — first heal
+        // requires the writer task to drain another frame. Enqueue via the
+        // low-level channel by cloning the sender's underlying tx: since
+        // TransportHandle::send() short-circuits on Wedged, drive the writer
+        // by sending via the raw mpsc sender captured before we started.
+        // Instead: bypass the short-circuit by directly pushing to the mpsc
+        // through a second, health-less handle constructed from parts.
+        // Simpler path: wait for the writer_loop to naturally re-poll — but
+        // there's no queued frame. Push through the direct writer via
+        // send_direct, which uses the shared helper and will now succeed.
+        handle
+            .send_direct(&frame)
+            .await
+            .expect("send_direct must succeed once stall cleared");
+
+        tokio::time::timeout(WEDGE_SLACK, health_rx.changed())
+            .await
+            .expect("no Healthy transition after stall cleared")
+            .unwrap();
+        assert_eq!(*health_rx.borrow_and_update(), TransportHealth::Healthy);
+
+        actor.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn send_short_circuits_with_transport_unhealthy_when_wedged() {
+        // Behavior: once health is Wedged, TransportHandle::send() must
+        // return Err(Error::TransportUnhealthy(_)) without enqueuing.
+        let transport = MockTransport::new();
+        let stall = transport.stall_handle();
+        stall.store(true, Ordering::Relaxed);
+
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
+        let mut health_rx = handle.subscribe_health().expect("health seam wired");
+
+        let frame =
+            GridConnectFrame::from_mti(MTI::VerifyNodeGlobal, 0xAAA, vec![]).unwrap();
+        handle.send(&frame).await.expect("first send() enqueues");
+
+        // Wait for Wedged.
+        tokio::time::timeout(SERIAL_SEND_TIMEOUT + WEDGE_SLACK, health_rx.changed())
+            .await
+            .expect("no Wedged transition")
+            .unwrap();
+
+        // Subsequent send() must fail fast without waiting on mpsc capacity.
+        let start = tokio::time::Instant::now();
+        let result = handle.send(&frame).await;
+        let elapsed = start.elapsed();
+        match result {
+            Err(Error::TransportUnhealthy(reason)) => {
+                assert!(reason.contains("timeout"));
+            }
+            other => panic!("expected TransportUnhealthy, got {:?}", other),
+        }
+        assert!(
+            elapsed < tokio::time::Duration::from_millis(50),
+            "send() did not fail fast: took {:?}",
+            elapsed
+        );
+
+        actor.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn send_direct_wedges_and_returns_transport_unhealthy_on_stall() {
+        // Behavior (D2): send_direct participates in the transport-health
+        // seam via the shared send_frame_with_timeout helper. A stall on the
+        // inline direct path must publish Wedged and return TransportUnhealthy.
+        let transport = MockTransport::new();
+        let stall = transport.stall_handle();
+        stall.store(true, Ordering::Relaxed);
+
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
+        let mut health_rx = handle.subscribe_health().expect("health seam wired");
+
+        let frame =
+            GridConnectFrame::from_mti(MTI::VerifyNodeGlobal, 0xAAA, vec![]).unwrap();
+
+        let result = handle.send_direct(&frame).await;
+        match result {
+            Err(Error::TransportUnhealthy(reason)) => {
+                assert!(reason.contains("timeout"));
+            }
+            other => panic!("expected TransportUnhealthy from send_direct, got {:?}", other),
+        }
+
+        assert!(matches!(
+            *health_rx.borrow_and_update(),
+            TransportHealth::Wedged { .. }
+        ));
 
         actor.shutdown().await;
     }

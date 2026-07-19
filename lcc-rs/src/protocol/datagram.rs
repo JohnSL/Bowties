@@ -148,9 +148,13 @@ impl DatagramAssembler {
         let header = MTI::DatagramReceivedOk.to_header(source_alias)?;
         
         // Include destination alias in the payload (2 bytes, big-endian)
+        // followed by a flags byte (0x00 = no flags). JMRI always sends the
+        // flags byte; omitting it is technically valid per S-9.7.3.2 but some
+        // nodes may expect it.
         let data = vec![
             ((dest_alias >> 8) & 0xFF) as u8,
             (dest_alias & 0xFF) as u8,
+            0x00, // flags: no reply pending, no timeout extension
         ];
         
         let frame = GridConnectFrame {
@@ -296,10 +300,11 @@ mod tests {
         assert_eq!(mti, MTI::DatagramReceivedOk);
         assert_eq!(source, 0x123);
         
-        // Destination should be in the data payload (2 bytes)
-        assert_eq!(ack_frame.data.len(), 2);
+        // Destination should be in the data payload (2 bytes + flags byte)
+        assert_eq!(ack_frame.data.len(), 3);
         let dest = ((ack_frame.data[0] as u16) << 8) | (ack_frame.data[1] as u16);
         assert_eq!(dest, 0x456);
+        assert_eq!(ack_frame.data[2], 0x00); // flags: no reply pending, no timeout
     }
     
     #[test]

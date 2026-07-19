@@ -47,6 +47,12 @@ pub trait TransportWriter: Send {
     async fn send(&mut self, frame: &GridConnectFrame) -> Result<()>;
     /// Close the transport.
     async fn close(&mut self) -> Result<()>;
+    /// Per-transport-kind timeout the writer task applies to each `send()`.
+    /// Wedge detection publishes `TransportHealth::Wedged` if this elapses.
+    /// Default matches `transport_actor::SERIAL_SEND_TIMEOUT` (500ms).
+    fn send_timeout(&self) -> Duration {
+        crate::transport_actor::SERIAL_SEND_TIMEOUT
+    }
 }
 
 /// TCP transport implementation
@@ -285,6 +291,10 @@ impl TransportWriter for TcpTransportWriter {
     async fn close(&mut self) -> Result<()> {
         self.stream.shutdown().await?;
         Ok(())
+    }
+
+    fn send_timeout(&self) -> Duration {
+        crate::transport_actor::TCP_SEND_TIMEOUT
     }
 }
 

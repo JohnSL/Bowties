@@ -17,6 +17,13 @@
   with configurable `post_ack_delay_ms` defaulting to 10ms), increasing the read timeout
   from 2000ms → 3000ms, and capping resend retries at 3. Tunable via `tuning.toml` in the
   app data directory.
+  * **2026-07-18 root-cause correction (spec 019 S10):** the SPROG USB-LCC **v1.4** CDI
+    failure that later reopened this area was NOT a pacing problem — post-ACK pacing was only
+    a symptom mask. The true root cause was a serial `\r\n` framing bug (Bowties appended
+    CR/LF after every `;`-terminated GridConnect frame; JMRI sends none, and SPROG v1.4's FTDI
+    buffer handling can't tolerate the extra bytes under CDI load). Fixed in `gridconnect_serial.rs`;
+    `post_ack_delay_ms` now defaults to 0 (S8) and pacing is retained only as a `tuning.toml`
+    escape hatch. See `temp/SESSION-HANDOFF-2026-07-18.md` and ADR-0018 §2026-07-18 extension.
 * MERG CAN ID configuration: JMRI exposes a CAN ID option (100–127, default 126) for MERG
   adapters as an advanced setting. Bowties doesn't expose this yet. Low priority — default 126
   works unless there's a conflict with another host on the same CAN bus.

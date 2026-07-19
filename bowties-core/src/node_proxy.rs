@@ -11,6 +11,7 @@ use lcc_rs::{
     CdiData, ConnectionStatus, DiscoveredNode, NodeAlias, NodeID, PIPStatus, ProtocolFlags,
     SNIPData, SNIPStatus, TransportHandle,
 };
+use lcc_rs::peer_session_registry::PeerSessionRegistry;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 
@@ -89,6 +90,13 @@ pub struct LiveNodeProxy {
     transport_handle: TransportHandle,
     our_alias: u16,
 
+    // Optional peer-session registry (S2 introduction, ADR-0016 D2).
+    // When `Some`, protocol calls fetch a `PeerSessionHandle` per call and
+    // delegate; the proxy retains no cached handle. When `None` (tests, or
+    // pre-S2 code paths before the registry is wired), the proxy falls back
+    // to its in-actor coalescing + free-function shim.
+    sessions: Option<Arc<PeerSessionRegistry>>,
+
     // Cached protocol state (was in AppState.nodes / DiscoveredNode)
     snip: Option<SNIPData>,
     snip_status: SNIPStatus,
@@ -107,12 +115,30 @@ pub struct LiveNodeProxy {
 }
 
 impl LiveNodeProxy {
-    /// Spawn the actor, returning a handle for communication.
+    /// Spawn the actor without a peer-session registry (fallback in-actor
+    /// coalescing path). Preserved so existing test code and pre-S2 wiring
+    /// continues to work.
     pub fn spawn(
         node_id: NodeID,
         alias: u16,
         transport_handle: TransportHandle,
         our_alias: u16,
+    ) -> LiveNodeProxyHandle {
+        Self::spawn_with_sessions(node_id, alias, transport_handle, our_alias, None)
+    }
+
+    /// Spawn the actor with the peer-session registry supplied (S2+ path).
+    ///
+    /// When `sessions` is `Some`, `query_snip`/`query_pip` fetch a
+    /// `PeerSessionHandle` from the registry per call (ADR-0016 D2). No
+    /// cached handle is held on the proxy — the registry is the sole source
+    /// of truth.
+    pub fn spawn_with_sessions(
+        node_id: NodeID,
+        alias: u16,
+        transport_handle: TransportHandle,
+        our_alias: u16,
+        sessions: Option<Arc<PeerSessionRegistry>>,
     ) -> LiveNodeProxyHandle {
         let (tx, rx) = mpsc::channel(64);
         let mailbox_tx = tx.clone();
@@ -122,6 +148,7 @@ impl LiveNodeProxy {
             alias,
             transport_handle,
             our_alias,
+            sessions,
             snip: None,
             snip_status: SNIPStatus::Unknown,
             pip_flags: None,
@@ -285,13 +312,41 @@ impl LiveNodeProxy {
             return;
         }
 
-        // First request — spawn the network query
+        // First request — spawn the network query.
         self.snip_waiters = Some(vec![reply]);
-        let handle = self.transport_handle.clone();
-        let our_alias = self.our_alias;
         let dest_alias = self.alias;
         let tx = mailbox_tx.clone();
 
+        // Session path (ADR-0016 D2): fetch handle from registry per call.
+        // If no session yet (registry hasn't observed the peer's identity
+        // frame), fall back to the free-function shim.
+        if let Some(sessions) = self.sessions.clone() {
+            let node_id = self.node_id;
+            let handle = self.transport_handle.clone();
+            let our_alias = self.our_alias;
+            tokio::spawn(async move {
+                let result = if let Some(session) = sessions.get(node_id).await {
+                    match session.query_snip().await {
+                        Ok(data) => {
+                            let status = if data.is_some() { SNIPStatus::Complete } else { SNIPStatus::Timeout };
+                            Ok((data, status))
+                        }
+                        Err(e) => Err(e.to_string()),
+                    }
+                } else {
+                    let semaphore = Arc::new(Semaphore::new(1));
+                    lcc_rs::query_snip(&handle, our_alias, dest_alias, semaphore)
+                        .await
+                        .map_err(|e| e.to_string())
+                };
+                let _ = tx.send(ProxyMessage::SnipQueryDone { result }).await;
+            });
+            return;
+        }
+
+        // Fallback path (no registry configured): use the free-function shim.
+        let handle = self.transport_handle.clone();
+        let our_alias = self.our_alias;
         tokio::spawn(async move {
             let semaphore = Arc::new(Semaphore::new(1));
             let result = lcc_rs::query_snip(&handle, our_alias, dest_alias, semaphore)
@@ -319,13 +374,36 @@ impl LiveNodeProxy {
             return;
         }
 
-        // First request — spawn the network query
         self.pip_waiters = Some(vec![reply]);
-        let handle = self.transport_handle.clone();
-        let our_alias = self.our_alias;
         let dest_alias = self.alias;
         let tx = mailbox_tx.clone();
 
+        if let Some(sessions) = self.sessions.clone() {
+            let node_id = self.node_id;
+            let handle = self.transport_handle.clone();
+            let our_alias = self.our_alias;
+            tokio::spawn(async move {
+                let result = if let Some(session) = sessions.get(node_id).await {
+                    match session.query_pip().await {
+                        Ok(flags) => {
+                            let status = if flags.is_some() { PIPStatus::Complete } else { PIPStatus::Timeout };
+                            Ok((flags, status))
+                        }
+                        Err(e) => Err(e.to_string()),
+                    }
+                } else {
+                    let semaphore = Arc::new(Semaphore::new(1));
+                    lcc_rs::pip::query_pip(&handle, our_alias, dest_alias, semaphore)
+                        .await
+                        .map_err(|e| e.to_string())
+                };
+                let _ = tx.send(ProxyMessage::PipQueryDone { result }).await;
+            });
+            return;
+        }
+
+        let handle = self.transport_handle.clone();
+        let our_alias = self.our_alias;
         tokio::spawn(async move {
             let semaphore = Arc::new(Semaphore::new(1));
             let result = lcc_rs::pip::query_pip(&handle, our_alias, dest_alias, semaphore)

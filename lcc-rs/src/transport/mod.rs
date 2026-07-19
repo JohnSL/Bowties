@@ -4,7 +4,10 @@ pub mod tcp;
 pub mod gridconnect_serial;
 pub mod slcan_serial;
 
-#[cfg(test)]
+// `mock` is publicly available so integration tests in `lcc-rs/tests/**`
+// (and downstream crates in future test binaries) can construct
+// `MockTransport` and `MockTransportWriter`. Production code does not depend
+// on it; the module has no runtime cost when unused.
 pub mod mock;
 
 pub use tcp::{LccTransport, TcpTransport, TransportReader, TransportWriter};

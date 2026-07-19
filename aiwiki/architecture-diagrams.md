@@ -38,7 +38,8 @@ graph TB
     end
 
     subgraph Protocol ["lcc-rs (Protocol Library)"]
-        Discovery["Discovery<br/><small>LccConnection, alias allocation,<br/>BatchReader</small>"]
+        Discovery["Discovery<br/><small>LccConnection, alias allocation</small>"]
+        PeerSession["PeerSession / Registry<br/><small>Per-peer actor: SNIP/PIP/CDI,<br/>memory r/w, single ACK owner</small>"]
         ProtocolLayer["Protocol<br/><small>Frame, MTI, Datagram,<br/>MemoryConfig</small>"]
         CDI["CDI<br/><small>Parser, hierarchy walker,<br/>role classification</small>"]
         Transport["Transport<br/><small>TCP, GridConnect Serial,<br/>SLCAN Serial</small>"]
@@ -133,10 +134,9 @@ Deep modules hide significant complexity behind a narrow public API. These are t
 
 - TCP/Serial connect + alias allocation
 - Node discovery protocol
-- SNIP/PIP batch queries
-- Memory config read/write
 - Transport actor lifecycle
-- **API:** `connect()`, `discover_nodes()`, `read_memory()`, `BatchReader`
+- **API:** `connect()`, `discover_nodes()`
+- SNIP/PIP queries, CDI download, and memory config read/write are owned per-peer by `PeerSession` (see ADR-0016 / ADR-0018), not by a shared `BatchReader`
 
 ### `DatagramAssembler` — lcc-rs
 

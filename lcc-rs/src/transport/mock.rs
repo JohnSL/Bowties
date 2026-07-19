@@ -5,6 +5,7 @@ use crate::transport::{LccTransport, TransportReader, TransportWriter};
 use crate::Error;
 use async_trait::async_trait;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Mock transport for testing
@@ -12,6 +13,9 @@ use std::sync::{Arc, Mutex};
 pub struct MockTransport {
     receive_queue: Arc<Mutex<VecDeque<String>>>,
     sent_frames: Arc<Mutex<Vec<String>>>,
+    /// When set to `true`, all `send()` calls on the writer half stall forever
+    /// (used by transport-health wedge tests). Cloned into the writer on split.
+    stall: Arc<AtomicBool>,
 }
 
 impl MockTransport {
@@ -20,6 +24,7 @@ impl MockTransport {
         Self {
             receive_queue: Arc::new(Mutex::new(VecDeque::new())),
             sent_frames: Arc::new(Mutex::new(Vec::new())),
+            stall: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -31,6 +36,13 @@ impl MockTransport {
     /// Get all sent frames
     pub fn get_sent_frames(&self) -> Vec<String> {
         self.sent_frames.lock().unwrap().clone()
+    }
+
+    /// Handle to the shared stall flag. Toggling to `true` makes every
+    /// subsequent `TransportWriter::send()` call await forever until reset
+    /// to `false`. Used by wedge / recovery tests.
+    pub fn stall_handle(&self) -> Arc<AtomicBool> {
+        self.stall.clone()
     }
 }
 
@@ -79,6 +91,7 @@ impl LccTransport for MockTransport {
             }),
             Box::new(MockTransportWriter {
                 sent_frames: self.sent_frames.clone(),
+                stall: self.stall.clone(),
             }),
         )
     }
@@ -107,11 +120,15 @@ impl TransportReader for MockTransportReader {
 /// Write half of a split mock transport.
 pub struct MockTransportWriter {
     sent_frames: Arc<Mutex<Vec<String>>>,
+    stall: Arc<AtomicBool>,
 }
 
 #[async_trait]
 impl TransportWriter for MockTransportWriter {
     async fn send(&mut self, frame: &GridConnectFrame) -> Result<(), Error> {
+        if self.stall.load(Ordering::Relaxed) {
+            std::future::pending::<()>().await;
+        }
         self.sent_frames.lock().unwrap().push(frame.to_string());
         Ok(())
     }

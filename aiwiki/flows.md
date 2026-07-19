@@ -31,8 +31,8 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **Component:** `CdiDownloadDialog.svelte`
 - **Orchestrator:** `cdiDialogOrchestrator.ts`
 - **API:** `cdi.ts`
-- **Backend:** `commands/cdi.rs` (`download_cdi`, `get_cdi_xml`, `cancel_cdi_download`)
-- **lcc-rs:** `protocol/memory_config.rs`, `cdi/parser.rs`
+- **Backend:** `commands/cdi.rs` (`download_cdi`, `get_cdi_xml`, `cancel_cdi_download`) — thin intent translator. Resolves a `PeerSessionHandle` via `state.sessions` (fetch-per-call) and dispatches `PeerCommand::DownloadCdi`; per-peer FIFO serialisation is structural inside the actor (`PeerSession::cdi_pending`). `cancel_cdi_download` snapshots every session via `PeerSessionRegistry::snapshot_handles()` and dispatches `PeerCommand::Cancel` to each (global-cancel semantic preserved). **S3 (2026-07-08, ADR-0018):** retired `bowties_core::cdi_inflight::CdiInflightRegistry` and `AppState::cdi_download_cancel`.
+- **lcc-rs:** `peer_session.rs::ActiveExchange::CdiDownload` (multi-chunk state machine, DR-with-resend-OK retry, OIR-terminal decode, per-chunk timeout with one `TerminateDueToError` emission per exchange), `protocol/memory_config.rs`, `protocol/datagram.rs`, `cdi/parser.rs`. `discovery.rs::read_cdi_cancellable_with_stats` is `#[deprecated]` — remains as a shim for external `LccConnection` consumers, retired in S5.
 
 ## Config Read Session
 - **Route:** `+page.svelte` (progress modal lifecycle)
