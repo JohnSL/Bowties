@@ -6,6 +6,7 @@
   import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
   import {
     deriveChannelState,
+    deriveSignalAspectState,
     channelStateLabel,
     roleForChannelState,
     type ChannelState,
@@ -100,9 +101,14 @@
     }
     const ids = resolvedEventIds?.get(id);
     const role = roleForChannelState(channel.role);
-    const positiveId = role === 'lamp-indicator' ? ids?.['lit'] : ids?.['occupied'];
-    const negativeId = role === 'lamp-indicator' ? ids?.['unlit'] : ids?.['clear'];
-    const state = deriveChannelState(eventStateStore.events, positiveId, negativeId, role);
+    let state: ChannelState;
+    if (role === 'signal-aspect') {
+      state = deriveSignalAspectState(eventStateStore.events, ids?.['redOn'], ids?.['redOff'], ids?.['greenOn'], ids?.['greenOff']);
+    } else {
+      const positiveId = role === 'lamp-indicator' ? ids?.['lit'] : ids?.['occupied'];
+      const negativeId = role === 'lamp-indicator' ? ids?.['unlit'] : ids?.['clear'];
+      state = deriveChannelState(eventStateStore.events, positiveId, negativeId, role);
+    }
     const groupLabel = channel.binding.kind === 'connectorInput'
       ? formatConnectorLabel(channel.binding.connector)
       : 'Direct Lamp Control';

@@ -119,6 +119,10 @@
         class:unlit={stateClass === 'unlit'}
         class:unknown={stateClass === 'unknown'}
         class:no-config={stateClass === 'no-config'}
+        class:signal-stop={stateClass === 'signal-stop'}
+        class:signal-approach={stateClass === 'signal-approach'}
+        class:signal-clear={stateClass === 'signal-clear'}
+        class:signal-dark={stateClass === 'signal-dark'}
         title={ch.stateLabel}
         aria-hidden="true"
       ></span>
@@ -259,6 +263,18 @@
     box-shadow: 0 0 4px rgba(230, 194, 0, 0.6);
   }
   .state-dot.unlit { background: #555; border-color: #555; }
+  .state-dot.signal-stop { background: #d55e00; border-color: #d55e00; }
+  .state-dot.signal-approach {
+    background: #e6c200;
+    border-color: #e6c200;
+    box-shadow: 0 0 4px rgba(230, 194, 0, 0.6);
+  }
+  .state-dot.signal-clear {
+    background: #009e73;
+    border-color: #009e73;
+    box-shadow: 0 0 4px rgba(0, 158, 115, 0.4);
+  }
+  .state-dot.signal-dark { background: #333; border-color: #333; opacity: 0.5; }
   .state-dot.no-config {
     background: transparent;
     border-style: dashed;

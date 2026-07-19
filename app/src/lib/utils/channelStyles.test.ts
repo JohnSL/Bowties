@@ -19,10 +19,10 @@ describe('channelStyles registry', () => {
   it('returns the 2-LED bicolor aspect mapping for "2-led-bicolor-aspect"', () => {
     const mapping = getStyleEventMapping('2-led-bicolor-aspect');
     expect(mapping).toBeDefined();
-    expect(mapping!.stop).toEqual({ consumerLeafIndex: 0 });
-    expect(mapping!.approach).toEqual({ consumerLeafIndex: 2 });
-    expect(mapping!.clear).toEqual({ consumerLeafIndex: 4 });
-    expect(mapping!.dark).toEqual({ consumerLeafIndex: 6 });
+    expect(mapping!.redOn).toEqual({ consumerLeafIndex: 0 });
+    expect(mapping!.redOff).toEqual({ consumerLeafIndex: 1 });
+    expect(mapping!.greenOn).toEqual({ consumerLeafIndex: 2 });
+    expect(mapping!.greenOff).toEqual({ consumerLeafIndex: 3 });
   });
 
   it('returns undefined for an unknown style id', () => {

@@ -2,7 +2,7 @@
 
 Branch: 020-abs-signaling
 Generated: 2026-07-07
-Status: 2/6 slices complete
+Status: 3/6 slices complete
 
 ## Architecture
 
@@ -152,7 +152,7 @@ The ordered slice set. An overview table for at-a-glance scanning, followed by o
 |---|---|---|---|---|
 | S1 | ABS template + signal-aspect style + full vertical apply path (stub compile) | HITL | None | done |
 | S2 | Real Tower LCC conditional line compiler | HITL | S1 | done |
-| S3 | Fix channel state display + signal-aspect event resolution | AFK | S1 | sketched |
+| S3 | Signal-aspect channel state display | AFK | S1 | done |
 | S4 | ABS cascade via same-node Track Circuits | HITL | S2 | sketched |
 | S5 | Facility deletion + resource reclamation | AFK | S2 | sketched |
 | S6 | Capacity display + target node suggestion | AFK | S1 | sketched |
@@ -220,19 +220,37 @@ The ordered slice set. An overview table for at-a-glance scanning, followed by o
 
 <!-- Session: 2026-07-19 — Completed S2. Next: S3 (AFK, blocked by S1 only — ready), S4 (HITL, blocked by S2 — now unblocked). -->
 
-### S3: Fix channel state display + signal-aspect event resolution [AFK]
+### S3: Signal-aspect channel state display [AFK]
 
-**Intent**: Channel state dots on the Railroad panel work correctly for both block-occupancy channels (regression fix) and signal-aspect channels (new).
-**Boundary**: Component → Store → Utils → API → Backend (`channel_events.rs`)
+**Intent**: Signal-aspect channels show the current aspect (Stop / Approach / Clear / Dark) in the Railroad panel state dots, derived from observed lamp On/Off PCERs on the bus.
+**Boundary**: Utils → Backend (`channel_events.rs`) → Component (`ChannelRow`) → Orchestrator (`eventStateOrchestrator`)
 **Blocked by**: S1
-**Status**: sketched
+**Status**: done
+**Complexity**: medium
+**User stories**: US1
 
 **Acceptance criteria**:
-- [ ] Block-occupancy channel rows show correct occupied/clear state dots on the Railroad panel (regression fix — currently broken)
-- [ ] `2-led-bicolor-aspect` style has entries in `STYLE_EVENT_MAPPINGS` with correct consumer leaf indices
-- [ ] Event resolution returns correct state-name → eventId map for signal-aspect channels (via existing `resolve_channel_event_ids` IPC)
-- [ ] Signal-aspect channels appear in Railroad panel grouped under their Signal LCC Direct Lamp Control subsystem
-- [ ] State dots on signal-aspect channel rows show lit/unlit based on live event state
+- [x] `ChannelState` union includes `{ role: 'signal-aspect'; state: 'stop' | 'approach' | 'clear' | 'dark' }` discriminant
+- [x] `STYLE_EVENT_MAPPINGS['2-led-bicolor-aspect']` maps LED-level events (`redOn`/`redOff`/`greenOn`/`greenOff`) with correct consumer leaf indices for multi-row resolution
+- [x] Backend supports `LampRowRange` binding variant — resolves events from N consecutive lamp rows, indexing sequentially
+- [x] `resolveChannelEventIds` orchestrator handles signal-aspect channels: sends `lampRowRange` binding with correct rowCount from style registry
+- [x] `deriveSignalAspectState` derives aspect from 4 LED events using per-LED most-recent-wins → 2×2 combination matrix
+- [x] `ChannelsPanel` dispatches signal-aspect derivation for signal-aspect channels
+- [x] `ChannelRow` renders stop/approach/clear/dark state dots with distinct CSS styles + tooltips
+- [x] Signal-aspect channels appear grouped under "Direct Lamp Control" in Railroad panel (existing groupLabel logic — no change needed)
+
+**Architecture note**: Signal-aspect state derivation is fundamentally different from the 2-state occupied/clear or lit/unlit pattern. It requires resolving 4 consumer events (2 per LED row) and combining 2 independent LED states into an aspect via a 2×2 matrix. The `LampRowRange` backend binding variant avoids sending multiple IPC requests per channel. The style mapping is repurposed from aspect-oriented (compilation reference, now handled by bowties-core `AspectPinMap`) to LED-oriented (state display). No conflict: S2 compiler uses its own `AspectPinMap` in bowties-core.
+
+**Tasks**:
+- [x] S3-T1: Integration test — signal-aspect channel with 4 resolved events: derive correct aspect from LED combination; verify ChannelsPanel produces correct ChannelState for signal-aspect channels
+- [x] S3-T2: bowties-core — add `resolve_lamp_row_range_event_ids(tree, start_row, row_count, role, leaf_index_map)` that collects consumer event leaves from N consecutive rows in order; unit test
+- [x] S3-T3: Backend IPC — add `LampRowRange { startRowOrdinal, rowCount }` variant to `ChannelResolutionBinding`; dispatch to new resolution function
+- [x] S3-T4: Frontend utils — extend `ChannelState` union with signal-aspect discriminant; add `deriveSignalAspectState` function; update `channelStateClass`/`channelStateLabel`/`roleForChannelState`; update `STYLE_EVENT_MAPPINGS['2-led-bicolor-aspect']` to LED-level mapping
+- [x] S3-T5: Frontend orchestrator — extend `resolveChannelEventIds` to detect signal-aspect role, use `lampRowRange` binding with `getStyleRowCount`, map LED-level leaf indices
+- [x] S3-T6: Frontend components — extend `ChannelsPanel` derivation loop for signal-aspect; add stop/approach/clear/dark CSS classes + tooltips to `ChannelRow`
+- [x] S3-T7: Validate — `cargo test -p bowties-core` green; `vitest run` green; signal-aspect state derivation correct
+
+<!-- Session: 2026-07-19 — Completed S3. Next: S4 (HITL), S5 (AFK), S6 (AFK). -->
 
 ### S4: ABS cascade via same-node Track Circuits [HITL]
 

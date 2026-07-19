@@ -11,7 +11,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { eventStateStore } from '$lib/stores/eventState.svelte';
 import type { InformationChannel } from '$lib/api/channels';
-import { getStyleEventMapping } from '$lib/utils/channelStyles';
+import { getStyleEventMapping, getStyleRowCount } from '$lib/utils/channelStyles';
 
 interface EventStatePayload {
   eventId: string;
@@ -19,10 +19,12 @@ interface EventStatePayload {
 }
 
 interface ChannelResolutionBinding {
-  kind: 'connectorInput' | 'lampRow';
+  kind: 'connectorInput' | 'lampRow' | 'lampRowRange';
   connector?: string;
   input?: number;
   rowOrdinal?: number;
+  startRowOrdinal?: number;
+  rowCount?: number;
 }
 
 interface ChannelResolutionRequest {
@@ -81,7 +83,8 @@ export async function resolveChannelEventIds(
     const mapping = getStyleEventMapping(ch.style);
     if (!mapping) continue;
 
-    const role: 'producer' | 'consumer' = ch.role === 'lamp-indicator' ? 'consumer' : 'producer';
+    const role: 'producer' | 'consumer' =
+      ch.role === 'lamp-indicator' || ch.role === 'signal-aspect' ? 'consumer' : 'producer';
     const leafIndexMap: Record<string, number> = {};
     for (const [state, entry] of Object.entries(mapping)) {
       const idx = role === 'consumer' ? entry.consumerLeafIndex : entry.producerLeafIndex;
@@ -91,7 +94,14 @@ export async function resolveChannelEventIds(
     if (Object.keys(leafIndexMap).length === 0) continue;
 
     let binding: ChannelResolutionBinding;
-    if (ch.binding.kind === 'connectorInput') {
+    if (ch.role === 'signal-aspect' && ch.binding.kind === 'lampRow') {
+      const rowCount = getStyleRowCount(ch.style);
+      binding = {
+        kind: 'lampRowRange',
+        startRowOrdinal: ch.binding.rowOrdinal,
+        rowCount: rowCount > 0 ? rowCount : 1,
+      };
+    } else if (ch.binding.kind === 'connectorInput') {
       binding = {
         kind: 'connectorInput',
         connector: ch.binding.connector,

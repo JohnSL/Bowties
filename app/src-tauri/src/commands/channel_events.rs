@@ -16,6 +16,8 @@ pub enum ChannelResolutionBinding {
     ConnectorInput { connector: String, input: u32 },
     #[serde(rename_all = "camelCase")]
     LampRow { row_ordinal: u32 },
+    #[serde(rename_all = "camelCase")]
+    LampRowRange { start_row_ordinal: u32, row_count: u32 },
 }
 
 /// Role the resolver should match against the CDI tree (`producer` for
@@ -84,28 +86,48 @@ pub async fn resolve_channel_event_ids(
             let layout_guard = state.layout_state.read().await;
             let tree_opt = layout_guard.as_ref().and_then(|ls| ls.config_tree(&parsed_key));
             if let Some(tree) = tree_opt {
-                let path_prefix = match &req.binding {
+                match &req.binding {
                     ChannelResolutionBinding::ConnectorInput { connector, input } => {
-                        bowties_core::channel_events::resolve_connector_input_path_prefix(
-                            tree, connector, *input,
-                        )
+                        let path_prefix =
+                            bowties_core::channel_events::resolve_connector_input_path_prefix(
+                                tree, connector, *input,
+                            );
+                        match path_prefix {
+                            Some(prefix) => bowties_core::channel_events::resolve_event_ids(
+                                tree,
+                                &prefix,
+                                req.role.into(),
+                                &req.leaf_index_map,
+                            ),
+                            None => HashMap::new(),
+                        }
                     }
                     ChannelResolutionBinding::LampRow { row_ordinal } => {
-                        bowties_core::channel_events::resolve_lamp_row_path_prefix(
-                            tree,
-                            *row_ordinal,
-                        )
+                        let path_prefix =
+                            bowties_core::channel_events::resolve_lamp_row_path_prefix(
+                                tree,
+                                *row_ordinal,
+                            );
+                        match path_prefix {
+                            Some(prefix) => bowties_core::channel_events::resolve_event_ids(
+                                tree,
+                                &prefix,
+                                req.role.into(),
+                                &req.leaf_index_map,
+                            ),
+                            None => HashMap::new(),
+                        }
                     }
-                };
-
-                match path_prefix {
-                    Some(prefix) => bowties_core::channel_events::resolve_event_ids(
+                    ChannelResolutionBinding::LampRowRange {
+                        start_row_ordinal,
+                        row_count,
+                    } => bowties_core::channel_events::resolve_lamp_row_range_event_ids(
                         tree,
-                        &prefix,
+                        *start_row_ordinal,
+                        *row_count,
                         req.role.into(),
                         &req.leaf_index_map,
                     ),
-                    None => HashMap::new(),
                 }
             } else {
                 HashMap::new()

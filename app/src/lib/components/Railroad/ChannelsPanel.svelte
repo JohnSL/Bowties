@@ -3,6 +3,7 @@
   import { eventStateStore } from '$lib/stores/eventState.svelte';
   import {
     deriveChannelState,
+    deriveSignalAspectState,
     roleForChannelState,
     type ChannelState,
   } from '$lib/utils/channelState';
@@ -51,9 +52,16 @@
       const ids = resolvedEventIds.get(ch.id);
       if (!ids) continue;
       const role = roleForChannelState(ch.role);
-      const positiveId = role === 'lamp-indicator' ? ids['lit'] : ids['occupied'];
-      const negativeId = role === 'lamp-indicator' ? ids['unlit'] : ids['clear'];
-      states.set(ch.id, deriveChannelState(events, positiveId, negativeId, role));
+      if (role === 'signal-aspect') {
+        states.set(
+          ch.id,
+          deriveSignalAspectState(events, ids['redOn'], ids['redOff'], ids['greenOn'], ids['greenOff']),
+        );
+      } else {
+        const positiveId = role === 'lamp-indicator' ? ids['lit'] : ids['occupied'];
+        const negativeId = role === 'lamp-indicator' ? ids['unlit'] : ids['clear'];
+        states.set(ch.id, deriveChannelState(events, positiveId, negativeId, role));
+      }
     }
     return states;
   });

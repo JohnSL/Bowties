@@ -10,6 +10,7 @@
   const ROLE_LABELS: Record<string, string> = {
     'block-occupancy': 'Block occupancy',
     'lamp-indicator': 'Lamp indicator',
+    'signal-aspect': 'Signal aspect',
   };
 
   /**
@@ -28,6 +29,10 @@
     occupied: 'Occupied',
     lit: 'Lit',
     unlit: 'Unlit',
+    'signal-stop': 'Stop',
+    'signal-approach': 'Approach',
+    'signal-clear': 'Clear (proceed)',
+    'signal-dark': 'Dark (no aspect)',
   };
 
   const DEFAULT_STATE: ChannelState = { kind: 'unknown' };
@@ -126,6 +131,10 @@
       class:unlit={stateClass === 'unlit'}
       class:unknown={stateClass === 'unknown'}
       class:no-config={stateClass === 'no-config'}
+      class:signal-stop={stateClass === 'signal-stop'}
+      class:signal-approach={stateClass === 'signal-approach'}
+      class:signal-clear={stateClass === 'signal-clear'}
+      class:signal-dark={stateClass === 'signal-dark'}
       title={stateTooltip}
       aria-label={stateTooltip}
       data-testid="occupancy-indicator"
@@ -224,6 +233,31 @@
     border-style: dashed;
     border-color: var(--text-muted, #999);
     opacity: 0.6;
+  }
+  .occupancy-indicator.signal-stop {
+    width: 10px;
+    height: 10px;
+    border: none;
+    background: #d55e00;
+  }
+  .occupancy-indicator.signal-approach {
+    width: 10px;
+    height: 10px;
+    border: none;
+    background: #e6c200;
+    box-shadow: 0 0 4px rgba(230, 194, 0, 0.6);
+  }
+  .occupancy-indicator.signal-clear {
+    width: 10px;
+    height: 10px;
+    border: none;
+    background: #009e73;
+    box-shadow: 0 0 4px rgba(0, 158, 115, 0.4);
+  }
+  .occupancy-indicator.signal-dark {
+    border: none;
+    background: #333;
+    opacity: 0.5;
   }
   .name-cell {
     padding: 0.5rem 0.6rem;

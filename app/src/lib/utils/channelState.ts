@@ -19,12 +19,16 @@ import type { ChannelRole } from '$lib/api/channels';
  * - `{ role: 'lamp-indicator', state: 'lit' | 'unlit' }` —
  *   consumer-side direct-lamp channel; state derives from observed
  *   Lamp On / Lamp Off PCERs on the bus.
+ * - `{ role: 'signal-aspect', state: 'stop' | 'approach' | 'clear' | 'dark' }` —
+ *   consumer-side 2-LED bicolor signal head; state derives from observed
+ *   red/green Lamp On / Lamp Off PCERs.
  */
 export type ChannelState =
   | { kind: 'no-config' }
   | { kind: 'unknown' }
   | { role: 'block-occupancy'; state: 'occupied' | 'clear' }
-  | { role: 'lamp-indicator'; state: 'lit' | 'unlit' };
+  | { role: 'lamp-indicator'; state: 'lit' | 'unlit' }
+  | { role: 'signal-aspect'; state: 'stop' | 'approach' | 'clear' | 'dark' };
 
 const NO_CONFIG: ChannelState = { kind: 'no-config' };
 const UNKNOWN: ChannelState = { kind: 'unknown' };
@@ -74,14 +78,64 @@ export function channelStateLabel(s: ChannelState): string {
 /** CSS class name representing the state, for state-dot / row styling. */
 export function channelStateClass(s: ChannelState): string {
   if ('kind' in s) return s.kind;
+  if (s.role === 'signal-aspect') return `signal-${s.state}`;
   return s.state;
 }
 
 /**
  * Map a `ChannelRole` onto the role discriminator the derivation function
- * accepts. Today `block-occupancy` and `lamp-indicator` are the only two
- * runtime-state-bearing roles.
+ * accepts. Today `block-occupancy`, `lamp-indicator`, and `signal-aspect`
+ * are the runtime-state-bearing roles.
  */
-export function roleForChannelState(role: ChannelRole): 'block-occupancy' | 'lamp-indicator' {
-  return role === 'lamp-indicator' ? 'lamp-indicator' : 'block-occupancy';
+export function roleForChannelState(
+  role: ChannelRole,
+): 'block-occupancy' | 'lamp-indicator' | 'signal-aspect' {
+  if (role === 'lamp-indicator') return 'lamp-indicator';
+  if (role === 'signal-aspect') return 'signal-aspect';
+  return 'block-occupancy';
+}
+
+/**
+ * Derive the current `ChannelState` for a signal-aspect channel from the
+ * most-recently observed red/green LED On/Off events.
+ *
+ * Logic:
+ * - If none of the 4 IDs are defined → `{ kind: 'no-config' }`
+ * - If none of the 4 events have been observed → `{ kind: 'unknown' }`
+ * - Determine red LED state: redOn more recent than redOff → red is on
+ * - Determine green LED state: greenOn more recent than greenOff → green is on
+ * - Map combination: (on,off)→stop, (on,on)→approach, (off,on)→clear, (off,off)→dark
+ * - Edge case: if only some events seen, treat unseen LEDs as "off" (dark default).
+ */
+export function deriveSignalAspectState(
+  events: ReadonlyMap<string, number>,
+  redOnId: string | undefined,
+  redOffId: string | undefined,
+  greenOnId: string | undefined,
+  greenOffId: string | undefined,
+): ChannelState {
+  if (!redOnId && !redOffId && !greenOnId && !greenOffId) return NO_CONFIG;
+
+  const redOnTs = redOnId ? events.get(redOnId) : undefined;
+  const redOffTs = redOffId ? events.get(redOffId) : undefined;
+  const greenOnTs = greenOnId ? events.get(greenOnId) : undefined;
+  const greenOffTs = greenOffId ? events.get(greenOffId) : undefined;
+
+  if (redOnTs == null && redOffTs == null && greenOnTs == null && greenOffTs == null) {
+    return UNKNOWN;
+  }
+
+  // Determine red LED state: on if redOn more recent than redOff (or only redOn seen).
+  // Default to off if neither red event observed.
+  const redIsOn = redOnTs != null && (redOffTs == null || redOnTs > redOffTs);
+
+  // Determine green LED state: on if greenOn more recent than greenOff (or only greenOn seen).
+  // Default to off if neither green event observed.
+  const greenIsOn = greenOnTs != null && (greenOffTs == null || greenOnTs > greenOffTs);
+
+  // Map LED combination to signal aspect
+  if (redIsOn && !greenIsOn) return { role: 'signal-aspect', state: 'stop' };
+  if (redIsOn && greenIsOn) return { role: 'signal-aspect', state: 'approach' };
+  if (!redIsOn && greenIsOn) return { role: 'signal-aspect', state: 'clear' };
+  return { role: 'signal-aspect', state: 'dark' };
 }

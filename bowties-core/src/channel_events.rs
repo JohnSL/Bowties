@@ -105,9 +105,50 @@ pub fn resolve_lamp_row_path_prefix(
     None
 }
 
+/// Resolve event IDs for a multi-row lamp binding (e.g. a 2-LED bicolor signal
+/// head spanning 2 consecutive Direct Lamp Control rows).
+///
+/// For each row from `start_row_ordinal` to `start_row_ordinal + row_count - 1`:
+/// 1. Resolves the row's CDI path prefix via [`resolve_lamp_row_path_prefix`]
+/// 2. Collects EventId leaves matching `role` under that prefix
+///
+/// All collected leaves are concatenated in row order (row 0 leaves first,
+/// then row 1, etc.) and indexed by `leaf_index_map` (state name → global leaf
+/// ordinal across all rows).
+pub fn resolve_lamp_row_range_event_ids(
+    tree: &NodeConfigTree,
+    start_row_ordinal: u32,
+    row_count: u32,
+    role: EventRole,
+    leaf_index_map: &HashMap<String, u32>,
+) -> HashMap<String, String> {
+    let mut all_leaves: Vec<&LeafNode> = Vec::new();
+
+    for offset in 0..row_count {
+        let ordinal = start_row_ordinal + offset;
+        let path_prefix = match resolve_lamp_row_path_prefix(tree, ordinal) {
+            Some(p) => p,
+            None => continue,
+        };
+        let row_leaves = collect_event_leaves_under_prefix(tree, &path_prefix, role);
+        all_leaves.extend(row_leaves);
+    }
+
+    let mut result = HashMap::new();
+    for (state_name, &leaf_index) in leaf_index_map {
+        if let Some(leaf) = all_leaves.get(leaf_index as usize) {
+            if let Some(ConfigValue::EventId { hex, .. }) = &leaf.value {
+                result.insert(state_name.clone(), hex.clone());
+            }
+        }
+    }
+
+    result
+}
+
 /// Collect EventId leaves matching `role` under `path_prefix`, in tree-traversal
 /// order (which matches CDI declaration order).
-fn collect_event_leaves_under_prefix<'a>(
+pub(crate) fn collect_event_leaves_under_prefix<'a>(
     tree: &'a NodeConfigTree,
     path_prefix: &[String],
     role: EventRole,
@@ -592,5 +633,50 @@ mod tests {
             );
         }
         assert!(resolve_lamp_row_path_prefix(&tree, 17).is_none());
+    }
+
+    #[test]
+    fn resolve_lamp_row_range_event_ids_collects_across_two_rows() {
+        let tree = make_lamp_tree(4);
+        // Two rows starting at ordinal 2: Lamp#2 and Lamp#3
+        // Each row has 2 consumer leaves (On, Off), so total 4 leaves:
+        //   index 0 = Lamp#2 On, index 1 = Lamp#2 Off,
+        //   index 2 = Lamp#3 On, index 3 = Lamp#3 Off
+        let mut mapping = HashMap::new();
+        mapping.insert("redOn".to_string(), 0u32);
+        mapping.insert("redOff".to_string(), 1u32);
+        mapping.insert("greenOn".to_string(), 2u32);
+        mapping.insert("greenOff".to_string(), 3u32);
+
+        let result = resolve_lamp_row_range_event_ids(
+            &tree,
+            2,
+            2,
+            EventRole::Consumer,
+            &mapping,
+        );
+
+        assert_eq!(result.get("redOn"), Some(&"050101010100A002".to_string()));
+        assert_eq!(result.get("redOff"), Some(&"050101010100B002".to_string()));
+        assert_eq!(result.get("greenOn"), Some(&"050101010100A003".to_string()));
+        assert_eq!(result.get("greenOff"), Some(&"050101010100B003".to_string()));
+    }
+
+    #[test]
+    fn resolve_lamp_row_range_event_ids_returns_empty_for_out_of_range() {
+        let tree = make_lamp_tree(2);
+        let mut mapping = HashMap::new();
+        mapping.insert("redOn".to_string(), 0u32);
+
+        // Start at row 5, but tree only has 2 rows
+        let result = resolve_lamp_row_range_event_ids(
+            &tree,
+            5,
+            2,
+            EventRole::Consumer,
+            &mapping,
+        );
+
+        assert!(result.is_empty());
     }
 }
