@@ -19,6 +19,7 @@ export interface CompiledFieldWrite {
   space: number;
   address: number;
   value: number[];
+  elementType: string;
 }
 
 /** The output of the logic compiler for one facility. */

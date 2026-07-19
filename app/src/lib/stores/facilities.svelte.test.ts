@@ -236,3 +236,67 @@ describe('S4: attachChannel / detachChannel on a baseline facility', () => {
     expect(facilitiesStore.collectDeltas()).toEqual([]);
   });
 });
+
+// ── Spec 020 / S2 — Pending logic targets ───────────────────────────────────
+
+describe('S2: setLogicTargetNodeKey / getLogicTargetNodeKey (pending target selection)', () => {
+  const baseline = (id: string): import('$lib/api/facilities').Facility => ({
+    facilityId: id,
+    templateId: 'block-indicator',
+    name: 'Block 5',
+    slotBindings: { input: [], output: [] },
+  });
+
+  it('setLogicTargetNodeKey records the target; getLogicTargetNodeKey returns it', () => {
+    facilitiesStore.hydrateBaseline([baseline('f-1')]);
+    facilitiesStore.setLogicTargetNodeKey('f-1', 'NODE-A');
+    expect(facilitiesStore.getLogicTargetNodeKey('f-1')).toBe('NODE-A');
+  });
+
+  it('getLogicTargetNodeKey prefers pending target over pending allocation', () => {
+    facilitiesStore.hydrateBaseline([baseline('f-1')]);
+    facilitiesStore.setLogicAllocation('f-1', {
+      facilityId: 'f-1',
+      targetNodeKey: 'NODE-ALLOC',
+      conditionalLines: { start: 0, count: 4 },
+    });
+    // Now set a pending target — should win over the allocation.
+    facilitiesStore.setLogicTargetNodeKey('f-1', 'NODE-USER');
+    expect(facilitiesStore.getLogicTargetNodeKey('f-1')).toBe('NODE-USER');
+  });
+
+  it('reset() clears pending targets', () => {
+    facilitiesStore.hydrateBaseline([baseline('f-1')]);
+    facilitiesStore.setLogicTargetNodeKey('f-1', 'NODE-A');
+    facilitiesStore.reset();
+    expect(facilitiesStore.getLogicTargetNodeKey('f-1')).toBeUndefined();
+  });
+
+  it('discard() clears pending targets', () => {
+    facilitiesStore.hydrateBaseline([baseline('f-1')]);
+    facilitiesStore.setLogicTargetNodeKey('f-1', 'NODE-A');
+    facilitiesStore.discard();
+    expect(facilitiesStore.getLogicTargetNodeKey('f-1')).toBeUndefined();
+  });
+
+  it('setLogicAllocation clears the corresponding pending target', () => {
+    facilitiesStore.hydrateBaseline([baseline('f-1')]);
+    facilitiesStore.setLogicTargetNodeKey('f-1', 'NODE-A');
+    facilitiesStore.setLogicAllocation('f-1', {
+      facilityId: 'f-1',
+      targetNodeKey: 'NODE-A',
+      conditionalLines: { start: 0, count: 4 },
+    });
+    // The pending target should be cleared; getLogicTargetNodeKey
+    // now falls through to the pending allocation.
+    expect(facilitiesStore.getLogicTargetNodeKey('f-1')).toBe('NODE-A');
+    // Verify it's from the allocation, not the pending target:
+    // set a DIFFERENT pending allocation and confirm the target changes.
+    facilitiesStore.setLogicAllocation('f-1', {
+      facilityId: 'f-1',
+      targetNodeKey: 'NODE-B',
+      conditionalLines: { start: 0, count: 4 },
+    });
+    expect(facilitiesStore.getLogicTargetNodeKey('f-1')).toBe('NODE-B');
+  });
+});

@@ -375,12 +375,28 @@ pub fn list_bundled_profiles(app_handle: &tauri::AppHandle) -> Vec<BundledProfil
 /// Characters invalid in file names (`\ / : * ? " < > |`) are replaced with `_`.
 fn make_profile_filename(manufacturer: &str, model: &str) -> String {
     let sanitize = |s: &str| -> String {
-        s.chars()
+        let raw: String = s
+            .chars()
             .map(|c| match c {
-                '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+                '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | ',' | ' ' => '_',
                 other => other,
             })
-            .collect()
+            .collect();
+        // Collapse consecutive underscores (e.g. "RR-CirKits, Inc." → "RR-CirKits_Inc.")
+        let mut result = String::with_capacity(raw.len());
+        let mut prev_underscore = false;
+        for c in raw.chars() {
+            if c == '_' {
+                if !prev_underscore {
+                    result.push(c);
+                }
+                prev_underscore = true;
+            } else {
+                result.push(c);
+                prev_underscore = false;
+            }
+        }
+        result
     };
     format!(
         "{}_{}.profile.yaml",
@@ -693,6 +709,14 @@ notValid: [unclosed bracket
     fn make_profile_filename_replaces_colon() {
         let name = make_profile_filename("Mfr:Test", "Model/X");
         assert_eq!(name, "Mfr_Test_Model_X.profile.yaml");
+    }
+
+    #[test]
+    fn make_profile_filename_collapses_comma_space() {
+        // CDI manufacturer "RR-CirKits, Inc." should match the profile file
+        // named "RR-CirKits_Inc._Signal-LCC.profile.yaml"
+        let name = make_profile_filename("RR-CirKits, Inc.", "Signal-LCC");
+        assert_eq!(name, "RR-CirKits_Inc._Signal-LCC.profile.yaml");
     }
 
     #[test]

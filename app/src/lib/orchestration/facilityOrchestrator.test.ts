@@ -134,6 +134,10 @@ import { configChangesStore } from '$lib/stores/configChanges.svelte';
 vi.mock('$lib/api/facilityBowties', () => ({
   composeFacilityBowties: vi.fn(),
 }));
+// Mock the logic adapter IPC for compiled templates (Spec 020 / S2).
+vi.mock('$lib/api/logicAdapter', () => ({
+  compileLogicForFacility: vi.fn(),
+}));
 // Spec 018 / S6 bugfix — orchestrator now mirrors drafts through the
 // LayoutState.drafts seam before every compose IPC. Mock the two
 // draft-sync IPCs so orchestrator tests stay decoupled from Tauri.
@@ -143,6 +147,7 @@ vi.mock('$lib/api/layout', () => ({
 }));
 const { composeFacilityBowties } = await import('$lib/api/facilityBowties');
 const { syncLayoutDrafts } = await import('$lib/api/layout');
+const { compileLogicForFacility } = await import('$lib/api/logicAdapter');
 
 // Stub the node-tree store lookup: tearDownFacilityBowties needs to resolve
 // consumer leaves in the tree so it can write fresh event IDs onto them.
@@ -576,5 +581,75 @@ describe('deleteFacility (Spec 018 / S6 — D2 wrapper)', () => {
     expect(removeSpy).not.toHaveBeenCalledWith('ch-bod-1');
     expect(facilitiesStore.facilities.some((f) => f.facilityId === 'f-1')).toBe(false);
     removeSpy.mockRestore();
+  });
+});
+
+// ── Spec 020 / S2 — needsLogicTarget return value ───────────────────────────
+
+const ABS_3_ASPECT: BehaviorTemplate = {
+  templateId: 'abs-3-aspect-signal',
+  displayName: 'ABS 3-Aspect Signal',
+  slots: [
+    { label: 'input', displayLabel: 'block', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
+    { label: 'output', displayLabel: 'signal', kind: 'consumer', requiredRole: 'signal-aspect', minChannels: 1, maxChannels: 1 },
+  ],
+  mapping: [
+    { producerState: 'occupied', consumerCommand: 'stop' },
+    { producerState: 'clear', consumerCommand: 'clear' },
+  ],
+  compilationTarget: 'compiled',
+  rules: [],
+};
+
+function signalAspect(): InformationChannel {
+  return {
+    id: 'ch-signal-1',
+    name: 'Signal 1',
+    role: 'signal-aspect',
+    style: '2-led-bicolor-aspect',
+    ownership: 'user-owned',
+    binding: { kind: 'lampRow', nodeKey: 'N3', rowOrdinal: 1 },
+  };
+}
+
+describe('Spec 020 / S2: selectChannelForSlot returns needsLogicTarget for compiled templates', () => {
+  beforeEach(async () => {
+    bowtieMetadataStore.clearAll();
+    vi.mocked(composeFacilityBowties).mockReset();
+    vi.mocked(composeFacilityBowties).mockResolvedValue([]);
+    vi.mocked(syncLayoutDrafts).mockClear();
+    vi.mocked(compileLogicForFacility).mockReset();
+    listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR, ABS_3_ASPECT]);
+    await behaviorTemplatesStore.loadBehaviorTemplates();
+  });
+
+  it('returns needsLogicTarget when facility is Wired + compiled + no target set', async () => {
+    channelsStore.hydrateBaseline([bod(1), signalAspect()]);
+    facilitiesStore.hydrateBaseline([
+      { facilityId: 'f-abs', templateId: 'abs-3-aspect-signal', name: 'Signal 5',
+        slotBindings: { input: ['ch-bod-1'], output: [] } },
+    ]);
+
+    const result = await orch.selectChannelForSlot({
+      facilityId: 'f-abs', slotLabel: 'output', channelId: 'ch-signal-1',
+    });
+
+    expect(result).toEqual({ needsLogicTarget: 'f-abs' });
+    // compileLogicForFacility should NOT be called since no target is set.
+    expect(compileLogicForFacility).not.toHaveBeenCalled();
+  });
+
+  it('returns empty object when facility is Wired + composed', async () => {
+    channelsStore.hydrateBaseline([bod(1), lamp()]);
+    facilitiesStore.hydrateBaseline([
+      { facilityId: 'f-1', templateId: 'block-indicator', name: 'Block 5',
+        slotBindings: { input: ['ch-bod-1'], output: [] } },
+    ]);
+
+    const result = await orch.selectChannelForSlot({
+      facilityId: 'f-1', slotLabel: 'output', channelId: 'ch-lamp-1',
+    });
+
+    expect(result).toEqual({});
   });
 });

@@ -43,6 +43,12 @@ class FacilitiesStore {
    */
   private _pendingSlotBindings = $state<Map<string, Map<string, string[]>>>(new Map());
   /**
+   * Pending logic targets: facilityId → nodeKey selected by the user
+   * before compilation runs (Spec 020 / S2). Superseded by an actual
+   * allocation once the compiler succeeds.
+   */
+  private _pendingLogicTargets = $state<Map<string, string>>(new Map());
+  /**
    * Pending logic allocations: facilityId → LogicAllocation (Spec 020 / S1).
    * Recorded when the compiler produces a plan; emitted as `allocateLogic`
    * deltas at save time. Per-facility field, no new dirty bucket.
@@ -130,6 +136,7 @@ class FacilitiesStore {
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
+    this._pendingLogicTargets = new Map();
     this._pendingLogicAllocations = new Map();
     this._pendingLogicFrees = new Set();
   }
@@ -141,6 +148,7 @@ class FacilitiesStore {
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
+    this._pendingLogicTargets = new Map();
     this._pendingLogicAllocations = new Map();
     this._pendingLogicFrees = new Set();
   }
@@ -212,6 +220,7 @@ class FacilitiesStore {
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
+    this._pendingLogicTargets = new Map();
     this._pendingLogicAllocations = new Map();
     this._pendingLogicFrees = new Set();
   }
@@ -422,6 +431,12 @@ class FacilitiesStore {
       this._pendingCreations = arr;
     }
     this._pendingLogicAllocations = new Map(this._pendingLogicAllocations).set(facilityId, allocation);
+    // The allocation supersedes any pending user target selection.
+    if (this._pendingLogicTargets.has(facilityId)) {
+      const next = new Map(this._pendingLogicTargets);
+      next.delete(facilityId);
+      this._pendingLogicTargets = next;
+    }
     // If there was a pending free for this facility (e.g. re-compile after discard), cancel it.
     if (this._pendingLogicFrees.has(facilityId)) {
       const next = new Set(this._pendingLogicFrees);
@@ -458,10 +473,21 @@ class FacilitiesStore {
   }
 
   /**
-   * Return the logic target node key for a facility, if one is set
-   * (either from a pending allocation or from the baseline).
+   * Record a user-selected logic target node key for a facility.
+   * This is checked BEFORE pending allocations and baseline by
+   * `getLogicTargetNodeKey`, so the compiler sees it immediately.
+   */
+  setLogicTargetNodeKey(facilityId: string, nodeKey: string): void {
+    this._pendingLogicTargets = new Map(this._pendingLogicTargets).set(facilityId, nodeKey);
+  }
+
+  /**
+   * Return the logic target node key for a facility, if one is set.
+   * Priority: pending user target > pending allocation > baseline allocation.
    */
   getLogicTargetNodeKey(facilityId: string): string | undefined {
+    const userTarget = this._pendingLogicTargets.get(facilityId);
+    if (userTarget) return userTarget;
     const pending = this._pendingLogicAllocations.get(facilityId);
     if (pending) return pending.targetNodeKey;
     const facility = this._baseline.find((f) => f.facilityId === facilityId);
@@ -475,6 +501,7 @@ class FacilitiesStore {
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
+    this._pendingLogicTargets = new Map();
     this._pendingLogicAllocations = new Map();
     this._pendingLogicFrees = new Set();
   }

@@ -5,10 +5,15 @@
   (Tower LCC nodes with conditional line capacity). Shows capacity
   per node and lets the user select one.
 
+  Owns its Dialog shell (ADR-0014 pattern, same as AddChannelPicker).
   Boundary: Component — renders props, emits intent via callbacks.
   No async, no IPC, no lifecycle management.
 -->
 <script lang="ts">
+  import Dialog from '$lib/components/Dialog/Dialog.svelte';
+  import DialogTitle from '$lib/components/Dialog/DialogTitle.svelte';
+  import DialogActions from '$lib/components/Dialog/DialogActions.svelte';
+  import Button from '$lib/components/Dialog/Button.svelte';
   import type { LogicCapacity } from '$lib/api/logicAdapter';
 
   interface Props {
@@ -25,8 +30,11 @@
   let { candidates, selectedNodeKey, onSelect, onCancel }: Props = $props();
 </script>
 
-<div class="logic-target-selector">
-  <h3>Select Logic Target Node</h3>
+<Dialog open width="md" ariaLabel="Select Logic Target Node" onCancel={onCancel}>
+  {#snippet title()}
+    <DialogTitle>Select Logic Target Node</DialogTitle>
+  {/snippet}
+
   <p class="description">
     Choose a Tower LCC node to host the compiled signal logic.
   </p>
@@ -54,15 +62,14 @@
     </ul>
   {/if}
 
-  <div class="actions">
-    <button type="button" class="cancel-btn" onclick={onCancel}>Cancel</button>
-  </div>
-</div>
+  {#snippet actions()}
+    <DialogActions>
+      <Button appearance="secondary" onclick={onCancel}>Cancel</Button>
+    </DialogActions>
+  {/snippet}
+</Dialog>
 
 <style>
-  .logic-target-selector {
-    padding: 1rem;
-  }
   .description {
     color: var(--vscode-descriptionForeground);
     font-size: 0.85rem;
@@ -105,22 +112,5 @@
   .capacity {
     font-size: 0.75rem;
     color: var(--vscode-descriptionForeground);
-  }
-  .actions {
-    margin-top: 0.75rem;
-    display: flex;
-    justify-content: flex-end;
-  }
-  .cancel-btn {
-    padding: 0.35rem 0.75rem;
-    background: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-button-secondaryForeground);
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.8rem;
-  }
-  .cancel-btn:hover {
-    background: var(--vscode-button-secondaryHoverBackground);
   }
 </style>

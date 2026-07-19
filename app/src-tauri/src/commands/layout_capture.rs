@@ -861,17 +861,34 @@ pub async fn open_layout_directory(
                 &app_data_dir,
             ) {
                 Ok(xml) => xml,
-                Err(_) => continue,
+                Err(e) => {
+                    eprintln!(
+                        "[layout_open] SKIP tree for node={} (cache_key={}): CDI XML not resolved: {}",
+                        snapshot.node_key, snapshot.cdi_ref.cache_key, e
+                    );
+                    continue;
+                }
             };
             cdi_xml_by_key.insert(nk, xml.clone());
 
             // Parse CDI, build minimal tree, merge snapshot values, extract event ID leaves
             let cdi = match lcc_rs::cdi::parser::parse_cdi(&xml) {
                 Ok(cdi) => cdi,
-                Err(_) => continue,
+                Err(e) => {
+                    eprintln!(
+                        "[layout_open] SKIP tree for node={}: CDI parse failed: {}",
+                        snapshot.node_key, e
+                    );
+                    continue;
+                }
             };
             let mut tree = crate::node_tree::build_node_config_tree(&dotted_id, &cdi);
             crate::node_tree::merge_snapshot_path_values(&mut tree, &snapshot.config);
+            eprintln!(
+                "[layout_open] Built tree for node={} segments=[{}]",
+                snapshot.node_key,
+                tree.segments.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ")
+            );
 
             // Spec 017 / S3: apply profile annotations so the seeded saved tree
             // carries `event_role` on producer leaves + `profile_applied = true`.
@@ -884,24 +901,36 @@ pub async fn open_layout_directory(
             if let Some(identity) = &cdi.identification {
                 let manufacturer = identity.manufacturer.as_deref().unwrap_or("");
                 let model = identity.model.as_deref().unwrap_or("");
+                eprintln!(
+                    "[layout_open] node={} profile lookup: manufacturer={:?} model={:?}",
+                    snapshot.node_key, manufacturer, model
+                );
                 if !manufacturer.is_empty() || !model.is_empty() {
-                    if let Some(profile) = crate::profile::load_profile(
+                    match crate::profile::load_profile(
                         manufacturer,
                         model,
                         &cdi,
                         &app,
                         &state.profiles,
                     ).await {
-                        let shared_daughterboards = crate::profile::load_shared_daughterboards(&app).await;
-                        let selections = loaded.bowties.selections_for_node(&snapshot.node_key);
-                        crate::commands::cdi::apply_profile_metadata_to_tree(
-                            &mut tree,
-                            &dotted_id,
-                            &profile,
-                            shared_daughterboards.as_ref(),
-                            &cdi,
-                            &selections,
-                        );
+                        Some(profile) => {
+                            let shared_daughterboards = crate::profile::load_shared_daughterboards(&app).await;
+                            let selections = loaded.bowties.selections_for_node(&snapshot.node_key);
+                            crate::commands::cdi::apply_profile_metadata_to_tree(
+                                &mut tree,
+                                &dotted_id,
+                                &profile,
+                                shared_daughterboards.as_ref(),
+                                &cdi,
+                                &selections,
+                            );
+                        }
+                        None => {
+                            eprintln!(
+                                "[layout_open] node={} NO profile found for {:?}/{:?}",
+                                snapshot.node_key, manufacturer, model
+                            );
+                        }
                     }
                 }
             }

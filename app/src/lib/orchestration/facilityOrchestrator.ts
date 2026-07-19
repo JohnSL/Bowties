@@ -85,7 +85,7 @@ export interface RemoveFromSlotArgs {
  * retired in S6 (2026-07-01) in favour of a two-step Remove-from-slot +
  * Select/Add sequence — see slice 018-S6 D4.
  */
-export function selectChannelForSlot(args: SelectChannelForSlotArgs): Promise<void> {
+export function selectChannelForSlot(args: SelectChannelForSlotArgs): Promise<{ needsLogicTarget?: string }> {
   const { facilityId, slotLabel, channelId } = args;
 
   const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
@@ -167,6 +167,7 @@ export interface AddChannelForSlotArgs {
 
 export interface AddChannelForSlotResult {
   channelId: string;
+  needsLogicTarget?: string;
 }
 
 /**
@@ -233,9 +234,9 @@ export async function addChannelForSlot(
   }
 
   // Spec 018 / S6 (D2) — compose-on-Wired hook.
-  await composeBowtiesIfWired(facilityId);
+  const composeResult = await composeBowtiesIfWired(facilityId);
 
-  return { channelId: channel.id };
+  return { channelId: channel.id, ...composeResult };
 }
 
 // ── Facility bowtie composition + teardown (Spec 018 / S6 — D2 + T13) ────
@@ -276,20 +277,22 @@ async function syncDraftsForComposition(): Promise<void> {
  * `createdByFacility` back-reference). All edits land in the draft
  * stores; the save flow picks them up unchanged.
  */
-export async function composeBowtiesIfWired(facilityId: string): Promise<void> {
-  if (effectiveLayoutStore.facilityStatus(facilityId) !== 'Wired') return;
+export async function composeBowtiesIfWired(facilityId: string): Promise<{ needsLogicTarget?: string }> {
+  const status = effectiveLayoutStore.facilityStatus(facilityId);
+  if (status !== 'Wired') return {};
 
   const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
-  if (!facility) return;
+  if (!facility) return {};
   const template = behaviorTemplatesStore.findByTemplateId(facility.templateId);
-  if (!template) return;
+  if (!template) return {};
 
   if (template.compilationTarget === 'compiled') {
-    await compileIfWired(facilityId);
+    return await compileIfWired(facilityId);
   } else {
     await syncDraftsForComposition();
     const ops = await composeFacilityBowties(facilityId);
     applyCompositionOps(ops);
+    return {};
   }
 }
 
@@ -304,11 +307,11 @@ export async function composeBowtiesIfWired(facilityId: string): Promise<void> {
  * The target node must be set before this function is called — if no
  * target is known, the caller (route/component) must prompt the user.
  */
-async function compileIfWired(facilityId: string): Promise<void> {
+async function compileIfWired(facilityId: string): Promise<{ needsLogicTarget?: string }> {
   const targetNodeKey = facilitiesStore.getLogicTargetNodeKey(facilityId);
   if (!targetNodeKey) {
     // No target selected yet — the UI should prompt the user.
-    return;
+    return { needsLogicTarget: facilityId };
   }
 
   await syncDraftsForComposition();
@@ -322,14 +325,21 @@ async function compileIfWired(facilityId: string): Promise<void> {
   // produce int values. For now we interpret the value as an int when it
   // fits in 4 bytes, otherwise as a string.
   for (const write of plan.fieldWrites) {
-    const value = write.value.length <= 4
-      ? { type: 'int' as const, value: write.value.reduce((acc, b) => (acc << 8) | b, 0) }
-      : { type: 'string' as const, value: String.fromCharCode(...write.value) };
+    let value;
+    if (write.elementType === 'eventId') {
+      const hex = Array.from(write.value).map(b => b.toString(16).padStart(2, '0')).join('');
+      value = { type: 'eventId' as const, bytes: write.value as unknown as [number, number, number, number, number, number, number, number], hex };
+    } else if (write.elementType === 'string') {
+      value = { type: 'string' as const, value: String.fromCharCode(...write.value) };
+    } else {
+      value = { type: 'int' as const, value: write.value.reduce((acc, b) => (acc << 8) | b, 0) };
+    }
     configEditor.applyEdit(
       editKeyForLeaf(targetNodeKey, write.space, write.address),
       value,
     );
   }
+  return {};
 }
 
 /**

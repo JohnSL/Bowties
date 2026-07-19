@@ -2,7 +2,7 @@
 
 Branch: 020-abs-signaling
 Generated: 2026-07-07
-Status: 1/6 slices complete
+Status: 2/6 slices complete
 
 ## Architecture
 
@@ -151,7 +151,7 @@ The ordered slice set. An overview table for at-a-glance scanning, followed by o
 | # | Slice title | Label | Blocked by | Status |
 |---|---|---|---|---|
 | S1 | ABS template + signal-aspect style + full vertical apply path (stub compile) | HITL | None | done |
-| S2 | Real Tower LCC conditional line compiler | HITL | S1 | tasked |
+| S2 | Real Tower LCC conditional line compiler | HITL | S1 | done |
 | S3 | Fix channel state display + signal-aspect event resolution | AFK | S1 | sketched |
 | S4 | ABS cascade via same-node Track Circuits | HITL | S2 | sketched |
 | S5 | Facility deletion + resource reclamation | AFK | S2 | sketched |
@@ -195,28 +195,30 @@ The ordered slice set. An overview table for at-a-glance scanning, followed by o
 **Intent**: Compiled conditional lines match Tower LCC CDI structure exactly — Save + bus write produces correct signal behavior on hardware.
 **Boundary**: Backend domain (`logic_adapter/`) + IPC layer (`commands/logic_adapter.rs`)
 **Blocked by**: S1
-**Status**: tasked
+**Status**: done
 **Complexity**: medium
 **User stories**: US1
 
 **Acceptance criteria**:
-- [ ] Compiler produces 3 contiguous conditional lines for a standalone 3-aspect signal in correct mast group structure (Group/Group/Last flags)
-- [ ] Evaluation order is most-restrictive-first: Stop (priority 1) → Approach (priority 2) → Clear (priority 3)
-- [ ] Variable inputs reference the block-occupancy channel's event IDs (occupied = set-true, clear = set-false)
-- [ ] Aspect-to-event map expansion: each aspect's compiled actions contain the correct lamp On/Off event IDs from the 2-LED bicolor style
-- [ ] End-of-line signal (no downstream input): Approach rule omitted, compiler produces 2 conditional lines (Stop + Clear) with Group/Last structure
-- [ ] Compiler rejects configurations that exceed 32 conditional lines per node with a clear `InsufficientCapacity` error
-- [ ] Compiler rejects styles whose action count per aspect exceeds 4 (Tower LCC line limit)
-- [ ] Compiled values round-trip through Save + bus write — CDI on target node matches expected field values
+- [x] Compiler produces 3 contiguous conditional lines for a standalone 3-aspect signal in correct mast group structure (Group/Group/Last flags)
+- [x] Evaluation order is most-restrictive-first: Stop (priority 1) → Approach (priority 2) → Clear (priority 3)
+- [x] Variable inputs reference the block-occupancy channel's event IDs (occupied = set-true, clear = set-false)
+- [x] Aspect-to-event map expansion: each aspect's compiled actions contain the correct lamp On/Off event IDs from the 2-LED bicolor style
+- [x] End-of-line signal (no downstream input): Approach rule omitted, compiler produces 2 conditional lines (Stop + Clear) with Group/Last structure
+- [x] Compiler rejects configurations that exceed 32 conditional lines per node with a clear `InsufficientCapacity` error
+- [x] Compiler rejects styles whose action count per aspect exceeds 4 (Tower LCC line limit)
+- [x] Compiled values round-trip through Save + bus write — CDI on target node matches expected field values
 
 **Architecture note**: Compiler is a pure function (`CompileInput → Result<CompiledLogicPlan, CompileError>`). `CompileInput` bundles the template, resolved channel event IDs, and aspect-to-pin-action map — the IPC command gathers this data from `LayoutState` (following the `compose_facility_bowties` pattern). Capacity enforcement is compiler-owned. Intermediate `CompiledConditionalLine` types make each compilation step independently testable before flattening to `CompiledFieldWrite`. Style aspect-to-pin maps are defined in `bowties-core` alongside the compiler (different purpose than the frontend `channelStyles.ts` leaf-index mapping).
 
 **Tasks**:
-- [ ] S2-T1: Integration test — compile standalone 3-aspect signal with mock channel bindings → verify CompiledLogicPlan field writes produce correct Tower LCC CDI addresses, enum values, and event IDs; compile end-of-line signal → verify 2-line output with Group/Last structure
-- [ ] S2-T2: Domain types — `CompileInput` struct (template, facility info, input channel events, output channel pin events, optional downstream binding); `CompiledConditionalLine` intermediate type with CDI field enums (ConditionalFunction, LogicOperation, VariableTrigger, VariableSource, ActionBehavior, ActionCondition, ActionDestination); `AspectPinMap` for style-to-pin-action resolution; CDI layout constants (LINE_SIZE=122, SEGMENT_ORIGIN=2528, field offsets)
-- [ ] S2-T3: Compiler core — replace stub `compile_facility` with real implementation: rule filtering (omit Approach when no downstream), rule→CompiledConditionalLine expansion (mast group flags, variable inputs from event IDs, logic operation, exit format), aspect→action event expansion (pin map + channel events → up to 4 action events per line), flatten to CompiledFieldWrite via address calculation
-- [ ] S2-T4: IPC update — refactor `compile_logic_for_facility` to read from `LayoutState` effective views (matching `compose_facility_bowties` pattern), resolve channel event IDs from config trees, build `CompileInput`, call compiler
-- [ ] S2-T5: Validate — `cargo test -p bowties-core` green; `vitest run` green; existing save/discard round-trip unchanged
+- [x] S2-T1: Integration test — compile standalone 3-aspect signal with mock channel bindings → verify CompiledLogicPlan field writes produce correct Tower LCC CDI addresses, enum values, and event IDs; compile end-of-line signal → verify 2-line output with Group/Last structure
+- [x] S2-T2: Domain types — `CompileInput` struct (template, facility info, input channel events, output channel pin events, optional downstream binding); `CompiledConditionalLine` intermediate type with CDI field enums (ConditionalFunction, LogicOperation, VariableTrigger, VariableSource, ActionBehavior, ActionCondition, ActionDestination); `AspectPinMap` for style-to-pin-action resolution; CDI layout constants (LINE_SIZE=122, SEGMENT_ORIGIN=2528, field offsets)
+- [x] S2-T3: Compiler core — replace stub `compile_facility` with real implementation: rule filtering (omit Approach when no downstream), rule→CompiledConditionalLine expansion (mast group flags, variable inputs from event IDs, logic operation, exit format), aspect→action event expansion (pin map + channel events → up to 4 action events per line), flatten to CompiledFieldWrite via address calculation
+- [x] S2-T4: IPC update — refactor `compile_logic_for_facility` to read from `LayoutState` effective views (matching `compose_facility_bowties` pattern), resolve channel event IDs from config trees, build `CompileInput`, call compiler
+- [x] S2-T5: Validate — `cargo test -p bowties-core` green; `vitest run` green; existing save/discard round-trip unchanged
+
+<!-- Session: 2026-07-19 — Completed S2. Next: S3 (AFK, blocked by S1 only — ready), S4 (HITL, blocked by S2 — now unblocked). -->
 
 ### S3: Fix channel state display + signal-aspect event resolution [AFK]
 

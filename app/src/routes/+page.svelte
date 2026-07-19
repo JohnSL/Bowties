@@ -110,9 +110,11 @@
   import { configDraftMirrorOrchestrator } from '$lib/orchestration/configDraftMirrorOrchestrator.svelte';
   import SelectChannelPicker from '$lib/components/Facilities/SelectChannelPicker.svelte';
   import AddChannelPicker from '$lib/components/Facilities/AddChannelPicker.svelte';
+  import LogicTargetSelector from '$lib/components/Facilities/LogicTargetSelector.svelte';
   import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
   import type { ChannelRole, InformationChannel } from '$lib/api/channels';
   import { deriveChannelState, type ChannelState } from '$lib/utils/channelState';
+  import { getLogicCapacity, type LogicCapacity } from '$lib/api/logicAdapter';
 
   // Active tab state — 'config' (default), 'bowties', or 'railroad'
   let activeTab = $state<'config' | 'bowties' | 'railroad'>('config');
@@ -159,6 +161,13 @@
   // "Add Placeholder Board…" menu item; closed on cancel or after a
   // successful add.
   let showAddBoardDialog = $state(false);
+
+  // Spec 020 / S2: Logic target selection dialog state. Opened when a
+  // compiled facility becomes Wired but has no target node selected.
+  let logicTargetDialog = $state<{
+    facilityId: string;
+    candidates: Array<{ nodeKey: string; displayName: string; capacity?: LogicCapacity }>;
+  } | null>(null);
 
   // Spec 014 / S8.5 / T11: pending "Delete Placeholder Board" confirmation.
   // Holds the NodeKey to delete while the user confirms; cleared on
@@ -1510,6 +1519,7 @@
         console.error('[facility] removeFromSlot failed', err);
         toast.push(`Could not remove channel: ${err instanceof Error ? err.message : String(err)}`, {
           theme: { '--toastBackground': '#c62828', '--toastColor': '#fff' },
+          initial: 0,
         });
       });
   }
@@ -1526,6 +1536,11 @@
         slotLabel: picker.slotLabel,
         channelId,
       })
+      .then(async (result) => {
+        if (result?.needsLogicTarget) {
+          await openLogicTargetDialog(result.needsLogicTarget);
+        }
+      })
       .catch((err) => {
         // Spec 018 / S6 bugfix — surface orchestrator failures (e.g.
         // a compose IPC error against stale draft state) instead of
@@ -1533,6 +1548,7 @@
         console.error('[facility] selectChannelForSlot failed', err);
         toast.push(`Could not bind channel: ${err instanceof Error ? err.message : String(err)}`, {
           theme: { '--toastBackground': '#c62828', '--toastColor': '#fff' },
+          initial: 0,
         });
       });
   }
@@ -1605,13 +1621,61 @@
         lampRowNodeKey,
         rowOrdinal,
       })
+      .then(async (result) => {
+        if (result?.needsLogicTarget) {
+          await openLogicTargetDialog(result.needsLogicTarget);
+        }
+      })
       .catch((err) => {
         // Spec 018 / S6 bugfix — see handlePickerConfirm.
         console.error('[facility] addChannelForSlot failed', err);
         toast.push(`Could not add channel: ${err instanceof Error ? err.message : String(err)}`, {
           theme: { '--toastBackground': '#c62828', '--toastColor': '#fff' },
+          initial: 0,
         });
       });
+  }
+
+  // ── Spec 020 / S2 — Logic target selection dialog ─────────────────────
+
+  /**
+   * Build the candidate list for the logic target dialog by querying
+   * each known node for logic capacity. Nodes with `totalLines > 0`
+   * are offered as candidates.
+   */
+  async function openLogicTargetDialog(facilityId: string) {
+    const entries = nodeRoster.allEntries;
+    const candidates: Array<{ nodeKey: string; displayName: string; capacity?: LogicCapacity }> = [];
+    for (const entry of entries) {
+      try {
+        const capacity = await getLogicCapacity(entry.nodeKey);
+        if (capacity.totalLines > 0) {
+          const displayName = resolveNodeName(entry.nodeKey);
+          candidates.push({ nodeKey: entry.nodeKey, displayName, capacity });
+        }
+      } catch {
+        // Node doesn't support logic capacity — skip it.
+      }
+    }
+    logicTargetDialog = { facilityId, candidates };
+  }
+
+  async function handleLogicTargetSelect(nodeKey: string) {
+    const facilityId = logicTargetDialog?.facilityId;
+    logicTargetDialog = null;
+    if (!facilityId) return;
+    facilitiesStore.setLogicTargetNodeKey(facilityId, nodeKey);
+    // Re-trigger compilation now that a target is set.
+    try {
+      await facilityOrchestrator.composeBowtiesIfWired(facilityId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[facility] compile signal logic failed:', msg);
+      toast.push(
+        `Could not compile signal logic: ${msg}`,
+        { theme: { '--toastBackground': '#c62828', '--toastColor': '#fff' }, initial: 0 },
+      );
+    }
   }
 </script>
 
@@ -1949,6 +2013,15 @@
     candidateGroups={addChannelCandidates}
     onConfirm={handleAddChannelConfirm}
     onCancel={closeAddChannelPicker}
+  />
+{/if}
+
+<!-- Spec 020 / S2: Logic target node selector for compiled facilities. -->
+{#if logicTargetDialog}
+  <LogicTargetSelector
+    candidates={logicTargetDialog.candidates}
+    onSelect={handleLogicTargetSelect}
+    onCancel={() => { logicTargetDialog = null; }}
   />
 {/if}
 
