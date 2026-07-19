@@ -26,6 +26,9 @@ pub enum CdiError {
     #[error("NodeNotFound: Node {0} not found")]
     NodeNotFound(String),
 
+    #[error("CdiDownloadInProgress: CDI download already in flight for node {0}")]
+    CdiDownloadInProgress(String),
+
     #[error("IoError: {0}")]
     IoError(String),
 }
@@ -191,8 +194,39 @@ async fn read_cdi_from_cache(cache_path: &PathBuf) -> Option<String> {
     tokio::fs::read_to_string(cache_path).await.ok()
 }
 
-/// Write CDI to file cache
+/// Minimum byte length for a CDI payload to be considered usable. A genuine
+/// CDI document (XML prologue + `<cdi>` … `</cdi>`) is comfortably larger than
+/// this; the threshold rejects short-read fragments (e.g. the 2026-07-18
+/// "Blocks Detection" config-space fragment that bled into the CDI assembler).
+const MIN_USABLE_CDI_BYTES: usize = 64;
+
+/// App-layer validity check for a downloaded/cached CDI payload (Fix 2).
+///
+/// A payload is usable only when it is non-empty, at least
+/// [`MIN_USABLE_CDI_BYTES`] long, and contains a closing `</cdi>` tag. This is
+/// deliberately cheap (no full XML parse) — the goal is to reject obviously
+/// truncated or cross-contaminated short reads before they can overwrite a
+/// known-good cached CDI. What counts as a usable *cached* CDI is an app
+/// concern, so the guard lives here rather than in the protocol library.
+fn is_usable_cdi(xml: &str) -> bool {
+    let trimmed = xml.trim();
+    !trimmed.is_empty() && trimmed.len() >= MIN_USABLE_CDI_BYTES && trimmed.contains("</cdi>")
+}
+
+/// Write CDI to file cache.
+///
+/// Fix 2 (defense-in-depth): refuses to persist a payload that fails
+/// [`is_usable_cdi`], so a partial/short-read download can never overwrite an
+/// existing good cache file with garbage.
 async fn write_cdi_to_cache(cache_path: &PathBuf, xml_content: &str) -> Result<(), CdiError> {
+    if !is_usable_cdi(xml_content) {
+        return Err(CdiError::InvalidXml(format!(
+            "refusing to cache invalid CDI ({} bytes; missing </cdi> or below {}-byte threshold) — \
+             existing cache preserved",
+            xml_content.trim().len(),
+            MIN_USABLE_CDI_BYTES,
+        )));
+    }
     tokio::fs::write(cache_path, xml_content)
         .await
         .map_err(|e| CdiError::IoError(format!("Failed to write CDI cache: {}", e)))
@@ -230,9 +264,12 @@ async fn has_cdi_available(
 }
 
 /// Download CDI from a node over the network
-/// 
+///
 /// Retrieves CDI XML using the Memory Configuration Protocol and caches it
-/// both in memory (node.cdi) and on disk (cdi_cache directory).
+/// both in memory (via `LayoutState.captured`) and on disk (cdi_cache
+/// directory). After S3, this command is a thin intent translator over
+/// `PeerSessionHandle::download_cdi`: per-peer FIFO serialisation is
+/// structural (ADR-0018), so no `CdiInflightRegistry` is required.
 #[tauri::command]
 pub async fn download_cdi(
     node_id: String,
@@ -241,7 +278,7 @@ pub async fn download_cdi(
 ) -> Result<GetCdiXmlResponse, String> {
     use std::time::Instant as StdInstant;
     println!("[CDI] download_cdi called for node: {}", node_id);
-    
+
     // Parse node ID
     let parsed_node_id = lcc_rs::NodeID::from_hex_string(&node_id)
         .map_err(|e| format!("InvalidNodeId: {}", e))?;
@@ -268,61 +305,95 @@ pub async fn download_cdi(
     let snip_label = snip_data.as_ref().map(|s| {
         if !s.user_name.is_empty() { s.user_name.clone() } else { s.model.clone() }
     }).unwrap_or_else(|| node_id.clone());
-    
+
     println!("[CDI] Found node with alias: 0x{:03X}", alias);
 
-    // Get connection reference
-    let connection_arc = {
-        let conn_guard = state.connection.read().await;
-        match conn_guard.as_ref() {
-            Some(conn) => conn.clone(),
-            None => return Err(CdiError::RetrievalFailed("Not connected to LCC network".to_string()).into()),
+    // Resolve the per-peer session handle via the registry (S2 fetch-per-call).
+    let session_handle = {
+        let sessions_guard = state.sessions.read().await;
+        match sessions_guard.as_ref() {
+            Some(registry) => registry.get(parsed_node_id).await,
+            None => None,
         }
+    };
+    let session_handle = match session_handle {
+        Some(h) => h,
+        None => return Err(CdiError::RetrievalFailed(
+            "Peer session not available (registry unset or node not seen yet)".into()
+        ).into()),
     };
 
     println!("[CDI] Starting CDI download from alias 0x{:03X}...", alias);
     crate::bwlog!(state.inner(), "[cdi] Downloading CDI for {} (alias={:#05x})", snip_label, alias);
     let dl_start = StdInstant::now();
 
-    // Reset the cancel flag before starting (mirrors cancel_config_reading pattern).
-    state.cdi_download_cancel.store(false, std::sync::atomic::Ordering::Relaxed);
-    let cancel_flag = state.cdi_download_cancel.clone();
+    // CDI chunks may be slower than config reads; keep the 5s per-chunk
+    // budget the pre-refactor code used.
+    //
+    // Post-ACK pacing (post_ack_delay_ms) defaults to 0. The SPROG
+    // `DatagramRejected 0x2020` storms once attributed to peer buffer
+    // pressure were actually caused by a serial `\r\n` framing bug (fixed
+    // in gridconnect_serial), not by request timing. Pacing stays reachable
+    // as a `tuning.toml` escape hatch for a future device that needs it, so
+    // we take whatever `memory_read_config()` supplies rather than forcing it.
+    let mut read_config = state.memory_read_config();
+    read_config.timeout_ms = 5000;
 
-    // Download CDI from node using the shared read config (with 5s timeout override
-    // for CDI since nodes may need extra time per chunk for large CDI trees).
-    let xml_content = {
-        let mut connection = connection_arc.lock().await;
-        let mut read_config = state.memory_read_config();
-        read_config.timeout_ms = 5000; // CDI chunks may be slower than config reads
-        match connection
-            .read_cdi_cancellable_with_stats(alias, read_config, cancel_flag)
-            .await
-        {
-            Ok(result) => result,
-            Err(e) => {
-                println!("[CDI] Download failed: {}", e);
-                // Record structured error in diagnostics.
-                {
-                    let mut stats = state.diag_stats.write().await;
-                    stats.errors.push(crate::diagnostics::DiagError {
-                        at: chrono::Utc::now(),
-                        phase: "cdi-download".to_string(),
-                        node_id: Some(node_id.clone()),
-                        error_type: if e.to_string().contains("Timeout") { "timeout" } else { "protocol-error" }.to_string(),
-                        detail: e.to_string(),
-                    });
-                }
-                return Err(CdiError::RetrievalFailed(format!("CDI download failed: {}", e)).into());
+    let completion = match session_handle.download_cdi(read_config).await {
+        Ok(c) => c,
+        Err(e) => {
+            println!("[CDI] Download failed: {:?}", e);
+            let (error_type, detail) = match &e {
+                lcc_rs::PeerError::Timeout { .. } => ("timeout".to_string(), e.to_string()),
+                lcc_rs::PeerError::TransportUnhealthy { .. } => ("transport-unhealthy".to_string(), e.to_string()),
+                lcc_rs::PeerError::Cancelled { .. } => ("cancelled".to_string(), e.to_string()),
+                lcc_rs::PeerError::Rejected { .. } => ("rejected".to_string(), e.to_string()),
+                lcc_rs::PeerError::PeerReinitialised => ("peer-reinitialised".to_string(), e.to_string()),
+                lcc_rs::PeerError::AliasChanged { .. } => ("alias-changed".to_string(), e.to_string()),
+                _ => ("protocol-error".to_string(), e.to_string()),
+            };
+            {
+                let mut stats = state.diag_stats.write().await;
+                stats.errors.push(crate::diagnostics::DiagError {
+                    at: chrono::Utc::now(),
+                    phase: "cdi-download".to_string(),
+                    node_id: Some(node_id.clone()),
+                    error_type,
+                    detail: detail.clone(),
+                });
             }
+            return Err(CdiError::RetrievalFailed(format!("CDI download failed: {}", detail)).into());
         }
     };
 
     let dl_ms = dl_start.elapsed().as_millis() as u64;
-    println!("[CDI] Download complete, size: {} bytes", xml_content.xml.len());
+    let byte_count = completion.bytes.len();
+    let chunk_count = completion.stats.chunks;
+    let retry_count = completion.stats.total_retries;
+    println!("[CDI] Download complete, size: {} bytes", byte_count);
     crate::bwlog!(state.inner(), "[cdi] CDI download complete for {}: {} bytes in {}ms ({} chunks, {} retries)",
-        snip_label, xml_content.xml.len(), dl_ms, xml_content.chunks, xml_content.total_retries);
-    
+        snip_label, byte_count, dl_ms, chunk_count, retry_count);
+
     let retrieved_at = Utc::now();
+
+    // Convert bytes → String (CDI must be valid UTF-8).
+    let xml_content = String::from_utf8(completion.bytes).map_err(|e| {
+        CdiError::InvalidXml(format!("CDI is not valid UTF-8: {}", e)).to_string()
+    })?;
+
+    // Fix 2: a short-read / truncated / cross-contaminated download must not
+    // be recorded as the node's captured CDI nor cached. Surface it as an
+    // error so a known-good cache (memory + file) is left untouched.
+    if !is_usable_cdi(&xml_content) {
+        crate::bwlog!(state.inner(),
+            "[cdi] Rejected unusable CDI for {} ({} bytes) — not recording/caching",
+            snip_label, xml_content.len());
+        return Err(CdiError::RetrievalFailed(format!(
+            "Downloaded CDI failed validity check ({} bytes; likely a short read) — \
+             existing cache preserved",
+            xml_content.len()
+        )).into());
+    }
 
     // Record CdiDownloadStats.
     {
@@ -330,16 +401,14 @@ pub async fn download_cdi(
             node_id: node_id.clone(),
             snip_name: snip_data.as_ref().map(|_s| snip_label.clone()),
             from_cache: false,
-            total_bytes: xml_content.xml.len(),
-            chunks: xml_content.chunks,
-            chunk_durations_ms: xml_content.chunk_durations_ms.clone(),
-            retries: xml_content.total_retries,
+            total_bytes: byte_count,
+            chunks: chunk_count,
+            chunk_durations_ms: completion.stats.chunk_durations_ms.clone(),
+            retries: retry_count,
             total_duration_ms: dl_ms,
         };
         state.diag_stats.write().await.cdi_downloads.insert(node_id.clone(), stats_entry);
     }
-
-    let xml_content = xml_content.xml;
 
     // Mirror into LayoutState.captured so the save path has the CDI XML even
     // if no proxy field would: live proxies no longer hold CDI bytes
@@ -1712,18 +1781,14 @@ pub async fn read_config_value(
     let element = found.element;
     let space = found.space;
     
-    // Get connection
-    let conn_lock = state.connection.read().await;
-    let connection = conn_lock
-        .as_ref()
-        .ok_or("Not connected to network")?
-        .clone();
-    drop(conn_lock);
-    
-    // Get node alias from proxy
+    // Resolve the per-peer session handle (S4: config r/w serialises through
+    // the peer session, never the bare connection).
+    let session_handle = state.peer_session(parsed_node_id).await?;
+
+    // Get node alias from proxy (for diagnostics/logging parity).
     let proxy = state.node_registry.get(&parsed_node_id).await
         .ok_or_else(|| format!("Node not found: {}", node_id))?;
-    let alias = proxy.alias();
+    let _alias = proxy.alias();
     
     // Get element size
     let size = get_element_size(element)?;
@@ -1731,13 +1796,12 @@ pub async fn read_config_value(
         return Err(format!("Element size {} exceeds maximum 64 bytes", size));
     }
     
-    // Read memory from node using the segment's declared address space
-    let mut conn = connection.lock().await;
-    let response_data = conn
-        .read_memory(alias, space, absolute_address, size as u8, timeout)
+    // Read memory from node via the peer session using the segment's declared
+    // address space.
+    let (response_data, _timing) = session_handle
+        .read_memory(space, absolute_address, size as u8, timeout)
         .await
         .map_err(|e| format!("Failed to read from node: {}", e))?; // T035: timeout handling
-    drop(conn);
     
     // Parse typed value
     let typed_value = parse_config_value(element, &response_data)?;
@@ -2005,7 +2069,7 @@ struct ReadItem {
 struct ReadPlan {
     /// Flat list of read-ready items (large elements split into 64-byte chunks).
     items: Vec<ReadItem>,
-    /// Groups of `items` indices to read in a single `read_memory_timed` call.
+    /// Groups of `items` indices to read in a single session `read_memory` call.
     batches: Vec<Vec<usize>>,
     /// Original element indices for elements that were split into multiple chunks.
     multi_chunk_indices: std::collections::BTreeSet<usize>,
@@ -2144,32 +2208,28 @@ where
     continuations
 }
 
-/// Attempt a single `read_memory_timed` call, retrying up to twice when the
-/// node times out.  A 200 ms pause before each retry lets the node drain any
-/// stale datagram-ack state from a previous dropped TCP frame.
+/// Attempt a single memory read through the peer session, retrying up to
+/// twice when the node times out.  A 200 ms pause before each retry lets the
+/// node drain any stale datagram-ack state from a previous dropped frame.
 ///
 /// Returns `(result, retry_count)`.
 async fn read_memory_with_retry(
-    connection: &tokio::sync::Mutex<lcc_rs::LccConnection>,
-    alias: u16,
+    session: &lcc_rs::PeerSessionHandle,
     space: u8,
     address: u32,
     size: u8,
     timeout_ms: u64,
-) -> (lcc_rs::Result<(Vec<u8>, lcc_rs::MemoryReadTiming)>, u32) {
+) -> (lcc_rs::MemoryReadResult, u32) {
     const MAX_RETRIES: u32 = 2;
     let mut result;
     let mut retry_count = 0u32;
     loop {
-        {
-            let mut conn = connection.lock().await;
-            result = conn
-                .read_memory_timed(alias, space, address, size, timeout_ms)
-                .await;
-        }
+        result = session.read_memory(space, address, size, timeout_ms).await;
         match &result {
             Ok(_) => break,
-            Err(e) if retry_count < MAX_RETRIES && e.to_string().contains("Timeout") => {
+            Err(e) if retry_count < MAX_RETRIES
+                && matches!(e, lcc_rs::PeerError::Timeout { .. }) =>
+            {
                 retry_count += 1;
                 tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
             }
@@ -2245,15 +2305,12 @@ pub async fn read_all_config_values(
         status: ProgressStatus::ReadingNode { node_name: node_name.clone() },
     });
     
-    // Get connection
-    let conn_lock = state.connection.read().await;
-    let connection = conn_lock
-        .as_ref()
-        .ok_or("Not connected to network")?
-        .clone();
-    drop(conn_lock);
+    // Resolve the per-peer session handle (S4: batch reads dispatch through
+    // the peer session; batch planning stays app-side).
+    let session_handle = state.peer_session(parsed_node_id).await?;
     
     let alias = node.alias.value();
+    let _ = alias; // retained for diagnostic parity; reads route via session
     let mut values = HashMap::new();
     let mut success_count = 0;
     let mut error_count = 0;
@@ -2303,11 +2360,6 @@ pub async fn read_all_config_values(
         }
     }).collect();
 
-    let mut reader = {
-        let conn = connection.lock().await;
-        let read_config = state.memory_read_config();
-        conn.batch_reader_with_config(alias, read_config).map_err(|e| e.to_string())?
-    };
     let reads_start = Instant::now();
 
     for (batch_idx, batch) in batches.iter().enumerate() {
@@ -2355,10 +2407,11 @@ pub async fn read_all_config_values(
 
         // Perform the read, then emit updated progress.
         let read_t_ms = reads_start.elapsed().as_millis() as u64;
-        let batch_result = reader.read_next(&batch_descriptors[batch_idx], timeout).await;
-        let response_data = match &batch_result.data {
-            Ok(initial_data) => {
-                let timing = batch_result.timing.as_ref().unwrap();
+        let batch_result = session_handle
+            .read_memory(batch_space, batch_start_addr, batch_descriptors[batch_idx].count, timeout)
+            .await;
+        let response_data = match &batch_result {
+            Ok((initial_data, timing)) => {
                 let mut data = initial_data.clone();
 
                 crate::bwlog!(state.inner(),
@@ -2380,13 +2433,12 @@ pub async fn read_all_config_values(
                         batch_start_addr,
                         batch_total_size,
                         |cont_addr, cont_size| {
-                            let connection = connection.clone();
+                            let session = session_handle.clone();
                             let node_name = cont_node_name.clone();
                             let state_ref = cont_state.clone();
                             async move {
                                 let (cont_result, _) = read_memory_with_retry(
-                                    &connection,
-                                    alias,
+                                    &session,
                                     batch_space,
                                     cont_addr,
                                     cont_size,
@@ -2440,7 +2492,8 @@ pub async fn read_all_config_values(
                 });
                 data
             }
-            Err(err_str) => {
+            Err(e) => {
+                let err_str = e.to_string();
                 crate::bwlog!(state.inner(),
                     "[config-read] {} @{:#010x}+{} space={:#04x}: FAILED {}",
                     node_name, batch_start_addr, batch_total_size, batch_space, err_str);
@@ -2453,8 +2506,7 @@ pub async fn read_all_config_values(
                     first_frame_latency_ms: None,
                     frame_gaps_ms: vec![],
                     frame_count: None,
-                    total_duration_ms: batch_result.timing.as_ref()
-                        .map(|t| t.total_duration_ms).unwrap_or(0),
+                    total_duration_ms: 0,
                 });
                 // Count every chunk in the batch as failed and record orig_index
                 // so the assembly pass can skip partially-failed large elements.
@@ -2888,10 +2940,29 @@ pub async fn cancel_config_reading(state: tauri::State<'_, AppState>) -> Result<
 }
 
 /// Cancel an in-progress CDI download
+///
+/// Dispatches `PeerCommand::Cancel` to every registered peer session,
+/// preserving the global-cancel semantic (S3 T6 sub-decision (ii)). Any
+/// active `CdiDownload` exchange aborts at the next checkpoint with
+/// `PeerError::Cancelled`, and the session emits a single
+/// `TerminateDueToError` so the peer releases its exchange state.
 #[tauri::command]
 pub async fn cancel_cdi_download(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    use std::sync::atomic::Ordering;
-    state.cdi_download_cancel.store(true, Ordering::Relaxed);
+    let sessions_guard = state.sessions.read().await;
+    let Some(registry) = sessions_guard.as_ref() else { return Ok(()); };
+    // Snapshot node IDs under the read lock, then drop the lock before
+    // dispatching per-session commands (avoids holding the registry lock
+    // across per-peer awaits and matches ADR-0016's read-check-then-act
+    // pattern).
+    // We don't currently have a `sessions()` iterator on the registry, so
+    // iterate through the underlying map via a broadcast: dispatch `Cancel`
+    // via the same handle each session was given. For now, use the
+    // best-effort helper: send Cancel to every session by cloning handles.
+    let handles = registry.snapshot_handles().await;
+    drop(sessions_guard);
+    for handle in handles {
+        handle.cancel("cancel_cdi_download").await;
+    }
     Ok(())
 }
 
@@ -3288,22 +3359,12 @@ pub async fn write_config_value(
     let parsed_node_id = lcc_rs::NodeID::from_hex_string(&node_id)
         .map_err(|e| format!("Invalid node ID: {}", e))?;
 
-    // Get connection arc
-    let conn_lock = state.connection.read().await;
-    let connection = conn_lock
-        .as_ref()
-        .ok_or("Not connected to network")?
-        .clone();
-    drop(conn_lock);
-
-    // Get node alias from proxy
-    let proxy = state.node_registry.get(&parsed_node_id).await
-        .ok_or_else(|| format!("Node not found: {}", node_id))?;
-    let alias = proxy.alias();
+    // Resolve the per-peer session handle (S4: writes serialise through the
+    // peer session).
+    let session_handle = state.peer_session(parsed_node_id).await?;
 
     // Perform write
-    let mut conn = connection.lock().await;
-    match conn.write_memory(alias, space, address, &data).await {
+    match session_handle.write_memory(space, address, data, lcc_rs::constants::WRITE_MEMORY_TIMEOUT_MS).await {
         Ok(()) => Ok(WriteResponse {
             address,
             space,
@@ -3557,6 +3618,8 @@ pub async fn write_modified_values(
         });
     }
 
+    // Retained for the post-write Update Complete pass (send_update_complete
+    // is not a memory read/write primitive and stays on the bare connection).
     let conn_lock = state.connection.read().await;
     let connection = conn_lock
         .as_ref()
@@ -3587,9 +3650,7 @@ pub async fn write_modified_values(
         let parsed_nid = lcc_rs::NodeID::from_hex_string(node_id)
             .map_err(|e| format!("Invalid node ID: {}", e))?;
         let node_key = crate::node_key::NodeKey::from_node_id(parsed_nid);
-        let proxy = state.node_registry.get(&parsed_nid).await
-            .ok_or_else(|| format!("Node not found: {}", node_id))?;
-        let alias = proxy.alias();
+        let session_handle = state.peer_session(parsed_nid).await?;
 
         // Mark as writing in LayoutState
         {
@@ -3609,9 +3670,9 @@ pub async fn write_modified_values(
 
         // Serialize and write
         let bytes = serialize_config_value(&leaf_info.value, leaf_info.element_type, leaf_info.size);
-        let mut conn = connection.lock().await;
-        let result = conn.write_memory(alias, leaf_info.space, leaf_info.address, &bytes).await;
-        drop(conn);
+        let result = session_handle
+            .write_memory(leaf_info.space, leaf_info.address, bytes, lcc_rs::constants::WRITE_MEMORY_TIMEOUT_MS)
+            .await;
 
         {
             let mut layout_guard = state.layout_state.write().await;
@@ -3805,9 +3866,7 @@ pub async fn trigger_action(
 ) -> Result<(), String> {
     let parsed_nid = lcc_rs::NodeID::from_hex_string(&node_id)
         .map_err(|e| format!("Invalid node ID: {}", e))?;
-    let proxy = state.node_registry.get(&parsed_nid).await
-        .ok_or_else(|| format!("Node not found: {}", node_id))?;
-    let alias = proxy.alias();
+    let session_handle = state.peer_session(parsed_nid).await?;
 
     let bytes: Vec<u8> = match size {
         1 => vec![value as u8],
@@ -3817,15 +3876,9 @@ pub async fn trigger_action(
         _ => vec![value as u8],
     };
 
-    let conn_lock = state.connection.read().await;
-    let connection = conn_lock
-        .as_ref()
-        .ok_or("Not connected to network")?
-        .clone();
-    drop(conn_lock);
-
-    let mut conn = connection.lock().await;
-    conn.write_memory(alias, space, address, &bytes).await
+    session_handle
+        .write_memory(space, address, bytes, lcc_rs::constants::WRITE_MEMORY_TIMEOUT_MS)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -4893,6 +4946,89 @@ mod fill_short_reply_tests {
         for &sz in &requested_sizes {
             assert!(sz <= 64, "Continuation size {} exceeds 64-byte CAN datagram limit", sz);
         }
+    }
+}
+
+// ============================================================================
+// S4 Fix 2 — CDI cache-write guard. A partial / short-read / cross-contaminated
+// download must never overwrite a known-good cached CDI.
+// ============================================================================
+#[cfg(test)]
+mod cdi_cache_guard_tests {
+    use super::*;
+
+    fn good_cdi() -> String {
+        // Well over the threshold and closed with </cdi>.
+        let filler = "<segment>".repeat(10);
+        format!("<?xml version=\"1.0\"?><cdi>{}</cdi>", filler)
+    }
+
+    #[test]
+    fn is_usable_cdi_accepts_well_formed() {
+        assert!(is_usable_cdi(&good_cdi()));
+    }
+
+    #[test]
+    fn is_usable_cdi_rejects_empty() {
+        assert!(!is_usable_cdi(""));
+        assert!(!is_usable_cdi("   \n  "));
+    }
+
+    #[test]
+    fn is_usable_cdi_rejects_short_fragment() {
+        // The 2026-07-18 clobber fragment: a config-space name, no </cdi>.
+        assert!(!is_usable_cdi("Blocks Detection"));
+    }
+
+    #[test]
+    fn is_usable_cdi_rejects_missing_close_tag() {
+        // Long enough but no closing </cdi>.
+        let payload = format!("<?xml version=\"1.0\"?><cdi>{}", "x".repeat(200));
+        assert!(!is_usable_cdi(&payload));
+    }
+
+    #[test]
+    fn is_usable_cdi_rejects_below_threshold_even_with_close_tag() {
+        // Contains </cdi> but is shorter than the byte threshold.
+        assert!("<cdi></cdi>".len() < MIN_USABLE_CDI_BYTES);
+        assert!(!is_usable_cdi("<cdi></cdi>"));
+    }
+
+    #[tokio::test]
+    async fn write_cdi_to_cache_rejects_invalid_and_preserves_good_cache() {
+        let dir = std::env::temp_dir().join(format!("bowties_cdi_guard_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cache_path = dir.join("node.cdi.xml");
+        let good = good_cdi();
+
+        // Seed a known-good cache file.
+        write_cdi_to_cache(&cache_path, &good).await.expect("seed good cache");
+        assert_eq!(std::fs::read_to_string(&cache_path).unwrap(), good);
+
+        // Attempt to overwrite with a short fragment → rejected, file untouched.
+        let err = write_cdi_to_cache(&cache_path, "Blocks Detection").await
+            .expect_err("invalid payload must be rejected");
+        assert!(err.to_string().contains("invalid CDI"), "got: {}", err);
+        assert_eq!(
+            std::fs::read_to_string(&cache_path).unwrap(),
+            good,
+            "good cache must survive an invalid write attempt",
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn write_cdi_to_cache_writes_valid_payload() {
+        let dir = std::env::temp_dir().join(format!("bowties_cdi_guard_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cache_path = dir.join("node.cdi.xml");
+        let good = good_cdi();
+
+        write_cdi_to_cache(&cache_path, &good).await.expect("valid write ok");
+        assert_eq!(std::fs::read_to_string(&cache_path).unwrap(), good);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

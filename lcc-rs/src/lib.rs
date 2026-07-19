@@ -41,24 +41,28 @@ pub mod pip;
 pub mod cdi;
 pub mod transport_actor;
 pub mod alias_allocation;
+pub mod peer_session;
+pub mod peer_session_registry;
 
 // Re-export commonly used types
 pub use types::{NodeID, EventID, NodeAlias, DiscoveredNode, SNIPData, SNIPStatus, ConnectionStatus, CdiData, ProtocolFlags, PIPStatus};
 pub use protocol::{GridConnectFrame, MTI, DatagramAssembler, DatagramState, MemoryConfigCmd, AddressSpace, ReadReply};
 pub use transport::LccTransport;
 pub use transport::{GridConnectSerialTransport, SlcanSerialTransport, FrameEncoding};
-/// Re-export `tokio_serial::FlowControl` so callers can specify flow control
-/// without adding a direct dependency on `tokio_serial`.
-pub use tokio_serial::FlowControl as SerialFlowControl;
+/// Re-export `serialport::FlowControl` so callers can specify flow control
+/// without adding a direct dependency on `serialport`.
+pub use serialport::FlowControl as SerialFlowControl;
 pub use discovery::LccConnection;
 pub use discovery::MemoryReadTiming;
 pub use discovery::CdiReadResult;
-pub use discovery::{BatchReadDescriptor, BatchReadResult, BatchReader};
+pub use discovery::BatchReadDescriptor;
 pub use datagram_reader::{MemoryReadConfig, ExchangeResult, ReadDescriptor, datagram_read_exchange};
 pub use snip::{query_snip, parse_snip_payload, encode_snip_payload};
 pub use cdi::{Cdi, Segment, DataElement, Group, IntElement, EventIdElement, StringElement, FloatElement, ActionElement, BlobElement, EventRole, classify_event_slot, walk_event_slots};
-pub use transport_actor::{TransportActor, TransportHandle, ReceivedMessage};
+pub use transport_actor::{TransportActor, TransportHandle, TransportHealth, ReceivedMessage, SERIAL_SEND_TIMEOUT, TCP_SEND_TIMEOUT};
 pub use alias_allocation::AliasAllocator;
+pub use peer_session::{CdiCompletion, CdiResult, CdiStats, MemoryReadResult, MemoryWriteResult, PeerCommand, PeerError, PeerSession, PeerSessionHandle};
+pub use peer_session_registry::PeerSessionRegistry;
 
 /// LCC-RS error type
 #[derive(Debug, thiserror::Error)]
@@ -71,6 +75,9 @@ pub enum Error {
     
     #[error("Transport error: {0}")]
     Transport(String),
+
+    #[error("Transport unhealthy: {0}")]
+    TransportUnhealthy(String),
     
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

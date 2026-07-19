@@ -6,7 +6,9 @@
 //! reach it.
 
 use lcc_rs::{NodeID, TransportHandle};
+use lcc_rs::peer_session_registry::PeerSessionRegistry;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::node_key::NodeKey;
@@ -17,6 +19,11 @@ pub struct NodeRegistry {
     proxies: RwLock<HashMap<NodeKey, NodeProxyHandle>>,
     transport_handle: RwLock<Option<TransportHandle>>,
     our_alias: RwLock<u16>,
+    /// Optional peer-session registry (ADR-0016 D2). Injected via
+    /// [`set_peer_sessions`] when the transport comes up; passed into
+    /// `LiveNodeProxy` at spawn time so protocol calls delegate through the
+    /// session actor.
+    peer_sessions: RwLock<Option<Arc<PeerSessionRegistry>>>,
 }
 
 impl NodeRegistry {
@@ -26,6 +33,7 @@ impl NodeRegistry {
             proxies: RwLock::new(HashMap::new()),
             transport_handle: RwLock::new(None),
             our_alias: RwLock::new(0),
+            peer_sessions: RwLock::new(None),
         }
     }
 
@@ -33,6 +41,13 @@ impl NodeRegistry {
     pub async fn set_transport(&self, handle: TransportHandle, our_alias: u16) {
         *self.transport_handle.write().await = Some(handle);
         *self.our_alias.write().await = our_alias;
+    }
+
+    /// Attach the peer-session registry (ADR-0016). Sessions spawned via
+    /// [`get_or_create`] after this call delegate SNIP/PIP through the
+    /// per-peer actor.
+    pub async fn set_peer_sessions(&self, sessions: Arc<PeerSessionRegistry>) {
+        *self.peer_sessions.write().await = Some(sessions);
     }
 
     /// Get or create a proxy for the given node.
@@ -81,8 +96,15 @@ impl NodeRegistry {
             .as_ref()
             .ok_or_else(|| "No transport configured — not connected".to_string())?;
         let our_alias = *self.our_alias.read().await;
+        let peer_sessions = self.peer_sessions.read().await.clone();
 
-        let live_handle = LiveNodeProxy::spawn(node_id, alias, transport.clone(), our_alias);
+        let live_handle = LiveNodeProxy::spawn_with_sessions(
+            node_id,
+            alias,
+            transport.clone(),
+            our_alias,
+            peer_sessions,
+        );
         let handle = NodeProxyHandle::Live(live_handle);
 
         proxies.insert(key, handle.clone());
@@ -146,6 +168,7 @@ impl NodeRegistry {
             handle.shutdown().await;
         }
         *self.transport_handle.write().await = None;
+        *self.peer_sessions.write().await = None;
     }
 
     /// Remove a single proxy by NodeID, shutting down its actor.

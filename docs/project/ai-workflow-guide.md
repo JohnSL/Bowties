@@ -41,9 +41,9 @@ For non-trivial changes that touched multiple modules, run `/feature-finish` bef
 
 For larger work that needs planning:
 
-1. **`/specify`** — describe the feature. AI produces a spec. Review and refine.
-2. **`/clarify`** — AI identifies underspecified areas. You answer targeted questions.
-3. **`/plan`** — AI produces an implementation plan. Review and approve.
+1. **`/speckit.specify`** — describe the feature. AI produces a spec. Review and refine.
+2. **`/speckit.clarify`** — AI identifies underspecified areas. You answer targeted questions.
+3. **`/speckit.plan`** — AI produces an implementation plan. Review and approve.
 4. **`/design`** — AI assesses architecture and validates the **slice set** (the roadmap) against placement rules and ADRs. It does *not* drill slices into tasks. Review findings and trade-offs.
 5. **`/slices`** — AI generates a slice **roadmap**: one card per slice (intent + boundary + HITL/AFK + acceptance criteria, plus an architecture note for slices that shift the design). The per-layer task breakdown is *not* written yet. Review granularity, acceptance criteria, and labels.
 6. **`/build`** — AI appends a task breakdown to **one slice at a time**, implements it with TDD, then re-reads the roadmap and adjusts the next slice's card before expanding it. May span multiple sessions.
@@ -197,9 +197,9 @@ Brainstorm ─► /specify ─► /clarify ─► /plan ─► /design ─► /s
 | Phase | What happens | Who drives | Artifacts |
 |-------|-------------|------------|-----------|
 | **Brainstorm** | Discuss the feature idea | You | Conversation only |
-| **Specify** | `/specify` — AI creates spec | You describe, AI writes | `specs/NNN-feature/spec.md` |
-| **Clarify** | `/clarify` — AI asks targeted questions | AI asks, you answer | Updated `spec.md` |
-| **Plan** | `/plan` — AI creates implementation plan | AI proposes, you approve | `specs/NNN-feature/plan.md` |
+| **Specify** | `/speckit.specify` — AI creates spec | You describe, AI writes | `specs/NNN-feature/spec.md` |
+| **Clarify** | `/speckit.clarify` — AI asks targeted questions | AI asks, you answer | Updated `spec.md` |
+| **Plan** | `/speckit.plan` — AI creates implementation plan | AI proposes, you approve | `specs/NNN-feature/plan.md` |
 | **Design** | `/design` — AI assesses architecture, validates the slice set (roadmap) | AI analyzes, you decide on trade-offs | Architecture Assessment in `plan.md` |
 | **Slices** | `/slices` — AI generates the slice **roadmap** (one card per slice: intent, boundary, acceptance criteria, arch note) | AI proposes, you review granularity + acceptance criteria | `specs/NNN-feature/slices.md` |
 | **Build** | `/build` — AI tasks and implements one slice at a time with TDD (multi-session) | AI codes, you review HITL slices | Code, tests, aiwiki/ enrichment |
@@ -213,7 +213,7 @@ Brainstorm ─► /specify ─► /clarify ─► /plan ─► /design ─► /s
 |-----------|------|
 | Bug fix | `/bugfix` → review analysis → approve → AI fixes → optional `/feature-finish` → merge |
 | Quick change | `/quickchange` → review analysis → approve → AI implements → optional `/feature-finish` → merge |
-| Feature | `/specify` → `/clarify` → `/plan` → `/design` → `/slices` → `/build` (multi-session) → `/feature-finish` → merge |
+| Feature | `/speckit.specify` → `/speckit.clarify` → `/speckit.plan` → `/design` → `/slices` → `/build` (multi-session) → `/feature-finish` → merge |
 
 Run `/feature-finish` before merge whenever the change touched multiple modules or changed behavior. Skip it for trivial single-file fixes.
 

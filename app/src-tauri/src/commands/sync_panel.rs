@@ -354,12 +354,9 @@ pub async fn build_sync_session(
             .ok_or_else(|| "No layout is active".to_string())?
     };
 
-    let conn_lock = state.connection.read().await;
-    let connection = conn_lock
-        .as_ref()
-        .ok_or("Not connected to network")?
-        .clone();
-    drop(conn_lock);
+    if !state.is_connected().await {
+        return Err("Not connected to network".to_string());
+    }
 
     let changes = state.offline_changes_cache.read().await.clone();
     let pending: Vec<&OfflineChange> = changes
@@ -439,7 +436,6 @@ pub async fn build_sync_session(
                 continue;
             }
         };
-        let alias = proxy.alias();
 
         let space = change.space.unwrap_or(0);
         let address = change
@@ -480,11 +476,19 @@ pub async fn build_sync_session(
             }
         };
 
-        // Targeted read: fetch only this field from the live bus
+        // Targeted read: fetch only this field from the live bus via the
+        // peer session (S4 D2=ii — never the bare connection).
         let read_size = meta.size.min(64) as u8;
-        let raw = {
-            let mut conn = connection.lock().await;
-            conn.read_memory(alias, space, address, read_size, 3000).await
+        let raw = match proxy.node_id() {
+            Some(nid) => match state.peer_session(nid).await {
+                Ok(session) => session
+                    .read_memory(space, address, read_size, 3000)
+                    .await
+                    .map(|(data, _timing)| data)
+                    .map_err(|e| e.to_string()),
+                Err(e) => Err(e),
+            },
+            None => Err("Node not on bus".to_string()),
         };
 
         let raw = match raw {
@@ -872,7 +876,27 @@ pub async fn apply_sync_changes(
                 continue;
             }
         };
-        let alias = proxy.alias();
+        // Resolve the per-peer session handle (S4 D2=ii — writes serialise
+        // through the peer session, never the bare connection).
+        let session_handle = match proxy.node_id() {
+            Some(nid) => match state.peer_session(nid).await {
+                Ok(session) => session,
+                Err(e) => {
+                    failed.push(ApplySyncFailure {
+                        change_id: change_id.clone(),
+                        reason: e,
+                    });
+                    continue;
+                }
+            },
+            None => {
+                failed.push(ApplySyncFailure {
+                    change_id: change_id.clone(),
+                    reason: format!("Node not on bus: {}", parsed_node_key),
+                });
+                continue;
+            }
+        };
 
         let space = change.space.unwrap_or(0);
         let address = change
@@ -929,10 +953,10 @@ pub async fn apply_sync_changes(
 
         let bytes = crate::commands::cdi::serialize_config_value(&config_val, meta.leaf_type, meta.size);
 
-        // Write to the bus node
-        let mut conn = connection.lock().await;
-        let result = conn.write_memory(alias, space, address, &bytes).await;
-        drop(conn);
+        // Write to the bus node via the peer session
+        let result = session_handle
+            .write_memory(space, address, bytes, 3000)
+            .await;
 
         match result {
             Ok(()) => {

@@ -197,12 +197,24 @@ A pure-function module that owns normalization, formatting, comparison, and tran
 _Avoid_: helper (util is a helper), service (services have state/side effects)
 
 **Transport Actor**:
-An internal runtime abstraction that manages the physical CAN/serial connection and dispatches frames to protocol handlers.
+An internal runtime abstraction that manages the physical CAN/serial connection and dispatches frames to protocol handlers. Its writer is a bounded FIFO that bounds each send with a per-transport `SEND_TIMEOUT` (ADR-0017).
 _Avoid_: transport layer, serial handler, connection (Connection owns the Transport Actor)
+
+**Transport Health**:
+The wedge-detection contract published by the Transport Actor writer on a `watch` channel (`Healthy` / `Wedged`). A stuck send surfaces as `Wedged` within `SEND_TIMEOUT`, and `TransportHandle::send` fails fast with `TransportUnhealthy` rather than hanging. See ADR-0017.
+_Avoid_: connection status (that is a UI-facing app concept), link state
 
 **Node Proxy**:
 A per-node actor (thread) that owns all mutable state for a single discovered LCC node (SNIP, PIP, CDI cache, config values, tree snapshots), communicating via message passing through `NodeProxyHandle`.
 _Avoid_: node handler, node manager, node service
+
+**Peer Session**:
+A per-peer protocol actor in `lcc-rs` that owns every exchange with one remote node (SNIP/PIP queries, CDI download, memory read/write), enforcing single-ACK-owner, single-active-exchange, and per-peer FIFO serialisation. Emits `TerminateDueToError` on our-fault live-wire failures. See ADR-0016 / ADR-0018.
+_Avoid_: node session, connection (Peer Session is protocol-layer, per remote node), Node Proxy (that is the app-layer aggregator that delegates to a Peer Session)
+
+**Peer Session Registry**:
+The sole spawner of Peer Sessions, keyed by Node ID and gated on identity-carrying inbound frames (VNI / InitializationComplete / AMD). Owns the per-peer inbound demux that routes each frame to its session's bounded channel. Alias renegotiation updates a session in place; it never spawns a duplicate. See ADR-0016.
+_Avoid_: session manager, node registry (that is the app-layer `NodeRegistry`), connection pool
 
 ## Data & Workflow
 
@@ -271,6 +283,8 @@ _Avoid_: "node store" (overloaded), "dirty store"
 - One **Event ID** maps to one **Bowtie**; a **Bowtie** defines producers + consumers for that Event ID
 - A **Bowtie** has one or more **Connection Elements** as producers and one or more as consumers
 - A **Layout** contains one **Node Tree** with one **Node Proxy** per discovered node
+- A **Node Proxy** (app-layer) delegates every protocol exchange to at most one **Peer Session** (protocol-layer) for the same node, fetched per-call from the **Peer Session Registry**
+- The **Peer Session Registry** owns exactly one **Peer Session** per remote **Node ID**; **Node Alias** renegotiation updates that session in place rather than spawning a duplicate
 - A **Profile** is specific to one node model; it may contain **Relevance Rules** and **Cascade Rules**
 - **Relevance Rules** govern CDI sections (many-to-many: one rule may affect multiple sections; one section may be governed by multiple rules)
 - **Offline Changes** are a superset of **Pending Changes** (all pending changes are offline; not all offline changes are pending)

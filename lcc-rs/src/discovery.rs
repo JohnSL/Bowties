@@ -8,7 +8,7 @@ use crate::{
     types::{NodeID, NodeAlias, DiscoveredNode, SNIPData, ProtocolFlags},
     protocol::{GridConnectFrame, MTI},
     transport::{LccTransport, TcpTransport},
-    transport_actor::{TransportActor, TransportHandle, ReceivedMessage},
+    transport_actor::{TransportActor, TransportHandle},
     alias_allocation::AliasAllocator,
     constants::CONNECTION_STABILIZATION_MS,
 };
@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::time::{sleep, Duration, Instant};
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::Mutex;
 
 /// Timing data captured during a single `read_memory_timed` call.
 ///
@@ -34,21 +34,15 @@ pub struct MemoryReadTiming {
     pub frame_count: u8,
 }
 
-/// Describes a single read performed by [`BatchReader::read_next`].
+/// Describes a single memory read: address space, address, and byte count.
+///
+/// Used app-side for CDI-element batch planning; each descriptor is dispatched
+/// through `PeerSessionHandle::read_memory` (S4).
 #[derive(Debug, Clone)]
 pub struct BatchReadDescriptor {
     pub address_space: u8,
     pub address: u32,
     pub count: u8,
-}
-
-/// Result of one read within a batch.
-#[derive(Debug, Clone)]
-pub struct BatchReadResult {
-    /// `Ok(data)` on success, `Err(message)` on failure.
-    pub data: std::result::Result<Vec<u8>, String>,
-    /// Timing data (present on success, `None` on failure).
-    pub timing: Option<MemoryReadTiming>,
 }
 
 /// Result of a CDI download including per-chunk timing telemetry.
@@ -62,80 +56,6 @@ pub struct CdiReadResult {
     pub total_retries: usize,
     /// Duration of each chunk in milliseconds (request sent → reply received).
     pub chunk_durations_ms: Vec<u32>,
-}
-
-/// Performs pipelined memory reads on a single node, holding a single broadcast
-/// subscription across all reads.
-///
-/// Obtain one via [`LccConnection::batch_reader`].  Call [`BatchReader::read_next`]
-/// in a loop, once per descriptor.  The subscription stays alive between calls so
-/// the ACK for read N and the request for read N+1 are issued back-to-back with
-/// no re-subscribe overhead.
-pub struct BatchReader {
-    handle: TransportHandle,
-    our_alias: u16,
-    dest_alias: u16,
-    rx: broadcast::Receiver<ReceivedMessage>,
-    config: crate::datagram_reader::MemoryReadConfig,
-}
-
-impl BatchReader {
-    /// Create a new reader.  The broadcast subscription is established immediately.
-    pub fn new(handle: TransportHandle, our_alias: u16, dest_alias: u16) -> Self {
-        let rx = handle.subscribe_all();
-        Self {
-            handle, our_alias, dest_alias, rx,
-            config: crate::datagram_reader::MemoryReadConfig::default(),
-        }
-    }
-
-    /// Create a new reader with custom configuration.
-    pub fn with_config(
-        handle: TransportHandle,
-        our_alias: u16,
-        dest_alias: u16,
-        config: crate::datagram_reader::MemoryReadConfig,
-    ) -> Self {
-        let rx = handle.subscribe_all();
-        Self { handle, our_alias, dest_alias, rx, config }
-    }
-
-    /// Perform one pipelined memory read.
-    ///
-    /// Sends the request via `send_direct` (bypassing the mpsc queue), waits for
-    /// the assembled datagram reply on the shared subscription, ACKs via
-    /// `send_direct`, and returns the result with timing data.
-    pub async fn read_next(&mut self, desc: &BatchReadDescriptor, timeout_ms: u64) -> BatchReadResult {
-        let read_desc = crate::datagram_reader::ReadDescriptor {
-            address_space: desc.address_space,
-            address: desc.address,
-            count: desc.count,
-        };
-        // Use per-call timeout if different from config default.
-        let config = if timeout_ms != self.config.timeout_ms {
-            crate::datagram_reader::MemoryReadConfig {
-                timeout_ms,
-                ..self.config.clone()
-            }
-        } else {
-            self.config.clone()
-        };
-
-        let result = crate::datagram_reader::datagram_read_exchange(
-            &self.handle,
-            &mut self.rx,
-            self.our_alias,
-            self.dest_alias,
-            &read_desc,
-            &config,
-            true, // use send_direct for batch reads
-        ).await;
-
-        BatchReadResult {
-            data: result.data,
-            timing: result.timing,
-        }
-    }
 }
 
 /// High-level LCC connection for performing network operations
@@ -873,6 +793,13 @@ impl LccConnection {
     }
 
     /// Like [`read_cdi_cancellable`], but also returns per-chunk timing metadata.
+    ///
+    /// Deprecated in S3 (feature 019-peer-session-refactor). All in-tree
+    /// callers now route through `PeerSessionHandle::download_cdi`; this
+    /// signature is retained only as a compatibility shim for external
+    /// consumers of the `LccConnection` API and will be retired in S5
+    /// alongside `datagram_read_exchange`.
+    #[deprecated(since = "0.3.6", note = "route through PeerSessionHandle::download_cdi; retired in S5")]
     pub async fn read_cdi_cancellable_with_stats(
         &mut self,
         dest_alias: u16,
@@ -932,7 +859,7 @@ impl LccConnection {
 
             let result = datagram_read_exchange(
                 handle, &mut rx, our_alias, dest_alias,
-                &desc, &config, false,
+                &desc, &config, true,
             ).await;
 
             total_retries += result.retry_count as usize;
@@ -1111,39 +1038,6 @@ impl LccConnection {
                 }
             }
         }
-    }
-
-    // ========================================================================
-    // Batch Memory Read (subscribe once, hold handle across loop)
-    // ========================================================================
-
-    /// Return a [`BatchReader`] ready to perform pipelined memory reads on `dest_alias`.
-    ///
-    /// The `BatchReader` holds a single broadcast subscription for its lifetime,
-    /// so consecutive [`BatchReader::read_next`] calls keep the subscription alive
-    /// between reads — eliminating per-read subscribe/unsubscribe overhead and
-    /// allowing the ACK for read N to be immediately followed by the request for
-    /// read N+1 without any scheduler hop.
-    pub fn batch_reader(&self, dest_alias: u16) -> crate::Result<BatchReader> {
-        let handle = self.handle.as_ref()
-            .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?
-            .clone();
-        let our_alias = self.our_alias.value();
-        Ok(BatchReader::new(handle, our_alias, dest_alias))
-    }
-
-    /// Like [`batch_reader`](Self::batch_reader), but with custom read configuration
-    /// (timeout, retry cap, post-ACK delay).
-    pub fn batch_reader_with_config(
-        &self,
-        dest_alias: u16,
-        config: crate::datagram_reader::MemoryReadConfig,
-    ) -> crate::Result<BatchReader> {
-        let handle = self.handle.as_ref()
-            .ok_or_else(|| crate::Error::Protocol("No transport handle available".to_string()))?
-            .clone();
-        let our_alias = self.our_alias.value();
-        Ok(BatchReader::with_config(handle, our_alias, dest_alias, config))
     }
 
     // ========================================================================
@@ -2384,6 +2278,45 @@ mod tests {
             err.contains("cancelled") || err.contains("Cancelled"),
             "Error should mention cancellation: {}",
             err
+        );
+    }
+
+    // Behavior contract: CDI download must use the direct-write path so ACKs
+    // and follow-up read requests bypass the writer-task mpsc wakeup.  Without
+    // this, gateways with tight inter-frame gap requirements (e.g. SPROG DCC
+    // Generator over serial) drop the second request in each pair, causing
+    // repeated timeouts.  See Option A of the change-analyze escalation on
+    // 2026-07-05.
+    #[tokio::test]
+    async fn test_cdi_read_uses_send_direct() {
+        let src: u16 = 0xBBB;
+        let dst: u16 = 0xAAA;
+
+        // Single-chunk CDI reply with null terminator — enough to complete the
+        // exchange and produce at least one direct ACK write.
+        let reply = make_cdi_reply_frame(src, dst, 0, b"A\x00");
+        let mut transport = GlobalMockTransport::new();
+        transport.add_receive_frame(reply.to_string());
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
+
+        assert_eq!(
+            handle.direct_write_count(), 0,
+            "sanity: counter should start at 0"
+        );
+
+        let result = LccConnection::read_cdi_with_handle(
+            &handle, dst, src, cdi_test_config(2000), None,
+        ).await;
+
+        let count = handle.direct_write_count();
+        actor.shutdown().await;
+
+        assert!(result.is_ok(), "CDI read should succeed: {:?}", result);
+        assert!(
+            count > 0,
+            "read_cdi_with_handle must exercise send_direct (count was {})",
+            count
         );
     }
 }

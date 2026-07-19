@@ -14,7 +14,7 @@ Thumbs.db
 !.env.example
 
 # Build artifacts (covered by subproject .gitignore but listed for clarity)
-/target/
+**/target/
 /build/
 /dist/
 node_modules/

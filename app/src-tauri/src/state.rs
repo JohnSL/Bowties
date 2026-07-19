@@ -1,6 +1,7 @@
 //! Application state management for Bowties Tauri application
 
 use lcc_rs::{LccConnection, SNIPData, TransportHandle};
+use lcc_rs::peer_session_registry::PeerSessionRegistry;
 use crate::commands::{ConnectionConfig};
 use crate::events::EventRouter;
 use crate::node_registry::NodeRegistry;
@@ -122,12 +123,15 @@ pub struct AppState {
 
     /// Per-node proxy registry — the canonical source of per-node state.
     pub node_registry: Arc<NodeRegistry>,
+
+    /// Per-peer session registry (ADR-0016). `Some` while a transport is
+    /// active; sole spawner of `PeerSession` actors keyed by NodeID. Cleared
+    /// on transport disconnect. `LiveNodeProxy` fetches a session handle per
+    /// protocol call via this registry (fetch-per-call, D2).
+    pub sessions: Arc<RwLock<Option<Arc<PeerSessionRegistry>>>>,
     
     /// Cancellation token for config reading operations (T012)
     pub config_read_cancel: Arc<AtomicBool>,
-
-    /// Cancellation flag for CDI download operations.
-    pub cdi_download_cancel: Arc<AtomicBool>,
 
     /// Active connection configuration (None when not connected)
     pub active_connection: Arc<RwLock<Option<ConnectionConfig>>>,
@@ -184,9 +188,9 @@ impl AppState {
             transport_handle: Arc::new(RwLock::new(None)),
             event_router: Arc::new(RwLock::new(None)),
             node_registry: Arc::new(NodeRegistry::new()),
+            sessions: Arc::new(RwLock::new(None)),
             active_connection: Arc::new(RwLock::new(None)),
             config_read_cancel: Arc::new(AtomicBool::new(false)),
-            cdi_download_cancel: Arc::new(AtomicBool::new(false)),
             bowties_catalog: Arc::new(RwLock::new(None)),
             active_layout: Arc::new(RwLock::new(None)),
             offline_changes_cache: Arc::new(RwLock::new(Vec::new())),
@@ -204,6 +208,27 @@ impl AppState {
     /// Return a `MemoryReadConfig` from the current tuning parameters.
     pub fn memory_read_config(&self) -> lcc_rs::MemoryReadConfig {
         self.tuning.to_memory_read_config()
+    }
+
+    /// Resolve the per-peer [`PeerSessionHandle`] for `node_id` via the
+    /// session registry (fetch-per-call, ADR-0016 / S2 pattern).
+    ///
+    /// Returns a human-readable error string when the registry is unset (no
+    /// active transport) or the node has not yet been seen — matching the
+    /// error style of the config r/w commands that call it. Every config
+    /// read/write routes through this so a peer's `DatagramAssembler` is only
+    /// ever reached behind a single `ActiveExchange` (S4 interleave closure).
+    pub async fn peer_session(
+        &self,
+        node_id: lcc_rs::NodeID,
+    ) -> Result<lcc_rs::PeerSessionHandle, String> {
+        let sessions_guard = self.sessions.read().await;
+        match sessions_guard.as_ref() {
+            Some(registry) => registry.get(node_id).await.ok_or_else(|| {
+                "Peer session not available (node not seen yet)".to_string()
+            }),
+            None => Err("Peer session not available (not connected)".to_string()),
+        }
     }
 
     /// Check if connected to LCC network
@@ -235,6 +260,12 @@ impl AppState {
         // Store transport handle
         if let Some(ref h) = handle {
             *self.transport_handle.write().await = Some(h.clone());
+            // Build the peer-session registry (ADR-0016 sole spawner) and
+            // publish it to both `AppState.sessions` and the node registry
+            // (so `LiveNodeProxy` instances receive it at spawn time).
+            let peer_sessions = PeerSessionRegistry::new(h.clone(), our_alias);
+            *self.sessions.write().await = Some(peer_sessions.clone());
+            self.node_registry.set_peer_sessions(peer_sessions).await;
             // Configure node registry so proxies can be spawned
             self.node_registry.set_transport(h.clone(), our_alias).await;
         }
@@ -291,6 +322,14 @@ impl AppState {
         
         // Clear transport handle
         *self.transport_handle.write().await = None;
+        // Shut down the peer-session registry (ADR-0016): clears the
+        // sessions map AND aborts the spawn-watcher so its captured
+        // `TransportHandle` is released. Without the watcher abort the
+        // transport broadcast channel stays alive and on Windows serial
+        // reconnect the OS handle surfaces `COM7: Access is denied`.
+        if let Some(sessions) = self.sessions.write().await.take() {
+            sessions.shutdown().await;
+        }
         
         // Clear connection and active config
         *self.connection.write().await = None;
