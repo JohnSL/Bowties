@@ -186,6 +186,15 @@ const ABS_3_ASPECT_SLOTS: &[SlotDefinition] = &[
         max_channels: Some(1),
         shared: false,
     },
+    SlotDefinition {
+        label: "downstream-signal",
+        display_label: "downstream",
+        kind: SlotKind::Producer,
+        required_role: "signal-aspect",
+        min_channels: 0,
+        max_channels: Some(1),
+        shared: true,
+    },
 ];
 
 /// State mapping for the ABS template is informational — the actual
@@ -406,5 +415,24 @@ mod tests {
         assert_eq!(BLOCK_INDICATOR.find_slot("input").map(|s| s.label), Some("input"));
         assert_eq!(BLOCK_INDICATOR.find_slot("output").map(|s| s.label), Some("output"));
         assert!(BLOCK_INDICATOR.find_slot("nope").is_none());
+    }
+
+    #[test]
+    fn abs_template_has_downstream_signal_slot() {
+        let ds = ABS_3_ASPECT_SIGNAL
+            .find_slot("downstream-signal")
+            .expect("downstream-signal slot exists");
+        assert_eq!(ds.display_label, "downstream");
+        assert_eq!(ds.kind, SlotKind::Producer);
+        assert_eq!(ds.required_role, "signal-aspect");
+        assert_eq!(ds.min_channels, 0);
+        assert_eq!(ds.max_channels, Some(1));
+        assert!(ds.shared);
+    }
+
+    #[test]
+    fn abs_template_has_three_slots_in_order() {
+        let labels: Vec<&str> = ABS_3_ASPECT_SIGNAL.slots.iter().map(|s| s.label).collect();
+        assert_eq!(labels, vec!["input", "output", "downstream-signal"]);
     }
 }

@@ -31,6 +31,11 @@ pub struct Facility {
     /// the listed channel ids. The cap is enforced per template slot
     /// by `max_channels` (Spec 018 / S4 — D8).
     pub slot_bindings: BTreeMap<String, Vec<String>>,
+    /// Logic allocation hydrated at query time from the document's
+    /// `logic_allocations` array. Never persisted on the facility
+    /// entity itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logic_allocation: Option<crate::logic_adapter::LogicAllocation>,
 }
 
 /// Root structure for `facilities.yaml` persistence.
@@ -57,6 +62,26 @@ impl FacilitiesDocument {
             facilities,
             logic_allocations: Vec::new(),
         }
+    }
+
+    /// Return facilities with their matching logic allocation joined in.
+    ///
+    /// Used at query time so the frontend receives hydrated records without
+    /// the allocation being persisted on the facility entity itself.
+    pub fn facilities_with_allocations(&self) -> Vec<Facility> {
+        self.facilities
+            .iter()
+            .map(|f| {
+                let alloc = self
+                    .logic_allocations
+                    .iter()
+                    .find(|a| a.facility_id == f.facility_id);
+                Facility {
+                    logic_allocation: alloc.cloned(),
+                    ..f.clone()
+                }
+            })
+            .collect()
     }
 }
 
@@ -325,6 +350,7 @@ mod tests {
             template_id: "block-indicator".to_string(),
             name: name.to_string(),
             slot_bindings,
+            logic_allocation: None,
         }
     }
 
@@ -808,5 +834,53 @@ mod tests {
             vec!["ch-a".to_string()]
         );
         assert!(facilities.facilities[1].slot_bindings["output"].is_empty());
+    }
+
+    // ── facilities_with_allocations (hydration join) ─────────────────────
+
+    #[test]
+    fn facilities_with_allocations_joins_matching_allocation() {
+        use crate::logic_adapter::{ConditionalLineRange, LogicAllocation};
+
+        let f = block_indicator_with_empty_slots("f-1", "Block 5");
+        let alloc = LogicAllocation {
+            facility_id: "f-1".to_string(),
+            target_node_key: "05010101FF000001".to_string(),
+            conditional_lines: ConditionalLineRange { start: 0, count: 2 },
+        };
+        let doc = FacilitiesDocument {
+            schema_version: "1.0".to_string(),
+            facilities: vec![f],
+            logic_allocations: vec![alloc.clone()],
+        };
+
+        let hydrated = doc.facilities_with_allocations();
+
+        assert_eq!(hydrated.len(), 1);
+        assert_eq!(hydrated[0].logic_allocation, Some(alloc));
+    }
+
+    #[test]
+    fn facilities_with_allocations_leaves_none_for_unmatched() {
+        use crate::logic_adapter::{ConditionalLineRange, LogicAllocation};
+
+        let f1 = block_indicator_with_empty_slots("f-1", "Block 5");
+        let f2 = block_indicator_with_empty_slots("f-2", "Block 6");
+        let alloc = LogicAllocation {
+            facility_id: "f-1".to_string(),
+            target_node_key: "05010101FF000001".to_string(),
+            conditional_lines: ConditionalLineRange { start: 0, count: 2 },
+        };
+        let doc = FacilitiesDocument {
+            schema_version: "1.0".to_string(),
+            facilities: vec![f1, f2],
+            logic_allocations: vec![alloc.clone()],
+        };
+
+        let hydrated = doc.facilities_with_allocations();
+
+        assert_eq!(hydrated.len(), 2);
+        assert_eq!(hydrated[0].logic_allocation, Some(alloc));
+        assert_eq!(hydrated[1].logic_allocation, None);
     }
 }

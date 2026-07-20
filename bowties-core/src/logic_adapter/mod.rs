@@ -347,7 +347,7 @@ pub struct PinEvents {
 }
 
 /// Reference to a downstream signal's track circuit input.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DownstreamBinding {
     /// Track circuit input number (1–8) on the target node.
     pub track_circuit: u8,
@@ -826,6 +826,51 @@ pub fn get_capacity(
 /// so only Tower-LCC-class nodes appear in the logic target picker.
 pub fn has_conditional_lines(tree: &NodeConfigTree) -> bool {
     !build_conditional_line_address_map(tree).is_empty()
+}
+
+// ── Downstream resolution (Spec 020 / S4) ────────────────────────────────
+
+use crate::layout::facilities::Facility;
+
+/// Resolve the downstream signal binding for a facility.
+///
+/// Looks up the `downstream-signal` slot binding on the compiling facility,
+/// finds which other facility owns that channel as its output, and checks
+/// whether that downstream facility already has a logic allocation. If so,
+/// produces a `DownstreamBinding` with a hardcoded Track Circuit 1 (S5 will
+/// allocate dynamically). Returns `None` if:
+/// - The slot is unbound (end-of-line signal)
+/// - The bound channel is not the output of any other facility
+/// - The downstream facility has no allocation yet (deferred compilation)
+pub fn resolve_downstream_binding(
+    facility: &Facility,
+    all_facilities: &[Facility],
+    allocations: &[LogicAllocation],
+) -> Option<DownstreamBinding> {
+    // 1. Get the downstream-signal slot binding.
+    let downstream_channel_id = facility
+        .slot_bindings
+        .get("downstream-signal")
+        .and_then(|v| v.first())?;
+
+    // 2. Find which facility has this channel as its "output" slot binding.
+    let downstream_facility = all_facilities.iter().find(|f| {
+        f.facility_id != facility.facility_id
+            && f.slot_bindings
+                .get("output")
+                .map_or(false, |v| v.contains(downstream_channel_id))
+    })?;
+
+    // 3. Check if the downstream facility has a logic allocation.
+    let _downstream_allocation = allocations
+        .iter()
+        .find(|a| a.facility_id == downstream_facility.facility_id)?;
+
+    // 4. Produce DownstreamBinding (S4: hardcoded TC 1; S5 will allocate).
+    Some(DownstreamBinding {
+        track_circuit: 1,
+        speed: TrackSpeed::Stop,
+    })
 }
 
 #[cfg(test)]
@@ -1700,5 +1745,97 @@ mod tests {
         assert_eq!(map.get(&(ConditionalLineField::ActionEventId(0), 0)).unwrap().address, 3131);
         assert_eq!(map.get(&(ConditionalLineField::ActionCondition(1), 0)).unwrap().address, 3228);
         assert_eq!(map.get(&(ConditionalLineField::ActionEventId(1), 0)).unwrap().address, 3231);
+    }
+
+    // ── resolve_downstream_binding tests (S4) ─────────────────────────
+
+    use crate::layout::facilities::Facility;
+    use std::collections::BTreeMap;
+
+    fn make_facility(id: &str, template: &str, bindings: Vec<(&str, Vec<&str>)>) -> Facility {
+        let slot_bindings: BTreeMap<String, Vec<String>> = bindings
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.into_iter().map(|s| s.to_string()).collect()))
+            .collect();
+        Facility {
+            facility_id: id.to_string(),
+            template_id: template.to_string(),
+            name: format!("Facility {}", id),
+            slot_bindings,
+            logic_allocation: None,
+        }
+    }
+
+    #[test]
+    fn resolve_downstream_returns_none_when_slot_unbound() {
+        let upstream = make_facility("f1", "abs-3-aspect-signal", vec![
+            ("input", vec!["ch-block"]),
+            ("output", vec!["ch-signal"]),
+            ("downstream-signal", vec![]),
+        ]);
+        let all = vec![upstream.clone()];
+        let allocs = vec![];
+
+        assert_eq!(resolve_downstream_binding(&upstream, &all, &allocs), None);
+    }
+
+    #[test]
+    fn resolve_downstream_returns_none_when_no_owning_facility() {
+        let upstream = make_facility("f1", "abs-3-aspect-signal", vec![
+            ("input", vec!["ch-block"]),
+            ("output", vec!["ch-signal-1"]),
+            ("downstream-signal", vec!["ch-orphan"]),
+        ]);
+        let all = vec![upstream.clone()];
+        let allocs = vec![];
+
+        assert_eq!(resolve_downstream_binding(&upstream, &all, &allocs), None);
+    }
+
+    #[test]
+    fn resolve_downstream_returns_none_when_downstream_has_no_allocation() {
+        let upstream = make_facility("f1", "abs-3-aspect-signal", vec![
+            ("input", vec!["ch-block"]),
+            ("output", vec!["ch-signal-1"]),
+            ("downstream-signal", vec!["ch-signal-2"]),
+        ]);
+        let downstream = make_facility("f2", "abs-3-aspect-signal", vec![
+            ("input", vec!["ch-block-2"]),
+            ("output", vec!["ch-signal-2"]),
+            ("downstream-signal", vec![]),
+        ]);
+        let all = vec![upstream.clone(), downstream];
+        let allocs = vec![]; // downstream has no allocation yet
+
+        assert_eq!(resolve_downstream_binding(&upstream, &all, &allocs), None);
+    }
+
+    #[test]
+    fn resolve_downstream_returns_binding_when_downstream_is_allocated() {
+        let upstream = make_facility("f1", "abs-3-aspect-signal", vec![
+            ("input", vec!["ch-block"]),
+            ("output", vec!["ch-signal-1"]),
+            ("downstream-signal", vec!["ch-signal-2"]),
+        ]);
+        let downstream = make_facility("f2", "abs-3-aspect-signal", vec![
+            ("input", vec!["ch-block-2"]),
+            ("output", vec!["ch-signal-2"]),
+            ("downstream-signal", vec![]),
+        ]);
+        let all = vec![upstream.clone(), downstream];
+        let allocs = vec![LogicAllocation {
+            facility_id: "f2".to_string(),
+            target_node_key: "node-1".to_string(),
+            conditional_lines: ConditionalLineRange { start: 0, count: 2 },
+        }];
+
+        let result = resolve_downstream_binding(&upstream, &all, &allocs);
+        assert_eq!(
+            result,
+            Some(DownstreamBinding {
+                track_circuit: 1,
+                speed: TrackSpeed::Stop,
+            })
+        );
     }
 }

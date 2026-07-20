@@ -10,8 +10,8 @@ use bowties_core::channel_events::{resolve_event_ids, resolve_lamp_row_path_pref
 use bowties_core::layout::channels::{ChannelBinding, InformationChannel};
 use bowties_core::logic_adapter::{
     build_conditional_line_address_map, compile_facility, get_capacity, has_conditional_lines,
-    resolve_field_writes, CompileInput, CompiledLogicPlan, InputChannelEvents, LogicCapacity,
-    PinEvents,
+    resolve_downstream_binding, resolve_field_writes, CompileInput, CompiledLogicPlan,
+    InputChannelEvents, LogicCapacity, PinEvents,
 };
 use bowties_core::node_key::NodeKey;
 use bowties_core::node_tree::NodeConfigTree;
@@ -258,6 +258,12 @@ pub async fn compile_logic_for_facility(
 
     let output_pin_events = resolve_bicolor_pin_events(output_tree, base_row)?;
 
+    // ── Resolve downstream-signal binding (Spec 020 / S4) ────────────
+
+    let all_facilities = &layout_state.effective_facilities().facilities;
+    let all_allocations = &layout_state.effective_facilities().logic_allocations;
+    let downstream = resolve_downstream_binding(&facility, all_facilities, all_allocations);
+
     // ── Build CompileInput and compile ───────────────────────────────
 
     let compile_input = CompileInput {
@@ -271,7 +277,7 @@ pub async fn compile_logic_for_facility(
             .clone(),
         input_events,
         output_pin_events,
-        downstream: None, // S4 will resolve downstream bindings
+        downstream,
     };
 
     let compiler_output = compile_facility(&compile_input).map_err(|e| e.to_string())?;

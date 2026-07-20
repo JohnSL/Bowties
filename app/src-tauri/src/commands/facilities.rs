@@ -28,5 +28,5 @@ pub async fn list_facilities(
     }
     let layout_dir = Path::new(&context.root_path);
     let doc: FacilitiesDocument = bowties_core::layout::read_facilities(layout_dir)?;
-    Ok(doc.facilities)
+    Ok(doc.facilities_with_allocations())
 }

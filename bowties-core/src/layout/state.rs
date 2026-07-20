@@ -746,6 +746,7 @@ mod tests {
                     ("input".to_string(), Vec::new()),
                     ("output".to_string(), Vec::new()),
                 ]),
+                logic_allocation: None,
             },
         }
     }

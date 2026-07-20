@@ -653,3 +653,44 @@ describe('Spec 020 / S2: selectChannelForSlot returns needsLogicTarget for compi
     expect(result).toEqual({});
   });
 });
+
+describe('Spec 020 / S4: removeFromSlot recompiles when facility stays Wired', () => {
+  beforeEach(async () => {
+    bowtieMetadataStore.clearAll();
+    vi.mocked(composeFacilityBowties).mockReset();
+    vi.mocked(composeFacilityBowties).mockResolvedValue([]);
+    vi.mocked(syncLayoutDrafts).mockClear();
+    vi.mocked(compileLogicForFacility).mockReset();
+    vi.mocked(compileLogicForFacility).mockResolvedValue({
+      allocation: { facilityId: 'f-abs', targetNodeKey: 'N-tower', conditionalLines: { start: 0, count: 2 } },
+      fieldWrites: [],
+    });
+    listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR, ABS_3_ASPECT]);
+    await behaviorTemplatesStore.loadBehaviorTemplates();
+  });
+
+  it('detaching downstream-signal re-triggers compileLogicForFacility', async () => {
+    // The downstream-signal channel is the output of another facility.
+    const downstreamSignalCh: InformationChannel = {
+      id: 'ch-signal-ds',
+      name: 'Downstream Signal',
+      role: 'signal-aspect',
+      style: '2-led-bicolor-aspect',
+      ownership: 'user-owned',
+      binding: { kind: 'lampRow', nodeKey: 'N3', rowOrdinal: 3 },
+    };
+    channelsStore.hydrateBaseline([bod(1), signalAspect(), downstreamSignalCh]);
+    facilitiesStore.hydrateBaseline([
+      {
+        facilityId: 'f-abs', templateId: 'abs-3-aspect-signal', name: 'Signal 5',
+        slotBindings: { input: ['ch-bod-1'], output: ['ch-signal-1'], 'downstream-signal': ['ch-signal-ds'] },
+      },
+    ]);
+    facilitiesStore.setLogicTargetNodeKey('f-abs', 'N-tower');
+
+    await orch.removeFromSlot({ facilityId: 'f-abs', slotLabel: 'downstream-signal', channelId: 'ch-signal-ds' });
+
+    // Facility stays Wired (minChannels=0 for downstream-signal), so recompile is triggered.
+    expect(compileLogicForFacility).toHaveBeenCalledWith('f-abs', 'N-tower');
+  });
+});

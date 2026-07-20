@@ -139,3 +139,39 @@ export function deriveSignalAspectState(
   if (!redIsOn && greenIsOn) return { role: 'signal-aspect', state: 'clear' };
   return { role: 'signal-aspect', state: 'dark' };
 }
+
+/**
+ * Per-lamp LED state for a 2-LED bicolor signal.
+ * Used by the facility comprehension view to show individual lamp On/Off state.
+ */
+export interface LedLampState {
+  label: string;
+  isOn: boolean;
+  color: 'red' | 'green';
+}
+
+/**
+ * Derive individual LED lamp states for a 2-LED bicolor signal channel.
+ * Returns an array of per-lamp states (red LED, green LED) using the same
+ * most-recent-wins logic as `deriveSignalAspectState`.
+ */
+export function deriveLedLampStates(
+  events: ReadonlyMap<string, number>,
+  redOnId: string | undefined,
+  redOffId: string | undefined,
+  greenOnId: string | undefined,
+  greenOffId: string | undefined,
+): LedLampState[] {
+  const redOnTs = redOnId ? events.get(redOnId) : undefined;
+  const redOffTs = redOffId ? events.get(redOffId) : undefined;
+  const greenOnTs = greenOnId ? events.get(greenOnId) : undefined;
+  const greenOffTs = greenOffId ? events.get(greenOffId) : undefined;
+
+  const redIsOn = redOnTs != null && (redOffTs == null || redOnTs > redOffTs);
+  const greenIsOn = greenOnTs != null && (greenOffTs == null || greenOnTs > greenOffTs);
+
+  return [
+    { label: 'Red', isOn: redIsOn, color: 'red' },
+    { label: 'Green', isOn: greenIsOn, color: 'green' },
+  ];
+}

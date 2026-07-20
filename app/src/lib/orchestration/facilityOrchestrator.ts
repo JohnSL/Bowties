@@ -150,6 +150,11 @@ export async function removeFromSlot(args: RemoveFromSlotArgs): Promise<void> {
   if (channel?.ownership === 'user-owned') {
     channelsStore.removeUserOwnedChannel(channelId);
   }
+
+  // Spec 020 / S4 — recompile when the facility stays Wired after detach
+  // (e.g. downstream-signal slot has minChannels=0, so removing it doesn't
+  // break the Wired status). The recompile updates the line count (3→2).
+  await composeBowtiesIfWired(facilityId);
 }
 
 // ── Add-channel flow (Spec 018 / S5 — atomic create + claim + bind) ──────

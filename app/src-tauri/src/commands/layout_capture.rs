@@ -884,11 +884,6 @@ pub async fn open_layout_directory(
             };
             let mut tree = crate::node_tree::build_node_config_tree(&dotted_id, &cdi);
             crate::node_tree::merge_snapshot_path_values(&mut tree, &snapshot.config);
-            eprintln!(
-                "[layout_open] Built tree for node={} segments=[{}]",
-                snapshot.node_key,
-                tree.segments.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ")
-            );
 
             // Spec 017 / S3: apply profile annotations so the seeded saved tree
             // carries `event_role` on producer leaves + `profile_applied = true`.
@@ -901,10 +896,6 @@ pub async fn open_layout_directory(
             if let Some(identity) = &cdi.identification {
                 let manufacturer = identity.manufacturer.as_deref().unwrap_or("");
                 let model = identity.model.as_deref().unwrap_or("");
-                eprintln!(
-                    "[layout_open] node={} profile lookup: manufacturer={:?} model={:?}",
-                    snapshot.node_key, manufacturer, model
-                );
                 if !manufacturer.is_empty() || !model.is_empty() {
                     match crate::profile::load_profile(
                         manufacturer,
@@ -925,12 +916,7 @@ pub async fn open_layout_directory(
                                 &selections,
                             );
                         }
-                        None => {
-                            eprintln!(
-                                "[layout_open] node={} NO profile found for {:?}/{:?}",
-                                snapshot.node_key, manufacturer, model
-                            );
-                        }
+                        None => {}
                     }
                 }
             }

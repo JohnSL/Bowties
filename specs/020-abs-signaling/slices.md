@@ -2,7 +2,7 @@
 
 Branch: 020-abs-signaling
 Generated: 2026-07-07
-Status: 3/6 slices complete
+Status: 4/7 slices complete
 
 ## Architecture
 
@@ -138,9 +138,10 @@ graph TD
 | S1: ABS template + full vertical apply (stub compile) | User creates ABS signal facility, binds channels, selects logic target, applies — CDI changes staged as drafts | Yes |
 | S2: Real Tower LCC compiler | Compiled conditional lines match Tower LCC CDI exactly — correct signal behavior on hardware | Yes |
 | S3: Fix channel state display + signal-aspect event resolution | Channel state dots work for block-occupancy (regression fix) and signal-aspect channels | Yes |
-| S4: ABS cascade via same-node Track Circuits | Chaining signals produces Stop → Approach → Clear cascade | Yes |
-| S5: Facility deletion + resource reclamation | Delete reclaims conditional lines and Track Circuits | Yes |
-| S6: Capacity display + target node suggestion | Capacity numbers visible per candidate node before apply | Yes |
+| S4: Facility comprehension view + editable bindings | Inputs→Logic→Outputs detail view for applied facilities; explicit logic target selection; per-lamp output state; editable downstream-signal slot | Yes |
+| S5: ABS cascade via same-node Track Circuits | Chaining signals produces Stop → Approach → Clear cascade | Yes |
+| S6: Facility deletion + resource reclamation | Delete reclaims conditional lines and Track Circuits | Yes |
+| S7: Capacity display + target node suggestion | Capacity numbers visible per candidate node before apply | Yes |
 
 ---
 
@@ -153,9 +154,10 @@ The ordered slice set. An overview table for at-a-glance scanning, followed by o
 | S1 | ABS template + signal-aspect style + full vertical apply path (stub compile) | HITL | None | done |
 | S2 | Real Tower LCC conditional line compiler | HITL | S1 | done |
 | S3 | Signal-aspect channel state display | AFK | S1 | done |
-| S4 | ABS cascade via same-node Track Circuits | HITL | S2 | sketched |
-| S5 | Facility deletion + resource reclamation | AFK | S2 | sketched |
-| S6 | Capacity display + target node suggestion | AFK | S1 | sketched |
+| S4 | Facility comprehension view + editable bindings | HITL | S3 | done |
+| S5 | ABS cascade via same-node Track Circuits | HITL | S4 | sketched |
+| S6 | Facility deletion + resource reclamation | AFK | S2 | sketched |
+| S7 | Capacity display + target node suggestion | AFK | S4 | sketched |
 
 ### S1: ABS template + signal-aspect style + full vertical apply path (stub compile) [HITL]
 
@@ -252,11 +254,42 @@ The ordered slice set. An overview table for at-a-glance scanning, followed by o
 
 <!-- Session: 2026-07-19 — Completed S3. Next: S4 (HITL), S5 (AFK), S6 (AFK). -->
 
-### S4: ABS cascade via same-node Track Circuits [HITL]
+### S4: Facility comprehension view + editable bindings [HITL]
+
+**Intent**: Applied facilities display an Inputs → Logic → Outputs detail view in the Railroad panel. Users can inspect live state, see compiled rules, explicitly select/change the logic target, view per-lamp output state, and edit the downstream-signal binding after initial apply.
+**Boundary**: Route → Component → Store → Orchestrator (recompile on binding edit) → Backend IPC (downstream resolution)
+**Blocked by**: S3
+**Status**: done
+**Complexity**: medium
+**User stories**: US1
+
+**Acceptance criteria**:
+- [ ] Selecting a facility in the Railroad panel renders the comprehension view: Input cards (left), Logic card (center), Output cards (right) with flow arrows
+- [ ] Each Input card shows channel name, role, and live state badge (top-right of card): occupied/clear for block-occupancy, stop/approach/clear for downstream signal
+- [ ] Logic card shows: compiled rules with evaluation priority, target node name, current evaluation result (e.g. "Stop — next block occupied"), and a "Select target node" button
+- [ ] "Select target node" button opens the LogicTargetSelector; changing the target triggers recompilation and re-stages CDI drafts for the new node (freeing the old allocation)
+- [ ] Output cards show signal aspect state badge (top-right) and per-lamp breakdown (e.g. "Row 5 — Red: ON", "Row 6 — Green: off")
+- [ ] Downstream-signal input slot is visible as an input card; when empty, shows "End of line — no cascade" with an "Add downstream signal →" action
+- [ ] Binding a downstream signal to an existing facility triggers recompilation (2-line → 3-line, adds Approach rule); unbinding triggers recompilation back to 2-line
+- [ ] State dots/badges use the card-header position (top-right) consistently across input and output cards
+
+**Architecture note**: Downstream-signal is a 3rd slot on the ABS template (D1: Option A — slot reuse). `required_role: "signal-aspect"`, `minChannels: 0`, `maxChannels: 1`, `shared: true`. Orchestrator resolves bound channel → owning facility → logic allocation → `DownstreamBinding` at compile time. Per-lamp state derived by component from the same 4 event timestamps S3 uses. Compiled rules summary derived on frontend from template rules + live channel state (no new backend query). In-card expansion pattern: `$state(false)` + CSS grid swap.
+
+**Tasks**:
+- [x] S4-T1: Integration test — expand FacilityCard for compiled-template facility → verify 3-column comprehension view renders with input/logic/output cards; bind downstream-signal slot → verify recompile triggers 3-line output; unbind → verify recompile back to 2-line; change logic target → verify CDI drafts restaged for new node
+- [x] S4-T2: bowties-core — Add 3rd slot `downstream-signal` to ABS template (`signal-aspect`, shared, `minChannels: 0`, `maxChannels: 1`); update IPC `compile_logic_for_facility` to resolve downstream from slot binding (channel → owning facility → allocation → `DownstreamBinding`); unit test
+- [x] S4-T3: Frontend orchestrator — Extend `compileLogicIfNeeded` to pass downstream-signal slot binding to IPC; add recompile trigger on downstream-signal attach/detach (calls existing `compileLogicForFacility` path)
+- [x] S4-T4: Frontend components — `FacilityComprehensionView.svelte` (3-column: input cards with live state badges, logic card with rules/evaluation/target-button, output cards with aspect badge + per-lamp LED state); `FacilityCard.svelte` gains expand toggle + conditional rendering
+- [x] S4-T5: Frontend components — Downstream-signal input card: empty state ("End of line — no cascade" + "Add downstream signal →" action); filled state (channel name + live aspect badge); bind/unbind actions dispatch through orchestrator
+- [x] S4-T6: Validate — `cargo test -p bowties-core` green; `vitest run` green; expand/collapse round-trip; downstream bind/unbind → recompile → correct line count; target change → CDI drafts restaged
+
+<!-- Session: 2026-07-19 — Completed S4. Next: S5 (HITL). -->
+
+### S5: ABS cascade via same-node Track Circuits [HITL]
 
 **Intent**: User can chain multiple ABS signal facilities so that occupying a block cascades Stop → Approach → Clear backward through the block system.
 **Boundary**: Orchestrator → Store → API → Backend domain (`logic_adapter/` compiler extension)
-**Blocked by**: S2
+**Blocked by**: S4
 **Status**: sketched
 
 **Acceptance criteria**:
@@ -269,7 +302,7 @@ The ordered slice set. An overview table for at-a-glance scanning, followed by o
 
 **Architecture note**: Track Circuits are an internal Tower LCC communication primitive (8 per node) that carry aspect/speed values between conditional groups. This slice extends the compiler's variable resolution to include TC-sourced reads and the action expansion to include TC-destination writes. Cross-node cascade (via Track Transmitter/Receiver linking) is explicitly deferred.
 
-### S5: Facility deletion + resource reclamation [AFK]
+### S6: Facility deletion + resource reclamation [AFK]
 
 **Intent**: Deleting a signal facility fully reclaims all allocated conditional lines and Track Circuits — resources are immediately available for reuse.
 **Boundary**: Orchestrator → Backend (`logic_adapter/` + `LayoutState`)
@@ -284,11 +317,11 @@ The ordered slice set. An overview table for at-a-glance scanning, followed by o
 - [ ] Save toolbar and close prompt reflect the deletion-related CDI changes (Dirty Aggregation seam — Save toolbar + close prompt consumers)
 - [ ] User-owned signal-aspect channel is removed alongside the facility (no orphan channels; User-Owned Channel Lifecycle seam)
 
-### S6: Capacity display + target node suggestion [AFK]
+### S7: Capacity display + target node suggestion [AFK]
 
 **Intent**: User sees available conditional line and Track Circuit capacity per candidate node before applying a signal facility.
 **Boundary**: Route → Component → Store → Backend
-**Blocked by**: S1
+**Blocked by**: S4
 **Status**: sketched
 
 **Acceptance criteria**:

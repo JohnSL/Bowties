@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, fireEvent } from '@testing-library/svelte';
 import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
 import type { Facility } from '$lib/api/facilities';
 
@@ -19,6 +19,12 @@ vi.mock('$lib/api/facilities', () => ({
 vi.mock('$lib/api/channels', () => ({
   listChannels: async () => [],
 }));
+
+const resolveNodeNameMock = vi.fn<(nodeId: string) => string>((nodeId) => nodeId);
+vi.mock('$lib/layout', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('$lib/layout')>();
+  return { ...actual, resolveNodeName: (...args: Parameters<typeof actual.resolveNodeName>) => resolveNodeNameMock(...args) };
+});
 
 const { effectiveLayoutStore } = await import('$lib/layout/effectiveLayoutStore.svelte');
 const { facilitiesStore } = await import('$lib/stores/facilities.svelte');
@@ -38,6 +44,22 @@ const BLOCK_INDICATOR: BehaviorTemplate = {
   ],
   compilationTarget: 'composed' as const,
   rules: [],
+};
+
+const ABS_3_ASPECT: BehaviorTemplate = {
+  templateId: 'abs-3-aspect-signal',
+  displayName: 'ABS 3-Aspect Signal',
+  slots: [
+    { label: 'input', displayLabel: 'block', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1, shared: true },
+    { label: 'output', displayLabel: 'signal', kind: 'consumer', requiredRole: 'signal-aspect', minChannels: 1, maxChannels: 1 },
+    { label: 'downstream-signal', displayLabel: 'downstream', kind: 'producer', requiredRole: 'signal-aspect', minChannels: 0, maxChannels: 1, shared: true },
+  ],
+  mapping: [],
+  compilationTarget: 'compiled' as const,
+  rules: [
+    { label: 'Stop', priority: 1, condition: { inputSlot: 'input', producerState: 'occupied' }, aspect: 'stop' },
+    { label: 'Clear', priority: 3, condition: { inputSlot: 'input', producerState: 'clear' }, aspect: 'clear' },
+  ],
 };
 
 beforeEach(async () => {
@@ -80,5 +102,65 @@ describe('FacilityCard status pill (Spec 018 / S6 — D5)', () => {
     vi.spyOn(effectiveLayoutStore, 'facilityStatus').mockReturnValue('Wired');
     render(FacilityCard, { props: { facility: f, template: BLOCK_INDICATOR } });
     expect(screen.getByText(/^Wired$/)).toBeInTheDocument();
+  });
+});
+
+describe('FacilityCard comprehension view (Spec 020 / S4)', () => {
+  it('shows comprehension view directly for compiled-template facilities', () => {
+    const f: Facility = { facilityId: 'f-abs', templateId: 'abs-3-aspect-signal', name: 'Signal 5',
+      slotBindings: { input: ['ch-1'], output: ['ch-2'], 'downstream-signal': [] } };
+    facilitiesStore.hydrateBaseline([f]);
+    vi.spyOn(effectiveLayoutStore, 'facilityStatus').mockReturnValue('Wired');
+    render(FacilityCard, { props: { facility: f, template: ABS_3_ASPECT } });
+    expect(screen.getByTestId('comprehension-view')).toBeInTheDocument();
+  });
+
+  it('does not show comprehension view for composed-template facilities', () => {
+    const f: Facility = { facilityId: 'f-1', templateId: 'block-indicator', name: 'Block 5',
+      slotBindings: { input: ['ch-1'], output: ['ch-2'] } };
+    facilitiesStore.hydrateBaseline([f]);
+    vi.spyOn(effectiveLayoutStore, 'facilityStatus').mockReturnValue('Wired');
+    render(FacilityCard, { props: { facility: f, template: BLOCK_INDICATOR } });
+    expect(screen.queryByTestId('comprehension-view')).not.toBeInTheDocument();
+  });
+
+  it('shows slot-grid for composed-template facilities', () => {
+    const f: Facility = { facilityId: 'f-1', templateId: 'block-indicator', name: 'Block 5',
+      slotBindings: { input: ['ch-1'], output: ['ch-2'] } };
+    facilitiesStore.hydrateBaseline([f]);
+    vi.spyOn(effectiveLayoutStore, 'facilityStatus').mockReturnValue('Wired');
+    render(FacilityCard, { props: { facility: f, template: BLOCK_INDICATOR } });
+    expect(screen.getAllByTestId('facility-slot').length).toBeGreaterThan(0);
+  });
+
+  it('downstream-signal empty state shows "End of line" text and Add action', async () => {
+    const f: Facility = { facilityId: 'f-abs', templateId: 'abs-3-aspect-signal', name: 'Signal 5',
+      slotBindings: { input: ['ch-1'], output: ['ch-2'], 'downstream-signal': [] } };
+    facilitiesStore.hydrateBaseline([f]);
+    vi.spyOn(effectiveLayoutStore, 'facilityStatus').mockReturnValue('Wired');
+    const selectHandler = vi.fn();
+    render(FacilityCard, { props: { facility: f, template: ABS_3_ASPECT, onSelectChannel: selectHandler } });
+
+    // Comprehension view is shown directly — no expand click needed.
+    expect(screen.getByText(/End of line/)).toBeInTheDocument();
+    const addBtn = screen.getByRole('button', { name: /add downstream/i });
+    expect(addBtn).toBeInTheDocument();
+
+    await fireEvent.click(addBtn);
+    expect(selectHandler).toHaveBeenCalledWith('f-abs', 'downstream-signal');
+  });
+
+  it('displays resolved node name for logic target instead of raw key', () => {
+    const f: Facility = {
+      facilityId: 'f-abs', templateId: 'abs-3-aspect-signal', name: 'Signal 5',
+      slotBindings: { input: ['ch-1'], output: ['ch-2'], 'downstream-signal': [] },
+      logicAllocation: { facilityId: 'f-abs', targetNodeKey: '05010101FF000001', conditionalLines: { start: 0, count: 2 } },
+    };
+    facilitiesStore.hydrateBaseline([f]);
+    vi.spyOn(effectiveLayoutStore, 'facilityStatus').mockReturnValue('Wired');
+    resolveNodeNameMock.mockReturnValue('Tower LCC — Main');
+    render(FacilityCard, { props: { facility: f, template: ABS_3_ASPECT } });
+    expect(screen.getByText('Tower LCC — Main')).toBeInTheDocument();
+    expect(screen.queryByText('05010101FF000001')).not.toBeInTheDocument();
   });
 });
