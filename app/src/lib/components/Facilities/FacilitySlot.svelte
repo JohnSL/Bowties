@@ -1,25 +1,13 @@
 <script lang="ts">
   /**
-   * FacilitySlot — single slot inside a facility card (Spec 018).
+   * FacilitySlot — thin wrapper around SlotCard for non-compiled facility cards.
    *
-   * Visual layout mirrors mockups.html §3 (empty) and §6 (filled): a
-   * vertical card with an uppercase slot label on top. Empty state
-   * pairs an italic "empty" label with the Select-channel button.
-   * Filled state shows the bound channel's state dot, name +
-   * ownership badge, location meta, and a Remove-from-slot link
-   * action (no Rename per S4 D6 — channel rename lives in the
-   * Channels panel; Rebind was retired in S6 D4 — swap a channel
-   * via Remove-from-slot followed by Select/Add).
-   *
-   * Vec-shaped bindings (Spec 018 / S4 — D8): the component takes
-   * the parent-resolved `currentChannelId` / `currentChannelDisplay`
-   * shape, leaving the parent (FacilityCard) responsible for picking
-   * element 0 from the underlying `slotBindings[label]` Vec. The
-   * UI is intentionally max-1 in S4 even though the wire form is
-   * plural.
+   * Resolves slot-specific props (label, empty state, action buttons) from
+   * the template definition and delegates rendering to SlotCard.
    */
   import type { BehaviorTemplate, SlotDefinition } from '$lib/api/behaviorTemplates';
-  import { channelStateClass, type ChannelState } from '$lib/utils/channelState';
+  import type { ChannelState } from '$lib/utils/channelState';
+  import SlotCard from './SlotCard.svelte';
 
   let {
     slotLabel,
@@ -32,9 +20,7 @@
   }: {
     slotLabel: string;
     template?: BehaviorTemplate;
-    /** Channel id currently bound (UI is max-1 in S4 — see D8 comment). */
     currentChannelId?: string;
-    /** Display metadata for the currently bound channel. */
     currentChannelDisplay?: {
       name: string;
       ownership: 'hardware-owned' | 'user-owned';
@@ -43,9 +29,7 @@
       state: ChannelState;
       stateLabel: string;
     };
-    /** Spec 018 / S4 — producer-side input slot's Select channel handler. */
     onSelectChannel?: (slotLabel: string) => void;
-    /** Spec 018 / S5 — consumer-side output slot's Add channel handler. */
     onAddChannel?: (slotLabel: string) => void;
     onRemoveFromSlot?: (slotLabel: string, currentChannelId: string) => void;
   } = $props();
@@ -54,18 +38,9 @@
     return template?.slots.find((s) => s.label === slotLabel);
   }
 
-  function slotKindLabel(): string {
+  function cardLabel(): string {
     const def = definition();
-    if (!def) return '';
-    return def.kind === 'producer' ? '(input)' : '(output)';
-  }
-
-  function headerLabel(): string {
-    const def = definition();
-    const name = def?.displayLabel ?? slotLabel;
-    const capitalized = name.charAt(0).toUpperCase() + name.slice(1);
-    const kind = slotKindLabel();
-    return kind ? `${capitalized} ${kind}` : capitalized;
+    return def?.displayLabel ?? slotLabel;
   }
 
   function requiredRoleHint(): string {
@@ -75,16 +50,22 @@
   }
 
   const filled = $derived(currentChannelId !== undefined && currentChannelDisplay !== undefined);
-
-  // Spec 018 / S5 — role-branched empty-state action: producer slots show
-  // "Select channel" (S4); consumer slots show "Add channel" (this slice).
   const slotIsConsumer = $derived(definition()?.kind === 'consumer');
 </script>
 
-<div class="slot" class:filled class:empty={!filled} data-testid="facility-slot" data-slot-label={slotLabel}>
-  <span class="slot-label">{headerLabel()}</span>
-
-  {#if !filled}
+<SlotCard
+  label={cardLabel()}
+  state={currentChannelDisplay?.state}
+  stateLabel={currentChannelDisplay?.stateLabel}
+  channelName={currentChannelDisplay?.name}
+  ownership={currentChannelDisplay?.ownership}
+  meta={currentChannelDisplay ? `${currentChannelDisplay.groupLabel} · ${currentChannelDisplay.locationLabel}` : undefined}
+  empty={!filled}
+  data-slot={slotLabel}
+  data-testid="facility-slot"
+  data-slot-label={slotLabel}
+>
+  {#snippet emptyContent()}
     <div class="slot-empty-row">
       <span class="slot-empty-text">empty</span>
       <div class="slot-empty-actions">
@@ -107,71 +88,20 @@
         {/if}
       </div>
     </div>
-  {:else}
-    {@const ch = currentChannelDisplay!}
-    {@const stateClass = channelStateClass(ch.state)}
-    <div class="slot-filled" data-testid="filled-slot">
-      <span
-        class="state-dot"
-        class:occupied={stateClass === 'occupied'}
-        class:clear={stateClass === 'clear'}
-        class:lit={stateClass === 'lit'}
-        class:unlit={stateClass === 'unlit'}
-        class:unknown={stateClass === 'unknown'}
-        class:no-config={stateClass === 'no-config'}
-        class:signal-stop={stateClass === 'signal-stop'}
-        class:signal-approach={stateClass === 'signal-approach'}
-        class:signal-clear={stateClass === 'signal-clear'}
-        class:signal-dark={stateClass === 'signal-dark'}
-        title={ch.stateLabel}
-        aria-hidden="true"
-      ></span>
-      <div class="slot-filled-text">
-        <div class="slot-channel-name-row">
-          <span class="slot-channel-name" data-testid="slot-channel-name">{ch.name}</span>
-          <span
-            class="ownership-badge"
-            class:hw={ch.ownership === 'hardware-owned'}
-            class:user={ch.ownership === 'user-owned'}
-          >{ch.ownership === 'hardware-owned' ? 'HW' : 'USER'}</span>
-        </div>
-        <span class="slot-channel-meta">{ch.groupLabel} · {ch.locationLabel} · {ch.stateLabel.toLowerCase()}</span>
-      </div>
-    </div>
-    <div class="slot-filled-actions" data-testid="filled-slot-actions">
+  {/snippet}
+  {#snippet actions()}
+    {#if filled}
       <button
         type="button"
         class="btn-link danger"
         onclick={() => onRemoveFromSlot?.(slotLabel, currentChannelId!)}
         data-testid="remove-from-slot-button"
       >Remove from slot</button>
-    </div>
-  {/if}
-</div>
+    {/if}
+  {/snippet}
+</SlotCard>
 
 <style>
-  .slot {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 0.4rem;
-    min-height: 78px;
-    padding: 0.625rem 0.75rem;
-    border: 1px solid var(--border-color, #d1d1d1);
-    border-radius: 5px;
-    background: var(--bg-subtle, #fafafa);
-  }
-  .slot.empty {
-    border-style: dashed;
-    background: #fafbfc;
-  }
-  .slot-label {
-    font-size: 0.625rem;
-    font-weight: 600;
-    color: var(--text-muted, #616161);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
   .slot-empty-row {
     display: flex;
     align-items: center;
@@ -201,88 +131,9 @@
   .btn:hover:not(:disabled) {
     background: var(--bg-hover, #f5f5f5);
   }
-  .btn:disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-  }
   .btn-sm {
     font-size: 0.6875rem;
     padding: 0.2rem 0.5rem;
-  }
-  .slot-filled {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.5rem;
-  }
-  .slot-filled-text {
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-    min-width: 0;
-  }
-  .slot-channel-name-row {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    flex-wrap: wrap;
-  }
-  .slot-channel-name {
-    font-weight: 500;
-    color: var(--text-primary, #242424);
-    font-size: 0.8125rem;
-  }
-  .slot-channel-meta {
-    font-size: 0.6875rem;
-    color: var(--text-muted, #616161);
-  }
-  .ownership-badge {
-    font-size: 0.625rem;
-    font-weight: 600;
-    padding: 0.0625rem 0.4rem;
-    border-radius: 8px;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-  }
-  .ownership-badge.hw { background: #dbeafe; color: #1e40af; }
-  .ownership-badge.user { background: #ede9fe; color: #5b21b6; }
-  .state-dot {
-    display: inline-block;
-    flex-shrink: 0;
-    width: 10px;
-    height: 10px;
-    margin-top: 0.2rem;
-    border-radius: 50%;
-    border: 1.5px solid var(--text-muted, #616161);
-    background: transparent;
-  }
-  .state-dot.occupied { background: #d55e00; border-color: #d55e00; }
-  .state-dot.clear { background: #009e73; border-color: #009e73; }
-  .state-dot.lit {
-    background: #e6c200;
-    border-color: #e6c200;
-    box-shadow: 0 0 4px rgba(230, 194, 0, 0.6);
-  }
-  .state-dot.unlit { background: #555; border-color: #555; }
-  .state-dot.signal-stop { background: #d55e00; border-color: #d55e00; }
-  .state-dot.signal-approach {
-    background: #e6c200;
-    border-color: #e6c200;
-    box-shadow: 0 0 4px rgba(230, 194, 0, 0.6);
-  }
-  .state-dot.signal-clear {
-    background: #009e73;
-    border-color: #009e73;
-    box-shadow: 0 0 4px rgba(0, 158, 115, 0.4);
-  }
-  .state-dot.signal-dark { background: #333; border-color: #333; opacity: 0.5; }
-  .state-dot.no-config {
-    background: transparent;
-    border-style: dashed;
-    opacity: 0.6;
-  }
-  .slot-filled-actions {
-    display: flex;
-    gap: 0.25rem;
   }
   .btn-link {
     background: none;

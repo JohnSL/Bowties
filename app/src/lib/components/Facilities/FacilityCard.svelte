@@ -17,6 +17,7 @@
   import { getStyleRowCount } from '$lib/utils/channelStyles';
   import { facilitiesStore } from '$lib/stores/facilities.svelte';
   import FacilitySlot from './FacilitySlot.svelte';
+  import SlotCard from './SlotCard.svelte';
 
   let {
     facility,
@@ -111,25 +112,17 @@
     const downstreamBinding = facility.slotBindings['downstream-signal'];
     const downstreamDisplay = downstreamBinding?.length ? displayFor(downstreamBinding) : undefined;
     const downstreamState = downstreamDisplay?.currentChannelDisplay?.state;
+    const downstreamIsStop = downstreamState && !('kind' in downstreamState) && downstreamState.state === 'stop';
 
-    // Walk rules in priority order (lower number = higher priority)
-    const sorted = [...template.rules].sort((a, b) => a.priority - b.priority);
-    for (const rule of sorted) {
-      if (rule.condition.inputSlot === 'input' && rule.condition.producerState === 'occupied') {
-        if (inputState.state === 'occupied') {
-          return { aspect: rule.aspect, reason: 'next block occupied' };
-        }
+    // Evaluate: Stop > Approach > Clear
+    if (inputState.state === 'occupied') {
+      return { aspect: 'stop', reason: 'next block occupied' };
+    }
+    if (inputState.state === 'clear') {
+      if (downstreamIsStop) {
+        return { aspect: 'approach', reason: 'downstream signal at Stop' };
       }
-      if (rule.aspect === 'approach' && downstreamState && !('kind' in downstreamState)) {
-        if (downstreamState.state === 'stop') {
-          return { aspect: 'approach', reason: 'downstream signal at Stop' };
-        }
-      }
-      if (rule.condition.inputSlot === 'input' && rule.condition.producerState === 'clear') {
-        if (inputState.state === 'clear') {
-          return { aspect: rule.aspect, reason: 'next block clear' };
-        }
-      }
+      return { aspect: 'clear', reason: 'next block clear' };
     }
     return undefined;
   }
@@ -137,17 +130,19 @@
   /**
    * Get per-lamp LED states for signal-aspect output channels.
    */
-  function outputLampStates(binding: string[]): Array<{ label: string; isOn: boolean; color: 'red' | 'green' }> {
+  function outputLampStates(binding: string[]): Array<{ label: string; isOn: boolean; color: 'red' | 'green'; rowLabel: string }> {
     if (binding.length === 0) return [];
     const id = binding[0];
     const channel = channelsStore.channels.find((c) => c.id === id);
     if (!channel || channel.role !== 'signal-aspect') return [];
     const ids = resolvedEventIds?.get(id);
     if (!ids) return [];
-    return deriveLedLampStates(
+    const lamps = deriveLedLampStates(
       eventStateStore.events,
       ids['redOn'], ids['redOff'], ids['greenOn'], ids['greenOff'],
     );
+    const startRow = channel.binding.kind === 'lampRow' ? channel.binding.rowOrdinal : 0;
+    return lamps.map((lamp, i) => ({ ...lamp, rowLabel: `Row ${startRow + i}` }));
   }
 
   function formatConnectorLabel(connectorId: string): string {
@@ -248,38 +243,27 @@
         }) as [label, binding] (label)}
           {@const d = displayFor(binding)}
           {@const def = template?.slots.find(s => s.label === label)}
-          <div class="cv-card" data-slot={label}>
-            <div class="cv-card-header">
-              <span class="cv-card-label">{def?.displayLabel ?? label}</span>
-              {#if d.currentChannelDisplay}
-                {@const stateClass = channelStateClass(d.currentChannelDisplay.state)}
-                <span class="cv-badge-row">
-                  <span
-                    class="cv-state-dot"
-                    class:occupied={stateClass === 'occupied'}
-                    class:clear={stateClass === 'clear'}
-                    class:signal-stop={stateClass === 'signal-stop'}
-                    class:signal-approach={stateClass === 'signal-approach'}
-                    class:signal-clear={stateClass === 'signal-clear'}
-                    class:signal-dark={stateClass === 'signal-dark'}
-                    class:unknown={stateClass === 'unknown'}
-                  ></span>
-                  <span class="cv-state-label">{d.currentChannelDisplay.stateLabel}</span>
-                </span>
+          <SlotCard
+            label={def?.displayLabel ?? label}
+            state={d.currentChannelDisplay?.state}
+            stateLabel={d.currentChannelDisplay?.stateLabel}
+            channelName={d.currentChannelDisplay?.name}
+            ownership={d.currentChannelDisplay?.ownership}
+            meta={d.currentChannelDisplay ? `${d.currentChannelDisplay.groupLabel} · ${d.currentChannelDisplay.locationLabel}` : undefined}
+            empty={!d.currentChannelDisplay}
+            data-slot={label}
+          >
+            {#snippet emptyContent()}
+              {#if label === 'downstream-signal'}
+                <span class="cv-empty">End of line — no cascade</span>
+                <button type="button" class="btn-link cv-action" aria-label="Add downstream signal" onclick={() => onSelectChannel?.(facility.facilityId, label)}>
+                  Add downstream signal →
+                </button>
+              {:else}
+                <span class="cv-empty">Unbound</span>
               {/if}
-            </div>
-            {#if d.currentChannelDisplay}
-              <span class="cv-channel-name">{d.currentChannelDisplay.name}</span>
-              <span class="cv-channel-meta">{d.currentChannelDisplay.groupLabel} · {d.currentChannelDisplay.locationLabel}</span>
-            {:else if label === 'downstream-signal'}
-              <span class="cv-empty">End of line — no cascade</span>
-              <button type="button" class="btn-link cv-action" aria-label="Add downstream signal" onclick={() => onSelectChannel?.(facility.facilityId, label)}>
-                Add downstream signal →
-              </button>
-            {:else}
-              <span class="cv-empty">Unbound</span>
-            {/if}
-          </div>
+            {/snippet}
+          </SlotCard>
         {/each}
       </div>
 
@@ -307,13 +291,16 @@
           </div>
           <div class="cv-rules-list">
             <div class="cv-rule" class:cv-rule-active={currentEvaluation()?.aspect === 'stop'}>
-              • Next block occupied → <span class="cv-rule-aspect-stop">Stop</span>
+              <span class="cv-rule-indicator" aria-hidden="true">{currentEvaluation()?.aspect === 'stop' ? '▶' : '•'}</span>
+              Next block occupied → <span class="cv-rule-aspect-stop">Stop</span>
             </div>
             <div class="cv-rule" class:cv-rule-active={currentEvaluation()?.aspect === 'approach'}>
-              • Downstream signal at Stop → <span class="cv-rule-aspect-approach">Approach</span>
+              <span class="cv-rule-indicator" aria-hidden="true">{currentEvaluation()?.aspect === 'approach' ? '▶' : '•'}</span>
+              Downstream signal at Stop → <span class="cv-rule-aspect-approach">Approach</span>
             </div>
             <div class="cv-rule" class:cv-rule-active={currentEvaluation()?.aspect === 'clear'}>
-              • Otherwise → <span class="cv-rule-aspect-clear">Clear</span>
+              <span class="cv-rule-indicator" aria-hidden="true">{currentEvaluation()?.aspect === 'clear' ? '▶' : '•'}</span>
+              Otherwise → <span class="cv-rule-aspect-clear">Clear</span>
             </div>
           </div>
           <div class="cv-logic-footer">
@@ -321,9 +308,6 @@
               <span class="cv-meta-label">Runs on:</span>
               <span class="cv-target-value">{logicTargetNodeKey ? resolveNodeName(logicTargetNodeKey) : 'Not assigned'}</span>
             </div>
-            {#if currentEvaluation()}
-              <div class="cv-eval-reason">Current: <strong>{currentEvaluation()!.aspect.charAt(0).toUpperCase() + currentEvaluation()!.aspect.slice(1)}</strong> ({currentEvaluation()!.reason})</div>
-            {/if}
           </div>
         </div>
       </div>
@@ -341,31 +325,17 @@
           {@const d = displayFor(binding)}
           {@const def = template?.slots.find(s => s.label === label)}
           {@const lamps = outputLampStates(binding)}
-          <div class="cv-card" data-slot={label}>
-            <div class="cv-card-header">
-              <span class="cv-card-label">{def?.displayLabel ?? label}</span>
-              {#if d.currentChannelDisplay}
-                {@const stateClass = channelStateClass(d.currentChannelDisplay.state)}
-                <span class="cv-badge-row">
-                  <span
-                    class="cv-state-dot"
-                    class:signal-stop={stateClass === 'signal-stop'}
-                    class:signal-approach={stateClass === 'signal-approach'}
-                    class:signal-clear={stateClass === 'signal-clear'}
-                    class:signal-dark={stateClass === 'signal-dark'}
-                    class:occupied={stateClass === 'occupied'}
-                    class:clear={stateClass === 'clear'}
-                    class:lit={stateClass === 'lit'}
-                    class:unlit={stateClass === 'unlit'}
-                    class:unknown={stateClass === 'unknown'}
-                  ></span>
-                  <span class="cv-state-label">{d.currentChannelDisplay.stateLabel}</span>
-                </span>
-              {/if}
-            </div>
-            {#if d.currentChannelDisplay}
-              <span class="cv-channel-name">{d.currentChannelDisplay.name}</span>
-              <span class="cv-channel-meta">{d.currentChannelDisplay.groupLabel} · {d.currentChannelDisplay.locationLabel}</span>
+          <SlotCard
+            label={def?.displayLabel ?? label}
+            state={d.currentChannelDisplay?.state}
+            stateLabel={d.currentChannelDisplay?.stateLabel}
+            channelName={d.currentChannelDisplay?.name}
+            ownership={d.currentChannelDisplay?.ownership}
+            meta={d.currentChannelDisplay ? `${d.currentChannelDisplay.groupLabel} · ${d.currentChannelDisplay.locationLabel}` : undefined}
+            empty={!d.currentChannelDisplay}
+            data-slot={label}
+          >
+            {#snippet extraContent()}
               {#if lamps.length > 0}
                 <div class="cv-lamp-breakdown">
                   {#each lamps as lamp}
@@ -373,34 +343,55 @@
                       <span class="cv-lamp-dot" class:lamp-on={lamp.isOn} class:lamp-red={lamp.color === 'red'} class:lamp-green={lamp.color === 'green'}></span>
                       <span class="cv-lamp-label">{lamp.label}:</span>
                       <span class="cv-lamp-state" class:lamp-state-on={lamp.isOn}>{lamp.isOn ? 'ON' : 'off'}</span>
+                      <span class="cv-lamp-row-label">— {lamp.rowLabel}</span>
                     </div>
                   {/each}
                 </div>
               {/if}
-            {:else}
-              <span class="cv-empty">Unbound</span>
-            {/if}
-          </div>
+            {/snippet}
+          </SlotCard>
         {/each}
       </div>
     </section>
   {:else}
     <div class="slot-grid">
-      {#each primarySlots() as [label, binding], i (label)}
-        {@const d = displayFor(binding)}
-        {#if i > 0}
-          <span class="slot-arrow" aria-hidden="true">→</span>
-        {/if}
-        <FacilitySlot
-          slotLabel={label}
-          {template}
-          currentChannelId={d.currentChannelId}
-          currentChannelDisplay={d.currentChannelDisplay}
-          onSelectChannel={(slot) => onSelectChannel?.(facility.facilityId, slot)}
-          onAddChannel={(slot) => onAddChannel?.(facility.facilityId, slot)}
-          onRemoveFromSlot={(slot, currentId) => onRemoveFromSlot?.(facility.facilityId, slot, currentId)}
-        />
-      {/each}
+      <div class="slot-column">
+        <h4 class="cv-heading">Inputs</h4>
+        {#each primarySlots().filter(([label]) => {
+          const def = template?.slots.find(s => s.label === label);
+          return def?.kind === 'producer';
+        }) as [label, binding] (label)}
+          {@const d = displayFor(binding)}
+          <FacilitySlot
+            slotLabel={label}
+            {template}
+            currentChannelId={d.currentChannelId}
+            currentChannelDisplay={d.currentChannelDisplay}
+            onSelectChannel={(slot) => onSelectChannel?.(facility.facilityId, slot)}
+            onAddChannel={(slot) => onAddChannel?.(facility.facilityId, slot)}
+            onRemoveFromSlot={(slot, currentId) => onRemoveFromSlot?.(facility.facilityId, slot, currentId)}
+          />
+        {/each}
+      </div>
+      <span class="slot-arrow" aria-hidden="true">→</span>
+      <div class="slot-column">
+        <h4 class="cv-heading">Outputs</h4>
+        {#each primarySlots().filter(([label]) => {
+          const def = template?.slots.find(s => s.label === label);
+          return def?.kind === 'consumer';
+        }) as [label, binding] (label)}
+          {@const d = displayFor(binding)}
+          <FacilitySlot
+            slotLabel={label}
+            {template}
+            currentChannelId={d.currentChannelId}
+            currentChannelDisplay={d.currentChannelDisplay}
+            onSelectChannel={(slot) => onSelectChannel?.(facility.facilityId, slot)}
+            onAddChannel={(slot) => onAddChannel?.(facility.facilityId, slot)}
+            onRemoveFromSlot={(slot, currentId) => onRemoveFromSlot?.(facility.facilityId, slot, currentId)}
+          />
+        {/each}
+      </div>
     </div>
   {/if}
 </article>
@@ -496,20 +487,23 @@
   .slot-grid {
     display: grid;
     grid-template-columns: 1fr 28px 1fr;
-    align-items: stretch;
+    align-items: start;
     gap: 0.5rem;
+    padding-top: 0.625rem;
+    border-top: 1px solid var(--border-color, #e5e5e5);
+  }
+  .slot-column {
+    display: flex;
+    flex-direction: column;
   }
   .slot-arrow {
     display: flex;
     align-items: center;
     justify-content: center;
+    padding-top: 1.75rem;
     color: var(--text-muted, #616161);
     font-size: 1.125rem;
     line-height: 1;
-  }
-  /* Single-slot templates fall back to a sensible single column. */
-  .slot-grid:has(> :nth-child(1):last-child) {
-    grid-template-columns: 1fr;
   }
   .comprehension-view {
     display: grid;
@@ -587,17 +581,6 @@
     font-weight: 500;
     color: var(--text-secondary, #424242);
   }
-  .cv-channel-name {
-    display: block;
-    font-size: 0.8125rem;
-    color: var(--text-primary, #242424);
-  }
-  .cv-channel-meta {
-    display: block;
-    font-size: 0.6875rem;
-    color: var(--text-muted, #616161);
-    margin-top: 0.125rem;
-  }
   .cv-empty {
     color: var(--text-muted, #616161);
     font-style: italic;
@@ -624,9 +607,16 @@
     color: var(--text-secondary, #424242);
   }
   .cv-rule-active {
-    background: var(--surface-accent-active, #ede9fe);
     font-weight: 500;
-    border: 1px solid var(--border-accent, #c4b5fd);
+  }
+  .cv-rule-indicator {
+    display: inline-block;
+    width: 1em;
+    text-align: center;
+    font-size: 0.625rem;
+  }
+  .cv-rule-active .cv-rule-indicator {
+    color: var(--text-accent, #5b21b6);
   }
   .cv-rule-aspect-stop { font-weight: 600; color: #b91c1c; }
   .cv-rule-aspect-approach { font-weight: 600; color: #92400e; }
@@ -635,11 +625,6 @@
     margin-top: 0.5rem;
     padding-top: 0.375rem;
     border-top: 1px solid var(--border-accent, #c4b5fd);
-  }
-  .cv-eval-reason {
-    font-size: 0.6875rem;
-    color: var(--text-accent, #5b21b6);
-    margin-top: 0.25rem;
   }
   .cv-logic-target {
     font-size: 0.6875rem;
@@ -684,5 +669,10 @@
   .cv-lamp-state.lamp-state-on {
     font-weight: 600;
     color: var(--text-primary, #242424);
+  }
+  .cv-lamp-row-label {
+    color: var(--text-muted, #94a3b8);
+    font-size: 0.625rem;
+    margin-left: auto;
   }
 </style>
