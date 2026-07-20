@@ -167,8 +167,8 @@ describe('Spec 018 / S4 — Select-channel user journey (integration)', () => {
 
     // (b) Click Select channel on the input slot.
     const inputSlot = slotByLabel('input');
-    const selectBtn = within(inputSlot).getByTestId('select-channel-button');
-    await fireEvent.click(selectBtn);
+    const addBtn = within(inputSlot).getByTestId('add-channel-button');
+    await fireEvent.click(addBtn);
     expect(onSelectChannel).toHaveBeenCalledWith('f-block-5', 'input');
 
     // Simulate the route's picker confirm → orchestrator dispatch.
@@ -251,7 +251,7 @@ describe('Spec 018 / S4 — Select-channel user journey (integration)', () => {
     expect(usedByCell('TowerLCC-1 BOD A1').textContent?.trim()).toBe('—');
     // Empty slot returns — the Select-channel button reappears on the input slot.
     await waitFor(() =>
-      expect(within(slotByLabel('input')).getByTestId('select-channel-button')).toBeInTheDocument(),
+      expect(within(slotByLabel('input')).getByTestId('add-channel-button')).toBeInTheDocument(),
     );
   });
 

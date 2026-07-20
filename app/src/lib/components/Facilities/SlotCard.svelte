@@ -6,9 +6,8 @@
    * - Header row: slot label (left) + state badge (right)
    * - Channel name + ownership badge
    * - Meta line (group · location)
+   * - Built-in slot management actions: "Add channel..." (empty) / "Remove from slot" (filled)
    * - Optional extra content (lamp breakdown, etc.) via snippet
-   * - Optional actions (Remove from slot, Add downstream, etc.) via snippet
-   * - Empty state via snippet
    *
    * The card does NOT include "INPUTS"/"OUTPUTS" column headings — those
    * belong to the parent layout (FacilityCard) above the card.
@@ -21,11 +20,14 @@
     state,
     stateLabel,
     channelName,
+    channelId,
     ownership,
     meta,
     empty = false,
+    slotLabel,
+    onAddChannel,
+    onRemoveFromSlot,
     extraContent,
-    actions,
     emptyContent,
     'data-slot': dataSlot,
     'data-testid': dataTestId,
@@ -39,19 +41,25 @@
     stateLabel?: string;
     /** Channel name (bold, primary info). */
     channelName?: string;
+    /** Bound channel id (needed for Remove action). */
+    channelId?: string;
     /** Channel ownership type. */
     ownership?: 'hardware-owned' | 'user-owned';
     /** Meta line text (e.g. "Connector A · Input 6"). */
     meta?: string;
     /** Whether the slot is empty/unbound. */
     empty?: boolean;
+    /** Slot label identifier passed to callbacks. */
+    slotLabel?: string;
+    /** Handler for Add channel action (empty state). */
+    onAddChannel?: (slotLabel: string) => void;
+    /** Handler for Remove from slot action (filled state). */
+    onRemoveFromSlot?: (slotLabel: string, channelId: string) => void;
     /** Optional extra content below the meta line (e.g. lamp breakdown). */
     extraContent?: Snippet;
-    /** Optional action buttons at the bottom of the card. */
-    actions?: Snippet;
-    /** Custom empty state content. */
+    /** Custom empty state content (overrides default "Add channel..." button). */
     emptyContent?: Snippet;
-    /** Data attribute for test identification. */
+    /** Data attribute for slot identification in comprehension view. */
     'data-slot'?: string;
     'data-testid'?: string;
     'data-slot-label'?: string;
@@ -88,7 +96,17 @@
     {#if emptyContent}
       {@render emptyContent()}
     {:else}
-      <span class="slot-card-empty-text">Unbound</span>
+      <div class="slot-card-empty-row">
+        <span class="slot-card-empty-text">empty</span>
+        {#if onAddChannel && slotLabel}
+          <button
+            type="button"
+            class="slot-card-btn"
+            onclick={() => onAddChannel!(slotLabel!)}
+            data-testid="add-channel-button"
+          >Add channel…</button>
+        {/if}
+      </div>
     {/if}
   {:else}
     {#if channelName}
@@ -109,12 +127,16 @@
     {#if extraContent}
       {@render extraContent()}
     {/if}
-  {/if}
-
-  {#if actions}
-    <div class="slot-card-actions">
-      {@render actions()}
-    </div>
+    {#if onRemoveFromSlot && slotLabel && channelId}
+      <div class="slot-card-actions">
+        <button
+          type="button"
+          class="slot-card-btn-link danger"
+          onclick={() => onRemoveFromSlot!(slotLabel!, channelId!)}
+          data-testid="remove-from-slot-button"
+        >Remove from slot</button>
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -217,12 +239,48 @@
     color: var(--text-muted, #616161);
     margin-top: 0.125rem;
   }
+  .slot-card-empty-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
   .slot-card-empty-text {
     color: var(--text-muted, #616161);
     font-style: italic;
     font-size: 0.8125rem;
   }
+  .slot-card-btn {
+    font: inherit;
+    font-size: 0.6875rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    border: 1px solid var(--border-strong, #c7c7c7);
+    background: #fff;
+    color: var(--text-primary, #242424);
+    cursor: pointer;
+    line-height: 1.4;
+  }
+  .slot-card-btn:hover {
+    background: var(--bg-hover, #f5f5f5);
+  }
   .slot-card-actions {
     margin-top: 0.25rem;
+  }
+  .slot-card-btn-link {
+    background: none;
+    border: none;
+    color: var(--accent-color, #0f6cbd);
+    padding: 0.125rem 0.25rem;
+    cursor: pointer;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    font-family: inherit;
+  }
+  .slot-card-btn-link:hover {
+    text-decoration: underline;
+  }
+  .slot-card-btn-link.danger {
+    color: #b91c1c;
   }
 </style>

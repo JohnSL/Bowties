@@ -248,22 +248,15 @@
             state={d.currentChannelDisplay?.state}
             stateLabel={d.currentChannelDisplay?.stateLabel}
             channelName={d.currentChannelDisplay?.name}
+            channelId={d.currentChannelId}
             ownership={d.currentChannelDisplay?.ownership}
             meta={d.currentChannelDisplay ? `${d.currentChannelDisplay.groupLabel} · ${d.currentChannelDisplay.locationLabel}` : undefined}
             empty={!d.currentChannelDisplay}
+            slotLabel={label}
+            onAddChannel={(slot) => onSelectChannel?.(facility.facilityId, slot)}
+            onRemoveFromSlot={(slot, currentId) => onRemoveFromSlot?.(facility.facilityId, slot, currentId)}
             data-slot={label}
-          >
-            {#snippet emptyContent()}
-              {#if label === 'downstream-signal'}
-                <span class="cv-empty">End of line — no cascade</span>
-                <button type="button" class="btn-link cv-action" aria-label="Add downstream signal" onclick={() => onSelectChannel?.(facility.facilityId, label)}>
-                  Add downstream signal →
-                </button>
-              {:else}
-                <span class="cv-empty">Unbound</span>
-              {/if}
-            {/snippet}
-          </SlotCard>
+          />
         {/each}
       </div>
 
@@ -330,9 +323,13 @@
             state={d.currentChannelDisplay?.state}
             stateLabel={d.currentChannelDisplay?.stateLabel}
             channelName={d.currentChannelDisplay?.name}
+            channelId={d.currentChannelId}
             ownership={d.currentChannelDisplay?.ownership}
             meta={d.currentChannelDisplay ? `${d.currentChannelDisplay.groupLabel} · ${d.currentChannelDisplay.locationLabel}` : undefined}
             empty={!d.currentChannelDisplay}
+            slotLabel={label}
+            onAddChannel={(slot) => onAddChannel?.(facility.facilityId, slot)}
+            onRemoveFromSlot={(slot, currentId) => onRemoveFromSlot?.(facility.facilityId, slot, currentId)}
             data-slot={label}
           >
             {#snippet extraContent()}
@@ -367,8 +364,7 @@
             {template}
             currentChannelId={d.currentChannelId}
             currentChannelDisplay={d.currentChannelDisplay}
-            onSelectChannel={(slot) => onSelectChannel?.(facility.facilityId, slot)}
-            onAddChannel={(slot) => onAddChannel?.(facility.facilityId, slot)}
+            onAddChannel={(slot) => onSelectChannel?.(facility.facilityId, slot)}
             onRemoveFromSlot={(slot, currentId) => onRemoveFromSlot?.(facility.facilityId, slot, currentId)}
           />
         {/each}
@@ -386,7 +382,6 @@
             {template}
             currentChannelId={d.currentChannelId}
             currentChannelDisplay={d.currentChannelDisplay}
-            onSelectChannel={(slot) => onSelectChannel?.(facility.facilityId, slot)}
             onAddChannel={(slot) => onAddChannel?.(facility.facilityId, slot)}
             onRemoveFromSlot={(slot, currentId) => onRemoveFromSlot?.(facility.facilityId, slot, currentId)}
           />
@@ -580,16 +575,6 @@
     font-size: 0.6875rem;
     font-weight: 500;
     color: var(--text-secondary, #424242);
-  }
-  .cv-empty {
-    color: var(--text-muted, #616161);
-    font-style: italic;
-    font-size: 0.8125rem;
-  }
-  .cv-action {
-    display: block;
-    margin-top: 0.25rem;
-    font-size: 0.75rem;
   }
   .cv-logic-card {
     background: var(--surface-accent-subtle, #f5f3ff);

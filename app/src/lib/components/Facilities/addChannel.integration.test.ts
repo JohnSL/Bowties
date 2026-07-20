@@ -270,7 +270,7 @@ describe('Spec 018 / S5 — Add-channel user journey (integration)', () => {
     mountPanel();
     const outputSlot = slotByLabel('output');
     expect(within(outputSlot).getByTestId('add-channel-button')).toBeInTheDocument();
-    expect(within(outputSlot).queryByTestId('select-channel-button')).toBeNull();
+    // Both slot types now use the unified 'add-channel-button' test ID.
 
     // Input slot keeps S4 behaviour: it's already filled, so neither button shows.
     const inputSlot = slotByLabel('input');

@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
 import type { Facility } from '$lib/api/facilities';
 
@@ -133,7 +133,7 @@ describe('FacilityCard comprehension view (Spec 020 / S4)', () => {
     expect(screen.getAllByTestId('facility-slot').length).toBeGreaterThan(0);
   });
 
-  it('downstream-signal empty state shows "End of line" text and Add action', async () => {
+  it('downstream-signal empty state shows "Add channel" button that invokes onSelectChannel', async () => {
     const f: Facility = { facilityId: 'f-abs', templateId: 'abs-3-aspect-signal', name: 'Signal 5',
       slotBindings: { input: ['ch-1'], output: ['ch-2'], 'downstream-signal': [] } };
     facilitiesStore.hydrateBaseline([f]);
@@ -142,8 +142,9 @@ describe('FacilityCard comprehension view (Spec 020 / S4)', () => {
     render(FacilityCard, { props: { facility: f, template: ABS_3_ASPECT, onSelectChannel: selectHandler } });
 
     // Comprehension view is shown directly — no expand click needed.
-    expect(screen.getByText(/End of line/)).toBeInTheDocument();
-    const addBtn = screen.getByRole('button', { name: /add downstream/i });
+    // Scope to the downstream-signal slot card specifically.
+    const dsSlot = screen.getByTestId('comprehension-view').querySelector('[data-slot="downstream-signal"]')!;
+    const addBtn = within(dsSlot as HTMLElement).getByTestId('add-channel-button');
     expect(addBtn).toBeInTheDocument();
 
     await fireEvent.click(addBtn);
