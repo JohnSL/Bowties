@@ -26,6 +26,11 @@ pub const DISCOVERY_SILENCE_THRESHOLD_MS: u64 = 250;
 /// the discovery loop. Keeps the silence-threshold check responsive.
 pub const DISCOVERY_POLL_INTERVAL_MS: u64 = 10;
 
+/// Maximum number of alias allocation attempts before giving up.
+/// With the LFSR generator each attempt uses a pseudo-random candidate,
+/// so 20 attempts is more than sufficient for any real LCC bus.
+pub const MAX_ALIAS_ATTEMPTS: u32 = 20;
+
 /// Time (ms) to listen for alias conflicts after sending CID frames.
 /// Per OpenLCB S-9.7.2.1: "nodes that may take time to set up a response
 /// shall be given 400ms". JMRI/OpenLCB_Java use 400ms; Bowties previously

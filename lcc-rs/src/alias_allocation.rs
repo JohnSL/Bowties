@@ -18,7 +18,7 @@ use crate::{
     transport::LccTransport,
 };
 use crate::protocol::MTI;
-use crate::constants::ALIAS_CONFLICT_LISTEN_MS;
+use crate::constants::{ALIAS_CONFLICT_LISTEN_MS, MAX_ALIAS_ATTEMPTS};
 use std::time::Duration;
 use tokio::time::{timeout, Instant};
 
@@ -29,10 +29,11 @@ impl AliasAllocator {
     /// Allocate a unique alias for the given Node ID.
     ///
     /// Per OpenLCB S-9.7.2.1:
+    /// - Generates candidate aliases using the standard LFSR algorithm (NIDa)
     /// - Sends CID7, CID6, CID5, CID4 frames (same alias; NodeID segments in header)
     /// - Waits 400 ms for any RID conflict frame carrying our alias
     /// - On no conflict: sends RID then InitializationComplete (with 6-byte NodeID)
-    /// - Retries up to 3 times with offset aliases if a conflict is detected
+    /// - On conflict: advances the LFSR to a pseudo-random next candidate and retries
     pub async fn allocate(
         node_id: &NodeID,
         transport: &mut Box<dyn LccTransport>,
@@ -53,13 +54,14 @@ impl AliasAllocator {
             (node_val & 0xFFF) as u32,          // CID4 — bits 11:0
         ];
 
-        let base_alias = node_id
-            .hash_to_alias()
-            .map_err(|e| Error::AliasAllocation(e))?;
+        let mut gen = AliasGenerator::new(node_id);
 
-        // Try up to 3 alias candidates (offset by 0x400 each time)
-        for attempt in 0u16..3 {
-            let alias_val = (base_alias.value().wrapping_add(attempt * 0x400)) & 0xFFF;
+        for attempt in 0u32..MAX_ALIAS_ATTEMPTS {
+            let alias_val = if attempt == 0 {
+                gen.current_alias()
+            } else {
+                gen.next_alias()
+            };
             let alias = NodeAlias::new(alias_val)
                 .map_err(|e| Error::AliasAllocation(e))?;
 
@@ -97,7 +99,7 @@ impl AliasAllocator {
         }
 
         Err(Error::AliasAllocation(
-            "Failed to allocate alias after 3 attempts".to_string(),
+            format!("Failed to allocate alias after {} attempts", MAX_ALIAS_ATTEMPTS),
         ))
     }
 
@@ -141,10 +143,106 @@ impl AliasAllocator {
     }
 }
 
+/// LFSR-based alias generator per OpenLCB S-9.7.2.1.
+///
+/// Ports the NIDa algorithm from OpenLCB_Java: a 48-bit state (two 24-bit
+/// registers) seeded from the NodeID, stepped with a nonlinear feedback
+/// function, and reduced to a 12-bit alias.
+struct AliasGenerator {
+    lfsr1: u32,
+    lfsr2: u32,
+    current_alias: u16,
+}
+
+impl AliasGenerator {
+    /// Create a new generator seeded from the given NodeID.
+    /// The first alias is immediately available via `current_alias()`.
+    fn new(node_id: &NodeID) -> Self {
+        let id = node_id.as_bytes();
+        let lfsr1 = ((id[0] as u32) << 16) | ((id[1] as u32) << 8) | (id[2] as u32);
+        let lfsr2 = ((id[3] as u32) << 16) | ((id[4] as u32) << 8) | (id[5] as u32);
+        let mut gen = Self { lfsr1, lfsr2, current_alias: 0 };
+        gen.next_alias(); // Step once to produce first alias (matches NIDa constructor)
+        gen
+    }
+
+    /// Advance the LFSR and compute the next alias.
+    /// Skips alias 0 (invalid per OpenLCB S-9.7.2.1 §6.3).
+    fn next_alias(&mut self) -> u16 {
+        loop {
+            self.step();
+            let alias = self.compute_alias();
+            if alias != 0 {
+                self.current_alias = alias;
+                return alias;
+            }
+        }
+    }
+
+    /// Get the current alias without advancing the generator.
+    fn current_alias(&self) -> u16 {
+        self.current_alias
+    }
+
+    /// Step the LFSR (matches OpenLCB_Java NIDa.stepGenerator)
+    fn step(&mut self) {
+        let temp1 = ((self.lfsr1 << 9) | ((self.lfsr2 >> 15) & 0x1FF)) & 0xFF_FFFF;
+        let temp2 = (self.lfsr2 << 9) & 0xFF_FFFF;
+
+        self.lfsr2 = self.lfsr2.wrapping_add(temp2).wrapping_add(0x7A_4BA9);
+        self.lfsr1 = self.lfsr1.wrapping_add(temp1).wrapping_add(0x1B_0CA3);
+
+        // Carry from lfsr2 overflow into lfsr1
+        self.lfsr1 = (self.lfsr1 & 0xFF_FFFF).wrapping_add((self.lfsr2 & 0xFF00_0000) >> 24);
+        self.lfsr2 &= 0xFF_FFFF;
+    }
+
+    /// Compute 12-bit alias from current LFSR state
+    fn compute_alias(&self) -> u16 {
+        ((self.lfsr1 ^ self.lfsr2 ^ (self.lfsr1 >> 12) ^ (self.lfsr2 >> 12)) & 0xFFF) as u16
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::types::NodeID;
+
+    /// Verify the LFSR generator produces the correct first alias for known NodeIDs.
+    ///
+    /// Reference values computed from OpenLCB_Java NIDa algorithm:
+    ///   loadSeed → stepGenerator → computeAliasFromGenerator
+    #[test]
+    fn test_lfsr_first_alias_from_node_id() {
+        // Test vector 1: NodeID used in OpenLCB_Java NIDaTest setUp
+        let gen1 = AliasGenerator::new(&NodeID::new([0x00, 0x00, 0x00, 0x01, 0x00, 0x02]));
+        assert_eq!(
+            gen1.current_alias(), 0x50A,
+            "First alias for NodeID 00.00.00.01.00.02 should be 0x50A"
+        );
+
+        // Test vector 2: NodeID used in existing CID segment tests
+        let gen2 = AliasGenerator::new(&NodeID::new([0x02, 0x03, 0x04, 0x05, 0x06, 0x07]));
+        assert_eq!(
+            gen2.current_alias(), 0x285,
+            "First alias for NodeID 02.03.04.05.06.07 should be 0x285"
+        );
+    }
+
+    /// Verify successive aliases are all non-zero and no two consecutive are equal.
+    #[test]
+    fn test_lfsr_successive_aliases_differ_and_nonzero() {
+        let mut gen = AliasGenerator::new(&NodeID::new([0x02, 0x03, 0x04, 0x05, 0x06, 0x07]));
+        let mut prev = gen.current_alias();
+        assert_ne!(prev, 0, "First alias must not be 0");
+
+        for i in 0..100 {
+            let next = gen.next_alias();
+            assert_ne!(next, 0, "Alias {} must not be 0", i);
+            assert_ne!(next, prev, "Alias {} must differ from previous", i);
+            prev = next;
+        }
+    }
 
     /// Verify that the NodeID segment extraction matches the reference sequence
     /// from testStartup.py (NodeID = 02.03.04.05.06.07, alias = 0x573).
@@ -188,5 +286,25 @@ mod tests {
             GridConnectFrame::from_mti(MTI::InitializationComplete, alias, node_id.as_bytes().to_vec())
                 .unwrap();
         assert_eq!(frame.to_string(), ":X19100AAAN010203040506;");
+    }
+
+    /// Verify allocate() uses the LFSR generator for its alias candidate
+    #[tokio::test]
+    async fn test_allocate_uses_lfsr_alias() {
+        use crate::transport::mock::MockTransport;
+
+        let node_id = NodeID::new([0x00, 0x00, 0x00, 0x01, 0x00, 0x02]);
+        let expected_alias = AliasGenerator::new(&node_id).current_alias();
+
+        // No conflict responses → first LFSR alias should be accepted
+        let mut transport: Box<dyn LccTransport> = Box::new(MockTransport::new());
+        let alias = AliasAllocator::allocate(&node_id, &mut transport)
+            .await
+            .expect("allocation should succeed");
+
+        assert_eq!(
+            alias.value(), expected_alias,
+            "allocate() should use the LFSR generator's first alias"
+        );
     }
 }
