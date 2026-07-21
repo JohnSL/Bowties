@@ -365,7 +365,7 @@ thin shim modules so existing `crate::` paths compile unchanged.
 | `diagnostics.rs` | Ring-buffer logging (`bwlog!`), diagnostic stats, frame activity ring buffer (`FrameRing`), structured errors (`DiagError`), human-readable summary | — |
 | `events/router.rs` | Event broadcast: transport frames → Tauri events | inline `#[cfg(test)]` |
 | `traffic/mod.rs` | Message decoding for traffic monitor display | — |
-| `menu.rs` | Native OS menu bar: builds File/View/Tools/Help submenus, returns `MenuHandles` for runtime enable/disable. Help → About is a custom `MenuItem` routed through `on_menu_event` to the frontend `AboutDialog`. | — |
+| `menu.rs` | Native OS menu bar: builds File / Edit / View / Tools submenus on all platforms (+ Help on Windows/Linux, + App submenu first on macOS), returns `MenuHandles` for runtime enable/disable. Edit uses `PredefinedMenuItem` cut/copy/paste/select_all everywhere; undo/redo are added only on macOS because WebView2/WebKitGTK don't respond to the platform undo/redo commands the predefined items dispatch, so on Windows/Linux they would appear as non-functional entries (Ctrl+Z / Ctrl+Y still work natively inside text fields there). The Edit menu is required on macOS so Cmd+C/V reach WKWebView text fields via the AppKit responder chain (issue #19); on Windows/Linux it's discoverability chrome since the WebView handles those shortcuts natively. On macOS the App submenu hosts About/Services/Hide/Quit; About and Quit are custom `MenuItem`s (ids `menu-about`, `menu-exit`) on all platforms so `on_menu_event` still fires the frontend AboutDialog / unsaved-changes exit prompt; Services/Hide/HideOthers/ShowAll must be predefined. | — |
 ---
 
 ## lcc-rs Protocol Library (`lcc-rs/src/`)
