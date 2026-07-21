@@ -40,6 +40,10 @@ pub struct LogicAllocation {
     pub target_node_key: String,
     /// Conditional line range(s) allocated on the target node.
     pub conditional_lines: ConditionalLineRange,
+    /// Track circuit number (1–8) allocated for downstream cascade output.
+    /// `None` if this facility does not publish its aspect via a track circuit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_circuit: Option<u8>,
 }
 
 // ── Compiled plan ─────────────────────────────────────────────────────────
@@ -83,6 +87,10 @@ pub struct LogicCapacity {
     pub total_lines: u32,
     /// Conditional lines currently allocated.
     pub used_lines: u32,
+    /// Total track circuits available on the node.
+    pub total_track_circuits: u8,
+    /// Track circuits currently allocated.
+    pub used_track_circuits: u8,
 }
 
 impl LogicCapacity {
@@ -117,6 +125,10 @@ pub enum CompileError {
         action_count: usize,
         max_actions: usize,
     },
+    /// All track circuits on the target node are already allocated.
+    InsufficientTrackCircuits {
+        node_key: String,
+    },
 }
 
 impl std::fmt::Display for CompileError {
@@ -142,6 +154,13 @@ impl std::fmt::Display for CompileError {
                     aspect, action_count, max_actions
                 )
             }
+            Self::InsufficientTrackCircuits { node_key } => {
+                write!(
+                    f,
+                    "all {} track circuits on node '{}' are already allocated",
+                    MAX_TRACK_CIRCUITS, node_key
+                )
+            }
         }
     }
 }
@@ -154,6 +173,8 @@ impl std::error::Error for CompileError {}
 pub const MAX_CONDITIONAL_LINES: u32 = 32;
 /// Maximum action events per conditional line.
 pub const MAX_ACTIONS_PER_LINE: usize = 4;
+/// Maximum track circuits per Tower LCC node.
+pub const MAX_TRACK_CIRCUITS: u8 = 8;
 /// Maximum length of a conditional line description string.
 const DESCRIPTION_MAX_LEN: usize = 32;
 
@@ -324,6 +345,31 @@ pub enum ActionCondition {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionDestination {
     Event = 0,
+    TrackCircuit1 = 1,
+    TrackCircuit2 = 2,
+    TrackCircuit3 = 3,
+    TrackCircuit4 = 4,
+    TrackCircuit5 = 5,
+    TrackCircuit6 = 6,
+    TrackCircuit7 = 7,
+    TrackCircuit8 = 8,
+}
+
+impl ActionDestination {
+    /// Map a track circuit number (1–8) to the corresponding destination.
+    pub fn from_track_circuit(n: u8) -> Self {
+        match n {
+            1 => Self::TrackCircuit1,
+            2 => Self::TrackCircuit2,
+            3 => Self::TrackCircuit3,
+            4 => Self::TrackCircuit4,
+            5 => Self::TrackCircuit5,
+            6 => Self::TrackCircuit6,
+            7 => Self::TrackCircuit7,
+            8 => Self::TrackCircuit8,
+            _ => panic!("invalid track circuit number: {n} (must be 1–8)"),
+        }
+    }
 }
 
 // ── Compiler Input Types ──────────────────────────────────────────────────
@@ -373,6 +419,9 @@ pub struct CompileInput {
     pub output_pin_events: Vec<PinEvents>,
     /// Downstream signal binding for Approach rule. `None` = end-of-line.
     pub downstream: Option<DownstreamBinding>,
+    /// Track circuit number (1–8) this facility should write its aspect
+    /// speed to. `None` if no upstream signal reads from this facility.
+    pub tc_output: Option<u8>,
 }
 
 // ── Aspect-to-Pin-Action Map (D2:A — compiler-owned) ──────────────────────
@@ -458,12 +507,15 @@ pub fn compile_facility(
     rules.sort_by_key(|r| r.priority);
 
     // Validate action counts against the per-line limit.
+    // TC write (when tc_output is set) takes one additional action slot.
+    let tc_action_count = if input.tc_output.is_some() { 1 } else { 0 };
     for rule in &rules {
         if let Some(pin_actions) = find_aspect_pin_actions(rule.aspect) {
-            if pin_actions.len() > MAX_ACTIONS_PER_LINE {
+            let total = pin_actions.len() + tc_action_count;
+            if total > MAX_ACTIONS_PER_LINE {
                 return Err(CompileError::TooManyActions {
                     aspect: rule.aspect.to_string(),
-                    action_count: pin_actions.len(),
+                    action_count: total,
                     max_actions: MAX_ACTIONS_PER_LINE,
                 });
             }
@@ -487,6 +539,7 @@ pub fn compile_facility(
             start,
             count: required,
         },
+        track_circuit: input.tc_output,
     };
 
     let mut field_writes = Vec::new();
@@ -576,9 +629,13 @@ fn compile_rule_to_field_writes(
         ActionCondition::ImmediateIfTrue
     };
 
+    // Determine how many lamp actions and whether a TC write is needed.
+    let tc_slot: Option<usize> = input.tc_output.map(|_| pin_actions.len());
+
     for slot in 0..MAX_ACTIONS_PER_LINE {
         let s = slot as u8;
         if slot < pin_actions.len() {
+            // Lamp pin action.
             let pa = &pin_actions[slot];
             let event_id = if pa.on {
                 &input.output_pin_events[pa.pin_index].on_event
@@ -589,6 +646,14 @@ fn compile_rule_to_field_writes(
             writes.push(ufw(ConditionalLineField::ActionDestination(s), line_index, vec![ActionDestination::Event as u8]));
             writes.push(ufw(ConditionalLineField::ActionTrackSpeed(s), line_index, vec![0u8]));
             writes.push(ufw(ConditionalLineField::ActionEventId(s), line_index, event_id.to_vec()));
+        } else if tc_slot == Some(slot) {
+            // Track circuit write action — publishes aspect speed.
+            let tc_num = input.tc_output.unwrap();
+            let speed = aspect_to_track_speed(rule.aspect);
+            writes.push(ufw(ConditionalLineField::ActionCondition(s), line_index, vec![action_cond as u8]));
+            writes.push(ufw(ConditionalLineField::ActionDestination(s), line_index, vec![ActionDestination::from_track_circuit(tc_num) as u8]));
+            writes.push(ufw(ConditionalLineField::ActionTrackSpeed(s), line_index, vec![speed as u8]));
+            writes.push(ufw(ConditionalLineField::ActionEventId(s), line_index, vec![0u8; 8]));
         } else {
             // Unused action event slot — zeroed out.
             writes.push(ufw(ConditionalLineField::ActionCondition(s), line_index, vec![0u8]));
@@ -808,15 +873,59 @@ fn used_lines_on_node(node_key: &str, allocations: &[LogicAllocation]) -> u32 {
         .sum()
 }
 
+/// Count track circuits already allocated on a given node.
+fn used_track_circuits_on_node(node_key: &str, allocations: &[LogicAllocation]) -> u8 {
+    allocations
+        .iter()
+        .filter(|a| a.target_node_key == node_key && a.track_circuit.is_some())
+        .count() as u8
+}
+
+/// Allocate the next free track circuit (1–8) on a target node.
+///
+/// Scans existing allocations for the node and returns the lowest
+/// unoccupied track circuit number. Returns an error if all 8 are in use.
+pub fn allocate_track_circuit(
+    target_node_key: &str,
+    existing_allocations: &[LogicAllocation],
+) -> Result<u8, CompileError> {
+    let used: Vec<u8> = existing_allocations
+        .iter()
+        .filter(|a| a.target_node_key == target_node_key)
+        .filter_map(|a| a.track_circuit)
+        .collect();
+    for n in 1..=MAX_TRACK_CIRCUITS {
+        if !used.contains(&n) {
+            return Ok(n);
+        }
+    }
+    Err(CompileError::InsufficientTrackCircuits {
+        node_key: target_node_key.to_string(),
+    })
+}
+
 /// Query the capacity of a logic target node given existing allocations.
 pub fn get_capacity(
     target_node_key: &str,
     existing_allocations: &[LogicAllocation],
 ) -> LogicCapacity {
     let used = used_lines_on_node(target_node_key, existing_allocations);
+    let used_tc = used_track_circuits_on_node(target_node_key, existing_allocations);
     LogicCapacity {
         total_lines: MAX_CONDITIONAL_LINES,
         used_lines: used,
+        total_track_circuits: MAX_TRACK_CIRCUITS,
+        used_track_circuits: used_tc,
+    }
+}
+
+/// Map an aspect name to its track speed value for TC output.
+pub fn aspect_to_track_speed(aspect: &str) -> TrackSpeed {
+    match aspect {
+        "stop" => TrackSpeed::Stop,
+        "approach" => TrackSpeed::Approach,
+        "clear" => TrackSpeed::Clear,
+        _ => TrackSpeed::Stop,
     }
 }
 
@@ -862,13 +971,14 @@ pub fn resolve_downstream_binding(
     })?;
 
     // 3. Check if the downstream facility has a logic allocation.
-    let _downstream_allocation = allocations
+    let downstream_allocation = allocations
         .iter()
         .find(|a| a.facility_id == downstream_facility.facility_id)?;
 
-    // 4. Produce DownstreamBinding (S4: hardcoded TC 1; S5 will allocate).
+    // 4. Produce DownstreamBinding using the downstream's allocated TC.
+    let track_circuit = downstream_allocation.track_circuit?;
     Some(DownstreamBinding {
-        track_circuit: 1,
+        track_circuit,
         speed: TrackSpeed::Stop,
     })
 }
@@ -911,6 +1021,7 @@ mod tests {
                 track_circuit: 1,
                 speed: TrackSpeed::Stop,
             }),
+            tc_output: None,
         }
     }
 
@@ -918,6 +1029,7 @@ mod tests {
     fn make_end_of_line_input() -> CompileInput {
         let mut input = make_standalone_input();
         input.downstream = None;
+        input.tc_output = None;
         input
     }
 
@@ -1233,6 +1345,7 @@ mod tests {
             facility_id: "other".to_string(),
             target_node_key: "050201020300".to_string(),
             conditional_lines: ConditionalLineRange { start: 0, count: 5 },
+            track_circuit: None,
         }];
 
         let output = compile_facility(&input).unwrap();
@@ -1253,6 +1366,7 @@ mod tests {
             facility_id: "other".to_string(),
             target_node_key: "050201020300".to_string(),
             conditional_lines: ConditionalLineRange { start: 0, count: 31 },
+            track_circuit: None,
         }];
 
         let err = compile_facility(&input).unwrap_err();
@@ -1302,11 +1416,13 @@ mod tests {
                 facility_id: "a".to_string(),
                 target_node_key: "NODE1".to_string(),
                 conditional_lines: ConditionalLineRange { start: 0, count: 10 },
+                track_circuit: None,
             },
             LogicAllocation {
                 facility_id: "b".to_string(),
                 target_node_key: "NODE1".to_string(),
                 conditional_lines: ConditionalLineRange { start: 10, count: 5 },
+                track_circuit: None,
             },
         ];
 
@@ -1322,6 +1438,7 @@ mod tests {
             facility_id: "a".to_string(),
             target_node_key: "OTHER".to_string(),
             conditional_lines: ConditionalLineRange { start: 0, count: 20 },
+            track_circuit: None,
         }];
 
         let cap = get_capacity("NODE1", &allocs);
@@ -1337,6 +1454,7 @@ mod tests {
             facility_id: "f1".to_string(),
             target_node_key: "050201020300".to_string(),
             conditional_lines: ConditionalLineRange { start: 5, count: 3 },
+            track_circuit: None,
         };
         let json = serde_json::to_value(&alloc).unwrap();
         assert_eq!(json["facilityId"], "f1");
@@ -1355,6 +1473,7 @@ mod tests {
                 facility_id: "f1".to_string(),
                 target_node_key: "NODE1".to_string(),
                 conditional_lines: ConditionalLineRange { start: 0, count: 1 },
+                track_circuit: None,
             },
             field_writes: vec![CompiledFieldWrite {
                 leaf_path: "conditionalLine[0]/description".to_string(),
@@ -1827,15 +1946,414 @@ mod tests {
             facility_id: "f2".to_string(),
             target_node_key: "node-1".to_string(),
             conditional_lines: ConditionalLineRange { start: 0, count: 2 },
+            track_circuit: Some(3),
         }];
 
         let result = resolve_downstream_binding(&upstream, &all, &allocs);
         assert_eq!(
             result,
             Some(DownstreamBinding {
-                track_circuit: 1,
+                track_circuit: 3,
                 speed: TrackSpeed::Stop,
             })
         );
+    }
+
+    #[test]
+    fn resolve_downstream_returns_none_when_downstream_has_no_track_circuit() {
+        let upstream = make_facility("f1", "abs-3-aspect-signal", vec![
+            ("input", vec!["ch-block"]),
+            ("output", vec!["ch-signal-1"]),
+            ("downstream-signal", vec!["ch-signal-2"]),
+        ]);
+        let downstream = make_facility("f2", "abs-3-aspect-signal", vec![
+            ("input", vec!["ch-block-2"]),
+            ("output", vec!["ch-signal-2"]),
+            ("downstream-signal", vec![]),
+        ]);
+        let all = vec![upstream.clone(), downstream];
+        let allocs = vec![LogicAllocation {
+            facility_id: "f2".to_string(),
+            target_node_key: "node-1".to_string(),
+            conditional_lines: ConditionalLineRange { start: 0, count: 2 },
+            track_circuit: None,
+        }];
+
+        assert_eq!(resolve_downstream_binding(&upstream, &all, &allocs), None);
+    }
+
+    // ── Track circuit allocation (S5) ─────────────────────────────────
+
+    #[test]
+    fn allocate_track_circuit_returns_first_free() {
+        let allocs = vec![];
+        assert_eq!(allocate_track_circuit("NODE1", &allocs).unwrap(), 1);
+    }
+
+    #[test]
+    fn allocate_track_circuit_skips_used() {
+        let allocs = vec![
+            LogicAllocation {
+                facility_id: "a".to_string(),
+                target_node_key: "NODE1".to_string(),
+                conditional_lines: ConditionalLineRange { start: 0, count: 2 },
+                track_circuit: Some(1),
+            },
+            LogicAllocation {
+                facility_id: "b".to_string(),
+                target_node_key: "NODE1".to_string(),
+                conditional_lines: ConditionalLineRange { start: 2, count: 2 },
+                track_circuit: Some(3),
+            },
+        ];
+        assert_eq!(allocate_track_circuit("NODE1", &allocs).unwrap(), 2);
+    }
+
+    #[test]
+    fn allocate_track_circuit_rejects_when_all_8_used() {
+        let allocs: Vec<LogicAllocation> = (1..=8)
+            .map(|n| LogicAllocation {
+                facility_id: format!("f{n}"),
+                target_node_key: "NODE1".to_string(),
+                conditional_lines: ConditionalLineRange { start: (n as u32 - 1) * 2, count: 2 },
+                track_circuit: Some(n),
+            })
+            .collect();
+        let err = allocate_track_circuit("NODE1", &allocs).unwrap_err();
+        assert_eq!(
+            err,
+            CompileError::InsufficientTrackCircuits { node_key: "NODE1".to_string() }
+        );
+    }
+
+    #[test]
+    fn allocate_track_circuit_ignores_other_nodes() {
+        let allocs = vec![LogicAllocation {
+            facility_id: "a".to_string(),
+            target_node_key: "OTHER".to_string(),
+            conditional_lines: ConditionalLineRange { start: 0, count: 2 },
+            track_circuit: Some(1),
+        }];
+        assert_eq!(allocate_track_circuit("NODE1", &allocs).unwrap(), 1);
+    }
+
+    // ── TC write action injection (S5) ────────────────────────────────
+
+    #[test]
+    fn tc_output_injects_write_action_in_each_rule() {
+        let mut input = make_standalone_input();
+        input.tc_output = Some(2);
+
+        let output = compile_facility(&input).unwrap();
+
+        // Each line should have a TC write in slot 2 (after 2 lamp actions).
+        // Line 0 (Stop): TC write with TrackSpeed::Stop
+        assert_eq!(
+            find_unresolved(&output.unresolved_writes, ConditionalLineField::ActionDestination(2), 0).value,
+            [ActionDestination::TrackCircuit2 as u8]
+        );
+        assert_eq!(
+            find_unresolved(&output.unresolved_writes, ConditionalLineField::ActionTrackSpeed(2), 0).value,
+            [TrackSpeed::Stop as u8]
+        );
+        assert_eq!(
+            find_unresolved(&output.unresolved_writes, ConditionalLineField::ActionEventId(2), 0).value,
+            [0u8; 8]
+        );
+
+        // Line 1 (Approach): TC write with TrackSpeed::Approach
+        assert_eq!(
+            find_unresolved(&output.unresolved_writes, ConditionalLineField::ActionDestination(2), 1).value,
+            [ActionDestination::TrackCircuit2 as u8]
+        );
+        assert_eq!(
+            find_unresolved(&output.unresolved_writes, ConditionalLineField::ActionTrackSpeed(2), 1).value,
+            [TrackSpeed::Approach as u8]
+        );
+
+        // Line 2 (Clear): TC write with TrackSpeed::Clear
+        assert_eq!(
+            find_unresolved(&output.unresolved_writes, ConditionalLineField::ActionDestination(2), 2).value,
+            [ActionDestination::TrackCircuit2 as u8]
+        );
+        assert_eq!(
+            find_unresolved(&output.unresolved_writes, ConditionalLineField::ActionTrackSpeed(2), 2).value,
+            [TrackSpeed::Clear as u8]
+        );
+
+        // Slot 3 should still be zeroed (unused).
+        assert_eq!(
+            find_unresolved(&output.unresolved_writes, ConditionalLineField::ActionCondition(3), 0).value,
+            [0u8]
+        );
+    }
+
+    #[test]
+    fn tc_output_condition_matches_lamp_actions() {
+        let mut input = make_standalone_input();
+        input.tc_output = Some(1);
+
+        let output = compile_facility(&input).unwrap();
+
+        // Stop rule (non-default): ImmediateIfTrue
+        assert_eq!(
+            find_unresolved(&output.unresolved_writes, ConditionalLineField::ActionCondition(2), 0).value,
+            [ActionCondition::ImmediateIfTrue as u8]
+        );
+        // Clear rule (default/last): Immediately
+        assert_eq!(
+            find_unresolved(&output.unresolved_writes, ConditionalLineField::ActionCondition(2), 2).value,
+            [ActionCondition::Immediately as u8]
+        );
+    }
+
+    #[test]
+    fn end_of_line_with_tc_output_has_2_lines_with_tc_writes() {
+        let mut input = make_end_of_line_input();
+        input.tc_output = Some(5);
+
+        let output = compile_facility(&input).unwrap();
+        assert_eq!(output.allocation.conditional_lines.count, 2);
+
+        // Line 0 (Stop): TC write with TrackSpeed::Stop
+        assert_eq!(
+            find_unresolved(&output.unresolved_writes, ConditionalLineField::ActionDestination(2), 0).value,
+            [ActionDestination::TrackCircuit5 as u8]
+        );
+        assert_eq!(
+            find_unresolved(&output.unresolved_writes, ConditionalLineField::ActionTrackSpeed(2), 0).value,
+            [TrackSpeed::Stop as u8]
+        );
+
+        // Line 1 (Clear): TC write with TrackSpeed::Clear
+        assert_eq!(
+            find_unresolved(&output.unresolved_writes, ConditionalLineField::ActionDestination(2), 1).value,
+            [ActionDestination::TrackCircuit5 as u8]
+        );
+        assert_eq!(
+            find_unresolved(&output.unresolved_writes, ConditionalLineField::ActionTrackSpeed(2), 1).value,
+            [TrackSpeed::Clear as u8]
+        );
+    }
+
+    #[test]
+    fn no_tc_output_means_no_tc_write_actions() {
+        // Existing behavior: no TC output → all unused slots are zeroed.
+        let input = make_standalone_input();
+        assert!(input.tc_output.is_none());
+
+        let output = compile_facility(&input).unwrap();
+        // Slot 2 should be zeroed (no TC write).
+        assert_eq!(
+            find_unresolved(&output.unresolved_writes, ConditionalLineField::ActionDestination(2), 0).value,
+            [0u8]
+        );
+    }
+
+    // ── 2-signal cascade integration (S5) ─────────────────────────────
+
+    /// Distinct events for the second signal.
+    const OCCUPIED_EVENT_2: [u8; 8] = [0, 0, 0, 0, 0, 0, 3, 1];
+    const CLEAR_EVENT_2: [u8; 8] = [0, 0, 0, 0, 0, 0, 3, 2];
+    const RED_ON_EVENT_2: [u8; 8] = [0, 0, 0, 0, 0, 0, 4, 1];
+    const RED_OFF_EVENT_2: [u8; 8] = [0, 0, 0, 0, 0, 0, 4, 2];
+    const GREEN_ON_EVENT_2: [u8; 8] = [0, 0, 0, 0, 0, 0, 4, 3];
+    const GREEN_OFF_EVENT_2: [u8; 8] = [0, 0, 0, 0, 0, 0, 4, 4];
+
+    /// Events for a third signal.
+    const OCCUPIED_EVENT_3: [u8; 8] = [0, 0, 0, 0, 0, 0, 5, 1];
+    const CLEAR_EVENT_3: [u8; 8] = [0, 0, 0, 0, 0, 0, 5, 2];
+    const RED_ON_EVENT_3: [u8; 8] = [0, 0, 0, 0, 0, 0, 6, 1];
+    const RED_OFF_EVENT_3: [u8; 8] = [0, 0, 0, 0, 0, 0, 6, 2];
+    const GREEN_ON_EVENT_3: [u8; 8] = [0, 0, 0, 0, 0, 0, 6, 3];
+    const GREEN_OFF_EVENT_3: [u8; 8] = [0, 0, 0, 0, 0, 0, 6, 4];
+
+    fn make_signal_input(
+        id: &str,
+        name: &str,
+        node_key: &str,
+        existing: Vec<LogicAllocation>,
+        input_events: InputChannelEvents,
+        pin_events: Vec<PinEvents>,
+        downstream: Option<DownstreamBinding>,
+        tc_output: Option<u8>,
+    ) -> CompileInput {
+        CompileInput {
+            template_id: "abs-3-aspect-signal".to_string(),
+            facility_id: id.to_string(),
+            facility_name: name.to_string(),
+            target_node_key: node_key.to_string(),
+            existing_allocations: existing,
+            input_events,
+            output_pin_events: pin_events,
+            downstream,
+            tc_output,
+        }
+    }
+
+    #[test]
+    fn two_signal_cascade_compiles_correctly() {
+        let node = "NODE1";
+
+        // Step 1: Compile downstream (end-of-line) with tc_output.
+        let downstream_input = make_signal_input(
+            "f-ds", "Signal DS", node,
+            vec![],
+            InputChannelEvents { set_true_event: OCCUPIED_EVENT_2, set_false_event: CLEAR_EVENT_2 },
+            vec![
+                PinEvents { on_event: RED_ON_EVENT_2, off_event: RED_OFF_EVENT_2 },
+                PinEvents { on_event: GREEN_ON_EVENT_2, off_event: GREEN_OFF_EVENT_2 },
+            ],
+            None, // end-of-line
+            Some(1), // TC 1 allocated for this downstream
+        );
+        let ds_output = compile_facility(&downstream_input).unwrap();
+        assert_eq!(ds_output.allocation.conditional_lines.count, 2); // Stop + Clear
+
+        // Downstream should have TC writes in each rule.
+        assert_eq!(
+            find_unresolved(&ds_output.unresolved_writes, ConditionalLineField::ActionDestination(2), 0).value,
+            [ActionDestination::TrackCircuit1 as u8]
+        );
+
+        // Step 2: Compile upstream with downstream binding.
+        let ds_alloc = LogicAllocation {
+            facility_id: "f-ds".to_string(),
+            target_node_key: node.to_string(),
+            conditional_lines: ds_output.allocation.conditional_lines.clone(),
+            track_circuit: Some(1),
+        };
+        let upstream_input = make_signal_input(
+            "f-us", "Signal US", node,
+            vec![ds_alloc],
+            InputChannelEvents { set_true_event: OCCUPIED_EVENT, set_false_event: CLEAR_EVENT },
+            vec![
+                PinEvents { on_event: RED_ON_EVENT, off_event: RED_OFF_EVENT },
+                PinEvents { on_event: GREEN_ON_EVENT, off_event: GREEN_OFF_EVENT },
+            ],
+            Some(DownstreamBinding { track_circuit: 1, speed: TrackSpeed::Stop }),
+            None, // upstream has no TC output (no one reads from it)
+        );
+        let us_output = compile_facility(&upstream_input).unwrap();
+        assert_eq!(us_output.allocation.conditional_lines.count, 3); // Stop + Approach + Clear
+
+        // Upstream Approach line reads from TC 1.
+        assert_eq!(
+            find_unresolved(&us_output.unresolved_writes, ConditionalLineField::V1Source, us_output.allocation.conditional_lines.start + 1).value,
+            [VariableSource::TrackCircuit1 as u8]
+        );
+        assert_eq!(
+            find_unresolved(&us_output.unresolved_writes, ConditionalLineField::V1TrackSpeed, us_output.allocation.conditional_lines.start + 1).value,
+            [TrackSpeed::Stop as u8]
+        );
+
+        // Upstream should NOT have TC write actions (no tc_output).
+        assert_eq!(
+            find_unresolved(&us_output.unresolved_writes, ConditionalLineField::ActionDestination(2), us_output.allocation.conditional_lines.start).value,
+            [0u8]
+        );
+    }
+
+    #[test]
+    fn three_signal_cascade_uses_two_tcs() {
+        let node = "NODE1";
+
+        // Signal C (end-of-line) → TC 1
+        let sig_c = make_signal_input(
+            "f-c", "Signal C", node,
+            vec![],
+            InputChannelEvents { set_true_event: OCCUPIED_EVENT_3, set_false_event: CLEAR_EVENT_3 },
+            vec![
+                PinEvents { on_event: RED_ON_EVENT_3, off_event: RED_OFF_EVENT_3 },
+                PinEvents { on_event: GREEN_ON_EVENT_3, off_event: GREEN_OFF_EVENT_3 },
+            ],
+            None,
+            Some(1),
+        );
+        let c_out = compile_facility(&sig_c).unwrap();
+        let c_alloc = LogicAllocation {
+            facility_id: "f-c".to_string(),
+            target_node_key: node.to_string(),
+            conditional_lines: c_out.allocation.conditional_lines.clone(),
+            track_circuit: Some(1),
+        };
+
+        // Signal B (middle) → TC 2, reads from TC 1
+        let sig_b = make_signal_input(
+            "f-b", "Signal B", node,
+            vec![c_alloc.clone()],
+            InputChannelEvents { set_true_event: OCCUPIED_EVENT_2, set_false_event: CLEAR_EVENT_2 },
+            vec![
+                PinEvents { on_event: RED_ON_EVENT_2, off_event: RED_OFF_EVENT_2 },
+                PinEvents { on_event: GREEN_ON_EVENT_2, off_event: GREEN_OFF_EVENT_2 },
+            ],
+            Some(DownstreamBinding { track_circuit: 1, speed: TrackSpeed::Stop }),
+            Some(2), // TC 2 for B's output
+        );
+        let b_out = compile_facility(&sig_b).unwrap();
+        assert_eq!(b_out.allocation.conditional_lines.count, 3); // Stop + Approach + Clear
+
+        let b_alloc = LogicAllocation {
+            facility_id: "f-b".to_string(),
+            target_node_key: node.to_string(),
+            conditional_lines: b_out.allocation.conditional_lines.clone(),
+            track_circuit: Some(2),
+        };
+
+        // Signal B reads from TC 1 (downstream C), writes to TC 2
+        assert_eq!(
+            find_unresolved(&b_out.unresolved_writes, ConditionalLineField::V1Source, b_out.allocation.conditional_lines.start + 1).value,
+            [VariableSource::TrackCircuit1 as u8]
+        );
+        assert_eq!(
+            find_unresolved(&b_out.unresolved_writes, ConditionalLineField::ActionDestination(2), b_out.allocation.conditional_lines.start).value,
+            [ActionDestination::TrackCircuit2 as u8]
+        );
+
+        // Signal A (head) → no TC output, reads from TC 2
+        let sig_a = make_signal_input(
+            "f-a", "Signal A", node,
+            vec![c_alloc, b_alloc],
+            InputChannelEvents { set_true_event: OCCUPIED_EVENT, set_false_event: CLEAR_EVENT },
+            vec![
+                PinEvents { on_event: RED_ON_EVENT, off_event: RED_OFF_EVENT },
+                PinEvents { on_event: GREEN_ON_EVENT, off_event: GREEN_OFF_EVENT },
+            ],
+            Some(DownstreamBinding { track_circuit: 2, speed: TrackSpeed::Stop }),
+            None,
+        );
+        let a_out = compile_facility(&sig_a).unwrap();
+        assert_eq!(a_out.allocation.conditional_lines.count, 3);
+
+        // Signal A Approach reads from TC 2 (downstream B).
+        assert_eq!(
+            find_unresolved(&a_out.unresolved_writes, ConditionalLineField::V1Source, a_out.allocation.conditional_lines.start + 1).value,
+            [VariableSource::TrackCircuit2 as u8]
+        );
+    }
+
+    // ── Capacity (S5) ─────────────────────────────────────────────────
+
+    #[test]
+    fn capacity_includes_track_circuit_counts() {
+        let allocs = vec![
+            LogicAllocation {
+                facility_id: "a".to_string(),
+                target_node_key: "NODE1".to_string(),
+                conditional_lines: ConditionalLineRange { start: 0, count: 2 },
+                track_circuit: Some(1),
+            },
+            LogicAllocation {
+                facility_id: "b".to_string(),
+                target_node_key: "NODE1".to_string(),
+                conditional_lines: ConditionalLineRange { start: 2, count: 3 },
+                track_circuit: Some(3),
+            },
+        ];
+        let cap = get_capacity("NODE1", &allocs);
+        assert_eq!(cap.total_track_circuits, 8);
+        assert_eq!(cap.used_track_circuits, 2);
+        assert_eq!(cap.total_lines, 32);
+        assert_eq!(cap.used_lines, 5);
     }
 }

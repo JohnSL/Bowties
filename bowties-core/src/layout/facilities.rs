@@ -847,6 +847,7 @@ mod tests {
             facility_id: "f-1".to_string(),
             target_node_key: "05010101FF000001".to_string(),
             conditional_lines: ConditionalLineRange { start: 0, count: 2 },
+            track_circuit: None,
         };
         let doc = FacilitiesDocument {
             schema_version: "1.0".to_string(),
@@ -870,6 +871,7 @@ mod tests {
             facility_id: "f-1".to_string(),
             target_node_key: "05010101FF000001".to_string(),
             conditional_lines: ConditionalLineRange { start: 0, count: 2 },
+            track_circuit: None,
         };
         let doc = FacilitiesDocument {
             schema_version: "1.0".to_string(),

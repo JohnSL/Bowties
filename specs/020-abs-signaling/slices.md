@@ -2,7 +2,7 @@
 
 Branch: 020-abs-signaling
 Generated: 2026-07-07
-Status: 4/7 slices complete
+Status: 5/7 slices complete
 
 ## Architecture
 
@@ -155,7 +155,7 @@ The ordered slice set. An overview table for at-a-glance scanning, followed by o
 | S2 | Real Tower LCC conditional line compiler | HITL | S1 | done |
 | S3 | Signal-aspect channel state display | AFK | S1 | done |
 | S4 | Facility comprehension view + editable bindings | HITL | S3 | done |
-| S5 | ABS cascade via same-node Track Circuits | HITL | S4 | sketched |
+| S5 | ABS cascade via same-node Track Circuits | HITL | S4 | done |
 | S6 | Facility deletion + resource reclamation | AFK | S2 | sketched |
 | S7 | Capacity display + target node suggestion | AFK | S4 | sketched |
 
@@ -290,17 +290,31 @@ The ordered slice set. An overview table for at-a-glance scanning, followed by o
 **Intent**: User can chain multiple ABS signal facilities so that occupying a block cascades Stop → Approach → Clear backward through the block system.
 **Boundary**: Orchestrator → Store → API → Backend domain (`logic_adapter/` compiler extension)
 **Blocked by**: S4
-**Status**: sketched
+**Status**: done
+**Complexity**: medium
+**User stories**: US1
 
 **Acceptance criteria**:
-- [ ] User binds an upstream signal's downstream-signal input slot to a downstream signal facility's output
-- [ ] Compiler allocates a Track Circuit (1–8) for the cascade connection and records it in the logic allocation
-- [ ] Upstream signal's Approach rule compiles to a Track Circuit read variable (TC source + speed threshold match)
-- [ ] Downstream signal's compiled actions include a Track Circuit write action publishing its current aspect as a speed value
-- [ ] 3-signal cascade compiles correctly: occupied block → protecting signal Stop, one behind → Approach, two behind → Clear
-- [ ] Compiler rejects cascade wiring when all 8 Track Circuits on the target node are allocated, with a clear capacity error
+- [x] User binds an upstream signal's downstream-signal input slot to a downstream signal facility's output
+- [x] Compiler allocates a Track Circuit (1–8) for the cascade connection and records it in the logic allocation
+- [x] Upstream signal's Approach rule compiles to a Track Circuit read variable (TC source + speed threshold match)
+- [x] Downstream signal's compiled actions include a Track Circuit write action publishing its current aspect as a speed value
+- [x] 3-signal cascade compiles correctly: occupied block → protecting signal Stop, one behind → Approach, two behind → Clear
+- [x] Compiler rejects cascade wiring when all 8 Track Circuits on the target node are allocated, with a clear capacity error
 
-**Architecture note**: Track Circuits are an internal Tower LCC communication primitive (8 per node) that carry aspect/speed values between conditional groups. This slice extends the compiler's variable resolution to include TC-sourced reads and the action expansion to include TC-destination writes. Cross-node cascade (via Track Transmitter/Receiver linking) is explicitly deferred.
+**Architecture note**: Track Circuits are an internal Tower LCC communication primitive (8 per node) that carry aspect/speed values between conditional groups. **D1:A — Downstream-owned TC**: TC allocated on the downstream facility's `LogicAllocation` (add `track_circuit: Option<u8>`); one TC per downstream regardless of fan-in count; upstream reads from downstream's allocated TC via `resolve_downstream_binding()`. **D2:A — Sequential orchestrator calls**: orchestrator compiles downstream first → syncs drafts → compiles upstream; no new IPC command. Cross-node cascade (via Track Transmitter/Receiver linking) is explicitly deferred.
+
+**Tasks**:
+- [x] S5-T1: Integration test — 2-signal cascade: compile downstream (end-of-line) → bind upstream → compile cascade → verify upstream has 3-line plan with TC read in Approach rule, downstream has TC write actions in each rule; 3-signal cascade: verify Stop→Approach→Clear propagation with 2 TCs; verify TC capacity error when all 8 TCs are allocated
+- [x] S5-T2: bowties-core domain — Add `track_circuit: Option<u8>` to `LogicAllocation`; add `tc_output: Option<u8>` to `CompileInput`; add `allocate_track_circuit()` (scan existing allocations for free 1–8); add `MAX_TRACK_CIRCUITS: u8 = 8` constant; add `InsufficientTrackCircuits` variant to `CompileError`; add TC capacity to `LogicCapacity`; unit test free-TC allocation
+- [x] S5-T3: bowties-core compiler — Extend `compile_facility()`: when `tc_output` is set, inject one additional TC-write action per rule (ActionDestination::TrackCircuitN, ActionTrackSpeed = aspect speed); add `ActionDestination::TrackCircuit1..8` enum variants; add aspect-to-speed map (`stop→Stop`, `approach→Approach`, `clear→Clear`); update action-count validation to include TC write slot; unit test TC write injection
+- [x] S5-T4: bowties-core downstream resolution — Extend `resolve_downstream_binding()`: read downstream facility's `LogicAllocation.track_circuit` instead of hardcoded 1; if downstream has no TC yet, return allocation request; update `DownstreamBinding` to carry allocated TC dynamically
+- [x] S5-T5: Backend IPC — Update `compile_logic_for_facility` to: read downstream facility's allocation for `tc_output` field; pass `tc_output` in `CompileInput`; allocate TC on downstream's allocation when first upstream binds (set `track_circuit` on downstream's `LogicAllocation` in effective state)
+- [x] S5-T6: Frontend orchestrator — Extend `compileLogicIfNeeded`: when downstream-signal slot is bound, compile downstream first → `syncDraftsForComposition()` → compile upstream; on unbind, recompile downstream (remove TC writes) + recompile upstream (remove Approach rule)
+- [x] S5-T7: Frontend store — Extend `LogicAllocation` TypeScript type with `trackCircuit: number | null`; update `LogicCapacity` type with `usedTrackCircuits` / `totalTrackCircuits`
+- [x] S5-T8: Validate — `cargo test -p bowties-core` green; `vitest run` green; 2-signal and 3-signal cascade round-trip verified
+
+<!-- Session: 2026-07-20 — Completed S5. Next: S6 (AFK), S7 (AFK). -->
 
 ### S6: Facility deletion + resource reclamation [AFK]
 

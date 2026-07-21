@@ -264,6 +264,15 @@ pub async fn compile_logic_for_facility(
     let all_allocations = &layout_state.effective_facilities().logic_allocations;
     let downstream = resolve_downstream_binding(&facility, all_facilities, all_allocations);
 
+    // ── Resolve tc_output (Spec 020 / S5) ────────────────────────────
+    // If this facility already has a track_circuit allocated, re-use it.
+    // The track_circuit is set by the orchestrator when an upstream signal
+    // binds to this facility's output.
+    let tc_output = facility
+        .logic_allocation
+        .as_ref()
+        .and_then(|a| a.track_circuit);
+
     // ── Build CompileInput and compile ───────────────────────────────
 
     let compile_input = CompileInput {
@@ -278,6 +287,7 @@ pub async fn compile_logic_for_facility(
         input_events,
         output_pin_events,
         downstream,
+        tc_output,
     };
 
     let compiler_output = compile_facility(&compile_input).map_err(|e| e.to_string())?;
@@ -312,6 +322,8 @@ pub async fn get_logic_capacity(
         return Ok(LogicCapacity {
             total_lines: 0,
             used_lines: 0,
+            total_track_circuits: 0,
+            used_track_circuits: 0,
         });
     };
 
@@ -345,6 +357,8 @@ pub async fn get_logic_capacity(
         return Ok(LogicCapacity {
             total_lines: 0,
             used_lines: 0,
+            total_track_circuits: 0,
+            used_track_circuits: 0,
         });
     }
 

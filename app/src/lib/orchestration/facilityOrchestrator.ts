@@ -22,7 +22,7 @@ import { configEditor } from '$lib/stores/configEditor.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
 import { composeFacilityBowties, type CompositionOp } from '$lib/api/facilityBowties';
-import { compileLogicForFacility } from '$lib/api/logicAdapter';
+import { compileLogicForFacility, type CompiledLogicPlan } from '$lib/api/logicAdapter';
 import { syncLayoutDrafts } from '$lib/api/layout';
 import { canonicalEventIdHex } from '$lib/utils/serialize';
 import { editKeyForLeaf } from '$lib/utils/editKey';
@@ -305,9 +305,12 @@ export async function composeBowtiesIfWired(facilityId: string): Promise<{ needs
  * Compile-before-compose path for `compiled` templates (Spec 020 / S1 — D1:A).
  *
  * 1. Determine the logic target node (from existing allocation or pending selection).
- * 2. Call the compiler IPC to get a `CompiledLogicPlan`.
- * 3. Record the allocation in `facilitiesStore`.
- * 4. Stage the field writes as CDI draft edits via `configEditor`.
+ * 2. If the facility has a downstream-signal bound, ensure the downstream
+ *    facility has a track_circuit allocated, then compile the downstream
+ *    first so its TC writes are staged (D2:A — sequential compilation).
+ * 3. Call the compiler IPC to get a `CompiledLogicPlan`.
+ * 4. Record the allocation in `facilitiesStore`.
+ * 5. Stage the field writes as CDI draft edits via `configEditor`.
  *
  * The target node must be set before this function is called — if no
  * target is known, the caller (route/component) must prompt the user.
@@ -319,6 +322,11 @@ async function compileIfWired(facilityId: string): Promise<{ needsLogicTarget?: 
     return { needsLogicTarget: facilityId };
   }
 
+  // Spec 020 / S5 — cascade: if the facility has a downstream-signal
+  // bound, ensure the downstream has a track_circuit and recompile it
+  // so its TC write actions are staged before we compile the upstream.
+  await ensureDownstreamTcAndRecompile(facilityId);
+
   await syncDraftsForComposition();
   const plan = await compileLogicForFacility(facilityId, targetNodeKey);
 
@@ -326,10 +334,15 @@ async function compileIfWired(facilityId: string): Promise<{ needsLogicTarget?: 
   facilitiesStore.setLogicAllocation(facilityId, plan.allocation);
 
   // Stage each compiled field write as a CDI draft edit.
-  // The stub compiler produces label bytes; the real compiler (S2) will
-  // produce int values. For now we interpret the value as an int when it
-  // fits in 4 bytes, otherwise as a string.
-  for (const write of plan.fieldWrites) {
+  stageFieldWritesAsDrafts(plan.fieldWrites, targetNodeKey);
+  return {};
+}
+
+/**
+ * Stage compiled field writes as CDI draft edits via `configEditor`.
+ */
+function stageFieldWritesAsDrafts(fieldWrites: CompiledLogicPlan['fieldWrites'], targetNodeKey: string): void {
+  for (const write of fieldWrites) {
     let value;
     if (write.elementType === 'eventId') {
       const hex = Array.from(write.value).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -337,14 +350,81 @@ async function compileIfWired(facilityId: string): Promise<{ needsLogicTarget?: 
     } else if (write.elementType === 'string') {
       value = { type: 'string' as const, value: String.fromCharCode(...write.value) };
     } else {
-      value = { type: 'int' as const, value: write.value.reduce((acc, b) => (acc << 8) | b, 0) };
+      value = { type: 'int' as const, value: write.value.reduce((acc: number, b: number) => (acc << 8) | b, 0) };
     }
     configEditor.applyEdit(
       editKeyForLeaf(targetNodeKey, write.space, write.address),
       value,
     );
   }
-  return {};
+}
+
+/**
+ * Spec 020 / S5 — ensure the downstream facility of `upstreamId` has a
+ * track_circuit allocated, and recompile it so its TC write actions are
+ * staged. No-op if the upstream has no downstream-signal bound.
+ *
+ * D1:A: TC is owned by the downstream's LogicAllocation.
+ * D2:A: Sequential orchestrator calls — compile downstream first.
+ */
+async function ensureDownstreamTcAndRecompile(upstreamId: string): Promise<void> {
+  const upstream = facilitiesStore.facilities.find((f) => f.facilityId === upstreamId);
+  if (!upstream) return;
+  const downstreamChannelId = upstream.slotBindings?.['downstream-signal']?.[0];
+  if (!downstreamChannelId) return;
+
+  // Find the downstream facility that owns this channel as its "output" slot.
+  const downstreamFacility = facilitiesStore.facilities.find(
+    (f) =>
+      f.facilityId !== upstreamId &&
+      f.slotBindings?.['output']?.includes(downstreamChannelId),
+  );
+  if (!downstreamFacility) return;
+
+  // Check if the downstream already has a track_circuit allocated.
+  const dsAllocation = downstreamFacility.logicAllocation;
+  if (dsAllocation?.trackCircuit) return; // already allocated
+
+  // The downstream needs a target node to compile.
+  const dsTargetNodeKey = facilitiesStore.getLogicTargetNodeKey(downstreamFacility.facilityId);
+  if (!dsTargetNodeKey) return;
+
+  // Allocate a TC for the downstream: use the next free from 1-8.
+  // This is a frontend-side allocation; the backend will persist it
+  // in the LogicAllocation returned by the compiler.
+  // We set the TC by updating the allocation before calling compile,
+  // so the backend's IPC sees it via the facility's logic_allocation.
+  if (dsAllocation) {
+    // Downstream has an allocation but no TC — add one.
+    facilitiesStore.setLogicAllocation(downstreamFacility.facilityId, {
+      ...dsAllocation,
+      trackCircuit: findNextFreeTrackCircuit(dsTargetNodeKey),
+    });
+  }
+
+  // Sync + recompile the downstream so its TC write actions appear.
+  await syncDraftsForComposition();
+  const dsPlan = await compileLogicForFacility(downstreamFacility.facilityId, dsTargetNodeKey);
+  facilitiesStore.setLogicAllocation(downstreamFacility.facilityId, dsPlan.allocation);
+  stageFieldWritesAsDrafts(dsPlan.fieldWrites, dsTargetNodeKey);
+}
+
+/**
+ * Find the lowest free track circuit (1–8) on a target node.
+ * Scans all existing allocations visible to the facilities store.
+ */
+function findNextFreeTrackCircuit(targetNodeKey: string): number {
+  const usedTCs = new Set<number>();
+  for (const f of facilitiesStore.facilities) {
+    if (f.logicAllocation?.targetNodeKey === targetNodeKey && f.logicAllocation.trackCircuit) {
+      usedTCs.add(f.logicAllocation.trackCircuit);
+    }
+  }
+  for (let n = 1; n <= 8; n++) {
+    if (!usedTCs.has(n)) return n;
+  }
+  // All 8 in use — the backend compiler will reject the compile call.
+  return 1;
 }
 
 /**

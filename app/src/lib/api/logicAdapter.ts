@@ -11,6 +11,8 @@ export interface LogicAllocation {
   facilityId: string;
   targetNodeKey: string;
   conditionalLines: ConditionalLineRange;
+  /** Track circuit number (1–8) allocated for downstream cascade output, or null. */
+  trackCircuit: number | null;
 }
 
 /** One CDI field write produced by the compiler. */
@@ -32,6 +34,8 @@ export interface CompiledLogicPlan {
 export interface LogicCapacity {
   totalLines: number;
   usedLines: number;
+  totalTrackCircuits: number;
+  usedTrackCircuits: number;
 }
 
 /** Compile the logic for a facility on a target node. */

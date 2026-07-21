@@ -194,7 +194,8 @@ the savings. Default is delegation; inline is the escape hatch.
 2. Set the slice's roadmap status `tasked → done`
 3. Update the status line (`N/total slices complete`)
 4. Present the result: what was built, what the test proves, any surprises
-5. **Re-read the roadmap and adjust the next slice's card** in light of what this slice revealed (the just-in-time re-cut) — its boundary, and acceptance criteria/architecture note if the learning changed them. Do not author the next slice's task breakdown until you actually start it.
+5. **Provide user-test instructions.** Describe how the user can verify the slice's behavior themselves in the running app — the concrete steps to reach the relevant UI or workflow, what to do, and what they should observe. Focus on user-visible behavior, not internal state or test-only assertions. If the slice has no user-visible surface (pure refactor, backend-only plumbing, protocol-level change), say so explicitly and note what the automated tests cover in its place. Keep it short: a numbered list of steps plus expected outcomes.
+6. **Re-read the roadmap and adjust the next slice's card** in light of what this slice revealed (the just-in-time re-cut) — its boundary, and acceptance criteria/architecture note if the learning changed them. Do not author the next slice's task breakdown until you actually start it.
 
 ## Session Capacity
 
