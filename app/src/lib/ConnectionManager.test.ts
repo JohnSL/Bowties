@@ -119,6 +119,32 @@ describe('ConnectionManager — layout-scoped connections (S7)', () => {
     });
   });
 
+  it('trims whitespace from TCP host field on submit (#24)', async () => {
+    stubContext.rootPath = 'C:/layouts/test.layout';
+    getMock.mockResolvedValue([]);
+    await mountComponent();
+
+    // Open the Add Connection modal
+    await fireEvent.click(screen.getByLabelText('Add connection'));
+
+    // Fill in required name
+    const nameInput = screen.getByPlaceholderText('My layout hub');
+    await fireEvent.input(nameInput, { target: { value: 'Test Hub' } });
+
+    // Type a host with leading/trailing spaces
+    const hostInput = screen.getByPlaceholderText('localhost');
+    await fireEvent.input(hostInput, { target: { value: '  192.168.1.100  ' } });
+
+    // Submit via the Add button
+    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+
+    await waitFor(() => {
+      expect(saveMock).toHaveBeenCalled();
+      const savedConfigs = saveMock.mock.calls[0][1] as Array<{ host?: string }>;
+      expect(savedConfigs[0].host).toBe('192.168.1.100');
+    });
+  });
+
   it('shows an empty list when no layout is active and does not call the API', async () => {
     stubContext.rootPath = null;
     await mountComponent();
