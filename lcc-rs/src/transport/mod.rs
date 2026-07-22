@@ -1,7 +1,7 @@
 //! Transport layer for LCC/OpenLCB communication
 
 pub mod tcp;
-pub mod gridconnect_serial;
+pub mod gridconnect_async;
 pub mod slcan_serial;
 
 // `mock` is publicly available so integration tests in `lcc-rs/tests/**`
@@ -11,5 +11,5 @@ pub mod slcan_serial;
 pub mod mock;
 
 pub use tcp::{LccTransport, TcpTransport, TransportReader, TransportWriter};
-pub use gridconnect_serial::{GridConnectSerialTransport, FrameEncoding};
+pub use gridconnect_async::{GridConnectAsyncTransport, FrameEncoding};
 pub use slcan_serial::SlcanSerialTransport;

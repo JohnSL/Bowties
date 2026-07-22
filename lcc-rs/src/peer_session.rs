@@ -1579,7 +1579,7 @@ impl PeerSession {
         }
 
         for frame in &frames {
-            if let Err(e) = self.transport.send(frame).await {
+            if let Err(e) = self.transport.send_direct(frame).await {
                 self.complete_memory_read(Err(PeerError::from(e))).await;
                 return;
             }
@@ -1677,7 +1677,7 @@ impl PeerSession {
 
         // Sole ACK owner for this reply datagram.
         if let Ok(ack) = DatagramAssembler::send_acknowledgment(self.our_alias, self.alias) {
-            let _ = self.transport.send(&ack).await;
+            let _ = self.transport.send_direct(&ack).await;
         }
 
         let reply = match MemoryConfigCmd::parse_read_reply(&complete_data) {

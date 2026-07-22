@@ -48,7 +48,7 @@ pub mod peer_session_registry;
 pub use types::{NodeID, EventID, NodeAlias, DiscoveredNode, SNIPData, SNIPStatus, ConnectionStatus, CdiData, ProtocolFlags, PIPStatus};
 pub use protocol::{GridConnectFrame, MTI, DatagramAssembler, DatagramState, MemoryConfigCmd, AddressSpace, ReadReply};
 pub use transport::LccTransport;
-pub use transport::{GridConnectSerialTransport, SlcanSerialTransport, FrameEncoding};
+pub use transport::{GridConnectAsyncTransport, SlcanSerialTransport, FrameEncoding};
 /// Re-export `serialport::FlowControl` so callers can specify flow control
 /// without adding a direct dependency on `serialport`.
 pub use serialport::FlowControl as SerialFlowControl;

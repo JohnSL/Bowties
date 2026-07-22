@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use lcc_rs::{
-    FrameEncoding, GridConnectFrame, GridConnectSerialTransport, LccConnection, MemoryReadConfig,
-    NodeID, PeerError, PeerSessionRegistry, SerialFlowControl, MTI,
+    FrameEncoding, GridConnectFrame, LccConnection,
+    MemoryReadConfig, NodeID, PeerError, PeerSessionRegistry, SerialFlowControl, MTI,
 };
 use serde::Serialize;
 use tokio::sync::Mutex;
@@ -124,6 +124,64 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Sweep a memory-config address range in fixed-size chunks via
+    /// `PeerSessionHandle::read_memory`. Exercises the config-read path
+    /// (`ActiveExchange::MemoryRead`) that the Bowties app actually runs
+    /// most of the time (CDI XML is cached; only config values are
+    /// re-read on reconnect).
+    ///
+    /// Reports per-chunk timing (first-frame latency, total duration,
+    /// frame count) so slow-transport symptoms can be isolated from
+    /// app-side batching / progress-event overhead.
+    ReadSpace {
+        /// Target node ID (dotted or contiguous hex).
+        #[arg(long)]
+        node: String,
+
+        /// Address space (hex, e.g. `FD` or `0xFD`). Defaults to `0xFD`
+        /// (configuration).
+        #[arg(long, default_value = "0xFD", value_parser = parse_hex_u8)]
+        space: u8,
+
+        /// Start address (hex, e.g. `0x80`). Defaults to `0x80`, the
+        /// typical first configurable address on LCC nodes.
+        #[arg(long, default_value = "0x80", value_parser = parse_hex_u32)]
+        start: u32,
+
+        /// Total number of bytes to sweep from `start`.
+        #[arg(long)]
+        length: u32,
+
+        /// Chunk size per read (1..=64).
+        #[arg(long, default_value_t = 64)]
+        chunk_size: u8,
+
+        /// Number of full sweeps.
+        #[arg(long, default_value_t = 1)]
+        iterations: usize,
+
+        /// Per-read timeout (ms).
+        #[arg(long, default_value_t = 3000)]
+        timeout_ms: u64,
+
+        /// Discovery collection window before starting reads (ms).
+        #[arg(long, default_value_t = 500)]
+        discover_timeout_ms: u64,
+
+        /// Emit JSON records instead of a human-readable table.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+fn parse_hex_u8(s: &str) -> Result<u8, String> {
+    let cleaned = s.trim_start_matches("0x").trim_start_matches("0X");
+    u8::from_str_radix(cleaned, 16).map_err(|e| format!("invalid hex u8 '{s}': {e}"))
+}
+
+fn parse_hex_u32(s: &str) -> Result<u32, String> {
+    let cleaned = s.trim_start_matches("0x").trim_start_matches("0X");
+    u32::from_str_radix(cleaned, 16).map_err(|e| format!("invalid hex u32 '{s}': {e}"))
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -202,6 +260,54 @@ struct SummaryRecord {
     timeout_ms: u64,
 }
 
+// ─── Records for `read-space` JSON output ──────────────────────────────────
+
+/// One completed chunk read within a `read-space` sweep.
+#[derive(Serialize)]
+struct ReadSpaceChunkRecord {
+    iteration: usize,
+    chunk_index: usize,
+    address: u32,
+    size: u8,
+    #[serde(flatten)]
+    outcome: ReadSpaceChunkOutcome,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "kebab-case")]
+enum ReadSpaceChunkOutcome {
+    Ok {
+        first_frame_latency_ms: u64,
+        total_duration_ms: u64,
+        frame_count: u8,
+        frame_gaps_ms: Vec<u32>,
+    },
+    Err {
+        error_kind: String,
+        detail: String,
+        elapsed_ms: u128,
+    },
+}
+
+#[derive(Serialize)]
+struct ReadSpaceIterationRecord {
+    iteration: usize,
+    wall_ms: u64,
+    chunk_count: usize,
+    success_count: usize,
+    failure_count: usize,
+    first_frame_latency_ms: ChunkStatsRecord,
+    total_duration_ms: ChunkStatsRecord,
+}
+
+#[derive(Serialize)]
+struct ChunkStatsRecord {
+    min: u32,
+    mean: u32,
+    p95: u32,
+    max: u32,
+}
+
 // ─── Entry point ────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -214,9 +320,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Match the app's construction sequence.
     eprintln!(
         "[cdi-probe] Opening {} @ {} baud, flow={:?}, encoding={:?}",
-        cli.port, cli.baud, cli.flow, cli.encoding
+        cli.port, cli.baud, cli.flow, cli.encoding,
     );
-    let transport = GridConnectSerialTransport::open(
+    let transport = lcc_rs::GridConnectAsyncTransport::open(
         &cli.port,
         cli.baud,
         cli.flow.into(),
@@ -292,6 +398,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     max_retries,
                     post_ack_delay_ms,
                 },
+                discover_timeout_ms,
+                cli.session_settle_ms,
+                json,
+            )
+            .await
+        }
+        Command::ReadSpace {
+            node,
+            space,
+            start,
+            length,
+            chunk_size,
+            iterations,
+            timeout_ms,
+            discover_timeout_ms,
+            json,
+        } => {
+            let target = NodeID::from_hex_string(&node)
+                .map_err(|e| format!("invalid --node: {}", e))?;
+            if chunk_size == 0 || chunk_size > 64 {
+                return Err(format!(
+                    "--chunk-size must be in 1..=64, got {}",
+                    chunk_size
+                )
+                .into());
+            }
+            if length == 0 {
+                return Err("--length must be > 0".into());
+            }
+            run_read_space(
+                &connection,
+                &registry,
+                target,
+                space,
+                start,
+                length,
+                chunk_size,
+                iterations,
+                timeout_ms,
                 discover_timeout_ms,
                 cli.session_settle_ms,
                 json,
@@ -583,6 +728,226 @@ async fn run_cdi(
     }
 
     if failure_count > 0 {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+// ─── Read-space (config-read timing baseline) ───────────────────────────────
+
+#[allow(clippy::too_many_arguments)]
+async fn run_read_space(
+    connection: &Arc<Mutex<LccConnection>>,
+    registry: &Arc<PeerSessionRegistry>,
+    target: NodeID,
+    space: u8,
+    start: u32,
+    length: u32,
+    chunk_size: u8,
+    iterations: usize,
+    timeout_ms: u64,
+    discover_timeout_ms: u64,
+    session_settle_ms: u64,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Step 1: prime the registry by discovering the node.
+    eprintln!(
+        "[cdi-probe] Discovering nodes ({}ms window) to prime the session registry...",
+        discover_timeout_ms
+    );
+    let nodes = {
+        let mut conn = connection.lock().await;
+        conn.discover_nodes(discover_timeout_ms).await?
+    };
+    if !nodes.iter().any(|n| n.node_id == target) {
+        eprintln!(
+            "[cdi-probe] WARNING: target node {} not seen in discovery. \
+             Continuing anyway — session may not spawn.",
+            target.to_hex_string()
+        );
+    } else {
+        eprintln!(
+            "[cdi-probe] Target {} present in discovery ({} node(s) total).",
+            target.to_hex_string(),
+            nodes.len()
+        );
+    }
+
+    tokio::time::sleep(Duration::from_millis(session_settle_ms)).await;
+
+    let handle = match registry.get(target).await {
+        Some(h) => h,
+        None => {
+            return Err(format!(
+                "no peer session for {} — the registry hasn't spawned one \
+                 (target may not be on the bus, or session_settle_ms is too short)",
+                target.to_hex_string()
+            )
+            .into());
+        }
+    };
+
+    // Pre-compute the chunk plan (address, size) for a single sweep.
+    let plan: Vec<(u32, u8)> = {
+        let mut items = Vec::new();
+        let end = start.saturating_add(length);
+        let mut addr = start;
+        while addr < end {
+            let remaining = end - addr;
+            let size = std::cmp::min(remaining, chunk_size as u32) as u8;
+            items.push((addr, size));
+            addr = addr.saturating_add(size as u32);
+        }
+        items
+    };
+
+    eprintln!(
+        "[cdi-probe] Sweeping space 0x{:02X} @ 0x{:08X}+{} in {}-byte chunks: \
+         {} chunk(s) per iteration, {} iteration(s) (timeout_ms={})",
+        space,
+        start,
+        length,
+        chunk_size,
+        plan.len(),
+        iterations,
+        timeout_ms,
+    );
+
+    if !json {
+        println!(
+            "{:>3}  {:>7}  {:>10}  {:>6}  {:>6}  {:>6}  {:>6}  {:>6}  {:>6}  {:>6}  {:>6}",
+            "#", "wall_ms", "chunks",
+            "ff_min", "ff_mean", "ff_p95", "ff_max",
+            "tt_min", "tt_mean", "tt_p95", "tt_max",
+        );
+    }
+
+    let mut all_iter_records: Vec<ReadSpaceIterationRecord> = Vec::new();
+    let mut all_chunk_records: Vec<ReadSpaceChunkRecord> = Vec::new();
+    let mut wall_by_iter: Vec<u64> = Vec::new();
+    let mut had_failure = false;
+
+    for iter_idx in 1..=iterations {
+        let iter_start = Instant::now();
+        let mut first_frame_ms_samples: Vec<u32> = Vec::with_capacity(plan.len());
+        let mut total_ms_samples: Vec<u32> = Vec::with_capacity(plan.len());
+        let mut success_count = 0usize;
+        let mut failure_count = 0usize;
+
+        for (chunk_idx, &(addr, size)) in plan.iter().enumerate() {
+            let call_start = Instant::now();
+            let outcome = match handle.read_memory(space, addr, size, timeout_ms).await {
+                Ok((_data, timing)) => {
+                    success_count += 1;
+                    first_frame_ms_samples.push(timing.first_frame_latency_ms as u32);
+                    total_ms_samples.push(timing.total_duration_ms as u32);
+                    ReadSpaceChunkOutcome::Ok {
+                        first_frame_latency_ms: timing.first_frame_latency_ms,
+                        total_duration_ms: timing.total_duration_ms,
+                        frame_count: timing.frame_count,
+                        frame_gaps_ms: timing.frame_gaps_ms,
+                    }
+                }
+                Err(e) => {
+                    failure_count += 1;
+                    had_failure = true;
+                    let elapsed_ms = call_start.elapsed().as_millis();
+                    if !json {
+                        eprintln!(
+                            "[cdi-probe] iter {} chunk {} @0x{:08X}+{} FAILED after {}ms: {}: {}",
+                            iter_idx,
+                            chunk_idx,
+                            addr,
+                            size,
+                            elapsed_ms,
+                            error_kind_of(&e),
+                            e,
+                        );
+                    }
+                    ReadSpaceChunkOutcome::Err {
+                        error_kind: error_kind_of(&e),
+                        detail: e.to_string(),
+                        elapsed_ms,
+                    }
+                }
+            };
+            all_chunk_records.push(ReadSpaceChunkRecord {
+                iteration: iter_idx,
+                chunk_index: chunk_idx,
+                address: addr,
+                size,
+                outcome,
+            });
+        }
+
+        let wall_ms = iter_start.elapsed().as_millis() as u64;
+        wall_by_iter.push(wall_ms);
+
+        let (ff_min, ff_mean, ff_p95, ff_max) = chunk_stats(&first_frame_ms_samples);
+        let (tt_min, tt_mean, tt_p95, tt_max) = chunk_stats(&total_ms_samples);
+
+        if !json {
+            println!(
+                "{:>3}  {:>7}  {:>10}  {:>6}  {:>6}  {:>6}  {:>6}  {:>6}  {:>6}  {:>6}  {:>6}",
+                iter_idx,
+                wall_ms,
+                format!("{}/{}", success_count, plan.len()),
+                ff_min, ff_mean, ff_p95, ff_max,
+                tt_min, tt_mean, tt_p95, tt_max,
+            );
+        }
+
+        all_iter_records.push(ReadSpaceIterationRecord {
+            iteration: iter_idx,
+            wall_ms,
+            chunk_count: plan.len(),
+            success_count,
+            failure_count,
+            first_frame_latency_ms: ChunkStatsRecord {
+                min: ff_min, mean: ff_mean, p95: ff_p95, max: ff_max,
+            },
+            total_duration_ms: ChunkStatsRecord {
+                min: tt_min, mean: tt_mean, p95: tt_p95, max: tt_max,
+            },
+        });
+    }
+
+    if json {
+        for rec in &all_chunk_records {
+            println!("{}", serde_json::to_string(rec)?);
+        }
+        for rec in &all_iter_records {
+            println!("{}", serde_json::to_string(rec)?);
+        }
+    } else {
+        println!();
+        println!("── Summary ─────────────────────────────────────────");
+        println!("  iterations       : {}", iterations);
+        println!("  chunks/iter      : {}", plan.len());
+        println!("  bytes/iter       : {}", length);
+        println!("  chunk_size       : {}", chunk_size);
+        println!("  timeout_ms       : {}", timeout_ms);
+        if !wall_by_iter.is_empty() {
+            let sum: u64 = wall_by_iter.iter().sum();
+            let mean_wall = sum / wall_by_iter.len() as u64;
+            let mut sorted = wall_by_iter.clone();
+            sorted.sort_unstable();
+            let min_wall = *sorted.first().unwrap();
+            let max_wall = *sorted.last().unwrap();
+            let median_wall = sorted[sorted.len() / 2];
+            let per_chunk_mean = mean_wall as f64 / plan.len() as f64;
+            println!(
+                "  wall_ms/iter     : min={} median={} mean={} max={}",
+                min_wall, median_wall, mean_wall, max_wall
+            );
+            println!(
+                "  per-chunk mean   : {:.2} ms (wall / chunks/iter)",
+                per_chunk_mean
+            );
+        }
+    }
+
+    if had_failure {
         std::process::exit(1);
     }
     Ok(())
