@@ -68,6 +68,14 @@ export interface Interaction {
   fields: Record<string, string | number | boolean | string[] | null>;
   /** Pre-computed timing measurements (only applicable fields present) */
   timing: InteractionTiming;
+  /**
+   * Memory-config Read/Write only. `true` when the reply was matched to the
+   * request by payload address+space+kind. `false` when address matching
+   * failed (e.g. reply not yet in the trace window) and sequence-order
+   * fallback was used — treat `timing.ackToReplyMs` as unreliable in that
+   * case. Absent for interaction types where address matching does not apply.
+   */
+  addressMatched?: boolean;
 }
 
 // ─── MTI Constants ────────────────────────────────────────────────────────────
@@ -155,6 +163,55 @@ function spaceName(space: number): string {
     case 0xFB: return "0xFB (Train Search)";
     default:   return `0x${space.toString(16).toUpperCase().padStart(2, "0")}`;
   }
+}
+
+/**
+ * Compute a stable payload match key for a memory-config Read/Write datagram
+ * so that a request can be paired with its actual reply (not just the next
+ * reply in file order). Returns `null` for datagrams where address-based
+ * matching does not apply (query/lock/freeze commands, malformed payloads,
+ * or other memory-config cmds).
+ *
+ * Layout for Read/Write and their replies (OpenLCB S-9.7.4.2):
+ *   [0x20, cmd, addr_hi, addr_mid_hi, addr_mid_lo, addr_lo, (space?), ...data]
+ * The low 2 bits of `cmd` encode the address space:
+ *   0=space in byte[6], 1=0xFD, 2=0xFE, 3=0xFF
+ * The request and its matching reply always share the same layout and space
+ * encoding, so the key derived from bytes[2..6] + space + kind matches
+ * request↔reply deterministically.
+ *
+ * Key format: `${kind}:${space}:${addr}` where
+ *   kind  = "R" (Read family) or "W" (Write family)
+ *   space = effective address space number (0-255)
+ *   addr  = 32-bit unsigned address in hex
+ */
+function memCfgAddressMatchKey(dgBytes: number[]): string | null {
+  if (dgBytes.length < 6) return null;
+  const cmd = dgBytes[1];
+  const base = cmd & 0xFC;
+  const spaceSuffix = cmd & 0x03;
+
+  // Read family: 0x40-0x43 (request), 0x48-0x4B (fail reply), 0x50-0x53 (OK reply)
+  // Write family: 0x44-0x47 (request), 0x54-0x57 (OK reply), 0x58-0x5B (fail reply)
+  let kind: "R" | "W";
+  if (base === 0x40 || base === 0x48 || base === 0x50) kind = "R";
+  else if (base === 0x44 || base === 0x54 || base === 0x58) kind = "W";
+  else return null;
+
+  const addr = ((dgBytes[2] << 24) | (dgBytes[3] << 16) |
+                (dgBytes[4] << 8)  |  dgBytes[5]) >>> 0;
+
+  const SPACE_MAP: Record<number, number> = { 1: 0xFD, 2: 0xFE, 3: 0xFF };
+  let space: number;
+  if (spaceSuffix !== 0) {
+    space = SPACE_MAP[spaceSuffix]!;
+  } else if (dgBytes.length >= 7) {
+    space = dgBytes[6];
+  } else {
+    return null;
+  }
+
+  return `${kind}:${space.toString(16)}:${addr.toString(16)}`;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -261,18 +318,50 @@ export function buildInteractionGroups(
     const cmd = dgReq.bytes[1];
     const noReply = isMemConfigNoReplyCmd(cmd);
 
-    // Find first matching reply: from opposite direction, after this request.
-    // Use frame index ordering (not timestamp) because request and reply can
-    // share the same millisecond timestamp in fast USB-to-CAN traces.
+    // Find the matching reply from the opposite direction, occurring after
+    // this request's last frame.
+    //
+    // Pairing strategy:
+    //   * Read/Write requests: STRICT address matching. Only pair with a
+    //     reply whose payload address+space+kind matches the request. If no
+    //     match is found (e.g. the request was rejected, or the true reply
+    //     is outside the trace window, or the trace lost frames), do NOT
+    //     fall back to sequence-order pairing — that causes cascading
+    //     mis-alignment when clients pipeline requests. Emit the request as
+    //     unpaired (complete=false) and set `addressMatched: false` so
+    //     callers can detect that address matching was attempted and failed.
+    //     Successful matches carry `addressMatched: true`.
+    //   * Query / lock / freeze / unfreeze (no address in payload) and any
+    //     other memory-config cmd we do not classify: use sequence-order
+    //     pairing (first unused reply from the opposite direction after this
+    //     request). `addressMatched` is omitted for those interactions.
+    //
+    // Frame-index (not timestamp) ordering is used because request and reply
+    // can share the same millisecond timestamp in fast USB-to-CAN traces.
     let matchRep: DgEntry | undefined;
+    let addressMatched: boolean | undefined;
     const reqLastFrameIdx = dgReq.frameIndices[dgReq.frameIndices.length - 1] ?? 0;
     if (!noReply) {
-      matchRep = memReps.find(rep =>
-        !usedRepDis.has(rep.di) &&
-        datagrams[rep.di].srcAlias === dgReq.destAlias &&
-        datagrams[rep.di].destAlias === dgReq.srcAlias &&
-        datagrams[rep.di].frameIndices[0] > reqLastFrameIdx,
-      );
+      const reqKey = memCfgAddressMatchKey(dgReq.bytes);
+      if (reqKey !== null) {
+        // Read/Write: strict address matching, no fallback.
+        matchRep = memReps.find(rep =>
+          !usedRepDis.has(rep.di) &&
+          datagrams[rep.di].srcAlias === dgReq.destAlias &&
+          datagrams[rep.di].destAlias === dgReq.srcAlias &&
+          datagrams[rep.di].frameIndices[0] > reqLastFrameIdx &&
+          memCfgAddressMatchKey(datagrams[rep.di].bytes) === reqKey,
+        );
+        addressMatched = matchRep !== undefined;
+      } else {
+        // Non-address command (query, lock, etc.): fall back to sequence order.
+        matchRep = memReps.find(rep =>
+          !usedRepDis.has(rep.di) &&
+          datagrams[rep.di].srcAlias === dgReq.destAlias &&
+          datagrams[rep.di].destAlias === dgReq.srcAlias &&
+          datagrams[rep.di].frameIndices[0] > reqLastFrameIdx,
+        );
+      }
       if (matchRep) usedRepDis.add(matchRep.di);
     }
 
@@ -376,6 +465,7 @@ export function buildInteractionGroups(
       summary,
       fields,
       timing,
+      ...(addressMatched !== undefined ? { addressMatched } : {}),
     });
   }
 

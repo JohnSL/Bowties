@@ -163,10 +163,13 @@ const INTERACTION_TYPES = [
     "alias-negotiation", "event", "event-identification", "snip", "pip",
     "verify", "memory-config", "traction", "datagram-ack", "datagram", "other",
 ];
-server.tool("list_groups", "List interaction groups in the loaded trace. Requires at least one filter (type and/or nodeId). Returns protocol pairs (memory-config, snip, pip, verify, traction), events, alias negotiation, and individual frames. Each row includes groupIndex and frameIndices for drill-down via get_frames. Pre-computed timing fields (requestToAckMs, ackToReplyMs, replyToAckMs, gapToNextMs) enable latency analysis.", {
+server.tool("list_groups", "List interaction groups in the loaded trace. Requires at least one filter (type and/or nodeId). Returns protocol pairs (memory-config, snip, pip, verify, traction), events, alias negotiation, and individual frames. Each row includes groupIndex and frameIndices for drill-down via get_frames. Pre-computed timing fields (requestToAckMs, ackToReplyMs, replyToAckMs, gapToNextMs) enable latency analysis. Memory-config Read/Write requests are paired to their reply STRICTLY by payload address+space; `addressMatched: true` on a row means the pairing is trustworthy, `addressMatched: false` means no matching reply was found (rejected request, trace-window truncation, or dropped frames) and the request is emitted as unpaired.", {
     type: z.enum(INTERACTION_TYPES).optional().describe("Filter by interaction type: memory-config | snip | pip | verify | traction | event | event-identification | alias-negotiation | datagram-ack | datagram | other"),
     nodeId: z.string().optional().describe("Filter to a specific node: NodeID like '09.00.99.05.01.C0' or alias like '0x646'"),
-}, ({ type, nodeId }) => {
+    summaryOnly: z.boolean().optional().describe("When true, omit the per-row `fields` object and the full `frameIndices` array. Keeps `groupIndex`, `src`, `dest`, `summary`, `complete`, `timing`, `frameCount`, and `addressMatched`. Use for large exploratory listings; drill down with a follow-up call (no summaryOnly) or with get_frames."),
+    limit: z.number().int().positive().optional().describe("Maximum number of rows to return. When omitted, all matching rows are returned."),
+    offset: z.number().int().nonnegative().optional().describe("Number of matching rows to skip before applying `limit`. Use with `limit` to page through large results."),
+}, ({ type, nodeId, summaryOnly, limit, offset }) => {
     if (!traceCache) {
         return { content: [{ type: "text", text: JSON.stringify({ error: "No trace loaded. Call read_clipboard, read_trace_file, or load_trace first." }) }] };
     }
@@ -197,7 +200,12 @@ server.tool("list_groups", "List interaction groups in the loaded trace. Require
     if (filterAlias !== undefined) {
         filtered = filtered.filter(g => g.srcAlias === filterAlias || g.destAlias === filterAlias);
     }
-    const rows = filtered.map(g => {
+    const totalMatching = filtered.length;
+    const skip = offset ?? 0;
+    const paged = limit !== undefined
+        ? filtered.slice(skip, skip + limit)
+        : (skip > 0 ? filtered.slice(skip) : filtered);
+    const rows = paged.map(g => {
         const row = {
             groupIndex: g.groupIndex,
             type: g.type,
@@ -208,8 +216,10 @@ server.tool("list_groups", "List interaction groups in the loaded trace. Require
         row.summary = g.summary;
         if (!g.complete)
             row.complete = false;
-        if (Object.keys(g.fields).length > 0)
+        if (!summaryOnly && Object.keys(g.fields).length > 0)
             row.fields = g.fields;
+        if (g.addressMatched !== undefined)
+            row.addressMatched = g.addressMatched;
         // Only include non-null timing values
         const t = {};
         for (const [k, v] of Object.entries(g.timing)) {
@@ -219,13 +229,22 @@ server.tool("list_groups", "List interaction groups in the loaded trace. Require
         if (Object.keys(t).length > 0)
             row.timing = t;
         row.frameCount = g.frameIndices.length;
-        row.frameIndices = g.frameIndices;
+        if (!summaryOnly)
+            row.frameIndices = g.frameIndices;
         return row;
     });
+    const payload = { groupCount: rows.length, groups: rows };
+    if (limit !== undefined || skip > 0) {
+        payload.totalMatching = totalMatching;
+        payload.offset = skip;
+        if (limit !== undefined)
+            payload.limit = limit;
+        payload.hasMore = skip + rows.length < totalMatching;
+    }
     return {
         content: [{
                 type: "text",
-                text: JSON.stringify({ groupCount: rows.length, groups: rows }, null, 2),
+                text: JSON.stringify(payload, null, 2),
             }],
     };
 });

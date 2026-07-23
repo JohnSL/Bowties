@@ -51,6 +51,14 @@ export interface Interaction {
     fields: Record<string, string | number | boolean | string[] | null>;
     /** Pre-computed timing measurements (only applicable fields present) */
     timing: InteractionTiming;
+    /**
+     * Memory-config Read/Write only. `true` when the reply was matched to the
+     * request by payload address+space+kind. `false` when address matching
+     * failed (e.g. reply not yet in the trace window) and sequence-order
+     * fallback was used — treat `timing.ackToReplyMs` as unreliable in that
+     * case. Absent for interaction types where address matching does not apply.
+     */
+    addressMatched?: boolean;
 }
 export declare function buildInteractionGroups(frames: ParsedFrame[], datagrams: AssembledDatagram[], _aliasMap: AliasMap): Interaction[];
 //# sourceMappingURL=interaction-grouper.d.ts.map
