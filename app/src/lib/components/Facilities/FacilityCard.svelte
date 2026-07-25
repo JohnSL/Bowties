@@ -558,19 +558,9 @@
     background: transparent;
     flex-shrink: 0;
   }
-  .cv-state-dot.occupied { background: #d55e00; border-color: #d55e00; }
-  .cv-state-dot.clear { background: #009e73; border-color: #009e73; }
-  .cv-state-dot.lit { background: #e6c200; border-color: #e6c200; }
-  .cv-state-dot.unlit { background: #555; border-color: #555; }
   .cv-state-dot.signal-stop { background: #d55e00; border-color: #d55e00; }
   .cv-state-dot.signal-approach { background: #e6c200; border-color: #e6c200; }
   .cv-state-dot.signal-clear { background: #009e73; border-color: #009e73; }
-  .cv-state-dot.signal-dark { background: #333; border-color: #333; opacity: 0.5; }
-  .cv-state-dot.unknown {
-    background: transparent;
-    border-style: dashed;
-    opacity: 0.6;
-  }
   .cv-state-label {
     font-size: 0.6875rem;
     font-weight: 500;
