@@ -430,3 +430,83 @@ concurrency and flow control match the reference).
 ownership); the S3 Behavior Summary + AC1 corrections in
 [../../../specs/019-peer-session-refactor/slices.md](../../../specs/019-peer-session-refactor/slices.md).
 
+## 2026-07-25 extension: Peer-cleanup contract narrowed — no TDE on peer-initiated terminals (JMRI alignment)
+
+**Problem.** The peer-cleanup contract table above lists
+`PeerError::Rejected (DR cap exhaustion or OIR)` as **Yes** for TDE
+emission. Under [ADR-0019](0019-jmri-as-primary-compatibility-target.md)
+(2026-07-23), `OpenLCB_Java` never emits `TerminateDueToError` anywhere
+— including after OIR, non-resend `DatagramRejected`, memory-config
+`ReadReply::Failed`, or its own `MAX_TRIES = 3` retry-cap-exhaustion.
+Bowties emitting TDE at these seams is a divergence from the reference
+implementation that real peers (only ever tested against JMRI) may
+not tolerate.
+
+**Decision.** The peer-cleanup contract distinguishes
+**our-fault-live-wire** (TDE required) from **peer-initiated terminal**
+(no TDE). The table is rewritten:
+
+| Failure class                                                                     | Emit cleanup? |
+|-----------------------------------------------------------------------------------|---------------|
+| `PeerError::Timeout` (per-chunk deadline, our-side)                               | Yes           |
+| `PeerError::Cancelled` (`PeerCommand::Cancel`)                                    | Yes           |
+| `PeerError::Protocol` (lag-recovery exhaustion, local reply-parse failure)        | Yes           |
+| `PeerError::Rejected` from OIR                                                    | **No** — peer-initiated terminal; peer already released state (JMRI alignment, ADR-0019) |
+| `PeerError::Rejected` from non-resend DR (bit 0x1000 clear)                       | **No** — same rationale |
+| `PeerError::Rejected` from write-path retry-cap-exhaustion (`WRITE_MEMORY_MAX_RETRIES`) | **No** — mirrors JMRI `MemoryConfigurationService MAX_TRIES = 3` (which also emits nothing) |
+| `PeerError::Rejected` from `ReadReply::Failed` (peer-reported read error)         | **No** — peer-initiated terminal; peer completed its reply |
+| `PeerError::TransportUnhealthy` (mid-exchange `Wedged`)                           | **No** — wire is dead (ADR-0017 D1) |
+| `PeerError::PeerReinitialised`                                                    | No — peer already released exchange state |
+| `PeerError::AliasChanged`                                                         | No — same rationale |
+| Reassembly error / assembled-size-exceeds-limit (local decode failure)            | Yes — the peer thinks we're still receiving |
+
+The TDE error-code payload conventions are unchanged: `0x0200` for
+our-side timeouts / cancels / lag-exhaustion, and forwarding the peer's
+own error code where applicable — the surface just narrows to the
+our-fault-live-wire class.
+
+The `PeerError::is_our_fault_live_wire` classifier is unchanged (its
+`Rejected` arm is dead against the current call graph — every removed
+emit was inline, not routed through `abort_active`). If a future
+refactor consolidates the inline emits into `abort_active`, that
+refactor is the correct place to prune the classifier arm; the
+narrowing does not force the pruning now.
+
+**Rationale.** Consistent with
+[ADR-0016 §2026-07-25 extension](0016-per-peer-session-actor.md) which
+narrows Invariant #7 in lockstep. Applies the same reasoning uniformly
+across every peer-initiated-terminal message class in the peer_session
+seam (OIR + non-resend DR + `ReadReply::Failed` + retry-cap-exhaustion)
+rather than narrowing OIR alone and leaving sibling seams divergent.
+
+**Behaviour retained** (SPROG regression class): our-side timeouts
+still emit TDE via `handle_deadline` — the exact code path the
+original ADR-0016 D2 / ADR-0018 §Peer-cleanup contract was designed to
+close remains intact. `handle_deadline`'s three sites
+(CDI / read / write timeout) are untouched.
+
+**Call-site inventory** — nine remaining `emit_terminate_due_to_error`
+callers, all in the retained our-fault-live-wire class:
+
+1. `on_cdi_frame` reply-parse failure (local decode error)
+2. `on_cdi_frame` assembled-size-exceeds-limit local guard
+3. `on_memory_read_frame` reply-parse failure (local decode error)
+4. `handle_deadline` `CdiDownload` timeout
+5. `handle_deadline` `MemoryRead` timeout
+6. `handle_deadline` `MemoryWrite` timeout
+7. `abort_active` `CdiDownload` (gated by `is_our_fault_live_wire`)
+8. `abort_active` `MemoryRead` (same gate)
+9. `abort_active` `MemoryWrite` (same gate)
+
+**Test pattern.** See [ADR-0016 §2026-07-25 extension](0016-per-peer-session-actor.md)
+"Test pattern" — full `cargo test --manifest-path lcc-rs/Cargo.toml`
+green; peer-initiated-terminal tests renamed to `..._no_tde` with
+`== 0` assertions; timeout / cancel / lag-recovery tests unchanged
+and passing.
+
+**Follow-up.** OIR-with-temporary-error-flag (`code & 0x2000`) retry
+parity with JMRI's `MimicNodeStore.handleOptionalIntRejected` remains
+open ("Fix C" from the same architectural analysis). It is a separate
+`/bugfix` under ADR-0019 that will extend the same three OIR branches
+without unwinding this decision.
+

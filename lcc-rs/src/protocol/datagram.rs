@@ -143,26 +143,10 @@ impl DatagramAssembler {
         source_alias: u16,
         dest_alias: u16,
     ) -> Result<GridConnectFrame> {
-        // DatagramReceivedOk is a standard addressed MTI, not a datagram MTI
-        // The destination is encoded in the data payload as 2 bytes (alias)
-        let header = MTI::DatagramReceivedOk.to_header(source_alias)?;
-        
-        // Include destination alias in the payload (2 bytes, big-endian)
-        // followed by a flags byte (0x00 = no flags). JMRI always sends the
-        // flags byte; omitting it is technically valid per S-9.7.3.2 but some
-        // nodes may expect it.
-        let data = vec![
-            ((dest_alias >> 8) & 0xFF) as u8,
-            (dest_alias & 0xFF) as u8,
-            0x00, // flags: no reply pending, no timeout extension
-        ];
-        
-        let frame = GridConnectFrame {
-            header,
-            data,
-        };
-        
-        Ok(frame)
+        // Delegate to the free constructor with flags=0x00 (no reply pending,
+        // no timeout extension). JMRI always sends the flags byte; omitting
+        // it is technically valid per S-9.7.3.2 but some nodes may expect it.
+        Ok(build_datagram_received_ok_frame(source_alias, dest_alias, 0x00))
     }
 
     /// Clear any stale or errored datagrams for a specific source
@@ -183,6 +167,85 @@ impl Default for DatagramAssembler {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Build a `DatagramReceivedOk` addressed-message frame (S-9.7.3.2 §4.2).
+///
+/// Payload layout after the standard MTI header:
+///
+/// ```text
+/// [dest_alias(2 BE, top nibble zeroed per addressed-message convention), flags(1)]
+/// ```
+///
+/// `flags` = `0x00` in the common ACK case (no reply pending, no timeout
+/// extension). JMRI always emits the flags byte; omitting it is technically
+/// valid per S-9.7.3.2 but some nodes may expect it. The existing
+/// production emitter [`DatagramAssembler::send_acknowledgment`] delegates
+/// here with `flags = 0x00`.
+///
+/// # Panics
+///
+/// Panics if `source_alias` does not encode a valid 12-bit alias — the
+/// underlying `MTI::to_header` returns `Err` on invalid aliases, and this
+/// helper unwraps because well-formed 12-bit aliases are a caller
+/// precondition (matching the OIR / memory-config builders in this crate).
+pub fn build_datagram_received_ok_frame(
+    source_alias: u16,
+    dest_alias: u16,
+    flags: u8,
+) -> GridConnectFrame {
+    let header = MTI::DatagramReceivedOk
+        .to_header(source_alias)
+        .expect("valid 12-bit source alias");
+    let data = vec![
+        ((dest_alias >> 8) & 0x0F) as u8,
+        (dest_alias & 0xFF) as u8,
+        flags,
+    ];
+    GridConnectFrame { header, data }
+}
+
+/// Build a `DatagramRejected` addressed-message frame (S-9.7.3 §3.3.3).
+///
+/// Payload layout after the standard MTI header:
+///
+/// ```text
+/// [dest_alias(2 BE, top nibble zeroed per addressed-message convention),
+///  error_code(2 BE)]
+/// ```
+///
+/// The `0x1000` bit of `error_code` is the "resend OK" flag (temporary
+/// error): peers with the flag set are expected to be retried by the
+/// requester; peers with the flag clear are permanent rejections. The
+/// encoder does not interpret the flag — callers pass the exact 16-bit
+/// code from S-9.7.3 §3.5.5.
+///
+/// This builder exists per protocol-crate completeness
+/// (`lcc-rs.instructions.md`) — Bowties has no production emitter of
+/// `DatagramRejected` today (peer initiates DR toward us, not the other
+/// way), but the builder is the single citation seam for the DR payload
+/// byte order and removes verbatim duplication across integration test
+/// fixtures.
+///
+/// # Panics
+///
+/// Panics if `source_alias` does not encode a valid 12-bit alias (same
+/// caller precondition as [`build_datagram_received_ok_frame`]).
+pub fn build_datagram_rejected_frame(
+    source_alias: u16,
+    dest_alias: u16,
+    error_code: u16,
+) -> GridConnectFrame {
+    let header = MTI::DatagramRejected
+        .to_header(source_alias)
+        .expect("valid 12-bit source alias");
+    let data = vec![
+        ((dest_alias >> 8) & 0x0F) as u8,
+        (dest_alias & 0xFF) as u8,
+        (error_code >> 8) as u8,
+        (error_code & 0xFF) as u8,
+    ];
+    GridConnectFrame { header, data }
 }
 
 #[cfg(test)]
@@ -342,5 +405,52 @@ mod tests {
         // not datagram MTIs (0x1A000, 0x1B000, etc.)
         assert_eq!(mti, MTI::SNIPResponse);
         assert_ne!(dg_mti, MTI::SNIPResponse);  // Datagram parsing gets it wrong!
+    }
+
+    // --- build_datagram_received_ok_frame / build_datagram_rejected_frame tests ---
+
+    #[test]
+    fn build_datagram_received_ok_frame_encodes_addressed_ack() {
+        let frame = build_datagram_received_ok_frame(0x123, 0x456, 0x00);
+        let (mti, source) = MTI::from_header(frame.header).unwrap();
+        assert_eq!(mti, MTI::DatagramReceivedOk);
+        assert_eq!(source, 0x123);
+        // Payload: [dest_hi & 0x0F, dest_lo, flags].
+        assert_eq!(frame.data, vec![0x04, 0x56, 0x00]);
+    }
+
+    #[test]
+    fn build_datagram_received_ok_frame_forwards_flags_byte() {
+        // Reply-pending bit (0x80) still ends up in the flags byte verbatim.
+        let frame = build_datagram_received_ok_frame(0x123, 0x456, 0x80);
+        assert_eq!(frame.data[2], 0x80);
+    }
+
+    #[test]
+    fn send_acknowledgment_matches_free_constructor() {
+        // The instance-associated helper delegates to the free constructor
+        // with flags=0x00. Both must produce identical frames.
+        let via_method = DatagramAssembler::send_acknowledgment(0xAAA, 0xBBB).unwrap();
+        let via_free = build_datagram_received_ok_frame(0xAAA, 0xBBB, 0x00);
+        assert_eq!(via_method.header, via_free.header);
+        assert_eq!(via_method.data, via_free.data);
+    }
+
+    #[test]
+    fn build_datagram_rejected_frame_encodes_addressed_reject() {
+        let frame = build_datagram_rejected_frame(0x123, 0x456, 0x1042);
+        let (mti, source) = MTI::from_header(frame.header).unwrap();
+        assert_eq!(mti, MTI::DatagramRejected);
+        assert_eq!(source, 0x123);
+        // Payload: [dest_hi & 0x0F, dest_lo, code_hi, code_lo].
+        assert_eq!(frame.data, vec![0x04, 0x56, 0x10, 0x42]);
+    }
+
+    #[test]
+    fn build_datagram_rejected_frame_preserves_resend_ok_bit() {
+        // The 0x2000 bit (temporary error, resend OK per S-9.7.3 §3.5.5) is
+        // caller-owned semantics; the encoder must not touch it.
+        let frame = build_datagram_rejected_frame(0x111, 0x222, 0x2020);
+        assert_eq!(frame.data[2..4], [0x20, 0x20]);
     }
 }

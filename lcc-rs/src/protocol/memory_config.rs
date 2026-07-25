@@ -329,6 +329,74 @@ impl MemoryConfigCmd {
         let data = vec![0x20, 0xAA];
         GridConnectFrame::create_datagram_frames(source_alias, dest_alias, data)
     }
+
+    /// Build a MemoryConfigRead SUCCESS reply datagram payload.
+    ///
+    /// Returns the bytes that a peer would place inside a datagram whose
+    /// transport framing is added separately (see
+    /// `GridConnectFrame::create_datagram_frames`). Layout matches what
+    /// [`Self::parse_read_reply`] consumes:
+    ///
+    /// ```text
+    /// [0x20, reply_cmd, addr(4 BE), payload...]
+    /// ```
+    ///
+    /// where `reply_cmd` is `space.command_flag() + 0x10` — Configuration
+    /// (0x41) → 0x51; CDI (0x43) → 0x53; generic spaces (0x40) → 0x50; per
+    /// S-9.7.4.4 reply-command encoding (`read_cmd | 0x10`).
+    ///
+    /// The encoder/decoder pair (`build_read_reply_success` +
+    /// `parse_read_reply`) exists per protocol-crate completeness
+    /// (`lcc-rs.instructions.md`) — Bowties itself is a memory-config
+    /// *client* and has no production emitter of memory-config reply
+    /// frames, but the encoder is the single citation seam for the reply
+    /// byte order and removes wire-encoding duplication across integration
+    /// test fixtures.
+    pub fn build_read_reply_success(
+        space: AddressSpace,
+        address: u32,
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let reply_cmd = space.command_flag() + 0x10;
+        let addr = address.to_be_bytes();
+        let mut data = Vec::with_capacity(6 + payload.len());
+        data.extend_from_slice(&[0x20, reply_cmd, addr[0], addr[1], addr[2], addr[3]]);
+        data.extend_from_slice(payload);
+        data
+    }
+
+    /// Build a MemoryConfigRead FAILED reply datagram payload.
+    ///
+    /// A FAILED reply carries a peer-reported read error inside an
+    /// otherwise-valid memory-config reply. Layout matches what
+    /// [`Self::parse_read_reply`] consumes:
+    ///
+    /// ```text
+    /// [0x20, reply_cmd | 0x08, addr(4 BE), error_code(2 BE)]
+    /// ```
+    ///
+    /// where `reply_cmd | 0x08` is the failure flag applied to the same
+    /// reply command as [`Self::build_read_reply_success`] — Configuration
+    /// FAILED (0x51 | 0x08) → 0x59; CDI FAILED (0x53 | 0x08) → 0x5B; per
+    /// S-9.7.4.4.
+    ///
+    /// Companion of [`Self::build_read_reply_success`]; see that function's
+    /// note on why the encoder exists in the protocol crate despite Bowties
+    /// having no production emitter.
+    pub fn build_read_reply_failed(
+        space: AddressSpace,
+        address: u32,
+        error_code: u16,
+    ) -> Vec<u8> {
+        let reply_cmd = space.command_flag() + 0x18;
+        let addr = address.to_be_bytes();
+        let err = error_code.to_be_bytes();
+        vec![
+            0x20, reply_cmd,
+            addr[0], addr[1], addr[2], addr[3],
+            err[0], err[1],
+        ]
+    }
 }
 
 /// D21: Parsed address space information reply.
@@ -653,6 +721,79 @@ mod tests {
         let payload = vec![0x00; 65];
         let result = MemoryConfigCmd::build_write(0xAAA, 0xBBB, AddressSpace::Configuration, 0, &payload);
         assert!(result.is_err());
+    }
+
+    // --- build_read_reply_success / build_read_reply_failed tests ---
+    //
+    // Codec-pair round-trip: encoder output parses back to the same
+    // (space, address, payload/error_code) triple via parse_read_reply.
+
+    #[test]
+    fn test_build_read_reply_success_configuration_round_trip() {
+        let payload = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        let bytes = MemoryConfigCmd::build_read_reply_success(
+            AddressSpace::Configuration, 0x00000010, &payload);
+        // Embedded reply command: read_cmd(0x41) + 0x10 = 0x51.
+        assert_eq!(&bytes[..6], &[0x20, 0x51, 0x00, 0x00, 0x00, 0x10]);
+        assert_eq!(&bytes[6..], &payload[..]);
+        // Round-trip through the decoder.
+        match MemoryConfigCmd::parse_read_reply(&bytes).unwrap() {
+            ReadReply::Success { address, space, data } => {
+                assert_eq!(address, 0x00000010);
+                assert_eq!(space, AddressSpace::Configuration);
+                assert_eq!(data, payload);
+            }
+            other => panic!("expected Success, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_read_reply_success_cdi_round_trip() {
+        let payload = vec![b'C', b'D', 0x00];
+        let bytes = MemoryConfigCmd::build_read_reply_success(
+            AddressSpace::Cdi, 0, &payload);
+        // Embedded CDI reply command: read_cmd(0x43) + 0x10 = 0x53.
+        assert_eq!(bytes[1], 0x53);
+        match MemoryConfigCmd::parse_read_reply(&bytes).unwrap() {
+            ReadReply::Success { address, space, data } => {
+                assert_eq!(address, 0);
+                assert_eq!(space, AddressSpace::Cdi);
+                assert_eq!(data, payload);
+            }
+            other => panic!("expected Success, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_read_reply_failed_configuration_round_trip() {
+        let bytes = MemoryConfigCmd::build_read_reply_failed(
+            AddressSpace::Configuration, 0x0100, 0x1032);
+        // Embedded FAILED reply command: read_cmd(0x41) + 0x18 = 0x59.
+        assert_eq!(bytes, vec![0x20, 0x59, 0x00, 0x00, 0x01, 0x00, 0x10, 0x32]);
+        match MemoryConfigCmd::parse_read_reply(&bytes).unwrap() {
+            ReadReply::Failed { address, space, error_code, .. } => {
+                assert_eq!(address, 0x0100);
+                assert_eq!(space, AddressSpace::Configuration);
+                assert_eq!(error_code, 0x1032);
+            }
+            other => panic!("expected Failed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_read_reply_failed_cdi_round_trip() {
+        let bytes = MemoryConfigCmd::build_read_reply_failed(
+            AddressSpace::Cdi, 0x40, 0x1000);
+        // Embedded CDI FAILED reply command: read_cmd(0x43) + 0x18 = 0x5B.
+        assert_eq!(bytes[1], 0x5B);
+        match MemoryConfigCmd::parse_read_reply(&bytes).unwrap() {
+            ReadReply::Failed { address, space, error_code, .. } => {
+                assert_eq!(address, 0x40);
+                assert_eq!(space, AddressSpace::Cdi);
+                assert_eq!(error_code, 0x1000);
+            }
+            other => panic!("expected Failed, got {:?}", other),
+        }
     }
 
     // --- build_update_complete tests (T005) ---

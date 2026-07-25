@@ -461,6 +461,100 @@ subscription and aborted its live CDI download. Two defects compounded:
   **Construction-window contract: DROP.** A frame whose source alias has no
   registered route yet is discarded (not buffered). Safe because a session
   issues no requests before it is registered, so no reply can be missed.
+
+## 2026-07-25 extension: `TerminateDueToError` narrowed to our-fault-live-wire; peer-initiated terminals emit no cleanup (JMRI alignment)
+
+**Problem.** [ADR-0019](0019-jmri-as-primary-compatibility-target.md)
+(accepted 2026-07-23) makes `OpenLCB_Java` the primary behavioural
+compatibility target: where the LCC standard permits a behaviour but
+JMRI does not use it, Bowties mirrors JMRI's subset. `grep -r
+TerminateDueToError OpenLCB_Java/src/` returns one hit — the enum
+declaration in `MessageTypeIdentifier.java` — with no emitter and no
+handler anywhere in the codebase.
+`MessageDecoder.handleOptionalIntRejected` is a no-op default;
+`MimicNodeStore` overrides it only for SNII/PIP temp-flag retry (never
+emits TDE); `MemoryConfigurationService` has no override and falls
+through to a `MAX_TRIES = 3` timeout-retry loop that also emits nothing.
+Invariant #7 as originally stated required TDE emission after every
+"our-fault" termination, including OIR and DR-cap-exhaustion — both
+**peer-initiated** terminals under S-9.7.2.1 §3.4 / S-9.7.3.2 §3.4
+semantics. Under ADR-0019 this is a divergence from the reference
+implementation that real peers (only ever tested against JMRI) may not
+tolerate.
+
+**Decision.** Invariant #7 is narrowed to distinguish **our-fault-live-wire**
+from **peer-initiated terminal**. TDE emission is required only for the
+former:
+
+- **Our-fault-live-wire (TDE required, exactly once)**: our-side
+  per-chunk `Timeout` (`handle_deadline`), explicit `Cancel`
+  (`abort_active` via `PeerError::Cancelled`), lag-recovery exhaustion
+  (`abort_active` via `PeerError::Protocol`), and local
+  reply-parse / assembled-size-exceeds-limit failures where we cannot
+  decode the peer's bytes. These are all "the peer thinks we're still
+  receiving; we're not". The original SPROG-timeout regression that
+  motivated Invariant #7 lives entirely in this class and is untouched.
+- **Peer-initiated terminal (no TDE)**: `OptionalInteractionRejected`
+  (OIR), non-resend `DatagramRejected` (bit 0x1000 clear), memory-config
+  `ReadReply::Failed` (peer-reported read error in a valid reply), and
+  write-path retry-cap-exhaustion after `WRITE_MEMORY_MAX_RETRIES`
+  consecutive resend-OK DRs (mirrors JMRI's `MAX_TRIES = 3` cap that
+  also emits nothing). In every case the peer has already released
+  its exchange state — echoing an error back at the peer is the
+  divergence, not the cleanup.
+
+**Call sites changed** (`lcc-rs/src/peer_session.rs`; all eight sites
+removed the inline `emit_terminate_due_to_error` call — the completion
+payload `PeerError::Rejected { mti, code }` is preserved at every site):
+
+| Handler                    | Terminal class                          | Sub-cases removed |
+|----------------------------|-----------------------------------------|-------------------|
+| `on_cdi_frame`             | OIR / non-resend DR / `ReadReply::Failed` | 3 |
+| `on_memory_read_frame`     | OIR / non-resend DR / `ReadReply::Failed` | 3 |
+| `on_memory_write_frame`    | OIR / (non-resend DR or retry-cap-exhaustion, single inline branch) | 2 |
+
+The `PeerError::is_our_fault_live_wire` classifier is unchanged. Its
+`Rejected` arm is dead against the current call graph (every OIR / DR /
+`Failed` emission happened inline before `complete_*`, never through
+`abort_active`), and Option B explicitly declined to prune it — a
+future refactor that consolidates the inline emits into `abort_active`
+is the correct place to remove the arm.
+
+`emit_terminate_due_to_error` (the method) is retained; the remaining
+nine callers are all in the narrowed our-fault-live-wire class listed
+above.
+
+**Rationale.** ADR-0019 compliance at the entire peer-initiated-terminal
+seam, not just OIR. The invariant becomes semantic ("who caused the
+termination") instead of an enumeration of MTIs, which is a stronger
+statement to enforce on future code review. Prevents future TDE
+emission after any peer-initiated terminal by narrowing the invariant
+text in the same commit as the emission-site changes.
+
+**References.**
+- [ADR-0019](0019-jmri-as-primary-compatibility-target.md) — governing
+  policy.
+- [ADR-0018 §2026-07-25 extension](0018-cdi-download-exchange-ownership.md)
+  — mirror narrowing of the peer-cleanup contract table.
+- `OpenLCB_Java/src/org/openlcb/MessageTypeIdentifier.java` (line 41
+  — sole TDE reference), `MessageDecoder.java`,
+  `MimicNodeStore.java`, `MemoryConfigurationService.java` —
+  behavioural absence verified.
+- `aiwiki/architecture-health.md` — resolution entry
+  "TerminateDueToError emission narrowed to our-fault-live-wire
+  (resolved 2026-07-25)".
+
+**Test pattern.** `lcc-rs/tests/peer_session_cdi.rs` +
+`peer_session_config.rs` — eight per-terminal-class TDE-count
+assertions renamed to `..._no_tde` and flipped from `== 1` to
+`== 0` (Batches 1–3, tdd-cycle red→green). Timeout / cancel /
+lag-recovery-exhaustion TDE-emission tests
+(`cdi_timeout_emits_one_terminate_due_to_error`,
+`read_memory_timeout_emits_one_terminate_due_to_error`, and
+`is_our_fault_live_wire`'s classifier tests) remain green — verified
+unchanged after each batch. Full `cargo test --manifest-path
+lcc-rs/Cargo.toml` green: 359 unit + all integration suites +
+doctests.
   Route and session entry are registered atomically under the sessions
   write guard; lock order is **sessions → routes** everywhere. `AliasChanged`
   re-keys the route and the entry alias under both locks — lossless because

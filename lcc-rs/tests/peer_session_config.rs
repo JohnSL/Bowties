@@ -21,7 +21,10 @@
 
 use lcc_rs::peer_session::{PeerCommand, PeerError, PeerSession};
 use lcc_rs::protocol::mti::MTI;
-use lcc_rs::protocol::GridConnectFrame;
+use lcc_rs::protocol::{
+    build_datagram_received_ok_frame, build_datagram_rejected_frame,
+    AddressSpace, GridConnectFrame, MemoryConfigCmd,
+};
 use lcc_rs::transport::mock::MockTransport;
 use lcc_rs::{MemoryReadConfig, NodeID, TransportActor, TransportHandle};
 use std::time::Duration;
@@ -38,52 +41,62 @@ fn peer_node_id(byte: u8) -> NodeID {
     NodeID::new([0x02, 0x01, 0x57, 0x00, 0x00, byte])
 }
 
-/// Build a MemoryConfigRead reply datagram from the peer with the given
-/// reply command byte (embedded format: 0x51 config, 0x53 CDI). Splits into
-/// multiple datagram frames as needed by the protocol frame builder.
+/// Build a MemoryConfigRead SUCCESS reply datagram from the peer as GridConnect
+/// wire strings. Delegates payload encoding to `MemoryConfigCmd::build_read_reply_success`
+/// (the codec-pair partner of `MemoryConfigCmd::parse_read_reply`) and adds the
+/// datagram framing on top; this wrapper exists only to return `Vec<String>`
+/// for `MockTransport::add_receive_frame`.
 fn build_read_reply_frames(
     from_alias: u16,
     to_alias: u16,
-    reply_cmd: u8,
+    space: AddressSpace,
     address: u32,
     payload: &[u8],
 ) -> Vec<String> {
-    let addr_bytes = address.to_be_bytes();
-    let mut data = vec![
-        0x20u8, reply_cmd,
-        addr_bytes[0], addr_bytes[1], addr_bytes[2], addr_bytes[3],
-    ];
-    data.extend_from_slice(payload);
+    let data = MemoryConfigCmd::build_read_reply_success(space, address, payload);
     let frames = GridConnectFrame::create_datagram_frames(from_alias, to_alias, data)
         .expect("build datagram frames");
     frames.iter().map(|f| f.to_string()).collect()
 }
 
-/// Build a DatagramReceivedOk frame from the peer addressed to us.
+/// Build a MemoryConfigRead FAILED reply datagram from the peer as GridConnect
+/// wire strings. See `build_read_reply_frames` for the codec-pair rationale;
+/// this variant carries a peer-reported read failure code inside an
+/// otherwise-valid memory-config reply.
+fn build_read_reply_failed_frames(
+    from_alias: u16,
+    to_alias: u16,
+    space: AddressSpace,
+    address: u32,
+    error_code: u16,
+) -> Vec<String> {
+    let data = MemoryConfigCmd::build_read_reply_failed(space, address, error_code);
+    let frames = GridConnectFrame::create_datagram_frames(from_alias, to_alias, data)
+        .expect("build datagram frames");
+    frames.iter().map(|f| f.to_string()).collect()
+}
+
+/// Build a DatagramReceivedOk frame from the peer addressed to us, as a
+/// GridConnect wire string. Thin adapter over
+/// `lcc_rs::protocol::build_datagram_received_ok_frame` for
+/// `MockTransport::add_receive_frame`.
 fn build_datagram_received_ok(from_alias: u16, to_alias: u16, flags: u8) -> String {
-    let header = MTI::DatagramReceivedOk.to_header(from_alias).unwrap();
-    let data = vec![
-        ((to_alias >> 8) & 0x0F) as u8,
-        (to_alias & 0xFF) as u8,
-        flags,
-    ];
-    let frame = GridConnectFrame { header, data };
-    frame.to_string()
+    build_datagram_received_ok_frame(from_alias, to_alias, flags).to_string()
 }
 
 /// Build an OptionalInteractionRejected frame with wrapped MTI + error code.
+/// Byte-order authority: `lcc_rs::protocol::build_oir_payload`.
 fn build_oir(from_alias: u16, to_alias: u16, wrapped_mti: u16, error_code: u16) -> String {
     let header = MTI::OptionalInteractionRejected.to_header(from_alias).unwrap();
-    let data = vec![
-        ((to_alias >> 8) & 0x0F) as u8,
-        (to_alias & 0xFF) as u8,
-        ((wrapped_mti >> 8) & 0xFF) as u8,
-        (wrapped_mti & 0xFF) as u8,
-        ((error_code >> 8) & 0xFF) as u8,
-        (error_code & 0xFF) as u8,
-    ];
-    let frame = GridConnectFrame { header, data };
-    frame.to_string()
+    let data = lcc_rs::protocol::build_oir_payload(to_alias, error_code, wrapped_mti);
+    GridConnectFrame { header, data }.to_string()
+}
+
+/// Build a DatagramRejected frame (addressed message) as a GridConnect wire
+/// string. Thin adapter over `lcc_rs::protocol::build_datagram_rejected_frame`
+/// for `MockTransport::add_receive_frame`.
+fn build_datagram_rejected(from_alias: u16, to_alias: u16, error_code: u16) -> String {
+    build_datagram_rejected_frame(from_alias, to_alias, error_code).to_string()
 }
 
 /// Count outbound TerminateDueToError frames from `our_alias` to `dest_alias`.
@@ -154,7 +167,7 @@ async fn read_memory_returns_bytes_and_timing() {
     // Config space 0xFD, address 0x10, read 4 bytes → reply command 0x51.
     let payload: Vec<u8> = vec![0xDE, 0xAD, 0xBE, 0xEF];
     let mut transport = MockTransport::new();
-    for f in build_read_reply_frames(node_alias, our_alias(), 0x51, 0x10, &payload) {
+    for f in build_read_reply_frames(node_alias, our_alias(), AddressSpace::Configuration, 0x10, &payload) {
         transport.add_receive_frame(f);
     }
     let transport_probe = transport.clone();
@@ -201,6 +214,201 @@ async fn write_memory_completes_on_datagram_received_ok() {
     actor.shutdown().await;
 }
 
+/// Pins that a memory-write OIR reply preserves the TRUE error code (bytes
+/// 2..4) in `PeerError::Rejected.code` — not the rejected MTI (bytes 4..6).
+/// Constructed inline (not via `build_oir`), citing OpenLCB Java's
+/// `OptionalIntRejectedMessage.toPayload` byte order.
+#[tokio::test]
+async fn write_memory_oir_preserves_error_code_in_rejected() {
+    let node_alias: u16 = 0x3AE;
+    let node_id = peer_node_id(0xB2);
+
+    let error_code: u16 = 0x1040; // Permanent Error, Not Implemented (S-9.7.3 §3.5.5)
+    let rejected_mti: u16 = 0x0A28; // DatagramReceivedOk (S-9.7.3.2 §4.2)
+
+    let header = MTI::OptionalInteractionRejected.to_header(node_alias).unwrap();
+    let data = vec![
+        ((our_alias() >> 8) & 0x0F) as u8,
+        (our_alias() & 0xFF) as u8,
+        ((error_code >> 8) & 0xFF) as u8,
+        (error_code & 0xFF) as u8,
+        ((rejected_mti >> 8) & 0xFF) as u8,
+        (rejected_mti & 0xFF) as u8,
+    ];
+    let frame = GridConnectFrame { header, data };
+
+    let mut transport = MockTransport::new();
+    transport.add_receive_frame(frame.to_string());
+    let transport_probe = transport.clone();
+
+    let (mut actor, handle) = make_actor(transport);
+    let session = PeerSession::spawn(node_id, node_alias, our_alias(), handle);
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        session.write_memory(0xFD, 0x20, vec![0x01, 0x02], 500),
+    ).await.expect("write call returned within timeout");
+
+    match result {
+        Err(PeerError::Rejected { mti, code }) => {
+            assert_eq!(mti, rejected_mti as u32, "rejected MTI must come from bytes 4..6, not the hardcoded OIR MTI");
+            assert_eq!(code, error_code, "error code must come from bytes 2..4");
+        }
+        other => panic!("expected Rejected, got {:?}", other),
+    }
+
+    // JMRI never emits TerminateDueToError after OIR (ADR-0019); Bowties
+    // mirrors that.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        count_terminate_due_to_error(&transport_probe, our_alias(), node_alias),
+        0,
+        "OIR must not emit TerminateDueToError (JMRI-aligned)",
+    );
+
+    actor.shutdown().await;
+}
+
+// ── Non-resend DR: permanent rejection, no TDE (ADR-0019 Option B) ───────
+//
+// Policy (Option B): JMRI never emits TerminateDueToError after any
+// peer-initiated terminal rejection, including a non-resend-OK
+// DatagramRejected received directly (no retries attempted).
+// complete_memory_write(Err(Rejected)) still fires, but no cleanup frame is
+// written to the wire.
+
+#[tokio::test]
+async fn write_memory_datagram_rejected_permanent_returns_rejected_and_no_tde() {
+    let node_alias: u16 = 0x3AE;
+    let node_id = peer_node_id(0xB3);
+
+    // Rejection payload: bit 13 (0x2000) clear → permanent rejection, no resend.
+    let error_code: u16 = 0x1042;
+    let dr_frame = build_datagram_rejected(node_alias, our_alias(), error_code);
+
+    let mut transport = MockTransport::new();
+    transport.add_receive_frame(dr_frame);
+    let transport_probe = transport.clone();
+
+    let (mut actor, handle) = make_actor(transport);
+    let session = PeerSession::spawn(node_id, node_alias, our_alias(), handle);
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        session.write_memory(0xFD, 0x20, vec![0x01, 0x02], 500),
+    ).await.expect("write call returned within timeout");
+
+    match result {
+        Err(PeerError::Rejected { mti, code }) => {
+            assert_eq!(mti, MTI::DatagramRejected.value(), "rejected MTI must be DatagramRejected");
+            assert_eq!(code, error_code, "error code must come from the DR payload");
+        }
+        other => panic!("expected Rejected, got {:?}", other),
+    }
+
+    // Per ADR-0019 Option B, JMRI never emits TerminateDueToError after any
+    // peer-initiated terminal rejection; Bowties mirrors that for DR too.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let count = count_terminate_due_to_error(&transport_probe, our_alias(), node_alias);
+    assert_eq!(count, 0, "non-resend DR must not emit TerminateDueToError (JMRI-aligned), got {}", count);
+
+    actor.shutdown().await;
+}
+
+// ── Resend-OK DR retry-cap exhaustion: no TDE (ADR-0019 Option B) ────────
+//
+// Policy (Option B): after WRITE_MEMORY_MAX_RETRIES consecutive resend-OK
+// DRs, the session stops retrying and completes the write — this is
+// classified as "peer told us it's done N times, we chose to stop", not a
+// wire fault. JMRI's MemoryConfigurationService caps at MAX_TRIES = 3 and
+// also emits no TerminateDueToError; Bowties mirrors that here.
+
+#[tokio::test]
+async fn write_memory_retry_exhaustion_returns_rejected_and_no_tde() {
+    let node_alias: u16 = 0x3AE;
+    let node_id = peer_node_id(0xB4);
+
+    // Resend-OK DR (bit 13 / 0x2000 set): the session retries up to
+    // WRITE_MEMORY_MAX_RETRIES times; the (N+1)th DR exhausts the cap and
+    // terminates the exchange.
+    let error_code: u16 = 0x2020;
+    let dr_frame = build_datagram_rejected(node_alias, our_alias(), error_code);
+
+    let mut transport = MockTransport::new();
+    for _ in 0..(lcc_rs::constants::WRITE_MEMORY_MAX_RETRIES + 1) {
+        transport.add_receive_frame(dr_frame.clone());
+    }
+    let transport_probe = transport.clone();
+
+    let (mut actor, handle) = make_actor(transport);
+    let session = PeerSession::spawn(node_id, node_alias, our_alias(), handle);
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        session.write_memory(0xFD, 0x20, vec![0x01, 0x02], 500),
+    ).await.expect("write call returned within timeout");
+
+    match result {
+        Err(PeerError::Rejected { mti, code }) => {
+            assert_eq!(mti, MTI::DatagramRejected.value(), "rejected MTI must be DatagramRejected");
+            assert_eq!(code, error_code, "error code must come from the last (cap-exhausting) DR payload");
+        }
+        other => panic!("expected Rejected after retry exhaustion, got {:?}", other),
+    }
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let count = count_terminate_due_to_error(&transport_probe, our_alias(), node_alias);
+    assert_eq!(count, 0, "retry-cap exhaustion must not emit TerminateDueToError (JMRI-aligned), got {}", count);
+
+    actor.shutdown().await;
+}
+
+// ── ReadReply::Failed (non-0x1082): peer-reported read failure, no TDE ───
+//
+// Policy (Option B): a memory-config read reply with the FAILED command bit
+// set (e.g. 0x59 for embedded config space) is a peer-initiated terminal on
+// par with OIR and DR: the peer sent a syntactically valid reply that
+// reports its own read failure. Per ADR-0019, JMRI never emits
+// TerminateDueToError for this class either; Bowties mirrors that.
+
+#[tokio::test]
+async fn read_memory_read_reply_failed_returns_rejected_and_no_tde() {
+    let node_alias: u16 = 0x3AE;
+    let node_id = peer_node_id(0xD4);
+
+    let error_code: u16 = 0x1032;
+    let mut transport = MockTransport::new();
+    for f in build_read_reply_failed_frames(node_alias, our_alias(), AddressSpace::Configuration, 0x00, error_code) {
+        transport.add_receive_frame(f);
+    }
+    let transport_probe = transport.clone();
+
+    let (mut actor, handle) = make_actor(transport);
+    let session = PeerSession::spawn(node_id, node_alias, our_alias(), handle);
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        session.read_memory(0xFD, 0x00, 8, 500),
+    ).await.expect("read call returned within timeout");
+
+    match result {
+        Err(PeerError::Rejected { mti, code }) => {
+            assert_eq!(mti, MTI::DatagramRejected.value(), "rejected MTI must be DatagramRejected");
+            assert_eq!(code, error_code, "error code must come from the read-reply payload");
+        }
+        other => panic!("expected Rejected, got {:?}", other),
+    }
+
+    // Per ADR-0019 Option B, JMRI never emits TerminateDueToError after a
+    // peer-reported read failure inside a valid memory-config reply;
+    // Bowties mirrors that for ReadReply::Failed too.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let count = count_terminate_due_to_error(&transport_probe, our_alias(), node_alias);
+    assert_eq!(count, 0, "ReadReply::Failed must not emit TerminateDueToError (JMRI-aligned), got {}", count);
+
+    actor.shutdown().await;
+}
+
 // ── (c) stalled read → deadline → one TerminateDueToError → Timeout ───────
 
 #[tokio::test]
@@ -238,7 +446,7 @@ async fn read_memory_timeout_emits_one_terminate_due_to_error() {
 // ── (d) OIR mid-read → Rejected with wrapped MTI ──────────────────────────
 
 #[tokio::test]
-async fn read_memory_oir_returns_rejected() {
+async fn read_memory_oir_returns_rejected_and_no_tde() {
     let node_alias: u16 = 0x3AE;
     let node_id = peer_node_id(0xD1);
 
@@ -262,8 +470,107 @@ async fn read_memory_oir_returns_rejected() {
         other => panic!("expected Rejected, got {:?}", other),
     }
 
+    // JMRI never emits TerminateDueToError after OIR (ADR-0019); Bowties
+    // mirrors that.
     tokio::time::sleep(Duration::from_millis(50)).await;
-    assert_eq!(count_terminate_due_to_error(&transport_probe, our_alias(), node_alias), 1);
+    assert_eq!(
+        count_terminate_due_to_error(&transport_probe, our_alias(), node_alias),
+        0,
+        "OIR must not emit TerminateDueToError (JMRI-aligned)",
+    );
+
+    actor.shutdown().await;
+}
+
+/// Pins the OIR payload byte order against the OpenLCB Java reference
+/// implementation directly, independent of `build_oir`. Per
+/// `OptionalIntRejectedMessage.toPayload` (OpenLCB_Java), the payload after
+/// the destination alias is: error code (2 bytes), then rejected MTI
+/// (2 bytes). Constructed inline (not via `build_oir`) so this test does not
+/// share a fixture with the bug it's pinning against.
+#[tokio::test]
+async fn read_memory_oir_decodes_payload_per_openlcb_java() {
+    let node_alias: u16 = 0x3AE;
+    let node_id = peer_node_id(0xD2);
+
+    let error_code: u16 = 0x1040; // Permanent Error, Not Implemented (S-9.7.3 §3.5.5)
+    let rejected_mti: u16 = 0x0A28; // DatagramReceivedOk (S-9.7.3.2 §4.2)
+
+    let header = MTI::OptionalInteractionRejected.to_header(node_alias).unwrap();
+    let data = vec![
+        ((our_alias() >> 8) & 0x0F) as u8,
+        (our_alias() & 0xFF) as u8,
+        ((error_code >> 8) & 0xFF) as u8,
+        (error_code & 0xFF) as u8,
+        ((rejected_mti >> 8) & 0xFF) as u8,
+        (rejected_mti & 0xFF) as u8,
+    ];
+    let frame = GridConnectFrame { header, data };
+
+    let mut transport = MockTransport::new();
+    transport.add_receive_frame(frame.to_string());
+
+    let (mut actor, handle) = make_actor(transport);
+    let session = PeerSession::spawn(node_id, node_alias, our_alias(), handle);
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        session.read_memory(0xFD, 0x00, 8, 500),
+    ).await.expect("read call returned within timeout");
+
+    match result {
+        Err(PeerError::Rejected { mti, code }) => {
+            assert_eq!(mti, rejected_mti as u32, "rejected MTI must come from bytes 4..6");
+            assert_eq!(code, error_code, "error code must come from bytes 2..4");
+        }
+        other => panic!("expected Rejected, got {:?}", other),
+    }
+
+    actor.shutdown().await;
+}
+
+// ── Non-resend DR: permanent rejection, no TDE (ADR-0019 Option B) ───────
+//
+// Policy (Option B): JMRI never emits TerminateDueToError after any
+// peer-initiated terminal rejection, including a non-resend-OK
+// DatagramRejected. Bowties extends the OIR-only JMRI-alignment fix to
+// cover this DR-terminal class too: complete_memory_read(Err(Rejected))
+// still fires, but no cleanup frame is written to the wire.
+
+#[tokio::test]
+async fn read_memory_datagram_rejected_permanent_returns_rejected_and_no_tde() {
+    let node_alias: u16 = 0x3AE;
+    let node_id = peer_node_id(0xD3);
+
+    // Rejection payload: bit 13 (0x2000) clear → permanent rejection, no resend.
+    let error_code: u16 = 0x1042;
+    let dr_frame = build_datagram_rejected(node_alias, our_alias(), error_code);
+
+    let mut transport = MockTransport::new();
+    transport.add_receive_frame(dr_frame);
+    let transport_probe = transport.clone();
+
+    let (mut actor, handle) = make_actor(transport);
+    let session = PeerSession::spawn(node_id, node_alias, our_alias(), handle);
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        session.read_memory(0xFD, 0x00, 8, 500),
+    ).await.expect("read call returned within timeout");
+
+    match result {
+        Err(PeerError::Rejected { mti, code }) => {
+            assert_eq!(mti, MTI::DatagramRejected.value(), "rejected MTI must be DatagramRejected");
+            assert_eq!(code, error_code, "error code must come from the DR payload");
+        }
+        other => panic!("expected Rejected, got {:?}", other),
+    }
+
+    // Per ADR-0019 Option B, JMRI never emits TerminateDueToError after any
+    // peer-initiated terminal rejection; Bowties mirrors that for DR too.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let count = count_terminate_due_to_error(&transport_probe, our_alias(), node_alias);
+    assert_eq!(count, 0, "non-resend DR must not emit TerminateDueToError (JMRI-aligned), got {}", count);
 
     actor.shutdown().await;
 }
@@ -279,10 +586,10 @@ async fn two_concurrent_reads_serialise_no_interleave() {
     let payload_a: Vec<u8> = vec![0x11, 0x22, 0x33, 0x44];
     let payload_b: Vec<u8> = vec![0x55, 0x66, 0x77, 0x88];
     let mut transport = MockTransport::new();
-    for f in build_read_reply_frames(node_alias, our_alias(), 0x51, 0x00, &payload_a) {
+    for f in build_read_reply_frames(node_alias, our_alias(), AddressSpace::Configuration, 0x00, &payload_a) {
         transport.add_receive_frame(f);
     }
-    for f in build_read_reply_frames(node_alias, our_alias(), 0x51, 0x40, &payload_b) {
+    for f in build_read_reply_frames(node_alias, our_alias(), AddressSpace::Configuration, 0x40, &payload_b) {
         transport.add_receive_frame(f);
     }
     let transport_probe = transport.clone();
@@ -326,10 +633,10 @@ async fn concurrent_cdi_and_read_no_interleave_one_ack_each() {
     // CDI reply queued FIRST so the CDI exchange (started first) consumes it;
     // the config read is queued behind it and only becomes active after CDI
     // completes.
-    for f in build_read_reply_frames(node_alias, our_alias(), 0x53, 0x00, &cdi_payload) {
+    for f in build_read_reply_frames(node_alias, our_alias(), AddressSpace::Cdi, 0x00, &cdi_payload) {
         transport.add_receive_frame(f);
     }
-    for f in build_read_reply_frames(node_alias, our_alias(), 0x51, 0x00, &cfg_payload) {
+    for f in build_read_reply_frames(node_alias, our_alias(), AddressSpace::Configuration, 0x00, &cfg_payload) {
         transport.add_receive_frame(f);
     }
     let transport_probe = transport.clone();
