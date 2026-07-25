@@ -543,14 +543,21 @@ def cmd_assemble(args: argparse.Namespace) -> int:
     rules_out: list[dict] = []
     for entry in rr.get("rules", []):
         ctrl_path, _ = _convert_path(entry["controllingField"], root)
-        # `field` is the controlling field's display name, not a full path.
-        field_name = ctrl_path.rsplit("/", 1)[-1]
+        # v2 schema (see specs/014-config-modes-placeholders/contracts/
+        # profile-yaml-schema-v2.json §"relevanceRules"): `field` is any CDI
+        # field path (cross-segment allowed), using the same '/' + '#N' syntax
+        # as groupPath. The Rust loader
+        # (bowties-core/src/profile/resolver.rs `resolve_profile_paths`) walks
+        # the segment/element name tree starting from the first component, so
+        # the first component MUST be a segment name. Emitting only the leaf
+        # short name here breaks resolution ("no segment name matches the start
+        # of path 'Output Function'").
         affected_path, affected_seg = _convert_path(entry["affectedSection"], root)
         rules_out.append({
             "id": entry["id"],
             "affectedTarget": affected_path,
             "allOf": [{
-                "field": field_name,
+                "field": ctrl_path,
                 "irrelevantWhen": list(entry["irrelevantWhen"]),
             }],
             "explanation": entry["explanation"],

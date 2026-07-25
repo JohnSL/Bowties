@@ -14,9 +14,11 @@ nodeType:
 # Paths that cannot be resolved in the connected node's CDI are silently skipped
 # with a log warning (FR-006).
 #
-# Node Power Monitor events ('Power OK' and 'Power Not OK') are direct children
-# of their segment and are not contained in any group; they cannot be declared
-# via groupPath notation and retain their heuristic assignment.
+# Note: Node Power Monitor events ('Power OK' and 'Power Not OK') are direct
+# children of their segment (not wrapped in any group). Segment-level groupPath
+# declarations ARE supported (see bowties-core apply_event_role); this profile
+# does not declare a role for them because the protocol heuristic already
+# classifies them as Producer.
 
 eventRoles:
   # ── Port I/O segment ──────────────────────────────────────────────────────

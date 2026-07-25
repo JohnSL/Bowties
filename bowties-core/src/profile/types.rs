@@ -259,8 +259,16 @@ pub struct RelevanceRule {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RelevanceCondition {
-    /// CDI name of the controlling field, sibling within the same replicated
-    /// group instance as the affected group.  E.g., `"Output Function"`.
+    /// CDI path of the controlling field (v2 schema: cross-segment allowed).
+    /// Uses the same `/`-separated name syntax with optional `#N` ordinal
+    /// suffix as [`RelevanceRule::affected_target`] and event-role
+    /// `groupPath`. E.g., `"Port I/O-1/Line/Output Function"`.
+    ///
+    /// The v1 "sibling within the same replicated group instance" restriction
+    /// was relaxed in v2 — see
+    /// `specs/014-config-modes-placeholders/contracts/profile-yaml-schema-v2.json`
+    /// §relevanceRules. Resolved by
+    /// [`crate::profile::resolver::resolve_profile_paths`].
     pub field: String,
 
     /// Integer enum values of the controlling field that render the section irrelevant.

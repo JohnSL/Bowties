@@ -780,7 +780,17 @@ fn apply_event_role(
     label: Option<&str>,
 ) -> usize {
     let mut applied = 0usize;
-    for segment in &mut tree.segments {
+    for (seg_idx, segment) in tree.segments.iter_mut().enumerate() {
+        // A resolved path of length 1 (e.g. ["seg:2"]) names a segment
+        // directly.  Segments are not `GroupNode`s, so `walk_for_role`'s
+        // Group-only recursion would never visit their direct EventId
+        // leaves.  Apply the role to every EventId descendant of the
+        // matching segment.  (Segments have no `display_name` field, so
+        // `label` is ignored here.)
+        if resolved_path.len() == 1 && resolved_path[0] == format!("seg:{}", seg_idx) {
+            applied += set_roles_on_descendants(&mut segment.children, role);
+            continue;
+        }
         walk_for_role(&mut segment.children, resolved_path, role, label, &mut applied);
     }
     applied
@@ -945,6 +955,79 @@ mod tests {
             "GroupA leaf should have Producer role");
         assert_eq!(leaf_b.event_role, Some(EventRole::Consumer),
             "GroupB leaf should have Consumer role");
+    }
+
+    // ── annotate_tree with segment-direct EventId leaves ─────────────────────
+
+    /// CDI where EventId leaves sit directly under a `<segment>` with no
+    /// intervening `<group>`. This is the RR-CirKits Signal-LCC Node Power
+    /// Monitor pattern.
+    const CDI_SEGMENT_DIRECT_EVENTIDS: &str = r#"<cdi>
+        <segment space="253" origin="0">
+            <name>Node Power Monitor</name>
+            <eventid><name>Power OK</name></eventid>
+            <eventid><name>Power Not OK</name></eventid>
+        </segment>
+    </cdi>"#;
+
+    /// A segment-only profile path (e.g. `"Node Power Monitor"`) must apply the
+    /// declared role to every EventId leaf that lives directly under that
+    /// segment. `apply_event_role` currently only descends `GroupNode`s, so
+    /// segment-direct leaves are silently skipped.
+    #[test]
+    fn annotate_tree_applies_role_to_segment_direct_eventid_leaves() {
+        let cdi = parse_cdi(CDI_SEGMENT_DIRECT_EVENTIDS).expect("CDI parse should succeed");
+        let mut tree = build_node_config_tree("test:node", &cdi);
+
+        let profile = StructureProfile {
+            schema_version: "1.0".to_string(),
+            node_type: types::ProfileNodeType {
+                manufacturer: "Test".to_string(),
+                model: "Test Node".to_string(),
+            },
+            firmware_version_range: None,
+            event_roles: vec![types::EventRoleDecl {
+                group_path: "Node Power Monitor".to_string(),
+                role: types::ProfileEventRole::Producer,
+                label: None,
+            }],
+            relevance_rules: vec![],
+            configuration_modes: vec![],
+            styles: vec![],
+        };
+
+        let report = annotate_tree(&mut tree, &profile, &std::collections::BTreeMap::new(), &cdi);
+
+        assert_eq!(
+            report.event_roles_applied, 2,
+            "both segment-direct EventId leaves should be annotated"
+        );
+        assert!(
+            !report.warnings.iter().any(|w| {
+                w.contains("Node Power Monitor")
+                    && w.contains("resolved but matched no groups in tree")
+            }),
+            "unexpected 'matched no groups' warning: {:?}",
+            report.warnings,
+        );
+
+        let event_leaves: Vec<&crate::node_tree::LeafNode> = tree.segments[0]
+            .children
+            .iter()
+            .filter_map(|n| match n {
+                ConfigNode::Leaf(l) if l.element_type == LeafType::EventId => Some(l),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(event_leaves.len(), 2, "expected two EventId leaves under the segment");
+        for leaf in event_leaves {
+            assert_eq!(
+                leaf.event_role,
+                Some(EventRole::Producer),
+                "leaf {:?} should be Producer",
+                leaf.name,
+            );
+        }
     }
 
     // ── make_profile_key ──────────────────────────────────────────────────────
