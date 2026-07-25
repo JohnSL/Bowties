@@ -1,6 +1,7 @@
 ---
 description: TDD Refactor phase — improve the structure of code just made green, with depth/placement guardrails, stopping for architecture-first-fix when a deeper seam problem surfaces.
 name: tdd-refactor
+model: Claude Sonnet 5 (copilot)
 ---
 
 # TDD Refactor — Improve Structure, Keep Tests Green
