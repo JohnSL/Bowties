@@ -246,7 +246,7 @@ describe('composeBowtiesIfWired (Spec 018 / S6 — D2)', () => {
         consumerLeafSpace: 253,
         consumerLeafAddress: 100,
         eventIdBytes: [2,1,1,1,0xff,1,0,1],
-        bowtieName: 'Block 5 — lit',
+        bowtieName: 'BOD A1 — occupied',
         createdByFacility: 'f-1',
       },
       {
@@ -255,7 +255,7 @@ describe('composeBowtiesIfWired (Spec 018 / S6 — D2)', () => {
         consumerLeafSpace: 253,
         consumerLeafAddress: 108,
         eventIdBytes: [2,1,1,1,0xff,1,1,1],
-        bowtieName: 'Block 5 — unlit',
+        bowtieName: 'BOD A1 — clear',
         createdByFacility: 'f-1',
       },
     ]);
@@ -823,6 +823,68 @@ describe('Spec 020 / S2: selectChannelForSlot returns needsLogicTarget for compi
     });
 
     expect(result).toEqual({});
+  });
+});
+
+// Spec 020 / S2 — composer consumes the compiler's WiringPlan; named cards
+// for compiled templates. Reaches the Bowties catalog's Consumer surface
+// (`bowtieMetadataStore.bowtiesForFacility`) rather than asserting internal
+// Rust state only, per the Facility Bowtie Lifecycle seam's Consumer list.
+describe('Spec 020 / S2: composeBowtiesIfWired composes named cards for compiled templates', () => {
+  beforeEach(async () => {
+    bowtieMetadataStore.clearAll();
+    configChangesStore.clearAllDrafts();
+    vi.mocked(composeFacilityBowties).mockReset();
+    vi.mocked(syncLayoutDrafts).mockClear();
+    vi.mocked(compileLogicForFacility).mockReset();
+    listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR, ABS_3_ASPECT]);
+    await behaviorTemplatesStore.loadBehaviorTemplates();
+  });
+
+  it('compiles then composes, populating bowtieMetadataStore with named ABS cards', async () => {
+    channelsStore.hydrateBaseline([bod(1), signalAspect()]);
+    facilitiesStore.hydrateBaseline([
+      { facilityId: 'f-abs-1', templateId: 'abs-3-aspect-signal', name: 'Signal 5',
+        slotBindings: { input: ['ch-bod-1'], output: ['ch-signal-1'] } },
+    ]);
+    facilitiesStore.setLogicTargetNodeKey('f-abs-1', 'N-tower');
+
+    vi.mocked(compileLogicForFacility).mockResolvedValue({
+      allocation: { facilityId: 'f-abs-1', targetNodeKey: 'N-tower', conditionalLines: { start: 0, count: 2 } },
+      fieldWrites: [],
+    });
+    vi.mocked(composeFacilityBowties).mockResolvedValue([
+      {
+        consumerNodeKey: 'N-tower',
+        consumerLeafPath: ['Conditionals', 'Logic #1', 'V1SetTrueEvent'],
+        consumerLeafSpace: 253,
+        consumerLeafAddress: 2528,
+        eventIdBytes: [2, 1, 1, 1, 0xff, 1, 0, 1],
+        bowtieName: 'BOD A1 — occupied',
+        createdByFacility: 'f-abs-1',
+      },
+      {
+        consumerNodeKey: 'N-tower',
+        consumerLeafPath: ['Conditionals', 'Logic #1', 'ActionEventId(0)'],
+        consumerLeafSpace: 253,
+        consumerLeafAddress: 2628,
+        eventIdBytes: [2, 1, 1, 1, 0xff, 2, 0, 1],
+        bowtieName: 'Signal 1 — red on',
+        createdByFacility: 'f-abs-1',
+      },
+    ]);
+
+    await orch.composeBowtiesIfWired('f-abs-1');
+
+    expect(compileLogicForFacility).toHaveBeenCalledWith('f-abs-1', 'N-tower');
+    expect(composeFacilityBowties).toHaveBeenCalledWith('f-abs-1');
+
+    const hexes = bowtieMetadataStore.bowtiesForFacility('f-abs-1');
+    expect(hexes).toHaveLength(2);
+    const names = hexes
+      .map((hex) => bowtieMetadataStore.getMetadata(hex)?.name)
+      .sort();
+    expect(names).toEqual(['BOD A1 — occupied', 'Signal 1 — red on'].sort());
   });
 });
 

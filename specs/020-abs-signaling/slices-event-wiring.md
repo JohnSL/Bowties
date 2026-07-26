@@ -2,7 +2,7 @@
 
 Branch: 020-abs-signaling
 Generated: 2026-07-26
-Status: 1/5 slices complete
+Status: 4/7 slices complete
 Parent plan: [plan-event-wiring.md](plan-event-wiring.md)
 
 ## Architecture
@@ -136,8 +136,10 @@ Green = single-owner boundary.
 | # | Slice title | Label | Blocked by | Status |
 |---|---|---|---|---|
 | S1 | Compiler emits `LogicPlan` with unconsumed `WiringPlan` | HITL | None | done |
-| S2 | Composer consumes `WiringPlan`; named cards + naming rule unified | HITL | S1 | sketched |
-| S3 | Remove 2026-07-25 short-circuits; residual-card bug closes | AFK | S2 | sketched |
+| S2 | Composer consumes `WiringPlan`; named cards + naming rule unified | HITL | S1 | done |
+| S6 | Bugfix — event-ID resolver reads drafted `modified_value` (surface fix for issue #26) | AFK | S2 | done |
+| S7 | Prediction-first output signal-aspect indicator (pre-Save aspect + LED visibility) | AFK | S6 | done |
+| S3 | Remove 2026-07-25 short-circuits; residual-card bug closes | AFK | S2, S6 | sketched |
 | S4 | `reset_facility` emits structural fields only | REFACTOR | S3 | sketched |
 | S5 | Docs + ADR-0015 follow-up | REFACTOR | S4 | sketched |
 
@@ -180,31 +182,137 @@ Green = single-owner boundary.
 **Intent**: Wiring an ABS facility populates the Bowties catalog with named cards for every BOD occupancy event and every LED pin event (e.g. "Signal 5 Head — red on"), with facility back-references. Block Indicator's existing bowtie cards migrate to the same channel + state naming rule.
 **Boundary**: Backend domain (`facility_bowties::compose_bowtie_ops` — remove `Ok(vec![])` compiled short-circuit; call `plan_facility_wiring` from `bowties-core::logic_adapter`; emit ops for both LED consumer leaves and conditional-line event-ID slots; register `BowtieMetadata` per event ID; new `style_state_label` helper) → Backend command (`compose_facility_bowties` IPC — remove `Ok(vec![])` compiled short-circuit) → Frontend orchestrator (`composeBowtiesIfWired` — no behavior change; the compiled-template branch just now returns ops instead of an empty vec) → Frontend store (`bowtieMetadataStore` — `bowtiesForFacility()` starts returning rows for compiled facilities as well; no schema change).
 **Blocked by**: S1 ✅
-**Status**: sketched
+**Status**: done
 
 **S1 learnings that shape S2**:
 - The composer calls `bowties_core::logic_adapter::plan_facility_wiring(input)` directly (D2 A-alt) — no cache read, no IPC round-trip for the plan.
 - `ConditionalLineField` is already IPC-serializable, so the composer can freely construct target CDI addresses from `WiringSlot.target.field + line_index`.
 - Every `WiringSlot` carries `bowtie_identity { rule_label, aspect }` — the composer uses this directly as the `BowtieMetadata` grouping key alongside the `event_id_hex` primary key.
-- The `Ok(vec![])` short-circuits (backend `compose_bowtie_ops` L?? and `compose_facility_bowties` IPC L123-126) MUST be removed in S2 — without their removal, no ops are produced for compiled templates and no cards appear. The FE-side `resetComposedLeavesForFacility` short-circuit (L467-475) stays in place through S2; S3 removes it. Cards persist after `removeFromSlot` on a compiled facility until S3 lands — that residual-card bug is exactly what S3 fixes.
+- The `Ok(vec![])` short-circuits (backend `compose_bowtie_ops` L173-176 and `compose_facility_bowties` IPC L111-115) MUST be removed in S2 — without their removal, no ops are produced for compiled templates and no cards appear. The FE-side `resetComposedLeavesForFacility` short-circuit (L471-473) stays in place through S2; S3 removes it. Cards persist after `removeFromSlot` on a compiled facility until S3 lands — that residual-card bug is exactly what S3 fixes.
+
+**S2 pre-check discrepancies** (found 2026-07-26 by Explore reconnaissance):
+- The card's parenthetical "Block A occupied → Block A — occupied" understates the Block Indicator naming migration. Actual current wording is `"<facility.name> — <consumer_command>"` (e.g. `"Block 5 — lit"`, `"Block 5 — unlit"`) — built from the *facility name* + the *consumer command*. Under the Provenance-Based Naming rule the new wording is `"<source-channel name> — <source state>"` (e.g. `"Block 1 — occupied"`, `"Block 1 — clear"`) — a shift on **both** dimensions (facility → source channel, consumer command → source state). This is a legitimate user-visible change; see D1 below.
+- `bowties-core::channel_events::resolve_channel_event_ids` currently resolves only producer (BOD occupancy) event IDs. LED pin event IDs on signal-head channels have no existing resolver. A new helper is required; scope discussed under implementation notes below.
 
 **Acceptance criteria**:
-- [ ] After wiring an ABS 3-Aspect facility, the Bowties catalog panel shows one named card per LED pin event (typically 4 per signal head) and one per BOD input-condition event (typically 2 per BOD input), each with the facility as its `createdByFacility` back-reference.
-- [ ] ABS bowtie card names follow the rule `"<channel name> — <state or pin label>"` — e.g. "Block A — occupied", "Block A — clear", "Signal 5 Head — red on", "Signal 5 Head — green off".
-- [ ] Wiring a Block Indicator produces cards named by the same rule — e.g. "Block A — occupied" (migrated from prior "Block A occupied" wording).
-- [ ] The composer *adopts* existing event IDs from the source channel leaves (does not mint fresh IDs during forward composition); a bowtie already present on an LED pin remains the same bowtie after ABS wiring adopts it.
-- [ ] On-node CDI after wire is identical to S1 baseline (event-ID slots now written by composer instead of compiler, but the resulting values match).
-- [ ] All existing tests remain green *except* `compiled_template_short_circuits_to_empty_ops`, which is rewritten as part of this slice to assert the new WiringPlan consumption behavior. The FE S6 orchestrator tests (`facilityOrchestrator.test.ts` L541 / L741) remain green — they still assert the FE short-circuit behavior, which stays intact through S2.
-- [ ] `FacilityCard` status pill continues to reflect the correct Wired/Unwired state for both ABS and Block Indicator (Facility Bowtie Lifecycle seam Consumer).
-- [ ] Manual demo: wire ABS facility → open catalog → see named cards with facility back-reference. Wire Block Indicator → verify migrated naming.
+- [x] After wiring an ABS 3-Aspect facility, the Bowties catalog panel shows one named card per LED pin event (typically 4 per signal head) and one per BOD input-condition event (typically 2 per BOD input), each with the facility as its `createdByFacility` back-reference.
+- [x] ABS bowtie card names follow the rule `"<channel name> — <state or pin label>"` — e.g. "Block A — occupied", "Block A — clear", "Signal 5 Head — red on", "Signal 5 Head — green off".
+- [x] Wiring a Block Indicator produces cards named by the same rule — e.g. "BOD A1 — occupied" (migrated from prior "Block 5 — lit" wording; producer channel name + producer state, not facility name + consumer command).
+- [x] The composer *adopts* existing event IDs from the source channel leaves (does not mint fresh IDs during forward composition); a bowtie already present on an LED pin remains the same bowtie after ABS wiring adopts it.
+- [x] On-node CDI after wire is identical to S1 baseline (event-ID slots now written by composer instead of compiler, but the resulting values match).
+- [x] All existing tests remain green *except* `compiled_template_short_circuits_to_empty_ops`, which is rewritten as part of this slice to assert the new WiringPlan consumption behavior. The FE S6 orchestrator tests (`facilityOrchestrator.test.ts` L541 / L741) remain green — they still assert the FE short-circuit behavior, which stays intact through S2.
+- [x] `FacilityCard` status pill continues to reflect the correct Wired/Unwired state for both ABS and Block Indicator (Facility Bowtie Lifecycle seam Consumer).
+- [ ] Manual demo: wire ABS facility → open catalog → see named cards with facility back-reference. Wire Block Indicator → verify migrated naming. **← awaiting user QA**
 
 **Architecture note** *(HITL — pattern shift)*: This slice locks in the **Single Event-Wiring Owner** pattern (Finding F1 — deepens composer without widening interface) and the **Adopt-Not-Mint** discipline for compiled templates (Finding F3 — preserves D6 producer-identifies-consumer-subscribes seam invariant). It also unifies naming under the **Provenance-Based Naming** rule (Finding F10 / D4), which migrates Block Indicator's existing user-visible names. The Block Indicator name migration is user-visible and worth flagging before implementation. The FE `resetComposedLeavesForFacility` short-circuit remains as a safety net through S2; S3 removes it.
 
-### S3: Remove 2026-07-25 short-circuits; residual-card bug closes [AFK]
+**Complexity**: medium-high
+**User stories**: US-abs-wire (primary), Block-Indicator-naming-uniformity (secondary)
+
+**Tasks** (authored 2026-07-26, one slice at a time per just-in-time discipline):
+- [x] S2-T1: **Integration test (RED first)** — Rust test `compiled_template_composes_from_wiring_plan_named_cards` in `bowties-core/src/facility_bowties/mod.rs` asserts a Wired ABS 3-Aspect facility's `compose_compiled_bowtie_ops` returns 10 ops (one per WiringPlan slot) with adopted event IDs, correct target addresses, and Provenance-Based names. FE vitest `composeBowtiesIfWired composes named cards for compiled templates` reaches `bowtieMetadataStore.bowtiesForFacility('f-abs-1')` as the Consumer-surface seam-aware red phase.
+- [x] S2-T2: **`style_state_label(role, state) → String`** + **`role_hint_state_label(hint, slot_label) → String`** helpers added to `bowties-core/src/facility_bowties/mod.rs`, covering the full BlockOccupancy/LampIndicator/SignalAspect vocabulary and WiringPlan `RoleHint` translation.
+- [x] S2-T3: **Design correction (discovered during batch prep, not a new `channel_events.rs` resolver)** — `CompileInput` (already passed to the compiler) carries pre-resolved `input_events`/`output_pin_events`; the compiled composer reuses those directly via `(ConditionalLineField, RoleHint)` matching instead of re-deriving from `per_node_cdi` + `InformationChannel`. Avoids a duplicate resolution path (DRY) and matches the composed path's existing "caller pre-resolves, composer stays pure" convention. See session notes for full rationale.
+- [x] S2-T4: New `pub fn compose_compiled_bowtie_ops(compile_input, target_tree, input_channel_name, output_channel_name)` in `facility_bowties/mod.rs` recomputes the `WiringPlan` and fills its event-ID slots (adopting `CompileInput`'s pre-resolved bytes), resolving target addresses via the existing `build_conditional_line_address_map`. Backend short-circuit at old L173-176 removed; kept as a sibling function to `compose_bowtie_ops` rather than one signature (compiled composition needs materially different inputs — `existing_allocations`, `downstream`, `tc_output` — that composed composition doesn't).
+- [x] S2-T5: Block Indicator naming migrated — L314 now calls `style_state_label(&producer_channel.role, mapping.producer_state)` with the producer channel's name. `wired_block_indicator_produces_two_ops_adopting_producer_event_ids` updated ("BOD A1 — occupied" / "BOD A1 — clear"); FE `facilityOrchestrator.test.ts` mock literal updated to match.
+- [x] S2-T6: IPC composer short-circuit removed from `app/src-tauri/src/commands/facility_bowties.rs`; new `compose_compiled_template` helper rebuilds the same `CompileInput` `compile_logic_for_facility` uses (same channel-resolution helpers) and calls `compose_compiled_bowtie_ops`. **Additional required FE change discovered during batch prep**: `facilityOrchestrator.ts`'s `compileIfWired` did not call the compose IPC at all for compiled templates (compile-only), so no cards could ever appear — added a compose-after-compile step (re-sync drafts, call `composeFacilityBowties`, `applyCompositionOps`) mirroring the composed path. The slice card's "no orchestrator behavior change" assumption did not hold; this is the change that makes the acceptance criteria observable end-to-end.
+- [x] S2-T7: `compiled_template_short_circuits_to_empty_ops` rewritten as `compiled_template_composes_from_wiring_plan_named_cards` (10-op ABS 3-Aspect fixture: Stop/Approach/Clear lines, verifies adopted event IDs, target addresses, and Provenance-Based names, including cross-line pin-event reuse).
+- [x] S2-T8: FE vitest coverage added in `bowtieMetadata.svelte.test.ts` (`bowtiesForFacility returns rows for a compiled (ABS) facility, same as composed`) locking the no-template-kind-filter invariant.
+- [x] S2-T9: Validate — `cargo test` (bowties-core: 495 passed; app/src-tauri: compiles clean, pre-existing test-binary DLL-load issue on this OS is unrelated to S2 — see session notes) all green; `npx vitest run` from `app/` all green (1487 passed, including S6 FE short-circuit tests). Slices.md updated.
+
+### S6: Bugfix — event-ID resolver reads drafted `modified_value` [AFK] [BUGFIX]
+
+**Intent** *(revised 2026-07-26 after post-fix triage)*: Make `bowties-core::channel_events` resolvers draft-aware so any caller that adopts event IDs from drafted (uncommitted) CDI leaves sees the drafted values. The concrete correctness case this closes is the **compose IPC's input-side BOD event-ID adoption**: `compose_compiled_template` in `app/src-tauri/src/commands/facility_bowties.rs` resolves the input BOD channel's `occupied`/`clear` event IDs via `resolve_channel_event_ids` (Producer role, `connector-a input N`), then hands the bytes to the compiler/composer as `CompileInput::input_events`. Pre-S6 the resolver read only `leaf.value`, so a user's drafted-but-unsaved edit to a BOD event ID would be silently ignored and the composer would adopt the stale committed value into the SLC's V1SetTrueEvent / V1SetFalseEvent slots. Post-S6 the drafted values flow through.
+
+**Original slice card claim (retracted 2026-07-26)**: An earlier framing promised "FacilityCard signal indicator flips from `unknown` to correct aspect before Save." That claim was diagnostic-mismatched — the composer never drafts to the Signal-LCC's LED pin leaves, and `deriveSignalAspectState` requires observed events on the wire (which nothing produces pre-Save). The prediction-based indicator that actually delivers pre-Save signal visibility is scoped in S7. This entry now describes only the correctness contribution S6 makes.
+
+**Boundary**: Backend domain only (`bowties-core::channel_events`). Two `&leaf.value` reads at existing lines 39 and 140 are swapped to `effective_value(leaf)` (from `node_tree.rs`). No FE surface change.
+
+**Blocked by**: S2 ✅ (the resolver is reached for compiled templates via `compose_compiled_template` once S2 landed the composer's WiringPlan consumption path)
+
+**Status**: done
+
+**Scope guarantees** (explicitly out of scope — issue #26 owns them):
+- Do NOT add `LayoutState::effective_config_tree()` or any new backend seam.
+- Do NOT touch the other ~12 `config_tree()` callers with the same latent bug.
+- Do NOT extend ADR-0012 (draft layer) or ADR-0015 (LayoutState single-owner).
+- Do NOT touch `resetComposedLeavesForFacility` (S3 owns that).
+
+**Acceptance criteria**:
+- [x] `bowties-core::channel_events::resolve_event_ids` and `resolve_lamp_row_range_event_ids` read via `effective_value(leaf)` (preferring `modified_value` when present, falling back to `value`) instead of `&leaf.value` directly.
+- [x] Rust unit test in `channel_events.rs` — a leaf whose `modified_value` holds a drafted `ConfigValue::EventId { hex, .. }` (with `value = None` or `value` holding a different hex) surfaces the drafted hex through `resolve_channel_event_ids`. Test asserts the drafted hex is what the resolver returns, and — as the FE-visible corollary — that a committed `value` alone still works (no regression against the S1/S2 baseline).
+- [x] Frontend regression-lock test in `channelState.test.ts`: `deriveSignalAspectState` is provenance-opaque — treats resolved IDs as opaque keys regardless of whether they came from `value` or `modified_value`. This is a contract lock, not the user-visible signal-visibility fix (that is S7).
+- [x] All existing tests remain green — `cargo test -p bowties-core` (496 passed) and `npx vitest run` (channelState.test.ts 24/24, facilityOrchestrator.test.ts 24/24).
+- [x] User-visible correctness (2026-07-26 triage): the compose IPC's input-side BOD adoption now sees drafted BOD event IDs. Verified by inspection of the `compose_compiled_template` resolution path in `app/src-tauri/src/commands/facility_bowties.rs::compose_compiled_template` — the resolver returning drafted hex was the intended contract, and post-S6 the intent is met at the leaf-read seam. No end-to-end user demo lands here — the observable outcome of drafted-BOD adoption manifests only after Save when the SLC starts producing correct events, which is downstream of Save flow, not of this fix.
+- ~~Manual demo: create + wire an ABS facility → observe the FacilityCard signal indicator flips from `unknown` to the correct aspect (`stop` or `dark` depending on head defaults) **before Save**.~~ **Retracted 2026-07-26** — architectural mismatch, see S7.
+
+**Architecture note** *(BUGFIX — surface fix; deeper seam deferred to issue #26)*: This is a **narrow behavioural patch at the leaf-read site**, not a seam introduction. The correct architectural fix is `LayoutState::effective_config_tree()` — a draft-aware view that would let every `config_tree()` caller (of which there are ~13, per issue #26's audit) become draft-correct without local knowledge of `effective_value`. That change is a real seam introduction touching ADR-0012 (draft layer scope) and ADR-0015 (LayoutState single-ownership), and rippling through catalog rebuilds, sync flows, and the OpenLCB command bus. Doing it inline as part of Spec 020 would break slice atomicity and force ADR extensions that unbalance this feature's scope. S6 restores the ABS user-visible behaviour today via the two-line surface fix; issue #26 tracks the deeper refactor.
+
+**Complexity**: trivial (2 identical line swaps + 2 focused tests)
+
+**User stories**: US-abs-wire (unblocks the ABS signal aspect visibility acceptance criterion)
+
+**Tasks**:
+- [x] S6-T1: Rust RED test in `channel_events.rs::tests` — `resolve_channel_event_ids_returns_drafted_modified_value` asserts a leaf whose `modified_value = Some(ConfigValue::EventId { hex: "0501010101DEAF01", .. })` surfaces `"0501010101DEAF01"` through `resolve_channel_event_ids`. Failed against the pre-S6 `&leaf.value` reads.
+- [x] S6-T2: Rust GREEN — swapped `&leaf.value` → `effective_value(leaf)` at the two sites in `channel_events.rs` (`resolve_event_ids` and `resolve_lamp_row_range_event_ids`). Added `effective_value` to the `use crate::node_tree::{...}` import.
+- [x] S6-T3: FE regression-lock test in `channelState.test.ts` under `describe('deriveSignalAspectState')`: `returns known aspect when IDs sourced from drafted-value resolution` — provenance-opaque contract lock (passed immediately; guards against future FE regressions).
+- [x] S6-T4: Validate — `cargo test -p bowties-core` (496 passed); `npx vitest run src/lib/utils/channelState.test.ts` (24 passed); `npx vitest run src/lib/orchestration/facilityOrchestrator.test.ts` (24 passed).
+- [x] S6-T5: Post-fix enrichment — [aiwiki/architecture-health.md](../../aiwiki/architecture-health.md) entry added pointing at issue #26; [aiwiki/seams.md](../../aiwiki/seams.md) "Facility Bowtie Lifecycle" `Last-modified` bumped.
+
+---
+
+### S7: Prediction-first output signal-aspect indicator [AFK]
+
+**Intent**: Give the FacilityCard's output signal-aspect indicator a **rule-based prediction path** so it shows a known aspect and LED breakdown pre-Save on a compiled facility, mirroring the Logic block's `currentEvaluation()` output. When the facility is compiled and rule evaluation produces an aspect, the output channel indicator renders that aspect (and the corresponding LED on/off pattern) instead of `unknown`. When rule evaluation is undefined (input state unknown) OR the facility is composed (not compiled), fall back to the existing observation-based `deriveSignalAspectState` / `deriveLedLampStates`.
+
+**Background** (why this is a separate slice from S6): S6 was framed as the fix for the user-visible ABS "output stuck at unknown" symptom. Triage on 2026-07-26 established that S6 could not close that symptom because (a) the composer never drafts to the Signal-LCC's LED pin leaves — those events live on the Signal-LCC and are ADOPTED by compose, not written — and (b) `deriveSignalAspectState` returns `unknown` only when the four LED IDs resolve but no matching events are observed on the wire, which is the correct answer pre-Save because the SLC is still running its committed logic and nothing is producing the LED events. The FIX for the user-visible symptom is to add a *second* derivation source (rule-based prediction) alongside the existing observation source, and let the output slot render prefer prediction when it is available. That is this slice.
+
+**Boundary**: Frontend utils + component only.
+- `app/src/lib/utils/channelState.ts` — new pure helpers `signalAspectStateFromPredictedAspect(aspect)` and `ledLampStatesFromPredictedAspect(aspect)`.
+- `app/src/lib/components/Facilities/FacilityCard.svelte` — `displayFor` and `outputLampStates` extended to prefer prediction for the OUTPUT slot of a compiled facility when `currentEvaluation()` returns an aspect.
+
+No backend change. No IPC change. No new store, no orchestrator work. This is a pure display-derivation extension.
+
+**Blocked by**: S6 ✅ (only nominally — the actual dependency is on the S1/S2 compilation-target infrastructure, which S6 sits atop)
+
+**Status**: done
+
+**Scope guarantees** (explicit non-goals):
+- Do NOT change the observation-based derivation (`deriveSignalAspectState`, `deriveLedLampStates`) — they remain the transport-truth source.
+- Do NOT extend to `ChannelsPanel.svelte`. That is a separate view and applying prediction there requires cross-store coupling (Channels panel doesn't know which facility owns a channel). If the same "Unknown" symptom shows there and is worth addressing, it becomes a follow-up idea.
+- Do NOT alter the aspect-evaluation logic in `currentEvaluation()` — S7 is a *consumer* of its output, not a rewrite of it.
+- Do NOT touch the input-side (block-occupancy / lamp-indicator) display paths — only the output signal-aspect path in a compiled facility changes.
+- Do NOT introduce a new ADR or extend an existing one — this is display-derivation only, no seam introduction.
+
+**Acceptance criteria**:
+- [x] New pure helper `signalAspectStateFromPredictedAspect(aspect: 'stop' | 'approach' | 'clear' | 'dark') → ChannelState` returns `{ role: 'signal-aspect', state: aspect }`. Trivial wrapper (locality — one canonical place to construct the state literal).
+- [x] New pure helper `ledLampStatesFromPredictedAspect(aspect: 'stop' | 'approach' | 'clear' | 'dark') → LedLampState[]` returns the two-LED (red, green) breakdown per the standard aspect ↔ LED mapping used by `deriveSignalAspectState`'s inverse: stop→(red on, green off); approach→(red on, green on); clear→(red off, green on); dark→(red off, green off).
+- [x] Both helpers have exhaustive unit tests in `channelState.test.ts` covering all four aspects (8 new tests, all passing).
+- [x] `FacilityCard.svelte`'s output signal-aspect rendering path uses the new helpers when the facility is compiled (`isCompiled === true`) AND `currentEvaluation()` returns a defined aspect. Otherwise it falls back to the existing `deriveSignalAspectState` / `deriveLedLampStates` observation path (unchanged behavior for composed facilities and for compiled facilities with no evaluable input state).
+- [x] Existing FacilityCard tests remain green (no behavior change for composed facilities; no behavior change when prediction is undefined) — 3 new `FacilityCard.prediction.test.ts` integration tests cover the compiled-facility prediction path, the fallback path, and the composed-facility unchanged path.
+- [ ] Manual demo: create + wire an ABS 3-Aspect facility with a live BOD input → observe the output signal channel indicator shows a known aspect (e.g. "Stop") and the LED breakdown shows red on / green off, matching the Logic block's prediction, **before Save**. Toggling the physical BOD block state changes the prediction in real time. **← awaiting user QA**
+
+**Architecture note** *(AFK — display derivation, no seam)*: This is a **pure display extension** at the FacilityCard layer, not an architectural change. The prediction source (`currentEvaluation()`) already lives one function away in the same component; the fix is to teach the output rendering path to consume it. The observation path (`deriveSignalAspectState`) stays as the fallback and remains the post-Save truth source — once the SLC runs the drafted logic and starts emitting LED events, observation and prediction converge on the same value. **Locality of Reference** (Ousterhout §7 — related logic lives close together) is the principle at stake: the aspect prediction and its rendered representations belong in one place. **YAGNI**: two tiny helpers + one call-site update, no new abstraction layer.
+
+**Complexity**: trivial (2 helpers + 1 component call-site update)
+
+**User stories**: US-abs-wire (closes the pre-Save signal-visibility gap the S6 slice card originally promised)
+
+**Tasks**:
+- [x] S7-T1: FE RED — unit tests in `channelState.test.ts` for both helpers (8 tests total, one `describe` per helper, one `it` per aspect × 4 aspects).
+- [x] S7-T2: FE GREEN — both helpers implemented in `channelState.ts` as pure functions.
+- [x] S7-T3: FE RED — new `FacilityCard.prediction.test.ts` colocated with the component; 3 integration tests covering compiled-facility prediction, observation fallback when input unknown, and composed-facility unchanged.
+- [x] S7-T4: FE GREEN — `displayFor()` and `outputLampStates()` extended to accept an optional `predictedAspect` parameter; new `predictedOutputAspect = $derived.by(...)` computed near `isCompiled`; output-slot render loop (~L317) passes `predictedOutputAspect` to both. INPUT loop unchanged.
+- [x] S7-T5: Validate — `npx vitest run` from `app/` all green (channelState 32/32 including 8 new; FacilityCard.prediction 3/3; FacilityCard 8/8; facilityOrchestrator 24/24).
+- [x] S7-T6: Post-fix enrichment — [aiwiki/owners.md](../../aiwiki/owners.md) `channelState.ts` and `FacilityCard.svelte` entries updated with S7 descriptions; [aiwiki/architecture-health.md](../../aiwiki/architecture-health.md) S6 entry rewritten to correctly attribute the user-visible fix to S7; [aiwiki/seams.md](../../aiwiki/seams.md) "Facility Bowtie Lifecycle" `Last-modified` bumped to include S7 summary.
+
+---
+
+### S3: Remove FE teardown short-circuit; residual-card bug closes [AFK]
 
 **Intent**: Removing a channel from a Wired ABS facility (via `removeFromSlot`, cascade detach, or load-time dangling-ref repair) clears the ABS facility's bowtie cards from the catalog — the same UX Block Indicator has today. Closes the residual-catalog-card bug identified in plan-event-wiring.md.
-**Boundary**: Backend domain (`compose_bowtie_ops` guard removal) → Backend command (`compose_facility_bowties` IPC guard removal) → Frontend orchestrator (`resetComposedLeavesForFacility` guard removal). Test rewrites in `bowties-core` composer tests and `facilityOrchestrator.test.ts`.
-**Blocked by**: S2
+**Boundary**: Frontend orchestrator only (`resetComposedLeavesForFacility` L460-475 guard removal in `app/src/lib/orchestration/facilityOrchestrator.ts`). Test rewrites in `facilityOrchestrator.test.ts` (S6 tests at L541 / L741). The backend halves of the 2026-07-25 symmetry rule were already removed in S2 (`bowties-core::facility_bowties::compose_bowtie_ops` and the `compose_facility_bowties` IPC — both now dispatch to `compose_compiled_bowtie_ops` on the compiled path).
+**Blocked by**: S2 ✅
 **Status**: sketched
 
 **Acceptance criteria**:
@@ -212,10 +320,15 @@ Green = single-owner boundary.
 - [ ] Cascade detach (BOD daughterboard cleared) on a Wired ABS facility clears its bowtie cards from the catalog.
 - [ ] Load-time repair of a dangling channel reference on a Wired ABS facility results in no orphaned catalog cards.
 - [ ] `deleteFacility` on a Wired ABS facility still results in a clean target node with no orphaned cards (unchanged UX, different implementation path).
-- [ ] `compiled_template_short_circuits_to_empty_ops` test is rewritten as `compiled_template_composes_from_wiring_plan` and asserts N `CompositionOp`s emitted for N wiring-plan slots.
 - [ ] The two S6 orchestrator tests are rewritten to their inverse: `deleteFacility` and `removeFromSlot` on Wired compiled facility DO invoke the composer, produce teardown ops for both LED and conditional-line event-ID slots, and register metadata deletions.
 - [ ] All test suites (`cargo test -p bowties-core`, `vitest run`) green.
 - [ ] Manual demo covers all four channel-removal paths (delete, removeFromSlot, cascade, load-time repair) and confirms catalog cleanliness.
+
+**S2 learnings that shape S3**:
+- The FE short-circuit is at `facilityOrchestrator.ts` L460-475 (verified 2026-07-26); the branch reads `template?.compilationTarget === 'compiled'` and returns before reaching either the composer-forward or metadata-driven-fallback branch. Removal is a straight deletion of the 6-line guard.
+- `resetComposedLeavesForFacility`'s existing two-strategy lookup (composer-forward when Wired, metadata-driven scan when Incomplete) already handles the compiled case correctly once the guard is gone — for a Wired compiled facility, the composer now emits ops (as of S2) and the forward path returns them; for an Incomplete compiled facility, `bowtieMetadataStore.bowtiesForFacility(facilityId)` returns the compiled facility's rows (also as of S2, no store change needed) and the metadata-driven fallback iterates them.
+- The two S6 tests at L541 (removeFromSlot) and L741 (deleteFacility) assert `expect(composeFacilityBowties).not.toHaveBeenCalled()`. S3 flips both to `expect(composeFacilityBowties).toHaveBeenCalledWith(...)` and asserts the resulting teardown ops write fresh event IDs to both LED consumer leaves and conditional-line event-ID slots.
+- `generateFreshEventIdForNode` (FE) already handles teardown-side minting for consumer leaves; whether it handles conditional-line event-ID slots (which live on the target node, not the source channel node) needs verification. If not, the metadata-driven fallback may need a small extension to write fresh IDs to conditional-line slots too. Flag: S3-T2 covers this discovery.
 
 ### S4: `reset_facility` emits structural fields only [REFACTOR]
 
@@ -246,4 +359,5 @@ Green = single-owner boundary.
 - [ ] [plan-event-wiring.md](plan-event-wiring.md) marked complete; cross-references from [plan.md](plan.md) updated.
 
 <!-- Session: 2026-07-26 — Completed S1. Next: S2 (HITL). S2 card adjusted for S1 A-alt learnings: composer calls plan_facility_wiring directly (no cache read); ConditionalLineField already IPC-serializable; bowtie_identity already on every slot; S2 removes backend composer short-circuits (FE resetComposedLeavesForFacility short-circuit stays until S3). -->
+<!-- Session: 2026-07-26 — Completed S2. Next: S3 (AFK). Note: this session found S2-T1..T9's implementation from a prior session had NOT actually landed in the working tree (only S1 was committed) — re-implemented from scratch. Two design corrections from the task card: (1) S2-T3's planned channel_events.rs resolver was replaced by reusing CompileInput's already-resolved input_events/output_pin_events (DRY, matches composed-path convention); (2) the orchestrator required a real behavior change (compose-after-compile in compileIfWired) that the card assumed was a no-op — without it, ABS composition was unreachable from the UI. See session memory for full rationale and file/line map. -->
 

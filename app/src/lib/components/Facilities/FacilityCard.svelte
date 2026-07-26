@@ -9,6 +9,8 @@
     deriveChannelState,
     deriveSignalAspectState,
     deriveLedLampStates,
+    signalAspectStateFromPredictedAspect,
+    ledLampStatesFromPredictedAspect,
     channelStateLabel,
     channelStateClass,
     roleForChannelState,
@@ -91,6 +93,13 @@
   // (Inputs → Logic → Outputs) as their primary layout. No expand/collapse.
   let isCompiled = $derived(template?.compilationTarget === 'compiled');
 
+  /** Predicted output aspect for S7 prediction-first render (S7: compiled only). */
+  let predictedOutputAspect = $derived.by(() => {
+    if (!isCompiled) return undefined;
+    const evalResult = currentEvaluation();
+    return evalResult?.aspect as 'stop' | 'approach' | 'clear' | 'dark' | undefined;
+  });
+
   /** Logic target node key for compiled facilities. */
   let logicTargetNodeKey = $derived(facilitiesStore.getLogicTargetNodeKey(facility.facilityId));
 
@@ -130,17 +139,19 @@
   /**
    * Get per-lamp LED states for signal-aspect output channels.
    */
-  function outputLampStates(binding: string[]): Array<{ label: string; isOn: boolean; color: 'red' | 'green'; rowLabel: string }> {
+  function outputLampStates(binding: string[], predictedAspect?: 'stop' | 'approach' | 'clear' | 'dark'): Array<{ label: string; isOn: boolean; color: 'red' | 'green'; rowLabel: string }> {
     if (binding.length === 0) return [];
     const id = binding[0];
     const channel = channelsStore.channels.find((c) => c.id === id);
     if (!channel || channel.role !== 'signal-aspect') return [];
     const ids = resolvedEventIds?.get(id);
     if (!ids) return [];
-    const lamps = deriveLedLampStates(
-      eventStateStore.events,
-      ids['redOn'], ids['redOff'], ids['greenOn'], ids['greenOff'],
-    );
+    const lamps = predictedAspect !== undefined
+      ? ledLampStatesFromPredictedAspect(predictedAspect)
+      : deriveLedLampStates(
+        eventStateStore.events,
+        ids['redOn'], ids['redOff'], ids['greenOn'], ids['greenOff'],
+      );
     const startRow = channel.binding.kind === 'lampRow' ? channel.binding.rowOrdinal : 0;
     return lamps.map((lamp, i) => ({ ...lamp, rowLabel: `Row ${startRow + i}` }));
   }
@@ -156,7 +167,7 @@
    * UI is max-1 in S4: we pick element 0 of the Vec, leaving multi-binding
    * rendering to a future slice when ABS aspect-slot repeaters arrive.
    */
-  function displayFor(binding: string[]):
+  function displayFor(binding: string[], predictedAspect?: 'stop' | 'approach' | 'clear' | 'dark'):
     | { currentChannelId: string; currentChannelDisplay: { name: string; ownership: 'hardware-owned' | 'user-owned'; groupLabel: string; locationLabel: string; state: ChannelState; stateLabel: string } }
     | { currentChannelId: undefined; currentChannelDisplay: undefined } {
     if (binding.length === 0) {
@@ -171,7 +182,11 @@
     const role = roleForChannelState(channel.role);
     let state: ChannelState;
     if (role === 'signal-aspect') {
-      state = deriveSignalAspectState(eventStateStore.events, ids?.['redOn'], ids?.['redOff'], ids?.['greenOn'], ids?.['greenOff']);
+      if (predictedAspect !== undefined) {
+        state = signalAspectStateFromPredictedAspect(predictedAspect);
+      } else {
+        state = deriveSignalAspectState(eventStateStore.events, ids?.['redOn'], ids?.['redOff'], ids?.['greenOn'], ids?.['greenOff']);
+      }
     } else {
       const positiveId = role === 'lamp-indicator' ? ids?.['lit'] : ids?.['occupied'];
       const negativeId = role === 'lamp-indicator' ? ids?.['unlit'] : ids?.['clear'];
@@ -315,9 +330,9 @@
           const def = template?.slots.find(s => s.label === label);
           return def?.kind === 'consumer';
         }) as [label, binding] (label)}
-          {@const d = displayFor(binding)}
+          {@const d = displayFor(binding, predictedOutputAspect)}
           {@const def = template?.slots.find(s => s.label === label)}
-          {@const lamps = outputLampStates(binding)}
+          {@const lamps = outputLampStates(binding, predictedOutputAspect)}
           <SlotCard
             label={def?.displayLabel ?? label}
             state={d.currentChannelDisplay?.state}

@@ -417,6 +417,22 @@ describe('createdByFacility back-reference (Spec 018 / S6)', () => {
     expect(bowtieMetadataStore.bowtiesForFacility('f-block-5')).toEqual([HEX_B]);
   });
 
+  // Spec 020 / S2 — the composer is the sole event-wiring owner for BOTH
+  // composed (Block Indicator) and compiled (ABS) templates; the metadata
+  // rows they register are indistinguishable here (`createdByFacility` is
+  // the only filter — no template-kind field). This test locks that
+  // invariant: a compiled facility's rows appear via the exact same query
+  // used for composed facilities, once the composer emits ops with
+  // `created_by_facility` populated (no store implementation change).
+  it('bowtiesForFacility returns rows for a compiled (ABS) facility, same as composed', () => {
+    const HEX_C = '05010101FF030001';
+    const HEX_D = '05010101FF030101';
+    bowtieMetadataStore.createBowtie(HEX_C, 'BOD A1 — occupied', { createdByFacility: 'f-abs-1' });
+    bowtieMetadataStore.createBowtie(HEX_D, 'Signal 1 — red on', { createdByFacility: 'f-abs-1' });
+    const ids = bowtieMetadataStore.bowtiesForFacility('f-abs-1');
+    expect(new Set(ids)).toEqual(new Set([HEX_C, HEX_D]));
+  });
+
   it('adoptEventId preserves createdByFacility when re-keying an in-session create', () => {
     const placeholder = 'planning-999';
     bowtieMetadataStore.createBowtie(placeholder, 'Block 5 — lit', {

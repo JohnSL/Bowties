@@ -335,6 +335,16 @@ async function compileIfWired(facilityId: string): Promise<{ needsLogicTarget?: 
 
   // Stage each compiled field write as a CDI draft edit.
   stageFieldWritesAsDrafts(plan.fieldWrites, targetNodeKey);
+
+  // Spec 020 / S2 — compose is the sole event-wiring owner for both
+  // template kinds. Re-sync so the backend sees the allocation just
+  // recorded above (compose reads `facility.logicAllocation` for the
+  // compiled-template branch), then compose to fill the WiringPlan's
+  // event-ID slots and register named bowtie cards.
+  await syncDraftsForComposition();
+  const ops = await composeFacilityBowties(facilityId);
+  applyCompositionOps(ops);
+
   return {};
 }
 

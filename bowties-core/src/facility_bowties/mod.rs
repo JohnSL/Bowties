@@ -31,6 +31,10 @@ use crate::behavior_templates::{BehaviorTemplate, SlotKind};
 use crate::channel_events::resolve_lamp_row_path_prefix;
 use crate::layout::channels::{ChannelBinding, ChannelRole, InformationChannel};
 use crate::layout::facilities::Facility;
+use crate::logic_adapter::{
+    build_conditional_line_address_map, plan_facility_wiring, CompileInput, ConditionalLineField,
+    RoleHint,
+};
 use crate::node_tree::{ConfigNode, LeafNode, LeafType, NodeConfigTree};
 use lcc_rs::cdi::EventRole;
 
@@ -86,6 +90,9 @@ pub enum FacilityCompositionError {
     /// Block Indicator has one of each; guard is defence-in-depth.
     NoProducerSlot,
     NoConsumerSlot,
+    /// A `WiringPlan` slot's target CDI field has no resolved address on
+    /// the target node's config tree (compiled path only).
+    MissingTargetAddress { field: String, line_index: u32 },
 }
 
 impl std::fmt::Display for FacilityCompositionError {
@@ -125,6 +132,10 @@ impl std::fmt::Display for FacilityCompositionError {
             ),
             Self::NoProducerSlot => write!(f, "template declares no producer slot"),
             Self::NoConsumerSlot => write!(f, "template declares no consumer slot"),
+            Self::MissingTargetAddress { field, line_index } => write!(
+                f,
+                "wiring slot '{field}' on line {line_index} has no resolved address on the target node",
+            ),
         }
     }
 }
@@ -166,14 +177,6 @@ pub fn compose_bowtie_ops(
     per_node_cdi: &HashMap<String, NodeConfigTree>,
     consumer_leaf_index: &ConsumerLeafIndex,
 ) -> Result<Vec<CompositionOp>, FacilityCompositionError> {
-    // Spec 020 / S6 bugfix — inverse-path symmetry with `composeBowtiesIfWired`.
-    // Compiled templates produce zero composition ops by definition of the
-    // disjoint write surface (conditional-line fields, not EventID consumer
-    // leaves). Encoding this at the composer boundary protects every caller.
-    if template.compilation_target == crate::behavior_templates::CompilationTarget::Compiled {
-        return Ok(Vec::new());
-    }
-
     // ── Wired guard: every slot must be at its min_channels ──────────
     for slot in template.slots {
         let bound = facility
@@ -311,8 +314,146 @@ pub fn compose_bowtie_ops(
             consumer_leaf_space: leaf.space,
             consumer_leaf_address: leaf.address,
             event_id_bytes: *producer_bytes,
-            bowtie_name: format!("{} — {}", facility.name, mapping.consumer_command),
+            bowtie_name: format!(
+                "{} — {}",
+                producer_channel.name,
+                style_state_label(&producer_channel.role, mapping.producer_state)
+            ),
             created_by_facility: facility.facility_id.clone(),
+        });
+    }
+
+    Ok(ops)
+}
+
+/// User-visible state label for a channel role + raw state name.
+///
+/// Single source of naming truth for the **Provenance-Based Naming** rule
+/// (`"<channel name> — <state label>"`). Vocabulary follows ADR-0013 channel
+/// roles: `BlockOccupancy` → occupied/clear, `LampIndicator` → lit/unlit,
+/// `SignalAspect` → red/green/yellow on/off. Unrecognised state names pass
+/// through verbatim so a future vocabulary addition degrades gracefully
+/// instead of panicking.
+fn style_state_label(role: &ChannelRole, state: &str) -> String {
+    let label = match role {
+        ChannelRole::BlockOccupancy => match state {
+            "occupied" => "occupied",
+            "clear" => "clear",
+            other => other,
+        },
+        ChannelRole::LampIndicator => match state {
+            "lit" => "lit",
+            "unlit" => "unlit",
+            other => other,
+        },
+        ChannelRole::SignalAspect => match state {
+            "red on" => "red on",
+            "red off" => "red off",
+            "green on" => "green on",
+            "green off" => "green off",
+            "yellow on" => "yellow on",
+            "yellow off" => "yellow off",
+            other => other,
+        },
+    };
+    label.to_string()
+}
+
+/// User-visible state label for a `WiringPlan` slot's [`RoleHint`].
+///
+/// `BlockOccupied`/`BlockClear` translate to the same vocabulary
+/// [`style_state_label`] uses for `ChannelRole::BlockOccupancy`. `LedPin`
+/// slots already carry a fully-formed label (e.g. `"red on"`) in the
+/// slot's `slot_label` — passed through verbatim rather than re-derived,
+/// since the on/off half of the label lives only in `slot_label`, not in
+/// the `RoleHint` itself.
+fn role_hint_state_label(hint: &RoleHint, slot_label: &str) -> String {
+    match hint {
+        RoleHint::BlockOccupied => "occupied".to_string(),
+        RoleHint::BlockClear => "clear".to_string(),
+        RoleHint::LedPin(_) => slot_label.to_string(),
+    }
+}
+
+/// Compose the [`CompositionOp`]s for a Wired **compiled** facility
+/// (Spec 020 / S2 — Single Event-Wiring Owner).
+///
+/// Recomputes the same `WiringPlan` the compiler produced from
+/// `compile_input` (D2:A-alt — pure re-derivation, no cache) and fills
+/// every event-ID slot the compiler left blank on the target node,
+/// adopting event IDs the caller already resolved onto `compile_input`
+/// (D6 — never mints fresh IDs on the forward path). `input_channel_name`
+/// / `output_channel_name` are the facility's bound block-occupancy /
+/// signal-aspect channel names, used for Provenance-Based Naming.
+///
+/// Track-circuit action slots reuse `RoleHint::BlockOccupied` as a
+/// placeholder in [`plan_facility_wiring`] for a slot whose target field
+/// is `ActionEventId` rather than `V1SetTrueEvent` — those slots carry no
+/// event ID by design (track circuits publish aspect speed via
+/// `ActionDestination`, not an event) and are skipped here.
+pub fn compose_compiled_bowtie_ops(
+    compile_input: &CompileInput,
+    target_tree: &NodeConfigTree,
+    input_channel_name: &str,
+    output_channel_name: &str,
+) -> Result<Vec<CompositionOp>, FacilityCompositionError> {
+    let plan = plan_facility_wiring(compile_input);
+    let address_map = build_conditional_line_address_map(target_tree);
+
+    let mut ops = Vec::with_capacity(plan.slots.len());
+    for slot in &plan.slots {
+        let event_id_bytes: [u8; 8] = match (&slot.target.field, &slot.source.role_hint) {
+            (ConditionalLineField::V1SetTrueEvent, RoleHint::BlockOccupied) => {
+                compile_input.input_events.set_true_event
+            }
+            (ConditionalLineField::V1SetFalseEvent, RoleHint::BlockClear) => {
+                compile_input.input_events.set_false_event
+            }
+            (ConditionalLineField::ActionEventId(_), RoleHint::LedPin(pin_name)) => {
+                let pin_index = match pin_name.as_str() {
+                    "red" => 0,
+                    "green" => 1,
+                    _ => continue, // no other pin names produced by plan_facility_wiring today
+                };
+                let Some(pin_events) = compile_input.output_pin_events.get(pin_index) else {
+                    continue;
+                };
+                if slot.source.slot_label.ends_with(" on") {
+                    pin_events.on_event
+                } else {
+                    pin_events.off_event
+                }
+            }
+            // Track-circuit action-event placeholder — no event ID to adopt.
+            (ConditionalLineField::ActionEventId(_), RoleHint::BlockOccupied) => continue,
+            _ => continue,
+        };
+
+        let addr = address_map
+            .get(&(slot.target.field, slot.target.line_index))
+            .ok_or_else(|| FacilityCompositionError::MissingTargetAddress {
+                field: format!("{:?}", slot.target.field),
+                line_index: slot.target.line_index,
+            })?;
+
+        let channel_name = match &slot.source.role_hint {
+            RoleHint::BlockOccupied | RoleHint::BlockClear => input_channel_name,
+            RoleHint::LedPin(_) => output_channel_name,
+        };
+        let state_label = role_hint_state_label(&slot.source.role_hint, &slot.source.slot_label);
+
+        ops.push(CompositionOp {
+            consumer_node_key: compile_input.target_node_key.clone(),
+            consumer_leaf_path: vec![
+                "Conditionals".to_string(),
+                format!("Logic #{}", slot.target.line_index + 1),
+                format!("{:?}", slot.target.field),
+            ],
+            consumer_leaf_space: addr.space,
+            consumer_leaf_address: addr.address,
+            event_id_bytes,
+            bowtie_name: format!("{channel_name} — {state_label}"),
+            created_by_facility: compile_input.facility_id.clone(),
         });
     }
 
@@ -404,6 +545,7 @@ mod tests {
     use super::*;
     use crate::behavior_templates::BLOCK_INDICATOR;
     use crate::layout::channels::{ChannelBinding, ChannelOwnership, ChannelRole};
+    use crate::logic_adapter::{CompileInput, DownstreamBinding, InputChannelEvents, PinEvents, TrackSpeed};
     use crate::node_tree::{
         ConfigNode, ConfigValue, GroupNode, LeafNode, LeafType, NodeConfigTree, SegmentNode,
     };
@@ -603,7 +745,9 @@ mod tests {
             ],
         );
         assert_eq!(ops[0].consumer_node_key, CONSUMER_NODE);
-        assert_eq!(ops[0].bowtie_name, "Block 5 — lit");
+        // Provenance-Based Naming (Spec 020 / S2): producer channel name +
+        // producer state, not facility name + consumer command.
+        assert_eq!(ops[0].bowtie_name, "BOD A1 — occupied");
         assert_eq!(ops[0].created_by_facility, "f-block-5");
 
         // op[1] — clear → unlit, Lamp Off leaf, clear bytes.
@@ -616,7 +760,36 @@ mod tests {
                 "Lamp Off".to_string(),
             ],
         );
-        assert_eq!(ops[1].bowtie_name, "Block 5 — unlit");
+        assert_eq!(ops[1].bowtie_name, "BOD A1 — clear");
+    }
+
+    #[test]
+    fn style_state_label_covers_all_role_vocabularies() {
+        assert_eq!(style_state_label(&ChannelRole::BlockOccupancy, "occupied"), "occupied");
+        assert_eq!(style_state_label(&ChannelRole::BlockOccupancy, "clear"), "clear");
+        assert_eq!(style_state_label(&ChannelRole::LampIndicator, "lit"), "lit");
+        assert_eq!(style_state_label(&ChannelRole::LampIndicator, "unlit"), "unlit");
+        assert_eq!(style_state_label(&ChannelRole::SignalAspect, "red on"), "red on");
+        assert_eq!(style_state_label(&ChannelRole::SignalAspect, "red off"), "red off");
+        assert_eq!(style_state_label(&ChannelRole::SignalAspect, "green on"), "green on");
+        assert_eq!(style_state_label(&ChannelRole::SignalAspect, "green off"), "green off");
+        assert_eq!(style_state_label(&ChannelRole::SignalAspect, "yellow on"), "yellow on");
+        assert_eq!(style_state_label(&ChannelRole::SignalAspect, "yellow off"), "yellow off");
+    }
+
+    #[test]
+    fn role_hint_state_label_translates_wiring_plan_vocabulary() {
+        assert_eq!(role_hint_state_label(&RoleHint::BlockOccupied, "block occupancy"), "occupied");
+        assert_eq!(role_hint_state_label(&RoleHint::BlockClear, "block clear"), "clear");
+        // LedPin slots already carry a fully-formed label; passed through verbatim.
+        assert_eq!(
+            role_hint_state_label(&RoleHint::LedPin("red".to_string()), "red on"),
+            "red on"
+        );
+        assert_eq!(
+            role_hint_state_label(&RoleHint::LedPin("green".to_string()), "green off"),
+            "green off"
+        );
     }
 
     #[test]
@@ -833,43 +1006,191 @@ mod tests {
         assert!(!role_matches(Some(EventRole::Producer), EventRole::Consumer));
     }
 
-    /// Spec 020 / S6 bugfix — inverse-path symmetry with the frontend's
-    /// `composeBowtiesIfWired`. Compiled templates (e.g. ABS 3-Aspect
-    /// Signal) use a disjoint write surface (conditional-line CDI fields,
-    /// not EventID consumer leaves), so the composer must short-circuit
-    /// to an empty op list before touching any producer/consumer slot
-    /// resolution — even when the caller-supplied `consumer_leaf_index`
-    /// is empty, which would otherwise surface `MissingConsumerLeaf` for
-    /// the template's `stop`/`clear` mappings.
+    /// Spec 020 / S2 — the composer consumes the compiler's `WiringPlan`
+    /// directly for compiled templates (e.g. ABS 3-Aspect Signal), rather
+    /// than short-circuiting to an empty op list. Covers a standalone
+    /// 3-line facility (Stop / Approach / Clear): block-occupancy event
+    /// IDs are adopted onto every non-approach line's V1 slots, and each
+    /// aspect's LED pin actions adopt the same physical pin's on/off
+    /// event ID regardless of which conditional line references it
+    /// (D6 — adopt-not-mint; one physical pin is shared across lines).
     #[test]
-    fn compiled_template_short_circuits_to_empty_ops() {
-        use crate::behavior_templates::ABS_3_ASPECT_SIGNAL;
+    fn compiled_template_composes_from_wiring_plan_named_cards() {
+        fn hex(h: &str) -> [u8; 8] {
+            let mut out = [0u8; 8];
+            for (i, chunk) in h.as_bytes().chunks(2).enumerate() {
+                out[i] = u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16).unwrap();
+            }
+            out
+        }
 
-        let mut sb: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        sb.insert("input".to_string(), vec!["ch-bod-1".to_string()]);
-        sb.insert("output".to_string(), vec!["ch-signal-1".to_string()]);
-        let facility = Facility {
-            facility_id: "f-abs-1".to_string(),
-            template_id: "abs-3-aspect-signal".to_string(),
-            name: "Signal 5".to_string(),
-            slot_bindings: sb,
-            logic_allocation: None,
+        fn make_leaf_simple(name: &str, address: u32) -> ConfigNode {
+            ConfigNode::Leaf(LeafNode {
+                name: name.to_string(),
+                description: None,
+                element_type: LeafType::EventId,
+                address,
+                size: 8,
+                space: 253,
+                path: vec![],
+                value: None,
+                event_role: None,
+                constraints: None,
+                button_text: None,
+                dialog_text: None,
+                action_value: 0,
+                hint_slider: None,
+                hint_radio: false,
+                modified_value: None,
+                write_state: None,
+                write_error: None,
+                read_only: false,
+            })
+        }
+
+        fn make_group_simple(
+            instance: u32,
+            replication_of: &str,
+            replication_count: u32,
+            children: Vec<ConfigNode>,
+        ) -> ConfigNode {
+            ConfigNode::Group(GroupNode {
+                name: replication_of.to_string(),
+                has_name: true,
+                description: None,
+                instance,
+                instance_label: format!("{replication_of} {instance}"),
+                replication_of: replication_of.to_string(),
+                replication_count,
+                path: vec![],
+                children,
+                display_name: None,
+                hideable: false,
+                hidden_by_default: false,
+                read_only: false,
+            })
+        }
+
+        fn make_logic_line(instance: u32, base: u32) -> ConfigNode {
+            make_group_simple(
+                instance,
+                "Logic",
+                32,
+                vec![
+                    make_group_simple(
+                        1,
+                        "Variable #1",
+                        1,
+                        vec![
+                            make_leaf_simple("set true", base),
+                            make_leaf_simple("set false", base + 8),
+                        ],
+                    ),
+                    make_group_simple(1, "Action", 4, vec![make_leaf_simple("Action Event", base + 100)]),
+                    make_group_simple(2, "Action", 4, vec![make_leaf_simple("Action Event", base + 200)]),
+                ],
+            )
+        }
+
+        let target_node_key = "05020102FF000003".to_string();
+        let target_tree = NodeConfigTree {
+            node_id: target_node_key.clone(),
+            identity: None,
+            connector_profile: None,
+            connector_profile_warning: None,
+            unknown_variants: vec![],
+            profile_applied: false,
+            segments: vec![SegmentNode {
+                name: "Conditionals".to_string(),
+                description: None,
+                origin: 0,
+                space: 253,
+                children: vec![
+                    make_logic_line(1, 2528),
+                    make_logic_line(2, 10000),
+                    make_logic_line(3, 20000),
+                ],
+            }],
         };
 
-        // Deliberately empty — a pre-fix implementation reaches the
-        // consumer-leaf-index lookup and raises `MissingConsumerLeaf`.
-        let empty_consumer_leaf_index: ConsumerLeafIndex = HashMap::new();
+        let compile_input = CompileInput {
+            template_id: "abs-3-aspect-signal".to_string(),
+            facility_id: "f-abs-1".to_string(),
+            facility_name: "Signal 5".to_string(),
+            target_node_key: target_node_key.clone(),
+            existing_allocations: vec![],
+            input_events: InputChannelEvents {
+                set_true_event: hex("0201010102000001"),
+                set_false_event: hex("0201010102000101"),
+            },
+            output_pin_events: vec![
+                PinEvents {
+                    on_event: hex("0201010103000001"),
+                    off_event: hex("0201010103000101"),
+                },
+                PinEvents {
+                    on_event: hex("0201010104000001"),
+                    off_event: hex("0201010104000101"),
+                },
+            ],
+            downstream: Some(DownstreamBinding {
+                track_circuit: 1,
+                speed: TrackSpeed::Stop,
+            }),
+            tc_output: None,
+        };
 
-        let ops = compose_bowtie_ops(
-            &facility,
-            &ABS_3_ASPECT_SIGNAL,
-            &[],
-            &HashMap::new(),
-            &HashMap::new(),
-            &empty_consumer_leaf_index,
-        )
-        .expect("compiled templates must short-circuit to Ok(vec![])");
+        let ops = compose_compiled_bowtie_ops(&compile_input, &target_tree, "BOD A1", "Signal 5 Head")
+            .expect("compiled composition must succeed");
 
-        assert!(ops.is_empty());
+        // One op per WiringPlan slot: 4 (Stop: 2 block + 2 LED) + 2 (Approach: 2 LED, no block slots) + 4 (Clear: 2 block + 2 LED).
+        assert_eq!(ops.len(), 10);
+
+        // op[0] — Stop line's block-occupied slot: adopts input_events.set_true_event.
+        assert_eq!(ops[0].event_id_bytes, compile_input.input_events.set_true_event);
+        assert_eq!(ops[0].consumer_node_key, target_node_key);
+        assert_eq!(ops[0].consumer_leaf_space, 253);
+        assert_eq!(ops[0].consumer_leaf_address, 2528);
+        assert_eq!(ops[0].bowtie_name, "BOD A1 — occupied");
+        assert_eq!(ops[0].created_by_facility, "f-abs-1");
+
+        // op[1] — Stop line's block-clear slot.
+        assert_eq!(ops[1].event_id_bytes, compile_input.input_events.set_false_event);
+        assert_eq!(ops[1].consumer_leaf_address, 2536);
+        assert_eq!(ops[1].bowtie_name, "BOD A1 — clear");
+
+        // op[2] — Stop line's red-on LED pin.
+        assert_eq!(ops[2].event_id_bytes, compile_input.output_pin_events[0].on_event);
+        assert_eq!(ops[2].consumer_leaf_address, 2628);
+        assert_eq!(ops[2].bowtie_name, "Signal 5 Head — red on");
+
+        // op[3] — Stop line's green-off LED pin.
+        assert_eq!(ops[3].event_id_bytes, compile_input.output_pin_events[1].off_event);
+        assert_eq!(ops[3].consumer_leaf_address, 2728);
+        assert_eq!(ops[3].bowtie_name, "Signal 5 Head — green off");
+
+        // op[4] — Approach line's red-on LED pin: SAME event ID as the Stop
+        // line's red-on op (D6 — adopt-not-mint; one physical pin shared
+        // across conditional lines). No block-occupancy slots on this line.
+        assert_eq!(ops[4].event_id_bytes, ops[2].event_id_bytes);
+        assert_eq!(ops[4].consumer_leaf_address, 10100);
+        assert_eq!(ops[4].bowtie_name, "Signal 5 Head — red on");
+
+        // op[5] — Approach line's green-on LED pin.
+        assert_eq!(ops[5].event_id_bytes, compile_input.output_pin_events[1].on_event);
+        assert_eq!(ops[5].consumer_leaf_address, 10200);
+        assert_eq!(ops[5].bowtie_name, "Signal 5 Head — green on");
+
+        // op[6..9] — Clear line.
+        assert_eq!(ops[6].consumer_leaf_address, 20000);
+        assert_eq!(ops[6].bowtie_name, "BOD A1 — occupied");
+        assert_eq!(ops[7].consumer_leaf_address, 20008);
+        assert_eq!(ops[7].bowtie_name, "BOD A1 — clear");
+        assert_eq!(ops[8].event_id_bytes, compile_input.output_pin_events[0].off_event);
+        assert_eq!(ops[8].bowtie_name, "Signal 5 Head — red off");
+        assert_eq!(ops[9].bowtie_name, "Signal 5 Head — green on");
+
+        // Every op back-references the facility.
+        assert!(ops.iter().all(|op| op.created_by_facility == "f-abs-1"));
     }
 }

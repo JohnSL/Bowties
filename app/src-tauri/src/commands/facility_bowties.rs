@@ -19,12 +19,17 @@
 use std::collections::HashMap;
 
 use bowties_core::facility_bowties::{
-    compose_bowtie_ops, CompositionOp, ConsumerLeafIndex, FacilityCompositionError,
-    ProducerEventIds,
+    compose_bowtie_ops, compose_compiled_bowtie_ops, CompositionOp, ConsumerLeafIndex,
+    FacilityCompositionError, ProducerEventIds,
 };
 use bowties_core::layout::channels::{ChannelBinding, ChannelRole, InformationChannel};
+use bowties_core::layout::facilities::Facility;
+use bowties_core::layout::state::LayoutState;
+use bowties_core::logic_adapter::{self, CompileInput, InputChannelEvents, PinEvents};
+use bowties_core::behavior_templates::BehaviorTemplate;
 use bowties_core::node_key::NodeKey;
 use bowties_core::node_tree::NodeConfigTree;
+use lcc_rs::cdi::EventRole;
 
 use crate::state::AppState;
 
@@ -103,14 +108,16 @@ pub async fn compose_facility_bowties(
             )
         })?;
 
-    // Spec 020 / S6 bugfix — inverse-path symmetry with the frontend
-    // `composeBowtiesIfWired` compile-vs-compose split. Skip all CDI /
-    // event-id / consumer-leaf-index work; compiled templates produce
-    // zero composition ops (disjoint write surface).
+    // Spec 020 / S2 — compiled templates (e.g. ABS 3-Aspect Signal) are
+    // composed via the compiler's `WiringPlan`, not the producer/consumer
+    // slot path below. The composer is the sole event-wiring owner for
+    // both template kinds (Single Event-Wiring Owner); this branch
+    // rebuilds the same `CompileInput` the compile IPC used and recomputes
+    // the plan (D2:A-alt — pure re-derivation, no cache).
     if template.compilation_target
         == bowties_core::behavior_templates::CompilationTarget::Compiled
     {
-        return Ok(vec![]);
+        return compose_compiled_template(&facility, template, layout_state);
     }
 
     // Snapshot channels.
@@ -221,4 +228,172 @@ pub async fn compose_facility_bowties(
         &consumer_leaf_index,
     )
     .map_err(|e: FacilityCompositionError| e.to_string())
+}
+
+/// Compose bowtie ops for a Wired **compiled** facility (Spec 020 / S2).
+///
+/// Rebuilds the same `CompileInput` [`compile_logic_for_facility`] used
+/// (same channel-resolution helpers, same downstream/tc_output rules) and
+/// hands it to `compose_compiled_bowtie_ops`, which recomputes the
+/// `WiringPlan` and fills its event-ID slots by adopting event IDs already
+/// resolved onto `CompileInput` — never minting fresh ones (D6).
+///
+/// [`compile_logic_for_facility`]: crate::commands::logic_adapter::compile_logic_for_facility
+fn compose_compiled_template(
+    facility: &Facility,
+    template: &BehaviorTemplate,
+    layout_state: &LayoutState,
+) -> Result<Vec<CompositionOp>, String> {
+    let allocation = facility.logic_allocation.as_ref().ok_or_else(|| {
+        format!(
+            "facility '{}' has not been compiled to a logic target yet",
+            facility.facility_id
+        )
+    })?;
+    let target_node_key = allocation.target_node_key.clone();
+
+    let channels: Vec<InformationChannel> = layout_state.effective_channels().channels.clone();
+
+    // ── Resolve input (block-occupancy) channel event IDs ──────────────
+
+    let input_slot = template
+        .find_slot("input")
+        .ok_or_else(|| "template has no input slot".to_string())?;
+    let input_channel_id = facility
+        .slot_bindings
+        .get(input_slot.label)
+        .and_then(|v| v.first())
+        .ok_or_else(|| format!("facility '{}' has no input channel bound", facility.facility_id))?;
+    let input_channel = channels
+        .iter()
+        .find(|c| c.id == *input_channel_id)
+        .ok_or_else(|| format!("input channel '{}' not in inventory", input_channel_id))?;
+    let (input_node_key_str, connector, input_ordinal) = match &input_channel.binding {
+        ChannelBinding::ConnectorInput {
+            node_key,
+            connector,
+            input,
+        } => (node_key.clone(), connector.clone(), *input),
+        _ => return Err("input channel has non-ConnectorInput binding".to_string()),
+    };
+    let input_parsed_key = NodeKey::parse(&input_node_key_str)
+        .map_err(|e| format!("invalid input node key '{}': {}", input_node_key_str, e))?;
+    let input_tree = layout_state
+        .config_tree(&input_parsed_key)
+        .ok_or_else(|| format!("no CDI tree for input node {}", input_node_key_str))?;
+    let producer_mapping = producer_leaf_index_for_style(&input_channel.style)
+        .ok_or_else(|| format!("unknown producer style '{}'", input_channel.style))?;
+    let input_ids_hex = bowties_core::channel_events::resolve_channel_event_ids(
+        input_tree,
+        &connector,
+        input_ordinal,
+        &producer_mapping,
+    );
+    let occupied_hex = input_ids_hex.get("occupied").ok_or_else(|| {
+        "occupied event not available — read config from the block detector node first".to_string()
+    })?;
+    let clear_hex = input_ids_hex.get("clear").ok_or_else(|| {
+        "clear event not available — read config from the block detector node first".to_string()
+    })?;
+    let input_events = InputChannelEvents {
+        set_true_event: parse_hex_id(occupied_hex)
+            .ok_or_else(|| format!("invalid occupied event hex: {occupied_hex}"))?,
+        set_false_event: parse_hex_id(clear_hex)
+            .ok_or_else(|| format!("invalid clear event hex: {clear_hex}"))?,
+    };
+
+    // ── Resolve output (signal-aspect) channel pin events ────────────
+
+    let output_slot = template
+        .find_slot("output")
+        .ok_or_else(|| "template has no output slot".to_string())?;
+    let output_channel_id = facility
+        .slot_bindings
+        .get(output_slot.label)
+        .and_then(|v| v.first())
+        .ok_or_else(|| format!("facility '{}' has no output channel bound", facility.facility_id))?;
+    let output_channel = channels
+        .iter()
+        .find(|c| c.id == *output_channel_id)
+        .ok_or_else(|| format!("output channel '{}' not in inventory", output_channel_id))?;
+    let (output_node_key_str, base_row) = match &output_channel.binding {
+        ChannelBinding::LampRow {
+            node_key,
+            row_ordinal,
+        } => (node_key.clone(), *row_ordinal),
+        _ => return Err("output channel has non-LampRow binding".to_string()),
+    };
+    let output_parsed_key = NodeKey::parse(&output_node_key_str)
+        .map_err(|e| format!("invalid output node key '{}': {}", output_node_key_str, e))?;
+    let output_tree = layout_state
+        .config_tree(&output_parsed_key)
+        .ok_or_else(|| format!("no CDI tree for output node {}", output_node_key_str))?;
+
+    let mut pin_leaf_map = HashMap::new();
+    pin_leaf_map.insert("red_on".to_string(), 0u32);
+    pin_leaf_map.insert("red_off".to_string(), 1u32);
+    pin_leaf_map.insert("green_on".to_string(), 2u32);
+    pin_leaf_map.insert("green_off".to_string(), 3u32);
+    let pin_ids_hex = bowties_core::channel_events::resolve_lamp_row_range_event_ids(
+        output_tree,
+        base_row,
+        2,
+        EventRole::Consumer,
+        &pin_leaf_map,
+    );
+    let pin_event = |key: &str| -> Result<[u8; 8], String> {
+        let hex = pin_ids_hex
+            .get(key)
+            .ok_or_else(|| format!("{key} event not available — read config from the Signal LCC node first"))?;
+        parse_hex_id(hex).ok_or_else(|| format!("invalid {key} event hex: {hex}"))
+    };
+    let output_pin_events = vec![
+        PinEvents {
+            on_event: pin_event("red_on")?,
+            off_event: pin_event("red_off")?,
+        },
+        PinEvents {
+            on_event: pin_event("green_on")?,
+            off_event: pin_event("green_off")?,
+        },
+    ];
+
+    // ── Resolve downstream + tc_output exactly as the compiler does ──────
+
+    let all_facilities = &layout_state.effective_facilities().facilities;
+    let all_allocations = &layout_state.effective_facilities().logic_allocations;
+    let downstream =
+        logic_adapter::resolve_downstream_binding(facility, all_facilities, all_allocations);
+    let tc_output = allocation.track_circuit;
+
+    // `existing_allocations` excludes this facility's own allocation —
+    // `plan_facility_wiring` must reproduce the exact line-index base the
+    // compiler used, which was computed BEFORE this facility's own
+    // allocation existed.
+    let existing_allocations: Vec<_> = all_allocations
+        .iter()
+        .filter(|a| a.facility_id != facility.facility_id)
+        .cloned()
+        .collect();
+
+    let compile_input = CompileInput {
+        template_id: facility.template_id.clone(),
+        facility_id: facility.facility_id.clone(),
+        facility_name: facility.name.clone(),
+        target_node_key: target_node_key.clone(),
+        existing_allocations,
+        input_events,
+        output_pin_events,
+        downstream,
+        tc_output,
+    };
+
+    let target_parsed_key = NodeKey::parse(&target_node_key)
+        .map_err(|e| format!("invalid target node key '{}': {}", target_node_key, e))?;
+    let target_tree = layout_state
+        .config_tree(&target_parsed_key)
+        .ok_or_else(|| format!("no CDI tree for target node {}", target_node_key))?;
+
+    compose_compiled_bowtie_ops(&compile_input, target_tree, &input_channel.name, &output_channel.name)
+        .map_err(|e: FacilityCompositionError| e.to_string())
 }

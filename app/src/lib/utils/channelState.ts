@@ -141,6 +141,19 @@ export function deriveSignalAspectState(
 }
 
 /**
+ * Wrap a rule-predicted aspect into a signal-aspect `ChannelState` literal.
+ * Used by the FacilityCard's prediction-first output indicator path (Spec
+ * 020 / S7) so a compiled facility's output shows a known aspect pre-Save,
+ * driven by the same rule evaluation the Logic block already renders.
+ * Falls back path: observation via `deriveSignalAspectState`.
+ */
+export function signalAspectStateFromPredictedAspect(
+  aspect: 'stop' | 'approach' | 'clear' | 'dark',
+): ChannelState {
+  return { role: 'signal-aspect', state: aspect };
+}
+
+/**
  * Per-lamp LED state for a 2-LED bicolor signal.
  * Used by the facility comprehension view to show individual lamp On/Off state.
  */
@@ -173,5 +186,27 @@ export function deriveLedLampStates(
   return [
     { label: 'Red', isOn: redIsOn, color: 'red' },
     { label: 'Green', isOn: greenIsOn, color: 'green' },
+  ];
+}
+
+/**
+ * Derive the two-LED (red, green) breakdown for a rule-predicted aspect.
+ * Direct inverse of `deriveSignalAspectState`'s aspect ↔ (red, green)
+ * truth table:
+ *   stop     → red on,  green off
+ *   approach → red on,  green on
+ *   clear    → red off, green on
+ *   dark     → red off, green off
+ * Used by the FacilityCard's prediction-first output indicator path (Spec
+ * 020 / S7). Fallback path: observation via `deriveLedLampStates`.
+ */
+export function ledLampStatesFromPredictedAspect(
+  aspect: 'stop' | 'approach' | 'clear' | 'dark',
+): LedLampState[] {
+  const redOn = aspect === 'stop' || aspect === 'approach';
+  const greenOn = aspect === 'approach' || aspect === 'clear';
+  return [
+    { label: 'Red', isOn: redOn, color: 'red' },
+    { label: 'Green', isOn: greenOn, color: 'green' },
   ];
 }

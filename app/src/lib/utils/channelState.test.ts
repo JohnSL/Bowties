@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   deriveChannelState,
   deriveSignalAspectState,
+  signalAspectStateFromPredictedAspect,
+  ledLampStatesFromPredictedAspect,
   channelStateLabel,
   channelStateClass,
 } from './channelState';
@@ -241,5 +243,97 @@ describe('deriveSignalAspectState', () => {
       role: 'signal-aspect',
       state: 'dark',
     });
+  });
+
+  it('returns known aspect when IDs sourced from drafted-value resolution', () => {
+    // Contract: deriveSignalAspectState treats the four LED event IDs as opaque
+    // keys into the observed-events map. Whether the backend resolver sourced
+    // them from a leaf's committed `value` or its drafted `modified_value`
+    // (S6 draft-awareness fix in bowties-core::channel_events) is invisible
+    // here. Locks the FE half of "drafted event IDs must surface as a known
+    // signal aspect before Save" — the user-visible regression S6 closes.
+    const draftedRedOn = '0501010101DEAF01';
+    const draftedRedOff = '0501010101DEAF02';
+    const draftedGreenOn = '0501010101DEAF03';
+    const draftedGreenOff = '0501010101DEAF04';
+    const events = new Map<string, number>([
+      [draftedRedOn, 2000],
+      [draftedRedOff, 1000],
+      [draftedGreenOn, 1000],
+      [draftedGreenOff, 2000],
+    ]);
+    expect(
+      deriveSignalAspectState(
+        events,
+        draftedRedOn,
+        draftedRedOff,
+        draftedGreenOn,
+        draftedGreenOff,
+      ),
+    ).toEqual({ role: 'signal-aspect', state: 'stop' });
+  });
+});
+
+describe('signalAspectStateFromPredictedAspect', () => {
+  it('maps stop aspect to signal-aspect ChannelState', () => {
+    expect(
+      signalAspectStateFromPredictedAspect('stop'),
+    ).toEqual({ role: 'signal-aspect', state: 'stop' });
+  });
+
+  it('maps approach aspect to signal-aspect ChannelState', () => {
+    expect(
+      signalAspectStateFromPredictedAspect('approach'),
+    ).toEqual({ role: 'signal-aspect', state: 'approach' });
+  });
+
+  it('maps clear aspect to signal-aspect ChannelState', () => {
+    expect(
+      signalAspectStateFromPredictedAspect('clear'),
+    ).toEqual({ role: 'signal-aspect', state: 'clear' });
+  });
+
+  it('maps dark aspect to signal-aspect ChannelState', () => {
+    expect(
+      signalAspectStateFromPredictedAspect('dark'),
+    ).toEqual({ role: 'signal-aspect', state: 'dark' });
+  });
+});
+
+describe('ledLampStatesFromPredictedAspect', () => {
+  it('returns [Red ON, Green OFF] for stop aspect', () => {
+    expect(
+      ledLampStatesFromPredictedAspect('stop'),
+    ).toEqual([
+      { label: 'Red', isOn: true, color: 'red' },
+      { label: 'Green', isOn: false, color: 'green' },
+    ]);
+  });
+
+  it('returns [Red ON, Green ON] for approach aspect', () => {
+    expect(
+      ledLampStatesFromPredictedAspect('approach'),
+    ).toEqual([
+      { label: 'Red', isOn: true, color: 'red' },
+      { label: 'Green', isOn: true, color: 'green' },
+    ]);
+  });
+
+  it('returns [Red OFF, Green ON] for clear aspect', () => {
+    expect(
+      ledLampStatesFromPredictedAspect('clear'),
+    ).toEqual([
+      { label: 'Red', isOn: false, color: 'red' },
+      { label: 'Green', isOn: true, color: 'green' },
+    ]);
+  });
+
+  it('returns [Red OFF, Green OFF] for dark aspect', () => {
+    expect(
+      ledLampStatesFromPredictedAspect('dark'),
+    ).toEqual([
+      { label: 'Red', isOn: false, color: 'red' },
+      { label: 'Green', isOn: false, color: 'green' },
+    ]);
   });
 });
