@@ -1,6 +1,7 @@
 ---
 description: TDD coordinator that implements ONE already-tasked slice via batched red+green cycles plus a single refactor, delegating to tdd-cycle and tdd-refactor workers so main-window growth stays constant per slice. Runs strictly downstream of /design and inside slices.md tracking.
 name: tdd-build
+model: Claude Haiku 4.5 (copilot)
 agents:
   - tdd-cycle
   - tdd-refactor

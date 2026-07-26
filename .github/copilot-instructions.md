@@ -64,6 +64,7 @@ Skills like `design`, `build`, and `architecture-first-fix` require reading many
 - In `lcc-rs/**`, prioritize protocol correctness, transport clarity, public API stability, and test coverage over app-specific convenience shortcuts.
 - Avoid leaking Bowties UI or app workflow assumptions into the protocol library.
 - When implementing LCC/OpenLCB protocol behavior, consult `OpenLCB_Java/` and `JMRI/` in this workspace as reference implementations for expected protocol behavior and usage patterns.
+- **JMRI (`OpenLCB_Java`) is the primary compatibility target for on-wire behaviour** (ADR-0019). The written standards define message *semantics*; JMRI defines the *behavioural policy* real-world peers have been debugged against. Where the standard permits a behaviour but JMRI does not use it, prefer JMRI's subset. "The standard allows X" is not by itself a reason to emit X on the wire. When adding new emit/transmit sites in `lcc-rs/`, cite the equivalent JMRI behaviour (or record that JMRI does nothing) in the associated ADR or an `aiwiki/` note. Known divergences we deliberately mirror are tracked in `aiwiki/architecture-health.md` under "JMRI-alignment audit candidates".
 
 ## Change Discipline
 

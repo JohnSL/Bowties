@@ -1,6 +1,7 @@
 ---
 description: Deprecated — merged into tdd-cycle. Do not invoke directly.
 name: tdd-green-deprecated
+model: Claude Sonnet 5 (copilot)
 ---
 
 # tdd-green — DEPRECATED

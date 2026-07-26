@@ -338,7 +338,7 @@
       };
 
       if (preset.adapterType === 'tcp') {
-        config.host = formHost;
+        config.host = formHost.trim();
         config.port = formTcpPort;
       } else {
         config.serialPort = formSerialPort;

@@ -94,6 +94,33 @@ the `groupCounts` and understand what's in the trace before filtering.
 To compare Bowties vs JMRI response latencies, call `list_groups(type:"memory-config")`
 and compare `requestToAckMs` and `ackToReplyMs` across interactions from each client.
 
+**Pairing correctness (Read/Write only):** Every memory-config Read/Write row includes
+an `addressMatched` flag.
+- `addressMatched: true` — the reply datagram was paired to the request by matching
+  payload address+space+kind. Timing values are trustworthy.
+- `addressMatched: false` — no reply with the request's address was found in the trace
+  window. The request is emitted as unpaired (`complete: false`), and only
+  `requestToAckMs` is populated. Common causes: the responder rejected the request
+  (Datagram Rejected instead of OK), the reply was truncated at the trace boundary,
+  or a frame was dropped.
+
+Sequence-order fallback pairing is intentionally NOT used for Read/Write — with
+pipelined clients or a lost reply it would cascade into misaligned pairings across
+many subsequent requests. Non-address commands (Get Config Options, Lock, Freeze,
+etc.) still use sequence order and do not carry `addressMatched`.
+
+### Handling large result sets
+
+If a `list_groups` call returns hundreds of interactions and the response overflows
+inline output, use one of:
+
+- `summaryOnly: true` — drops `fields` and the full `frameIndices` array, keeps
+  `groupIndex`, `src`, `dest`, `summary`, `complete`, `timing`, `frameCount`, and
+  `addressMatched`. Enough for overview and latency analysis; drill down with a
+  follow-up call (no `summaryOnly`) or `get_frames`.
+- `limit` and `offset` — page through results. The response includes `totalMatching`,
+  `offset`, `limit`, and `hasMore` when paging is in use.
+
 ### "What does this byte string mean?"
 → `decode_datagram(bytesHex)`
 - Context-free: paste any hex string (e.g. `20 41 00 00 02 64 08`)

@@ -18,6 +18,7 @@ use crate::protocol::datagram::DatagramAssembler;
 use crate::protocol::frame::GridConnectFrame;
 use crate::protocol::memory_config::{AddressSpace, MemoryConfigCmd, ReadReply};
 use crate::protocol::mti::MTI;
+use crate::protocol::parse_oir_payload;
 use crate::transport_actor::{ReceivedMessage, TransportHandle, TransportHealth};
 use crate::types::{NodeID, PIPStatus, ProtocolFlags, SNIPData, SNIPStatus};
 use crate::{snip::parse_snip_payload, Error};
@@ -1229,21 +1230,12 @@ impl PeerSession {
     /// - Per-chunk timing capture and total-retry accumulation.
     async fn on_cdi_frame(&mut self, mti: MTI, frame: &GridConnectFrame) {
         // Terminal peer rejection (TN-9.7.3.2 §3.4): OIR ends the exchange
-        // regardless of the current cursor. Payload = wrapped MTI (2 bytes)
-        // + error code (2 bytes) + optional message.
+        // regardless of the current cursor. See `parse_oir_payload` for the
+        // payload byte order (S-9.7.3 §3.3.4).
         if mti == MTI::OptionalInteractionRejected {
-            let (wrapped_mti, error_code) = if frame.data.len() >= 6 {
-                let mti = ((frame.data[2] as u32) << 8) | frame.data[3] as u32;
-                let code = ((frame.data[4] as u16) << 8) | frame.data[5] as u16;
-                (mti, code)
-            } else if frame.data.len() >= 4 {
-                let mti = ((frame.data[2] as u32) << 8) | frame.data[3] as u32;
-                (mti, 0)
-            } else {
-                (0u32, 0u16)
-            };
-            // Peer-cleanup contract: emit TerminateDueToError once.
-            self.emit_terminate_due_to_error(error_code).await;
+            let (wrapped_mti, error_code) = parse_oir_payload(&frame.data);
+            // JMRI never emits TerminateDueToError after OIR (ADR-0019);
+            // Bowties mirrors that and completes the exchange directly.
             self.complete_cdi(Err(PeerError::Rejected {
                 mti: wrapped_mti,
                 code: error_code,
@@ -1289,7 +1281,9 @@ impl PeerSession {
                 // for the peer's actual reply on the next select! iteration.
                 return;
             } else {
-                self.emit_terminate_due_to_error(error_code).await;
+                // JMRI never emits TerminateDueToError after a non-resend DR
+                // (ADR-0019 Option B); Bowties mirrors that and completes
+                // the exchange directly.
                 self.complete_cdi(Err(PeerError::Rejected {
                     mti: MTI::DatagramRejected.value(),
                     code: error_code,
@@ -1458,10 +1452,13 @@ impl PeerSession {
                 // Peer reports read failure. Some codes (e.g. 0x1082 "address
                 // out of bounds") are natural short-read terminators for CDI.
                 // Match datagram_reader.rs: treat 0x1082 as clean termination.
+                //
+                // Per ADR-0019 Option B, JMRI never emits TerminateDueToError
+                // after a peer-reported read failure inside a valid
+                // memory-config reply; Bowties mirrors that here too.
                 if error_code == 0x1082 {
                     self.complete_cdi(Ok(())).await;
                 } else {
-                    self.emit_terminate_due_to_error(error_code).await;
                     self.complete_cdi(Err(PeerError::Rejected {
                         mti: MTI::DatagramRejected.value(),
                         code: error_code,
@@ -1579,7 +1576,7 @@ impl PeerSession {
         }
 
         for frame in &frames {
-            if let Err(e) = self.transport.send(frame).await {
+            if let Err(e) = self.transport.send_direct(frame).await {
                 self.complete_memory_read(Err(PeerError::from(e))).await;
                 return;
             }
@@ -1591,18 +1588,12 @@ impl PeerSession {
     /// timeout-extension, sole-ACK ownership, reply-identity guard, and
     /// per-frame timing capture.
     async fn on_memory_read_frame(&mut self, mti: MTI, frame: &GridConnectFrame) {
+        // Terminal peer rejection (S-9.7.3 §3.3.4). See parse_oir_payload
+        // for payload byte order.
         if mti == MTI::OptionalInteractionRejected {
-            let (wrapped_mti, error_code) = if frame.data.len() >= 6 {
-                let mti = ((frame.data[2] as u32) << 8) | frame.data[3] as u32;
-                let code = ((frame.data[4] as u16) << 8) | frame.data[5] as u16;
-                (mti, code)
-            } else if frame.data.len() >= 4 {
-                let mti = ((frame.data[2] as u32) << 8) | frame.data[3] as u32;
-                (mti, 0)
-            } else {
-                (0u32, 0u16)
-            };
-            self.emit_terminate_due_to_error(error_code).await;
+            let (wrapped_mti, error_code) = parse_oir_payload(&frame.data);
+            // JMRI never emits TerminateDueToError after OIR (ADR-0019);
+            // Bowties mirrors that and completes the exchange directly.
             self.complete_memory_read(Err(PeerError::Rejected { mti: wrapped_mti, code: error_code })).await;
             return;
         }
@@ -1622,7 +1613,9 @@ impl PeerSession {
                 // (same cascade-avoidance policy as CDI).
                 return;
             }
-            self.emit_terminate_due_to_error(error_code).await;
+            // JMRI never emits TerminateDueToError after a non-resend DR
+            // (ADR-0019 Option B); Bowties mirrors that and completes the
+            // exchange directly.
             self.complete_memory_read(Err(PeerError::Rejected {
                 mti: MTI::DatagramRejected.value(),
                 code: error_code,
@@ -1677,7 +1670,7 @@ impl PeerSession {
 
         // Sole ACK owner for this reply datagram.
         if let Ok(ack) = DatagramAssembler::send_acknowledgment(self.our_alias, self.alias) {
-            let _ = self.transport.send(&ack).await;
+            let _ = self.transport.send_direct(&ack).await;
         }
 
         let reply = match MemoryConfigCmd::parse_read_reply(&complete_data) {
@@ -1721,7 +1714,9 @@ impl PeerSession {
                 self.complete_memory_read(Ok((data, timing))).await;
             }
             ReadReply::Failed { error_code, .. } => {
-                self.emit_terminate_due_to_error(error_code).await;
+                // Per ADR-0019 Option B, JMRI never emits TerminateDueToError
+                // after a peer-reported read failure inside a valid
+                // memory-config reply; Bowties mirrors that here too.
                 self.complete_memory_read(Err(PeerError::Rejected {
                     mti: MTI::DatagramRejected.value(),
                     code: error_code,
@@ -1811,15 +1806,14 @@ impl PeerSession {
     /// non-resend DR / OIR are terminal; a reply-pending write reply carries
     /// the final result.
     async fn on_memory_write_frame(&mut self, mti: MTI, frame: &GridConnectFrame) {
+        // Terminal peer rejection (S-9.7.3 §3.3.4). See parse_oir_payload
+        // for payload byte order.
         if mti == MTI::OptionalInteractionRejected {
-            let error_code = if frame.data.len() >= 6 {
-                ((frame.data[4] as u16) << 8) | frame.data[5] as u16
-            } else {
-                0
-            };
-            self.emit_terminate_due_to_error(error_code).await;
+            let (wrapped_mti, error_code) = parse_oir_payload(&frame.data);
+            // JMRI never emits TerminateDueToError after OIR (ADR-0019);
+            // Bowties mirrors that and completes the exchange directly.
             self.complete_memory_write(Err(PeerError::Rejected {
-                mti: MTI::OptionalInteractionRejected.value(),
+                mti: wrapped_mti,
                 code: error_code,
             })).await;
             return;
@@ -1846,7 +1840,10 @@ impl PeerSession {
             if should_retry {
                 self.send_write_request().await;
             } else {
-                self.emit_terminate_due_to_error(error_code).await;
+                // JMRI never emits TerminateDueToError after a non-resend DR
+                // or after resend-OK DR retry-cap exhaustion (ADR-0019
+                // Option B); Bowties mirrors that and completes the
+                // exchange directly.
                 self.complete_memory_write(Err(PeerError::Rejected {
                     mti: MTI::DatagramRejected.value(),
                     code: error_code,

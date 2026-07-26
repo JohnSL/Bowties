@@ -1,6 +1,7 @@
 ---
 description: General TDD Red+Green worker. Handles a batch of 1–3 behaviors for any caller (build/tdd-build, bugfix, quickchange, ad-hoc TDD). Runs each behavior red→green sequentially with a per-behavior audit trail. Stops and escalates on placement or seam surprises.
 name: tdd-cycle
+model: Claude Sonnet 5 (copilot)
 ---
 
 # TDD Cycle — General Red+Green Worker

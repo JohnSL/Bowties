@@ -19,7 +19,7 @@ pub mod node_key;
 
 use menu::MenuHandles;
 
-use lcc_rs::{LccConnection, NodeID, GridConnectSerialTransport, SlcanSerialTransport, SerialFlowControl, FrameEncoding};
+use lcc_rs::{LccConnection, NodeID, GridConnectAsyncTransport, SlcanSerialTransport, SerialFlowControl, FrameEncoding};
 use state::AppState;
 use commands::{ConnectionConfig, AdapterType, FlowControl};
 use serde::{Deserialize, Serialize};
@@ -93,7 +93,7 @@ async fn connect_lcc(
                 FlowControl::XonXoff => SerialFlowControl::Software,
             };
             let transport = open_with_retry(
-                || GridConnectSerialTransport::open(serial_port, baud_rate, flow, FrameEncoding::Standard),
+                || GridConnectAsyncTransport::open(serial_port, baud_rate, flow, FrameEncoding::Standard),
                 "GridConnect serial port",
             )
             .await?;
@@ -116,7 +116,7 @@ async fn connect_lcc(
                 FlowControl::XonXoff => SerialFlowControl::Software,
             };
             let transport = open_with_retry(
-                || GridConnectSerialTransport::open(serial_port, baud_rate, flow, FrameEncoding::MergCanRs),
+                || GridConnectAsyncTransport::open(serial_port, baud_rate, flow, FrameEncoding::MergCanRs),
                 "MERG GridConnect serial port",
             )
             .await?;

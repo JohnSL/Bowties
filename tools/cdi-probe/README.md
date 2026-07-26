@@ -130,6 +130,71 @@ Global options:
 | `--discover-timeout-ms` | `500` | Discovery window before starting downloads |
 | `--json` | `false` | Emit JSONL to stdout instead of the human table |
 
+`read-space` subcommand options:
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--node` | *required* | Target NodeID (dotted or contiguous hex) |
+| `--space` | `0xFD` | Address space (hex). `0xFD` = configuration, `0xFF` = CDI, etc. |
+| `--start` | `0x80` | Sweep start address (hex) |
+| `--length` | *required* | Total bytes to sweep from `--start` |
+| `--chunk-size` | `64` | Bytes per `read_memory` call (1..=64) |
+| `--iterations` | `1` | Full sweeps to run back-to-back |
+| `--timeout-ms` | `3000` | Per-read timeout |
+| `--discover-timeout-ms` | `500` | Discovery window before starting reads |
+| `--json` | `false` | Emit one JSON record per chunk plus one per iteration to stdout |
+
+### Config-read timing baseline (`read-space`)
+
+`cdi-probe cdi` measures the CDI-download path (space `0xFF`, `ActiveExchange::CdiDownload`).
+The Bowties app skips CDI download when it has a cached copy of the correct
+version, so the code path it actually exercises most of the time is
+`PeerSessionHandle::read_memory` on space `0xFD` — a different `ActiveExchange`
+variant with different reply-frame handling and no `post_ack_delay_ms` hook.
+
+Use `read-space` to measure that path directly, headless, without the Tauri
+frontend / progress-event / batching overhead in the loop:
+
+```powershell
+cargo run --release -- --port COM8 read-space `
+    --node 02.01.57.00.02.D9 `
+    --start 0x80 `
+    --length 13706 `
+    --chunk-size 64 `
+    --iterations 3
+```
+
+Output:
+
+```
+  #  wall_ms  chunks     ff_min ff_mean ff_p95 ff_max   tt_min tt_mean tt_p95 tt_max
+  1     8942  215/215        14      41     52     94       30      54     65    118
+  2     8917  215/215        13      40     50     91       29      53     63    115
+  3     8956  215/215        14      41     52     93       30      54     66    120
+
+── Summary ─────────────────────────────────────────
+  iterations       : 3
+  chunks/iter      : 215
+  bytes/iter       : 13706
+  chunk_size       : 64
+  timeout_ms       : 3000
+  wall_ms/iter     : min=8917 median=8942 mean=8938 max=8956
+  per-chunk mean   : 41.57 ms (wall / chunks/iter)
+```
+
+`ff_*` columns are `first_frame_latency_ms` (request → first reply frame,
+i.e. transport + node processing). `tt_*` columns are `total_duration_ms`
+(request → full reply assembled and ACKed, i.e. the whole read cycle).
+
+Comparing `per-chunk mean` from `cdi-probe` to the same node's per-batch
+timing in the Bowties app config-read log lets you isolate:
+
+- **`cdi-probe` mean ≈ app mean** → overhead is in `lcc-rs` / transport /
+  peer_session — a Bowties app code change won't help.
+- **`cdi-probe` mean « app mean** → overhead is app-side (batching,
+  Tauri progress emits, per-element `ConfigValue` parse, HashMap ops).
+  A targeted Bowties frontend/backend change can help.
+
 ## Why this exists
 
 Testing pacing changes through the Tauri UI is slow: change a constant,
