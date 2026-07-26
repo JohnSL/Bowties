@@ -10,7 +10,7 @@ use bowties_core::channel_events::{resolve_event_ids, resolve_lamp_row_path_pref
 use bowties_core::layout::channels::{ChannelBinding, InformationChannel};
 use bowties_core::logic_adapter::{
     build_conditional_line_address_map, compile_facility, get_capacity, has_conditional_lines,
-    resolve_downstream_binding, resolve_field_writes, CompileInput, CompiledLogicPlan,
+    resolve_downstream_binding, resolve_field_writes, reset_facility, CompileInput, CompiledLogicPlan,
     InputChannelEvents, LogicCapacity, PinEvents,
 };
 use bowties_core::node_key::NodeKey;
@@ -299,11 +299,12 @@ pub async fn compile_logic_for_facility(
         .config_tree(&target_parsed_key)
         .ok_or_else(|| format!("no CDI tree for target node {}", target_node_key))?;
     let address_map = build_conditional_line_address_map(target_tree);
-    let field_writes = resolve_field_writes(&compiler_output.unresolved_writes, &address_map);
+    let field_writes = resolve_field_writes(&compiler_output.field_writes, &address_map);
 
     Ok(CompiledLogicPlan {
         allocation: compiler_output.allocation,
         field_writes,
+        wiring_plan: compiler_output.wiring_plan,
     })
 }
 
@@ -366,4 +367,49 @@ pub async fn get_logic_capacity(
         &target_node_key,
         &layout_state.effective_facilities().logic_allocations,
     ))
+}
+
+/// Reset the logic for a facility (inverse of compile_logic_for_facility).
+///
+/// Produces field writes that set all fields in the allocated conditional
+/// line range back to CDI defaults (disabled state). Used when deleting a
+/// facility to reclaim the allocation and clear the CDI drafts.
+///
+/// Returns an empty vec if the facility has no allocation (idempotent).
+#[tauri::command]
+pub async fn reset_logic_for_facility(
+    facility_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<bowties_core::logic_adapter::CompiledFieldWrite>, String> {
+    let layout_guard = state.layout_state.read().await;
+    let layout_state = layout_guard
+        .as_ref()
+        .ok_or_else(|| "no layout is open".to_string())?;
+
+    // Locate the facility and its current allocation.
+    let facility = layout_state
+        .effective_facilities()
+        .facilities
+        .iter()
+        .find(|f| f.facility_id == facility_id)
+        .ok_or_else(|| format!("unknown facility '{facility_id}'"))?;
+
+    let Some(allocation) = facility.logic_allocation.as_ref() else {
+        // No allocation — nothing to reset. Return empty vec (idempotent).
+        return Ok(vec![]);
+    };
+
+    // Generate unresolved field writes for the reset.
+    let unresolved_writes = reset_facility(allocation);
+
+    // Resolve addresses from the target node's config tree.
+    let target_parsed_key = bowties_core::node_key::NodeKey::parse(&allocation.target_node_key)
+        .map_err(|e| format!("invalid target node key '{}': {}", allocation.target_node_key, e))?;
+    let target_tree = layout_state
+        .config_tree(&target_parsed_key)
+        .ok_or_else(|| format!("no CDI tree for target node {}", allocation.target_node_key))?;
+    let address_map = build_conditional_line_address_map(target_tree);
+    let field_writes = resolve_field_writes(&unresolved_writes, &address_map);
+
+    Ok(field_writes)
 }

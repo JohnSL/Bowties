@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
 import type { Facility } from '$lib/api/facilities';
 import type { InformationChannel } from '$lib/api/channels';
+import { findUpstreamReferrers } from '$lib/utils/facilityReferences';
 
 const listBehaviorTemplatesMock = vi.fn<() => Promise<BehaviorTemplate[]>>(async () => []);
 vi.mock('$lib/api/behaviorTemplates', () => ({
@@ -137,6 +138,7 @@ vi.mock('$lib/api/facilityBowties', () => ({
 // Mock the logic adapter IPC for compiled templates (Spec 020 / S2).
 vi.mock('$lib/api/logicAdapter', () => ({
   compileLogicForFacility: vi.fn(),
+  resetLogicForFacility: vi.fn(),
 }));
 // Spec 018 / S6 bugfix — orchestrator now mirrors drafts through the
 // LayoutState.drafts seam before every compose IPC. Mock the two
@@ -147,7 +149,7 @@ vi.mock('$lib/api/layout', () => ({
 }));
 const { composeFacilityBowties } = await import('$lib/api/facilityBowties');
 const { syncLayoutDrafts } = await import('$lib/api/layout');
-const { compileLogicForFacility } = await import('$lib/api/logicAdapter');
+const { compileLogicForFacility, resetLogicForFacility } = await import('$lib/api/logicAdapter');
 
 // Stub the node-tree store lookup: tearDownFacilityBowties needs to resolve
 // consumer leaves in the tree so it can write fresh event IDs onto them.
@@ -531,7 +533,52 @@ describe('removeFromSlot triggers teardown BEFORE detach (Spec 018 / S6 — T13)
     expect(post.input).toEqual([]);
     expect(composeFacilityBowties).toHaveBeenCalledOnce();
   });
+
+  // Spec 020 / S6 bugfix — same inverse-path symmetry gap as
+  // `deleteFacility`: `removeFromSlot` calls `tearDownFacilityBowties`
+  // BEFORE the detach mutation, so at teardown time the ABS facility is
+  // still Wired — exactly the code path the fix targets.
+  it('S6 bugfix: removeFromSlot on Wired compiled-template facility skips the composer IPC', async () => {
+    listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR, ABS_3_ASPECT]);
+    await behaviorTemplatesStore.loadBehaviorTemplates();
+
+    channelsStore.hydrateBaseline([bod(1), signalAspect()]);
+    facilitiesStore.hydrateBaseline([
+      {
+        facilityId: 'f-abs-1',
+        templateId: 'abs-3-aspect-signal',
+        name: 'Signal 5',
+        slotBindings: { input: ['ch-bod-1'], output: ['ch-signal-1'] },
+      },
+    ]);
+    vi.mocked(composeFacilityBowties).mockReset();
+
+    await orch.removeFromSlot({ facilityId: 'f-abs-1', slotLabel: 'output', channelId: 'ch-signal-1' });
+
+    // Inverse-path short-circuit fires; composer IPC never invoked.
+    expect(composeFacilityBowties).not.toHaveBeenCalled();
+    // The detach did land.
+    const post = facilitiesStore.facilities.find((f) => f.facilityId === 'f-abs-1')!.slotBindings;
+    expect(post.output).toEqual([]);
+  });
 });
+
+// ── Spec 020 / S6: deleteFacility + resource reclamation ──────────────────
+
+const ABS_3_ASPECT: BehaviorTemplate = {
+  templateId: 'abs-3-aspect-signal',
+  displayName: 'ABS 3-Aspect Signal',
+  slots: [
+    { label: 'input', displayLabel: 'block', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
+    { label: 'output', displayLabel: 'signal', kind: 'consumer', requiredRole: 'signal-aspect', minChannels: 1, maxChannels: 1 },
+  ],
+  mapping: [
+    { producerState: 'occupied', consumerCommand: 'stop' },
+    { producerState: 'clear', consumerCommand: 'clear' },
+  ],
+  compilationTarget: 'compiled',
+  rules: [],
+};
 
 describe('deleteFacility (Spec 018 / S6 — D2 wrapper)', () => {
   it('tears down bowties then deletes the facility', async () => {
@@ -582,24 +629,149 @@ describe('deleteFacility (Spec 018 / S6 — D2 wrapper)', () => {
     expect(facilitiesStore.facilities.some((f) => f.facilityId === 'f-1')).toBe(false);
     removeSpy.mockRestore();
   });
+
+  it('S6: deleteFacility calls resetLogicForFacility when facility has allocation', async () => {
+    // Setup: ABS facility with compiled template
+    const signalCh: InformationChannel = {
+      id: 'ch-signal-1',
+      name: 'Signal 1',
+      role: 'signal-aspect',
+      style: '2-led-bicolor-aspect',
+      ownership: 'user-owned',
+      binding: { kind: 'lampRow', nodeKey: 'N3', rowOrdinal: 1 },
+    };
+    channelsStore.hydrateBaseline([bod(1), signalCh]);
+    facilitiesStore.hydrateBaseline([
+      {
+        facilityId: 'f-abs-1',
+        templateId: 'abs-3-aspect-signal',
+        name: 'Signal 5',
+        slotBindings: { input: ['ch-bod-1'], output: ['ch-signal-1'] },
+        logicAllocation: {
+          facilityId: 'f-abs-1',
+          targetNodeKey: 'N-tower',
+          conditionalLines: { start: 0, count: 2 },
+        },
+      },
+    ]);
+
+    // Delete facility and verify orchestrator calls resetLogicForFacility
+    vi.mocked(resetLogicForFacility).mockResolvedValueOnce([
+      { leafPath: 'CL:0:Function', space: 253, address: 0, value: [0], elementType: 'int' },
+      { leafPath: 'CL:1:Function', space: 253, address: 2, value: [0], elementType: 'int' },
+    ]);
+    vi.mocked(composeFacilityBowties).mockResolvedValue([]);
+    await orch.deleteFacility('f-abs-1');
+
+    // Verify orchestrator called reset, deleted facility, and removed user-owned channel
+    expect(resetLogicForFacility).toHaveBeenCalledWith('f-abs-1');
+    expect(facilitiesStore.facilities.some((f) => f.facilityId === 'f-abs-1')).toBe(false);
+    expect(channelsStore.channels.some((c) => c.id === 'ch-signal-1')).toBe(false);
+  });
+
+  it('S6: delete facility with downstream referrers', async () => {
+    // Setup: two ABS facilities where f-abs-2 binds f-abs-1's output as downstream-signal
+    const signalCh: InformationChannel = {
+      id: 'ch-signal-1',
+      name: 'Signal 1',
+      role: 'signal-aspect',
+      style: '2-led-bicolor-aspect',
+      ownership: 'user-owned',
+      binding: { kind: 'lampRow', nodeKey: 'N3', rowOrdinal: 1 },
+    };
+    const downstreamSignalCh: InformationChannel = {
+      id: 'ch-signal-2',
+      name: 'Signal 2 (downstream)',
+      role: 'signal-aspect',
+      style: '2-led-bicolor-aspect',
+      ownership: 'user-owned',
+      binding: { kind: 'lampRow', nodeKey: 'N3', rowOrdinal: 2 },
+    };
+    channelsStore.hydrateBaseline([bod(1), signalCh, downstreamSignalCh]);
+    facilitiesStore.hydrateBaseline([
+      {
+        facilityId: 'f-abs-1',
+        templateId: 'abs-3-aspect-signal',
+        name: 'Signal 5',
+        slotBindings: { input: ['ch-bod-1'], output: ['ch-signal-1'] },
+        logicAllocation: {
+          facilityId: 'f-abs-1',
+          targetNodeKey: 'N-tower',
+          conditionalLines: { start: 0, count: 2 },
+        },
+      },
+      {
+        facilityId: 'f-abs-2',
+        templateId: 'abs-3-aspect-signal',
+        name: 'Signal 6',
+        slotBindings: { input: ['ch-bod-1'], output: ['ch-signal-2'], 'downstream-signal': ['ch-signal-1'] },
+        logicAllocation: {
+          facilityId: 'f-abs-2',
+          targetNodeKey: 'N-tower',
+          conditionalLines: { start: 2, count: 2 },
+        },
+      },
+    ]);
+
+    // Verify upstream referrers detection
+    const referrers = findUpstreamReferrers('f-abs-1', facilitiesStore.facilities);
+    expect(referrers).toHaveLength(1);
+    expect(referrers[0].facilityId).toBe('f-abs-2');
+
+    // Delete facility f-abs-1 (has referrers)
+    vi.mocked(resetLogicForFacility).mockResolvedValueOnce([
+      { leafPath: 'CL:0:Function', space: 253, address: 0, value: [0], elementType: 'int' },
+      { leafPath: 'CL:1:Function', space: 253, address: 2, value: [0], elementType: 'int' },
+    ]);
+    vi.mocked(composeFacilityBowties).mockResolvedValue([]);
+    await orch.deleteFacility('f-abs-1');
+
+    // Verify allocation freed and channel removed
+    expect(facilitiesStore.facilities.some((f) => f.facilityId === 'f-abs-1')).toBe(false);
+    expect(resetLogicForFacility).toHaveBeenCalledWith('f-abs-1');
+    expect(channelsStore.channels.some((c) => c.id === 'ch-signal-1')).toBe(false);
+    expect(channelsStore.channels.some((c) => c.id === 'ch-signal-2')).toBe(true);
+  });
+
+  // Spec 020 / S6 bugfix — the inverse path (`resetComposedLeavesForFacility`)
+  // was not updated alongside `composeBowtiesIfWired`'s compile-vs-compose
+  // split (Spec 020 / S1), so deleting a Wired ABS facility unconditionally
+  // called the composer IPC and hit `MissingConsumerLeaf` for the
+  // signal-aspect consumer channel, which has no composer mapping.
+  it('S6 bugfix: deleteFacility on Wired compiled-template facility skips the composer IPC', async () => {
+    // Ensure the ABS template is registered.
+    listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR, ABS_3_ASPECT]);
+    await behaviorTemplatesStore.loadBehaviorTemplates();
+
+    channelsStore.hydrateBaseline([bod(1), signalAspect()]);
+    facilitiesStore.hydrateBaseline([
+      {
+        facilityId: 'f-abs-1',
+        templateId: 'abs-3-aspect-signal',
+        name: 'Signal 5',
+        slotBindings: { input: ['ch-bod-1'], output: ['ch-signal-1'] },
+        logicAllocation: {
+          facilityId: 'f-abs-1',
+          targetNodeKey: 'N-tower',
+          conditionalLines: { start: 0, count: 2 },
+        },
+      },
+    ]);
+    vi.mocked(resetLogicForFacility).mockResolvedValueOnce([]);
+    vi.mocked(composeFacilityBowties).mockReset();
+
+    await orch.deleteFacility('f-abs-1');
+
+    // The inverse-path short-circuit must fire — composer IPC never called.
+    expect(composeFacilityBowties).not.toHaveBeenCalled();
+    // But the compile-side reset path DID fire.
+    expect(resetLogicForFacility).toHaveBeenCalledWith('f-abs-1');
+    // Facility is gone.
+    expect(facilitiesStore.facilities.some((f) => f.facilityId === 'f-abs-1')).toBe(false);
+  });
 });
 
 // ── Spec 020 / S2 — needsLogicTarget return value ───────────────────────────
-
-const ABS_3_ASPECT: BehaviorTemplate = {
-  templateId: 'abs-3-aspect-signal',
-  displayName: 'ABS 3-Aspect Signal',
-  slots: [
-    { label: 'input', displayLabel: 'block', kind: 'producer', requiredRole: 'block-occupancy', minChannels: 1, maxChannels: 1 },
-    { label: 'output', displayLabel: 'signal', kind: 'consumer', requiredRole: 'signal-aspect', minChannels: 1, maxChannels: 1 },
-  ],
-  mapping: [
-    { producerState: 'occupied', consumerCommand: 'stop' },
-    { producerState: 'clear', consumerCommand: 'clear' },
-  ],
-  compilationTarget: 'compiled',
-  rules: [],
-};
 
 function signalAspect(): InformationChannel {
   return {

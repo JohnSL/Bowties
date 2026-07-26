@@ -12,6 +12,7 @@
     onSelectChannel,
     onAddChannel,
     onRemoveFromSlot,
+    onDeleteRequest,
   }: {
     nodeName: (nodeKey: string) => string;
     /** Resolve structured display parts for a node key. */
@@ -36,6 +37,8 @@
     /** Spec 018 / S5 — consumer-side Add-channel intent emitter. */
     onAddChannel?: (facilityId: string, slotLabel: string) => void;
     onRemoveFromSlot?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
+    /** Spec 020 / S6 — facility deletion request emitter. */
+    onDeleteRequest?: (facilityId: string) => void;
   } = $props();
 </script>
 
@@ -45,6 +48,7 @@
     {onSelectChannel}
     {onAddChannel}
     {onRemoveFromSlot}
+    {onDeleteRequest}
   />
   <ChannelsPanel {nodeName} {nodeParts} {resolvedEventIds} {daughterboardName} {usedBy} />
 </div>

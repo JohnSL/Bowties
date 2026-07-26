@@ -449,3 +449,84 @@ lose edits. The `RwLock::write()` guard serializes all mutations.
 state, alias. These are pure bus-IO working buffers with no concurrent-
 mutation race (actor mailbox serializes them) and no save-flow concern.
 Moving them is not warranted (YAGNI).
+
+## 2026-07-25 extension: compile-vs-compose inverse-path symmetry
+
+**Trigger.** Spec 020 / S6 bugfix. On manual verification of S6, removing a
+signal-aspect output channel from a Wired ABS facility slot — or deleting
+the facility — failed with:
+
+> `[facility] deleteFacility failed: consumer channel '<uuid>' style`
+> `'2-led-bicolor-aspect' has no composable event mapping`
+
+**Root cause — forward/inverse asymmetry at the Facility Bowtie Lifecycle seam.**
+Spec 020 / S1 introduced a compile-vs-compose discriminator on the forward
+path: `composeBowtiesIfWired` in the frontend orchestrator checks
+`template.compilationTarget === 'compiled'` and routes Compiled facilities
+to `compileIfWired` (the composer is never called for them). The inverse
+path `resetComposedLeavesForFacility` was NOT updated. For Wired facilities
+it unconditionally called `composeFacilityBowties` (backend IPC → `compose_bowtie_ops`),
+which hit the style-mapping check on signal-aspect output channels — channels
+that legitimately have no composer mapping because Compiled templates use a
+disjoint write surface (conditional-line fields, not `EventID` consumer
+leaves). The reported callers were user-initiated `removeFromSlot` and
+`deleteFacility`; the same latent bug lurked in `_cascadeDetach` (runtime
+hardware-channel loss) and the load-time `reconcileDanglingChannelRefsOnLoad`,
+both of which funnel through the same primitive.
+
+**Decision.** Encode the forward/inverse symmetry as executable contract at
+two complementary layers (Option C — orchestrator symmetry + composer
+boundary):
+
+- **Frontend orchestrator (`resetComposedLeavesForFacility`).** Consult
+  `template.compilationTarget` at the same seam the forward path already
+  does. Look up the facility via `facilitiesStore.facilities.find(...)`,
+  then the template via `behaviorTemplatesStore.findByTemplateId(...)`; if
+  `template.compilationTarget === 'compiled'`, return early — no composer
+  IPC, no metadata-driven fallback. Compiled facilities never call
+  `bowtieMetadataStore.createBowtie`, so their metadata is always empty;
+  the compile-side reset is handled separately by `resetLogicForFacility()`
+  in `deleteFacility()`. The short-circuit sits BEFORE the existing
+  `facilityStatus === 'Wired'` branch.
+
+- **Composer boundary (`bowties-core::facility_bowties::compose_bowtie_ops`
+  and the `compose_facility_bowties` IPC).** Both return `Ok(vec![])` when
+  `template.compilation_target == CompilationTarget::Compiled`. The pure
+  function's guard sits at the top, before the Wired guard and producer/
+  consumer slot lookups; the IPC's guard sits right after `find_template()`,
+  before any CDI-tree gathering, producer-event-id resolution, or
+  `consumer_leaf_index_for_style` lookup — so no partial work happens and
+  the pre-existing `MissingConsumerLeaf` / "no composable event mapping"
+  error at the IPC (legitimate for genuinely composed templates whose style
+  has no mapping) is unreachable for Compiled templates.
+
+**Symmetry rule.** Any discriminator that gates the forward composition path
+at the Facility Bowtie Lifecycle seam MUST be mirrored at the same seam on
+the inverse (teardown / reset) path. Adding a new `CompilationTarget`
+variant (or any equivalent split) requires updating both
+`composeBowtiesIfWired` (forward) and `resetComposedLeavesForFacility`
+(inverse); the composer's `Ok(vec![])` for non-composing variants keeps the
+invariant executable at the deepest layer regardless of caller diligence.
+
+**Regression class prevented.** (a) Forward-only compile-vs-compose
+extensions — any future Compiled template inherits correct inverse
+handling without another patch. (b) Any-caller composer misuse for
+Compiled facilities — caller-independent because the composer's boundary
+is the last common gate; `_cascadeDetach` and `reconcileDanglingChannelRefsOnLoad`
+inherit the fix. (c) The recurring "deep-fix-only-at-symptom-site" failure
+mode called out in the `architecture-first-fix` skill.
+
+**Tests pinning the contract.**
+- `bowties-core/src/facility_bowties/mod.rs::compiled_template_short_circuits_to_empty_ops`
+  — `compose_bowtie_ops` returns `Ok(vec![])` for a Compiled template
+  without reaching the wired-guard / channel-role / consumer-leaf-index
+  work.
+- `app/src/lib/orchestration/facilityOrchestrator.test.ts` — `S6 bugfix:
+  deleteFacility on Wired compiled-template facility skips the composer
+  IPC` and `S6 bugfix: removeFromSlot on Wired compiled-template facility
+  skips the composer IPC` — assert `composeFacilityBowties` is not called
+  and (for deleteFacility) that `resetLogicForFacility` still fires.
+
+**Cross-references.** Facility Bowtie Lifecycle entry in `aiwiki/seams.md`
+(`Last-modified: 2026-07-25`). Spec 020 / S6 slice card session note dated
+2026-07-25 (bugfix follow-up).

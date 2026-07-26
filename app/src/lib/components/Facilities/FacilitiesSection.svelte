@@ -11,12 +11,15 @@
     onSelectChannel,
     onAddChannel,
     onRemoveFromSlot,
+    onDeleteRequest,
   }: {
     resolvedEventIds?: ReadonlyMap<string, Record<string, string>>;
     onSelectChannel?: (facilityId: string, slotLabel: string) => void;
     /** Spec 018 / S5 — consumer-side Add-channel intent emitter. */
     onAddChannel?: (facilityId: string, slotLabel: string) => void;
     onRemoveFromSlot?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
+    /** Spec 020 / S6 — emit deletion request; caller gates on confirmation dialog. */
+    onDeleteRequest?: (facilityId: string) => void;
   } = $props();
 
   let showAddDialog = $state(false);
@@ -36,13 +39,9 @@
     facilitiesStore.renameFacility(facilityId, newName);
   }
   function handleDelete(facilityId: string) {
-    // Spec 018 / S6 — route through the orchestrator so composed
-    // bowties are torn down before the facility is removed. Calling
-    // `facilitiesStore.deleteFacility` directly would leave orphan
-    // bowtie metadata rows tagged with `createdByFacility === id`.
-    facilityOrchestrator.deleteFacility(facilityId).catch((err) => {
-      console.error('[facility] deleteFacility failed', err);
-    });
+    // Spec 020 / S6 — emit deletion request. Caller (route) will check for
+    // upstream referrers and gate deletion on confirmation dialog if needed.
+    onDeleteRequest?.(facilityId);
   }
 </script>
 

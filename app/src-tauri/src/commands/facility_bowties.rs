@@ -103,6 +103,16 @@ pub async fn compose_facility_bowties(
             )
         })?;
 
+    // Spec 020 / S6 bugfix — inverse-path symmetry with the frontend
+    // `composeBowtiesIfWired` compile-vs-compose split. Skip all CDI /
+    // event-id / consumer-leaf-index work; compiled templates produce
+    // zero composition ops (disjoint write surface).
+    if template.compilation_target
+        == bowties_core::behavior_templates::CompilationTarget::Compiled
+    {
+        return Ok(vec![]);
+    }
+
     // Snapshot channels.
     let channels: Vec<InformationChannel> = layout_state.effective_channels().channels.clone();
 

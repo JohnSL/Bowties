@@ -2,7 +2,7 @@
 
 Branch: 020-abs-signaling
 Generated: 2026-07-07
-Status: 5/7 slices complete
+Status: 6/7 slices complete
 
 ## Architecture
 
@@ -156,7 +156,7 @@ The ordered slice set. An overview table for at-a-glance scanning, followed by o
 | S3 | Signal-aspect channel state display | AFK | S1 | done |
 | S4 | Facility comprehension view + editable bindings | HITL | S3 | done |
 | S5 | ABS cascade via same-node Track Circuits | HITL | S4 | done |
-| S6 | Facility deletion + resource reclamation | AFK | S2 | sketched |
+| S6 | Facility deletion + resource reclamation | AFK | S2 | done |
 | S7 | Capacity display + target node suggestion | AFK | S4 | sketched |
 
 ### S1: ABS template + signal-aspect style + full vertical apply path (stub compile) [HITL]
@@ -319,17 +319,38 @@ The ordered slice set. An overview table for at-a-glance scanning, followed by o
 ### S6: Facility deletion + resource reclamation [AFK]
 
 **Intent**: Deleting a signal facility fully reclaims all allocated conditional lines and Track Circuits — resources are immediately available for reuse.
-**Boundary**: Orchestrator → Backend (`logic_adapter/` + `LayoutState`)
+**Boundary**: Utils → Component (dialog) → Route → Orchestrator → Backend (`logic_adapter/` + `LayoutState`)
 **Blocked by**: S2
-**Status**: sketched
+**Status**: done
+**Complexity**: medium
+**User stories**: US1
 
 **Acceptance criteria**:
-- [ ] Deleting an applied facility resets its conditional lines to disabled/default state (all variable and action fields cleared as CDI drafts)
-- [ ] Logic allocation record is removed — conditional lines and Track Circuits freed for reuse
-- [ ] A subsequent facility can reuse the same lines and circuits without manual intervention
-- [ ] When deleting a facility referenced as a downstream signal by other facilities, Bowties warns listing affected upstream facilities and requires confirmation before proceeding
-- [ ] Save toolbar and close prompt reflect the deletion-related CDI changes (Dirty Aggregation seam — Save toolbar + close prompt consumers)
-- [ ] User-owned signal-aspect channel is removed alongside the facility (no orphan channels; User-Owned Channel Lifecycle seam)
+- [x] Deleting an applied facility resets its conditional lines to disabled/default state (all variable and action fields cleared as CDI drafts)
+- [x] Logic allocation record is removed — conditional lines and Track Circuits freed for reuse
+- [x] A subsequent facility can reuse the same lines and circuits without manual intervention
+- [x] When deleting a facility referenced as a downstream signal by other facilities, Bowties warns listing affected upstream facilities and requires confirmation before proceeding
+- [x] Save toolbar and close prompt reflect the deletion-related CDI changes (Dirty Aggregation seam — Save toolbar + close prompt consumers)
+- [x] User-owned signal-aspect channel is removed alongside the facility (no orphan channels; User-Owned Channel Lifecycle seam)
+
+**Architecture note**: Most of S6's plumbing already landed in S1-S5 — `FreeLogic` delta type + backend apply path, `facilitiesStore.freeLogicAllocation()` + `deleteFacility()` call site, user-owned channel removal, dirty-aggregation wiring. S6 fills only two gaps:
+
+1. **Compiler owns reset (symmetric compilation)** — a new `reset_facility()` function in `logic_adapter/` produces `CompiledFieldWrite` entries that set the allocated conditional lines back to CDI defaults. Same module owns forward compile and inverse reset, matching how S4 uses the compiler for downstream recompile. Frontend never derives "default" values for CDI fields; that is CDI-schema knowledge owned backend. This mirrors the existing `resetComposedLeavesForFacility()` pattern in the orchestrator that resets bowtie consumer leaves on delete (facilityOrchestrator.ts L460–495) — S6 extends that pattern from bowtie leaves to conditional-line fields.
+2. **Downstream-reference warning uses existing dialog pattern** — a pure `findUpstreamReferrers()` scan lives in `app/src/lib/utils/**`; a new `DeleteFacilityDialog.svelte` mirrors `ChannelRemovalDialog.svelte`; `+page.svelte` hosts the dialog state and gates `facilityOrchestrator.deleteFacility()` on confirmation. The orchestrator itself stays free of UI concerns — it just deletes when called.
+
+**Tasks**:
+- [x] S6-T1: Integration test — allocate→delete→reuse round trip: create ABS facility A, compile (allocates lines 0–1 on Tower LCC), verify CDI drafts staged; delete A, verify (a) allocation removed via `FreeLogic` delta, (b) staged CDI drafts reverted to defaults, (c) user-owned signal-aspect channel removed; create facility B, compile, verify it reuses lines 0–1. Second integration test — delete facility C that is bound as downstream on facility D: warning dialog lists D as affected, cancel aborts; confirm proceeds with deletion + reclamation
+- [x] S6-T2: bowties-core `logic_adapter` — Add `reset_facility(allocation: &LogicAllocation) -> Vec<CompiledFieldWrite>` that produces field writes clearing every field of the allocated conditional line range to CDI defaults (Function=0/Disabled, VariableTrigger=Off, VariableSource=None, ActionBehavior=Off, ActionDestination=None, event IDs = 00.00.00.00.00.00.00.00, mast group flags cleared). Reuse existing address-calculation constants from S2. Unit tests: reset covers the exact range in the allocation; produces the same field count per line as `compile_facility` (symmetry check); works for 2-line and 3-line allocations; works when `track_circuit` is set (TC-write action slots also cleared)
+- [x] S6-T3: Tauri IPC — Add `reset_logic_for_facility(facilityId: String) -> Vec<CompiledFieldWrite>` command that reads the facility's current `LogicAllocation` from effective LayoutState and calls `reset_facility()`. Mirrors `compile_logic_for_facility` shape. Returns empty vec if the facility has no allocation
+- [x] S6-T4: Frontend API + orchestrator — Add `resetLogicForFacility()` in `$lib/api/logicAdapter.ts`; extend `facilityOrchestrator.deleteFacility()` to call `resetLogicForFacility()` **before** `tearDownFacilityBowties()` (so we produce reset drafts against the still-present allocation), stage each returned `CompiledFieldWrite` via `configEditor.applyEdit()`. The subsequent `facilitiesStore.deleteFacility()` call already emits the `FreeLogic` delta. Order matters: reset drafts → tear down bowties → delete facility record → remove user-owned channels
+- [x] S6-T5: Frontend utils — `app/src/lib/utils/facilityReferences.ts` with `findUpstreamReferrers(facilityId: string, facilities: FacilityRecord[]): FacilityRecord[]`: scan all facilities' `downstream-signal` slot bindings, resolve each bound channel to its owning facility (via `slotBindings['output']`), return the set of facilities whose downstream-signal points at any channel owned by `facilityId`. Unit tests: no referrers case, single referrer, multiple referrers, self-reference excluded
+- [x] S6-T6: Frontend component — `app/src/lib/components/DeleteFacilityDialog.svelte` mirroring `ChannelRemovalDialog.svelte`: props `{ facilityName, referrers: FacilityRecord[], onConfirm, onCancel }`; body lists each referrer name and warns that the affected upstream signals will no longer cascade correctly. Use existing Dialog primitives + danger-intent confirm button
+- [x] S6-T7: Route wiring — In `+page.svelte`, replace the direct `facilityOrchestrator.deleteFacility()` call from `FacilitiesSection` with a two-step flow: on delete request, compute `findUpstreamReferrers()`; if empty, call `deleteFacility()` directly; if non-empty, show `DeleteFacilityDialog` and only call `deleteFacility()` on confirm. Route hosts dialog state; `FacilitiesSection` gains an `onDeleteRequest` prop that emits up
+- [x] S6-T8: Validate — `cargo test -p bowties-core` green; `vitest run` green; manually verify save/discard round-trip: delete an applied facility → Save toolbar shows dirty → Save → reopen → allocation gone, conditional lines defaulted, ready for a new facility to reuse them
+
+<!-- Session: 2026-07-25 — Completed S6. Next: S7 (AFK). -->
+<!-- Session: 2026-07-25 — S6 bugfix (in-session, no re-open): forward/inverse asymmetry in the Facility Bowtie Lifecycle seam surfaced on manual verification — Wired ABS facilities failed to remove-from-slot or delete with `consumer channel style '2-led-bicolor-aspect' has no composable event mapping`. Root cause: `composeBowtiesIfWired` was updated in S1 to route Compiled templates to `compileIfWired`, but the inverse `resetComposedLeavesForFacility` unconditionally called `composeFacilityBowties` on Wired facilities. Fix (Option C, complementary layers): (a) frontend orchestrator short-circuits `resetComposedLeavesForFacility` when `template.compilationTarget === 'compiled'`, mirroring the forward path's discriminator at the same seam; (b) backend `compose_bowtie_ops` + IPC `compose_facility_bowties` both return `Ok(vec![])` for Compiled templates, encoding the disjoint-write-surface invariant at the composer boundary. Also closes latent bugs in `_cascadeDetach` and load-time `reconcileDanglingChannelRefsOnLoad` which funnel through the same primitive. Tests: `bowties-core/src/facility_bowties/mod.rs::compiled_template_short_circuits_to_empty_ops`; `facilityOrchestrator.test.ts` — `S6 bugfix: deleteFacility on Wired compiled-template facility skips the composer IPC` and `S6 bugfix: removeFromSlot on Wired compiled-template facility skips the composer IPC`. See ADR-0015 §"2026-07-25 extension" and aiwiki/seams.md Facility Bowtie Lifecycle. -->
+<!-- Session: 2026-07-26 — S6 follow-up (no re-open): a second user-visible bug from the same root cause remains — removing a channel from a Wired ABS facility does NOT clear the residual bowtie card from the catalog (Block Indicator does). The 2026-07-25 short-circuits are correct executable contract for the two-owner design, but they do not close this second bug because compile-side inverse (`resetLogicForFacility`) is wired only into `deleteFacility`, not into `removeFromSlot` / `_cascadeDetach` / `reconcileDanglingChannelRefsOnLoad`. Rather than adding per-caller compile-inverse plumbing (Track 1 bandage), the root cause — dual event-wiring ownership between `logic_adapter::compile_facility` and `facility_bowties::compose_bowtie_ops` — is being eliminated via a composer-unification refactor tracked in `plan-event-wiring.md` (slices `slices-event-wiring.md`). Landing that refactor closes the residual-catalog-card bug uniformly across every un-Wire path and supersedes the 2026-07-25 ADR-0015 extension by removing the split-ownership situation entirely. -->
 
 ### S7: Capacity display + target node suggestion [AFK]
 

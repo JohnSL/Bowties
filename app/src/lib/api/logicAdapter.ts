@@ -55,3 +55,10 @@ export async function getLogicCapacity(
 ): Promise<LogicCapacity> {
   return invoke<LogicCapacity>('get_logic_capacity', { targetNodeKey });
 }
+
+/** Reset the logic for a facility (produce CDI default field writes). */
+export async function resetLogicForFacility(
+  facilityId: string,
+): Promise<CompiledFieldWrite[]> {
+  return invoke<CompiledFieldWrite[]>('reset_logic_for_facility', { facilityId });
+}

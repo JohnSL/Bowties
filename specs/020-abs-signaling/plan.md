@@ -3,6 +3,10 @@
 **Branch**: `020-abs-signaling` | **Date**: 2026-07-07 | **Spec**: [spec.md](spec.md)
 **Input**: Feature specification from `specs/020-abs-signaling/spec.md`
 
+## Related refactors
+
+- **Composer event-wiring unification** ([plan-event-wiring.md](plan-event-wiring.md), tracker [slices-event-wiring.md](slices-event-wiring.md)) — prerequisite to closing the S6 residual-catalog-card bug on Un-Wire. Retires the compile-side event-ID authority in `logic_adapter::compile_facility`; consolidates all event-ID wiring (composed and compiled templates) under `facility_bowties::compose_bowtie_ops`. Supersedes ADR-0015 §"2026-07-25 extension" by eliminating the two-owner situation that extension addressed.
+
 ## Summary
 
 ABS Signaling introduces behavior templates that compile abstract railroad signaling rules into Tower LCC conditional line CDI writes, signal-aspect channels with hardware style mappings, and logic allocation tracking with capacity enforcement. The core value proposition: users select a template, map inputs and outputs, choose a target node, and Bowties compiles the entire conditional-line configuration — eliminating manual Tower LCC configuration for ABS signals.

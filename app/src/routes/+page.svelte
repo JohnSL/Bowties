@@ -115,6 +115,9 @@
   import type { ChannelRole, InformationChannel } from '$lib/api/channels';
   import { deriveChannelState, type ChannelState } from '$lib/utils/channelState';
   import { getLogicCapacity, type LogicCapacity } from '$lib/api/logicAdapter';
+  import DeleteFacilityDialog from '$lib/components/DeleteFacilityDialog.svelte';
+  import { findUpstreamReferrers } from '$lib/utils/facilityReferences';
+  import type { FacilityRecord } from '$lib/api/facilities';
 
   // Active tab state — 'config' (default), 'bowties', or 'railroad'
   let activeTab = $state<'config' | 'bowties' | 'railroad'>('config');
@@ -167,6 +170,15 @@
   let logicTargetDialog = $state<{
     facilityId: string;
     candidates: Array<{ nodeKey: string; displayName: string; capacity?: LogicCapacity }>;
+  } | null>(null);
+
+  // Spec 020 / S6: Delete facility confirmation dialog. Opened when deleting
+  // a facility that has upstream referrers (other facilities with this one as
+  // their downstream-signal input). Lists affected upstream facilities.
+  let deleteFacilityDialog = $state<{
+    facilityId: string;
+    facilityName: string;
+    referrers: FacilityRecord[];
   } | null>(null);
 
   // Spec 014 / S8.5 / T11: pending "Delete Placeholder Board" confirmation.
@@ -1677,6 +1689,50 @@
       );
     }
   }
+
+  // ── Spec 020 / S6 — Facility deletion with upstream referrer warning ──
+
+  function handleDeleteFacilityRequest(facilityId: string) {
+    const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+    if (!facility) return;
+
+    // Check for upstream referrers (facilities bound to this one as downstream-signal).
+    const referrers = findUpstreamReferrers(facilityId, facilitiesStore.facilities);
+    if (referrers.length > 0) {
+      // Open confirmation dialog with referrer list.
+      deleteFacilityDialog = {
+        facilityId,
+        facilityName: facility.name,
+        referrers,
+      };
+    } else {
+      // No referrers — delete directly.
+      proceedWithFacilityDeletion(facilityId);
+    }
+  }
+
+  function proceedWithFacilityDeletion(facilityId: string) {
+    facilityOrchestrator.deleteFacility(facilityId).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[facility] deleteFacility failed:', msg);
+      toast.push(`Could not delete facility: ${msg}`, {
+        theme: { '--toastBackground': '#c62828', '--toastColor': '#fff' },
+        initial: 0,
+      });
+    });
+  }
+
+  function handleDeleteFacilityConfirm() {
+    const facilityId = deleteFacilityDialog?.facilityId;
+    deleteFacilityDialog = null;
+    if (facilityId) {
+      proceedWithFacilityDeletion(facilityId);
+    }
+  }
+
+  function handleDeleteFacilityCancel() {
+    deleteFacilityDialog = null;
+  }
 </script>
 
 
@@ -1838,6 +1894,7 @@
           onSelectChannel={handleSelectChannelIntent}
           onAddChannel={handleAddChannelIntent}
           onRemoveFromSlot={handleRemoveFromSlot}
+          onDeleteRequest={handleDeleteFacilityRequest}
         />
       </div>
 
@@ -2038,6 +2095,15 @@
     channelCount={channelRemovalDialog.channelCount}
     onCancel={() => { channelRemovalDialog = null; }}
     onConfirm={() => { channelRemovalDialog?.onConfirm(); }}
+  />
+{/if}
+
+{#if deleteFacilityDialog}
+  <DeleteFacilityDialog
+    facilityName={deleteFacilityDialog.facilityName}
+    referrers={deleteFacilityDialog.referrers}
+    onCancel={handleDeleteFacilityCancel}
+    onConfirm={handleDeleteFacilityConfirm}
   />
 {/if}
 

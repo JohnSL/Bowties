@@ -407,6 +407,7 @@ pub fn run() {
             commands::clear_layout_drafts,         // Spec 018 / S6 bugfix: drop LayoutState drafts on Discard / after Save
             commands::compile_logic_for_facility,  // Spec 020 / S1: compile logic for a facility
             commands::get_logic_capacity,          // Spec 020 / S1: query logic capacity of a target node
+            commands::reset_logic_for_facility,    // Spec 020 / S6: reset logic for a deleted facility
             commands::channel_events::resolve_channel_event_ids,  // Spec 016 / S1: batch event ID resolution
             diagnostics::get_diagnostic_report,
             update_menu_state,

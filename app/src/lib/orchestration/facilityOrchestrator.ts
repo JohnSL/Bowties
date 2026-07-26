@@ -22,7 +22,7 @@ import { configEditor } from '$lib/stores/configEditor.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
 import { composeFacilityBowties, type CompositionOp } from '$lib/api/facilityBowties';
-import { compileLogicForFacility, type CompiledLogicPlan } from '$lib/api/logicAdapter';
+import { compileLogicForFacility, resetLogicForFacility, type CompiledLogicPlan } from '$lib/api/logicAdapter';
 import { syncLayoutDrafts } from '$lib/api/layout';
 import { canonicalEventIdHex } from '$lib/utils/serialize';
 import { editKeyForLeaf } from '$lib/utils/editKey';
@@ -458,6 +458,18 @@ function findNextFreeTrackCircuit(targetNodeKey: string): number {
  * the standard save flow (ADR-0012 extension 2026-07-03).
  */
 async function resetComposedLeavesForFacility(facilityId: string): Promise<void> {
+  // Spec 020 / S6 bugfix — inverse-path symmetry with composeBowtiesIfWired.
+  // Compiled templates use a disjoint write surface (conditional-line
+  // fields, not EventID consumer leaves); the compile-side reset is
+  // handled separately by resetLogicForFacility in deleteFacility. No
+  // composer IPC, no metadata-driven fallback (metadata is always empty
+  // for compiled templates).
+  const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+  if (facility) {
+    const template = behaviorTemplatesStore.findByTemplateId(facility.templateId);
+    if (template?.compilationTarget === 'compiled') return;
+  }
+
   if (effectiveLayoutStore.facilityStatus(facilityId) === 'Wired') {
     await syncDraftsForComposition();
     const ops = await composeFacilityBowties(facilityId);
@@ -521,6 +533,10 @@ export async function tearDownFacilityBowties(facilityId: string): Promise<void>
  * so the cascade orchestrator (which watches `channelsStore.channels`)
  * cannot find slot bindings referencing the disappearing channel and
  * interfere with our teardown/delete sequence.
+ * 
+ * Reset order (Spec 020 / S6): reset conditional lines → tear down bowties →
+ * delete facility record → remove user-owned channels. This ensures CDI
+ * defaults are staged while the allocation is still present.
  */
 export async function deleteFacility(facilityId: string): Promise<void> {
   // Snapshot user-owned channel IDs before the facility is deleted.
@@ -533,6 +549,13 @@ export async function deleteFacility(facilityId: string): Promise<void> {
         userOwnedChannelIds.push(channelId);
       }
     }
+  }
+
+  // Reset logic allocation (if present) BEFORE teardown so CDI defaults are staged
+  // while the allocation record is still present.
+  if (facility?.logicAllocation) {
+    const resetWrites = await resetLogicForFacility(facilityId);
+    stageFieldWritesAsDrafts(resetWrites, facility.logicAllocation.targetNodeKey);
   }
 
   await tearDownFacilityBowties(facilityId);

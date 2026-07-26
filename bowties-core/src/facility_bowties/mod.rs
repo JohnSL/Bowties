@@ -166,6 +166,14 @@ pub fn compose_bowtie_ops(
     per_node_cdi: &HashMap<String, NodeConfigTree>,
     consumer_leaf_index: &ConsumerLeafIndex,
 ) -> Result<Vec<CompositionOp>, FacilityCompositionError> {
+    // Spec 020 / S6 bugfix — inverse-path symmetry with `composeBowtiesIfWired`.
+    // Compiled templates produce zero composition ops by definition of the
+    // disjoint write surface (conditional-line fields, not EventID consumer
+    // leaves). Encoding this at the composer boundary protects every caller.
+    if template.compilation_target == crate::behavior_templates::CompilationTarget::Compiled {
+        return Ok(Vec::new());
+    }
+
     // ── Wired guard: every slot must be at its min_channels ──────────
     for slot in template.slots {
         let bound = facility
@@ -823,5 +831,45 @@ mod tests {
         assert!(role_matches(Some(EventRole::Ambiguous), EventRole::Consumer));
         assert!(role_matches(Some(EventRole::Consumer), EventRole::Consumer));
         assert!(!role_matches(Some(EventRole::Producer), EventRole::Consumer));
+    }
+
+    /// Spec 020 / S6 bugfix — inverse-path symmetry with the frontend's
+    /// `composeBowtiesIfWired`. Compiled templates (e.g. ABS 3-Aspect
+    /// Signal) use a disjoint write surface (conditional-line CDI fields,
+    /// not EventID consumer leaves), so the composer must short-circuit
+    /// to an empty op list before touching any producer/consumer slot
+    /// resolution — even when the caller-supplied `consumer_leaf_index`
+    /// is empty, which would otherwise surface `MissingConsumerLeaf` for
+    /// the template's `stop`/`clear` mappings.
+    #[test]
+    fn compiled_template_short_circuits_to_empty_ops() {
+        use crate::behavior_templates::ABS_3_ASPECT_SIGNAL;
+
+        let mut sb: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        sb.insert("input".to_string(), vec!["ch-bod-1".to_string()]);
+        sb.insert("output".to_string(), vec!["ch-signal-1".to_string()]);
+        let facility = Facility {
+            facility_id: "f-abs-1".to_string(),
+            template_id: "abs-3-aspect-signal".to_string(),
+            name: "Signal 5".to_string(),
+            slot_bindings: sb,
+            logic_allocation: None,
+        };
+
+        // Deliberately empty — a pre-fix implementation reaches the
+        // consumer-leaf-index lookup and raises `MissingConsumerLeaf`.
+        let empty_consumer_leaf_index: ConsumerLeafIndex = HashMap::new();
+
+        let ops = compose_bowtie_ops(
+            &facility,
+            &ABS_3_ASPECT_SIGNAL,
+            &[],
+            &HashMap::new(),
+            &HashMap::new(),
+            &empty_consumer_leaf_index,
+        )
+        .expect("compiled templates must short-circuit to Ok(vec![])");
+
+        assert!(ops.is_empty());
     }
 }
