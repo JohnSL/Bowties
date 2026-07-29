@@ -111,6 +111,21 @@ describe('selectChannelForSlot', () => {
     })).toThrow(orch.SlotAtMaxError);
     expect(facilitiesStore.facilities[0].slotBindings.input).toEqual(['ch-bod-1']);
   });
+
+  // Facility-slot binding compatibility (Option B, template-owned): mutation
+  // enforcement must not diverge from the picker's candidate projection —
+  // an exclusive-claim slot (Block Indicator's `input`) must reject a
+  // channel that already carries an exclusive claim on another facility.
+  it('throws ExclusiveClaimConflictError when attaching a channel already exclusively claimed by another facility', () => {
+    facilitiesStore.hydrateBaseline([
+      { facilityId: 'f-1', templateId: 'block-indicator', name: 'Block 5', slotBindings: { input: [], output: [] } },
+      { facilityId: 'f-2', templateId: 'block-indicator', name: 'Block 6', slotBindings: { input: ['ch-bod-1'], output: [] } },
+    ]);
+    expect(() => orch.selectChannelForSlot({
+      facilityId: 'f-1', slotLabel: 'input', channelId: 'ch-bod-1',
+    })).toThrow(orch.ExclusiveClaimConflictError);
+    expect(facilitiesStore.facilities[0].slotBindings.input).toEqual([]);
+  });
 });
 
 describe('removeFromSlot', () => {

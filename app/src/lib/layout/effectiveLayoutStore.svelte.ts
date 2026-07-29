@@ -177,12 +177,15 @@ class EffectiveLayoutStore {
   get channelUsageMap(): Map<string, ChannelUsageEntry[]> {
     const map = new Map<string, ChannelUsageEntry[]>();
     for (const facility of facilitiesStore.facilities) {
+      const template = behaviorTemplatesStore.findByTemplateId(facility.templateId);
       for (const [slotLabel, channelIds] of Object.entries(facility.slotBindings)) {
+        const shared = template?.slots.find((s) => s.label === slotLabel)?.shared ?? false;
         for (const channelId of channelIds) {
           const entry: ChannelUsageEntry = {
             facilityId: facility.facilityId,
             facilityName: facility.name,
             slotLabel,
+            shared,
           };
           const list = map.get(channelId);
           if (list) list.push(entry);
@@ -195,12 +198,21 @@ class EffectiveLayoutStore {
 
   /**
    * Channels filtered by `role` that are available for slot binding.
-   * By default (Spec 018 / S4 — D2: one-slot-per-channel invariant), a
-   * channel already bound to any facility is excluded. When `shared` is
-   * true (Spec 020 — ABS input slots), all role-compatible channels are
-   * returned regardless of existing bindings. The optional `excludeIds`
-   * set lets Rebind include the currently-bound channel as the pre-
-   * selected option even though it is technically bound.
+   *
+   * Facility-slot binding compatibility (Option B, template-owned): one
+   * exclusive claim may coexist with any number of shared observers; a
+   * second exclusive claim is rejected. This is not a conventional write
+   * lock where a writer excludes readers.
+   *
+   * When the requesting slot itself is `shared` (Spec 020 — ABS input
+   * slots), every role-compatible channel is eligible regardless of
+   * existing claims. When the requesting slot is exclusive (default —
+   * Spec 018 / S4 D2), a channel is excluded only if it already carries
+   * an exclusive claim elsewhere; shared-observer usage (e.g. an ABS
+   * facility observing the same block detector) does not exclude it.
+   * The optional `excludeIds` set lets Rebind include the currently-bound
+   * channel as the pre-selected option even though it is technically
+   * bound.
    */
   unboundChannelsForRole(
     role: ChannelRole,
@@ -212,7 +224,8 @@ class EffectiveLayoutStore {
     return channelsStore.channels.filter((ch) => {
       if (ch.role !== role) return false;
       if (isShared) return true;
-      if (usage.has(ch.id)) return exclude?.has(ch.id) ?? false;
+      const hasExclusiveClaim = usage.get(ch.id)?.some((entry) => !entry.shared) ?? false;
+      if (hasExclusiveClaim) return exclude?.has(ch.id) ?? false;
       return true;
     });
   }
@@ -323,6 +336,9 @@ export interface ChannelUsageEntry {
   facilityId: string;
   facilityName: string;
   slotLabel: string;
+  /** Whether this facility-slot binding is a shared observer (per the
+   * template's `SlotDefinition.shared`) vs an exclusive claim. */
+  shared: boolean;
 }
 
 /** Spec 018 / S5 (D1) — one eligible Direct Lamp Control row, ready for the AddChannelPicker. */

@@ -64,6 +64,23 @@ export class SlotAtMaxError extends Error {
   }
 }
 
+/**
+ * Thrown when attaching a channel to an exclusive-claim slot while the
+ * channel already carries an exclusive claim on another facility slot.
+ *
+ * Facility-slot binding compatibility (Option B, template-owned): one
+ * exclusive claim may coexist with any number of shared observers, but a
+ * second exclusive claim is rejected. Mirrors the picker's candidate
+ * projection (`effectiveLayoutStore.unboundChannelsForRole`) so mutation
+ * enforcement never diverges from what the picker offered.
+ */
+export class ExclusiveClaimConflictError extends Error {
+  constructor(public readonly channelId: string) {
+    super(`Channel '${channelId}' already has an exclusive claim on another facility slot`);
+    this.name = 'ExclusiveClaimConflictError';
+  }
+}
+
 export interface SelectChannelForSlotArgs {
   facilityId: string;
   slotLabel: string;
@@ -117,6 +134,21 @@ export function selectChannelForSlot(args: SelectChannelForSlotArgs): Promise<{ 
     currentBindings.length >= slot.maxChannels
   ) {
     throw new SlotAtMaxError(slotLabel, slot.maxChannels);
+  }
+
+  // Facility-slot binding compatibility (Option B, template-owned): an
+  // exclusive-claim slot must reject a channel that already carries an
+  // exclusive claim elsewhere. Shared-observer usage never conflicts.
+  // Mirrors `effectiveLayoutStore.unboundChannelsForRole` so the picker's
+  // candidates and this mutation guard never diverge.
+  if (!slot.shared) {
+    const usage = effectiveLayoutStore.channelUsageMap.get(channelId) ?? [];
+    const hasConflictingExclusiveClaim = usage.some(
+      (entry) => !entry.shared && !(entry.facilityId === facilityId && entry.slotLabel === slotLabel),
+    );
+    if (hasConflictingExclusiveClaim) {
+      throw new ExclusiveClaimConflictError(channelId);
+    }
   }
 
   facilitiesStore.attachChannel(facilityId, slotLabel, channelId);

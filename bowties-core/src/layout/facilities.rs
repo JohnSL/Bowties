@@ -106,6 +106,17 @@ pub enum FacilityApplyError {
         facility_id: String,
         template_id: String,
     },
+    /// Attach into an exclusive-claim slot would conflict with an
+    /// existing exclusive claim on the same channel from another
+    /// facility slot. Shared-observer claims never conflict — one
+    /// exclusive claim may coexist with any number of shared observers,
+    /// but a second exclusive claim is rejected (Option B, template-owned
+    /// binding compatibility).
+    ExclusiveClaimConflict {
+        facility_id: String,
+        slot_label: String,
+        channel_id: String,
+    },
 }
 
 impl std::fmt::Display for FacilityApplyError {
@@ -138,6 +149,15 @@ impl std::fmt::Display for FacilityApplyError {
                 f,
                 "facility {} references unknown template {}",
                 facility_id, template_id
+            ),
+            Self::ExclusiveClaimConflict {
+                facility_id,
+                slot_label,
+                channel_id,
+            } => write!(
+                f,
+                "channel '{}' already has an exclusive claim elsewhere; cannot bind it to exclusive slot '{}' on facility {}",
+                channel_id, slot_label, facility_id
             ),
         }
     }
@@ -186,6 +206,44 @@ pub fn normalize_facility_channel_refs(
         }
     }
     warnings
+}
+
+/// True when `channel_id` already carries an exclusive claim on some
+/// facility slot other than `(excluding_facility_id, excluding_slot_label)`.
+///
+/// Facility-slot binding compatibility (Option B, template-owned): one
+/// exclusive claim may coexist with any number of shared observers, but a
+/// second exclusive claim is rejected. Shared-observer bindings (per the
+/// template's `SlotDefinition::shared`) never count as a conflict. Used by
+/// `apply_facility_deltas` to keep backend persistence validation aligned
+/// with the frontend's `unboundChannelsForRole` candidate projection and
+/// the orchestrator's mutation guard.
+fn has_conflicting_exclusive_claim(
+    doc: &FacilitiesDocument,
+    channel_id: &str,
+    excluding_facility_id: &str,
+    excluding_slot_label: &str,
+) -> bool {
+    for facility in &doc.facilities {
+        let Some(template) = behavior_templates::find_template(&facility.template_id) else {
+            continue;
+        };
+        for (slot_label, bindings) in &facility.slot_bindings {
+            if facility.facility_id == excluding_facility_id && slot_label == excluding_slot_label
+            {
+                continue;
+            }
+            if !bindings.iter().any(|id| id == channel_id) {
+                continue;
+            }
+            if let Some(slot_def) = template.find_slot(slot_label) {
+                if !slot_def.shared {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Apply the facility-relevant variants of [`LayoutEditDelta`] to a
@@ -251,6 +309,41 @@ pub fn apply_facility_deltas(
                 slot_label,
                 channel_id,
             } => {
+                // Immutable lookups first (template + cross-facility
+                // exclusive-claim check) so they don't overlap with the
+                // mutable borrow taken below to apply the attach.
+                let template_id = doc
+                    .facilities
+                    .iter()
+                    .find(|f| &f.facility_id == facility_id)
+                    .ok_or_else(|| FacilityApplyError::UnknownFacility {
+                        facility_id: facility_id.clone(),
+                    })?
+                    .template_id
+                    .clone();
+                let template = behavior_templates::find_template(&template_id).ok_or_else(|| {
+                    FacilityApplyError::UnknownTemplate {
+                        facility_id: facility_id.clone(),
+                        template_id: template_id.clone(),
+                    }
+                })?;
+                let slot_def = template.find_slot(slot_label).ok_or_else(|| {
+                    FacilityApplyError::UnknownSlot {
+                        facility_id: facility_id.clone(),
+                        slot_label: slot_label.clone(),
+                    }
+                })?;
+
+                if !slot_def.shared
+                    && has_conflicting_exclusive_claim(doc, channel_id, facility_id, slot_label)
+                {
+                    return Err(FacilityApplyError::ExclusiveClaimConflict {
+                        facility_id: facility_id.clone(),
+                        slot_label: slot_label.clone(),
+                        channel_id: channel_id.clone(),
+                    });
+                }
+
                 let facility = doc
                     .facilities
                     .iter_mut()
@@ -258,17 +351,6 @@ pub fn apply_facility_deltas(
                     .ok_or_else(|| FacilityApplyError::UnknownFacility {
                         facility_id: facility_id.clone(),
                     })?;
-                let template = behavior_templates::find_template(&facility.template_id)
-                    .ok_or_else(|| FacilityApplyError::UnknownTemplate {
-                        facility_id: facility_id.clone(),
-                        template_id: facility.template_id.clone(),
-                    })?;
-                let slot_def = template.find_slot(slot_label).ok_or_else(|| {
-                    FacilityApplyError::UnknownSlot {
-                        facility_id: facility_id.clone(),
-                        slot_label: slot_label.clone(),
-                    }
-                })?;
                 let bindings = facility
                     .slot_bindings
                     .entry(slot_label.clone())
@@ -676,6 +758,108 @@ mod tests {
         )
         .unwrap();
         assert_eq!(doc.facilities, vec![f]);
+    }
+
+    // ── facility-slot binding compatibility (shared-observer vs
+    // exclusive-claim, Option B / template-owned) ───────────────────────
+
+    fn abs_signal_with_empty_slots(facility_id: &str, name: &str) -> Facility {
+        let mut slot_bindings = BTreeMap::new();
+        slot_bindings.insert("input".to_string(), Vec::<String>::new());
+        slot_bindings.insert("output".to_string(), Vec::<String>::new());
+        slot_bindings.insert("downstream-signal".to_string(), Vec::<String>::new());
+        Facility {
+            facility_id: facility_id.to_string(),
+            template_id: "abs-3-aspect-signal".to_string(),
+            name: name.to_string(),
+            slot_bindings,
+            logic_allocation: None,
+        }
+    }
+
+    #[test]
+    fn apply_attach_rejects_exclusive_claim_conflict_across_facilities() {
+        let mut f1 = block_indicator_with_empty_slots("id-1", "Block 5");
+        f1.slot_bindings
+            .insert("input".to_string(), vec!["ch-1".to_string()]);
+        let f2 = block_indicator_with_empty_slots("id-2", "Block 6");
+        let mut doc = FacilitiesDocument::new(vec![f1, f2]);
+        let err = apply_facility_deltas(
+            &mut doc,
+            &[LayoutEditDelta::AttachChannelToSlot {
+                facility_id: "id-2".into(),
+                slot_label: "input".into(),
+                channel_id: "ch-1".into(),
+            }],
+        )
+        .unwrap_err();
+        match err {
+            FacilityApplyError::ExclusiveClaimConflict {
+                facility_id,
+                slot_label,
+                channel_id,
+            } => {
+                assert_eq!(facility_id, "id-2");
+                assert_eq!(slot_label, "input");
+                assert_eq!(channel_id, "ch-1");
+            }
+            other => panic!("expected ExclusiveClaimConflict, got {:?}", other),
+        }
+        assert_eq!(
+            doc.facilities[1].slot_bindings.get("input"),
+            Some(&Vec::<String>::new())
+        );
+    }
+
+    #[test]
+    fn apply_attach_allows_exclusive_claim_alongside_existing_shared_observer_claim() {
+        // ABS's `input` slot is a shared observer; a Block Indicator's
+        // `input` slot is an exclusive claim. One exclusive claim
+        // coexists with any number of shared observers on the same
+        // channel.
+        let mut abs = abs_signal_with_empty_slots("id-abs", "Signal 3");
+        abs.slot_bindings
+            .insert("input".to_string(), vec!["ch-1".to_string()]);
+        let block_indicator = block_indicator_with_empty_slots("id-1", "Block 5");
+        let mut doc = FacilitiesDocument::new(vec![abs, block_indicator]);
+        apply_facility_deltas(
+            &mut doc,
+            &[LayoutEditDelta::AttachChannelToSlot {
+                facility_id: "id-1".into(),
+                slot_label: "input".into(),
+                channel_id: "ch-1".into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            doc.facilities[1].slot_bindings.get("input"),
+            Some(&vec!["ch-1".to_string()])
+        );
+    }
+
+    #[test]
+    fn apply_attach_into_a_shared_observer_slot_ignores_existing_exclusive_claim() {
+        // A second ABS facility's shared `input` slot may observe a
+        // channel already exclusively claimed by a Block Indicator.
+        let mut block_indicator = block_indicator_with_empty_slots("id-1", "Block 5");
+        block_indicator
+            .slot_bindings
+            .insert("input".to_string(), vec!["ch-1".to_string()]);
+        let abs = abs_signal_with_empty_slots("id-abs", "Signal 3");
+        let mut doc = FacilitiesDocument::new(vec![block_indicator, abs]);
+        apply_facility_deltas(
+            &mut doc,
+            &[LayoutEditDelta::AttachChannelToSlot {
+                facility_id: "id-abs".into(),
+                slot_label: "input".into(),
+                channel_id: "ch-1".into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            doc.facilities[1].slot_bindings.get("input"),
+            Some(&vec!["ch-1".to_string()])
+        );
     }
 
     #[test]
