@@ -72,6 +72,18 @@ pub enum TransportHealth {
     Wedged { reason: String },
 }
 
+/// Terminal signal published by the reader task when it stops due to an
+/// unexpected error (e.g. Windows os error 995 / ERROR_OPERATION_ABORTED).
+///
+/// Unlike `TransportHealth`, this is never expected to recover — the reader
+/// loop has already exited. Explicit `TransportActor::shutdown()` cancellation
+/// is not published here; it is expected lifecycle, not transport loss.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransportTermination {
+    /// The reader loop's `receive()` call returned an unexpected error.
+    ReaderError { reason: String },
+}
+
 /// A message received from (or sent to) the LCC network with metadata.
 #[derive(Debug, Clone)]
 pub struct ReceivedMessage {
@@ -106,6 +118,10 @@ pub struct TransportHandle {
     /// Cloning the handle shares the sender; publishing goes through the
     /// writer task, subscription via `subscribe_health()`.
     health_tx: Option<watch::Sender<TransportHealth>>,
+    /// Transport-termination watch sender. `None` when constructed via
+    /// `from_parts` (legacy bridge path). `Some(None)`-valued until the
+    /// reader task publishes a terminal `ReaderError`.
+    termination_tx: Option<watch::Sender<Option<TransportTermination>>>,
 }
 
 impl TransportHandle {
@@ -115,6 +131,7 @@ impl TransportHandle {
     /// the actual I/O. Short-circuits with `Error::TransportUnhealthy` when
     /// the observed transport health is `Wedged` — no frame is enqueued.
     pub async fn send(&self, frame: &GridConnectFrame) -> Result<()> {
+        self.check_terminated()?;
         if let Some(ref health_tx) = self.health_tx {
             if let TransportHealth::Wedged { ref reason } = *health_tx.borrow() {
                 return Err(Error::TransportUnhealthy(reason.clone()));
@@ -123,6 +140,19 @@ impl TransportHandle {
         self.tx.send(frame.clone()).await.map_err(|_| {
             Error::Transport("Transport actor shut down".to_string())
         })
+    }
+
+    /// Short-circuits with `Error::TransportTerminated` once the reader task
+    /// has published a `TransportTermination`. Checked before the recoverable
+    /// `TransportHealth::Wedged` short-circuit in both `send()` and
+    /// `send_direct()`.
+    fn check_terminated(&self) -> Result<()> {
+        if let Some(ref term_tx) = self.termination_tx {
+            if let Some(TransportTermination::ReaderError { ref reason }) = *term_tx.borrow() {
+                return Err(Error::TransportTerminated(reason.clone()));
+            }
+        }
+        Ok(())
     }
 
     /// Subscribe to **all** inbound (and echoed outbound) frames.
@@ -154,6 +184,7 @@ impl TransportHandle {
     /// shared `send_frame_with_timeout` helper: a stall here publishes
     /// `TransportHealth::Wedged` and returns `Error::TransportUnhealthy`.
     pub async fn send_direct(&self, frame: &GridConnectFrame) -> Result<()> {
+        self.check_terminated()?;
         self.direct_write_count.fetch_add(1, Ordering::Relaxed);
         if let Some(ref writer_lock) = self.direct_writer {
             {
@@ -184,6 +215,7 @@ impl TransportHandle {
             direct_writer: None,
             direct_write_count: Arc::new(AtomicUsize::new(0)),
             health_tx: None,
+            termination_tx: None,
         }
     }
 
@@ -202,6 +234,16 @@ impl TransportHandle {
     /// bridge path does not publish health).
     pub fn subscribe_health(&self) -> Option<watch::Receiver<TransportHealth>> {
         self.health_tx.as_ref().map(|tx| tx.subscribe())
+    }
+
+    /// Subscribe to the transport-termination seam. Returns a `watch::Receiver`
+    /// whose current value is `None` until the reader task publishes a
+    /// terminal `TransportTermination` (never for explicit `shutdown()`).
+    ///
+    /// Returns `None` for handles constructed via `from_parts` (the legacy
+    /// bridge path does not publish termination).
+    pub fn subscribe_termination(&self) -> Option<watch::Receiver<Option<TransportTermination>>> {
+        self.termination_tx.as_ref().map(|tx| tx.subscribe())
     }
 
     /// Clone of the broadcast sender (for bridging to legacy `MessageDispatcher`).
@@ -246,6 +288,7 @@ impl TransportActor {
         let direct_writer = Arc::new(tokio::sync::Mutex::new(writer));
 
         let (health_tx, _health_rx) = watch::channel(TransportHealth::Healthy);
+        let (termination_tx, _termination_rx) = watch::channel(None);
 
         let handle = TransportHandle {
             tx: outbound_tx,
@@ -254,6 +297,7 @@ impl TransportActor {
             direct_writer: Some(direct_writer.clone()),
             direct_write_count: Arc::new(AtomicUsize::new(0)),
             health_tx: Some(health_tx.clone()),
+            termination_tx: Some(termination_tx.clone()),
         };
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -268,6 +312,7 @@ impl TransportActor {
                 mti_senders,
                 alias_map,
                 shutdown_rx,
+                termination_tx,
             ))
         };
 
@@ -314,6 +359,7 @@ impl TransportActor {
         mti_senders: Arc<RwLock<HashMap<MTI, broadcast::Sender<ReceivedMessage>>>>,
         alias_map: Arc<RwLock<HashMap<u16, [u8; 6]>>>,
         mut shutdown_rx: oneshot::Receiver<()>,
+        termination_tx: watch::Sender<Option<TransportTermination>>,
     ) {
         loop {
             tokio::select! {
@@ -353,7 +399,9 @@ impl TransportActor {
                             }
                         }
                         Err(e) => {
-                            eprintln!("TransportActor reader: connection error: {}", e);
+                            let reason = format!("reader terminated unexpectedly: {}", e);
+                            eprintln!("TransportActor reader: connection error: {}", reason);
+                            let _ = termination_tx.send(Some(TransportTermination::ReaderError { reason }));
                             break;
                         }
                     }
@@ -786,5 +834,165 @@ mod tests {
         ));
 
         actor.shutdown().await;
+    }
+
+    // ---------- Transport termination seam ----------
+
+    #[tokio::test]
+    async fn reader_error_publishes_terminal_notification() {
+        // Behavior: an unexpected error from TransportReader::receive() (e.g.
+        // Windows os error 995 / ERROR_OPERATION_ABORTED) must publish exactly
+        // one TransportTermination::ReaderError notification on the
+        // termination watch seam.
+        let transport = MockTransport::new();
+        let fail = transport.fail_receive_handle();
+        fail.store(true, Ordering::Relaxed);
+
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
+        let mut term_rx = handle
+            .subscribe_termination()
+            .expect("termination seam wired");
+        assert_eq!(*term_rx.borrow(), None);
+
+        tokio::time::timeout(tokio::time::Duration::from_millis(500), term_rx.changed())
+            .await
+            .expect("no termination notification published")
+            .expect("termination watch closed unexpectedly");
+
+        match &*term_rx.borrow_and_update() {
+            Some(TransportTermination::ReaderError { reason }) => {
+                assert!(!reason.is_empty());
+            }
+            other => panic!("expected ReaderError termination, got {:?}", other),
+        }
+
+        actor.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn explicit_shutdown_does_not_publish_termination() {
+        // Behavior: TransportActor::shutdown() is expected lifecycle, not
+        // unexpected transport loss. It must not publish a
+        // TransportTermination notification.
+        let transport = MockTransport::new();
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
+        let term_rx = handle
+            .subscribe_termination()
+            .expect("termination seam wired");
+
+        actor.shutdown().await;
+
+        assert_eq!(
+            *term_rx.borrow(),
+            None,
+            "explicit shutdown must not be reported as unexpected transport loss"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_fails_promptly_after_reader_termination() {
+        // Behavior: once the reader has published a terminal notification,
+        // TransportHandle::send() must fail fast with TransportTerminated
+        // rather than enqueueing into a logically dead writer.
+        let transport = MockTransport::new();
+        let fail = transport.fail_receive_handle();
+        fail.store(true, Ordering::Relaxed);
+
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
+        let mut term_rx = handle
+            .subscribe_termination()
+            .expect("termination seam wired");
+
+        tokio::time::timeout(tokio::time::Duration::from_millis(500), term_rx.changed())
+            .await
+            .expect("no termination notification published")
+            .unwrap();
+
+        let frame = GridConnectFrame::from_mti(MTI::VerifyNodeGlobal, 0xAAA, vec![]).unwrap();
+        let start = tokio::time::Instant::now();
+        let result = handle.send(&frame).await;
+        let elapsed = start.elapsed();
+
+        match result {
+            Err(Error::TransportTerminated(reason)) => {
+                assert!(!reason.is_empty());
+            }
+            other => panic!("expected TransportTerminated, got {:?}", other),
+        }
+        assert!(
+            elapsed < tokio::time::Duration::from_millis(50),
+            "send() did not fail fast: took {:?}",
+            elapsed
+        );
+
+        actor.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn send_direct_fails_promptly_after_reader_termination() {
+        // Behavior: send_direct() must also observe the termination seam,
+        // not just the mpsc-queue send() path.
+        let transport = MockTransport::new();
+        let fail = transport.fail_receive_handle();
+        fail.store(true, Ordering::Relaxed);
+
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
+        let mut term_rx = handle
+            .subscribe_termination()
+            .expect("termination seam wired");
+
+        tokio::time::timeout(tokio::time::Duration::from_millis(500), term_rx.changed())
+            .await
+            .expect("no termination notification published")
+            .unwrap();
+
+        let frame = GridConnectFrame::from_mti(MTI::VerifyNodeGlobal, 0xAAA, vec![]).unwrap();
+        let start = tokio::time::Instant::now();
+        let result = handle.send_direct(&frame).await;
+        let elapsed = start.elapsed();
+
+        match result {
+            Err(Error::TransportTerminated(reason)) => {
+                assert!(!reason.is_empty());
+            }
+            other => panic!("expected TransportTerminated from send_direct, got {:?}", other),
+        }
+        assert!(
+            elapsed < tokio::time::Duration::from_millis(50),
+            "send_direct() did not fail fast: took {:?}",
+            elapsed
+        );
+
+        actor.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_completes_within_bound_after_reader_failure() {
+        // Behavior: TransportActor::shutdown() must still complete within a
+        // bounded timeout after the reader task has already exited due to an
+        // unexpected error (reader_handle.await on an already-finished task
+        // must not hang).
+        let transport = MockTransport::new();
+        let fail = transport.fail_receive_handle();
+        fail.store(true, Ordering::Relaxed);
+
+        let mut actor = TransportActor::new(Box::new(transport));
+        let handle = actor.handle();
+        let mut term_rx = handle
+            .subscribe_termination()
+            .expect("termination seam wired");
+
+        tokio::time::timeout(tokio::time::Duration::from_millis(500), term_rx.changed())
+            .await
+            .expect("no termination notification published")
+            .unwrap();
+
+        tokio::time::timeout(tokio::time::Duration::from_millis(500), actor.shutdown())
+            .await
+            .expect("shutdown did not complete within bound after reader failure");
     }
 }

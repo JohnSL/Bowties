@@ -478,6 +478,30 @@ The parametric stall variant on `MockTransportWriter` (`MockTransport::stall_han
 
 
 
+## Unexpected Connection Termination
+
+- **Governing ADR(s)**: ADR-0017 (2026-07-29 extension), ADR-0016 (aggregate-owned task lifecycle), ADR-0011 (frontend disconnect transition ownership)
+- **Owner**: `ConnectionSession` ([app/src-tauri/src/connection_session.rs](../app/src-tauri/src/connection_session.rs)) — owns connection-scoped resources and the termination supervisor. `claim_session` atomically selects exactly one cleanup owner between explicit disconnect and unexpected loss; `publish_session_and_supervise` publishes the aggregate before the watcher can claim it.
+- **Contributors**:
+  - `TransportActor::reader_loop` ([lcc-rs/src/transport_actor.rs](../lcc-rs/src/transport_actor.rs)) — publishes one `TransportTermination::ReaderError` for an unexpected receive error. The explicit shutdown branch publishes nothing.
+  - `TransportHandle::send` / `send_direct` — consume the current terminal value and fail fast with `Error::TransportTerminated`, preventing new work from entering a dead session.
+  - `AppState::set_connection_with_dispatcher` / `disconnect` ([app/src-tauri/src/state.rs](../app/src-tauri/src/state.rs)) — establish the supervised aggregate or explicitly claim it without emitting loss.
+- **Consumers**:
+  - Backend termination supervisor — claims and cleans the aggregate, then emits one `lcc-connection-lost { reason }` event. It checks the watch receiver's current value before awaiting `changed()` so an already-published failure is not missed.
+  - `SyncSessionOrchestrator.connectionLost` ([app/src/lib/orchestration/syncSessionOrchestrator.svelte.ts](../app/src/lib/orchestration/syncSessionOrchestrator.svelte.ts)) — applies the existing offline fallback without invoking backend disconnect again; duplicate/concurrent notifications are ignored.
+  - Main route ([app/src/routes/+page.svelte](../app/src/routes/+page.svelte)) — owns only Tauri listener registration and delegates the payload to the orchestrator.
+- **Per-slice plumbing rule**: Terminal transport exits MUST publish through `TransportTermination`; do not encode them as recoverable `Wedged` health or special-case OS error numbers. Connection-scoped resources MUST live in `ConnectionSession` and teardown MUST begin by claiming the aggregate. New frontend loss handling MUST delegate to `SyncSessionOrchestrator.connectionLost` rather than duplicate fallback sequencing in a route or store.
+- **Last-modified**: 2026-07-29 (introduced — USB removal discovered after suspend now converges through typed transport termination, aggregate cleanup, and offline fallback)
+- **Last-audited**: 2026-07-29
+
+### Notes
+
+Reader termination and writer health are intentionally separate. `Wedged` can recover after a later successful send; `ReaderError` is terminal because the session cannot receive again without reopening the transport and allocating a new alias. Automatic reconnect is therefore outside `lcc-rs` and is not part of this seam.
+
+The focused regression surfaces are `lcc-rs/src/transport_actor.rs`, `app/src-tauri/src/connection_session.rs`, `app/src/lib/orchestration/syncSessionOrchestrator.svelte.test.ts`, and `app/src/routes/page.route.test.ts`.
+
+
+
 ## Peer Session Ownership
 
 - **Governing ADR(s)**: ADR-0016 (Per-peer session actor ownership)

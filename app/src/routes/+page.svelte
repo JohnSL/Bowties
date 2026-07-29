@@ -1021,6 +1021,14 @@
         configAcquisition.applyProgressEvent(event.payload);
       }));
 
+      // Unexpected transport termination: backend has already torn down the
+      // session and emits this exactly once. Delegate to the orchestrator,
+      // which applies the same disconnect lifecycle/fallback (minus the
+      // already-completed `disconnect_lcc` call).
+      unlistens.push(await listen<{ reason: string }>('lcc-connection-lost', async (event) => {
+        await syncSessionOrchestrator.connectionLost(event.payload.reason);
+      }));
+
       // Spec 016: Subscribe to PCER events for live channel state indicators
       unlistens.push(await startEventStateListening());
 

@@ -310,8 +310,7 @@ pub async fn download_cdi(
 
     // Resolve the per-peer session handle via the registry (S2 fetch-per-call).
     let session_handle = {
-        let sessions_guard = state.sessions.read().await;
-        match sessions_guard.as_ref() {
+        match state.sessions_registry().await {
             Some(registry) => registry.get(parsed_node_id).await,
             None => None,
         }
@@ -2948,8 +2947,7 @@ pub async fn cancel_config_reading(state: tauri::State<'_, AppState>) -> Result<
 /// `TerminateDueToError` so the peer releases its exchange state.
 #[tauri::command]
 pub async fn cancel_cdi_download(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let sessions_guard = state.sessions.read().await;
-    let Some(registry) = sessions_guard.as_ref() else { return Ok(()); };
+    let Some(registry) = state.sessions_registry().await else { return Ok(()); };
     // Snapshot node IDs under the read lock, then drop the lock before
     // dispatching per-session commands (avoids holding the registry lock
     // across per-peer awaits and matches ADR-0016's read-check-then-act
@@ -2959,7 +2957,6 @@ pub async fn cancel_cdi_download(state: tauri::State<'_, AppState>) -> Result<()
     // via the same handle each session was given. For now, use the
     // best-effort helper: send Cancel to every session by cloning handles.
     let handles = registry.snapshot_handles().await;
-    drop(sessions_guard);
     for handle in handles {
         handle.cancel("cancel_cdi_download").await;
     }
@@ -3398,12 +3395,8 @@ pub async fn send_update_complete(
         .map_err(|e| format!("Invalid node ID: {}", e))?;
 
     // Get connection arc
-    let conn_lock = state.connection.read().await;
-    let connection = conn_lock
-        .as_ref()
-        .ok_or("Not connected to network")?
-        .clone();
-    drop(conn_lock);
+    let connection = state.connection_arc().await
+        .ok_or("Not connected to network")?;
 
     // Get node alias from proxy
     let proxy = state.node_registry.get(&parsed_node_id).await
@@ -3620,12 +3613,8 @@ pub async fn write_modified_values(
 
     // Retained for the post-write Update Complete pass (send_update_complete
     // is not a memory read/write primitive and stays on the bare connection).
-    let conn_lock = state.connection.read().await;
-    let connection = conn_lock
-        .as_ref()
-        .ok_or("Not connected to network")?
-        .clone();
-    drop(conn_lock);
+    let connection = state.connection_arc().await
+        .ok_or("Not connected to network")?;
 
     let mut succeeded = 0u32;
     let mut failed = 0u32;

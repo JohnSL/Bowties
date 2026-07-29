@@ -16,6 +16,10 @@ pub struct MockTransport {
     /// When set to `true`, all `send()` calls on the writer half stall forever
     /// (used by transport-health wedge tests). Cloned into the writer on split.
     stall: Arc<AtomicBool>,
+    /// When set to `true`, the reader half's `receive()` call returns an
+    /// unexpected I/O error instead of blocking or yielding a queued frame
+    /// (used by transport-termination tests). Cloned into the reader on split.
+    fail_receive: Arc<AtomicBool>,
 }
 
 impl MockTransport {
@@ -25,6 +29,7 @@ impl MockTransport {
             receive_queue: Arc::new(Mutex::new(VecDeque::new())),
             sent_frames: Arc::new(Mutex::new(Vec::new())),
             stall: Arc::new(AtomicBool::new(false)),
+            fail_receive: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -43,6 +48,14 @@ impl MockTransport {
     /// to `false`. Used by wedge / recovery tests.
     pub fn stall_handle(&self) -> Arc<AtomicBool> {
         self.stall.clone()
+    }
+
+    /// Handle to the shared fail-receive flag. Toggling to `true` makes the
+    /// reader half's `receive()` return an unexpected I/O error instead of
+    /// blocking, simulating a terminal transport-reader failure (e.g.
+    /// Windows os error 995 / ERROR_OPERATION_ABORTED).
+    pub fn fail_receive_handle(&self) -> Arc<AtomicBool> {
+        self.fail_receive.clone()
     }
 }
 
@@ -88,6 +101,7 @@ impl LccTransport for MockTransport {
         (
             Box::new(MockTransportReader {
                 receive_queue: self.receive_queue.clone(),
+                fail_receive: self.fail_receive.clone(),
             }),
             Box::new(MockTransportWriter {
                 sent_frames: self.sent_frames.clone(),
@@ -100,12 +114,18 @@ impl LccTransport for MockTransport {
 /// Read half of a split mock transport.
 pub struct MockTransportReader {
     receive_queue: Arc<Mutex<VecDeque<String>>>,
+    fail_receive: Arc<AtomicBool>,
 }
 
 #[async_trait]
 impl TransportReader for MockTransportReader {
     async fn receive(&mut self) -> Result<GridConnectFrame, Error> {
         loop {
+            if self.fail_receive.load(Ordering::Relaxed) {
+                return Err(Error::Io(std::io::Error::other(
+                    "os error 995: The I/O operation has been aborted because of either a thread exit or an application request.",
+                )));
+            }
             let frame_str = self.receive_queue.lock().unwrap().pop_front();
             if let Some(s) = frame_str {
                 tokio::task::yield_now().await;

@@ -265,6 +265,11 @@ lets the mpsc fill, the actor's `writer.send().await` blocks, and
 *executor-isolation* guarantees are platform-independent; only the *per-write*
 OS bound differs.
 
+The blocking `gridconnect_serial` module remains a supported transport model,
+but the Bowties Tauri app currently opens GridConnect adapters through
+`GridConnectAsyncTransport`. The actor-level health and termination contracts
+apply to both implementations.
+
 ### Known cross-platform gap (tracked, not fixed in S9)
 
 `writer_thread` breaks on any write/flush error, including a transient
@@ -277,4 +282,51 @@ Making the writer thread resilient to a transient `TimedOut` and/or giving the
 Unix path a per-write timeout is deferred to a `kind/idea` follow-up, to be
 implemented and validated on Mac/Linux hardware rather than written blind on
 Windows against the hardware-validated path.
+
+## 2026-07-29 extension: terminal transport loss and connection-session ownership
+
+### Context
+
+When Windows resumed after sleep with a USB-to-LCC adapter no longer attached,
+the serial reader returned an aborted-I/O error. `TransportActor::reader_loop`
+logged the error and exited, but the writer, backend registries, and frontend
+still represented the connection as live. This is different from a recoverable
+writer `Wedged` state: a terminated reader cannot recover without reopening the
+transport and establishing a new LCC session.
+
+### Decision
+
+Keep recoverable health and terminal lifetime as separate typed seams:
+
+- `TransportHealth` continues to describe bounded writer progress and may move
+  between `Healthy` and `Wedged`.
+- `TransportTermination` is a one-shot terminal notification. An unexpected
+  reader error publishes `ReaderError`; explicit actor shutdown does not.
+  `TransportHandle::send` and `send_direct` fail immediately with
+  `Error::TransportTerminated` after publication.
+- Bowties owns app policy in `ConnectionSession`, a backend aggregate containing
+  the `LccConnection`, transport handle, event router, peer-session registry,
+  active configuration, and termination supervisor. The active session is
+  atomically claimed by either explicit disconnect or unexpected termination;
+  only the winner performs cleanup.
+- Unexpected termination emits one `lcc-connection-lost` event after backend
+  cleanup. `SyncSessionOrchestrator` consumes it through the existing offline
+  fallback transition without invoking `disconnect_lcc` again. Reconnection
+  remains explicit because reopening hardware and allocating a new alias are
+  application lifecycle policy, not transport recovery.
+
+The session is published before its supervisor can claim it, and the supervisor
+checks the watch channel's current value before awaiting a change. These two
+rules prevent an immediate or already-published transport failure from leaving
+a dead session recorded as connected.
+
+### Regression contract
+
+`lcc-rs/src/transport_actor.rs` tests pin terminal publication, fail-fast sends,
+shutdown cancellation, and bounded shutdown after reader failure.
+`app/src-tauri/src/connection_session.rs` tests pin late-subscription handling,
+publish-before-supervise ordering, explicit-disconnect silence, and single-winner
+session claims. Frontend orchestrator and route tests pin offline fallback,
+duplicate-event idempotency, reason display, and the absence of a second backend
+disconnect call.
 

@@ -3,11 +3,13 @@
 use lcc_rs::{LccConnection, SNIPData, TransportHandle};
 use lcc_rs::peer_session_registry::PeerSessionRegistry;
 use crate::commands::{ConnectionConfig};
+use crate::connection_session::{publish_session_and_supervise, ConnectionLostPayload, ConnectionSession};
 use crate::events::EventRouter;
 use crate::node_registry::NodeRegistry;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::collections::HashMap;
+use tauri::Emitter;
 use tokio::sync::{RwLock, Mutex};
 use crate::node_key::NodeKey;
 
@@ -112,29 +114,18 @@ impl TuningConfig {
 /// Global application state shared across Tauri commands
 #[derive(Clone)]
 pub struct AppState {
-    /// LCC network connection (optional, None if not connected)
-    pub connection: Arc<RwLock<Option<Arc<Mutex<LccConnection>>>>>,
-
-    /// Transport handle for direct channel-based communication
-    pub transport_handle: Arc<RwLock<Option<TransportHandle>>>,
-    
-    /// Event router for frontend notifications
-    pub event_router: Arc<RwLock<Option<EventRouter>>>,
+    /// Connection-scoped resources (Option B aggregate): the LCC connection,
+    /// transport handle, event router, peer-session registry, active
+    /// connection config, and termination supervisor. `None` when not
+    /// connected. See `connection_session::ConnectionSession`.
+    session: Arc<RwLock<Option<ConnectionSession>>>,
 
     /// Per-node proxy registry — the canonical source of per-node state.
+    /// App-scoped: survives across connections (Option B).
     pub node_registry: Arc<NodeRegistry>,
 
-    /// Per-peer session registry (ADR-0016). `Some` while a transport is
-    /// active; sole spawner of `PeerSession` actors keyed by NodeID. Cleared
-    /// on transport disconnect. `LiveNodeProxy` fetches a session handle per
-    /// protocol call via this registry (fetch-per-call, D2).
-    pub sessions: Arc<RwLock<Option<Arc<PeerSessionRegistry>>>>,
-    
     /// Cancellation token for config reading operations (T012)
     pub config_read_cancel: Arc<AtomicBool>,
-
-    /// Active connection configuration (None when not connected)
-    pub active_connection: Arc<RwLock<Option<ConnectionConfig>>>,
 
     // ── Feature 006: Bowtie catalog fields ────────────────────────────────
 
@@ -184,12 +175,8 @@ impl AppState {
     /// Create a new application state
     pub fn new() -> Self {
         Self {
-            connection: Arc::new(RwLock::new(None)),
-            transport_handle: Arc::new(RwLock::new(None)),
-            event_router: Arc::new(RwLock::new(None)),
+            session: Arc::new(RwLock::new(None)),
             node_registry: Arc::new(NodeRegistry::new()),
-            sessions: Arc::new(RwLock::new(None)),
-            active_connection: Arc::new(RwLock::new(None)),
             config_read_cancel: Arc::new(AtomicBool::new(false)),
             bowties_catalog: Arc::new(RwLock::new(None)),
             active_layout: Arc::new(RwLock::new(None)),
@@ -210,6 +197,26 @@ impl AppState {
         self.tuning.to_memory_read_config()
     }
 
+    /// Clone of the active `LccConnection` handle, if connected.
+    pub async fn connection_arc(&self) -> Option<Arc<Mutex<LccConnection>>> {
+        self.session.read().await.as_ref().map(|s| s.connection.clone())
+    }
+
+    /// Clone of the active `TransportHandle`, if connected.
+    pub async fn transport_handle(&self) -> Option<TransportHandle> {
+        self.session.read().await.as_ref().and_then(|s| s.transport_handle.clone())
+    }
+
+    /// Clone of the active peer-session registry, if connected.
+    pub async fn sessions_registry(&self) -> Option<Arc<PeerSessionRegistry>> {
+        self.session.read().await.as_ref().and_then(|s| s.sessions.clone())
+    }
+
+    /// Clone of the active connection config, if connected.
+    pub async fn active_connection_config(&self) -> Option<ConnectionConfig> {
+        self.session.read().await.as_ref().map(|s| s.active_config.clone())
+    }
+
     /// Resolve the per-peer [`PeerSessionHandle`] for `node_id` via the
     /// session registry (fetch-per-call, ADR-0016 / S2 pattern).
     ///
@@ -222,8 +229,7 @@ impl AppState {
         &self,
         node_id: lcc_rs::NodeID,
     ) -> Result<lcc_rs::PeerSessionHandle, String> {
-        let sessions_guard = self.sessions.read().await;
-        match sessions_guard.as_ref() {
+        match self.sessions_registry().await {
             Some(registry) => registry.get(node_id).await.ok_or_else(|| {
                 "Peer session not available (node not seen yet)".to_string()
             }),
@@ -233,18 +239,24 @@ impl AppState {
 
     /// Check if connected to LCC network
     pub async fn is_connected(&self) -> bool {
-        self.connection.read().await.is_some()
+        self.session.read().await.is_some()
     }
 
-    /// Set the LCC connection
+    /// Establish connection-scoped state for a newly opened `LccConnection`.
+    ///
+    /// Builds the `ConnectionSession` aggregate (transport handle, event
+    /// router, peer-session registry) and subscribes to typed transport
+    /// termination, spawning exactly one supervisor task. If the transport
+    /// terminates unexpectedly later, the supervisor atomically claims this
+    /// session, runs the same cleanup `disconnect()` uses, and emits
+    /// `lcc-connection-lost` exactly once. Explicit `disconnect()` never
+    /// emits that event (see `disconnect`).
     pub async fn set_connection_with_dispatcher(
         &self,
         connection: Arc<Mutex<LccConnection>>,
+        config: ConnectionConfig,
         app: tauri::AppHandle,
     ) {
-        // Set connection
-        *self.connection.write().await = Some(connection.clone());
-        
         // Get transport handle from connection
         let handle = {
             let conn = connection.lock().await;
@@ -257,24 +269,24 @@ impl AppState {
             conn.our_alias().value()
         };
 
-        // Store transport handle
+        // Build the peer-session registry (ADR-0016 sole spawner) and
+        // publish it to both the session and the node registry (so
+        // `LiveNodeProxy` instances receive it at spawn time).
+        let mut sessions_opt = None;
         if let Some(ref h) = handle {
-            *self.transport_handle.write().await = Some(h.clone());
-            // Build the peer-session registry (ADR-0016 sole spawner) and
-            // publish it to both `AppState.sessions` and the node registry
-            // (so `LiveNodeProxy` instances receive it at spawn time).
             let peer_sessions = PeerSessionRegistry::new(h.clone(), our_alias);
-            *self.sessions.write().await = Some(peer_sessions.clone());
+            sessions_opt = Some(peer_sessions.clone());
             self.node_registry.set_peer_sessions(peer_sessions).await;
             // Configure node registry so proxies can be spawned
             self.node_registry.set_transport(h.clone(), our_alias).await;
         }
 
         // Start event router
+        let mut router_opt = None;
         if let Some(ref h) = handle {
-            let mut router = EventRouter::from_handle(app, h.clone(), our_alias, self.node_registry.clone(), self.diag_stats.clone(), self.frame_ring.clone());
+            let mut router = EventRouter::from_handle(app.clone(), h.clone(), our_alias, self.node_registry.clone(), self.diag_stats.clone(), self.frame_ring.clone());
             router.start().await;
-            *self.event_router.write().await = Some(router);
+            router_opt = Some(router);
         }
         
         // Configure SNIP data and start responding to discovery queries
@@ -298,42 +310,38 @@ impl AppState {
             // Start responding to SNIP requests
             let _ = conn.start_responding_to_snip_requests();
         }
+
+        let session = ConnectionSession::new(connection, handle.clone(), router_opt, sessions_opt, config);
+
+        // Subscribe to typed transport termination (if the transport handle
+        // publishes it) and publish the session with exactly one supervisor
+        // per connection. `publish_session_and_supervise` stores the session
+        // before spawning the supervisor, so a transport that already
+        // terminated (or terminates during setup) is claimed and cleaned up
+        // there instead of racing ahead of the store below.
+        let term_rx = handle.as_ref().and_then(|h| h.subscribe_termination());
+        let node_registry = self.node_registry.clone();
+        let app_for_emit = app.clone();
+        publish_session_and_supervise(&self.session, session, node_registry, term_rx, move |reason| {
+            let _ = app_for_emit.emit("lcc-connection-lost", ConnectionLostPayload { reason });
+        })
+        .await;
     }
 
-    /// Disconnect and cleanup
+    /// Disconnect and cleanup.
+    ///
+    /// Atomically claims the active session — the same claim primitive the
+    /// termination supervisor uses — so this is idempotent with respect to a
+    /// concurrent unexpected termination: whichever side takes the session
+    /// performs cleanup; the other is a no-op. Aborts the supervisor task
+    /// before cleanup (safe: if the supervisor had already claimed the
+    /// session, `take()` here returns `None` and nothing happens). Never
+    /// emits `lcc-connection-lost`.
     pub async fn disconnect(&self) {
-        // Stop event router
-        if let Some(mut router) = self.event_router.write().await.take() {
-            router.stop().await;
+        if let Some(mut session) = self.session.write().await.take() {
+            session.abort_supervisor();
+            session.cleanup(&self.node_registry).await;
         }
-
-        // Shut down all node proxy actors
-        self.node_registry.shutdown_all().await;
-
-        // Abort background responder tasks (VerifyNodeGlobal + SNIP responders) that
-        // were spawned by LccConnection.  These tasks hold channel handles;
-        // if they are not aborted here they keep the transport alive.
-        // Then close the connection (shuts down the TransportActor if present).
-        if let Some(conn_arc) = self.connection.read().await.as_ref().cloned() {
-            let mut conn = conn_arc.lock().await;
-            conn.shutdown_responders().await;
-            let _ = conn.close().await;
-        }
-        
-        // Clear transport handle
-        *self.transport_handle.write().await = None;
-        // Shut down the peer-session registry (ADR-0016): clears the
-        // sessions map AND aborts the spawn-watcher so its captured
-        // `TransportHandle` is released. Without the watcher abort the
-        // transport broadcast channel stays alive and on Windows serial
-        // reconnect the OS handle surfaces `COM7: Access is denied`.
-        if let Some(sessions) = self.sessions.write().await.take() {
-            sessions.shutdown().await;
-        }
-        
-        // Clear connection and active config
-        *self.connection.write().await = None;
-        *self.active_connection.write().await = None;
         *self.sync_mode.write().await = None;
     }
 }

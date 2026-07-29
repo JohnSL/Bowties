@@ -15,9 +15,11 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **Invariant — off-bus saved node visibility:** After each `replaceLiveRoster` in the discovery and refresh handlers, `nodeRoster.injectOffBusSavedNodes(savedNodeIds)` synthesizes `NotResponding` entries for saved layout nodes not present on the bus. Also called after `probeForNodes()` to cover the "all nodes offline" case where no discovery events fire. Idempotent; overwritten when a node later responds.
 
 ## Disconnect / Offline Fallback
-- **Orchestrator:** `syncSessionOrchestrator.svelte.ts` (`disconnect()` → `disconnectWithOfflineFallback()`)
+- **Explicit path:** `syncSessionOrchestrator.svelte.ts` (`disconnect()` → `disconnectWithOfflineFallback()` → `disconnect_lcc`)
+- **Unexpected path:** `TransportActor` publishes typed `TransportTermination`; backend `ConnectionSession` atomically claims and cleans the active session, then emits `lcc-connection-lost`; `SyncSessionOrchestrator.connectionLost()` applies the same offline fallback without calling `disconnect_lcc` again.
 - **Transition matrix:** `lifecycleTransitionMatrix.ts` (`resolveDisconnectTransition`)
 - **Paths:** `rehydrated_offline` (layout + snapshots → rehydrate), `preserved_layout` (layout, no snapshots → clear live state), `cleared_to_connection` (no layout → clear + show dialog)
+- **Lifetime invariant:** Explicit disconnect and unexpected termination compete for one session claim. Exactly one path owns cleanup; only unexpected loss emits `lcc-connection-lost`, and duplicate frontend loss notifications are ignored.
 - **Sidebar invariant:** The `rehydrateOffline` callback in `+page.svelte` calls `configSidebarStore.pruneToAvailableNodes()` *after* hydration to keep the selection if the node survived into the offline roster. The `clearLiveState` callback calls `configSidebarStore.reset()` unconditionally (no nodes survive when there are no snapshots).
 
 ## SNIP / PIP Query

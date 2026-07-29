@@ -59,7 +59,7 @@ pub use discovery::BatchReadDescriptor;
 pub use datagram_reader::{MemoryReadConfig, ExchangeResult, ReadDescriptor, datagram_read_exchange};
 pub use snip::{query_snip, parse_snip_payload, encode_snip_payload};
 pub use cdi::{Cdi, Segment, DataElement, Group, IntElement, EventIdElement, StringElement, FloatElement, ActionElement, BlobElement, EventRole, classify_event_slot, walk_event_slots};
-pub use transport_actor::{TransportActor, TransportHandle, TransportHealth, ReceivedMessage, SERIAL_SEND_TIMEOUT, TCP_SEND_TIMEOUT};
+pub use transport_actor::{TransportActor, TransportHandle, TransportHealth, TransportTermination, ReceivedMessage, SERIAL_SEND_TIMEOUT, TCP_SEND_TIMEOUT};
 pub use alias_allocation::AliasAllocator;
 pub use peer_session::{CdiCompletion, CdiResult, CdiStats, MemoryReadResult, MemoryWriteResult, PeerCommand, PeerError, PeerSession, PeerSessionHandle};
 pub use peer_session_registry::PeerSessionRegistry;
@@ -78,6 +78,9 @@ pub enum Error {
 
     #[error("Transport unhealthy: {0}")]
     TransportUnhealthy(String),
+
+    #[error("Transport terminated: {0}")]
+    TransportTerminated(String),
     
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

@@ -798,12 +798,8 @@ pub async fn apply_sync_changes(
     };
 
     // Must be connected
-    let conn_lock = state.connection.read().await;
-    let connection = conn_lock
-        .as_ref()
-        .ok_or("Not connected to network")?
-        .clone();
-    drop(conn_lock);
+    let connection = state.connection_arc().await
+        .ok_or("Not connected to network")?;
 
     let mut applied = Vec::new();
     let mut skipped = Vec::new();

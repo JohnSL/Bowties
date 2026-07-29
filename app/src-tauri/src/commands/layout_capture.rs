@@ -1090,7 +1090,7 @@ pub async fn save_layout_with_bus_writes(
 ) -> Result<SaveWithBusWriteResult, String> {
     use tauri::Emitter;
 
-    let is_connected = state.connection.read().await.is_some();
+    let is_connected = state.is_connected().await;
 
     // Phase 1: Save layout (with resolved role persistence via save_layout_directory).
     let _ = app.emit("save-progress", serde_json::json!({ "phase": "saving-layout" }));

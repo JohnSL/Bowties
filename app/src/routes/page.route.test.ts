@@ -761,6 +761,24 @@ describe('+page disconnect lifecycle (Spec 016 / S2)', () => {
       expect(eventStateStore.size).toBe(0);
     });
   });
+
+  it('delegates lcc-connection-lost to the orchestrator: reports the reason and never calls disconnect_lcc', async () => {
+    render(Page);
+    await waitFor(() => expect(eventHandlers.has('lcc-connection-lost')).toBe(true));
+    // Wait for the startup connection status to mark the orchestrator's
+    // session live (connectionLabel rendered in the status pill).
+    await waitFor(() => expect(screen.getByText('Bench Bus')).toBeInTheDocument());
+
+    invokeRef.mockClear();
+
+    await eventHandlers.get('lcc-connection-lost')!({ payload: { reason: 'transport read error' } });
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('transport read error');
+    });
+    expect(layoutStore.isConnected).toBe(false);
+    expect(invokeRef).not.toHaveBeenCalledWith('disconnect_lcc');
+  });
 });
 
 describe('+page channel resolution timing (Spec 017 / S1)', () => {
