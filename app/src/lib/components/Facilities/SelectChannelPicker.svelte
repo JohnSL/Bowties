@@ -19,6 +19,7 @@
   import DialogTitle from '$lib/components/Dialog/DialogTitle.svelte';
   import DialogActions from '$lib/components/Dialog/DialogActions.svelte';
   import Button from '$lib/components/Dialog/Button.svelte';
+  import SingleSelectList from '$lib/components/SingleSelectList/SingleSelectList.svelte';
 
   let {
     slotLabel,
@@ -55,6 +56,10 @@
       return location.includes(q);
     });
   });
+
+  const listItems = $derived(
+    filteredChannels.map((ch) => ({ key: ch.id })),
+  );
 
   const confirmDisabled = $derived(selectedId === undefined);
 
@@ -100,39 +105,33 @@
       aria-label="Filter channels"
     />
 
-    {#if filteredChannels.length === 0}
-      <p class="scp-empty">No matching channels.</p>
-    {:else}
-      <ul class="scp-list" role="radiogroup" aria-label="Channel candidates">
-        {#each filteredChannels as ch (ch.id)}
+    <SingleSelectList
+      items={listItems}
+      bind:selectedKey={selectedId}
+      ariaLabel="Channel candidates"
+      name="select-channel"
+      emptyMessage="No matching channels."
+    >
+      {#snippet row(key)}
+        {@const ch = filteredChannels.find((c) => c.id === key)}
+        {#if ch}
           {@const state = channelState(ch.id)}
           {@const stateClass = channelStateClass(state)}
-          <li class="scp-list-item">
-            <label class="scp-row" class:selected={selectedId === ch.id}>
-              <input
-                type="radio"
-                name="select-channel"
-                value={ch.id}
-                checked={selectedId === ch.id}
-                onchange={() => (selectedId = ch.id)}
-              />
-              <span
-                class="scp-state-dot"
-                class:occupied={stateClass === 'occupied'}
-                class:clear={stateClass === 'clear'}
-                class:lit={stateClass === 'lit'}
-                class:unlit={stateClass === 'unlit'}
-                class:unknown={stateClass === 'unknown'}
-                class:no-config={stateClass === 'no-config'}
-                aria-hidden="true"
-              ></span>
-              <span class="scp-name">{ch.name}</span>
-              <span class="scp-meta">{describeLocation(ch)} · {stateLabel(state)}</span>
-            </label>
-          </li>
-        {/each}
-      </ul>
-    {/if}
+          <span
+            class="scp-state-dot"
+            class:occupied={stateClass === 'occupied'}
+            class:clear={stateClass === 'clear'}
+            class:lit={stateClass === 'lit'}
+            class:unlit={stateClass === 'unlit'}
+            class:unknown={stateClass === 'unknown'}
+            class:no-config={stateClass === 'no-config'}
+            aria-hidden="true"
+          ></span>
+          <span class="scp-name">{ch.name}</span>
+          <span class="scp-meta">{describeLocation(ch)} · {stateLabel(state)}</span>
+        {/if}
+      {/snippet}
+    </SingleSelectList>
 
     <button type="submit" class="scp-hidden-submit" tabindex="-1" aria-hidden="true"></button>
   </form>
@@ -167,38 +166,6 @@
     outline: none;
     border-color: var(--fluent-strokeFocus2);
     box-shadow: 0 0 0 2px var(--fluent-strokeFocusHalo);
-  }
-  .scp-empty {
-    color: var(--fluent-neutralForeground2);
-    margin: 0.5rem 0;
-    font-size: var(--fluent-fontSizeBase200);
-  }
-  .scp-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    max-height: 18rem;
-    overflow-y: auto;
-    border: 1px solid var(--fluent-neutralStroke2, #e2e2e2);
-    border-radius: 4px;
-  }
-  .scp-row {
-    display: grid;
-    grid-template-columns: auto auto 1fr auto auto;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.4rem 0.6rem;
-    cursor: pointer;
-    border-bottom: 1px solid var(--fluent-neutralStroke2, #f0f0f0);
-  }
-  .scp-row:last-child {
-    border-bottom: none;
-  }
-  .scp-row:hover {
-    background: var(--fluent-neutralBackground1Hover, #f5f5f5);
-  }
-  .scp-row.selected {
-    background: var(--fluent-neutralBackground1Selected, #eef4ff);
   }
   .scp-state-dot {
     display: inline-block;
