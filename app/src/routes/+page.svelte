@@ -2086,7 +2086,7 @@
 {#if logicTargetDialog}
   <LogicTargetSelector
     candidates={logicTargetDialog.candidates}
-    onSelect={handleLogicTargetSelect}
+    onConfirm={handleLogicTargetSelect}
     onCancel={() => { logicTargetDialog = null; }}
   />
 {/if}

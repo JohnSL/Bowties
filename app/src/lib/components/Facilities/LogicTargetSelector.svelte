@@ -3,9 +3,9 @@
 
   Displays a list of candidate nodes that can serve as logic targets
   (Tower LCC nodes with conditional line capacity). Shows capacity
-  per node and lets the user select one.
+  per node and lets the user select one, then confirm.
 
-  Owns its Dialog shell (ADR-0014 pattern, same as AddChannelPicker).
+  Uses SingleSelectList for consistent picker interaction (ADR-0014).
   Boundary: Component — renders props, emits intent via callbacks.
   No async, no IPC, no lifecycle management.
 -->
@@ -14,20 +14,45 @@
   import DialogTitle from '$lib/components/Dialog/DialogTitle.svelte';
   import DialogActions from '$lib/components/Dialog/DialogActions.svelte';
   import Button from '$lib/components/Dialog/Button.svelte';
+  import SingleSelectList from '$lib/components/SingleSelectList/SingleSelectList.svelte';
   import type { LogicCapacity } from '$lib/api/logicAdapter';
 
   interface Props {
     /** Available candidate nodes with their keys and display names. */
     candidates: Array<{ nodeKey: string; displayName: string; capacity?: LogicCapacity }>;
-    /** Currently selected node key, if any. */
+    /** Optional initial selection seed (e.g. proximity-based suggestion). */
     selectedNodeKey?: string;
-    /** Callback when the user selects a node. */
-    onSelect: (nodeKey: string) => void;
+    /** Callback when the user confirms their selection. */
+    onConfirm: (nodeKey: string) => void;
     /** Callback when the user cancels the selection. */
     onCancel: () => void;
   }
 
-  let { candidates, selectedNodeKey, onSelect, onCancel }: Props = $props();
+  let { candidates, selectedNodeKey, onConfirm, onCancel }: Props = $props();
+
+  let localSelectedKey = $state<string | undefined>(undefined);
+
+  // Seed from prop once on mount; validates against candidates.
+  $effect(() => {
+    if (localSelectedKey === undefined && selectedNodeKey && candidates.some((c) => c.nodeKey === selectedNodeKey)) {
+      localSelectedKey = selectedNodeKey;
+    }
+  });
+
+  const listItems = $derived(
+    candidates.map((c) => ({ key: c.nodeKey })),
+  );
+
+  const confirmDisabled = $derived(localSelectedKey === undefined);
+
+  function candidateByKey(key: string) {
+    return candidates.find((c) => c.nodeKey === key);
+  }
+
+  function handleConfirm() {
+    if (localSelectedKey === undefined) return;
+    onConfirm(localSelectedKey);
+  }
 </script>
 
 <Dialog open width="md" ariaLabel="Select Logic Target Node" onCancel={onCancel}>
@@ -35,82 +60,83 @@
     <DialogTitle>Select Logic Target Node</DialogTitle>
   {/snippet}
 
-  <p class="description">
-    Choose a Tower LCC node to host the compiled signal logic.
-  </p>
+  <form
+    class="lts-form"
+    onsubmit={(e) => { e.preventDefault(); handleConfirm(); }}
+  >
+    <p class="description">
+      Choose a Tower LCC node to host the compiled signal logic.
+    </p>
 
-  {#if candidates.length === 0}
-    <p class="empty">No candidate nodes available.</p>
-  {:else}
-    <ul class="candidate-list">
-      {#each candidates as candidate (candidate.nodeKey)}
-        <li class="candidate" class:selected={candidate.nodeKey === selectedNodeKey}>
-          <button
-            type="button"
-            class="candidate-button"
-            onclick={() => onSelect(candidate.nodeKey)}
-          >
+    <SingleSelectList
+      items={listItems}
+      bind:selectedKey={localSelectedKey}
+      ariaLabel="Logic target candidates"
+      name="logic-target"
+      emptyMessage="No candidate nodes available."
+    >
+      {#snippet row(key)}
+        {@const candidate = candidateByKey(key)}
+        {#if candidate}
+          <span class="lts-row-content">
             <span class="node-name">{candidate.displayName}</span>
             {#if candidate.capacity}
               <span class="capacity">
                 {candidate.capacity.totalLines - candidate.capacity.usedLines}/{candidate.capacity.totalLines} lines available
               </span>
             {/if}
-          </button>
-        </li>
-      {/each}
-    </ul>
-  {/if}
+          </span>
+        {/if}
+      {/snippet}
+    </SingleSelectList>
+
+    <button type="submit" class="lts-hidden-submit" tabindex="-1" aria-hidden="true"></button>
+  </form>
 
   {#snippet actions()}
     <DialogActions>
       <Button appearance="secondary" onclick={onCancel}>Cancel</Button>
+      <Button appearance="primary" disabled={confirmDisabled} onclick={handleConfirm}>
+        Confirm
+      </Button>
     </DialogActions>
   {/snippet}
 </Dialog>
 
 <style>
-  .description {
-    color: var(--vscode-descriptionForeground);
-    font-size: 0.85rem;
-    margin-bottom: 0.75rem;
-  }
-  .empty {
-    color: var(--vscode-descriptionForeground);
-    font-style: italic;
-  }
-  .candidate-list {
-    list-style: none;
-    padding: 0;
+  .lts-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
     margin: 0;
   }
-  .candidate {
-    margin-bottom: 0.25rem;
+  .description {
+    color: var(--fluent-neutralForeground2);
+    font-size: var(--fluent-fontSizeBase200);
+    margin: 0;
   }
-  .candidate-button {
-    width: 100%;
+  .lts-row-content {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.5rem 0.75rem;
-    background: var(--vscode-list-hoverBackground);
-    border: 1px solid var(--vscode-panel-border);
-    border-radius: 4px;
-    color: var(--vscode-foreground);
-    cursor: pointer;
-    font-size: 0.85rem;
+    width: 100%;
   }
-  .candidate-button:hover {
-    background: var(--vscode-list-activeSelectionBackground);
-    color: var(--vscode-list-activeSelectionForeground);
-  }
-  .selected .candidate-button {
-    border-color: var(--vscode-focusBorder);
-    background: var(--vscode-list-activeSelectionBackground);
-    color: var(--vscode-list-activeSelectionForeground);
+  .node-name {
+    font-weight: 500;
+    color: var(--fluent-neutralForeground1);
   }
   .capacity {
-    font-size: 0.75rem;
-    color: var(--vscode-descriptionForeground);
+    font-size: var(--fluent-fontSizeBase200);
+    color: var(--fluent-neutralForeground2);
+  }
+  .lts-hidden-submit {
+    position: absolute;
+    width: 0;
+    height: 0;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
   }
 </style>
