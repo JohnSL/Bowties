@@ -586,6 +586,66 @@ mod tests {
     }
 
     #[test]
+    fn v4_layout_opens_with_additive_fields_defaulted_and_next_save_emits_v5() {
+        let root = std::env::temp_dir().join("bowties_test_v4_read_v5_save");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let layout_dir = root.join("legacy-layout");
+        std::fs::create_dir_all(&layout_dir).unwrap();
+        let v4_manifest_yaml = "\
+schemaVersion: 4
+layoutId: legacy-layout
+capturedAt: '2026-01-01T00:00:00Z'
+lastSavedAt: '2026-01-01T00:00:00Z'
+activeMode: offline
+matchThresholds:
+  likelySame: 80
+  uncertainMin: 40
+";
+        std::fs::write(layout_dir.join(MANIFEST_FILE), v4_manifest_yaml).unwrap();
+        std::fs::write(
+            layout_dir.join(BOWTIES_FILE),
+            serialize_yaml(&LayoutFile::default()).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            layout_dir.join(OFFLINE_CHANGES_FILE),
+            serialize_yaml(&Vec::<OfflineChange>::new()).unwrap(),
+        )
+        .unwrap();
+
+        let loaded = read_layout_capture(&layout_dir).unwrap();
+        assert_eq!(loaded.manifest.schema_version, 4);
+        assert!(loaded.manifest.connections.is_empty());
+        assert!(loaded.channels.channels.is_empty());
+        assert!(loaded.facilities.facilities.is_empty());
+        assert!(loaded.facilities.logic_allocations.is_empty());
+
+        let next_manifest = crate::layout::manifest::build_save_manifest(
+            Some(&loaded.manifest),
+            loaded.manifest.layout_id.clone(),
+            loaded.manifest.captured_at.clone(),
+            "2026-01-02T00:00:00Z".to_string(),
+        );
+        let data = LayoutDirectoryWriteData {
+            manifest: next_manifest,
+            node_snapshots: loaded.node_snapshots,
+            bowties: loaded.bowties,
+            offline_changes: loaded.offline_changes,
+            cdi_files: Vec::new(),
+            channels: loaded.channels,
+            facilities: loaded.facilities,
+        };
+        write_layout_capture(&layout_dir, &data).unwrap();
+
+        let resaved: LayoutManifest = read_yaml_file(&layout_dir.join(MANIFEST_FILE)).unwrap();
+        assert_eq!(resaved.schema_version, 5);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn repeated_base_file_saves_are_deterministic() {
         let root = std::env::temp_dir().join("bowties_test_deterministic_save");
         let _ = std::fs::remove_dir_all(&root);

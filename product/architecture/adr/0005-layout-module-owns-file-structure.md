@@ -150,3 +150,19 @@ structure (the original ADR commitment), and it hides the in-memory three-layer
 projection (the ADR-0015 commitment). Both are visible to the rest of the backend
 only through intent-shaped functions and the `LayoutState` query / mutation
 surface. See ADR-0015 for the full surface, invariants, and rationale.
+
+## 2026-07-30 extension: Explicit aggregate layout compatibility
+
+The ABS signaling format additions advance the aggregate layout schema from v4
+to v5. Every new save writes v5 so Bowties versions that only understand v4
+reject the extended format at the manifest boundary.
+
+The `layout/manifest.rs` owner separately declares which aggregate versions the
+current build can deserialize directly. This build directly reads v4 and v5;
+opening v4 performs no migration or write, and its next ordinary save emits v5.
+Other versions are rejected. Direct readability is an explicit set rather than
+a numeric range so a future version that requires migration cannot accidentally
+enter the normal deserialization path.
+
+Manifest unit tests protect the write version and direct-read classification.
+The layout I/O test protects the v4 open and subsequent v5 save workflow.

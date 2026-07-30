@@ -4,7 +4,12 @@ use serde::{Deserialize, Serialize};
 
 use super::types::ConnectionConfig;
 
-pub const LAYOUT_SCHEMA_VERSION: u32 = 4;
+pub const LAYOUT_SCHEMA_VERSION: u32 = 5;
+
+/// Aggregate layout schema versions this build reads without migration.
+/// Keep this explicit so directly readable and migratable versions remain
+/// distinct when migrations are introduced.
+pub const DIRECTLY_READABLE_SCHEMA_VERSIONS: &[u32] = &[4, 5];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,11 +61,11 @@ impl LayoutManifest {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if self.schema_version != LAYOUT_SCHEMA_VERSION {
+        if !DIRECTLY_READABLE_SCHEMA_VERSIONS.contains(&self.schema_version) {
             return Err(format!(
-                "Unsupported layout schema version {} (expected {})",
+                "Layout schema version {} is not directly readable (directly readable versions: {:?})",
                 self.schema_version,
-                LAYOUT_SCHEMA_VERSION
+                DIRECTLY_READABLE_SCHEMA_VERSIONS
             ));
         }
         if self.layout_id.trim().is_empty() {
@@ -117,6 +122,43 @@ mod tests {
             baud_rate: None,
             flow_control: FlowControl::None,
         }
+    }
+
+    #[test]
+    fn new_manifest_uses_current_aggregate_schema_version_5() {
+        let m = LayoutManifest::new(
+            "layout-a".to_string(),
+            "2026-06-01T00:00:00Z".to_string(),
+            "2026-06-01T00:00:01Z".to_string(),
+        );
+        assert_eq!(m.schema_version, 5);
+    }
+
+    fn manifest_with_schema_version(schema_version: u32) -> LayoutManifest {
+        let mut m = LayoutManifest::new(
+            "layout-a".to_string(),
+            "2026-06-01T00:00:00Z".to_string(),
+            "2026-06-01T00:00:01Z".to_string(),
+        );
+        m.schema_version = schema_version;
+        m
+    }
+
+    #[test]
+    fn validate_directly_reads_prior_and_current_schema_versions() {
+        assert!(manifest_with_schema_version(4).validate().is_ok());
+        assert!(manifest_with_schema_version(5).validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_schema_versions_outside_the_directly_readable_set() {
+        let err = manifest_with_schema_version(3).validate().unwrap_err();
+        assert!(
+            err.contains("not directly readable"),
+            "error should use directly-readable terminology, got: {}",
+            err
+        );
+        assert!(manifest_with_schema_version(6).validate().is_err());
     }
 
     #[test]
