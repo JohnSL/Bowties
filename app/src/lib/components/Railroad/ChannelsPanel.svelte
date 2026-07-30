@@ -9,6 +9,7 @@
   } from '$lib/utils/channelState';
   import type { InformationChannel } from '$lib/api/channels';
   import type { NodeDisplayParts } from '$lib/utils/nodeDisplayName';
+  import type { NodeConfigTree } from '$lib/types/nodeTree';
   import NodeLabel from '$lib/components/NodeLabel.svelte';
   import ChannelRow from './ChannelRow.svelte';
 
@@ -18,6 +19,7 @@
     resolvedEventIds,
     daughterboardName,
     usedBy,
+    nodeTree,
   }: {
     nodeName: (nodeKey: string) => string;
     /** Resolve structured display parts for a node key. Used in group headers. */
@@ -41,6 +43,8 @@
      * row renders em-dash.
      */
     usedBy?: (channelId: string) => ReadonlyArray<{ facilityName: string; slotLabel: string }>;
+    /** Resolves the cached config tree for a node key — enables config navigation. */
+    nodeTree?: (nodeKey: string) => NodeConfigTree | undefined;
   } = $props();
 
   /** Derive `ChannelState` for all channels from event store + resolved IDs + role. */
@@ -137,6 +141,7 @@
                 channelState={channelStates.get(channel.id) ?? { kind: 'unknown' }}
                 usedBy={usedBy?.(channel.id)}
                 onRename={handleRename}
+                {nodeTree}
               />
             {/each}
           {/each}

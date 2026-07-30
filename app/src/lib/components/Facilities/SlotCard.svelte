@@ -5,6 +5,7 @@
    * Provides a consistent card layout across all facility types:
    * - Header row: slot label (left) + state badge (right)
    * - Channel name + ownership badge
+   * - Config navigation link (blue underlined, matching ElementEntry style)
    * - Meta line (group · location)
    * - Built-in slot management actions: "Add channel..." (empty) / "Remove from slot" (filled)
    * - Optional extra content (lamp breakdown, etc.) via snippet
@@ -13,6 +14,7 @@
    * belong to the parent layout (FacilityCard) above the card.
    */
   import { channelStateClass, type ChannelState } from '$lib/utils/channelState';
+  import type { ConfigTarget } from '$lib/utils/channelConfigNavigation';
   import type { Snippet } from 'svelte';
 
   let {
@@ -27,6 +29,8 @@
     slotLabel,
     onAddChannel,
     onRemoveFromSlot,
+    configTargets,
+    onConfigTargetClick,
     extraContent,
     emptyContent,
     'data-slot': dataSlot,
@@ -55,6 +59,10 @@
     onAddChannel?: (slotLabel: string) => void;
     /** Handler for Remove from slot action (filled state). */
     onRemoveFromSlot?: (slotLabel: string, channelId: string) => void;
+    /** Resolved config navigation targets for this channel (ADR-0003). */
+    configTargets?: ConfigTarget[];
+    /** Callback when a config target is clicked — parent dispatches to configFocusStore. */
+    onConfigTargetClick?: (target: ConfigTarget) => void;
     /** Optional extra content below the meta line (e.g. lamp breakdown). */
     extraContent?: Snippet;
     /** Custom empty state content (overrides default "Add channel..." button). */
@@ -66,6 +74,23 @@
   } = $props();
 
   const stateClass = $derived(state ? channelStateClass(state) : undefined);
+
+  function handleConfigNavClick(e: MouseEvent) {
+    if (!configTargets || configTargets.length === 0) return;
+    if (configTargets.length === 1) {
+      onConfigTargetClick?.(configTargets[0]);
+      return;
+    }
+    // Toggle the popover via DOM (avoids adding $state to this component)
+    const popover = (e.currentTarget as HTMLElement).nextElementSibling;
+    if (popover) popover.toggleAttribute('data-open');
+  }
+
+  function handleTargetClick(target: ConfigTarget, e: MouseEvent) {
+    onConfigTargetClick?.(target);
+    const popover = (e.currentTarget as HTMLElement).closest('[data-testid="config-nav-popover"]');
+    if (popover) popover.removeAttribute('data-open');
+  }
 </script>
 
 <div class="slot-card" class:slot-card-empty={empty} data-slot={dataSlot} data-testid={dataTestId} data-slot-label={dataSlotLabel}>
@@ -118,6 +143,36 @@
             class:hw={ownership === 'hardware-owned'}
             class:user={ownership === 'user-owned'}
           >{ownership === 'hardware-owned' ? 'HW' : 'USER'}</span>
+        {/if}
+      </div>
+    {/if}
+    {#if configTargets && configTargets.length > 0}
+      <div class="slot-card-config-nav">
+        {#if configTargets.length === 1}
+          <button
+            type="button"
+            class="config-nav-link"
+            data-testid="slot-config-nav"
+            title="Go to this field in the configuration"
+            onclick={handleConfigNavClick}
+          >{configTargets[0].label}</button>
+        {:else}
+          <button
+            type="button"
+            class="config-nav-link"
+            data-testid="slot-config-nav"
+            title="Show configuration sections"
+            onclick={handleConfigNavClick}
+          >{configTargets.length} config sections ▾</button>
+          <div class="config-nav-popover" data-testid="config-nav-popover">
+            {#each configTargets as target}
+              <button
+                type="button"
+                class="config-nav-link config-nav-popover-item"
+                onclick={(e) => handleTargetClick(target, e)}
+              >{target.label}</button>
+            {/each}
+          </div>
         {/if}
       </div>
     {/if}
@@ -238,6 +293,48 @@
     font-size: 0.6875rem;
     color: var(--text-muted, #616161);
     margin-top: 0.125rem;
+  }
+  .slot-card-config-nav {
+    position: relative;
+    margin-top: 0.125rem;
+  }
+  .config-nav-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 0.78rem;
+    color: #0078d4;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    text-align: left;
+    word-break: break-word;
+  }
+  .config-nav-link:hover {
+    color: #005a9e;
+  }
+  .config-nav-popover {
+    display: none;
+    position: absolute;
+    left: 0;
+    top: 100%;
+    z-index: 10;
+    flex-direction: column;
+    gap: 0.125rem;
+    background: var(--surface-color, #fff);
+    border: 1px solid var(--border-color, #d1d1d1);
+    border-radius: 4px;
+    padding: 0.25rem 0.375rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    min-width: 120px;
+  }
+  :global(.config-nav-popover[data-open]) {
+    display: flex;
+  }
+  .config-nav-popover-item {
+    display: block;
+    width: 100%;
+    padding: 0.125rem 0;
   }
   .slot-card-empty-row {
     display: flex;

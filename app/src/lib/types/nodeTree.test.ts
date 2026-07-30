@@ -14,6 +14,8 @@ import {
   replicationInstances,
   resolvePillSelectionsForPath,
   buildElementLabel,
+  findNodeAtPath,
+  buildPathLabel,
 } from '$lib/types/nodeTree';
 import type {
   NodeConfigTree,
@@ -514,18 +516,16 @@ describe('resolvePillSelectionsForPath', () => {
     expect(result.size).toBe(0);
   });
 
-  it('out-of-bounds instance index — returns partial Map and stops cleanly without throwing', () => {
+  it('out-of-bounds instance index — returns empty Map and stops cleanly without throwing', () => {
     const inst1 = makeInstance(0, 1);
     const inst2 = makeInstance(0, 2);
     const wrapper = makeWrapper(0, [inst1, inst2]); // only 2 instances
     const seg = makeSegment([wrapper]);
 
-    // instNum=5 exceeds wrapper.children.length → selectedInst is undefined → breaks
+    // instNum=5 exceeds wrapper.children.length → resolvePathStep returns undefined → breaks
     expect(() => {
       const result = resolvePillSelectionsForPath(nodeId, seg, ['seg:0', 'elem:0#5', 'elem:1']);
-      // Should return an entry for the outer level (since inst1 exists as firstSibling)
-      // but stop before navigating deeper
-      expect(result.get('nodeId:seg:0/elem:0#1')).toBe(4); // 5-1=4
+      expect(result.size).toBe(0);
     }).not.toThrow();
   });
 });
@@ -665,5 +665,125 @@ describe('buildElementLabel', () => {
     const resolver = (l: LeafConfigNode) => l.value;
     const result = buildElementLabel(tree, eventLeaf, resolver);
     expect(result).toBe('I/O Pins.GPIO13 (1).Event On');
+  });
+});
+
+// ─── findNodeAtPath ──────────────────────────────────────────────────────────
+
+describe('findNodeAtPath', () => {
+  const leaf = makeLeaf({ name: 'Event ID', path: ['seg:0', 'elem:0#1', 'elem:0'] });
+  const group = makeGroup([leaf], {
+    name: 'Line', instance: 1, instanceLabel: 'Line 1',
+    path: ['seg:0', 'elem:0#1'], displayName: null,
+  });
+  const tree = makeTree([makeSegment([group], { name: 'Configuration' })]);
+
+  it('returns a group when the path terminates at a group', () => {
+    const node = findNodeAtPath(tree, ['seg:0', 'elem:0#1']);
+    expect(node).toBe(group);
+  });
+
+  it('returns a leaf when the path goes all the way down', () => {
+    const node = findNodeAtPath(tree, ['seg:0', 'elem:0#1', 'elem:0']);
+    expect(node).toBe(leaf);
+  });
+
+  it('returns undefined for an invalid path', () => {
+    expect(findNodeAtPath(tree, ['seg:9'])).toBeUndefined();
+    expect(findNodeAtPath(tree, ['seg:0', 'elem:99'])).toBeUndefined();
+    expect(findNodeAtPath(tree, [])).toBeUndefined();
+  });
+});
+
+// ─── buildPathLabel ──────────────────────────────────────────────────────────
+
+describe('buildPathLabel', () => {
+  const leaf = makeLeaf({ name: 'Event ID', path: ['seg:0', 'elem:0#1', 'elem:0'] });
+  const group = makeGroup([leaf], {
+    name: 'Line', instance: 1, instanceLabel: 'Line 1',
+    path: ['seg:0', 'elem:0#1'], displayName: null,
+  });
+  const tree = makeTree([makeSegment([group], { name: 'Configuration' })]);
+
+  it('returns segment.group label for a group path', () => {
+    expect(buildPathLabel(tree, ['seg:0', 'elem:0#1'])).toBe('Configuration.Line 1');
+  });
+
+  it('returns segment.group.leaf label for a full leaf path', () => {
+    expect(buildPathLabel(tree, ['seg:0', 'elem:0#1', 'elem:0'])).toBe('Configuration.Line 1.Event ID');
+  });
+
+  it('returns just segment name for a segment-only path', () => {
+    expect(buildPathLabel(tree, ['seg:0'])).toBe('Configuration');
+  });
+
+  it('returns empty string for invalid/empty path', () => {
+    expect(buildPathLabel(tree, [])).toBe('');
+    expect(buildPathLabel(tree, ['seg:99'])).toBe('');
+  });
+
+  it('uses displayName when set on a group', () => {
+    const namedGroup = makeGroup([leaf], {
+      name: 'Line', instance: 1, instanceLabel: 'Line 1',
+      path: ['seg:0', 'elem:0#1'], displayName: 'Up Main Block 5',
+    });
+    const t = makeTree([makeSegment([namedGroup], { name: 'Configuration' })]);
+    expect(buildPathLabel(t, ['seg:0', 'elem:0#1'])).toBe('Configuration.Up Main Block 5');
+  });
+});
+
+// ─── Wrapper/instance path resolution ────────────────────────────────────────
+
+describe('wrapper/instance path resolution', () => {
+  // Models the real tree: segment → wrapper (elem:0) → instances (elem:0#1, elem:0#2)
+  const leaf1 = makeLeaf({ name: 'Event ID', path: ['seg:0', 'elem:0#1', 'elem:0'] });
+  const leaf2 = makeLeaf({ name: 'Event ID', path: ['seg:0', 'elem:0#2', 'elem:0'], address: 64 });
+  const instance1 = makeGroup([leaf1], {
+    name: 'Line', instance: 1, instanceLabel: 'Line 1',
+    path: ['seg:0', 'elem:0#1'], displayName: null,
+    replicationOf: 'Line', replicationCount: 3,
+  });
+  const instance2 = makeGroup([leaf2], {
+    name: 'Line', instance: 2, instanceLabel: 'Line 2',
+    path: ['seg:0', 'elem:0#2'], displayName: null,
+    replicationOf: 'Line', replicationCount: 3,
+  });
+  const wrapper = makeGroup([instance1, instance2], {
+    name: 'Line', instance: 0, instanceLabel: 'Line',
+    path: ['seg:0', 'elem:0'], displayName: null,
+    replicationOf: 'Line', replicationCount: 3,
+  });
+  const tree = makeTree([makeSegment([wrapper], { name: 'Port I/O' })]);
+
+  describe('findNodeAtPath', () => {
+    it('resolves an instance inside a wrapper', () => {
+      expect(findNodeAtPath(tree, ['seg:0', 'elem:0#2'])).toBe(instance2);
+    });
+
+    it('resolves a leaf inside a wrapper instance', () => {
+      expect(findNodeAtPath(tree, ['seg:0', 'elem:0#1', 'elem:0'])).toBe(leaf1);
+    });
+
+    it('resolves the wrapper itself with a plain path', () => {
+      expect(findNodeAtPath(tree, ['seg:0', 'elem:0'])).toBe(wrapper);
+    });
+  });
+
+  describe('buildPathLabel', () => {
+    it('builds segment.instance label through a wrapper', () => {
+      expect(buildPathLabel(tree, ['seg:0', 'elem:0#2'])).toBe('Port I/O.Line 2');
+    });
+
+    it('builds full path through wrapper to leaf', () => {
+      expect(buildPathLabel(tree, ['seg:0', 'elem:0#1', 'elem:0'])).toBe('Port I/O.Line 1.Event ID');
+    });
+  });
+
+  describe('getChildrenAtPath', () => {
+    it('returns instance children through a wrapper path', () => {
+      const children = getChildrenAtPath(tree, ['seg:0', 'elem:0#1']);
+      expect(children).toHaveLength(1);
+      expect(children![0]).toBe(leaf1);
+    });
   });
 });

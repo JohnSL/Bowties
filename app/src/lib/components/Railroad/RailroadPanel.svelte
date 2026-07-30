@@ -2,6 +2,7 @@
   import FacilitiesSection from '$lib/components/Facilities/FacilitiesSection.svelte';
   import ChannelsPanel from './ChannelsPanel.svelte';
   import type { NodeDisplayParts } from '$lib/utils/nodeDisplayName';
+  import type { NodeConfigTree } from '$lib/types/nodeTree';
 
   let {
     nodeName,
@@ -13,6 +14,7 @@
     onAddChannel,
     onRemoveFromSlot,
     onDeleteRequest,
+    nodeTree,
   }: {
     nodeName: (nodeKey: string) => string;
     /** Resolve structured display parts for a node key. */
@@ -39,6 +41,8 @@
     onRemoveFromSlot?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
     /** Spec 020 / S6 — facility deletion request emitter. */
     onDeleteRequest?: (facilityId: string) => void;
+    /** Resolves the cached config tree for a node key — enables config navigation. */
+    nodeTree?: (nodeKey: string) => NodeConfigTree | undefined;
   } = $props();
 </script>
 
@@ -49,8 +53,9 @@
     {onAddChannel}
     {onRemoveFromSlot}
     {onDeleteRequest}
+    {nodeTree}
   />
-  <ChannelsPanel {nodeName} {nodeParts} {resolvedEventIds} {daughterboardName} {usedBy} />
+  <ChannelsPanel {nodeName} {nodeParts} {resolvedEventIds} {daughterboardName} {usedBy} {nodeTree} />
 </div>
 
 <style>

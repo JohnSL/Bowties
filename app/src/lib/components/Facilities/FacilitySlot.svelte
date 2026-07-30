@@ -7,6 +7,7 @@
    */
   import type { BehaviorTemplate, SlotDefinition } from '$lib/api/behaviorTemplates';
   import type { ChannelState } from '$lib/utils/channelState';
+  import type { ConfigTarget } from '$lib/utils/channelConfigNavigation';
   import SlotCard from './SlotCard.svelte';
 
   let {
@@ -16,6 +17,8 @@
     currentChannelDisplay,
     onAddChannel,
     onRemoveFromSlot,
+    configTargets,
+    onConfigTargetClick,
   }: {
     slotLabel: string;
     template?: BehaviorTemplate;
@@ -31,6 +34,10 @@
     /** Handler for the "Add channel..." action on empty slots. */
     onAddChannel?: (slotLabel: string) => void;
     onRemoveFromSlot?: (slotLabel: string, currentChannelId: string) => void;
+    /** Resolved config navigation targets, passed through to SlotCard. */
+    configTargets?: ConfigTarget[];
+    /** Callback when a config target is clicked. */
+    onConfigTargetClick?: (target: ConfigTarget) => void;
   } = $props();
 
   function definition(): SlotDefinition | undefined {
@@ -57,6 +64,8 @@
   slotLabel={slotLabel}
   onAddChannel={onAddChannel}
   onRemoveFromSlot={onRemoveFromSlot}
+  {configTargets}
+  {onConfigTargetClick}
   data-testid="facility-slot"
   data-slot-label={slotLabel}
 />

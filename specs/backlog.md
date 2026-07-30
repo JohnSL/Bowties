@@ -60,11 +60,10 @@
   * Key design decisions still open: protocol-agnostic channel model (LCC + DCC/LocoNet via JMRI), LogixNG as alternative logic execution target, panel topology import for future layout editor, signal system metadata per channel.
   * No implementation work until proposals are reviewed and scoped.
 * Channel hardware references as navigable hyperlinks (ADR-0003 display-reference rule)
-  * Root cause: ADR-0003's 2026-06-25 extension establishes that any "node + path" reference in the UI must be a clickable hyperlink that navigates to the configuration field. The current `ChannelRow` hardware line shows resolved text but is not a link.
-  * Follow-up:
-    1. Design the navigation target: clicking a hardware ref on the Railroad tab should switch to Config tab, select the node, and focus the relevant field/connector.
-    2. Implement as a `<button>` that dispatches a navigation action (likely via `configFocusStore` or similar routing mechanism).
-    3. Add test coverage for navigation behavior (`ChannelRow.test.ts`).
+  * Root cause: ADR-0003's 2026-06-25 extension establishes that any "node + path" reference in the UI must be a clickable hyperlink that navigates to the configuration field.
+  * Progress: `channelConfigNavigation.ts` resolves channel bindings to `ConfigTarget[]` (1:1 for connectorInput, 1:N for lampRow). Navigation wired end-to-end: `+page.svelte` passes `nodeTreeStore.getTree` → `RailroadPanel` → both `FacilitiesSection`/`FacilityCard` and `ChannelsPanel`/`ChannelRow`. `SlotCard` meta line and `ChannelRow` location cell render clickable buttons dispatching `configFocusStore.focusConfigField`. Tests in `channelConfigNavigation.test.ts`, `ChannelRow.test.ts`, `SlotCard.test.ts`, and `FacilityCard.test.ts`.
+  * Remaining:
+    1. Live end-to-end validation of facility-card and channel-row navigation with real hardware.
 * Placeholder nodes — generalise planning beyond facility scaffolding
   * Vision-doc reference: `specs/proposals/app-ux-vision/app-ux-vision.md` (Channel Roles, Styles, and Bindings; Placeholder Nodes).
   * Root cause: spec 018's planning capability stops at empty facility slots. The broader vision needs a way to declare "boards I plan to buy" and back channels with their pins/Logic-blocks before any real hardware connects, so the user can configure daughter boards, name channels, apply templates, and aggregate hardware needs (e.g., "you need 3 more LED outputs for this aspect style") without owning any of the boards yet.

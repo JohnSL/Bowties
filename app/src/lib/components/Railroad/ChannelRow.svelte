@@ -1,11 +1,14 @@
 <script lang="ts">
   import type { InformationChannel } from '$lib/api/channels';
+  import type { NodeConfigTree } from '$lib/types/nodeTree';
   import {
     channelStateClass,
     channelStateLabel,
     type ChannelState,
   } from '$lib/utils/channelState';
   import { getStyleRowCount } from '$lib/utils/channelStyles';
+  import { resolveConfigTargets } from '$lib/utils/channelConfigNavigation';
+  import { configFocusStore } from '$lib/stores/configFocus.svelte';
 
   const ROLE_LABELS: Record<string, string> = {
     'block-occupancy': 'Block occupancy',
@@ -42,6 +45,7 @@
     channelState = DEFAULT_STATE,
     usedBy,
     onRename,
+    nodeTree,
   }: {
     channel: InformationChannel;
     /** Spec 018 / S5 D3 — typed discriminated state for this channel. */
@@ -54,10 +58,13 @@
      */
     usedBy?: ReadonlyArray<{ facilityName: string; slotLabel: string }>;
     onRename?: (id: string, newName: string) => void;
+    /** Resolves the cached config tree for a node key, when available. */
+    nodeTree?: (nodeKey: string) => NodeConfigTree | undefined;
   } = $props();
 
   let isEditingName = $state(false);
   let nameEditValue = $state('');
+  let isConfigPopoverOpen = $state(false);
 
   function startRename() {
     nameEditValue = channel.name;
@@ -119,6 +126,26 @@
     if (!usedBy || usedBy.length === 0) return '—';
     return usedBy.map((b) => `${b.facilityName} / ${b.slotLabel}`).join('; ');
   });
+
+  let configTargets = $derived.by(() => {
+    const tree = nodeTree?.(channel.binding.nodeKey);
+    return resolveConfigTargets(channel, tree);
+  });
+
+  function handleLocationClick() {
+    if (configTargets.length === 1) {
+      configFocusStore.focusConfigField(configTargets[0].nodeId, configTargets[0].elementPath);
+      return;
+    }
+    if (configTargets.length > 1) {
+      isConfigPopoverOpen = !isConfigPopoverOpen;
+    }
+  }
+
+  function handleConfigTargetClick(target: { nodeId: string; elementPath: string[] }) {
+    configFocusStore.focusConfigField(target.nodeId, target.elementPath);
+    isConfigPopoverOpen = false;
+  }
 </script>
 
 <tr class="channel-row">
@@ -171,7 +198,23 @@
       <span class="style">{channel.style}</span>
     </div>
   </td>
-  <td class="location-cell">{location}</td>
+  <td class="location-cell">
+    <button
+      class="location-nav"
+      data-testid="location-nav"
+      onclick={handleLocationClick}
+      title="Jump to configuration"
+    >{location}</button>
+    {#if isConfigPopoverOpen}
+      <div class="config-popover" role="menu">
+        {#each configTargets as target (target.elementPath.join('/'))}
+          <button role="menuitem" onclick={() => handleConfigTargetClick(target)}>
+            {target.label}
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </td>
   <td class="state-label-cell">
     <span class="state-label">{stateLabel}</span>
     {#if isLampIndicator}
@@ -329,6 +372,44 @@
     font-size: 0.8rem;
     color: var(--text-secondary, #555);
     white-space: nowrap;
+    position: relative;
+  }
+  .location-nav {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+  .location-nav:hover {
+    text-decoration: underline;
+  }
+  .config-popover {
+    position: absolute;
+    z-index: 10;
+    top: 100%;
+    left: 0.6rem;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface-primary, #fff);
+    border: 1px solid var(--border-subtle, #ddd);
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    min-width: 10rem;
+  }
+  .config-popover button {
+    background: none;
+    border: none;
+    padding: 0.4rem 0.6rem;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .config-popover button:hover {
+    background: var(--surface-hover, #fafafa);
   }
   .state-label-cell {
     padding: 0.5rem 0.6rem;

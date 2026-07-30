@@ -18,6 +18,9 @@
   } from '$lib/utils/channelState';
   import { getStyleRowCount } from '$lib/utils/channelStyles';
   import { facilitiesStore } from '$lib/stores/facilities.svelte';
+  import { resolveConfigTargets, type ConfigTarget } from '$lib/utils/channelConfigNavigation';
+  import { configFocusStore } from '$lib/stores/configFocus.svelte';
+  import type { NodeConfigTree } from '$lib/types/nodeTree';
   import FacilitySlot from './FacilitySlot.svelte';
   import SlotCard from './SlotCard.svelte';
 
@@ -30,6 +33,7 @@
     onSelectChannel,
     onAddChannel,
     onRemoveFromSlot,
+    nodeTree,
   }: {
     facility: Facility;
     template?: BehaviorTemplate;
@@ -42,6 +46,8 @@
     /** Spec 018 / S5 — consumer-side output slot's Add channel intent. */
     onAddChannel?: (facilityId: string, slotLabel: string) => void;
     onRemoveFromSlot?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
+    /** Resolves the cached config tree for a node key, when available. */
+    nodeTree?: (nodeKey: string) => NodeConfigTree | undefined;
   } = $props();
 
   // Spec 018 / S6 (D5): status is derived by the effectiveLayoutStore facade
@@ -162,6 +168,20 @@
     return connectorId;
   }
 
+  /** Resolve config navigation targets for a slot's bound channel. */
+  function configTargetsFor(binding: string[]): ConfigTarget[] | undefined {
+    if (binding.length === 0) return undefined;
+    const channel = channelsStore.channels.find((c) => c.id === binding[0]);
+    if (!channel) return undefined;
+    const tree = nodeTree?.(channel.binding.nodeKey);
+    const targets = resolveConfigTargets(channel, tree);
+    return targets.length > 0 ? targets : undefined;
+  }
+
+  function handleConfigTargetClick(target: ConfigTarget) {
+    configFocusStore.focusConfigField(target.nodeId, target.elementPath);
+  }
+
   /**
    * Resolve the FacilitySlot filled-state display from the channel id.
    * UI is max-1 in S4: we pick element 0 of the Vec, leaving multi-binding
@@ -270,6 +290,8 @@
             slotLabel={label}
             onAddChannel={(slot) => onSelectChannel?.(facility.facilityId, slot)}
             onRemoveFromSlot={(slot, currentId) => onRemoveFromSlot?.(facility.facilityId, slot, currentId)}
+            configTargets={configTargetsFor(binding)}
+            onConfigTargetClick={handleConfigTargetClick}
             data-slot={label}
           />
         {/each}
@@ -345,6 +367,8 @@
             slotLabel={label}
             onAddChannel={(slot) => onAddChannel?.(facility.facilityId, slot)}
             onRemoveFromSlot={(slot, currentId) => onRemoveFromSlot?.(facility.facilityId, slot, currentId)}
+            configTargets={configTargetsFor(binding)}
+            onConfigTargetClick={handleConfigTargetClick}
             data-slot={label}
           >
             {#snippet extraContent()}
@@ -381,6 +405,8 @@
             currentChannelDisplay={d.currentChannelDisplay}
             onAddChannel={(slot) => onSelectChannel?.(facility.facilityId, slot)}
             onRemoveFromSlot={(slot, currentId) => onRemoveFromSlot?.(facility.facilityId, slot, currentId)}
+            configTargets={configTargetsFor(binding)}
+            onConfigTargetClick={handleConfigTargetClick}
           />
         {/each}
       </div>
@@ -399,6 +425,8 @@
             currentChannelDisplay={d.currentChannelDisplay}
             onAddChannel={(slot) => onAddChannel?.(facility.facilityId, slot)}
             onRemoveFromSlot={(slot, currentId) => onRemoveFromSlot?.(facility.facilityId, slot, currentId)}
+            configTargets={configTargetsFor(binding)}
+            onConfigTargetClick={handleConfigTargetClick}
           />
         {/each}
       </div>

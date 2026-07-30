@@ -8,6 +8,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
 import type { Facility } from '$lib/api/facilities';
+import type { InformationChannel } from '$lib/api/channels';
+import type { NodeConfigTree } from '$lib/types/nodeTree';
 
 const listBehaviorTemplatesMock = vi.fn<() => Promise<BehaviorTemplate[]>>(async () => []);
 vi.mock('$lib/api/behaviorTemplates', () => ({
@@ -26,8 +28,18 @@ vi.mock('$lib/layout', async (importOriginal) => {
   return { ...actual, resolveNodeName: (...args: Parameters<typeof actual.resolveNodeName>) => resolveNodeNameMock(...args) };
 });
 
+const { focusConfigFieldMock } = vi.hoisted(() => ({
+  focusConfigFieldMock: vi.fn(),
+}));
+vi.mock('$lib/stores/configFocus.svelte', () => ({
+  configFocusStore: {
+    focusConfigField: focusConfigFieldMock,
+  },
+}));
+
 const { effectiveLayoutStore } = await import('$lib/layout/effectiveLayoutStore.svelte');
 const { facilitiesStore } = await import('$lib/stores/facilities.svelte');
+const { channelsStore } = await import('$lib/stores/channels.svelte');
 const { behaviorTemplatesStore } = await import('$lib/stores/behaviorTemplates.svelte');
 const FacilityCard = (await import('./FacilityCard.svelte')).default;
 
@@ -64,7 +76,9 @@ const ABS_3_ASPECT: BehaviorTemplate = {
 
 beforeEach(async () => {
   facilitiesStore.reset();
+  channelsStore.reset();
   behaviorTemplatesStore.reset();
+  focusConfigFieldMock.mockClear();
   listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR]);
   await behaviorTemplatesStore.loadBehaviorTemplates();
 });
@@ -163,5 +177,83 @@ describe('FacilityCard comprehension view (Spec 020 / S4)', () => {
     render(FacilityCard, { props: { facility: f, template: ABS_3_ASPECT } });
     expect(screen.getByText('Tower LCC — Main')).toBeInTheDocument();
     expect(screen.queryByText('05010101FF000001')).not.toBeInTheDocument();
+  });
+});
+
+function connectorInputChannel(): InformationChannel {
+  return {
+    id: 'ch-1',
+    name: 'Block 3 Occupancy',
+    role: 'block-occupancy',
+    style: 'bod-block-detector-input',
+    ownership: 'hardware-owned',
+    binding: { kind: 'connectorInput', nodeKey: '020157000001', connector: 'connector-a', input: 2 },
+  };
+}
+
+function connectorInputTree(): NodeConfigTree {
+  return {
+    nodeId: '020157000001',
+    identity: null,
+    connectorProfile: {
+      nodeId: '020157000001',
+      carrierKey: 'carrier-1',
+      slots: [
+        {
+          slotId: 'connector-a',
+          label: 'Connector A',
+          order: 0,
+          allowNoneInstalled: true,
+          supportedDaughterboardIds: ['bod-8'],
+          affectedPaths: [],
+          resolvedAffectedPaths: [['seg:0', 'elem:0#1'], ['seg:0', 'elem:0#2']],
+        },
+      ],
+    },
+    segments: [],
+  };
+}
+
+describe('FacilityCard — channel-to-config navigation', () => {
+  it('compiled view: clicking the meta line navigates via configFocusStore using the nodeTree resolver', async () => {
+    const tree = connectorInputTree();
+    channelsStore.hydrateBaseline([connectorInputChannel()]);
+    const f: Facility = { facilityId: 'f-abs', templateId: 'abs-3-aspect-signal', name: 'Signal 5',
+      slotBindings: { input: ['ch-1'], output: [], 'downstream-signal': [] } };
+    facilitiesStore.hydrateBaseline([f]);
+    vi.spyOn(effectiveLayoutStore, 'facilityStatus').mockReturnValue('Incomplete');
+
+    render(FacilityCard, {
+      props: {
+        facility: f,
+        template: ABS_3_ASPECT,
+        nodeTree: (nodeKey: string) => (nodeKey === tree.nodeId ? tree : undefined),
+      },
+    });
+
+    await fireEvent.click(screen.getByTestId('slot-config-nav'));
+
+    expect(focusConfigFieldMock).toHaveBeenCalledWith('020157000001', ['seg:0', 'elem:0#2']);
+  });
+
+  it('non-compiled view: clicking the meta line navigates via configFocusStore using the nodeTree resolver', async () => {
+    const tree = connectorInputTree();
+    channelsStore.hydrateBaseline([connectorInputChannel()]);
+    const f: Facility = { facilityId: 'f-1', templateId: 'block-indicator', name: 'Block 5',
+      slotBindings: { input: ['ch-1'], output: [] } };
+    facilitiesStore.hydrateBaseline([f]);
+    vi.spyOn(effectiveLayoutStore, 'facilityStatus').mockReturnValue('Incomplete');
+
+    render(FacilityCard, {
+      props: {
+        facility: f,
+        template: BLOCK_INDICATOR,
+        nodeTree: (nodeKey: string) => (nodeKey === tree.nodeId ? tree : undefined),
+      },
+    });
+
+    await fireEvent.click(screen.getByTestId('slot-config-nav'));
+
+    expect(focusConfigFieldMock).toHaveBeenCalledWith('020157000001', ['seg:0', 'elem:0#2']);
   });
 });

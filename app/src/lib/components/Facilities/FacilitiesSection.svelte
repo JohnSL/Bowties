@@ -2,6 +2,7 @@
   import { facilitiesStore } from '$lib/stores/facilities.svelte';
   import { behaviorTemplatesStore } from '$lib/stores/behaviorTemplates.svelte';
   import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
+  import type { NodeConfigTree } from '$lib/types/nodeTree';
   import * as facilityOrchestrator from '$lib/orchestration/facilityOrchestrator';
   import AddFacilityDialog from './AddFacilityDialog.svelte';
   import FacilityCard from './FacilityCard.svelte';
@@ -12,6 +13,7 @@
     onAddChannel,
     onRemoveFromSlot,
     onDeleteRequest,
+    nodeTree,
   }: {
     resolvedEventIds?: ReadonlyMap<string, Record<string, string>>;
     onSelectChannel?: (facilityId: string, slotLabel: string) => void;
@@ -20,6 +22,8 @@
     onRemoveFromSlot?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
     /** Spec 020 / S6 — emit deletion request; caller gates on confirmation dialog. */
     onDeleteRequest?: (facilityId: string) => void;
+    /** Resolves the cached config tree for a node key — enables config navigation. */
+    nodeTree?: (nodeKey: string) => NodeConfigTree | undefined;
   } = $props();
 
   let showAddDialog = $state(false);
@@ -77,6 +81,7 @@
             {onSelectChannel}
             {onAddChannel}
             {onRemoveFromSlot}
+            {nodeTree}
           />
         </li>
       {/each}

@@ -1903,6 +1903,7 @@
           onAddChannel={handleAddChannelIntent}
           onRemoveFromSlot={handleRemoveFromSlot}
           onDeleteRequest={handleDeleteFacilityRequest}
+          nodeTree={(key) => nodeTreeStore.getTree(key)}
         />
       </div>
 
