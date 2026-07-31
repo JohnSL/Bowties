@@ -67,6 +67,9 @@
   const DESC_TRUNCATE_THRESHOLD = 120;
   const DESC_TRUNCATE_AT = 100;
 
+  /** JMRI/OpenLCB CDI string convention: size <= 64 is single-line, size > 64 is multiline. */
+  const STRING_MULTILINE_THRESHOLD = 64;
+
   // ── Local state ────────────────────────────────────────────────────────────
 
   let rowEl: HTMLDivElement;
@@ -143,6 +146,9 @@
     (leaf.elementType === 'string' ||
       (leaf.elementType === 'int' && !(leaf.constraints?.mapEntries?.length) && !leaf.hintSlider))
   );
+
+  /** JMRI/OpenLCB CDI convention: string leaves with size > 64 render as a multiline textarea */
+  let isMultilineString = $derived(leaf.elementType === 'string' && leaf.size > STRING_MULTILINE_THRESHOLD);
 
   /** Whether this leaf is an int field with constrained map entries (dropdown) */
   let isSelectEditable = $derived(
@@ -297,7 +303,7 @@
 
   /** Validate a string value and send to Rust tree */
   function handleStringInput(e: Event) {
-    const raw = (e.target as HTMLInputElement).value;
+    const raw = (e.target as HTMLInputElement | HTMLTextAreaElement).value;
 
     // Synchronously buffer the typed value so the derived inputStr stays
     // at what the user typed, preventing the async IPC response from
@@ -487,7 +493,18 @@
 
   <div class="field-content">
 
-    {#if isEditable && leaf.elementType === 'string'}
+    {#if isEditable && leaf.elementType === 'string' && isMultilineString}
+      <textarea
+        class="field-input field-input--multiline"
+        value={inputStr}
+        maxlength={leaf.size - 1}
+        disabled={isDisabled}
+        aria-label={leaf.name}
+        aria-invalid={isInvalid}
+        oninput={handleStringInput}
+        onblur={handleStringBlur}
+      ></textarea>
+    {:else if isEditable && leaf.elementType === 'string'}
       <input
         type="text"
         class="field-input"
@@ -894,6 +911,13 @@
     max-width: 120px;
     font-family: 'Cascadia Code', 'Cascadia Mono', 'SF Mono', 'Fira Code', 'Consolas', monospace;
     font-size: 12px;
+  }
+
+  .field-input--multiline {
+    max-width: 480px;
+    min-height: 60px;
+    resize: vertical;
+    font-family: inherit;
   }
 
   .field-input--select {

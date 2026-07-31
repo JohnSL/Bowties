@@ -393,6 +393,53 @@ describe('TreeLeafRow.svelte', () => {
 
       expect(mockApplyEdit).toHaveBeenCalledWith(editKeyForLeaf(NODE_ID, 253, 100), { type: 'string', value: 'new value' });
     });
+
+    it('renders single-line input for string leaf with size 64', () => {
+      const leaf = makeLeaf({
+        elementType: 'string',
+        value: { type: 'string', value: '' },
+        size: 64,
+      });
+      render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+      expect(screen.getByRole('textbox').tagName).toBe('INPUT');
+    });
+
+    it('renders multiline textarea for string leaf with size 65', () => {
+      const leaf = makeLeaf({
+        elementType: 'string',
+        value: { type: 'string', value: '' },
+        size: 65,
+      });
+      render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+      expect(screen.getByRole('textbox').tagName).toBe('TEXTAREA');
+    });
+
+    it('renders multiline textarea for size-256 string leaf and preserves the edit pipeline', async () => {
+      const leaf = makeLeaf({
+        elementType: 'string',
+        value: { type: 'string', value: 'old' },
+        size: 256,
+        address: 200,
+        space: 253,
+      });
+      render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+      const textarea = screen.getByRole('textbox');
+      expect(textarea.tagName).toBe('TEXTAREA');
+
+      await fireEvent.input(textarea, { target: { value: 'new value' } });
+
+      expect(mockApplyEdit).toHaveBeenCalledWith(editKeyForLeaf(NODE_ID, 253, 200), { type: 'string', value: 'new value' });
+    });
+
+    it('renders single-line input for an unrelated short string leaf', () => {
+      const leaf = makeLeaf({
+        elementType: 'string',
+        value: { type: 'string', value: '' },
+        size: 16,
+      });
+      render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+      expect(screen.getByRole('textbox').tagName).toBe('INPUT');
+    });
   });
 
   // ─── T022: Editable numeric input ─────────────────────────────────────────

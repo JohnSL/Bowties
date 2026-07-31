@@ -69,6 +69,7 @@ A user wants to browse a node's configuration, inspect values, and move between 
 - The configuration UI uses a sidebar and card-deck style browsing model rather than the superseded Miller Columns view.
 - Sidebar navigation exposes nodes and configuration areas using the current frontend ownership model.
 - Configuration details display current values and related metadata.
+- The leaf-field component renders string fields up to 64 bytes as single-line inputs and larger strings as multiline text areas; both controls share validation and write behavior.
 - When an event slot participates in a discovered or current bowtie, the configuration view can show a related "Used in" connection reference.
 
 ### What The User Gets
