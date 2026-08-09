@@ -377,7 +377,8 @@
     padding: 2px 8px; font-weight: 600; letter-spacing: .04em;
   }
   .knocked { outline: 2px solid var(--color-danger); outline-offset: 2px; border-radius: 999px; }
-</style>
+
+*,*::before,*::after{animation:none!important;transition:none!important}</style>
 </head>
 <body>
 
@@ -480,7 +481,8 @@
   <div class="steps-glance">
     <span class="g">Add facility</span><span class="sep">→</span>
     <span class="g">System &amp; signal role</span><span class="sep">→</span>
-    <span class="g">Signal appearance</span><span class="sep">→</span>
+    <span class="g">Indications</span><span class="sep">→</span>
+    <span class="g">Signal style</span><span class="sep">→</span>
     <span class="g">Say what it protects</span><span class="sep">→</span>
     <span class="g">Wire the lamps</span><span class="sep">→</span>
     <span class="g">Confirm the behaviour</span>
@@ -546,7 +548,7 @@
         <div class="dialog-body">
           <div class="stepper" style="margin-bottom:14px">
             <div class="step active"><span class="step-n">1</span>System &amp; signal role</div>
-            <div class="step"><span class="step-n">2</span>Signal appearance</div>
+            <div class="step"><span class="step-n">2</span>Indications</div>
             <div class="step"><span class="step-n">3</span>What it protects</div>
             <div class="step"><span class="step-n">4</span>Wire the lamps</div>
             <div class="step"><span class="step-n">5</span>Confirm</div>
@@ -556,7 +558,7 @@
               <div class="field-label">Signaling system</div>
               <div class="system-picker">
                 <label class="system-choice selected">
-                  <input type="radio" name="system" checked>
+                  <input type="radio" name="system" checked="">
                   <div><div class="choice-title">ABS</div>
                     <div class="choice-desc">No turnouts; this signal watches the blocks ahead</div></div>
                 </label>
@@ -602,7 +604,7 @@
                     <div class="choice-desc">All indications, with direction and tumbledown.</div></div>
                 </label>
               </div>
-              <div class="role-options" data-system-roles="interlocking" hidden>
+              <div class="role-options" data-system-roles="interlocking" hidden="">
                 <label class="choice">
                   <input type="radio" name="signal-role" value="interlocking home signal">
                   <div><div class="choice-title">Interlocking home signal</div>
@@ -615,7 +617,7 @@
                 </label>
               </div>
 
-              <label class="ctc-option" style="font-size:11px;display:flex;align-items:flex-start;gap:5px;color:var(--text-secondary);margin-top:12px">
+              <label class="ctc-option" style="font-size:11px;display:flex;align-items:flex-start;gap:5px;color:var(--text-secondary);margin-top:12px" hidden="">
                 <input type="checkbox" name="ctc-control">
                 <span><strong>Dispatcher controlled (CTC)</strong><br>The dispatcher controls this interlocking and its routes.</span>
               </label>
@@ -641,12 +643,12 @@
                 <div class="hw-row">
                   <span class="hw-ok">✔</span>
                   <div><strong data-logic-title="">Logic on the same board</strong><br>
-                    <span data-logic-description="" style="color:var(--text-muted)">This interlocking signal fits in the Signal-LCC's own logic</span></div>
+                    <span data-logic-description="" style="color:var(--text-muted)">Automatic block logic fits in the Signal-LCC itself</span></div>
                 </div>
                 <div class="hw-row">
                   <span class="hw-ok">✔</span>
                   <div><strong>Inputs you already have</strong><br>
-                    <span data-input-description="" style="color:var(--text-muted)">Block occupancy · turnout position · the signals ahead</span></div>
+                    <span data-input-description="" style="color:var(--text-muted)">Block occupancy · the signal ahead</span></div>
                 </div>
               </div>
 
@@ -687,77 +689,61 @@
   <div class="frame">
     <div class="frame-num">3</div>
     <div>
-      <h3>Pick the signal appearance</h3>
+      <h3>Choose the signaling discipline</h3>
       <p class="frame-do">
-        Choose from the signal types that match what you told Bowties in step 2. The list is filtered:
-        an "ABS · 3-indication block signal" choice shows only types that can display Clear, Approach, and Stop; an
-        interlocking home shows types with diverging-route indications. <b>If nothing fits, “Create a new signal type” opens the
-        editor in §3</b> — the shipped entries are ordinary signal types with no special status.
+        <b>How does this signal convey information?</b> Speed signaling encodes the permitted speed
+        in the aspect; route signaling shows which route is set. Combined with the route structure,
+        this determines how many indications the signal needs. <b>Bowties computes the indication set
+        from these choices.</b>
       </p>
       <div class="dialog wide">
-        <div class="dialog-head">Rockville — Eastward Home Signal · choose signal appearance</div>
+        <div class="dialog-head">Rockville — Eastward Home Signal · indications</div>
         <div class="dialog-body">
           <div class="stepper" style="margin-bottom:14px">
             <div class="step done"><span class="step-n">1</span>System &amp; signal role</div>
-            <div class="step active"><span class="step-n">2</span>Signal appearance</div>
-            <div class="step"><span class="step-n">3</span>What it protects</div>
-            <div class="step"><span class="step-n">4</span>Wire the lamps</div>
-            <div class="step"><span class="step-n">5</span>Confirm</div>
+            <div class="step active"><span class="step-n">2</span>Indications</div>
+            <div class="step"><span class="step-n">3</span>Signal style</div>
+            <div class="step"><span class="step-n">4</span>What it protects</div>
+            <div class="step"><span class="step-n">5</span>Wire the lamps</div>
+            <div class="step"><span class="step-n">6</span>Confirm</div>
           </div>
-          <div class="cols" style="grid-template-columns: 1fr 260px; gap:18px">
+          <div class="cols" style="grid-template-columns: 1fr 280px; gap:18px">
             <div>
-              <div class="choice">
-                <div class="mast"><div class="mast-heads"><div class="head">
-                  <span class="lamp lit green"></span><span class="lamp lit yellow"></span><span class="lamp lit red"></span>
-                </div></div></div>
-                <div><div class="choice-title">Color light — 1 head, 3 aspect</div>
-                  <div class="choice-desc">Clear · Approach · Stop. Automatic block signaling. 3 lamps.</div></div>
+              <div class="field-label">Signaling discipline</div>
+              <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">
+                <label class="choice selected">
+                  <input type="radio" name="discipline" value="speed" checked="">
+                  <div><div class="choice-title">Speed signaling</div>
+                    <div class="choice-desc">Aspects convey the speed permitted. The predominant North American approach.</div></div>
+                </label>
+                <label class="choice">
+                  <input type="radio" name="discipline" value="route">
+                  <div><div class="choice-title">Route signaling</div>
+                    <div class="choice-desc">Aspects convey which route is set. Speed comes from the timetable.</div></div>
+                </label>
               </div>
-              <div class="choice selected">
-                <div class="mast"><div class="mast-heads">
-                  <div class="head"><span class="lamp lit green"></span><span class="lamp lit yellow"></span><span class="lamp lit red"></span></div>
-                  <div class="head"><span class="lamp lit green"></span><span class="lamp lit yellow"></span><span class="lamp lit red"></span></div>
-                </div></div>
-                <div><div class="choice-title">Color light — 2 head, speed signaling</div>
-                  <div class="choice-desc">Adds the Medium family for diverging routes. 6 lamps.</div></div>
+
+              <div class="field-label">Route structure <span style="font-weight:400;text-transform:none;letter-spacing:0">(from step 1: Interlocking home)</span></div>
+              <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">
+                <label class="choice selected">
+                  <input type="radio" name="route-structure-2" value="1-diverging" checked="">
+                  <div><div class="choice-title">Normal + 1 diverging route (medium speed)</div></div>
+                </label>
+                <label class="choice">
+                  <input type="radio" name="route-structure-2" value="2-diverging">
+                  <div><div class="choice-title">Normal + 2 diverging routes (medium + slow)</div></div>
+                </label>
+                <label class="choice">
+                  <input type="radio" name="route-structure-2" value="1-diverging-slow">
+                  <div><div class="choice-title">Normal + 1 diverging route (slow speed)</div></div>
+                </label>
               </div>
-              <div class="choice">
-                <div class="mast"><div class="pl-head" style="width:38px;height:38px">
-                  <span class="lamp lit amber pl-c" style="width:8px;height:8px"></span>
-                  <span class="lamp lit amber pl-n" style="width:8px;height:8px"></span>
-                  <span class="lamp lit amber pl-s" style="width:8px;height:8px"></span>
-                  <span class="lamp lit amber pl-ne" style="width:8px;height:8px"></span>
-                  <span class="lamp lit amber pl-sw" style="width:8px;height:8px"></span>
-                  <span class="lamp lit amber pl-e" style="width:8px;height:8px"></span>
-                  <span class="lamp lit amber pl-w" style="width:8px;height:8px"></span>
-                </div></div>
-                <div><div class="choice-title">PRR position light</div>
-                  <div class="choice-desc">Your own — created for the Enola signals. 8 lamps.</div></div>
-              </div>
-              <div class="choice" style="border-style:dashed">
-                <div style="width:26px;text-align:center;font-size:18px;color:var(--accent-blue)">+</div>
-                <div><div class="choice-title">Create a new signal type…</div>
-                  <div class="choice-desc">Nothing here matches — define heads, lamps and indications</div></div>
-              </div>
+
+              
             </div>
 
             <div class="panel subtle">
-              <p class="subhead">Route structure</p>
-              <div style="margin-bottom:10px">
-                <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:4px">
-                  <input type="radio" name="route-structure" value="1-diverging" checked>
-                  Normal + 1 diverging (medium)
-                </label>
-                <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:4px">
-                  <input type="radio" name="route-structure" value="2-diverging">
-                  Normal + 2 diverging (medium + slow)
-                </label>
-                <label style="display:flex;align-items:center;gap:6px;font-size:12px">
-                  <input type="radio" name="route-structure" value="1-diverging-slow">
-                  Normal + 1 diverging (slow)
-                </label>
-              </div>
-              <p class="subhead">Shows six indications</p>
+              <p class="subhead">6 indications required</p>
               <table class="aspect-table" style="font-size:11px">
                 <tbody>
                   <tr><td style="padding:3px 0">Clear</td><td style="padding:3px 0"><span class="speed-chip">Clear</span></td></tr>
@@ -769,9 +755,7 @@
                 </tbody>
               </table>
               <div style="margin-top:10px;font-size:11px;color:var(--text-secondary)">
-                Needs <strong>6 lamp drivers</strong><br>
-                Uses <strong>6 of 8</strong> aspect slots<br>
-                Already used by <strong>4 signals</strong>
+                Uses <strong>6 of 8</strong> aspect slots
               </div>
             </div>
           </div>
@@ -780,13 +764,122 @@
           <button class="btn">Back</button><button class="btn btn-primary">Next</button>
         </div>
       </div>
-      <p class="frame-ref">Full signal type editor: <a href="#s3">§3</a> · defining an unusual one from scratch: <a href="#s4">§4</a></p>
     </div>
   </div>
   <div class="frame-rail"></div>
 
   <!-- Frame 4 -->
+  
+  <!-- Frame 3b: Signal style -->
   <div class="frame">
+    <div class="frame-num">3</div>
+    <div>
+      <h3>Choose the signal style</h3>
+      <p class="frame-do">
+        Now that Bowties knows the 6 indications this signal needs, the user picks <b>how those
+        indications are displayed</b>. The choice determines head shape, lamp arrangement, and
+        driver count. <b>Bowties computes the head count from the indication set and the style.</b>
+      </p>
+      <div class="dialog wide">
+        <div class="dialog-head">Rockville — Eastward Home Signal · signal style</div>
+        <div class="dialog-body">
+          <div class="stepper" style="margin-bottom:14px">
+            <div class="step done"><span class="step-n">1</span>System &amp; signal role</div>
+            <div class="step done"><span class="step-n">2</span>Indications</div>
+            <div class="step active"><span class="step-n">3</span>Signal style</div>
+            <div class="step"><span class="step-n">4</span>What it protects</div>
+            <div class="step"><span class="step-n">5</span>Wire the lamps</div>
+            <div class="step"><span class="step-n">6</span>Confirm</div>
+          </div>
+          <div class="cols" style="grid-template-columns: 1fr 280px; gap:18px">
+            <div>
+              <div class="field-label">Signal style</div>
+              <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:6px">
+                <label class="choice selected" style="flex-direction:column;align-items:center;padding:10px 8px">
+                  <input type="radio" name="signal-style" value="color-light" checked>
+                  <div class="mast" style="margin-bottom:4px"><div class="mast-heads"><div class="head">
+                    <span class="lamp lit green"></span><span class="lamp lit yellow"></span><span class="lamp lit red"></span>
+                  </div></div></div>
+                  <div class="choice-title" style="text-align:center">Color light</div>
+                </label>
+                <label class="choice" style="flex-direction:column;align-items:center;padding:10px 8px">
+                  <input type="radio" name="signal-style" value="position-light">
+                  <div class="pl-head" style="width:32px;height:32px;margin-bottom:4px">
+                    <span class="lamp lit amber pl-c" style="width:7px;height:7px"></span>
+                    <span class="lamp lit amber pl-n" style="width:7px;height:7px"></span>
+                    <span class="lamp lit amber pl-s" style="width:7px;height:7px"></span>
+                    <span class="lamp lit amber pl-ne" style="width:7px;height:7px"></span>
+                    <span class="lamp lit amber pl-sw" style="width:7px;height:7px"></span>
+                    <span class="lamp lit amber pl-e" style="width:7px;height:7px"></span>
+                    <span class="lamp lit amber pl-w" style="width:7px;height:7px"></span>
+                  </div>
+                  <div class="choice-title" style="text-align:center">Position light</div>
+                </label>
+                <label class="choice" style="flex-direction:column;align-items:center;padding:10px 8px">
+                  <input type="radio" name="signal-style" value="color-position">
+                  <div class="pl-head" style="width:32px;height:32px;margin-bottom:4px">
+                    <span class="lamp lit green pl-n" style="width:7px;height:7px"></span>
+                    <span class="lamp lit green pl-s" style="width:7px;height:7px"></span>
+                    <span class="lamp lit yellow pl-ne" style="width:7px;height:7px"></span>
+                    <span class="lamp lit yellow pl-sw" style="width:7px;height:7px"></span>
+                    <span class="lamp lit red pl-e" style="width:7px;height:7px"></span>
+                    <span class="lamp lit red pl-w" style="width:7px;height:7px"></span>
+                  </div>
+                  <div class="choice-title" style="text-align:center">Color-position</div>
+                </label>
+                <label class="choice" style="flex-direction:column;align-items:center;padding:10px 8px">
+                  <input type="radio" name="signal-style" value="searchlight">
+                  <div style="width:22px;height:22px;border-radius:50%;background:#14161a;border:1px solid #383c44;display:flex;align-items:center;justify-content:center;margin-bottom:4px">
+                    <span class="lamp lit green" style="width:12px;height:12px"></span>
+                  </div>
+                  <div class="choice-title" style="text-align:center">Searchlight</div>
+                </label>
+                <label class="choice" style="flex-direction:column;align-items:center;padding:10px 8px">
+                  <input type="radio" name="signal-style" value="semaphore">
+                  <div style="font-size:20px;margin-bottom:4px">╱</div>
+                  <div class="choice-title" style="text-align:center">Semaphore</div>
+                </label>
+              </div>
+            </div>
+
+            <div class="panel subtle">
+              <p class="subhead">Bowties computes</p>
+              <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;padding:8px 10px;border:1px solid var(--border);border-radius:5px;background:#fff">
+                <div class="mast"><div class="mast-heads">
+                  <div class="head"><span class="lamp lit green"></span><span class="lamp lit yellow"></span><span class="lamp lit red"></span></div>
+                  <div class="head"><span class="lamp lit green"></span><span class="lamp lit yellow"></span><span class="lamp lit red"></span></div>
+                </div></div>
+                <div style="font-size:12px">
+                  <strong>2 heads</strong>, 3 lamps each<br>
+                  <span style="color:var(--text-muted)">6 lamp drivers needed</span>
+                </div>
+              </div>
+              <p class="subhead">6 indications from step 2</p>
+              <table class="aspect-table" style="font-size:11px">
+                <tbody>
+                  <tr><td style="padding:3px 0">Clear</td><td style="padding:3px 0"><span class="speed-chip">Clear</span></td></tr>
+                  <tr><td style="padding:3px 0">Approach</td><td style="padding:3px 0"><span class="speed-chip">Approach</span></td></tr>
+                  <tr><td style="padding:3px 0">Medium Clear</td><td style="padding:3px 0"><span class="speed-chip">Medium</span></td></tr>
+                  <tr><td style="padding:3px 0">Medium Approach</td><td style="padding:3px 0"><span class="speed-chip">Medium</span></td></tr>
+                  <tr><td style="padding:3px 0">Stop</td><td style="padding:3px 0"><span class="speed-chip">Stop</span></td></tr>
+                  <tr><td style="padding:3px 0">Dark</td><td style="padding:3px 0"><span class="speed-chip">Clear</span></td></tr>
+                </tbody>
+              </table>
+              <div style="margin-top:10px;font-size:11px;color:var(--text-secondary)">
+                Uses <strong>6 of 8</strong> aspect slots
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-foot">
+          <button class="btn">Back</button><button class="btn btn-primary">Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="frame-rail"></div>
+
+<div class="frame">
     <div class="frame-num">4</div>
     <div>
       <h3>Say what it protects</h3>
@@ -801,10 +894,11 @@
         <div class="dialog-body">
           <div class="stepper" style="margin-bottom:14px">
             <div class="step done"><span class="step-n">1</span>System &amp; signal role</div>
-            <div class="step done"><span class="step-n">2</span>Signal appearance</div>
-            <div class="step active"><span class="step-n">3</span>What it protects</div>
-            <div class="step"><span class="step-n">4</span>Wire the lamps</div>
-            <div class="step"><span class="step-n">5</span>Confirm</div>
+            <div class="step done"><span class="step-n">2</span>Indications</div>
+            <div class="step done"><span class="step-n">3</span>Signal style</div>
+            <div class="step active"><span class="step-n">4</span>What it protects</div>
+            <div class="step"><span class="step-n">5</span>Wire the lamps</div>
+            <div class="step"><span class="step-n">6</span>Confirm</div>
           </div>
           <div style="display:grid;grid-template-columns:250px 1fr;gap:12px;align-items:center">
             <div style="font-size:12px;font-weight:600">Protects the block</div>
@@ -840,10 +934,11 @@
         <div class="dialog-body">
           <div class="stepper" style="margin-bottom:14px">
             <div class="step done"><span class="step-n">1</span>System &amp; signal role</div>
-            <div class="step done"><span class="step-n">2</span>Signal appearance</div>
-            <div class="step done"><span class="step-n">3</span>What it protects</div>
-            <div class="step active"><span class="step-n">4</span>Wire the lamps</div>
-            <div class="step"><span class="step-n">5</span>Confirm</div>
+            <div class="step done"><span class="step-n">2</span>Indications</div>
+            <div class="step done"><span class="step-n">3</span>Signal style</div>
+            <div class="step done"><span class="step-n">4</span>What it protects</div>
+            <div class="step active"><span class="step-n">5</span>Wire the lamps</div>
+            <div class="step"><span class="step-n">6</span>Confirm</div>
           </div>
           <div style="margin-bottom:12px;display:flex;gap:18px;align-items:center;flex-wrap:wrap">
             <div style="display:flex;gap:10px;align-items:center">
@@ -916,10 +1011,11 @@
         <div class="dialog-body">
           <div class="stepper" style="margin-bottom:14px">
             <div class="step done"><span class="step-n">1</span>System &amp; signal role</div>
-            <div class="step done"><span class="step-n">2</span>Signal appearance</div>
-            <div class="step done"><span class="step-n">3</span>What it protects</div>
-            <div class="step done"><span class="step-n">4</span>Wire the lamps</div>
-            <div class="step active"><span class="step-n">5</span>Confirm</div>
+            <div class="step done"><span class="step-n">2</span>Indications</div>
+            <div class="step done"><span class="step-n">3</span>Signal style</div>
+            <div class="step done"><span class="step-n">4</span>What it protects</div>
+            <div class="step done"><span class="step-n">5</span>Wire the lamps</div>
+            <div class="step active"><span class="step-n">6</span>Confirm</div>
           </div>
           <div class="table-wrap">
             <table class="aspect-table">
@@ -1378,7 +1474,7 @@
 
       <div class="stepper">
         <div class="step done"><span class="step-n">1</span>System &amp; signal role</div>
-        <div class="step done"><span class="step-n">2</span>Signal appearance</div>
+        <div class="step done"><span class="step-n">2</span>Indications</div>
         <div class="step done"><span class="step-n">3</span>What it protects</div>
         <div class="step active"><span class="step-n">4</span>Wire the lamps</div>
         <div class="step"><span class="step-n">5</span>Confirm</div>

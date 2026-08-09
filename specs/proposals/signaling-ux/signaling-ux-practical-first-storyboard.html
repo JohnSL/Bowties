@@ -1,0 +1,1713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signaling UX — Practical-first storyboard</title>
+<style>
+  :root {
+    /* Fluent v9 neutrals */
+    --bg-app:        #f5f5f5;
+    --bg-panel:      #ffffff;
+    --bg-subtle:     #fafafa;
+    --bg-hover:      #f5f5f5;
+    --bg-selected:   #ebf3fc;
+    --border:        #d1d1d1;
+    --border-strong: #c7c7c7;
+    --text-primary:  #242424;
+    --text-secondary:#424242;
+    --text-muted:    #616161;
+    /* Fluent v9 brand + status */
+    --accent-blue:        #0f6cbd;
+    --accent-blue-hover:  #115ea3;
+    --accent-amber:    #bc4b09;
+    --accent-amber-bg: #fff4ce;
+    --color-danger:    #c50f1f;
+    /* Okabe-Ito domain state */
+    --state-occupied: #d55e00;
+    --state-clear:    #009e73;
+    --status-live-bg: #dcfce7;
+    --status-live-fg: #166534;
+    --status-incomplete-bg: #fff4ce;
+    --status-incomplete-fg: #bc4b09;
+    /* Signal lamp colours (saturated for legibility at small size) */
+    --lamp-red:    #e02020;
+    --lamp-yellow: #f0b400;
+    --lamp-green:  #17b26a;
+    --lamp-lunar:  #dce9ff;
+    --lamp-amber:  #f5a524;
+    --lamp-off:    #2a2d33;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px;
+    background: var(--bg-app);
+    font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  h1.page-title { font-size: 22px; margin: 0 0 6px 0; }
+  p.page-sub { margin: 0 0 24px 0; color: var(--text-secondary); max-width: 1200px; }
+
+  .toc {
+    background: #fff; border: 1px solid var(--border); border-radius: 6px;
+    padding: 14px 18px; margin-bottom: 28px; max-width: 1200px;
+  }
+  .toc h2 { font-size: 13px; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+  .toc ol { margin: 0; padding-left: 22px; }
+  .toc li { padding: 2px 0; }
+  .toc a { color: var(--accent-blue); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  .mockup-section { margin-bottom: 48px; max-width: 1200px; }
+  .mockup-section h2 {
+    font-size: 16px; margin: 0 0 4px 0; padding-bottom: 6px;
+    border-bottom: 2px solid var(--border);
+  }
+  .mockup-caption { color: var(--text-secondary); margin: 0 0 14px 0; font-size: 12px; }
+  .mockup-caption code, .note code, td code, li code {
+    background: #eef0f3; padding: 1px 5px; border-radius: 3px; font-size: 11px;
+  }
+
+  /* --- Window chrome --- */
+  .window {
+    background: var(--bg-app); border: 1px solid var(--border-strong);
+    border-radius: 6px; overflow: hidden; box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+  }
+  .titlebar {
+    background: #2c3038; color: #e8eaed; padding: 6px 12px; font-size: 12px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .titlebar .dots { display: flex; gap: 6px; }
+  .titlebar .dots span { width: 10px; height: 10px; border-radius: 50%; background: #5a5f66; display: inline-block; }
+  .tabbar { display: flex; background: #fff; border-bottom: 1px solid var(--border); padding: 0 16px; }
+  .tab { padding: 10px 18px; font-size: 13px; color: var(--text-secondary); cursor: default; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tab.active { color: var(--text-primary); border-bottom-color: var(--accent-blue); font-weight: 500; }
+  .main { padding: 18px 22px; background: #fff; }
+
+  /* --- Buttons --- */
+  .btn {
+    font: inherit; font-size: 12px; padding: 5px 12px; border-radius: 4px;
+    border: 1px solid var(--border-strong); background: #fff; color: var(--text-primary);
+    cursor: pointer; line-height: 1.4;
+  }
+  .btn:hover { background: var(--bg-hover); }
+  .btn-primary { background: var(--accent-blue); color: #fff; border-color: var(--accent-blue); }
+  .btn-primary:hover { background: var(--accent-blue-hover); border-color: var(--accent-blue-hover); }
+  .btn-link { background: none; border: none; color: var(--accent-blue); padding: 2px 4px; cursor: pointer; font-size: 12px; }
+  .btn-link:hover { text-decoration: underline; }
+  .btn-sm { font-size: 11px; padding: 3px 8px; }
+
+  /* --- Cards / panels --- */
+  .facility-card { background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; }
+  .facility-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .facility-title { display: flex; align-items: center; gap: 10px; }
+  .facility-name { font-weight: 600; font-size: 14px; }
+  .facility-sub { font-size: 11px; color: var(--text-muted); }
+  .facility-actions { display: flex; gap: 6px; }
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 11px;
+    font-weight: 600; padding: 2px 8px; border-radius: 10px;
+  }
+  .status-pill.live { background: var(--status-live-bg); color: var(--status-live-fg); }
+  .status-pill.incomplete { background: var(--status-incomplete-bg); color: var(--status-incomplete-fg); }
+  .status-pill .pulse { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+  .subhead {
+    font-size: 10px; font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: .06em; margin: 0 0 8px 0;
+  }
+
+  /* --- Signal mast rendering (colour light) --- */
+  .mast { display: inline-flex; flex-direction: column; align-items: center; }
+  .mast-heads { display: flex; flex-direction: column; gap: 4px; align-items: center; }
+  /* Capsule outline: the semicircular top and bottom of a prototype signal head. */
+  .head {
+    background: #14161a; border: 1px solid #383c44; border-radius: 999px;
+    padding: 7px 4px; display: flex; flex-direction: column; gap: 4px; align-items: center;
+  }
+  .lamp {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--lamp-off); border: 1px solid #45494f; display: block;
+  }
+  .lamp.sm { width: 11px; height: 11px; }
+  .lamp.lit.red    { background: var(--lamp-red);    border-color: #ff6a6a; box-shadow: 0 0 7px 1px rgba(224,32,32,.75); }
+  .lamp.lit.yellow { background: var(--lamp-yellow); border-color: #ffd75e; box-shadow: 0 0 7px 1px rgba(240,180,0,.75); }
+  .lamp.lit.green  { background: var(--lamp-green);  border-color: #5ce0a4; box-shadow: 0 0 7px 1px rgba(23,178,106,.75); }
+  .lamp.lit.lunar  { background: var(--lamp-lunar);  border-color: #ffffff; box-shadow: 0 0 7px 1px rgba(220,233,255,.85); }
+  .lamp.lit.amber  { background: var(--lamp-amber);  border-color: #ffca7a; box-shadow: 0 0 7px 1px rgba(245,165,36,.8); }
+  .lamp.flash { animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: .18; box-shadow: none; } }
+  .mast-post { width: 5px; height: 26px; background: #6b7280; }
+  .mast-base { width: 26px; height: 5px; border-radius: 2px; background: #6b7280; }
+  .mast-caption { font-size: 10px; color: var(--text-muted); margin-top: 5px; text-align: center; }
+
+  /* --- Position-light head (PRR) --- */
+  .pl-head {
+    position: relative; width: 62px; height: 62px; border-radius: 50%;
+    background: #14161a; border: 1px solid #383c44;
+  }
+  .pl-head .lamp { position: absolute; transform: translate(-50%, -50%); width: 12px; height: 12px; }
+  .pl-c  { left: 50%; top: 50%; }
+  .pl-n  { left: 50%; top: 16%; }
+  .pl-s  { left: 50%; top: 84%; }
+  .pl-ne { left: 76%; top: 24%; }
+  .pl-sw { left: 24%; top: 76%; }
+  .pl-e  { left: 84%; top: 50%; }
+  .pl-w  { left: 16%; top: 50%; }
+
+  /* --- Aspect table --- */
+  .aspect-table { width: 100%; border-collapse: collapse; background: #fff; font-size: 12px; }
+  .aspect-table thead th {
+    background: #f3f4f6; text-align: left; padding: 7px 10px; font-weight: 600;
+    color: var(--text-secondary); border-bottom: 1px solid var(--border);
+    font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+  }
+  .aspect-table td { padding: 8px 10px; border-bottom: 1px solid #eef0f3; vertical-align: middle; }
+  .aspect-table tbody tr:last-child td { border-bottom: none; }
+  .aspect-table tr.dimmed td { background: #fbfbfc; }
+  .aspect-table .face-cell { width: 62px; text-align: center; }
+  .indication-name { font-weight: 600; }
+  .indication-meaning { font-size: 11px; color: var(--text-muted); }
+  .name-secondary { font-size: 11px; color: var(--text-muted); font-style: italic; }
+  .speed-chip {
+    font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px;
+    background: #e8eefb; color: #1d3f7a; white-space: nowrap;
+  }
+  .table-wrap { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+
+  /* --- Capacity meters --- */
+  .capacity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .cap { border: 1px solid var(--border); border-radius: 5px; padding: 9px 11px; background: var(--bg-subtle); }
+  .cap-label { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); }
+  .cap-value { font-size: 16px; font-weight: 600; margin: 3px 0 5px 0; }
+  .cap-value .of { font-size: 11px; font-weight: 400; color: var(--text-muted); }
+  .cap-bar { height: 5px; border-radius: 3px; background: #e5e7eb; overflow: hidden; }
+  .cap-bar span { display: block; height: 100%; background: var(--accent-blue); }
+  .cap.warn { border-color: #fcd34d; background: var(--accent-amber-bg); }
+  .cap.warn .cap-bar span { background: var(--accent-amber); }
+  .cap-note { font-size: 10px; color: var(--accent-amber); margin-top: 4px; font-weight: 600; }
+
+  /* --- Notes / callouts --- */
+  .note {
+    border-left: 3px solid var(--accent-blue); background: #f3f8fd;
+    padding: 10px 14px; border-radius: 0 5px 5px 0; margin: 12px 0; font-size: 12px;
+  }
+  .note.warn { border-left-color: var(--accent-amber); background: var(--accent-amber-bg); }
+  .note.limit { border-left-color: var(--color-danger); background: #fdf3f4; }
+  .note strong { display: block; margin-bottom: 3px; }
+  .note p { margin: 4px 0 0 0; }
+
+  .review-brief {
+    background: #fff; border: 2px solid var(--accent-blue); border-radius: 6px;
+    padding: 16px 20px; margin-bottom: 28px; max-width: 1200px;
+  }
+  .review-brief h2 { margin: 0 0 8px 0; font-size: 15px; }
+  .review-brief .q-group { margin-top: 12px; }
+  .review-brief .q-group h3 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--text-muted); margin: 0 0 5px 0;
+  }
+  .review-brief ol { margin: 0; padding-left: 20px; }
+  .review-brief li { padding: 2px 0; }
+  .challenge {
+    background: #eef6ff; border: 1px solid #b6d4f5; border-radius: 5px;
+    padding: 10px 14px; margin: 12px 0; font-size: 13px;
+  }
+
+  /* --- Ordering comparison --- */
+  .ordering { display: grid; grid-template-columns: 1fr 44px 1fr; gap: 10px; align-items: stretch; margin: 14px 0 0 0; }
+  .ordering > div:not(.ordering-arrow) {
+    background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 12px 15px;
+  }
+  .ordering .proposed { border-color: #85b7e5; background: #f8fbff; }
+  .ordering-arrow { display: grid; place-items: center; color: var(--accent-blue); font-size: 22px; }
+  .ordering h3 { font-size: 12px; margin: 0 0 6px 0; }
+  .ordering ol { margin: 0; padding-left: 20px; color: var(--text-secondary); font-size: 12px; }
+
+  /* --- Wizard / stepper --- */
+  .stepper { display: flex; gap: 0; margin-bottom: 16px; }
+  .step {
+    flex: 1; padding: 8px 10px; border: 1px solid var(--border); border-right: none;
+    background: var(--bg-subtle); font-size: 11px; color: var(--text-muted);
+  }
+  .step:first-child { border-radius: 5px 0 0 5px; }
+  .step:last-child { border-right: 1px solid var(--border); border-radius: 0 5px 5px 0; }
+  .step.done { background: #eefaf4; color: var(--status-live-fg); }
+  .step.active { background: var(--bg-selected); color: var(--text-primary); font-weight: 600; border-color: var(--accent-blue); }
+  .step .step-n { font-weight: 700; margin-right: 5px; }
+
+  /* --- Driver assignment --- */
+  .assign-grid { display: grid; grid-template-columns: 200px 1fr; gap: 22px; align-items: start; }
+  .driver-list { display: flex; flex-direction: column; gap: 5px; }
+  .driver-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    border: 1px solid var(--border); border-radius: 5px; padding: 6px 10px; background: #fff;
+  }
+  .driver-row.assigned { background: var(--bg-selected); border-color: #a9c9ea; }
+  .driver-pick {
+    font-family: 'Cascadia Mono', Consolas, monospace; font-size: 11px;
+    border: 1px solid var(--border-strong); border-radius: 4px; padding: 3px 7px; background: #fff;
+  }
+  select.wide-pick { font: inherit; font-size: 12px; padding: 5px 8px; width: 280px; border: 1px solid var(--border-strong); border-radius: 4px; background: #fff; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 11px; color: var(--text-muted); margin-top: 10px; }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+
+  /* --- Generic layout --- */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  .panel { border: 1px solid var(--border); border-radius: 6px; padding: 13px 15px; background: #fff; }
+  .panel.subtle { background: var(--bg-subtle); }
+  .panel-row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px solid #eef0f3; font-size: 12px; }
+  .panel-row:last-child { border-bottom: none; }
+  .panel-row span:last-child { font-weight: 600; }
+
+  /* --- Dialogs --- */
+  .dialog {
+    background: #fff; border: 1px solid var(--border-strong); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.12); max-width: 470px; overflow: hidden;
+  }
+  .dialog.wide { max-width: 860px; }
+  .dialog-head { padding: 11px 16px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 14px; }
+  .dialog-body { padding: 14px 16px; }
+  .dialog-foot {
+    padding: 10px 16px; border-top: 1px solid var(--border);
+    display: flex; justify-content: flex-end; gap: 8px; background: var(--bg-subtle);
+  }
+  .choice {
+    display: flex; gap: 10px; align-items: flex-start;
+    border: 1px solid var(--border); border-radius: 5px; padding: 9px 11px; margin-bottom: 6px;
+    background: #fff;
+  }
+  .choice.selected { border-color: var(--accent-blue); background: var(--bg-selected); }
+  .choice-title { font-weight: 600; font-size: 12px; }
+  .choice-desc { font-size: 11px; color: var(--text-muted); }
+  .choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .choice-grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .choice-grid .choice { margin-bottom: 0; min-height: 64px; }
+  .field-label {
+    font-size: 10px; font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px;
+  }
+  .text-input {
+    width: 100%; padding: 6px 9px; border: 1px solid var(--border-strong);
+    border-radius: 4px; font: inherit; font-size: 12px;
+  }
+
+  /* --- Fidelity ladder --- */
+  .segmented { display: grid; grid-template-columns: repeat(3, 1fr); }
+  .segment {
+    border: 1px solid var(--border-strong); border-right: none;
+    padding: 9px 11px; background: #fff; cursor: pointer; text-align: left; font-size: 12px;
+  }
+  .segment:first-child { border-radius: 5px 0 0 5px; }
+  .segment:last-child { border-right: 1px solid var(--border-strong); border-radius: 0 5px 5px 0; }
+  .segment.selected { background: var(--bg-selected); color: #0b4f85; font-weight: 600; box-shadow: inset 0 -2px var(--accent-blue); }
+  .segment input { position: absolute; opacity: 0; pointer-events: none; }
+  .recommended { color: var(--status-live-fg); font-weight: 600; }
+  [hidden] { display: none !important; }
+
+  /* --- Route binding --- */
+  .route-box { border: 1px solid var(--border); border-radius: 5px; padding: 10px 12px; margin-bottom: 8px; background: #fff; }
+  .route-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 12px; margin-bottom: 8px; }
+  .route-line { width: 26px; height: 4px; background: #6b7280; border-radius: 2px; }
+  .route-line.diverging { transform: rotate(-18deg); }
+  .field { margin-bottom: 10px; }
+  .field:last-child { margin-bottom: 0; }
+
+  /* --- Local connection map --- */
+  .connection-map { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; }
+  .map-node { min-width: 132px; border: 1px solid var(--border); border-radius: 5px; padding: 8px 10px; text-align: center; background: #fff; font-size: 11px; }
+  .map-node.current { border: 2px solid var(--accent-blue); background: var(--bg-selected); }
+  .map-node.placeholder-node { border-style: dashed; color: var(--accent-amber); background: var(--accent-amber-bg); }
+  .map-arrow { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+
+  /* --- Storyboard frames --- */
+  .frame { display: grid; grid-template-columns: 30px 1fr; gap: 14px; margin-bottom: 8px; }
+  .frame-num {
+    width: 26px; height: 26px; border-radius: 50%; background: var(--accent-blue); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px;
+  }
+  .frame h3 { margin: 1px 0 3px 0; font-size: 14px; }
+  .frame-do { margin: 0 0 10px 0; font-size: 12px; color: var(--text-secondary); }
+  .frame-do b { color: var(--text-primary); font-weight: 600; }
+  .frame-rail { border-left: 2px dotted var(--border-strong); height: 18px; margin: 0 0 8px 13px; }
+  .frame-ref { font-size: 11px; color: var(--text-muted); margin-top: 8px; }
+  .steps-glance {
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    background: #fff; border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px 14px; margin-bottom: 22px; font-size: 12px;
+  }
+  .steps-glance .g {
+    background: var(--bg-selected); border: 1px solid #b6d4f5;
+    border-radius: 14px; padding: 3px 11px; white-space: nowrap;
+  }
+  .steps-glance .sep { color: var(--text-muted); }
+
+  /* --- Hardware requirement panel --- */
+  .hw-need { border: 1px solid var(--border); border-radius: 5px; padding: 10px 12px; background: var(--bg-subtle); }
+  .hw-row { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; font-size: 12px; }
+  .hw-row + .hw-row { border-top: 1px solid #eef0f3; }
+  .hw-ok { color: var(--status-live-fg); font-weight: 700; }
+  .hw-add { color: var(--accent-amber); font-weight: 700; }
+
+  /* --- Easy vs hard diff --- */
+  .diff-table { width: 100%; border-collapse: collapse; font-size: 12px; background: #fff; }
+  .diff-table thead th {
+    background: #f3f4f6; text-align: left; padding: 7px 10px; font-size: 10px;
+    text-transform: uppercase; letter-spacing: .04em; color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+  }
+  .diff-table td { padding: 7px 10px; border-bottom: 1px solid #eef0f3; vertical-align: top; }
+  .diff-table tbody tr:last-child td { border-bottom: none; }
+  .diff-table td.grew { background: var(--accent-amber-bg); font-weight: 600; }
+
+  @media (max-width: 900px) {
+    body { padding: 16px; }
+    .cols, .ordering { grid-template-columns: 1fr; }
+    .ordering-arrow { transform: rotate(90deg); }
+    .assign-grid { grid-template-columns: 1fr; }
+    .choice-grid, .choice-grid.four { grid-template-columns: 1fr; }
+    .segmented { grid-template-columns: 1fr; }
+    .segment, .segment:first-child, .segment:last-child { border: 1px solid var(--border-strong); border-bottom: none; border-radius: 0; }
+    .segment:first-child { border-radius: 5px 5px 0 0; }
+    .segment:last-child { border-bottom: 1px solid var(--border-strong); border-radius: 0 0 5px 5px; }
+    .capacity-grid { grid-template-columns: repeat(2, 1fr); }
+    .frame { grid-template-columns: 1fr; }
+    .frame-rail { display: none; }
+    .stepper { flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+
+<h1 class="page-title">Signaling UX — Practical-first storyboard</h1>
+<p class="page-sub">
+  A second ordering for the same wizard, drawn in the same design language as
+  <a href="signaling-ux-mockups.html">the original proposal</a> so the two can be compared directly.
+  It asks <strong>what the railroad must do</strong> before it asks what signaling system governs the
+  location, and it offers familiar signaling as a complete answer rather than a preview of a better
+  one. Everything downstream of the wizard — bring-up, the facility card, capacity, APB and CTC — is
+  unchanged from the original and is deliberately not repeated here.
+  <strong>Two signals are built below: the common case first, then the hard one.</strong>
+</p>
+
+<div class="review-brief">
+  <h2>What this document is testing</h2>
+  <p style="margin:0">
+    Not whether the model can express real signaling — the original answers that, and this document
+    changes nothing about the model. What is on trial here is <strong>the order of the questions</strong>.
+    The original opens by asking the user to name a signaling system (ABS, APB, interlocking) and the
+    signal's role within it. This version opens by asking how the track beyond the signal is used, and
+    maps the answer to a signaling system privately.
+  </p>
+
+  <div class="ordering">
+    <div>
+      <h3>Original ordering</h3>
+      <ol>
+        <li>Signaling system, and this signal's role in it</li>
+        <li>Signaling discipline, giving the indication set</li>
+        <li>Signal style</li>
+        <li>What it protects</li>
+        <li>Wire the lamps</li>
+        <li>Confirm the derived behaviour</li>
+      </ol>
+    </div>
+    <div class="ordering-arrow" aria-hidden="true">→</div>
+    <div class="proposed">
+      <h3>Practical-first ordering</h3>
+      <ol>
+        <li>How the track beyond this signal is used</li>
+        <li>How closely to follow a prototype</li>
+        <li>Signal style</li>
+        <li>What it protects, per route</li>
+        <li>Confirm the derived behaviour</li>
+      </ol>
+      <p style="margin:8px 0 0 0;font-size:11px;color:var(--text-muted)">
+        Lamp wiring is unchanged and folded into step 4.
+      </p>
+    </div>
+  </div>
+
+  <div class="challenge">
+    <strong>Two questions we would like answered with a counter-example, not an opinion:</strong><br>
+    1. Name a location where answering <em>“how is this track used”</em> first leads the user to the
+    wrong signal — somewhere the signaling system genuinely has to be stated up front.<br>
+    2. Name an indication set that the <strong>Practical</strong> answer produces badly enough that
+    the user would have been better served being asked for a rulebook on screen one.
+  </div>
+
+  <div class="cols">
+    <div class="q-group">
+      <h3>If you know prototype signaling</h3>
+      <ol>
+        <li>Can a modeler answer the four <strong>Track use</strong> choices in §1 without signaling expertise?</li>
+        <li>Does <strong>Practical</strong> read as a complete choice, or as a lesser one?</li>
+        <li>The hard case in §3 introduces the words <em>Medium Clear</em> and <em>Medium Approach</em> at
+          the confirm step, having avoided all jargon until then. Is that the right moment, too late, or
+          an argument against hiding it at all?</li>
+        <li>Is “what happens beyond this signal” the right framing, or should it be “what happens at this signal”?</li>
+      </ol>
+    </div>
+    <div class="q-group">
+      <h3>If you know Signal-LCC / LCC hardware</h3>
+      <ol>
+        <li>The user never names the hardware. Bowties allocates drivers, aspects and — for APB and CTC —
+          a second board. Is silent allocation acceptable, or does the board have to be visible earlier?</li>
+        <li>In §2, filtering the prototype catalog by what the hardware can display: useful, or does it
+          hide entries people will go looking for?</li>
+        <li>§3 spends 6 of 16 lamp drivers on one signal without the user asking for a second head. Is the
+          capacity readout at the confirm step early enough?</li>
+        <li>Are placeholders for not-yet-created masts a good idea independent of this ordering?</li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="note warn" style="margin-bottom:0">
+    <strong>The signaling data here is illustrative, not authoritative.</strong>
+    Indication names, lamp arrangements and speed pairings are drawn from common speed-signaling
+    practice to make the screens concrete. Please correct them — but please treat mistakes in the
+    <em>data</em> separately from problems with the <em>ordering</em>. They are different critiques.
+  </div>
+</div>
+
+<div class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#s1">The common case — a three-aspect block signal, start to finish</a></li>
+    <li><a href="#s2">Fidelity — what Prototype and Custom look like when chosen</a></li>
+    <li><a href="#s3">The hard case — a two-head junction signal through the same five steps</a></li>
+    <li><a href="#s4">What actually got harder</a></li>
+    <li><a href="#s5">Placeholders — why creation order stops mattering</a></li>
+    <li><a href="#s6">Where this ordering is weakest</a></li>
+  </ol>
+  <p style="margin:10px 0 0 0;font-size:11px;color:var(--text-muted)">
+    Bring-up and testing, the facility card, the capacity envelope, cascade in full, APB / CTC, what the
+    model cannot do, and the vocabulary table are all in
+    <a href="signaling-ux-mockups.html">the original</a> and apply unchanged.
+  </p>
+</div>
+
+
+<!-- ============================================================ 1 -->
+<div class="mockup-section" id="s1">
+  <h2>1. The common case — a three-aspect block signal, start to finish</h2>
+  <p class="mockup-caption">
+    Plain double track, no turnout, no dispatcher. This is the signal most modelers place most often,
+    and the whole argument for this ordering is that it should take four answers, three of which are
+    obvious. It is shown <strong>first</strong>, deliberately — §3 then has to live up to it.
+  </p>
+
+  <div class="steps-glance">
+    <span class="g">Track use</span><span class="sep">→</span>
+    <span class="g">Fidelity</span><span class="sep">→</span>
+    <span class="g">Signal style</span><span class="sep">→</span>
+    <span class="g">What it protects</span><span class="sep">→</span>
+    <span class="g">Confirm</span>
+    <span class="sep" style="margin-left:12px">·</span>
+    <span style="color:var(--text-muted)">4 answers, 1 confirmation</span>
+  </div>
+
+  <!-- Frame 1 -->
+  <div class="frame">
+    <div class="frame-num">1</div>
+    <div>
+      <h3>How is the track beyond this signal used?</h3>
+      <p class="frame-do">
+        A visible railroad question, answerable by looking at the layout. <b>Bowties privately maps the
+        answer to ABS, interlocking, APB or dispatcher-controlled logic</b> — the words the original
+        asks for on screen one never appear.
+      </p>
+      <div class="dialog wide">
+        <div class="dialog-head">Milepost 41.2 — Eastward · what happens beyond this signal?</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step active"><span class="step-n">1</span>Track use</div>
+            <div class="step"><span class="step-n">2</span>Fidelity</div>
+            <div class="step"><span class="step-n">3</span>Signal style</div>
+            <div class="step"><span class="step-n">4</span>What it protects</div>
+            <div class="step"><span class="step-n">5</span>Confirm</div>
+          </div>
+          <div class="choice-grid four">
+            <label class="choice selected">
+              <input type="radio" name="track-use-easy" checked>
+              <div><div class="choice-title">Straight track</div>
+                <div class="choice-desc">Trains continue one way. No turnout here.</div></div>
+            </label>
+            <label class="choice">
+              <input type="radio" name="track-use-easy">
+              <div><div class="choice-title">A junction</div>
+                <div class="choice-desc">The signal protects a normal and a diverging route.</div></div>
+            </label>
+            <label class="choice">
+              <input type="radio" name="track-use-easy">
+              <div><div class="choice-title">Two-way single track</div>
+                <div class="choice-desc">Trains use this section in both directions.</div></div>
+            </label>
+            <label class="choice">
+              <input type="radio" name="track-use-easy">
+              <div><div class="choice-title">Dispatcher controlled</div>
+                <div class="choice-desc">A dispatcher sets routes or holds signals.</div></div>
+            </label>
+          </div>
+          <div class="note" style="margin-bottom:0">
+            <strong>Nothing on this screen names a signaling system.</strong>
+            “Straight track” resolves to ABS, “A junction” to an interlocking, “Two-way single track” to
+            APB, “Dispatcher controlled” to CTC over an interlocking. The mapping is Bowties' to make,
+            and it is the same mapping the original asks the user to make for themselves.
+          </div>
+        </div>
+        <div class="dialog-foot">
+          <button class="btn">Cancel</button><button class="btn btn-primary">Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="frame-rail"></div>
+
+  <!-- Frame 2 -->
+  <div class="frame">
+    <div class="frame-num">2</div>
+    <div>
+      <h3>How closely should it follow a prototype?</h3>
+      <p class="frame-do">
+        <b>Practical is a complete answer, not a preview.</b> It is the recommended path and the one
+        this storyboard follows. Prototype and Custom are shown in full in <a href="#s2">§2</a>.
+      </p>
+      <div class="dialog wide" data-fidelity-picker>
+        <div class="dialog-head">Milepost 41.2 — Eastward · level of fidelity</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step done"><span class="step-n">1</span>Track use</div>
+            <div class="step active"><span class="step-n">2</span>Fidelity</div>
+            <div class="step"><span class="step-n">3</span>Signal style</div>
+            <div class="step"><span class="step-n">4</span>What it protects</div>
+            <div class="step"><span class="step-n">5</span>Confirm</div>
+          </div>
+          <div class="segmented">
+            <label class="segment selected">
+              <input type="radio" name="fidelity-easy" value="practical" checked>
+              Practical <span class="recommended">· recommended</span>
+            </label>
+            <label class="segment">
+              <input type="radio" name="fidelity-easy" value="prototype"> Prototype rulebook
+            </label>
+            <label class="segment">
+              <input type="radio" name="fidelity-easy" value="custom"> Custom
+            </label>
+          </div>
+          <div class="note" data-fidelity-explanation>
+            <strong>Practical signaling</strong>
+            Clear, Approach and Stop, plus only the route or direction behaviour this location
+            requires. Easy to build, and easy for operators to learn in one evening.
+          </div>
+          <div class="panel subtle" data-fidelity-panel="prototype" hidden>
+            <div class="field-label">Prototype family</div>
+            <select class="wide-pick">
+              <option>NORAC — modern eastern US</option>
+              <option>PRR 1956 position light</option>
+              <option>Union Pacific 2008</option>
+              <option>Browse all compatible catalog entries…</option>
+            </select>
+            <div class="note warn" style="margin-bottom:0">
+              <strong>The catalog is filtered by what the hardware can display.</strong>
+              Entries needing more than four lit lamps in one indication, or more than sixteen
+              indications, cannot be built on a Signal-LCC and are not offered.
+            </div>
+          </div>
+          <div class="panel subtle" data-fidelity-panel="custom" hidden>
+            <strong style="font-size:12px">Start from a nearby signal type, or from an empty definition.</strong>
+            <p style="margin:4px 0 0 0;color:var(--text-muted);font-size:12px">
+              This is the original's signal type editor, reached from here instead of being the default
+              path. Heads, lamps, indications, published speeds, flashing and cascade are all editable.
+            </p>
+          </div>
+        </div>
+        <div class="dialog-foot">
+          <button class="btn">Back</button><button class="btn btn-primary">Next</button>
+        </div>
+      </div>
+      <p class="frame-ref">The three segments above are live — click them. The rest of this storyboard follows <strong>Practical</strong>.</p>
+    </div>
+  </div>
+  <div class="frame-rail"></div>
+
+  <!-- Frame 3 -->
+  <div class="frame">
+    <div class="frame-num">3</div>
+    <div>
+      <h3>Choose how the signal should look</h3>
+      <p class="frame-do">
+        Style comes <b>after</b> fidelity so that an impossible pairing is never offered. Bowties has
+        already worked out that this location needs three indications on one head, so the preview on the
+        right is real, not a stock image.
+      </p>
+      <div class="dialog wide">
+        <div class="dialog-head">Milepost 41.2 — Eastward · signal style</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step done"><span class="step-n">1</span>Track use</div>
+            <div class="step done"><span class="step-n">2</span>Fidelity</div>
+            <div class="step active"><span class="step-n">3</span>Signal style</div>
+            <div class="step"><span class="step-n">4</span>What it protects</div>
+            <div class="step"><span class="step-n">5</span>Confirm</div>
+          </div>
+          <div class="cols" style="grid-template-columns:1fr 300px">
+            <div class="choice-grid">
+              <label class="choice selected">
+                <input type="radio" name="style-easy" checked>
+                <div><div class="choice-title">Color light</div>
+                  <div class="choice-desc">Familiar red, yellow and green lamps.</div></div>
+              </label>
+              <label class="choice">
+                <input type="radio" name="style-easy">
+                <div><div class="choice-title">Searchlight</div>
+                  <div class="choice-desc">One housing showing several colors.</div></div>
+              </label>
+              <label class="choice">
+                <input type="radio" name="style-easy">
+                <div><div class="choice-title">Position light</div>
+                  <div class="choice-desc">Rows of lamps convey the indication.</div></div>
+              </label>
+              <label class="choice">
+                <input type="radio" name="style-easy">
+                <div><div class="choice-title">Other or custom</div>
+                  <div class="choice-desc">Open the physical display editor.</div></div>
+              </label>
+            </div>
+            <div class="panel subtle">
+              <p class="subhead">Bowties proposes</p>
+              <div style="display:flex;gap:14px;align-items:center">
+                <div class="mast">
+                  <div class="mast-heads"><div class="head">
+                    <span class="lamp lit green"></span><span class="lamp lit yellow"></span><span class="lamp lit red"></span>
+                  </div></div>
+                  <div class="mast-post"></div><div class="mast-base"></div>
+                </div>
+                <div style="font-size:12px">
+                  <strong>One head, 3 lamps</strong><br>
+                  <span style="color:var(--text-muted)">3 lamp drivers · 3 aspect slots</span>
+                </div>
+              </div>
+              <div class="note" style="margin-bottom:0">
+                <strong>Green top, yellow middle, red bottom.</strong>
+                The standard arrangement, matching the node's own driver naming
+                <code>H1-G</code> <code>H1-Y</code> <code>H1-R</code>. Not something the user should
+                have to state.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-foot">
+          <button class="btn">Back</button><button class="btn btn-primary">Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="frame-rail"></div>
+
+  <!-- Frame 4 -->
+  <div class="frame">
+    <div class="frame-num">4</div>
+    <div>
+      <h3>Say what it protects, and which wire goes to which lamp</h3>
+      <p class="frame-do">
+        Two questions, plus the physical wiring. <b>This is not a track plan</b> — it is one protected
+        block and one next mast, both named explicitly. Bowties pre-selects the node closest to the
+        block being protected.
+      </p>
+      <div class="dialog wide">
+        <div class="dialog-head">Milepost 41.2 — Eastward · what it protects</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step done"><span class="step-n">1</span>Track use</div>
+            <div class="step done"><span class="step-n">2</span>Fidelity</div>
+            <div class="step done"><span class="step-n">3</span>Signal style</div>
+            <div class="step active"><span class="step-n">4</span>What it protects</div>
+            <div class="step"><span class="step-n">5</span>Confirm</div>
+          </div>
+          <div class="cols" style="grid-template-columns:1fr 300px">
+            <div>
+              <div class="route-box">
+                <div class="route-title"><span class="route-line"></span> The route ahead</div>
+                <div class="field">
+                  <div class="field-label">Protected block</div>
+                  <select class="wide-pick"><option>Main 1 — MP 41.2 to 42.8</option></select>
+                </div>
+                <div class="field">
+                  <div class="field-label">Next mast</div>
+                  <select class="wide-pick">
+                    <option>MP 42.8 — Eastward</option>
+                    <option>Create a named placeholder…</option>
+                    <option>Leave unconnected for now</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="assign-grid" style="grid-template-columns:120px 1fr;margin-top:14px">
+                <div style="text-align:center">
+                  <div class="mast">
+                    <div class="mast-heads"><div class="head">
+                      <span class="lamp lit green"></span><span class="lamp lit yellow"></span><span class="lamp lit red"></span>
+                    </div></div>
+                    <div class="mast-post"></div><div class="mast-base"></div>
+                  </div>
+                  <div class="mast-caption">3 of 3 assigned</div>
+                </div>
+                <div>
+                  <p class="subhead" style="margin-bottom:6px">Lamps on Signal-LCC “West Staging”</p>
+                  <div class="driver-list">
+                    <div class="driver-row assigned">
+                      <span style="display:flex;align-items:center;gap:8px;font-size:12px"><span class="lamp lit green sm"></span> Green</span>
+                      <select class="driver-pick"><option>#1 H1-G</option></select>
+                    </div>
+                    <div class="driver-row assigned">
+                      <span style="display:flex;align-items:center;gap:8px;font-size:12px"><span class="lamp lit yellow sm"></span> Yellow</span>
+                      <select class="driver-pick"><option>#2 H1-Y</option></select>
+                    </div>
+                    <div class="driver-row assigned">
+                      <span style="display:flex;align-items:center;gap:8px;font-size:12px"><span class="lamp lit red sm"></span> Red</span>
+                      <select class="driver-pick"><option>#3 H1-R</option></select>
+                    </div>
+                  </div>
+                  <div class="legend">
+                    <span><span class="lamp lit green sm"></span> assigned</span>
+                    <span style="opacity:.7">drivers claimed elsewhere are not offered</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel subtle">
+              <p class="subhead">Local connection</p>
+              <div class="connection-map" style="flex-direction:column;align-items:stretch">
+                <div class="map-node current">MP 41.2 — Eastward<br><small style="color:var(--text-muted)">this mast</small></div>
+                <div class="map-arrow" style="text-align:center">tells the signal behind what speed it may run &darr;</div>
+                <div class="map-node">MP 42.8 — Eastward<br><small style="color:var(--text-muted)">next mast</small></div>
+              </div>
+              <div class="note" style="margin-bottom:0">
+                <strong>Creation order does not matter.</strong>
+                If the next mast does not exist yet, name a placeholder and resolve it later from either
+                card. See <a href="#s5">§5</a>.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-foot">
+          <button class="btn">Back</button><button class="btn btn-primary">Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="frame-rail"></div>
+
+  <!-- Frame 5 -->
+  <div class="frame">
+    <div class="frame-num">5</div>
+    <div>
+      <h3>Confirm the behaviour Bowties worked out</h3>
+      <p class="frame-do">
+        <b>The user does not write this table — Bowties derives it and asks them to confirm it.</b> The
+        derivation is identical to the original's; only the presentation changes. Plain English is the
+        primary column and the indication name is subdued, because on the Practical path the name is
+        the least useful thing about the row.
+      </p>
+      <div class="dialog wide">
+        <div class="dialog-head">Milepost 41.2 — Eastward · confirm</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step done"><span class="step-n">1</span>Track use</div>
+            <div class="step done"><span class="step-n">2</span>Fidelity</div>
+            <div class="step done"><span class="step-n">3</span>Signal style</div>
+            <div class="step done"><span class="step-n">4</span>What it protects</div>
+            <div class="step active"><span class="step-n">5</span>Confirm</div>
+          </div>
+          <div class="table-wrap">
+            <table class="aspect-table">
+              <thead>
+                <tr>
+                  <th style="width:52px">Shows</th>
+                  <th>When</th>
+                  <th style="width:190px">Tells the signal behind</th>
+                  <th style="width:70px"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="face-cell"><div class="mast"><div class="mast-heads"><div class="head">
+                    <span class="lamp lit green"></span><span class="lamp"></span><span class="lamp"></span>
+                  </div></div></div></td>
+                  <td>This block and the next are both clear
+                    <div class="name-secondary">called “Clear”</div></td>
+                  <td><span class="speed-chip">Clear</span></td>
+                  <td><button class="btn-link btn-sm">Adjust…</button></td>
+                </tr>
+                <tr>
+                  <td class="face-cell"><div class="mast"><div class="mast-heads"><div class="head">
+                    <span class="lamp"></span><span class="lamp lit yellow"></span><span class="lamp"></span>
+                  </div></div></div></td>
+                  <td>This block is clear, but MP 42.8 is at Stop
+                    <div class="name-secondary">called “Approach”</div></td>
+                  <td><span class="speed-chip">Approach</span></td>
+                  <td><button class="btn-link btn-sm">Adjust…</button></td>
+                </tr>
+                <tr>
+                  <td class="face-cell"><div class="mast"><div class="mast-heads"><div class="head">
+                    <span class="lamp"></span><span class="lamp"></span><span class="lamp lit red"></span>
+                  </div></div></div></td>
+                  <td>This block is occupied
+                    <div class="name-secondary">called “Stop”</div></td>
+                  <td><span class="speed-chip">Stop</span></td>
+                  <td><button class="btn-link btn-sm">Adjust…</button></td>
+                </tr>
+                <tr class="dimmed">
+                  <td class="face-cell"><div class="mast"><div class="mast-heads"><div class="head">
+                    <span class="lamp"></span><span class="lamp"></span><span class="lamp"></span>
+                  </div></div></div></td>
+                  <td>No train within two blocks
+                    <div class="name-secondary">called “Dark” — approach lighting, off by default</div></td>
+                  <td><span class="speed-chip">Clear</span></td>
+                  <td><button class="btn-link btn-sm">Enable</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="cols" style="margin-top:14px;grid-template-columns:1fr 300px">
+            <div>
+              <p class="subhead">What this costs on the board</p>
+              <div class="capacity-grid">
+                <div class="cap">
+                  <div class="cap-label">Lamp drivers</div>
+                  <div class="cap-value">3 <span class="of">of 16</span></div>
+                  <div class="cap-bar"><span style="width:18.75%"></span></div>
+                </div>
+                <div class="cap">
+                  <div class="cap-label">Masts</div>
+                  <div class="cap-value">1 <span class="of">of 8</span></div>
+                  <div class="cap-bar"><span style="width:12.5%"></span></div>
+                </div>
+                <div class="cap">
+                  <div class="cap-label">Aspects</div>
+                  <div class="cap-value">3 <span class="of">of 8</span></div>
+                  <div class="cap-bar"><span style="width:37.5%"></span></div>
+                </div>
+                <div class="cap">
+                  <div class="cap-label">Logic slots</div>
+                  <div class="cap-value">3 <span class="of">of 32</span></div>
+                  <div class="cap-bar"><span style="width:9.4%"></span></div>
+                </div>
+              </div>
+            </div>
+            <div class="panel subtle">
+              <p class="subhead">Bowties handled</p>
+              <div class="panel-row"><span>Signaling system</span><span>ABS</span></div>
+              <div class="panel-row"><span>Display node</span><span>Signal-LCC</span></div>
+              <div class="panel-row"><span>Logic node</span><span>the same board</span></div>
+              <div class="panel-row"><span>Event IDs shown</span><span>0</span></div>
+            </div>
+          </div>
+
+          <div class="note" style="margin-bottom:0">
+            <strong>Read the middle column aloud and it is the whole rule.</strong>
+            Four answers produced it. The original reaches the same table by asking the user to name
+            ABS and pick a signal role first; the question for reviewers is whether naming ABS
+            <em>added</em> anything for this signal.
+          </div>
+        </div>
+        <div class="dialog-foot">
+          <button class="btn">Back</button><button class="btn btn-primary">Looks right — build the signal</button>
+        </div>
+      </div>
+      <p class="frame-ref">Bring-up and testing follow exactly as in the original — see its §6.</p>
+    </div>
+  </div>
+</div>
+
+
+<!-- ============================================================ 2 -->
+<div class="mockup-section" id="s2">
+  <h2>2. Fidelity — what Prototype and Custom look like when chosen</h2>
+  <p class="mockup-caption">
+    Step 2 is the load-bearing claim of this ordering: that <em>Practical</em> can be a complete answer
+    without making prototype fidelity feel like a locked door. Both other branches are shown here so
+    reviewers can judge whether the door is obvious enough.
+  </p>
+
+  <div class="cols">
+    <div class="panel">
+      <p class="subhead">Prototype rulebook</p>
+      <p style="margin:0 0 10px 0;font-size:12px">
+        The user picks a railroad or signaling family. Bowties takes the indication table, the speeds,
+        the normal/diverging applicability and the cascade policy from the catalog entry. The catalog
+        entries are ordinary signal types with no special status — the same objects the Custom branch
+        produces.
+      </p>
+      <div style="display:flex;gap:16px;align-items:center;padding:10px 12px;border:1px solid var(--border);border-radius:5px;background:var(--bg-subtle)">
+        <div class="mast">
+          <div class="pl-head">
+            <span class="lamp lit amber pl-c"></span>
+            <span class="lamp lit amber pl-n"></span>
+            <span class="lamp lit amber pl-s"></span>
+            <span class="lamp pl-ne"></span>
+            <span class="lamp pl-sw"></span>
+            <span class="lamp pl-e"></span>
+            <span class="lamp pl-w"></span>
+          </div>
+          <div class="mast-post"></div><div class="mast-base"></div>
+        </div>
+        <div style="font-size:12px">
+          <strong>PRR 1956 position light</strong><br>
+          <span style="color:var(--text-muted)">Vertical row = Clear · 3 of 4 lit lamps · 7 drivers</span>
+        </div>
+      </div>
+      <div class="note warn" style="margin-bottom:0">
+        <strong>Nothing about this is red-over-green.</strong>
+        The three degrees of freedom — a name, up to four lit lamps, a published speed — cover a
+        position light and a color light without a special case, which is what makes the Practical
+        default safe rather than limiting.
+      </div>
+    </div>
+
+    <div class="panel">
+      <p class="subhead">Custom</p>
+      <p style="margin:0 0 10px 0;font-size:12px">
+        The original's signal type editor, reached from step 2 rather than being the default path.
+        Heads, lamps per head, indications, published speeds, flashing and cascade are all editable, and
+        the indication list is filtered by what the mast can physically show.
+      </p>
+      <div class="table-wrap">
+        <table class="aspect-table">
+          <thead><tr><th style="width:46px">Shows</th><th>Indication</th><th>Permits past</th><th>Expects ahead</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="face-cell" style="width:46px"><div class="mast"><div class="mast-heads"><div class="head">
+                <span class="lamp lit green"></span><span class="lamp"></span><span class="lamp"></span>
+              </div></div></div></td>
+              <td class="indication-name">Clear</td>
+              <td><span class="speed-chip">Clear</span></td>
+              <td><span class="speed-chip">Clear</span></td>
+            </tr>
+            <tr>
+              <td class="face-cell"><div class="mast"><div class="mast-heads"><div class="head">
+                <span class="lamp"></span><span class="lamp lit yellow"></span><span class="lamp"></span>
+              </div></div></div></td>
+              <td class="indication-name">Approach</td>
+              <td><span class="speed-chip">Approach</span></td>
+              <td><span class="speed-chip">Stop</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note" style="margin-bottom:0">
+        <strong>Those two speed columns are still the entire logic.</strong>
+        Practical fills them in from the track use; Prototype takes them from the catalog; Custom lets
+        the user set them. All three land in the same place.
+      </div>
+    </div>
+  </div>
+
+  <div class="note limit">
+    <strong>The risk this ordering takes.</strong>
+    A user who wants prototype fidelity must first answer a question about track use that feels beneath
+    them, then find fidelity on screen two. The original puts their question first and the beginner's
+    question second. <em>Which user should have to scroll past the other one's question?</em> — that is
+    the whole disagreement between these two documents, stated as plainly as we can.
+  </div>
+</div>
+
+
+<!-- ============================================================ 3 -->
+<div class="mockup-section" id="s3">
+  <h2>3. The hard case — a two-head junction signal through the same five steps</h2>
+  <p class="mockup-caption">
+    Same wizard, same five steps, same worked example the original uses: <strong>Rockville — Eastward
+    Home Signal</strong>, protecting Main 1 East over turnout 21, with CP Banks ahead on the normal
+    route. Six indications on two heads read together as one. Watch what the four Track-use words have
+    to carry here — and where the plain-English framing starts to strain.
+  </p>
+
+  <!-- Frame 1 -->
+  <div class="frame">
+    <div class="frame-num">1</div>
+    <div>
+      <h3>Same question, different answer</h3>
+      <p class="frame-do">
+        The user picks <b>A junction</b>. That single word now has to imply an interlocking, route
+        selection, a second next-mast, and a second head. <b>None of that is visible yet.</b>
+      </p>
+      <div class="dialog wide">
+        <div class="dialog-head">Rockville — Eastward Home Signal · what happens beyond this signal?</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step active"><span class="step-n">1</span>Track use</div>
+            <div class="step"><span class="step-n">2</span>Fidelity</div>
+            <div class="step"><span class="step-n">3</span>Signal style</div>
+            <div class="step"><span class="step-n">4</span>What it protects</div>
+            <div class="step"><span class="step-n">5</span>Confirm</div>
+          </div>
+          <div class="cols" style="grid-template-columns:1fr 290px">
+            <div class="choice-grid">
+              <label class="choice">
+                <input type="radio" name="track-use-hard">
+                <div><div class="choice-title">Straight track</div>
+                  <div class="choice-desc">Trains continue one way. No turnout here.</div></div>
+              </label>
+              <label class="choice selected">
+                <input type="radio" name="track-use-hard" checked>
+                <div><div class="choice-title">A junction</div>
+                  <div class="choice-desc">The signal protects a normal and a diverging route.</div></div>
+              </label>
+              <label class="choice">
+                <input type="radio" name="track-use-hard">
+                <div><div class="choice-title">Two-way single track</div>
+                  <div class="choice-desc">Trains use this section in both directions.</div></div>
+              </label>
+              <label class="choice">
+                <input type="radio" name="track-use-hard">
+                <div><div class="choice-title">Dispatcher controlled</div>
+                  <div class="choice-desc">A dispatcher sets routes or holds signals.</div></div>
+              </label>
+            </div>
+            <div>
+              <div class="field-label">What this needs</div>
+              <div class="hw-need">
+                <div class="hw-row">
+                  <span class="hw-ok">✔</span>
+                  <div><strong>Signal-LCC “West Staging”</strong><br>
+                    <span style="color:var(--text-muted)">Drives the lamps and holds the aspects</span></div>
+                </div>
+                <div class="hw-row">
+                  <span class="hw-ok">✔</span>
+                  <div><strong>Logic on the same board</strong><br>
+                    <span style="color:var(--text-muted)">An interlocking of this size fits in the Signal-LCC itself</span></div>
+                </div>
+                <div class="hw-row">
+                  <span class="hw-ok">✔</span>
+                  <div><strong>Inputs you already have</strong><br>
+                    <span style="color:var(--text-muted)">Block occupancy · turnout position · the signals ahead</span></div>
+                </div>
+              </div>
+              <div class="note" style="margin-bottom:0">
+                <strong>Had they picked “Two-way single track”…</strong>
+                this panel would have said a Tower LCC+Q is needed and that Bowties would add one to the
+                plan. Hardware consequence appears the moment the railroad question is answered.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-foot">
+          <button class="btn">Cancel</button><button class="btn btn-primary">Next</button>
+        </div>
+      </div>
+      <div class="note warn">
+        <strong>First strain: four words is a coarse instrument.</strong>
+        “A junction” covers a single-turnout siding entrance, a double crossover, and a five-track
+        yard throat. The original asks a narrower question — <em>interlocking home signal</em> versus
+        <em>interlocking distant</em> — and gets a more precise answer for it.
+      </div>
+    </div>
+  </div>
+  <div class="frame-rail"></div>
+
+  <!-- Frame 2 -->
+  <div class="frame">
+    <div class="frame-num">2</div>
+    <div>
+      <h3>Fidelity — unchanged, and this is a point in the ordering's favour</h3>
+      <p class="frame-do">
+        The hard case asks exactly the same second question as the easy one, and Practical is still a
+        legitimate answer: <b>Clear, Approach, Medium Clear, Medium Approach, Stop.</b> Nothing about
+        a junction forces the user into a rulebook.
+      </p>
+      <div class="dialog wide" data-fidelity-picker>
+        <div class="dialog-head">Rockville — Eastward Home Signal · level of fidelity</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step done"><span class="step-n">1</span>Track use</div>
+            <div class="step active"><span class="step-n">2</span>Fidelity</div>
+            <div class="step"><span class="step-n">3</span>Signal style</div>
+            <div class="step"><span class="step-n">4</span>What it protects</div>
+            <div class="step"><span class="step-n">5</span>Confirm</div>
+          </div>
+          <div class="segmented">
+            <label class="segment selected">
+              <input type="radio" name="fidelity-hard" value="practical" checked>
+              Practical <span class="recommended">· recommended</span>
+            </label>
+            <label class="segment">
+              <input type="radio" name="fidelity-hard" value="prototype"> Prototype rulebook
+            </label>
+            <label class="segment">
+              <input type="radio" name="fidelity-hard" value="custom"> Custom
+            </label>
+          </div>
+          <div class="note" data-fidelity-explanation>
+            <strong>Practical signaling</strong>
+            Clear, Approach and Stop, plus only the route or direction behaviour this location
+            requires. Easy to build, and easy for operators to learn in one evening.
+          </div>
+          <div class="panel subtle" data-fidelity-panel="prototype" hidden>
+            <div class="field-label">Prototype family</div>
+            <select class="wide-pick">
+              <option>NORAC — modern eastern US</option>
+              <option>PRR 1956 position light</option>
+              <option>Union Pacific 2008</option>
+              <option>Browse all compatible catalog entries…</option>
+            </select>
+            <div class="note warn" style="margin-bottom:0">
+              <strong>The catalog is filtered by what the hardware can display.</strong>
+              Entries needing more than four lit lamps in one indication, or more than sixteen
+              indications, cannot be built on a Signal-LCC and are not offered.
+            </div>
+          </div>
+          <div class="panel subtle" data-fidelity-panel="custom" hidden>
+            <strong style="font-size:12px">Start from a nearby signal type, or from an empty definition.</strong>
+            <p style="margin:4px 0 0 0;color:var(--text-muted);font-size:12px">
+              This is the original's signal type editor, reached from here instead of being the default
+              path. Heads, lamps, indications, published speeds, flashing and cascade are all editable.
+            </p>
+          </div>
+        </div>
+        <div class="dialog-foot">
+          <button class="btn">Back</button><button class="btn btn-primary">Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="frame-rail"></div>
+
+  <!-- Frame 3 -->
+  <div class="frame">
+    <div class="frame-num">3</div>
+    <div>
+      <h3>Style — where Bowties spends the user's hardware without being asked</h3>
+      <p class="frame-do">
+        The user picks a familiar style. Bowties decides the signal needs <b>two heads and six lamp
+        drivers</b>, because a diverging route needs its own indication. That is a consequence of step 1,
+        surfacing two screens later.
+      </p>
+      <div class="dialog wide">
+        <div class="dialog-head">Rockville — Eastward Home Signal · signal style</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step done"><span class="step-n">1</span>Track use</div>
+            <div class="step done"><span class="step-n">2</span>Fidelity</div>
+            <div class="step active"><span class="step-n">3</span>Signal style</div>
+            <div class="step"><span class="step-n">4</span>What it protects</div>
+            <div class="step"><span class="step-n">5</span>Confirm</div>
+          </div>
+          <div class="cols" style="grid-template-columns:1fr 300px">
+            <div class="choice-grid">
+              <label class="choice selected">
+                <input type="radio" name="style-hard" checked>
+                <div><div class="choice-title">Color light</div>
+                  <div class="choice-desc">Familiar red, yellow and green lamps.</div></div>
+              </label>
+              <label class="choice">
+                <input type="radio" name="style-hard">
+                <div><div class="choice-title">Searchlight</div>
+                  <div class="choice-desc">One housing showing several colors.</div></div>
+              </label>
+              <label class="choice">
+                <input type="radio" name="style-hard">
+                <div><div class="choice-title">Position light</div>
+                  <div class="choice-desc">Rows of lamps convey the indication.</div></div>
+              </label>
+              <label class="choice">
+                <input type="radio" name="style-hard">
+                <div><div class="choice-title">Other or custom</div>
+                  <div class="choice-desc">Open the physical display editor.</div></div>
+              </label>
+            </div>
+            <div class="panel subtle">
+              <p class="subhead">Bowties proposes</p>
+              <div style="display:flex;gap:14px;align-items:center">
+                <div class="mast">
+                  <div class="mast-heads">
+                    <div class="head"><span class="lamp lit green"></span><span class="lamp lit yellow"></span><span class="lamp lit red"></span></div>
+                    <div class="head"><span class="lamp lit green"></span><span class="lamp lit yellow"></span><span class="lamp lit red"></span></div>
+                  </div>
+                  <div class="mast-post"></div><div class="mast-base"></div>
+                </div>
+                <div style="font-size:12px">
+                  <strong>Two heads, 3 lamps each</strong><br>
+                  <span style="color:var(--text-muted)">6 lamp drivers · 5 aspect slots</span>
+                </div>
+              </div>
+              <div class="note warn" style="margin-bottom:0">
+                <strong>A second head is required here.</strong>
+                The diverging route needs an indication of its own, and the two heads are read
+                <em>together</em> as one indication rather than one head per route.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-foot">
+          <button class="btn">Back</button><button class="btn btn-primary">Next</button>
+        </div>
+      </div>
+      <div class="note warn">
+        <strong>Second strain: the user is told, not asked.</strong>
+        Doubling the driver cost is a real decision made on the user's behalf, three screens before the
+        capacity readout appears. The original surfaces head count in the same place, but the user has
+        by then explicitly chosen “interlocking home signal”, so it reads as a consequence of their own
+        choice rather than an inference from “A junction”.
+      </div>
+    </div>
+  </div>
+  <div class="frame-rail"></div>
+
+  <!-- Frame 4 -->
+  <div class="frame">
+    <div class="frame-num">4</div>
+    <div>
+      <h3>What it protects — now three route boxes instead of one</h3>
+      <p class="frame-do">
+        The easy case asked for a block and a next mast. This one adds <b>which turnout selects the
+        route</b>, and <b>a second next mast that does not exist yet</b>. Same screen, three times the
+        content.
+      </p>
+      <div class="dialog wide">
+        <div class="dialog-head">Rockville — Eastward Home Signal · what it protects</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step done"><span class="step-n">1</span>Track use</div>
+            <div class="step done"><span class="step-n">2</span>Fidelity</div>
+            <div class="step done"><span class="step-n">3</span>Signal style</div>
+            <div class="step active"><span class="step-n">4</span>What it protects</div>
+            <div class="step"><span class="step-n">5</span>Confirm</div>
+          </div>
+          <div class="cols" style="grid-template-columns:1fr 300px">
+            <div>
+              <div class="route-box">
+                <div class="route-title">Shared by both routes</div>
+                <div class="field">
+                  <div class="field-label">Protected block</div>
+                  <select class="wide-pick"><option>Rockville — Main 1 East</option></select>
+                </div>
+                <div class="field">
+                  <div class="field-label">Route selected by</div>
+                  <select class="wide-pick"><option>Rockville turnout 21</option></select>
+                </div>
+              </div>
+
+              <div class="route-box">
+                <div class="route-title"><span class="route-line"></span> Route ahead — turnout normal</div>
+                <div class="field">
+                  <div class="field-label">Next mast</div>
+                  <select class="wide-pick"><option>CP Banks — Eastward Home</option></select>
+                </div>
+              </div>
+
+              <div class="route-box" style="border-color:#fcd34d;background:var(--accent-amber-bg)">
+                <div class="route-title"><span class="route-line diverging"></span> Diverging route — turnout reversed</div>
+                <div class="field" style="margin-bottom:0">
+                  <div class="field-label">Next mast</div>
+                  <select class="wide-pick">
+                    <option>Create placeholder: “Marysville — Eastward”</option>
+                    <option>Choose an existing mast…</option>
+                    <option>Leave unconnected for now</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel subtle">
+              <p class="subhead">Local connection</p>
+              <div class="connection-map" style="flex-direction:column;align-items:stretch">
+                <div class="map-node current">Rockville — Eastward<br><small style="color:var(--text-muted)">this mast</small></div>
+                <div class="map-arrow" style="text-align:center">normal &darr;&nbsp;&nbsp;&nbsp;&darr; diverging</div>
+                <div style="display:flex;gap:6px">
+                  <div class="map-node" style="flex:1;min-width:0">CP Banks</div>
+                  <div class="map-node placeholder-node" style="flex:1;min-width:0">Marysville<br><small>placeholder</small></div>
+                </div>
+              </div>
+              <div class="note" style="margin-bottom:0">
+                <strong>Marked incomplete until resolved.</strong>
+                The signal still builds and still works on the normal route. The diverging indications
+                stay dark until the placeholder is bound. See <a href="#s5">§5</a>.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-foot">
+          <button class="btn">Back</button><button class="btn btn-primary">Next</button>
+        </div>
+      </div>
+      <p class="frame-ref">Lamp wiring is the same six-row list as the original's §2 and is omitted here for space.</p>
+    </div>
+  </div>
+  <div class="frame-rail"></div>
+
+  <!-- Frame 5 -->
+  <div class="frame">
+    <div class="frame-num">5</div>
+    <div>
+      <h3>Confirm — and the plain-English framing finally cracks</h3>
+      <p class="frame-do">
+        Six rows instead of three. Two of them are conditions no amount of plain English makes short.
+        <b>This is the honest cost of the practical-first ordering, and it lands on the last screen.</b>
+      </p>
+      <div class="dialog wide">
+        <div class="dialog-head">Rockville — Eastward Home Signal · confirm</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step done"><span class="step-n">1</span>Track use</div>
+            <div class="step done"><span class="step-n">2</span>Fidelity</div>
+            <div class="step done"><span class="step-n">3</span>Signal style</div>
+            <div class="step done"><span class="step-n">4</span>What it protects</div>
+            <div class="step active"><span class="step-n">5</span>Confirm</div>
+          </div>
+          <div class="table-wrap">
+            <table class="aspect-table">
+              <thead>
+                <tr>
+                  <th style="width:56px">Shows</th>
+                  <th>When</th>
+                  <th style="width:170px">Tells the signal behind</th>
+                  <th style="width:70px"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="face-cell"><div class="mast"><div class="mast-heads">
+                    <div class="head"><span class="lamp lit green"></span><span class="lamp"></span><span class="lamp"></span></div>
+                    <div class="head"><span class="lamp"></span><span class="lamp"></span><span class="lamp lit red"></span></div>
+                  </div></div></td>
+                  <td>Turnout <strong>normal</strong>, block clear, CP Banks showing Clear
+                    <div class="name-secondary">called “Clear”</div></td>
+                  <td><span class="speed-chip">Clear</span></td>
+                  <td><button class="btn-link btn-sm">Adjust…</button></td>
+                </tr>
+                <tr>
+                  <td class="face-cell"><div class="mast"><div class="mast-heads">
+                    <div class="head"><span class="lamp"></span><span class="lamp lit yellow"></span><span class="lamp"></span></div>
+                    <div class="head"><span class="lamp"></span><span class="lamp"></span><span class="lamp lit red"></span></div>
+                  </div></div></td>
+                  <td>Turnout <strong>normal</strong>, block clear, CP Banks at Stop
+                    <div class="name-secondary">called “Approach”</div></td>
+                  <td><span class="speed-chip">Approach</span></td>
+                  <td><button class="btn-link btn-sm">Adjust…</button></td>
+                </tr>
+                <tr>
+                  <td class="face-cell"><div class="mast"><div class="mast-heads">
+                    <div class="head"><span class="lamp"></span><span class="lamp"></span><span class="lamp lit red"></span></div>
+                    <div class="head"><span class="lamp lit green"></span><span class="lamp"></span><span class="lamp"></span></div>
+                  </div></div></td>
+                  <td>Turnout <strong>reversed</strong>, block clear, Marysville showing Clear
+                    <div class="name-secondary">called “Medium Clear” — medium speed through the turnout, then normal</div></td>
+                  <td><span class="speed-chip">Medium</span></td>
+                  <td><button class="btn-link btn-sm">Adjust…</button></td>
+                </tr>
+                <tr>
+                  <td class="face-cell"><div class="mast"><div class="mast-heads">
+                    <div class="head"><span class="lamp"></span><span class="lamp"></span><span class="lamp lit red"></span></div>
+                    <div class="head"><span class="lamp"></span><span class="lamp lit yellow"></span><span class="lamp"></span></div>
+                  </div></div></td>
+                  <td>Turnout <strong>reversed</strong>, block clear, Marysville at Stop
+                    <div class="name-secondary">called “Medium Approach” — medium speed, then prepare to stop</div></td>
+                  <td><span class="speed-chip">Medium</span></td>
+                  <td><button class="btn-link btn-sm">Adjust…</button></td>
+                </tr>
+                <tr>
+                  <td class="face-cell"><div class="mast"><div class="mast-heads">
+                    <div class="head"><span class="lamp"></span><span class="lamp"></span><span class="lamp lit red"></span></div>
+                    <div class="head"><span class="lamp"></span><span class="lamp"></span><span class="lamp lit red"></span></div>
+                  </div></div></td>
+                  <td>Block occupied, or the turnout is moving
+                    <div class="name-secondary">called “Stop”</div></td>
+                  <td><span class="speed-chip">Stop</span></td>
+                  <td><button class="btn-link btn-sm">Adjust…</button></td>
+                </tr>
+                <tr class="dimmed">
+                  <td class="face-cell"><div class="mast"><div class="mast-heads">
+                    <div class="head"><span class="lamp"></span><span class="lamp"></span><span class="lamp"></span></div>
+                    <div class="head"><span class="lamp"></span><span class="lamp"></span><span class="lamp"></span></div>
+                  </div></div></td>
+                  <td>No train within two blocks
+                    <div class="name-secondary">called “Dark” — approach lighting, off by default</div></td>
+                  <td><span class="speed-chip">Clear</span></td>
+                  <td><button class="btn-link btn-sm">Enable</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="cols" style="margin-top:14px;grid-template-columns:1fr 300px">
+            <div>
+              <p class="subhead">What this costs on the board</p>
+              <div class="capacity-grid">
+                <div class="cap warn">
+                  <div class="cap-label">Lamp drivers</div>
+                  <div class="cap-value">6 <span class="of">of 16</span></div>
+                  <div class="cap-bar"><span style="width:37.5%"></span></div>
+                  <div class="cap-note">two more junctions and this board is full</div>
+                </div>
+                <div class="cap">
+                  <div class="cap-label">Masts</div>
+                  <div class="cap-value">1 <span class="of">of 8</span></div>
+                  <div class="cap-bar"><span style="width:12.5%"></span></div>
+                </div>
+                <div class="cap">
+                  <div class="cap-label">Aspects</div>
+                  <div class="cap-value">6 <span class="of">of 8</span></div>
+                  <div class="cap-bar"><span style="width:75%"></span></div>
+                </div>
+                <div class="cap">
+                  <div class="cap-label">Logic slots</div>
+                  <div class="cap-value">11 <span class="of">of 32</span></div>
+                  <div class="cap-bar"><span style="width:34%"></span></div>
+                </div>
+              </div>
+            </div>
+            <div class="panel subtle">
+              <p class="subhead">Bowties handled</p>
+              <div class="panel-row"><span>Signaling system</span><span>Interlocking</span></div>
+              <div class="panel-row"><span>Display node</span><span>Signal-LCC</span></div>
+              <div class="panel-row"><span>Logic node</span><span>the same board</span></div>
+              <div class="panel-row"><span>Unresolved links</span><span style="color:var(--accent-amber)">1</span></div>
+              <div class="panel-row"><span>Event IDs shown</span><span>0</span></div>
+            </div>
+          </div>
+
+          <div class="note warn" style="margin-bottom:0">
+            <strong>Third strain: the jargon comes back anyway.</strong>
+            <em>Medium Clear</em> and <em>Medium Approach</em> have no plain-English short form — the
+            condition column describes when they appear, but the operator still has to learn the name to
+            call the signal on the radio. The practical-first ordering does not remove the vocabulary;
+            it defers it to the last screen, where there is no room to teach it.
+          </div>
+        </div>
+        <div class="dialog-foot">
+          <button class="btn">Back</button><button class="btn btn-primary">Looks right — build the signal</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ============================================================ 4 -->
+<div class="mockup-section" id="s4">
+  <h2>4. What actually got harder</h2>
+  <p class="mockup-caption">
+    Both signals used the same five steps and the same four questions. Everything below is what the
+    wizard added on its own, without a further question being asked.
+  </p>
+
+  <div class="table-wrap">
+    <table class="diff-table">
+      <thead>
+        <tr>
+          <th style="width:230px"></th>
+          <th style="width:200px">Common case<br><span style="font-weight:400;text-transform:none;letter-spacing:0">MP 41.2 — straight track</span></th>
+          <th style="width:200px">Hard case<br><span style="font-weight:400;text-transform:none;letter-spacing:0">Rockville — junction</span></th>
+          <th>Who decided</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Wizard steps</strong></td>
+          <td>5</td><td>5</td>
+          <td>Fixed. This is the ordering's main claim and it holds.</td>
+        </tr>
+        <tr>
+          <td><strong>Questions answered</strong></td>
+          <td>4</td>
+          <td class="grew">6</td>
+          <td>Step 4 grew two selects — the turnout, and a second next-mast.</td>
+        </tr>
+        <tr>
+          <td><strong>Heads</strong></td>
+          <td>1</td>
+          <td class="grew">2</td>
+          <td><strong>Bowties</strong>, inferred from “A junction”.</td>
+        </tr>
+        <tr>
+          <td><strong>Lamp drivers</strong></td>
+          <td>3 of 16</td>
+          <td class="grew">6 of 16</td>
+          <td><strong>Bowties</strong>. Shown at step 3, quantified at step 5.</td>
+        </tr>
+        <tr>
+          <td><strong>Indications</strong></td>
+          <td>3 (+ Dark)</td>
+          <td class="grew">5 (+ Dark)</td>
+          <td><strong>Bowties</strong>, from track use plus route count.</td>
+        </tr>
+        <tr>
+          <td><strong>New words the user must learn</strong></td>
+          <td>0</td>
+          <td class="grew">2 — <em>Medium Clear</em>, <em>Medium Approach</em></td>
+          <td>Unavoidable. They appear on the last screen.</td>
+        </tr>
+        <tr>
+          <td><strong>Unresolved links on build</strong></td>
+          <td>0</td>
+          <td class="grew">1 placeholder</td>
+          <td>The user, because the diverging mast does not exist yet.</td>
+        </tr>
+        <tr>
+          <td><strong>Signaling system named on screen</strong></td>
+          <td>never</td><td>never</td>
+          <td>Bowties, silently. The original names it on screen one in both cases.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>The good news for this ordering.</strong>
+    The step count did not grow, the vocabulary did not grow until the last screen, and the hard case
+    never required the user to know that “interlocking” was the word for what they were building. Four
+    plain questions carried a two-head speed-signaled interlocking mast.
+  </div>
+
+  <div class="note warn">
+    <strong>The bad news for this ordering.</strong>
+    Three separate decisions — a second head, doubled driver cost, and two new indication names — were
+    made <em>for</em> the user and revealed late. In the original the user commits to “interlocking home
+    signal” on screen one, so the same three consequences read as things they asked for. Deferred
+    surprise is the price of a gentler opening question.
+  </div>
+</div>
+
+
+<!-- ============================================================ 5 -->
+<div class="mockup-section" id="s5">
+  <h2>5. Placeholders — why creation order stops mattering</h2>
+  <p class="mockup-caption">
+    The hard case needed a mast that did not exist yet. This is the one idea in this document that is
+    <strong>independent of the ordering</strong> and would work just as well in the original — it is
+    called out separately so it does not unfairly tip the comparison.
+  </p>
+
+  <div class="window">
+    <div class="titlebar"><span class="dots"><span></span><span></span><span></span></span> Bowties — signaling relationships</div>
+    <div class="tabbar">
+      <div class="tab">Config</div><div class="tab">Wiring</div>
+      <div class="tab active">Railroad</div><div class="tab">Operate</div>
+    </div>
+    <div class="main">
+      <div class="connection-map" style="padding:8px 0 14px">
+        <div class="map-node">Rockville — Westward</div>
+        <div class="map-arrow">&larr; next</div>
+        <div class="map-node current">Rockville — Eastward<br><small style="color:var(--text-muted)">protects Main 1 East</small></div>
+        <div class="map-arrow">next &rarr;</div>
+        <div class="map-node">CP Banks — Eastward</div>
+        <div class="map-arrow">diverging &rarr;</div>
+        <div class="map-node placeholder-node">Marysville — Eastward<br><small>placeholder</small></div>
+      </div>
+
+      <div class="facility-card">
+        <div class="facility-header">
+          <div class="facility-title">
+            <span class="facility-name">Rockville — Eastward Home Signal</span>
+            <span class="status-pill incomplete"><span class="pulse"></span>Incomplete</span>
+            <span class="facility-sub">1 unresolved link · normal route working</span>
+          </div>
+          <div class="facility-actions">
+            <button class="btn btn-sm">Resolve placeholder…</button>
+            <button class="btn btn-sm">Test…</button>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--text-secondary)">
+          Diverging indications stay dark until <strong>Marysville — Eastward</strong> exists. The
+          placeholder can be resolved from either mast's card, so the user may build the layout in any
+          order they like.
+        </div>
+      </div>
+
+      <div class="note warn">
+        <strong>What Bowties can and cannot validate.</strong>
+        It can find unresolved placeholders, duplicate ownership of a lamp driver, and obvious cycles.
+        It cannot prove that these references match the physical railroad — there is still no track
+        topology model, and the user is still naming the next mast by hand.
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ============================================================ 6 -->
+<div class="mockup-section" id="s6">
+  <h2>6. Where this ordering is weakest</h2>
+  <p class="mockup-caption">
+    Stated plainly, so a reviewer comparing the two documents can weigh the trade rather than being
+    sold one side of it.
+  </p>
+
+  <div class="cols">
+    <div class="panel">
+      <p class="subhead">Costs of asking track use first</p>
+      <ul style="margin:0;padding-left:18px;font-size:12px">
+        <li><strong>Four words carry too much.</strong> “A junction” spans a siding turnout and a yard
+          throat; the original's “interlocking home signal” does not.</li>
+        <li><strong>Consequences arrive late.</strong> Head count at step 3, driver cost and new
+          vocabulary at step 5.</li>
+        <li><strong>The expert is served second.</strong> Someone who knows they want NORAC must answer
+          a beginner's question before reaching fidelity.</li>
+        <li><strong>The jargon is deferred, not removed.</strong> Operators still have to learn
+          <em>Medium Clear</em>.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <p class="subhead">Benefits of asking track use first</p>
+      <ul style="margin:0;padding-left:18px;font-size:12px">
+        <li><strong>The common case takes four obvious answers</strong> and never names a signaling
+          system.</li>
+        <li><strong>No impossible combinations.</strong> Style is chosen after Bowties knows the
+          indication count, so an unbuildable pairing is never offered.</li>
+        <li><strong>Hardware consequence appears at step 1</strong> — including “this needs a Tower
+          LCC+Q”, before any effort is invested.</li>
+        <li><strong>Practical is a complete answer</strong>, with prototype fidelity one click away
+          rather than a prerequisite.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="note limit" style="margin-bottom:0">
+    <strong>What we are actually asking you to choose between.</strong>
+    Both documents build the same two signals, from the same model, ending in the same derived table.
+    The original front-loads a question only an informed user can answer, and everything after it reads
+    as consequence. This one front-loads a question anyone can answer, and pays for it with three
+    decisions made silently on the user's behalf. <em>Which failure would you rather debug at
+    2 a.m. before an operating session?</em>
+  </div>
+</div>
+
+<script>
+  (() => {
+    const copy = {
+      practical: ['Practical signaling',
+        'Clear, Approach and Stop, plus only the route or direction behaviour this location requires. Easy to build, and easy for operators to learn in one evening.'],
+      prototype: ['Prototype rulebook',
+        'Choose a railroad or signaling family. Bowties uses a compatible catalog mast, its indication table, its published speeds and its cascade policy.'],
+      custom: ['Custom signaling',
+        'Start from a nearby signal type or define the physical display and indication behaviour directly. Hardware limits still apply and are enforced as you author.']
+    };
+
+    for (const picker of document.querySelectorAll('[data-fidelity-picker]')) {
+      const inputs = [...picker.querySelectorAll('input[type="radio"]')];
+      const explanation = picker.querySelector('[data-fidelity-explanation]');
+      const panels = [...picker.querySelectorAll('[data-fidelity-panel]')];
+
+      const update = () => {
+        const chosen = inputs.find(input => input.checked).value;
+        for (const input of inputs) input.closest('.segment').classList.toggle('selected', input.checked);
+        for (const panel of panels) panel.hidden = panel.dataset.fidelityPanel !== chosen;
+        explanation.innerHTML = `<strong>${copy[chosen][0]}</strong>${copy[chosen][1]}`;
+      };
+
+      for (const input of inputs) input.addEventListener('change', update);
+      update();
+    }
+  })();
+</script>
+
+</body>
+</html>

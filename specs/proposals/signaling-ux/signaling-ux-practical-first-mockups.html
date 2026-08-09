@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Signaling UX - Practical-first wizard</title>
+  <style>
+    :root {
+      --app: #f5f5f5;
+      --panel: #ffffff;
+      --subtle: #fafafa;
+      --selected: #ebf3fc;
+      --border: #d1d1d1;
+      --border-strong: #b8b8b8;
+      --text: #242424;
+      --text-2: #424242;
+      --muted: #616161;
+      --brand: #0f6cbd;
+      --brand-hover: #115ea3;
+      --green: #107c41;
+      --green-bg: #e7f5ec;
+      --amber: #8a4b00;
+      --amber-bg: #fff4ce;
+      --danger: #c50f1f;
+      --danger-bg: #fdf3f4;
+      --rail: #73777f;
+      --lamp-red: #e02020;
+      --lamp-yellow: #f0b400;
+      --lamp-green: #17b26a;
+      --lamp-off: #2a2d33;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 28px;
+      background: var(--app);
+      color: var(--text);
+      font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    button, input, select { font: inherit; }
+    button, label { -webkit-tap-highlight-color: transparent; }
+    a { color: var(--brand); }
+    h1 { margin: 0; font-size: 24px; letter-spacing: 0; }
+    h2 { margin: 0; font-size: 17px; letter-spacing: 0; }
+    h3 { margin: 0; font-size: 14px; letter-spacing: 0; }
+    p { margin: 0; }
+    code { background: #eef0f3; padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+
+    .page { max-width: 1180px; margin: 0 auto; }
+    .page-head { margin-bottom: 20px; }
+    .page-head p { color: var(--text-2); max-width: 900px; margin-top: 6px; }
+    .jump { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; }
+
+    .brief {
+      background: var(--panel);
+      border: 2px solid var(--brand);
+      border-radius: 6px;
+      padding: 16px 18px;
+      margin-bottom: 24px;
+    }
+    .brief h2 { margin-bottom: 7px; }
+    .principle {
+      margin-top: 12px;
+      padding: 10px 12px;
+      background: var(--selected);
+      border-left: 3px solid var(--brand);
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .comparison {
+      display: grid;
+      grid-template-columns: 1fr 44px 1fr;
+      align-items: stretch;
+      gap: 10px;
+      margin-bottom: 28px;
+    }
+    .comparison > div:not(.compare-arrow) {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 13px 15px;
+    }
+    .comparison .new { border-color: #85b7e5; background: #f8fbff; }
+    .compare-arrow { display: grid; place-items: center; color: var(--brand); font-size: 24px; }
+    .comparison ol { margin: 8px 0 0; padding-left: 20px; color: var(--text-2); }
+
+    .section { margin-bottom: 36px; }
+    .section-head { border-bottom: 2px solid var(--border); padding-bottom: 7px; margin-bottom: 5px; }
+    .caption { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+
+    .window {
+      background: var(--panel);
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      overflow: hidden;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, .05);
+    }
+    .titlebar { background: #2c3038; color: #e8eaed; padding: 7px 12px; font-size: 12px; }
+    .tabbar { display: flex; padding: 0 16px; border-bottom: 1px solid var(--border); }
+    .tab { padding: 9px 15px; border-bottom: 2px solid transparent; color: var(--muted); }
+    .tab.active { color: var(--text); border-bottom-color: var(--brand); font-weight: 600; }
+    .main { padding: 18px 20px; }
+
+    .stepper { display: grid; grid-template-columns: repeat(5, 1fr); margin-bottom: 18px; }
+    .step {
+      padding: 8px 9px;
+      border: 1px solid var(--border);
+      border-right: none;
+      background: var(--subtle);
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .step:first-child { border-radius: 5px 0 0 5px; }
+    .step:last-child { border-right: 1px solid var(--border); border-radius: 0 5px 5px 0; }
+    .step.active { background: var(--selected); border-color: var(--brand); color: var(--text); font-weight: 600; }
+    .step.done { background: var(--green-bg); color: var(--green); }
+    .step b { margin-right: 4px; }
+
+    .frame { display: grid; grid-template-columns: 32px 1fr; gap: 12px; margin-bottom: 10px; }
+    .frame-number {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--brand);
+      color: white;
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      font-size: 12px;
+    }
+    .frame-copy { color: var(--text-2); margin: 3px 0 10px; font-size: 12px; }
+    .frame-copy strong { color: var(--text); }
+    .frame-rail { border-left: 2px dotted var(--border-strong); height: 18px; margin: 0 0 9px 13px; }
+
+    .dialog { border: 1px solid var(--border-strong); border-radius: 7px; overflow: hidden; background: var(--panel); }
+    .dialog-head { padding: 11px 15px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 14px; }
+    .dialog-body { padding: 15px; }
+    .dialog-foot { padding: 10px 15px; border-top: 1px solid var(--border); background: var(--subtle); display: flex; justify-content: flex-end; gap: 8px; }
+
+    .field-label { margin: 0 0 5px; color: var(--muted); text-transform: uppercase; font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+    .choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+    .choice-grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .choice {
+      display: flex;
+      gap: 9px;
+      align-items: flex-start;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 9px 10px;
+      background: white;
+      min-height: 62px;
+      cursor: pointer;
+    }
+    .choice:hover { background: #f8f8f8; }
+    .choice.selected { border-color: var(--brand); background: var(--selected); box-shadow: inset 0 0 0 1px var(--brand); }
+    .choice input { margin: 2px 0 0; }
+    .choice-title { font-weight: 600; font-size: 12px; }
+    .choice-desc { color: var(--muted); font-size: 11px; margin-top: 2px; }
+    .recommended { color: var(--green); font-weight: 600; }
+
+    .segmented { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; }
+    .segment {
+      border: 1px solid var(--border-strong);
+      border-right: none;
+      padding: 9px 10px;
+      background: white;
+      cursor: pointer;
+      text-align: left;
+    }
+    .segment:first-child { border-radius: 5px 0 0 5px; }
+    .segment:last-child { border-right: 1px solid var(--border-strong); border-radius: 0 5px 5px 0; }
+    .segment.selected { background: var(--selected); color: #0b4f85; font-weight: 600; box-shadow: inset 0 -2px var(--brand); }
+    .segment input { position: absolute; opacity: 0; pointer-events: none; }
+
+    .cols { display: grid; grid-template-columns: 1fr 300px; gap: 18px; align-items: start; }
+    .panel { border: 1px solid var(--border); border-radius: 6px; padding: 12px 13px; background: var(--subtle); }
+    .panel h3 { margin-bottom: 8px; }
+    .panel-row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px solid #e8e8e8; }
+    .panel-row:last-child { border-bottom: none; }
+    .panel-row span:last-child { text-align: right; font-weight: 600; }
+
+    .btn { border: 1px solid var(--border-strong); border-radius: 4px; padding: 5px 11px; background: white; color: var(--text); cursor: pointer; }
+    .btn:hover { background: #f2f2f2; }
+    .btn-primary { background: var(--brand); border-color: var(--brand); color: white; }
+    .btn-primary:hover { background: var(--brand-hover); }
+    .btn-link { border: none; background: none; color: var(--brand); padding: 3px; cursor: pointer; }
+
+    .text-input, select { width: 100%; border: 1px solid var(--border-strong); border-radius: 4px; padding: 6px 8px; background: white; color: var(--text); }
+    .field { margin-bottom: 11px; }
+    .route-box { border: 1px solid var(--border); border-radius: 5px; padding: 10px; margin-top: 8px; }
+    .route-title { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 8px; }
+    .route-line { width: 26px; height: 4px; background: var(--rail); border-radius: 2px; }
+    .route-line.diverging { transform: rotate(-20deg); transform-origin: right; }
+    .placeholder { color: var(--amber); font-weight: 600; }
+    [hidden] { display: none !important; }
+
+    .note { border-left: 3px solid var(--brand); background: #f3f8fd; padding: 9px 12px; margin-top: 11px; border-radius: 0 5px 5px 0; font-size: 12px; }
+    .note.warn { border-color: #bc4b09; background: var(--amber-bg); }
+    .note.danger { border-color: var(--danger); background: var(--danger-bg); }
+    .note strong { display: block; margin-bottom: 2px; }
+
+    .mast { display: inline-flex; flex-direction: column; align-items: center; min-width: 36px; }
+    .head { background: #14161a; border: 1px solid #383c44; border-radius: 999px; padding: 6px 4px; display: flex; flex-direction: column; gap: 4px; }
+    .lamp { width: 12px; height: 12px; border-radius: 50%; background: var(--lamp-off); border: 1px solid #45494f; }
+    .lamp.red { background: var(--lamp-red); box-shadow: 0 0 5px rgba(224, 32, 32, .7); }
+    .lamp.yellow { background: var(--lamp-yellow); box-shadow: 0 0 5px rgba(240, 180, 0, .7); }
+    .lamp.green { background: var(--lamp-green); box-shadow: 0 0 5px rgba(23, 178, 106, .7); }
+    .post { width: 4px; height: 16px; background: #6b7280; }
+    .base { width: 22px; height: 4px; background: #6b7280; }
+
+    .result-card { border: 1px solid var(--border); border-radius: 6px; padding: 14px 15px; background: white; }
+    .result-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+    .result-title { display: flex; gap: 10px; align-items: center; }
+    .pill { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; background: var(--green-bg); color: var(--green); }
+    .pill.incomplete { background: var(--amber-bg); color: var(--amber); }
+    .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--border); }
+    .summary-cell { padding: 10px; border-right: 1px solid var(--border); }
+    .summary-cell:last-child { border-right: none; }
+    .summary-cell small { display: block; color: var(--muted); text-transform: uppercase; font-size: 9px; font-weight: 700; margin-bottom: 3px; }
+
+    .connection-map { display: flex; align-items: center; justify-content: center; gap: 8px; overflow-x: auto; padding: 18px 6px; }
+    .map-node { min-width: 150px; border: 1px solid var(--border); border-radius: 5px; padding: 9px 10px; text-align: center; background: white; }
+    .map-node.current { border: 2px solid var(--brand); background: var(--selected); }
+    .map-node.placeholder-node { border-style: dashed; color: var(--amber); }
+    .map-arrow { color: var(--muted); font-size: 18px; white-space: nowrap; }
+
+    .coord-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+    .coord { border: 1px solid var(--border); border-radius: 6px; padding: 13px 14px; background: white; }
+    .coord h3 { margin-bottom: 4px; }
+    .coord p { color: var(--muted); font-size: 12px; }
+    .member { display: flex; justify-content: space-between; border-top: 1px solid #ececec; padding: 7px 0; margin-top: 8px; }
+
+    .review-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 24px; margin: 10px 0 0; padding-left: 20px; }
+    .review-list li { padding: 2px 0; }
+
+    @media (max-width: 820px) {
+      body { padding: 16px; }
+      .comparison { grid-template-columns: 1fr; }
+      .compare-arrow { transform: rotate(90deg); }
+      .choice-grid.four { grid-template-columns: repeat(2, 1fr); }
+      .cols, .coord-grid { grid-template-columns: 1fr; }
+      .summary-grid { grid-template-columns: 1fr; }
+      .summary-cell { border-right: none; border-bottom: 1px solid var(--border); }
+      .summary-cell:last-child { border-bottom: none; }
+      .step span { display: none; }
+      .review-list { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 520px) {
+      body { padding: 10px; }
+      .main, .dialog-body { padding: 12px; }
+      .choice-grid, .choice-grid.four { grid-template-columns: 1fr; }
+      .segmented { grid-template-columns: 1fr; }
+      .segment, .segment:first-child, .segment:last-child { border: 1px solid var(--border-strong); border-bottom: none; border-radius: 0; }
+      .segment:first-child { border-radius: 5px 5px 0 0; }
+      .segment:last-child { border-bottom: 1px solid var(--border-strong); border-radius: 0 0 5px 5px; }
+      .frame { grid-template-columns: 1fr; }
+      .frame-rail { display: none; }
+    }
+  </style>
+</head>
+<body>
+<main class="page">
+  <header class="page-head">
+    <h1>Signaling UX - practical-first wizard</h1>
+    <p>A comparison mockup. The normal path asks what the railroad must do, then produces familiar signaling. Prototype fidelity and unusual display technology remain possible without becoming prerequisites.</p>
+    <nav class="jump">
+      <a href="#storyboard">Try the wizard</a>
+      <a href="#connections">Mast connections</a>
+      <a href="#coordination">APB and interlocking</a>
+      <a href="#advanced">Prototype and custom</a>
+      <a href="signaling-ux-mockups.html">Open the original proposal</a>
+    </nav>
+  </header>
+
+  <section class="brief">
+    <h2>What this version is testing</h2>
+    <p>Can a modeler build useful signaling without knowing a prototype rulebook, naming the signaling discipline, or drawing a track plan? JMRI data tests the advanced path's ceiling; it does not set the vocabulary of the recommended path.</p>
+    <div class="principle">Ask what the railroad must do first. Offer familiar signaling by default. Ask which prototype to reproduce only when the user chooses prototype fidelity.</div>
+  </section>
+
+  <section class="comparison" aria-label="Approach comparison">
+    <div>
+      <h3>Original ordering</h3>
+      <ol>
+        <li>Choose signaling system and role</li>
+        <li>Choose speed or route discipline</li>
+        <li>Choose signal style</li>
+        <li>Bind topology and wire lamps</li>
+      </ol>
+    </div>
+    <div class="compare-arrow" aria-hidden="true">&rarr;</div>
+    <div class="new">
+      <h3>Practical-first ordering</h3>
+      <ol>
+        <li>Say how this piece of track is used</li>
+        <li>Accept practical signaling or opt into fidelity</li>
+        <li>Choose a compatible appearance</li>
+        <li>Name only the local blocks and masts involved</li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="section" id="storyboard">
+    <div class="section-head"><h2>Storyboard - configure one mast</h2></div>
+    <p class="caption">The controls are interactive. Change the track use or fidelity and the later screens summarize the resulting path.</p>
+
+    <div class="frame">
+      <div class="frame-number">1</div>
+      <div>
+        <h3>How is the track beyond this signal used?</h3>
+        <p class="frame-copy">The modeler answers a visible railroad question. <strong>Bowties privately maps the answer to ABS, interlocking, APB, or dispatcher-controlled logic.</strong></p>
+        <div class="dialog">
+          <div class="dialog-head">Rockville eastward - what happens beyond this signal?</div>
+          <div class="dialog-body">
+            <div class="stepper">
+              <div class="step active"><b>1</b><span>Track use</span></div>
+              <div class="step"><b>2</b><span>Fidelity</span></div>
+              <div class="step"><b>3</b><span>Appearance</span></div>
+              <div class="step"><b>4</b><span>Connections</span></div>
+              <div class="step"><b>5</b><span>Confirm</span></div>
+            </div>
+            <div class="choice-grid four" id="track-use-options">
+              <label class="choice selected">
+                <input type="radio" name="track-use" value="straight" checked>
+                <span><span class="choice-title">Straight track</span><span class="choice-desc">Trains continue in one direction with no turnout here.</span></span>
+              </label>
+              <label class="choice">
+                <input type="radio" name="track-use" value="junction">
+                <span><span class="choice-title">A junction</span><span class="choice-desc">The signal protects normal and diverging routes.</span></span>
+              </label>
+              <label class="choice">
+                <input type="radio" name="track-use" value="bidirectional">
+                <span><span class="choice-title">Two-way single track</span><span class="choice-desc">Trains use this section in both directions.</span></span>
+              </label>
+              <label class="choice">
+                <input type="radio" name="track-use" value="dispatcher">
+                <span><span class="choice-title">Dispatcher controlled</span><span class="choice-desc">A dispatcher sets routes or holds signals.</span></span>
+              </label>
+            </div>
+          </div>
+          <div class="dialog-foot"><button class="btn">Cancel</button><button class="btn btn-primary">Next</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="frame-rail"></div>
+
+    <div class="frame">
+      <div class="frame-number">2</div>
+      <div>
+        <h3>How closely should it follow a prototype?</h3>
+        <p class="frame-copy"><strong>Practical signaling is a complete choice, not a lesser preview.</strong> Prototype and Custom expose more decisions only when requested.</p>
+        <div class="dialog">
+          <div class="dialog-head">Rockville eastward - choose the level of fidelity</div>
+          <div class="dialog-body">
+            <div class="segmented" id="fidelity-options">
+              <label class="segment selected"><input type="radio" name="fidelity" value="practical" checked>Practical <span class="recommended">(recommended)</span></label>
+              <label class="segment"><input type="radio" name="fidelity" value="prototype">Prototype rulebook</label>
+              <label class="segment"><input type="radio" name="fidelity" value="custom">Custom</label>
+            </div>
+            <div class="note" id="fidelity-explanation">
+              <strong>Practical signaling</strong>
+              Clear, Approach, and Stop, plus only the route or direction behavior this location requires. Easy to build and easy for operators to learn.
+            </div>
+            <div class="panel" id="prototype-picker" hidden style="margin-top: 11px;">
+              <div class="field-label">Prototype family</div>
+              <select aria-label="Prototype family">
+                <option>NORAC / modern eastern US</option>
+                <option>PRR 1956 position light</option>
+                <option>Union Pacific 2008</option>
+                <option>Browse all compatible catalog entries...</option>
+              </select>
+              <div class="note warn"><strong>Catalog entries are filtered by hardware.</strong> Types needing more than four lit outputs per indication or more than sixteen indications cannot be built on this Signal-LCC.</div>
+            </div>
+            <div class="panel" id="custom-picker" hidden style="margin-top: 11px;">
+              <strong>Start from a nearby signal type or from an empty definition.</strong>
+              <p style="color: var(--muted); margin-top: 4px;">The advanced editor exposes heads, physical outputs, indications, published speeds, flashing, and cascade policy.</p>
+            </div>
+          </div>
+          <div class="dialog-foot"><button class="btn">Back</button><button class="btn btn-primary">Next</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="frame-rail"></div>
+
+    <div class="frame">
+      <div class="frame-number">3</div>
+      <div>
+        <h3>Choose how the signal should look</h3>
+        <p class="frame-copy">The practical path offers compatible physical forms. It does not ask the user to define indications before knowing what the signal can display.</p>
+        <div class="dialog">
+          <div class="dialog-head">Rockville eastward - appearance</div>
+          <div class="dialog-body">
+            <div class="cols">
+              <div class="choice-grid" id="style-options">
+                <label class="choice selected">
+                  <input type="radio" name="style" value="color light" checked>
+                  <span><span class="choice-title">Color light</span><span class="choice-desc">Familiar red, yellow, and green lamps.</span></span>
+                </label>
+                <label class="choice">
+                  <input type="radio" name="style" value="searchlight">
+                  <span><span class="choice-title">Searchlight</span><span class="choice-desc">One housing displaying multiple colors.</span></span>
+                </label>
+                <label class="choice">
+                  <input type="radio" name="style" value="position light">
+                  <span><span class="choice-title">Position light</span><span class="choice-desc">Rows of lamps convey the indication.</span></span>
+                </label>
+                <label class="choice" id="other-style">
+                  <input type="radio" name="style" value="custom display">
+                  <span><span class="choice-title">Other or custom</span><span class="choice-desc">Open the physical display editor.</span></span>
+                </label>
+              </div>
+              <div class="panel">
+                <h3>Bowties proposes</h3>
+                <div style="display: flex; gap: 12px; align-items: center;">
+                  <div class="mast"><div class="head"><span class="lamp green"></span><span class="lamp"></span><span class="lamp"></span></div><span class="post"></span><span class="base"></span></div>
+                  <div><strong id="proposal-name">One 3-lamp head</strong><br><span style="color: var(--muted);" id="proposal-detail">Clear / Approach / Stop</span></div>
+                </div>
+                <div class="note warn" id="style-capacity" hidden><strong>A second head is required.</strong>This location needs a separate diverging-route indication.</div>
+              </div>
+            </div>
+          </div>
+          <div class="dialog-foot"><button class="btn">Back</button><button class="btn btn-primary">Next</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="frame-rail"></div>
+
+    <div class="frame" id="mast-connection-step">
+      <div class="frame-number">4</div>
+      <div>
+        <h3>Connect only what this mast needs</h3>
+        <p class="frame-copy">This is not a track plan. It is a set of explicit local relationships: <strong>the protected block and the next mast for each route.</strong></p>
+        <div class="dialog">
+          <div class="dialog-head">Rockville eastward - what does it protect?</div>
+          <div class="dialog-body">
+            <div class="cols">
+              <div>
+                <div class="field"><div class="field-label">Protected block</div><select><option>Rockville east block</option><option>Choose another block...</option></select></div>
+                <div class="route-box">
+                  <div class="route-title"><span class="route-line"></span> Route ahead</div>
+                  <div class="field"><div class="field-label">Next mast</div><select><option>Marysville eastward</option><option>Create a named placeholder...</option><option>Leave unconnected for now</option></select></div>
+                </div>
+                <div class="route-box" id="diverging-route" hidden>
+                  <div class="route-title"><span class="route-line diverging"></span> Diverging route</div>
+                  <div class="field"><div class="field-label">Selected when</div><select><option>Turnout 12 is Reverse</option></select></div>
+                  <div class="field"><div class="field-label">Next mast</div><select><option>Create placeholder: Yard lead signal</option><option>Choose an existing mast...</option></select></div>
+                </div>
+                <div class="route-box" id="opposing-route" hidden>
+                  <div class="route-title"><span class="route-line"></span> Opposing direction</div>
+                  <div class="field"><div class="field-label">APB section</div><select><option>Create Rockville-Marysville section</option><option>Choose an existing section...</option></select></div>
+                </div>
+              </div>
+              <div class="panel">
+                <h3>Local connection</h3>
+                <div class="connection-map" style="display: grid; padding: 4px;">
+                  <div class="map-node current">Rockville eastward<br><small>this mast</small></div>
+                  <div class="map-arrow">publishes speed &rarr;</div>
+                  <div class="map-node">Marysville eastward<br><small>next mast</small></div>
+                </div>
+                <div class="note"><strong>Creation order does not matter.</strong>A placeholder can be resolved later from either mast's card. Until then, this facility is marked incomplete.</div>
+              </div>
+            </div>
+          </div>
+          <div class="dialog-foot"><button class="btn">Back</button><button class="btn btn-primary">Next</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="frame-rail"></div>
+
+    <div class="frame">
+      <div class="frame-number">5</div>
+      <div>
+        <h3>Confirm the behavior Bowties will build</h3>
+        <p class="frame-copy">Railroad terms remain primary. Hardware allocation and signaling terminology are available as supporting detail.</p>
+        <div class="dialog">
+          <div class="dialog-head">Rockville eastward - confirm</div>
+          <div class="dialog-body">
+            <div class="cols">
+              <div>
+                <div class="result-card">
+                  <div class="result-head">
+                    <div class="result-title">
+                      <div class="mast"><div class="head"><span class="lamp green"></span><span class="lamp"></span><span class="lamp"></span></div><span class="post"></span><span class="base"></span></div>
+                      <div><strong>Rockville eastward</strong><br><span style="color: var(--muted);" id="result-description">Practical block signal</span></div>
+                    </div>
+                    <span class="pill" id="result-pill">Ready</span>
+                  </div>
+                  <div class="summary-grid">
+                    <div class="summary-cell"><small>Track use</small><strong id="result-track">Straight track</strong></div>
+                    <div class="summary-cell"><small>Appearance</small><strong id="result-style">Color light</strong></div>
+                    <div class="summary-cell"><small>Displays</small><strong id="result-aspects">Clear / Approach / Stop</strong></div>
+                  </div>
+                </div>
+                <div class="note" id="behavior-note"><strong>What operators will see</strong>Stop when the protected block is occupied; Approach when the next mast is at Stop; otherwise Clear.</div>
+              </div>
+              <div class="panel">
+                <h3>Bowties handles</h3>
+                <div class="panel-row"><span>Logic family</span><span id="logic-family">ABS</span></div>
+                <div class="panel-row"><span>Display node</span><span>Signal-LCC</span></div>
+                <div class="panel-row"><span>Lamp drivers</span><span id="driver-count">3 of 16</span></div>
+                <div class="panel-row"><span>Aspect slots</span><span id="aspect-count">3 of 8</span></div>
+                <div class="panel-row" id="logic-node-row" hidden><span>Coordination logic</span><span>Tower LCC+Q</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="dialog-foot"><button class="btn">Back</button><button class="btn btn-primary">Build signal</button></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="connections">
+    <div class="section-head"><h2>Connections without a track plan</h2></div>
+    <p class="caption">Bowties accumulates a signaling graph from local references. It never claims to know the physical track arrangement.</p>
+    <div class="window">
+      <div class="titlebar">Bowties - signaling relationships</div>
+      <div class="main">
+        <div class="connection-map">
+          <div class="map-node">Rockville westward</div>
+          <div class="map-arrow">&larr; next</div>
+          <div class="map-node current">Rockville eastward<br><small>protects Rockville east block</small></div>
+          <div class="map-arrow">next &rarr;</div>
+          <div class="map-node">Marysville eastward</div>
+          <div class="map-arrow">next &rarr;</div>
+          <div class="map-node placeholder-node">East staging mast<br><small>placeholder</small></div>
+        </div>
+        <div class="note warn"><strong>What Bowties can and cannot validate</strong>It can find missing targets, duplicate ownership, and obvious cycles. It cannot prove that these references match the physical railroad.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="coordination">
+    <div class="section-head"><h2>When behavior belongs above one mast</h2></div>
+    <p class="caption">The mast wizard creates displays and local connections. APB direction and interlocking routes are separate coordination facilities that reference several masts.</p>
+    <div class="coord-grid">
+      <article class="coord">
+        <h3>Rockville-Marysville APB section</h3>
+        <p>Created when the user chooses two-way single track. Owns direction detection, the direction latch, its clearer, and opposing-signal tumbledown.</p>
+        <div class="member"><span>Eastward masts</span><strong>3 connected</strong></div>
+        <div class="member"><span>Westward masts</span><strong>3 connected</strong></div>
+        <div class="member"><span>Detection blocks</span><strong>4 connected</strong></div>
+        <div class="note"><strong>The mast displays do not change.</strong>Each mast still receives the aspect events it already understands.</div>
+      </article>
+      <article class="coord">
+        <h3>Rockville interlocking</h3>
+        <p>Created when a mast protects a junction or dispatcher-controlled route. Owns route selection, locking, and shared turnout conditions.</p>
+        <div class="member"><span>Home masts</span><strong>2 connected</strong></div>
+        <div class="member"><span>Routes</span><strong>Normal + diverging</strong></div>
+        <div class="member"><span>Turnouts</span><strong>12, 14</strong></div>
+        <div class="note"><strong>Simple junctions stay simple.</strong>The coordination facility can be generated from the first mast and edited only when the user needs more control.</div>
+      </article>
+    </div>
+  </section>
+
+  <section class="section" id="advanced">
+    <div class="section-head"><h2>Prototype and custom remain possible</h2></div>
+    <p class="caption">JMRI's catalog validates breadth here. It does not force every user to know a railroad, year, mast code, or aspect mapping.</p>
+    <div class="window">
+      <div class="titlebar">Bowties - choose a prototype signal</div>
+      <div class="main">
+        <div class="cols">
+          <div>
+            <div class="field"><div class="field-label">Railroad or signaling family</div><select><option>PRR 1956</option><option>NS 2008</option><option>B&amp;O 1957</option><option>Browse all...</option></select></div>
+            <div class="field"><div class="field-label">Compatible mast</div><select><option>Double position-light high signal</option><option>Single position-light ABS signal</option></select></div>
+            <div class="note"><strong>Imported logical data</strong>Indication names, speeds, normal/diverging applicability, special roles, and cascade mappings come from the catalog.</div>
+            <div class="note warn"><strong>Physical recipe still required</strong>JMRI's <code>show=green</code> means an abstract head state. A Bowties catalog entry must separately define which physical lamps, positions, or actuators produce it.</div>
+          </div>
+          <div class="panel">
+            <h3>Compatibility check</h3>
+            <div class="panel-row"><span>Indications</span><span>9 of 16</span></div>
+            <div class="panel-row"><span>Lit outputs per indication</span><span>4 maximum</span></div>
+            <div class="panel-row"><span>Physical outputs</span><span>12 of 16</span></div>
+            <div class="panel-row"><span>Catalog cascade</span><span>Included</span></div>
+            <div class="pill" style="margin-top: 10px;">Compatible with Signal-LCC</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="brief">
+    <h2>Questions for comparison</h2>
+    <ol class="review-list">
+      <li>Can a modeler answer the Track use choices without signaling expertise?</li>
+      <li>Does Practical sound complete rather than second-rate?</li>
+      <li>Is choosing appearance after fidelity late enough to prevent impossible combinations?</li>
+      <li>Does Next mast per route feel understandable without a track diagram?</li>
+      <li>Are placeholders preferable to requiring geographical creation order?</li>
+      <li>Should APB sections and interlockings be visible objects or generated implementation detail?</li>
+      <li>When should Bowties expose the terms ABS, APB, interlocking, and CTC?</li>
+      <li>Is the Custom branch visible enough to make unusual signaling feel supported?</li>
+    </ol>
+  </section>
+</main>
+
+<script>
+  (() => {
+    const titleCase = value => value.replace(/\b\w/g, letter => letter.toUpperCase());
+
+    const trackDetails = {
+      straight: {
+        label: 'Straight track',
+        description: 'Practical block signal',
+        proposal: 'One 3-lamp head',
+        aspects: 'Clear / Approach / Stop',
+        logic: 'ABS', drivers: '3 of 16', slots: '3 of 8',
+        note: 'Stop when the protected block is occupied; Approach when the next mast is at Stop; otherwise Clear.'
+      },
+      junction: {
+        label: 'A junction',
+        description: 'Practical junction signal',
+        proposal: 'Two 3-lamp heads',
+        aspects: 'Clear / Approach / Diverging Clear / Diverging Approach / Stop',
+        logic: 'Interlocking', drivers: '6 of 16', slots: '5 of 8',
+        note: 'The turnout selects the route and its next mast. The signal adds a distinct diverging indication operators can learn.'
+      },
+      bidirectional: {
+        label: 'Two-way single track',
+        description: 'Practical APB signal',
+        proposal: 'One 3-lamp head',
+        aspects: 'Clear / Approach / Stop',
+        logic: 'APB section', drivers: '3 of 16', slots: '3 of 8',
+        note: 'Normal block indications apply in the direction of travel. The APB section holds opposing signals at Stop.'
+      },
+      dispatcher: {
+        label: 'Dispatcher controlled',
+        description: 'Practical controlled signal',
+        proposal: 'Two 3-lamp heads',
+        aspects: 'Clear / Approach / Diverging Clear / Stop',
+        logic: 'CTC interlocking', drivers: '6 of 16', slots: '4 of 8',
+        note: 'The dispatcher can hold the signal at Stop and select a proved route. Operators see the same familiar indications.'
+      }
+    };
+
+    const updateSelections = group => {
+      for (const input of document.querySelectorAll(`input[name="${group}"]`)) {
+        const parent = input.closest('.choice, .segment');
+        if (parent) parent.classList.toggle('selected', input.checked);
+      }
+    };
+
+    const updateFidelity = () => {
+      const fidelity = document.querySelector('input[name="fidelity"]:checked').value;
+      updateSelections('fidelity');
+      document.getElementById('prototype-picker').hidden = fidelity !== 'prototype';
+      document.getElementById('custom-picker').hidden = fidelity !== 'custom';
+      const explanation = document.getElementById('fidelity-explanation');
+      const copy = {
+        practical: ['Practical signaling', 'Clear, Approach, and Stop, plus only the route or direction behavior this location requires. Easy to build and easy for operators to learn.'],
+        prototype: ['Prototype rulebook', 'Choose a railroad or signaling family. Bowties uses a compatible catalog mast, its indication table, and its cascade policy.'],
+        custom: ['Custom signaling', 'Start from a nearby type or define the physical display and indication behavior directly. Hardware limits still apply.']
+      };
+      explanation.innerHTML = `<strong>${copy[fidelity][0]}</strong>${copy[fidelity][1]}`;
+      updateResult();
+    };
+
+    const updateResult = () => {
+      const track = document.querySelector('input[name="track-use"]:checked').value;
+      const fidelity = document.querySelector('input[name="fidelity"]:checked').value;
+      const style = document.querySelector('input[name="style"]:checked').value;
+      const details = trackDetails[track];
+      updateSelections('track-use');
+      updateSelections('style');
+      document.getElementById('diverging-route').hidden = track !== 'junction' && track !== 'dispatcher';
+      document.getElementById('opposing-route').hidden = track !== 'bidirectional';
+      document.getElementById('style-capacity').hidden = track !== 'junction' && track !== 'dispatcher';
+      document.getElementById('proposal-name').textContent = details.proposal;
+      document.getElementById('proposal-detail').textContent = details.aspects;
+      document.getElementById('result-track').textContent = details.label;
+      document.getElementById('result-style').textContent = titleCase(style);
+      document.getElementById('result-aspects').textContent = fidelity === 'practical' ? details.aspects : `${titleCase(fidelity)} indication set`;
+      document.getElementById('result-description').textContent = fidelity === 'practical' ? details.description : `${titleCase(fidelity)} ${details.logic.toLowerCase()} signal`;
+      document.getElementById('logic-family').textContent = details.logic;
+      document.getElementById('driver-count').textContent = details.drivers;
+      document.getElementById('aspect-count').textContent = details.slots;
+      document.getElementById('behavior-note').innerHTML = `<strong>What operators will see</strong>${details.note}`;
+      document.getElementById('logic-node-row').hidden = track === 'straight' || track === 'junction';
+      document.getElementById('result-pill').textContent = 'Ready';
+    };
+
+    for (const input of document.querySelectorAll('input[name="track-use"], input[name="style"]')) input.addEventListener('change', updateResult);
+    for (const input of document.querySelectorAll('input[name="fidelity"]')) input.addEventListener('change', updateFidelity);
+    updateFidelity();
+  })();
+</script>
+</body>
+</html>

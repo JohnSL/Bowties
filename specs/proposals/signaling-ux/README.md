@@ -13,6 +13,8 @@ implementation detail Bowties chooses on the user's behalf.
 | File | Status | Purpose |
 |---|---|---|
 | [signaling-ux-mockups.html](signaling-ux-mockups.html) | **done, iterating** | Self-contained HTML mockups. Open in a browser. No build step; safe to email to reviewers. |
+| [signaling-ux-practical-first-storyboard.html](signaling-ux-practical-first-storyboard.html) | **comparison draft** | Alternative **ordering** for the same wizard: asks how the track is used before naming a signaling system. Same design language as the mockups. Wizard only — builds the common case, then the hard case, then names what got harder. |
+| `signaling-ux-practical-first-mockups.html` | **superseded** | First sketch of the practical-first ordering. Replaced by the storyboard above; safe to delete. |
 | `signaling-ux-proposal.md` | **not written** | The prose proposal. Deliberately deferred until the mockups settle — see "Working method". |
 | This README | living | Handoff context, decisions, open questions. |
 
