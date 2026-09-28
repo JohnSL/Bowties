@@ -43,6 +43,13 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **Backend:** `commands/cdi.rs` (`read_all_config_values` — emits `BuildingCatalog` status on last node before event-role exchange and catalog build, `get_node_tree`, `cancel_config_reading`)
 - **lcc-rs:** `protocol/memory_config.rs`, `protocol/datagram.rs`
 
+## Profile Event-Role Annotation
+- **Authoring source:** `profile-extractions/<node>/event-roles.json` classifies exact EventId `childFields`; `.github/skills/_lib/profile_tools.py assemble` validates and expands them into canonical leaf-target `eventRoles` declarations.
+- **Bundling:** the generated profile's event-role declarations are copied into `app/src-tauri/profiles/` while preserving hand-authored shipping sections. Runtime contract tests exercise the bundled profile against test-owned CDI fixtures; assembler unit tests independently own generation behavior.
+- **Runtime owner:** `bowties-core::profile::annotate_tree` resolves each path and applies segment/group declarations broadly or EventId-leaf declarations precisely across replicated instances.
+- **Consumers:** live config trees (`commands/cdi.rs`), offline/captured trees (`commands/layout_capture.rs`), and role-filtered channel-event resolution (`bowties-core::channel_events`).
+- **Invariant:** mixed-role children under one CDI group must be separate leaf targets. A replicated group suffix such as `Rule#2` selects an instance; it does not identify a role-bearing sibling.
+
 ## Config Editing (Online)
 - **Route:** `config/+page.svelte`
 - **Component:** `ElementCardDeck/`, `ConfigSidebar/`

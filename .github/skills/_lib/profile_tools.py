@@ -451,9 +451,9 @@ _HEADER = (
 _EVENT_ROLES_HEADER = (
     '# Event role declarations\n'
     '#\n'
-    '# Each entry maps a name-based CDI group path to a declared role. All\n'
-    '# eventid leaves inside the matching group \u2014 across every replicated\n'
-    '# instance \u2014 receive this role, overriding any heuristic assignment.\n'
+    '# Each entry maps a name-based CDI EventId leaf path to a declared role.\n'
+    '# The matching leaf in every replicated instance receives this role,\n'
+    '# overriding any heuristic assignment.\n'
     '#\n'
     "# Path notation: '/'-separated CDI element names. Use '#N' (1-based)\n"
     '# to disambiguate same-named sibling groups (e.g. Conditionals/Logic/Action#2).\n'
@@ -517,6 +517,39 @@ def _render_relevance_rules(rules: list[dict]) -> str:
     return "\n".join(out) + "\n"
 
 
+def _expand_event_roles(entries: list[dict], root: CdiNode) -> list[dict]:
+    """Expand extraction group entries into canonical EventId-leaf targets."""
+    out: list[dict] = []
+    roles_by_target: dict[str, str] = {}
+    for entry in entries:
+        parent_path = entry["cdiPath"]
+        for child_field in entry.get("childFields", []):
+            raw_target = f"{parent_path}/{child_field}"
+            chain = resolve_chain(raw_target, root)
+            if chain is None:
+                raise ValueError(f"Could not resolve event-role child: {raw_target!r}")
+            child = chain[-1][1]
+            if child.kind != "eventid":
+                raise ValueError(f"Event-role child {raw_target!r} is not an EventId")
+            target, segment = _convert_path(raw_target, root)
+            role = entry["role"]
+            existing_role = roles_by_target.get(target)
+            if existing_role is not None:
+                if existing_role != role:
+                    raise ValueError(
+                        f"Conflicting event roles for {target!r}: "
+                        f"{existing_role!r} and {role!r}"
+                    )
+                continue
+            roles_by_target[target] = role
+            out.append({
+                "groupPath": target,
+                "role": role,
+                "_segment": segment,
+            })
+    return out
+
+
 def cmd_assemble(args: argparse.Namespace) -> int:
     node_dir = Path(args.node_dir).resolve()
     root, cdi_path, outline = load_cdi(node_dir)
@@ -531,26 +564,26 @@ def cmd_assemble(args: argparse.Namespace) -> int:
     er = json.loads(er_path.read_text(encoding="utf-8"))
     rr = json.loads(rr_path.read_text(encoding="utf-8"))
 
-    event_roles_out: list[dict] = []
-    for entry in er.get("roles", []):
-        gp, seg = _convert_path(entry["cdiPath"], root)
-        event_roles_out.append({
-            "groupPath": gp,
-            "role": entry["role"],
-            "_segment": seg,
-        })
+    event_roles_out = _expand_event_roles(er.get("roles", []), root)
 
     rules_out: list[dict] = []
     for entry in rr.get("rules", []):
         ctrl_path, _ = _convert_path(entry["controllingField"], root)
-        # `field` is the controlling field's display name, not a full path.
-        field_name = ctrl_path.rsplit("/", 1)[-1]
+        # v2 schema (see specs/014-config-modes-placeholders/contracts/
+        # profile-yaml-schema-v2.json §"relevanceRules"): `field` is any CDI
+        # field path (cross-segment allowed), using the same '/' + '#N' syntax
+        # as groupPath. The Rust loader
+        # (bowties-core/src/profile/resolver.rs `resolve_profile_paths`) walks
+        # the segment/element name tree starting from the first component, so
+        # the first component MUST be a segment name. Emitting only the leaf
+        # short name here breaks resolution ("no segment name matches the start
+        # of path 'Output Function'").
         affected_path, affected_seg = _convert_path(entry["affectedSection"], root)
         rules_out.append({
             "id": entry["id"],
             "affectedTarget": affected_path,
             "allOf": [{
-                "field": field_name,
+                "field": ctrl_path,
                 "irrelevantWhen": list(entry["irrelevantWhen"]),
             }],
             "explanation": entry["explanation"],

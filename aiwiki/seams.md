@@ -47,6 +47,28 @@ This file is kept current through normal work, not graduation audits:
 
 ---
 
+## Profile Event-Role Annotation
+
+- **Governing ADR(s)**: ADR-0010; Spec 014 profile-v2 contract
+- **Owner**: `annotate_tree` / `apply_event_role` ([bowties-core/src/profile/mod.rs](../bowties-core/src/profile/mod.rs)) — applies resolved segment, group, or EventId-leaf declarations to every matching replicated tree instance
+- **Contributors**:
+  - [profile-extractions/*/event-roles.json](../profile-extractions/) — classifies exact EventId `childFields` as Producer or Consumer
+  - [`.github/skills/_lib/profile_tools.py`](../.github/skills/_lib/profile_tools.py) — validates each child and emits canonical leaf-target declarations
+  - [app/src-tauri/profiles/*.profile.yaml](../app/src-tauri/profiles/) — bundled runtime declarations loaded at the IPC boundary
+- **Consumers**:
+  - [app/src-tauri/src/commands/cdi.rs](../app/src-tauri/src/commands/cdi.rs) — annotates live configuration trees
+  - [app/src-tauri/src/commands/layout_capture.rs](../app/src-tauri/src/commands/layout_capture.rs) — annotates captured/offline trees
+  - `channel_events::resolve_event_ids` ([bowties-core/src/channel_events.rs](../bowties-core/src/channel_events.rs)) — resolves role-filtered channel events
+- **Per-slice plumbing rule**: Generated profiles preserve extraction scope exactly: each classified `childField` becomes one EventId-leaf path. Do not encode mixed-role children as duplicate group paths or use `#N` to distinguish roles inside one replicated group. Group targets remain valid only when ancestor-wide assignment is intentional. Keep generated and bundled event-role declarations in parity; test shipping declarations against a stable test-owned CDI fixture rather than mutable `docs/ref` or extraction artifacts.
+- **Last-modified**: 2026-09-27
+- **Last-audited**: 2026-09-27
+
+### Notes
+
+Signal-LCC exposed the seam: one replicated `Rule` group contains Consumer `set aspect` beside Producer `aspect is set` / `aspect cleared`. The old assembler discarded `childFields`, emitted duplicate parent targets, and composition's intentional last-write-wins behavior collapsed the Consumer declaration. Leaf targets make the extraction's exact role scope survive assembly and annotation.
+
+---
+
 ## Dirty Aggregation
 
 - **Governing ADR(s)**: ADR-0011, ADR-0004

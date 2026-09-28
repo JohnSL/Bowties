@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<!--
+  Test-owned structural excerpt of the Signal-LCC rev-C7c CDI.
+  It preserves the Rule-to-Aspect replication and mixed EventId roles needed
+  by the bundled-profile contract without depending on mutable docs/ref data.
+-->
+<cdi xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://openlcb.org/schema/cdi/1/1/cdi.xsd">
+    <identification>
+        <manufacturer>RR-CirKits, Inc.</manufacturer>
+        <model>Signal-LCC</model>
+        <hardwareVersion>rev-C...rev-I</hardwareVersion>
+        <softwareVersion>rev-C7c</softwareVersion>
+    </identification>
+    <segment space="253" origin="5296">
+        <name>Rule to Aspect</name>
+        <group replication="8">
+            <name>Mast</name>
+            <repname>Mast</repname>
+            <eventid>
+                <name>Link Address</name>
+                <description>(P) Track Circuit Link Address.</description>
+            </eventid>
+            <group replication="8">
+                <name>Rule</name>
+                <repname>Rule</repname>
+                <eventid>
+                    <name>set aspect</name>
+                    <description>(C) Event to Set Aspect.</description>
+                </eventid>
+                <eventid>
+                    <name>aspect is set</name>
+                    <description>(P) Send this event when the Aspect is set.</description>
+                </eventid>
+                <eventid>
+                    <name>aspect cleared</name>
+                    <description>(P) Send this event when the Aspect clears.</description>
+                </eventid>
+            </group>
+        </group>
+    </segment>
+</cdi>

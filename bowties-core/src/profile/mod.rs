@@ -207,10 +207,10 @@ pub struct AnnotationReport {
 /// rule annotations.
 ///
 /// **Phase 3 (US1)**: applies event role overrides from `profile.event_roles`.
-/// For each declaration, resolves the name-based CDI group path to an index-
-/// based path prefix, then walks the tree to find every matching `GroupNode`
-/// (across all replicated instances) and sets `leaf.event_role` on every
-/// `EventId` leaf inside.
+/// For each declaration, resolves the name-based CDI group or `EventId` leaf
+/// path to an index-based path, then walks the tree across all replicated
+/// instances. A group target applies to every descendant `EventId`; a leaf
+/// target applies only to that `EventId`.
 ///
 /// **V2 (S2)**: also composes the active overlay set from
 /// `profile.configuration_modes` under `selections` (FR-006: declaration order,
@@ -766,8 +766,8 @@ fn map_empty_behavior(value: &EmptyConnectorBehavior) -> NodeTreeEmptyConnectorB
 // Private tree-traversal helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Walk the entire tree and set `leaf.event_role = role` on every `EventId`
-/// leaf inside groups whose stripped path equals `resolved_path`.
+/// Walk the entire tree and apply `role` to every matching group or `EventId`
+/// leaf target across replicated instances.
 ///
 /// If `label` is `Some`, also sets `group.display_name` on every directly
 /// matched group (but not its descendants).
@@ -780,42 +780,61 @@ fn apply_event_role(
     label: Option<&str>,
 ) -> usize {
     let mut applied = 0usize;
-    for segment in &mut tree.segments {
+    for (seg_idx, segment) in tree.segments.iter_mut().enumerate() {
+        // A resolved path of length 1 (e.g. ["seg:2"]) names a segment
+        // directly. Segments are not `ConfigNode`s, so `walk_for_role` cannot
+        // match the segment itself. Apply the role to every EventId descendant
+        // of the matching segment. (Segments have no `display_name` field, so
+        // `label` is ignored here.)
+        if resolved_path.len() == 1 && resolved_path[0] == format!("seg:{}", seg_idx) {
+            applied += set_roles_on_descendants(&mut segment.children, role);
+            continue;
+        }
         walk_for_role(&mut segment.children, resolved_path, role, label, &mut applied);
     }
     applied
 }
 
-/// Recursive descent: for each `GroupNode`, check whether its path (with
+/// Recursive descent: check whether each group or EventId leaf path (with
 /// instance suffixes stripped) equals `resolved_path`.
 ///
-/// - **Match**: apply `role` to every `EventId` leaf descendant of this group;
+/// - **Group match**: apply `role` to every `EventId` leaf descendant of this group;
 ///   if `label` is `Some`, set `group.display_name` on the matched group only
 ///   (not its descendants).  Do not recurse further for path matching.
+/// - **Leaf match**: apply `role` only to that EventId leaf.
 /// - **No match**: recurse into this group's children to search deeper.
 fn walk_for_role(
-    children: &mut Vec<ConfigNode>,
+    children: &mut [ConfigNode],
     resolved_path: &[String],
     role: lcc_rs::cdi::EventRole,
     label: Option<&str>,
     applied: &mut usize,
 ) {
     for node in children.iter_mut() {
-        if let ConfigNode::Group(group) = node {
-            let stripped = resolver::strip_instance_steps(&group.path);
-            if stripped == resolved_path {
-                // Found a matching group — optionally override its display name.
-                if let Some(lbl) = label {
-                    group.display_name = Some(lbl.to_string());
+        match node {
+            ConfigNode::Group(group) => {
+                let stripped = resolver::strip_instance_steps(&group.path);
+                if stripped == resolved_path {
+                    // Found a matching group — optionally override its display name.
+                    if let Some(lbl) = label {
+                        group.display_name = Some(lbl.to_string());
+                    }
+                    // Apply the role to all EventId leaves within this group.
+                    *applied += set_roles_on_descendants(&mut group.children, role);
+                } else {
+                    // Not a match at this level; keep searching deeper.
+                    walk_for_role(&mut group.children, resolved_path, role, label, applied);
                 }
-                // Apply the role to all EventId leaves within this group.
-                *applied += set_roles_on_descendants(&mut group.children, role);
-            } else {
-                // Not a match at this level; keep searching deeper.
-                walk_for_role(&mut group.children, resolved_path, role, label, applied);
             }
+            ConfigNode::Leaf(leaf) if leaf.element_type == LeafType::EventId => {
+                let stripped = resolver::strip_instance_steps(&leaf.path);
+                if stripped == resolved_path {
+                    leaf.event_role = Some(role);
+                    *applied += 1;
+                }
+            }
+            ConfigNode::Leaf(_) => {}
         }
-        // Leaf nodes at this level are not traversed for path matching.
     }
 }
 
@@ -824,7 +843,7 @@ fn walk_for_role(
 ///
 /// Returns the count of leaves modified.
 fn set_roles_on_descendants(
-    children: &mut Vec<ConfigNode>,
+    children: &mut [ConfigNode],
     role: lcc_rs::cdi::EventRole,
 ) -> usize {
     let mut count = 0usize;
@@ -945,6 +964,79 @@ mod tests {
             "GroupA leaf should have Producer role");
         assert_eq!(leaf_b.event_role, Some(EventRole::Consumer),
             "GroupB leaf should have Consumer role");
+    }
+
+    // ── annotate_tree with segment-direct EventId leaves ─────────────────────
+
+    /// CDI where EventId leaves sit directly under a `<segment>` with no
+    /// intervening `<group>`. This is the RR-CirKits Signal-LCC Node Power
+    /// Monitor pattern.
+    const CDI_SEGMENT_DIRECT_EVENTIDS: &str = r#"<cdi>
+        <segment space="253" origin="0">
+            <name>Node Power Monitor</name>
+            <eventid><name>Power OK</name></eventid>
+            <eventid><name>Power Not OK</name></eventid>
+        </segment>
+    </cdi>"#;
+
+    /// A segment-only profile path (e.g. `"Node Power Monitor"`) must apply the
+    /// declared role to every EventId leaf that lives directly under that
+    /// segment. `apply_event_role` currently only descends `GroupNode`s, so
+    /// segment-direct leaves are silently skipped.
+    #[test]
+    fn annotate_tree_applies_role_to_segment_direct_eventid_leaves() {
+        let cdi = parse_cdi(CDI_SEGMENT_DIRECT_EVENTIDS).expect("CDI parse should succeed");
+        let mut tree = build_node_config_tree("test:node", &cdi);
+
+        let profile = StructureProfile {
+            schema_version: "1.0".to_string(),
+            node_type: types::ProfileNodeType {
+                manufacturer: "Test".to_string(),
+                model: "Test Node".to_string(),
+            },
+            firmware_version_range: None,
+            event_roles: vec![types::EventRoleDecl {
+                group_path: "Node Power Monitor".to_string(),
+                role: types::ProfileEventRole::Producer,
+                label: None,
+            }],
+            relevance_rules: vec![],
+            configuration_modes: vec![],
+            styles: vec![],
+        };
+
+        let report = annotate_tree(&mut tree, &profile, &std::collections::BTreeMap::new(), &cdi);
+
+        assert_eq!(
+            report.event_roles_applied, 2,
+            "both segment-direct EventId leaves should be annotated"
+        );
+        assert!(
+            !report.warnings.iter().any(|w| {
+                w.contains("Node Power Monitor")
+                    && w.contains("resolved but matched no groups in tree")
+            }),
+            "unexpected 'matched no groups' warning: {:?}",
+            report.warnings,
+        );
+
+        let event_leaves: Vec<&crate::node_tree::LeafNode> = tree.segments[0]
+            .children
+            .iter()
+            .filter_map(|n| match n {
+                ConfigNode::Leaf(l) if l.element_type == LeafType::EventId => Some(l),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(event_leaves.len(), 2, "expected two EventId leaves under the segment");
+        for leaf in event_leaves {
+            assert_eq!(
+                leaf.event_role,
+                Some(EventRole::Producer),
+                "leaf {:?} should be Producer",
+                leaf.name,
+            );
+        }
     }
 
     // ── make_profile_key ──────────────────────────────────────────────────────
@@ -1068,6 +1160,98 @@ mod tests {
                 _ => panic!("Expected instance group"),
             }
         }
+    }
+
+    #[test]
+    fn annotate_tree_leaf_roles_stay_distinct_across_nested_replicas() {
+        let cdi = parse_cdi(
+            r#"<cdi>
+                <segment space="253" origin="0">
+                    <name>Rule to Aspect</name>
+                    <group replication="2">
+                        <name>Mast</name>
+                        <repname>Mast</repname>
+                        <group replication="2">
+                            <name>Rule</name>
+                            <repname>Rule</repname>
+                            <eventid><name>set aspect</name></eventid>
+                            <eventid><name>aspect is set</name></eventid>
+                            <eventid><name>aspect cleared</name></eventid>
+                        </group>
+                    </group>
+                </segment>
+            </cdi>"#,
+        )
+        .expect("CDI parse should succeed");
+        let mut tree = build_node_config_tree("test:node", &cdi);
+
+        let profile = StructureProfile {
+            schema_version: "2.0".to_string(),
+            node_type: types::ProfileNodeType {
+                manufacturer: "Test".to_string(),
+                model: "Test".to_string(),
+            },
+            firmware_version_range: None,
+            event_roles: vec![
+                types::EventRoleDecl {
+                    group_path: "Rule to Aspect/Mast/Rule/set aspect".to_string(),
+                    role: types::ProfileEventRole::Consumer,
+                    label: None,
+                },
+                types::EventRoleDecl {
+                    group_path: "Rule to Aspect/Mast/Rule/aspect is set".to_string(),
+                    role: types::ProfileEventRole::Producer,
+                    label: None,
+                },
+                types::EventRoleDecl {
+                    group_path: "Rule to Aspect/Mast/Rule/aspect cleared".to_string(),
+                    role: types::ProfileEventRole::Producer,
+                    label: None,
+                },
+            ],
+            relevance_rules: vec![],
+            configuration_modes: vec![],
+            styles: vec![],
+        };
+
+        let report = annotate_tree(
+            &mut tree,
+            &profile,
+            &std::collections::BTreeMap::new(),
+            &cdi,
+        );
+
+        assert_eq!(
+            report.event_roles_applied, 12,
+            "three leaves in each nested Rule instance"
+        );
+        assert!(
+            report.warnings.is_empty(),
+            "unexpected warnings: {:?}",
+            report.warnings
+        );
+
+        fn assert_rule_leaves(children: &[ConfigNode]) {
+            for node in children {
+                match node {
+                    ConfigNode::Group(group) => assert_rule_leaves(&group.children),
+                    ConfigNode::Leaf(leaf) if leaf.element_type == LeafType::EventId => {
+                        let expected = match leaf.name.as_str() {
+                            "set aspect" => EventRole::Consumer,
+                            "aspect is set" | "aspect cleared" => EventRole::Producer,
+                            name => panic!("unexpected EventId leaf {name}"),
+                        };
+                        assert_eq!(
+                            leaf.event_role, Some(expected),
+                            "unexpected role for {}",
+                            leaf.name
+                        );
+                    }
+                    ConfigNode::Leaf(_) => {}
+                }
+            }
+        }
+        assert_rule_leaves(&tree.segments[0].children);
     }
 
     // ── annotate_tree unresolved path ─────────────────────────────────────────

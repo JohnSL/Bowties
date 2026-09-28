@@ -29,7 +29,7 @@ The CLI:
 
 1. Reads `manual-outline.json`, `event-roles.json`, and `relevance-rules.json`.
 2. Parses the CDI XML to build a path registry.
-3. Converts every extraction path to `#<ordinal>` notation. Same-name siblings get an explicit `#N` suffix (1-based document order); unique names stay unchanged. Ambiguous paths from the extraction (no `[N]` suffix despite a sibling collision) are auto-disambiguated to `#1` to match the loader's default-pick behaviour — add an explicit `[N]` suffix in the source `event-roles.json` / `relevance-rules.json` if you mean a different sibling.
+3. Converts every extraction path to `#<ordinal>` notation. Same-name siblings get an explicit `#N` suffix (1-based document order); unique names stay unchanged. Ambiguous paths from the extraction (no `[N]` suffix despite a sibling collision) are auto-disambiguated to `#1` to match the loader's default-pick behaviour — add an explicit `[N]` suffix in the source `event-roles.json` / `relevance-rules.json` if you mean a different sibling. Event-role entries expand their `childFields` into one exact EventId leaf target per field; unresolved or non-EventId children fail assembly, and conflicting roles for one leaf are rejected.
 4. Emits `<Manufacturer>_<Model>.profile.yaml` matching the v2 schema at `specs/014-config-modes-placeholders/contracts/profile-yaml-schema-v2.json`:
    - `schemaVersion: "2.0"` (the current Bowties loader rejects `"1.0"`).
    - `affectedTarget` (v2 field name; the loader's `serde(alias)` still accepts `affectedGroupPath` in hand-edited files).
@@ -62,9 +62,9 @@ nodeType:
 
 eventRoles:
   # ── Port I/O ──
-  - groupPath: "Port I/O/Line/Event#1"
+  - groupPath: "Port I/O/Line/Event#1/Command"
     role: Consumer
-  - groupPath: "Port I/O/Line/Event#2"
+  - groupPath: "Port I/O/Line/Event#2/Indicator"
     role: Producer
 
 relevanceRules:
@@ -82,7 +82,7 @@ The file includes a top-of-file header comment plus per-segment dividers between
 ## Key Conventions Enforced by the CLI
 
 - `schemaVersion` is `"2.0"`.
-- `groupPath` and `affectedTarget` use `/`-separated CDI group names with `#N` ordinal suffix where same-name siblings exist.
+- Generated event-role `groupPath` values use `/`-separated CDI names ending at an EventId leaf, with `#N` ordinal suffix where same-name siblings exist. This preserves mixed-role groups without broad ancestor assignment. Hand-authored profiles may still target a homogeneous group.
 - `allOf` is always a list, even for single-condition rules.
 - `irrelevantWhen` contains the raw integer `<property>` values from the CDI `<map>`, not string labels.
 - `explanation` is copied **verbatim** from the extraction output's `explanation` field.

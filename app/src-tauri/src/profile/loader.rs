@@ -372,15 +372,33 @@ pub fn list_bundled_profiles(app_handle: &tauri::AppHandle) -> Vec<BundledProfil
 /// Build the profile file name from manufacturer and model strings.
 ///
 /// Format: `{Manufacturer}_{Model}.profile.yaml`
-/// Characters invalid in file names (`\ / : * ? " < > |`) are replaced with `_`.
+/// Filesystem-invalid characters, commas, and spaces are replaced with `_`;
+/// consecutive replacements collapse to one separator so SNIP identities such
+/// as `RR-CirKits, Inc.` match the bundled `RR-CirKits_Inc.` filename stem.
 fn make_profile_filename(manufacturer: &str, model: &str) -> String {
     let sanitize = |s: &str| -> String {
-        s.chars()
+        let raw: String = s
+            .chars()
             .map(|c| match c {
-                '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+                '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | ',' | ' ' => '_',
                 other => other,
             })
-            .collect()
+            .collect();
+
+        let mut result = String::with_capacity(raw.len());
+        let mut previous_was_separator = false;
+        for c in raw.chars() {
+            if c == '_' {
+                if !previous_was_separator {
+                    result.push(c);
+                }
+                previous_was_separator = true;
+            } else {
+                result.push(c);
+                previous_was_separator = false;
+            }
+        }
+        result
     };
     format!(
         "{}_{}.profile.yaml",
@@ -693,6 +711,12 @@ notValid: [unclosed bracket
     fn make_profile_filename_replaces_colon() {
         let name = make_profile_filename("Mfr:Test", "Model/X");
         assert_eq!(name, "Mfr_Test_Model_X.profile.yaml");
+    }
+
+    #[test]
+    fn make_profile_filename_matches_rr_cirkits_snip_identity() {
+        let name = make_profile_filename("RR-CirKits, Inc.", "Signal-LCC");
+        assert_eq!(name, "RR-CirKits_Inc._Signal-LCC.profile.yaml");
     }
 
     #[test]
