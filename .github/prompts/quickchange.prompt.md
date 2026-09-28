@@ -22,9 +22,9 @@ the main conversation. Delegate the entire analysis to the
    Expect back: Seam summary, Options (with required `Regression class
    prevented:` fields), Recommendation, and an Investigation audit.
 
-2. **Spot-check the audit** for red flags (stale assumptions, misapplied
-   ADRs, options rejected by self-check that should have been presented).
-   Re-invoke with a correcting note, or flag concerns in your presentation.
+2. **Validate the returned analysis** using the caller validation gate in the
+   `architecture-first-fix` skill. Re-invoke `change-analyze` with a correcting
+   note if any check fails.
 
 3. **Present the options block to the user** (omit the audit from the
    default presentation; keep it in your own context). Order: Seam summary
@@ -50,18 +50,20 @@ tests or production code inline in the main conversation.
      frontend, `cargo test` for backend/lcc-rs).
    - **Risk note** if the accepted option touches a risky seam.
 
-   Work only from `tdd-cycle`'s returned audit summary. Do not re-read the
-   full test output in the main conversation.
+   Use `tdd-cycle`'s audit summary to conserve context; do not replay full test
+   output unless verification fails. The caller still verifies the actual diff,
+   aggregate tests, and diagnostics before reporting success.
 
 5. **Handle escalation**: if `tdd-cycle` returned an `architecture-first-fix`
-   escalation, present its option draft to the user and wait for a choice
-   before re-invoking. If the escalation's options need fuller analysis,
-   re-invoke `change-analyze` with mode `mid-slice-escalation` and the
-   escalation context.
+   escalation, invoke `change-analyze` with mode `mid-slice-escalation` and the
+   worker's structured evidence. Validate its return as in step 2, present the
+   options to the user, and wait for a choice before re-invoking.
 
-6. **Run affected tests**: use the test mapping from the Seam summary to
-   identify and run all tests that cover the changed modules (broader than
-   `tdd-cycle`'s per-behavior suite run).
+6. **Verify repository state and run affected tests**: inspect the actual
+   changed-file set and confirm it matches the worker report and accepted scope.
+   Use the test mapping from the Seam summary to run all tests that cover the
+   changed modules (broader than `tdd-cycle`'s per-behavior suite run), then
+   check current diagnostics.
 
 ## Post-Implementation (you are NOT done — complete these before summarizing)
 

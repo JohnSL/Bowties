@@ -1,7 +1,7 @@
 ---
 description: TDD coordinator that implements ONE already-tasked slice via batched red+green cycles plus a single refactor, delegating to tdd-cycle and tdd-refactor workers so main-window growth stays constant per slice. Runs strictly downstream of /design and inside slices.md tracking.
 name: tdd-build
-model: Claude Haiku 4.5 (copilot)
+user-invocable: false
 agents:
   - tdd-cycle
   - tdd-refactor
@@ -79,8 +79,7 @@ While behaviors remain:
     Form the next batch (rules above).
     Invoke tdd-cycle with the batch.
     If tdd-cycle escalated architecture-first-fix:
-        Stop. Surface the option draft to the user via /build.
-        Wait for the user's choice before resuming.
+      Stop. Return the structured evidence to /build for analysis and user review.
     Otherwise:
         Persist the batch summary (see Memory pruning) and continue.
 
@@ -91,6 +90,12 @@ After all behaviors are green:
 Between invocations, work only from each worker's structured summary. Pass
 the next worker exactly what it needs — not the full transcript, not the
 slice card, not aiwiki excerpts.
+
+Before accepting a cycle summary, confirm every completed behavior includes a
+RED failure for the expected reason, GREEN implementation files, and an
+affected-suite result. Confirm the reported touched files match the actual
+working-tree changes. Bounce a malformed or contradictory summary to the worker
+for correction instead of inferring missing evidence.
 
 ## Delegation briefs (minimal input)
 
@@ -109,32 +114,33 @@ After each `tdd-cycle` invocation returns, write the batch summary to
 verbose summary from your working context and keep only a one-line index
 entry: `Batch {k}: {N} behaviors done, {M} remaining, no escalation`.
 
-This keeps the coordinator's context bounded for long slices without losing
-the audit trail — the memory file is the durable record.
+This keeps the coordinator's context bounded for long slices. The memory file
+is a temporary current-conversation audit cache; `slices.md`, the working tree,
+and test results are the durable evidence used to resume later.
 
 ## Model routing
 
-Default each delegated invocation to a faster model. Escalate to a stronger
-model only when:
-
-- A cycle worker returns an escalation with ambiguous seam analysis.
-- The refactor worker reports a deeper structural finding than a local
-  refactor can honestly reach.
+Delegated invocations inherit the currently selected model. Delegate for role
+separation and context isolation, not an assumed model hierarchy. Pin another
+model only after a measured workflow-specific reason is established.
 
 ## Mid-slice surprises → stop, do not patch
 
 If any worker escalates (green requires the wrong layer, a needed change
 conflicts with an ADR, an assumed invariant does not hold, or coordinating
 state crosses a seam the slice did not anticipate) — **stop the loop** and
-load [`architecture-first-fix`](../skills/architecture-first-fix/SKILL.md).
-Surface its options to the user (via `/build`) with the principle at stake
-named. Wait for a choice before resuming. Unanticipated complications usually
-mean the slice's design needs revisiting, not working around.
+return the worker's structured evidence to `/build`. The `/build` caller invokes
+`change-analyze`, presents the options, and waits for the user's choice. Workers
+detect and report surprises; they do not start nested architecture-analysis
+chains. Unanticipated complications usually mean the slice's design needs
+revisiting, not working around.
 
 ## Slice boundaries and multi-session tracking
 
-You always stop at a slice boundary, never mid-slice, so every stopping point
-has tests passing. After the slice is green and refactored:
+In the normal path, stop at a slice boundary so every resumable checkpoint has
+tests passing. An architecture escalation may stop mid-slice; return its
+evidence immediately rather than recording the slice as complete. After the
+slice is green and refactored:
 
 1. Check off the slice's tasks in `specs/<feature>/slices.md` (`[x]`) and set
    the slice `status: done`.
@@ -150,9 +156,10 @@ to `slices.md`:
 <!-- Session: YYYY-MM-DD — Completed S{N}. Next: S{N+1} ({HITL|AFK}). -->
 ```
 
-A fresh session resumes from `slices.md` and
-`/memories/session/build-<feature>-*.md` — files are the cross-session
-coordinator, not conversation history.
+A fresh conversation resumes from `slices.md`, then verifies that record
+against `git status`, the actual files, and the relevant tests. Do not rely on
+`/memories/session/build-<feature>-*.md`; session memory is conversation-scoped
+and may no longer exist or may describe work absent from the working tree.
 
 ## Slice-report contract
 
@@ -165,7 +172,7 @@ Batches:
   1. {N behaviors} — no escalation | escalation: {seam}
   2. {N behaviors} — ...
 Refactor: {what was restructured | none needed | deferred pending architecture-first-fix}
-Escalation: none | architecture-first-fix on {seam} — options draft below
+Escalation: none | architecture-first-fix on {seam} — structured evidence below
 Tests: {suite}: N passed, 0 failed
 Files touched: {list}
 Memory: /memories/session/build-{feature}-slice-{N}.md

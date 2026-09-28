@@ -23,8 +23,10 @@ Always use the `lcc-trace` MCP server tools for frame decoding and diagnostic an
 - `decode_diagnostic_frames` — pass `recentFrameActivity` for frame-by-frame decoding
 - `decode_frame` — decode individual frames when investigating specific messages
 
-Use `tool_search` to load these tools before calling them. Only fall back to the manual
-reference tables below if a tool call returns an error (not merely because the tables exist).
+Use these tools when they are available in the current environment. Fall back to
+the manual reference tables below when the tools are unavailable or a call returns
+an error (not merely because the tables exist). Do not depend on a particular
+tool-loading mechanism.
 
 ## Step 0 — Acquire the report
 

@@ -26,12 +26,9 @@ the main conversation. Delegate the entire analysis to the
    (hypotheses ruled out, ADRs scanned, options rejected by self-check,
    prior-work issues, assumptions).
 
-2. **Spot-check the audit**: before presenting to the user, review the
-   Investigation audit for red flags — a ruled-out hypothesis that looks
-   wrong on its face, an assumption you know is stale, an ADR listed as
-   "does not apply" that plainly does. If any surface, either re-invoke
-   `change-analyze` with a correcting note, or flag the concern in your
-   presentation ("The subagent assumed X — worth verifying because…").
+2. **Validate the returned analysis** using the caller validation gate in the
+  `architecture-first-fix` skill. Re-invoke `change-analyze` with a correcting
+  note if any check fails.
 
 3. **Present the options block to the user** (omit the audit from the
    default presentation; keep it in your own context for follow-up
@@ -59,22 +56,23 @@ tests or production code inline in the main conversation.
    - **Risk note** if the accepted option touches a risky seam (auto-narrow
      to 1 behavior).
 
-   Work only from `tdd-cycle`'s returned audit summary. Do not re-read the
-   full test output in the main conversation.
+   Use `tdd-cycle`'s audit summary to conserve context; do not replay full test
+   output unless verification fails. The caller still verifies the actual diff,
+   aggregate tests, and diagnostics before reporting success.
 
 5. **Handle escalation**: if `tdd-cycle` returned an
-   `architecture-first-fix` escalation, present its option draft to the
-   user and wait for a choice before re-invoking with the revised approach.
-   Do not patch through. If the escalation's options look thin or need
-   fuller analysis, re-invoke `change-analyze` with mode
-   `mid-slice-escalation` and the escalation context.
+   `architecture-first-fix` escalation, invoke `change-analyze` with mode
+   `mid-slice-escalation` and the worker's structured evidence. Validate its
+   return as in step 2, present the options to the user, and wait for a choice
+   before re-invoking the cycle. Do not patch through.
 
-6. **Run full test suite** (main-window, small): run all tests, not just
-   the ones mapped to the changed module. A bugfix that changes observable
-   behavior can break consumers the module-level mapping doesn't cover.
-   Also scan the files `tdd-cycle` touched for dead code, stale imports,
-   or pattern non-conformance introduced by the fix — fix in place if
-   narrow and testable.
+6. **Verify repository state and run the full test suite** (main-window,
+   small): inspect the actual changed-file set and confirm it matches the
+   worker report and accepted scope. Run all tests, not just the ones mapped to
+   the changed module, then check current diagnostics. A bugfix that changes
+   observable behavior can break consumers the module-level mapping doesn't
+   cover. Also scan touched files for dead code, stale imports, or pattern
+   non-conformance introduced by the fix — fix in place if narrow and testable.
 
 ## Post-Implementation (you are NOT done — complete these before summarizing)
 

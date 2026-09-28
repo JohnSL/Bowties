@@ -9,11 +9,13 @@ failure-mode catalogue.
 
 ## Option format
 
-Present **two or more options** that fix the change at its architectural
-root cause. Options must differ by **architectural direction** — which seam
-becomes the owner, which invariant is enforced where — **not** by scope,
-code volume, or "how much of the codebase is touched." Every option must be
-an honest fix at the right seam.
+Prefer **two or more options** that fix the change at its architectural root
+cause. Options must differ by **architectural direction** — which seam becomes
+the owner, which invariant is enforced where — **not** by scope, code volume,
+or "how much of the codebase is touched." Every presented option must be an
+honest fix at the right seam. If evidence leaves only one viable direction,
+present that direction and record the rejected alternatives with evidence in
+the audit rather than inventing a synthetic peer.
 
 Typical axes of variation:
 
@@ -122,6 +124,8 @@ fails, rewrite before returning.
 
 - [ ] Every option has a `Regression class prevented:` field with a named
       class of future bugs and *why* the option prevents them.
+- [ ] If only one option is presented, rejected alternatives and the evidence
+  against them are recorded in the audit.
 - [ ] No option is differentiated primarily by scope or code volume; each
       option commits to a different architectural direction.
 - [ ] No option uses `Locality` as its sole principle unless the symptom

@@ -13,7 +13,7 @@ Use [LANGUAGE.md](../improve-codebase-architecture/LANGUAGE.md) vocabulary for a
 
 ### 1. Load context
 
-**Delegate to an `Explore` subagent** to conserve main-conversation context. The subagent should fetch all of the following and return a structured summary (affected modules, relevant ADRs, terminology notes, prior `kind/idea` issues, placement rules excerpt, touched seams):
+**Delegate to an `Explore` subagent** to conserve main-conversation context. If that subagent is unavailable, perform the same read-only retrieval directly. Fetch all of the following and produce a structured summary (affected modules, relevant ADRs, terminology notes, prior `kind/idea` issues, placement rules excerpt, touched seams):
 
 1. Detect current feature from branch name or `$env:SPECIFY_FEATURE`
 2. Read `specs/<feature>/plan.md` and `specs/<feature>/spec.md`

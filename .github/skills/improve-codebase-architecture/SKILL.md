@@ -34,7 +34,7 @@ This skill is _informed_ by the project's domain model. The domain language give
 
 Read the project's domain glossary and any ADRs in the area you're touching first.
 
-Then use the Agent tool with `subagent_type=Explore` to walk the codebase. Don't follow rigid heuristics — explore organically and note where you experience friction:
+Then invoke the `Explore` subagent to walk the codebase. If that subagent is unavailable, perform the same read-only exploration directly. Don't follow rigid heuristics — explore organically and note where you experience friction:
 
 - Where does understanding one concept require bouncing between many small modules?
 - Where are modules **shallow** — interface nearly as complex as the implementation?
@@ -68,4 +68,4 @@ Side effects happen inline as decisions crystallize:
 - **Naming a deepened module after a concept not in `product/glossary.md`?** Add the term to `product/glossary.md` — same discipline as `/grill-with-docs` (see [GLOSSARY-FORMAT.md](../grill-with-docs/GLOSSARY-FORMAT.md)).
 - **Sharpening a fuzzy term during the conversation?** Update `product/glossary.md` right there.
 - **User rejects the candidate with a load-bearing reason?** Offer an ADR, framed as: _"Want me to record this as an ADR so future architecture reviews don't re-suggest it?"_ Only offer when the reason would actually be needed by a future explorer to avoid re-suggesting the same thing — skip ephemeral reasons ("not worth it right now") and self-evident ones. See [ADR-FORMAT.md](../grill-with-docs/ADR-FORMAT.md). ADRs go in `product/architecture/adr/`.
-- **Want to explore alternative interfaces for the deepened module?** See [INTERFACE-DESIGN.md](INTERFACE-DESIGN.md).
+- **Want to explore alternative interfaces for the deepened module?** See [INTERFACE_DESIGN.md](INTERFACE_DESIGN.md).

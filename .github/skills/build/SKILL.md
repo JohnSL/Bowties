@@ -20,9 +20,9 @@ The roadmap is a thin, two-tier file: every slice starts as a one-line `sketched
 
 ## Pre-Implementation Checks
 
-**Run once per session, not per slice.** On the first slice, delegate these checks to an `Explore` subagent and store the results in session memory (`/memories/session/build-checks-<feature>.md`). For subsequent slices, reference the cached results — only re-run a check if the current slice touches a module not covered by the cache.
+**Run once per conversation, not per slice.** On the first slice, delegate these checks to an `Explore` subagent and store the temporary results in session memory (`/memories/session/build-checks-<feature>.md`). For subsequent slices in the same conversation, reference the cached results — only re-run a check if the current slice touches a module not covered by the cache. In a new conversation, reconstruct the cache from `slices.md`, the working tree, and current repository evidence; do not assume prior session memory still exists or matches the checkout.
 
-Model routing rule: start this pre-check pass on a faster model (retrieval and mapping). Escalate to a stronger model only if the first pass returns conflicting ownership/ADR signals or cannot converge on likely seams.
+Model routing rule: inherit the selected model. Delegate this pass to isolate retrieval and mapping context, not because a particular model tier is assumed. If the first pass returns conflicting ownership or ADR signals, request deeper analysis with the conflicting evidence called out explicitly.
 
 1. Check `aiwiki/owners.md` — does shared logic already exist for what you're building?
 2. Check `product/architecture/code-placement-and-ownership.md` — is each file in the right layer?
@@ -174,9 +174,9 @@ Constraints:
   suite → next behavior. Horizontal slicing (all reds then all greens) is
   forbidden and is caught by the per-behavior audit trail in the worker's return.
 - Both workers are bound to `architecture-first-fix`: if a green requires wrong-
-  layer placement or cleanup reveals a deeper seam problem, they stop and surface
-  option drafts rather than patching. The coordinator forwards them to the user
-  via `/build` and waits.
+  layer placement or cleanup reveals a deeper seam problem, they stop and return
+  structured evidence rather than patching. The coordinator returns that evidence
+  here; `/build` invokes `change-analyze`, presents the options, and waits.
 - The coordinator prunes per-batch summaries to
   `/memories/session/build-<feature>-slice-<N>.md` so its own context stays
   bounded on long slices.
@@ -187,6 +187,18 @@ Constraints:
 **Inline exception.** For a slice with a single trivial behavior, running the
 loop inline in the main conversation is fine — the delegation overhead outweighs
 the savings. Default is delegation; inline is the escape hatch.
+
+#### Worker-return validation
+
+Before accepting a delegated slice result:
+
+- Confirm every behavior has a recorded RED failure for the expected reason,
+  followed by GREEN and affected-suite results.
+- Inspect the actual working-tree changed-file set and confirm it matches the
+  worker's report and the slice boundary.
+- Run the promised aggregate tests and check current diagnostics in the caller.
+- If a worker escalates, pass its evidence to `change-analyze` with mode
+  `mid-slice-escalation`; workers do not draft or present architecture options.
 
 ### After Each Slice
 

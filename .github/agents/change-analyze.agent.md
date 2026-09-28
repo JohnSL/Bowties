@@ -1,6 +1,9 @@
 ---
 description: Architecture-first analysis worker. Investigates the seam, drafts options with required regression-class fields, runs the self-check, and returns a structured summary plus audit metadata. Serves /bugfix, /quickchange, /build HITL Part 2 (per numbered decision), and mid-slice escalations from tdd-cycle.
 name: change-analyze
+user-invocable: false
+agents:
+  - Explore
 ---
 
 # Change Analyze — Architecture-First Analysis Worker
@@ -54,9 +57,9 @@ than guessing.
 
 ### 1. Identify the seam
 
-Use `Explore` subagents (fast model) to gather the following in parallel
-where possible. Do not read source files directly in your own context if a
-subagent can produce a structured summary:
+Use `Explore` subagents to gather the following in parallel where that isolates
+a genuinely read-heavy investigation. Otherwise inspect the evidence directly.
+Delegated exploration inherits the selected model; do not assume a model tier:
 
 - Which layer(s) own the affected behavior per
   `product/architecture/code-placement-and-ownership.md`.
@@ -93,7 +96,9 @@ For `quickchange` and `hitl-decision`, this step is often trivial or skipped
 Load [option-drafting.md](../skills/architecture-first-fix/option-drafting.md)
 for the full option format, self-check, banned-language list, stopgap rule,
 and philosophy. Draft two or more options that differ by **architectural
-direction** — not by scope. Each option **must** include:
+direction** — not by scope. If investigation establishes only one honest
+viable direction, present it and list the rejected alternatives with evidence
+instead of inventing a synthetic peer. Each presented option **must** include:
 
 - `Seam`, `ADR(s) upheld`, `Principle(s) at stake`
 - `Regression class prevented` — a named class of future bugs the option
@@ -161,7 +166,8 @@ Tradeoff: {architectural direction, not scope}
 **Option B — {title}**
 {…same shape…}
 
-(Additional options as needed.)
+(Additional options as needed. If only one viable option exists, include the
+evidence-backed rejected alternatives in the Investigation audit.)
 
 ## Recommendation
 

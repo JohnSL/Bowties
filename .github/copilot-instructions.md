@@ -20,7 +20,8 @@ These instructions are the always-on implementation contract for Bowties.
 - Apply DRY by reusing shared helpers for normalization, fallback rules, formatting, and translation logic instead of creating local variants.
 - Apply YAGNI by preferring the smallest explicit abstraction that solves the current problem. Do not add generic frameworks or speculative layers without multiple real call sites.
 - Apply TDD for production behavior changes: add or update a focused test around the behavior seam first when practical, then implement the smallest change that makes it pass.
-- **Delegate the Red+Green loop to the `tdd-cycle` subagent by default.** Any time TDD is used — whether via `/build`, `/bugfix`, `/quickchange`, or a freeform "add a test and implement" request — invoke `tdd-cycle` with a batch of 1–3 behaviors (test location + framework per behavior). Work only from its returned audit summary. Do **not** run Red/Green inline in the main conversation. Inline TDD is the exception, reserved for a single trivial one-line behavior where subagent overhead exceeds the savings.
+- **Delegate TDD through the workflow's designated worker by default.** Feature slices under `/build` invoke `tdd-build`, which coordinates `tdd-cycle` and `tdd-refactor`. Bugfixes, quick changes, and ad-hoc TDD invoke `tdd-cycle` directly with a batch of 1–3 behaviors (test location + framework per behavior). Inline TDD is reserved for a single trivial behavior where delegation overhead exceeds the savings.
+- **Verify delegated implementation in the caller.** A worker summary conserves context; it is not proof by itself. After delegated edits, inspect the actual changed-file set, confirm it matches the requested scope, run the promised aggregate tests, and check current diagnostics before reporting success.
 - When fixing a regression, encode the regression as a behavior contract in tests and update the durable product docs if the user-visible behavior or ownership rule is part of the fix.
 
 ## Context Conservation
@@ -28,9 +29,9 @@ These instructions are the always-on implementation contract for Bowties.
 Skills like `design`, `build`, and `architecture-first-fix` require reading many canonical files (aiwiki, ADRs, placement rules, glossary, GitHub issues). Gathering all of that in the main conversation burns context tokens that are better spent on decisions and implementation.
 
 - **Delegate read-heavy context gathering to subagents.** When a skill step requires reading 3+ canonical files or searching GitHub issues, use an `Explore` subagent to fetch and summarize the results. Work from the subagent's structured summary in the main conversation.
-- **Route subagent work by complexity.** Default to a faster model for retrieval and mapping tasks (search, ownership scans, file triage, status summaries). Escalate to a stronger model only for ambiguous root-cause analysis, cross-ADR trade-offs, or high-impact design synthesis. Prefer escalation after a fast first pass, not heavyweight-by-default.
-- **Cache build checks per session.** On the first slice of a build session, run pre-implementation checks via subagent and store results in session memory (`/memories/session/`). Reference that cache for subsequent slices instead of re-running the same searches.
-- **Deduplicate GitHub issue searches.** Search `kind/idea` issues once per session (or once per skill invocation), not once per step that mentions them. Reuse the results across steps.
+- **Route subagent work by role and context.** Inherit the currently selected model by default. Delegate retrieval and mapping tasks (search, ownership scans, file triage, status summaries) to isolate read-heavy context; delegate ambiguous root-cause analysis or cross-ADR synthesis only when role separation is useful. Pin a different model only for a measured workflow-specific reason.
+- **Cache build checks per conversation.** On the first slice of a build conversation, run pre-implementation checks via subagent and store temporary results in session memory (`/memories/session/`). Session memory is not cross-session or repository evidence: persist resumable progress in `specs/<feature>/slices.md`, and verify it against the working tree and tests when resuming.
+- **Deduplicate GitHub issue searches.** Search `kind/idea` issues once per conversation (or once per skill invocation), not once per step that mentions them. Reuse the results across steps.
 - **Keep decision points in-band.** Do NOT delegate user-facing presentations to subagents: option presentation (architecture-first-fix), finding review (design), HITL slice decisions (build), and TDD implementation loops must stay in the main conversation where the user can interact.
 
 ## Where Logic Goes
@@ -105,7 +106,7 @@ Before implementing a change, verify:
 
 ## Architecture-First Default
 
-For every bugfix or behavior change — whether triggered by a slash command (`/bugfix`, `/quickchange`, etc.) or a freeform chat request — load and follow the `architecture-first-fix` skill before editing code. The skill defines the procedure: identify the seam, distinguish symptom from root cause, present two or more options at the root cause with the principle at stake named explicitly (DRY / SOLID / YAGNI / Depth / Locality / ADR-compliance), and wait for the user to choose.
+For every bugfix or behavior change — whether triggered by a slash command (`/bugfix`, `/quickchange`, etc.) or a freeform chat request — load and follow the `architecture-first-fix` skill before editing code. The skill defines the procedure: identify the seam, distinguish symptom from root cause, present honest architectural options at the root cause with the principle at stake named explicitly (DRY / SOLID / YAGNI / Depth / Locality / ADR-compliance), and wait for the user to choose. Prefer two or more peer options; when evidence leaves only one viable direction, present it with the rejected alternatives and their evidence rather than inventing a synthetic choice.
 
 Exempt: trivial mechanical edits (typo, comment, import sort, formatting), and cases where the user has explicitly said "just patch it", "skip the architecture check", or equivalent.
 

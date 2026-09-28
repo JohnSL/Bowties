@@ -1,7 +1,8 @@
 ---
 description: General TDD Red+Green worker. Handles a batch of 1–3 behaviors for any caller (build/tdd-build, bugfix, quickchange, ad-hoc TDD). Runs each behavior red→green sequentially with a per-behavior audit trail. Stops and escalates on placement or seam surprises.
 name: tdd-cycle
-model: Claude Sonnet 5 (copilot)
+user-invocable: false
+agents: []
 ---
 
 # TDD Cycle — General Red+Green Worker
@@ -56,8 +57,10 @@ the caller to narrow it rather than guessing.
 
 ## Hard rules
 
-- **One behavior at a time, fully complete.** For each behavior: write ONE
-  test → run → confirm failing → write minimal code → run → confirm passing
+- **One behavior at a time, fully complete.** For each behavior: write one
+  failing behavior contract (a parameterized test is allowed when it is the
+  natural representation of that one outcome) → run → confirm failing → write
+  minimal code → run → confirm passing
   → re-run the affected suite. Only then move to the next behavior. Do not
   batch red across behaviors; that is horizontal slicing, forbidden by
   [tdd.md](../skills/build/tdd.md).
@@ -90,14 +93,12 @@ following surface:
 - The right fix conflicts with an ADR in `product/architecture/adr/`, or would
   cross a seam the caller did not anticipate.
 
-When you escalate, delegate the options drafting to
-[`change-analyze`](change-analyze.agent.md) with mode
-`mid-slice-escalation`. Pass it the caller's task title, the acceptance
-context, and the specific point of surprise. Include `change-analyze`'s
-returned structured block in your own return under the `Escalation:`
-section. Do not draft options yourself — that keeps you focused on the
-Red+Green mechanics and produces consistent option quality across the
-workspace. Do not proceed to the next behavior in the batch.
+When you escalate, return evidence to the caller: the behavior in progress,
+the expected seam, the observed conflicting seam or invariant, relevant files
+and diagnostics, and why continuing would require an architecture decision.
+Do not invoke `change-analyze` or draft options yourself. The caller owns the
+architecture-analysis invocation and user interaction. Do not proceed to the
+next behavior in the batch.
 
 ## Procedure (per behavior, sequential)
 
@@ -134,8 +135,8 @@ Behavior 3: {name}
 
 Remaining: {N} behaviors deferred to next batch (or 0)
 Escalation: none | architecture-first-fix on {seam}
-  {change-analyze's returned block, verbatim: Seam summary + Options with
-   Regression class prevented + Recommendation + Investigation audit}
+  Evidence: {behavior, expected seam, observed conflict, relevant files and
+  diagnostics, why continuing requires an architecture decision}
 Files touched: {list}
 ```
 

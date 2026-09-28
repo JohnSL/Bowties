@@ -1,7 +1,8 @@
 ---
 description: TDD Refactor phase — improve the structure of code just made green, with depth/placement guardrails, stopping for architecture-first-fix when a deeper seam problem surfaces.
 name: tdd-refactor
-model: Claude Sonnet 5 (copilot)
+user-invocable: false
+agents: []
 ---
 
 # TDD Refactor — Improve Structure, Keep Tests Green
@@ -49,9 +50,8 @@ corrects that opportunism — but only up to the depth a behavior-preserving
 cleanup can honestly reach. **You must not quietly re-architect across the
 slice's seams.**
 
-Stop refactoring and load
-[`architecture-first-fix`](../skills/architecture-first-fix/SKILL.md) if any
-of the following surface:
+Stop refactoring and return structured evidence to the coordinator if any of
+the following surface:
 
 - The green code sits in the wrong layer per
   [code-placement-and-ownership.md](../../product/architecture/code-placement-and-ownership.md),
@@ -62,9 +62,11 @@ of the following surface:
 - The right fix conflicts with an ADR in `product/architecture/adr/`, or
   would cross a seam the slice did not anticipate.
 
-Do not patch through the surprise. Return the option draft to the coordinator
-with the principle at stake named (DRY / SOLID / YAGNI / Depth / Locality /
-ADR-compliance).
+Do not patch through the surprise and do not invoke another subagent. Return
+the behavior being preserved, expected seam, observed conflict, relevant files
+and diagnostics, and the likely principle at stake (DRY / SOLID / YAGNI /
+Depth / Locality / ADR-compliance). The `/build` caller owns architecture
+analysis and user interaction.
 
 ## Procedure
 
@@ -85,7 +87,8 @@ Restructured: {one line each — what and where}
 Invariant preserved: {one line}
 Debt reduced: {one line}
 Escalation: none | architecture-first-fix on {seam}
-  Options draft: (A) {...} (B) {...} — principle at stake: {...}
+  Evidence: {preserved behavior, expected seam, observed conflict, relevant
+  files and diagnostics, likely principle at stake}
 Tests: {suite}: N passed, 0 failed
 ```
 

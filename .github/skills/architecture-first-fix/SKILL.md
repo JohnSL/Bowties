@@ -70,6 +70,22 @@ returned option that lacks them:
   in `aiwiki/seams.md`. Consumer-side patches without Owner-side symmetry
   are stopgaps.
 
+## Caller validation gate
+
+Before presenting a `change-analyze` return, the caller confirms:
+
+- The Owner and evidence locations are present.
+- Every presented option names a principle and includes a specific
+  `Regression class prevented:` with why.
+- Options differ by architectural direction rather than effort or scope.
+- Assumptions and unresolved evidence are visible.
+- If only one option is viable, the audit records rejected alternatives with
+  evidence rather than inventing a synthetic peer.
+- The audit contains no obviously stale assumption or misapplied ADR.
+
+If any check fails, re-invoke `change-analyze` with a correcting note. Do not
+silently repair or complete its analysis in the presentation.
+
 ## Recommendation criterion — prevention breadth, not scope
 
 The recommendation must be justified by **prevention breadth and named
