@@ -109,6 +109,12 @@ Open candidates:
 - **Area**: `app/src-tauri/src/profile/mod.rs`, `app/src-tauri/profiles/*.profile.yaml`
 - **Risk**: Inline unit tests for `build_connector_profile_with_diagnostics` synthesize CDIs that match the profile's `firmware-revision` signature by construction, so a profile signature can drift from what real hardware emits without any test failing. The first symptom is "daughterboard controls don't appear" on a real user's node.
 
+### Invalid Signal-LCC conditional terminators can silence later groups
+- **Area**: Signal-LCC config-tree validation, guided configuration constraints, and pre-save diagnostics
+- **Risk**: Bowties can read and preserve a raw enum value that is absent from the node's current CDI, but it does not yet validate the resulting cross-entry conditional structure. On Signal-LCC, an invalid Function value in an earlier group can prevent a later, otherwise-valid `Group` + `Last (Single)` pair from operating, with no action event or device error.
+- **Evidence**: 2026-09-27 C7c hardware bench test. A restored configuration contained raw Function value `3` in JMRI Logic 2, 4 and 6, while the current CDI defines only `0 = Blocked`, `1 = Group` and `2 = Last (Single)`. S4r Logic 7–8 remained silent after its own fields were corrected. Changing only those three earlier reserved values to `Last (Single)` made the later group work immediately. The full behavioral record is in `product/hardware/signal-lcc/conditionals.md`.
+- **Planning question**: Decide which owner validates unknown CDI enum values and table-wide group boundaries, when diagnostics appear, and whether repair is user-confirmed or automatic. Preserve unknown values for round-trip safety until that policy is explicit; do not silently coerce reserved values merely because one observed C7c configuration used `3` where `2` was intended.
+
 ### Config-read batch count inflated vs OpenLCB_Java reference (observed 2026-07-21)
 - **Area**: `app/src-tauri/src/commands/cdi.rs` (`build_read_plan`, `get_element_size`, batch execution loop)
 - **Risk**: On a real RR-CirKits LCC Loconet Gateway (5221 CDI elements, GridConnect serial @ 57600 baud), Bowties took 72.7 s vs LCCPro's ~17 s to read the same node. Round-trip cost per batch is hardware-bound (~55–70 ms serial + node turnaround) and serialization is by design (ADR-0016), so the only lever is **reducing batch count**. Two Bowties choices inflate that count vs the OpenLCB_Java reference:
