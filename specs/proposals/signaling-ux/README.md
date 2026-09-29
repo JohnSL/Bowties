@@ -56,6 +56,5 @@ marked as such — critique the *model* separately from the *data*.
   `rule-to-aspect.md`, `conditionals.md`, `track-circuits.md`, and `bowties-ux-implications.md`
   before touching the proposal.
 - **Open questions.** Proposal §8.
-- **Backlog items** — glossary gaps, worked-example extractions, and revising
-  `specs/020-abs-signaling/` to match once the proposal settles:
+- **Backlog items** — glossary gaps and worked-example extractions:
   [../../backlog.md](../../backlog.md).

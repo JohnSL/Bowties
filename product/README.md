@@ -48,6 +48,10 @@ When current code, active tests, and `product/` disagree with older design or te
 
 - `product/glossary.md` — canonical terminology, avoid-lists, and term relationships for Bowties and LCC/OpenLCB
 
+### Hardware Behavior
+
+- `product/hardware/signal-lcc/` — how the RR-CirKits Signal-LCC node actually behaves: capacity limits, Rule to Aspect, Direct Lamp Control, conditional evaluation and its short-circuit semantics, track-circuit cascade, and the UX implications for Bowties. Every claim cites the CDI, the manual, or a community source URL.
+
 ### User Experience
 
 - `product/user-experience/bowties-model.md` — core event abstraction and bowtie card model

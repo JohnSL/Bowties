@@ -1,356 +1,394 @@
-# Option A — Mainline Extraction Plan
+# Option A — Mainline Reconciliation And Extraction Plan
 
-Status: **execution plan.** This document describes how to salvage durable work from `020-abs-signaling` without merging its obsolete Tower-LCC-first ABS facility implementation.
+Status: **execution plan, rebuilt from a complete branch inventory.** This
+document describes how to retain approved work from `020-abs-signaling` on
+`main`, reject the obsolete Tower-LCC-first ABS implementation, and then delete
+the source worktree and branch.
 
 ## Goal
 
-Start from `main`, integrate independently valuable capabilities in owner-scoped changes, and then implement the headless Signal-LCC intent pipeline from the current product direction.
+Start from `main`, account for every meaningful difference on
+`020-abs-signaling`, integrate retained capabilities in owner-scoped changes,
+and delete the source branch only after the final parity gate passes.
 
-The unmerged branch is evidence and a source of selected changes. It is **not** the unit to merge.
+The source branch is evidence. Commits identify provenance, but they are not
+integration units: several commits mix generic capabilities with obsolete ABS
+policy, persistence, IPC, and presentation.
+
+## Immutable Inventory Baseline
+
+The inventory in this plan compares five distinct states:
+
+| State | Revision or working-tree state |
+|---|---|
+| Common ancestor | `409bda798a607c44c3358e308740c20e50365610` |
+| Initial `main` baseline | `ad6606b2f5afa8b31ed87a85c1046e21ae967611` |
+| Current `main` | `be21bed` (`Fix Signal-LCC event role classification`; Unit 1 landed) |
+| Committed source | `0365d5ca04f5082f1f567d0d4e8a77c7a4f7a4f3` |
+| Source worktree | committed source plus this uncommitted plan update only |
+
+Do not reset, rebase, or otherwise rewrite these states while an inventory
+decision still relies on them. If either branch advances, update this baseline
+and re-run the commit and owner completeness checks.
 
 ## Governing Decisions
 
-1. The developer-agent improvements land before every other extracted change.
-2. `ABS 3-Aspect Signal` was never released; remove it rather than preserve compatibility.
-3. Do not merge the Tower-LCC-first ABS compiler, public facility flow, allocation persistence, target selector, or prediction path as production architecture.
-4. Preserve concepts only when they independently fit the Signal-LCC-first plan: typed intent, ordered policy, reviewable plans, event-wiring requirements, resource claims, diagnostics, and inverse cleanup.
-5. Every extracted change has one architectural owner and passes its own validation.
-6. Do not merge generated SvelteKit output, unexplained lockfile drift, or session-handoff files.
+1. `ABS 3-Aspect Signal` was never released. It has no compatibility promise.
+2. Do not merge the Tower-LCC-first compiler, allocation persistence, public
+   facility flow, target selector, or prediction path into `main`.
+3. Preserve a source concept only when it independently fits current product
+   direction and has a current owner, behavior contract, and validation path.
+4. Integrate functionality, not commits. A mixed commit may contribute to
+   several retained units while its obsolete portions remain rejected.
+5. Every source-only commit and every materially changed owner must receive a
+   disposition before the source branch can be deleted.
+6. Preserve main-only behavior, especially the JMRI multiline-string heuristic
+   from `01ff74c` and the current developer workflow and signaling direction.
+7. Do not land generated SvelteKit output, unexplained lockfile drift, session
+   handoffs, stale active Spec 020 claims, or incidental cleanup without an
+   independently stated behavior contract.
+8. Apply one integration unit at a time to `main`. Validate it and wait for
+   explicit commit approval before starting the next unit.
 
-## Workflow
+## Disposition Vocabulary
 
-This is a single-developer repository. Extraction items are **not** landed via feature branches or pull requests. Instead:
+- **Retain** — independently valuable behavior that must exist on `main`.
+- **Reconstruct** — retain the behavior, but not the source patch as a whole.
+- **Already landed** — equivalent behavior or documentation is committed on
+  `main`; preserve the main version.
+- **Reject obsolete** — belongs to the superseded ABS/Tower-LCC-first design.
+- **Reject noise** — generated output, lockfile drift, temporary handoff, or
+  incidental cleanup without an independent contract.
+- **Defer and re-derive** — preserve the requirement or question, but do not
+  retain the source implementation. Resolve it in the headless pipeline design.
 
-1. Each extraction item is applied directly to `main` in the working tree, one item at a time, as a staged (or unstaged) change set — not yet committed.
-2. The developer validates the change locally against the item's Acceptance criteria and the Repository Hygiene Gates.
-3. Only when the developer explicitly says to commit does the change land as a commit on `main`.
-4. If validation fails, the working-tree change is amended, reset, or discarded before the next item begins.
-5. The next extraction item does not start until the previous one is either committed or discarded. Do not stack unrelated in-progress items in the working tree.
+## Complete Commit Ledger
 
-"Land on `main`" throughout the rest of this document means apply to the `main` working tree and wait for explicit commit approval, not push, merge, or open a PR.
+This ledger accounts for all 33 commits reachable from the source head after
+the common ancestor, including the two merges. A commit marked mixed must not
+be cherry-picked wholesale.
 
-## Phase 0 — Preserve The Current Worktree
+| Commit | Concern | Disposition | Integration destination or reason |
+|---|---|---|---|
+| `bf23d97` | Original Tower-LCC-first Spec 020 | Reject obsolete | Historical source only; do not publish as an active spec. |
+| `659f52e` | Original slices and seam notes | Reject obsolete | Task plan implements the rejected architecture. |
+| `bae83b6` | ABS template/compiler foundation plus `signal-aspect` role/style | Mixed: reconstruct | Retain only target-independent role/style concepts; reject compiled template types, shared slot flag, target selector, allocations, and registry entry. |
+| `ee6d1d9` | Next-step ABS tasks | Reject obsolete | Historical planning only. |
+| `e77fd7b` | Merge of then-current `main` | Provenance only | Its durable main-line work is represented by the later common ancestor. |
+| `0964722` | Tower conditional-line compiler wiring plus profile filename normalization | Mixed: reconstruct | Retain SNIP identity → bundled filename normalization and its focused test; reject compiler, target capacity/selection, allocation, reset, and IPC flow. |
+| `f474e55` | Real-time signal display and multi-row event resolution | Mixed: reconstruct | Retain target-independent multi-row resolution and observation-based display; reject ABS-facility coupling. |
+| `aff0504` | ABS comprehension UI and allocation hydration | Reject/superseded | Reject allocation persistence and ABS comprehension; generic card presentation is taken from later commits. |
+| `57662f1` | Declarative `SlotCard` presentation | Retain by reconstruction | Generic component foundation. |
+| `1a7ddde` | Facility/slot UX refinement | Mixed: reconstruct | Retain role-neutral card behavior and tests; exclude ABS assumptions. |
+| `54f1e1e` | ABS S5 plus build-workflow user-test instructions | Mixed: reconstruct | Retain only the developer-workflow instruction; reject S5 allocation/compiler changes. |
+| `56dfb09` | Lockfile update and incidental FacilityCard CSS removal | Reject noise | No declared dependency change or independent behavior contract. |
+| `1139296` | Initial profile assembler/runtime correction | Retain | Source evidence for Profile Event-Role Annotation. |
+| `669899a` | Merge of `main` at the current common ancestor | Provenance only | No separate extraction; this establishes the comparison base. |
+| `726c7ed` | ABS event wiring, inverse cleanup, and downstream-signal delete warning | Reject source implementation | Referrer logic is hard-coded to ABS `output`/`downstream-signal`; retain cleanup requirements for the future planner, not this code. |
+| `bf697f7` | Draft-aware event IDs, signal observation, and ABS prediction | Mixed: reconstruct | Retain effective drafted-value resolution and observation tests; reject prediction and ABS wiring behavior. |
+| `c08423e` | Tower-LCC+Q bundled profile plus lockfile drift | Mixed: retain profile | Retain the profile after validation; reject lockfile drift. |
+| `b7c339a` | Shared daughterboard metadata for Tower-LCC+Q | Retain | Land with the profile as one validated unit. |
+| `d72499b` | USB sleep/disconnect recovery | Mixed: reconstruct | Retain Transport Health/session ownership and tests; reject `.svelte-kit` output. |
+| `4f2b862` | Shared-observer/exclusive-claim filtering | Defer and re-derive | Current implementation exists for obsolete ABS shared slots. Preserve the resource-claim question for the headless planner; do not add unused schema now. |
+| `610425f` | CDI-backed channel/facility configuration navigation | Retain by reconstruction | Keep path-label resolution, navigation, and supported-binding tests. |
+| `1df8aa3` | Accessible `SingleSelectList` and supported picker migration | Retain | Generic UI unit. |
+| `bf6c12e` | Logic target selector fix plus radio layout fix | Mixed: reconstruct | Retain only `flex-shrink: 0` in `SingleSelectList`; reject target selector and route flow. |
+| `67ce5b5` | Layout aggregate schema v5 for ABS allocations | Reject obsolete | Main remains on the current schema unless a future owner decision requires a new version. |
+| `a4d6bbd` | Initial revised signaling proposal | Superseded | Later signaling decisions and storyboard are the durable version. |
+| `ff5ecdf` | Hardware research, mockups, and old Spec 020 slice notes | Mixed | Hardware evidence/storyboard are already landed; reject old Spec 020 task artifacts; reconcile index links separately. |
+| `a7139d4` | Practical-first direction and constraints | Already landed | Preserve main's published form; review backlog differences rather than replacing it. |
+| `81df48a` | Signal Plant direction | Already landed | Included in main's signaling UX publication. |
+| `92c69a4` | Storyboard Step 3 refinement | Already landed | Included in main's signaling UX publication. |
+| `3046ff9` | GPT-5.6 Sol agent workflow | Already landed | Equivalent main commit is `b6ba969`; only the separate `54f1e1e` user-test instruction remains. |
+| `695cdbb` | Leaf-scoped Signal-LCC role classification | Retain | Landed on `main` in `be21bed` with reconstructed owner/flow/seam documentation. |
+| `f880bc9` | Stable C7c fixture and contract test | Retain | Landed on `main` in `be21bed` with the shipping-profile contract. |
+| `0365d5c` | Bench findings and current extraction/headless plans | Mixed | Durable evidence/direction are already in `ad6606b`; reject session handoffs; replace the old extraction plan with this inventory-backed plan. |
 
-Complete this phase on `020-abs-signaling` before resetting, rebasing, or reconstructing anything.
+## Main-Only Commit Ledger
 
-### 0.1 Review the working tree
+| Commit | Behavior | Required treatment |
+|---|---|---|
+| `01ff74c` | JMRI heuristic: strings longer than 64 bytes use multiline editing | Preserve and rerun its focused component tests after frontend extraction. |
+| `b6ba969` | Current GPT-5.6 Sol developer agents/prompts/skills | Preserve as the landed Phase 1 equivalent. |
+| `ad6606b` | Signal-LCC hardware evidence and signaling UX direction | Preserve as the landed documentation baseline. Reconcile indexes and backlog; never overwrite from source wholesale. |
 
-Classify current uncommitted files into two durable commits:
+## Capability And Owner Ledger
 
-**Hardware findings and architecture evidence**
+The commit ledger prevents history omissions. This capability ledger prevents a
+mixed commit from hiding behavior at a shared owner.
 
-- `product/hardware/signal-lcc/**`
-- the Signal-LCC invalid-conditional-boundary entry in `aiwiki/architecture-health.md`
+| Capability or owner | Disposition | Evidence | Dependency or exclusion |
+|---|---|---|---|
+| Developer-agent workflow | Already landed, plus one retained hunk | `b6ba969`, selected `54f1e1e` | Add user-test instructions separately; no runtime files. |
+| Durable Signal-LCC evidence and signaling direction | Already landed | `ad6606b` | Reconcile `aiwiki/README.md`, `product/README.md`, proposal indexes, and backlog without reviving superseded mockups. |
+| Profile Event-Role Annotation | Already landed | `1139296`, `695cdbb`, `f880bc9`; main `be21bed` | Preserve leaf-scoped generation, runtime annotation, parity tests, and reconstructed owner/flow/seam documentation. |
+| USB connection-session/Transport Health recovery | Reconstruct | `d72499b` | Exclude generated `.svelte-kit`; validate backend, `lcc-rs`, and frontend lifecycle together. |
+| Tower-LCC+Q profile and daughterboard metadata | Retain | `c08423e`, `b7c339a` | Exclude lockfile; require representative CDI/profile-loading coverage. |
+| Accessible single-selection UI | Retain | `1df8aa3`, selected `bf6c12e` | Migrate a currently supported picker; no logic target selector. |
+| Role-neutral `SlotCard` presentation | Reconstruct | `57662f1`, `1a7ddde` | Demonstrate with Block Indicator; exclude prediction/allocation/comprehension. |
+| CDI-backed configuration navigation | Reconstruct | `610425f` | Depends on the generic card surface and current `NodeConfigTree`; test connector input and lamp row bindings. |
+| Draft-aware event-ID resolution | Retain as its own unit | selected `bf697f7` | Use `effective_value()` for current and future channel resolution; do not couple it to ABS. |
+| Target-independent signal-aspect channel/display | Reconstruct | selected `bae83b6`, `f474e55`, `bf697f7` | Depends on profile correctness and draft-aware/multi-row event resolution; exclude public ABS policy and prediction. |
+| Shared observer/exclusive resource claims | Defer and re-derive | `4f2b862` | No currently supported shared slot. Define claims in the headless planner only when intent requires them. |
+| Facility referrer warning | Reject source implementation | selected `726c7ed` | Hard-coded to obsolete downstream-signal topology. Revisit only with a target-neutral reference model. |
+| Generic facility deletion and inverse cleanup | Preserve current main behavior | current Spec 018 owners; selected requirements from `726c7ed` | Future generated plans must own symmetric cleanup; do not retain old compiler types. |
+| Tower-LCC compiler and wiring plan | Reject obsolete | `bae83b6`, `0964722`, `54f1e1e`, `726c7ed` | No production module, IPC command, allocation delta, or target selector. |
+| ABS prediction/comprehension | Reject obsolete | `aff0504`, `bf697f7` | Observation is retained; policy prediction is not. |
+| Layout schema v5 and `LogicAllocation` | Reject obsolete | `aff0504`, `54f1e1e`, `67ce5b5` | No unreleased compatibility requirement. |
+| Headless Signal-LCC intent pipeline | New implementation | `headless-intent-pipeline-plan.md` | Starts only after retained extraction units and final source inventory review. |
 
-**Signaling direction and planning**
+## Ordered Integration Units
 
-- `specs/proposals/signaling-ux/README.md`
-- `specs/proposals/signaling-ux/design-decisions.md`
-- `specs/proposals/signaling-ux/goals-and-constraints.md`
-- `specs/proposals/signaling-ux/signaling-ux-practical-first-storyboard.html`
-- `specs/proposals/signaling-ux/headless-intent-pipeline-plan.md`
-- this extraction plan
+The order below is based on owner dependencies, not source chronology.
 
-Do **not** commit:
+### Unit 1 — Complete The Frozen Signal-LCC Profile Correction
 
-- `specs/proposals/signaling-ux/session-handoff-2026-09-07.md`
-- `specs/proposals/signaling-ux/session-handoff-phase2-rewrite-2026-09-07.md`
-
-Those are temporary session aids, not durable product or planning artifacts.
-
-### 0.2 Validate and commit
-
-For each durable commit:
-
-- run `git diff --check` on the included files;
-- inspect the staged diff, not only the working-tree diff;
-- use a message that names the evidence or planning decision;
-- record the resulting commit IDs in the execution log below.
-
-These commits preserve work on the source branch. They are not permission to merge the branch wholesale.
-
-### 0.3 Tag the source point
-
-After the preservation commits, create a local safety tag or record the final source commit ID. This gives later extraction sessions one immutable reference even if the branch is subsequently edited.
-
-## Phase 1 — Developer-Agent Improvements First
-
-This is the first change integrated from the source branch.
-
-### Source
-
-- commit `3046ff9` — developer prompts, agents, skills, and Copilot instructions
-
-### Method
-
-Apply `3046ff9` directly on `main` in the working tree. Cherry-pick is appropriate only if it applies cleanly and the complete diff remains coherent against current `main`; otherwise reconstruct the same behavior. Wait for explicit commit approval before committing.
-
-### Scope
-
-- `.github/agents/**`
-- `.github/prompts/**`
-- `.github/skills/**`
-- `.github/copilot-instructions.md`
-
-Exclude every product, application, profile, or signaling file.
-
-### Acceptance
-
-- customization files have valid frontmatter and references;
-- removed worker agents are not referenced as required callable agents;
-- architecture-first and TDD delegation instructions remain internally consistent;
-- no application/runtime files change;
-- this change is committed on `main` before the next extraction item begins.
-
-## Phase 2 — Publish Durable Evidence And Direction
-
-After Phase 1 is committed on `main`, apply a documentation-only change directly on `main`.
-
-### Include
-
-- current Signal-LCC hardware documentation and bench findings;
-- signaling UX charter, current decisions, and current storyboard;
-- the headless intent pipeline plan;
-- this extraction plan;
-- proposal index updates.
-
-### Exclude or supersede
-
-- session-handoff files;
-- old active Spec 020 as a current plan;
-- claims that the Tower-LCC-first `ABS 3-Aspect Signal` implementation is the shipping direction.
-
-### Spec 020 treatment
-
-Do not copy `specs/020-abs-signaling/**` to `main` as an active feature specification. Preserve useful historical reasoning only if it is explicitly moved under `specs/archive/**` with a supersession note pointing to the signaling UX charter and headless pipeline plan. Otherwise leave it on the source branch as historical evidence.
-
-### Acceptance
-
-- durable docs distinguish measured hardware behavior from planned behavior;
-- current direction is Signal-LCC-first and railroad-intent-first;
-- no document instructs users to create the obsolete ABS facility;
-- Markdown diagnostics and link checks are clean.
-
-## Phase 3 — Independent Runtime And Profile Changes
-
-Each item is a separate change applied to `main` in isolation, validated, and committed on explicit approval before the next item begins. Order within this phase may change when dependencies demand it, but do not combine the items merely because they originated on one branch, and do not stack them in the working tree simultaneously.
-
-### 3A — Signal-LCC profile correctness
-
-Source evidence:
-
-- `1139296`
-- `695cdbb`
-- `f880bc9`
+Current status: **landed on `main` in `be21bed`.**
 
 Retain:
 
-- leaf-scoped mixed producer/consumer event-role generation;
-- assembler conflict validation;
-- bundled/generated Signal-LCC profile corrections;
-- stable test-owned C7c CDI fixture and contract tests;
-- corresponding owner/seam documentation.
+- exact leaf-scoped mixed producer/consumer extraction metadata;
+- SNIP identity → bundled profile filename normalization for punctuation and whitespace;
+- assembler expansion, type validation, deduplication, and conflict rejection;
+- runtime leaf annotation across replicated CDI groups;
+- generated and bundled profile updates, including the Tower-LCC declaration
+  migration required by the corrected profile schema;
+- stable C7c fixture and shipping-profile contract test;
+- owner, flow, seam, and architecture-health documentation.
 
-Do not blindly cherry-pick all three commits. Reconstruct the cohesive correction against current `main`; some files and tests evolved across the commits.
+The landed unit is cohesive. Direct blob comparison showed that its production,
+metadata, generated output, bundled output, and tests matched source head. Its
+`Profile Event-Role Annotation` flow/seam and relevant owner entries were
+reconstructed without importing unrelated ABS documentation.
 
 Acceptance:
 
-- extraction-tool tests pass;
-- generated and bundled profile declarations agree;
-- mixed-role Rule-to-Aspect leaves retain producer/consumer distinctions;
-- full `bowties-core` tests pass.
+- Python profile-tool tests pass;
+- focused profile annotation and bundled Signal-LCC contract tests pass;
+- full `bowties-core` tests pass;
+- generated and bundled Signal-LCC profiles agree;
+- mixed Rule-to-Aspect leaves retain Consumer `set aspect` and Producer
+  `aspect is set`/`aspect cleared` roles across all replicas;
+- landed commit contains only this unit and its documentation.
 
-### 3B — USB sleep/disconnect recovery
-
-Source evidence:
-
-- `d72499b`
+### Unit 2 — Publish The Reconciliation Plan And Workflow Remainder
 
 Retain:
 
-- connection-session ownership;
-- bounded transport writer/health behavior;
-- frontend session reconciliation;
-- focused transport/session tests;
-- governing ADR and aiwiki updates.
+- this inventory-backed plan;
+- the build-skill requirement to provide concise user-test instructions from
+  `54f1e1e`;
+- missing index links for already-published hardware/product documentation.
 
-Exclude:
+Reconcile, do not copy wholesale:
 
-- all changes under `app/src-tauri/.svelte-kit/**`.
+- `specs/backlog.md` against the actual main tree;
+- proposal mockups, keeping only artifacts still identified as current;
+- `aiwiki/README.md` and `product/README.md` indexes.
 
 Acceptance:
 
-- sleep/disconnect/reconnect behavior is covered by focused tests;
-- `lcc-rs`, backend, and frontend lifecycle tests pass;
+- customization diagnostics are clean;
+- Markdown links are clean;
+- no runtime files change;
+- no active document presents old Spec 020 as the shipping direction.
+
+### Unit 3 — USB Sleep/Disconnect Recovery
+
+Source: `d72499b`.
+
+Retain connection-session ownership, bounded writer/health behavior, frontend
+session reconciliation, focused tests, ADR-0017 extension, and aiwiki updates.
+Exclude all `app/src-tauri/.svelte-kit/**` files.
+
+Acceptance:
+
+- sleep, disconnect, and reconnect transitions have focused tests;
+- `lcc-rs`, backend, and frontend lifecycle suites pass;
 - generated files do not appear in the diff.
 
-### 3C — Tower-LCC+Q profile support
+### Unit 4 — Tower-LCC+Q Profile Support
 
-Source evidence:
+Source: `c08423e`, `b7c339a`.
 
-- `c08423e`
-- `b7c339a`
-
-Retain only after independent profile validation:
-
-- Tower-LCC+Q profile;
-- shared daughterboard metadata required by that profile;
-- focused profile-loading/connector tests.
-
-Exclude `app/package-lock.json` unless a deliberate dependency change in `app/package.json` requires regeneration.
+Retain the profile and shared daughterboard metadata as one profile-owned unit.
+Exclude `app/package-lock.json`.
 
 Acceptance:
 
-- captured or representative CDI builds the expected profile without warnings;
+- representative CDI loads without warnings;
 - daughterboard selection resolves expected connectors;
-- no signaling-intent or ABS facility dependency exists.
+- profile-loading tests and relevant `bowties-core` tests pass;
+- no dependency on ABS or signaling-intent code exists.
 
-## Phase 4 — Generic UX And Domain Salvage
+### Unit 5 — Accessible Single-Selection UI
 
-Extract small, independently useful capabilities. Do not recreate the obsolete ABS user flow while salvaging generic pieces.
+Source: `1df8aa3`, the one-line generic refinement from `bf6c12e`.
 
-### 4A — `SingleSelectList`
+Retain `SingleSelectList`, its harness/tests, and migration of an existing
+supported facility picker. Exclude `LogicTargetSelector` and its route state.
 
-Source evidence:
+Acceptance:
 
-- `1df8aa3`
-- the generic portion of `bf6c12e`
+- keyboard, selection, confirmation, disabled-state, and layout tests pass;
+- the migrated picker works with Block Indicator;
+- full Vitest and touched-surface Svelte diagnostics pass.
 
-Retain the reusable accessible single-selection component and migrate an existing supported picker only when that migration is coherent by itself.
+### Unit 6 — Generic Slot Presentation And Configuration Navigation
 
-Do not restore the ABS logic-target selector.
+Source: selected `57662f1`, `1a7ddde`, and `610425f`.
 
-### 4B — Channel configuration navigation
+These source changes form one user-visible capability: a role-neutral slot card
+can show its CDI-derived configuration target and navigate to it. Keeping them
+together avoids landing a second card abstraction without its demonstrated use.
 
-Source evidence:
+Retain:
 
-- `610425f`
+- declarative `SlotCard` rendering;
+- CDI/profile-aware path-label construction;
+- instance-aware tree traversal;
+- role-neutral resolution for currently supported connector-input and lamp-row
+  bindings;
+- navigation through `configFocusStore`;
+- route/component plumbing and focused tests.
 
-Retain role-neutral navigation from channel/facility presentation to the owning configuration section, with tests for supported binding shapes.
+Exclude ABS comprehension, prediction, target selection, allocations, and
+hard-coded Stop/Approach/Clear policy.
 
-### 4C — Generic facility presentation
+Acceptance:
 
-Source evidence:
+- Block Indicator and supported standalone channels show useful CDI-derived
+  targets and navigate to the correct configuration section;
+- missing tree/profile data degrades safely;
+- focused component/utility tests and full Vitest pass;
+- main-only multiline editing remains covered and unchanged.
 
-- `57662f1`
-- `1a7ddde`
-- selected portions of `610425f`
+### Unit 7 — Draft-Aware Channel Event Resolution
 
-Candidates:
+Source: selected `bf697f7`.
 
-- `SlotCard` declarative rendering;
-- role-neutral FacilityCard layout improvements;
-- reusable channel-card presentation.
+Make current channel event resolution use the effective leaf value so unsaved
+draft Event IDs resolve consistently with the configuration UI. Keep this
+separate from signal policy and multi-row display.
+
+Acceptance:
+
+- committed-only values still resolve;
+- `modified_value` wins when present;
+- existing connector and lamp-row consumers remain unchanged;
+- focused and full `bowties-core` tests pass.
+
+### Unit 8 — Target-Independent Signal-Aspect Capability
+
+Source: selected `bae83b6`, `f474e55`, and non-prediction portions of
+`bf697f7`.
+
+Retain:
+
+- `signal-aspect` channel role;
+- validated Signal-LCC-backed display style(s);
+- multi-row lamp binding and event resolution;
+- observation-based aspect and lamp-state derivation;
+- role/style/profile validation and channel display tests.
 
 Exclude:
 
-- compiled-facility comprehension tied to Tower conditional lines;
-- hard-coded Stop/Approach/Clear evaluation;
-- downstream-Stop prediction;
-- logic-target selection;
-- ABS-specific status or allocation rendering.
+- `ABS_3_ASPECT_SIGNAL` and every production `abs-3-aspect-signal` identifier;
+- compiled behavior-template fields and shared-slot schema added only for ABS;
+- `logic_adapter`, `WiringPlan`, allocation persistence/deltas, target IPC/UI,
+  and prediction-first rendering.
 
-### 4D — Generic delete/referrer behavior
+Acceptance:
 
-Source evidence:
+- a signal-aspect channel can be represented, validated, navigated, and
+  observed without an ABS facility;
+- existing Block Indicator and lamp channels remain unchanged;
+- all retained tests use target-independent terminology;
+- production searches find none of the obsolete surfaces listed above.
 
-- selected portions of `726c7ed`
+### Unit 9 — Final Reconciliation And Source-Branch Retirement
 
-Retain only if it applies to supported facilities such as Block Indicator without requiring compiled ABS template types. Fix all retained type contracts rather than carrying branch-only `FacilityRecord` imports or stale fixtures.
+Before deleting the source worktree or branch:
 
-### Acceptance for every Phase 4 change
+1. Re-run the 33-commit ledger against the final source head.
+2. Re-run the capability/owner ledger against final `main`.
+3. Confirm every Retain/Reconstruct item is committed and validated.
+4. Confirm every main-only behavior remains present.
+5. Search production code for rejected template IDs, compiler modules, IPC
+   commands, allocation types/deltas, schema-v5 rationale, prediction helpers,
+   and target-selector UI.
+6. Confirm generated output, lockfile drift, and session handoffs did not land.
+7. Reconcile `specs/backlog.md`, removing completed work and retaining only
+   actionable future work not owned by another active plan.
+8. Confirm the source worktree contains no unique uncommitted durable work.
+9. Optionally create a safety tag at the final source commit, remove the
+   worktree, and delete `020-abs-signaling`.
 
-- behavior is demoable with a currently supported facility or channel;
-- no `abs-3-aspect-signal` identifier enters production code;
-- no Tower-LCC conditional type is required;
-- focused tests and full Vitest pass;
-- the change adds no new `svelte-check` diagnostics over its touched surface.
+### Unit 10 — Build The Headless Signal-LCC Intent Pipeline
 
-## Phase 5 — Signal-Aspect Capability Without ABS Policy
-
-Create a focused branch for target-independent signal display capability.
-
-### Retain or reconstruct
-
-- `signal-aspect` channel role;
-- Signal-LCC-backed signal display styles;
-- multi-row event resolution needed by those styles;
-- observation-based aspect/lamp state derivation;
-- profile and channel-style validation.
-
-### Remove
-
-- `ABS_3_ASPECT_SIGNAL` constant and registry entry;
-- public ABS creation flow;
-- ABS facility persistence;
-- `LogicAllocation` persistence introduced only for the old implementation;
-- Tower-LCC `logic_adapter` production module;
-- Tower-specific `WiringPlan` production types;
-- ABS-specific prediction in FacilityCard;
-- current logic-target IPC and UI.
-
-### Acceptance
-
-- signal-aspect channels can be represented, bound to validated styles, navigated, and observed without an ABS facility;
-- Block Indicator and all existing supported facilities remain unchanged;
-- searches of production code find no obsolete ABS template ID or public label;
-- all retained tests use target-independent terminology.
-
-## Phase 6 — Build The Headless Signal-LCC Intent Pipeline
-
-This phase is a distinct feature build on `main`, following the same one-item-at-a-time, explicit-commit workflow. Use [headless-intent-pipeline-plan.md](headless-intent-pipeline-plan.md) as the source plan.
-
-This phase is new implementation, not extraction.
+This is new implementation, not extraction. Follow
+[headless-intent-pipeline-plan.md](headless-intent-pipeline-plan.md) only after
+Unit 9 proves that retained branch work is safely on `main`.
 
 Risk-first sequence:
 
 1. typed Signal Mast intent and bundled policy;
 2. pure Signal-LCC plan preview;
-3. validation against current CDI and effective configuration, including unknown Function values and broken group boundaries;
+3. validation against current CDI and effective configuration;
 4. normal draft/application workflow;
 5. generated reproduction of the proven single-mast bench configuration;
 6. generated Track Circuit cascade acceptance;
 7. signaling wizard as an adapter that produces the same intent.
 
-Do not introduce a generalized multi-target planning framework until Signal-LCC proves which contracts are genuinely target-neutral.
+Re-derive resource claims, reference topology, diagnostics, and inverse cleanup
+from this pipeline's actual contracts. Do not revive source branch types merely
+because they addressed similarly named concerns.
+
+## Explicitly Rejected Production Surface
+
+The final `main` tree must not contain source implementations of:
+
+- the `ABS 3-Aspect Signal` public template or identifier;
+- `CompilationTarget`, `RuleCondition`, or `ConditionActionRule` as artifacts
+  of the old behavior-template compiler;
+- Tower-LCC `logic_adapter` or `WiringPlan` production modules;
+- `LogicAllocation`, allocation persistence, or Allocate/Free layout deltas;
+- layout schema v5 introduced solely for those allocations;
+- logic capacity, compile/reset, or target-selection IPC and UI;
+- downstream-Stop or predicted-aspect facility rendering;
+- downstream-signal-specific deletion/referrer UI;
+- generated `app/src-tauri/.svelte-kit/**` files;
+- unexplained `app/package-lock.json` changes;
+- session-handoff documents;
+- active Spec 020 claims that the old facility is current product direction.
 
 ## Repository Hygiene Gates
 
-Apply these gates to every extracted change:
+Apply to every integration unit:
 
-- no generated `app/src-tauri/.svelte-kit/**` diff;
-- no unexplained `app/package-lock.json` diff;
-- no session-handoff files;
-- no stale active Spec 020 assertions;
-- no production `abs-3-aspect-signal` registration;
-- `git diff --check` passes;
-- focused tests pass;
+- `git diff --check` passes for the exact candidate;
+- focused tests pass before aggregate suites;
 - full relevant Rust/Vitest suites pass;
 - touched files introduce no new static diagnostics;
-- aiwiki and durable product docs are updated for changed owners, flows, seams, or behavior.
-
-## Why Not Cherry-Pick The Feature Commits Wholesale
-
-The source commits mix concerns. Generic FacilityCard work is interleaved with ABS prediction; the USB fix includes generated SvelteKit output; profile work evolved across multiple commits; and layout format changes encode branch-only ABS persistence. Commit IDs identify evidence, not necessarily clean integration units.
-
-Prefer behavior-level reconstruction when a source commit crosses owners.
+- generated and lock files change only when the unit explicitly owns them;
+- aiwiki owners/flows/seams and durable product docs change with their owner;
+- staged diff is inspected, not only the working-tree diff;
+- no unrelated integration unit is stacked before explicit commit approval.
 
 ## Execution Log
 
-Fill this in during extraction so another session can resume safely.
-
-| Phase | Source commit(s) | Landed commit on `main` | Result | Validation |
+| Unit | Source evidence | Landed commit on `main` | Result | Validation |
 |---|---|---|---|---|
-| 0 — hardware evidence | pending | source branch only | pending | pending |
-| 0 — signaling plans | pending | source branch only | pending | pending |
-| 1 — developer agents | `3046ff9` | pending | pending | pending |
-| 2 — durable docs | Phase 0 commits | pending | pending | pending |
-| 3A — Signal-LCC profile | `1139296`, `695cdbb`, `f880bc9` | pending | pending | pending |
-| 3B — USB recovery | `d72499b` | pending | pending | pending |
-| 3C — Tower-LCC+Q profile | `c08423e`, `b7c339a` | pending | pending | pending |
-| 4A — selection list | `1df8aa3`, selected `bf6c12e` | pending | pending | pending |
-| 4B — config navigation | `610425f` | pending | pending | pending |
-| 4C — facility presentation | selected `57662f1`, `1a7ddde`, `610425f` | pending | pending | pending |
-| 4D — delete/referrers | selected `726c7ed` | pending | pending | pending |
-| 5 — signal-aspect capability | reconstructed | pending | pending | pending |
-| 6 — headless pipeline | new implementation | pending | pending | pending |
+| Baseline — multiline editor | `01ff74c` | `01ff74c` | landed | existing focused tests |
+| Baseline — developer agents | `3046ff9` equivalent | `b6ba969` | landed | customization review completed |
+| Baseline — evidence/direction | `ff5ecdf`..`0365d5c` selected | `ad6606b` | landed | documentation publication completed |
+| 1 — Signal-LCC profile correction | selected `0964722`; `1139296`, `695cdbb`, `f880bc9` | `be21bed` | landed; runtime confirmed on Signal-LCC | 5 Python tests; 428 core + 4 smoke + 1 contract tests; 16-declaration parity; backend tests compile; backend build passes; Windows DLL blocks Tauri test execution |
+| 2 — reconciliation plan/workflow | selected `54f1e1e`, this plan | pending | candidate ready for commit approval | customization diagnostics clean; local Markdown links resolve; 33-commit ledger complete; no runtime files changed |
+| 3 — USB recovery | `d72499b` selected | pending | pending | pending |
+| 4 — Tower-LCC+Q profile | `c08423e`, `b7c339a` | pending | pending | pending |
+| 5 — single-selection UI | `1df8aa3`, selected `bf6c12e` | pending | pending | pending |
+| 6 — slot navigation | selected `57662f1`, `1a7ddde`, `610425f` | pending | pending | pending |
+| 7 — draft-aware event resolution | selected `bf697f7` | pending | pending | pending |
+| 8 — signal-aspect capability | selected `bae83b6`, `f474e55`, `bf697f7` | pending | pending | pending |
+| 9 — final reconciliation/branch deletion | complete ledgers | pending | pending | pending |
+| 10 — headless pipeline | new implementation | pending | pending | pending |

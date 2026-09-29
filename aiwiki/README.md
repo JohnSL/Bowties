@@ -42,6 +42,7 @@ What to read at each phase of a feature:
 | Placement | `product/architecture/code-placement-and-ownership.md` | Verify new logic goes in the right layer |
 | Vocabulary | `product/glossary.md` | Use canonical terms in code and output |
 | Constraints | `product/architecture/adr/` | Check for rejected approaches |
+| Node behavior | `product/hardware/signal-lcc/` | Signal-LCC capacity limits, aspect vs direct-lamp choice, conditional short-circuit semantics, cascade rules |
 | Implementation | Layer-specific `.github/instructions/` file | Follow layer conventions |
 | Graduation | Run `/feature-finish` skill | Sync product/ and aiwiki/ before merge |
 
