@@ -23,7 +23,7 @@ The inventory in this plan compares five distinct states:
 |---|---|
 | Common ancestor | `409bda798a607c44c3358e308740c20e50365610` |
 | Initial `main` baseline | `ad6606b2f5afa8b31ed87a85c1046e21ae967611` |
-| Current `main` | `be21bed` (`Fix Signal-LCC event role classification`; Unit 1 landed) |
+| Current `main` | `3d3628a` (`Publish signaling branch reconciliation plan`; Units 1–2 landed) |
 | Committed source | `0365d5ca04f5082f1f567d0d4e8a77c7a4f7a4f3` |
 | Source worktree | committed source plus this uncommitted plan update only |
 
@@ -383,8 +383,8 @@ Apply to every integration unit:
 | Baseline — developer agents | `3046ff9` equivalent | `b6ba969` | landed | customization review completed |
 | Baseline — evidence/direction | `ff5ecdf`..`0365d5c` selected | `ad6606b` | landed | documentation publication completed |
 | 1 — Signal-LCC profile correction | selected `0964722`; `1139296`, `695cdbb`, `f880bc9` | `be21bed` | landed; runtime confirmed on Signal-LCC | 5 Python tests; 428 core + 4 smoke + 1 contract tests; 16-declaration parity; backend tests compile; backend build passes; Windows DLL blocks Tauri test execution |
-| 2 — reconciliation plan/workflow | selected `54f1e1e`, this plan | pending | candidate ready for commit approval | customization diagnostics clean; local Markdown links resolve; 33-commit ledger complete; no runtime files changed |
-| 3 — USB recovery | `d72499b` selected | pending | pending | pending |
+| 2 — reconciliation plan/workflow | selected `54f1e1e`, this plan | `3d3628a` | landed | customization diagnostics clean; local Markdown links resolve; 33-commit ledger complete; no runtime files changed |
+| 3 — USB recovery | `d72499b` selected | pending | candidate ready for commit approval | source implementation and tests ported directly; 14 focused + 455 aggregate `lcc-rs` tests pass; 46 focused frontend tests pass; full Vitest 1447/1448 with the unrelated timeout passing alone; backend tests compile and backend builds; Windows DLL blocks backend test execution |
 | 4 — Tower-LCC+Q profile | `c08423e`, `b7c339a` | pending | pending | pending |
 | 5 — single-selection UI | `1df8aa3`, selected `bf6c12e` | pending | pending | pending |
 | 6 — slot navigation | selected `57662f1`, `1a7ddde`, `610425f` | pending | pending | pending |

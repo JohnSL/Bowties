@@ -202,6 +202,14 @@ export class SyncSessionOrchestrator {
   private syncTriggered = false;
 
   #connectionLabel = $state('');
+  /**
+   * Local idempotency guard only — NOT the authoritative connected flag
+   * (`layoutStore.isConnected` owns that). Tracks whether this orchestrator
+   * currently considers its session live, so a duplicate/concurrent
+   * `connectionLost()` call (or one that arrives after a regular
+   * `disconnect()` already ran) is a harmless no-op.
+   */
+  #isLiveSession = false;
 
   constructor(
     private readonly deps: SyncSessionConnectionDeps,
@@ -220,6 +228,7 @@ export class SyncSessionOrchestrator {
    */
   setConnectionLabel(label: string): void {
     this.#connectionLabel = label;
+    this.#isLiveSession = true;
   }
 
   /**
@@ -228,6 +237,7 @@ export class SyncSessionOrchestrator {
    * `connectLiveSession` helper; owns the connection label.
    */
   connect(config: ConnectionConfig): void {
+    this.#isLiveSession = true;
     connectLiveSession({
       config,
       hasLayoutFile: this.deps.hasLayoutFile(),
@@ -248,8 +258,43 @@ export class SyncSessionOrchestrator {
   async disconnect(): Promise<void> {
     this.deps.setErrorMessage('');
     this.#connectionLabel = '';
+    this.#isLiveSession = false;
     await disconnectWithOfflineFallback({
       disconnect: this.deps.disconnectLcc,
+      afterDisconnect: () => {
+        this.deps.setLayoutConnected(false);
+        this.deps.resetSyncPanel();
+        this.resetAutoTrigger();
+      },
+      hasLayoutFile: this.deps.hasLayoutFile(),
+      hasSnapshots: this.deps.hasSnapshots(),
+      rehydrateOffline: this.deps.rehydrateOffline,
+      preserveLiveState: () => {
+        this.deps.setShowConnectionDialog(false);
+        this.deps.clearLiveState();
+      },
+      clearLiveState: this.deps.clearLiveState,
+      showConnectionDialog: () => this.deps.setShowConnectionDialog(true),
+      onError: (message) => this.deps.setErrorMessage(message),
+    });
+  }
+
+  /**
+   * Handle the backend's `lcc-connection-lost` event (unexpected transport
+   * termination). Backend teardown has already completed by the time this
+   * fires, so — unlike `disconnect()` — this must NOT call `disconnectLcc`.
+   * Otherwise it applies the exact same lifecycle transition/fallback as a
+   * regular disconnect, surfacing the reason as the page error message.
+   * Idempotent: a duplicate/concurrent call while already handled (or after
+   * a regular `disconnect()` already ran) is a no-op.
+   */
+  async connectionLost(reason: string): Promise<void> {
+    if (!this.#isLiveSession) return;
+    this.#isLiveSession = false;
+    this.#connectionLabel = '';
+    this.deps.setErrorMessage(`Connection lost: ${reason}`);
+    await disconnectWithOfflineFallback({
+      disconnect: async () => {},
       afterDisconnect: () => {
         this.deps.setLayoutConnected(false);
         this.deps.resetSyncPanel();
@@ -276,6 +321,7 @@ export class SyncSessionOrchestrator {
   async disconnectBeforeLayoutSwitch(): Promise<void> {
     this.deps.setErrorMessage('');
     this.#connectionLabel = '';
+    this.#isLiveSession = false;
     try {
       await this.deps.disconnectLcc();
     } catch (error) {

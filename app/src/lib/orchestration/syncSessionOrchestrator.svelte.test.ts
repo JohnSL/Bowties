@@ -443,6 +443,61 @@ describe('SyncSessionOrchestrator connection workflow', () => {
     expect(deps.clearLiveState).toHaveBeenCalledTimes(1);
     expect(deps.setShowConnectionDialog).toHaveBeenLastCalledWith(false);
   });
+
+  it('connectionLost() rehydrates offline state when snapshots exist and never calls disconnectLcc', async () => {
+    const deps = createConnectionDeps({
+      hasLayoutFile: vi.fn(() => true),
+      hasSnapshots: vi.fn(() => true),
+    });
+    const orchestrator = new SyncSessionOrchestrator(deps);
+    orchestrator.connect({ name: 'Bench Bus' });
+
+    await orchestrator.connectionLost('transport read error');
+
+    expect(orchestrator.connectionLabel).toBe('');
+    expect(deps.disconnectLcc).not.toHaveBeenCalled();
+    expect(deps.setLayoutConnected).toHaveBeenLastCalledWith(false);
+    expect(deps.resetSyncPanel).toHaveBeenCalledTimes(1);
+    expect(deps.rehydrateOffline).toHaveBeenCalledTimes(1);
+    expect(deps.clearLiveState).not.toHaveBeenCalled();
+    expect(deps.setErrorMessage).toHaveBeenLastCalledWith(expect.stringContaining('transport read error'));
+  });
+
+  it('connectionLost() clears live state, shows the connection dialog, and reports the reason when no layout is open', async () => {
+    const deps = createConnectionDeps({
+      hasLayoutFile: vi.fn(() => false),
+      hasSnapshots: vi.fn(() => false),
+    });
+    const orchestrator = new SyncSessionOrchestrator(deps);
+    orchestrator.connect({ name: 'Bench Bus' });
+
+    await orchestrator.connectionLost('peer closed socket');
+
+    expect(deps.disconnectLcc).not.toHaveBeenCalled();
+    expect(deps.clearLiveState).toHaveBeenCalledTimes(1);
+    expect(deps.setShowConnectionDialog).toHaveBeenLastCalledWith(true);
+    expect(deps.rehydrateOffline).not.toHaveBeenCalled();
+    expect(deps.setErrorMessage).toHaveBeenLastCalledWith(expect.stringContaining('peer closed socket'));
+  });
+
+  it('connectionLost() transitions once for concurrent/duplicate loss events', async () => {
+    const deps = createConnectionDeps({
+      hasLayoutFile: vi.fn(() => true),
+      hasSnapshots: vi.fn(() => true),
+    });
+    const orchestrator = new SyncSessionOrchestrator(deps);
+    orchestrator.connect({ name: 'Bench Bus' });
+    vi.mocked(deps.setLayoutConnected).mockClear();
+
+    const first = orchestrator.connectionLost('transport read error');
+    const second = orchestrator.connectionLost('transport read error');
+    await Promise.all([first, second]);
+    await orchestrator.connectionLost('transport read error');
+
+    expect(deps.rehydrateOffline).toHaveBeenCalledTimes(1);
+    expect(deps.setLayoutConnected).toHaveBeenCalledTimes(1);
+    expect(deps.resetSyncPanel).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('disconnectWithOfflineFallback', () => {

@@ -22,13 +22,8 @@ pub async fn discover_nodes(
     let timeout = timeout_ms.unwrap_or(250);
     
     // Get connection reference
-    let connection_arc = {
-        let conn_guard = state.connection.read().await;
-        match conn_guard.as_ref() {
-            Some(conn) => conn.clone(),
-            None => return Err("Not connected to LCC network".to_string()),
-        }
-    };
+    let connection_arc = state.connection_arc().await
+        .ok_or_else(|| "Not connected to LCC network".to_string())?;
     
     // Lock and perform discovery
     let mut connection = connection_arc.lock().await;
@@ -66,13 +61,8 @@ pub async fn probe_nodes(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     eprintln!("[probe_nodes] command invoked");
-    let connection_arc = {
-        let conn_guard = state.connection.read().await;
-        match conn_guard.as_ref() {
-            Some(conn) => conn.clone(),
-            None => return Err("Not connected to LCC network".to_string()),
-        }
-    };
+    let connection_arc = state.connection_arc().await
+        .ok_or_else(|| "Not connected to LCC network".to_string())?;
     let mut connection = connection_arc.lock().await;
     connection.probe_nodes().await.map_err(|e| format!("Probe failed: {}", e))
 }
@@ -224,13 +214,8 @@ pub async fn verify_node_status(
     let _node_alias = NodeAlias::new(alias).map_err(|e| format!("Invalid alias: {}", e))?;
     
     // Get connection reference
-    let connection_arc = {
-        let conn_guard = state.connection.read().await;
-        match conn_guard.as_ref() {
-            Some(conn) => conn.clone(),
-            None => return Err("Not connected to LCC network".to_string()),
-        }
-    };
+    let connection_arc = state.connection_arc().await
+        .ok_or_else(|| "Not connected to LCC network".to_string())?;
     
     // Lock and verify the node
     let mut connection = connection_arc.lock().await;
@@ -276,13 +261,8 @@ pub async fn verify_node_status(
 pub async fn refresh_all_nodes(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
-    let connection_arc = {
-        let conn_guard = state.connection.read().await;
-        match conn_guard.as_ref() {
-            Some(conn) => conn.clone(),
-            None => return Err("Not connected to LCC network".to_string()),
-        }
-    };
+    let connection_arc = state.connection_arc().await
+        .ok_or_else(|| "Not connected to LCC network".to_string())?;
 
     let expected_nodes = state.node_registry.get_all_snapshots().await;
 

@@ -4,6 +4,7 @@
 
 mod commands;
 mod cdi;
+mod connection_session;
 mod menu;
 mod state;
 mod events;
@@ -147,8 +148,7 @@ async fn connect_lcc(
         }
     };
 
-    *state.active_connection.write().await = Some(config.clone());
-    state.set_connection_with_dispatcher(connection, app).await;
+    state.set_connection_with_dispatcher(connection, config.clone(), app).await;
 
     // Log connection event.
     let adapter_label = match &config.adapter_type {
@@ -188,7 +188,7 @@ async fn connect_lcc(
         let state_clone = state.inner().clone();
         tokio::spawn(async move {
             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-            let conn_opt = state_clone.connection.read().await.clone();
+            let conn_opt = state_clone.connection_arc().await;
             if let Some(conn_arc) = conn_opt {
                 let node_count = state_clone.node_registry.len().await;
                 bwlog!(state_clone, "TCP second probe fired at T+2s ({} nodes visible before probe)", node_count);
@@ -266,7 +266,7 @@ async fn get_connection_status(
 ) -> Result<ConnectionInfo, String> {
     Ok(ConnectionInfo {
         connected: state.is_connected().await,
-        config: state.active_connection.read().await.clone(),
+        config: state.active_connection_config().await,
     })
 }
 

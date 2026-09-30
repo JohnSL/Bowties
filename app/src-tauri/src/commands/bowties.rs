@@ -55,9 +55,8 @@ pub async fn query_event_roles(
 
     // Grab connection + transport handle + own alias.
     let (_connection, handle, our_alias) = {
-        let conn_lock = state.connection.read().await;
-        let conn_opt = match conn_lock.as_ref() {
-            Some(c) => c.clone(),
+        let conn_opt = match state.connection_arc().await {
+            Some(c) => c,
             None => {
                 eprintln!("[bowties] query_event_roles: no connection");
                 return HashMap::new();
