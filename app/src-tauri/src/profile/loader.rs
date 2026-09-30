@@ -717,6 +717,12 @@ notValid: [unclosed bracket
     fn make_profile_filename_matches_rr_cirkits_snip_identity() {
         let name = make_profile_filename("RR-CirKits, Inc.", "Signal-LCC");
         assert_eq!(name, "RR-CirKits_Inc._Signal-LCC.profile.yaml");
+
+        let plusq_name = make_profile_filename("RR-CirKits, Inc.", "Tower-LCC+Q");
+        assert_eq!(
+            plusq_name,
+            "RR-CirKits_Inc._Tower-LCC+Q.profile.yaml"
+        );
     }
 
     #[test]

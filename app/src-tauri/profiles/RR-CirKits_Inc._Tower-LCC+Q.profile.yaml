@@ -1,0 +1,269 @@
+# Structure profile for RR-CirKits, Inc. / Tower-LCC+Q
+#
+# Hand-authored from the CDI Bowties cached locally as
+# `RR-CirKits__Inc__Tower-LCC_Q_v1_15.cdi.xml` (identification:
+# hardwareVersion rev-A, softwareVersion v1.15).
+#
+# The Tower-LCC+Q shares its Port I/O line structure and 2-connector layout
+# with the classic Tower-LCC (`RR-CirKits_Tower-LCC.profile.yaml`), but:
+#   - renames the Port I/O event groups to the Commands/Consumers +
+#     Actions/Producers convention also used by Signal-LCC (classic
+#     Tower-LCC uses ambiguous "Event#1"/"Event#2" names instead).
+#   - replaces the classic discrete Conditionals engine (Variable #1/#2 +
+#     Action#2) with a text-based logic script per Logic group
+#     (`Group Description` + `MultiLine`, no eventid children) plus two new
+#     dedicated segments: `Logic Inputs` (16 named groups, Group I0..I15)
+#     and `Logic Outputs` (16 named groups, Group Q0..Q15).
+#   - renames the Track Receiver/Transmitter groups to `Rx Circuit` /
+#     `Tx Circuit` and widens them from 8 to 16 replications.
+#   - adds a `Syntax Messages` segment reporting MultiLine compile results.
+#
+# Schema: https://bowties.app/schemas/structure-profile-v2.schema.json
+# (see specs/014-config-modes-placeholders for the v1->v2 changes).
+# The Bowties profile loader rejects schemaVersion "1.0".
+
+schemaVersion: "2.0"
+
+# Node type — matched against the SNIP manufacturer/model fields
+# reported by the node when Bowties connects.
+nodeType:
+  manufacturer: "RR-CirKits, Inc."
+  model: "Tower-LCC+Q"
+
+# Event role declarations
+#
+# Each entry maps a name-based CDI group path to a declared role. All
+# eventid leaves inside the matching group — across every replicated
+# instance — receive this role, overriding any heuristic assignment.
+#
+# Path notation: '/'-separated CDI element names. A path that names a
+# segment directly (no group) applies the role to every EventId leaf found
+# anywhere under that segment (see bowties-core apply_event_role).
+# Paths that cannot be resolved in the connected node's CDI are silently
+# skipped with a log warning.
+
+eventRoles:
+  # ── Port I/O segment ──────────────────────────────────────────────────────
+  # Each Line (16 replications) contains a Commands/Consumers group (6x
+  # replicated (C) command events) and an Actions/Producers group (6x
+  # replicated (P) indication events).
+  - groupPath: "Port I/O/Line/Commands/Consumers"
+    role: Consumer
+    label: "Consumer Events"
+  - groupPath: "Port I/O/Line/Actions/Producers"
+    role: Producer
+    label: "Producer Events"
+
+  # ── Logic Inputs segment ──────────────────────────────────────────────────
+  # 16 named groups (Group I0..Group I15), each replicated 8x, each holding a
+  # True/False (C) eventid pair. Segment-level path applies Consumer to every
+  # True/False leaf across all 16 groups.
+  - groupPath: "Logic Inputs"
+    role: Consumer
+
+  # ── Logic Outputs segment ─────────────────────────────────────────────────
+  # 16 named groups (Group Q0..Group Q15), each replicated 8x, each holding a
+  # True/False (P) eventid pair. Segment-level path applies Producer to every
+  # True/False leaf across all 16 groups.
+  - groupPath: "Logic Outputs"
+    role: Producer
+
+  # ── Track Receivers segment ───────────────────────────────────────────────
+  # Each Rx Circuit (16 replications) contains one consumer event: "Link Address".
+  - groupPath: "Track Receivers/Rx Circuit"
+    role: Consumer
+
+  # ── Track Transmitters segment ────────────────────────────────────────────
+  # Each Tx Circuit (16 replications) contains one producer event: "Link Address".
+  - groupPath: "Track Transmitters/Tx Circuit"
+    role: Producer
+
+  # ── Syntax Messages segment ───────────────────────────────────────────────
+  # Reports the outcome of compiling the MultiLine logic script.
+  - groupPath: "Syntax Messages/Syntax Events"
+    role: Producer
+
+# No manual/evidence-backed relevance rules yet (mirrors the conservative
+# choice made for classic Tower-LCC, which has the same Output/Input
+# Function fields but no authored relevance rules).
+relevanceRules: []
+
+# Configuration Modes (v2)
+#
+# Three modes are declared:
+#   1. `firmware-revision` — CDI-signature auto-detect. Tower-LCC+Q currently
+#      ships v1.15; when a future revision changes paths or enum maps, extend
+#      `variantsSignature` with an additional entry and add a matching
+#      variant below. The variant id is the key the shared daughterboard
+#      catalog uses to look up per-firmware constraint rules.
+#   2. `connector-a` — structural slot for the first carrier connector
+#      (Line#1-8).
+#   3. `connector-b` — structural slot for the second carrier connector
+#      (Line#9-16).
+#
+# Daughterboard display names, descriptions, and per-variant validity rules
+# live in `RR-CirKits.shared-daughterboards.yaml`. The variants below carry
+# empty overlays because they only declare *which* boards are valid in each
+# slot — the rich rules come from the shared library, keyed by daughterboard
+# id and the active firmware variant (`tower-lcc-plusq`). Each shared
+# daughterboard and style entry carries a `constraintVariants` block with
+# `variantId: "tower-lcc-plusq"` and paths rewritten for this CDI (e.g.
+# `Commands/Consumers` instead of `Event#1`, `Actions/Producers` instead of
+# `Event#2`).
+
+configurationModes:
+  - id: "firmware-revision"
+    label: "Firmware revision"
+    selector:
+      kind: "cdiSignature"
+      variantsSignature:
+        - variantId: "tower-lcc-plusq"
+          signature:
+            requiredPaths:
+              - "Port I/O/Line/Output Function"
+              - "Port I/O/Line/Receiving the configured Command (C) event(s) will drive or pulse the line:"
+              - "Port I/O/Line/Input Function"
+              - "Port I/O/Line/The configured Indication (P) event(s) will be sent when the line is driven:"
+            enumEntryCounts:
+              - path: "Port I/O/Line/Output Function"
+                count: 5
+              - path: "Port I/O/Line/Input Function"
+                count: 3
+    variants:
+      - id: "tower-lcc-plusq"
+        label: "v1.15 firmware"
+        overlay: {}
+
+  - id: "connector-a"
+    label: "Connector A"
+    selector:
+      kind: "structuralSlot"
+      slotId: "connector-a"
+      slotLabel: "Connector A"
+      slotOrder: 0
+      affectedPaths:
+        - "Port I/O/Line#1"
+        - "Port I/O/Line#2"
+        - "Port I/O/Line#3"
+        - "Port I/O/Line#4"
+        - "Port I/O/Line#5"
+        - "Port I/O/Line#6"
+        - "Port I/O/Line#7"
+        - "Port I/O/Line#8"
+      allowNoneInstalled: true
+    variants:
+      - id: "BOD4"
+        label: "BOD4"
+        overlay: {}
+      - id: "BOD4-CP"
+        label: "BOD4-CP"
+        overlay: {}
+      - id: "BOD-8-SM"
+        label: "BOD-8-SM"
+        overlay: {}
+      - id: "FOB-A"
+        label: "FOB-A"
+        overlay: {}
+      - id: "FOB-C"
+        label: "FOB-C"
+        overlay: {}
+      - id: "BOB-S"
+        label: "BOB-S"
+        overlay: {}
+      - id: "OI-IB-8"
+        label: "OI-IB-8"
+        overlay: {}
+      - id: "OI-OB-8"
+        label: "OI-OB-8"
+        overlay: {}
+      - id: "RB-2"
+        label: "RB-2"
+        overlay: {}
+      - id: "RB-4"
+        label: "RB-4"
+        overlay: {}
+      - id: "SMD-8"
+        label: "SMD-8"
+        overlay: {}
+      - id: "SCSD-8"
+        label: "SCSD-8"
+        overlay: {}
+      - id: "Isolator-8"
+        label: "Isolator-8"
+        overlay: {}
+      - id: "MSS I/OAdapter"
+        label: "MSS I/OAdapter"
+        overlay: {}
+      - id: "Sampled I/O Splitter Pair"
+        label: "Sampled I/O Splitter Pair"
+        overlay: {}
+      - id: "I/O Test-SM"
+        label: "I/O Test-SM"
+        overlay: {}
+
+  - id: "connector-b"
+    label: "Connector B"
+    selector:
+      kind: "structuralSlot"
+      slotId: "connector-b"
+      slotLabel: "Connector B"
+      slotOrder: 1
+      affectedPaths:
+        - "Port I/O/Line#9"
+        - "Port I/O/Line#10"
+        - "Port I/O/Line#11"
+        - "Port I/O/Line#12"
+        - "Port I/O/Line#13"
+        - "Port I/O/Line#14"
+        - "Port I/O/Line#15"
+        - "Port I/O/Line#16"
+      allowNoneInstalled: true
+    variants:
+      - id: "BOD4"
+        label: "BOD4"
+        overlay: {}
+      - id: "BOD4-CP"
+        label: "BOD4-CP"
+        overlay: {}
+      - id: "BOD-8-SM"
+        label: "BOD-8-SM"
+        overlay: {}
+      - id: "FOB-A"
+        label: "FOB-A"
+        overlay: {}
+      - id: "FOB-C"
+        label: "FOB-C"
+        overlay: {}
+      - id: "BOB-S"
+        label: "BOB-S"
+        overlay: {}
+      - id: "OI-IB-8"
+        label: "OI-IB-8"
+        overlay: {}
+      - id: "OI-OB-8"
+        label: "OI-OB-8"
+        overlay: {}
+      - id: "RB-2"
+        label: "RB-2"
+        overlay: {}
+      - id: "RB-4"
+        label: "RB-4"
+        overlay: {}
+      - id: "SMD-8"
+        label: "SMD-8"
+        overlay: {}
+      - id: "SCSD-8"
+        label: "SCSD-8"
+        overlay: {}
+      - id: "Isolator-8"
+        label: "Isolator-8"
+        overlay: {}
+      - id: "MSS I/OAdapter"
+        label: "MSS I/OAdapter"
+        overlay: {}
+      - id: "Sampled I/O Splitter Pair"
+        label: "Sampled I/O Splitter Pair"
+        overlay: {}
+      - id: "I/O Test-SM"
+        label: "I/O Test-SM"
+        overlay: {}

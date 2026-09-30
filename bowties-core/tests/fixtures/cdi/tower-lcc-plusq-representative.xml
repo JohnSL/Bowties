@@ -1,0 +1,86 @@
+<cdi>
+  <identification>
+    <manufacturer>RR-CirKits, Inc.</manufacturer>
+    <model>Tower-LCC+Q</model>
+    <hardwareVersion>rev-A</hardwareVersion>
+    <softwareVersion>v1.15</softwareVersion>
+  </identification>
+  <segment space="253" origin="0">
+    <name>Port I/O</name>
+    <group replication="16">
+      <name>Line</name>
+      <repname>Line</repname>
+      <int size="1">
+        <name>Output Function</name>
+        <map>
+          <relation><property>0</property><value>None</value></relation>
+          <relation><property>1</property><value>Steady</value></relation>
+          <relation><property>2</property><value>Blink</value></relation>
+          <relation><property>3</property><value>Pulse</value></relation>
+          <relation><property>4</property><value>Servo</value></relation>
+        </map>
+      </int>
+      <int size="1">
+        <name>Receiving the configured Command (C) event(s) will drive or pulse the line:</name>
+      </int>
+      <int size="1">
+        <name>Input Function</name>
+        <map>
+          <relation><property>0</property><value>None</value></relation>
+          <relation><property>1</property><value>Normal</value></relation>
+          <relation><property>2</property><value>Alternating</value></relation>
+        </map>
+      </int>
+      <int size="1">
+        <name>The configured Indication (P) event(s) will be sent when the line is driven:</name>
+      </int>
+      <group replication="6">
+        <name>Commands/Consumers</name>
+        <eventid><name>Command Event</name></eventid>
+      </group>
+      <group replication="6">
+        <name>Actions/Producers</name>
+        <eventid><name>Action Event</name></eventid>
+        <int size="1"><name>Upon this action</name></int>
+      </group>
+    </group>
+  </segment>
+  <segment space="253" origin="4096">
+    <name>Logic Inputs</name>
+    <group replication="16">
+      <name>Group I</name>
+      <eventid><name>True</name></eventid>
+      <eventid><name>False</name></eventid>
+    </group>
+  </segment>
+  <segment space="253" origin="8192">
+    <name>Logic Outputs</name>
+    <group replication="16">
+      <name>Group Q</name>
+      <eventid><name>True</name></eventid>
+      <eventid><name>False</name></eventid>
+    </group>
+  </segment>
+  <segment space="253" origin="12288">
+    <name>Track Receivers</name>
+    <group replication="16">
+      <name>Rx Circuit</name>
+      <eventid><name>Link Address</name></eventid>
+    </group>
+  </segment>
+  <segment space="253" origin="16384">
+    <name>Track Transmitters</name>
+    <group replication="16">
+      <name>Tx Circuit</name>
+      <eventid><name>Link Address</name></eventid>
+    </group>
+  </segment>
+  <segment space="253" origin="20480">
+    <name>Syntax Messages</name>
+    <group>
+      <name>Syntax Events</name>
+      <eventid><name>Compile Succeeded</name></eventid>
+      <eventid><name>Compile Failed</name></eventid>
+    </group>
+  </segment>
+</cdi>

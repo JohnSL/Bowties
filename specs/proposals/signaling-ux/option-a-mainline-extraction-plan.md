@@ -384,11 +384,18 @@ Apply to every integration unit:
 | Baseline — evidence/direction | `ff5ecdf`..`0365d5c` selected | `ad6606b` | landed | documentation publication completed |
 | 1 — Signal-LCC profile correction | selected `0964722`; `1139296`, `695cdbb`, `f880bc9` | `be21bed` | landed; runtime confirmed on Signal-LCC | 5 Python tests; 428 core + 4 smoke + 1 contract tests; 16-declaration parity; backend tests compile; backend build passes; Windows DLL blocks Tauri test execution |
 | 2 — reconciliation plan/workflow | selected `54f1e1e`, this plan | `3d3628a` | landed | customization diagnostics clean; local Markdown links resolve; 33-commit ledger complete; no runtime files changed |
-| 3 — USB recovery | `d72499b` selected | pending | candidate ready for commit approval | source implementation and tests ported directly; 14 focused + 455 aggregate `lcc-rs` tests pass; 46 focused frontend tests pass; full Vitest 1447/1448 with the unrelated timeout passing alone; backend tests compile and backend builds; Windows DLL blocks backend test execution |
-| 4 — Tower-LCC+Q profile | `c08423e`, `b7c339a` | pending | pending | pending |
+| 3 — USB recovery | `d72499b` selected | `9313c33` | landed | source implementation and tests ported directly; 14 focused + 455 aggregate `lcc-rs` tests pass; 46 focused frontend tests pass; full Vitest 1447/1448 with the unrelated timeout passing alone; backend tests compile and backend builds; Windows DLL blocks backend test execution |
+| 4 — Tower-LCC+Q profile | `c08423e`, `b7c339a` | this commit | landed with byte-identical source profile/metadata; lockfile excluded; representative CDI contract added | 428 core + 4 smoke + 1 Signal-LCC contract + 1 Tower-LCC+Q contract tests pass; backend focused test compiles but Windows DLL blocks execution |
 | 5 — single-selection UI | `1df8aa3`, selected `bf6c12e` | pending | pending | pending |
 | 6 — slot navigation | selected `57662f1`, `1a7ddde`, `610425f` | pending | pending | pending |
 | 7 — draft-aware event resolution | selected `bf697f7` | pending | pending | pending |
 | 8 — signal-aspect capability | selected `bae83b6`, `f474e55`, `bf697f7` | pending | pending | pending |
 | 9 — final reconciliation/branch deletion | complete ledgers | pending | pending | pending |
 | 10 — headless pipeline | new implementation | pending | pending | pending |
+
+Unit 4 integration deviation: the two source commits contain the production
+profile and shared metadata but no tests or committed Tower-LCC+Q CDI capture.
+The mainline candidate therefore adds a stable representative CDI fixture and
+a bundled-profile contract test that exercises every declared role path, the
+v1.15 firmware signature, both connector slots, and the Q-specific detector
+constraints. The retained production YAML remains byte-identical to source.

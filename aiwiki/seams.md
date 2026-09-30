@@ -59,13 +59,15 @@ This file is kept current through normal work, not graduation audits:
   - [app/src-tauri/src/commands/cdi.rs](../app/src-tauri/src/commands/cdi.rs) — annotates live configuration trees
   - [app/src-tauri/src/commands/layout_capture.rs](../app/src-tauri/src/commands/layout_capture.rs) — annotates captured/offline trees
   - `channel_events::resolve_event_ids` ([bowties-core/src/channel_events.rs](../bowties-core/src/channel_events.rs)) — resolves role-filtered channel events
-- **Per-slice plumbing rule**: Generated profiles preserve extraction scope exactly: each classified `childField` becomes one EventId-leaf path. Do not encode mixed-role children as duplicate group paths or use `#N` to distinguish roles inside one replicated group. Group targets remain valid only when ancestor-wide assignment is intentional. Keep generated and bundled event-role declarations in parity; test shipping declarations against a stable test-owned CDI fixture rather than mutable `docs/ref` or extraction artifacts.
-- **Last-modified**: 2026-09-27
+- **Per-slice plumbing rule**: Generated profiles preserve extraction scope exactly: each classified `childField` becomes one EventId-leaf path. Do not encode mixed-role children as duplicate group paths or use `#N` to distinguish roles inside one replicated group. Group targets remain valid only when ancestor-wide assignment is intentional. Keep generated and bundled event-role declarations in parity; test every new shipping profile against a stable test-owned CDI fixture rather than mutable `docs/ref`, local caches, or extraction artifacts.
+- **Last-modified**: 2026-09-29
 - **Last-audited**: 2026-09-27
 
 ### Notes
 
 Signal-LCC exposed the seam: one replicated `Rule` group contains Consumer `set aspect` beside Producer `aspect is set` / `aspect cleared`. The old assembler discarded `childFields`, emitted duplicate parent targets, and composition's intentional last-write-wins behavior collapsed the Consumer declaration. Leaf targets make the extraction's exact role scope survive assembly and annotation.
+
+Tower-LCC+Q intentionally uses segment/group-wide declarations because each targeted subtree has a single role. Its shipping contract is exercised by `bundled_tower_lcc_plusq_profile_contract.rs`, including all seven declared paths and the representative replicated groups.
 
 ---
 
