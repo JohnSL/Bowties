@@ -2,6 +2,7 @@
   import FacilitiesSection from '$lib/components/Facilities/FacilitiesSection.svelte';
   import ChannelsPanel from './ChannelsPanel.svelte';
   import type { NodeDisplayParts } from '$lib/utils/nodeDisplayName';
+  import type { NodeConfigTree } from '$lib/types/nodeTree';
 
   let {
     nodeName,
@@ -12,6 +13,7 @@
     onSelectChannel,
     onAddChannel,
     onRemoveFromSlot,
+    nodeTree,
   }: {
     nodeName: (nodeKey: string) => string;
     /** Resolve structured display parts for a node key. */
@@ -36,6 +38,7 @@
     /** Spec 018 / S5 — consumer-side Add-channel intent emitter. */
     onAddChannel?: (facilityId: string, slotLabel: string) => void;
     onRemoveFromSlot?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
+    nodeTree?: (nodeKey: string) => NodeConfigTree | undefined;
   } = $props();
 </script>
 
@@ -45,8 +48,9 @@
     {onSelectChannel}
     {onAddChannel}
     {onRemoveFromSlot}
+    {nodeTree}
   />
-  <ChannelsPanel {nodeName} {nodeParts} {resolvedEventIds} {daughterboardName} {usedBy} />
+  <ChannelsPanel {nodeName} {nodeParts} {resolvedEventIds} {daughterboardName} {usedBy} {nodeTree} />
 </div>
 
 <style>

@@ -14,6 +14,8 @@ import {
   replicationInstances,
   resolvePillSelectionsForPath,
   buildElementLabel,
+  findNodeAtPath,
+  buildPathLabel,
 } from '$lib/types/nodeTree';
 import type {
   NodeConfigTree,
@@ -514,18 +516,16 @@ describe('resolvePillSelectionsForPath', () => {
     expect(result.size).toBe(0);
   });
 
-  it('out-of-bounds instance index — returns partial Map and stops cleanly without throwing', () => {
+  it('out-of-bounds instance index — returns empty Map and stops cleanly without throwing', () => {
     const inst1 = makeInstance(0, 1);
     const inst2 = makeInstance(0, 2);
     const wrapper = makeWrapper(0, [inst1, inst2]); // only 2 instances
     const seg = makeSegment([wrapper]);
 
-    // instNum=5 exceeds wrapper.children.length → selectedInst is undefined → breaks
+    // instNum=5 exceeds wrapper.children.length → shared path resolution stops
     expect(() => {
       const result = resolvePillSelectionsForPath(nodeId, seg, ['seg:0', 'elem:0#5', 'elem:1']);
-      // Should return an entry for the outer level (since inst1 exists as firstSibling)
-      // but stop before navigating deeper
-      expect(result.get('nodeId:seg:0/elem:0#1')).toBe(4); // 5-1=4
+      expect(result.size).toBe(0);
     }).not.toThrow();
   });
 });
@@ -665,5 +665,52 @@ describe('buildElementLabel', () => {
     const resolver = (l: LeafConfigNode) => l.value;
     const result = buildElementLabel(tree, eventLeaf, resolver);
     expect(result).toBe('I/O Pins.GPIO13 (1).Event On');
+  });
+});
+
+describe('config-target path traversal', () => {
+  const leaf = makeLeaf({
+    name: 'Event ID',
+    path: ['seg:0', 'elem:0#1', 'elem:0'],
+  });
+  const instance = makeGroup([leaf], {
+    name: 'Line',
+    instance: 1,
+    instanceLabel: 'Line 1',
+    replicationOf: 'Line',
+    replicationCount: 2,
+    path: ['seg:0', 'elem:0#1'],
+  });
+  const secondInstance = makeGroup([], {
+    name: 'Line',
+    instance: 2,
+    instanceLabel: 'Line 2',
+    replicationOf: 'Line',
+    replicationCount: 2,
+    path: ['seg:0', 'elem:0#2'],
+  });
+  const wrapper = makeGroup([instance, secondInstance], {
+    name: 'Line',
+    instance: 0,
+    instanceLabel: 'Line',
+    replicationOf: 'Line',
+    replicationCount: 2,
+    path: ['seg:0', 'elem:0'],
+  });
+  const tree = makeTree([makeSegment([wrapper], { name: 'Port I/O' })]);
+
+  it('resolves groups and leaves through replicated wrappers', () => {
+    expect(findNodeAtPath(tree, ['seg:0', 'elem:0#1'])).toBe(instance);
+    expect(findNodeAtPath(tree, ['seg:0', 'elem:0#1', 'elem:0'])).toBe(leaf);
+    expect(findNodeAtPath(tree, ['seg:0', 'elem:99'])).toBeUndefined();
+  });
+
+  it('builds a useful label through replicated wrappers', () => {
+    expect(buildPathLabel(tree, ['seg:0', 'elem:0#1', 'elem:0']))
+      .toBe('Port I/O.Line 1.Event ID');
+  });
+
+  it('returns replicated-instance children from getChildrenAtPath', () => {
+    expect(getChildrenAtPath(tree, ['seg:0', 'elem:0#1'])).toEqual([leaf]);
   });
 });

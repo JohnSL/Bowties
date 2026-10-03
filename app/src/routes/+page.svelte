@@ -1758,6 +1758,7 @@
           onSelectChannel={handleSelectChannelIntent}
           onAddChannel={handleAddChannelIntent}
           onRemoveFromSlot={handleRemoveFromSlot}
+          nodeTree={(key) => nodeTreeStore.getTree(key)}
         />
       </div>
 

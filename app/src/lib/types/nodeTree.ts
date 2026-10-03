@@ -241,6 +241,71 @@ export function effectiveValue(leaf: LeafConfigNode): TreeConfigValue | null {
 
 // ─── Tree traversal helpers ──────────────────────────────────────────────────
 
+interface StepResolution {
+  node: ConfigNode;
+  wrapper?: GroupConfigNode;
+  instanceIndex?: number;
+}
+
+/** Resolve one tree-path step, including replicated wrapper/instance paths. */
+function resolvePathStep(children: ConfigNode[], step: string): StepResolution | undefined {
+  const instanceMatch = step.match(/^(elem:\d+)#(\d+)$/);
+  if (instanceMatch) {
+    const wrapperStep = instanceMatch[1];
+    const instanceIndex = parseInt(instanceMatch[2], 10) - 1;
+    const wrapper = children.find(
+      (child) => isGroup(child) && child.path.at(-1) === wrapperStep,
+    ) as GroupConfigNode | undefined;
+    const instance = wrapper?.children[instanceIndex];
+    if (wrapper && instance) return { node: instance, wrapper, instanceIndex };
+  }
+
+  const node = children.find((child) => child.path.at(-1) === step);
+  return node ? { node } : undefined;
+}
+
+/** Resolve the group or leaf at an element path. */
+export function findNodeAtPath(tree: NodeConfigTree, path: string[]): ConfigNode | undefined {
+  if (path.length === 0) return undefined;
+  const segmentIndex = parseSegIndex(path[0]);
+  if (segmentIndex === null || segmentIndex >= tree.segments.length) return undefined;
+
+  if (path.length === 1) return undefined;
+  let children = tree.segments[segmentIndex].children;
+  for (let index = 1; index < path.length; index++) {
+    const resolution = resolvePathStep(children, path[index]);
+    if (!resolution) return undefined;
+    if (index === path.length - 1) return resolution.node;
+    if (!isGroup(resolution.node)) return undefined;
+    children = resolution.node.children;
+  }
+  return undefined;
+}
+
+/** Build a dot-joined CDI display label for a group or leaf path. */
+export function buildPathLabel(tree: NodeConfigTree, path: string[]): string {
+  if (path.length === 0) return '';
+  const segmentIndex = parseSegIndex(path[0]);
+  if (segmentIndex === null || segmentIndex >= tree.segments.length) return '';
+  const segment = tree.segments[segmentIndex];
+  const parts = segment.name?.trim() ? [segment.name.trim()] : [];
+
+  let children = segment.children;
+  for (let index = 1; index < path.length; index++) {
+    const resolution = resolvePathStep(children, path[index]);
+    if (!resolution) break;
+    if (isGroup(resolution.node)) {
+      const name = (resolution.node.displayName ?? getInstanceDisplayName(resolution.node)).trim();
+      if (name) parts.push(name);
+      children = resolution.node.children;
+    } else {
+      const label = resolution.node.name?.trim() || resolution.node.path.at(-1) || '';
+      if (label) parts.push(label);
+    }
+  }
+  return parts.join('.');
+}
+
 /**
  * Find the children for a given path within a tree.
  *
@@ -254,21 +319,16 @@ export function getChildrenAtPath(
 ): ConfigNode[] | null {
   if (pathKey.length === 0) return null;
 
-  // First component selects a segment by index (e.g. "seg:0")
   const segKey = pathKey[0];
   const segIdx = parseSegIndex(segKey);
   if (segIdx === null || segIdx >= tree.segments.length) return null;
 
   let children = tree.segments[segIdx].children;
 
-  // Walk deeper path components
   for (let i = 1; i < pathKey.length; i++) {
-    const step = pathKey[i];
-    const found = children.find(
-      (c) => isGroup(c) && c.path[c.path.length - 1] === step,
-    );
-    if (!found || !isGroup(found)) return null;
-    children = found.children;
+    const resolution = resolvePathStep(children, pathKey[i]);
+    if (!resolution || !isGroup(resolution.node)) return null;
+    children = resolution.node.children;
   }
 
   return children;
@@ -666,46 +726,24 @@ export function resolvePillSelectionsForPath(
 
   for (let pi = 1; pi < elementPath.length; pi++) {
     const component = elementPath[pi];
-    const rm = component.match(/^elem:(\d+)#(\d+)$/);
+    const resolution = resolvePathStep(currentChildren, component);
+    if (!resolution) break;
 
-    if (rm) {
-      const instNum = parseInt(rm[2], 10); // 1-based
-      // Find the wrapper group by matching path component "elem:N" (without instance suffix)
-      const wrapperComponent = `elem:${rm[1]}`;
-      const wrapper = currentChildren.find(
-        c => isGroup(c) && c.path.at(-1) === wrapperComponent,
-      ) as GroupConfigNode | undefined;
-      if (!wrapper) break;
-
-      // Check whether wrapper_N is one of multiple same-named sibling wrappers.
-      // When it is, `groupReplicatedChildren` groups THOSE WRAPPERS into a
-      // replicatedSet, so the pill key uses the first WRAPPER's path (no # suffix).
-      const wrapperSiblings = findWrapperSiblings(currentChildren, wrapper);
+    if (resolution.wrapper) {
+      const wrapperSiblings = findWrapperSiblings(currentChildren, resolution.wrapper);
       if (wrapperSiblings.length > 1) {
         const firstWrapperSibling = wrapperSiblings[0];
-        const wrapperIndexInSiblings = wrapperSiblings.indexOf(wrapper);
+        const wrapperIndexInSiblings = wrapperSiblings.indexOf(resolution.wrapper);
         result.set(`${nodeId}:${firstWrapperSibling.path.join('/')}`, wrapperIndexInSiblings);
       }
 
-      // Inner pill: selects which INSTANCE within wrapper_N.
-      // The pill key uses the first instance's path (has # suffix).
-      const firstInstance = wrapper.children[0];
+      const firstInstance = resolution.wrapper.children[0];
       if (!firstInstance || !isGroup(firstInstance)) break;
-      result.set(`${nodeId}:${firstInstance.path.join('/')}`, instNum - 1);
-
-      const selectedInst = wrapper.children[instNum - 1];
-      if (!selectedInst || !isGroup(selectedInst)) break;
-      currentChildren = selectedInst.children;
-    } else {
-      // Non-replicated group — navigate into it without setting a pill
-      const nm = component.match(/^elem:(\d+)$/);
-      if (!nm) break;
-      const node = currentChildren.find(
-        c => isGroup(c) && c.path.at(-1) === component,
-      ) as GroupConfigNode | undefined;
-      if (!node) break;
-      currentChildren = node.children;
+      result.set(`${nodeId}:${firstInstance.path.join('/')}`, resolution.instanceIndex!);
     }
+
+    if (!isGroup(resolution.node)) break;
+    currentChildren = resolution.node.children;
   }
 
   return result;

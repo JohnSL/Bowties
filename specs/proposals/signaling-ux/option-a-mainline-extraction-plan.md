@@ -23,7 +23,7 @@ The inventory in this plan compares five distinct states:
 |---|---|
 | Common ancestor | `409bda798a607c44c3358e308740c20e50365610` |
 | Initial `main` baseline | `ad6606b2f5afa8b31ed87a85c1046e21ae967611` |
-| Current `main` | `9762fd5` (`Add Tower-LCC+Q profile support`; Units 1–4 landed) |
+| Current `main` | `cbc4fe9` (`Add accessible single-selection UI`; Units 1–5 landed) |
 | Committed source | `0365d5ca04f5082f1f567d0d4e8a77c7a4f7a4f3` |
 | Source worktree | committed source plus this uncommitted plan update only |
 
@@ -412,8 +412,8 @@ Apply to every integration unit:
 | 2 — reconciliation plan/workflow | selected `54f1e1e`, this plan | `3d3628a` | landed | customization diagnostics clean; local Markdown links resolve; 33-commit ledger complete; no runtime files changed |
 | 3 — USB recovery | `d72499b` selected | `9313c33` | landed | source implementation and tests ported directly; 14 focused + 455 aggregate `lcc-rs` tests pass; 46 focused frontend tests pass; full Vitest 1447/1448 with the unrelated timeout passing alone; backend tests compile and backend builds; Windows DLL blocks backend test execution |
 | 4 — Tower-LCC+Q profile | `c08423e`, `b7c339a` | `9762fd5` | landed with byte-identical source profile/metadata; lockfile excluded; representative CDI contract added | 428 core + 4 smoke + 1 Signal-LCC contract + 1 Tower-LCC+Q contract tests pass; backend focused test compiles but Windows DLL blocks execution |
-| 5 — single-selection UI | `1df8aa3`, selected `bf6c12e` | this commit | source component, tests, and all three supported picker migrations ported; obsolete logic-target selector and route state excluded | 24 focused + 84 multiline-editor regression tests and full Vitest 1460/1460 pass; production build passes; touched files have no diagnostics; repository-wide `svelte-check` remains blocked by 123 pre-existing errors in 32 unrelated files |
-| 6 — slot navigation | selected `57662f1`, `1a7ddde`, `610425f` | pending | pending | pending |
+| 5 — single-selection UI | `1df8aa3`, selected `bf6c12e` | `cbc4fe9` | source component, tests, and all three supported picker migrations ported; obsolete logic-target selector and route state excluded | 24 focused + 84 multiline-editor regression tests and full Vitest 1460/1460 pass; production build passes; touched files have no diagnostics; repository-wide `svelte-check` remains blocked by 123 pre-existing errors in 32 unrelated files |
+| 6 — slot navigation | selected `57662f1`, `1a7ddde`, `610425f` | this commit | landed generic SlotCard, instance-aware CDI labels, config target resolution, and facility/standalone navigation; obsolete ABS branches excluded | 158 focused tests pass including 95 multiline regressions; aggregate Vitest 1472/1473 with unrelated startup timeout passing alone (15/15); production build passes; touched diagnostics clean |
 | 7 — draft-aware event resolution | selected `bf697f7` | pending | pending | pending |
 | 8 — signal-aspect capability | selected `bae83b6`, `f474e55`, `bf697f7` | pending | pending | pending |
 | 9 — final reconciliation/branch deletion | complete ledgers | pending | pending | pending |
@@ -433,3 +433,12 @@ contracts with role-neutral fixture names and the current type shape. The
 production component and picker migrations otherwise match the retained source
 hunks; current main's narrower Block Indicator-only `AddChannelPicker` role and
 style prop types remain in place.
+
+Unit 6 integration deviations: the source card files contain compiled ABS
+comprehension branches and signal-aspect state classes, so the candidate ports
+the shared `SlotCard` shape through the current role-neutral `FacilitySlot`
+adapter instead of replacing `FacilityCard` wholesale. The source navigation
+utility asks `channelStyles` for multi-row signal style spans; that API belongs
+to pending Unit 8 and does not exist on current `main`, so Unit 6 resolves the
+currently supported one-row `single-led-direct-lamp` binding only. The generic
+card retains one-or-many target presentation for Unit 8 to consume later.

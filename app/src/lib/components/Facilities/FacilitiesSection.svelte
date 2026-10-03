@@ -2,6 +2,7 @@
   import { facilitiesStore } from '$lib/stores/facilities.svelte';
   import { behaviorTemplatesStore } from '$lib/stores/behaviorTemplates.svelte';
   import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
+  import type { NodeConfigTree } from '$lib/types/nodeTree';
   import * as facilityOrchestrator from '$lib/orchestration/facilityOrchestrator';
   import AddFacilityDialog from './AddFacilityDialog.svelte';
   import FacilityCard from './FacilityCard.svelte';
@@ -11,12 +12,14 @@
     onSelectChannel,
     onAddChannel,
     onRemoveFromSlot,
+    nodeTree,
   }: {
     resolvedEventIds?: ReadonlyMap<string, Record<string, string>>;
     onSelectChannel?: (facilityId: string, slotLabel: string) => void;
     /** Spec 018 / S5 — consumer-side Add-channel intent emitter. */
     onAddChannel?: (facilityId: string, slotLabel: string) => void;
     onRemoveFromSlot?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
+    nodeTree?: (nodeKey: string) => NodeConfigTree | undefined;
   } = $props();
 
   let showAddDialog = $state(false);
@@ -78,6 +81,7 @@
             {onSelectChannel}
             {onAddChannel}
             {onRemoveFromSlot}
+            {nodeTree}
           />
         </li>
       {/each}

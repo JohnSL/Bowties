@@ -1,5 +1,8 @@
 <script lang="ts">
   import type { InformationChannel } from '$lib/api/channels';
+  import type { NodeConfigTree } from '$lib/types/nodeTree';
+  import { resolveConfigTargets, type ConfigTarget } from '$lib/utils/channelConfigNavigation';
+  import { configFocusStore } from '$lib/stores/configFocus.svelte';
   import {
     channelStateClass,
     channelStateLabel,
@@ -36,6 +39,7 @@
     channelState = DEFAULT_STATE,
     usedBy,
     onRename,
+    nodeTree,
   }: {
     channel: InformationChannel;
     /** Spec 018 / S5 D3 — typed discriminated state for this channel. */
@@ -48,10 +52,12 @@
      */
     usedBy?: ReadonlyArray<{ facilityName: string; slotLabel: string }>;
     onRename?: (id: string, newName: string) => void;
+    nodeTree?: (nodeKey: string) => NodeConfigTree | undefined;
   } = $props();
 
   let isEditingName = $state(false);
   let nameEditValue = $state('');
+  let isConfigPopoverOpen = $state(false);
 
   function startRename() {
     nameEditValue = channel.name;
@@ -109,6 +115,20 @@
     if (!usedBy || usedBy.length === 0) return '—';
     return usedBy.map((b) => `${b.facilityName} / ${b.slotLabel}`).join('; ');
   });
+  let configTargets = $derived(resolveConfigTargets(channel, nodeTree?.(channel.binding.nodeKey)));
+
+  function handleLocationClick() {
+    if (configTargets.length === 1) {
+      navigateToConfig(configTargets[0]);
+    } else if (configTargets.length > 1) {
+      isConfigPopoverOpen = !isConfigPopoverOpen;
+    }
+  }
+
+  function navigateToConfig(target: ConfigTarget) {
+    configFocusStore.focusConfigField(target.nodeId, target.elementPath);
+    isConfigPopoverOpen = false;
+  }
 </script>
 
 <tr class="channel-row">
@@ -157,7 +177,29 @@
       <span class="style">{channel.style}</span>
     </div>
   </td>
-  <td class="location-cell">{location}</td>
+  <td class="location-cell">
+    {#if configTargets.length > 0}
+      <button
+        type="button"
+        class="location-nav"
+        data-testid="location-nav"
+        title="Jump to configuration"
+        aria-expanded={configTargets.length > 1 ? isConfigPopoverOpen : undefined}
+        onclick={handleLocationClick}
+      >{location}</button>
+      {#if isConfigPopoverOpen}
+        <div class="config-popover" role="menu">
+          {#each configTargets as target (target.elementPath.join('/'))}
+            <button type="button" role="menuitem" onclick={() => navigateToConfig(target)}>
+              {target.label}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    {:else}
+      {location}
+    {/if}
+  </td>
   <td class="state-label-cell">
     <span class="state-label">{stateLabel}</span>
     {#if isLampIndicator}
@@ -290,7 +332,41 @@
     font-size: 0.8rem;
     color: var(--text-secondary, #555);
     white-space: nowrap;
+    position: relative;
   }
+  .location-nav {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+  .location-nav:hover { text-decoration: underline; }
+  .config-popover {
+    position: absolute;
+    z-index: 10;
+    top: 100%;
+    left: 0.6rem;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface-primary, #fff);
+    border: 1px solid var(--border-subtle, #ddd);
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    min-width: 10rem;
+  }
+  .config-popover button {
+    background: none;
+    border: none;
+    padding: 0.4rem 0.6rem;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .config-popover button:hover { background: var(--surface-hover, #fafafa); }
   .state-label-cell {
     padding: 0.5rem 0.6rem;
     font-size: 0.8rem;

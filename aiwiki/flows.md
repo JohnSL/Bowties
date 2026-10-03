@@ -69,6 +69,13 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **Backend:** `commands/sync_panel.rs` (`set_offline_change`, `revert_offline_change`)
 - **No protocol** — local-only until sync apply
 
+## Configuration Target Navigation
+- **Producers:** `Bowtie/ElementEntry.svelte`, `Facilities/SlotCard.svelte` through `FacilityCard.svelte`, and `Railroad/ChannelRow.svelte`.
+- **Resolver:** `utils/channelConfigNavigation.ts` translates supported channel bindings into CDI-aware `ConfigTarget[]`; `types/nodeTree.ts::buildPathLabel` and its shared instance-aware traversal resolve labels and replicated paths.
+- **Store:** `configFocus.svelte.ts` owns the one-shot `{nodeId, elementPath}` navigation request.
+- **Route consumer:** `+page.svelte` switches to Config, selects the node/segment, resolves replicated-group pill selections, and clears the request.
+- **Degradation invariant:** missing cached tree, connector profile, or target path leaves plain non-navigable location text; presentation components never synthesize a guessed path.
+
 ## Layout Open / Save
 - **Route:** `+page.svelte` (`saveCurrentCaptureToFile` — save path; `openLayoutAction` — open path)
 - **Orchestrator:** `offlineLayoutOrchestrator.ts` (calls `buildBowtieCatalog` after offline hydration), `saveLayoutOrchestrator.ts` (tested save→rebuild→clean sequence)
@@ -154,7 +161,7 @@ Which modules participate in each major workflow. For full ownership rules, see 
 
 ## Information Channel Inventory (Spec 015)
 - **Route:** `+page.svelte` — 3rd tab ("Railroad") in segmented control; renders `RailroadPanel`
-- **Component:** `Railroad/RailroadPanel.svelte` → `ChannelGroup.svelte` → `ChannelCard.svelte`
+- **Component:** `Railroad/RailroadPanel.svelte` → `ChannelsPanel.svelte` → `ChannelRow.svelte`; the panel also composes `FacilitiesSection.svelte` → `FacilityCard.svelte` → `FacilitySlot.svelte` → role-neutral `SlotCard.svelte`
 - **Store:** `channels.svelte.ts` (`channelsStore` — hydrated on layout open, reset on close)
 - **API:** `channels.ts` (`listChannels`, `createChannels`, `renameChannel`, `deleteChannels`)
 - **Backend:** `commands/channels.rs` (`list_channels`, `create_channels`, `rename_channel`, `delete_channels`)

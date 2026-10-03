@@ -4,6 +4,9 @@
   import { channelsStore } from '$lib/stores/channels.svelte';
   import { eventStateStore } from '$lib/stores/eventState.svelte';
   import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
+  import { configFocusStore } from '$lib/stores/configFocus.svelte';
+  import { resolveConfigTargets, type ConfigTarget } from '$lib/utils/channelConfigNavigation';
+  import type { NodeConfigTree } from '$lib/types/nodeTree';
   import {
     deriveChannelState,
     channelStateLabel,
@@ -21,6 +24,7 @@
     onSelectChannel,
     onAddChannel,
     onRemoveFromSlot,
+    nodeTree,
   }: {
     facility: Facility;
     template?: BehaviorTemplate;
@@ -33,6 +37,7 @@
     /** Spec 018 / S5 — consumer-side output slot's Add channel intent. */
     onAddChannel?: (facilityId: string, slotLabel: string) => void;
     onRemoveFromSlot?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
+    nodeTree?: (nodeKey: string) => NodeConfigTree | undefined;
   } = $props();
 
   // Spec 018 / S6 (D5): status is derived by the effectiveLayoutStore facade
@@ -79,6 +84,17 @@
     const match = connectorId.match(/^connector-([a-z])$/i);
     if (match) return `Connector ${match[1].toUpperCase()}`;
     return connectorId;
+  }
+
+  function configTargetsFor(binding: string[]): ConfigTarget[] | undefined {
+    const channel = channelsStore.channels.find((candidate) => candidate.id === binding[0]);
+    if (!channel) return undefined;
+    const targets = resolveConfigTargets(channel, nodeTree?.(channel.binding.nodeKey));
+    return targets.length > 0 ? targets : undefined;
+  }
+
+  function handleConfigTargetClick(target: ConfigTarget) {
+    configFocusStore.focusConfigField(target.nodeId, target.elementPath);
   }
 
   /**
@@ -165,6 +181,8 @@
         onSelectChannel={(slot) => onSelectChannel?.(facility.facilityId, slot)}
         onAddChannel={(slot) => onAddChannel?.(facility.facilityId, slot)}
         onRemoveFromSlot={(slot, currentId) => onRemoveFromSlot?.(facility.facilityId, slot, currentId)}
+        configTargets={configTargetsFor(binding)}
+        onConfigTargetClick={handleConfigTargetClick}
       />
     {/each}
   </div>
