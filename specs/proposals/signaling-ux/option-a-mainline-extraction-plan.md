@@ -2,14 +2,15 @@
 
 Status: **execution plan, rebuilt from a complete branch inventory.** This
 document describes how to retain approved work from `020-abs-signaling` on
-`main`, reject the obsolete Tower-LCC-first ABS implementation, and then delete
-the source worktree and branch.
+`main`, reject the obsolete Tower-LCC-first ABS implementation, and preserve
+the source worktree and branch as read-only evidence through Unit 10.
 
 ## Goal
 
 Start from `main`, account for every meaningful difference on
 `020-abs-signaling`, integrate retained capabilities in owner-scoped changes,
-and delete the source branch only after the final parity gate passes.
+and freeze the source branch after the final parity gate passes so Unit 10 can
+selectively reference its implementation evidence.
 
 The source branch is evidence. Commits identify provenance, but they are not
 integration units: several commits mix generic capabilities with obsolete ABS
@@ -23,9 +24,9 @@ The inventory in this plan compares five distinct states:
 |---|---|
 | Common ancestor | `409bda798a607c44c3358e308740c20e50365610` |
 | Initial `main` baseline | `ad6606b2f5afa8b31ed87a85c1046e21ae967611` |
-| Current `main` | `cbc4fe9` (`Add accessible single-selection UI`; Units 1–5 landed) |
+| Current `main` | `7b6d9d7` (`Add draft-aware channel event resolution`; Units 1–7 landed) |
 | Committed source | `0365d5ca04f5082f1f567d0d4e8a77c7a4f7a4f3` |
-| Source worktree | committed source plus this uncommitted plan update only |
+| Source worktree | committed source plus the uncommitted reconciliation-plan rewrite later published and superseded on `main`; no unique runtime work |
 
 Do not reset, rebase, or otherwise rewrite these states while an inventory
 decision still relies on them. If either branch advances, update this baseline
@@ -45,7 +46,7 @@ and re-run the commit and owner completeness checks.
   rejected. Do not independently reimplement retained behavior merely because
   the whole commit cannot be cherry-picked.
 5. Every source-only commit and every materially changed owner must receive a
-   disposition before the source branch can be deleted.
+  disposition before the source branch is frozen as Unit 10 evidence.
 6. Preserve main-only behavior, especially the JMRI multiline-string heuristic
    from `01ff74c` and the current developer workflow and signaling direction.
 7. Do not land generated SvelteKit output, unexplained lockfile drift, session
@@ -56,7 +57,8 @@ and re-run the commit and owner completeness checks.
 
 ## Extraction Procedure
 
-For Units 3–8, **extract/port; do not redesign or rebuild from scratch**:
+For Units 3–7, **extract/port; do not redesign or rebuild from scratch**.
+Unit 8 is evidence for selective reuse during Unit 10, not an extraction unit:
 
 1. Inventory every file and hunk in the named source commit(s), excluding only
   surfaces this plan explicitly rejects.
@@ -154,7 +156,7 @@ mixed commit from hiding behavior at a shared owner.
 | Role-neutral `SlotCard` presentation | Reconstruct | `57662f1`, `1a7ddde` | Demonstrate with Block Indicator; exclude prediction/allocation/comprehension. |
 | CDI-backed configuration navigation | Reconstruct | `610425f` | Depends on the generic card surface and current `NodeConfigTree`; test connector input and lamp row bindings. |
 | Draft-aware event-ID resolution | Retain as its own unit | selected `bf697f7` | Use `effective_value()` for current and future channel resolution; do not couple it to ABS. |
-| Target-independent signal-aspect channel/display | Reconstruct | selected `bae83b6`, `f474e55`, `bf697f7` | Depends on profile correctness and draft-aware/multi-row event resolution; exclude public ABS policy and prediction. |
+| Target-independent signal-aspect channel/display | Defer and re-derive in Unit 10 | selected `bae83b6`, `f474e55`, `bf697f7` | Preserve as implementation evidence. Reuse multi-row resolution, display-style validation, and observation derivation only after the headless pipeline establishes their owning intent and binding abstractions; do not pre-commit to the source channel/UI model. |
 | Shared observer/exclusive resource claims | Defer and re-derive | `4f2b862` | No currently supported shared slot. Define claims in the headless planner only when intent requires them. |
 | Facility referrer warning | Reject source implementation | selected `726c7ed` | Hard-coded to obsolete downstream-signal topology. Revisit only with a target-neutral reference model. |
 | Generic facility deletion and inverse cleanup | Preserve current main behavior | current Spec 018 owners; selected requirements from `726c7ed` | Future generated plans must own symmetric cleanup; do not retain old compiler types. |
@@ -304,21 +306,26 @@ Acceptance:
 - existing connector and lamp-row consumers remain unchanged;
 - focused and full `bowties-core` tests pass.
 
-### Unit 8 — Target-Independent Signal-Aspect Capability
+### Unit 8 — Defer Signal-Aspect Extraction Into Unit 10
 
 Source: selected `bae83b6`, `f474e55`, and non-prediction portions of
 `bf697f7`.
 
-Retain:
+Do not extract a standalone production capability before the headless pipeline
+defines the Signal Mast intent, persistence, and physical-binding boundaries.
+Treat the source implementations as evidence for Unit 10, especially:
 
-- `signal-aspect` channel role;
-- validated Signal-LCC-backed display style(s);
 - multi-row lamp binding and event resolution;
+- validated Signal-LCC-backed display style(s);
 - observation-based aspect and lamp-state derivation;
-- role/style/profile validation and channel display tests.
+- focused validation and observation tests that can be restated against the new
+  owner contracts.
 
-Exclude:
+Do not carry forward merely because the source already has them:
 
+- the `signal-aspect` channel role, persistence shape, or frontend integration
+  until Unit 10 confirms that a generic channel is the correct physical-binding
+  boundary;
 - `ABS_3_ASPECT_SIGNAL` and every production `abs-3-aspect-signal` identifier;
 - compiled behavior-template fields and shared-slot schema added only for ABS;
 - `logic_adapter`, `WiringPlan`, allocation persistence/deltas, target IPC/UI,
@@ -326,19 +333,19 @@ Exclude:
 
 Acceptance:
 
-- a signal-aspect channel can be represented, validated, navigated, and
-  observed without an ABS facility;
-- existing Block Indicator and lamp channels remain unchanged;
-- all retained tests use target-independent terminology;
-- production searches find none of the obsolete surfaces listed above.
+- no Unit 8 production code is extracted;
+- the candidate primitives and tests are listed as Unit 10 source evidence;
+- the source branch remains available through Unit 10 for selective reference;
+- production searches still find none of the obsolete surfaces listed above.
 
-### Unit 9 — Final Reconciliation And Source-Branch Retirement
+### Unit 9 — Final Reconciliation And Source-Branch Freeze
 
-Before deleting the source worktree or branch:
+Before beginning Unit 10:
 
 1. Re-run the 33-commit ledger against the final source head.
 2. Re-run the capability/owner ledger against final `main`.
-3. Confirm every Retain/Reconstruct item is committed and validated.
+3. Confirm every Retain/Reconstruct item is committed and validated, and every
+   deferred item is assigned explicitly to Unit 10 or the backlog.
 4. Confirm every main-only behavior remains present.
 5. Search production code for rejected template IDs, compiler modules, IPC
    commands, allocation types/deltas, schema-v5 rationale, prediction helpers,
@@ -347,14 +354,16 @@ Before deleting the source worktree or branch:
 7. Reconcile `specs/backlog.md`, removing completed work and retaining only
    actionable future work not owned by another active plan.
 8. Confirm the source worktree contains no unique uncommitted durable work.
-9. Optionally create a safety tag at the final source commit, remove the
-   worktree, and delete `020-abs-signaling`.
+9. Record the final source head, then keep branch `020-abs-signaling` and its
+  worktree available as read-only implementation evidence until Unit 10 is
+  complete. Do not delete or rewrite the branch during Unit 9.
 
 ### Unit 10 — Build The Headless Signal-LCC Intent Pipeline
 
 This is new implementation, not extraction. Follow
 [headless-intent-pipeline-plan.md](headless-intent-pipeline-plan.md) only after
-Unit 9 proves that retained branch work is safely on `main`.
+Unit 9 proves that retained branch work is safely on `main` and freezes the
+source branch as reference evidence.
 
 Risk-first sequence:
 
@@ -368,7 +377,9 @@ Risk-first sequence:
 
 Re-derive resource claims, reference topology, diagnostics, and inverse cleanup
 from this pipeline's actual contracts. Do not revive source branch types merely
-because they addressed similarly named concerns.
+because they addressed similarly named concerns. Selectively reuse Unit 8's
+multi-row resolution, display validation, observation derivation, and tests only
+after the new intent and physical-binding owners are established.
 
 ## Explicitly Rejected Production Surface
 
@@ -413,10 +424,10 @@ Apply to every integration unit:
 | 3 — USB recovery | `d72499b` selected | `9313c33` | landed | source implementation and tests ported directly; 14 focused + 455 aggregate `lcc-rs` tests pass; 46 focused frontend tests pass; full Vitest 1447/1448 with the unrelated timeout passing alone; backend tests compile and backend builds; Windows DLL blocks backend test execution |
 | 4 — Tower-LCC+Q profile | `c08423e`, `b7c339a` | `9762fd5` | landed with byte-identical source profile/metadata; lockfile excluded; representative CDI contract added | 428 core + 4 smoke + 1 Signal-LCC contract + 1 Tower-LCC+Q contract tests pass; backend focused test compiles but Windows DLL blocks execution |
 | 5 — single-selection UI | `1df8aa3`, selected `bf6c12e` | `cbc4fe9` | source component, tests, and all three supported picker migrations ported; obsolete logic-target selector and route state excluded | 24 focused + 84 multiline-editor regression tests and full Vitest 1460/1460 pass; production build passes; touched files have no diagnostics; repository-wide `svelte-check` remains blocked by 123 pre-existing errors in 32 unrelated files |
-| 6 — slot navigation | selected `57662f1`, `1a7ddde`, `610425f` | this commit | landed generic SlotCard, instance-aware CDI labels, config target resolution, and facility/standalone navigation; obsolete ABS branches excluded | 158 focused tests pass including 95 multiline regressions; aggregate Vitest 1472/1473 with unrelated startup timeout passing alone (15/15); production build passes; touched diagnostics clean |
-| 7 — draft-aware event resolution | selected `bf697f7` | pending | pending | pending |
-| 8 — signal-aspect capability | selected `bae83b6`, `f474e55`, `bf697f7` | pending | pending | pending |
-| 9 — final reconciliation/branch deletion | complete ledgers | pending | pending | pending |
+| 6 — slot navigation | selected `57662f1`, `1a7ddde`, `610425f` | `48ddaf9` | landed generic SlotCard, instance-aware CDI labels, config target resolution, and facility/standalone navigation; obsolete ABS branches excluded | 158 focused tests pass including 95 multiline regressions; aggregate Vitest 1472/1473 with unrelated startup timeout passing alone (15/15); production build passes; touched diagnostics clean |
+| 7 — draft-aware event resolution | selected `bf697f7` | `7b6d9d7` | source owner change and regression test extracted; Unit 8 range resolver excluded | 435 `bowties-core` tests pass; 1 ignored; focused regression, diagnostics, and diff checks pass |
+| 8 — signal-aspect capability | selected `bae83b6`, `f474e55`, `bf697f7` | none | deferred and re-derived in Unit 10; source implementations retained as evidence only | plan boundary reviewed; no production extraction |
+| 9 — final reconciliation/branch freeze | source `0365d5c`; complete commit and capability ledgers | this commit | complete; branch and worktree preserved read-only for Unit 10 | source HEAD unchanged; Units 1–7 and main-only baselines verified; rejected production surfaces absent; generated/lock/session artifacts excluded; backlog needs no edit; source has no unique uncommitted runtime work |
 | 10 — headless pipeline | new implementation | pending | pending | pending |
 
 Unit 4 integration deviation: the two source commits contain the production
@@ -438,7 +449,16 @@ Unit 6 integration deviations: the source card files contain compiled ABS
 comprehension branches and signal-aspect state classes, so the candidate ports
 the shared `SlotCard` shape through the current role-neutral `FacilitySlot`
 adapter instead of replacing `FacilityCard` wholesale. The source navigation
-utility asks `channelStyles` for multi-row signal style spans; that API belongs
-to pending Unit 8 and does not exist on current `main`, so Unit 6 resolves the
-currently supported one-row `single-led-direct-lamp` binding only. The generic
-card retains one-or-many target presentation for Unit 8 to consume later.
+utility asks `channelStyles` for multi-row signal style spans; that API remains
+source evidence for Unit 10 and does not exist on current `main`, so Unit 6
+resolves the currently supported one-row `single-led-direct-lamp` binding only.
+The generic card retains one-or-many target presentation for Unit 10 to consume
+if its intent and physical-binding design adopts that presentation boundary.
+
+Unit 9 reconciliation note: source branch `020-abs-signaling` remains at
+`0365d5ca04f5082f1f567d0d4e8a77c7a4f7a4f3` in
+`D:/src/github/LCC/Bowties.worktrees/020-abs-signaling`. Its only worktree
+modification is the earlier reconciliation-plan rewrite whose durable content
+was published on `main` in Unit 2 and has since been superseded by this evolving
+mainline plan. The worktree and branch remain untouched and available as
+read-only evidence for Unit 10.
