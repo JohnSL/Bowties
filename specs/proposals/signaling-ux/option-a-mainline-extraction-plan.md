@@ -23,7 +23,7 @@ The inventory in this plan compares five distinct states:
 |---|---|
 | Common ancestor | `409bda798a607c44c3358e308740c20e50365610` |
 | Initial `main` baseline | `ad6606b2f5afa8b31ed87a85c1046e21ae967611` |
-| Current `main` | `3d3628a` (`Publish signaling branch reconciliation plan`; Units 1–2 landed) |
+| Current `main` | `9762fd5` (`Add Tower-LCC+Q profile support`; Units 1–4 landed) |
 | Committed source | `0365d5ca04f5082f1f567d0d4e8a77c7a4f7a4f3` |
 | Source worktree | committed source plus this uncommitted plan update only |
 
@@ -38,8 +38,12 @@ and re-run the commit and owner completeness checks.
    facility flow, target selector, or prediction path into `main`.
 3. Preserve a source concept only when it independently fits current product
    direction and has a current owner, behavior contract, and validation path.
-4. Integrate functionality, not commits. A mixed commit may contribute to
-   several retained units while its obsolete portions remain rejected.
+4. Integrate functionality, not whole commits. The source implementation and
+  its tests are the extraction baseline: port retained hunks together, then
+  adapt only where current `main` creates a real conflict. A mixed commit may
+  contribute to several retained units while its obsolete portions remain
+  rejected. Do not independently reimplement retained behavior merely because
+  the whole commit cannot be cherry-picked.
 5. Every source-only commit and every materially changed owner must receive a
    disposition before the source branch can be deleted.
 6. Preserve main-only behavior, especially the JMRI multiline-string heuristic
@@ -49,6 +53,28 @@ and re-run the commit and owner completeness checks.
    independently stated behavior contract.
 8. Apply one integration unit at a time to `main`. Validate it and wait for
    explicit commit approval before starting the next unit.
+
+## Extraction Procedure
+
+For Units 3–8, **extract/port; do not redesign or rebuild from scratch**:
+
+1. Inventory every file and hunk in the named source commit(s), excluding only
+  surfaces this plan explicitly rejects.
+2. Move the retained production implementation, existing tests, and associated
+  documentation together. A no-commit cherry-pick or source patch is preferred
+  when it cleanly preserves that provenance.
+3. Resolve conflicts against evolved `main` at the equivalent owner seam. Keep
+  newer mainline behavior; adapt the source hunk only as much as that conflict
+  requires.
+4. Run the moved focused tests and aggregate suites after the complete port is
+  assembled. This is validation of existing behavior, not a new red-green TDD
+  implementation cycle.
+5. Add or rewrite production code or tests only when a current-main conflict or
+  uncovered integration gap makes the source implementation insufficient, and
+  record that deviation explicitly in the execution log.
+6. Before approval, compare the candidate file/hunk inventory with the source
+  evidence and list every omission. Generated output and other rejected noise
+  must be omitted deliberately, not accidentally.
 
 ## Disposition Vocabulary
 
@@ -385,8 +411,8 @@ Apply to every integration unit:
 | 1 — Signal-LCC profile correction | selected `0964722`; `1139296`, `695cdbb`, `f880bc9` | `be21bed` | landed; runtime confirmed on Signal-LCC | 5 Python tests; 428 core + 4 smoke + 1 contract tests; 16-declaration parity; backend tests compile; backend build passes; Windows DLL blocks Tauri test execution |
 | 2 — reconciliation plan/workflow | selected `54f1e1e`, this plan | `3d3628a` | landed | customization diagnostics clean; local Markdown links resolve; 33-commit ledger complete; no runtime files changed |
 | 3 — USB recovery | `d72499b` selected | `9313c33` | landed | source implementation and tests ported directly; 14 focused + 455 aggregate `lcc-rs` tests pass; 46 focused frontend tests pass; full Vitest 1447/1448 with the unrelated timeout passing alone; backend tests compile and backend builds; Windows DLL blocks backend test execution |
-| 4 — Tower-LCC+Q profile | `c08423e`, `b7c339a` | this commit | landed with byte-identical source profile/metadata; lockfile excluded; representative CDI contract added | 428 core + 4 smoke + 1 Signal-LCC contract + 1 Tower-LCC+Q contract tests pass; backend focused test compiles but Windows DLL blocks execution |
-| 5 — single-selection UI | `1df8aa3`, selected `bf6c12e` | pending | pending | pending |
+| 4 — Tower-LCC+Q profile | `c08423e`, `b7c339a` | `9762fd5` | landed with byte-identical source profile/metadata; lockfile excluded; representative CDI contract added | 428 core + 4 smoke + 1 Signal-LCC contract + 1 Tower-LCC+Q contract tests pass; backend focused test compiles but Windows DLL blocks execution |
+| 5 — single-selection UI | `1df8aa3`, selected `bf6c12e` | this commit | source component, tests, and all three supported picker migrations ported; obsolete logic-target selector and route state excluded | 24 focused + 84 multiline-editor regression tests and full Vitest 1460/1460 pass; production build passes; touched files have no diagnostics; repository-wide `svelte-check` remains blocked by 123 pre-existing errors in 32 unrelated files |
 | 6 — slot navigation | selected `57662f1`, `1a7ddde`, `610425f` | pending | pending | pending |
 | 7 — draft-aware event resolution | selected `bf697f7` | pending | pending | pending |
 | 8 — signal-aspect capability | selected `bae83b6`, `f474e55`, `bf697f7` | pending | pending | pending |
@@ -399,3 +425,11 @@ The mainline candidate therefore adds a stable representative CDI fixture and
 a bundled-profile contract test that exercises every declared role path, the
 v1.15 firmware signature, both connector slots, and the Q-specific detector
 constraints. The retained production YAML remains byte-identical to source.
+
+Unit 5 integration deviation: the source `AddFacilityDialog` test fixtures use
+the rejected ABS template names and cast obsolete compiler fields into the
+current `BehaviorTemplate` type. The mainline test preserves the same five UI
+contracts with role-neutral fixture names and the current type shape. The
+production component and picker migrations otherwise match the retained source
+hunks; current main's narrower Block Indicator-only `AddChannelPicker` role and
+style prop types remain in place.

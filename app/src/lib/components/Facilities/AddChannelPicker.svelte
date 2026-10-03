@@ -24,6 +24,7 @@
   import DialogActions from '$lib/components/Dialog/DialogActions.svelte';
   import Button from '$lib/components/Dialog/Button.svelte';
   import NodeLabel from '$lib/components/NodeLabel.svelte';
+  import SingleSelectList from '$lib/components/SingleSelectList/SingleSelectList.svelte';
   import type { NodeDisplayParts } from '$lib/utils/nodeDisplayName';
 
   export interface CandidateRow {
@@ -93,6 +94,18 @@
     filteredGroups.reduce((acc, g) => acc + g.rows.length, 0),
   );
 
+  /** Flat items list with group headers interleaved for SingleSelectList. */
+  const listItems = $derived.by(() => {
+    const out: { key: string; isHeader?: boolean }[] = [];
+    for (const group of filteredGroups) {
+      out.push({ key: `header:${group.nodeKey}`, isHeader: true });
+      for (const row of group.rows) {
+        out.push({ key: rowKey(row) });
+      }
+    }
+    return out;
+  });
+
   const confirmDisabled = $derived(selectedKey === undefined);
 
   function rowKey(row: CandidateRow): string {
@@ -145,38 +158,30 @@
         {/if}
       </p>
     {:else}
-      <ul class="acp-list" role="radiogroup" aria-label="Lamp row candidates">
-        {#each filteredGroups as group (group.nodeKey)}
-          <li
-            class="acp-group-header"
-            data-testid="lamp-group-header"
-            data-node-key={group.nodeKey}
-          >
+      <SingleSelectList
+        items={listItems}
+        bind:selectedKey={selectedKey}
+        ariaLabel="Lamp row candidates"
+        name="add-channel"
+      >
+        {#snippet row(key)}
+          {@const row = findRow(key)}
+          {#if row}
+            <span class="acp-name">{row.rowLabel}</span>
+          {/if}
+        {/snippet}
+        {#snippet header(key)}
+          {@const nodeKey = key.replace('header:', '')}
+          {@const group = filteredGroups.find((g) => g.nodeKey === nodeKey)}
+          {#if group}
             {#if group.nodeParts}
               <NodeLabel parts={group.nodeParts} orientation="inline" />
             {:else}
               {group.nodeName}
             {/if}
-          </li>
-          {#each group.rows as row (rowKey(row))}
-            {@const key = rowKey(row)}
-            <li class="acp-list-item">
-              <label class="acp-row" class:selected={selectedKey === key}>
-                <input
-                  type="radio"
-                  name="add-channel"
-                  value={key}
-                  checked={selectedKey === key}
-                  onchange={() => (selectedKey = key)}
-                  data-testid="lamp-row-radio"
-                  data-row-key={key}
-                />
-                <span class="acp-name">{row.rowLabel}</span>
-              </label>
-            </li>
-          {/each}
-        {/each}
-      </ul>
+          {/if}
+        {/snippet}
+      </SingleSelectList>
     {/if}
 
     <button type="submit" class="acp-hidden-submit" tabindex="-1" aria-hidden="true"></button>
@@ -217,48 +222,6 @@
     color: var(--fluent-neutralForeground2);
     margin: 0.5rem 0;
     font-size: var(--fluent-fontSizeBase200);
-  }
-  .acp-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    max-height: 18rem;
-    overflow-y: auto;
-    border: 1px solid var(--fluent-neutralStroke2, #e2e2e2);
-    border-radius: 4px;
-  }
-  .acp-list-item {
-    margin: 0;
-  }
-  .acp-group-header {
-    list-style: none;
-    margin: 0;
-    padding: 0.4rem 0.6rem;
-    background: var(--fluent-neutralBackground3, #f7f7f7);
-    border-bottom: 1px solid var(--fluent-neutralStroke2, #e2e2e2);
-    color: var(--fluent-neutralForeground1);
-    font-weight: 600;
-    font-size: var(--fluent-fontSizeBase200);
-    position: sticky;
-    top: 0;
-  }
-  .acp-row {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.4rem 0.6rem;
-    cursor: pointer;
-    border-bottom: 1px solid var(--fluent-neutralStroke2, #f0f0f0);
-  }
-  .acp-row:last-child {
-    border-bottom: none;
-  }
-  .acp-row:hover {
-    background: var(--fluent-neutralBackground1Hover, #f5f5f5);
-  }
-  .acp-row.selected {
-    background: var(--fluent-neutralBackground1Selected, #eef);
   }
   .acp-name {
     font-weight: 600;

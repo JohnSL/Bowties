@@ -11,6 +11,7 @@
   import DialogTitle from '$lib/components/Dialog/DialogTitle.svelte';
   import DialogActions from '$lib/components/Dialog/DialogActions.svelte';
   import Button from '$lib/components/Dialog/Button.svelte';
+  import SingleSelectList from '$lib/components/SingleSelectList/SingleSelectList.svelte';
 
   let {
     templates,
@@ -33,8 +34,16 @@
     }
   });
 
+  const templateItems = $derived(
+    templates.map((t) => ({ key: t.templateId })),
+  );
+
+  function templateByKey(key: string): BehaviorTemplate | undefined {
+    return templates.find((t) => t.templateId === key);
+  }
+
   function selectedTemplate(): BehaviorTemplate | undefined {
-    return templates.find((t) => t.templateId === selectedTemplateId);
+    return selectedTemplateId ? templateByKey(selectedTemplateId) : undefined;
   }
 
   function confirm() {
@@ -71,14 +80,19 @@
     class="af-form"
     onsubmit={(e) => { e.preventDefault(); confirm(); }}
   >
-    <label class="field">
+    <div class="field">
       <span class="field-label">Behavior template</span>
-      <select bind:value={selectedTemplateId} disabled={templates.length <= 1}>
-        {#each templates as t (t.templateId)}
-          <option value={t.templateId}>{t.displayName}</option>
-        {/each}
-      </select>
-    </label>
+      <SingleSelectList
+        items={templateItems}
+        bind:selectedKey={selectedTemplateId}
+        ariaLabel="Behavior templates"
+        name="behavior-template"
+      >
+        {#snippet row(key)}
+          <span class="af-template-name">{templateByKey(key)?.displayName ?? key}</span>
+        {/snippet}
+      </SingleSelectList>
+    </div>
 
     <label class="field">
       <span class="field-label">Name</span>
@@ -128,7 +142,6 @@
     color: var(--fluent-neutralForeground2);
     font-weight: 500;
   }
-  .field select,
   .field input {
     padding: 6px 10px;
     border: 1px solid var(--fluent-neutralStroke1);
@@ -138,11 +151,14 @@
     font-family: var(--fluent-fontFamily);
     font-size: var(--fluent-fontSizeBase300);
   }
-  .field select:focus,
   .field input:focus {
     outline: none;
     border-color: var(--fluent-strokeFocus2);
     box-shadow: 0 0 0 2px var(--fluent-strokeFocusHalo);
+  }
+  .af-template-name {
+    font-weight: 500;
+    color: var(--fluent-neutralForeground1);
   }
   .error {
     color: var(--fluent-dangerBackground);
