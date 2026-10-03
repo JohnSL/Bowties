@@ -318,7 +318,7 @@ D2 chose the atomic `CreateUserOwnedChannel` delta over the legacy split-IPC pat
 ## Channel Event-ID Resolution
 
 - **Governing ADR(s)**: ADR-0013 (channel role / style / binding); Spec 018 / S5 D6 (shape-agnostic resolver)
-- **Owner**: [bowties-core/src/channel_events.rs](../bowties-core/src/channel_events.rs) — `resolve_event_ids(tree, path_prefix, role, leaf_index_map) -> HashMap<String, String>` collects EventId leaves under `path_prefix` matching `role` and indexes them by the supplied map.
+- **Owner**: [bowties-core/src/channel_events.rs](../bowties-core/src/channel_events.rs) — `resolve_event_ids(tree, path_prefix, role, leaf_index_map) -> HashMap<String, String>` collects EventId leaves under `path_prefix` matching `role`, indexes them by the supplied map, and resolves each through `node_tree::effective_value` so `modified_value` drafts take precedence over committed values.
 - **Contributors** (sources of the per-binding path prefix):
   - [bowties-core/src/channel_events.rs](../bowties-core/src/channel_events.rs) — `resolve_connector_input_path_prefix(tree, connector, input)` (producer-side, S2 slot lookup) + `resolve_lamp_row_path_prefix(tree, row_ordinal)` (consumer-side, walks `Direct Lamp Control/Lamp#N`).
   - [app/src-tauri/src/commands/channel_events.rs](../app/src-tauri/src/commands/channel_events.rs) — `resolve_channel_event_ids` IPC command; `ChannelResolutionRequest` carries `binding` (tag-discriminated union mirroring `ChannelBinding`) + `role` + `leaf_index_map`; dispatches per `binding.kind` and returns the resolved map per channel.
@@ -329,7 +329,7 @@ D2 chose the atomic `CreateUserOwnedChannel` delta over the legacy split-IPC pat
   - [app/src/lib/components/Railroad/ChannelsPanel.svelte](../app/src/lib/components/Railroad/ChannelsPanel.svelte) — per-channel `channelStates` derivation pairs the resolved map with `eventStateStore` PCERs via `deriveChannelState(events, positive, negative, role)` (role discriminator picks `occupied/clear` vs `lit/unlit`).
   - [app/src/lib/components/Facilities/FacilityCard.svelte](../app/src/lib/components/Facilities/FacilityCard.svelte) — same derivation for the filled-slot display.
 - **Per-slice plumbing rule**: A new `binding.kind` MUST add a sibling `resolve_<kind>_path_prefix` in [bowties-core/src/channel_events.rs](../bowties-core/src/channel_events.rs) and extend the IPC command's dispatch — never inline a new prefix walker at the call site. A new role MUST update `ChannelResolutionRole` (Rust) + the orchestrator's role mapping + the `deriveChannelState` signature in lockstep so the resolver-shape invariant (one shape-agnostic core + per-shape adapters) survives.
-- **Last-modified**: 2026-06-29 (S5 — extracted shape-agnostic core; added `lampRow` + `Consumer` as the second binding-shape + role)
+- **Last-modified**: 2026-10-03 (signaling UX extraction Unit 7 — channel Event ID resolution now uses effective leaf values for draft-aware connector and lamp-row state)
 - **Last-audited**: 2026-06-29
 
 ### Notes
