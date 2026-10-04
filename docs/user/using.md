@@ -42,7 +42,7 @@ The status indicator in the connection bar turns green once a connection is esta
 | RR-CirKits LCC Buffer-USB | RR-CirKits LCC Buffer-USB, also the LCC to Loconet Bridge | COM port |
 | SPROG USB-LCC | SPROG DCC Ltd USB-LCC CAN adapter | COM port |
 | SPROG PI-LCC | SPROG DCC Ltd Raspberry Pi LCC hat | COM port |
-| Canable / Lawicell CANUSB | SLCAN-compatible USB-CAN adapter | COM port |
+| Canable / Lawicel CANUSB | SLCAN-compatible USB-CAN adapter | COM port |
 | Other GridConnect adapter | CAN2USBINO, MERG CAN-RS, or any other GridConnect device | COM port + Baud rate + Flow control |
 | Other SLCAN adapter | Any `slcand`-compatible adapter not listed above | COM port + Baud rate + Flow control |
 
@@ -118,6 +118,7 @@ Nodes without connector-slot metadata keep the normal pre-feature configuration 
 2. Edit the value inside the card:
    - **Drop-down** fields: choose from the list of options.
    - **Text / number** fields: click and type the new value.
+   - **Slider** fields: drag the control within the field's valid numeric range. Device profiles may use sliders for suitable values, including Signal-LCC Brightness intensities.
    - **Event ID** fields: enter a 64-bit event identifier in `XX.XX.XX.XX.XX.XX.XX.XX` format.
 3. Click **Apply** to write the new value to the node.
 
