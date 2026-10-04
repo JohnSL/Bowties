@@ -8,7 +8,7 @@
 pub mod types;
 pub mod resolver;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -32,6 +32,8 @@ pub use types::{
     StructureProfile,
     ProfileNodeType,
     FirmwareVersionRange,
+    FieldPresentationDecl,
+    FieldControl,
     ConnectorCdiSignature,
     ConnectorCdiEnumCount,
     CdiSignatureVariantMatch,
@@ -192,6 +194,8 @@ pub struct AnnotationReport {
     pub event_roles_applied: usize,
     /// Number of relevance rules applied to the tree.
     pub rules_applied: usize,
+    /// Number of integer leaves whose presentation metadata was overridden.
+    pub field_presentations_applied: usize,
     /// Warnings collected during annotation (also printed to stderr immediately).
     pub warnings: Vec<String>,
     /// Unknown-variant selections surfaced by [`compose_overlays`]. Empty when
@@ -263,12 +267,76 @@ pub fn annotate_tree(
         }
     }
 
+    let mut field_presentations: Vec<_> = profile.field_presentation.iter().collect();
+    field_presentations.sort_by_key(|declaration| {
+        path_map
+            .get(&declaration.field_path)
+            .map(Vec::len)
+            .unwrap_or(usize::MAX)
+    });
+    let mut presented_fields = HashSet::new();
+
+    for declaration in field_presentations {
+        match path_map.get(&declaration.field_path) {
+            Some(resolved_path) => {
+                match apply_field_presentation(
+                    tree,
+                    resolved_path,
+                    &declaration.control,
+                    &mut presented_fields,
+                ) {
+                    FieldPresentationOutcome::Applied => {}
+                    FieldPresentationOutcome::NoEligibleImmediateIntegerLeaves => {
+                        push_annotation_warning(
+                            &mut report,
+                            format!(
+                                "[profile] Field presentation path '{}' resolved but matched no eligible immediate integer leaves in tree",
+                                declaration.field_path
+                            ),
+                        );
+                    }
+                    FieldPresentationOutcome::NonIntegerLeaf => {
+                        push_annotation_warning(
+                            &mut report,
+                            format!(
+                                "[profile] Field presentation path '{}' targets a non-integer leaf; only integer leaves are supported",
+                                declaration.field_path
+                            ),
+                        );
+                    }
+                    FieldPresentationOutcome::NoTreeMatch => {
+                        push_annotation_warning(
+                            &mut report,
+                            format!(
+                                "[profile] Field presentation path '{}' resolved but matched no field in tree",
+                                declaration.field_path
+                            ),
+                        );
+                    }
+                }
+            }
+            None => push_annotation_warning(
+                &mut report,
+                format!(
+                    "[profile] Field presentation path '{}' could not be resolved in CDI — skipped",
+                    declaration.field_path
+                ),
+            ),
+        }
+    }
+    report.field_presentations_applied = presented_fields.len();
+
     // ── US2 stub ─────────────────────────────────────────────────────────────
     // Relevance rule evaluation (attaching RelevanceAnnotation to GroupNodes)
     // is a separate future slice. compose_overlays already exposes the
     // composed rules; the tree-walk apply step will consume them when it lands.
 
     report
+}
+
+fn push_annotation_warning(report: &mut AnnotationReport, warning: String) {
+    eprintln!("{}", warning);
+    report.warnings.push(warning);
 }
 
 pub fn build_connector_profile(
@@ -766,6 +834,96 @@ fn map_empty_behavior(value: &EmptyConnectorBehavior) -> NodeTreeEmptyConnectorB
 // Private tree-traversal helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+enum FieldPresentationOutcome {
+    Applied,
+    NoEligibleImmediateIntegerLeaves,
+    NonIntegerLeaf,
+    NoTreeMatch,
+}
+
+fn apply_field_presentation(
+    tree: &mut NodeConfigTree,
+    resolved_path: &[String],
+    control: &types::FieldControl,
+    presented_fields: &mut HashSet<Vec<String>>,
+) -> FieldPresentationOutcome {
+    for segment in &mut tree.segments {
+        if let Some(outcome) = apply_field_presentation_to_children(
+            &mut segment.children,
+            resolved_path,
+            control,
+            presented_fields,
+        )
+        {
+            return outcome;
+        }
+    }
+    FieldPresentationOutcome::NoTreeMatch
+}
+
+fn apply_field_presentation_to_children(
+    children: &mut [ConfigNode],
+    resolved_path: &[String],
+    control: &types::FieldControl,
+    presented_fields: &mut HashSet<Vec<String>>,
+) -> Option<FieldPresentationOutcome> {
+    for node in children {
+        match node {
+            ConfigNode::Group(group) if group.path == resolved_path => {
+                let mut applied_to_any_leaf = false;
+                for child in &mut group.children {
+                    if let ConfigNode::Leaf(leaf) = child {
+                        if leaf.element_type == LeafType::Int {
+                            apply_slider_control(leaf, control);
+                            presented_fields.insert(leaf.path.clone());
+                            applied_to_any_leaf = true;
+                        }
+                    }
+                }
+                return Some(if applied_to_any_leaf {
+                    FieldPresentationOutcome::Applied
+                } else {
+                    FieldPresentationOutcome::NoEligibleImmediateIntegerLeaves
+                });
+            }
+            ConfigNode::Group(group) => {
+                if let Some(outcome) = apply_field_presentation_to_children(
+                    &mut group.children,
+                    resolved_path,
+                    control,
+                    presented_fields,
+                ) {
+                    return Some(outcome);
+                }
+            }
+            ConfigNode::Leaf(leaf) if leaf.path == resolved_path => {
+                if leaf.element_type != LeafType::Int {
+                    return Some(FieldPresentationOutcome::NonIntegerLeaf);
+                }
+                apply_slider_control(leaf, control);
+                presented_fields.insert(leaf.path.clone());
+                return Some(FieldPresentationOutcome::Applied);
+            }
+            ConfigNode::Leaf(_) => {}
+        }
+    }
+    None
+}
+
+fn apply_slider_control(leaf: &mut crate::node_tree::LeafNode, control: &types::FieldControl) {
+    leaf.hint_slider = Some(match control {
+        types::FieldControl::Slider {
+            tick_spacing,
+            immediate,
+            show_value,
+        } => lcc_rs::cdi::SliderHints {
+            tick_spacing: *tick_spacing,
+            immediate: *immediate,
+            show_value: *show_value,
+        },
+    });
+}
+
 /// Walk the entire tree and apply `role` to every matching group or `EventId`
 /// leaf target across replicated instances.
 ///
@@ -940,6 +1098,7 @@ mod tests {
                 },
             ],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };
@@ -1001,6 +1160,7 @@ mod tests {
                 label: None,
             }],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };
@@ -1080,6 +1240,7 @@ mod tests {
                 },
             ],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };
@@ -1134,6 +1295,7 @@ mod tests {
                 label: None,
             }],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };
@@ -1210,6 +1372,7 @@ mod tests {
                 },
             ],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };
@@ -1274,6 +1437,7 @@ mod tests {
                 label: None,
             }],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };
@@ -1314,6 +1478,7 @@ mod tests {
                 label: None,
             }],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };
@@ -1350,6 +1515,7 @@ mod tests {
             firmware_version_range: None,
             event_roles: vec![],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: vec![types::ConfigurationMode {
                 id: "connector-a".to_string(),
                 label: "Connector A".to_string(),
@@ -1464,6 +1630,7 @@ mod tests {
             firmware_version_range: None,
             event_roles: vec![],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: vec![
                 types::ConfigurationMode {
                     id: "firmware-revision".to_string(),
@@ -1553,6 +1720,7 @@ mod tests {
             firmware_version_range: None,
             event_roles: vec![],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: vec![
                 types::ConfigurationMode {
                     id: "firmware-revision".to_string(),
@@ -1675,6 +1843,7 @@ mod tests {
             firmware_version_range: None,
             event_roles: vec![],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: vec![types::ConfigurationMode {
                 id: "connector-a".to_string(),
                 label: "Connector A".to_string(),
@@ -1784,6 +1953,7 @@ mod tests {
             firmware_version_range: None,
             event_roles: vec![],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: vec![types::ConfigurationMode {
                 id: "connector-a".to_string(),
                 label: "Connector A".to_string(),
@@ -1886,6 +2056,7 @@ mod tests {
             firmware_version_range: None,
             event_roles: vec![],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: vec![
                 types::ConfigurationMode {
                     id: "firmware-revision".to_string(),
@@ -2214,6 +2385,7 @@ mod tests {
             firmware_version_range: None,
             event_roles: vec![],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: modes,
             styles: vec![],
         }

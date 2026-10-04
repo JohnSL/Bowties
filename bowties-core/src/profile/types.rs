@@ -33,6 +33,10 @@ pub struct StructureProfile {
     #[serde(default)]
     pub relevance_rules: Vec<RelevanceRule>,
 
+    /// Explicit presentation metadata for individual CDI leaves.
+    #[serde(default)]
+    pub field_presentation: Vec<FieldPresentationDecl>,
+
     /// First-class Configuration Modes (v2 schema, FR-001). Each mode owns a
     /// selector + named variants whose overlays are composed in declaration
     /// order, last-write-wins per target (FR-006).
@@ -164,6 +168,25 @@ pub struct ProfileNodeType {
 pub struct FirmwareVersionRange {
     pub min: Option<String>,
     pub max: Option<String>,
+}
+
+/// Presentation metadata for an exact CDI leaf or eligible non-replicated group.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldPresentationDecl {
+    pub field_path: String,
+    pub control: FieldControl,
+}
+
+/// Supported profile-selected controls for CDI leaves.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum FieldControl {
+    Slider {
+        tick_spacing: u32,
+        immediate: bool,
+        show_value: bool,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -505,6 +528,7 @@ mod tests {
             }),
             event_roles: vec![],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: vec![
                 ConfigurationMode {
                     id: "firmware-revision".to_string(),

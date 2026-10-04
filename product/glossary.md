@@ -245,7 +245,7 @@ A set of structured YAML/JSON files extracted from a node's CDI XML and PDF manu
 _Avoid_: node profile (redundant), configuration template, metadata file
 
 **Structure Profile**:
-The `.profile.yaml` file shipped with the app containing event roles, relevance rules, and connector definitions for a specific node model.
+The graduated `.profile.yaml` file shipped with the app and maintained as the durable runtime source for a specific node model. It contains event roles, relevance rules, connector definitions, and optional presentation metadata. Presentation metadata may target an exact integer leaf or an eligible non-replicated group; group presentation applies only to immediate integer-leaf children.
 _Avoid_: extraction profile (that is the full 7-file authoring set)
 
 **Relevance Rules**:

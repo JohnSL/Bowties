@@ -4748,6 +4748,7 @@ mod profile_metadata_tests {
             firmware_version_range: None,
             event_roles: vec![],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };

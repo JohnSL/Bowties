@@ -12,7 +12,8 @@ Reading archived messages is public. Downloading files from the **Files** area r
 | Signal-LCC manual | `docs/ref/SignalLCC-manual-e.pdf` | Sections 7 (Logic, pp. 25–31) and 8 (Masts, pp. 31–33). Marked DRAFT beyond early sections |
 | Manual-derived field prose | `profile-extractions/signal-lcc/field-descriptions.yaml` | Per-field descriptions with manual section/page citations |
 | Manual-derived section prose | `profile-extractions/signal-lcc/section-descriptions.yaml` | Per-segment/group descriptions |
-| Structure profile | `profile-extractions/signal-lcc/RR-CirKits_Inc._Signal-LCC.profile.yaml` | Event roles and relevance rules |
+| Graduated structure profile | `app/src-tauri/profiles/RR-CirKits_Inc._Signal-LCC.profile.yaml` | Durable authored runtime profile, including product-owned styles, configuration modes, and group-scoped Brightness presentation |
+| Assembly bootstrap snapshot | `profile-extractions/signal-lcc/RR-CirKits_Inc._Signal-LCC.profile.yaml` | Historical capture/assembly output retained as provenance; not authoritative after graduation |
 
 ## Vendor Documentation
 

@@ -63,6 +63,12 @@ pub fn resolve_profile_paths(profile: &StructureProfile, cdi: &Cdi) -> ProfilePa
         }
     }
 
+    for declaration in &profile.field_presentation {
+        resolve_into(&mut map, &declaration.field_path, cdi, || {
+            "field-presentation path".to_string()
+        });
+    }
+
     // V2: walk every variant overlay so that composed-overlay paths can be
     // looked up by their declared string. Duplicates across modes / variants
     // / base resolve the same way; we skip ones already in the map.
@@ -454,6 +460,7 @@ mod tests {
                 label: None,
             }],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };
@@ -493,6 +500,7 @@ mod tests {
             firmware_version_range: None,
             event_roles: vec![],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: vec![crate::profile::types::ConfigurationMode {
                 id: "serial-a".to_string(),
                 label: "Serial A".to_string(),
@@ -760,6 +768,7 @@ mod tests {
                 }],
                 explanation: "Detector 3 is irrelevant when Side is Right".to_string(),
             }],
+            field_presentation: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };
@@ -796,6 +805,7 @@ mod tests {
             firmware_version_range: None,
             event_roles: vec![],
             relevance_rules: vec![],
+            field_presentation: vec![],
             configuration_modes: vec![crate::profile::types::ConfigurationMode {
                 id: "side".to_string(),
                 label: "Side".to_string(),

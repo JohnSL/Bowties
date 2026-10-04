@@ -47,21 +47,22 @@ This file is kept current through normal work, not graduation audits:
 
 ---
 
-## Profile Event-Role Annotation
+## Profile Tree Annotation
 
-- **Governing ADR(s)**: ADR-0010; Spec 014 profile-v2 contract
-- **Owner**: `annotate_tree` / `apply_event_role` ([bowties-core/src/profile/mod.rs](../bowties-core/src/profile/mod.rs)) — applies resolved segment, group, or EventId-leaf declarations to every matching replicated tree instance
+- **Governing ADR(s)**: Spec 014 profile-v2 contract
+- **Owner**: `annotate_tree` / `apply_event_role` / `apply_field_presentation` ([bowties-core/src/profile/mod.rs](../bowties-core/src/profile/mod.rs)) — applies resolved event-role declarations and exact-leaf or eligible-group presentation declarations to the configuration tree
 - **Contributors**:
-  - [profile-extractions/*/event-roles.json](../profile-extractions/) — classifies exact EventId `childFields` as Producer or Consumer
-  - [`.github/skills/_lib/profile_tools.py`](../.github/skills/_lib/profile_tools.py) — validates each child and emits canonical leaf-target declarations
-  - [app/src-tauri/profiles/*.profile.yaml](../app/src-tauri/profiles/) — bundled runtime declarations loaded at the IPC boundary
+  - [profile-extractions/*/event-roles.json](../profile-extractions/) — bootstrap provenance that classifies exact EventId `childFields` as Producer or Consumer
+  - [`.github/skills/_lib/profile_tools.py`](../.github/skills/_lib/profile_tools.py) — validates capture-derived event-role and relevance declarations and emits a bootstrap candidate
+  - [app/src-tauri/profiles/*.profile.yaml](../app/src-tauri/profiles/) — durable authored product and runtime source of truth after graduation; loaded at the IPC boundary
 - **Consumers**:
   - [app/src-tauri/src/commands/cdi.rs](../app/src-tauri/src/commands/cdi.rs) — annotates live configuration trees
   - [app/src-tauri/src/commands/layout_capture.rs](../app/src-tauri/src/commands/layout_capture.rs) — annotates captured/offline trees
   - `channel_events::resolve_event_ids` ([bowties-core/src/channel_events.rs](../bowties-core/src/channel_events.rs)) — resolves role-filtered channel events
-- **Per-slice plumbing rule**: Generated profiles preserve extraction scope exactly: each classified `childField` becomes one EventId-leaf path. Do not encode mixed-role children as duplicate group paths or use `#N` to distinguish roles inside one replicated group. Group targets remain valid only when ancestor-wide assignment is intentional. Keep generated and bundled event-role declarations in parity; test every new shipping profile against a stable test-owned CDI fixture rather than mutable `docs/ref`, local caches, or extraction artifacts.
-- **Last-modified**: 2026-09-29
-- **Last-audited**: 2026-09-27
+  - `TreeLeafRow` ([app/src/lib/components/ElementCardDeck/TreeLeafRow.svelte](../app/src/lib/components/ElementCardDeck/TreeLeafRow.svelte)) — renders integer leaves from the annotated `hint_slider`
+- **Per-slice plumbing rule**: Bootstrap candidates preserve capture-derived event-role and relevance scope. Each classified `childField` becomes one EventId-leaf path. After graduation, product-authored field presentation belongs directly in the bundled profile: it may name one integer leaf or one non-replicated group with an immediate integer-leaf child. Group controls apply only to immediate integer leaves; non-integer and nested children are ignored, while eligible-zero and unresolved targets warn without application. Exact leaf presentation overrides its immediate parent group, which overrides the CDI hint. Wildcards, recursive descent, and replicated-group fan-out remain invalid. `field_presentations_applied` counts uniquely annotated leaves after fan-out. Shipping contract tests own bundled behavior; extraction artifacts are not a presentation authority.
+- **Last-modified**: 2026-10-03
+- **Last-audited**: 2026-10-03
 
 ### Notes
 

@@ -173,6 +173,54 @@ The schema work is a real depth win: collapsing Tower-LCC's bespoke `connectorSl
 - Affected: `ConfigSidebar/NodeEntry.svelte`
 - Decision: **include simplified**. Sidebar is the only call site; inline marker keeps the component count honest.
 
+### 2026-10-03 extension: Group-scoped field presentation
+
+Signal-LCC Brightness validates a profile-v2 presentation extension: one
+`fieldPresentation` declaration may target a non-replicated CDI group and
+apply its control to the group's immediate integer-leaf children.
+
+#### Approved architecture
+
+- `bowties-core::profile` remains the annotation Owner. Extraction data,
+  profile assembly, and bundled profiles remain Contributors; rendering
+  Consumers do not acquire matching logic.
+- Group presentation is immediate-child only. It does not recurse into
+  nested groups and does not introduce wildcard or path-pattern syntax.
+- Presentation precedence is deterministic:
+  `exact leaf override > immediate parent-group override > CDI hint`.
+- An unresolved target or a valid group with no eligible integer children
+  warns and applies nothing. Mixed groups apply to direct integer leaves and
+  ignore other children.
+- `field_presentations_applied` counts annotated leaves after fan-out.
+- Replicated-group fan-out is outside this extension. Existing exact ordinal
+  paths remain unchanged.
+- Profile capture and assembly are bootstrap activities. After a profile
+  graduates into `app/src-tauri/profiles/`, that bundled profile becomes the
+  durable product and runtime source of truth; extraction artifacts remain
+  provenance rather than a continuing publication authority.
+- Assembler output must identify itself as a bootstrap candidate that must not
+  replace a graduated bundled profile wholesale. Post-graduation changes are
+  made directly to the bundle and verified through shipping behavior tests.
+- This extends the existing Profile Tree Annotation seam; no new ADR is
+  warranted.
+
+#### Vertical slice
+
+**S11: Group-scoped Signal-LCC slider presentation**
+- Type: HITL
+- Layers: bootstrap assembler, bundled profile, profile annotation domain, and
+  shipping-profile contract tests.
+- Blocked by: None.
+- Acceptance: the graduated Signal-LCC bundle directly replaces its 16
+  Brightness leaf declarations with one `Brightness/Intensities` declaration;
+  all 16 immediate integer leaves retain the same slider presentation;
+  non-integer and nested children do not inherit it; exact leaf presentation
+  overrides the group; invalid or empty group targets warn; the applied count
+  reports annotated leaves; live and captured tree Consumers remain unchanged;
+  assembler output clearly identifies its bootstrap-only lifecycle.
+- Demo: open Signal-LCC Brightness and verify all 16 fields remain sliders
+  while the bundled profile contains one group declaration.
+
 ### Vertical Slices
 
 **S1: v2 profile schema + overlay composition + path resolver relaxation**
@@ -238,4 +286,3 @@ None. The two findings flagged for possible deferral (F2 → consolidated `nodeM
 ### Architecture Decisions
 
 - **ADR-0008 — Unified node-key for real and placeholder boards.** See `product/architecture/adr/0008-unified-node-key-for-real-and-placeholder-boards.md`.
-

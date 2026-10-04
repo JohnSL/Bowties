@@ -55,7 +55,7 @@ to be passed.
 | Command | Used by skill | Purpose |
 | --- | --- | --- |
 | `validate <node-dir>` | profile-6 | Cross-check every extraction file against the CDI registry; write `validation-report.json`; exit non-zero on failure. |
-| `assemble <node-dir>` | profile-7 | Combine `event-roles.json` + `relevance-rules.json` into `<Mfr>_<Model>.profile.yaml`, converting `[N-M]` paths to `#N` ordinal notation. |
+| `assemble <node-dir>` | profile-7 | Combine `event-roles.json` and `relevance-rules.json` into the bootstrap/refinement candidate `<Mfr>_<Model>.bootstrap.profile.yaml`, converting `[N-M]` paths to `#N` ordinal notation. |
 | `skeleton sections <node-dir>` | profile-3 | Emit `section-descriptions.skeleton.yaml` with one entry per segment and group; LLM fills `description` + `citation`. |
 | `skeleton fields <node-dir>` | profile-4 | Emit `field-descriptions.skeleton.yaml` with one entry per leaf field (including every enum option) and one per eventid; LLM fills descriptions. |
 | `skeleton events <node-dir>` | profile-1 | Emit `event-roles.skeleton.json` with one entry per group containing eventids; LLM fills `role` / `citation` / `confidence`. |
@@ -67,7 +67,7 @@ to be passed.
 | Subcommand | Writes to |
 | --- | --- |
 | `validate` | `<node-dir>/validation-report.json` |
-| `assemble` | `<node-dir>/<Mfr>_<Model>.profile.yaml` |
+| `assemble` | `<node-dir>/<Mfr>_<Model>.bootstrap.profile.yaml` |
 | `skeleton sections` | `<node-dir>/section-descriptions.skeleton.yaml` |
 | `skeleton fields` | `<node-dir>/field-descriptions.skeleton.yaml` |
 | `skeleton events` | `<node-dir>/event-roles.skeleton.json` |
@@ -77,5 +77,11 @@ Skeletons write to `*.skeleton.*` filenames on purpose: each profile-1/3/4
 skill renames its skeleton to the canonical name (`event-roles.json`,
 `section-descriptions.yaml`, `field-descriptions.yaml`) once the LLM has
 filled in the TODO placeholders.
+
+Assembler output is a bootstrap candidate used while creating and refining a
+profile. After a profile graduates, its file in
+`app/src-tauri/profiles/*.profile.yaml` is the durable authored runtime source
+of truth. Do not replace a graduated bundled profile wholesale with assembler
+output; review and selectively incorporate any newly extracted information.
 
 [pep723]: https://peps.python.org/pep-0723/

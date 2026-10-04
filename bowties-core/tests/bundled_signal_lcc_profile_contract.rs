@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use bowties_core::node_tree::{build_node_config_tree, ConfigNode, LeafType};
 use bowties_core::profile::{
-    annotate_tree, resolve_named_path, resolver::strip_instance_steps, StructureProfile,
+    annotate_tree, resolve_named_path, resolver::strip_instance_steps, Selector, StructureProfile,
 };
 use lcc_rs::cdi::{parser::parse_cdi, EventRole};
 
@@ -123,4 +123,129 @@ fn shipping_signal_lcc_profile_assigns_distinct_rule_event_roles() {
             "unexpected annotated leaf count for resolved target {target:?}",
         );
     }
+}
+
+#[test]
+fn shipping_signal_lcc_profile_declares_brightness_group_presentation_once() {
+    let profile_yaml = fs::read_to_string(repo_path(
+        "app/src-tauri/profiles/RR-CirKits_Inc._Signal-LCC.profile.yaml",
+    ))
+    .expect("bundled Signal-LCC profile must be readable");
+    let profile: StructureProfile =
+        serde_yaml_ng::from_str(&profile_yaml).expect("bundled Signal-LCC profile must parse");
+
+    let brightness_declarations: Vec<_> = profile
+        .field_presentation
+        .iter()
+        .filter(|declaration| declaration.field_path == "Brightness/Intensities")
+        .collect();
+    assert_eq!(
+        brightness_declarations.len(),
+        1,
+        "shipping profile must declare the Brightness/Intensities group exactly once"
+    );
+    assert_eq!(
+        profile.field_presentation.len(),
+        1,
+        "shipping profile must replace the 16 leaf declarations"
+    );
+}
+
+#[test]
+fn shipping_signal_lcc_profile_annotates_all_brightness_leaves_as_sliders() {
+    let cdi_xml = fs::read_to_string(repo_path(
+        "docs/ref/RR-CirKits_Inc__Signal-LCC_rev-C7c.cdi.xml",
+    ))
+    .expect("Signal-LCC reference CDI must be readable");
+    let cdi = parse_cdi(&cdi_xml).expect("Signal-LCC reference CDI must parse");
+    let profile_yaml = fs::read_to_string(repo_path(
+        "app/src-tauri/profiles/RR-CirKits_Inc._Signal-LCC.profile.yaml",
+    ))
+    .expect("bundled Signal-LCC profile must be readable");
+    let profile: StructureProfile =
+        serde_yaml_ng::from_str(&profile_yaml).expect("bundled Signal-LCC profile must parse");
+    let mut tree = build_node_config_tree("signal-lcc:test", &cdi);
+    let report = annotate_tree(&mut tree, &profile, &BTreeMap::new(), &cdi);
+
+    assert_eq!(report.field_presentations_applied, 16);
+    let resolved_group = resolve_named_path("Brightness/Intensities", &cdi)
+        .expect("Brightness/Intensities group must resolve");
+    let mut applied_slider_count = 0;
+    fn verify_immediate_slider_leaves(
+        children: &[ConfigNode],
+        group_path: &[String],
+        applied_count: &mut usize,
+    ) {
+        for child in children {
+            match child {
+                ConfigNode::Group(group) => {
+                    verify_immediate_slider_leaves(&group.children, group_path, applied_count)
+                }
+                ConfigNode::Leaf(leaf) => {
+                    let path = strip_instance_steps(&leaf.path);
+                    if path.starts_with(group_path) && path.len() == group_path.len() + 1 {
+                        assert_eq!(leaf.element_type, LeafType::Int);
+                        let slider = leaf.hint_slider.as_ref().unwrap_or_else(|| {
+                            panic!("{} must receive slider metadata", leaf.name)
+                        });
+                        assert_eq!(slider.tick_spacing, 1);
+                        assert!(slider.immediate);
+                        assert!(slider.show_value);
+                        *applied_count += 1;
+                    }
+                }
+            }
+        }
+    }
+    for segment in &tree.segments {
+        verify_immediate_slider_leaves(
+            &segment.children,
+            &resolved_group,
+            &mut applied_slider_count,
+        );
+    }
+    assert_eq!(applied_slider_count, 16);
+}
+
+#[test]
+fn shipping_signal_lcc_profile_preserves_authored_styles_and_configuration_modes() {
+    let profile_yaml = fs::read_to_string(repo_path(
+        "app/src-tauri/profiles/RR-CirKits_Inc._Signal-LCC.profile.yaml",
+    ))
+    .expect("bundled Signal-LCC profile must be readable");
+    let profile: StructureProfile =
+        serde_yaml_ng::from_str(&profile_yaml).expect("bundled Signal-LCC profile must parse");
+
+    let style = profile
+        .styles
+        .iter()
+        .find(|style| style.style_id == "single-led-direct-lamp")
+        .expect("shipping profile must retain the direct-lamp style");
+    assert_eq!(style.binding_kind, "lampRow");
+    assert!(style.constraints.is_empty());
+
+    let firmware_mode = profile
+        .configuration_modes
+        .iter()
+        .find(|mode| mode.id == "firmware-revision")
+        .expect("shipping profile must retain firmware revision detection");
+    assert_eq!(firmware_mode.label, "Firmware revision");
+    assert!(matches!(firmware_mode.selector, Selector::CdiSignature { .. }));
+    assert_eq!(firmware_mode.variants[0].id, "signal-lcc-c7c");
+
+    let io_mode = profile
+        .configuration_modes
+        .iter()
+        .find(|mode| mode.id == "io-1")
+        .expect("shipping profile must retain the I/O-1 structural slot");
+    assert_eq!(io_mode.label, "I/O-1");
+    assert!(matches!(
+        &io_mode.selector,
+        Selector::StructuralSlot {
+            slot_id,
+            allow_none_installed: true,
+            ..
+        } if slot_id == "io-1"
+    ));
+    assert!(io_mode.variants.iter().any(|variant| variant.id == "BOD4"));
 }

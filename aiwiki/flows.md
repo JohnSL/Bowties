@@ -45,12 +45,12 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **Backend:** `commands/cdi.rs` (`read_all_config_values` — emits `BuildingCatalog` status on last node before event-role exchange and catalog build, `get_node_tree`, `cancel_config_reading`)
 - **lcc-rs:** `protocol/memory_config.rs`, `protocol/datagram.rs`
 
-## Profile Event-Role Annotation
-- **Authoring source:** `profile-extractions/<node>/event-roles.json` classifies exact EventId `childFields`; `.github/skills/_lib/profile_tools.py assemble` validates and expands them into canonical leaf-target `eventRoles` declarations.
-- **Bundling:** generated event-role declarations are copied into `app/src-tauri/profiles/` while preserving hand-authored shipping sections; wholly hand-authored profiles such as Tower-LCC+Q live in the same directory and follow the same runtime contract. Runtime contract tests exercise bundled profiles against test-owned CDI fixtures; assembler unit tests independently own generation behavior.
-- **Runtime owner:** `bowties-core::profile::annotate_tree` resolves each path and applies segment/group declarations broadly or EventId-leaf declarations precisely across replicated instances.
+## Profile Tree Annotation
+- **Bootstrap/refinement source:** `profile-extractions/<node>/event-roles.json` classifies exact EventId `childFields`; `.github/skills/_lib/profile_tools.py assemble` validates capture-derived event roles and relevance rules into a `*.bootstrap.profile.yaml` candidate.
+- **Graduation and bundling:** after a candidate is graduated, `app/src-tauri/profiles/*.profile.yaml` is the durable authored product and runtime source of truth. Shipping profiles are maintained directly rather than regenerated wholesale from extraction artifacts. Runtime contract tests own bundled behavior against CDI fixtures; assembler unit tests independently own bootstrap generation behavior.
+- **Runtime owner:** `bowties-core::profile::annotate_tree` resolves each path. Event-role segment/group declarations may apply broadly. Field presentation supports exact integer leaves and eligible non-replicated groups; group controls fan out only to immediate integer-leaf children. Exact leaf presentation overrides its immediate parent group, which overrides the CDI hint; invalid targets surface in `AnnotationReport.warnings`.
 - **Consumers:** live config trees (`commands/cdi.rs`), offline/captured trees (`commands/layout_capture.rs`), and role-filtered channel-event resolution (`bowties-core::channel_events`).
-- **Invariant:** mixed-role children under one CDI group must be separate leaf targets. A replicated group suffix such as `Rule#2` selects an instance; it does not identify a role-bearing sibling.
+- **Invariant:** mixed-role children under one CDI group must be separate leaf targets. A replicated group suffix such as `Rule#2` selects an instance; it does not identify a role-bearing sibling. Presentation declarations never recurse from groups or selectors.
 
 ## Config Editing (Online)
 - **Route:** `config/+page.svelte`

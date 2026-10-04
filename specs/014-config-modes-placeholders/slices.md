@@ -2,7 +2,7 @@
 
 Branch: 014-config-modes-placeholders
 Generated: 2026-05-24
-Status: S8.8–S8.14 complete (placeholder factory refactor done; S9 next)
+Status: S8.8–S8.14 and S11 complete; S9 remains pending
 
 ---
 
@@ -752,3 +752,107 @@ Exercise a Tower-LCC placeholder with daughterboard variants (uses the S5-bundle
 - [ ] S10-T2: Backend — unknown-profile-stem handling in tree assembly returns the "Unknown model" sentinel
 - [ ] S10-T3: Route — render the "Unknown model" placeholder state with edits blocked
 - [ ] S10-T4: Validate — integration test passes; quickstart step 8 green
+
+---
+
+## 2026-10-03 architecture extension: Group-scoped field presentation
+
+```mermaid
+flowchart LR
+    A["Capture artifacts"] --> B["Profile assembler<br/>bootstrap candidate"]
+    B --> C["Graduation boundary"]
+    C --> D["Bundled profile<br/>durable authored product"]
+    D --> E["Profile annotation Owner<br/>fans out to immediate integer leaves"]
+    E --> F["Live and captured trees"]
+    F --> G["TreeLeafRow<br/>renders sliders unchanged"]
+```
+
+**Patterns**:
+- **Declarative group fan-out** — matching remains in the profile annotation
+  Owner rather than the generator or UI.
+- **Specificity precedence** — exact leaf presentation overrides its immediate
+  parent-group presentation, which overrides the CDI hint.
+- **Profile graduation** — assembler output bootstraps a profile; after
+  graduation the bundled profile becomes the durable directly maintained
+  product.
+
+| Module | Change |
+|---|---|
+| Signal-LCC extraction | Retain capture/refinement provenance; it does not own product presentation policy |
+| Profile assembler | Emit capture-derived event-role and relevance data as an explicitly bootstrap-only candidate |
+| Profile annotation | Apply group controls to direct integer leaves and report applied-leaf counts |
+| Bundled Signal-LCC profile | Directly own one group declaration after graduation |
+| `TreeLeafRow` | No change; continue consuming annotated leaf metadata |
+
+| Slice | User-visible change | Demoable? | Status |
+|---|---|---|---|
+| S11 | All 16 Signal-LCC Brightness fields remain sliders using one profile override | Yes | tasked |
+
+## S11: Group-scoped Signal-LCC slider presentation [HITL]
+
+**Intent**: Profile authors can apply one presentation override to all direct
+integer fields in a group; Signal-LCC Brightness remains fully slider-enabled
+without 16 repeated declarations.
+
+**Boundary**: Bootstrap assembler → profile graduation → directly maintained
+bundled profile → `bowties-core::profile` annotation → live/captured tree
+consumers → existing configuration UI.
+
+**Blocked by**: None
+
+**Status**: done
+
+**Complexity**: medium
+
+**User stories**: Signal-LCC Brightness profile authoring; Profile Tree
+Annotation immediate-child fan-out
+
+**Acceptance criteria**:
+- [x] The graduated Signal-LCC bundle replaces its 16 Brightness leaf
+  declarations with one `Brightness/Intensities` declaration.
+- [x] Assembler output is clearly labeled as a bootstrap candidate that must
+  not replace a graduated bundled profile wholesale.
+- [x] A group presentation applies to its immediate integer-leaf children,
+  does not recurse into nested groups, and ignores non-integer children.
+- [x] Precedence is deterministic:
+  `exact leaf override > immediate parent-group override > CDI hint`.
+- [x] Unresolved targets and groups with no eligible integer children warn and
+  apply nothing.
+- [x] `field_presentations_applied` reports annotated leaves after fan-out;
+  the Signal-LCC declaration reports 16.
+- [x] Live CDI annotation and captured/offline annotation produce equivalent
+  presentation metadata for the same profile and CDI.
+- [x] Channel-event resolution remains behaviorally unchanged because field
+  presentation does not alter event-role annotations.
+- [x] `TreeLeafRow` renders all 16 Signal-LCC Brightness fields as sliders with
+  their existing control values.
+- [ ] Manual demo: open Signal-LCC Brightness and verify every field remains a
+  working slider while the bundled profile contains one override.
+
+**Architecture note**: This extends the Profile Tree Annotation seam with
+immediate-child fan-out at its existing domain Owner. Wildcards, recursive
+descent, and replicated-group fan-out remain intentionally unsupported.
+
+**Tasks**:
+- [x] S11-T1: Update the bundled Signal-LCC integration contract first so one
+  group declaration must produce 16 annotated Brightness slider leaves; confirm
+  RED before changing runtime behavior.
+- [x] S11-T2: Add focused `bowties-core` contracts for immediate integer
+  children, non-recursive/non-integer exclusion, exact-leaf precedence, empty
+  group warnings, and applied-leaf counting; implement the minimum annotation
+  behavior in `profile/mod.rs` and update the declaration contract in
+  `profile/types.rs`.
+- [x] S11-T3: Keep product-authored field presentation out of extraction
+  assembly while preserving the assembler's bootstrap filename, warning, and
+  lifecycle contracts.
+- [x] S11-T4: Directly replace the 16 declarations in the graduated bundled
+  Signal-LCC profile with one `Brightness/Intensities` declaration; restore
+  extraction artifacts to capture-only provenance and prove shipping behavior
+  without a source/bundle parity requirement.
+- [x] S11-T4a: Make assembler headers/help/output naming clearly identify a
+  bootstrap candidate that must not replace a graduated profile wholesale.
+- [x] S11-T5: Update the Profile Tree Annotation seam and module ownership
+  documentation with scope, precedence, warning, and applied-count invariants.
+- [x] S11-T6: Validate focused and aggregate Rust profile tests, Python profile
+  assembler tests, bundled-profile contracts, diff hygiene, and the
+  baseline-relative changed-file surface.
