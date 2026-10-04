@@ -1045,6 +1045,23 @@ describe('T041: int field with slider hint', () => {
     expect(screen.getByText('7')).toBeInTheDocument();
   });
 
+  it('preserves an initial value above the native range default maximum', () => {
+    const leaf = makeLeaf({
+      elementType: 'int',
+      value: { type: 'int', value: 197 },
+      size: 1,
+      constraints: { min: 0, max: 255, defaultValue: null, mapEntries: null },
+      hintSlider: { immediate: false, tickSpacing: 1, showValue: true },
+    });
+    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
+
+    const slider = screen.getByRole('slider') as HTMLInputElement;
+    expect(screen.getByText('197')).toBeInTheDocument();
+    expect(slider.value).toBe('197');
+    expect(slider.min).toBe('0');
+    expect(slider.max).toBe('255');
+  });
+
   it('does not show value label when showValue is false', () => {
     const leaf = makeLeaf({
       elementType: 'int',
@@ -1303,4 +1320,3 @@ describe('T10 placeholder eventid field', () => {
     expect(input).not.toBeDisabled();
   });
 });
-

@@ -38,7 +38,7 @@ specification (S-9.7.4.1) are supported by the Bowties app, and which are not ye
 | Constraints | min, max, default (pre-populated before first read) |
 | Map | Value↔label enum; rendered as select dropdown |
 | Reserved-value handling | When current value is absent from map, a disabled "(Reserved: N)" option is shown |
-| Hint — slider | `immediate`, `tickSpacing`, `showValue`; rendered as `<input type="range">` |
+| Hint — slider | `immediate`, `tickSpacing`, `showValue`; boolean attributes accept `true`, `1`, or `yes`. One-byte integers with omitted bounds use the represented `0..255` domain. Rendered as `<input type="range">`. |
 | Hint — radiobutton | Rendered as a radio-button group when map is also present |
 
 #### `<string>`

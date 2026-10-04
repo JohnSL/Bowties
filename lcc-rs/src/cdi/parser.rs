@@ -504,6 +504,10 @@ fn parse_blob_element(node: Node) -> Result<BlobElement, String> {
     })
 }
 
+fn parse_slider_boolean_attribute(value: Option<&str>) -> bool {
+    matches!(value, Some("true" | "1" | "yes"))
+}
+
 /// Parse `<hints>` element for integer elements
 fn parse_int_hints(node: Node) -> IntegerHints {
     let mut slider = None;
@@ -512,15 +516,11 @@ fn parse_int_hints(node: Node) -> IntegerHints {
     for child in node.children().filter(|n| n.is_element()) {
         match child.tag_name().name() {
             "slider" => {
-                let immediate = child.attribute("immediate")
-                    .map(|v| v == "true" || v == "1")
-                    .unwrap_or(false);
+                let immediate = parse_slider_boolean_attribute(child.attribute("immediate"));
                 let tick_spacing = child.attribute("tickSpacing")
                     .and_then(|s| s.parse::<u32>().ok())
                     .unwrap_or(0);
-                let show_value = child.attribute("showValue")
-                    .map(|v| v == "true" || v == "1")
-                    .unwrap_or(false);
+                let show_value = parse_slider_boolean_attribute(child.attribute("showValue"));
                 slider = Some(SliderHints { immediate, tick_spacing, show_value });
             }
             "radiobutton" => radiobutton = true,
@@ -1191,6 +1191,29 @@ mod tests {
         assert!(slider.immediate);
         assert_eq!(slider.tick_spacing, 10);
         assert!(slider.show_value);
+    }
+
+    #[test]
+    fn test_parse_int_slider_boolean_attributes() {
+        for (attribute, expected) in [
+            ("true", true),
+            ("1", true),
+            ("yes", true),
+            ("false", false),
+            ("no", false),
+        ] {
+            let xml = format!(
+                r#"<cdi><segment space="253"><int size="1"><hints><slider immediate="{attribute}" showValue="{attribute}"/></hints></int></segment></cdi>"#
+            );
+            let cdi = parse_cdi(&xml).unwrap();
+            let DataElement::Int(element) = &cdi.segments[0].elements[0] else {
+                panic!("Expected Int")
+            };
+            let slider = element.hints.as_ref().unwrap().slider.as_ref().unwrap();
+
+            assert_eq!(slider.immediate, expected, "immediate={attribute}");
+            assert_eq!(slider.show_value, expected, "showValue={attribute}");
+        }
     }
 
     #[test]

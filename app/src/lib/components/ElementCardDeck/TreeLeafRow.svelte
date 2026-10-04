@@ -550,10 +550,10 @@
         <input
           type="range"
           class="field-input field-input--slider"
-          value={inputNum}
           min={leaf.constraints?.min ?? undefined}
           max={leaf.constraints?.max ?? undefined}
           step={leaf.hintSlider.tickSpacing > 0 ? leaf.hintSlider.tickSpacing : 1}
+          value={inputNum}
           disabled={isDisabled}
           aria-label={leaf.name}
           oninput={leaf.hintSlider.immediate ? handleIntInput : undefined}

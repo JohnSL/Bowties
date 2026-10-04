@@ -557,8 +557,14 @@ fn build_children(
                     value: e.default.map(|d| ConfigValue::Int { value: d }),
                     event_role: None,
                     constraints: Some(LeafConstraints {
-                        min: e.min.map(|v| v as f64),
-                        max: e.max.map(|v| v as f64),
+                        min: e
+                            .min
+                            .or_else(|| (e.size == 1).then_some(0))
+                            .map(|v| v as f64),
+                        max: e
+                            .max
+                            .or_else(|| (e.size == 1).then_some(255))
+                            .map(|v| v as f64),
                         default_value: e.default.map(|v| v.to_string()),
                         map_entries: e.map.as_ref().map(|m| {
                             m.entries
@@ -2188,6 +2194,41 @@ mod tests {
                 assert_eq!(entries[1].label, "On");
             }
             _ => panic!("Expected leaf"),
+        }
+    }
+
+    #[test]
+    fn one_byte_int_constraints_fill_missing_representation_bounds() {
+        let cases = [
+            ("", Some(0.0), Some(255.0)),
+            ("<min>10</min>", Some(10.0), Some(255.0)),
+            ("<max>200</max>", Some(0.0), Some(200.0)),
+            (
+                "<min>10</min><max>200</max>",
+                Some(10.0),
+                Some(200.0),
+            ),
+        ];
+
+        for (bounds, expected_min, expected_max) in cases {
+            let tree = tree_from_xml(&format!(
+                r#"<cdi>
+                    <segment space="253" origin="0">
+                        <name>Config</name>
+                        <int size="1">
+                            <name>Setting</name>
+                            {bounds}
+                        </int>
+                    </segment>
+                </cdi>"#
+            ));
+
+            let ConfigNode::Leaf(leaf) = &tree.segments[0].children[0] else {
+                panic!("Expected leaf");
+            };
+            let constraints = leaf.constraints.as_ref().expect("Expected constraints");
+            assert_eq!(constraints.min, expected_min, "bounds: {bounds}");
+            assert_eq!(constraints.max, expected_max, "bounds: {bounds}");
         }
     }
 
