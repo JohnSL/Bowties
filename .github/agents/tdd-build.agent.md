@@ -1,6 +1,7 @@
 ---
 description: TDD coordinator that implements ONE already-tasked slice via batched red+green cycles plus a single refactor, delegating to tdd-cycle and tdd-refactor workers so main-window growth stays constant per slice. Runs strictly downstream of /design and inside slices.md tracking.
 name: tdd-build
+model: gpt-5.6-terra
 user-invocable: false
 agents:
   - tdd-cycle
@@ -58,7 +59,11 @@ first:
    a materially different module set than the ones already in the batch.
    Behaviors that share modules reuse loaded context; behaviors that don't get
    a fresh worker.
-3. **Auto-narrow to 1.** Send a single behavior when it is flagged risky in
+3. **Toolchain and generation boundary.** Break the batch when the next
+   behavior changes toolchains, introduces a generator, or moves from an
+   authoring source to generated/shipping integration. Each gets its own
+   expected file surface and verification checkpoint.
+4. **Auto-narrow to 1.** Send a single behavior when it is flagged risky in
    the slice's architecture note (new seam, cross-layer coordination,
    concurrency, IPC), or when the previous batch escalated
    `architecture-first-fix`.
@@ -81,6 +86,8 @@ While behaviors remain:
     If tdd-cycle escalated architecture-first-fix:
       Stop. Return the structured evidence to /build for analysis and user review.
     Otherwise:
+        Compare actual changes with the pre-batch baseline and expected file
+        surface. Stop on any mismatch before starting another batch.
         Persist the batch summary (see Memory pruning) and continue.
 
 After all behaviors are green:
@@ -94,15 +101,18 @@ slice card, not aiwiki excerpts.
 Before accepting a cycle summary, confirm every completed behavior includes a
 RED failure for the expected reason, GREEN implementation files, and an
 affected-suite result. Confirm the reported touched files match the actual
-working-tree changes. Bounce a malformed or contradictory summary to the worker
-for correction instead of inferring missing evidence.
+working-tree changes and the declared expected surface. Perform this check
+after every batch, not only at slice completion. Bounce a malformed or
+contradictory summary to the worker for correction instead of inferring
+missing evidence.
 
 ## Delegation briefs (minimal input)
 
 - **tdd-cycle**: pass the slice title (short), the ordered batch of 1–3
   behaviors, per-behavior test location + framework, and the slice's
-  acceptance criteria for scope only. Note if the batch was narrowed to 1 for
-  risk.
+  acceptance criteria for scope only. For every behavior, pass its expected
+  test files, production owners, and explicitly allowed generated/docs output.
+  Note if the batch was narrowed to 1 for risk.
 - **tdd-refactor**: pass the set of files changed across the slice's cycles,
   the slice's acceptance criteria, and confirmation that all slice tests are
   green.
@@ -120,9 +130,10 @@ and test results are the durable evidence used to resume later.
 
 ## Model routing
 
-Delegated invocations inherit the currently selected model. Delegate for role
-separation and context isolation, not an assumed model hierarchy. Pin another
-model only after a measured workflow-specific reason is established.
+This coordinator, `tdd-cycle`, and `tdd-refactor` are pinned to GPT-5.6 Terra:
+the measured workflow requires reliable multi-file implementation without the
+autonomy breadth of Sol. Architecture analysis remains owned by
+`change-analyze`, which is pinned separately.
 
 ## Mid-slice surprises → stop, do not patch
 

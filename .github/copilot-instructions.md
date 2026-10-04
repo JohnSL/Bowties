@@ -29,7 +29,7 @@ These instructions are the always-on implementation contract for Bowties.
 Skills like `design`, `build`, and `architecture-first-fix` require reading many canonical files (aiwiki, ADRs, placement rules, glossary, GitHub issues). Gathering all of that in the main conversation burns context tokens that are better spent on decisions and implementation.
 
 - **Delegate read-heavy context gathering to subagents.** When a skill step requires reading 3+ canonical files or searching GitHub issues, use an `Explore` subagent to fetch and summarize the results. Work from the subagent's structured summary in the main conversation.
-- **Route subagent work by role and context.** Inherit the currently selected model by default. Delegate retrieval and mapping tasks (search, ownership scans, file triage, status summaries) to isolate read-heavy context; delegate ambiguous root-cause analysis or cross-ADR synthesis only when role separation is useful. Pin a different model only for a measured workflow-specific reason.
+- **Route subagent work by role and context.** Use GPT-5.6 Luna for read-only Explore retrieval/mapping and command-only Task workers; use GPT-5.6 Terra for `tdd-build`, `tdd-cycle`, and `tdd-refactor`; use GPT-5.6 Sol for `change-analyze` architecture synthesis. These pins reflect measured workflow needs. For agents outside those roles, inherit the currently selected model unless another measured reason justifies a pin.
 - **Cache build checks per conversation.** On the first slice of a build conversation, run pre-implementation checks via subagent and store temporary results in session memory (`/memories/session/`). Session memory is not cross-session or repository evidence: persist resumable progress in `specs/<feature>/slices.md`, and verify it against the working tree and tests when resuming.
 - **Deduplicate GitHub issue searches.** Search `kind/idea` issues once per conversation (or once per skill invocation), not once per step that mentions them. Reuse the results across steps.
 - **Keep decision points in-band.** Do NOT delegate user-facing presentations to subagents: option presentation (architecture-first-fix), finding review (design), HITL slice decisions (build), and TDD implementation loops must stay in the main conversation where the user can interact.
@@ -69,6 +69,15 @@ Skills like `design`, `build`, and `architecture-first-fix` require reading many
 
 ## Change Discipline
 
+- Before delegated implementation, record the working-tree baseline and give
+  the worker an expected file surface for each behavior. Verify the
+  baseline-relative changed-file set after every worker batch, not only at the
+  end of the change.
+- Do not run write-mode formatters or fixers (`cargo fmt`, `rustfmt`, Prettier
+  write mode, lint `--fix`, import organizers, code cleanup) unless the user
+  explicitly requests that operation. Validation does not require formatting.
+  Never allow a formatter to touch files outside the accepted behavior's
+  expected surface.
 - Prefer existing shared helpers, stores, orchestrators, and backend services over adding parallel variants.
 - Name the owner of each new workflow or lifecycle transition explicitly in code and tests.
 - Update tests and the durable product docs together when intentional behavior changes land.

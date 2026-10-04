@@ -1,6 +1,7 @@
 ---
 description: Architecture-first analysis worker. Investigates the seam, drafts options with required regression-class fields, runs the self-check, and returns a structured summary plus audit metadata. Serves /bugfix, /quickchange, /build HITL Part 2 (per numbered decision), and mid-slice escalations from tdd-cycle.
 name: change-analyze
+model: gpt-5.6-sol
 user-invocable: false
 agents:
   - Explore
@@ -57,9 +58,10 @@ than guessing.
 
 ### 1. Identify the seam
 
-Use `Explore` subagents to gather the following in parallel where that isolates
-a genuinely read-heavy investigation. Otherwise inspect the evidence directly.
-Delegated exploration inherits the selected model; do not assume a model tier:
+Use `Explore` subagents pinned to GPT-5.6 Luna to gather the following in
+parallel where that isolates a genuinely read-heavy investigation. Otherwise
+inspect the evidence directly. Luna is limited to retrieval and mapping; this
+Sol worker owns cross-source synthesis and option drafting:
 
 - Which layer(s) own the affected behavior per
   `product/architecture/code-placement-and-ownership.md`.

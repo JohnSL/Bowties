@@ -48,7 +48,13 @@ tests or production code inline in the main conversation.
    - **Test location + framework** per behavior: from the Seam summary's
      test-files list, mapped to Bowties testing context (Vitest for
      frontend, `cargo test` for backend/lcc-rs).
+   - **Expected file surface** per behavior: exact test files, production
+     owner files, and explicitly allowed generated output or documentation.
    - **Risk note** if the accepted option touches a risky seam.
+
+   Split invocations at module-owner, toolchain, generator, and generated-output
+   boundaries. Do not send one worker a combined Rust + Python + generated
+   shipping integration mission merely because they belong to one user story.
 
    Use `tdd-cycle`'s audit summary to conserve context; do not replay full test
    output unless verification fails. The caller still verifies the actual diff,
@@ -58,6 +64,10 @@ tests or production code inline in the main conversation.
    escalation, invoke `change-analyze` with mode `mid-slice-escalation` and the
    worker's structured evidence. Validate its return as in step 2, present the
    options to the user, and wait for a choice before re-invoking.
+
+   After every successful `tdd-cycle` invocation, compare the actual
+   baseline-relative changed-file set with that batch's expected surface.
+   Resolve any mismatch before invoking the next batch.
 
 6. **Verify repository state and run affected tests**: inspect the actual
    changed-file set and confirm it matches the worker report and accepted scope.

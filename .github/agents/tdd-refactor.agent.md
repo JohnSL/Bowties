@@ -1,6 +1,7 @@
 ---
 description: TDD Refactor phase — improve the structure of code just made green, with depth/placement guardrails, stopping for architecture-first-fix when a deeper seam problem surfaces.
 name: tdd-refactor
+model: gpt-5.6-terra
 user-invocable: false
 agents: []
 ---
@@ -16,6 +17,7 @@ you **stop and escalate** rather than patch through.
 ## Inputs
 
 - The set of files changed during the slice's cycles.
+- The worktree baseline and expected file surface for the slice.
 - The slice's acceptance criteria.
 - Confirmation that all slice tests are green.
 
@@ -30,6 +32,12 @@ you **stop and escalate** rather than patch through.
   re-run the affected tests before the next.
 - **No scope creep.** Do not absorb unrelated cleanup, new features, or
   duplication wider than the slice touched.
+- **No write-mode formatters or fixers.** Do not run `cargo fmt`, `rustfmt`,
+  Prettier write mode, lint `--fix`, import organizers, or package/workspace
+  cleanup commands. Refactor only the explicitly supplied changed files.
+- **Verify the boundary after each step.** Compare `git status --short` with
+  the supplied baseline. If an unrelated or undeclared file changes, stop and
+  report it; do not attempt a broad cleanup.
 
 ## What to improve
 
@@ -90,6 +98,7 @@ Escalation: none | architecture-first-fix on {seam}
   Evidence: {preserved behavior, expected seam, observed conflict, relevant
   files and diagnostics, likely principle at stake}
 Tests: {suite}: N passed, 0 failed
+Scope check: matched expected surface | stopped on {unexpected file/change}
 ```
 
 ## Checklist
@@ -99,3 +108,5 @@ Tests: {suite}: N passed, 0 failed
 - [ ] Duplication from green removed or routed to its shared owner.
 - [ ] Touched files free of dead code, stale imports, commented-out blocks.
 - [ ] Any deeper seam problem escalated, not patched.
+- [ ] No write-mode formatter or fixer was run.
+- [ ] Changed files stayed within the supplied expected file surface.

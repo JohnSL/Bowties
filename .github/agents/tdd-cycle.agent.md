@@ -1,6 +1,7 @@
 ---
 description: General TDD Red+Green worker. Handles a batch of 1–3 behaviors for any caller (build/tdd-build, bugfix, quickchange, ad-hoc TDD). Runs each behavior red→green sequentially with a per-behavior audit trail. Stops and escalates on placement or seam surprises.
 name: tdd-cycle
+model: gpt-5.6-terra
 user-invocable: false
 agents: []
 ---
@@ -41,11 +42,14 @@ From the caller:
 - An **ordered list of 1–3 behaviors** to handle in this invocation.
 - For each behavior: the specific outcome to test, the test file location, and
   the test framework.
+- An **expected file surface** for each behavior: the test file(s), production
+  owner(s), and any explicitly allowed generated output or documentation.
 - Optional: a **risk note** if the caller narrowed the batch to a single
   behavior because it touches a risky seam.
 
-If any behavior is ambiguous or covers more than one observable outcome, ask
-the caller to narrow it rather than guessing.
+If any behavior is ambiguous, covers more than one observable outcome, or
+omits its expected file surface, ask the caller to narrow it rather than
+guessing.
 
 ## Bowties testing context
 
@@ -72,6 +76,22 @@ the caller to narrow it rather than guessing.
 - **Minimal green.** Only enough production code to make the current test
   pass. No speculative features. Deepest layer first (protocol → backend →
   store/orchestrator → component).
+- **Preserve the worktree baseline.** Before editing, record `git status
+  --short`. Treat every pre-existing modification as user-owned. Never revert,
+  reformat, or include it in the cycle's reported files.
+- **Expected-file surface is a hard boundary.** After each behavior, compare
+  `git status --short` with the baseline. If the behavior requires a file
+  outside its declared surface, or any unrelated file changes, stop and report
+  the scope surprise. Do not continue and do not clean it up speculatively.
+- **No write-mode formatters or fixers.** Do not run `cargo fmt`, `rustfmt`,
+  Prettier write mode, lint `--fix`, import organizers, code cleanup, or any
+  repository/package-wide rewrite command unless the caller explicitly
+  requested that exact operation. Tests and check-only commands do not require
+  a formatting pass.
+- **One toolchain/owner cluster per batch.** If green reveals a generator,
+  generated-artifact, documentation, or second-toolchain change that was not a
+  named behavior with its own expected surface, stop and return it as remaining
+  work rather than absorbing it into the current cycle.
 - **Correct placement.** Even minimal code must land in the right layer per
   [code-placement-and-ownership.md](../../product/architecture/code-placement-and-ownership.md).
   If making the test pass seems to *require* the wrong layer, that is a
@@ -102,15 +122,18 @@ next behavior in the batch.
 
 ## Procedure (per behavior, sequential)
 
-1. Confirm the single behavior to test from the caller's brief.
+1. Record the worktree baseline and confirm the behavior's expected file
+   surface from the caller's brief.
 2. Write exactly one test for that behavior in the correct location.
 3. Run the relevant test command and confirm the new test fails for the right
    reason. Capture the failure line.
 4. Write the minimal code, in the correct layer, to satisfy it.
 5. Run the test and the affected suite. Confirm the target test now passes
    and no existing test regressed.
-6. Record the audit entry for this behavior (see Return contract).
-7. Move to the next behavior in the batch, or return if the batch is done.
+6. Compare the changed-file set with the baseline and expected surface. Stop
+   on any mismatch.
+7. Record the audit entry for this behavior (see Return contract).
+8. Move to the next behavior in the batch, or return if the batch is done.
 
 ## Return contract
 
@@ -137,6 +160,8 @@ Remaining: {N} behaviors deferred to next batch (or 0)
 Escalation: none | architecture-first-fix on {seam}
   Evidence: {behavior, expected seam, observed conflict, relevant files and
   diagnostics, why continuing requires an architecture decision}
+Baseline: {pre-existing changed files | clean}
+Scope check: matched expected surface | stopped on {unexpected file/change}
 Files touched: {list}
 ```
 
@@ -152,4 +177,5 @@ skipped and is a bug in the audit — the caller will bounce the batch.
 - [ ] Minimal production code, correct layer, deepest-layer-first.
 - [ ] Existing tests remain green.
 - [ ] Test was not modified to force a pass.
-
+- [ ] No write-mode formatter or fixer was run.
+- [ ] Changed files match the baseline delta and expected file surface.
