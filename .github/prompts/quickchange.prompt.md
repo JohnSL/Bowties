@@ -69,11 +69,15 @@ tests or production code inline in the main conversation.
    baseline-relative changed-file set with that batch's expected surface.
    Resolve any mismatch before invoking the next batch.
 
-6. **Verify repository state and run affected tests**: inspect the actual
-   changed-file set and confirm it matches the worker report and accepted scope.
-   Use the test mapping from the Seam summary to run all tests that cover the
+6. **Verify repository state and select validation**: inspect the
+   baseline-relative Bowties changed-file set and confirm it matches the worker
+   report and accepted scope. Select validation using
+   `product/quality/testing-strategy.md`. When source changed, use the test
+   mapping from the Seam summary to run all Bowties tests that cover the
    changed modules (broader than `tdd-cycle`'s per-behavior suite run), then
-   check current diagnostics.
+   check current diagnostics. Do not run application tests for
+   documentation/planning-only changes, and never execute tooling in a
+   reference repository.
 
 ## Post-Implementation (you are NOT done — complete these before summarizing)
 

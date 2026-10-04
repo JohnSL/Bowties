@@ -196,7 +196,11 @@ Before accepting a delegated slice result:
   followed by GREEN and affected-suite results.
 - Inspect the actual working-tree changed-file set and confirm it matches the
   worker's report and the slice boundary.
-- Run the promised aggregate tests and check current diagnostics in the caller.
+- Select validation from the baseline-relative Bowties changed-file set using
+  `product/quality/testing-strategy.md`. Run applicable aggregate tests and
+  diagnostics in Bowties only; do not run application tests for
+  documentation/planning-only changes or execute tooling in reference
+  repositories.
 - If a worker escalates, pass its evidence to `change-analyze` with mode
   `mid-slice-escalation`; workers do not draft or present architecture options.
 

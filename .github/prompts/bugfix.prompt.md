@@ -75,13 +75,16 @@ tests or production code inline in the main conversation.
    baseline-relative changed-file set with that batch's expected surface.
    Resolve any mismatch before invoking the next batch.
 
-6. **Verify repository state and run the full test suite** (main-window,
-   small): inspect the actual changed-file set and confirm it matches the
-   worker report and accepted scope. Run all tests, not just the ones mapped to
-   the changed module, then check current diagnostics. A bugfix that changes
-   observable behavior can break consumers the module-level mapping doesn't
-   cover. Also scan touched files for dead code, stale imports, or pattern
-   non-conformance introduced by the fix — fix in place if narrow and testable.
+6. **Verify repository state and select validation** (main-window, small):
+   inspect the baseline-relative Bowties changed-file set and confirm it
+   matches the worker report and accepted scope. Select validation using
+   `product/quality/testing-strategy.md`. For a source-changing bugfix, run the
+   full Bowties test suite, not just tests mapped to the changed module, then
+   check current diagnostics. Do not run application tests when the task
+   changes only documentation/planning content. Never execute tooling in a
+   reference repository. Also scan touched source files for dead code, stale
+   imports, or pattern non-conformance introduced by the fix — fix in place if
+   narrow and testable.
 
 ## Post-Implementation (you are NOT done — complete these before summarizing)
 

@@ -94,6 +94,11 @@ After all behaviors are green:
     Invoke tdd-refactor once with the changed-file set for the slice.
 ```
 
+All edits and project-tool commands must stay within the Bowties repository
+root. Reference repositories are read/search-only and must never be used as a
+test, build, generator, formatter, linter, package-manager, debugger, task, or
+Git working directory.
+
 Between invocations, work only from each worker's structured summary. Pass
 the next worker exactly what it needs — not the full transcript, not the
 slice card, not aiwiki excerpts.

@@ -23,6 +23,9 @@ you **stop and escalate** rather than patch through.
 
 ## Hard rules
 
+- **Bowties execution only.** All edits and commands must stay within the
+  Bowties repository root. Other workspace repositories are read/search-only
+  and must never be used to run project tooling.
 - **Never refactor while red.** Every test must be green before you start and
   after each step. If a refactor turns a test red, revert it immediately.
 - **Behavior-preserving only.** Refactoring changes structure, not behavior.

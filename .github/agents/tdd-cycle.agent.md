@@ -61,6 +61,10 @@ guessing.
 
 ## Hard rules
 
+- **Bowties execution only.** All edits and commands must stay within the
+  Bowties repository root. Other workspace repositories are read/search-only;
+  never execute their tests, builds, applications, generators, formatters,
+  linters, package managers, debuggers, tasks, or Git mutations.
 - **One behavior at a time, fully complete.** For each behavior: write one
   failing behavior contract (a parameterized test is allowed when it is the
   natural representation of that one outcome) → run → confirm failing → write

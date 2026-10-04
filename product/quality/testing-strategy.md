@@ -12,6 +12,27 @@ The goal is not even distribution of tests by file count. The goal is to protect
 - Keep tests aligned with ownership boundaries: stores for deterministic state, orchestrators for sequencing, components for rendering and emitted intent, routes for cross-component workflow behavior, backend tests for application workflow and persistence, and `lcc-rs` tests for protocol correctness.
 - When fixing a regression, encode the failure as a test before or alongside the implementation.
 - When intentional behavior changes land, update both tests and the relevant `product/` documents.
+- Run Bowties project tooling only from within the Bowties repository. Other workspace repositories are read/search-only compatibility references and must never be built, tested, run, generated, formatted, linted, debugged, package-managed, or mutated.
+
+## Selecting Validation From Changed Files
+
+Select validation from the baseline-relative files changed by the current task, excluding unrelated pre-existing user changes.
+
+Application validation is required when the task changes any of these:
+
+- production or test source
+- build scripts or toolchain configuration
+- dependency manifests or lockfiles
+- generated assets consumed by the shipped application
+- profiles, schemas, or configuration consumed at runtime
+
+Choose the narrowest applicable tests, builds, type checks, or artifact validators for those files. A text-based extension such as Markdown, YAML, JSON, XML, or HTML does not by itself make a file documentation-only.
+
+Do not run application tests, builds, type checks, coverage, or runtime diagnostics when the task changes only documentation, planning, or code-navigation content under `docs/**`, `specs/**`, `product/**`, or `aiwiki/**`. Run an artifact-specific check only when one exists and applies, such as a link, schema, customization, or rendering check.
+
+When application tests are not applicable, report:
+
+`Tests not run: changed files contain no source, test, dependency, build, generated runtime asset, or runtime configuration changes.`
 
 ## Test Layers
 

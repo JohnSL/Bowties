@@ -10,6 +10,15 @@ $ARGUMENTS
 
 You **MUST** consider the user input before proceeding (if not empty).
 
+## Repository Boundary
+
+The repository containing `.github/copilot-instructions.md` is Bowties and is
+the only workspace repository where this agent may edit files or execute
+project tooling. Resolve all project detection from that repository root.
+Other workspace repositories are read/search-only references: never run their
+tests, builds, applications, generators, formatters, linters, package managers,
+debuggers, tasks, or Git mutations.
+
 ## Outline
 
 1. Run `.specify/scripts/powershell/check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks` from repo root and parse FEATURE_DIR and AVAILABLE_DOCS list. All paths must be absolute. For single quotes in args like "I'm Groot", use escape syntax: e.g 'I'\''m Groot' (or double-quote if possible: "I'm Groot").
@@ -128,7 +137,12 @@ You **MUST** consider the user input before proceeding (if not empty).
 9. Completion validation:
    - Verify all required tasks are completed
    - Check that implemented features match the original specification
-   - Validate that tests pass and coverage meets requirements
+   - Classify the baseline-relative Bowties task changes using
+     `product/quality/testing-strategy.md`
+   - When source or runtime-consumed files changed, validate that the
+     applicable Bowties tests pass and coverage requirements are met
+   - When changes are documentation/planning-only, do not run application
+     tests; report the documented not-run reason
    - Confirm the implementation follows the technical plan
    - Report final status with summary of completed work
 

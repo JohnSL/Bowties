@@ -2,6 +2,14 @@
 
 These instructions are the always-on implementation contract for Bowties.
 
+## Repository And Execution Boundary
+
+- The repository containing this file is the Bowties repository (`JohnSL/Bowties`) and is the only repository in the workspace where files may be changed or project tooling may be executed.
+- Resolve and verify the Bowties repository root before running commands that execute project code. Every edit and every command working directory must remain under that root.
+- All other workspace repositories, including `JMRI/` and `OpenLCB_Java/`, are read/search-only compatibility references. Inspecting their files and history is allowed; changing their state is not.
+- Never run tests, builds, applications, generators, formatters, linters, package managers, debuggers, VS Code tasks, or Git mutations in a reference repository.
+- Never run workspace-wide commands or tasks unless their scope is demonstrably confined to Bowties. If a command's repository scope cannot be proven before execution, stop rather than run it.
+
 ## Source Of Truth
 
 - Treat `product/` as the durable source of truth for current product behavior, workflows, architecture boundaries, and testing strategy once that folder exists.
@@ -21,7 +29,7 @@ These instructions are the always-on implementation contract for Bowties.
 - Apply YAGNI by preferring the smallest explicit abstraction that solves the current problem. Do not add generic frameworks or speculative layers without multiple real call sites.
 - Apply TDD for production behavior changes: add or update a focused test around the behavior seam first when practical, then implement the smallest change that makes it pass.
 - **Delegate TDD through the workflow's designated worker by default.** Feature slices under `/build` invoke `tdd-build`, which coordinates `tdd-cycle` and `tdd-refactor`. Bugfixes, quick changes, and ad-hoc TDD invoke `tdd-cycle` directly with a batch of 1–3 behaviors (test location + framework per behavior). Inline TDD is reserved for a single trivial behavior where delegation overhead exceeds the savings.
-- **Verify delegated implementation in the caller.** A worker summary conserves context; it is not proof by itself. After delegated edits, inspect the actual changed-file set, confirm it matches the requested scope, run the promised aggregate tests, and check current diagnostics before reporting success.
+- **Verify delegated implementation in the caller.** A worker summary conserves context; it is not proof by itself. After delegated edits, inspect the baseline-relative Bowties changed-file set, confirm it matches the requested scope, and select validation using `product/quality/testing-strategy.md`. Run applicable aggregate tests and diagnostics before reporting success; do not run application tests for documentation/planning-only changes.
 - When fixing a regression, encode the regression as a behavior contract in tests and update the durable product docs if the user-visible behavior or ownership rule is part of the fix.
 
 ## Context Conservation
@@ -64,7 +72,7 @@ Skills like `design`, `build`, and `architecture-first-fix` require reading many
 
 - In `lcc-rs/**`, prioritize protocol correctness, transport clarity, public API stability, and test coverage over app-specific convenience shortcuts.
 - Avoid leaking Bowties UI or app workflow assumptions into the protocol library.
-- When implementing LCC/OpenLCB protocol behavior, consult `OpenLCB_Java/` and `JMRI/` in this workspace as reference implementations for expected protocol behavior and usage patterns.
+- When implementing LCC/OpenLCB protocol behavior, consult `OpenLCB_Java/` and `JMRI/` in this workspace as read/search-only reference implementations for expected protocol behavior and usage patterns. Never edit them or execute their tooling.
 - **JMRI (`OpenLCB_Java`) is the primary compatibility target for on-wire behaviour** (ADR-0019). The written standards define message *semantics*; JMRI defines the *behavioural policy* real-world peers have been debugged against. Where the standard permits a behaviour but JMRI does not use it, prefer JMRI's subset. "The standard allows X" is not by itself a reason to emit X on the wire. When adding new emit/transmit sites in `lcc-rs/`, cite the equivalent JMRI behaviour (or record that JMRI does nothing) in the associated ADR or an `aiwiki/` note. Known divergences we deliberately mirror are tracked in `aiwiki/architecture-health.md` under "JMRI-alignment audit candidates".
 
 ## Change Discipline

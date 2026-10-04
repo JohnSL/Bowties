@@ -15,3 +15,6 @@ Files in this scope are the durable product docs for current behavior, workflows
 - When describing a regression seam, state the protected behavior and the test surface that should guard it.
 - Keep SOLID, DRY, YAGNI, and TDD concrete. Describe the actual ownership rule, shared helper, minimal abstraction, or expected test rather than repeating the acronym alone.
 - If a document conflicts with current implementation, either update it or mark it as stale immediately.
+- When the baseline-relative task changes are confined to `product/**`, do not run Bowties application tests, builds, type checks, coverage, or runtime diagnostics. Run only applicable documentation or customization validation.
+- If the task also changes executable or runtime-consumed files, select validation for the complete task change set using `product/quality/testing-strategy.md`.
+- When application tests are not applicable, report: `Tests not run: changed files contain no source, test, dependency, build, generated runtime asset, or runtime configuration changes.`
