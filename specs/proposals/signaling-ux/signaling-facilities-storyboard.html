@@ -1,0 +1,2152 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signaling facilities — Mast, Plant, and Line storyboard</title>
+<style>
+  :root {
+    --bg-app: #f5f5f5;
+    --bg-panel: #ffffff;
+    --bg-subtle: #fafafa;
+    --bg-selected: #ebf3fc;
+    --border: #d1d1d1;
+    --border-strong: #b8b8b8;
+    --text: #242424;
+    --text-secondary: #424242;
+    --text-muted: #616161;
+    --brand: #0f6cbd;
+    --brand-hover: #115ea3;
+    --brand-soft: #f0f6fc;
+    --success: #107c10;
+    --success-bg: #f1faf1;
+    --warning: #8a4b08;
+    --warning-bg: #fff7e6;
+    --danger: #c50f1f;
+    --rail: #56606d;
+    --signal: #c50f1f;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    padding: 32px;
+    color: var(--text);
+    background: var(--bg-app);
+    font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  button, input { font: inherit; }
+  a { color: var(--brand); }
+  h1 { margin: 0 0 6px; font-size: 24px; line-height: 1.2; }
+  h2 { margin: 0 0 5px; font-size: 18px; }
+  h3 { margin: 0 0 8px; font-size: 14px; }
+  p { margin: 0; }
+
+  .page {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  .page-subtitle {
+    max-width: 930px;
+    color: var(--text-secondary);
+    font-size: 14px;
+  }
+  .proposal-banner {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    margin: 20px 0 24px;
+    padding: 13px 15px;
+    border: 1px solid #9cc4e8;
+    border-radius: 7px;
+    background: var(--brand-soft);
+  }
+  .proposal-label {
+    flex: 0 0 auto;
+    padding: 2px 8px;
+    border-radius: 999px;
+    color: #fff;
+    background: var(--brand);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+  }
+  .proposal-banner strong { display: block; margin-bottom: 2px; }
+
+  .toc {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 34px;
+  }
+  .toc a {
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    background: #fff;
+    text-decoration: none;
+    font-size: 12px;
+  }
+  .toc a:hover { border-color: var(--brand); color: var(--brand); }
+
+  .section {
+    margin: 0 0 48px;
+    scroll-margin-top: 18px;
+  }
+  .section-head {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 14px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--border);
+  }
+  .section-caption {
+    max-width: 830px;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+  .object-tag { display: none; }
+
+  .window {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .titlebar { display: none; }
+  .titlebar-dots { display: flex; gap: 5px; }
+  .titlebar-dots span {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #626873;
+  }
+  .window-body { padding: 0; }
+
+  .dialog {
+    width: min(760px, 100%);
+    margin: 0 auto;
+    overflow: hidden;
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    background: #fff;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, .12);
+  }
+  .dialog.wide { width: min(1120px, 100%); }
+  .dialog-head {
+    padding: 13px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .dialog-body { padding: 17px 18px; }
+  .dialog-foot {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 11px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-subtle);
+  }
+  .dialog-foot-spacer { flex: 1; }
+  .btn {
+    min-height: 30px;
+    padding: 5px 13px;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    color: var(--text);
+    background: #fff;
+    cursor: pointer;
+  }
+  .btn:hover { background: #f5f5f5; }
+  .btn-primary {
+    border-color: var(--brand);
+    color: #fff;
+    background: var(--brand);
+  }
+  .btn-primary:hover { background: var(--brand-hover); }
+
+  .field-label {
+    margin: 0 0 7px;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .055em;
+    text-transform: uppercase;
+  }
+  .choice-stack { display: grid; gap: 9px; }
+  .facility-choice {
+    display: grid;
+    grid-template-columns: 26px 56px minmax(0, 1fr);
+    gap: 12px;
+    align-items: center;
+    min-height: 82px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    cursor: pointer;
+  }
+  .facility-choice:hover { border-color: #7caed7; }
+  .facility-choice.selected {
+    border-color: var(--brand);
+    background: var(--bg-selected);
+    box-shadow: inset 3px 0 0 var(--brand);
+  }
+  .facility-choice input { width: 16px; height: 16px; accent-color: var(--brand); }
+  .facility-choice svg { width: 56px; height: 42px; }
+  .choice-title { font-weight: 650; font-size: 14px; }
+  .choice-desc { margin-top: 2px; color: var(--text-secondary); font-size: 12px; }
+  .choice-examples { margin-top: 3px; color: var(--text-muted); font-size: 11px; }
+  .choice-kind {
+    display: none;
+  }
+  .add-facility-dialog { width: min(480px, 100%); border-radius: 8px; }
+  .add-facility-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 18px;
+  }
+  .add-facility-close {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    color: var(--text-secondary);
+    background: transparent;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .add-facility-close:hover { background: #f2f2f2; }
+  .add-facility-label {
+    display: block;
+    margin: 0 0 4px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .add-facility-list {
+    display: block;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  .add-facility-choice {
+    display: grid;
+    grid-template-columns: 16px 44px minmax(0, 1fr);
+    gap: 9px;
+    align-items: center;
+    min-height: 58px;
+    padding: 7px 10px;
+    border: 0;
+    border-radius: 0;
+    border-bottom: 1px solid #f0f0f0;
+    background: #fff;
+    cursor: pointer;
+  }
+  .add-facility-choice:last-child { border-bottom: 0; }
+  .add-facility-choice:hover { background: #f5f5f5; }
+  .add-facility-choice.selected { background: #eef4ff; }
+  .add-facility-choice input { width: 14px; height: 14px; margin: 0; accent-color: var(--brand); }
+  .add-facility-choice svg { width: 44px; height: 34px; }
+  .add-facility-choice .choice-title { font-size: 13px; }
+  .add-facility-choice .choice-desc { font-size: 11px; }
+  .add-facility-choice .choice-examples { font-size: 10px; }
+  .add-facility-name { display: block; margin-top: 14px; }
+  .add-facility-name input {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    color: var(--text);
+    background: #fff;
+    font: inherit;
+  }
+  .add-facility-dialog .dialog-foot {
+    justify-content: flex-end;
+    padding: 12px 18px;
+  }
+
+  .meaning-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-top: 18px;
+  }
+  .meaning-card {
+    padding: 13px 14px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+  }
+  .meaning-card strong { display: block; margin-bottom: 4px; }
+  .meaning-card p { color: var(--text-secondary); font-size: 12px; }
+
+  .stepper {
+    display: flex;
+    gap: 0;
+    margin: 0 0 18px;
+  }
+  .step {
+    flex: 1;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-right: 0;
+    color: var(--text-muted);
+    background: var(--bg-subtle);
+    white-space: nowrap;
+    font-size: 11px;
+  }
+  .step:first-child { border-radius: 5px 0 0 5px; }
+  .step:last-child { border-right: 1px solid var(--border); border-radius: 0 5px 5px 0; }
+  .step.done { color: #166534; background: #eefaf4; }
+  .step.active {
+    border-color: var(--brand);
+    color: var(--text);
+    background: var(--bg-selected);
+    font-weight: 650;
+  }
+  .step-n {
+    margin-right: 5px;
+    font-weight: 700;
+    font-size: 10px;
+  }
+
+  .wizard-frame { margin-top: 28px; }
+  .wizard-frame:first-of-type { margin-top: 0; }
+  .frame-heading {
+    margin: 0 0 10px;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+  .frame-heading strong { color: var(--text); }
+  .form-row {
+    display: grid;
+    grid-template-columns: 190px 1fr;
+    gap: 12px;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid #eceef1;
+  }
+  .form-row:last-child { border-bottom: 0; }
+  .form-row label { color: var(--text-secondary); font-size: 12px; }
+  .input, select {
+    width: 100%;
+    min-height: 30px;
+    padding: 5px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    color: var(--text);
+    background: #fff;
+  }
+  .signal-list {
+    display: grid;
+    grid-template-columns: 34px 1fr 90px;
+    align-items: center;
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: #fff;
+  }
+  .signal-list > div {
+    min-height: 38px;
+    padding: 8px 9px;
+    border-bottom: 1px solid #eceef1;
+  }
+  .signal-list > div:nth-last-child(-n + 3) { border-bottom: 0; }
+  .signal-number { color: var(--brand); font-weight: 700; text-align: center; }
+  .signal-status { color: var(--success); font-size: 11px; }
+  .mast-preview {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+  .mast-head {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 5px 3px;
+    border-radius: 999px;
+    background: #20242a;
+  }
+  .lamp {
+    width: 12px;
+    height: 12px;
+    border: 1px solid #505660;
+    border-radius: 50%;
+    background: #343940;
+  }
+  .lamp.red { background: #df2020; }
+  .lamp.yellow { background: #e0a800; }
+  .lamp.green { background: #17a65b; }
+  .mast-post { width: 3px; height: 14px; background: #737b86; }
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+  .summary-card {
+    padding: 11px 12px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg-subtle);
+  }
+  .summary-card strong { display: block; margin-bottom: 3px; }
+  .summary-card span { color: var(--text-muted); font-size: 11px; }
+  .segmented {
+    display: flex;
+    gap: 0;
+    margin-bottom: 12px;
+  }
+  .segment {
+    flex: 1;
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-right: 0;
+    color: var(--text-secondary);
+    background: #fff;
+    text-align: center;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .segment:first-child { border-radius: 4px 0 0 4px; }
+  .segment:last-child { border-right: 1px solid var(--border); border-radius: 0 4px 4px 0; }
+  .segment.selected { border-color: var(--brand); color: var(--brand-hover); background: var(--bg-selected); font-weight: 650; }
+  .segment input { position: absolute; opacity: 0; pointer-events: none; }
+  .mast-tabs {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .mast-tab {
+    padding: 5px 9px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    background: #fff;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .mast-tab.selected { border-color: var(--brand); color: var(--brand-hover); background: var(--bg-selected); font-weight: 650; }
+  .mast-tab .issue-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-left: 4px;
+    border-radius: 50%;
+    background: #d17b0f;
+  }
+  .context-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 13px;
+  }
+  .context-item {
+    padding: 8px 9px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-subtle);
+    font-size: 11px;
+  }
+  .context-item strong { display: block; color: var(--text-muted); font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }
+  .rulebook-panel {
+    margin-top: 10px;
+    padding: 11px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg-subtle);
+  }
+  .rulebook-tools { display: flex; gap: 6px; margin-bottom: 7px; }
+  .rulebook-list {
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: #fff;
+  }
+  .rulebook-entry {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 7px 9px;
+    border-bottom: 1px solid #eceef1;
+    font-size: 11px;
+  }
+  .rulebook-entry:last-child { border-bottom: 0; }
+  .rulebook-entry.selected { background: var(--bg-selected); }
+  .badge {
+    margin-left: auto;
+    padding: 1px 6px;
+    border-radius: 999px;
+    color: #854d0e;
+    background: #fef3c7;
+    font-size: 9px;
+    font-weight: 700;
+  }
+  .speed-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+    color: var(--text-muted);
+    font-size: 10px;
+  }
+  .speed-pair span { padding: 4px 6px; border-radius: 3px; background: #f4f5f7; }
+  .capacity-bar {
+    height: 6px;
+    margin-top: 5px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #e5e7eb;
+  }
+  .capacity-bar span { display: block; height: 100%; background: var(--brand); }
+  .binding-route {
+    margin-top: 10px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: #fff;
+  }
+  .binding-route-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 7px; }
+  .binding-route-head span { color: var(--text-muted); font-size: 10px; }
+  .driver-grid {
+    display: grid;
+    grid-template-columns: 1fr 140px;
+    gap: 5px 10px;
+    align-items: center;
+    font-size: 11px;
+  }
+  .driver-grid select { min-height: 26px; padding: 3px 6px; font-size: 11px; }
+  .validation-list { display: grid; gap: 5px; }
+  .validation-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 7px 9px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: #fff;
+    font-size: 11px;
+  }
+  .validation-row.ok::before { content: "✓"; color: var(--success); font-weight: 800; }
+  .validation-row.warn::before { content: "!"; color: #d17b0f; font-weight: 800; }
+  .facility-card {
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+  }
+  .facility-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .facility-actions { display: flex; gap: 6px; }
+
+  .two-col {
+    display: grid;
+    grid-template-columns: minmax(0, .9fr) minmax(420px, 1.25fr);
+    gap: 22px;
+  }
+  .panel {
+    padding: 14px 15px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+  }
+  .panel.subtle { background: var(--bg-subtle); }
+  .panel + .panel { margin-top: 12px; }
+  .radio-choice {
+    display: flex;
+    gap: 9px;
+    align-items: flex-start;
+    margin-top: 8px;
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: #fff;
+  }
+  .radio-choice.selected { border-color: var(--brand); background: var(--bg-selected); }
+  .radio-choice input { margin-top: 2px; accent-color: var(--brand); }
+  .radio-title { font-weight: 600; }
+  .radio-desc { color: var(--text-muted); font-size: 11px; }
+
+  .diagram {
+    min-height: 170px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background:
+      linear-gradient(#fff, #fff) padding-box,
+      repeating-linear-gradient(0deg, transparent, transparent 23px, #edf0f3 24px),
+      repeating-linear-gradient(90deg, transparent, transparent 23px, #edf0f3 24px);
+  }
+  .diagram svg { display: block; width: 100%; height: auto; }
+  .diagram-caption {
+    margin-top: 8px;
+    color: var(--text-muted);
+    text-align: center;
+    font-size: 11px;
+  }
+
+  .note {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-left: 3px solid var(--brand);
+    border-radius: 3px;
+    color: var(--text-secondary);
+    background: var(--brand-soft);
+    font-size: 12px;
+  }
+  .note.warning { border-color: #d17b0f; background: var(--warning-bg); }
+  .note.success { border-color: var(--success); background: var(--success-bg); }
+  .mockup-note {
+    width: min(1120px, 100%);
+    margin: 9px auto 0;
+    padding: 8px 11px;
+    border: 1px dashed #c58b36;
+    border-radius: 4px;
+    color: var(--text-muted);
+    background: #fffaf0;
+    font-size: 11px;
+  }
+  .mockup-note strong {
+    color: #8a4b08;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    font-size: 9px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  th {
+    padding: 7px 9px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-muted);
+    background: #f4f5f7;
+    text-align: left;
+    font-size: 10px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  td { padding: 8px 9px; border-bottom: 1px solid #eceef1; vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  .aspect { font-weight: 650; }
+  .aspect.stop { color: var(--danger); }
+  .aspect.approach { color: #8a5b00; }
+  .aspect.clear { color: var(--success); }
+
+  .tile-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 9px;
+  }
+  .shape-tile {
+    min-height: 105px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+  }
+  .shape-tile.selected { border-color: var(--brand); background: var(--bg-selected); }
+  .shape-tile.deferred { opacity: .65; }
+  .shape-tile svg { width: 100%; height: 42px; }
+  .shape-title { font-weight: 650; font-size: 12px; }
+  .shape-desc { color: var(--text-muted); font-size: 10px; }
+
+  .mode-switch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .mode-switch label {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: #fff;
+    cursor: pointer;
+  }
+  .mode-switch label.selected { border-color: var(--brand); background: var(--bg-selected); }
+  .mode-switch input { margin-top: 2px; accent-color: var(--brand); }
+  .mode-panel[hidden] { display: none; }
+
+  .ownership-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+  .ownership-card {
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+  }
+  .ownership-card h3 {
+    margin: 0;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    background: #f4f5f7;
+  }
+  .ownership-card div { padding: 11px 12px; font-size: 12px; }
+  .ownership-card ul { margin: 7px 0 0; padding-left: 18px; }
+
+  .decision-table td:first-child { width: 22%; font-weight: 650; }
+  .decision-table td:nth-child(2) { width: 38%; }
+  .status {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .status.settled { color: #166534; background: #dcfce7; }
+  .status.testing { color: #854d0e; background: #fef3c7; }
+
+  @media (max-width: 850px) {
+    body { padding: 18px; }
+    .two-col, .meaning-grid, .ownership-grid { grid-template-columns: 1fr; }
+    .tile-grid { grid-template-columns: 1fr 1fr; }
+    .facility-choice { grid-template-columns: 24px 50px minmax(0, 1fr); }
+    .choice-kind { display: none; }
+  }
+  @media (max-width: 560px) {
+    .mode-switch, .tile-grid { grid-template-columns: 1fr; }
+    .window-body { padding: 15px; }
+    .section-head { display: block; }
+    .object-tag { display: inline-block; margin-top: 7px; }
+  }
+</style>
+</head>
+<body>
+<main class="page">
+  <header>
+    <h1>Signaling facilities — Mast, Plant, and Line</h1>
+    <p class="page-subtitle">
+      A clean storyboard for the facility-first direction: add a named facility using the existing
+      entry point, show Bowties the railroad, and let Bowties derive the repeated signal relationships.
+    </p>
+  </header>
+
+  <div class="proposal-banner">
+    <span class="proposal-label">Exploratory</span>
+    <div>
+      <strong>This mockup tests a three-way entrance, not a settled domain model.</strong>
+      Signal Mast and Signal Plant retain their established meanings. Signal Line is the working
+      name for automatic signals along plain track; the mockup tests whether modelers recognize
+      that job before Bowties commits to a persistent Line or Territory object.
+    </div>
+  </div>
+
+  <nav class="toc" aria-label="Storyboard sections">
+    <a href="#choose">Add facility</a>
+    <a href="#mast">Signal Mast</a>
+    <a href="#plant">Signal Plant</a>
+    <a href="#line">Signal Line</a>
+    <a href="#handoff">How they connect</a>
+    <a href="#decisions">Decisions under test</a>
+  </nav>
+
+  <section class="section" id="choose">
+    <div class="section-head">
+      <div>
+        <h2>1. Add facility</h2>
+        <p class="section-caption">
+          Bowties already creates facilities by choosing a behavior template and entering a name.
+          This mockup adds three signaling templates alongside the existing Block Indicator;
+          the selected signaling template opens its dedicated wizard after the facility is added.
+        </p>
+      </div>
+      <span class="object-tag">Entry point</span>
+    </div>
+
+    <div class="window">
+      <div class="titlebar">
+        <span class="titlebar-dots"><span></span><span></span><span></span></span>
+        Bowties · Layout
+      </div>
+      <div class="window-body" style="background:#eceff2;padding:32px 20px">
+        <div class="dialog add-facility-dialog">
+          <div class="dialog-head add-facility-head">
+            <span>Add facility</span>
+            <button class="add-facility-close" aria-label="Close">×</button>
+          </div>
+          <div class="dialog-body">
+            <div class="add-facility-label">Behavior template</div>
+            <div class="add-facility-list" data-facility-choices="">
+              <label class="add-facility-choice facility-choice" data-target="">
+                <input type="radio" name="facility-type" value="indicator">
+                <svg viewBox="0 0 56 42" aria-hidden="true">
+                  <rect x="7" y="7" width="42" height="28" rx="3" fill="#edf0f3" stroke="#737b86" stroke-width="2"></rect>
+                  <circle cx="21" cy="21" r="6" fill="#e0a800" stroke="#20242a" stroke-width="2"></circle>
+                  <line x1="32" y1="17" x2="44" y2="17" stroke="#737b86" stroke-width="2"></line>
+                  <line x1="32" y1="24" x2="41" y2="24" stroke="#737b86" stroke-width="2"></line>
+                </svg>
+                <div>
+                  <div class="choice-title">Block Indicator</div>
+                  <div class="choice-desc">A panel light that follows one block's occupancy.</div>
+                </div>
+              </label>
+
+              <label class="add-facility-choice facility-choice selected" data-target="mast">
+                <input type="radio" name="facility-type" value="mast" checked="">
+                <svg viewBox="0 0 56 42" aria-hidden="true">
+                  <line x1="7" y1="33" x2="49" y2="33" stroke="#56606d" stroke-width="2"></line>
+                  <line x1="28" y1="33" x2="28" y2="13" stroke="#737b86" stroke-width="3"></line>
+                  <rect x="21" y="4" width="14" height="18" rx="7" fill="#20242a"></rect>
+                  <circle cx="28" cy="10" r="3.2" fill="#17a65b"></circle>
+                  <circle cx="28" cy="17" r="3.2" fill="#343940"></circle>
+                </svg>
+                <div>
+                  <div class="choice-title">Signal Mast</div>
+                  <div class="choice-desc">One signal at a location.</div>
+                  <div class="choice-examples">Block signal · distant · boundary · one signal at a turnout</div>
+                </div>
+              </label>
+
+              <label class="add-facility-choice facility-choice" data-target="plant">
+                <input type="radio" name="facility-type" value="plant">
+                <svg viewBox="0 0 56 42" aria-hidden="true">
+                  <line x1="3" y1="30" x2="53" y2="30" stroke="#56606d" stroke-width="2"></line>
+                  <line x1="16" y1="30" x2="23" y2="13" stroke="#56606d" stroke-width="2"></line>
+                  <line x1="23" y1="13" x2="35" y2="13" stroke="#56606d" stroke-width="2"></line>
+                  <line x1="35" y1="13" x2="42" y2="30" stroke="#56606d" stroke-width="2"></line>
+                  <circle cx="10" cy="36" r="2.6" fill="#c50f1f"></circle>
+                  <circle cx="46" cy="36" r="2.6" fill="#c50f1f"></circle>
+                  <circle cx="23" cy="7" r="2.6" fill="#c50f1f"></circle>
+                  <circle cx="35" cy="7" r="2.6" fill="#c50f1f"></circle>
+                </svg>
+                <div>
+                  <div class="choice-title">Signal Plant</div>
+                  <div class="choice-desc">Multiple coordinated signals around trackwork.</div>
+                  <div class="choice-examples">Passing siding · interlocking · crossover · diamond</div>
+                </div>
+              </label>
+
+              <label class="add-facility-choice facility-choice" data-target="line">
+                <input type="radio" name="facility-type" value="line">
+                <svg viewBox="0 0 56 42" aria-hidden="true">
+                  <line x1="3" y1="28" x2="53" y2="28" stroke="#56606d" stroke-width="2"></line>
+                  <line x1="15" y1="28" x2="15" y2="13" stroke="#737b86" stroke-width="2"></line>
+                  <circle cx="15" cy="9" r="4" fill="#17a65b" stroke="#20242a" stroke-width="2"></circle>
+                  <line x1="31" y1="28" x2="31" y2="13" stroke="#737b86" stroke-width="2"></line>
+                  <circle cx="31" cy="9" r="4" fill="#e0a800" stroke="#20242a" stroke-width="2"></circle>
+                  <line x1="47" y1="28" x2="47" y2="13" stroke="#737b86" stroke-width="2"></line>
+                  <circle cx="47" cy="9" r="4" fill="#c50f1f" stroke="#20242a" stroke-width="2"></circle>
+                </svg>
+                <div>
+                  <div class="choice-title">Signal Line</div>
+                  <div class="choice-desc">Automatic signals along a stretch of track.</div>
+                  <div class="choice-examples">Directional ABS · bidirectional/APB coordination</div>
+                </div>
+              </label>
+            </div>
+
+            <label class="add-facility-name">
+              <span class="add-facility-label">Name</span>
+              <input type="text" value="Milepost 41.2 — Eastward">
+            </label>
+          </div>
+          <div class="dialog-foot">
+            <button class="btn">Cancel</button>
+            <button class="btn btn-primary" data-continue="">Add facility</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="meaning-grid">
+      <div class="meaning-card">
+        <strong>Mast answers “what should this one signal do?”</strong>
+        <p>It may consider a block, a downstream signal, or a local turnout without becoming a Plant.</p>
+      </div>
+      <div class="meaning-card">
+        <strong>Plant answers “how does this location work?”</strong>
+        <p>It derives and coordinates several home signals from one recognizable track arrangement.</p>
+      </div>
+      <div class="meaning-card">
+        <strong>Line answers “how is this stretch signaled?”</strong>
+        <p>It orders blocks and derives the repeated same-direction or opposing-direction relationships.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="mast">
+    <div class="section-head">
+      <div>
+        <h2>2. Signal Mast wizard — one signal, start to finish</h2>
+        <p class="section-caption">
+          This walkthrough configures the named facility created above as an automatic block signal
+          on plain track. Its protected block is simple, but its vocabulary may preserve speed or
+          route information cascaded from the next signal or Plant. The Mast does not solve those
+          downstream routes; it translates their semantic result into an indication and display.
+        </p>
+      </div>
+      <span class="object-tag">One signal</span>
+    </div>
+
+    <div class="wizard-frame">
+      <p class="frame-heading"><strong>Step 1 of 5 — Purpose.</strong> Choose the job performed by this one signal.</p>
+      <div class="dialog wide">
+        <div class="dialog-head">Milepost 41.2 — Eastward · purpose</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step active"><span class="step-n">1</span>Purpose</div>
+            <div class="step"><span class="step-n">2</span>Aspects</div>
+            <div class="step"><span class="step-n">3</span>Display</div>
+            <div class="step"><span class="step-n">4</span>Bindings</div>
+            <div class="step"><span class="step-n">5</span>Confirm</div>
+          </div>
+          <div class="two-col">
+            <div class="panel subtle">
+              <div class="field-label">What kind of signal is this?</div>
+              <label class="radio-choice selected">
+                <input type="radio" name="mast-purpose" checked="">
+                <span><span class="radio-title">Automatic block signal</span><br>
+                <span class="radio-desc">Protects one block and may warn about the next signal.</span></span>
+              </label>
+              <label class="radio-choice">
+                <input type="radio" name="mast-purpose">
+                <span><span class="radio-title">Distant or advance signal</span><br>
+                <span class="radio-desc">Warns about a signal ahead without protecting its own block.</span></span>
+              </label>
+              <label class="radio-choice">
+                <input type="radio" name="mast-purpose">
+                <span><span class="radio-title">Boundary or stopping-point signal</span><br>
+                <span class="radio-desc">Marks a yard limit, territory boundary, bridge, or holdout.</span></span>
+              </label>
+            </div>
+            <div class="diagram">
+              <svg viewBox="0 0 620 180" role="img" aria-label="One signal protecting a block on plain track">
+                <text x="330" y="28" text-anchor="middle" font-size="12" fill="#616161">Protected block</text>
+                <rect x="145" y="40" width="370" height="92" rx="8" fill="rgba(15,108,189,.045)" stroke="#94b9da" stroke-dasharray="5 4"></rect>
+                <line x1="35" y1="96" x2="585" y2="96" stroke="#56606d" stroke-width="4"></line>
+                <line x1="106" y1="96" x2="106" y2="61" stroke="#737b86" stroke-width="5"></line>
+                <rect x="94" y="30" width="24" height="42" rx="11" fill="#20242a"></rect>
+                <circle cx="106" cy="41" r="5" fill="#343940"></circle>
+                <circle cx="106" cy="54" r="5" fill="#17a65b"></circle>
+                <path d="M78 96 L101 96 M90 89 L101 96 L90 103" fill="none" stroke="#0f6cbd" stroke-width="2"></path>
+                <text x="106" y="153" text-anchor="middle" font-size="12" font-weight="700" fill="#0f6cbd">Milepost 41.2</text>
+                <text x="106" y="168" text-anchor="middle" font-size="10" fill="#616161">Faces east</text>
+              </svg>
+              <div class="diagram-caption">One Mast owns one indication and one physical display.</div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-foot"><button class="btn">Cancel</button><span class="dialog-foot-spacer"></span><button class="btn btn-primary">Next: Aspects</button></div>
+      </div>
+    </div>
+
+    <div class="wizard-frame">
+      <p class="frame-heading"><strong>Step 2 of 5 — Aspects.</strong> Choose how this Mast communicates downstream conditions.</p>
+      <div class="dialog wide">
+        <div class="dialog-head">Milepost 41.2 — Eastward · aspects</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step done"><span class="step-n">1</span>Purpose</div>
+            <div class="step active"><span class="step-n">2</span>Aspects</div>
+            <div class="step"><span class="step-n">3</span>Display</div>
+            <div class="step"><span class="step-n">4</span>Bindings</div>
+            <div class="step"><span class="step-n">5</span>Confirm</div>
+          </div>
+          <div class="two-col">
+            <div>
+              <div class="panel subtle">
+                <div class="field-label">Signaling family</div>
+                <label class="radio-choice selected">
+                  <input type="radio" name="mast-family" checked="">
+                  <span><span class="radio-title">Speed signaling <span style="font-weight:400;color:var(--text-muted)">· layout default</span></span><br>
+                  <span class="radio-desc">Tell the engineer the speed permitted beyond this signal.</span></span>
+                </label>
+                <label class="radio-choice">
+                  <input type="radio" name="mast-family">
+                  <span><span class="radio-title">Route signaling</span><br>
+                  <span class="radio-desc">Tell the engineer which route is set; route knowledge supplies the speed.</span></span>
+                </label>
+              </div>
+              <div class="panel" style="margin-top:12px">
+                <div class="field-label">Aspect vocabulary</div>
+                <label class="radio-choice">
+                  <input type="radio" name="mast-vocabulary">
+                  <span><span class="radio-title">Essential</span><br>
+                  <span class="radio-desc">Clear, Approach, and Stop; folds other downstream conditions into Approach.</span></span>
+                </label>
+                <label class="radio-choice selected">
+                  <input type="radio" name="mast-vocabulary" checked="">
+                  <span><span class="radio-title">Common</span><br>
+                  <span class="radio-desc">Preserves common speed and extended-warning distinctions.</span></span>
+                </label>
+                <label class="radio-choice">
+                  <input type="radio" name="mast-vocabulary">
+                  <span><span class="radio-title">Rulebook</span><br>
+                  <span class="radio-desc">Use the applicable indications from a selected prototype rulebook.</span></span>
+                </label>
+              </div>
+            </div>
+            <div>
+              <div class="note" style="margin-bottom:12px">
+                <strong>Applicable here:</strong> the protected block feeds Stop; the downstream
+                signal contributes stop, extended-warning, and permitted-speed states.
+              </div>
+              <div class="panel" style="padding:0;overflow:hidden">
+                <table>
+                  <thead><tr><th>Condition</th><th>Common · speed</th></tr></thead>
+                  <tbody>
+                    <tr><td>Protected block occupied</td><td class="aspect stop">Stop</td></tr>
+                    <tr><td>Next signal requires stopping</td><td class="aspect approach">Approach</td></tr>
+                    <tr><td>Downstream Plant permits a medium-speed route</td><td class="aspect approach">Approach Medium</td></tr>
+                    <tr><td>A stop is two signals ahead</td><td class="aspect approach">Advance Approach</td></tr>
+                    <tr><td>Downstream path permits normal speed</td><td class="aspect clear">Clear</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-foot"><button class="btn">Back</button><span class="dialog-foot-spacer"></span><button class="btn btn-primary">Next: Display</button></div>
+      </div>
+    </div>
+
+    <div class="wizard-frame">
+      <p class="frame-heading"><strong>Step 3 of 5 — Display.</strong> Pick a physical style that can show the five derived aspects.</p>
+      <div class="dialog wide">
+        <div class="dialog-head">Milepost 41.2 — Eastward · display</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step done"><span class="step-n">1</span>Purpose</div>
+            <div class="step done"><span class="step-n">2</span>Aspects</div>
+            <div class="step active"><span class="step-n">3</span>Display</div>
+            <div class="step"><span class="step-n">4</span>Bindings</div>
+            <div class="step"><span class="step-n">5</span>Confirm</div>
+          </div>
+          <div class="two-col">
+            <div class="panel subtle">
+              <div class="field-label">Signal style</div>
+              <label class="radio-choice selected">
+                <input type="radio" name="mast-display" checked="">
+                <span><span class="radio-title">Three-lamp color light</span><br>
+                <span class="radio-desc">One head with green, yellow, and red lamps; flashing adds the extended indications.</span></span>
+              </label>
+              <label class="radio-choice">
+                <input type="radio" name="mast-display">
+                <span><span class="radio-title">Searchlight</span><br>
+                <span class="radio-desc">One optical unit showing the same three colors.</span></span>
+              </label>
+              <label class="radio-choice">
+                <input type="radio" name="mast-display">
+                <span><span class="radio-title">Other or custom</span><br>
+                <span class="radio-desc">Open the physical display editor.</span></span>
+              </label>
+            </div>
+            <div class="diagram">
+              <svg viewBox="0 0 360 180" role="img" aria-label="Three-lamp color-light signal">
+                <line x1="180" y1="150" x2="180" y2="112" stroke="#737b86" stroke-width="7"></line>
+                <line x1="140" y1="150" x2="220" y2="150" stroke="#737b86" stroke-width="7"></line>
+                <rect x="158" y="20" width="44" height="102" rx="20" fill="#20242a"></rect>
+                <circle cx="180" cy="43" r="11" fill="#17a65b"></circle>
+                <circle cx="180" cy="71" r="11" fill="#e0a800"></circle>
+                <circle cx="180" cy="99" r="11" fill="#df2020"></circle>
+              </svg>
+              <div class="diagram-caption">1 head · 3 lamps · flashing supported · 5 aspects</div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-foot"><button class="btn">Back</button><span class="dialog-foot-spacer"></span><button class="btn btn-primary">Next: Bindings</button></div>
+      </div>
+    </div>
+
+    <div class="wizard-frame">
+      <p class="frame-heading"><strong>Step 4 of 5 — Bindings.</strong> Connect the signal's inputs and physical outputs.</p>
+      <div class="dialog wide">
+        <div class="dialog-head">Milepost 41.2 — Eastward · bindings</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step done"><span class="step-n">1</span>Purpose</div>
+            <div class="step done"><span class="step-n">2</span>Aspects</div>
+            <div class="step done"><span class="step-n">3</span>Display</div>
+            <div class="step active"><span class="step-n">4</span>Bindings</div>
+            <div class="step"><span class="step-n">5</span>Confirm</div>
+          </div>
+          <div class="two-col">
+            <div class="panel">
+              <div class="field-label">Railroad connections</div>
+              <div class="form-row"><label>Protected block</label><select><option>Main 1 · MP 41.2–42.8</option></select></div>
+              <div class="form-row"><label>Downstream signal</label><select><option>Rockville West Home · Plant entrance</option></select></div>
+              <div style="margin-top:7px;color:var(--text-muted);font-size:11px">This signal exports the downstream stop, warning, and permitted-speed states used by the selected vocabulary.</div>
+            </div>
+            <div class="panel">
+              <div class="field-label">Physical connections</div>
+              <div class="form-row"><label>Signal-LCC node</label><select><option>West Staging</option></select></div>
+              <div class="form-row"><label>Green lamp</label><select><option>Output 1 · H1-G</option></select></div>
+              <div class="form-row"><label>Yellow lamp</label><select><option>Output 2 · H1-Y</option></select></div>
+              <div class="form-row"><label>Red lamp</label><select><option>Output 3 · H1-R</option></select></div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-foot"><button class="btn">Back</button><span class="dialog-foot-spacer"></span><button class="btn btn-primary">Next: Confirm</button></div>
+      </div>
+    </div>
+
+    <div class="wizard-frame">
+      <p class="frame-heading"><strong>Step 5 of 5 — Confirm.</strong> Review the behavior Bowties derived before creating it.</p>
+      <div class="dialog wide">
+        <div class="dialog-head">Milepost 41.2 — Eastward · confirm</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step done"><span class="step-n">1</span>Purpose</div>
+            <div class="step done"><span class="step-n">2</span>Aspects</div>
+            <div class="step done"><span class="step-n">3</span>Display</div>
+            <div class="step done"><span class="step-n">4</span>Bindings</div>
+            <div class="step active"><span class="step-n">5</span>Confirm</div>
+          </div>
+          <div class="summary-grid">
+            <div class="summary-card"><strong>Milepost 41.2 — Eastward</strong><span>Automatic block signal · plain track</span></div>
+            <div class="summary-card"><strong>Common · speed signaling</strong><span>5 applicable aspects from block and downstream state</span></div>
+            <div class="summary-card"><strong>1 head · 3 lamps</strong><span>Steady and flashing · Signal-LCC “West Staging”</span></div>
+          </div>
+          <div class="panel" style="margin-top:12px;padding:0;overflow:hidden">
+            <table>
+              <thead><tr><th>When</th><th>Show</th></tr></thead>
+              <tbody>
+                <tr><td>Main 1 is occupied</td><td class="aspect stop">Stop</td></tr>
+                <tr><td>Main 1 is clear; Rockville West Home requires stopping</td><td class="aspect approach">Approach</td></tr>
+                <tr><td>Main 1 is clear; Rockville Plant permits a medium-speed route</td><td class="aspect approach">Approach Medium</td></tr>
+                <tr><td>Main 1 is clear; a stop is two signals ahead</td><td class="aspect approach">Advance Approach</td></tr>
+                <tr><td>Main 1 and the downstream path permit normal speed</td><td class="aspect clear">Clear</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="validation-list">
+            <div class="validation-row ok">Protected block and downstream-signal bindings are complete.</div>
+            <div class="validation-row ok">The selected display can show every derived aspect.</div>
+            <div class="validation-row ok">All three lamp outputs and flashing behavior are available.</div>
+          </div>
+        </div>
+        <div class="dialog-foot"><button class="btn">Back</button><span class="dialog-foot-spacer"></span><button class="btn btn-primary">Create Signal Mast</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="plant">
+    <div class="section-head">
+      <div>
+        <h2>3. Signal Plant wizard — passing siding, start to finish</h2>
+        <p class="section-caption">
+          This section follows one Plant through all six steps. The passing-siding shape supplies
+          the repeated structure; each later step asks only what Bowties cannot derive from that
+          structure and the answers already given.
+        </p>
+      </div>
+    </div>
+
+    <div class="wizard-frame">
+      <p class="frame-heading"><strong>Step 1 of 6 — Shape.</strong> Choose the recognizable track arrangement.</p>
+      <div class="dialog wide">
+        <div class="dialog-head">New Signal Plant · shape</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step active"><span class="step-n">1</span>Shape</div>
+            <div class="step"><span class="step-n">2</span>Signals</div>
+            <div class="step"><span class="step-n">3</span>Aspects</div>
+            <div class="step"><span class="step-n">4</span>Display</div>
+            <div class="step"><span class="step-n">5</span>Bindings</div>
+            <div class="step"><span class="step-n">6</span>Confirm</div>
+          </div>
+
+          <div class="field-label">Pick the shape of the location</div>
+          <div class="tile-grid">
+            <div class="shape-tile selected">
+              <svg viewBox="0 0 120 42" aria-hidden="true">
+                <line x1="5" y1="31" x2="115" y2="31" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="30" y1="31" x2="43" y2="12" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="43" y1="12" x2="77" y2="12" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="77" y1="12" x2="90" y2="31" stroke="#56606d" stroke-width="2.5"/>
+              </svg>
+              <div class="shape-title">Passing siding</div>
+              <div class="shape-desc">Two turnouts sharing a middle track.</div>
+            </div>
+            <div class="shape-tile">
+              <svg viewBox="0 0 120 42" aria-hidden="true">
+                <line x1="5" y1="31" x2="115" y2="31" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="60" y1="31" x2="110" y2="8" stroke="#56606d" stroke-width="2.5"/>
+              </svg>
+              <div class="shape-title">Turnout / branch</div>
+              <div class="shape-desc">Several signals around one turnout.</div>
+            </div>
+            <div class="shape-tile">
+              <svg viewBox="0 0 120 42" aria-hidden="true">
+                <line x1="5" y1="11" x2="115" y2="11" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="5" y1="32" x2="115" y2="32" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="45" y1="11" x2="75" y2="32" stroke="#56606d" stroke-width="2.5"/>
+              </svg>
+              <div class="shape-title">Single crossover</div>
+              <div class="shape-desc">Move between two parallel tracks.</div>
+            </div>
+            <div class="shape-tile">
+              <svg viewBox="0 0 120 42" aria-hidden="true">
+                <line x1="5" y1="11" x2="115" y2="11" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="5" y1="32" x2="115" y2="32" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="45" y1="11" x2="75" y2="32" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="45" y1="32" x2="75" y2="11" stroke="#56606d" stroke-width="2.5"/>
+              </svg>
+              <div class="shape-title">Double crossover</div>
+              <div class="shape-desc">Move between parallel tracks either way.</div>
+            </div>
+            <div class="shape-tile">
+              <svg viewBox="0 0 120 42" aria-hidden="true">
+                <line x1="8" y1="7" x2="112" y2="35" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="8" y1="35" x2="112" y2="7" stroke="#56606d" stroke-width="2.5"/>
+              </svg>
+              <div class="shape-title">Interlocked diamond</div>
+              <div class="shape-desc">Two routes cross without connecting.</div>
+            </div>
+            <div class="shape-tile">
+              <svg viewBox="0 0 120 42" aria-hidden="true">
+                <line x1="8" y1="31" x2="60" y2="31" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="60" y1="31" x2="112" y2="7" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="60" y1="31" x2="112" y2="35" stroke="#56606d" stroke-width="2.5"/>
+              </svg>
+              <div class="shape-title">Wye</div>
+              <div class="shape-desc">Three signaled legs meet at a triangle.</div>
+            </div>
+            <div class="shape-tile">
+              <svg viewBox="0 0 120 42" aria-hidden="true">
+                <line x1="8" y1="10" x2="58" y2="10" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="8" y1="32" x2="58" y2="32" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="58" y1="10" x2="87" y2="21" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="58" y1="32" x2="87" y2="21" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="87" y1="21" x2="112" y2="21" stroke="#56606d" stroke-width="2.5"/>
+              </svg>
+              <div class="shape-title">Double track to single</div>
+              <div class="shape-desc">Two tracks converge into one.</div>
+            </div>
+            <div class="shape-tile">
+              <svg viewBox="0 0 120 42" aria-hidden="true">
+                <line x1="8" y1="21" x2="42" y2="21" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="78" y1="21" x2="112" y2="21" stroke="#56606d" stroke-width="2.5"/>
+                <rect x="42" y="12" width="36" height="18" fill="none" stroke="#56606d" stroke-width="2"/>
+              </svg>
+              <div class="shape-title">Movable bridge</div>
+              <div class="shape-desc">Signals protect a bridge that may be open or unlocked.</div>
+            </div>
+            <div class="shape-tile">
+              <svg viewBox="0 0 120 42" aria-hidden="true">
+                <line x1="8" y1="21" x2="112" y2="21" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="60" y1="8" x2="60" y2="34" stroke="#d17b0f" stroke-width="2"/>
+                <circle cx="43" cy="13" r="3.5" fill="#c50f1f"/>
+                <circle cx="77" cy="29" r="3.5" fill="#c50f1f"/>
+              </svg>
+              <div class="shape-title">Holdout</div>
+              <div class="shape-desc">Signals hold trains outside a controlled location.</div>
+            </div>
+            <div class="shape-tile">
+              <svg viewBox="0 0 120 42" aria-hidden="true">
+                <line x1="8" y1="21" x2="112" y2="21" stroke="#56606d" stroke-width="2.5"/>
+                <line x1="60" y1="5" x2="60" y2="37" stroke="#0f6cbd" stroke-width="2" stroke-dasharray="4 3"/>
+                <circle cx="46" cy="13" r="3.5" fill="#c50f1f"/>
+                <circle cx="74" cy="29" r="3.5" fill="#c50f1f"/>
+              </svg>
+              <div class="shape-title">Territory boundary</div>
+              <div class="shape-desc">Coordinated signals where operating territories meet.</div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-foot">
+          <button class="btn">Cancel</button>
+          <span class="dialog-foot-spacer"></span>
+          <button class="btn" disabled>Back</button>
+          <button class="btn btn-primary">Next: Signals</button>
+        </div>
+      </div>
+      <div class="mockup-note">
+        <strong>Mockup note</strong><br>
+        Importing a track diagram for custom or compound Plants is a later workflow, not another
+        canonical shape in this picker. This note would not appear in the product.
+      </div>
+    </div>
+
+    <div class="wizard-frame">
+      <p class="frame-heading"><strong>Step 2 of 6 — Signals.</strong> Describe how the location is signaled; Bowties derives the positions.</p>
+      <div class="dialog wide">
+        <div class="dialog-head">New Signal Plant · signals</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step done"><span class="step-n">1</span>Shape</div>
+            <div class="step active"><span class="step-n">2</span>Signals</div>
+            <div class="step"><span class="step-n">3</span>Aspects</div>
+            <div class="step"><span class="step-n">4</span>Display</div>
+            <div class="step"><span class="step-n">5</span>Bindings</div>
+            <div class="step"><span class="step-n">6</span>Confirm</div>
+          </div>
+
+          <div class="form-row" style="padding-top:0;margin-bottom:12px">
+            <label for="plant-name"><strong>Facility name</strong></label>
+            <input class="input" id="plant-name" value="Milepost 41 passing siding">
+          </div>
+          <div class="note" style="margin:0 0 14px"><strong>From step 1:</strong> passing siding with two turnouts and two routes through the location.</div>
+          <div class="two-col">
+            <div>
+              <div class="field-label">Main-line approach protection</div>
+              <label class="radio-choice selected">
+                <input type="radio" name="plant-main-protection" checked>
+                <span><span class="radio-title">Both directions</span><br><span class="radio-desc">Approach signals at both ends of the main line.</span></span>
+              </label>
+              <label class="radio-choice">
+                <input type="radio" name="plant-main-protection">
+                <span><span class="radio-title">Only eastbound</span><br><span class="radio-desc">Approach signal at the west end only.</span></span>
+              </label>
+              <label class="radio-choice">
+                <input type="radio" name="plant-main-protection">
+                <span><span class="radio-title">Only westbound</span><br><span class="radio-desc">Approach signal at the east end only.</span></span>
+              </label>
+              <div class="field-label" style="margin-top:14px">Siding departures</div>
+              <label class="radio-choice selected">
+                <input type="radio" name="plant-siding-departures" checked>
+                <span><span class="radio-title">Signaled at both ends</span><br><span class="radio-desc">Fully signaled main and siding exits.</span></span>
+              </label>
+              <label class="radio-choice">
+                <input type="radio" name="plant-siding-departures">
+                <span><span class="radio-title">Not signaled</span><br><span class="radio-desc">Trains leave the siding under other authority.</span></span>
+              </label>
+              <label class="radio-choice">
+                <input type="radio" name="plant-siding-departures">
+                <span><span class="radio-title">One end only</span><br><span class="radio-desc">Choose the exceptional siding departure on the schematic.</span></span>
+              </label>
+            </div>
+            <div>
+              <div class="diagram">
+                <svg viewBox="0 0 620 210" role="img" aria-label="Passing siding with six derived signals">
+                  <line x1="32" y1="125" x2="588" y2="125" stroke="#56606d" stroke-width="4"/>
+                  <line x1="155" y1="125" x2="205" y2="65" stroke="#56606d" stroke-width="4"/>
+                  <line x1="205" y1="65" x2="415" y2="65" stroke="#56606d" stroke-width="4"/>
+                  <line x1="415" y1="65" x2="465" y2="125" stroke="#56606d" stroke-width="4"/>
+                  <g fill="#c50f1f" stroke="#c50f1f" stroke-width="2">
+                    <circle cx="85" cy="145" r="4"/><line x1="81" y1="145" x2="67" y2="145"/><line x1="67" y1="139" x2="67" y2="151"/>
+                    <circle cx="205" cy="47" r="4"/><line x1="201" y1="47" x2="187" y2="47"/><line x1="187" y1="41" x2="187" y2="53"/>
+                    <circle cx="205" cy="107" r="4"/><line x1="201" y1="107" x2="187" y2="107"/><line x1="187" y1="101" x2="187" y2="113"/>
+                    <circle cx="415" cy="47" r="4"/><line x1="419" y1="47" x2="433" y2="47"/><line x1="433" y1="41" x2="433" y2="53"/>
+                    <circle cx="415" cy="107" r="4"/><line x1="419" y1="107" x2="433" y2="107"/><line x1="433" y1="101" x2="433" y2="113"/>
+                    <circle cx="535" cy="107" r="4"/><line x1="539" y1="107" x2="553" y2="107"/><line x1="553" y1="101" x2="553" y2="113"/>
+                  </g>
+                  <g fill="#0f6cbd" font-size="11" font-weight="700">
+                    <text x="65" y="178">1</text><text x="180" y="27">2</text><text x="180" y="92">3</text>
+                    <text x="435" y="27">4</text><text x="435" y="92">5</text><text x="555" y="92">6</text>
+                  </g>
+                </svg>
+                <div class="diagram-caption">Six signal positions derived. Uncheck or rename individual exceptions below.</div>
+              </div>
+              <div class="signal-list" style="margin-top:10px">
+                <div class="signal-number">1</div><div><input class="input" value="West approach"></div><div class="signal-status"><input type="checkbox" checked> Include</div>
+                <div class="signal-number">2</div><div><input class="input" value="West siding departure"></div><div class="signal-status"><input type="checkbox" checked> Include</div>
+                <div class="signal-number">3</div><div><input class="input" value="West main departure"></div><div class="signal-status"><input type="checkbox" checked> Include</div>
+                <div class="signal-number">4</div><div><input class="input" value="East siding departure"></div><div class="signal-status"><input type="checkbox" checked> Include</div>
+                <div class="signal-number">5</div><div><input class="input" value="East main departure"></div><div class="signal-status"><input type="checkbox" checked> Include</div>
+                <div class="signal-number">6</div><div><input class="input" value="East approach"></div><div class="signal-status"><input type="checkbox" checked> Include</div>
+              </div>
+              <div class="note"><strong>Defaults, not a constraint.</strong> Disable a position or rename any Mast when the real location is asymmetric.</div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-foot"><button class="btn">Cancel</button><span class="dialog-foot-spacer"></span><button class="btn">Back</button><button class="btn btn-primary">Next: Aspects</button></div>
+      </div>
+    </div>
+
+    <div class="wizard-frame">
+      <p class="frame-heading"><strong>Step 3 of 6 — Aspects.</strong> Choose the operating vocabulary once for the coordinated location.</p>
+      <div class="dialog wide">
+        <div class="dialog-head">New Signal Plant · aspects</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step done"><span class="step-n">1</span>Shape</div>
+            <div class="step done"><span class="step-n">2</span>Signals</div>
+            <div class="step active"><span class="step-n">3</span>Aspects</div>
+            <div class="step"><span class="step-n">4</span>Display</div>
+            <div class="step"><span class="step-n">5</span>Bindings</div>
+            <div class="step"><span class="step-n">6</span>Confirm</div>
+          </div>
+          <div class="panel subtle" style="margin-bottom:12px">
+            <div class="field-label">Who normally makes these signals clear?</div>
+            <div class="segmented" style="margin-bottom:6px">
+              <label class="segment selected"><input type="radio" name="plant-control" checked>Automatic from blocks and turnouts</label>
+              <label class="segment"><input type="radio" name="plant-control">Dispatcher / tower operator</label>
+              <label class="segment"><input type="radio" name="plant-control">Crew request or route button</label>
+            </div>
+            <p style="color:var(--text-muted);font-size:11px">
+              Automatic operation remains available without a dispatcher. A dispatcher may hold
+              an otherwise permissive signal at Stop when CTC is active.
+            </p>
+          </div>
+          <div class="field-label">Signal Mast to review</div>
+          <div class="mast-tabs" data-mast-tabs>
+            <button class="mast-tab">1 · West approach</button>
+            <button class="mast-tab">2 · West siding</button>
+            <button class="mast-tab selected">3 · West main</button>
+            <button class="mast-tab">4 · East siding</button>
+            <button class="mast-tab">5 · East main</button>
+            <button class="mast-tab">6 · East approach</button>
+          </div>
+          <div class="context-strip">
+            <div class="context-item"><strong>Faces</strong>Westbound</div>
+            <div class="context-item"><strong>Normal route</strong>Main · full speed</div>
+            <div class="context-item"><strong>Diverging route</strong>Siding · medium speed</div>
+            <div class="context-item"><strong>Signals ahead</strong>Known on both routes</div>
+          </div>
+
+          <div class="two-col" data-plant-vocab>
+            <div>
+              <div class="note" style="margin:0 0 12px">
+                <strong>Inherited from layout defaults:</strong> speed signaling · Common.
+                Change this Mast only, or apply the same choice to all six.
+              </div>
+              <div class="field-label">Signaling family</div>
+              <div class="segmented">
+                <label class="segment selected"><input type="radio" name="plant-family" checked>Speed</label>
+                <label class="segment"><input type="radio" name="plant-family">Route</label>
+              </div>
+
+              <div class="field-label">Aspect vocabulary</div>
+              <label class="radio-choice" data-vocab-choice="essential">
+                <input type="radio" name="plant-vocab" value="essential">
+                <span><span class="radio-title">Essential</span><br><span class="radio-desc">3–4 plain-English indications; simplified diverging behavior.</span></span>
+              </label>
+              <label class="radio-choice selected" data-vocab-choice="common">
+                <input type="radio" name="plant-vocab" value="common" checked>
+                <span><span class="radio-title">Common</span><br><span class="radio-desc">Adds diverging-speed and extended-approach indications.</span></span>
+              </label>
+              <label class="radio-choice" data-vocab-choice="rulebook">
+                <input type="radio" name="plant-vocab" value="rulebook">
+                <span><span class="radio-title">Rulebook</span><br><span class="radio-desc">Choose a railroad and era from the JMRI-derived catalog.</span></span>
+              </label>
+
+              <div class="rulebook-panel" data-rulebook-panel hidden>
+                <div class="field-label">Rulebook catalog</div>
+                <div class="rulebook-tools">
+                  <input class="input" type="search" placeholder="Search railroad or rulebook">
+                  <select style="width:110px"><option>All</option><option>Full</option><option>Reduced</option></select>
+                </div>
+                <div class="rulebook-list">
+                  <label class="rulebook-entry selected"><input type="radio" name="plant-rulebook" checked> NORAC 11 · 2024</label>
+                  <label class="rulebook-entry"><input type="radio" name="plant-rulebook"> NORAC reduced appearance <span class="badge">Reduced</span></label>
+                  <label class="rulebook-entry"><input type="radio" name="plant-rulebook"> Pennsylvania Railroad · 1956</label>
+                </div>
+                <div class="form-row"><label>Era</label><select><option>Modern · 2008–present</option></select></div>
+              </div>
+
+              <label class="radio-choice selected" style="margin-top:12px">
+                <input type="checkbox" checked>
+                <span><span class="radio-title">Apply this vocabulary to all compatible Masts</span><br><span class="radio-desc">Approach Masts keep only the indications their routes can produce.</span></span>
+              </label>
+            </div>
+
+            <div>
+              <div class="panel" style="padding:0;overflow:hidden">
+                <table>
+                  <thead><tr><th>Indication</th><th>When shown</th><th>Speed meaning</th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td class="aspect stop">Stop</td>
+                      <td>Route occupied, conflicting, or not lined</td>
+                      <td><div class="speed-pair"><span><b>Past:</b> Stop</span><span><b>Ahead:</b> —</span></div></td>
+                    </tr>
+                    <tr>
+                      <td class="aspect approach">Approach</td>
+                      <td>Main route; next signal at Stop</td>
+                      <td><div class="speed-pair"><span><b>Past:</b> Normal</span><span><b>Ahead:</b> Stop</span></div></td>
+                    </tr>
+                    <tr>
+                      <td class="aspect clear">Clear</td>
+                      <td>Main route; next signal permissive</td>
+                      <td><div class="speed-pair"><span><b>Past:</b> Normal</span><span><b>Ahead:</b> Normal</span></div></td>
+                    </tr>
+                    <tr>
+                      <td class="aspect approach">Medium Approach</td>
+                      <td>Siding route; next signal at Stop</td>
+                      <td><div class="speed-pair"><span><b>Past:</b> Medium</span><span><b>Ahead:</b> Stop</span></div></td>
+                    </tr>
+                    <tr>
+                      <td class="aspect clear">Medium Clear</td>
+                      <td>Siding route; next signal permissive</td>
+                      <td><div class="speed-pair"><span><b>Past:</b> Medium</span><span><b>Ahead:</b> Normal</span></div></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="note">
+                <strong>Plant-derived context, Mast-owned table.</strong> The selected Mast has both
+                main and siding routes. The approach Masts do not receive Medium indications, and
+                any Mast can override the inherited vocabulary without changing the Plant topology.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-foot"><button class="btn">Cancel</button><span class="dialog-foot-spacer"></span><button class="btn">Back</button><button class="btn btn-primary">Next: Display</button></div>
+      </div>
+    </div>
+
+    <div class="wizard-frame">
+      <p class="frame-heading"><strong>Step 4 of 6 — Display.</strong> Pick a shared signal type, then override only exceptional positions.</p>
+      <div class="dialog wide">
+        <div class="dialog-head">New Signal Plant · display</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step done"><span class="step-n">1</span>Shape</div>
+            <div class="step done"><span class="step-n">2</span>Signals</div>
+            <div class="step done"><span class="step-n">3</span>Aspects</div>
+            <div class="step active"><span class="step-n">4</span>Display</div>
+            <div class="step"><span class="step-n">5</span>Bindings</div>
+            <div class="step"><span class="step-n">6</span>Confirm</div>
+          </div>
+          <div class="field-label">Signal Mast to configure</div>
+          <div class="mast-tabs" data-mast-tabs>
+            <button class="mast-tab">1 · West approach</button>
+            <button class="mast-tab">2 · West siding</button>
+            <button class="mast-tab selected">3 · West main</button>
+            <button class="mast-tab">4 · East siding</button>
+            <button class="mast-tab">5 · East main</button>
+            <button class="mast-tab">6 · East approach</button>
+          </div>
+          <div class="two-col">
+            <div>
+              <div class="note" style="margin:0 0 12px">
+                <strong>Five indications require two independently controlled heads.</strong>
+                Head count is derived; choose only among compatible physical styles.
+              </div>
+              <div class="field-label">Compatible signal types for Mast 3</div>
+              <label class="radio-choice selected">
+                <input type="radio" name="plant-display-style" checked>
+                <span><span class="radio-title">Two-head color light</span><br><span class="radio-desc">6 lamps · 6 drivers · selected from layout default.</span></span>
+              </label>
+              <label class="radio-choice">
+                <input type="radio" name="plant-display-style">
+                <span><span class="radio-title">Two-head searchlight</span><br><span class="radio-desc">6 controlled colors through compatible searchlight hardware.</span></span>
+              </label>
+              <label class="radio-choice">
+                <input type="radio" name="plant-display-style">
+                <span><span class="radio-title">Position light</span><br><span class="radio-desc">Available after choosing a matching rulebook vocabulary.</span></span>
+              </label>
+              <label class="radio-choice" style="opacity:.58">
+                <input type="radio" name="plant-display-style" disabled>
+                <span><span class="radio-title">One-head color light</span><br><span class="radio-desc">Cannot distinguish the selected main and diverging indications.</span></span>
+              </label>
+              <label class="radio-choice selected" style="margin-top:12px">
+                <input type="checkbox" checked>
+                <span><span class="radio-title">Use compatible versions of this style for the other Masts</span><br><span class="radio-desc">Approach Masts automatically use the one-head version.</span></span>
+              </label>
+            </div>
+            <div>
+              <div class="panel">
+                <div class="field-label">Live preview · Mast 3</div>
+                <div style="display:grid;grid-template-columns:120px 1fr;gap:18px;align-items:center">
+                  <div style="display:flex;justify-content:center">
+                    <span class="mast-preview">
+                      <span class="mast-head"><span class="lamp red"></span><span class="lamp yellow"></span><span class="lamp green"></span></span>
+                      <span class="mast-head"><span class="lamp red"></span><span class="lamp yellow"></span><span class="lamp green"></span></span>
+                      <span class="mast-post" style="height:26px"></span>
+                    </span>
+                  </div>
+                  <div>
+                    <div class="summary-card"><strong>Two heads · 6 lamps</strong><span>Stop · Approach · Clear · Medium Approach · Medium Clear</span></div>
+                    <div class="summary-card" style="margin-top:8px"><strong>Signal-LCC requirements</strong><span>6 lamp drivers · 5 aspect slots · cascade input on each route</span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="panel">
+                <div class="field-label">Other generated displays</div>
+                <table>
+                  <thead><tr><th>Masts</th><th>Derived display</th><th>Capacity</th></tr></thead>
+                  <tbody>
+                    <tr><td>1 and 6 · approaches</td><td>One-head color light</td><td>3 drivers each</td></tr>
+                    <tr><td>2, 4, 5 · departures</td><td>Two-head color light</td><td>6 drivers each</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-foot"><button class="btn">Cancel</button><span class="dialog-foot-spacer"></span><button class="btn">Back</button><button class="btn btn-primary">Next: Bindings</button></div>
+      </div>
+    </div>
+
+    <div class="wizard-frame">
+      <p class="frame-heading"><strong>Step 5 of 6 — Bindings.</strong> Bind shared plant inputs once, then assign each physical signal.</p>
+      <div class="dialog wide">
+        <div class="dialog-head">New Signal Plant · bindings</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step done"><span class="step-n">1</span>Shape</div>
+            <div class="step done"><span class="step-n">2</span>Signals</div>
+            <div class="step done"><span class="step-n">3</span>Aspects</div>
+            <div class="step done"><span class="step-n">4</span>Display</div>
+            <div class="step active"><span class="step-n">5</span>Bindings</div>
+            <div class="step"><span class="step-n">6</span>Confirm</div>
+          </div>
+          <div class="two-col">
+            <div>
+              <div class="panel">
+                <div class="field-label">Shared Plant relationships</div>
+                <div class="form-row"><label>West turnout</label><select><option>Rockville West Turnout</option></select></div>
+                <div class="form-row"><label>East turnout</label><select><option>Rockville East Turnout</option></select></div>
+                <div class="form-row"><label>Main occupancy</label><select><option>Rockville Main Block</option></select></div>
+                <div class="form-row"><label>Siding occupancy</label><select><option>Rockville Siding Block</option></select></div>
+              </div>
+              <div class="panel">
+                <div class="field-label">Board capacity and ownership</div>
+                <div class="summary-card">
+                  <strong>Signal-LCC West</strong><span>Signals 1–3 · 15 of 16 lamp drivers assigned</span>
+                  <div class="capacity-bar"><span style="width:94%"></span></div>
+                </div>
+                <div class="summary-card" style="margin-top:7px">
+                  <strong>Signal-LCC East</strong><span>Signals 4–6 · 15 of 16 lamp drivers assigned</span>
+                  <div class="capacity-bar"><span style="width:94%"></span></div>
+                </div>
+                <div class="note warning"><strong>Boards are explicit.</strong> Bowties does not guess physical ownership from where a Node appears on the layout.</div>
+              </div>
+            </div>
+
+            <div>
+              <div class="field-label">Signal Mast to bind</div>
+              <div class="mast-tabs" data-mast-tabs>
+                <button class="mast-tab">1</button>
+                <button class="mast-tab">2</button>
+                <button class="mast-tab selected">3 · West main</button>
+                <button class="mast-tab">4</button>
+                <button class="mast-tab">5</button>
+                <button class="mast-tab">6 <span class="issue-dot"></span></button>
+              </div>
+              <div class="panel">
+                <div class="field-label">Railroad relationships · Mast 3</div>
+                <div class="form-row"><label>Protected block</label><select><option>Rockville Main Block</option></select></div>
+                <div class="binding-route">
+                  <div class="binding-route-head"><strong>Normal route · main</strong><span>Turnout normal</span></div>
+                  <div class="form-row"><label>Next Mast</label><select><option>West ABS 14</option><option>Create placeholder…</option><option>Leave unresolved</option></select></div>
+                </div>
+                <div class="binding-route">
+                  <div class="binding-route-head"><strong>Diverging route · siding</strong><span>Turnout reversed</span></div>
+                  <div class="form-row"><label>Next Mast</label><select><option>West siding departure</option><option>Create placeholder…</option></select></div>
+                </div>
+              </div>
+              <div class="panel">
+                <div class="field-label">Physical display · Mast 3</div>
+                <div class="form-row"><label>Signal-LCC board</label><select><option>Signal-LCC West</option></select></div>
+                <div class="driver-grid">
+                  <span>Upper red</span><select><option>Driver 1</option></select>
+                  <span>Upper yellow</span><select><option>Driver 2</option></select>
+                  <span>Upper green</span><select><option>Driver 3</option></select>
+                  <span>Lower red</span><select><option>Driver 4</option></select>
+                  <span>Lower yellow</span><select><option>Driver 5</option></select>
+                  <span>Lower green</span><select><option>Driver 6</option></select>
+                </div>
+                <div class="note success"><strong>6 of 6 outputs mapped.</strong> Already-claimed drivers are unavailable in these selectors.</div>
+              </div>
+            </div>
+          </div>
+          <div class="note warning">
+            <strong>One unresolved downstream reference:</strong> Mast 6's eastward next Mast does
+            not exist yet. Create an “East ABS 27” placeholder now, or leave the Plant Incomplete
+            and resolve it later from either related facility.
+          </div>
+        </div>
+        <div class="dialog-foot"><button class="btn">Cancel</button><span class="dialog-foot-spacer"></span><button class="btn">Back</button><button class="btn btn-primary">Next: Confirm</button></div>
+      </div>
+    </div>
+
+    <div class="wizard-frame">
+      <p class="frame-heading"><strong>Step 6 of 6 — Confirm.</strong> Review the railroad behavior and the generated implementation before applying it.</p>
+      <div class="dialog wide">
+        <div class="dialog-head">New Signal Plant · confirm</div>
+        <div class="dialog-body">
+          <div class="stepper">
+            <div class="step done"><span class="step-n">1</span>Shape</div>
+            <div class="step done"><span class="step-n">2</span>Signals</div>
+            <div class="step done"><span class="step-n">3</span>Aspects</div>
+            <div class="step done"><span class="step-n">4</span>Display</div>
+            <div class="step done"><span class="step-n">5</span>Bindings</div>
+            <div class="step active"><span class="step-n">6</span>Confirm</div>
+          </div>
+          <div class="summary-grid">
+            <div class="summary-card"><strong>Milepost 41 passing siding</strong><span>Two turnouts · main and siding routes · automatic control</span></div>
+            <div class="summary-card"><strong>6 Signal Masts</strong><span>2 approach · 2 main departure · 2 siding departure</span></div>
+            <div class="summary-card"><strong>Incomplete · 1 reference</strong><span>East ABS 27 will be represented by a resolvable placeholder.</span></div>
+          </div>
+          <div class="two-col" style="margin-top:12px">
+            <div class="panel">
+              <div class="field-label">How the Plant will behave</div>
+              <ul style="margin:0;padding-left:18px">
+                <li>A signal clears only for a lined, unoccupied route.</li>
+                <li>Clearing one route holds every conflicting signal at Stop.</li>
+                <li>Main routes use Clear or Approach from the next signal.</li>
+                <li>Siding routes use Medium Clear or Medium Approach.</li>
+                <li>Entering occupancy returns the protecting signal to Stop.</li>
+              </ul>
+            </div>
+            <div class="panel">
+              <div class="field-label">Validation</div>
+              <div class="validation-list">
+                <div class="validation-row ok">No duplicate lamp-driver ownership.</div>
+                <div class="validation-row ok">No obvious next-Mast cycles.</div>
+                <div class="validation-row ok">All six physical displays are completely mapped.</div>
+                <div class="validation-row ok">Both turnout and occupancy bindings are compatible.</div>
+                <div class="validation-row warn">East ABS 27 is unresolved; affected eastward advance indications remain unavailable.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="field-label" style="margin-top:14px">Review each generated Mast</div>
+          <div class="mast-tabs" data-mast-tabs>
+            <button class="mast-tab">1 · West approach</button>
+            <button class="mast-tab">2 · West siding</button>
+            <button class="mast-tab selected">3 · West main</button>
+            <button class="mast-tab">4 · East siding</button>
+            <button class="mast-tab">5 · East main</button>
+            <button class="mast-tab">6 · East approach <span class="issue-dot"></span></button>
+          </div>
+          <div class="two-col">
+            <div class="panel">
+              <div style="display:grid;grid-template-columns:90px 1fr;gap:14px;align-items:center">
+                <div style="display:flex;justify-content:center">
+                  <span class="mast-preview">
+                    <span class="mast-head"><span class="lamp red"></span><span class="lamp yellow"></span><span class="lamp green"></span></span>
+                    <span class="mast-head"><span class="lamp red"></span><span class="lamp yellow"></span><span class="lamp green"></span></span>
+                    <span class="mast-post" style="height:24px"></span>
+                  </span>
+                </div>
+                <div>
+                  <h3>West main departure</h3>
+                  <p style="color:var(--text-secondary);font-size:12px">Two-head color light · Common speed vocabulary · Signal-LCC West drivers 1–6</p>
+                  <div style="display:flex;gap:6px;margin-top:9px">
+                    <button class="btn">Adjust aspects…</button>
+                    <button class="btn">Adjust display…</button>
+                    <button class="btn">Adjust bindings…</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="panel" style="padding:0;overflow:hidden">
+              <table>
+                <thead><tr><th>Indication</th><th>Condition</th></tr></thead>
+                <tbody>
+                  <tr><td class="aspect stop">Stop</td><td>Route occupied, conflicting, or not lined</td></tr>
+                  <tr><td class="aspect approach">Approach</td><td>Main route; next signal at Stop</td></tr>
+                  <tr><td class="aspect clear">Clear</td><td>Main route; next signal permissive</td></tr>
+                  <tr><td class="aspect approach">Medium Approach</td><td>Siding route; next signal at Stop</td></tr>
+                  <tr><td class="aspect clear">Medium Clear</td><td>Siding route; next signal permissive</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="summary-grid" style="margin-top:12px">
+            <div class="summary-card"><strong>30 of 32 lamp drivers</strong><span>15 on each Signal-LCC board</span><div class="capacity-bar"><span style="width:94%"></span></div></div>
+            <div class="summary-card"><strong>26 aspect slots</strong><span>Across six generated Masts</span><div class="capacity-bar"><span style="width:72%"></span></div></div>
+            <div class="summary-card"><strong>18 logic relationships</strong><span>Routes, occupancy, conflicts, and cascade</span><div class="capacity-bar"><span style="width:58%"></span></div></div>
+          </div>
+          <div class="note warning">
+            <strong>Safe to create as Incomplete.</strong> Working routes become active. Mast 6
+            will not publish an indication that depends on East ABS 27 until that placeholder is resolved.
+          </div>
+        </div>
+        <div class="dialog-foot"><button class="btn">Cancel</button><span class="dialog-foot-spacer"></span><button class="btn">Back</button><button class="btn btn-primary">Create incomplete Signal Plant</button></div>
+      </div>
+      <p class="frame-heading" style="margin-top:18px"><strong>After creation.</strong> The Plant remains one editable facility while exposing each generated Mast for testing and troubleshooting.</p>
+      <div class="facility-card">
+        <div class="facility-card-head">
+          <div>
+            <h3 style="margin:0">Milepost 41 passing siding <span class="status testing">Incomplete</span></h3>
+            <p style="color:var(--text-muted);font-size:11px">Passing siding · 6 Masts · 1 unresolved link</p>
+          </div>
+          <div class="facility-actions">
+            <button class="btn">Resolve placeholder…</button>
+            <button class="btn">Test…</button>
+            <button class="btn">Edit Plant…</button>
+          </div>
+        </div>
+        <div class="note warning">
+          <strong>East ABS 27 is unresolved.</strong> Resolve it here or from the future downstream
+          facility. The existing test workflow can prove lamp wiring and every currently available indication.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="line">
+    <div class="section-head">
+      <div>
+        <h2>4. Signal Line — automatic signals along plain track</h2>
+        <p class="section-caption">
+          A Line is a sequence rather than a location. The user orders detected blocks; Bowties
+          derives the boundary masts and their downstream cascade. Bidirectional use reveals the
+          additional coordination that distinguishes APB from a simple directional ABS chain.
+        </p>
+      </div>
+      <span class="object-tag">A block sequence</span>
+    </div>
+
+    <div class="window">
+      <div class="titlebar">
+        <span class="titlebar-dots"><span></span><span></span><span></span></span>
+        New Signal Line · track use
+      </div>
+      <div class="window-body">
+        <div class="stepper">
+          <div class="step active"><span class="step-n">1</span>Track use</div>
+          <div class="step"><span class="step-n">2</span>Blocks</div>
+          <div class="step"><span class="step-n">3</span>Signals</div>
+          <div class="step"><span class="step-n">4</span>Aspects</div>
+          <div class="step"><span class="step-n">5</span>Bindings</div>
+          <div class="step"><span class="step-n">6</span>Confirm</div>
+        </div>
+
+        <div class="field-label">How do trains normally use this track?</div>
+        <div class="mode-switch" data-line-mode="">
+          <label class="selected">
+            <input type="radio" name="line-mode" value="directional" checked="">
+            <span><strong>One normal direction</strong><br>
+            <span class="radio-desc">Create a same-direction chain of automatic block signals.</span></span>
+          </label>
+          <label>
+            <input type="radio" name="line-mode" value="bidirectional">
+            <span><strong>Either direction</strong><br>
+            <span class="radio-desc">Coordinate opposing signals and establish direction ownership.</span></span>
+          </label>
+        </div>
+
+        <div class="mode-panel" data-mode-panel="directional">
+          <div class="two-col">
+            <div>
+              <div class="panel subtle">
+                <div class="field-label">Blocks, in travel order</div>
+                <table>
+                  <tbody>
+                    <tr><td style="width:34px;color:var(--text-muted)">1</td><td><strong>West approach</strong></td><td>Detected block</td></tr>
+                    <tr><td style="color:var(--text-muted)">2</td><td><strong>Mill curve</strong></td><td>Detected block</td></tr>
+                    <tr><td style="color:var(--text-muted)">3</td><td><strong>East approach</strong></td><td>Detected block</td></tr>
+                  </tbody>
+                </table>
+                <div style="display:flex;gap:7px;margin-top:10px">
+                  <button class="btn">Add block</button>
+                  <button class="btn">Reverse order</button>
+                </div>
+              </div>
+              <div class="note">
+                The Line workflow creates ordinary linked Signal Masts. The working question is
+                whether Bowties should retain a durable Line grouping for later edits.
+              </div>
+            </div>
+
+            <div>
+              <div class="diagram">
+                <svg viewBox="0 0 680 205" role="img" aria-label="Three directional ABS blocks and three generated signal masts">
+                  <g font-size="11" fill="#616161" text-anchor="middle">
+                    <text x="135" y="42">West approach</text>
+                    <text x="340" y="42">Mill curve</text>
+                    <text x="545" y="42">East approach</text>
+                  </g>
+                  <g>
+                    <rect x="42" y="57" width="186" height="80" rx="5" fill="#f5f9fd" stroke="#9cc4e8"></rect>
+                    <rect x="247" y="57" width="186" height="80" rx="5" fill="#f5f9fd" stroke="#9cc4e8"></rect>
+                    <rect x="452" y="57" width="186" height="80" rx="5" fill="#f5f9fd" stroke="#9cc4e8"></rect>
+                    <line x1="42" y1="98" x2="638" y2="98" stroke="#56606d" stroke-width="4"></line>
+                  </g>
+                  <g>
+                    <line x1="70" y1="98" x2="70" y2="72" stroke="#737b86" stroke-width="4"></line>
+                    <circle cx="70" cy="65" r="7" fill="#17a65b" stroke="#20242a" stroke-width="3"></circle>
+                    <line x1="275" y1="98" x2="275" y2="72" stroke="#737b86" stroke-width="4"></line>
+                    <circle cx="275" cy="65" r="7" fill="#e0a800" stroke="#20242a" stroke-width="3"></circle>
+                    <line x1="480" y1="98" x2="480" y2="72" stroke="#737b86" stroke-width="4"></line>
+                    <circle cx="480" cy="65" r="7" fill="#c50f1f" stroke="#20242a" stroke-width="3"></circle>
+                  </g>
+                  <g fill="#0f6cbd">
+                    <path d="M110 159 h410 l-11 -7 v14 l11 -7z"></path>
+                    <text x="315" y="185" text-anchor="middle" font-size="11">Normal direction of travel</text>
+                  </g>
+                </svg>
+                <div class="diagram-caption">Each Mast protects the block beyond it and reads the next Mast's cascade state.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mode-panel" data-mode-panel="bidirectional" hidden="">
+          <div class="two-col">
+            <div>
+              <div class="panel subtle">
+                <div class="field-label">Additional questions for either-direction use</div>
+                <label class="radio-choice selected">
+                  <input type="radio" checked="">
+                  <span><span class="radio-title">Direction follows the first entering train</span><br>
+                  <span class="radio-desc">Latch direction until the train clears the complete section.</span></span>
+                </label>
+                <label class="radio-choice">
+                  <input type="radio">
+                  <span><span class="radio-title">Dispatcher establishes direction</span><br>
+                  <span class="radio-desc">Automatic signals remain subordinate to dispatcher authority.</span></span>
+                </label>
+              </div>
+              <div class="note warning">
+                Bidirectional operation requires an Owner above individual Masts for direction
+                latching, opposing-signal lockout, and release. The final name—Signal Line,
+                Signaled Track, or Territory—remains a decision under test.
+              </div>
+            </div>
+
+            <div>
+              <div class="diagram">
+                <svg viewBox="0 0 680 235" role="img" aria-label="Three bidirectional blocks with opposing signal masts">
+                  <g font-size="11" fill="#616161" text-anchor="middle">
+                    <text x="135" y="34">West approach</text>
+                    <text x="340" y="34">Mill curve</text>
+                    <text x="545" y="34">East approach</text>
+                  </g>
+                  <g>
+                    <rect x="42" y="49" width="186" height="120" rx="5" fill="#f5f9fd" stroke="#9cc4e8"></rect>
+                    <rect x="247" y="49" width="186" height="120" rx="5" fill="#f5f9fd" stroke="#9cc4e8"></rect>
+                    <rect x="452" y="49" width="186" height="120" rx="5" fill="#f5f9fd" stroke="#9cc4e8"></rect>
+                    <line x1="42" y1="109" x2="638" y2="109" stroke="#56606d" stroke-width="4"></line>
+                  </g>
+                  <g>
+                    <line x1="70" y1="109" x2="70" y2="78" stroke="#737b86" stroke-width="4"></line>
+                    <circle cx="70" cy="70" r="7" fill="#17a65b" stroke="#20242a" stroke-width="3"></circle>
+                    <line x1="275" y1="109" x2="275" y2="78" stroke="#737b86" stroke-width="4"></line>
+                    <circle cx="275" cy="70" r="7" fill="#17a65b" stroke="#20242a" stroke-width="3"></circle>
+                    <line x1="480" y1="109" x2="480" y2="78" stroke="#737b86" stroke-width="4"></line>
+                    <circle cx="480" cy="70" r="7" fill="#17a65b" stroke="#20242a" stroke-width="3"></circle>
+
+                    <line x1="200" y1="109" x2="200" y2="140" stroke="#737b86" stroke-width="4"></line>
+                    <circle cx="200" cy="148" r="7" fill="#c50f1f" stroke="#20242a" stroke-width="3"></circle>
+                    <line x1="405" y1="109" x2="405" y2="140" stroke="#737b86" stroke-width="4"></line>
+                    <circle cx="405" cy="148" r="7" fill="#c50f1f" stroke="#20242a" stroke-width="3"></circle>
+                    <line x1="610" y1="109" x2="610" y2="140" stroke="#737b86" stroke-width="4"></line>
+                    <circle cx="610" cy="148" r="7" fill="#c50f1f" stroke="#20242a" stroke-width="3"></circle>
+                  </g>
+                  <g font-size="11" text-anchor="middle">
+                    <text x="340" y="198" fill="#166534" font-weight="700">Current direction: eastbound</text>
+                    <text x="340" y="218" fill="#616161">Opposing masts remain at Stop until the section releases.</text>
+                  </g>
+                </svg>
+                <div class="diagram-caption">APB-like behavior coordinates both chains; it is not merely twice as many independent Masts.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="handoff">
+    <div class="section-head">
+      <div>
+        <h2>5. How the three facility scales connect</h2>
+        <p class="section-caption">
+          Ownership remains singular at the boundaries. A Mast may read a Plant entrance as its
+          downstream signal, but it does not become part of two facilities.
+        </p>
+      </div>
+      <span class="object-tag">Ownership rule</span>
+    </div>
+
+    <div class="ownership-grid">
+      <article class="ownership-card">
+        <h3>Signal Mast owns</h3>
+        <div>
+          One combined indication and its physical display.
+          <ul>
+            <li>Protected block</li>
+            <li>Optional local turnout</li>
+            <li>Next-signal cascade</li>
+          </ul>
+        </div>
+      </article>
+      <article class="ownership-card">
+        <h3>Signal Plant owns</h3>
+        <div>
+          The coordinated behavior at localized trackwork.
+          <ul>
+            <li>Home signals</li>
+            <li>Routes and conflicts</li>
+            <li>Shared turnout bindings</li>
+          </ul>
+        </div>
+      </article>
+      <article class="ownership-card">
+        <h3>Signal Line may own</h3>
+        <div>
+          The ordered relationship along plain track.
+          <ul>
+            <li>Block sequence</li>
+            <li>Generated Mast chain</li>
+            <li>APB direction coordination</li>
+          </ul>
+        </div>
+      </article>
+    </div>
+
+    <div class="diagram" style="margin-top:14px">
+      <svg viewBox="0 0 920 180" role="img" aria-label="Signal Line handing off to a passing siding Signal Plant">
+        <rect x="28" y="24" width="470" height="125" rx="7" fill="#f5f9fd" stroke="#9cc4e8" stroke-dasharray="6 4"></rect>
+        <text x="48" y="48" font-size="12" font-weight="700" fill="#0f6cbd">SIGNAL LINE</text>
+        <rect x="520" y="24" width="370" height="125" rx="7" fill="#fff8ec" stroke="#d7aa5c" stroke-dasharray="6 4"></rect>
+        <text x="540" y="48" font-size="12" font-weight="700" fill="#8a4b08">SIGNAL PLANT</text>
+        <line x1="55" y1="103" x2="865" y2="103" stroke="#56606d" stroke-width="4"></line>
+        <line x1="650" y1="103" x2="690" y2="72" stroke="#56606d" stroke-width="4"></line>
+        <line x1="690" y1="72" x2="770" y2="72" stroke="#56606d" stroke-width="4"></line>
+        <line x1="770" y1="72" x2="810" y2="103" stroke="#56606d" stroke-width="4"></line>
+        <g>
+          <line x1="120" y1="103" x2="120" y2="77" stroke="#737b86" stroke-width="4"></line>
+          <circle cx="120" cy="69" r="7" fill="#17a65b" stroke="#20242a" stroke-width="3"></circle>
+          <line x1="315" y1="103" x2="315" y2="77" stroke="#737b86" stroke-width="4"></line>
+          <circle cx="315" cy="69" r="7" fill="#e0a800" stroke="#20242a" stroke-width="3"></circle>
+          <line x1="575" y1="103" x2="575" y2="77" stroke="#737b86" stroke-width="4"></line>
+          <circle cx="575" cy="69" r="7" fill="#c50f1f" stroke="#20242a" stroke-width="3"></circle>
+        </g>
+        <path d="M340 132 H550" stroke="#0f6cbd" stroke-width="2" stroke-dasharray="5 4"></path>
+        <path d="M550 132 l-10 -6 v12 z" fill="#0f6cbd"></path>
+        <text x="445" y="155" text-anchor="middle" font-size="11" fill="#0f6cbd">Last Line Mast reads the Plant entrance as its downstream signal</text>
+      </svg>
+    </div>
+  </section>
+
+  <section class="section" id="decisions">
+    <div class="section-head">
+      <div>
+        <h2>6. Decisions this mockup is testing</h2>
+        <p class="section-caption">
+          The storyboard is useful before every domain name and persistence rule is settled. These
+          are the specific conclusions a review should confirm or overturn.
+        </p>
+      </div>
+      <span class="object-tag">Review guide</span>
+    </div>
+
+    <div class="panel" style="padding:0;overflow:hidden">
+      <table class="decision-table">
+        <thead><tr><th>Decision</th><th>Current direction</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>First question</td>
+            <td>Choose one signal, one coordinated location, or a block sequence.</td>
+            <td><span class="status testing">Testing</span></td>
+          </tr>
+          <tr>
+            <td>Turnout threshold</td>
+            <td>A turnout alone does not create a Plant; multiple coordinated signals do.</td>
+            <td><span class="status settled">Direction chosen</span></td>
+          </tr>
+          <tr>
+            <td>Directional ABS</td>
+            <td>A Line workflow generates and links ordinary Signal Masts.</td>
+            <td><span class="status testing">Testing</span></td>
+          </tr>
+          <tr>
+            <td>APB ownership</td>
+            <td>Direction coordination needs an Owner above individual Masts.</td>
+            <td><span class="status settled">Constraint</span></td>
+          </tr>
+          <tr>
+            <td>Signal Line persistence</td>
+            <td>Retain at least group provenance; decide later whether Line is a durable Facility.</td>
+            <td><span class="status testing">Open</span></td>
+          </tr>
+          <tr>
+            <td>Territory context</td>
+            <td>ABS/APB/CTC remains territory-level behavior, not a per-Mast opening question.</td>
+            <td><span class="status settled">Direction chosen</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+  (() => {
+    const choices = [...document.querySelectorAll('[data-facility-choices] .facility-choice')];
+    const continueButton = document.querySelector('[data-continue]');
+
+    for (const choice of choices) {
+      choice.addEventListener('change', () => {
+        for (const candidate of choices) {
+          candidate.classList.toggle('selected', candidate.querySelector('input').checked);
+        }
+      });
+    }
+
+    continueButton?.addEventListener('click', () => {
+      const selected = choices.find(choice => choice.querySelector('input').checked);
+      if (selected) document.getElementById(selected.dataset.target)?.scrollIntoView();
+    });
+
+    const modeLabels = [...document.querySelectorAll('[data-line-mode] label')];
+    const modePanels = [...document.querySelectorAll('[data-mode-panel]')];
+
+    for (const label of modeLabels) {
+      label.addEventListener('change', () => {
+        const selectedMode = label.querySelector('input').value;
+        for (const candidate of modeLabels) {
+          candidate.classList.toggle('selected', candidate.querySelector('input').checked);
+        }
+        for (const panel of modePanels) {
+          panel.hidden = panel.dataset.modePanel !== selectedMode;
+        }
+      });
+    }
+
+    for (const tabs of document.querySelectorAll('[data-mast-tabs]')) {
+      for (const tab of tabs.querySelectorAll('.mast-tab')) {
+        tab.addEventListener('click', () => {
+          for (const candidate of tabs.querySelectorAll('.mast-tab')) candidate.classList.remove('selected');
+          tab.classList.add('selected');
+        });
+      }
+    }
+
+    for (const segmented of document.querySelectorAll('.segmented')) {
+      for (const segment of segmented.querySelectorAll('.segment')) {
+        segment.addEventListener('change', () => {
+          for (const candidate of segmented.querySelectorAll('.segment')) {
+            candidate.classList.toggle('selected', candidate.querySelector('input')?.checked ?? false);
+          }
+        });
+      }
+    }
+
+    const vocab = document.querySelector('[data-plant-vocab]');
+    if (vocab) {
+      const vocabChoices = [...vocab.querySelectorAll('[data-vocab-choice]')];
+      const rulebookPanel = vocab.querySelector('[data-rulebook-panel]');
+      for (const choice of vocabChoices) {
+        choice.addEventListener('change', () => {
+          const selected = choice.querySelector('input').value;
+          for (const candidate of vocabChoices) {
+            candidate.classList.toggle('selected', candidate.querySelector('input').checked);
+          }
+          if (rulebookPanel) rulebookPanel.hidden = selected !== 'rulebook';
+        });
+      }
+    }
+
+    for (const input of document.querySelectorAll('.radio-choice input[type="radio"][name]')) {
+      input.addEventListener('change', () => {
+        for (const peer of document.querySelectorAll(`.radio-choice input[type="radio"][name="${input.name}"]`)) {
+          peer.closest('.radio-choice')?.classList.toggle('selected', peer.checked);
+        }
+      });
+    }
+  })();
+</script>
+
+
+</body></html>

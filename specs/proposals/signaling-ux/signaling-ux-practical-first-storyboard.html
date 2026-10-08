@@ -292,6 +292,8 @@
     font-size: 10px; font-weight: 600; color: var(--text-muted);
     text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px;
   }
+  .selection-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .selection-value { min-width: 0; font-size: 12px; font-weight: 600; color: var(--text-primary); }
 
   /* --- Compact plant picker (single column, tiny icon + label) ---
      Used on the turnout and dispatcher-controlled-point plant tabs where the full
@@ -389,15 +391,22 @@
   .recommended { color: var(--status-live-fg); font-weight: 600; }
   [hidden] { display: none !important; }
 
-  /* --- Plant-variant tab picker (§2). Reuses .segmented / .segment. A 4-column variant.
+  /* --- Storyboard variant pickers. Reuse .segmented / .segment in four columns.
      Panels stack sequentially when printed or when JavaScript is disabled, so the whole set is
      visible in a PDF export. --- */
-  .segmented[data-plant-picker] { grid-template-columns: repeat(4, 1fr); }
+  .segmented[data-plant-picker],
+  .segmented[data-aspect-picker] { grid-template-columns: repeat(3, 1fr); }
+  .segmented[data-track-result-picker],
+  .segmented[data-track-aspect-picker] { grid-template-columns: repeat(2, 1fr); }
 
   @media print {
-    [data-plant-picker] { display: none; }
-    [data-plant-panel][hidden] { display: block !important; }
-    [data-plant-panel] + [data-plant-panel] { margin-top: 24px; border-top: 1px dashed var(--border); padding-top: 16px; }
+    [data-plant-picker], [data-aspect-picker],
+    [data-track-result-controls], [data-track-aspect-controls] { display: none; }
+    [data-plant-panel][hidden], [data-aspect-panel][hidden] { display: block !important; }
+    [data-plant-panel] + [data-plant-panel],
+    [data-aspect-panel] + [data-aspect-panel] {
+      margin-top: 24px; border-top: 1px dashed var(--border); padding-top: 16px;
+    }
   }
 
   /* --- Route binding --- */
@@ -475,10 +484,14 @@
 <body>
 <noscript>
   <style>
-    /* Without JS the plant-variant selector is inert, so hide it and reveal every variant. */
-    [data-plant-picker] { display: none; }
-    [data-plant-panel][hidden] { display: block !important; }
-    [data-plant-panel] + [data-plant-panel] { margin-top: 24px; border-top: 1px dashed var(--border); padding-top: 16px; }
+    /* Without JS the storyboard selectors are inert, so hide them and reveal every variant. */
+    [data-plant-picker], [data-aspect-picker],
+    [data-track-result-controls], [data-track-aspect-controls] { display: none; }
+    [data-plant-panel][hidden], [data-aspect-panel][hidden] { display: block !important; }
+    [data-plant-panel] + [data-plant-panel],
+    [data-aspect-panel] + [data-aspect-panel] {
+      margin-top: 24px; border-top: 1px dashed var(--border); padding-top: 16px;
+    }
   </style>
 </noscript>
 
@@ -487,7 +500,7 @@
   The shipping direction for the same wizard, drawn in the same design language as
   <a href="signaling-ux-mockups.html">the original proposal</a> so the two can be compared directly.
   It asks <strong>what this signal protects</strong> before anything else, with recognisable railroad
-  objects as the choices — a block, a turnout or crossing, a single-track section, a dispatcher-controlled point.
+  objects as the choices — a stretch of track, a junction or crossing, or a special controlled location.
   A dedicated <strong>plant step</strong> then captures what the thing being protected actually
   looks like (shape, routes, how it terminates), using schematic tiles as its picker so a modeler
   can recognise their layout at a glance instead of translating prose into pictures. Only then does
@@ -645,6 +658,7 @@
     <li><a href="#s4">What actually got harder</a></li>
     <li><a href="#s5">Placeholders — why creation order stops mattering</a></li>
     <li><a href="#s6">Where this ordering is weakest</a></li>
+    <li><a href="#future-refinements">Future mockup refinements</a></li>
   </ol>
   <p style="margin:10px 0 0 0;font-size:11px;color:var(--text-muted)">
     Bring-up and testing, the facility card, the capacity envelope, cascade in full, APB / CTC, what the
@@ -652,7 +666,6 @@
     <a href="signaling-ux-mockups.html">the original</a> and apply unchanged.
   </p>
 </div>
-
 
 <!-- ============================================================ 1 -->
 <div class="mockup-section" id="s1">
@@ -798,10 +811,10 @@
     <div>
       <h3>What does this signal protect?</h3>
       <p class="frame-do">
-        A visible railroad question, answerable by looking at the layout. The choices are the kinds of
-        thing a signal can guard — not signaling-system names. <b>Bowties privately maps the answer to
-        ABS, interlocking, APB or dispatcher-controlled logic</b>; the words the original asks for on
-        screen one never appear.
+        A visible railroad question, answerable by looking at the layout. The three choices are
+        different kinds of thing a signal can guard — not signaling-system names, track-count
+        assumptions, or control authorities. Step 2 refines the shape; plant and territory context
+        together determine whether Bowties needs ABS, APB, interlocking, or dispatcher-controlled logic.
       </p>
       <div class="dialog wide">
         <div class="dialog-head">Milepost 41.2 — Eastward · what does this signal protect?</div>
@@ -814,23 +827,23 @@
             <div class="step"><span class="step-n">5</span>Bindings</div>
             <div class="step"><span class="step-n">6</span>Confirm</div>
           </div>
-          <div class="choice-grid four">
-            <label class="choice">
-              <input type="radio" name="track-use-easy">
+          <div class="choice-grid">
+            <label class="choice selected">
+              <input type="radio" name="track-use-easy" checked>
               <svg class="choice-icon" width="110" height="40" viewBox="0 0 110 40" aria-hidden="true">
                 <line x1="5" y1="22" x2="105" y2="22" stroke="#5a6270" stroke-width="2.5"/>
                 <path d="M40 10 L 85 10 L 80 5 M 85 10 L 80 15" stroke="#616161" stroke-width="1.5" fill="none"/>
               </svg>
-              <div><div class="choice-title">A block of track</div>
-                <div class="choice-desc">One direction of travel. The block ahead of this signal.</div></div>
+              <div><div class="choice-title">A stretch of track</div>
+                <div class="choice-desc">Ordinary, bidirectional, or terminating track beyond this signal.</div></div>
             </label>
-            <label class="choice selected">
-              <input type="radio" name="track-use-easy" checked>
+            <label class="choice">
+              <input type="radio" name="track-use-easy">
               <svg class="choice-icon" width="110" height="40" viewBox="0 0 110 40" aria-hidden="true">
                 <line x1="5" y1="28" x2="105" y2="28" stroke="#5a6270" stroke-width="2.5"/>
                 <line x1="55" y1="28" x2="100" y2="8" stroke="#5a6270" stroke-width="2.5"/>
               </svg>
-              <div><div class="choice-title">A turnout or a crossing</div>
+              <div><div class="choice-title">A junction or crossing</div>
                 <div class="choice-desc">A route that diverges (turnout) or two tracks that cross without connecting (diamond).</div></div>
             </label>
             <label class="choice">
@@ -840,18 +853,8 @@
                 <path d="M55 10 L 95 10 L 90 5 M 95 10 L 90 15" stroke="#616161" stroke-width="1.5" fill="none"/>
                 <path d="M55 34 L 15 34 L 20 29 M 15 34 L 20 39" stroke="#616161" stroke-width="1.5" fill="none"/>
               </svg>
-              <div><div class="choice-title">A single-track section</div>
-                <div class="choice-desc">Trains run in both directions on the same rails.</div></div>
-            </label>
-            <label class="choice">
-              <input type="radio" name="track-use-easy">
-              <svg class="choice-icon" width="110" height="40" viewBox="0 0 110 40" aria-hidden="true">
-                <line x1="5" y1="28" x2="105" y2="28" stroke="#5a6270" stroke-width="2.5"/>
-                <line x1="55" y1="28" x2="100" y2="8" stroke="#5a6270" stroke-width="2.5"/>
-                <rect x="5" y="5" width="9" height="9" fill="#0f6cbd"/>
-              </svg>
-              <div><div class="choice-title">A dispatcher-controlled point</div>
-                <div class="choice-desc">A dispatcher sets routes or holds this signal.</div></div>
+              <div><div class="choice-title">A special controlled location</div>
+                <div class="choice-desc">A bridge, holdout point, boundary, or other condition that must be safe.</div></div>
             </label>
           </div>
         </div>
@@ -862,10 +865,10 @@
 
       <div class="note" style="margin-top:12px;margin-bottom:0">
         <strong>Nothing on this screen names a signaling system.</strong>
-        “A block of track” resolves to ABS, “A turnout or a crossing” to an interlocking (a turnout
-        interlocking or an interlocked diamond), “A single-track section” to APB, “A
-        dispatcher-controlled point” to CTC over an interlocking. The mapping is Bowties' to make,
-        and it is the same mapping the original asks the user to make for themselves.
+        Track count and control authority are deliberately absent. A stretch of track may become
+        ordinary ABS, bidirectional APB, or dispatcher-controlled territory; a junction may be
+        automatic or dispatcher controlled. Step 2 supplies the shape and shows the inherited
+        control context before Bowties derives the signaling behavior.
       </div>
     </div>
   </div>
@@ -878,20 +881,25 @@
       <h3>Plant — pick the shape of what this signal governs</h3>
       <p class="frame-do">
         The plant step asks <em>what the thing the signal protects actually looks like</em>. Its UI
-        shape is determined by step 1's answer, so <strong>all four variants are shown inline
-        below</strong> — the reader can see how step 2 changes as a function of step 1 without
-        leaving the walkthrough. This walkthrough is following the <strong>Block</strong> variant
-        (default tab); switch tabs to see how the same step reads for the other step-1 answers. In
-        all four, <em>absolute-vs-permissive</em> and <em>who controls the signal</em> are derived
-        from step 1's answer, not re-asked here.
+        shape is determined by step 1's answer. The top selector mirrors Step 1's three choices.
+        When <em>Stretch of track</em> is selected, the second selector inspects its ordinary and
+        bidirectional / terminating Step 2 results. Control is inherited from the territory and
+        can be changed here only when it changes the generated behavior.
       </p>
 
       <!-- Tab selector — .segmented / .segment styling, radio-based like [data-fidelity-picker]. -->
       <div class="segmented" data-plant-picker style="margin-bottom:16px">
-        <label class="segment selected"><input type="radio" name="plant-variant" value="block" checked>Block</label>
-        <label class="segment"><input type="radio" name="plant-variant" value="turnout">Turnout / junction</label>
-        <label class="segment"><input type="radio" name="plant-variant" value="single">Single-track section</label>
-        <label class="segment"><input type="radio" name="plant-variant" value="point">Dispatcher-controlled point</label>
+        <label class="segment selected"><input type="radio" name="plant-variant" value="track" checked>Stretch of track</label>
+        <label class="segment"><input type="radio" name="plant-variant" value="turnout">Junction / crossing</label>
+        <label class="segment"><input type="radio" name="plant-variant" value="point">Special location</label>
+      </div>
+
+      <div data-track-result-controls>
+        <div class="field-label" style="margin-top:0">Storyboard view · Track result from Step 2</div>
+        <div class="segmented" data-track-result-picker style="margin-bottom:16px">
+          <label class="segment selected"><input type="radio" name="track-result" value="block" checked>Ordinary track</label>
+          <label class="segment"><input type="radio" name="track-result" value="single">Bidirectional / terminating track</label>
+        </div>
       </div>
 
       <!-- ================= Block variant ================= -->
@@ -906,6 +914,11 @@
               <div class="step"><span class="step-n">4</span>Display</div>
               <div class="step"><span class="step-n">5</span>Bindings</div>
               <div class="step"><span class="step-n">6</span>Confirm</div>
+            </div>
+
+            <div class="selection-row" style="margin-bottom:12px">
+              <span class="selection-value"><strong>Control:</strong> Automatic · inherited from this territory</span>
+              <button class="btn btn-sm">Change…</button>
             </div>
 
             <div style="border:1px solid var(--accent-blue);border-radius:6px;background:#f6faff;padding:14px 16px">
@@ -965,6 +978,13 @@
           layout default (<em>Essential</em>) is exactly the right rung; the user will typically
           skip past step 3 with no changes.
         </div>
+
+        <div class="note warn" style="margin-top:12px;margin-bottom:0">
+          <strong>Future refinement — territory control.</strong>
+          <em>Change…</em> temporarily stands in for the future territory-default UX. Before
+          dispatcher-controlled track is built, decide where that default is established and
+          whether the plant needs control modes beyond Automatic and Dispatcher / operator.
+        </div>
       </div>
 
       <!-- ================= Turnout / junction variant =================
@@ -984,6 +1004,11 @@
               <div class="step"><span class="step-n">4</span>Display</div>
               <div class="step"><span class="step-n">5</span>Bindings</div>
               <div class="step"><span class="step-n">6</span>Confirm</div>
+            </div>
+
+            <div class="selection-row" style="margin-bottom:12px">
+              <span class="selection-value"><strong>Control:</strong> Automatic · inherited from this territory</span>
+              <button class="btn btn-sm">Change…</button>
             </div>
 
             <div style="display:grid;grid-template-columns:220px 1fr;gap:16px">
@@ -1152,11 +1177,9 @@
         </div>
 
         <div class="note" style="margin-top:12px;margin-bottom:0">
-          <strong>Absolute-vs-permissive is derived from step 1, not asked here.</strong>
-          When step 1 is "a turnout or a crossing," the signal is treated as an interlocking home
-          signal — <em>absolute</em> — and must show Stop. The plant step doesn't re-ask that; it
-          only asks the shape questions the aspect step actually needs to reach a correct indication
-          table.
+          <strong>Absolute-vs-permissive comes from the junction shape and control context.</strong>
+          This example is an interlocking home signal — <em>absolute</em> — and must show Stop.
+          The user does not choose the signaling-system label; Bowties derives it after Step 2.
         </div>
 
         <div class="note" style="margin-top:12px;margin-bottom:0">
@@ -1216,7 +1239,12 @@
               <div class="step"><span class="step-n">6</span>Confirm</div>
             </div>
 
-            <div class="field-label" style="margin-top:0">What shape is this single-track section?</div>
+            <div class="selection-row" style="margin-bottom:12px">
+              <span class="selection-value"><strong>Control:</strong> Automatic · inherited from this territory</span>
+              <button class="btn btn-sm">Change…</button>
+            </div>
+
+            <div class="field-label" style="margin-top:0">What kind of bidirectional track is this?</div>
 
             <div style="display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:10px;margin-bottom:14px">
 
@@ -1233,8 +1261,8 @@
                     <text x="15" y="76" font-size="9" fill="#242424" font-weight="600">this signal</text>
                     <text x="150" y="76" font-size="9" fill="#616161">next signal</text>
                   </svg>
-                  <div style="font-size:13px;font-weight:600;margin-top:4px">Plain single track</div>
-                  <div style="font-size:11px;color:var(--text-muted)">No meets. Runs in one direction at a time.</div>
+                  <div style="font-size:13px;font-weight:600;margin-top:4px">Plain bidirectional section</div>
+                  <div style="font-size:11px;color:var(--text-muted)">Trains use the same rails in both directions, one direction at a time.</div>
                 </div>
               </label>
 
@@ -1251,8 +1279,8 @@
                     <text x="15" y="76" font-size="9" fill="#242424" font-weight="600">this signal</text>
                     <text x="130" y="20" font-size="9" fill="#616161">meet</text>
                   </svg>
-                  <div style="font-size:13px;font-weight:600;margin-top:4px">Single track with meeting sidings</div>
-                  <div style="font-size:11px;color:var(--text-muted)">Opposing trains meet by taking the siding.</div>
+                  <div style="font-size:13px;font-weight:600;margin-top:4px">Passing siding · Signal Plant</div>
+                  <div style="font-size:11px;color:var(--text-muted)">Multiple coordinated signals; continue in the Signal Plant workflow.</div>
                 </div>
               </label>
 
@@ -1274,7 +1302,7 @@
 
             <div style="border:1px solid var(--accent-blue);border-radius:6px;background:#f6faff;padding:14px 16px">
               <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:var(--accent-blue-hover);margin-bottom:8px">
-                Selected · Single track with meeting sidings
+                Selected · Passing siding · hand off to Signal Plant
               </div>
 
               <div style="display:flex;gap:16px;align-items:flex-start;margin-bottom:12px">
@@ -1304,10 +1332,9 @@
                 <div style="flex:1">
                   <div style="font-size:12px;font-weight:600;margin-bottom:4px">Opposing trains take the siding to meet</div>
                   <div style="font-size:12px;color:var(--text-secondary);line-height:1.5">
-                    Because trains run in <em>both</em> directions on the same rails between sidings,
-                    the signal system has to remember which way is authorised right now. Bowties will
-                    derive direction-latching (APB) from this tile — the modeler doesn't check an
-                    APB checkbox; picking the plant shape that requires it is enough.
+                    A passing siding coordinates multiple turnouts, routes, signals, and opposing
+                    movements. Bowties preserves this choice, then continues in the Signal Plant
+                    workflow where the whole location can own that shared behavior.
                   </div>
                 </div>
               </div>
@@ -1320,37 +1347,36 @@
         </div>
 
         <div class="note" style="margin-top:12px;margin-bottom:0">
-          <strong>Direction-latching lives here, not on the aspect step.</strong>
-          The user never sees an "APB?" checkbox. The plant shape names the operational reality
-          (opposing trains share the track) and Bowties derives the direction-latching logic from
-          it. This is the design decision recorded in <em>Direction-latching lives in the plant,
-          not the aspect step</em>.
+          <strong>Direction coordination comes from the track shape and control context.</strong>
+          The user never sees an "APB?" checkbox. A plain automatic bidirectional section derives
+          APB-style coordination; dispatcher control derives a different authority policy. A
+          passing siding hands off to Signal Plant because several masts share that state.
         </div>
 
         <div class="note" style="margin-top:12px;margin-bottom:0">
-          <strong>What this plant implies for the aspect step:</strong>
-          the aspect step will need <em>Restricting</em> (for permissive re-entry into an occupied
-          direction under APB rules) in addition to <em>Clear</em>, <em>Approach</em>, and
-          <em>Stop</em>. The confirm screen will name the derived system as <em>APB (Absolute
-          Permissive Block)</em>. Under the hood, Bowties allocates a Tower LCC+Q to hold the
-          direction latch; the modeler never sees it.
+          <strong>What the plain automatic section implies for the aspect step:</strong>
+          its final indication set depends on the APB direction-ownership design. Dispatcher
+          control may produce a different policy from the same track shape. Both remain explicit
+          future refinements rather than assumptions hidden in Step 1.
         </div>
 
         <div class="note" style="margin-top:12px;margin-bottom:0">
-          <strong>For the other two tiles</strong> the inline preview shrinks: <em>Plain single
-          track</em> is a Clear/Approach/Stop signal like a block, and <em>Terminal / stub end</em>
-          is a signal with nothing to cascade to — the aspect step drops <em>Approach</em> because
-          there is no next-signal-ahead.
+          <strong>For the Mast-owned tiles</strong> the preview is smaller: <em>Plain
+          bidirectional section</em> coordinates two directions, while <em>Terminal / stub end</em>
+          has nothing to cascade to and drops <em>Approach</em>. The passing-siding design is
+          preserved in the Signal Plant walkthrough below.
         </div>
+
       </div>
 
-      <!-- ================= Dispatcher-controlled point variant =================
-           Compact layout matching the turnout tab: single-column picker on the left names
-           all eight shapes (5 turnout-based + 3 non-turnout); one canonical diagram lives
-           in the preview panel on the right. Selected default is Holdout on plain track,
+      <!-- ================= Special controlled location variant =================
+           Compact layout matching the junction tab: the left picker names the three
+           non-junction controlled locations; one canonical diagram lives in the preview
+           panel on the right. Selected default is Holdout on plain track,
            which has no position radios and no diverging-route follow-ups — the tab
-           demonstrates the non-turnout dispatcher-controlled case that the turnout tab
-           does not cover. -->
+           demonstrates a special-location case that the junction tab does not cover.
+           The hidden legacy junction entries below preserve the moved mockup material;
+           their visible owners are now the Junction / crossing picker. -->
       <div data-plant-panel="point" hidden>
         <div class="dialog wide">
           <div class="dialog-head">CP Banks — Eastward Home Signal · plant</div>
@@ -1364,21 +1390,18 @@
               <div class="step"><span class="step-n">6</span>Confirm</div>
             </div>
 
-            <div class="note warn" style="margin-top:0;margin-bottom:12px">
-              <strong>A dispatcher controls this signal.</strong>
-              This signal is <em>absolute</em> — it must be able to show Stop, and the dispatcher
-              (via Bowties' CTC panel or a JMRI panel) can hold it there. That is true whether the
-              plant is a turnout, a bridge, a plain-track holdout, or a territory boundary — the
-              shape only changes what else the aspect step needs to know.
+            <div class="selection-row" style="margin-bottom:12px">
+              <span class="selection-value"><strong>Control:</strong> Dispatcher / operator · inherited from this territory</span>
+              <button class="btn btn-sm">Change…</button>
             </div>
 
             <div style="display:grid;grid-template-columns:220px 1fr;gap:16px">
 
-              <!-- ===== Left: compact shape picker (8 shapes) ===== -->
+              <!-- ===== Left: compact special-location picker ===== -->
               <div>
-                <div class="field-label" style="margin-top:0">Plant shape</div>
+                <div class="field-label" style="margin-top:0">Special location</div>
                 <div class="plant-picker-compact">
-                  <label class="choice-compact">
+                  <label class="choice-compact" hidden>
                     <input type="radio" name="plant-shape-point">
                     <svg width="56" height="28" viewBox="0 0 56 28" aria-hidden="true">
                       <line x1="4" y1="20" x2="52" y2="20" stroke="#5a6270" stroke-width="1.6"/>
@@ -1389,7 +1412,7 @@
                       <div class="d">One diverging route.</div>
                     </div>
                   </label>
-                  <label class="choice-compact">
+                  <label class="choice-compact" hidden>
                     <input type="radio" name="plant-shape-point">
                     <svg width="56" height="28" viewBox="0 0 56 28" aria-hidden="true">
                       <line x1="4" y1="20" x2="52" y2="20" stroke="#5a6270" stroke-width="1.6"/>
@@ -1401,7 +1424,7 @@
                       <div class="d">Two diverging routes.</div>
                     </div>
                   </label>
-                  <label class="choice-compact">
+                  <label class="choice-compact" hidden>
                     <input type="radio" name="plant-shape-point">
                     <svg width="56" height="28" viewBox="0 0 56 28" aria-hidden="true">
                       <line x1="4" y1="9" x2="52" y2="9" stroke="#5a6270" stroke-width="1.6"/>
@@ -1414,7 +1437,7 @@
                       <div class="d">Between parallel tracks.</div>
                     </div>
                   </label>
-                  <label class="choice-compact">
+                  <label class="choice-compact" hidden>
                     <input type="radio" name="plant-shape-point">
                     <svg width="56" height="28" viewBox="0 0 56 28" aria-hidden="true">
                       <line x1="4" y1="20" x2="26" y2="20" stroke="#5a6270" stroke-width="1.6"/>
@@ -1426,7 +1449,7 @@
                       <div class="d">Both routes at low speed.</div>
                     </div>
                   </label>
-                  <label class="choice-compact">
+                  <label class="choice-compact" hidden>
                     <input type="radio" name="plant-shape-point">
                     <svg width="56" height="28" viewBox="0 0 56 28" aria-hidden="true">
                       <line x1="4" y1="4" x2="52" y2="24" stroke="#5a6270" stroke-width="1.6"/>
@@ -1521,10 +1544,10 @@
         </div>
 
         <div class="note" style="margin-top:12px;margin-bottom:0">
-          <strong>The operator model is derived, not asked.</strong>
-          No wizard question "who controls this signal?" — the answer is a consequence of step 1
-          (dispatcher-controlled point → CTC / manual tower is a downstream question, not a plant
-          question).
+          <strong>The control context is inherited, not encoded in the Step 1 category.</strong>
+          The compact Control row shows the territory default and offers a temporary
+          <em>Change…</em> path when Automatic versus Dispatcher / operator changes the generated
+          behavior. The future territory UX will own that default.
         </div>
 
         <div class="note" style="margin-top:12px;margin-bottom:0">
@@ -1550,14 +1573,12 @@
 
         <div class="note" style="margin-top:12px;margin-bottom:0">
           <strong>Why the extra tiles matter.</strong>
-          The original storyboard reused the turnout tab's plant panel verbatim for
-          dispatcher-controlled points, implicitly claiming every dispatcher-controlled signal
-          sits at a turnout. Prototype practice puts dispatcher control at anything defined as a
-          Control Point — including movable bridges, holdout meet-point signals on single-track,
-          and CTC / ABS territory boundaries. Expanding the tile set here is <em>Option A</em>
-          from the design-decisions discussion: keep step 1's four object-shaped answers, and
-          give the dispatcher-controlled-point plant step enough shapes to describe the real
-          non-turnout cases without asking "is this dispatcher-controlled?" as a checkbox.
+          Special controlled locations are physical cases, not synonyms for dispatcher control.
+          Movable bridges, holdout meet-point signals, and territory boundaries can inherit
+          automatic or dispatcher/operator control. The five junction shapes previously duplicated
+          here — single turnout, three-way turnout, crossover, wye, and interlocked diamond — now
+          live under <em>Junction / crossing</em>, where the same Control row can make any of them
+          dispatcher/operator controlled without duplicating the shape.
         </div>
       </div>
 
@@ -1572,20 +1593,30 @@
     <div>
       <h3>How should this signal work? — produces the indication table</h3>
       <p class="frame-do">
-        <b>This is where the aspects are decided.</b> Two controls — signaling <em>family</em>
-        (speed vs. route) and a three-rung <em>vocabulary ladder</em>: Essential, Common, or a
-        Rulebook chosen from a JMRI-derived catalog. Together with the plant from step 2, they
-        produce the list of aspects the signal will publish. The live preview on the right updates
-        as the choices change. Family and the ladder rung inherit the layout defaults (built-in
-        <em>speed · Essential</em> until the modeler opens the on-demand
-        <em>Layout defaults</em> dialog from the <em>change defaults</em> link next to the
-        vocabulary field-label). On the Rulebook rung, reduced-appearance rulebook variants
-        (badged <em>reduced</em>) give prototype names at operator-friendly length; era appears as
-        a small chip beneath the selected entry only for rulebooks with meaningful era-dependent
-        variants.
+        <b>This is where the aspects are decided.</b> Step 3 consumes the plant description from
+        step 2, asks only the behavior questions that remain for that plant, and produces the list
+        of aspects the signal will publish. The selector below is a storyboard control, not a
+        question in the product: use it to inspect the Step 3 UX that follows each Step 2 result.
       </p>
+
+      <div class="field-label" style="margin-top:0">Storyboard view · Step 2 result</div>
+      <div class="segmented" data-aspect-picker style="margin-bottom:16px">
+        <label class="segment selected"><input type="radio" name="aspect-variant" value="track" checked>Stretch of track</label>
+        <label class="segment"><input type="radio" name="aspect-variant" value="turnout">Junction / crossing</label>
+        <label class="segment"><input type="radio" name="aspect-variant" value="point">Special location</label>
+      </div>
+
+      <div data-track-aspect-controls>
+        <div class="field-label" style="margin-top:0">Storyboard view · Track result from Step 2</div>
+        <div class="segmented" data-track-aspect-picker style="margin-bottom:16px">
+          <label class="segment selected"><input type="radio" name="track-aspect-result" value="block" checked>Ordinary track</label>
+          <label class="segment"><input type="radio" name="track-aspect-result" value="single">Bidirectional track</label>
+        </div>
+      </div>
+
+      <div data-aspect-panel="turnout" hidden>
       <div class="dialog wide">
-        <div class="dialog-head">Milepost 41.2 — Eastward · aspects</div>
+        <div class="dialog-head">Rockville — Eastward Home Signal · aspects</div>
         <div class="dialog-body">
           <div class="stepper">
             <div class="step done"><span class="step-n">1</span>Purpose</div>
@@ -1596,16 +1627,39 @@
             <div class="step"><span class="step-n">6</span>Confirm</div>
           </div>
 
-          <div class="cols" data-vocab-picker="easy" style="grid-template-columns:1fr 300px">
+          <div class="note" style="margin-bottom:12px">
+            <strong>From step 2:</strong> one main route, one medium-speed diverging route, and
+            another signal in advance on each route.
+          </div>
+
+          <div class="cols" data-vocab-picker="turnout" style="grid-template-columns:1fr 300px">
             <div>
+              <div class="field-label" style="margin-top:0">How much route information should this signal show?</div>
+              <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px">
+                <label class="choice" style="padding:8px 10px">
+                  <input type="radio" name="turnout-depth">
+                  <div>
+                    <div style="font-size:12px;font-weight:600">Essential route information</div>
+                    <div style="font-size:11px;color:var(--text-muted)">Clear, Approach, and Stop without naming the diverging speed.</div>
+                  </div>
+                </label>
+                <label class="choice selected" style="padding:8px 10px">
+                  <input type="radio" name="turnout-depth" checked>
+                  <div>
+                    <div style="font-size:12px;font-weight:600">Show the diverging speed</div>
+                    <div style="font-size:11px;color:var(--text-muted)">Adds Medium Clear and Medium Approach for the diverging route.</div>
+                  </div>
+                </label>
+              </div>
+
               <div class="field-label" style="margin-top:0">Signaling family <span style="font-weight:400;color:var(--text-muted)">· inherits layout default</span></div>
               <div class="segmented" style="margin-bottom:12px">
                 <label class="segment selected">
-                  <input type="radio" name="family-easy" value="speed" checked>
+                  <input type="radio" name="family-turnout" value="speed" checked>
                   Speed
                 </label>
                 <label class="segment">
-                  <input type="radio" name="family-easy" value="route">
+                  <input type="radio" name="family-turnout" value="route">
                   Route
                 </label>
               </div>
@@ -1734,25 +1788,26 @@
               <!-- Essential rung preview -->
               <div data-rung-preview="essential">
                 <ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.7">
-                  <li><strong>Clear</strong> — block ahead clear, next signal ≥ Approach</li>
-                  <li><strong>Approach</strong> — block clear, next signal at Stop</li>
-                  <li><strong>Stop</strong> — block occupied</li>
+                  <li><strong>Clear</strong> — selected route clear</li>
+                  <li><strong>Approach</strong> — selected route ends at Stop</li>
+                  <li><strong>Stop</strong> — no route is available</li>
                 </ul>
                 <p style="margin:10px 0 0 0;font-size:11px;color:var(--text-muted)">
-                  3 aspects · 1 head · 3 lamps. Fits on a business-card cheat sheet.
+                  3 aspects · route speed is not distinguished. Fits on a business-card cheat sheet.
                 </p>
               </div>
 
               <!-- Common rung preview -->
               <div data-rung-preview="common" hidden>
                 <ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.7">
-                  <li><strong>Clear</strong> — block ahead clear, 2 signals ahead ≥ Approach</li>
-                  <li><strong>Advance Approach</strong> — signal 2 blocks ahead at Stop</li>
-                  <li><strong>Approach</strong> — next signal at Stop</li>
-                  <li><strong>Stop-and-Proceed</strong> — block occupied, proceed at restricted speed</li>
+                  <li><strong>Clear</strong> — main route clear</li>
+                  <li><strong>Approach</strong> — main route ends at Stop</li>
+                  <li><strong>Medium Clear</strong> — diverging route clear</li>
+                  <li><strong>Medium Approach</strong> — diverging route ends at Stop</li>
+                  <li><strong>Stop</strong> — no route is available</li>
                 </ul>
                 <p style="margin:10px 0 0 0;font-size:11px;color:var(--text-muted)">
-                  4 aspects · 1 head · 3 lamps (flashing yellow for Advance Approach). Fits on an index-card cheat sheet.
+                  5 aspects · 2 heads · diverging speed shown. Fits on an index-card cheat sheet.
                 </p>
               </div>
 
@@ -1846,7 +1901,181 @@
           <button class="btn">Back</button><button class="btn btn-primary">Next</button>
         </div>
       </div>
-      <p class="frame-ref">The vocabulary ladder is live — click a rung. Family and the layout default rung come from frame 0 and can be changed per signal.</p>
+      <p class="frame-ref">The vocabulary ladder and Rulebook catalog are live — click a rung, search the catalog, filter full or reduced entries, and select an era where one applies.</p>
+      <div class="note" style="margin-top:12px;margin-bottom:0">
+        <strong>Rulebook depth in the other variants.</strong> The full interaction is drawn once
+        here. Bidirectional track and special controlled locations would expose the same
+        Rulebook picker when the modeler chooses prototype fidelity; those variants currently
+        carry a placeholder for their plant-specific Rulebook filtering and indication previews.
+        The plain-block path stays intentionally simple and does not expose this depth.
+      </div>
+      </div>
+
+      <div data-aspect-panel="block">
+        <div class="dialog wide">
+          <div class="dialog-head">Milepost 41.2 — Eastward · aspects</div>
+          <div class="dialog-body">
+            <div class="stepper">
+              <div class="step done"><span class="step-n">1</span>Purpose</div>
+              <div class="step done"><span class="step-n">2</span>Plant</div>
+              <div class="step active"><span class="step-n">3</span>Aspects</div>
+              <div class="step"><span class="step-n">4</span>Display</div>
+              <div class="step"><span class="step-n">5</span>Bindings</div>
+              <div class="step"><span class="step-n">6</span>Confirm</div>
+            </div>
+            <div class="note" style="margin-bottom:12px">
+              <strong>From step 2:</strong> a plain block in one direction. There are no route or
+              diverging-speed choices to make.
+            </div>
+            <div class="cols" data-block-warning-picker style="grid-template-columns:1fr 320px">
+              <div>
+                <div class="field-label" style="margin-top:0">How far ahead should this signal warn?</div>
+                <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px">
+                  <label class="choice" style="padding:8px 10px">
+                    <input type="radio" name="block-warning" value="local">
+                    <div><div style="font-size:12px;font-weight:600">This block only</div>
+                      <div style="font-size:11px;color:var(--text-muted)">Clear or Stop · uses this block's occupancy.</div></div>
+                  </label>
+                  <label class="choice selected" style="padding:8px 10px">
+                    <input type="radio" name="block-warning" value="advance" checked>
+                    <div><div style="font-size:12px;font-weight:600">Also warn about the next signal</div>
+                      <div style="font-size:11px;color:var(--text-muted)">Adds Approach · requires the next signal in step 5.</div></div>
+                  </label>
+                </div>
+              </div>
+              <div class="panel subtle">
+                <p class="subhead">Bowties will create</p>
+                <div data-block-warning-preview="local" hidden>
+                  <ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.7">
+                    <li><strong>Clear</strong> — block clear</li>
+                    <li><strong>Stop</strong> — block occupied</li>
+                  </ul>
+                  <p style="margin:10px 0 0;font-size:11px;color:var(--text-muted)">2 aspects · requires only the protected block in step 5.</p>
+                </div>
+                <div data-block-warning-preview="advance">
+                  <ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.7">
+                    <li><strong>Clear</strong> — block and next signal permit movement</li>
+                    <li><strong>Approach</strong> — block clear, next signal at Stop</li>
+                    <li><strong>Stop</strong> — block occupied</li>
+                  </ul>
+                  <p style="margin:10px 0 0;font-size:11px;color:var(--text-muted)">3 aspects · requires the protected block and next signal in step 5.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="dialog-foot"><button class="btn">Back</button><button class="btn btn-primary">Next</button></div>
+        </div>
+      </div>
+
+      <div data-aspect-panel="single" hidden>
+        <div class="dialog wide">
+          <div class="dialog-head">Mill Creek — Eastward · aspects</div>
+          <div class="dialog-body">
+            <div class="stepper">
+              <div class="step done"><span class="step-n">1</span>Purpose</div>
+              <div class="step done"><span class="step-n">2</span>Plant</div>
+              <div class="step active"><span class="step-n">3</span>Aspects</div>
+              <div class="step"><span class="step-n">4</span>Display</div>
+              <div class="step"><span class="step-n">5</span>Bindings</div>
+              <div class="step"><span class="step-n">6</span>Confirm</div>
+            </div>
+            <div class="note" style="margin-bottom:12px">
+              <strong>From step 2:</strong> trains use this section in both directions; Bowties
+              will hold the opposing entrance at Stop while this direction owns the section.
+            </div>
+            <div class="cols" style="grid-template-columns:1fr 320px">
+              <div>
+                <div class="field-label" style="margin-top:0">How far ahead should this signal warn?</div>
+                <div style="display:flex;flex-direction:column;gap:4px">
+                  <label class="choice" style="padding:8px 10px">
+                    <input type="radio" name="single-warning">
+                    <div><div style="font-size:12px;font-weight:600">This section only</div>
+                      <div style="font-size:11px;color:var(--text-muted)">Clear when this direction owns an unoccupied section; otherwise Stop.</div></div>
+                  </label>
+                  <label class="choice selected" style="padding:8px 10px">
+                    <input type="radio" name="single-warning" checked>
+                    <div><div style="font-size:12px;font-weight:600">Also warn about the signal beyond the section</div>
+                      <div style="font-size:11px;color:var(--text-muted)">Adds Approach when the far signal requires stopping.</div></div>
+                  </label>
+                </div>
+                <div class="note" style="margin-top:12px;margin-bottom:0">
+                  <strong>Prototype Rulebook · placeholder.</strong> This plant would use the same
+                  Rulebook catalog shown in the Turnout / junction variant, filtered to indications
+                  that apply to bidirectional single-track operation.
+                </div>
+              </div>
+              <div class="panel subtle">
+                <p class="subhead">Bowties will create</p>
+                <ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.7">
+                  <li><strong>Clear</strong> — section available in this direction</li>
+                  <li><strong>Approach</strong> — section available, far signal at Stop</li>
+                  <li><strong>Stop</strong> — occupied or reserved against this train</li>
+                </ul>
+                <p style="margin:10px 0 0;font-size:11px;color:var(--text-muted)">Direction locking comes from the plant; it is not another aspect-step question.</p>
+              </div>
+            </div>
+          </div>
+          <div class="dialog-foot"><button class="btn">Back</button><button class="btn btn-primary">Next</button></div>
+        </div>
+        <div class="note warn" style="margin-top:12px;margin-bottom:0">
+          <strong>Future refinement — APB indications.</strong>
+          The final aspect choices depend on the direction-ownership and tumble-down behavior
+          established by the single-track plant. This indication preview and its Rulebook filter
+          remain placeholders until that plant behavior is designed.
+        </div>
+      </div>
+
+      <div data-aspect-panel="point" hidden>
+        <div class="dialog wide">
+          <div class="dialog-head">River Bridge — Eastward · aspects</div>
+          <div class="dialog-body">
+            <div class="stepper">
+              <div class="step done"><span class="step-n">1</span>Purpose</div>
+              <div class="step done"><span class="step-n">2</span>Plant</div>
+              <div class="step active"><span class="step-n">3</span>Aspects</div>
+              <div class="step"><span class="step-n">4</span>Display</div>
+              <div class="step"><span class="step-n">5</span>Bindings</div>
+              <div class="step"><span class="step-n">6</span>Confirm</div>
+            </div>
+            <div class="note" style="margin-bottom:12px">
+              <strong>From step 2:</strong> this signal protects a movable bridge. The bridge must
+              be closed and released before the signal can permit movement.
+            </div>
+            <div class="cols" style="grid-template-columns:1fr 320px">
+              <div>
+                <div class="field-label" style="margin-top:0">When the bridge is available, how far ahead should this signal warn?</div>
+                <div style="display:flex;flex-direction:column;gap:4px">
+                  <label class="choice" style="padding:8px 10px">
+                    <input type="radio" name="point-warning">
+                    <div><div style="font-size:12px;font-weight:600">Protect this location only</div>
+                      <div style="font-size:11px;color:var(--text-muted)">Clear when released; Stop when open, moving, or held.</div></div>
+                  </label>
+                  <label class="choice selected" style="padding:8px 10px">
+                    <input type="radio" name="point-warning" checked>
+                    <div><div style="font-size:12px;font-weight:600">Also warn about the next signal</div>
+                      <div style="font-size:11px;color:var(--text-muted)">Adds Approach after the bridge is safe but the next signal is at Stop.</div></div>
+                  </label>
+                </div>
+                <div class="note" style="margin-top:12px;margin-bottom:0">
+                  <strong>Prototype Rulebook · placeholder.</strong> This plant would use the same
+                  Rulebook catalog shown in the Turnout / junction variant, filtered to indications
+                  that apply to the selected controlled location.
+                </div>
+              </div>
+              <div class="panel subtle">
+                <p class="subhead">Bowties will create</p>
+                <ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.7">
+                  <li><strong>Clear</strong> — bridge safe and route ahead clear</li>
+                  <li><strong>Approach</strong> — bridge safe, next signal at Stop</li>
+                  <li><strong>Stop</strong> — bridge unavailable or route held</li>
+                </ul>
+                <p style="margin:10px 0 0;font-size:11px;color:var(--text-muted)">The bridge state comes from the selected plant shape; step 5 binds its real input.</p>
+              </div>
+            </div>
+          </div>
+          <div class="dialog-foot"><button class="btn">Back</button><button class="btn btn-primary">Next</button></div>
+        </div>
+      </div>
     </div>
   </div>
   <div class="frame-rail"></div>
@@ -1916,12 +2145,6 @@
                   <span style="color:var(--text-muted)">3 lamp drivers · 3 aspect slots</span>
                 </div>
               </div>
-              <div class="note" style="margin-bottom:0">
-                <strong>Green top, yellow middle, red bottom.</strong>
-                The standard arrangement, matching the node's own driver naming
-                <code>H1-G</code> <code>H1-Y</code> <code>H1-R</code>. Not something the user should
-                have to state.
-              </div>
             </div>
           </div>
         </div>
@@ -1929,6 +2152,10 @@
           <button class="btn">Back</button><button class="btn btn-primary">Next</button>
         </div>
       </div>
+      <ul class="frame-ref">
+        <li><strong>Storyboard note:</strong> Lamp order follows the selected display and the
+          node's available drivers; the modeler does not choose an arbitrary color order.</li>
+      </ul>
     </div>
   </div>
   <div class="frame-rail"></div>
@@ -1939,9 +2166,9 @@
     <div>
       <h3>Bind it to the layout — block, next signal, wiring</h3>
       <p class="frame-do">
-        Two questions, plus the physical wiring. <b>This is not a track plan</b> — it is one protected
-        block and one next mast, both named explicitly. Bowties pre-selects the node closest to the
-        block being protected.
+        Choose the Signal-LCC board, protected block, and next mast, then bind the physical wiring.
+        <b>This is not a track plan</b> — it is one protected block and one next mast, both named
+        explicitly. The user selects the board; Bowties does not guess based on proximity.
       </p>
       <div class="dialog wide">
         <div class="dialog-head">Milepost 41.2 — Eastward · bind it to the layout</div>
@@ -1954,25 +2181,36 @@
             <div class="step active"><span class="step-n">5</span>Bindings</div>
             <div class="step"><span class="step-n">6</span>Confirm</div>
           </div>
-          <div class="cols" style="grid-template-columns:1fr 300px">
+          <div class="cols" style="grid-template-columns:1fr 1fr;gap:16px">
             <div>
               <div class="route-box">
                 <div class="route-title"><span class="route-line"></span> The route ahead</div>
                 <div class="field">
                   <div class="field-label">Protected block</div>
-                  <select class="wide-pick"><option>Main 1 — MP 41.2 to 42.8</option></select>
+                  <div class="selection-row">
+                    <span class="selection-value">Main 1 — MP 41.2 to 42.8</span>
+                    <button class="btn btn-sm">Select</button>
+                  </div>
                 </div>
                 <div class="field">
                   <div class="field-label">Next mast</div>
-                  <select class="wide-pick">
-                    <option>MP 42.8 — Eastward</option>
-                    <option>Create a named placeholder…</option>
-                    <option>Leave unconnected for now</option>
-                  </select>
+                  <div class="selection-row">
+                    <span class="selection-value">MP 42.8 — Eastward</span>
+                    <button class="btn btn-sm">Select</button>
+                  </div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Used to determine Approach when this block is clear.</div>
                 </div>
               </div>
-
-              <div class="assign-grid" style="grid-template-columns:120px 1fr;margin-top:14px">
+            </div>
+            <div>
+              <div class="field" style="margin-bottom:10px">
+                <div class="field-label">Signal-LCC board</div>
+                <div class="selection-row">
+                  <span class="selection-value">Signal-LCC “West Staging”</span>
+                  <button class="btn btn-sm">Select</button>
+                </div>
+              </div>
+              <div class="assign-grid" style="grid-template-columns:84px 1fr;gap:10px">
                 <div style="text-align:center">
                   <div class="mast">
                     <div class="mast-heads"><div class="head">
@@ -1980,10 +2218,10 @@
                     </div></div>
                     <div class="mast-post"></div><div class="mast-base"></div>
                   </div>
-                  <div class="mast-caption">3 of 3 assigned</div>
+                  <div class="mast-caption">3 of 3 outputs mapped</div>
                 </div>
                 <div>
-                  <p class="subhead" style="margin-bottom:6px">Lamps on Signal-LCC “West Staging”</p>
+                  <p class="subhead" style="margin:0 0 6px 0">Lamp outputs</p>
                   <div class="driver-list">
                     <div class="driver-row assigned">
                       <span style="display:flex;align-items:center;gap:8px;font-size:12px"><span class="lamp lit green sm"></span> Green</span>
@@ -1998,25 +2236,7 @@
                       <select class="driver-pick"><option>#3 H1-R</option></select>
                     </div>
                   </div>
-                  <div class="legend">
-                    <span><span class="lamp lit green sm"></span> assigned</span>
-                    <span style="opacity:.7">drivers claimed elsewhere are not offered</span>
-                  </div>
                 </div>
-              </div>
-            </div>
-
-            <div class="panel subtle">
-              <p class="subhead">Local connection</p>
-              <div class="connection-map" style="flex-direction:column;align-items:stretch">
-                <div class="map-node current">MP 41.2 — Eastward<br><small style="color:var(--text-muted)">this mast</small></div>
-                <div class="map-arrow" style="text-align:center">tells the signal behind what speed it may run &darr;</div>
-                <div class="map-node">MP 42.8 — Eastward<br><small style="color:var(--text-muted)">next mast</small></div>
-              </div>
-              <div class="note" style="margin-bottom:0">
-                <strong>Creation order does not matter.</strong>
-                If the next mast does not exist yet, name a placeholder and resolve it later from either
-                card. See <a href="#s5">§5</a>.
               </div>
             </div>
           </div>
@@ -2025,6 +2245,14 @@
           <button class="btn">Back</button><button class="btn btn-primary">Next</button>
         </div>
       </div>
+      <ul class="frame-ref">
+        <li><strong>Storyboard notes (not shown in the dialog):</strong> The board is selected
+          explicitly; the picker offers only boards that can own the mast's lamps and aspects.</li>
+        <li>Block and mast selectors open searchable lists. The next-mast picker can also create a
+          placeholder or leave the connection unresolved.</li>
+        <li>Already-claimed lamp drivers are unavailable. The local-connection diagram was removed
+          because the selected block and next mast already show that relationship.</li>
+      </ul>
     </div>
   </div>
   <div class="frame-rail"></div>
@@ -2054,7 +2282,7 @@
           <div class="derived-tag" style="display:flex;align-items:center;gap:10px;margin:8px 0 12px;padding:8px 12px;border:1px solid var(--border);border-radius:5px;background:var(--bg-subtle);flex-wrap:wrap">
             <span style="font-size:11px;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted)">Bowties set this up as</span>
             <strong style="font-size:13px">an automatic block signal</strong>
-            <span style="font-size:11px;color:var(--text-muted)">speed · Essential · also called ABS</span>
+            <span style="font-size:11px;color:var(--text-muted)">speed · Essential</span>
             <button class="btn-link btn-sm" style="margin-left:auto">Print pocket card (business card)…</button>
           </div>
           <div class="table-wrap">
@@ -2108,7 +2336,7 @@
             </table>
           </div>
 
-          <div class="cols" style="margin-top:14px;grid-template-columns:1fr 300px">
+          <div class="cols" style="margin-top:14px;grid-template-columns:1fr">
             <div>
               <p class="subhead">What this costs on the board</p>
               <div class="capacity-grid">
@@ -2134,20 +2362,6 @@
                 </div>
               </div>
             </div>
-            <div class="panel subtle">
-              <p class="subhead">Bowties handled</p>
-              <div class="panel-row"><span>Signaling system</span><span>ABS</span></div>
-              <div class="panel-row"><span>Display node</span><span>Signal-LCC</span></div>
-              <div class="panel-row"><span>Logic node</span><span>the same board</span></div>
-              <div class="panel-row"><span>Event IDs shown</span><span>0</span></div>
-            </div>
-          </div>
-
-          <div class="note" style="margin-bottom:0">
-            <strong>Read the middle column aloud and it is the whole rule.</strong>
-            Four answers produced it. The original reaches the same table by asking the user to name
-            ABS and pick a signal role first; the question for reviewers is whether naming ABS
-            <em>added</em> anything for this signal.
           </div>
         </div>
         <div class="dialog-foot">
@@ -2155,6 +2369,11 @@
         </div>
       </div>
       <p class="frame-ref">Bring-up and testing follow exactly as in the original — see its §6.</p>
+      <ul class="frame-ref">
+        <li><strong>Storyboard note:</strong> The user reviews the derived indication table in
+          plain language. The dialog omits the internal signaling-system classification, hardware
+          roles, and Event IDs.</li>
+      </ul>
     </div>
   </div>
   <div class="frame-rail"></div>
@@ -2769,7 +2988,7 @@
   <p class="mockup-caption">
     Same wizard, same five steps, same worked example the original uses: <strong>Rockville — Eastward
     Home Signal</strong>, protecting Main 1 East over turnout 21, with CP Banks ahead on the normal
-    route. Six indications on two heads read together as one. Watch what the four Track-use words have
+    route. Six indications on two heads read together as one. Watch what the three Purpose choices have
     to carry here — and where the plain-English framing starts to strain.
   </p>
 
@@ -2779,7 +2998,7 @@
     <div>
       <h3>Same question, different answer</h3>
       <p class="frame-do">
-        The user picks <b>A turnout or a crossing</b>. That single choice now has to imply an
+        The user picks <b>A junction or crossing</b>. That single choice now has to imply an
         interlocking, route selection, a second next-mast, and a second head. <b>None of that is
         visible yet.</b>
       </p>
@@ -2802,8 +3021,8 @@
                   <line x1="5" y1="22" x2="105" y2="22" stroke="#5a6270" stroke-width="2.5"/>
                   <path d="M40 10 L 85 10 L 80 5 M 85 10 L 80 15" stroke="#616161" stroke-width="1.5" fill="none"/>
                 </svg>
-                <div><div class="choice-title">A block of track</div>
-                  <div class="choice-desc">One direction of travel. The block ahead of this signal.</div></div>
+                <div><div class="choice-title">A stretch of track</div>
+                  <div class="choice-desc">Ordinary, bidirectional, or terminating track beyond this signal.</div></div>
               </label>
               <label class="choice selected">
                 <input type="radio" name="track-use-hard" checked>
@@ -2811,7 +3030,7 @@
                   <line x1="5" y1="28" x2="105" y2="28" stroke="#5a6270" stroke-width="2.5"/>
                   <line x1="55" y1="28" x2="100" y2="8" stroke="#5a6270" stroke-width="2.5"/>
                 </svg>
-                <div><div class="choice-title">A turnout or a crossing</div>
+                <div><div class="choice-title">A junction or crossing</div>
                   <div class="choice-desc">A route that diverges (turnout) or two tracks that cross without connecting (diamond).</div></div>
               </label>
               <label class="choice">
@@ -2821,18 +3040,8 @@
                   <path d="M55 10 L 95 10 L 90 5 M 95 10 L 90 15" stroke="#616161" stroke-width="1.5" fill="none"/>
                   <path d="M55 34 L 15 34 L 20 29 M 15 34 L 20 39" stroke="#616161" stroke-width="1.5" fill="none"/>
                 </svg>
-                <div><div class="choice-title">A single-track section</div>
-                  <div class="choice-desc">Trains run in both directions on the same rails.</div></div>
-              </label>
-              <label class="choice">
-                <input type="radio" name="track-use-hard">
-                <svg class="choice-icon" width="110" height="40" viewBox="0 0 110 40" aria-hidden="true">
-                  <line x1="5" y1="28" x2="105" y2="28" stroke="#5a6270" stroke-width="2.5"/>
-                  <line x1="55" y1="28" x2="100" y2="8" stroke="#5a6270" stroke-width="2.5"/>
-                  <rect x="5" y="5" width="9" height="9" fill="#0f6cbd"/>
-                </svg>
-                <div><div class="choice-title">A dispatcher-controlled point</div>
-                  <div class="choice-desc">A dispatcher sets routes or holds this signal.</div></div>
+                <div><div class="choice-title">A special controlled location</div>
+                  <div class="choice-desc">A bridge, holdout point, boundary, or other condition that must be safe.</div></div>
               </label>
             </div>
             <div>
@@ -2854,11 +3063,6 @@
                     <span style="color:var(--text-muted)">Block occupancy · turnout position · the signals ahead</span></div>
                 </div>
               </div>
-              <div class="note" style="margin-bottom:0">
-                <strong>Had they picked “A single-track section”…</strong>
-                this panel would have said a Tower LCC+Q is needed and that Bowties would add one to the
-                plan. Hardware consequence appears the moment the railroad question is answered.
-              </div>
             </div>
           </div>
         </div>
@@ -2867,11 +3071,15 @@
         </div>
       </div>
       <div class="note warn">
-        <strong>First strain: four choices is a coarse instrument.</strong>
-        “A turnout or a crossing” covers a single-turnout siding entrance, a double crossover, and a
+        <strong>First strain: three broad choices still carry a lot.</strong>
+        “A junction or crossing” covers a single-turnout siding entrance, a double crossover, and a
         five-track yard throat. The original asks a narrower question — <em>interlocking home signal</em>
         versus <em>interlocking distant</em> — and gets a more precise answer for it.
       </div>
+      <ul class="frame-ref">
+        <li><strong>Storyboard note:</strong> Choosing <em>A stretch of track</em> defers ordinary
+          versus bidirectional behavior to Step 2 rather than implying APB in Step 1.</li>
+      </ul>
     </div>
   </div>
   <div class="frame-rail"></div>
@@ -2882,7 +3090,7 @@
     <div>
       <h3>Plant — which junction shape? (and does the diverging route reach another signal?)</h3>
       <p class="frame-do">
-        <strong>The plant step earns its keep here.</strong> "A turnout or a crossing" from step 1 is
+        <strong>The plant step earns its keep here.</strong> "A junction or crossing" from step 1 is
         coarse; the plant step sharpens it. The user picks a plant shape from schematic tiles —
         recognising their own layout at a glance instead of translating prose into a picture — and
         the inline preview panel expands with the shape-specific follow-ups
@@ -3041,10 +3249,9 @@
       </div>
 
       <div class="note" style="margin-top:12px;margin-bottom:0">
-        <strong>Absolute-vs-permissive is derived from step 1, not asked here.</strong>
-        Because step 1 was "a turnout or a crossing," this signal is treated as an interlocking home
-        signal — <em>absolute</em> — and must show Stop. The plant step doesn't re-ask that; it
-        only asks the shape questions the aspect step actually needs to reach a correct indication
+        <strong>Absolute-vs-permissive comes from the junction shape and control context.</strong>
+        This worked example resolves to an interlocking home signal — <em>absolute</em> — and must
+        show Stop. The plant step asks only the remaining shape questions needed for the indication
         table.
       </div>
     </div>
@@ -3123,11 +3330,9 @@
               </label>
 
               <div class="note" data-fidelity-explanation style="margin-top:10px">
-                <strong>Where the plant answered the hard question.</strong>
-                The step-2 plant said <em>single turnout · medium-speed diverging · reaches another
-                controlled signal</em>. That is why the Common rung's description names
-                Medium Clear, Medium Approach, and (on the confirm screen) Approach Medium. If the
-                diverging route had led into a yard, Approach Medium would drop out.
+                <strong>Based on this junction:</strong>
+                the medium-speed route to another controlled signal adds Medium Clear,
+                Medium Approach, and Approach Medium.
               </div>
             </div>
 
@@ -3229,11 +3434,6 @@
                   <span style="color:var(--text-muted)">6 lamp drivers · 5 aspect slots</span>
                 </div>
               </div>
-              <div class="note" style="margin-bottom:0">
-                <strong>Two heads because five aspects need it.</strong>
-                Not a surprise: step 3's preview already showed 5 aspects · 2 heads · 6 lamps. The
-                user saw the driver cost before reaching this screen.
-              </div>
             </div>
           </div>
         </div>
@@ -3246,6 +3446,10 @@
         Head count and driver cost are no longer surprises revealed at step 4 — they were already
         visible in step 3's live preview, tied directly to the vocabulary-ladder rung the user picked.
       </div>
+      <ul class="frame-ref">
+        <li><strong>Storyboard note:</strong> The two-head, six-driver display is a consequence of
+          the five selected aspects, previewed on the previous step.</li>
+      </ul>
     </div>
   </div>
   <div class="frame-rail"></div>
@@ -3319,7 +3523,7 @@
               <div class="note" style="margin-bottom:0">
                 <strong>Marked incomplete until resolved.</strong>
                 The signal still builds and still works on the normal route. The diverging indications
-                stay dark until the placeholder is bound. See <a href="#s5">§5</a>.
+                stay dark until the placeholder is bound.
               </div>
             </div>
           </div>
@@ -3461,29 +3665,19 @@
                 </div>
               </div>
             </div>
-            <div class="panel subtle">
-              <p class="subhead">Bowties handled</p>
-              <div class="panel-row"><span>Signaling system</span><span>Interlocking</span></div>
-              <div class="panel-row"><span>Display node</span><span>Signal-LCC</span></div>
-              <div class="panel-row"><span>Logic node</span><span>the same board</span></div>
-              <div class="panel-row"><span>Unresolved links</span><span style="color:var(--accent-amber)">1</span></div>
-              <div class="panel-row"><span>Event IDs shown</span><span>0</span></div>
-            </div>
           </div>
 
-          <div class="note" style="margin-bottom:0">
-            <strong>The jargon still exists — but no longer as a surprise.</strong>
-            <em>Medium Clear</em> and <em>Medium Approach</em> have no plain-English short form. The
-            confirm screen shows them alongside their plain-English trigger conditions, and the
-            <em>Print pocket card</em> action turns the same table into an index-card cheat sheet.
-            The vocabulary appeared at step 3 the moment the user stepped the vocabulary ladder up to Common; by
-            now they have already opted into it.
-          </div>
         </div>
         <div class="dialog-foot">
           <button class="btn">Back</button><button class="btn btn-primary">Looks right — build the signal</button>
         </div>
       </div>
+      <ul class="frame-ref">
+        <li><strong>Storyboard note:</strong> The confirmation keeps the indication names next to
+          their plain-language conditions; the pocket card provides the same table for reference.</li>
+        <li>The hardware target, logic placement, and Event IDs are not shown as separate
+          implementation choices.</li>
+      </ul>
     </div>
   </div>
 </div>
@@ -3659,7 +3853,7 @@
     <div class="panel">
       <p class="subhead">Costs of asking what it protects first</p>
       <ul style="margin:0;padding-left:18px;font-size:12px">
-        <li><strong>Four choices carry too much.</strong> “A turnout or a crossing” spans a siding
+        <li><strong>Three broad choices still carry a lot.</strong> “A junction or crossing” spans a siding
           turnout and a yard throat; the original's “interlocking home signal” does not.</li>
         <li><strong>Step 3 has two controls; the Rulebook rung unfolds a picker.</strong> Family
           plus a three-rung vocabulary ladder (Essential / Common / Rulebook); the Rulebook rung
@@ -3699,6 +3893,71 @@
     as consequence. This one front-loads a question anyone can answer, and pays for it with three
     decisions made silently on the user's behalf. <em>Which failure would you rather debug at
     2 a.m. before an operating session?</em>
+  </div>
+</div>
+
+<!-- ============================================================ Future refinements -->
+<div class="mockup-section" id="future-refinements">
+  <h2>Future mockup refinements</h2>
+  <p class="mockup-caption">
+    These items preserve what the storyboard has learned without presenting future-scenario UX as
+    settled requirements. Step-local notes carry the detail; this register records the cross-step
+    question and why the current feature can proceed safely without answering it.
+  </p>
+
+  <div class="table-wrap">
+    <table class="diff-table">
+      <thead>
+        <tr>
+          <th style="width:210px">Scenario</th>
+          <th style="width:150px">Current status</th>
+          <th>Questions to resolve</th>
+          <th>Safe to defer because</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Bidirectional single track</strong></td>
+          <td>Step 2 and Step 3 placeholders</td>
+          <td>Both entrances, same-direction signal chains, APB direction detection and latching,
+            opposing-signal tumble-down, and Mast → Plant promotion.</td>
+          <td>The first feature configures one mast, the protected block beyond it, and optionally
+            the next mast in that same chain.</td>
+        </tr>
+        <tr>
+          <td><strong>Single-track Rulebook filtering</strong></td>
+          <td>Placeholder</td>
+          <td>Which prototype indications apply to APB, how plant state filters the catalog, and
+            how direction ownership appears in the indication preview.</td>
+          <td>The complete Rulebook interaction is demonstrated by the Turnout / junction variant;
+            no separate catalog behavior is required by the first block feature.</td>
+        </tr>
+        <tr>
+          <td><strong>Territory control context</strong></td>
+          <td>Exploratory</td>
+          <td>Where Automatic versus Dispatcher / operator defaults are established, which
+            additional modes exist, and when a plant may override its inherited territory.</td>
+          <td>The mockup can show inherited Automatic control for the first block feature while
+            <em>Change…</em> remains a placeholder for the future territory UX.</td>
+        </tr>
+        <tr>
+          <td><strong>Direction representation</strong></td>
+          <td>Deferred</td>
+          <td>Whether mast facing becomes an explicit property, where it is edited, and how Bowties
+            distinguishes fixed mast facing from dynamic section ownership.</td>
+          <td>The initial relationship is unambiguous as this mast → protected block → next mast;
+            no opposing-direction coordination is performed.</td>
+        </tr>
+        <tr>
+          <td><strong>Passing siding ownership</strong></td>
+          <td>Direction chosen; workflow incomplete</td>
+          <td>Define the handoff from a Mast's bidirectional-track choice into a new or existing
+            Signal Plant, including how already-created masts are promoted or joined.</td>
+          <td>The passing-siding mockup is preserved in the Signal Plant walkthrough, while the
+            first block feature creates only one Mast and never invokes the handoff.</td>
+        </tr>
+      </tbody>
+    </table>
   </div>
 </div>
 
@@ -3770,14 +4029,70 @@
       const inputs = [...picker.querySelectorAll('input[type="radio"]')];
       const scope  = picker.closest('.frame') || picker.parentElement;
       const panels = [...scope.querySelectorAll('[data-plant-panel]')];
+      const trackControls = scope.querySelector('[data-track-result-controls]');
+      const trackInputs = [...scope.querySelectorAll('[data-track-result-picker] input[type="radio"]')];
 
       const update = () => {
         const chosen = inputs.find(input => input.checked)?.value;
+        const trackResult = trackInputs.find(input => input.checked)?.value || 'block';
         for (const input of inputs) input.closest('.segment').classList.toggle('selected', input.checked);
-        for (const panel of panels) panel.hidden = panel.dataset.plantPanel !== chosen;
+        for (const input of trackInputs) input.closest('.segment').classList.toggle('selected', input.checked);
+        if (trackControls) trackControls.hidden = chosen !== 'track';
+        for (const panel of panels) {
+          panel.hidden = chosen === 'track'
+            ? panel.dataset.plantPanel !== trackResult
+            : panel.dataset.plantPanel !== chosen;
+        }
       };
 
       for (const input of inputs) input.addEventListener('change', update);
+      for (const input of trackInputs) input.addEventListener('change', update);
+      update();
+    }
+  })();
+
+  // The plain-block path has one behavior choice: whether to cascade the next signal's state.
+  (() => {
+    for (const picker of document.querySelectorAll('[data-block-warning-picker]')) {
+      const inputs = [...picker.querySelectorAll('input[name="block-warning"]')];
+      const previews = [...picker.querySelectorAll('[data-block-warning-preview]')];
+
+      const update = () => {
+        const chosen = inputs.find(input => input.checked)?.value;
+        for (const input of inputs) input.closest('.choice').classList.toggle('selected', input.checked);
+        for (const preview of previews) preview.hidden = preview.dataset.blockWarningPreview !== chosen;
+      };
+
+      for (const input of inputs) input.addEventListener('change', update);
+      update();
+    }
+  })();
+
+  // Step-3 storyboard picker. This is a reviewer control only: in the product, step 2 chooses
+  // the plant and step 3 receives the corresponding behavior questions.
+  (() => {
+    for (const picker of document.querySelectorAll('[data-aspect-picker]')) {
+      const inputs = [...picker.querySelectorAll('input[type="radio"]')];
+      const scope  = picker.closest('.frame') || picker.parentElement;
+      const panels = [...scope.querySelectorAll('[data-aspect-panel]')];
+      const trackControls = scope.querySelector('[data-track-aspect-controls]');
+      const trackInputs = [...scope.querySelectorAll('[data-track-aspect-picker] input[type="radio"]')];
+
+      const update = () => {
+        const chosen = inputs.find(input => input.checked)?.value;
+        const trackResult = trackInputs.find(input => input.checked)?.value || 'block';
+        for (const input of inputs) input.closest('.segment').classList.toggle('selected', input.checked);
+        for (const input of trackInputs) input.closest('.segment').classList.toggle('selected', input.checked);
+        if (trackControls) trackControls.hidden = chosen !== 'track';
+        for (const panel of panels) {
+          panel.hidden = chosen === 'track'
+            ? panel.dataset.aspectPanel !== trackResult
+            : panel.dataset.aspectPanel !== chosen;
+        }
+      };
+
+      for (const input of inputs) input.addEventListener('change', update);
+      for (const input of trackInputs) input.addEventListener('change', update);
       update();
     }
   })();
