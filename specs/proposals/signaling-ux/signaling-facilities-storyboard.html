@@ -743,12 +743,12 @@
   </header>
 
   <div class="proposal-banner">
-    <span class="proposal-label">Exploratory</span>
+    <span class="proposal-label">Current direction</span>
     <div>
-      <strong>This mockup tests a three-way entrance, not a settled domain model.</strong>
-      Signal Mast and Signal Plant retain their established meanings. Signal Line is the working
-      name for automatic signals along plain track; the mockup tests whether modelers recognize
-      that job before Bowties commits to a persistent Line or Territory object.
+      <strong>Selected UX direction as of 2026-10-31: Signal Plant and Signal Line.</strong>
+      Add Facility no longer offers Signal Mast separately. Masts remain the individual signals
+      configured within a location or line; the Mast walkthrough below is configuration reference.
+      Detailed workflow design and persistent Line or Territory ownership remain open.
     </div>
   </div>
 
@@ -767,7 +767,7 @@
         <h2>1. Add facility</h2>
         <p class="section-caption">
           Bowties already creates facilities by choosing a behavior template and entering a name.
-          This mockup adds three signaling templates alongside the existing Block Indicator;
+          This mockup adds two signaling templates alongside the existing Block Indicator;
           the selected signaling template opens its dedicated wizard after the facility is added.
         </p>
       </div>
@@ -791,10 +791,9 @@
               <label class="add-facility-choice facility-choice" data-target="">
                 <input type="radio" name="facility-type" value="indicator">
                 <svg viewBox="0 0 56 42" aria-hidden="true">
-                  <rect x="7" y="7" width="42" height="28" rx="3" fill="#edf0f3" stroke="#737b86" stroke-width="2"></rect>
-                  <circle cx="21" cy="21" r="6" fill="#e0a800" stroke="#20242a" stroke-width="2"></circle>
-                  <line x1="32" y1="17" x2="44" y2="17" stroke="#737b86" stroke-width="2"></line>
-                  <line x1="32" y1="24" x2="41" y2="24" stroke="#737b86" stroke-width="2"></line>
+                  <line x1="3" y1="21" x2="21" y2="21" stroke="#56606d" stroke-width="2"></line>
+                  <line x1="35" y1="21" x2="53" y2="21" stroke="#56606d" stroke-width="2"></line>
+                  <circle cx="28" cy="21" r="6" fill="#c50f1f" stroke="#20242a" stroke-width="2"></circle>
                 </svg>
                 <div>
                   <div class="choice-title">Block Indicator</div>
@@ -802,24 +801,8 @@
                 </div>
               </label>
 
-              <label class="add-facility-choice facility-choice selected" data-target="mast">
-                <input type="radio" name="facility-type" value="mast" checked="">
-                <svg viewBox="0 0 56 42" aria-hidden="true">
-                  <line x1="7" y1="33" x2="49" y2="33" stroke="#56606d" stroke-width="2"></line>
-                  <line x1="28" y1="33" x2="28" y2="13" stroke="#737b86" stroke-width="3"></line>
-                  <rect x="21" y="4" width="14" height="18" rx="7" fill="#20242a"></rect>
-                  <circle cx="28" cy="10" r="3.2" fill="#17a65b"></circle>
-                  <circle cx="28" cy="17" r="3.2" fill="#343940"></circle>
-                </svg>
-                <div>
-                  <div class="choice-title">Signal Mast</div>
-                  <div class="choice-desc">One signal at a location.</div>
-                  <div class="choice-examples">Block signal · distant · boundary · one signal at a turnout</div>
-                </div>
-              </label>
-
-              <label class="add-facility-choice facility-choice" data-target="plant">
-                <input type="radio" name="facility-type" value="plant">
+              <label class="add-facility-choice facility-choice selected" data-target="plant">
+                <input type="radio" name="facility-type" value="plant" checked="">
                 <svg viewBox="0 0 56 42" aria-hidden="true">
                   <line x1="3" y1="30" x2="53" y2="30" stroke="#56606d" stroke-width="2"></line>
                   <line x1="16" y1="30" x2="23" y2="13" stroke="#56606d" stroke-width="2"></line>
@@ -832,7 +815,7 @@
                 </svg>
                 <div>
                   <div class="choice-title">Signal Plant</div>
-                  <div class="choice-desc">Multiple coordinated signals around trackwork.</div>
+                  <div class="choice-desc">One or more signals protecting a location.</div>
                   <div class="choice-examples">Passing siding · interlocking · crossover · diamond</div>
                 </div>
               </label>
@@ -2037,12 +2020,12 @@
         <tbody>
           <tr>
             <td>First question</td>
-            <td>Choose one signal, one coordinated location, or a block sequence.</td>
-            <td><span class="status testing">Testing</span></td>
+            <td>Choose a Signal Plant for a location or a Signal Line for plain track; no separate Mast entrance.</td>
+            <td><span class="status settled">Direction chosen</span></td>
           </tr>
           <tr>
-            <td>Turnout threshold</td>
-            <td>A turnout alone does not create a Plant; multiple coordinated signals do.</td>
+            <td>Plant threshold</td>
+            <td>The protected location determines the Plant workflow, not whether it has one signal or several.</td>
             <td><span class="status settled">Direction chosen</span></td>
           </tr>
           <tr>

@@ -14,6 +14,28 @@ Entries are dated. Newer entries appear at the top.
 
 ---
 
+## 2026-10-31 — Facility-first storyboard is the current UX direction
+
+**Decision.** [signaling-facilities-storyboard.html](signaling-facilities-storyboard.html)
+supersedes the two earlier HTML mockups, now retained in [archived/](archived/) as historical
+reference. Add Facility offers Block Indicator, Signal Plant, and Signal Line, with no separate
+Signal Mast entry.
+
+- **Signal Line** configures signals along plain track, including a single-signal case.
+- **Signal Plant** configures a recognizable location such as a turnout, bridge, holdout, or
+  territory boundary. Signal count alone does not determine which entrance applies.
+- **Signal Mast** remains the individual signal configured within those workflows. Its
+  retained walkthrough is reference material for that configuration, not another entrance.
+
+**Rationale.** Modelers choose what they are protecting rather than classify an individual
+signal as a Mast, Plant, or Line. Plant shapes already cover the special locations that would
+otherwise justify a separate Mast entrance.
+
+**Boundary.** This supersedes earlier entrance and signal-count threshold decisions, not the
+audience commitments or the headless-pipeline-first implementation sequence. Delivery phasing,
+single-signal workflow details, and durable Line persistence still require reconciliation with
+the charter and implementation plans; they are not settled by adopting the mockup.
+
 ## 2026-09-07 — Audience-coverage phasing (supersedes earlier four-phase entry)
 
 **Decision.** The signaling wizard phasing is defined by *audience segment*
