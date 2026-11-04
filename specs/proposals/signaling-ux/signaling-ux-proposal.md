@@ -1,7 +1,9 @@
 # Signaling UX — Proposal
 
-Status: **draft**. Companion to [signaling-ux-mockups.html](signaling-ux-mockups.html) and the
-[README](README.md).
+Status: **draft — needs alignment with the current facility-first UX direction**.
+The current mockup is [signaling-facilities-storyboard.html](signaling-facilities-storyboard.html);
+the original companion [mockups](archived/signaling-ux-mockups.html) are historical.
+See the [README](README.md) and the 2026-10-31 entry in [design-decisions.md](design-decisions.md).
 
 ---
 

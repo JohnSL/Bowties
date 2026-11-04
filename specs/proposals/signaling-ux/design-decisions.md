@@ -14,6 +14,230 @@ Entries are dated. Newer entries appear at the top.
 
 ---
 
+## 2026-11-01 — Reviewer notes describe current contracts, not change history
+
+**Decision.** Notes below each mockup contain only non-obvious behavior, local mockup limitations,
+and open questions. Use those headings only where needed; do not repeat visible controls,
+styling decisions, implementation helpers, or the sequence of earlier revisions.
+History and rationale remain in this decision log.
+
+Shared limitations appear once near the start of the storyboard: no hardware access,
+illustrative data, and no synchronized end-to-end plan. The conditional bidirectional limitation
+is retained there rather than repeated below four Line steps. Notes remain outside product UI.
+Unsettled authorization, unavailable-state, and application policies are explicitly open questions,
+not implied guarantees of the mockup.
+
+## 2026-11-01 — Separate governed directions from opposing-movement coordination
+
+**Decision.** Line Step 1 uses descriptive radios for **One direction** or **Both directions**.
+One direction uses an Eastward/Westward segmented-radio selector, matching Speed/Route in
+Signals rather than hiding two choices in a dropdown. Both directions reveals a
+separate operating-policy question: **No shared direction coordination** or **Coordinate traffic
+through the single-track section**. Neither coordination policy is silently selected.
+The same existing detected blocks participate in both directions, with opposite travel orders.
+
+The desktop layout uses two columns: descriptive movement/policy cards on the left and a compact
+block list on the right. Row position conveys order without an Order column. Occupancy reuses
+the signal-strip circles and observation renderer, with accessible full-state labels, tooltips,
+and a key. Up/down/remove actions use labeled icon buttons and retain disabled boundary moves.
+Bold ABS/APB terms in the descriptions connect familiar terminology without making it the input.
+
+ABS and APB belong in explanatory descriptions and the Review operating-intent summary,
+not in a primary system selector. This bridges the modeler's familiar system names with concrete
+protection and operating choices while preserving one facility-first workflow. Direction count,
+opposing protection, signaling family, vocabulary, and physical display remain distinct facts.
+
+Both directions without shared coordination may use independent automatic block chains (ABS);
+permission for opposing movements must be managed separately. APB requires validated section-wide
+direction detection, latching, opposing-signal protection/tumble-down, and release/reset behavior.
+Neither single track nor opposing signals alone establishes APB. This supersedes older shortcuts
+that equated a single-track shape with APB.
+
+The HTML previews the choices, conditional policy controls, and intended-behavior summary.
+Subsequent diagrams, counts, downstream links, and lamp assignments remain the one-direction
+example, explicitly explained in the shared mockup-scope note when Both directions is selected.
+Mockup-limit messages do not appear inside the simulated end-user UI. It does not implement bidirectional
+membership, opposing entrance signals, two-ended external connections, APB compilation, or hardware
+application. A future two-direction editor needs those relationships and directional views without
+renaming shared blocks or recreating existing signal identities and bindings.
+
+**Alternatives.** A combined three-card operating-mode selector keeps every combination visible
+but couples direction count to operating policy. Help-only terminology bridging misses the natural
+decision point in Step 1. Separate conditional questions follow SRP and prevent bidirectional=APB
+conflation; a shared derived summary makes the requested behavior and any unanswered policy explicit.
+
+## 2026-11-01 — Directional boundaries, assigned names, and Plant-handoff entry
+
+**Decision.** In Line Signals, rotate each Mast glyph 90 degrees; no additional chevron is needed.
+Align it with a visible track break at the entrance boundary of its protected block, on the
+engineer's right: below the track for eastward travel, above it for westward travel. Keep the
+assigned name close to the icon and leave a larger gap between the box and track. Changing
+the declared travel direction mirrors the schematic strip and switches the signal side while
+retaining the same ordered relationships, signal identities, assigned names, and bindings.
+Track-side placement is not a physical installation instruction. Future bidirectional signaling
+may show opposing markers on their respective right-hand sides at one boundary; this storyboard
+still represents one directional chain.
+
+Replace S1/S2/S3 with the user-assigned names from the same source as the name editor,
+preview, and accessible labels. Bound their visual width with ellipsis and expose the full name
+through tooltips and accessible labels. Do not introduce another generated relationship name
+or rename an assigned signal when direction changes.
+
+The endpoint becomes **Connect to Plant entrance…** (or **Change Plant entrance…** when
+connected). It selects the final Line signal and focuses the existing downstream controls,
+without changing their state or creating another configuration path. Connection remains an
+explicit choice; missing or unavailable downstream state must not imply Clear.
+
+The Plant owns its entrance Mast. The Line references the semantic downstream restriction/
+Track Speed rather than matching literal aspect labels. A future Plant-entrance picker can
+provide this handoff without a full track diagram, but the current preview still selects an
+existing downstream signal and does not create a Plant, entrance, or connector Mast.
+
+**Alternatives.** A chevron was initially included but rejected as redundant beside the rotated
+glyph; the overall travel heading and right-hand placement reinforce direction. Ordinal or
+generated contextual labels introduce another label beside an assigned name.
+“Add Plant entrance” incorrectly suggests creation rather than connection. A notes-only
+handoff would be honest about future scope but would miss an entry point to the existing controls.
+The chosen pattern keeps direction local, identity single-sourced, and connection ownership shared.
+
+## 2026-11-01 — Descriptive Line choices with a topology-specific preview
+
+**Decision.** Reuse the Plant Aspects interaction pattern in Line Signals: a visible
+Speed/Route selector followed by descriptive Essential/Common/Rulebook radios.
+Family selects the signaling basis; vocabulary selects the richness of named distinctions.
+Line-specific descriptions explain downstream restrictions rather than Plant-only diverging routes.
+The Line default and expanded selected-signal override use the same choice definitions;
+inheritance and preservation of exceptions remain explicit.
+
+The right-hand preview retains **Condition | Indication**. Richer speed-signaling examples
+add **Speed meaning** when an advance-warning row distinguishes outcomes. Simple and
+route-signaling examples do not carry an unhelpful extra column. This table explains possible
+configuration rules, not observed occupancy or a live signal display. Physical lamp arrangements
+remain in Connections; Rulebook and speed meanings remain illustrative, not verified catalog mappings.
+
+**Alternatives.** Keeping separate dropdown-based Line controls would preserve compactness but
+hide explanations and make equivalent Plant/Line choices less consistent. Copying the entire
+Plant table would import route distinctions that do not apply to plain sequential track.
+Shared explanatory choices with topology-specific previews preserve DRY without flattening
+the two facilities' different input relationships.
+
+## 2026-11-01 — Select a signal from the ordered Line strip
+
+**Decision.** Step 2 shows a horizontally scrollable block-and-entrance-signal strip. Selecting
+a signal opens one compact editor below it. The protected block and internal next-signal context
+come from the established order; they are displayed, not re-entered. Only the final signal asks
+about an external downstream connection, including a Plant entrance.
+
+Family and vocabulary inherit shared Line settings, with explicit per-signal exceptions. Changing
+Line settings preserves exceptions. The last signal begins with occupancy-only Clear/Stop when no
+downstream connection is available; this is an input/behavior distinction, not a family/vocabulary
+override. A three-aspect upstream signal can use a two-aspect downstream signal; matching aspect
+sets along the entire Line is not required. Richer indications can impose additional information
+requirements that the planner must validate.
+
+Track segments have labels above the line rather than clickable-looking block boxes. Occupancy
+markers use red fill/black outline for occupied, white fill/black outline for clear, and white
+fill/gray dashed outline for unknown, with text and tooltips. The offline preview explicitly makes
+occupancy unavailable instead of displaying old observations as current.
+
+The track segments are compact. The selected signal name sits above the two columns. **Entire Line**
+family (speed/route) and vocabulary (Essential/Common/Rulebook) occupy the left column, with
+**Selected signal only** overrides expanding below them. **Override Line signaling** is unchecked
+while inheriting; existing exceptions remain checked. That column alone scrolls within a bounded
+desktop height, keeping the track strip, name, rules, and navigation outside it. On narrow windows
+the columns stack and settings expand into normal page/dialog scrolling.
+
+A read-only **When this signal shows…** table on the right responds to family, vocabulary,
+per-signal exceptions, and available input relationships. Occupancy-only behavior remains an
+independent choice, not another vocabulary rung. Preview rules and the borrowed Rulebook entries
+are illustrative fixtures, not a complete catalog-backed compiler or verified prototype mappings.
+
+The HTML previews signal selection, names, inheritance, exceptions, occupancy availability, and
+the final connection; later steps retain the baseline illustration rather than claiming to preview
+a synchronized plan. Runtime unknown-state policy, storage, and delivery scope remain unchanged
+and unresolved where previously noted.
+
+## 2026-11-01 — Four shared Signal Line steps for create and edit
+
+**Decision.** Replace the six-step directional walkthrough with three configuration steps and
+a final review, using the same screens for a new or existing Signal Line:
+
+1. **Blocks:** Line name and direction; select existing named, detected blocks; show read-only
+   names and observed occupancy; add existing blocks, remove, and reorder. Block naming and
+   detector configuration happen outside signal setup. Removing membership is not deleting a
+   shared block or detector.
+2. **Signals:** each block entrance's signal name, behavior and aspects; shared defaults and
+   individual overrides; the last signal's downstream connection within this step.
+3. **Connections:** compatible physical displays, boards, and lamp outputs for those signals.
+   Occupancy-source bindings are not entered again.
+4. **Review:** baseline-relative changes, missing bindings, compatibility/capacity checks,
+   affected references, and normal draft/application actions.
+
+The storyboard reviewer selector switches create/edit context in place. The create example adds
+three signals; editing upgrades one existing occupancy-only signal to downstream-aware
+Clear/Approach/Stop, retaining its identity and green/red bindings and adding yellow. Two other
+signals remain unchanged. Existing values and overrides must load rather than be reset by defaults.
+Cancel leaves committed configuration unchanged; draft saving and hardware application remain distinct.
+
+Observed occupancy may update from existing detector connections before committing. It is not
+prediction from the draft signal logic, and unknown/unavailable state is explicit. HTML badges and
+connection assignments are illustrative; context selection, individual connection previews,
+and frame navigation are wired.
+This updates the UX walkthrough, not delivery scope, storage design, or runtime safety policy.
+
+## 2026-11-01 — Separate reviewer commentary from product UI
+
+**Decision.** Reviewer commentary belongs in a clearly marked
+**Design notes — not product UI** section below the corresponding frame, outside the dialog,
+window, or facility card. Notes stay visible, rather than being collapsed or moved to a companion
+document. Product warnings and modeler-facing guidance remain inside the mockup.
+
+This separates ownership rules, illustrative data, open questions, and proposed safety/application
+contracts from the messages the modeler would actually see. An unresolved connection still produces
+a concise product warning and visible actions; explanations of placeholder and persistence design
+belong below the frame.
+
+## 2026-11-01 — Directional Signal Line walkthrough under review (superseded by four-step flow above)
+
+**Exploration, not a settled domain decision.** The
+[current storyboard](signaling-facilities-storyboard.html#line) now follows one-direction
+Signal Line setup through blocks, line-end handling, behavior, individual-signal connections,
+review/application, and later editing.
+
+The starting example is one signal protecting one block with occupancy-only Clear/Stop.
+The extension retains that signal and adds two linked signals. Internal signals gain
+Clear/Approach/Stop behavior; the final signal remains occupancy-only unless explicitly linked
+to an external signal, including a Plant entrance. Missing references are incomplete work,
+not an assumed permissive state. Display compatibility is reviewed when adding Approach.
+
+These are proposed review contracts, not approved persistence or safety policies. In particular,
+live unknown downstream-state handling, durable Line identity versus grouping/provenance,
+removal semantics, and delivery scope remain unresolved. Bidirectional/APB coordination is
+deferred from this walkthrough. Review the experience before rewriting the charter or proposal
+around a particular Line model.
+
+## 2026-10-31 — Facility-first storyboard is the current UX direction
+
+**Decision.** [signaling-facilities-storyboard.html](signaling-facilities-storyboard.html)
+supersedes the two earlier HTML mockups, now retained in [archived/](archived/) as historical
+reference. Add Facility offers Block Indicator, Signal Plant, and Signal Line, with no separate
+Signal Mast entry.
+
+- **Signal Line** configures signals along plain track, including a single-signal case.
+- **Signal Plant** configures a recognizable location such as a turnout, bridge, holdout, or
+  territory boundary. Signal count alone does not determine which entrance applies.
+- **Signal Mast** remains the individual signal configured within those workflows. Its
+  retained walkthrough is reference material for that configuration, not another entrance.
+
+**Rationale.** Modelers choose what they are protecting rather than classify an individual
+signal as a Mast, Plant, or Line. Plant shapes already cover the special locations that would
+otherwise justify a separate Mast entrance.
+
+**Boundary.** This supersedes earlier entrance and signal-count threshold decisions, not the
+audience commitments or the headless-pipeline-first implementation sequence. Delivery phasing,
+single-signal workflow details, and durable Line persistence still require reconciliation with
+the charter and implementation plans; they are not settled by adopting the mockup.
+
 ## 2026-09-07 — Audience-coverage phasing (supersedes earlier four-phase entry)
 
 **Decision.** The signaling wizard phasing is defined by *audience segment*

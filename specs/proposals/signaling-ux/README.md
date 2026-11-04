@@ -1,7 +1,12 @@
 # Signaling UX — Proposal Set
 
-Status: **in progress.** Charter, mockups, and a proposal draft exist. The proposal is still
-iterating.
+Status: **current UX direction selected, 2026-10-31.** The facility-first storyboard is the
+current mockup. Detailed domain, persistence, and implementation decisions remain in progress.
+
+Start with [signaling-facilities-storyboard.html](signaling-facilities-storyboard.html):
+Add Facility offers Block Indicator, Signal Plant, and Signal Line. Signal Mast remains the
+individual signal being configured, not a separate top-level creation option. The two older
+HTML mockups are in [archived/](archived/) for historical reference only.
 
 This directory captures where we want to take the Bowties UX for **signalling** — building signals
 that a user describes in railroad terms, with Bowties owning every event ID, CDI field and logic rung.
@@ -21,8 +26,10 @@ implementation detail Bowties chooses on the user's behalf.
 |---|---|---|
 | [goals-and-constraints.md](goals-and-constraints.md) | **charter** | Non-negotiable audience, goals, constraints, and re-litigation checkpoints. Read before writing or reviewing anything else here. |
 | [design-decisions.md](design-decisions.md) | **living log** | Concrete design decisions and their rationale — opening question shape, layout-level defaults for signaling family, aspect set size dial, aspect-first ordering, deferred territory model. Sits between the high-level charter and the storyboard. |
-| [signaling-ux-practical-first-storyboard.html](signaling-ux-practical-first-storyboard.html) | **current direction** | Self-contained HTML storyboard for the shipping wizard. Opens with **"what does this signal protect?"**; a dedicated **plant step** captures shape / routes / termination via schematic tiles with an inline preview panel (see design-decisions.md); the aspect step then produces the indication table from two controls — signaling *family* and a single **vocabulary ladder** collapsing the earlier *fidelity* + *aspect-set-size* dials. Head count / style are derived. No build step; safe to email to reviewers. |
-| [signaling-ux-mockups.html](signaling-ux-mockups.html) | **superseded — historical** | Original method-first mockups (asks the user to name ABS / APB / interlocking / CTC on screen one). Kept for side-by-side comparison and to preserve frames the practical-first storyboard defers to it (bring-up, facility card, capacity envelope, APB / CTC, vocabulary table). Not the intended direction for the user-facing flow. |
+| [signaling-facilities-storyboard.html](signaling-facilities-storyboard.html) | **current direction** | Self-contained facility-first storyboard. Signal Plant configures a location; Signal Line uses four shared create/edit steps: Blocks, Signals, Connections, Review. A reviewer selector shows new versus existing Line context. Blocks previews one/both governed directions and a separate opposing-movement policy, then selects/orders existing detected blocks with read-only names and occupancy. Review summarizes the intended ABS/APB behavior; later signal/connection details remain a labeled one-direction example. The retained Mast walkthrough illustrates individual-signal configuration, not a third Add Facility option. Persistence and bidirectional/APB implementation remain open. No build step; safe to email to reviewers. |
+| [block-signal-feature-proposal.md](block-signal-feature-proposal.md) | **proposed next feature** | Speckit-ready input for guided setup of a Signal Mast protecting a plain block: lasting two-aspect Clear/Stop support first, followed by lasting three-aspect Clear/Approach/Stop support using downstream mast state. |
+| [archived/signaling-ux-practical-first-storyboard.html](archived/signaling-ux-practical-first-storyboard.html) | **archived — historical** | Earlier practical-first wizard. Superseded by the facility-first storyboard; retained for comparison, not current UX guidance. |
+| [archived/signaling-ux-mockups.html](archived/signaling-ux-mockups.html) | **archived — historical** | Original method-first mockups. Retained for historical examples of bring-up, facility cards, capacity, APB / CTC, and vocabulary, not current UX guidance. |
 | [signaling-ux-proposal.md](signaling-ux-proposal.md) | **draft** | The prose proposal. Signal type as the core data object; how active indications and cascade are derived; how the model maps onto ABS / APB / interlocking / CTC; conversion of JMRI signal XML into the shipped catalog. |
 | [headless-intent-pipeline-plan.md](headless-intent-pipeline-plan.md) | **proposed** | Headless architecture plan: typed Signal Mast intent and bundled behavior policy compile to a validated, reviewable Signal-LCC plan that developer scenarios and the future wizard apply through the same draft workflow. |
 | [option-a-mainline-extraction-plan.md](option-a-mainline-extraction-plan.md) | **execution plan** | Mainline salvage sequence for the unmerged `020-abs-signaling` worktree: preserve current evidence, land developer-agent improvements first, extract independent capabilities, discard obsolete ABS production architecture, then build the headless Signal-LCC pipeline. |
@@ -38,6 +45,11 @@ one self-contained mockups HTML, using Fluent v9 tokens matching
 [../../018-block-indicator-facility/mockups.html](../../018-block-indicator-facility/mockups.html).
 
 ## Working method
+
+The 2026-10-31 entry in [design-decisions.md](design-decisions.md) records the current entrance
+decision. Older Mast-first wizard and Plant-threshold statements in the charter, decision log,
+and prose proposal still need reconciliation; they do not restore a Signal Mast creation option.
+Selecting this mockup does not by itself settle delivery phasing or Line persistence.
 
 Charter first, then mockups, then proposal prose. Drawing screens changes the model; writing prose
 first means defending it instead of learning from it. The reviewer audience is both prototype-signalling
