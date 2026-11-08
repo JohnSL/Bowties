@@ -139,6 +139,8 @@
     || !!connectorConstraintState?.readOnly
     || (isPlaceholderNode && leaf.elementType === 'eventId'),
   );
+  /** Read-only event IDs remain focusable so their address can be selected and copied. */
+  let isReadOnlyEventId = $derived(leaf.elementType === 'eventId' && !!leaf.readOnly);
 
   /** Whether this leaf type supports inline editing */
   let isEditable = $derived(
@@ -407,6 +409,8 @@
 
   /** T034: event ID field — text input with dotted-hex validation */
   function handleEventIdInput(e: Event) {
+    if (isDisabled) return;
+
     const raw = (e.target as HTMLInputElement).value;
 
     const parsedBytes = parseEventIdHex(raw);
@@ -615,11 +619,15 @@
         class="field-input field-input--eventid"
         value={inputEventId}
         placeholder="HH.HH.HH.HH.HH.HH.HH.HH"
-        disabled={isDisabled}
+        disabled={isDisabled && !isReadOnlyEventId}
+        readonly={isReadOnlyEventId}
         aria-label={leaf.name}
         aria-invalid={isInvalid}
         oninput={handleEventIdInput}
       />
+      {#if isReadOnlyEventId}
+        <span class="read-only-indicator">Read-only</span>
+      {/if}
     {:else}
       <span class="field-value" class:mono={isMonoValue}>
         {formatValue(leaf.value)}
@@ -991,6 +999,12 @@
     font-family: 'Cascadia Code', 'Cascadia Mono', 'SF Mono', 'Fira Code', 'Consolas', monospace;
     font-size: 12px;
     letter-spacing: -0.01em;
+  }
+
+  .read-only-indicator {
+    color: #605e5c;
+    font-size: 11px;
+    font-style: italic;
   }
 
   /* ── Validation / error messages ── */

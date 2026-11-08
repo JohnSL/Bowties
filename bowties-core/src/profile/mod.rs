@@ -33,6 +33,7 @@ pub use types::{
     ProfileNodeType,
     FirmwareVersionRange,
     FieldPresentationDecl,
+    FieldAccessDecl,
     FieldControl,
     ConnectorCdiSignature,
     ConnectorCdiEnumCount,
@@ -196,6 +197,8 @@ pub struct AnnotationReport {
     pub rules_applied: usize,
     /// Number of integer leaves whose presentation metadata was overridden.
     pub field_presentations_applied: usize,
+    /// Number of leaves made read-only by profile declarations.
+    pub field_accesses_applied: usize,
     /// Warnings collected during annotation (also printed to stderr immediately).
     pub warnings: Vec<String>,
     /// Unknown-variant selections surfaced by [`compose_overlays`]. Empty when
@@ -325,6 +328,31 @@ pub fn annotate_tree(
         }
     }
     report.field_presentations_applied = presented_fields.len();
+
+    for declaration in &profile.field_access {
+        match resolver::resolve_named_path(&declaration.field_path, cdi) {
+            Ok(resolved_path) => {
+                let applied = apply_field_access(tree, &resolved_path, declaration.read_only);
+                if applied == 0 {
+                    push_annotation_warning(
+                        &mut report,
+                        format!(
+                            "[profile] Field access path '{}' resolved but matched no leaves in tree",
+                            declaration.field_path
+                        ),
+                    );
+                }
+                report.field_accesses_applied += applied;
+            }
+            Err(_) => push_annotation_warning(
+                &mut report,
+                format!(
+                    "[profile] Field access path '{}' could not be resolved in CDI — skipped",
+                    declaration.field_path
+                ),
+            ),
+        }
+    }
 
     // ── US2 stub ─────────────────────────────────────────────────────────────
     // Relevance rule evaluation (attaching RelevanceAnnotation to GroupNodes)
@@ -924,6 +952,48 @@ fn apply_slider_control(leaf: &mut crate::node_tree::LeafNode, control: &types::
     });
 }
 
+fn apply_field_access(
+    tree: &mut NodeConfigTree,
+    resolved_path: &[String],
+    read_only: bool,
+) -> usize {
+    let mut applied = 0;
+    for segment in &mut tree.segments {
+        apply_field_access_to_children(
+            &mut segment.children,
+            resolved_path,
+            read_only,
+            &mut applied,
+        );
+    }
+    applied
+}
+
+fn apply_field_access_to_children(
+    children: &mut [ConfigNode],
+    resolved_path: &[String],
+    read_only: bool,
+    applied: &mut usize,
+) {
+    for node in children {
+        match node {
+            ConfigNode::Group(group) => apply_field_access_to_children(
+                &mut group.children,
+                resolved_path,
+                read_only,
+                applied,
+            ),
+            ConfigNode::Leaf(leaf)
+                if resolver::strip_instance_steps(&leaf.path) == resolved_path =>
+            {
+                leaf.read_only |= read_only;
+                *applied += 1;
+            }
+            ConfigNode::Leaf(_) => {}
+        }
+    }
+}
+
 /// Walk the entire tree and apply `role` to every matching group or `EventId`
 /// leaf target across replicated instances.
 ///
@@ -1099,6 +1169,7 @@ mod tests {
             ],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };
@@ -1161,6 +1232,7 @@ mod tests {
             }],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };
@@ -1241,6 +1313,7 @@ mod tests {
             ],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };
@@ -1296,6 +1369,7 @@ mod tests {
             }],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };
@@ -1373,6 +1447,7 @@ mod tests {
             ],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };
@@ -1438,6 +1513,7 @@ mod tests {
             }],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };
@@ -1479,6 +1555,7 @@ mod tests {
             }],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };
@@ -1516,6 +1593,7 @@ mod tests {
             event_roles: vec![],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![types::ConfigurationMode {
                 id: "connector-a".to_string(),
                 label: "Connector A".to_string(),
@@ -1631,6 +1709,7 @@ mod tests {
             event_roles: vec![],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![
                 types::ConfigurationMode {
                     id: "firmware-revision".to_string(),
@@ -1721,6 +1800,7 @@ mod tests {
             event_roles: vec![],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![
                 types::ConfigurationMode {
                     id: "firmware-revision".to_string(),
@@ -1844,6 +1924,7 @@ mod tests {
             event_roles: vec![],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![types::ConfigurationMode {
                 id: "connector-a".to_string(),
                 label: "Connector A".to_string(),
@@ -1954,6 +2035,7 @@ mod tests {
             event_roles: vec![],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![types::ConfigurationMode {
                 id: "connector-a".to_string(),
                 label: "Connector A".to_string(),
@@ -2057,6 +2139,7 @@ mod tests {
             event_roles: vec![],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![
                 types::ConfigurationMode {
                     id: "firmware-revision".to_string(),
@@ -2386,6 +2469,7 @@ mod tests {
             event_roles: vec![],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: modes,
             styles: vec![],
         }

@@ -50,7 +50,7 @@ This file is kept current through normal work, not graduation audits:
 ## Profile Tree Annotation
 
 - **Governing ADR(s)**: Spec 014 profile-v2 contract
-- **Owner**: `annotate_tree` / `apply_event_role` / `apply_field_presentation` ([bowties-core/src/profile/mod.rs](../bowties-core/src/profile/mod.rs)) — applies resolved event-role declarations and exact-leaf or eligible-group presentation declarations to the configuration tree
+- **Owner**: `annotate_tree` / `apply_event_role` / `apply_field_presentation` / `apply_field_access` ([bowties-core/src/profile/mod.rs](../bowties-core/src/profile/mod.rs)) — applies resolved event-role, field-access, and presentation declarations to the configuration tree
 - **Contributors**:
   - [profile-extractions/*/event-roles.json](../profile-extractions/) — bootstrap provenance that classifies exact EventId `childFields` as Producer or Consumer
   - [`.github/skills/_lib/profile_tools.py`](../.github/skills/_lib/profile_tools.py) — validates capture-derived event-role and relevance declarations and emits a bootstrap candidate
@@ -59,9 +59,10 @@ This file is kept current through normal work, not graduation audits:
   - [app/src-tauri/src/commands/cdi.rs](../app/src-tauri/src/commands/cdi.rs) — annotates live configuration trees
   - [app/src-tauri/src/commands/layout_capture.rs](../app/src-tauri/src/commands/layout_capture.rs) — annotates captured/offline trees
   - `channel_events::resolve_event_ids` ([bowties-core/src/channel_events.rs](../bowties-core/src/channel_events.rs)) — resolves role-filtered channel events
-  - `TreeLeafRow` ([app/src/lib/components/ElementCardDeck/TreeLeafRow.svelte](../app/src/lib/components/ElementCardDeck/TreeLeafRow.svelte)) — renders integer leaves from the annotated `hint_slider`
+  - `TreeLeafRow` ([app/src/lib/components/ElementCardDeck/TreeLeafRow.svelte](../app/src/lib/components/ElementCardDeck/TreeLeafRow.svelte)) — renders integer leaves from the annotated `hint_slider` and read-only Event IDs as selectable, non-editable inputs
 - **Per-slice plumbing rule**: Bootstrap candidates preserve capture-derived event-role and relevance scope. Each classified `childField` becomes one EventId-leaf path. After graduation, product-authored field presentation belongs directly in the bundled profile: it may name one integer leaf or one non-replicated group with an immediate integer-leaf child. Group controls apply only to immediate integer leaves; non-integer and nested children are ignored, while eligible-zero and unresolved targets warn without application. Exact leaf presentation overrides its immediate parent group, which overrides the CDI hint. Wildcards, recursive descent, and replicated-group fan-out remain invalid. `field_presentations_applied` counts uniquely annotated leaves after fan-out. Shipping contract tests own bundled behavior; extraction artifacts are not a presentation authority.
-- **Last-modified**: 2026-10-03
+- **Field access**: Bundled profiles may declare exact leaf paths in `fieldAccess` with `readOnly: true`. Annotation fans out over repetitions and preserves existing leaf read-only state; unresolved and non-leaf paths warn. This controls editor presentation, not backend write authorization.
+- **Last-modified**: 2026-11-08
 - **Last-audited**: 2026-10-03
 
 ### Notes

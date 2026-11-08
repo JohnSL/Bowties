@@ -57,6 +57,7 @@ specification (S-9.7.4.1) are supported by the Bowties app, and which are not ye
 | Read / Write | Datagram read and write; dotted-hex input with validation |
 | Event-role display | Producer / Consumer tags sourced from node profile |
 | Bowtie linking | Event IDs can be linked to Bowtie diagrams |
+| Profile read-only | Profile `fieldAccess` declarations mark exact CDI leaf paths read-only across repetitions. Event IDs remain selectable and copyable in the configuration editor. This is a presentation rule, not backend write enforcement. |
 
 #### `<float>`
 

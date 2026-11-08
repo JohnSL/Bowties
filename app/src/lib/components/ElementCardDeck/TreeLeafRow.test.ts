@@ -642,6 +642,90 @@ describe('TreeLeafRow.svelte', () => {
   describe('T032: event ID field input', () => {
     const NODE_ID = '05.01.01.01.03.00';
 
+    it('keeps a read-only event ID visible, selectable, and non-editable while writable event IDs remain editable', async () => {
+      const eventValue: TreeConfigValue = {
+        type: 'eventId',
+        bytes: [5, 1, 1, 1, 22, 0, 0, 1],
+        hex: '05.01.01.01.16.00.00.01',
+      };
+      const { unmount } = render(TreeLeafRow, {
+        props: { leaf: makeLeaf({ elementType: 'eventId', value: eventValue, size: 8, readOnly: true }), nodeId: NODE_ID },
+      });
+
+      const readOnlyInput = screen.getByRole<HTMLInputElement>('textbox', { name: /test field/i });
+      expect(readOnlyInput).toHaveAttribute('readonly');
+      expect(readOnlyInput).not.toBeDisabled();
+      expect(screen.getByText('Read-only')).toBeVisible();
+      expect(readOnlyInput).toHaveValue(eventValue.hex);
+      readOnlyInput.focus();
+      readOnlyInput.select();
+      expect(document.activeElement).toBe(readOnlyInput);
+      expect(readOnlyInput.selectionStart).toBe(0);
+      expect(readOnlyInput.selectionEnd).toBe(eventValue.hex.length);
+      await fireEvent.input(readOnlyInput, { target: { value: '05.01.01.01.22.00.00.FF' } });
+      expect(mockApplyEdit).not.toHaveBeenCalled();
+
+      unmount();
+      render(TreeLeafRow, {
+        props: { leaf: makeLeaf({ elementType: 'eventId', value: eventValue, size: 8 }), nodeId: NODE_ID },
+      });
+      const writableInput = screen.getByRole('textbox', { name: /test field/i });
+      expect(writableInput).not.toHaveAttribute('readonly');
+      await fireEvent.input(writableInput, { target: { value: '05.01.01.01.22.00.00.FF' } });
+      expect(mockApplyEdit).toHaveBeenCalled();
+    });
+
+    it('keeps a read-only event ID selectable without edits under overlapping restrictions while a writable restricted event ID stays disabled', async () => {
+      const eventValue: TreeConfigValue = {
+        type: 'eventId',
+        bytes: [5, 1, 1, 1, 22, 0, 0, 1],
+        hex: '05.01.01.01.16.00.00.01',
+      };
+      const connectorConstraintState = {
+        slotId: 'mast-output',
+        hidden: false,
+        disabled: true,
+        readOnly: true,
+        allowedValues: null,
+        deniedValues: [],
+        explanations: [],
+      };
+      const { unmount } = render(TreeLeafRow, {
+        props: {
+          leaf: makeLeaf({ elementType: 'eventId', value: eventValue, size: 8, readOnly: true, writeState: 'writing' }),
+          nodeId: NODE_ID,
+          isNodeOffline: true,
+          connectorConstraintState,
+        },
+      });
+
+      const readOnlyInput = screen.getByRole<HTMLInputElement>('textbox', { name: /test field/i });
+      expect(readOnlyInput).toHaveAttribute('readonly');
+      expect(readOnlyInput).not.toBeDisabled();
+      expect(readOnlyInput).toHaveValue(eventValue.hex);
+      readOnlyInput.focus();
+      readOnlyInput.select();
+      expect(document.activeElement).toBe(readOnlyInput);
+      expect(readOnlyInput.selectionStart).toBe(0);
+      expect(readOnlyInput.selectionEnd).toBe(eventValue.hex.length);
+      await fireEvent.input(readOnlyInput, { target: { value: '05.01.01.01.22.00.00.FF' } });
+      expect(mockApplyEdit).not.toHaveBeenCalled();
+
+      unmount();
+      render(TreeLeafRow, {
+        props: {
+          leaf: makeLeaf({ elementType: 'eventId', value: eventValue, size: 8 }),
+          nodeId: NODE_ID,
+          isNodeOffline: true,
+          connectorConstraintState,
+        },
+      });
+      const disabledInput = screen.getByRole('textbox', { name: /test field/i });
+      expect(disabledInput).toBeDisabled();
+      await fireEvent.input(disabledInput, { target: { value: '05.01.01.01.22.00.00.FF' } });
+      expect(mockApplyEdit).not.toHaveBeenCalled();
+    });
+
     it('renders a text input for eventId fields when nodeId is provided', () => {
       const leaf = makeLeaf({
         elementType: 'eventId',

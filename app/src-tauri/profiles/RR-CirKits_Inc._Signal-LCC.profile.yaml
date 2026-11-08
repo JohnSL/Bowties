@@ -86,6 +86,16 @@ fieldPresentation:
       immediate: true
       showValue: true
 
+# Field access overrides
+#
+# Signal-LCC firmware owns the Link Address selected for each signal mast.
+# Keep the eight replicated mast leaves visible but prevent new edits. Track
+# Circuit link addresses remain firmware-configurable and are intentionally
+# not declared here.
+fieldAccess:
+  - fieldPath: "Rule to Aspect/Mast/Link Address"
+    readOnly: true
+
 # Channel styles
 #
 # Per Spec 018 / ADR-0013, a style is the hardware-shape realisation that

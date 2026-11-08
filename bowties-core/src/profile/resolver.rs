@@ -461,6 +461,7 @@ mod tests {
             }],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };
@@ -501,6 +502,7 @@ mod tests {
             event_roles: vec![],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![crate::profile::types::ConfigurationMode {
                 id: "serial-a".to_string(),
                 label: "Serial A".to_string(),
@@ -769,6 +771,7 @@ mod tests {
                 explanation: "Detector 3 is irrelevant when Side is Right".to_string(),
             }],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };
@@ -806,6 +809,7 @@ mod tests {
             event_roles: vec![],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![crate::profile::types::ConfigurationMode {
                 id: "side".to_string(),
                 label: "Side".to_string(),

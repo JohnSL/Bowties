@@ -37,6 +37,10 @@ pub struct StructureProfile {
     #[serde(default)]
     pub field_presentation: Vec<FieldPresentationDecl>,
 
+    /// Explicit access metadata for individual CDI leaves.
+    #[serde(default)]
+    pub field_access: Vec<FieldAccessDecl>,
+
     /// First-class Configuration Modes (v2 schema, FR-001). Each mode owns a
     /// selector + named variants whose overlays are composed in declaration
     /// order, last-write-wins per target (FR-006).
@@ -176,6 +180,14 @@ pub struct FirmwareVersionRange {
 pub struct FieldPresentationDecl {
     pub field_path: String,
     pub control: FieldControl,
+}
+
+/// Explicit access metadata for an exact CDI leaf.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldAccessDecl {
+    pub field_path: String,
+    pub read_only: bool,
 }
 
 /// Supported profile-selected controls for CDI leaves.
@@ -529,6 +541,7 @@ mod tests {
             event_roles: vec![],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![
                 ConfigurationMode {
                     id: "firmware-revision".to_string(),

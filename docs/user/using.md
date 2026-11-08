@@ -98,6 +98,8 @@ Your layout always reflects the state you last saved, so you can safely close an
 
 ![Configuration view showing discovered nodes and a node being edited](../images/config-view-edit.png)
 
+Some Event IDs are labeled **Read-only** because the node determines their values. You can select and copy these values, but cannot edit them in Bowties. For example, the Signal-LCC mast Link Address is read-only; the separate Track Circuit Link Address can be edited.
+
 ### Connector daughterboards on supported carrier boards
 
 Some RR-CirKits carrier boards include one or more connector slots for optional daughterboards.

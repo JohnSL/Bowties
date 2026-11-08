@@ -208,6 +208,84 @@ fn shipping_signal_lcc_profile_annotates_all_brightness_leaves_as_sliders() {
 }
 
 #[test]
+fn shipping_signal_lcc_profile_locks_only_mast_link_addresses() {
+    let cdi_xml = fs::read_to_string(repo_path(
+        "docs/ref/RR-CirKits_Inc__Signal-LCC_rev-C7c.cdi.xml",
+    ))
+    .expect("Signal-LCC reference CDI must be readable");
+    let cdi = parse_cdi(&cdi_xml).expect("Signal-LCC reference CDI must parse");
+    let profile_yaml = fs::read_to_string(repo_path(
+        "app/src-tauri/profiles/RR-CirKits_Inc._Signal-LCC.profile.yaml",
+    ))
+    .expect("bundled Signal-LCC profile must be readable");
+    let profile: StructureProfile =
+        serde_yaml_ng::from_str(&profile_yaml).expect("bundled Signal-LCC profile must parse");
+
+    let read_only_declarations: Vec<_> = profile
+        .field_access
+        .iter()
+        .filter(|declaration| declaration.read_only)
+        .collect();
+    assert_eq!(read_only_declarations.len(), 1);
+    assert_eq!(
+        read_only_declarations[0].field_path,
+        "Rule to Aspect/Mast/Link Address"
+    );
+
+    let mast_link_path = resolve_named_path("Rule to Aspect/Mast/Link Address", &cdi)
+        .expect("Mast Link Address must resolve");
+    let circuit_link_path = resolve_named_path("Track Circuits/Circuit/Link Address", &cdi)
+        .expect("Circuit Link Address must resolve");
+    let mut tree = build_node_config_tree("signal-lcc:test", &cdi);
+    annotate_tree(&mut tree, &profile, &BTreeMap::new(), &cdi);
+
+    fn verify_access(
+        children: &[ConfigNode],
+        mast_link_path: &[String],
+        circuit_link_path: &[String],
+        mast_count: &mut usize,
+        circuit_count: &mut usize,
+    ) {
+        for child in children {
+            match child {
+                ConfigNode::Group(group) => verify_access(
+                    &group.children,
+                    mast_link_path,
+                    circuit_link_path,
+                    mast_count,
+                    circuit_count,
+                ),
+                ConfigNode::Leaf(leaf) => {
+                    let path = strip_instance_steps(&leaf.path);
+                    if path == mast_link_path {
+                        assert!(leaf.read_only, "Mast Link Address must be read-only");
+                        *mast_count += 1;
+                    }
+                    if path == circuit_link_path {
+                        assert!(!leaf.read_only, "Circuit Link Address must remain editable");
+                        *circuit_count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    let mut mast_count = 0;
+    let mut circuit_count = 0;
+    for segment in &tree.segments {
+        verify_access(
+            &segment.children,
+            &mast_link_path,
+            &circuit_link_path,
+            &mut mast_count,
+            &mut circuit_count,
+        );
+    }
+    assert_eq!(mast_count, 8);
+    assert!(circuit_count > 0);
+}
+
+#[test]
 fn shipping_signal_lcc_profile_preserves_authored_styles_and_configuration_modes() {
     let profile_yaml = fs::read_to_string(repo_path(
         "app/src-tauri/profiles/RR-CirKits_Inc._Signal-LCC.profile.yaml",

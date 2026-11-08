@@ -39,6 +39,12 @@
       "items": { "$ref": "#/definitions/RelevanceRule" },
       "description": "Top-level relevance rules. Controlling field and affected target may live anywhere in the CDI (v1 sibling-only restriction removed). Multi-condition allOf is evaluated."
     },
+    "fieldAccess": {
+      "type": "array",
+      "default": [],
+      "items": { "$ref": "#/definitions/FieldAccessDecl" },
+      "description": "Explicit read-only access declarations for CDI leaves. Replicated leaves matching the declared path are all annotated."
+    },
     "configurationModes": {
       "type": "array",
       "default": [],
@@ -91,6 +97,21 @@
           "type": "array",
           "minItems": 1,
           "items": { "type": "integer" }
+        }
+      }
+    },
+    "FieldAccessDecl": {
+      "type": "object",
+      "required": ["fieldPath", "readOnly"],
+      "properties": {
+        "fieldPath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "CDI path of the leaf made read-only."
+        },
+        "readOnly": {
+          "const": true,
+          "description": "Only read-only access declarations are supported."
         }
       }
     },
