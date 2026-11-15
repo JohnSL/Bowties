@@ -15,4 +15,5 @@ pub mod node_proxy;
 pub mod node_registry;
 pub mod placeholder;
 pub mod profile;
+pub mod signaling;
 pub mod sync;

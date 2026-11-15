@@ -56,6 +56,10 @@ A two-rung group is a supported Signal-LCC pattern, not a Tower-LCC-only capabil
 
 ### Hardware Validation Record
 
+**Track Circuit source probes, 2026-11-07:** the [same-board probe](../../../specs/020-block-signals-first-slice/manual-track-circuit-test.md) used a stand-alone `Last (Single)`, `V1 Only`, `Track Circuit 1`, `Track Speed = Stop` conditional with true -> Approach and false -> Clear. It distinguished downstream Stop from Approach/Clear. Changing the receiver trigger from `On Matching Event` to `On Variable Change` stopped repeated Approach commands while preserving the mapping.
+
+In the [two-board follow-up](../../../specs/020-block-signals-first-slice/manual-two-board-test.md), Stop/Clear reception succeeded after correcting Circuit 1 to the publisher's actual hardware Link Address. A Track Circuit remains a variable source; trigger selection does not repair a wrong event-family binding. The final trigger used in that successful capture was not confirmed after a temporary trigger experiment, so it does not establish cross-board trigger equivalence. Keep the proven `On Variable Change` baseline and verify the binding before experimenting with trigger behavior.
+
 Initial bench testing using two detector event pairs established the following boundary:
 
 - Either detector pair could drive a stand-alone `Last (Single)` conditional and select the expected aspect.

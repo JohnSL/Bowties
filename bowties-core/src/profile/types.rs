@@ -501,6 +501,11 @@ pub struct Style {
     /// (e.g. `"connectorInput"`, `"lampRow"`). Frontends enforce match at
     /// channel creation; backend currently treats this as documentation.
     pub binding_kind: String,
+    /// Optional semantic indication-to-driver map for a supported signal
+    /// display. Kept on the profile style so core/backend consumers do not
+    /// duplicate RG appearance metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal_appearances: Option<SignalAppearanceMap>,
     /// Base constraint rules contributed to the slot projection whenever a
     /// daughterboard's `channel_inputs[].style` resolves to this entry.
     #[serde(default)]
@@ -508,6 +513,16 @@ pub struct Style {
     /// Optional per-CDI-variant overrides, mirroring `DaughterboardConstraintVariant`.
     #[serde(default)]
     pub constraint_variants: Vec<StyleConstraintVariant>,
+}
+
+/// Semantic appearances for the narrow two-driver signal style. Values are
+/// physical driver names declared by the profile (currently `red`/`green`).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SignalAppearanceMap {
+    pub stop: Vec<String>,
+    pub approach: Vec<String>,
+    pub clear: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

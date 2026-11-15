@@ -96,7 +96,7 @@ Tower-LCC+Q intentionally uses segment/group-wide declarations because each targ
   - [app/src/routes/+page.svelte](../app/src/routes/+page.svelte#L954) — window-close handler reads `isDirty` + `dirtyBreakdown`
 - **Per-slice plumbing rule**: When adding a new edit-bearing store, extend `effectiveNodeStore.dirtyBreakdown` with a new bucket AND update the `isDirty` predicate in the same slice. The store must also register a reset callback in `layoutLifecycleOrchestrator.resetForNewLayout()` (Lifecycle Reset seam). Consumers read exclusively through the `$lib/layout` facade — never re-derive from raw stores.
 - **Last-modified**: 2026-06-28
-- **Last-audited**: 2026-06-28
+- **Last-audited**: 2026-11-07
 
 ### Notes
 
@@ -141,7 +141,7 @@ Tower-LCC+Q intentionally uses segment/group-wide declarations because each targ
   - [app/src/lib/orchestration/layoutLifecycleOrchestrator.ts](../app/src/lib/orchestration/layoutLifecycleOrchestrator.ts) — `closeLayout()` lifecycle chain
 - **Per-slice plumbing rule**: When adding a new layout-scoped store, implement `LayoutScopedParticipant` on the store class and append it to the `layoutScopedParticipants` array. The dispatch loop handles lifecycle events and save-delta collection automatically — you cannot forget one. If the store is edit-bearing, also implement `collectDeltas()` on the same interface. Add the store to this seam entry in the same slice.
 - **Last-modified**: 2026-07-03
-- **Last-audited**: 2026-07-03
+- **Last-audited**: 2026-11-07
 
 ### Notes
 
@@ -166,7 +166,7 @@ Prior to 2026-07-03, dispatch was manual enumeration (each store called individu
   - Backend `save_layout_with_bus_writes` / `save_layout_directory` IPC commands — consume the aggregated delta array
 - **Per-slice plumbing rule**: When adding a new edit-bearing store that must persist via the save flow, implement `collectDeltas(): LayoutEditDelta[]` on the `LayoutScopedParticipant` interface. The store is already registered in `layoutScopedParticipants` (required by the Lifecycle Reset seam), so the dispatch loop picks it up automatically.
 - **Last-modified**: 2026-07-03
-- **Last-audited**: 2026-07-03
+- **Last-audited**: 2026-11-07
 
 ### Notes
 
@@ -212,7 +212,7 @@ Pre-Spec 014 / S6 the selections were not restored on layout open, leaving slot 
   - Composed bowtie cards on the Bowties catalog panel are an additional Consumer surface of S6 wiring — `bowtieMetadataStore.bowtiesForFacility(facilityId)` populates them via the composition seam described in the **Facility Bowtie Lifecycle** entry below
 - **Per-slice plumbing rule**: New channel kinds (new `binding.kind` variants) MUST extend `channelsStore.groupedByHardware` (and the `hardwareGroupKey` helper) and `ChannelsPanel.svelte`'s `groupLabel` so they land in their own subsystem row without parallel rendering paths. New Consumers of the panel (a new column, a new badge) MUST source from `channelsStore` / `eventStateStore` / `effectiveLayoutStore` rather than re-deriving from raw stores. New "Used by" sources (anything beyond facility slots) MUST flow through `effectiveLayoutStore` so the resolver prop's signature stays stable.
 - **Last-modified**: 2026-07-01 (S6 — Wired-status pill now reads through `effectiveLayoutStore.facilityStatus`; bowtie catalog cards surface composed bowties driven by the Facility Bowtie Lifecycle seam)
-- **Last-audited**: 2026-06-28
+- **Last-audited**: 2026-11-07
 
 ### Notes
 
@@ -279,7 +279,7 @@ Introduced in Spec 018 / S3 (ADR-0013). The migration was backend-only: the fron
   - [app/src-tauri/src/commands/facility_bowties.rs](../app/src-tauri/src/commands/facility_bowties.rs) `compose_facility_bowties` — reads facilities + channels through `LayoutState::effective_facilities()` / `effective_channels()` (drafts-over-saved view). Precedence rule matches `cdi_xml(key)` (captured-over-saved) — the drafts variant is served when present, saved is served otherwise. Introduced by the 2026-07-03 draft-layer activation.
 - **Per-slice plumbing rule**: Any new in-memory cache of an open layout's persistent CDI bytes, profile-annotated trees, or saved bowtie / channels / facilities / offline-changes documents MUST live inside `LayoutState` (extending its surface) or document why it is a per-actor working buffer (per ADR-0009 amendment) — never as a parallel `Arc<RwLock<...>>` on `AppState`. Any new "save-flow needs to know X about a node" requirement reads X through `LayoutState`, not the proxy. Any new CDI-arrival seam (file-cache, bus download, future cloud restore) records into `LayoutState` via `record_captured` in the same change. Any new backend read that must observe frontend-side draft edits goes through `LayoutState::effective_*` (2026-07-03 extension). `node_registry.saved_trees` does not grow new readers outside `get_or_create` — if a new "I need the saved tree before any read" requirement appears, the right answer is `LayoutState::config_tree(key)`.
 - **Last-modified**: 2026-07-03 (draft-layer activation — `DraftLayer` gains `pending_facilities` / `pending_channels`; `sync_drafts` / `clear_drafts` / `effective_facilities` / `effective_channels` added; `save_layout_directory` refreshes the saved layer + clears drafts inline; `facility_bowties.rs` reads through the effective view; ADR-0015 extension recorded — then re-modified same day for the atomic-save fold: `save_layout_directory` now applies `LayoutEditDelta::{CreateChannel, RenameChannel, DeleteChannel}` beside facility deltas; legacy `create_channels` / `rename_channel` / `delete_channels` IPCs removed; frontend collects through the single `collectAllSaveDeltas()` facade — ADR-0002 extension recorded — then re-modified same day again for the read-side referential-integrity guarantee: `read_capture` now normalizes `facilities.yaml` slot bindings against `channels.yaml` via `facilities::normalize_facility_channel_refs`, so `LayoutState.saved` is guaranteed schema-clean; repairs surface through `LayoutDirectoryReadData.load_warnings` → `OpenLayoutResult.load_warnings` → route toast — second ADR-0002 extension recorded)
-- **Last-audited**: 2026-07-03
+- **Last-audited**: 2026-11-07
 
 ### Notes
 
@@ -311,7 +311,7 @@ emoveFromSlot({ facilityId, slotLabel, channelId }) for the inverse. Both treat 
   - [app/src/lib/components/Railroad/ChannelRow.svelte](../app/src/lib/components/Railroad/ChannelRow.svelte) — renders the resulting channel under its Direct Lamp Control group with the `USER` ownership badge + lit/unlit state-dot + the lamp-indicator info-icon tooltip (AC #5 discoverability mandate).
 - **Per-slice plumbing rule**: User-owned channel creation MUST go through `facilityOrchestrator.addChannelForSlot` so the create + attach pair always lands atomically. Direct calls to `channelsStore.createUserOwnedChannel` from a component layer are an antipattern — the attach would never fire, leaving an orphan draft. Per-slot deletion MUST go through `facilityOrchestrator.removeFromSlot` (it detects `ownership === 'user-owned'` and routes through `channelsStore.removeUserOwnedChannel` so the channel's lifecycle stays tied to its binding). Whole-facility deletion goes through `facilityOrchestrator.deleteFacility`, which tears down bowties, deletes the facility, then removes user-owned channels — in that order so the cascade orchestrator cannot see a disappearing channel while the facility's slot bindings still reference it (the cascade's `_reconcile` processes ALL disappearing channel IDs, not just hardware-owned, and would detach/re-teardown if bindings remain). Hardware-owned channels are left alone (their lifecycle follows hardware config, not facility membership). S6 D3 adds a third mandatory consumer: the `facilityCascadeOrchestrator` deletes a facility-bound user-owned channel indirectly by staging the detach from its slot, which trips the S6 removeFromSlot hook.
 - **Last-modified**: 2026-07-04 (bugfix — `deleteFacility` now iterates bound slots and deletes user-owned channels via `channelsStore.removeUserOwnedChannel`; previously only `removeFromSlot` handled channel cleanup, leaving orphaned channels on whole-facility deletion.)
-- **Last-audited**: 2026-06-29
+- **Last-audited**: 2026-11-07
 
 ### Notes
 
@@ -332,7 +332,7 @@ D2 chose the atomic `CreateUserOwnedChannel` delta over the legacy split-IPC pat
   - [app/src/lib/components/Facilities/FacilityCard.svelte](../app/src/lib/components/Facilities/FacilityCard.svelte) — same derivation for the filled-slot display.
 - **Per-slice plumbing rule**: A new `binding.kind` MUST add a sibling `resolve_<kind>_path_prefix` in [bowties-core/src/channel_events.rs](../bowties-core/src/channel_events.rs) and extend the IPC command's dispatch — never inline a new prefix walker at the call site. A new role MUST update `ChannelResolutionRole` (Rust) + the orchestrator's role mapping + the `deriveChannelState` signature in lockstep so the resolver-shape invariant (one shape-agnostic core + per-shape adapters) survives.
 - **Last-modified**: 2026-10-03 (signaling UX extraction Unit 7 — channel Event ID resolution now uses effective leaf values for draft-aware connector and lamp-row state)
-- **Last-audited**: 2026-06-29
+- **Last-audited**: 2026-11-07
 
 ### Notes
 
@@ -427,7 +427,7 @@ D3 chose the frontend diff-based orchestrator over a backend save-flow fixup bec
   - [app/src-tauri/src/commands/save_layout_with_bus_writes.rs](../app/src-tauri/src/commands/save_layout_with_bus_writes.rs) Phase 2 — the ultimate consumer. If the mirror silently drops a draft, this phase never emits the corresponding bus write and Phase 4's catalog rebuild reads the un-updated live state, producing empty consumer leaves and disappearing bowties.
 - **Per-slice plumbing rule**: Any new feature that produces a config-value draft MUST go through `configEditor.applyEdit` and do nothing else on the IPC side. Direct `setModifiedValue` calls from a component or orchestrator layer are drift — they bypass the single-owner property that keeps the "someone forgot to flush" bug class impossible. The mirror is mounted per layout-open in `+page.svelte` and torn down in `layoutLifecycleOrchestrator.resetForNewLayout()`; new lifecycle transitions MUST preserve both hooks so the last-seen map never bleeds across layouts. Offline mode is out of scope: the mirror is silent when `layoutStore.isConnected === false`, and `stageDraftsForOfflineSave` in `configDraftOrchestrator` owns the offline-save persistence path. A future batched `setModifiedValues` IPC (multi-write coalesce) MUST replace the mirror's emission, not run in parallel. Placeholder NodeKeys are skipped — they persist through the offline-save path only.
 - **Last-modified**: 2026-07-03 (introduced — Commit 1 of the ADR-0012 2026-07-03 extension: orchestrator + mount + teardown wired; per-callsite `flushDraftToBackend` calls retire in Commit 2)
-- **Last-audited**: 2026-07-03
+- **Last-audited**: 2026-11-07
 
 ### Notes
 
@@ -454,7 +454,7 @@ Removals produce no IPC because the backend already reflects the resolved state 
   - [app/src-tauri/src/commands/save_layout_with_bus_writes.rs](../app/src-tauri/src/commands/save_layout_with_bus_writes.rs) Phase 2 — the ultimate consumer. If the mirror silently drops a draft, this phase never emits the corresponding bus write and Phase 4's catalog rebuild reads the un-updated live state, producing empty consumer leaves and disappearing bowties.
 - **Per-slice plumbing rule**: Any new feature that produces a config-value draft MUST go through `configEditor.applyEdit` and do nothing else on the IPC side. Direct `setModifiedValue` calls from a component or orchestrator layer are drift — they bypass the single-owner property that keeps the "someone forgot to flush" bug class impossible. The mirror is mounted per layout-open in `+page.svelte` and torn down in `layoutLifecycleOrchestrator.resetForNewLayout()`; new lifecycle transitions MUST preserve both hooks so the last-seen map never bleeds across layouts. Offline mode is out of scope: the mirror is silent when `layoutStore.isConnected === false`, and `stageDraftsForOfflineSave` in `configDraftOrchestrator` owns the offline-save persistence path. A future batched `setModifiedValues` IPC (multi-write coalesce) MUST replace the mirror's emission, not run in parallel. Placeholder NodeKeys are skipped — they persist through the offline-save path only.
 - **Last-modified**: 2026-07-03 (introduced — Commit 1 of the ADR-0012 2026-07-03 extension: orchestrator + mount + teardown wired; per-callsite `flushDraftToBackend` calls retire in Commit 2)
-- **Last-audited**: 2026-07-03
+- **Last-audited**: 2026-11-07
 
 ### Notes
 
@@ -501,6 +501,13 @@ The parametric stall variant on `MockTransportWriter` (`MockTransport::stall_han
 **Serial transport model + enqueue-vs-write timeout split** (S9 decision, 2026-07-18, ADR-0017 §2026-07-18 extension): `gridconnect_serial` uses blocking OS reader/writer threads (kept for **executor isolation** — a stuck serial syscall never starves a tokio worker, on every platform — *not* the earlier unproven "Windows async unreliable" claim). Because `TransportWriter::send()` is an mpsc enqueue on this transport, the actor's `SERIAL_SEND_TIMEOUT` (500 ms) bounds the **enqueue**, not the wire write; it fires only once the queue backs up behind a stuck thread. The per-write bound is platform-specific (Windows 5000 ms DCB; Unix `tcdrain()` unbounded), so the actor's enqueue-fill `Wedged` detection is the uniform cross-platform observable backstop. A known Unix gap (writer thread exits on transient `write()` `TimedOut`; `tcdrain` blocks unbounded under sustained CTS back-pressure) is deferred to a `kind/idea` follow-up, to be validated on Mac/Linux hardware. `slcan_serial` remains async (`tokio_serial::SerialStream`), so `tokio-serial` stays a dependency regardless.
 
 
+## Automatic Block Signals Progressive Proposal
+
+- **Owner**: `app/src-tauri/src/signaling/mod.rs` supplies authoritative effective-layout, profile and output-ownership facts and calls the pure core policy/projector.
+- **Contributors**: `bowties-core/src/signaling/chain.rs` owns signal blocks, per-direction chains, stable signal identity (facility, entrance block, direction), next signals and rules; `bowties-core/src/signaling/mod.rs` owns the request/response types and the pure `signal-indication` role/style/binding projection; `bowties-core/src/channel_events.rs` resolves typed detection event facts; the Signal-LCC profile declares the two-driver RG appearance map; `app/src/lib/orchestration/blockSignalsEditorOrchestrator.ts` sequences one transient preview request at a time.
+- **Consumers**: `app/src/lib/components/Facilities/FacilitiesSection.svelte` opens the editor; `BlockSignalsEditor.svelte` with `BlocksStep`/`AspectsStep` render the list, settings and rules and emit `blockSignalsEditorActions`; `TrackDiagram.svelte` (layout in `trackGeometry.ts`) is the shared drawing on both pages. `RailroadPanel.integration.test.ts`, `trackGeometry.test.ts` and `blockSignalsEditorOrchestrator.test.ts` cover the user path, layout, stale responses and cancel. The approved visual reference is `specs/proposals/signaling-ux/signaling-facilities-storyboard.html#line-blocks` and `#line-signals`.
+- **Invariant**: A preview is side-effect-free. Its `incompletePreview` capability cannot authorize staging, saving or application. It cannot create a facility/configuration draft, Information Channel, resource claim, persistent state, patch or bus write. Signal identities are scoped to the transient facility ID and keyed by entrance block and governed direction, so renames keep them and changing the direction of travel selects the other direction's signals. The list order is the user's; previews never reorder or overwrite editor input. Placeholder turnouts are request data, not layout objects, and always report an unavailable position. Cancel/layout reset invalidates an in-flight preview.
+- **Last-modified**: 2026-11-15 (Spec 020 / S2R Blocks and Aspects)
 
 ## Unexpected Connection Termination
 

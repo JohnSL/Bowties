@@ -175,3 +175,38 @@ default close-on-Esc, is now explicit in the shell.
 ## Status
 
 Accepted (2026-06-28) — `fluent-ux-refactor` branch.
+
+## 2026-11-07 extension: selection dialogs and wizard footer regions
+
+`DialogActions` accepts an optional leading snippet for actions such as a
+wizard's Cancel. Its children remain trailing/right-aligned. Existing callers
+without the snippet preserve their layout; the Line wizard uses leading Cancel
+and trailing Back/Next, matching its approved storyboard without local overrides
+of shared dialog chrome.
+
+`SearchableSingleSelectDialog` composes the shared Dialog, SingleSelectList and
+footer for search, scrolling and selection confirmation. `SelectChannelPicker`
+and `SelectBlockPicker` supply domain rows and emit selected identifiers; neither
+shared selection nor the block adapter performs domain mutation. Filtering out
+the selected candidate disables Confirm rather than authorizing a hidden choice.
+Nested picker dismissal leaves the parent wizard intact.
+
+Regression surfaces: `DialogActions.test.ts`, `SelectChannelPicker.test.ts`,
+`SelectBlockPicker.test.ts` and the visible `RailroadPanel.integration.test.ts`.
+
+## 2026-11-08 extension: contained wizard workspaces
+
+`Dialog.bodyLayout` defaults to `scroll`. The opt-in `contained` mode bounds
+the surface to available viewport height and delegates scrolling to the caller's
+workspace without changing ordinary dialogs. This avoids competing dialog-body
+and panel scroll owners.
+
+Automatic Block Signals uses a fixed-size upper context and a flex-budgeted lower workspace.
+Policy and indication panes scroll independently on roomy viewports, so policy
+growth does not move the indication preview away. At constrained widths/heights,
+one inner workspace scrollbar replaces panel scrolling to keep all content
+reachable. Header and footer remain shell-owned.
+
+Tests cover default/contained shell behavior and the wizard's scroll-region and
+label-spacing contract. Native Tauri visual review is still required; source
+layout tests are not evidence of native pixel bounds.

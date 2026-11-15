@@ -121,6 +121,16 @@ styles:
       unlit:
         consumerLeafIndex: 1
     constraints: []
+  # One semantic signal indication uses two same-host LED drivers. The
+  # appearance map is declarative so preview and future compilation consume
+  # the same profile-owned meanings rather than independent lamp states.
+  - styleId: "two-driver-rg-signal"
+    bindingKind: "signalLccRgOutputs"
+    signalAppearances:
+      stop: ["red"]
+      approach: ["red", "green"]
+      clear: ["green"]
+    constraints: []
 
 # Relevance rules
 #

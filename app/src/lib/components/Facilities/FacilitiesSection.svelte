@@ -6,6 +6,17 @@
   import * as facilityOrchestrator from '$lib/orchestration/facilityOrchestrator';
   import AddFacilityDialog from './AddFacilityDialog.svelte';
   import FacilityCard from './FacilityCard.svelte';
+  import BlockSignalsEditor from '$lib/components/BlockSignals/BlockSignalsEditor.svelte';
+  import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
+  import { blockSignalsEditorStore } from '$lib/stores/blockSignalsEditor.svelte';
+  import { channelsStore } from '$lib/stores/channels.svelte';
+  import { eventStateStore } from '$lib/stores/eventState.svelte';
+  import { deriveChannelState } from '$lib/utils/channelState';
+  import { occupancyFromChannelState, type BlockOccupancy } from '$lib/components/BlockSignals/occupancy';
+  import {
+    blockSignalsEditorActions,
+    startBlockSignalsEditor,
+  } from '$lib/orchestration/blockSignalsEditorOrchestrator';
 
   let {
     resolvedEventIds,
@@ -24,11 +35,58 @@
 
   let showAddDialog = $state(false);
 
+  // Live occupancy of each detected block, from the same events as the Channels panel.
+  const blockOccupancy = $derived.by(() => {
+    const states = new Map<string, BlockOccupancy>();
+    if (!blockSignalsEditorStore.open) return states;
+    const events = eventStateStore.events;
+    for (const channel of channelsStore.channels) {
+      if (channel.role !== 'block-occupancy') continue;
+      const ids = resolvedEventIds?.get(channel.id);
+      const state = deriveChannelState(events, ids?.['occupied'], ids?.['clear'], 'block-occupancy');
+      states.set(channel.id, occupancyFromChannelState(state));
+    }
+    return states;
+  });
+  const blockSignalsTemplate: BehaviorTemplate = {
+    templateId: 'automatic-block-signals',
+    displayName: 'Automatic Block Signals',
+    slots: [],
+    mapping: [],
+  };
+
+  // Shown in Add facility so people can see what's planned; it can't be chosen yet.
+  const interlockingPlantChoice = {
+    templateId: 'interlocking-plant',
+    displayName: 'Interlocking Plant',
+    slots: [],
+    mapping: [],
+    description: 'Signals that govern routes over power switches at one location.',
+    unavailableNote: 'Coming in a later release',
+  };
+
+  // One-line descriptions shown under each facility type in Add facility.
+  const FACILITY_DESCRIPTIONS: Record<string, string> = {
+    'block-indicator': "A panel light that follows one block's occupancy.",
+    'automatic-block-signals': 'Signals that respond to occupancy, the next signal, and hand-thrown turnouts.',
+  };
+
+  const facilityChoices = $derived(
+    [...behaviorTemplatesStore.templates, blockSignalsTemplate]
+      .map((template) => ({ ...template, description: FACILITY_DESCRIPTIONS[template.templateId] }))
+      .concat(interlockingPlantChoice),
+  );
+
   function templateFor(templateId: string): BehaviorTemplate | undefined {
     return behaviorTemplatesStore.findByTemplateId(templateId);
   }
 
   function handleAddConfirm(template: BehaviorTemplate, name: string) {
+    if (template.templateId === blockSignalsTemplate.templateId) {
+      startBlockSignalsEditor(name);
+      showAddDialog = false;
+      return;
+    }
     facilitiesStore.addFacility(template, name);
     showAddDialog = false;
   }
@@ -90,9 +148,18 @@
 
   {#if showAddDialog}
     <AddFacilityDialog
-      templates={behaviorTemplatesStore.templates}
+      templates={facilityChoices}
       onConfirm={handleAddConfirm}
       onCancel={handleAddCancel}
+    />
+  {/if}
+
+  {#if blockSignalsEditorStore.open}
+    <BlockSignalsEditor
+      view={blockSignalsEditorStore}
+      actions={blockSignalsEditorActions}
+      detectedBlocks={effectiveLayoutStore.detectedBlocks}
+      occupancy={blockOccupancy}
     />
   {/if}
 </section>

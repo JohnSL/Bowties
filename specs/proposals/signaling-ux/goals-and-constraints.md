@@ -112,8 +112,8 @@ ships*.
    boundary, spur ends. One facility type (Signal Mast), 5-step wizard,
    no Plant object. Full depth-on-demand (rulebook picker, aspect
    vocabulary rungs, layout defaults, family override).
-2. **Phase 2 — Signal Plants (multi-signal 80% coverage).** Introduces
-   the Signal Plant object as an ergonomic layer over the Mast
+2. **Phase 2 — Interlocking Plants (multi-signal 80% coverage).** Introduces
+   the Interlocking Plant object as an ergonomic layer over the Mast
    substrate. Flagship tile: passing siding. Also: multi-signal
    single-turnout interlocking, APB coordination on single-track
    sections, signal-type reuse. Includes a **Mast → Plant conversion
@@ -126,7 +126,7 @@ ships*.
    signal-type authoring (user-owned rulebook YAML), distant-signal
    chaining edge cases.
 4. **Phase 4 — Custom / compound plants.** Facilities whose topology
-   varies per site. Signal Plant with imported topology from JMRI
+   varies per site. Interlocking Plant with imported topology from JMRI
    Layout Editor. Bowties compiles the plant description + vocabulary
    rung + turnout bindings to STL for Signal-LCC (generation target;
    not hand-authored).

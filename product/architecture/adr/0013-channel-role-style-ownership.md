@@ -79,3 +79,22 @@ Rule, codified now and binding on every binding shape that addresses a replicate
 - **Owners and consumers are tracked in `aiwiki/seams.md` → "Replication Instance Traversal".** Future shape additions update that entry.
 
 This extension does not change the channel schema, the role/style/ownership decomposition, or the constraint-source rules. It only names the seam that the open-ended `binding.kind` universe was always going to need.
+
+## 2026-11-08 extension: transient Automatic Block Signals indication selection
+
+Automatic Block Signals S2 adds `signal-indication` to the existing role universe and
+`signalLccRgOutputs { nodeKey, greenOutput, redOutput }` to the existing
+binding union. They describe one semantic signal indication, not two
+independently meaningful lamp channels. The binding requires two distinct
+outputs on the same host.
+
+The shipped Signal-LCC profile declares `two-driver-rg-signal` and its
+Stop/Approach/Clear appearance map. The pure signaling projection consumes
+that profile-owned map with authoritative effective configuration/output
+evidence; frontend consumers render the returned result and do not duplicate
+hardware validation or style metadata.
+
+S2 selections remain editor-transient. No `InformationChannel`, channel delta,
+claim, draft, patch, persistence record, or bus write is created by preview.
+Durable Line/channel references and reviewed patch lowering remain deferred to
+their later slices.

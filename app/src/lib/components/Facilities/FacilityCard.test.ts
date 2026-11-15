@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
+import type { InformationChannel } from '$lib/api/channels';
 import type { Facility } from '$lib/api/facilities';
 
 const listBehaviorTemplatesMock = vi.fn<() => Promise<BehaviorTemplate[]>>(async () => []);
@@ -23,6 +24,7 @@ vi.mock('$lib/api/channels', () => ({
 const { effectiveLayoutStore } = await import('$lib/layout/effectiveLayoutStore.svelte');
 const { facilitiesStore } = await import('$lib/stores/facilities.svelte');
 const { behaviorTemplatesStore } = await import('$lib/stores/behaviorTemplates.svelte');
+const { channelsStore } = await import('$lib/stores/channels.svelte');
 const FacilityCard = (await import('./FacilityCard.svelte')).default;
 
 const BLOCK_INDICATOR: BehaviorTemplate = {
@@ -39,6 +41,7 @@ const BLOCK_INDICATOR: BehaviorTemplate = {
 };
 
 beforeEach(async () => {
+  channelsStore.reset();
   facilitiesStore.reset();
   behaviorTemplatesStore.reset();
   listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR]);
@@ -78,5 +81,28 @@ describe('FacilityCard status pill (Spec 018 / S6 — D5)', () => {
     vi.spyOn(effectiveLayoutStore, 'facilityStatus').mockReturnValue('Wired');
     render(FacilityCard, { props: { facility: f, template: BLOCK_INDICATOR } });
     expect(screen.getByText(/^Wired$/)).toBeInTheDocument();
+  });
+
+  it('renders a Signal LCC channel with its node and paired output labels', () => {
+    const signalChannel: InformationChannel = {
+      id: 'ch-signal-1',
+      name: 'Eastbound signal',
+      role: 'signal-indication',
+      style: 'signal-lcc-rg',
+      ownership: 'hardware-owned',
+      binding: {
+        kind: 'signalLccRgOutputs',
+        nodeKey: '0501010114a1',
+        greenOutput: 1,
+        redOutput: 3,
+      },
+    };
+    const f = facility('f-signal', { input: [], output: [signalChannel.id] });
+    channelsStore.hydrateBaseline([signalChannel]);
+    facilitiesStore.hydrateBaseline([f]);
+
+    render(FacilityCard, { props: { facility: f, template: BLOCK_INDICATOR } });
+
+    expect(screen.getByText(/Signal LCC RG Outputs · Node 0501010114a1 · Outputs 1 \/ 3/)).toBeInTheDocument();
   });
 });

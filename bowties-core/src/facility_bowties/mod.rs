@@ -247,6 +247,13 @@ pub fn compose_bowtie_ops(
                 actual_role: ChannelRole::BlockOccupancy,
             });
         }
+        ChannelBinding::SignalLccRgOutputs { .. } => {
+            return Err(FacilityCompositionError::RoleMismatch {
+                slot_label: consumer_slot.label.to_string(),
+                expected_role: "lamp-indicator",
+                actual_role: ChannelRole::SignalIndication,
+            });
+        }
     };
 
     let consumer_tree = per_node_cdi.get(&consumer_node_key).ok_or_else(|| {

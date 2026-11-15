@@ -36,6 +36,10 @@ invokes `tdd-cycle` directly — you are not involved.
 3. For a **HITL** slice, the user has already reviewed the architectural
    context and approved the numbered decisions per the `build` skill's HITL
    flow. Do not begin the loop on an unapproved HITL slice.
+4. For a UI slice with approved mockups/storyboards, the handoff identifies the
+   exact reference screens and the interaction/visual contract. Read those
+   screens before implementation. If missing, return to `/build` for a complete
+   handoff rather than inventing a presentation from functional criteria alone.
 
 ## Ownership
 
@@ -118,6 +122,11 @@ missing evidence.
   acceptance criteria for scope only. For every behavior, pass its expected
   test files, production owners, and explicitly allowed generated/docs output.
   Note if the batch was narrowed to 1 for risk.
+- For UI behaviors, also pass the exact approved reference sections, required
+  framing/layout/navigation/selection/styling patterns and authorized differences.
+  A narrower slice may disable unsupported functionality but must preserve the
+  approved interaction and visual structure. Tests must exercise user navigation
+  and cancellation, not merely check that fields or text exist.
 - **tdd-refactor**: pass the set of files changed across the slice's cycles,
   the slice's acceptance criteria, and confirmation that all slice tests are
   green.
@@ -158,9 +167,12 @@ tests passing. An architecture escalation may stop mid-slice; return its
 evidence immediately rather than recording the slice as complete. After the
 slice is green and refactored:
 
-1. Check off the slice's tasks in `specs/<feature>/slices.md` (`[x]`) and set
-   the slice `status: done`.
-2. Update the status line (`N/total slices complete`).
+1. Check off tasks proven by the worker, but leave caller aggregate validation
+   and running-UI/reference comparison pending. Keep `status: tasked` until
+   `/build` verifies those gates; passing behavioral tests is not evidence of
+   visual fidelity.
+2. Report implementation readiness without incrementing the completed-slice
+   count while caller gates are pending.
 3. Hand control back to the `build` skill, which re-reads the roadmap,
    adjusts the next slice's boundary in light of what was learned, and tasks
    it before you run again.
@@ -182,7 +194,7 @@ and may no longer exist or may describe work absent from the working tree.
 Return one block to `/build`. No prose narration.
 
 ```
-Slice: S{N} — {title}   status: done | escalated
+Slice: S{N} — {title}   status: ready-for-caller-validation | escalated
 
 Batches:
   1. {N behaviors} — no escalation | escalation: {seam}
@@ -190,6 +202,7 @@ Batches:
 Refactor: {what was restructured | none needed | deferred pending architecture-first-fix}
 Escalation: none | architecture-first-fix on {seam} — structured evidence below
 Tests: {suite}: N passed, 0 failed
+UI contract: {reference sections, implemented structure, authorized differences, caller comparison pending | not applicable}
 Files touched: {list}
 Memory: /memories/session/build-{feature}-slice-{N}.md
 ```

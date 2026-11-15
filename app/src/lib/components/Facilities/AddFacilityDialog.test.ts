@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import AddFacilityDialog from './AddFacilityDialog.svelte';
 import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
@@ -13,12 +13,12 @@ function tmpl(id: string, name: string): BehaviorTemplate {
 }
 
 describe('AddFacilityDialog', () => {
-  let onConfirm: ReturnType<typeof vi.fn>;
-  let onCancel: ReturnType<typeof vi.fn>;
+  let onConfirm: Mock<(template: BehaviorTemplate, name: string) => void>;
+  let onCancel: Mock<() => void>;
 
   beforeEach(() => {
-    onConfirm = vi.fn();
-    onCancel = vi.fn();
+    onConfirm = vi.fn<(template: BehaviorTemplate, name: string) => void>();
+    onCancel = vi.fn<() => void>();
   });
 
   it('renders templates as a selectable radio list', () => {
@@ -87,6 +87,27 @@ describe('AddFacilityDialog', () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
+  it('disables Add facility for blank or whitespace-only names for every template', async () => {
+    render(AddFacilityDialog, {
+      props: {
+        templates: [tmpl('block-indicator', 'Block Indicator'), tmpl('automatic-block-signals', 'Automatic Block Signals')],
+        onConfirm,
+        onCancel,
+      },
+    });
+
+    const addFacility = screen.getByRole('button', { name: /add facility/i });
+    expect(addFacility).toBeDisabled();
+
+    const radios = within(screen.getByRole('radiogroup')).getAllByRole('radio');
+    await fireEvent.click(radios[1]);
+    await fireEvent.input(screen.getByPlaceholderText('e.g. Block 5'), { target: { value: '   ' } });
+    expect(addFacility).toBeDisabled();
+
+    await fireEvent.input(screen.getByPlaceholderText('e.g. Block 5'), { target: { value: ' Line 1 ' } });
+    expect(addFacility).toBeEnabled();
+  });
+
   it('Cancel button calls onCancel', async () => {
     render(AddFacilityDialog, {
       props: {
@@ -97,5 +118,27 @@ describe('AddFacilityDialog', () => {
     });
     await fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
     expect(onCancel).toHaveBeenCalled();
+  });
+
+  it('shows an unavailable facility type disabled, with its note, and never selects it', async () => {
+    render(AddFacilityDialog, {
+      props: {
+        templates: [
+          { ...tmpl('interlocking-plant', 'Interlocking Plant'), unavailableNote: 'Coming in a later release' },
+          tmpl('automatic-block-signals', 'Automatic Block Signals'),
+        ],
+        onConfirm,
+        onCancel,
+      },
+    });
+
+    const radios = within(screen.getByRole('radiogroup')).getAllByRole('radio');
+    expect(radios[0]).toBeDisabled();
+    expect(radios[1]).toBeChecked();
+    expect(screen.getByText('Coming in a later release')).toBeInTheDocument();
+
+    await fireEvent.input(screen.getByPlaceholderText('e.g. Block 5'), { target: { value: 'Main' } });
+    await fireEvent.click(screen.getByRole('button', { name: /add facility/i }));
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({ templateId: 'automatic-block-signals' }), 'Main');
   });
 });

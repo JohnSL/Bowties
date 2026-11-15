@@ -125,7 +125,7 @@ be cherry-picked wholesale.
 | `a4d6bbd` | Initial revised signaling proposal | Superseded | Later signaling decisions and storyboard are the durable version. |
 | `ff5ecdf` | Hardware research, mockups, and old Spec 020 slice notes | Mixed | Hardware evidence/storyboard are already landed; reject old Spec 020 task artifacts; reconcile index links separately. |
 | `a7139d4` | Practical-first direction and constraints | Already landed | Preserve main's published form; review backlog differences rather than replacing it. |
-| `81df48a` | Signal Plant direction | Already landed | Included in main's signaling UX publication. |
+| `81df48a` | Interlocking Plant direction | Already landed | Included in main's signaling UX publication. |
 | `92c69a4` | Storyboard Step 3 refinement | Already landed | Included in main's signaling UX publication. |
 | `3046ff9` | GPT-5.6 Sol agent workflow | Already landed | Equivalent main commit is `b6ba969`; only the separate `54f1e1e` user-test instruction remains. |
 | `695cdbb` | Leaf-scoped Signal-LCC role classification | Retain | Landed on `main` in `be21bed` with reconstructed owner/flow/seam documentation. |

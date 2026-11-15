@@ -27,6 +27,7 @@
   type Width = 'sm' | 'md' | 'lg' | number;
   type Role = 'dialog' | 'alertdialog';
   type InitialFocus = 'first' | 'last' | 'none';
+  type BodyLayout = 'scroll' | 'contained';
 
   interface Props {
     /** Whether the dialog is open. Caller owns visibility. */
@@ -41,6 +42,8 @@
     ariaLabel?: string;
     /** Which focusable to focus on mount. Default `first`. */
     initialFocus?: InitialFocus;
+    /** `scroll` keeps the standard body scrollbar; `contained` delegates scrolling to its workspace. */
+    bodyLayout?: BodyLayout;
     /**
      * Stacking z-index for the overlay. Default 1500. Use a higher value
      * (e.g. 2000 for `ErrorDialog`) when this dialog must stay above other
@@ -61,6 +64,7 @@
     role = 'dialog',
     ariaLabel,
     initialFocus = 'first',
+    bodyLayout = 'scroll',
     zIndex = 1500,
     onCancel,
     title,
@@ -172,6 +176,7 @@
   >
     <div
       bind:this={surfaceEl}
+      class:fluent-dialog-surface--contained={bodyLayout === 'contained'}
       class="fluent-dialog-surface"
       style="width: {widthPx}"
       {role}
@@ -195,7 +200,10 @@
         </div>
       {/if}
 
-      <div class="fluent-dialog-body">
+      <div
+        class:fluent-dialog-body--contained={bodyLayout === 'contained'}
+        class="fluent-dialog-body"
+      >
         {@render children()}
       </div>
 
@@ -235,6 +243,10 @@
     flex-direction: column;
     overflow: hidden;
     animation: fluent-slide-in 0.18s ease-out;
+  }
+
+  .fluent-dialog-surface--contained {
+    height: 90vh;
   }
 
   @keyframes fluent-slide-in {
@@ -295,6 +307,12 @@
     color: var(--fluent-neutralForeground2);
     overflow: auto;
     flex: 1 1 auto;
+  }
+
+  .fluent-dialog-body--contained {
+    display: flex;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .fluent-dialog-footer {

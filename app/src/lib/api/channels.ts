@@ -7,7 +7,7 @@ import { invoke } from '@tauri-apps/api/core';
  */
 
 /** The state-vocabulary contract a facility slot binds by. */
-export type ChannelRole = 'block-occupancy' | 'lamp-indicator';
+export type ChannelRole = 'block-occupancy' | 'lamp-indicator' | 'signal-indication';
 
 /** Lifecycle classification — who creates and destroys this channel. */
 export type ChannelOwnership = 'hardware-owned' | 'user-owned';
@@ -15,7 +15,13 @@ export type ChannelOwnership = 'hardware-owned' | 'user-owned';
 /** Discriminated union of binding shapes; `kind` MUST match the style. */
 export type ChannelBinding =
   | { kind: 'connectorInput'; nodeKey: string; connector: string; input: number }
-  | { kind: 'lampRow'; nodeKey: string; rowOrdinal: number };
+  | { kind: 'lampRow'; nodeKey: string; rowOrdinal: number }
+  | {
+    kind: 'signalLccRgOutputs';
+    nodeKey: string;
+    greenOutput: number;
+    redOutput: number;
+  };
 
 /** A single information channel in the layout inventory. */
 export interface InformationChannel {

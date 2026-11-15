@@ -58,6 +58,7 @@ pub use types::{
     DaughterboardMetadata,
     ChannelInputMapping,
     Style,
+    SignalAppearanceMap,
     StyleConstraintVariant,
 };
 pub use resolver::{ProfilePathMap, resolve_named_path, resolve_profile_paths};
@@ -1972,6 +1973,7 @@ mod tests {
             styles: vec![types::Style {
                 style_id: "bod-block-detector-input".to_string(),
                 binding_kind: "connectorInput".to_string(),
+                signal_appearances: None,
                 constraints: vec![types::ConnectorConstraintRule {
                     target_path: "Port I/O/Line/Output Function".to_string(),
                     constraint_type: types::ConnectorConstraintType::AllowValues,
@@ -2082,6 +2084,7 @@ mod tests {
             styles: vec![types::Style {
                 style_id: "bod-block-detector-input".to_string(),
                 binding_kind: "connectorInput".to_string(),
+                signal_appearances: None,
                 constraints: vec![types::ConnectorConstraintRule {
                     target_path: "Port I/O/Line/Output Function".to_string(),
                     constraint_type: types::ConnectorConstraintType::AllowValues,

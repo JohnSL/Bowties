@@ -12,13 +12,17 @@
   import DialogActions from '$lib/components/Dialog/DialogActions.svelte';
   import Button from '$lib/components/Dialog/Button.svelte';
   import SingleSelectList from '$lib/components/SingleSelectList/SingleSelectList.svelte';
+  import FacilityTypeIcon from './FacilityTypeIcon.svelte';
+
+  /** A facility type offered in the list, with an optional one-line description; an `unavailableNote` shows it disabled. */
+  type FacilityChoice = BehaviorTemplate & { description?: string; unavailableNote?: string };
 
   let {
     templates,
     onConfirm,
     onCancel,
   }: {
-    templates: BehaviorTemplate[];
+    templates: FacilityChoice[];
     onConfirm: (template: BehaviorTemplate, name: string) => void;
     onCancel: () => void;
   } = $props();
@@ -27,34 +31,36 @@
   let name = $state('');
   let error = $state<string | null>(null);
 
-  // Default the selection to the first template once props are available.
+  // Default the selection to the first available template once props are available.
   $effect(() => {
-    if (selectedTemplateId === undefined && templates.length > 0) {
-      selectedTemplateId = templates[0].templateId;
+    const first = templates.find((t) => !t.unavailableNote);
+    if (selectedTemplateId === undefined && first) {
+      selectedTemplateId = first.templateId;
     }
   });
 
   const templateItems = $derived(
-    templates.map((t) => ({ key: t.templateId })),
+    templates.map((t) => ({ key: t.templateId, disabled: !!t.unavailableNote })),
   );
 
-  function templateByKey(key: string): BehaviorTemplate | undefined {
+  function templateByKey(key: string): FacilityChoice | undefined {
     return templates.find((t) => t.templateId === key);
   }
 
   function selectedTemplate(): BehaviorTemplate | undefined {
-    return selectedTemplateId ? templateByKey(selectedTemplateId) : undefined;
+    const choice = selectedTemplateId ? templateByKey(selectedTemplateId) : undefined;
+    return choice && !choice.unavailableNote ? choice : undefined;
   }
 
   function confirm() {
     const trimmed = name.trim();
-    if (trimmed.length === 0) {
-      error = 'Please enter a name for the facility.';
-      return;
-    }
     const tmpl = selectedTemplate();
     if (!tmpl) {
       error = 'Please choose a behavior template.';
+      return;
+    }
+    if (trimmed.length === 0) {
+      error = 'Please enter a name for the facility.';
       return;
     }
     onConfirm(tmpl, trimmed);
@@ -89,7 +95,19 @@
         name="behavior-template"
       >
         {#snippet row(key)}
-          <span class="af-template-name">{templateByKey(key)?.displayName ?? key}</span>
+          {@const choice = templateByKey(key)}
+          <span class="af-choice" class:unavailable={!!choice?.unavailableNote}>
+            <span class="af-template-icon"><FacilityTypeIcon templateId={key} /></span>
+            <span class="af-template-text">
+              <span class="af-template-name">{choice?.displayName ?? key}</span>
+              {#if choice?.description}
+                <span class="af-template-desc">{choice.description}</span>
+              {/if}
+              {#if choice?.unavailableNote}
+                <span class="af-template-note">{choice.unavailableNote}</span>
+              {/if}
+            </span>
+          </span>
         {/snippet}
       </SingleSelectList>
     </div>
@@ -118,7 +136,7 @@
       <Button appearance="secondary" onclick={onCancel}>Cancel</Button>
       <Button
         appearance="primary"
-        disabled={!selectedTemplate()}
+        disabled={!selectedTemplate() || name.trim().length === 0}
         onclick={confirm}
       >Add facility</Button>
     </DialogActions>
@@ -156,9 +174,46 @@
     border-color: var(--fluent-strokeFocus2);
     box-shadow: 0 0 0 2px var(--fluent-strokeFocusHalo);
   }
+  .af-choice {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  /* fixed width so names line up even for a type without a picture */
+  .af-template-icon {
+    display: flex;
+    flex: 0 0 44px;
+    min-height: 34px;
+    align-items: center;
+  }
+  .af-choice.unavailable .af-template-icon {
+    opacity: 0.45;
+    filter: grayscale(1);
+  }
+  .af-template-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    padding-block: 3px;
+  }
   .af-template-name {
     font-weight: 500;
     color: var(--fluent-neutralForeground1);
+  }
+  .af-template-desc {
+    font-size: var(--fluent-fontSizeBase200);
+    line-height: 1.35;
+    color: var(--fluent-neutralForeground2);
+  }
+  .af-template-note {
+    font-size: var(--fluent-fontSizeBase200);
+    color: var(--fluent-neutralForeground3);
+  }
+  .af-choice.unavailable .af-template-name,
+  .af-choice.unavailable .af-template-desc {
+    color: var(--fluent-neutralForegroundDisabled, #a0a0a0);
   }
   .error {
     color: var(--fluent-dangerBackground);

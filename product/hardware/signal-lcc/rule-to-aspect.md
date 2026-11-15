@@ -83,6 +83,10 @@ The producers **cannot be disabled**. A user asked for a way to silence them to 
 
 ## Track Speed Is Not Decoration
 
+The mast's Link Address identifies a family of eight speed EventIDs; the selected speed determines which event is emitted. It is not a separate communications channel or a speed payload attached to a single event.
+
+**Measured write behavior, 2026-11-07:** on the tested rev-C7c CDI board, writes to the mast Link Address were not retained despite the CDI's "Limited Write" wording. JMRI refresh returned the generated `02.01.57.10.09.96.07.30`, matching observed Stop (`...07.30`) and Clear (`...07.37`) publications. Treat this field as effectively read-only on this tested hardware and configure receivers from fresh publisher readback. Do not infer successful application from an edited or saved value. The [two-board test](../../../specs/020-block-signals-first-slice/manual-two-board-test.md) records the failed binding and successful correction.
+
 `Track Speed` on each rule is what the mast publishes to its track circuit, described in the CDI as the speed "on approach to signal". Getting it wrong is the number-one cause of cascades that do nothing. Ken Cameron's first diagnostic question, [#8700](https://groups.io/g/layoutcommandcontrol/message/8700):
 
 > For the first step, inspect your signal Rule to Aspect table. Did you set the correct 'Track Speed' on each aspect of the mast? […] If the signal isn't setup right, the track circuit doesn't change. The mast pushes the track circuit change it doesn't consume it.

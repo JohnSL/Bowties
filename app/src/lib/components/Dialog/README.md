@@ -74,6 +74,19 @@ Refactor plan: [dialog-shell-refactor.md](../../../../../specs/018-block-indicat
   primary action is unambiguously the next step (e.g., progress dialogs whose
   only action is `Close`).
 
+## Contained workspaces
+
+`bodyLayout` defaults to `"scroll"`, preserving the standard dialog body
+scrollbar. A viewport-sized wizard can opt into `bodyLayout="contained"`.
+The shell then bounds the surface to 90vh and gives its body a flex layout with
+`min-height: 0` and no body scrollbar; the caller must supply a bounded workspace
+and reachable inner scroll regions.
+
+The Automatic Block Signals wizard uses fixed upper context and independently scrolling
+policy/indication panes on roomy viewports. At narrow or short sizes it switches
+to one inner workspace scrollbar instead of clipping content or nesting scroll
+regions. The shared header and footer remain outside that workspace.
+
 ## What the shell does NOT do
 
 - It doesn't decide what `onCancel` or `onConfirm` mean — those are callers'

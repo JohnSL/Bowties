@@ -118,12 +118,23 @@
     const positiveId = role === 'lamp-indicator' ? ids?.['lit'] : ids?.['occupied'];
     const negativeId = role === 'lamp-indicator' ? ids?.['unlit'] : ids?.['clear'];
     const state = deriveChannelState(eventStateStore.events, positiveId, negativeId, role);
-    const groupLabel = channel.binding.kind === 'connectorInput'
-      ? formatConnectorLabel(channel.binding.connector)
-      : 'Direct Lamp Control';
-    const locationLabel = channel.binding.kind === 'connectorInput'
-      ? `Input ${channel.binding.input}`
-      : `Row ${channel.binding.rowOrdinal}`;
+    let groupLabel: string;
+    let locationLabel: string;
+    switch (channel.binding.kind) {
+      case 'connectorInput':
+        groupLabel = formatConnectorLabel(channel.binding.connector);
+        locationLabel = `Input ${channel.binding.input}`;
+        break;
+      case 'lampRow':
+        groupLabel = 'Direct Lamp Control';
+        locationLabel = `Row ${channel.binding.rowOrdinal}`;
+        break;
+      case 'signalLccRgOutputs':
+        groupLabel = 'Signal LCC RG Outputs';
+        locationLabel =
+          `Node ${channel.binding.nodeKey} · Outputs ${channel.binding.greenOutput} / ${channel.binding.redOutput}`;
+        break;
+    }
     return {
       currentChannelId: id,
       currentChannelDisplay: {

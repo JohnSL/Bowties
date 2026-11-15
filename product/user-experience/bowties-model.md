@@ -124,6 +124,54 @@ The Configuration tab shows raw CDI structure — nodes, segments, groups, indiv
 
 ---
 
+## Automatic Block Signals Preview
+
+The Railroad tab's **Add facility** dialog also starts a transient Automatic Block Signals
+preview. It does not create a facility, configuration draft, output claim, or
+bus write. The modeler chooses an existing detected block, then names the Line
+and its entrance signal and chooses a presentation orientation. The preview
+states that the signal protects that block only: occupied expects Stop and clear
+expects Clear. An unavailable observation remains unavailable rather than being
+shown as a live state. Display, binding, confirmation, saving, and application
+belong to later workflow steps.
+
+Both Block Indicator and Automatic Block Signals require an initial name in Add facility.
+That same name appears in the Line wizard and remains editable. The block picker
+lists candidates alphabetically; this does not reorder a Line's travel order.
+Missing hardware bindings still make the proposal incomplete but do not produce
+a routine notice on pages without save/apply actions.
+
+The preview is a wide five-step wizard, not an inline facility form. Blocks
+and Signals are usable in S1; Display, Bindings and Confirm remain numbered
+but visibly unavailable. The Blocks membership row reports unavailable
+occupancy truthfully and can remove only the Line membership, never the shared
+block or detector. The Signals card separates hypothetical Stop/Clear
+expectations from live observation and uses a neutral oriented entrance marker,
+not a red lamp that would imply an observed Stop.
+Blocks uses a searchable, scrollable Add block selection dialog and membership
+card, with the Line name label and input on one row. Signals retains the
+storyboard's selected-signal name, Entire Line policy summary and separate
+When-this-signal-shows table. Cancel/close reset the transient editor through
+orchestration. Cancel stays flush left; Back/Next stay right. The track strip
+shows block occupancy separately from the neutral entrance-signal selection tile
+below it. On narrow screens, cards stack without horizontal overflow.
+
+The Line wizard opts into contained dialog layout. On roomy windows, the
+stepper, track/name context and footer stay stationary while the policy and
+indication panes scroll independently. On narrow or short windows, one inner
+workspace scrolls instead; the outer dialog body does not add a second scrollbar.
+The rail labels share explicit line height and equal rail-edge gaps.
+
+Automatic Block Signals is additive: Block Indicator facilities, lamps, blocks and detectors
+remain unchanged. The Line references a shared block and owns only its entrance
+signal. S1 supports one block; selecting more produces an explicit unsupported
+count issue, not several fabricated terminal signals. A transient Line identity
+scopes signal identities across editor requests, including renaming and diagram
+reorientation. The shared result explicitly has `incompletePreview` capability
+with staging, saving and application unavailable even when detection resolves.
+
+---
+
 ## Sources
 
 - `app/src/lib/stores/bowties.svelte.ts`

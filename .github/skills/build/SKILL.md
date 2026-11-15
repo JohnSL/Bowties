@@ -44,6 +44,21 @@ Model routing rule: inherit the selected model. Delegate this pass to isolate re
 
 Only **one** slice is `tasked` at a time. Do not author the task breakdown for a downstream slice until the current one is `done`. If a pivot during implementation invalidates a downstream slice, edit that slice's card — it costs a sentence, not a rewrite, precisely because its tasks were never authored.
 
+### Approved UI contract
+
+For a slice with approved mockups or a storyboard, read the relevant screens
+before tasking and link their exact sections from the slice card. Carry their
+interaction and visual contract into acceptance criteria and worker briefs:
+entry point, screen/dialog framing, step progression, layout hierarchy, selection
+pattern, navigation/cancellation, diagrams and existing app styling primitives.
+Do not reduce that contract to the presence of fields, buttons or text.
+
+A narrower slice may disable unsupported functionality, but must preserve the
+approved interaction and visual structure unless the user approves a deviation.
+Record allowed differences explicitly; architectural approval is not permission
+to redesign the UX. Stop for user direction if the mockup conflicts with the
+accepted behavior or cannot be implemented at the planned seam.
+
 ## Per-Slice Workflow
 
 ### HITL Slices
@@ -203,6 +218,14 @@ Before accepting a delegated slice result:
   repositories.
 - If a worker escalates, pass its evidence to `change-analyze` with mode
   `mid-slice-escalation`; workers do not draft or present architecture options.
+- For UI slices, compare the running implementation against the approved
+  reference at the applicable screens, using browser screenshots and actual
+  interaction where available. Verify framing, hierarchy, styling, navigation,
+  cancellation, disabled future steps and responsive behavior, not only test
+  assertions. Record the reference sections, observed results and intentional
+  differences in `slices.md`. If runtime access is blocked, record the blocker
+  and leave visual acceptance and completion pending; do not substitute passing
+  tests or a build for this check.
 
 ### After Each Slice
 

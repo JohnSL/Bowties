@@ -15,6 +15,8 @@
     key: T;
     /** When true, rendered as a non-selectable group header instead of a selectable row. */
     isHeader?: boolean;
+    /** When true, the row is shown but cannot be selected. */
+    disabled?: boolean;
   }
 
   let {
@@ -63,12 +65,13 @@
         </li>
       {:else}
         <li class="ssl-list-item">
-          <label class="ssl-row" class:selected={selectedKey === item.key}>
+          <label class="ssl-row" class:selected={selectedKey === item.key} class:disabled={item.disabled}>
             <input
               type="radio"
               {name}
               value={item.key}
               checked={selectedKey === item.key}
+              disabled={item.disabled}
               onchange={() => handleChange(item.key)}
               data-testid="ssl-radio"
             />
@@ -127,6 +130,13 @@
   }
   .ssl-row.selected {
     background: var(--fluent-neutralBackground1Selected, #eef4ff);
+  }
+  .ssl-row.disabled {
+    cursor: default;
+    color: var(--fluent-neutralForegroundDisabled, #a0a0a0);
+  }
+  .ssl-row.disabled:hover {
+    background: none;
   }
   .ssl-row input[type='radio'] {
     margin: 0;

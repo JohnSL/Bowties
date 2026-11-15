@@ -212,6 +212,13 @@ class EffectiveLayoutStore {
     });
   }
 
+  /** Named hardware-detected blocks available to the transient S1 editor. */
+  get detectedBlocks(): Array<{ blockId: string; name: string }> {
+    return channelsStore.channels
+      .filter((channel) => channel.role === 'block-occupancy')
+      .map((channel) => ({ blockId: channel.id, name: channel.name }));
+  }
+
   /**
    * Spec 018 / S5 (D1) — eligible Direct Lamp Control rows for the
    * given style id, grouped by node, across every node in the roster

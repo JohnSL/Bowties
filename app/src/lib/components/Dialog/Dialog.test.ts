@@ -43,6 +43,23 @@ describe('Dialog — rendering', () => {
     expect(getByText('body text')).toBeInTheDocument();
   });
 
+  it('keeps the default scrolling body but marks an opted-in body as contained', () => {
+    const defaultDialog = render(Dialog, { props: baseProps() });
+    expect(defaultDialog.container.querySelector('.fluent-dialog-body')).not.toHaveClass(
+      'fluent-dialog-body--contained',
+    );
+
+    const containedDialog = render(Dialog, {
+      props: baseProps({ bodyLayout: 'contained' }),
+    });
+    expect(containedDialog.container.querySelector('.fluent-dialog-surface')).toHaveClass(
+      'fluent-dialog-surface--contained',
+    );
+    expect(containedDialog.container.querySelector('.fluent-dialog-body')).toHaveClass(
+      'fluent-dialog-body--contained',
+    );
+  });
+
   it('renders the title slot when provided', () => {
     const { getByText } = render(Dialog, {
       props: baseProps({ title: snippetWith('<span>Hello title</span>') }),

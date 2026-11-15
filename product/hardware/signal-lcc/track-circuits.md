@@ -13,6 +13,16 @@ A track circuit is how a signal learns **what the next signal is showing**, expr
 - A node that needs to *read* that mast defines a **Track Circuit** whose `Link Address` (consumer) is a copy of the remote mast's published address.
 - Conditionals then read the circuit by setting a variable's `Source` to `Track Circuit N` and its `Track Speed` to the value being tested.
 
+The link is implemented with **eight distinct EventIDs**, one per speed indication, not an event with an additional speed payload. The Link Address identifies the event family. Receipt of another speed event replaces the previous indication in the receiver. The mast publishes these events automatically; ordinary setup does not require manually sending them.
+
+### Hardware readback and measured reception (2026-11-07)
+
+Treat the mast's Link Address as node-generated: read it from hardware before configuring consumers. On the tested rev-C7c CDI board, an attempted write of `02.01.57.10.09.96.04.68` was not retained; JMRI refresh returned `02.01.57.10.09.96.07.30`. Matching edited/saved publisher and receiver values was insufficient because the publisher snapshot was stale relative to hardware.
+
+The trace showed Stop at `...07.30` and Clear at `...07.37`. Changing only the receiving board's Circuit 1 binding to the actual `...07.30` family restored S4r: downstream Stop -> upstream Approach, downstream Clear -> upstream Clear, with both LEDs and command/acknowledgement evidence. See the [two-board record and raw traces](../../../specs/020-block-signals-first-slice/manual-two-board-test.md).
+
+The [same-board probe](../../../specs/020-block-signals-first-slice/manual-track-circuit-test.md) also established downstream Approach -> upstream Clear with a Stop comparison. This is not a complete characterization of all eight selectors or threshold semantics. Cross-board Approach, receiver initialization/restart, the final trigger used in the successful cross-board run, and sustained quiet-bus behavior remain unverified.
+
 Ken Cameron, [#8700](https://groups.io/g/layoutcommandcontrol/message/8700):
 
 > The mast pushes the track circuit change it doesn't consume it.
@@ -46,8 +56,8 @@ Using the second detector directly in the upstream mast's conditional is a valid
 For "Mast 1 should show Approach when Mast 2 shows Stop":
 
 1. On **Mast 2**, set each rule's `Track Speed` correctly (`Stop` on the stop rule, etc.).
-2. Copy **Mast 2**'s `Link Address`.
-3. On the node owning **Mast 1**, paste it into a free `Track Circuits/Circuit/Link Address`, say Circuit 1. Name it after the remote mast.
+2. Read **Mast 2**'s generated `Link Address` from hardware and copy that readback, not an edited/offline value.
+3. On the node owning **Mast 1**, paste it into a free `Track Circuits/Circuit/Link Address`, say Circuit 1. Name it after the remote mast. Apply and read back the receiver binding.
 4. In a conditional on Mast 1's ladder, set `Variable #1 Source = Track Circuit 1` and `Variable #1 Track Speed = Stop`, `Logic Operation = V1 Only`.
 5. In that conditional's Action, send Mast 1's "Approach" `set aspect` event with `Condition = Immediately`.
 

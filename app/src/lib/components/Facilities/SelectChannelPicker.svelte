@@ -15,11 +15,7 @@
     channelStateLabel,
     type ChannelState,
   } from '$lib/utils/channelState';
-  import Dialog from '$lib/components/Dialog/Dialog.svelte';
-  import DialogTitle from '$lib/components/Dialog/DialogTitle.svelte';
-  import DialogActions from '$lib/components/Dialog/DialogActions.svelte';
-  import Button from '$lib/components/Dialog/Button.svelte';
-  import SingleSelectList from '$lib/components/SingleSelectList/SingleSelectList.svelte';
+  import SearchableSingleSelectDialog from '$lib/components/SingleSelectList/SearchableSingleSelectDialog.svelte';
 
   let {
     slotLabel,
@@ -44,24 +40,7 @@
 
   const dialogTitle = $derived(`Select channel for '${slotLabel}'`);
 
-  let selectedId = $state<string | undefined>(undefined);
-  let searchText = $state('');
-
-  const filteredChannels = $derived.by(() => {
-    const q = searchText.trim().toLowerCase();
-    if (q.length === 0) return candidateChannels;
-    return candidateChannels.filter((ch) => {
-      if (ch.name.toLowerCase().includes(q)) return true;
-      const location = describeLocation(ch).toLowerCase();
-      return location.includes(q);
-    });
-  });
-
-  const listItems = $derived(
-    filteredChannels.map((ch) => ({ key: ch.id })),
-  );
-
-  const confirmDisabled = $derived(selectedId === undefined);
+  const listItems = $derived(candidateChannels.map((ch) => ({ key: ch.id })));
 
   function describeLocation(ch: InformationChannel): string {
     if (ch.binding.kind === 'connectorInput') {
@@ -79,41 +58,23 @@
     return channelStateLabel(state);
   }
 
-  function handleConfirm() {
-    if (selectedId === undefined) return;
-    onConfirm(selectedId);
-  }
 </script>
 
-<Dialog open width="md" ariaLabel={dialogTitle} initialFocus="first" onCancel={onCancel}>
-  {#snippet title()}
-    <DialogTitle>{dialogTitle}</DialogTitle>
-  {/snippet}
-
-  <form
-    class="scp-form"
-    onsubmit={(e) => {
-      e.preventDefault();
-      handleConfirm();
-    }}
-  >
-    <input
-      class="scp-search"
-      type="search"
-      placeholder="Search by name or location…"
-      bind:value={searchText}
-      aria-label="Filter channels"
-    />
-
-    <SingleSelectList
-      items={listItems}
-      bind:selectedKey={selectedId}
-      ariaLabel="Channel candidates"
-      name="select-channel"
-      emptyMessage="No matching channels."
-    >
-      {#snippet row(key)}
-        {@const ch = filteredChannels.find((c) => c.id === key)}
+<SearchableSingleSelectDialog
+  title={dialogTitle}
+  filterLabel="Filter channels"
+  items={listItems}
+  searchTextFor={(id) => {
+    const channel = candidateChannels.find((candidate) => candidate.id === id);
+    return channel ? `${channel.name} ${describeLocation(channel)}` : id;
+  }}
+  ariaLabel="Channel candidates"
+  name="select-channel"
+  onConfirm={onConfirm}
+  {onCancel}
+>
+  {#snippet row(key)}
+        {@const ch = candidateChannels.find((c) => c.id === key)}
         {#if ch}
           {@const state = channelState(ch.id)}
           {@const stateClass = channelStateClass(state)}
@@ -130,43 +91,10 @@
           <span class="scp-name">{ch.name}</span>
           <span class="scp-meta">{describeLocation(ch)} · {stateLabel(state)}</span>
         {/if}
-      {/snippet}
-    </SingleSelectList>
-
-    <button type="submit" class="scp-hidden-submit" tabindex="-1" aria-hidden="true"></button>
-  </form>
-
-  {#snippet actions()}
-    <DialogActions>
-      <Button appearance="secondary" onclick={onCancel}>Cancel</Button>
-      <Button appearance="primary" disabled={confirmDisabled} onclick={handleConfirm}>
-        Confirm
-      </Button>
-    </DialogActions>
   {/snippet}
-</Dialog>
+</SearchableSingleSelectDialog>
 
 <style>
-  .scp-form {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    margin: 0;
-  }
-  .scp-search {
-    padding: 6px 10px;
-    border: 1px solid var(--fluent-neutralStroke1);
-    border-radius: 4px;
-    background: var(--fluent-neutralBackground1);
-    color: var(--fluent-neutralForeground1);
-    font-family: var(--fluent-fontFamily);
-    font-size: var(--fluent-fontSizeBase300);
-  }
-  .scp-search:focus {
-    outline: none;
-    border-color: var(--fluent-strokeFocus2);
-    box-shadow: 0 0 0 2px var(--fluent-strokeFocusHalo);
-  }
   .scp-state-dot {
     display: inline-block;
     width: 8px;
@@ -197,15 +125,5 @@
   .scp-meta {
     font-size: var(--fluent-fontSizeBase200);
     color: var(--fluent-neutralForeground2);
-  }
-  .scp-hidden-submit {
-    position: absolute;
-    width: 0;
-    height: 0;
-    padding: 0;
-    border: 0;
-    overflow: hidden;
-    opacity: 0;
-    pointer-events: none;
   }
 </style>

@@ -15,17 +15,20 @@ use serde::{Deserialize, Serialize};
 /// The state-vocabulary contract a facility slot binds by. Declared in
 /// Rust (mirrored as a TS string-literal union) so production code matches
 /// state values exhaustively. ADR-0013.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ChannelRole {
     BlockOccupancy,
     /// `lamp-indicator` lands with Spec 018 / S5; declared here so the
     /// enum reads as the role universe rather than as a one-element list.
     LampIndicator,
+    /// Semantic signal indication: Stop, Approach, and Clear are realised by
+    /// the selected style, rather than as independent lamp channels.
+    SignalIndication,
 }
 
 /// Lifecycle classification: who creates and destroys this channel.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ChannelOwnership {
     /// Auto-created by hardware-config selection (e.g., BOD daughterboard).
@@ -37,7 +40,7 @@ pub enum ChannelOwnership {
 /// What the channel is bound to. Discriminated union; the `kind` MUST match
 /// the channel's style's declared binding shape (enforced at channel
 /// creation; not by the type system because styles are declared in YAML).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ChannelBinding {
     /// A single pin on a TowerLCC-family connector input. The S2 variant.
@@ -50,6 +53,15 @@ pub enum ChannelBinding {
     /// A Direct Lamp Control row on a Signal-LCC node. Lands with S5.
     #[serde(rename_all = "camelCase")]
     LampRow { node_key: String, row_ordinal: u32 },
+    /// A single semantic signal indication realised by two physical outputs
+    /// on the same Signal-LCC host. It is intentionally one typed binding,
+    /// not two independent lamp meanings.
+    #[serde(rename_all = "camelCase")]
+    SignalLccRgOutputs {
+        node_key: String,
+        green_output: u32,
+        red_output: u32,
+    },
 }
 
 /// A single information channel in the layout inventory.
@@ -193,6 +205,10 @@ mod tests {
             serde_json::to_string(&ChannelRole::LampIndicator).unwrap(),
             "\"lamp-indicator\"",
         );
+        assert_eq!(
+            serde_json::to_string(&ChannelRole::SignalIndication).unwrap(),
+            "\"signal-indication\"",
+        );
     }
 
     #[test]
@@ -231,6 +247,20 @@ mod tests {
         assert_eq!(json["kind"], "lampRow");
         assert_eq!(json["nodeKey"], "05010101FF000002");
         assert_eq!(json["rowOrdinal"], 7);
+    }
+
+    #[test]
+    fn signal_lcc_rg_output_binding_serializes_as_one_typed_same_host_binding() {
+        let binding = ChannelBinding::SignalLccRgOutputs {
+            node_key: "05010101FF000101".to_string(),
+            green_output: 1,
+            red_output: 3,
+        };
+        let json = serde_json::to_value(&binding).unwrap();
+        assert_eq!(json["kind"], "signalLccRgOutputs");
+        assert_eq!(json["nodeKey"], "05010101FF000101");
+        assert_eq!(json["greenOutput"], 1);
+        assert_eq!(json["redOutput"], 3);
     }
 
     #[test]

@@ -118,6 +118,7 @@ pub async fn compose_facility_bowties(
             let node_key_str = match &channel.binding {
                 ChannelBinding::ConnectorInput { node_key, .. } => node_key.clone(),
                 ChannelBinding::LampRow { node_key, .. } => node_key.clone(),
+                ChannelBinding::SignalLccRgOutputs { node_key, .. } => node_key.clone(),
             };
             if per_node_cdi.contains_key(&node_key_str) {
                 continue;

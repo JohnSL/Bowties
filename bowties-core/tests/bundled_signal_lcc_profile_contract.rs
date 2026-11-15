@@ -152,6 +152,30 @@ fn shipping_signal_lcc_profile_declares_brightness_group_presentation_once() {
 }
 
 #[test]
+fn shipping_signal_lcc_profile_declares_the_supported_two_driver_rg_signal_style() {
+    let profile_yaml = fs::read_to_string(repo_path(
+        "app/src-tauri/profiles/RR-CirKits_Inc._Signal-LCC.profile.yaml",
+    ))
+    .expect("bundled Signal-LCC profile must be readable");
+    let profile: StructureProfile =
+        serde_yaml_ng::from_str(&profile_yaml).expect("bundled Signal-LCC profile must parse");
+
+    let style = profile
+        .styles
+        .iter()
+        .find(|style| style.style_id == "two-driver-rg-signal")
+        .expect("the shipped profile must own the supported signal display style");
+    assert_eq!(style.binding_kind, "signalLccRgOutputs");
+    let appearances = style
+        .signal_appearances
+        .as_ref()
+        .expect("the style must declare its semantic indication appearances");
+    assert_eq!(appearances.stop, ["red"]);
+    assert_eq!(appearances.approach, ["red", "green"]);
+    assert_eq!(appearances.clear, ["green"]);
+}
+
+#[test]
 fn shipping_signal_lcc_profile_annotates_all_brightness_leaves_as_sliders() {
     let cdi_xml = fs::read_to_string(repo_path(
         "docs/ref/RR-CirKits_Inc__Signal-LCC_rev-C7c.cdi.xml",

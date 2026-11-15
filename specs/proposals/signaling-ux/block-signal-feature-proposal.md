@@ -280,7 +280,7 @@ hardware for every test run.
 This feature does not include:
 
 - turnout or crossing protection;
-- multi-route or multi-signal Signal Plants;
+- multi-route or multi-signal Interlocking Plants;
 - single-track APB coordination;
 - dispatcher-controlled points or CTC;
 - Tower LCC+Q fallback;
@@ -360,7 +360,7 @@ without leaving Bowties-owned configuration or resources untracked.
 The first hardware target is Signal-LCC using its built-in per-mast behavior.
 The feature must be validated by configuration read-back and observed signal
 behavior, not only by successful write calls. Turnouts, crossings,
-single-track APB, dispatcher-controlled points, Signal Plants, Tower-LCC
+single-track APB, dispatcher-controlled points, Interlocking Plants, Tower-LCC
 fallback, public template formats, and a standalone developer apply tool are
 out of scope.
 

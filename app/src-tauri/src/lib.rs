@@ -17,6 +17,7 @@ pub mod profile;
 pub mod diagnostics;
 pub mod placeholder;
 pub mod node_key;
+pub mod signaling;
 
 use menu::MenuHandles;
 
@@ -82,6 +83,7 @@ async fn connect_lcc(
                 .await
                 .map_err(|e| format!("Failed to connect via TCP: {}", e))?
         }
+
         AdapterType::GridConnectSerial => {
             let serial_port = config
                 .serial_port
@@ -210,6 +212,16 @@ async fn connect_lcc(
         connected: true,
         config: Some(config),
     })
+}
+
+/// Produce an S1 Automatic Block Signals preview.  This command is intentionally
+/// read-only: it does not allocate, stage, write, or claim anything.
+#[tauri::command]
+async fn preview_block_signals(
+    state: tauri::State<'_, AppState>,
+    request: bowties_core::signaling::BlockSignalsRequest,
+) -> Result<bowties_core::signaling::BlockSignalsPreview, String> {
+    signaling::preview(state.inner(), request).await
 }
 
 /// Disconnect from the LCC network
@@ -401,6 +413,7 @@ pub fn run() {
             commands::remove_known_layout,      // Spec 013 / S5: known-layout registry
             commands::list_channels,               // Spec 015 / S1: information channel inventory (writes ride LayoutEditDelta via save_layout_directory)
             commands::list_behavior_templates,     // Spec 018 / S1: hardcoded behavior template registry
+            preview_block_signals,
             commands::list_facilities,             // Spec 018 / S1: facility inventory (read-only; CRUD via delta save)
             commands::compose_facility_bowties,    // Spec 018 / S6 (D2): compose bowtie ops for a Wired facility
             commands::sync_layout_drafts,          // Spec 018 / S6 bugfix: mirror frontend drafts into LayoutState

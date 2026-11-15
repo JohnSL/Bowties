@@ -222,7 +222,7 @@ The first implementation does not include:
 - reverse engineering arbitrary existing conditionals into intent;
 - direct bus writes from tests or developer tools;
 - cross-node cascade unless the first same-node Track Circuit slice proves that it is needed immediately;
-- Signal Plant aggregation, which remains a later phase built over Signal Mast intent.
+- Interlocking Plant aggregation, which remains a later phase built over Signal Mast intent.
 
 ## Planning Decisions Still Required
 

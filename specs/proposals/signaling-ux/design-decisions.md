@@ -14,6 +14,20 @@ Entries are dated. Newer entries appear at the top.
 
 ---
 
+## 2026-11-15 — Rename to Automatic Block Signals and Interlocking Plant
+
+**Decision.** The facility called *Signal Line* is now **Automatic Block Signals** (2026-11-14),
+and *Signal Plant* is now **Interlocking Plant** (2026-11-15). Both are the prototype terms
+modelers already use: ABS for signals driven by block occupancy, and an interlocking plant
+for a location where signals and switches are tied together so a route can only be cleared
+when it is safe. "Plant" remains the short form where space is tight (the "+ Plant" chip,
+"Plant entrance"). A single controlled signal, such as a holdout or bridge signal, is still
+configured as an Interlocking Plant even though it is not strictly an interlocking.
+
+The rename covers code as well as product text (components, stores, IPC command, core types,
+tests and the `specs/020-block-signals-first-slice/` folder), so one name is used throughout.
+Entries below this one keep the names that were current when they were written.
+
 ## 2026-11-01 — Reviewer notes describe current contracts, not change history
 
 **Decision.** Notes below each mockup contain only non-obvious behavior, local mockup limitations,
