@@ -4749,6 +4749,7 @@ mod profile_metadata_tests {
             event_roles: vec![],
             relevance_rules: vec![],
             field_presentation: vec![],
+            field_access: vec![],
             configuration_modes: vec![],
             styles: vec![],
         };

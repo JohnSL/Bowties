@@ -290,7 +290,8 @@ describe('createNewLayout + layoutLifecycleOrchestrator integration', () => {
 
     expect(saveLayoutDirectory).toHaveBeenCalledTimes(1);
     expect(nodeRoster.placeholderEntries.length).toBe(0);
-  });
+    // cold dynamic imports of the lifecycle modules can exceed 5s under a full parallel run
+  }, 15_000);
 });
 
 describe('removeKnownLayout', () => {

@@ -218,6 +218,16 @@ If you clear a BOD daughter-board selection or reselect it as an incompatible bo
 - If that transitions the facility out of Wired, the composed bowties are torn down at the same time (same mechanism as **Remove from slot**).
 - All cascade side effects appear in the toolbar's unsaved-change count and can be reverted with **Discard**, or committed with **Save**.
 
+### Automatic Block Signals (early preview)
+
+**Add facility** also offers **Automatic Block Signals**, which lets you try out how Bowties will set up automatic block signals. It is an early preview for feedback: you can explore the first two pages, but nothing is saved to the layout or written to your nodes, and **Cancel** discards everything. **Interlocking Plant** is listed too but is not available yet.
+
+- **Blocks.** Name the signals, choose one direction or both, and list your detected blocks in the order a train passes them. Under each block, list its hand-thrown turnouts on the main track. For now turnouts are placeholders entered by name; they are not connected to turnout position inputs, so each one is treated as not lined for the main. The track diagram shows where Bowties puts the signals. Use **⋯** on a block's row to remove the signal between it and the block above, for example for a short detection section. The chips at each end of the track set what lies beyond the last block.
+- **Live occupancy.** While you are connected, each block's dot shows **Occupied** or **Clear** as its detector reports. A dashed dot means there is no reading yet, for example before a train has moved through the block or while you are offline.
+- **Aspects.** Choose 2, 3 or 4 aspects, whether a signal shows Stop or Restricting when a turnout isn't lined for the main, and approach lighting, for all signals or for one selected signal. Bowties shows the rules each signal follows.
+
+The **Physical signals** and **Review** pages are not available yet. Feedback on this preview is especially welcome.
+
 ---
 
 ## Reconnecting with pending offline changes
