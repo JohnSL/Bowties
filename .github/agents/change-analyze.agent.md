@@ -95,7 +95,7 @@ For `quickchange` and `hitl-decision`, this step is often trivial or skipped
 
 ### 3. Draft options
 
-Load [option-drafting.md](../skills/architecture-first-fix/option-drafting.md)
+Load [option-drafting.md](../../.claude/skills/architecture-first-fix/option-drafting.md)
 for the full option format, self-check, banned-language list, stopgap rule,
 and philosophy. Draft two or more options that differ by **architectural
 direction** — not by scope. If investigation establishes only one honest

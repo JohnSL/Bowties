@@ -46,7 +46,7 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **lcc-rs:** `protocol/memory_config.rs`, `protocol/datagram.rs`
 
 ## Profile Tree Annotation
-- **Bootstrap/refinement source:** `profile-extractions/<node>/event-roles.json` classifies exact EventId `childFields`; `.github/skills/_lib/profile_tools.py assemble` validates capture-derived event roles and relevance rules into a `*.bootstrap.profile.yaml` candidate.
+- **Bootstrap/refinement source:** `profile-extractions/<node>/event-roles.json` classifies exact EventId `childFields`; `.claude/skills/_lib/profile_tools.py assemble` validates capture-derived event roles and relevance rules into a `*.bootstrap.profile.yaml` candidate.
 - **Graduation and bundling:** after a candidate is graduated, `app/src-tauri/profiles/*.profile.yaml` is the durable authored product and runtime source of truth. Shipping profiles are maintained directly rather than regenerated wholesale from extraction artifacts. Runtime contract tests own bundled behavior against CDI fixtures; assembler unit tests independently own bootstrap generation behavior.
 - **Runtime owner:** `bowties-core::profile::annotate_tree` resolves each path. Event-role segment/group declarations may apply broadly. Field presentation supports exact integer leaves and eligible non-replicated groups; group controls fan out only to immediate integer-leaf children. Exact leaf presentation overrides its immediate parent group, which overrides the CDI hint; invalid targets surface in `AnnotationReport.warnings`.
 - **Consumers:** live config trees (`commands/cdi.rs`), offline/captured trees (`commands/layout_capture.rs`), and role-filtered channel-event resolution (`bowties-core::channel_events`).

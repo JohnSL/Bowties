@@ -158,7 +158,7 @@ Tower-LCC's connector + daughterboard configuration model is re-expressed under 
 ## Dependencies
 
 - The current v1 schema at [specs/008-guided-configuration/contracts/profile-yaml-schema.json](../008-guided-configuration/contracts/profile-yaml-schema.json) is the baseline being extended.
-- The `profile-7-assemble` skill at [.github/skills/profile-7-assemble/SKILL.md](../../.github/skills/profile-7-assemble/SKILL.md) will need updating once the schema lands.
+- The `profile-7-assemble` skill at [.claude/skills/profile-7-assemble/SKILL.md](../../.claude/skills/profile-7-assemble/SKILL.md) will need updating once the schema lands.
 - Tower-LCC's existing profile at [app/src-tauri/profiles/RR-CirKits_Tower-LCC.profile.yaml](../../app/src-tauri/profiles/RR-CirKits_Tower-LCC.profile.yaml) is the migration source.
 - TurnoutBoss source artifacts are staged at `profile-extractions/turnout-boss/` (CDI XML, manual PDF, phase-1 extraction outputs); Tower-LCC's source CDI XML is not currently checked in and should be backfilled during this work.
 - The future hardware planner spec ([specs/proposals/app-ux-vision/planner-proposal.md](../proposals/app-ux-vision/planner-proposal.md)) is a downstream consumer of this work, not a dependency.

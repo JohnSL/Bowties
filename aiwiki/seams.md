@@ -53,7 +53,7 @@ This file is kept current through normal work, not graduation audits:
 - **Owner**: `annotate_tree` / `apply_event_role` / `apply_field_presentation` / `apply_field_access` ([bowties-core/src/profile/mod.rs](../bowties-core/src/profile/mod.rs)) — applies resolved event-role, field-access, and presentation declarations to the configuration tree
 - **Contributors**:
   - [profile-extractions/*/event-roles.json](../profile-extractions/) — bootstrap provenance that classifies exact EventId `childFields` as Producer or Consumer
-  - [`.github/skills/_lib/profile_tools.py`](../.github/skills/_lib/profile_tools.py) — validates capture-derived event-role and relevance declarations and emits a bootstrap candidate
+  - [`.claude/skills/_lib/profile_tools.py`](../.claude/skills/_lib/profile_tools.py) — validates capture-derived event-role and relevance declarations and emits a bootstrap candidate
   - [app/src-tauri/profiles/*.profile.yaml](../app/src-tauri/profiles/) — durable authored product and runtime source of truth after graduation; loaded at the IPC boundary
 - **Consumers**:
   - [app/src-tauri/src/commands/cdi.rs](../app/src-tauri/src/commands/cdi.rs) — annotates live configuration trees

@@ -76,7 +76,7 @@ For very small slices (1–2 behaviors total), one `tdd-cycle` invocation covers
 the slice.
 
 Do **not** batch red across behaviors within a worker; that is horizontal
-slicing and is forbidden by [tdd.md](../skills/build/tdd.md). The worker
+slicing and is forbidden by [tdd.md](../../.claude/skills/build/tdd.md). The worker
 completes each behavior red-then-green before starting the next; the
 per-behavior audit trail in its return proves this.
 
@@ -200,6 +200,7 @@ Batches:
   1. {N behaviors} — no escalation | escalation: {seam}
   2. {N behaviors} — ...
 Refactor: {what was restructured | none needed | deferred pending architecture-first-fix}
+Dead ends: none | {workers' dead-end entries, deduplicated — candidates for aiwiki/ enrichment}
 Escalation: none | architecture-first-fix on {seam} — structured evidence below
 Tests: {suite}: N passed, 0 failed
 UI contract: {reference sections, implemented structure, authorized differences, caller comparison pending | not applicable}

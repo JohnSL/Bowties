@@ -52,7 +52,7 @@ For changes in the offline layout, sync, discovery, or config-read workflow, run
 
 Production code changes should be accompanied by knowledge-base / product-doc enrichment (`aiwiki/`, `product/`, or `specs/backlog.md`). Two deterministic gates enforce this so it does not depend on remembering:
 
-- **VS Code Stop hook** (`.github/hooks/enrichment-gate.json` → `enrichment-gate.ps1`): when the agent tries to finish, it blocks completion if non-test source under `app/src/`, `app/src-tauri/src/`, `lcc-rs/`, or `bowties-core/` changed in the working tree but no doc/KB file did. Workspace hooks like this do not need the `chat.useCustomAgentHooks` setting, but agent hooks are a Preview VS Code feature overall — hence the pre-push safety net below.
+- **Agent Stop hook** (VS Code: `.github/hooks/enrichment-gate.json`; Claude Code: `.claude/settings.json` with `-Format claude`; both run `enrichment-gate.ps1`): when the agent tries to finish, it blocks completion if non-test source under `app/src/`, `app/src-tauri/src/`, `lcc-rs/`, or `bowties-core/` changed in the working tree but no doc/KB file did. Workspace hooks like this do not need the `chat.useCustomAgentHooks` setting, but agent hooks are a Preview VS Code feature overall — hence the pre-push safety net below.
 - **Git pre-push hook** (`.githooks/pre-push` → `enrichment-prepush.ps1`): the durable safety net. Blocks a push when the pushed commits change source without an accompanying doc update.
 
 Both gates share one classifier (`.github/hooks/enrichment-classify.ps1`), so the rules never drift.

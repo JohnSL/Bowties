@@ -71,9 +71,9 @@ guessing.
   minimal code → run → confirm passing
   → re-run the affected suite. Only then move to the next behavior. Do not
   batch red across behaviors; that is horizontal slicing, forbidden by
-  [tdd.md](../skills/build/tdd.md).
+  [tdd.md](../../.claude/skills/build/tdd.md).
 - **Test behavior, not implementation.** Tests exercise a public interface and
-  read like a specification. Mock only at [system boundaries](../skills/build/mocking.md);
+  read like a specification. Mock only at [system boundaries](../../.claude/skills/build/mocking.md);
   never mock internal collaborators.
 - **Fail for the right reason.** A red test must fail because the behavior is
   not yet implemented — not because of a syntax error, missing import, or typo.
@@ -161,6 +161,7 @@ Behavior 3: {name}
   suite: ...
 
 Remaining: {N} behaviors deferred to next batch (or 0)
+Dead ends: none | {≤2 one-line entries: approach abandoned + the design fact it revealed}
 Escalation: none | architecture-first-fix on {seam}
   Evidence: {behavior, expected seam, observed conflict, relevant files and
   diagnostics, why continuing requires an architecture decision}
@@ -171,6 +172,11 @@ Files touched: {list}
 
 A missing `red:` failure message on any behavior indicates the RED phase was
 skipped and is a bug in the audit — the caller will bounce the batch.
+
+`Dead ends` is for abandoned approaches that carry design information the
+caller or `aiwiki/` should keep (for example, "tried caching in the store;
+the orchestrator owns that lifecycle"). Do not report typos, flaky reruns,
+or ordinary red→green iteration. The attempt history itself stays with you.
 
 ## Cycle checklist (per behavior)
 

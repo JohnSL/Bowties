@@ -1,8 +1,8 @@
 # Skills
 
-This document describes the Copilot skills available in the Bowties project and how to use them.
+This document describes the AI skills available in the Bowties project and how to use them.
 
-Skills are `.github/skills/<name>/SKILL.md` files that Copilot loads automatically when you ask a question that matches the skill's domain. They give the AI structured workflows, tool-call sequences, and domain knowledge that make answers significantly more accurate — especially for protocol-specific tasks like LCC trace analysis.
+Skills are `.claude/skills/<name>/SKILL.md` files (a location both GitHub Copilot and Claude Code discover) that the AI loads automatically when you ask a question that matches the skill's domain. They give the AI structured workflows, tool-call sequences, and domain knowledge that make answers significantly more accurate — especially for protocol-specific tasks like LCC trace analysis.
 
 ## Available skills
 

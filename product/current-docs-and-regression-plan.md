@@ -126,7 +126,7 @@ These principles should be expressed as repo rules, not slogans.
 
 ## Proposed Copilot Governance
 
-The repository already has `.github/agents/`, `.github/instructions/`, `.github/prompts/`, and `.github/skills/`.
+The repository already has `.github/agents/`, `.github/instructions/`, `.github/prompts/`, and `.claude/skills/` (shared with Claude Code).
 
 We should use them more deliberately.
 

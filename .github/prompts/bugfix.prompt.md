@@ -2,7 +2,7 @@
 description: "Fix a bug with root cause analysis, TDD regression encoding, impact-aware testing, and knowledge base enrichment."
 ---
 
-**First action**: Use `manage_todo_list` to create a todo from all 8 steps below. Update status as you work. Do not mark the task complete until all items including post-implementation are done.
+**First action**: Use your todo-list tool (`manage_todo_list` in Copilot, `TodoWrite` in Claude Code) to create a todo from all 8 steps below. Update status as you work. Do not mark the task complete until all items including post-implementation are done.
 
 ## Pre-Implementation Analysis (delegated)
 

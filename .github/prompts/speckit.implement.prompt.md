@@ -2,7 +2,7 @@
 agent: speckit.implement
 ---
 
-**First action**: Use `manage_todo_list` to create a todo from all 8 Bowties-specific steps below (in addition to any task-level todos). Update status as you work. Do not mark the task complete until all items including post-implementation enrichment are done.
+**First action**: Use your todo-list tool (`manage_todo_list` in Copilot, `TodoWrite` in Claude Code) to create a todo from all 8 Bowties-specific steps below (in addition to any task-level todos). Update status as you work. Do not mark the task complete until all items including post-implementation enrichment are done.
 
 ## Bowties Pre-Implementation Analysis (do this BEFORE executing any tasks)
 

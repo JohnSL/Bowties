@@ -15,10 +15,19 @@
 #            or { continue: $true } to allow stopping
 #   exit 0 : stdout parsed as JSON
 #
+# Contract (Claude Code hooks, -Format claude; wired in .claude/settings.json):
+#   stdin  : same Stop-hook JSON shape (including stop_hook_active)
+#   stdout : { decision: "block", reason } to block, or { continue: $true } to allow
+#
 # Design constraints:
 #   - Deterministic file diff only. No LLM calls, no quality re-litigation.
 #   - Honour stop_hook_active to avoid nag loops (never block twice in a row).
 #   - Fail open: any internal error allows the agent to stop.
+
+param(
+    [ValidateSet('vscode', 'claude')]
+    [string]$Format = 'vscode'
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -29,11 +38,18 @@ function Write-Allow {
 }
 
 function Write-Block([string]$Reason) {
-    $payload = [ordered]@{
-        hookSpecificOutput = [ordered]@{
-            hookEventName = 'Stop'
-            decision      = 'block'
-            reason        = $Reason
+    if ($Format -eq 'claude') {
+        $payload = [ordered]@{
+            decision = 'block'
+            reason   = $Reason
+        }
+    } else {
+        $payload = [ordered]@{
+            hookSpecificOutput = [ordered]@{
+                hookEventName = 'Stop'
+                decision      = 'block'
+                reason        = $Reason
+            }
         }
     }
     Write-Output ($payload | ConvertTo-Json -Depth 5 -Compress)

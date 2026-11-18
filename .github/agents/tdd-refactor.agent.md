@@ -47,7 +47,7 @@ you **stop and escalate** rather than patch through.
 - Remove duplication introduced during green; route shared helpers to their
   owning layer (`app/src/lib/utils/**` for normalization/formatting, etc.).
 - Deepen modules: move incidental complexity behind a simple interface
-  ([deep-modules.md](../skills/build/deep-modules.md)).
+  ([deep-modules.md](../../.claude/skills/build/deep-modules.md)).
 - Improve intention-revealing names and structure.
 - Reuse existing shared owners (stores, orchestrators, backend services)
   instead of leaving a parallel variant.
@@ -97,6 +97,7 @@ Refactor: {done | none needed | deferred pending architecture-first-fix}
 Restructured: {one line each — what and where}
 Invariant preserved: {one line}
 Debt reduced: {one line}
+Dead ends: none | {≤2 one-line entries: restructuring abandoned + the design fact it revealed}
 Escalation: none | architecture-first-fix on {seam}
   Evidence: {preserved behavior, expected seam, observed conflict, relevant
   files and diagnostics, likely principle at stake}
