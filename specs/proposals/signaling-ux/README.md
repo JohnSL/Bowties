@@ -13,8 +13,8 @@ This directory captures where we want to take the Bowties UX for **signalling** 
 that a user describes in railroad terms, with Bowties owning every event ID, CDI field and logic rung.
 
 It is deliberately *not* a Signal-LCC proposal or a Tower LCC+Q proposal. Bowties owns hardware
-translation; the Automatic Block Signals mockup lets the user identify nearby installed boards and
-physical outputs.
+translation; the Automatic Block Signals mockup lets the user choose the Signal LCC each signal
+runs on and the pins its lamps use.
 
 > **Dividing test (2026-11-14):** if any signal tells a train which route it will take (power
 > switches, diverging indications, siding departure signals), it belongs to a **Interlocking Plant**.
@@ -73,9 +73,12 @@ experts and Signal-LCC/LCC hardware experts. Signalling data in the mockups is i
 marked as such — critique the *model* separately from the *data*.
 
 Automatic Block Signals separates meaning from visual encoding. Aspects retains defaults for all signals and
-per-signal policy overrides; Physical signals owns each mast's heads, electrical implementations,
-nearby installed board choice, and outputs together. Its editor is a future reuse candidate for
-Plant, not a change to the existing Plant pages. Legacy `#line-*` anchors remain aliases.
+per-signal policy overrides; Appearance owns signal type and approach lighting; Wiring owns the
+Signal LCC each signal runs on (one node per signal), each head's electrical implementation, the
+lamp-to-pin assignments (a seat-map pin grid), and the Rule to Aspect table derived from
+Appearance (closed by default, read-only unless customized). See the 2026-11-18 entry in [design-decisions.md](design-decisions.md). The Wiring
+editor is a future reuse candidate for Plant, not a change to the existing Plant pages. Legacy
+`#line-*` anchors remain aliases.
 
 For review, on Blocks select each turnout to see which derived signals protect it; move the Depot track
 turnout up and down to move it between blocks; pick turnout shapes in the diagram header;
