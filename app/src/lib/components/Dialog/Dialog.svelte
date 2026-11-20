@@ -2,7 +2,8 @@
   /**
    * Dialog — Fluent v9 modal shell for Bowties.
    *
-   * Owns: overlay, surface, focus trap, Esc / overlay-click / × → onCancel,
+   * Owns: overlay, surface, focus trap, Esc / × → onCancel (overlay clicks
+   * never dismiss — modals close only via an explicit action, ADR-0014),
    * ARIA wiring, and the visual chrome (header divider + filled footer).
    *
    * Does NOT own: workflow sequencing or business logic. Callers decide what
@@ -15,9 +16,8 @@
    *   - `actions` → footer content. Omit to render a footer-less dialog.
    *
    * Variants:
-   *   - `closable={true}`  (default) → × close button, Esc, and overlay click
-   *                                    all call `onCancel`.
-   *   - `closable={false}`           → no ×, Esc/overlay click ignored. Use
+   *   - `closable={true}`  (default) → × close button and Esc call `onCancel`.
+   *   - `closable={false}`           → no ×, Esc ignored. Use
    *                                    for in-flight progress dialogs.
    *
    * See specs/018-block-indicator-facility/dialog-shell-refactor.md.
@@ -34,7 +34,7 @@
     open: boolean;
     /** `sm` = 400, `md` = 480, `lg` = 600. A number is treated as pixels. */
     width?: Width;
-    /** When false, hides ×, ignores Esc and overlay-click. Default true. */
+    /** When false, hides × and ignores Esc. Default true. */
     closable?: boolean;
     /** ARIA role. Use `alertdialog` for destructive confirms. Default `dialog`. */
     role?: Role;
@@ -50,7 +50,7 @@
      * dialogs that might be open at the same time.
      */
     zIndex?: number;
-    /** Called for Esc, overlay click, and × — when `closable` is true. */
+    /** Called for Esc and × — when `closable` is true. */
     onCancel: () => void;
     title?: Snippet;
     children: Snippet;
@@ -124,11 +124,6 @@
     }
   }
 
-  function handleOverlayClick(event: MouseEvent) {
-    if (!closable) return;
-    if (event.target === event.currentTarget) onCancel();
-  }
-
   function applyInitialFocus() {
     const focusables = focusableElements();
     if (focusables.length === 0) {
@@ -167,12 +162,10 @@
 </script>
 
 {#if open}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div
     class="fluent-dialog-overlay"
     style="z-index: {zIndex}"
     role="presentation"
-    onclick={handleOverlayClick}
   >
     <div
       bind:this={surfaceEl}

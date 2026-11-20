@@ -264,6 +264,46 @@ Moving them would introduce a new concurrency surface (writeable in-flight targe
 for concurrent CDI reads) with no offsetting bug class prevented. Revisit only when
 there is an actual driver.
 
+## 2026-11-19 extension: bundle pairing enforced; profiles resolve by declared identity
+
+Issue #30: on 0.4.0 every RR-CirKits entry in the placeholder picker failed with
+`BundledCdiNotFound`. The picker lists every bundled `*.profile.yaml`, but only the
+TurnoutBoss `<stem>.cdi.xml` had ever been committed. Section 2's rule ("adding a new
+board model requires only adding a bundled CDI + profile") was stated but never
+enforced against the shipped `profiles/` directory.
+
+The same investigation found a second, older defect. Profile resolution
+(`profile/loader.rs::load_profile`) rebuilt a filename from the CDI `<identification>`
+using a sanitizer, `make_profile_filename`. The bundled TurnoutBoss stem
+`Mustangpeak-Engineering_TurnoutBoss` used the space→`-` convention from Spec 014
+research.md, which was never implemented. The sanitizer produces
+`Mustangpeak_Engineering_TurnoutBoss`, so real and placeholder TurnoutBoss nodes never
+received their profile overlay, and nothing reported it.
+
+Decisions:
+
+- **Profiles resolve by declared identity.** `load_profile` scans the search dirs'
+  `*.profile.yaml` and matches each file's `nodeType` (manufacturer, model) against the
+  CDI identity with `make_profile_key`, the normalizer that `ProfileCache` already uses.
+  The first search dir wins; within a dir, files are taken in sorted filename order.
+  The filename is no longer an identity encoding.
+- **The profile stem is the placeholder key only.** It remains the stable,
+  persisted board-model identity for placeholders (Spec 014 FR-019: `profileStem`,
+  bundled-CDI `cacheKey`). It is not re-derived from the CDI, so renaming bundle
+  files is never needed to fix profile matching, and saved layouts are not stranded.
+  `RR-CirKits_Inc._Signal-LCC.cdi.xml` (rev-C7c), `RR-CirKits_Tower-LCC.cdi.xml` (rev-C7)
+  and `RR-CirKits_Inc._Tower-LCC+Q.cdi.xml` (v1.15) are now bundled.
+- **Bundle integrity is test-enforced.** A loader test walks the real
+  `app/src-tauri/profiles/` directory through the production picker listing and the
+  production factory loader. It requires that every listed stem has a loadable CDI,
+  that the CDI's identity resolves back to that same profile, and that no two bundled
+  profiles declare the same `nodeType` key.
+
+Rejected: renaming the TurnoutBoss bundle to match the sanitizer (breaks persisted
+`profileStem` values and would need a permanent legacy alias); changing the sanitizer
+(breaks the `RR-CirKits, Inc.` mapping); filtering the picker to profile+CDI pairs
+(turns a clear error into a silent omission; no supported workflow needs it yet).
+
 ## Invariants
 
 Structured testable rules for the `/design` audit. Each invariant resolves to

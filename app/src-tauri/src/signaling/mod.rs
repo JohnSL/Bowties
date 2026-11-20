@@ -10,9 +10,9 @@ use bowties_core::{
     },
     profile::{make_profile_key, StructureProfile},
     signaling::{
-        preview_block_signals_with_hardware, ProposalIssue, SelectedBlock, SignalAppearanceSet,
+        preview_block_signals_with_hardware, ProposalIssue, SignalAppearanceSet,
         SignalDriver, SignalHardwareEvidence, SignalHardwareFacts, SignalHardwareHost,
-        SignalIndication, BlockSignalsPreview, BlockSignalsRequest, SignalOutput, SignalStyle,
+        BlockSignalsPreview, BlockSignalsRequest, SignalOutput, SignalStyle,
     },
 };
 
@@ -384,6 +384,7 @@ mod tests {
         LeafType, NodeConfigTree, SegmentNode,
     };
     use bowties_core::profile::{make_profile_key, StructureProfile};
+    use bowties_core::signaling::{SelectedBlock, SignalIndication};
     use lcc_rs::cdi::{EventRole, Identification};
     use std::path::PathBuf;
 

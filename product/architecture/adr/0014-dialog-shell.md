@@ -79,7 +79,8 @@ consistent treatment.
 ### 3. Non-dismissible surfaces use `closable={false}` on the same shell, not a separate `<Progress>` component
 
 `Dialog` accepts a `closable?: boolean` prop (default `true`). When `false`, the
-× close button is omitted, Esc is ignored, and overlay-click is a no-op. Progress
+× close button is omitted and Esc is ignored (overlay clicks never dismiss — see the
+2026-11-19 extension). Progress
 dialogs (`SaveProgressDialog`, `CdiDownloadDialog`, `CdiRedownloadDialog`,
 `LayoutLoadingDialog`) all set `closable` per phase from their owning store so
 the user can't dismiss an in-flight write or download mid-flight.
@@ -210,3 +211,21 @@ reachable. Header and footer remain shell-owned.
 Tests cover default/contained shell behavior and the wizard's scroll-region and
 label-spacing contract. Native Tauri visual review is still required; source
 layout tests are not evidence of native pixel bounds.
+
+## 2026-11-19 extension: overlay clicks never dismiss
+
+Clicking the overlay outside the surface no longer calls `onCancel`, whatever the
+value of `closable`. A modal now closes only through an explicit action: Cancel or
+a confirm button in `actions`, the × button, or Esc. The last two still call
+`onCancel` while `closable` is true.
+
+Why: the original contract carried click-outside-to-close over from the hand-rolled
+overlays this shell replaced (for example `ConfirmDialog`'s `.cm-overlay`). No
+decision in this ADR justified it. Add-style form dialogs (Add placeholder board,
+Add facility) lost user input to stray clicks. Win32 / Fluent v8 modal dialogs,
+whose chrome conventions this ADR already follows, do not light-dismiss.
+
+Owner: `Dialog.svelte`. No per-dialog opt-in prop exists; one dismissal rule
+applies to every modal (a per-dialog opt-out was rejected so dismissal behaviour
+cannot vary between dialogs). Guard: `Dialog.test.ts` "overlay click does NOT fire
+onCancel" under the default (closable) props.

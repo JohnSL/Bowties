@@ -13,7 +13,9 @@ const SHARED_DAUGHTERBOARD_LIBRARY_FILENAME: &str = "RR-CirKits.shared-daughterb
 
 /// Load a structure profile for the given manufacturer + model.
 ///
-/// Looks for `{resource_dir}/profiles/{Manufacturer}_{Model}.profile.yaml`.
+/// Scans `{resource_dir}/profiles/*.profile.yaml` for the file whose declared
+/// `nodeType.manufacturer` + `nodeType.model` match (see
+/// `find_profile_path_by_identity`); the file name itself is not significant.
 ///
 /// On Windows `resource_dir()` resolves to the directory containing the
 /// executable, so profiles are user-editable without touching AppData.
@@ -47,10 +49,8 @@ pub async fn load_profile(
         }
     }
 
-    let filename = make_profile_filename(manufacturer, model);
-
     let search_dirs = profile_search_dirs(app_handle);
-    let Some(path) = find_existing_profile_path(&search_dirs, &filename) else {
+    let Some(path) = find_profile_path_by_identity(&search_dirs, manufacturer, model) else {
         cache.write().await.insert(key, None);
         return None;
     };
@@ -140,6 +140,49 @@ fn find_existing_profile_path(
         .iter()
         .map(|dir| dir.join(file_name))
         .find(|candidate| candidate.exists())
+}
+
+/// Find the profile whose declared `nodeType` identity matches
+/// `manufacturer` + `model` (compared via `make_profile_key`).
+///
+/// File names are not part of the identity contract; only the `nodeType`
+/// block is. Search dirs are tried in order (first dir wins); within a dir,
+/// files are scanned in sorted file-name order for determinism. Uses the same
+/// stem/summary parsing as the placeholder picker.
+fn find_profile_path_by_identity(
+    search_dirs: &[std::path::PathBuf],
+    manufacturer: &str,
+    model: &str,
+) -> Option<std::path::PathBuf> {
+    let wanted = make_profile_key(manufacturer, model);
+
+    for dir in search_dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        let mut paths: Vec<std::path::PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| profile_yaml_stem(path).is_some())
+            .collect();
+        paths.sort();
+
+        for path in paths {
+            let Some(stem) = profile_yaml_stem(&path) else {
+                continue;
+            };
+            let Ok(content) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Some(summary) = parse_profile_summary(&stem, &content) else {
+                continue;
+            };
+            if make_profile_key(&summary.manufacturer, &summary.model) == wanted {
+                return Some(path);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(debug_assertions)]
@@ -367,44 +410,6 @@ fn parse_profile_summary(stem: &str, content: &str) -> Option<BundledProfileSumm
 pub fn list_bundled_profiles(app_handle: &tauri::AppHandle) -> Vec<BundledProfileSummary> {
     let dirs = profile_search_dirs(app_handle);
     list_bundled_profiles_in_dirs(&dirs)
-}
-
-/// Build the profile file name from manufacturer and model strings.
-///
-/// Format: `{Manufacturer}_{Model}.profile.yaml`
-/// Filesystem-invalid characters, commas, and spaces are replaced with `_`;
-/// consecutive replacements collapse to one separator so SNIP identities such
-/// as `RR-CirKits, Inc.` match the bundled `RR-CirKits_Inc.` filename stem.
-fn make_profile_filename(manufacturer: &str, model: &str) -> String {
-    let sanitize = |s: &str| -> String {
-        let raw: String = s
-            .chars()
-            .map(|c| match c {
-                '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | ',' | ' ' => '_',
-                other => other,
-            })
-            .collect();
-
-        let mut result = String::with_capacity(raw.len());
-        let mut previous_was_separator = false;
-        for c in raw.chars() {
-            if c == '_' {
-                if !previous_was_separator {
-                    result.push(c);
-                }
-                previous_was_separator = true;
-            } else {
-                result.push(c);
-                previous_was_separator = false;
-            }
-        }
-        result
-    };
-    format!(
-        "{}_{}.profile.yaml",
-        sanitize(manufacturer),
-        sanitize(model)
-    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -701,28 +706,71 @@ notValid: [unclosed bracket
         assert!(!path.exists(), "file must not exist for this test");
     }
 
-    #[test]
-    fn make_profile_filename_replaces_invalid_chars() {
-        let name = make_profile_filename("RR-CirKits", "Tower-LCC");
-        assert_eq!(name, "RR-CirKits_Tower-LCC.profile.yaml");
+    fn identity_yaml(manufacturer: &str, model: &str) -> String {
+        format!(
+            "schemaVersion: \"2.0\"\nnodeType:\n  manufacturer: \"{manufacturer}\"\n  model: \"{model}\"\neventRoles: []\nrelevanceRules: []\n"
+        )
     }
 
     #[test]
-    fn make_profile_filename_replaces_colon() {
-        let name = make_profile_filename("Mfr:Test", "Model/X");
-        assert_eq!(name, "Mfr_Test_Model_X.profile.yaml");
+    fn find_profile_path_by_identity_resolves_snip_identity_to_declared_file() {
+        let dir = s8_make_temp_profiles_dir("identity-rr");
+        std::fs::write(
+            dir.join("RR-CirKits_Inc._Signal-LCC.profile.yaml"),
+            identity_yaml("RR-CirKits, Inc.", "Signal-LCC"),
+        ).expect("write signal");
+        std::fs::write(
+            dir.join("RR-CirKits_Tower-LCC.profile.yaml"),
+            identity_yaml("RR-CirKits", "Tower-LCC"),
+        ).expect("write tower");
+
+        let found = find_profile_path_by_identity(&[dir.clone()], "RR-CirKits, Inc.", "Signal-LCC");
+        assert_eq!(found, Some(dir.join("RR-CirKits_Inc._Signal-LCC.profile.yaml")));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn make_profile_filename_matches_rr_cirkits_snip_identity() {
-        let name = make_profile_filename("RR-CirKits, Inc.", "Signal-LCC");
-        assert_eq!(name, "RR-CirKits_Inc._Signal-LCC.profile.yaml");
+    fn find_profile_path_by_identity_ignores_stem_spelling() {
+        let dir = s8_make_temp_profiles_dir("identity-mp");
+        std::fs::write(
+            dir.join("Mustangpeak-Engineering_TurnoutBoss.profile.yaml"),
+            identity_yaml("Mustangpeak Engineering", "TurnoutBoss"),
+        ).expect("write turnoutboss");
 
-        let plusq_name = make_profile_filename("RR-CirKits, Inc.", "Tower-LCC+Q");
-        assert_eq!(
-            plusq_name,
-            "RR-CirKits_Inc._Tower-LCC+Q.profile.yaml"
-        );
+        let found = find_profile_path_by_identity(&[dir.clone()], "Mustangpeak Engineering", "TurnoutBoss");
+        assert_eq!(found, Some(dir.join("Mustangpeak-Engineering_TurnoutBoss.profile.yaml")));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_profile_path_by_identity_returns_none_without_match() {
+        let dir = s8_make_temp_profiles_dir("identity-none");
+        std::fs::write(
+            dir.join("Acme_Widget.profile.yaml"),
+            identity_yaml("Acme", "Widget"),
+        ).expect("write acme");
+
+        assert_eq!(find_profile_path_by_identity(&[dir.clone()], "Acme", "Gadget"), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_profile_path_by_identity_first_search_dir_wins() {
+        let source = s8_make_temp_profiles_dir("identity-first-source");
+        let resource = s8_make_temp_profiles_dir("identity-first-resource");
+        std::fs::write(source.join("Acme_Widget.profile.yaml"), identity_yaml("Acme", "Widget"))
+            .expect("write source");
+        std::fs::write(resource.join("Acme-Widget.profile.yaml"), identity_yaml("Acme", "Widget"))
+            .expect("write resource");
+
+        let found = find_profile_path_by_identity(&[source.clone(), resource.clone()], "Acme", "Widget");
+        assert_eq!(found, Some(source.join("Acme_Widget.profile.yaml")));
+
+        let _ = std::fs::remove_dir_all(&source);
+        let _ = std::fs::remove_dir_all(&resource);
     }
 
     #[test]
@@ -850,6 +898,56 @@ notValid: [unclosed bracket
 
         let _ = std::fs::remove_dir_all(&source);
         let _ = std::fs::remove_dir_all(&resource);
+    }
+
+    #[test]
+    fn bundled_profiles_each_have_loadable_cdi_whose_identity_round_trips() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("profiles");
+        let summaries = list_bundled_profiles_in_dirs(&[dir.clone()]);
+        assert!(!summaries.is_empty(), "no bundled profiles listed from {dir:?}");
+
+        let mut failures: Vec<String> = Vec::new();
+        for summary in &summaries {
+            let stem = &summary.stem;
+            let cdi = match crate::placeholder::load_bundled_cdi_with_xml(&[dir.clone()], stem) {
+                Ok((_xml, cdi)) => cdi,
+                Err(e) => {
+                    failures.push(format!("{stem}: loader failed: {e}"));
+                    continue;
+                }
+            };
+            let (Some(manufacturer), Some(model)) = (
+                cdi.identification.as_ref().and_then(|i| i.manufacturer.clone()),
+                cdi.identification.as_ref().and_then(|i| i.model.clone()),
+            ) else {
+                failures.push(format!("{stem}: CDI identification lacks manufacturer/model"));
+                continue;
+            };
+            let expected = dir.join(format!("{stem}.profile.yaml"));
+            let actual = find_profile_path_by_identity(&[dir.clone()], &manufacturer, &model);
+            if actual.as_ref() != Some(&expected) {
+                failures.push(format!(
+                    "{stem}: CDI identity ({manufacturer:?}, {model:?}) resolves to {actual:?}, expected {expected:?}"
+                ));
+            }
+        }
+
+        let mut seen: std::collections::HashMap<String, &str> = std::collections::HashMap::new();
+        for summary in &summaries {
+            let key = make_profile_key(&summary.manufacturer, &summary.model);
+            if let Some(previous) = seen.insert(key.clone(), summary.stem.as_str()) {
+                failures.push(format!(
+                    "{}: shares profile key '{key}' with {previous}",
+                    summary.stem
+                ));
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "bundled profile/CDI integrity failures:\n{}",
+            failures.join("\n")
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────

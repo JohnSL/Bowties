@@ -121,6 +121,17 @@ Open candidates:
 - **Fix**: the assembler now expands each event-role declaration to the EventId leaves it actually classifies and fails when two role declarations disagree for the same leaf. `apply_event_role` in `bowties-core/src/profile/mod.rs` walks resolved EventId-leaf paths and applies the declared role only to that leaf across every replicated instance, so mixed-role groups (Signal-LCC Rule-to-Aspect) retain distinct Producer/Consumer declarations. Group-path declarations still apply role to all descendant leaves. Coverage: `test_profile_tools.py` for the assembler; `bundled_signal_lcc_profile_contract.rs` (with the test-owned `signal-lcc-c7c-rule-to-aspect.xml` fixture) for the shipping profile's exact Rule-to-Aspect roles.
 - **Authoring invariant**: generated profiles must target EventId-leaf paths, not their containing groups, whenever a group holds more than one role. `#N` distinguishes same-name siblings or replicated instances, never roles within one group.
 
+### Bundled profile ↔ CDI pairing and filename-as-identity profile lookup (resolved 2026-11-19, issue #30)
+- **Area**: `app/src-tauri/profiles/`, `app/src-tauri/src/profile/loader.rs`, `bowties-core/src/placeholder.rs` (`load_bundled_cdi_with_xml`).
+- **Risk** (resolved):
+  - (1) The placeholder picker listed every bundled profile, but three RR-CirKits CDIs were never committed, so adding those boards failed with `BundledCdiNotFound`.
+  - (2) `load_profile` matched profiles by a sanitized filename rebuilt from the CDI identity. The TurnoutBoss bundle's hyphen stem (the Spec 014 research.md space→`-` rule, never implemented) did not match, so TurnoutBoss nodes silently had no profile overlay.
+- **Fix**:
+  - Missing CDIs bundled.
+  - Profiles now resolve by declared `nodeType` identity through `make_profile_key` (ADR-0009, 2026-11-19 extension).
+  - A loader integrity test runs the production picker listing, the factory CDI loader and identity resolution over the real `profiles/` dir.
+- **Remaining observation**: `profile/loader.rs::profile_search_dirs` and `commands/cdi.rs::bundled_cdi_search_dirs` are parallel copies of the same debug-source-then-resource-dir rule. They have not drifted yet. Consolidate them into one resolver if either changes.
+
 ### Config-read batch count inflated vs OpenLCB_Java reference (observed 2026-07-21)
 - **Area**: `app/src-tauri/src/commands/cdi.rs` (`build_read_plan`, `get_element_size`, batch execution loop)
 - **Risk**: On a real RR-CirKits LCC Loconet Gateway (5221 CDI elements, GridConnect serial @ 57600 baud), Bowties took 72.7 s vs LCCPro's ~17 s to read the same node. Round-trip cost per batch is hardware-bound (~55–70 ms serial + node turnaround) and serialization is by design (ADR-0016), so the only lever is **reducing batch count**. Two Bowties choices inflate that count vs the OpenLCB_Java reference:
