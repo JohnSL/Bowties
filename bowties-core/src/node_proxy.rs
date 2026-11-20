@@ -9,7 +9,7 @@
 
 use lcc_rs::{
     CdiData, ConnectionStatus, DiscoveredNode, NodeAlias, NodeID, PIPStatus, ProtocolFlags,
-    SNIPData, SNIPStatus, TransportHandle,
+    QueryOutcome, SNIPData, SNIPStatus, TransportHandle,
 };
 use lcc_rs::peer_session_registry::PeerSessionRegistry;
 use std::sync::Arc;
@@ -21,6 +21,26 @@ use crate::node_tree::NodeConfigTree;
 
 type SnipResult = Result<(Option<SNIPData>, SNIPStatus), String>;
 type PipResult = Result<(Option<ProtocolFlags>, PIPStatus), String>;
+
+/// Whether a cached query status is a final answer the proxy may serve
+/// without asking the peer session again. Mirrors `PeerSession`'s policy
+/// (`QueryOutcome::Complete` / `NotSupported` are final; `Timeout` is not),
+/// so the proxy never holds a stricter finality rule than the session.
+trait CachedQueryStatus: Copy {
+    fn is_final(self) -> bool;
+}
+
+impl CachedQueryStatus for SNIPStatus {
+    fn is_final(self) -> bool {
+        matches!(self, SNIPStatus::Complete | SNIPStatus::NotSupported)
+    }
+}
+
+impl CachedQueryStatus for PIPStatus {
+    fn is_final(self) -> bool {
+        matches!(self, PIPStatus::Complete | PIPStatus::NotSupported)
+    }
+}
 
 // ── ProxyMessage ─────────────────────────────────────────────────────────────
 
@@ -301,7 +321,7 @@ impl LiveNodeProxy {
         mailbox_tx: &mpsc::Sender<ProxyMessage>,
     ) {
         // Cache hit — already have a definitive answer
-        if self.snip_status == SNIPStatus::Complete || self.snip_status == SNIPStatus::Timeout {
+        if self.snip_status.is_final() {
             let _ = reply.send(Ok((self.snip.clone(), self.snip_status)));
             return;
         }
@@ -327,10 +347,9 @@ impl LiveNodeProxy {
             tokio::spawn(async move {
                 let result = if let Some(session) = sessions.get(node_id).await {
                     match session.query_snip().await {
-                        Ok(data) => {
-                            let status = if data.is_some() { SNIPStatus::Complete } else { SNIPStatus::Timeout };
-                            Ok((data, status))
-                        }
+                        Ok(QueryOutcome::Complete(data)) => Ok((Some(data), SNIPStatus::Complete)),
+                        Ok(QueryOutcome::NotSupported) => Ok((None, SNIPStatus::NotSupported)),
+                        Ok(QueryOutcome::Timeout) => Ok((None, SNIPStatus::Timeout)),
                         Err(e) => Err(e.to_string()),
                     }
                 } else {
@@ -362,8 +381,8 @@ impl LiveNodeProxy {
         reply: oneshot::Sender<PipResult>,
         mailbox_tx: &mpsc::Sender<ProxyMessage>,
     ) {
-        // Cache hit
-        if self.pip_status == PIPStatus::Complete || self.pip_status == PIPStatus::Timeout {
+        // Cache hit — already have a definitive answer
+        if self.pip_status.is_final() {
             let _ = reply.send(Ok((self.pip_flags.clone(), self.pip_status)));
             return;
         }
@@ -385,10 +404,9 @@ impl LiveNodeProxy {
             tokio::spawn(async move {
                 let result = if let Some(session) = sessions.get(node_id).await {
                     match session.query_pip().await {
-                        Ok(flags) => {
-                            let status = if flags.is_some() { PIPStatus::Complete } else { PIPStatus::Timeout };
-                            Ok((flags, status))
-                        }
+                        Ok(QueryOutcome::Complete(flags)) => Ok((Some(flags), PIPStatus::Complete)),
+                        Ok(QueryOutcome::NotSupported) => Ok((None, PIPStatus::NotSupported)),
+                        Ok(QueryOutcome::Timeout) => Ok((None, PIPStatus::Timeout)),
                         Err(e) => Err(e.to_string()),
                     }
                 } else {
@@ -731,9 +749,6 @@ impl NodeProxyHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node_tree::{
-        ConfigNode, ConfigValue, LeafNode, LeafType, NodeConfigTree, SegmentNode,
-    };
     use std::collections::HashMap;
 
     /// Create a dummy TransportHandle that doesn't connect to anything.
@@ -742,48 +757,6 @@ mod tests {
         let (all_tx, _) = tokio::sync::broadcast::channel(1);
         let mti_senders = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
         TransportHandle::from_parts(tx, all_tx, mti_senders)
-    }
-
-    /// Build a minimal tree with one event-ID leaf carrying a known value.
-    fn tree_with_event_id(hex: &str, bytes: [u8; 8]) -> NodeConfigTree {
-        NodeConfigTree {
-            node_id: "05.02.01.02.03.00".into(),
-            identity: None,
-            connector_profile: None,
-            connector_profile_warning: None,
-            unknown_variants: Vec::new(),
-            profile_applied: false,
-            segments: vec![SegmentNode {
-                name: "Configuration".into(),
-                description: None,
-                origin: 0,
-                space: 0xFD,
-                children: vec![ConfigNode::Leaf(LeafNode {
-                    name: "Event ID".into(),
-                    description: None,
-                    element_type: LeafType::EventId,
-                    address: 100,
-                    size: 8,
-                    space: 0xFD,
-                    path: vec!["seg:0".into(), "elem:0".into()],
-                    value: Some(ConfigValue::EventId {
-                        bytes,
-                        hex: hex.into(),
-                    }),
-                    event_role: None,
-                    constraints: None,
-                    button_text: None,
-                    dialog_text: None,
-                    action_value: 0,
-                    hint_slider: None,
-                    hint_radio: false,
-                    modified_value: None,
-                    write_state: None,
-                    write_error: None,
-                    read_only: false,
-                })],
-            }],
-        }
     }
 
     /// Live proxy no longer holds config_tree (ADR-0015) — get_config_tree
@@ -817,5 +790,175 @@ mod tests {
         assert_eq!(snap_after.alias.value(), 0x200);
 
         handle.shutdown().await;
+    }
+
+    // ── Bug #28: proxy SNIP/PIP cache finality ────────────────────────────
+
+    use lcc_rs::transport::mock::MockTransport;
+    use lcc_rs::TransportActor;
+    use std::time::Duration;
+
+    const PEER_ALIAS: u16 = 0x3AE;
+    const OUR_ALIAS: u16 = 0x825;
+    const PEER_ID: [u8; 6] = [0x02, 0x01, 0x57, 0x00, 0x00, 0x28];
+
+    fn frame(mti: u32, source: u16, data: &[u8]) -> String {
+        let hex: String = data.iter().map(|b| format!("{:02X}", b)).collect();
+        format!(":X{:08X}N{};", (mti << 12) | source as u32, hex)
+    }
+
+    /// Outbound addressed requests with `mti` from us to the peer.
+    fn count_requests(probe: &MockTransport, mti: u32) -> usize {
+        let header = format!(":X{:08X}N", (mti << 12) | OUR_ALIAS as u32);
+        let body = format!("{:02X}{:02X}", (PEER_ALIAS >> 8) as u8 & 0x0F, PEER_ALIAS & 0xFF);
+        probe
+            .get_sent_frames()
+            .iter()
+            .filter(|f| f.starts_with(&header) && f.contains(&body))
+            .count()
+    }
+
+    const SNIP_REQUEST_MTI: u32 = 0x19DE8;
+    const PIP_REQUEST_MTI: u32 = 0x19828;
+
+    /// Multi-frame SNIP reply addressed to us.
+    fn snip_reply() -> Vec<String> {
+        let (hi, lo) = (((OUR_ALIAS >> 8) & 0x0F) as u8, (OUR_ALIAS & 0xFF) as u8);
+        let payload = [0x04, b'A', 0, b'W', 0, b'1', 0, b'2', 0, 0x02, b'N', 0, b'D', 0];
+        let chunks: Vec<&[u8]> = payload.chunks(6).collect();
+        let n = chunks.len();
+        chunks
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let flag: u8 = if n == 1 { 0 } else if i == 0 { 1 } else if i == n - 1 { 2 } else { 3 };
+                let mut d = vec![(flag << 4) | hi, lo];
+                d.extend_from_slice(c);
+                frame(0x19A08, PEER_ALIAS, &d)
+            })
+            .collect()
+    }
+
+    fn pip_reply() -> Vec<String> {
+        vec![frame(
+            0x19668,
+            PEER_ALIAS,
+            &[((OUR_ALIAS >> 8) & 0x0F) as u8, (OUR_ALIAS & 0xFF) as u8, 0x80, 0x00],
+        )]
+    }
+
+    /// Queue `reply` frames once `wanted` requests are on the wire.
+    fn reply_after_requests(
+        probe: MockTransport,
+        mti: u32,
+        wanted: usize,
+        reply: Vec<String>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut probe = probe;
+            loop {
+                if count_requests(&probe, mti) >= wanted {
+                    for f in reply {
+                        probe.add_receive_frame(f);
+                    }
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+    }
+
+    /// Live proxy backed by a real registry/session over a mock transport.
+    async fn proxy_with_session() -> (NodeProxyHandle, MockTransport, TransportActor) {
+        let mut transport = MockTransport::new();
+        let probe = transport.clone();
+        transport.add_receive_frame(frame(0x19170, PEER_ALIAS, &PEER_ID));
+        let actor = TransportActor::new(Box::new(transport));
+        let th = actor.handle();
+        let registry = PeerSessionRegistry::new(th.clone(), OUR_ALIAS);
+        let node_id = NodeID::new(PEER_ID);
+        for _ in 0..50 {
+            if registry.get(node_id).await.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(registry.get(node_id).await.is_some(), "session must spawn on VNI");
+        let proxy = NodeProxyHandle::Live(LiveNodeProxy::spawn_with_sessions(
+            node_id, PEER_ALIAS, th, OUR_ALIAS, Some(registry),
+        ));
+        (proxy, probe, actor)
+    }
+
+    /// After a Timeout the proxy must not answer from its cache: the next
+    /// query reaches the session again, and a Complete answer is then cached.
+    #[tokio::test]
+    async fn snip_query_after_timeout_reaches_session_again() {
+        let (proxy, probe, mut actor) = proxy_with_session().await;
+        proxy.update_snip(None, SNIPStatus::Timeout).await.unwrap();
+        let responder = reply_after_requests(probe.clone(), SNIP_REQUEST_MTI, 1, snip_reply());
+
+        let (data, status) = tokio::time::timeout(Duration::from_secs(5), proxy.query_snip())
+            .await
+            .expect("query_snip finished")
+            .unwrap();
+        responder.abort();
+        assert_eq!(status, SNIPStatus::Complete);
+        assert!(data.is_some());
+        assert_eq!(count_requests(&probe, SNIP_REQUEST_MTI), 1);
+
+        // Complete is now final: served from cache, no new request.
+        let (_, status) = proxy.query_snip().await.unwrap();
+        assert_eq!(status, SNIPStatus::Complete);
+        assert_eq!(count_requests(&probe, SNIP_REQUEST_MTI), 1);
+
+        proxy.shutdown().await;
+        actor.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn pip_query_after_timeout_reaches_session_again() {
+        let (proxy, probe, mut actor) = proxy_with_session().await;
+        proxy.update_pip(None, PIPStatus::Timeout).await.unwrap();
+        let responder = reply_after_requests(probe.clone(), PIP_REQUEST_MTI, 1, pip_reply());
+
+        let (flags, status) = tokio::time::timeout(Duration::from_secs(5), proxy.query_pip())
+            .await
+            .expect("query_pip finished")
+            .unwrap();
+        responder.abort();
+        assert_eq!(status, PIPStatus::Complete);
+        assert!(flags.is_some());
+        assert_eq!(count_requests(&probe, PIP_REQUEST_MTI), 1);
+
+        let (_, status) = proxy.query_pip().await.unwrap();
+        assert_eq!(status, PIPStatus::Complete);
+        assert_eq!(count_requests(&probe, PIP_REQUEST_MTI), 1);
+
+        proxy.shutdown().await;
+        actor.shutdown().await;
+    }
+
+    /// Complete and NotSupported are final: served from the proxy cache with
+    /// no new request on the wire.
+    #[tokio::test]
+    async fn final_snip_and_pip_statuses_are_served_from_cache() {
+        let (proxy, probe, mut actor) = proxy_with_session().await;
+
+        for status in [SNIPStatus::Complete, SNIPStatus::NotSupported] {
+            proxy.update_snip(None, status).await.unwrap();
+            let (_, got) = proxy.query_snip().await.unwrap();
+            assert_eq!(got, status);
+        }
+        for status in [PIPStatus::Complete, PIPStatus::NotSupported] {
+            proxy.update_pip(None, status).await.unwrap();
+            let (_, got) = proxy.query_pip().await.unwrap();
+            assert_eq!(got, status);
+        }
+        assert_eq!(count_requests(&probe, SNIP_REQUEST_MTI), 0);
+        assert_eq!(count_requests(&probe, PIP_REQUEST_MTI), 0);
+
+        proxy.shutdown().await;
+        actor.shutdown().await;
     }
 }

@@ -623,3 +623,79 @@ the re-keying registry demux. If a future consumer needs drain-while-idle
 semantics (e.g. an unsolicited-event surface on an idle session), revisit the
 `active.is_some()` inbound gate. Governed by `aiwiki/seams.md § Peer Session
 Ownership`.
+
+## 2026-11-20 extension: SNIP/PIP bounded resend; Timeout is not a cached terminal outcome (#28)
+
+**Context.** Issue #28: during discovery one addressed SNIP request was lost
+on a busy CAN segment. `PeerSession` sent it once. When the 5 s deadline
+passed it cached `SNIPStatus::Timeout`, and `handle_command` answered
+every later query from that cache. `LiveNodeProxy` cached Timeout as well.
+The node never got SNIP data for the session, so its CDI could not be
+resolved. Only a reconnect or `NodeReinitialised` recovered it.
+
+**Decision.** `PeerSession` owns the finality and retry policy for SNIP and
+PIP queries:
+
+- **Bounded resend.** Each query makes up to `SNIP_MAX_ATTEMPTS` /
+  `PIP_MAX_ATTEMPTS` (3) attempts, each with its own
+  `SNIP_ATTEMPT_TIMEOUT` / `PIP_ATTEMPT_TIMEOUT` (2 s) deadline. When an
+  attempt's deadline passes with no reply, `handle_deadline` re-issues the
+  same request and keeps the existing waiters. A reply to any attempt
+  completes the exchange. A SNIP first frame (`0x10`) resets the assembler,
+  so a late reply to an earlier attempt cannot corrupt a reply to a later
+  one.
+- **Typed outcome.** `SnipResult` / `PipResult` carry
+  `QueryOutcome<T> { Complete(T), NotSupported, Timeout }`. Before this
+  change both Timeout and NotSupported were `Ok(None)` and consumers
+  re-derived the status. Consumers now pass the session's outcome through.
+- **Finality rule.** Only `Complete` and `NotSupported` are served from
+  cache (`cached_snip()` / `cached_pip()` are the only gates). `Timeout` is
+  reported to the waiters but is not final: the next query issues a fresh
+  request, whether it arrives through `handle_command` or the parked-query
+  drain path.
+- **One issue path.** `issue_snip_request(attempt)` /
+  `issue_pip_request(attempt)` are the only places a request is put on the
+  wire. They are used by `handle_command`, `handle_deadline`, and
+  `drain_parked_after_completion`. The drain path previously had its own
+  inline copy, which ignored send errors.
+- SNIP/PIP timeouts still emit no `TerminateDueToError`, as before. SNIP
+  and PIP are not datagram exchanges.
+
+**JMRI comparison (ADR-0019 Invariant 1): a deliberate divergence.**
+`OpenLCB_Java` `MimicNodeStore` sends SNII/PIP with `numTriesLeft = 1` and
+a 700 ms `Interaction` deadline. It never resends on timeout; it resends
+only on an OIR with the temporary-error bit (`code & 0x2000`). It recovers
+through `refresh()` clearing its memos and through re-query on
+`InitializationComplete`. We resend on timeout because:
+
+1. JMRI already has the timeout-retry mechanism in `MimicNodeStore`; it is
+   just configured to a single try.
+2. JMRI's `MemoryConfigurationService` does retry timed-out datagrams
+   (`MAX_TRIES = 3`).
+3. An addressed SNIP/PIP request is an idempotent query, so a duplicate
+   request makes a compliant peer send a duplicate reply and nothing more.
+
+The temporary-OIR resend remains the open "Fix C" candidate in
+`aiwiki/architecture-health.md`. When it is aligned, it should reuse the
+same per-exchange `attempt` counter.
+
+**Rejected alternative.** Keep JMRI's single try and have app workflows
+(Refresh, node selection) re-query timed-out nodes. Rejected because every
+consumer of `query_snip` / `query_pip` would have to bring its own
+recovery trigger. The protocol library is the one place that covers all
+of them.
+
+**Consumer contract.** `LiveNodeProxy` (`bowties-core/src/node_proxy.rs`)
+must not hold a stricter finality policy than the session. It caches only
+`Complete` / `NotSupported`, and passes `Timeout` through without caching
+it.
+
+**Tests.** In `lcc-rs/tests/peer_session_snip_pip.rs`:
+- `lost_snip_request_is_resent_and_resend_reply_completes_waiter`
+- `lost_pip_request_is_resent_and_resend_reply_completes_waiter`
+- `exhausted_snip_attempts_are_not_cached_and_next_query_hits_the_wire`
+- `parked_snip_query_after_timeout_issues_fresh_request_when_drained`
+- `not_supported_is_explicit_and_terminal_for_snip_and_pip`
+
+These run in real time: the mock transport rules out paused tokio time.
+An exhaustion test takes about 6 s.

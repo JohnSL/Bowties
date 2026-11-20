@@ -28,12 +28,18 @@ use std::time::Instant as StdInstant;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::{Duration, Instant as TokioInstant};
 
-/// SNIP round-trip cap (matches legacy free-function behaviour).
-pub const SNIP_TIMEOUT: Duration = Duration::from_secs(5);
+/// Per-attempt SNIP deadline. A request with no reply within this window is
+/// resent (Bug #28); see `SNIP_MAX_ATTEMPTS`.
+pub const SNIP_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
+/// Total SNIP request attempts (initial + resends) before the session
+/// reports an explicit `Timeout` outcome. `Timeout` is never cached.
+pub const SNIP_MAX_ATTEMPTS: u32 = 3;
 /// Silence window that closes a multi-frame SNIP response.
 pub const SNIP_SILENCE_TIMEOUT: Duration = Duration::from_millis(100);
-/// PIP round-trip cap.
-pub const PIP_TIMEOUT: Duration = Duration::from_secs(2);
+/// Per-attempt PIP deadline (see `SNIP_ATTEMPT_TIMEOUT`).
+pub const PIP_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
+/// Total PIP request attempts (initial + resends) before an explicit `Timeout`.
+pub const PIP_MAX_ATTEMPTS: u32 = 3;
 /// PIP inter-frame silence window (matches legacy free-function behaviour).
 pub const PIP_SILENCE_TIMEOUT: Duration = Duration::from_millis(200);
 
@@ -85,8 +91,31 @@ pub(crate) fn source_alias(frame: &GridConnectFrame) -> Option<u16> {
     MTI::from_header(frame.header).ok().map(|(_, src)| src)
 }
 
-pub type SnipResult = Result<Option<SNIPData>, PeerError>;
-pub type PipResult = Result<Option<ProtocolFlags>, PeerError>;
+/// Final answer of a SNIP/PIP query. Only `Complete` and `NotSupported` are
+/// terminal cached outcomes; `Timeout` (all attempts unanswered) is reported
+/// to the waiters but never cached, so a later query goes back on the wire.
+#[derive(Debug, Clone)]
+pub enum QueryOutcome<T> {
+    /// The peer answered; carries the data.
+    Complete(T),
+    /// The peer rejected the query (OIR): permanent, cached.
+    NotSupported,
+    /// Every attempt went unanswered. Not cached.
+    Timeout,
+}
+
+impl<T> QueryOutcome<T> {
+    /// The data when the query completed, `None` for `NotSupported`/`Timeout`.
+    pub fn into_data(self) -> Option<T> {
+        match self {
+            QueryOutcome::Complete(data) => Some(data),
+            QueryOutcome::NotSupported | QueryOutcome::Timeout => None,
+        }
+    }
+}
+
+pub type SnipResult = Result<QueryOutcome<SNIPData>, PeerError>;
+pub type PipResult = Result<QueryOutcome<ProtocolFlags>, PeerError>;
 pub type CdiResult = Result<CdiCompletion, PeerError>;
 
 /// Result of a single-datagram memory read primitive (S4 D1=A).
@@ -276,9 +305,13 @@ enum ActiveExchange {
         receiving: bool,
         received_first_frame: bool,
         deadline: TokioInstant,
+        /// 1-based request attempt currently awaiting a reply.
+        attempt: u32,
     },
     PipQuery {
         deadline: TokioInstant,
+        /// 1-based request attempt currently awaiting a reply.
+        attempt: u32,
     },
     /// CDI download exchange (ADR-0018).
     ///
@@ -761,8 +794,8 @@ impl PeerSession {
     async fn handle_command(&mut self, cmd: PeerCommand) {
         match cmd {
             PeerCommand::QuerySnip { reply } => {
-                if matches!(self.snip_status, SNIPStatus::Complete | SNIPStatus::Timeout) {
-                    let _ = reply.send(Ok(self.snip_cache.clone()));
+                if let Some(outcome) = self.cached_snip() {
+                    let _ = reply.send(Ok(outcome));
                     return;
                 }
                 // Fast-path: if the last observed wedge is still current, fail
@@ -771,16 +804,16 @@ impl PeerSession {
                 // TransportWedged before this command runs.)
                 self.snip_waiters.push(reply);
                 if self.active.is_some() { return; }
-                self.start_snip_exchange().await;
+                self.issue_snip_request(1).await;
             }
             PeerCommand::QueryPip { reply } => {
-                if matches!(self.pip_status, PIPStatus::Complete | PIPStatus::Timeout) {
-                    let _ = reply.send(Ok(self.pip_cache.clone()));
+                if let Some(outcome) = self.cached_pip() {
+                    let _ = reply.send(Ok(outcome));
                     return;
                 }
                 self.pip_waiters.push(reply);
                 if self.active.is_some() { return; }
-                self.start_pip_exchange().await;
+                self.issue_pip_request(1).await;
             }
             PeerCommand::DownloadCdi { config, reply } => {
                 if self.active.is_some() {
@@ -847,7 +880,28 @@ impl PeerSession {
         }
     }
 
-    async fn start_snip_exchange(&mut self) {
+    /// Final cached SNIP answer (`Complete` or `NotSupported`); `None` means
+    /// the query must go on the wire. `Timeout` is deliberately not final.
+    fn cached_snip(&self) -> Option<QueryOutcome<SNIPData>> {
+        match (self.snip_status, &self.snip_cache) {
+            (SNIPStatus::Complete, Some(data)) => Some(QueryOutcome::Complete(data.clone())),
+            (SNIPStatus::NotSupported, _) => Some(QueryOutcome::NotSupported),
+            _ => None,
+        }
+    }
+
+    /// Final cached PIP answer (see `cached_snip`).
+    fn cached_pip(&self) -> Option<QueryOutcome<ProtocolFlags>> {
+        match (self.pip_status, self.pip_cache) {
+            (PIPStatus::Complete, Some(flags)) => Some(QueryOutcome::Complete(flags)),
+            (PIPStatus::NotSupported, _) => Some(QueryOutcome::NotSupported),
+            _ => None,
+        }
+    }
+
+    /// The single place a SNIP request goes on the wire. `attempt` is 1-based;
+    /// resends keep the existing waiters.
+    async fn issue_snip_request(&mut self, attempt: u32) {
         let request = match GridConnectFrame::from_addressed_mti(
             MTI::SNIPRequest,
             self.our_alias,
@@ -873,11 +927,13 @@ impl PeerSession {
             payload: Vec::new(),
             receiving: false,
             received_first_frame: false,
-            deadline: TokioInstant::now() + SNIP_TIMEOUT,
+            deadline: TokioInstant::now() + SNIP_ATTEMPT_TIMEOUT,
+            attempt,
         });
     }
 
-    async fn start_pip_exchange(&mut self) {
+    /// The single place a PIP request goes on the wire (see `issue_snip_request`).
+    async fn issue_pip_request(&mut self, attempt: u32) {
         let request = match GridConnectFrame::from_addressed_mti(
             MTI::ProtocolSupportInquiry,
             self.our_alias,
@@ -900,7 +956,8 @@ impl PeerSession {
 
         self.pip_status = PIPStatus::InProgress;
         self.active = Some(ActiveExchange::PipQuery {
-            deadline: TokioInstant::now() + PIP_TIMEOUT,
+            deadline: TokioInstant::now() + PIP_ATTEMPT_TIMEOUT,
+            attempt,
         });
     }
 
@@ -1042,8 +1099,7 @@ impl PeerSession {
 
     async fn on_snip_frame(&mut self, mti: MTI, frame: &GridConnectFrame) {
         if mti == MTI::OptionalInteractionRejected {
-            self.snip_status = SNIPStatus::NotSupported;
-            self.complete_snip(Ok(None)).await;
+            self.complete_snip(Ok(QueryOutcome::NotSupported)).await;
             return;
         }
         if mti != MTI::SNIPResponse { return; }
@@ -1061,13 +1117,14 @@ impl PeerSession {
 
         // We need to end the mutable borrow of `self.active` before calling
         // `complete_snip`. Split into a compute-then-decide pattern.
-        let mut completed: Option<Result<Option<SNIPData>, PeerError>> = None;
+        let mut completed: Option<SnipResult> = None;
 
         if let Some(ActiveExchange::SnipQuery {
             payload,
             receiving,
             received_first_frame,
             deadline,
+            ..
         }) = &mut self.active {
             *received_first_frame = true;
             // Once we've seen a real SNIP frame, shorten the deadline to the
@@ -1097,7 +1154,7 @@ impl PeerSession {
                         payload.extend_from_slice(&chunk);
                         let final_payload = payload.clone();
                         completed = Some(match parse_snip_payload(&final_payload) {
-                            Ok(data) => Ok(Some(data)),
+                            Ok(data) => Ok(QueryOutcome::Complete(data)),
                             Err(e) => Err(PeerError::Protocol(e.to_string())),
                         });
                     }
@@ -1117,8 +1174,7 @@ impl PeerSession {
 
     async fn on_pip_frame(&mut self, mti: MTI, frame: &GridConnectFrame) {
         if mti == MTI::OptionalInteractionRejected {
-            self.pip_status = PIPStatus::NotSupported;
-            self.complete_pip(Ok(None)).await;
+            self.complete_pip(Ok(QueryOutcome::NotSupported)).await;
             return;
         }
         if mti != MTI::ProtocolSupportReply { return; }
@@ -1130,7 +1186,7 @@ impl PeerSession {
             return;
         }
         let flags = ProtocolFlags::from_bytes(&frame.data[2..]);
-        self.complete_pip(Ok(Some(flags))).await;
+        self.complete_pip(Ok(QueryOutcome::Complete(flags))).await;
     }
 
     // ── CDI download exchange (ADR-0018) ─────────────────────────────────
@@ -1911,28 +1967,27 @@ impl PeerSession {
 
     async fn handle_deadline(&mut self) {
         match self.active.take() {
-            Some(ActiveExchange::SnipQuery { payload, received_first_frame, .. }) => {
+            Some(ActiveExchange::SnipQuery { payload, received_first_frame, attempt, .. }) => {
                 // Silence-terminated DatagramOnly assembly: parse whatever we
                 // buffered.
                 if received_first_frame && !payload.is_empty() {
                     if let Ok(data) = parse_snip_payload(&payload) {
-                        self.snip_cache = Some(data.clone());
-                        self.snip_status = SNIPStatus::Complete;
-                        for w in self.snip_waiters.drain(..) {
-                            let _ = w.send(Ok(Some(data.clone())));
-                        }
-                        self.drain_parked_after_completion().await;
+                        self.complete_snip(Ok(QueryOutcome::Complete(data))).await;
                         return;
                     }
                 }
-                self.snip_status = SNIPStatus::Timeout;
-                for w in self.snip_waiters.drain(..) { let _ = w.send(Ok(None)); }
-                self.drain_parked_after_completion().await;
+                if attempt < SNIP_MAX_ATTEMPTS {
+                    Box::pin(self.issue_snip_request(attempt + 1)).await;
+                    return;
+                }
+                self.complete_snip(Ok(QueryOutcome::Timeout)).await;
             }
-            Some(ActiveExchange::PipQuery { .. }) => {
-                self.pip_status = PIPStatus::Timeout;
-                for w in self.pip_waiters.drain(..) { let _ = w.send(Ok(None)); }
-                self.drain_parked_after_completion().await;
+            Some(ActiveExchange::PipQuery { attempt, .. }) => {
+                if attempt < PIP_MAX_ATTEMPTS {
+                    Box::pin(self.issue_pip_request(attempt + 1)).await;
+                    return;
+                }
+                self.complete_pip(Ok(QueryOutcome::Timeout)).await;
             }
             Some(ActiveExchange::CdiDownload { waiter, download_start, .. }) => {
                 // Peer-cleanup contract (TN-9.7.2.1): emit exactly one
@@ -1969,15 +2024,12 @@ impl PeerSession {
     async fn complete_snip(&mut self, result: SnipResult) {
         self.active = None;
         match &result {
-            Ok(Some(data)) => {
+            Ok(QueryOutcome::Complete(data)) => {
                 self.snip_cache = Some(data.clone());
                 self.snip_status = SNIPStatus::Complete;
             }
-            Ok(None) => {
-                if matches!(self.snip_status, SNIPStatus::InProgress) {
-                    self.snip_status = SNIPStatus::Timeout;
-                }
-            }
+            Ok(QueryOutcome::NotSupported) => self.snip_status = SNIPStatus::NotSupported,
+            Ok(QueryOutcome::Timeout) => self.snip_status = SNIPStatus::Timeout,
             Err(_) => {
                 self.snip_status = SNIPStatus::Error;
             }
@@ -1990,15 +2042,12 @@ impl PeerSession {
     async fn complete_pip(&mut self, result: PipResult) {
         self.active = None;
         match &result {
-            Ok(Some(flags)) => {
+            Ok(QueryOutcome::Complete(flags)) => {
                 self.pip_cache = Some(*flags);
                 self.pip_status = PIPStatus::Complete;
             }
-            Ok(None) => {
-                if matches!(self.pip_status, PIPStatus::InProgress) {
-                    self.pip_status = PIPStatus::Timeout;
-                }
-            }
+            Ok(QueryOutcome::NotSupported) => self.pip_status = PIPStatus::NotSupported,
+            Ok(QueryOutcome::Timeout) => self.pip_status = PIPStatus::Timeout,
             Err(_) => {
                 self.pip_status = PIPStatus::Error;
             }
@@ -2106,55 +2155,14 @@ impl PeerSession {
             }
             return;
         }
-        // SNIP first if both parked.
-        if !self.snip_waiters.is_empty()
-            && !matches!(self.snip_status, SNIPStatus::Complete | SNIPStatus::Timeout)
-        {
-            let transport = self.transport.clone();
-            let our_alias = self.our_alias;
-            let alias = self.alias;
-            match GridConnectFrame::from_addressed_mti(MTI::SNIPRequest, our_alias, alias, vec![]) {
-                Ok(f) => {
-                    tokio::spawn(async move { let _ = transport.send(&f).await; });
-                    self.snip_status = SNIPStatus::InProgress;
-                    self.active = Some(ActiveExchange::SnipQuery {
-                        payload: Vec::new(),
-                        receiving: false,
-                        received_first_frame: false,
-                        deadline: TokioInstant::now() + SNIP_TIMEOUT,
-                    });
-                    return;
-                }
-                Err(e) => {
-                    let err = PeerError::Protocol(e.to_string());
-                    for w in self.snip_waiters.drain(..) { let _ = w.send(Err(err.clone())); }
-                }
-            }
+        // SNIP first if both parked. Both go through the same issue path as
+        // a fresh query; `Timeout` is not a cached outcome, so it re-issues.
+        if !self.snip_waiters.is_empty() && self.cached_snip().is_none() {
+            Box::pin(self.issue_snip_request(1)).await;
+            return;
         }
-        if !self.pip_waiters.is_empty()
-            && !matches!(self.pip_status, PIPStatus::Complete | PIPStatus::Timeout)
-        {
-            let transport = self.transport.clone();
-            let our_alias = self.our_alias;
-            let alias = self.alias;
-            match GridConnectFrame::from_addressed_mti(
-                MTI::ProtocolSupportInquiry,
-                our_alias,
-                alias,
-                vec![],
-            ) {
-                Ok(f) => {
-                    tokio::spawn(async move { let _ = transport.send(&f).await; });
-                    self.pip_status = PIPStatus::InProgress;
-                    self.active = Some(ActiveExchange::PipQuery {
-                        deadline: TokioInstant::now() + PIP_TIMEOUT,
-                    });
-                }
-                Err(e) => {
-                    let err = PeerError::Protocol(e.to_string());
-                    for w in self.pip_waiters.drain(..) { let _ = w.send(Err(err.clone())); }
-                }
-            }
+        if !self.pip_waiters.is_empty() && self.cached_pip().is_none() {
+            Box::pin(self.issue_pip_request(1)).await;
         }
     }
 }
