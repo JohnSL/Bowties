@@ -13,6 +13,7 @@ import type {
   SignalWiring,
   TravelDirection,
 } from '$lib/api/signaling';
+import type { BlockSignalsRecord } from '$lib/api/facilities';
 import type { TurnoutShape } from '$lib/components/BlockSignals/trackGeometry';
 import { generateUuidV4 } from '$lib/utils/uuid';
 
@@ -43,8 +44,20 @@ const DEFAULT_SETTINGS: FacilitySignalSettings = {
   approachLighting: 'alwaysLit',
 };
 
+export type BlockSignalsEditorMode = 'create' | 'edit';
+
+/** A saved facility's effective state, as the orchestrator reads it for editing. */
+export interface BlockSignalsEditSeed {
+  facilityId: string;
+  name: string;
+  record: BlockSignalsRecord;
+  /** Wiring per signal ID, from each signal channel's effective binding. */
+  wiring: Record<string, SignalWiringChoice>;
+}
+
 /** What the editor components read; they never change the store directly. */
 export interface BlockSignalsEditorView {
+  readonly mode: BlockSignalsEditorMode;
   readonly step: BlockSignalsStep;
   readonly facilityName: string;
   readonly direction: TravelDirection;
@@ -79,6 +92,7 @@ export interface BlockSignalsEditorView {
  */
 class BlockSignalsEditorStore implements BlockSignalsEditorView {
   private _open = $state(false);
+  private _mode = $state<BlockSignalsEditorMode>('create');
   private _step = $state<BlockSignalsStep>('blocks');
   private _facilityName = $state('');
   private _facilityId = $state('');
@@ -100,6 +114,7 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
   private _finishError = $state<string | null>(null);
 
   get open(): boolean { return this._open; }
+  get mode(): BlockSignalsEditorMode { return this._mode; }
   get step(): BlockSignalsStep { return this._step; }
   get facilityName(): string { return this._facilityName; }
   get direction(): TravelDirection { return this._direction; }
@@ -209,6 +224,24 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
     this._open = true;
     this._facilityName = initialName;
     this._facilityId = generateUuidV4();
+  }
+
+  /** Open the editor on a saved facility, seeding all input from its effective state. */
+  startEdit(seed: BlockSignalsEditSeed): void {
+    this.clear();
+    const { record } = seed;
+    this._open = true;
+    this._mode = 'edit';
+    this._facilityId = seed.facilityId;
+    this._facilityName = seed.name;
+    this._direction = record.direction;
+    this._movements = record.movements;
+    this._blocks = record.blocks.map((block) => ({ ...block, turnouts: block.turnouts.map((t) => ({ ...t })) }));
+    this._entranceEnd = record.entranceEnd;
+    this._exitEnd = record.exitEnd;
+    this._settings = { ...record.settings };
+    this._signalNames = Object.fromEntries(record.signals.map((s) => [s.signalId, s.name]));
+    this._wiring = Object.fromEntries(Object.entries(seed.wiring).map(([id, w]) => [id, { ...w }]));
   }
 
   navigate(step: BlockSignalsStep): void {
@@ -361,6 +394,7 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
 
   private clear(): void {
     this._open = false;
+    this._mode = 'create';
     this._step = 'blocks';
     this._facilityName = '';
     this._facilityId = '';

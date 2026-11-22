@@ -111,6 +111,11 @@ pub struct CompileInput {
     pub hardware: SignalHardwareFacts,
     pub nodes: Vec<NodeSlotFacts>,
     pub occupancy: Vec<BlockOccupancyEvents>,
+    /// The facility's own claimed slots when recompiling a saved facility. The
+    /// recipe is placed in exactly these slots and their pins and values are
+    /// not reported as in use. Empty when creating (lowest free slots).
+    #[serde(default)]
+    pub own_claims: Vec<ClaimedSlot>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -125,6 +130,7 @@ pub enum CompileIssueCode {
     OutputCapacity,
     NoFreeMast,
     NoFreeLogic,
+    ClaimedSlotUnavailable,
     OccupancyEventsMissing,
     AspectEventsMissing,
     UnsupportedBlockCount,
@@ -172,17 +178,28 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
     };
     ctx.node_key = Some(wiring.node_key.clone());
 
-    check_binding(&mut signal, wiring, &input.hardware, &mut ctx);
+    let own_masts: Vec<u32> = input
+        .own_claims
+        .iter()
+        .filter(|c| c.kind == ClaimedSlotKind::Mast && c.node_key == wiring.node_key)
+        .map(|c| c.index)
+        .collect();
+    check_binding(&mut signal, wiring, &input.hardware, &own_masts, &mut ctx);
 
     let node = input.nodes.iter().find(|n| n.node_key == wiring.node_key);
-    let mast = node.and_then(free_mast);
-    if mast.is_none() {
-        ctx.push(CompileIssueCode::NoFreeMast, "The board has no free mast.");
-    }
-    let logic = node.and_then(free_logic);
-    if logic.is_none() {
-        ctx.push(CompileIssueCode::NoFreeLogic, "The board has no free Logic conditional.");
-    }
+    let (mast, logic) = if input.own_claims.is_empty() {
+        let mast = node.and_then(free_mast);
+        if mast.is_none() {
+            ctx.push(CompileIssueCode::NoFreeMast, "The board has no free mast.");
+        }
+        let logic = node.and_then(free_logic);
+        if logic.is_none() {
+            ctx.push(CompileIssueCode::NoFreeLogic, "The board has no free Logic conditional.");
+        }
+        (mast, logic)
+    } else {
+        claimed_slots(&input.own_claims, wiring, node, &mut ctx)
+    };
     let occupancy = input
         .occupancy
         .iter()
@@ -280,6 +297,7 @@ fn check_binding(
     signal: &mut SignalPreview,
     wiring: &SignalWiring,
     hardware: &SignalHardwareFacts,
+    own_masts: &[u32],
     ctx: &mut IssueSink<'_>,
 ) {
     let selection = SignalBindingSelection {
@@ -293,7 +311,7 @@ fn check_binding(
         },
     };
     let mut issues = Vec::new();
-    project_signal_binding(signal, &selection, hardware, &mut issues);
+    project_signal_binding(signal, &selection, hardware, own_masts, &mut issues);
     for issue in issues {
         let (code, detail) = match &issue {
             ProposalIssue::InvalidSignalBinding { reason, .. } => (CompileIssueCode::BindingInvalid, reason.clone()),
@@ -317,6 +335,34 @@ fn check_binding(
         };
         ctx.push_binding(code, &detail, Some(issue));
     }
+}
+
+/// The facility's own mast and Logic, which must exist on the wiring node.
+/// Never re-picks: a claim that cannot be honoured is a blocking issue.
+fn claimed_slots<'a>(
+    claims: &[ClaimedSlot],
+    wiring: &SignalWiring,
+    node: Option<&'a NodeSlotFacts>,
+    ctx: &mut IssueSink<'_>,
+) -> (Option<&'a MastFact>, Option<&'a LogicFact>) {
+    let on_node = |kind: ClaimedSlotKind| {
+        claims
+            .iter()
+            .find(|c| c.kind == kind && c.node_key == wiring.node_key)
+            .map(|c| c.index)
+    };
+    let mast = on_node(ClaimedSlotKind::Mast)
+        .and_then(|i| node.and_then(|n| n.masts.iter().find(|m| m.index == i)));
+    let logic = on_node(ClaimedSlotKind::Logic)
+        .and_then(|i| node.and_then(|n| n.logic.iter().find(|l| l.index == i)));
+    let off_node = claims.iter().any(|c| c.node_key != wiring.node_key);
+    if mast.is_none() || logic.is_none() || off_node {
+        ctx.push(
+            CompileIssueCode::ClaimedSlotUnavailable,
+            "The mast and Logic this facility already uses are not available on the chosen Signal LCC.",
+        );
+    }
+    (mast, logic)
 }
 
 /// Path of a mast's processing leaf, for callers building pending edits.

@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use super::SignalOutput;
+use super::{SignalOutput, SignalOutputOwner};
 use crate::node_tree::{
     effective_value, replication_instances, ConfigNode, ConfigValue, NodeConfigTree,
 };
@@ -27,14 +27,14 @@ pub fn signal_outputs_from_configuration(tree: &NodeConfigTree) -> Result<Vec<Si
         return Err("Direct Lamp Control has no authoritative output rows.".to_string());
     }
     let output_count = lamps.len() as u32;
-    let mut owners = HashMap::<u32, String>::new();
+    let mut owners = HashMap::<u32, SignalOutputOwner>::new();
     for lamp in lamps {
         let selection = required_int_leaf(&lamp.children, "Lamp Selection")?;
         record_output_owner(
             &mut owners,
             selection,
             output_count,
-            format!("Direct lamp {}", lamp.instance),
+            SignalOutputOwner::DirectLamp(lamp.instance),
         )?;
     }
 
@@ -61,7 +61,7 @@ pub fn signal_outputs_from_configuration(tree: &NodeConfigTree) -> Result<Vec<Si
                     &mut owners,
                     selection,
                     output_count,
-                    format!("Mast {}", mast.instance),
+                    SignalOutputOwner::Mast(mast.instance),
                 )?;
             }
         }
@@ -103,10 +103,10 @@ fn find_int_leaf(children: &[ConfigNode], name: &str) -> Option<Result<i64, Stri
 }
 
 fn record_output_owner(
-    owners: &mut HashMap<u32, String>,
+    owners: &mut HashMap<u32, SignalOutputOwner>,
     selection: i64,
     output_count: u32,
-    owner: String,
+    owner: SignalOutputOwner,
 ) -> Result<(), String> {
     if selection == 0 {
         return Ok(());
@@ -115,7 +115,7 @@ fn record_output_owner(
         .ok()
         .filter(|ordinal| (1..=output_count).contains(ordinal))
         .ok_or_else(|| format!("{owner} selects invalid output {selection}."))?;
-    if let Some(previous_owner) = owners.insert(ordinal, owner.clone()) {
+    if let Some(previous_owner) = owners.insert(ordinal, owner) {
         if previous_owner == owner {
             return Ok(());
         }
@@ -193,8 +193,8 @@ mod tests {
         format!("Rule to Aspect/Mast[{mast}]/Mast Processing")
     }
 
-    fn owner_of(outputs: &[SignalOutput], ordinal: u32) -> Option<&str> {
-        outputs[(ordinal - 1) as usize].owner.as_deref()
+    fn owner_of(outputs: &[SignalOutput], ordinal: u32) -> Option<String> {
+        outputs[(ordinal - 1) as usize].owner.map(|o| o.to_string())
     }
 
     #[test]
@@ -206,8 +206,8 @@ mod tests {
         set_int(&mut tree, &mast_lamp(1, 2, 2), 1);
         set_int(&mut tree, &mast_lamp(1, 3, 1), 1);
         let outputs = signal_outputs_from_configuration(&tree).expect("no conflict");
-        assert_eq!(owner_of(&outputs, 3), Some("Mast 1"));
-        assert_eq!(owner_of(&outputs, 1), Some("Mast 1"));
+        assert_eq!(owner_of(&outputs, 3), Some("Mast 1".to_string()));
+        assert_eq!(owner_of(&outputs, 1), Some("Mast 1".to_string()));
         assert_eq!(owner_of(&outputs, 2), None);
         assert_eq!(outputs[2].label, "#3 H1-R");
     }

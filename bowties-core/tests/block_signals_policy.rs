@@ -603,7 +603,7 @@ fn reports_insufficient_current_output_capacity_from_complete_configuration() {
             SignalOutput {
                 ordinal: 2,
                 label: "#2 H1-R".to_string(),
-                owner: Some("Existing mast".to_string()),
+                owner: Some(bowties_core::signaling::SignalOutputOwner::Mast(7)),
             },
         ]),
     );
@@ -628,7 +628,7 @@ fn reports_the_current_owner_of_a_selected_conflicting_output() {
             SignalOutput {
                 ordinal: 2,
                 label: "#2 H1-R".to_string(),
-                owner: Some("Existing mast".to_string()),
+                owner: Some(bowties_core::signaling::SignalOutputOwner::Mast(7)),
             },
             SignalOutput { ordinal: 3, label: "#3 H1-Y".to_string(), owner: None },
         ]),
@@ -640,7 +640,7 @@ fn reports_the_current_owner_of_a_selected_conflicting_output() {
             signal_id: WEST_YARD_EAST.to_string(),
             node_key: "05010101FF000101".to_string(),
             output: 2,
-            owner: "Existing mast".to_string(),
+            owner: "Mast 7".to_string(),
         }],
     );
 }

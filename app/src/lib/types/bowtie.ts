@@ -106,6 +106,8 @@ export type LayoutEditDelta =
   | { type: 'createChannel'; channel: import('$lib/api/channels').InformationChannel }
   /** Rename an existing channel (backend rejects unknown ids). */
   | { type: 'renameChannel'; channelId: string; newName: string }
+  /** Replace a channel's whole binding in place (backend rejects unknown ids). */
+  | { type: 'setChannelBinding'; channelId: string; binding: import('$lib/api/channels').ChannelBinding }
   /** Delete an information channel (idempotent for unknown ids). */
   | { type: 'deleteChannel'; channelId: string };
 

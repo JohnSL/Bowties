@@ -122,3 +122,9 @@ channels), so slot bindings remain the only source of channel membership for
 facility whose record channel IDs differ from its `signals` slot set
 (`check_block_signals_agreement`, Spec 020 E1a).
 
+**Rebind (Spec 020 E2a):** a channel's binding changes in place through the
+`SetChannelBinding` whole-binding replace delta (`channelsStore.rebindChannel`;
+no-op when equal, pending entry dropped when it returns to the saved binding).
+The channel ID, name and slot membership are unchanged. Rejected: deleting and
+recreating the channel, which runs delete-side cleanup on every rebind and
+makes correctness depend on delta order.

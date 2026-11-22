@@ -21,6 +21,7 @@
     template,
     resolvedEventIds,
     onRename,
+    onEdit,
     onDelete,
     onSelectChannel,
     onAddChannel,
@@ -32,6 +33,7 @@
     /** Map from channelId to state-name → eventId (Spec 018 / S5 D6). */
     resolvedEventIds?: ReadonlyMap<string, Record<string, string>>;
     onRename?: (facilityId: string, newName: string) => void;
+    onEdit?: (facilityId: string) => void;
     onDelete?: (facilityId: string) => void;
     /** Spec 018 / S4 — producer-side input slot's Select channel intent. */
     onSelectChannel?: (facilityId: string, slotLabel: string) => void;
@@ -49,7 +51,7 @@
   );
 
   // Spec 020 / E1a: the Automatic Block Signals editor creates and owns the
-  // facility's signal channels, so its card lists them read-only (editing is E2).
+  // facility's signal channels, so its card lists them read-only (edited via the same editor).
   const isAutomaticBlockSignals = $derived(
     (template?.templateId ?? facility.templateId) === 'automatic-block-signals',
   );
@@ -194,6 +196,9 @@
       </span>
     </div>
     <div class="actions">
+      {#if isAutomaticBlockSignals}
+        <button type="button" class="btn-link" onclick={() => onEdit?.(facility.facilityId)} aria-label="Edit facility">Edit</button>
+      {/if}
       <button type="button" class="btn-link" onclick={startRename} aria-label="Rename facility">Rename</button>
       <button type="button" class="btn-link danger" onclick={handleDelete} aria-label="Delete facility">Delete</button>
     </div>

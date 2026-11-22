@@ -11,6 +11,8 @@ const ISSUE_TEXT: Record<ComposeIssueCode, string> = {
   outputCapacity: 'This Signal LCC does not have enough free pins.',
   noFreeMast: 'This Signal LCC has no free mast. Choose another Signal LCC.',
   noFreeLogic: 'This Signal LCC has no free logic left for these signals. Choose another Signal LCC.',
+  claimedSlotUnavailable:
+    'The mast and logic this signal already uses are no longer available on this Signal LCC. Choose the original Signal LCC.',
   occupancyEventsMissing: 'Occupancy events are missing for a protected block. Set up its detector first.',
   aspectEventsMissing: 'The aspect events for this signal are missing on the Signal LCC.',
   unsupportedBlockCount: 'This release cannot build signals for this number of blocks.',

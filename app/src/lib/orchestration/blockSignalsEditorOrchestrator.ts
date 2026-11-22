@@ -13,10 +13,14 @@ import type { TurnoutShape } from '$lib/components/BlockSignals/trackGeometry';
 import {
   createBlockSignalsFacility,
   pendingEditsForWiring,
+  updateBlockSignalsFacility,
 } from '$lib/orchestration/facilityOrchestrator';
+import { channelsStore } from '$lib/stores/channels.svelte';
+import { facilitiesStore } from '$lib/stores/facilities.svelte';
 import {
   blockSignalsEditorStore as store,
   type BlockSignalsStep,
+  type SignalWiringChoice,
 } from '$lib/stores/blockSignalsEditor.svelte';
 
 /**
@@ -33,6 +37,27 @@ class BlockSignalsEditorOrchestrator {
   start(initialName: string): void {
     this.requestGeneration += 1;
     store.start(initialName);
+  }
+
+  /** Open the editor on a saved facility's effective state and check it against the backend. */
+  async startEdit(facilityId: string): Promise<void> {
+    const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+    const record = facility?.blockSignals;
+    if (!facility || !record) return;
+    const wiring: Record<string, SignalWiringChoice> = {};
+    for (const signal of record.signals) {
+      const binding = channelsStore.channels.find((c) => c.id === signal.channelId)?.binding;
+      if (binding?.kind === 'signalLccRgOutputs') {
+        wiring[signal.signalId] = {
+          nodeKey: binding.nodeKey,
+          redOutput: binding.redOutput,
+          greenOutput: binding.greenOutput,
+        };
+      }
+    }
+    this.requestGeneration += 1;
+    store.startEdit({ facilityId, name: facility.name, record, wiring });
+    await this.edit(() => {});
   }
 
   async navigate(step: BlockSignalsStep): Promise<void> {
@@ -67,7 +92,8 @@ class BlockSignalsEditorOrchestrator {
     this.finishing = true;
     const generation = ++this.requestGeneration;
     try {
-      const result = await createBlockSignalsFacility({
+      const stage = store.mode === 'edit' ? updateBlockSignalsFacility : createBlockSignalsFacility;
+      const result = await stage({
         facilityId: store.facilityId,
         name: store.facilityName,
         line: store.previewRequest(),
@@ -150,6 +176,7 @@ export const blockSignalsEditorOrchestrator = new BlockSignalsEditorOrchestrator
 const o = blockSignalsEditorOrchestrator;
 
 export const startBlockSignalsEditor = (initialName: string): void => o.start(initialName);
+export const startEditBlockSignalsEditor = (facilityId: string): Promise<void> => o.startEdit(facilityId);
 export const navigateBlockSignalsEditor = (step: BlockSignalsStep): Promise<void> => o.navigate(step);
 export const finishBlockSignalsEditor = (): Promise<void> => o.finish();
 export const cancelBlockSignalsEditor = (): void => o.cancel();

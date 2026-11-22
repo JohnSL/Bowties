@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
 import type { InformationChannel } from '$lib/api/channels';
 import type { Facility } from '$lib/api/facilities';
@@ -148,6 +148,26 @@ describe('FacilityCard Automatic Block Signals (Spec 020 / E1a)', () => {
     expect(screen.getByText(/#1 H1-G/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /add channel|select channel|remove|detach/i })).toBeNull();
     expect(screen.queryByTestId('add-channel-button')).toBeNull();
+  });
+
+  it('offers Edit on an Automatic Block Signals card and emits the edit intent', async () => {
+    const f: Facility = { facilityId: 'f-abs', templateId: 'automatic-block-signals', name: 'ABS East', slotBindings: { signals: [] } };
+    facilitiesStore.hydrateBaseline([f]);
+    const onEdit = vi.fn();
+
+    render(FacilityCard, { props: { facility: f, template: ABS, onEdit } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit facility' }));
+
+    expect(onEdit).toHaveBeenCalledWith('f-abs');
+  });
+
+  it('offers no Edit on a Block Indicator card', () => {
+    const f = facility('f-1', { input: [], output: [] });
+    facilitiesStore.hydrateBaseline([f]);
+
+    render(FacilityCard, { props: { facility: f, template: BLOCK_INDICATOR, onEdit: vi.fn() } });
+
+    expect(screen.queryByRole('button', { name: 'Edit facility' })).toBeNull();
   });
 
   it('offers no Add channel picker when the signals slot is empty', () => {

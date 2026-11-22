@@ -6,13 +6,14 @@ use std::collections::HashMap;
 
 use bowties_core::{
     layout::channels::{ChannelBinding, ChannelRole, InformationChannel},
+    layout::state::LayoutState,
     node_key::NodeKey,
     node_tree::NodeConfigTree,
     profile::{make_profile_key, StructureProfile},
     signaling::{
         outputs::signal_outputs_from_configuration, preview_block_signals_with_hardware, ProposalIssue, SignalAppearanceSet,
         SignalDriver, SignalHardwareEvidence, SignalHardwareFacts, SignalHardwareHost,
-        BlockSignalsPreview, BlockSignalsRequest, SignalStyle,
+        BlockSignalsPreview, BlockSignalsRequest, SavedSignalIdentity, SignalStyle,
     },
 };
 
@@ -95,6 +96,31 @@ pub fn propose(
     let mut preview = preview_block_signals_with_hardware(request, facts.hardware.clone());
     preview.issues.extend(issues);
     Ok(preview)
+}
+
+/// The saved signals of an existing facility, so editing keeps their IDs.
+/// Empty when the facility is new or has no Automatic Block Signals record.
+pub(crate) fn saved_signals_from_layout(
+    layout: &LayoutState,
+    facility_id: &str,
+) -> Vec<SavedSignalIdentity> {
+    layout
+        .effective_facilities()
+        .facilities
+        .iter()
+        .find(|f| f.facility_id == facility_id)
+        .and_then(|f| f.block_signals.as_ref())
+        .map(|record| {
+            record
+                .signals
+                .iter()
+                .map(|s| SavedSignalIdentity {
+                    signal_id: s.signal_id.clone(),
+                    protected_block: s.protected_block.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn resolved_detection_events(
@@ -237,13 +263,15 @@ fn signal_style_from_profile(style: &bowties_core::profile::Style) -> Result<Sig
 /// draft, claim, configuration, or bus-write effect.
 pub async fn preview(
     state: &AppState,
-    request: BlockSignalsRequest,
+    mut request: BlockSignalsRequest,
 ) -> Result<BlockSignalsPreview, String> {
     let facts = {
         let layout = state.layout_state.read().await;
         let Some(layout) = layout.as_ref() else {
+            request.saved_signals = Vec::new();
             return propose(&ProposalFacts::default(), request);
         };
+        request.saved_signals = saved_signals_from_layout(layout, &request.facility_id);
         let profiles = state.profiles.read().await;
         proposal_facts_from_layout(layout, &profiles)
     };
@@ -691,8 +719,8 @@ mod tests {
         assert_eq!(guided.output_hosts.len(), 1);
         assert_eq!(guided.output_hosts[0].outputs.len(), 3);
         assert_eq!(
-            guided.output_hosts[0].outputs[1].owner.as_deref(),
-            Some("Mast 1 rule 1"),
+            guided.output_hosts[0].outputs[1].owner,
+            Some(bowties_core::signaling::SignalOutputOwner::Mast(1)),
             "current active mast appearances must make their physical output unavailable",
         );
         assert_eq!(

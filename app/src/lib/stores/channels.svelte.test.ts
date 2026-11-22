@@ -530,3 +530,67 @@ describe('channelsStore removeUserOwnedChannel (Spec 018 / S5)', () => {
     ]);
   });
 });
+
+describe('channelsStore rebindChannel (Spec 020 / E2a)', () => {
+  const signalChannel = () => makeChannel({
+    id: 'sig-1',
+    role: 'signal-indication',
+    ownership: 'user-owned',
+    binding: { kind: 'signalLccRgOutputs', nodeKey: '05010101FF000002', greenOutput: 1, redOutput: 2 },
+  });
+  const newBinding = {
+    kind: 'signalLccRgOutputs' as const,
+    nodeKey: '05010101FF000002',
+    greenOutput: 3,
+    redOutput: 4,
+  };
+
+  it('replaces the effective binding as an unsaved change and emits setChannelBinding', () => {
+    const ch = signalChannel();
+    channelsStore.setChannels([ch]);
+
+    expect(channelsStore.rebindChannel('sig-1', newBinding)).toBe(true);
+
+    const eff = channelsStore.channels[0];
+    expect(eff.binding).toEqual(newBinding);
+    expect(eff.id).toBe('sig-1');
+    expect(eff.name).toBe(ch.name);
+    expect(channelsStore.isDirty).toBe(true);
+    expect(channelsStore.editCount).toBe(1);
+    expect(channelsStore.collectDeltas()).toEqual([
+      { type: 'setChannelBinding', channelId: 'sig-1', binding: newBinding },
+    ]);
+  });
+
+  it('is a no-op when equal to the current effective binding', () => {
+    const ch = signalChannel();
+    channelsStore.setChannels([ch]);
+
+    expect(channelsStore.rebindChannel('sig-1', { ...ch.binding } as typeof newBinding)).toBe(false);
+    expect(channelsStore.isDirty).toBe(false);
+  });
+
+  it('drops the pending entry when rebound back to the saved binding', () => {
+    const ch = signalChannel();
+    channelsStore.setChannels([ch]);
+    channelsStore.rebindChannel('sig-1', newBinding);
+
+    channelsStore.rebindChannel('sig-1', { ...ch.binding } as typeof newBinding);
+
+    expect(channelsStore.isDirty).toBe(false);
+    expect(channelsStore.editCount).toBe(0);
+    expect(channelsStore.collectDeltas()).toEqual([]);
+  });
+
+  it('is cleared by discard and reset', () => {
+    channelsStore.setChannels([signalChannel()]);
+    channelsStore.rebindChannel('sig-1', newBinding);
+    channelsStore.discard();
+    expect(channelsStore.isDirty).toBe(false);
+    expect(channelsStore.channels[0].binding).not.toEqual(newBinding);
+
+    channelsStore.rebindChannel('sig-1', newBinding);
+    channelsStore.reset();
+    expect(channelsStore.isDirty).toBe(false);
+  });
+});

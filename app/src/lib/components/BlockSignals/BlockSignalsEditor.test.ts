@@ -50,6 +50,14 @@ describe('BlockSignalsEditor shell', () => {
   });
 });
 
+describe('BlockSignalsEditor edit mode', () => {
+  it('titles the dialog with the facility being edited and keeps Done', () => {
+    open('wiring', { mode: 'edit', facilityName: 'Cedar Hill', canFinish: true });
+    expect(screen.getByRole('dialog', { name: /Edit Automatic Block Signals · Cedar Hill/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+  });
+});
+
 describe('scope gating on Blocks and Aspects', () => {
   it('shows APB disabled without any "later release" text', () => {
     open('blocks', { movements: 'bothDirections' });

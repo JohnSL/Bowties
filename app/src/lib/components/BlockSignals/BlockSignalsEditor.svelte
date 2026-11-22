@@ -47,7 +47,11 @@
   const stepIndex = (step: BlockSignalsStep) => STEPS.findIndex((item) => item.id === step);
   const isEnabled = (step: BlockSignalsStep) => STEPS.find((item) => item.id === step)?.enabled ?? false;
   const hasBlocks = $derived(view.blocks.length > 0);
-  const dialogLabel = $derived(`New Automatic Block Signals · ${STEP_TITLE[view.step]}`);
+  const dialogHeading = $derived(
+    view.mode === 'edit'
+      ? `Edit Automatic Block Signals · ${view.facilityName} · ${STEP_TITLE[view.step]}`
+      : `New Automatic Block Signals · ${STEP_TITLE[view.step]}`,
+  );
 </script>
 
 {#snippet leading()}
@@ -58,14 +62,14 @@
   open
   width={1120}
   bodyLayout="contained"
-  ariaLabel={dialogLabel}
+  ariaLabel={dialogHeading}
   initialFocus="none"
   onCancel={() => {
     if (!pickerOpen) intents.cancel();
   }}
 >
   {#snippet title()}
-    <DialogTitle>New Automatic Block Signals · {STEP_TITLE[view.step]}</DialogTitle>
+    <DialogTitle>{dialogHeading}</DialogTitle>
   {/snippet}
 
   <div class="abs-editor">

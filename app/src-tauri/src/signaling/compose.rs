@@ -24,7 +24,7 @@ use bowties_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{proposal_facts_from_layout, resolved_detection_events};
+use super::{proposal_facts_from_layout, resolved_detection_events, saved_signals_from_layout};
 use crate::state::AppState;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -63,10 +63,23 @@ pub async fn compose(
 fn compose_from_layout(
     layout: &LayoutState,
     profiles: &HashMap<String, Option<StructureProfile>>,
-    request: ComposeBlockSignalsRequest,
+    mut request: ComposeBlockSignalsRequest,
 ) -> Result<ComposeBlockSignalsResponse, String> {
+    request.line.saved_signals = request
+        .facility_id
+        .as_deref()
+        .map(|id| saved_signals_from_layout(layout, id))
+        .unwrap_or_default();
     let facts = proposal_facts_from_layout(layout, profiles);
     let claimed = claimed_slots_from_facilities(layout.effective_facilities(), request.facility_id.as_deref());
+    // Recompiling a saved facility: its own claimed slots are reused, not re-picked.
+    let own_claims = request
+        .facility_id
+        .as_deref()
+        .and_then(|id| layout.effective_facilities().facilities.iter().find(|f| f.facility_id == id))
+        .and_then(|f| f.block_signals.as_ref())
+        .map(|record| record.claimed_slots.clone())
+        .unwrap_or_default();
 
     let mut occupancy = Vec::new();
     for block in &request.line.blocks {
@@ -108,6 +121,7 @@ fn compose_from_layout(
         hardware: facts.hardware.clone(),
         nodes,
         occupancy,
+        own_claims,
     });
     let edits = resolve_edits(&indexes, &compiled.edits).map_err(|e| e.to_string())?;
     Ok(ComposeBlockSignalsResponse { edits, claimed_slots: compiled.claimed_slots, issues: compiled.issues })

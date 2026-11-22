@@ -1,5 +1,6 @@
 import { listChannels, type ChannelBinding, type ChannelRole, type InformationChannel } from '$lib/api/channels';
 import type { LayoutEditDelta } from '$lib/types/bowtie';
+import { deepEqual } from '$lib/utils/deepEqual';
 
 /**
  * Hardware-locality grouping key for the Spec 018 / S3 Channels panel.
@@ -34,6 +35,8 @@ class ChannelsStore {
   private _pendingRenames = $state<Map<string, string>>(new Map());
   /** IDs of baseline channels pending deletion. */
   private _pendingDeletions = $state<Set<string>>(new Set());
+  /** Pending rebinds: channel ID → replacement binding (Spec 020 / E2a). */
+  private _pendingBindings = $state<Map<string, ChannelBinding>>(new Map());
   private _loading = $state(false);
 
   /** All channels: baseline (minus deletions) + pending creations, with pending renames applied. */
@@ -42,10 +45,16 @@ class ChannelsStore {
       ? this._baseline.filter((ch) => !this._pendingDeletions.has(ch.id))
       : this._baseline;
     const raw = [...base, ...this._pendingCreations];
-    if (this._pendingRenames.size === 0) return raw;
+    if (this._pendingRenames.size === 0 && this._pendingBindings.size === 0) return raw;
     return raw.map((ch) => {
       const newName = this._pendingRenames.get(ch.id);
-      return newName !== undefined ? { ...ch, name: newName } : ch;
+      const binding = this._pendingBindings.get(ch.id);
+      if (newName === undefined && binding === undefined) return ch;
+      return {
+        ...ch,
+        ...(newName !== undefined ? { name: newName } : {}),
+        ...(binding !== undefined ? { binding } : {}),
+      };
     });
   }
 
@@ -93,6 +102,7 @@ class ChannelsStore {
     return (
       this._pendingCreations.length > 0 ||
       this._pendingRenames.size > 0 ||
+      this._pendingBindings.size > 0 ||
       this._pendingDeletions.size > 0
     );
   }
@@ -102,6 +112,7 @@ class ChannelsStore {
     return (
       this._pendingCreations.length +
       this._pendingRenames.size +
+      this._pendingBindings.size +
       this._pendingDeletions.size
     );
   }
@@ -125,6 +136,7 @@ class ChannelsStore {
   discard(): void {
     this._pendingCreations = [];
     this._pendingRenames = new Map();
+    this._pendingBindings = new Map();
     this._pendingDeletions = new Set();
   }
 
@@ -136,6 +148,7 @@ class ChannelsStore {
     this._baseline = channels;
     this._pendingCreations = [];
     this._pendingRenames = new Map();
+    this._pendingBindings = new Map();
     this._pendingDeletions = new Set();
   }
 
@@ -148,6 +161,7 @@ class ChannelsStore {
       this._baseline = await listChannels();
       this._pendingCreations = [];
       this._pendingRenames = new Map();
+      this._pendingBindings = new Map();
       this._pendingDeletions = new Set();
     } finally {
       this._loading = false;
@@ -222,6 +236,9 @@ class ChannelsStore {
     for (const [channelId, newName] of this._pendingRenames) {
       deltas.push({ type: 'renameChannel', channelId, newName });
     }
+    for (const [channelId, binding] of this._pendingBindings) {
+      deltas.push({ type: 'setChannelBinding', channelId, binding });
+    }
     for (const channelId of this._pendingDeletions) {
       deltas.push({ type: 'deleteChannel', channelId });
     }
@@ -256,6 +273,35 @@ class ChannelsStore {
   }
 
   /**
+   * Replace a channel's whole binding in-memory (Spec 020 / E2a).
+   * No-op suppression (ADR-0012): equal to the effective binding → nothing
+   * recorded; equal to the saved binding → any pending rebind is dropped.
+   * A channel still in pending creations is updated in place (its
+   * `createChannel` delta carries the new binding). Returns true when the
+   * effective binding changed.
+   */
+  rebindChannel(id: string, binding: ChannelBinding): boolean {
+    const effective = this.channels.find((ch) => ch.id === id);
+    if (!effective) return false;
+    if (deepEqual(effective.binding, binding)) return false;
+
+    const creationIdx = this._pendingCreations.findIndex((ch) => ch.id === id);
+    if (creationIdx >= 0) {
+      const next = this._pendingCreations.slice();
+      next[creationIdx] = { ...next[creationIdx], binding };
+      this._pendingCreations = next;
+      return true;
+    }
+
+    const baseline = this._baseline.find((ch) => ch.id === id);
+    const next = new Map(this._pendingBindings);
+    if (baseline && deepEqual(baseline.binding, binding)) next.delete(id);
+    else next.set(id, binding);
+    this._pendingBindings = next;
+    return true;
+  }
+
+  /**
    * Mark channels for deletion (in-memory only, per ADR-0012).
    * Channels that are pending creations are removed immediately;
    * baseline channels are tracked in _pendingDeletions for save flush.
@@ -272,6 +318,11 @@ class ChannelsStore {
     if (baselineIds.length > 0) {
       this._pendingDeletions = new Set([...this._pendingDeletions, ...baselineIds]);
     }
+    if (this._pendingBindings.size > 0) {
+      const nextBindings = new Map(this._pendingBindings);
+      for (const id of ids) nextBindings.delete(id);
+      this._pendingBindings = nextBindings;
+    }
     // Clean up any renames for deleted channels
     if (this._pendingRenames.size > 0) {
       const nextRenames = new Map(this._pendingRenames);
@@ -287,6 +338,7 @@ class ChannelsStore {
     this._baseline = channels;
     this._pendingCreations = [];
     this._pendingRenames = new Map();
+    this._pendingBindings = new Map();
     this._pendingDeletions = new Set();
   }
 
@@ -295,6 +347,7 @@ class ChannelsStore {
     this._baseline = [];
     this._pendingCreations = [];
     this._pendingRenames = new Map();
+    this._pendingBindings = new Map();
     this._pendingDeletions = new Set();
     this._loading = false;
   }

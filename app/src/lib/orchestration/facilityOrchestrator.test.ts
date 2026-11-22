@@ -722,3 +722,141 @@ describe('createBlockSignalsFacility (Spec 020 / E1a — facilityOrchestrator)',
     expect(effectiveNodeStore.isDirty).toBe(false);
   });
 });
+
+// ── Spec 020 / E2a — updateBlockSignalsFacility (shared staging pipeline) ──
+
+describe('updateBlockSignalsFacility (Spec 020 / E2a — facilityOrchestrator)', () => {
+  const SAVED_LINE = {
+    direction: 'bidirectional',
+    movements: 'both',
+    entranceEnd: 'a',
+    exitEnd: 'b',
+    blocks: [{ blockId: 'b1' }],
+    settings: { mode: 'old' },
+  };
+  const NEW_LINE = { ...SAVED_LINE, settings: { mode: 'new' }, facilityId: 'abs-1', facilityName: 'Main line' };
+
+  function savedChannel(): InformationChannel {
+    return {
+      id: 'ch-sig-1',
+      name: 'Signal A',
+      role: 'signal-indication',
+      style: 'two-driver-rg-signal',
+      ownership: 'user-owned',
+      binding: { kind: 'signalLccRgOutputs', nodeKey: ABS_NODE, redOutput: 1, greenOutput: 2 },
+    } as InformationChannel;
+  }
+
+  function updateArgs(over: Partial<Parameters<typeof orch.updateBlockSignalsFacility>[0]> = {}) {
+    return {
+      facilityId: 'abs-1',
+      name: 'Main line',
+      line: NEW_LINE as never,
+      wiring: [{ signalId: 's1', nodeKey: ABS_NODE, redOutput: 3, greenOutput: 4 }],
+      signals: [{ signalId: 's1', name: 'Signal A', protectedBlock: 'b1' }],
+      ...over,
+    };
+  }
+
+  beforeEach(async () => {
+    vi.restoreAllMocks();
+    configChangesStore.clearAllDrafts();
+    vi.mocked(composeBlockSignals).mockReset();
+    vi.mocked(composeBlockSignals).mockResolvedValue(COMPOSED as never);
+    listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR, ABS_TEMPLATE]);
+    behaviorTemplatesStore.reset();
+    await behaviorTemplatesStore.loadBehaviorTemplates();
+    channelsStore.hydrateBaseline([savedChannel()]);
+    facilitiesStore.hydrateBaseline([{
+      facilityId: 'abs-1',
+      templateId: 'automatic-block-signals',
+      name: 'Main line',
+      slotBindings: { signals: ['ch-sig-1'] },
+      blockSignals: {
+        ...SAVED_LINE,
+        signals: [{ signalId: 's1', name: 'Signal A', protectedBlock: 'b1', channelId: 'ch-sig-1' }],
+        claimedSlots: [{ nodeKey: ABS_NODE, kind: 'mast', index: 9 }],
+      },
+    } as never]);
+  });
+
+  it('replaces the record, rebinds the same channel and stages the compiled edits', async () => {
+    const result = await orch.updateBlockSignalsFacility(updateArgs());
+
+    expect(result).toEqual({ ok: true });
+    const request = vi.mocked(composeBlockSignals).mock.calls[0][0] as ComposeBlockSignalsRequest;
+    expect(request.facilityId).toBe('abs-1');
+    const facility = facilitiesStore.facilities.find((f) => f.facilityId === 'abs-1')!;
+    expect(facility.blockSignals?.settings).toEqual({ mode: 'new' });
+    expect(facility.blockSignals?.claimedSlots).toEqual(COMPOSED.claimedSlots);
+    expect(facility.blockSignals?.signals[0].channelId).toBe('ch-sig-1');
+    expect(channelsStore.channels).toHaveLength(1);
+    expect(channelsStore.channels[0].binding).toMatchObject({ redOutput: 3, greenOutput: 4 });
+    expect(configChangesStore.draftEntries().map((d) => d.key)).toEqual([
+      editKeyForLeaf(ABS_NODE, 253, 10),
+      editKeyForLeaf(ABS_NODE, 253, 20),
+    ]);
+  });
+
+  it('renames the facility and a signal channel when their names changed', async () => {
+    await orch.updateBlockSignalsFacility(updateArgs({
+      name: 'Renamed line',
+      signals: [{ signalId: 's1', name: 'Signal Z', protectedBlock: 'b1' }],
+    }));
+
+    expect(facilitiesStore.facilities[0].name).toBe('Renamed line');
+    expect(channelsStore.channels[0].name).toBe('Signal Z');
+    expect(facilitiesStore.facilities[0].blockSignals?.signals[0].name).toBe('Signal Z');
+  });
+
+  it('stages no configuration edits for a name-only change', async () => {
+    vi.mocked(composeBlockSignals).mockResolvedValue({ edits: [], claimedSlots: [{ nodeKey: ABS_NODE, kind: 'mast', index: 9 }], issues: [] } as never);
+
+    const result = await orch.updateBlockSignalsFacility(updateArgs({
+      name: 'Renamed line',
+      line: { ...SAVED_LINE, facilityId: 'abs-1' } as never,
+      wiring: [{ signalId: 's1', nodeKey: ABS_NODE, redOutput: 1, greenOutput: 2 }],
+    }));
+
+    expect(result).toEqual({ ok: true });
+    expect(configChangesStore.draftEntries()).toHaveLength(0);
+    expect(facilitiesStore.facilities[0].name).toBe('Renamed line');
+  });
+
+  it('stages nothing when compose reports issues', async () => {
+    const issues = [{ code: 'outputInUse', signalId: 's1', nodeKey: ABS_NODE, detail: 'busy' }];
+    vi.mocked(composeBlockSignals).mockResolvedValue({ edits: [], claimedSlots: [], issues } as never);
+
+    const result = await orch.updateBlockSignalsFacility(updateArgs({ name: 'Renamed line' }));
+
+    expect(result).toEqual({ ok: false, issues });
+    expect(effectiveNodeStore.isDirty).toBe(false);
+  });
+
+  it('rolls the record, names, binding and drafts back when staging fails', async () => {
+    configEditor.applyEdit(editKeyForLeaf(ABS_NODE, 253, 10), { type: 'int', value: 5 });
+    const realApply = configEditor.applyEdit.bind(configEditor);
+    let calls = 0;
+    vi.spyOn(configEditor, 'applyEdit').mockImplementation((k, v) => {
+      if (++calls === 2) throw new Error('boom');
+      realApply(k, v);
+    });
+
+    const result = await orch.updateBlockSignalsFacility(updateArgs({
+      name: 'Renamed line',
+      signals: [{ signalId: 's1', name: 'Signal Z', protectedBlock: 'b1' }],
+    }));
+
+    expect(result).toMatchObject({ ok: false });
+    const facility = facilitiesStore.facilities[0];
+    expect(facility.name).toBe('Main line');
+    expect(facility.blockSignals?.settings).toEqual({ mode: 'old' });
+    expect(channelsStore.channels[0].name).toBe('Signal A');
+    expect(channelsStore.channels[0].binding).toMatchObject({ redOutput: 1, greenOutput: 2 });
+    expect(configChangesStore.draftEntries()).toEqual([
+      { key: editKeyForLeaf(ABS_NODE, 253, 10), value: { type: 'int', value: 5 } },
+    ]);
+    expect(facilitiesStore.collectDeltas()).toEqual([]);
+    expect(channelsStore.collectDeltas()).toEqual([]);
+  });
+});

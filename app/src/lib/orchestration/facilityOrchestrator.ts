@@ -433,22 +433,52 @@ export type CreateBlockSignalsFacilityResult =
   | { ok: false; issues: ComposeIssue[] }
   | { ok: false; error: unknown };
 
+export type UpdateBlockSignalsFacilityArgs = CreateBlockSignalsFacilityArgs;
+export type UpdateBlockSignalsFacilityResult = CreateBlockSignalsFacilityResult;
+
+/** Workflow owner: create an Automatic Block Signals facility (see `stageBlockSignalsFacility`). */
+export function createBlockSignalsFacility(
+  args: CreateBlockSignalsFacilityArgs,
+): Promise<CreateBlockSignalsFacilityResult> {
+  return stageBlockSignalsFacility('create', args);
+}
+
 /**
- * Workflow owner: create an Automatic Block Signals facility.
+ * Workflow owner: update a saved Automatic Block Signals facility. Same
+ * pipeline as create; the facility keeps its ID, signal channels and slot
+ * attachments, and its record, names and channel wiring are replaced.
+ */
+export function updateBlockSignalsFacility(
+  args: UpdateBlockSignalsFacilityArgs,
+): Promise<UpdateBlockSignalsFacilityResult> {
+  return stageBlockSignalsFacility('update', args);
+}
+
+/**
+ * Shared staging pipeline for Automatic Block Signals (create and update).
  *
  * Mirrors drafts so the backend sees other unsaved claims, composes with
- * fresh facts (wiring nodes' unsaved edits included), refuses on any issue
- * without staging anything, then stages the signal channels, the facility
- * with its compiled record, the slot attaches and the configuration edits
- * as ordinary drafts. Any failure after the first staged mutation removes
- * everything staged here. Never composes bowties (the template has no mapping).
+ * fresh facts (wiring nodes' unsaved edits included, facilityId so an update
+ * recompiles into its own claimed slots), refuses on any issue without
+ * staging anything, then stages the facility/record/channels and the
+ * configuration edits as ordinary drafts. Any failure after the first staged
+ * mutation restores everything staged here. Never composes bowties (the
+ * template has no mapping).
  */
-export async function createBlockSignalsFacility(
+async function stageBlockSignalsFacility(
+  target: 'create' | 'update',
   args: CreateBlockSignalsFacilityArgs,
 ): Promise<CreateBlockSignalsFacilityResult> {
   const { facilityId, name, line, wiring, signals } = args;
   const template = behaviorTemplatesStore.findByTemplateId(BLOCK_SIGNALS_TEMPLATE_ID);
   if (!template) return { ok: false, error: new UnknownReferenceError('template') };
+
+  const priorFacility = target === 'update'
+    ? facilitiesStore.facilities.find((f) => f.facilityId === facilityId)
+    : undefined;
+  if (target === 'update' && !priorFacility?.blockSignals) {
+    return { ok: false, error: new UnknownReferenceError('facility') };
+  }
 
   let composed;
   try {
@@ -460,22 +490,33 @@ export async function createBlockSignalsFacility(
   if (composed.issues.length > 0) return { ok: false, issues: composed.issues };
 
   const priorDrafts = new Map(configChangesStore.draftEntries().map((d) => [d.key, d.value]));
+  const priorChannels = new Map(channelsStore.channels.map((c) => [c.id, c]));
   const createdChannelIds: string[] = [];
   let facilityAdded = false;
   try {
     const wiringBySignal = new Map(wiring.map((w) => [w.signalId, w]));
+    const savedChannelIds = new Map(
+      (priorFacility?.blockSignals?.signals ?? []).map((s) => [s.signalId, s.channelId]),
+    );
     const recordSignals: BlockSignalsRecord['signals'] = signals.map((signal) => {
       const wired = wiringBySignal.get(signal.signalId);
       if (!wired) throw new Error(`No wiring for signal '${signal.signalId}'`);
+      const binding = {
+        kind: 'signalLccRgOutputs' as const,
+        nodeKey: wired.nodeKey,
+        greenOutput: wired.greenOutput,
+        redOutput: wired.redOutput,
+      };
+      const savedChannelId = savedChannelIds.get(signal.signalId);
+      if (savedChannelId) {
+        channelsStore.renameChannel(savedChannelId, signal.name);
+        channelsStore.rebindChannel(savedChannelId, binding);
+        return { ...signal, channelId: savedChannelId };
+      }
       const channel = channelsStore.createUserOwnedChannel({
         role: 'signal-indication',
         style: 'two-driver-rg-signal',
-        binding: {
-          kind: 'signalLccRgOutputs',
-          nodeKey: wired.nodeKey,
-          greenOutput: wired.greenOutput,
-          redOutput: wired.redOutput,
-        },
+        binding,
         name: signal.name,
       });
       createdChannelIds.push(channel.id);
@@ -492,8 +533,13 @@ export async function createBlockSignalsFacility(
       signals: recordSignals,
       claimedSlots: composed.claimedSlots,
     };
-    facilitiesStore.addFacility(template, name, facilityId, record);
-    facilityAdded = true;
+    if (target === 'create') {
+      facilitiesStore.addFacility(template, name, facilityId, record);
+      facilityAdded = true;
+    } else {
+      facilitiesStore.setBlockSignalsRecord(facilityId, record);
+      facilitiesStore.renameFacility(facilityId, name);
+    }
     for (const channelId of createdChannelIds) {
       if (!facilitiesStore.attachChannel(facilityId, BLOCK_SIGNALS_SLOT, channelId)) {
         throw new Error(`Failed to attach channel '${channelId}' to facility '${facilityId}'`);
@@ -511,6 +557,16 @@ export async function createBlockSignalsFacility(
     }
     if (facilityAdded) facilitiesStore.deleteFacility(facilityId);
     for (const channelId of createdChannelIds) channelsStore.removeUserOwnedChannel(channelId);
+    if (priorFacility?.blockSignals) {
+      facilitiesStore.setBlockSignalsRecord(facilityId, priorFacility.blockSignals);
+      facilitiesStore.renameFacility(facilityId, priorFacility.name);
+      for (const s of priorFacility.blockSignals.signals) {
+        const prior = priorChannels.get(s.channelId);
+        if (!prior) continue;
+        channelsStore.renameChannel(prior.id, prior.name);
+        channelsStore.rebindChannel(prior.id, prior.binding);
+      }
+    }
     return { ok: false, error };
   }
 }

@@ -49,12 +49,14 @@ const {
   resetBlockSignalsEditorForNewLayout,
   setExitEnd,
   setBlockSignalsMovements,
+  setFacilityName,
   setFacilitySignalSettings,
   setJoinedToPrevious,
   setSignalName,
   setSignalOverride,
   setTurnoutShape,
   startBlockSignalsEditor,
+  startEditBlockSignalsEditor,
 } = await import('./blockSignalsEditorOrchestrator');
 
 function deferred<T>() {
@@ -405,5 +407,97 @@ describe('blockSignalsEditor compose check and Done (E1a B11b)', () => {
 
     expect(store.open).toBe(true);
     expect(facilitiesStore.pendingCreations).toHaveLength(0);
+  });
+});
+
+describe('blockSignalsEditor edit mode (E2a B5b)', () => {
+  const SAVED = {
+    facilityId: 'abs-1',
+    templateId: 'automatic-block-signals',
+    name: 'Saved line',
+    slotBindings: { signals: ['ch-sig-1'] },
+    blockSignals: {
+      direction: 'westward',
+      movements: 'oneDirection',
+      entranceEnd: { kind: 'noPlant' },
+      exitEnd: { kind: 'treatAsStop' },
+      blocks: [{ blockId: 'block:cedar', name: 'Cedar Hill', joinedToPrevious: false, turnouts: [] }],
+      settings: { aspects: 3, turnoutNotLined: 'restricting', approachLighting: 'alwaysLit' },
+      signals: [{ signalId: 's1', name: 'Saved signal', protectedBlock: 'block:cedar', channelId: 'ch-sig-1' }],
+      claimedSlots: [{ nodeKey: HOST.nodeKey, kind: 'mast' as const, index: 9 }],
+    },
+  };
+
+  beforeEach(async () => {
+    previewBlockSignalsMock.mockReset();
+    previewBlockSignalsMock.mockImplementation(async () => signalPreview());
+    composeBlockSignalsMock.mockReset();
+    composeBlockSignalsMock.mockResolvedValue({ edits: [], claimedSlots: SAVED.blockSignals.claimedSlots, issues: [] });
+    resetBlockSignalsEditorForNewLayout();
+    configChangesStore.clearAllDrafts();
+    behaviorTemplatesStore.reset();
+    await behaviorTemplatesStore.loadBehaviorTemplates();
+    channelsStore.hydrateBaseline([{
+      id: 'ch-sig-1',
+      name: 'Saved signal',
+      role: 'signal-indication',
+      style: 'two-driver-rg-signal',
+      ownership: 'user-owned',
+      binding: { kind: 'signalLccRgOutputs', nodeKey: HOST.nodeKey, redOutput: 1, greenOutput: 3 },
+    } as never]);
+    facilitiesStore.hydrateBaseline([SAVED as never]);
+  });
+
+  it('starts in create mode for a new facility', () => {
+    startBlockSignalsEditor('Main');
+    expect(store.mode).toBe('create');
+  });
+
+  it('seeds every input from the saved facility and its channel wiring', async () => {
+    await startEditBlockSignalsEditor('abs-1');
+
+    expect(store.open).toBe(true);
+    expect(store.mode).toBe('edit');
+    expect(store.facilityId).toBe('abs-1');
+    expect(store.facilityName).toBe('Saved line');
+    expect(store.direction).toBe('westward');
+    expect(store.exitEnd).toEqual({ kind: 'treatAsStop' });
+    expect(store.blocks.map((b) => b.blockId)).toEqual(['block:cedar']);
+    expect(store.settings.turnoutNotLined).toBe('restricting');
+    expect(store.signalNames).toEqual({ s1: 'Saved signal' });
+    expect(store.wiringFor('s1')).toEqual({ nodeKey: HOST.nodeKey, redOutput: 1, greenOutput: 3 });
+    const request = previewBlockSignalsMock.mock.lastCall![0];
+    expect(request).toMatchObject({ facilityId: 'abs-1', facilityName: 'Saved line', signalNames: { s1: 'Saved signal' } });
+    expect(store.preview).not.toBeNull();
+  });
+
+  it('on Done updates the saved facility and its channel instead of creating', async () => {
+    await startEditBlockSignalsEditor('abs-1');
+    await navigateBlockSignalsEditor('wiring');
+    await setFacilityName('Renamed line');
+    await chooseGreenOutput('s1', 2);
+    expect(store.canFinish).toBe(true);
+
+    await finishBlockSignalsEditor();
+
+    expect(store.open).toBe(false);
+    expect(facilitiesStore.pendingCreations).toHaveLength(0);
+    expect(facilitiesStore.facilities).toHaveLength(1);
+    expect(facilitiesStore.facilities[0].name).toBe('Renamed line');
+    expect(channelsStore.channels).toHaveLength(1);
+    expect(channelsStore.channels[0].binding).toMatchObject({ redOutput: 1, greenOutput: 2 });
+    expect(facilitiesStore.facilities[0].blockSignals?.signals[0].channelId).toBe('ch-sig-1');
+    expect(effectiveNodeStore.isDirty).toBe(true);
+  });
+
+  it('cancel in edit mode stages nothing', async () => {
+    await startEditBlockSignalsEditor('abs-1');
+    await setFacilityName('Renamed line');
+
+    cancelBlockSignalsEditor();
+
+    expect(store.open).toBe(false);
+    expect(effectiveNodeStore.isDirty).toBe(false);
+    expect(facilitiesStore.facilities[0].name).toBe('Saved line');
   });
 });

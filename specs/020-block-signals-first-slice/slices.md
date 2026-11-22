@@ -2,7 +2,7 @@
 
 Branch: 020-block-signals-first-slice
 Generated: 2026-11-07; roadmap regenerated 2026-11-22 for the end-to-end pivot
-Status: 2/9 slices complete (S1, S2R); S2 and the old S3–S8 superseded by E1a–E6
+Status: 5/10 slices complete (S1, S2R, E1a, E1b, E2a); S2 and the old S3–S8 superseded by E1a–E6
 
 Approved input: the
 [2026-11-22 Architecture Assessment](plan.md#architecture-assessment-end-to-end-first-release-2026-11-22)
@@ -105,7 +105,8 @@ flowchart LR
 |---|---|---|
 | E1a: Stage and save a one-block signal offline | Four steps, Done, unsaved edits, offline Save and reopen | Yes |
 | E1b: Light the signal on the bench | LED red when occupied, green when clear | Yes, bench |
-| E2: Edit and remove | Rename, reorient, rebind and remove a saved facility | Yes, bench |
+| E2a: Edit a saved facility | Rename, reorient and rebind a saved facility; write it online and through the Sync Panel | Yes, bench |
+| E2b: Remove a facility | Removal resets only the claimed slots; the signal goes dark | Yes, bench |
 | E3: Two blocks on one board | Approach behind an occupied block | Yes, bench |
 | E4: Verify writes | Signals marked verified, mismatched or unavailable | Yes, bench |
 | E5: Across boards | Signals on two boards coordinate; partial failure shown | Yes, two boards |
@@ -118,10 +119,11 @@ flowchart LR
 | S1 | Choose blocks and name signals | HITL | None | done |
 | S2 | Choose display and bind real outputs | HITL | S1 | superseded by E1a (Wiring) |
 | S2R | Feedback release: Blocks and Aspects per revised storyboard | HITL | S1, S2 checkpoint | done |
-| E1a | Stage and save a one-block signal offline | HITL | S2R | tasked |
-| E1b | Light the signal on the bench | HITL | E1a + terminal-recipe evidence | sketched |
-| E2 | Edit and remove | HITL | E1b | sketched |
-| E3 | Two blocks on one board | HITL | E2 + same-board Approach evidence | sketched |
+| E1a | Stage and save a one-block signal offline | HITL | S2R | done |
+| E1b | Light the signal on the bench | HITL | E1a + terminal-recipe evidence | done (Sync Panel check moved to E2a) |
+| E2a | Edit a saved facility | HITL | E1b | done |
+| E2b | Remove a facility | HITL | E2a | sketched |
+| E3 | Two blocks on one board | HITL | E2b + same-board Approach evidence | sketched |
 | E4 | Verify writes | HITL | E1b | sketched |
 | E5 | Across boards | HITL | E3 + E4 + cross-board Approach and receiver-restart evidence | sketched |
 | E6 | Maintain a three-block facility | AFK | E5 | sketched |
@@ -672,7 +674,7 @@ Deferred until the save/apply slice:
 **Intent**: The modeler completes Blocks, Aspects, Appearance and Wiring, clicks Done, and saves offline; the facility, its signal channel and the configuration edits (saved as Offline Changes) survive reopening.
 **Boundary**: Step components → editor store/orchestrator → facility orchestrator → facility, channel and configuration drafts → backend compose → core compiler → layout file.
 **Blocked by**: S2R.
-**Status**: tasked
+**Status**: done
 **Complexity**: large
 **User stories**: US1 (offline portion), US4 (output and resource checks)
 
@@ -686,14 +688,14 @@ Deferred until the save/apply slice:
 - D5: storyboard frame, stepper, order and footers kept. Appearance ([`#line-appearance`](../proposals/signaling-ux/signaling-facilities-storyboard.html#line-appearance)) shows fixed values with other choices disabled and no "Try the signals" simulator. Wiring ([`#line-wiring`](../proposals/signaling-ux/signaling-facilities-storyboard.html#line-wiring)) keeps the "Runs on" picker and pin grid but asks only for red and green; Customize lamps, Blink and Show disabled. Review ([`#line-review`](../proposals/signaling-ux/signaling-facilities-storyboard.html#line-review)) is deferred to E3 and shown disabled in the stepper; Wiring's footer has Done.
 
 **Acceptance criteria**:
-- [ ] Blocks, Aspects, Appearance and Wiring are all exercisable, and Review is shown disabled in the step list. Aspects and Appearance show this release's fixed values.
-- [ ] Options outside this release's scope are shown disabled with no "coming later" text, including the existing S2R notes in the editor (APB, Interlocking Plant end choice, physical signals). No disabled option can reach a saved facility.
-- [ ] Wiring lets the modeler pick a Signal LCC, a red pin and a green pin. A pin already in use, or a mast or Logic slot that is not free (including one with an unsaved hand edit), shows a blocking issue on Wiring, and Done is unavailable.
-- [ ] Done adds a facility card to the Railroad tab, adds a signal-indication channel to the Railroad panel (in its own Signal LCC group) whose "Used by" names the facility, and shows the generated values as unsaved edits in the node's configuration.
-- [ ] Those edits enable the Save toolbar, appear in the unsaved-changes breakdown, count as in-memory edits, and trigger the navigation/layout-close and window-close prompts. Canceling a close keeps the edits.
-- [ ] Discard removes the facility, the channel and the configuration edits together, and the toolbar and prompts return to clean.
-- [ ] Saving offline and reopening restores the facility, the channel and the configuration edits as Offline Changes. Closing the layout or starting a new one leaves no editor, draft or mirror state behind.
-- [ ] A version-4 layout opens unchanged. A layout with a newer manifest version is refused with a "made by a newer Bowties" message. `docs/technical/layout-file-format.md` describes the policy.
+- [x] Blocks, Aspects, Appearance and Wiring are all exercisable, and Review is shown disabled in the step list. Aspects and Appearance show this release's fixed values.
+- [x] Options outside this release's scope are shown disabled with no "coming later" text, including the existing S2R notes in the editor (APB, Interlocking Plant end choice, physical signals). No disabled option can reach a saved facility.
+- [x] Wiring lets the modeler pick a Signal LCC, a red pin and a green pin. A pin already in use, or a mast or Logic slot that is not free (including one with an unsaved hand edit), shows a blocking issue on Wiring, and Done is unavailable.
+- [x] Done adds a facility card to the Railroad tab, adds a signal-indication channel to the Railroad panel (in its own Signal LCC group) whose "Used by" names the facility, and shows the generated values as unsaved edits in the node's configuration.
+- [x] Those edits enable the Save toolbar, appear in the unsaved-changes breakdown, count as in-memory edits, and trigger the navigation/layout-close and window-close prompts. Canceling a close keeps the edits.
+- [x] Discard removes the facility, the channel and the configuration edits together, and the toolbar and prompts return to clean.
+- [x] Saving offline and reopening restores the facility, the channel and the configuration edits as Offline Changes. Closing the layout or starting a new one leaves no editor, draft or mirror state behind.
+- [x] A version-4 layout opens unchanged. A layout with a newer manifest version is refused with a "made by a newer Bowties" message. `docs/technical/layout-file-format.md` describes the policy.
 
 **Architecture note**: Introduces the pure compiler and claimed slots recorded on the facility, and makes Automatic Block Signals the first facility that composes mast and Logic configuration into configuration edits and the first to persist a signal channel (ADR-0001, ADR-0005, ADR-0012 and ADR-0013 extensions). Rewrite the ABS seam invariant in `aiwiki/seams.md` when this lands.
 
@@ -711,21 +713,21 @@ Deferred until the save/apply slice:
 - [x] E1a-T11: Components — `AppearanceStep`, `WiringStep` (Runs on picker, red/green pin grid, issues, Done), stepper with Review disabled; remove "later" text in the editor.
 - [x] E1a-T12: Offline save and reopen — facility, channel and Offline Changes roundtrip; lifecycle reset leaves no editor state.
 - [x] E1a-T13: Docs — `docs/technical/layout-file-format.md`, ADR-0012 and ADR-0013 extension lines, seams (ABS invariant, Lifecycle Reset participant, Railroad panel, Slot Binding), owners.
-- [ ] E1a-T14: Validate — vitest, `cargo test -p bowties-core`, app backend check/tests, svelte-check; native review against the storyboard sections above.
+- [x] E1a-T14: Validate — vitest, `cargo test -p bowties-core`, app backend check/tests, svelte-check; native review against the storyboard sections above.
 
 **Validation (2026-11-22)**:
 - `cargo test` in `bowties-core`: all passing (453 unit tests + 9 integration binaries, incl. `block_signals_compiler.rs`, `block_signals_layout_roundtrip.rs`, and a test that resolves every compiled edit against the bundled Signal LCC CDI).
 - `app/src-tauri`: `cargo check --tests` clean. Its test executable does not start on this machine (`STATUS_ENTRYPOINT_NOT_FOUND`), so `compose.rs` and the command glue have compile-only evidence.
 - `npx vitest run`: 1543 passed, 2 failed. The 2 failures are 5 s timeouts in older S2R tests in `RailroadPanel.integration.test.ts` ("shows live occupancy…", "builds a travel-order list…") under full-suite load; the file passes alone (13/13). The slice made that file's shared `openEditor` setup heavier. Open: decide between a per-test timeout and splitting the file.
 - svelte-check: no errors in touched files (pre-existing errors elsewhere unchanged).
-- **Pending:** native review in the running app against `#line-appearance` and `#line-wiring`, and an offline Save → reopen check that the compiled edits appear as Offline Changes (core round trip is tested; the app-side conversion of drafts to Offline Change rows is the existing path for every configuration edit).
+- Native review: accepted by the user on 2026-11-22 after the fixes below. The offline Save → reopen path in the running app (compiled edits shown as Offline Changes) is covered by the core round trip and the existing draft-to-Offline-Change path; it is exercised in the app by E1b's Sync Panel check.
 
 **Implementation differences from the storyboard (for native review)**: Appearance shows three disabled signal types with RG searchlight checked, omits "Restricting looks like", shows a disabled "Override for this signal", and a fixed Indication × Mast table. Wiring has no "Next unwired signal" or progress counter (one signal); "Runs on" is a field button with "Change ▾" and no usage line; the picker is the shared `SearchableSingleSelectDialog` without the "Only nodes that can host" filter; lamps are two radios (Red lamp, Green lamp) instead of head cards; Customize lamps, Blink and Show are disabled; taken and this-signal pins are disabled (no swap or clear); no colour legend; issues show in an amber "Choices needing attention" box.
 
 **Native review fixes (2026-11-22)**: the pin grid was empty because output ownership counted each mast rule as a separate owner (a mast reusing red in Stop and Approach became a "conflict" and the host's facts were marked invalid); ownership moved to `bowties-core/src/signaling/outputs.rs` with one owner per mast, and Wiring now explains an unusable host instead of showing an empty grid. The node picker and "Runs on" use the shared node name with "<model> · <address>" underneath. Pin labels include the number ("#1 H1-G"). `facilities.yaml` written by this build is stamped "2.0" (a saved bench layout showed "1.0" with a `blockSignals` record). Bench result from the user's saved layout: signal on mast 2 / Logic 1, red #7, green #8, saved connected, LED follows the block (Stop/Clear).
 
 **Open items found during build**:
-- Deleting an Automatic Block Signals facility removes the facility and channel but does not reset its claimed mast/Logic slots on the board (that is E2). Decision pending: disable delete for ABS facilities until E2, or move removal ahead of E1b.
+- Deleting an Automatic Block Signals facility removes the facility and channel but does not reset its claimed mast/Logic slots on the board. Decided 2026-11-22: leave delete as is on this development build; E2b fixes it.
 - `channels.yaml` has the same latent version-stamp behavior (keeps a loaded "1.0").
 - "Used by" reads "<facility> / signals" because `usedBy` is built from the raw slot key, not the template's slot label. Fixing it changes the `usedBy` contract (all facility slots); candidate for a small follow-up.
 - Hardware questions before E1b: (1) the Logic sends the mast's own Rule 1/Rule 3 "set aspect" events read from the board; (2) the compiler writes "Delay before action" = 0 ms although the CDI label reads 1–60000, and zeroes unused Appearance lamps and Actions 3–4.
@@ -735,7 +737,9 @@ Deferred until the save/apply slice:
 **Intent**: Saving while connected writes the configuration to the board; the LED is red when the block is occupied and green when it is clear.
 **Boundary**: Save with bus writes and the Sync Panel → Signal LCC.
 **Blocked by**: E1a + terminal-recipe evidence (passed).
-**Status**: sketched
+**Status**: done
+
+**Already observed (2026-11-22, during E1a review)**: a connected Save of the bench layout wrote the board, and the LED follows the block (red occupied, green clear). On 2026-11-22 the user chose to close E1b on that result and move the remaining checks into E2a, where a rebind gives a real change to write both online and through the Sync Panel: the Sync Panel path, nothing claiming "verified", detection and unrelated configuration unchanged, and the reopen/catalog check.
 
 **Acceptance criteria**:
 - [ ] A connected Save writes the staged values to the board. A layout saved offline and opened while connected writes them through the Sync Panel.
@@ -746,28 +750,79 @@ Deferred until the save/apply slice:
 
 **Architecture note**: First use of the existing Save and Sync Panel writers for a facility that generates logic, with no separate Apply. A failure here that cannot be reported truthfully through those writers is the trigger the ADR-0001 extension names for revisiting.
 
-### E2: Edit and remove [HITL]
+### E2a: Edit a saved facility [HITL]
 
-**Intent**: The modeler reopens a saved facility to rename, reorient, rebind its outputs, or remove it.
-**Boundary**: Editor (edit mode from the saved record) → facility orchestrator → compiler → drafts → Save.
+**Intent**: The modeler reopens a saved facility to rename it, reorient it, or change its red and green pins; the change is written by a connected Save or, after an offline Save, through the Sync Panel.
+**Boundary**: Facility card → editor (edit mode from the saved record) → facility orchestrator → backend compose → compiler (reusing the facility's claimed slots) → drafts → Save / Sync Panel → Signal LCC.
 **Blocked by**: E1b.
+**Status**: done
+**Complexity**: large
+**User stories**: US1 (edit), US4 (output and resource checks)
+
+**Acceptance criteria**:
+- [x] Opening a saved facility shows its saved choices on every step.
+- [x] Renaming the facility or reorienting stages zero configuration edits; renaming a signal stages only its mast and Logic descriptions; each keeps the signal's identity, protected block and outputs.
+- [x] Rebinding recompiles into the facility's own claimed mast and Logic slots (no new slots claimed) and the facility's own pins are never reported as in use; the old pins show as free in the Railroad panel and the new ones show "Used by" the facility. If a claimed slot no longer exists or the signal moves to another board, Wiring shows a blocking issue and Done is unavailable.
+- [x] Every edit shows in the Save toolbar, the unsaved-changes breakdown and the close prompts, and Discard restores the saved facility and its configuration.
+- [x] On the bench, after a rebind saved while connected, the signal follows the block on the new pins.
+- [x] On the bench, after a rebind saved offline, reopening while connected and writing from the Sync Panel moves the signal to the new pins (carried from E1b).
+- [x] Nothing in the app says the signal is verified after writing; block detection and unrelated configuration are unchanged; reopening shows the facility with no leftover Offline Changes (carried from E1b).
+
+**Architecture note**: Recompiling from the claimed slots on the facility record (plan F4) is tested here first: the compiler must treat the facility's own claims as its own, not as taken. Edit mode is the first time the editor is seeded from a saved record.
+
+**Decisions (approved 2026-11-22)**:
+- D1 A: the compiler takes the facility's claimed slots as input and recompiles into exactly those; pins owned by the facility's own masts are not conflicts; output owners are typed (mast index), not "Mast N" strings; a missing claimed slot or a move to another board is a blocking `ClaimedSlotUnavailable` issue (no silent re-pick). A hand edit to a claimed slot is overwritten.
+- D2 A: a `SetChannelBinding` whole-binding replace delta (core `layout::channels`) and `channelsStore.rebindChannel`, with deep-equal no-op and the pending entry dropped when the binding returns to the saved value. Channel ID and `signals` slot membership unchanged.
+- D3 A: saved signal IDs win. Derivation (`chain.rs`) keeps a saved signal's ID, name and channel when a derived signal protects the same block; unmatched signals get a derived ID. The backend reads the saved record from the effective layout by facility ID.
+- D4 A: `blockSignalsEditor.startEdit(facilityId)` seeds every step from the effective record and channel bindings (mode `edit`); Done runs one shared facility-orchestrator pipeline (fresh compose, refuse on issues, stage, roll back) with a create or update target; FacilityCard emits an Edit intent.
+
+**Tasks**:
+- [x] E2a-T1: Integration test — open a saved ABS facility from its card (Edit) → every step shows the saved choices → change red/green → Done stages only the mast lamp edits into the same mast/Logic slots, the channel row shows the new pins "Used by" the facility, the Save toolbar/unsaved breakdown show the change; Discard restores the saved pins and edits. Rename of the facility stages no configuration edits. Prefer a new test file to keep `RailroadPanel.integration.test.ts` within its timeouts; share helpers through a test-support module.
+- [x] E2a-T2: Core compiler — `own_claims` input, own slots reused, own pins not in use, typed output owner, `ClaimedSlotUnavailable` for missing slot or different node.
+- [x] E2a-T3: Core identity — derived signals matching a saved signal by protected block keep its ID (and the editor gets saved names through it).
+- [x] E2a-T4: Core channel delta — `SetChannelBinding` apply, no-op, save/load roundtrip, agreement check still holds.
+- [x] E2a-T5: Backend — compose and preview read the facility's record (claimed slots, saved signals) from the effective layout by facility ID; TS API types.
+- [x] E2a-T6: Stores — `channelsStore.rebindChannel` with no-op and return-to-saved; dirty count, Discard and lifecycle reset cover it.
+- [x] E2a-T7: Editor store/orchestrator — `startEdit(facilityId)` seeding from effective record + bindings, edit mode, Done routes to update.
+- [x] E2a-T8: facilityOrchestrator — shared compose → guard → stage → rollback pipeline with create and update targets; update replaces the record, rebinds/renames channels, stages edits.
+- [x] E2a-T9: Components — FacilityCard Edit action; FacilitiesSection opens the editor in edit mode; editor heading for edit mode.
+- [x] E2a-T10: Docs — ADR-0012 and ADR-0013 extension lines, `aiwiki/seams.md` (ABS seam, channel deltas), owners, flows.
+- [x] E2a-T11: Validate — vitest, `cargo test` in `bowties-core`, backend `cargo check --tests`, svelte-check; bench: rebind saved online, rebind saved offline then written from the Sync Panel; E1b carried checks.
+
+**Validation (2026-11-22)**:
+- `cargo test` in `bowties-core`: all passing (463 unit tests + integration binaries, incl. new `block_signals_identity.rs` and the own-claim tests in `block_signals_compiler.rs`).
+- `app/src-tauri`: `cargo check --tests` clean (test executable does not start on this machine; `compose.rs` and `signaling/mod.rs` have compile-only evidence).
+- `npx vitest run`: 1569 passed, 2 failed — both 5 s timeouts in the long editor walk-throughs (`RailroadPanel.edit.integration.test.ts` E2a-T1 at 8.5 s, and the older S2R travel-order test) under full-suite load; `src/lib/components/Railroad` alone passes 19/19. Open: per-test timeout for these walk-throughs.
+- svelte-check: no errors in touched files.
+- E2a-T1 note: the integration test was written after the lower batches and passed on first run; each lower behavior had its own recorded RED (compiler own claims, saved identity, `SetChannelBinding`, `rebindChannel`, shared pipeline, edit mode, Edit action and heading).
+- Bench (2026-11-22, user): pins changed offline and saved; on reconnecting the app offered to sync and the Sync Panel write moved the signal to the new pins. Pins changed again and saved while connected; the board updated correctly.
+
+**Storyboard**: the edit dialog title follows the storyboard ("Edit Automatic Block Signals · <facility> · <step>"); the storyboard has no card-level Edit, so the card uses the existing link-button style next to Rename and Delete.
+
+**Open items found during build**:
+- An edit that leaves a saved signal with no matching derived signal (a removed block) drops it from the record but leaves its channel and slot attachment. Not reachable with one block; handle with E3/E6 block-list edits.
+- Per-signal setting overrides are not saved in the record, so edit mode starts without them (no overrides are reachable in this release).
+- `ChannelApplyError` has separate `UnknownRenameTarget` and `UnknownBindingTarget` variants; could merge into one unknown-channel error later.
+
+### E2b: Remove a facility [HITL]
+
+**Intent**: The modeler removes an Automatic Block Signals facility, and only its claimed slots are reset.
+**Boundary**: Facility card → facility orchestrator → compiler (release edits for claimed slots) → drafts → Save.
+**Blocked by**: E2a.
 **Status**: sketched
 
 **Acceptance criteria**:
-- [ ] Opening a saved facility shows its saved choices on every step.
-- [ ] Renaming or reorienting stages zero configuration edits and keeps the signal's identity, protected block and outputs.
-- [ ] Rebinding moves the outputs; the old pins show as free in the Railroad panel and the new ones show "Used by" the facility.
 - [ ] Removal resets only the claimed slots, returns Direct Lamp rows to "Used by Mast", keeps block detection, and removes the facility card and channel.
-- [ ] Every edit and removal shows in the Save toolbar, the unsaved-changes breakdown and the close prompts, and Discard restores the saved facility.
-- [ ] On the bench, the signal follows the block after a rebind and goes dark after removal.
+- [ ] Removal shows in the Save toolbar, the unsaved-changes breakdown and the close prompts, and Discard restores the saved facility.
+- [ ] On the bench, the signal goes dark after removal.
 
-**Architecture note**: Recompiling from the claimed slots on the facility record is what makes release safe (plan F4); this slice tests that design. Generic facility teardown is not proof that a slot is safe to release.
+**Architecture note**: Generic facility teardown is not proof that a slot is safe to release; release is computed from the claimed slots on the record.
 
 ### E3: Two blocks on one board [HITL]
 
 **Intent**: The modeler adds a second block; the first signal keeps its identity and shows Approach behind an occupied block. This slice also adds the Review step (deferred from E1a).
 **Boundary**: Editor → compiler (receiving logic, Track Circuit) → drafts → Save → Signal LCC.
-**Blocked by**: E2 + same-board Approach evidence (passed).
+**Blocked by**: E2b + same-board Approach evidence (passed).
 **Status**: sketched
 
 **Acceptance criteria**:

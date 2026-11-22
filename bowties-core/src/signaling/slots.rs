@@ -493,6 +493,7 @@ mod tests {
                 occupied: Some([1, 1, 1, 1, 1, 1, 0, 1]),
                 clear: Some([1, 1, 1, 1, 1, 1, 0, 2]),
             }],
+            own_claims: vec![],
         });
         assert!(compiled.issues.is_empty(), "{:?}", compiled.issues);
         assert!(!compiled.edits.is_empty());

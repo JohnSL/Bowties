@@ -35,6 +35,7 @@ pub(super) fn derive_signals(
     report_request_issues(request, issues);
 
     let groups = signal_blocks(request);
+    let mut claimed_saved = HashSet::new();
     let line_settings = SignalSettings {
         aspects: checked_aspects(request.settings.aspects, None, issues),
         approach_lighting: request.settings.approach_lighting.clone(),
@@ -46,6 +47,7 @@ pub(super) fn derive_signals(
         SignalRun::WithList,
         &line_settings,
         &request.exit_end,
+        &mut claimed_saved,
         issues,
     );
     if request.movements == Movements::BothDirections {
@@ -66,10 +68,26 @@ pub(super) fn derive_signals(
             SignalRun::AgainstList,
             &line_settings,
             &beyond,
+            &mut claimed_saved,
             issues,
         ));
     }
     signals
+}
+
+/// The saved signal ID for a signal block, when a not-yet-claimed saved signal
+/// protects one of its blocks. Each saved signal is claimed at most once.
+fn saved_signal_id(
+    request: &BlockSignalsRequest,
+    group: &[usize],
+    claimed_saved: &mut HashSet<usize>,
+) -> Option<String> {
+    let (index, saved) = request.saved_signals.iter().enumerate().find(|(index, saved)| {
+        !claimed_saved.contains(index)
+            && group.iter().any(|&b| request.blocks[b].block_id == saved.protected_block)
+    })?;
+    claimed_saved.insert(index);
+    Some(saved.signal_id.clone())
 }
 
 /// Signal blocks as lists of block indexes, in list order. The first block
@@ -91,6 +109,7 @@ fn chain(
     run: SignalRun,
     line_settings: &SignalSettings,
     beyond: &ExitEnd,
+    claimed_saved: &mut HashSet<usize>,
     issues: &mut Vec<ProposalIssue>,
 ) -> Vec<SignalPreview> {
     let governs = match run {
@@ -101,12 +120,13 @@ fn chain(
         .iter()
         .map(|group| {
             let entrance = &request.blocks[group[0]];
-            let signal_id = format!(
+            let derived_id = format!(
                 "signal:{}:{}:{}",
                 request.facility_id,
                 entrance.block_id,
                 governs.id_suffix()
             );
+            let signal_id = saved_signal_id(request, group, claimed_saved).unwrap_or(derived_id);
             let name = request
                 .signal_names
                 .get(&signal_id)

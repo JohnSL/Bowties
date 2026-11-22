@@ -39,6 +39,7 @@ export function previewWith(signals: SignalPreview[] = [SIGNAL]): BlockSignalsPr
 
 export function fakeView(overrides: Partial<BlockSignalsEditorView> = {}): BlockSignalsEditorView {
   return {
+    mode: 'create',
     step: 'blocks' as BlockSignalsStep,
     facilityName: 'Cedar Hill',
     direction: 'eastward',

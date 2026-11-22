@@ -212,6 +212,7 @@ export type ComposeIssueCode =
   | 'outputCapacity'
   | 'noFreeMast'
   | 'noFreeLogic'
+  | 'claimedSlotUnavailable'
   | 'occupancyEventsMissing'
   | 'aspectEventsMissing'
   | 'unsupportedBlockCount'

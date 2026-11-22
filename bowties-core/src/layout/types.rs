@@ -289,12 +289,20 @@ pub enum LayoutEditDelta {
     CreateChannel {
         channel: crate::layout::channels::InformationChannel,
     },
-    /// Rename an existing information channel (no-op if `channel_id` is
-    /// unknown, matching the facility rename semantics).
+    /// Rename an existing information channel (an unknown `channel_id` is an
+    /// apply error).
     #[serde(rename_all = "camelCase")]
     RenameChannel {
         channel_id: String,
         new_name: String,
+    },
+    /// Replace an existing channel's whole binding in place. Channel id, name,
+    /// role, style, ownership and facility slot membership are unchanged.
+    /// Unlike delete, an unknown `channel_id` is an apply error (as rename).
+    #[serde(rename_all = "camelCase")]
+    SetChannelBinding {
+        channel_id: String,
+        binding: crate::layout::channels::ChannelBinding,
     },
     /// Delete an information channel (no-op if `channel_id` is unknown).
     #[serde(rename_all = "camelCase")]
@@ -421,6 +429,7 @@ pub fn apply_layout_deltas(layout: &mut LayoutFile, deltas: Vec<LayoutEditDelta>
             | LayoutEditDelta::DetachChannelFromSlot { .. }
             | LayoutEditDelta::CreateChannel { .. }
             | LayoutEditDelta::RenameChannel { .. }
+            | LayoutEditDelta::SetChannelBinding { .. }
             | LayoutEditDelta::DeleteChannel { .. } => {
                 // Facilities live outside LayoutFile (facilities.yaml).
                 // Handled by `layout::facilities::apply_facility_deltas`,

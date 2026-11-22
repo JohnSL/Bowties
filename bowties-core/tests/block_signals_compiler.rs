@@ -1,7 +1,7 @@
 use bowties_core::layout::facilities::{ClaimedSlot, ClaimedSlotKind};
 use bowties_core::signaling::compiler::*;
 use bowties_core::signaling::{
-    BlockSignalsRequest, SelectedBlock, SignalAppearanceSet, SignalDriver, SignalHardwareEvidence,
+    BlockSignalsRequest, SignalOutputOwner, SelectedBlock, SignalAppearanceSet, SignalDriver, SignalHardwareEvidence,
     SignalHardwareFacts, SignalHardwareHost, SignalOutput, SignalStyle,
 };
 
@@ -92,6 +92,7 @@ fn input() -> CompileInput {
             occupied: Some(OCC),
             clear: Some(CLR),
         }],
+        own_claims: vec![],
     }
 }
 
@@ -195,7 +196,7 @@ fn blocking_issues_are_coded_scoped_and_suppress_all_edits() {
     let mut cases: Vec<(&str, CompileInput, CompileIssueCode, bool)> = Vec::new();
 
     let mut c = input();
-    c.hardware.hosts[0].outputs[9].owner = Some("Direct lamp 3".into());
+    c.hardware.hosts[0].outputs[9].owner = Some(SignalOutputOwner::DirectLamp(3));
     cases.push(("output owned", c, OutputInUse, true));
 
     let mut c = input();
@@ -204,7 +205,7 @@ fn blocking_issues_are_coded_scoped_and_suppress_all_edits() {
 
     let mut c = input();
     for o in c.hardware.hosts[0].outputs.iter_mut().skip(1) {
-        o.owner = Some("Mast 4 rule 1".into());
+        o.owner = Some(SignalOutputOwner::Mast(4));
     }
     cases.push(("capacity", c, OutputCapacity, true));
 
@@ -267,5 +268,71 @@ fn blocking_issues_are_coded_scoped_and_suppress_all_edits() {
             assert_eq!(issue.signal_id.as_deref(), Some(sid.as_str()), "{name}");
             assert_eq!(issue.node_key.as_deref(), Some(NODE), "{name}");
         }
+    }
+}
+
+fn claim(kind: ClaimedSlotKind, index: u32) -> ClaimedSlot {
+    ClaimedSlot { node_key: NODE.into(), kind, index }
+}
+
+/// A saved facility's own configuration: Mast 2 and Logic 1 are active and
+/// Mast 2 drives pins 9 and 10.
+fn recompile_input() -> CompileInput {
+    let mut c = input();
+    c.own_claims = vec![claim(ClaimedSlotKind::Mast, 2), claim(ClaimedSlotKind::Logic, 1)];
+    c.nodes[0].masts[1].in_use = true;
+    c.nodes[0].logic[0].in_use = true;
+    c.nodes[0].pending_edits.push(PendingEdit {
+        path: "Rule to Aspect/Mast[2]/Mast Processing".into(),
+        value: int(1),
+    });
+    c.nodes[0].pending_edits.push(PendingEdit {
+        path: "Conditionals/Logic[1]/Function".into(),
+        value: int(2),
+    });
+    for o in c.hardware.hosts[0].outputs.iter_mut().filter(|o| o.ordinal == 9 || o.ordinal == 10) {
+        o.owner = Some(SignalOutputOwner::Mast(2));
+    }
+    c
+}
+
+#[test]
+fn recompile_reuses_own_claimed_slots_and_own_pins() {
+    let result = compile_block_signals(&recompile_input());
+    assert_eq!(result.issues, vec![]);
+    assert_eq!(pairs(&result), expected_edits(2, 1, 10, 9));
+    assert_eq!(
+        result.claimed_slots,
+        vec![claim(ClaimedSlotKind::Mast, 2), claim(ClaimedSlotKind::Logic, 1)]
+    );
+}
+
+#[test]
+fn recompile_still_conflicts_with_pins_of_another_mast() {
+    let mut c = recompile_input();
+    c.hardware.hosts[0].outputs[9].owner = Some(SignalOutputOwner::Mast(3));
+    let result = compile_block_signals(&c);
+    assert!(codes(&result).contains(&CompileIssueCode::OutputInUse), "{:?}", result.issues);
+    assert!(result.edits.is_empty());
+}
+
+#[test]
+fn recompile_never_repicks_when_a_claimed_slot_is_unavailable() {
+    use CompileIssueCode::ClaimedSlotUnavailable;
+
+    let mut other_node = recompile_input();
+    other_node.own_claims[0].node_key = "050101010999".into();
+
+    let mut missing_mast = recompile_input();
+    missing_mast.nodes[0].masts.retain(|m| m.index != 2);
+
+    let mut missing_logic = recompile_input();
+    missing_logic.nodes[0].logic.retain(|l| l.index != 1);
+
+    for (name, case) in [("other node", other_node), ("missing mast", missing_mast), ("missing logic", missing_logic)] {
+        let result = compile_block_signals(&case);
+        assert!(codes(&result).contains(&ClaimedSlotUnavailable), "{name}: {:?}", result.issues);
+        assert!(result.edits.is_empty(), "{name}");
+        assert!(result.claimed_slots.is_empty(), "{name}");
     }
 }

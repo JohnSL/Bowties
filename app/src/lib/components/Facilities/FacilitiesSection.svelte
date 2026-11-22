@@ -16,6 +16,7 @@
   import {
     blockSignalsEditorActions,
     startBlockSignalsEditor,
+    startEditBlockSignalsEditor,
   } from '$lib/orchestration/blockSignalsEditorOrchestrator';
 
   let {
@@ -130,6 +131,7 @@
             template={templateFor(facility.templateId)}
             {resolvedEventIds}
             onRename={handleRename}
+            onEdit={startEditBlockSignalsEditor}
             onDelete={handleDelete}
             {onSelectChannel}
             {onAddChannel}

@@ -1,6 +1,7 @@
 import { listFacilities, type BlockSignalsRecord, type Facility, type SlotBinding } from '$lib/api/facilities';
 import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
 import type { LayoutEditDelta } from '$lib/types/bowtie';
+import { deepEqual } from '$lib/utils/deepEqual';
 import { generateUuidV4 } from '$lib/utils/uuid';
 
 /**
@@ -439,19 +440,6 @@ function sameSet(a: readonly string[], b: readonly string[]): boolean {
   const set = new Set(a);
   for (const x of b) if (!set.has(x)) return false;
   return true;
-}
-
-/** Structural equality for JSON-shaped records (key order insensitive). */
-function deepEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
-  if (Array.isArray(a) !== Array.isArray(b)) return false;
-  const ka = Object.keys(a as object);
-  const kb = Object.keys(b as object);
-  if (ka.length !== kb.length) return false;
-  return ka.every((k) =>
-    Object.prototype.hasOwnProperty.call(b, k)
-    && deepEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
 }
 
 export const facilitiesStore = new FacilitiesStore();

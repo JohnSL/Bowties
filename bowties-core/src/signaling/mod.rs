@@ -169,6 +169,19 @@ pub struct BlockSignalsRequest {
     /// channels in S2.
     #[serde(default)]
     pub bindings: Vec<SignalBindingSelection>,
+    /// Signals already saved for this facility, filled by the backend from the
+    /// layout. A derived signal whose protected block matches one keeps its
+    /// saved signal ID, so names and channels stay attached across edits.
+    #[serde(default)]
+    pub saved_signals: Vec<SavedSignalIdentity>,
+}
+
+/// The identity of one saved signal: its ID and the block it protects.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedSignalIdentity {
+    pub signal_id: String,
+    pub protected_block: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -316,7 +329,43 @@ pub enum SignalHardwareEvidence {
 pub struct SignalOutput {
     pub ordinal: u32,
     pub label: String,
-    pub owner: Option<String>,
+    pub owner: Option<SignalOutputOwner>,
+}
+
+/// Who currently drives a physical output. Serialized as its display label
+/// ("Mast 2", "Direct lamp 1") so the frontend can show "Taken by ...".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignalOutputOwner {
+    /// A Rule-to-Aspect mast (1-based).
+    Mast(u32),
+    /// A Direct Lamp Control row (1-based).
+    DirectLamp(u32),
+}
+
+impl std::fmt::Display for SignalOutputOwner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Mast(n) => write!(f, "Mast {n}"),
+            Self::DirectLamp(n) => write!(f, "Direct lamp {n}"),
+        }
+    }
+}
+
+impl Serialize for SignalOutputOwner {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for SignalOutputOwner {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let label = String::deserialize(deserializer)?;
+        let number = |prefix: &str| label.strip_prefix(prefix)?.parse::<u32>().ok();
+        number("Mast ")
+            .map(Self::Mast)
+            .or_else(|| number("Direct lamp ").map(Self::DirectLamp))
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown output owner '{label}'")))
+    }
 }
 
 /// Read-only, profile-supported output host facts. The backend gathers these
@@ -479,7 +528,7 @@ pub fn preview_block_signals_with_hardware(
             .iter()
             .find(|candidate| candidate.signal_id == signal.signal_id);
         match binding {
-            Some(binding) => project_signal_binding(signal, binding, &hardware, &mut issues),
+            Some(binding) => project_signal_binding(signal, binding, &hardware, &[], &mut issues),
             None => unbound = true,
         }
     }
@@ -505,8 +554,15 @@ fn project_signal_binding(
     signal: &mut SignalPreview,
     selection: &SignalBindingSelection,
     hardware: &SignalHardwareFacts,
+    own_masts: &[u32],
     issues: &mut Vec<ProposalIssue>,
 ) {
+    // Pins held by the facility's own masts are free to it.
+    let held_by_other = |output: &SignalOutput| match output.owner {
+        None => false,
+        Some(SignalOutputOwner::Mast(n)) => !own_masts.contains(&n),
+        Some(SignalOutputOwner::DirectLamp(_)) => true,
+    };
     if selection.role != ChannelRole::SignalIndication {
         issues.push(ProposalIssue::InvalidSignalBinding {
             signal_id: signal.signal_id.clone(),
@@ -593,7 +649,7 @@ fn project_signal_binding(
     let available = host
         .outputs
         .iter()
-        .filter(|output| output.owner.is_none())
+        .filter(|output| !held_by_other(output))
         .count();
     if available < 2 {
         issues.push(ProposalIssue::InsufficientSignalOutputCapacity {
@@ -611,12 +667,12 @@ fn project_signal_binding(
             .iter()
             .find(|output| output.ordinal == output_ordinal)
             .expect("validated output remains present");
-        if let Some(owner) = &output.owner {
+        if let Some(owner) = output.owner.filter(|_| held_by_other(output)) {
             issues.push(ProposalIssue::SignalOutputConflict {
                 signal_id: signal.signal_id.clone(),
                 node_key: node_key.clone(),
                 output: output_ordinal,
-                owner: owner.clone(),
+                owner: owner.to_string(),
             });
         }
     }

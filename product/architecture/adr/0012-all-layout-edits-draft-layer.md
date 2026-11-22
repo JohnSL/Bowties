@@ -320,3 +320,27 @@ mapped: Automatic Block Signals.
   request, and stages nothing if any blocking issue is reported. A failure
   after staging starts rolls back the channel, the facility and each staged
   edit (restoring any earlier hand edit on the same field).
+
+## 2026-11-22 extension: editing compiled facility intent
+
+Spec 020 E2a edits a saved Automatic Block Signals facility.
+
+- **One staging pipeline, two targets.** Create and update share one
+  facility-orchestrator pipeline: sync drafts, fresh compose, stage nothing on
+  a blocking issue, stage, roll back on failure. The update target replaces
+  the record (`setBlockSignalsRecord`), renames the facility and signal
+  channels, rebinds channels (`SetChannelBinding`, ADR-0013), and stages the
+  compiled edits. Rejected: a separate update function, which would let the
+  update path drift from create's fresh-facts guard and rollback.
+- **Recompilation stays in the claimed slots.** The compiler receives the
+  facility's claimed slots and recompiles into exactly those; pins owned by
+  the facility's own masts are not conflicts. A claimed slot that no longer
+  exists, or wiring on another node, is a blocking issue, never a re-pick.
+  Rejected: letting the backend strip the facility's slots from the facts and
+  keep picking the lowest free slot, which would drift to a lower slot when
+  one frees up and leave the old slot active.
+- **Saved signal identity wins.** A derived signal that protects the same
+  block as a saved signal keeps the saved signal ID (one-to-one); only
+  unmatched signals get a derived ID. This keeps names, channels and the
+  `signals` slot attached across reorient, and is the rule later block-list
+  edits refine.
