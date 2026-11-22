@@ -14,14 +14,15 @@
 
 ### Session 2026-11-22
 
-- Q: The S2R feedback release exposes more than this spec covers (movements in both directions, 2/3/4 aspects, turnouts, Restricting, far-end choices, approach lighting). Does this spec grow to match it? A: No. The preview release got no feedback, so the next goal is a working end-to-end release within this spec's original scope. Features beyond it are added afterward, one at a time, on top of the working path. The S2R pages stay. Choices outside this scope are shown unavailable ("Coming in a later release"), not removed, and the saved Line model must be able to hold them later without a migration.
+- Q: The S2R feedback release exposes more than this spec covers (movements in both directions, 2/3/4 aspects, turnouts, Restricting, far-end choices, approach lighting). Does this spec grow to match it? A: No. The preview release got no feedback, so the next goal is a working end-to-end release within this spec's original scope. Features beyond it are added afterward, one at a time, on top of the working path. The S2R pages stay. Choices outside this scope are shown disabled, with no "coming later" text, not removed, and the saved Line model must be able to hold them later without a migration.
 - Q: Which guided steps does this scope use? A: The storyboard's five steps: Blocks, Aspects, Appearance, Wiring, Review. They replace the earlier Blocks, Signals, Display, Bindings, Confirm. In this scope, Aspects and Appearance show fixed values (three-indication policy; one RG searchlight head, always lit). Wiring and Review are where the modeler chooses outputs and confirms.
+- Q: What do "save a draft" and "apply" mean in this spec? A: Bowties' existing lifecycle (FR-011, ADR-0001 2026-11-22 extension). Review's Done stages the facility, its signal channels and the compiled Signal LCC configuration as Pending Changes. "Save a draft" is Save; "apply" is the bus write that Save performs when connected, or the Sync Panel after an offline Save. There is no separate Apply action. "Read back" is the verification added in slice E4; until then, written values are never shown as verified.
 
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Operate a One-Block Line (Priority: P1)
 
-A modeler names an Automatic Block Signals facility, chooses eastward or westward travel, and selects an existing detected block. Bowties creates one named signal at that block's entrance. The modeler assigns its red and green outputs on a compatible Signal-LCC, reviews the result, saves a draft, and separately applies it. Occupied means Stop; clear means Clear, with no promise about track beyond this block.
+A modeler names an Automatic Block Signals facility, chooses eastward or westward travel, and selects an existing detected block. Bowties creates one named signal at that block's entrance. The modeler assigns its red and green outputs on a compatible Signal-LCC, reviews the result, and saves the layout. Saving while connected writes the configuration to the board; saving offline keeps it as Pending Changes that the Sync Panel writes later. Occupied means Stop; clear means Clear, with no promise about track beyond this block.
 
 **Why this priority**: A working occupancy-protected signal is useful on its own and establishes the normal creation and hardware lifecycle.
 

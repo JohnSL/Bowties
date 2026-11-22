@@ -98,3 +98,19 @@ S2 selections remain editor-transient. No `InformationChannel`, channel delta,
 claim, draft, patch, persistence record, or bus write is created by preview.
 Durable Line/channel references and reviewed patch lowering remain deferred to
 their later slices.
+
+## 2026-11-22 extension: signal outputs persisted as channels
+
+From Spec 020 E1, each signal in a saved Automatic Block Signals facility
+owns one persisted Information Channel: role `signal-indication`, style
+`two-driver-rg-signal`, binding `signalLccRgOutputs`. The signal record in
+the facility references the channel by ID. This lifts the 2026-11-08
+"editor-transient" restriction for saved facilities only; the preview
+still creates no channel, delta or write.
+
+Channels are created, rebound and removed through the existing channel
+deltas and draft store, so output ownership, "Used by" display in the
+Railroad panel and dirty state use one path. Considered and rejected:
+storing the two pins inline in the signal record, which would need a
+second output-ownership check and would hide signals from the Railroad
+panel.

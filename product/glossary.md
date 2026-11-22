@@ -133,7 +133,7 @@ _Avoid_: channel inventory (pre-018 surface, retired), channel list, hardware pa
 ## Facilities System
 
 **Facility**:
-A named, persisted instance of a **Behavior Template**, with one **Facility Slot** per template-declared slot. Each slot is optionally bound to one **Channel** by role. A facility has exactly one **Facility Status** (`Incomplete` if any slot empty; `Wired` if all slots filled, with the underlying bowtie(s) created via the existing bowtie creation mechanism). Persisted in `facilities.yaml`. A facility is a **UI veneer** over bowties — Spec 018 introduces no new sync, persistence, or deployment machinery for facilities themselves.
+A named, persisted instance of a **Behavior Template**, with one **Facility Slot** per template-declared slot. Each slot is optionally bound to one **Channel** by role. A facility has exactly one **Facility Status** (`Incomplete` if any slot empty; `Wired` if all slots filled, with the underlying bowtie(s) created via the existing bowtie creation mechanism). Persisted in `facilities.yaml`. A facility adds no sync or deployment machinery of its own: its effect on hardware is ordinary **Pending Change**s that ride Save (ADR-0001). Block Indicator is a UI veneer over bowties. **Automatic Block Signals** (Spec 020) also persists its own record (ordered blocks, signals, **Claimed Resource**s) in the facility.
 _Avoid_: arrangement, signal, device, behavior, automation (these describe future template families; "facility" is the generic noun)
 
 **Behavior Template**:
@@ -158,7 +158,7 @@ _Avoid_: provenance, source, origin, "system channel" / "manual channel" (vague)
 
 **Binding** (Channel Binding):
 The discriminated reference from a **Channel** to the specific pin(s) it claims on a specific subsystem on a specific node. Shape: `{ kind: 'connectorInput' | 'lampRow' | …, …style-specific fields }`. The `kind` MUST match the **Style**'s declared binding shape. Replaces the pre-018 `hardwareRef` field; see also that entry.
-_Avoid_: hardware reference (pre-018 term), wiring (wiring is the bowtie/bus side), target, anchor
+_Avoid_: hardware reference (pre-018 term), wiring (wiring is the bowtie/bus side), target, anchor. Exception: **Wiring** is the modeler-facing name of the Automatic Block Signals step where signal outputs are chosen, because modelers wire LEDs to those pins. Code and docs still call the result a binding.
 
 **Facility Status**:
 The derived lifecycle status of a **Facility**, computed by a pure function over slot fullness — never stored on persistence (ADR-0004). Two values: `Incomplete` (at least one slot empty; no underlying bowtie(s) exist for the template's mapping) and `Wired` (all slots filled; underlying bowtie(s) exist, created via the existing bowtie creation mechanism). Transitions are automatic; there is no separate "deploy" action in Spec 018.
@@ -167,6 +167,26 @@ _Avoid_: "Live" (the original Spec 018 draft used this; renamed to **Wired** to 
 **Style Constraint Contract**:
 A declaration on a **Style** describing how its **Channel**s manage the CDI fields of the pins they claim — fix a field to a specific value, restrict it to a subset of allowed values, or hide it entirely. Unmanaged fields stay freely user-editable. Spec 018 repositions the existing BOD-family `validityRules` (today on daughter-board entries) onto the `bod-block-detector-input` style; the renderer (the existing profile-driven relevance/validity surface) is unchanged. The user cannot put a managed field into a state that would invalidate the channel's semantics.
 _Avoid_: validity rules (the renderer mechanism; the contract is the source declaration), restrictions, locks, schema
+
+**Automatic Block Signals**:
+A **Facility** (Spec 020) that signals one or more existing detected blocks entered in travel order. Each block gets one entrance **Signal**. Its guided steps are Blocks, Aspects, Appearance, Wiring and Review. The facility compiles to Signal LCC configuration (mast, Rule to Aspect, conditionals) staged as **Pending Change**s. Code and older specs also call one instance a "Line".
+_Avoid_: Signal Line (pre-S2R name), ABS system, signal wizard
+
+**Signal**:
+An entrance signal of an **Automatic Block Signals** facility. It has a stable identity, a name, the block it protects, and one `signal-indication` **Channel** for its outputs. It shows an **Aspect** chosen by its own block's occupancy and the next signal's Aspect.
+_Avoid_: mast (the Signal LCC CDI structure that realises a signal), head (one lamp group of a signal)
+
+**Aspect**:
+The meaning a **Signal** conveys to a train: Stop, Approach or Clear in the three-indication policy. Aspects are policy; the lamps lit for each aspect are its **Indication**.
+_Avoid_: color, state, rule (a Rule is the Signal LCC CDI entry that selects an aspect)
+
+**Indication**:
+The physical appearance that shows an **Aspect**: which lamps are lit, for example red for Stop, red plus green for Approach and green for Clear on a two-driver RG searchlight. Decided by the signal's **Style** and appearance, not by the aspect policy.
+_Avoid_: aspect (when lamps are meant), color
+
+**Claimed Resource**:
+A Signal LCC slot (mast, Logic conditional, Track Circuit) that an **Automatic Block Signals** facility configured, recorded in its facility record per node. Recomposition reuses the same slots; removal resets only claimed slots. A slot that is needed but already in use is a blocking issue, never silently overwritten.
+_Avoid_: allocation, reservation, owned resource
 
 **Hardware-owned Channel**:
 See **Channel Ownership**.

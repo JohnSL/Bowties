@@ -11,3 +11,21 @@ The fix is to reorder: save the layout file first (with pending changes staged a
 - **Option C: Suppress draft pruning during save** — fragile around error paths and cancel.
 - **Option E: Catalog-freshness guard** — architecturally clean but complex state tracking. Over-engineered for this problem.
 - **Three-phase reorder (chosen):** Eliminates the category of bugs by fixing the ordering. Reuses existing offline changes infrastructure.
+
+## 2026-11-22 extension: facilities reach hardware through Save
+
+Automatic Block Signals (Spec 020) is the first facility that generates
+Signal LCC logic (mast, Rule to Aspect, conditionals). It reaches the
+board through this ADR's route, as Block Indicator already does:
+`facilityOrchestrator` stages the compiled values as Pending Changes
+through `configEditor.applyEdit`. Save writes the layout file first and
+then, when connected, writes those values to the bus. Offline, the Sync
+Panel writes them later.
+
+Considered and rejected for the first applied release: a separate Apply
+action with an immutable reviewed proposal, snapshot generations and its
+own recovery engine (Spec 020 plan, 2026-11-07 assessment). It would be a
+second write path beside Save and the Sync Panel, and a large new seam
+before any signal lights. Revisit only if multi-node partial failure
+cannot be reported truthfully through the existing writers. Readback
+verification extends those writers rather than replacing them.

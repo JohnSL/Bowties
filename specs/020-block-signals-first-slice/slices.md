@@ -1,47 +1,38 @@
 # Slices: One-Direction Automatic Block Signals
 
 Branch: 020-block-signals-first-slice
-Generated: 2026-11-07
-Status: 2/9 slices complete (S1, S2R); S2 superseded; S3–S8 to be re-sketched
+Generated: 2026-11-07; roadmap regenerated 2026-11-22 for the end-to-end pivot
+Status: 2/9 slices complete (S1, S2R); S2 and the old S3–S8 superseded by E1a–E6
 
-Approved input: [Architecture Assessment](plan.md#architecture-assessment) and
-[feature specification](spec.md). Roadmap review split the assessment's first
-slice into three UX checkpoints so feedback can precede persistence and hardware
-application. The remaining five slices preserve the approved design contracts.
-
-`/build` expands one card at a time with just-in-time tasks. S1 is complete,
-including user-confirmed native Tauri review. S2 is checkpointed (commit
-`7b1b641`) with its resource check and visual gate still open. S2R, a
-feedback release that rebuilds Blocks and Aspects to the revised storyboard,
-is done. Downstream cards remain `sketched`.
+Approved input: the
+[2026-11-22 Architecture Assessment](plan.md#architecture-assessment-end-to-end-first-release-2026-11-22)
+and the [feature specification](spec.md). `/build` expands one card at a
+time with just-in-time tasks.
 
 **Pivot (2026-11-22): end-to-end first, then add features.** The release
 with Blocks and Aspects drew no feedback. Instead of building more preview
 pages, the next work makes the spec's original scope work end to end:
 - one direction;
-- the three-indication policy;
+- the three-indication policy (Stop, Approach, Clear);
 - no turnouts;
 - one RG searchlight head, always lit;
-- save, apply, and check on the bench.
+- save, write to the board, and check on the bench.
 
-Features beyond that scope are added one at a time after it works (see the
+Features beyond that scope are added one at a time after E6 (see the
 [2026-11-22 clarification](spec.md#session-2026-11-22)).
 
-Consequences for the roadmap:
-- **The Appearance feedback slice is paused.** Its design (expected aspects
-  evaluated in the core on a scene, a simulated train, signal type and the
-  mast drawing, optional APB) was presented on 2026-11-19 but not decided or
-  recorded in `plan.md`. Two of its findings carry into the pivot:
-  - the core owns rule evaluation, which Review and bench checks need;
-  - signal type stays separate from channel Style.
-- **The steps become Blocks, Aspects, Appearance, Wiring, Review.** Aspects
-  and Appearance show this scope's fixed values. S2R options outside the
-  scope show as "Coming in a later release" and must not reach a saved Line.
-- **Wiring replaces S2's Display and Bindings.** S2's output-binding work
-  in `7b1b641` is the starting point for the Wiring step.
-- **S3 to S8 need re-sketching before `/build`.** Run `/design` for the
-  end-to-end path; it re-sketches these cards against the S2R pages and the
-  five steps.
+What this means for earlier work:
+- S1 and S2R are done; their cards below are kept as the record.
+- S2 (Display and Bindings) is superseded. Its output-binding work in
+  `7b1b641` is the starting point for the Wiring step in E1a.
+- The old S3–S8 cards (immutable proposal, separate Apply, recovery engine)
+  are superseded by E1a–E6. The plan's F1 replaces the separate Apply with
+  the existing Save and Sync Panel writers (ADR-0001, 2026-11-22 extension).
+- The Appearance feedback design presented on 2026-11-19 stays paused. Two
+  of its findings carry forward: the core owns rule evaluation, and signal
+  type stays separate from channel Style.
+- Options outside this scope are shown disabled, with no "coming later"
+  text, and cannot reach a saved facility.
 
 ## Architecture
 
@@ -49,112 +40,98 @@ Consequences for the roadmap:
 
 ```mermaid
 flowchart LR
-    UI[Railroad and facility rendering] --> Orch[Existing facility and config orchestration]
-    Orch --> Drafts[Frontend facility and config drafts]
-    Drafts --> Mirror[Layout draft sync and config mirror]
-    Legacy[Overlapping explicit config flush] --> Backend
-    Mirror --> Backend[Backend layout and sync workflows]
-    Backend --> Layout[Core facilities and LayoutState]
-    Backend --> Executor[Existing apply executor and readback]
-    Executor --> Peer[Existing peer-session protocol interfaces]
-    Peer --> Nodes[Physical nodes]
+    Steps[Blocks and Aspects pages] --> Editor[Editor store and orchestrator]
+    Editor --> Preview[Backend preview: free outputs, block facts]
+    Preview --> Core[Core Line policy]
+    Facility[Block Indicator facility] --> FOrch[Facility orchestrator]
+    FOrch --> Drafts[Facility, channel and configuration drafts]
+    Drafts --> Save[Save: file first, then bus writes]
+    Drafts --> Sync[Sync Panel writes when offline]
+    Save --> Nodes[Boards]
+    Sync --> Nodes
 ```
+
+The Automatic Block Signals editor ends at a preview; nothing is saved or
+written.
 
 ### After
 
 ```mermaid
 flowchart LR
-    UI[Guided Line steps and diagram] --> Editor[Editor state and Line orchestration]
-    Editor --> Proposal[Backend immutable proposal service]
-    Headless[Headless caller] --> Proposal
-    Proposal --> Core[Core ordered Line policy and narrow compiler]
-    Proposal --> Facts[Authoritative configuration and observed facts]
-    Editor --> Lifecycle[Shared acknowledged staging and lifecycle service]
-    Headless --> Lifecycle
-    Lifecycle --> Drafts[Existing frontend drafts and effective facade]
-    Drafts --> Sync[Single acknowledged draft synchronization owner]
-    Sync --> Layout[Core facilities and LayoutState]
-    Lifecycle --> Executor[Existing executor with per-patch evidence]
-    Executor --> Peer[Existing peer-session read and write interfaces]
-    Peer --> Nodes[Physical nodes]
-    Executor --> Recovery[Durable verification and recovery evidence]
-    Recovery --> Layout
-    Facts --> Proposal
+    Steps[Blocks, Aspects, Appearance, Wiring, Review] --> Editor[Editor store and orchestrator]
+    Editor -->|Done| FOrch[Facility orchestrator]
+    FOrch --> Compose[Backend compose: node facts]
+    Compose --> Compiler[Core compiler: edits, claimed slots, issues]
+    FOrch --> Drafts[Facility record, signal channel, Pending Changes]
+    Drafts --> Save[Save: file first, then bus writes]
+    Drafts --> Sync[Sync Panel writes when offline]
+    Save --> Nodes[Signal LCC]
+    Sync --> Nodes
+    Nodes -.->|E4 readback| Status[Verified, mismatched, unavailable]
 ```
-
-The diagrams show responsibilities, not new parallel persistence or apply paths.
-Frontend UI edits remain frontend-authoritative; backend mirrors do not become a
-second UI draft owner. Headless callers use the shared validated lifecycle
-contract settled at S4, not a compiler-only bypass.
 
 ### Patterns
 
-- **Ordered aggregate**: entered block membership is travel order and the only
-  source of downstream relationships; direction is diagram metadata.
-- **Functional core / imperative shell**: core policy, identity retention,
-  compilation and resource diffs are pure; the backend supplies facts and effects.
-- **Progressive proposal boundary**: incomplete editor input produces explicit
-  missing-fact issues, not a fabricated valid or stageable hardware proposal.
-- **Immutable proposal**: confirmation authorizes the exact reviewed revision
-  and snapshot generations, never a silently reconstructed patch.
-- **Effective-view facade**: rendering consumes composed saved/draft state and
-  aggregate dirty state rather than local fallback or dirty calculations.
-- **Single acknowledged staging owner**: stage the facility and config batch
-  coherently, consolidate overlapping flushing, and await synchronization before
-  dependent preview/apply.
-- **Forward recovery**: fresh readback yields a new validated correction; neither
-  acknowledgement nor a multi-node operation implies verified atomic success.
+- **Facility composes into Pending Changes**: the facility record is the
+  intent; its hardware effect is ordinary configuration edits that ride Save
+  and the Sync Panel. No second write path.
+- **Pure compiler, imperative shell**: the core compiles a Line plus node
+  facts into configuration edits, claimed slots and issues; the backend
+  supplies facts; the orchestrator stages the result.
+- **Claimed resources recorded on the facility**: recomposition touches the
+  same slots; removal releases only those.
+- **Gated options**: the model and pages keep S2R's broader options; the
+  compiler accepts only this release's scope.
+- **Accept older, reject newer**: the layout manifest check opens older
+  versions and refuses newer ones (ADR-0005, 2026-11-22 extension).
 
 ### Module Changes
 
-Proposed module names are placements, not assertions that those modules exist.
-
 | Module | Today | After |
 |---|---|---|
-| Core facilities and layout persistence | Facility deltas and saved/captured/draft ownership | Line records, compatible persistence, ownership and recovery roundtrip |
-| Proposed core signaling module | No Line policy/compiler owner | Ordered policy, stable signal retention and narrow Signal-LCC patch/resource diff |
-| Proposed backend signaling service | No unified Line proposal boundary | Authoritative facts, progressive validation and immutable reviewed proposals |
-| Existing draft/config orchestration | Reactive mirror and overlapping explicit flushing | Shared acknowledged synchronization and coherent Line staging |
-| Frontend layout facade and facility drafts | Effective facilities and aggregate dirty state | Line projections and edits in existing Save/discard/close participation |
-| Proposed Line editor and orchestrator | No guided Line editor | Deterministic step state and lifecycle-scoped sequencing |
-| Backend layout draft/capture commands | Existing sync, save/open and recovery boundaries | Line deltas and durable evidence through the same boundaries |
-| Existing sync executor/readback | Write acknowledgements do not establish Line verification | Proposal-linked per-node/per-patch outcomes, verification and fresh-read recovery |
-| Guided components and Railroad composition | Existing facility/channel rendering | Blocks, Signals, Display, Bindings, Confirm and truthful status |
-| Channel events, profile bindings and style helpers | Shared detection/path/translation owners | Reused without a competing event or style model |
-| Existing protocol interfaces | Peer-session transport/read/write ownership | Reused; no new protocol abstraction planned |
+| Core signaling (`compiler.rs` new) | Line policy and S2 binding projection | Pure compiler: Line + node facts → configuration edits, claimed slots, issues |
+| Core behavior templates | Block Indicator only | Also registers `automatic-block-signals` |
+| Core facilities document | No Line fields; `schemaVersion` "1.0" | Optional ABS record (blocks, direction, signals, claimed slots); "2.0" |
+| Core layout manifest | Version 4, exact match required | Version 5; accepts 4 to 5, rejects newer |
+| Backend signaling | Preview facts for the editor | Compose command: gathers node facts and calls the compiler |
+| Editor store and orchestrator | Blocks and Aspects preview | Five steps, scope gating, Wiring choices, edit mode; Done hands off to the facility orchestrator |
+| Facility orchestrator | Composes Block Indicator facilities | Also composes and tears down ABS facilities |
+| Step components | BlocksStep, AspectsStep | Plus AppearanceStep, WiringStep, ReviewStep; out-of-scope options disabled |
+| Existing writers (Save, Sync Panel) | Write and record acknowledgement | Unchanged through E3; E4 adds readback |
 
 ### Behavior Summary
 
 | Slice | User-visible change | Demoable? |
 |---|---|---|
-| S1: Choose blocks and name signals | Exercise Blocks/Signals and a real one-block diagram | Yes |
-| S2: Choose display and bind real outputs | Exercise Display/Bindings with actual wiring choices | Yes |
-| S3: Review the complete terminal proposal | Exercise Confirm and all five steps before persistence | Yes |
-| S4: Keep or discard Line drafts | Stage, save, reopen, rename, reorient or discard without applying | Yes |
-| S5: Safely operate one signal | Apply, verify, recover and safely remove owned resources | Yes, terminal evidence required |
-| S6: Extend on one board | Append a block while retaining the original signal | Yes, internal-signal bench-gated |
-| S7: Operate across nodes | Distribute signals and recover visibly from partial application | Yes, cross-board bench-gated |
-| S8: Maintain a three-block Line | Reorder, prepend, rebind and remove members safely | Yes |
+| E1a: Stage and save a one-block signal offline | Five steps, Done, Pending Changes, Save and reopen | Yes |
+| E1b: Light the signal on the bench | LED red when occupied, green when clear | Yes, bench |
+| E2: Edit and remove | Rename, reorient, rebind and remove a saved facility | Yes, bench |
+| E3: Two blocks on one board | Approach behind an occupied block | Yes, bench |
+| E4: Verify writes | Signals marked verified, mismatched or unavailable | Yes, bench |
+| E5: Across boards | Signals on two boards coordinate; partial failure shown | Yes, two boards |
+| E6: Maintain a three-block facility | Reorder, prepend, remove a middle block | Yes |
 
 ## Roadmap
 
 | # | Slice title | Label | Blocked by | Status |
 |---|---|---|---|---|
 | S1 | Choose blocks and name signals | HITL | None | done |
-| S2 | Choose display and bind real outputs | HITL | S1 | superseded by Wiring (re-sketch) |
+| S2 | Choose display and bind real outputs | HITL | S1 | superseded by E1a (Wiring) |
 | S2R | Feedback release: Blocks and Aspects per revised storyboard | HITL | S1, S2 checkpoint | done |
-| S3 | Review the complete terminal proposal | HITL | S2 | sketched |
-| S4 | Keep or discard Line drafts | HITL | S3 | sketched |
-| S5 | Safely operate one signal | HITL | S4 + terminal-recipe evidence | sketched |
-| S6 | Extend on one board | HITL | S5 + internal-signal bench evidence | sketched |
-| S7 | Operate across nodes | HITL | S6 + cross-board/receiver-restart evidence | sketched |
-| S8 | Maintain a three-block Line | AFK | S7 | sketched |
+| E1a | Stage and save a one-block signal offline | HITL | S2R | sketched |
+| E1b | Light the signal on the bench | HITL | E1a + terminal-recipe evidence | sketched |
+| E2 | Edit and remove | HITL | E1b | sketched |
+| E3 | Two blocks on one board | HITL | E2 + same-board Approach evidence | sketched |
+| E4 | Verify writes | HITL | E1b | sketched |
+| E5 | Across boards | HITL | E3 + E4 + cross-board Approach and receiver-restart evidence | sketched |
+| E6 | Maintain a three-block facility | AFK | E5 | sketched |
 
-Hardware gates refer to [single-board evidence](manual-track-circuit-test.md) and
-[two-board evidence](manual-two-board-test.md). Measured subsets do not establish
-full acceptance. Outstanding trigger, restart and quiet-bus checks remain gates
-where relevant. Failure handling belongs in every affected slice, not a final
-hardening pass. No horizontal foundation or test-only slice is authorized.
+Hardware gates refer to [single-board evidence](manual-track-circuit-test.md)
+and [two-board evidence](manual-two-board-test.md). The terminal recipe and
+same-board Approach have passed; cross-board Approach and receiver restart
+are outstanding. Failure handling belongs in every affected slice, not a
+final hardening pass. No horizontal foundation or test-only slice is
+authorized.
 
 ### S1: Choose blocks and name signals [HITL]
 
@@ -378,7 +355,7 @@ manifest and incidental core lockfile version rewrite were cleaned up.
 **Intent**: Exercise Display and Bindings and inspect actual red/green wiring choices.
 **Boundary**: Rendering -> editor/orchestration -> backend authoritative facts -> core hardware validation/compiler.
 **Blocked by**: S1.
-**Status**: tasked
+**Status**: superseded by E1a (Wiring step); output-binding work in `7b1b641` carries forward
 **Complexity**: large
 **User stories**: US1, US4 (display/binding preview and validation portions).
 
@@ -690,149 +667,142 @@ Deferred until the save/apply slice:
 - Running the backend adapter and headless parity tests on a machine where
   the Tauri test executable starts.
 
-### S3: Review the complete terminal proposal [HITL]
+### E1a: Stage and save a one-block signal offline [HITL]
 
-**Intent**: Exercise Review and complete five-step navigation before saving/applying exists.
-**Pivot note (2026-11-22)**: Re-sketch with `/design`. The steps are now Blocks, Aspects, Appearance, Wiring, Review, and "Confirm" below means Review.
-**Boundary**: Rendering -> orchestration -> backend immutable proposal -> core compiler/resource diff.
-**Blocked by**: S2.
+**Intent**: The modeler completes all five steps, clicks Done, and saves offline; the facility, its signal channel and the Pending Changes survive reopening.
+**Boundary**: Step components → editor store/orchestrator → facility orchestrator → facility, channel and configuration drafts → backend compose → core compiler → layout file.
+**Blocked by**: S2R.
 **Status**: sketched
 
 **Acceptance criteria**:
-- [ ] All five steps are exercisable; Confirm shows protected block, real wiring, terminal behavior, expected indications, claims/conflicts, affected configuration and every affected node.
-- [ ] Missing observations remain unavailable; missing required facts or incompatible/conflicting bindings block proposal eligibility with scoped issues.
-- [ ] Edits invalidate the prior review; confirmation identifies the exact proposal revision and snapshot generations.
-- [ ] Preview performs zero bus writes and creates no lasting reservations.
-- [ ] Identical guided/headless complete input uses the same service and yields equal normalized proposals, patches and issues.
-- [ ] Back/forward navigation preserves valid choices and identities; saving/applying is explicitly unavailable until its later slice.
+- [ ] Blocks, Aspects, Appearance, Wiring and Review are all exercisable. Aspects and Appearance show this release's fixed values.
+- [ ] Options outside this release's scope are shown disabled with no "coming later" text, including the existing S2R notes (APB, Interlocking Plant, physical signals). No disabled option can reach a saved facility.
+- [ ] Wiring lets the modeler pick a node, a red pin and a green pin. A pin already in use, or a mast or Logic slot that is not free, shows a blocking issue on Review, and Done is unavailable.
+- [ ] Review lists the protected block, the behavior (red when occupied, green when clear), the outputs and the claimed slots.
+- [ ] Done adds a facility card to the Railroad tab, adds a signal-indication channel to the Railroad panel whose "Used by" names the facility, and shows the generated values as Pending Changes in the node's configuration.
+- [ ] Facility-only edits enable the Save toolbar, appear in the unsaved-changes breakdown, count as in-memory edits, and trigger the navigation/layout-close and window-close prompts. Canceling a close keeps the edits.
+- [ ] Discard removes the facility, the channel and the Pending Changes together, and the toolbar and prompts return to clean.
+- [ ] Saving offline and reopening restores the facility, the channel and the Pending Changes. Closing the layout or starting a new one leaves no editor, draft or mirror state behind.
+- [ ] A version-4 layout opens unchanged. A layout with a newer manifest version is refused with a "made by a newer Bowties" message. `docs/technical/layout-file-format.md` describes the policy.
 
-**Architecture note**: Establish the immutable reviewed-revision/snapshot contract used by staging and application, without client-reconstructed patches.
+**Architecture note**: Introduces the pure compiler and claimed slots recorded on the facility, and makes Automatic Block Signals the first facility that composes mast and Logic configuration into Pending Changes and the first to persist a signal channel (ADR-0001, ADR-0005 and ADR-0013 2026-11-22 extensions). Rewrite the ABS seam invariant in `aiwiki/seams.md` when this lands.
 
-### S4: Keep or discard Line drafts [HITL]
+### E1b: Light the signal on the bench [HITL]
 
-**Intent**: Stage, save, reopen, rename, reorient or discard a Line without applying hardware changes.
-**Boundary**: Rendering -> stores/orchestration -> backend draft mirror -> core facilities/layout persistence.
-**Blocked by**: S3.
+**Intent**: Saving while connected writes the configuration to the board; the LED is red when the block is occupied and green when it is clear.
+**Boundary**: Save with bus writes and the Sync Panel → Signal LCC.
+**Blocked by**: E1a + terminal-recipe evidence (passed).
 **Status**: sketched
 
 **Acceptance criteria**:
-- [ ] Facility metadata and node patches stage as one coherent batch or neither does. Synchronization failures are visible and block dependent preview/application.
-- [ ] Line-only edits enable the Save toolbar, appear in the unsaved-changes per-bucket breakdown, trigger navigation/layout-close and window-close prompts, and count as in-memory edits.
-- [ ] Save preserves metadata and pending node patches with zero bus writes; reopening restores actual pending work, not example defaults.
-- [ ] Discard restores the baseline, removes pending claims from frontend/backend views and reconciles Save/close indicators. Canceling a close retains edits.
-- [ ] Rename/orientation-only edits produce zero hardware patches and preserve membership order, signal identities, protected blocks, bindings, links and resource claims.
-- [ ] Close/new/recovery reset leaves no prior Line editor, draft, mirror or observation state in another layout; a fresh live session does not carry stale observations.
-- [ ] Reopened review, catalog and existing facility composition consume consistent effective saved/draft state. Snapshot/save and CDI access preserve existing CDI-backed views online and offline.
-- [ ] Older layouts load unchanged; malformed or unknown Line records produce explicit load/reconciliation errors rather than disappearing.
-- [ ] Layout file versions are bumped for the Line schema change. Decide in `/design` which markers change and how the manifest check treats older versions:
-  - `manifest.yaml`'s `LAYOUT_SCHEMA_VERSION` is 4 (`bowties-core/src/layout/manifest.rs:7`). `validate()` rejects any other value.
-  - The per-file `schemaVersion` is `"1.0"` in `facilities.yaml` (`facilities.rs:47`) and `"2.0"` in `channels.yaml` (`channels.rs:98`). Neither is checked on read.
-  - Serde ignores unknown fields, so without a version check an older Bowties could open a newer layout and silently drop its Line records on save.
-  - Tests cover both directions: a layout with a newer version is rejected with a clear message, and a layout from before the change still opens as the chosen policy says.
-- [ ] Guided/headless callers share the acknowledged staging/save/discard lifecycle; neither bypasses validation or creates another persistent draft owner.
+- [ ] A connected Save writes the staged values to the board. A layout saved offline and opened while connected writes them through the Sync Panel.
+- [ ] On the bench, an occupied block shows red and a clear block shows green, following each change in occupancy.
+- [ ] Nothing in the app says the signal is verified after writing; readback arrives in E4.
+- [ ] Block detection and unrelated configuration on the board are unchanged.
+- [ ] Reopening after a connected Save shows the facility with no leftover Pending Changes, and the Bowties catalog shows the same cards before and after reopening.
 
-**Architecture note**: Settle frontend draft authority, awaited synchronization and headless lifecycle contracts. Extend existing facility drafts, dirty aggregation and reset participation while consolidating overlapping flush ownership.
+**Architecture note**: First use of the existing Save and Sync Panel writers for a facility that generates logic, with no separate Apply. A failure here that cannot be reported truthfully through those writers is the trigger the ADR-0001 extension names for revisiting.
 
-### S5: Safely operate one signal [HITL]
+### E2: Edit and remove [HITL]
 
-**Intent**: Apply a terminal signal, inspect actual verification, recover interruptions and remove only its owned resources.
-**Boundary**: UI -> lifecycle/save/sync orchestration -> backend executor/readback/persistence -> existing protocol interface -> hardware.
-**Blocked by**: S4 + supported terminal-recipe evidence.
+**Intent**: The modeler reopens a saved facility to rename, reorient, rebind its outputs, or remove it.
+**Boundary**: Editor (edit mode from the saved record) → facility orchestrator → compiler → drafts → Save.
+**Blocked by**: E1b.
 **Status**: sketched
 
 **Acceptance criteria**:
-- [ ] Stale review never writes. The existing executor receives exactly the reviewed, acknowledged draft batch without lost or duplicate edits.
-- [ ] Write acknowledgement alone is unverified, never displayed as verified hardware state.
-- [ ] Mid-node interruption, mismatched or unavailable readback remains visibly unverified/diverged/unavailable through save/reopen and recovery. Retry reads actual state and validates a new delta.
-- [ ] Disconnection/reconnection exposes truthful observation freshness; expected indications never replace unavailable live observations.
-- [ ] Applied/read-back/reopened Line identity, names, direction, protected block and output bindings agree. Physical occupied/clear terminal cases match red/green Stop/Clear in 100% of tests.
-- [ ] Reviewed removal blocks uncertain ownership/external references, releases only proven Line-owned resources and retains ownership/recovery evidence until verified or safely recorded as pending.
-- [ ] Shared blocks/detection, existing facility/channel displays and unrelated configuration survive removal; generic facility teardown is not proof of safe Line release.
-- [ ] Apply/recovery reconciles the Save toolbar, unsaved-changes breakdown, in-memory-edit and close-prompt surfaces with actual remaining work rather than hiding unresolved changes.
-- [ ] Guided/headless callers use the same validated apply/readback/recovery service and existing persistence checkpoints.
+- [ ] Opening a saved facility shows its saved choices on every step.
+- [ ] Renaming or reorienting stages zero configuration edits and keeps the signal's identity, protected block and outputs.
+- [ ] Rebinding moves the outputs; the old pins show as free in the Railroad panel and the new ones show "Used by" the facility.
+- [ ] Removal resets only the claimed slots, returns Direct Lamp rows to "Used by Mast", keeps block detection, and removes the facility card and channel.
+- [ ] Every edit and removal shows in the Save toolbar, the unsaved-changes breakdown and the close prompts, and Discard restores the saved facility.
+- [ ] On the bench, the signal follows the block after a rebind and goes dark after removal.
 
-**Architecture note**: Establish guarded release and durable forward recovery inside the existing executor. Acknowledgement is not verification; do not add a parallel apply engine or automatic rollback.
+**Architecture note**: Recompiling from the claimed slots on the facility record is what makes release safe (plan F4); this slice tests that design. Generic facility teardown is not proof that a slot is safe to release.
 
-### S6: Extend on one board [HITL]
+### E3: Two blocks on one board [HITL]
 
-**Intent**: Append a second block to a working Line while retaining the original signal.
-**Boundary**: Editor -> proposal/compiler -> existing draft/apply/readback lifecycle -> hardware.
-**Blocked by**: S5 + completed relevant internal-signal bench evidence.
+**Intent**: The modeler adds a second block; the first signal keeps its identity and shows Approach behind an occupied block.
+**Boundary**: Editor → compiler (receiving logic, Track Circuit) → drafts → Save → Signal LCC.
+**Blocked by**: E2 + same-board Approach evidence (passed).
 **Status**: sketched
 
 **Acceptance criteria**:
-- [ ] Review explains terminal-to-internal conversion, downstream links, actual allocations and affected changes before writes.
-- [ ] The original signal retains identity, name, protected block and compatible outputs; the new terminal signal protects only its own block.
-- [ ] All four two-block occupancy combinations match selected rules, physical outputs and published/received restrictions: own occupied block wins Stop; clear upstream plus downstream Stop gives Approach; clear upstream plus downstream Approach/Clear gives Clear.
-- [ ] The receiving circuit belongs to the upstream host even for same-node links. Capacity checks use actual current allocations, not manufacturer maximums alone.
-- [ ] Approach activates red+green and publishes Approach Track Speed independently of appearance mapping, without subjective blended-color approval.
-- [ ] Extension remains saveable/discardable, appears in the Save toolbar and unsaved-change/close surfaces, and resets through the existing lifecycle.
-- [ ] Invalid extension changes neither committed hardware nor lasting claims; unavailable observations remain explicitly unavailable.
-- [ ] Equivalent guided/headless extensions yield equal normalized proposals and use the same staging/apply/readback service.
+- [ ] Adding a block keeps the first signal's identity, name, protected block and outputs; the new signal protects only its own block.
+- [ ] Review explains that the first signal now has a signal after it, and lists the added logic and claimed slots.
+- [ ] All four two-block occupancy combinations match the policy on the bench: own block occupied gives Stop (red); clear with the next block occupied gives Approach (red and green together); both clear gives Clear (green).
+- [ ] The Track Circuit Link Address comes from values freshly read from the board, not saved or assumed ones.
+- [ ] A needed slot that is not free blocks Done with a scoped issue; nothing is overwritten.
+- [ ] The change shows in the Save toolbar, the unsaved-changes breakdown and the close prompts, and can be discarded.
 
-**Architecture note**: Introduce the narrow measured receiving-circuit implementation. Derive downstream links from ordered membership, not a second independently persisted graph.
+**Architecture note**: Adds the receiving-logic recipe and a Track Circuit derived from block order, not a separately stored link graph.
 
-### S7: Operate across nodes [HITL]
+### E4: Verify writes [HITL]
 
-**Intent**: Distribute signals across boards and recover truthfully from partial application.
-**Boundary**: Editor -> backend/core -> existing apply/readback/recovery -> multiple nodes.
-**Blocked by**: S6 + completed relevant cross-board/receiver-restart evidence.
+**Intent**: After writing, Bowties reads the values back and marks each signal verified, mismatched or unavailable.
+**Boundary**: Existing writers (`write_modified_values`, `apply_sync_changes`) → readback → status on the facility card and Review.
+**Blocked by**: E1b.
 **Status**: sketched
 
 **Acceptance criteria**:
-- [ ] Receivers on upstream hosts bind to freshly hardware-read publisher Link Addresses, not assumed saved/edited values or arbitrary events. Readback verifies receiver bindings.
-- [ ] Verified cross-node selected rules, output combinations and published/received restrictions match the tested policy; review includes every affected node/reference.
-- [ ] Failures between nodes and within a later node distinguish acknowledged, verified, not-attempted and unknown work. Partial application is never shown complete and its evidence survives reopen.
-- [ ] Reconnect marks observation freshness truthfully and offers fresh-read recovery without stale replay or assumed rollback. Unavailable/diverged facts block unsafe destructive recovery.
-- [ ] Unresolved work remains visible in the Save toolbar, unsaved-change breakdown, in-memory-edit and close-prompt surfaces.
-- [ ] Receiver restart, final trigger verification and sustained quiet-bus behavior satisfy relevant manual gates before hardware acceptance; record firmware input-loss behavior without inventing a fail-safe guarantee.
-- [ ] Guided/headless callers use the same operation/recovery service and persistent evidence, not a separate multi-node executor or resource registry.
+- [ ] After a connected Save or a Sync Panel write, each signal is marked verified only when its values read back as written.
+- [ ] A mismatched value marks the signal mismatched, names the value, and stays visible after reopening.
+- [ ] When the board cannot be read, the signal is marked unavailable, never shown as live or verified.
+- [ ] A mismatch or unavailable result keeps the work visible in the Save toolbar or Sync Panel rather than hiding it.
 
-**Architecture note**: Widen S5's operation and ownership contracts across non-atomic physical nodes rather than introducing another executor or resource registry.
+**Architecture note**: Readback extends the existing writers rather than adding a second executor (ADR-0001 2026-11-22 extension).
 
-### S8: Maintain a three-block Line [AFK]
+### E5: Across boards [HITL]
 
-**Intent**: Reorder, prepend, rebind and remove nonfinal members while preserving surviving signals.
-**Boundary**: Editor -> core identity/resource diff -> existing lifecycle -> all affected nodes.
-**Blocked by**: S7.
+**Intent**: Signals hosted on two Signal LCC boards coordinate correctly, and a partial failure is reported per board.
+**Boundary**: Compiler (cross-node receiver) → drafts → Save / Sync Panel → two nodes.
+**Blocked by**: E3 + E4 + cross-board Approach and receiver-restart evidence (outstanding).
 **Status**: sketched
 
 **Acceptance criteria**:
-- [ ] Review shows changed links, claims/releases and old/new hosts before writes; uncertain ownership or references block destructive changes.
-- [ ] Surviving signal identities/names and compatible bindings/resources persist through apply/readback/reopen after reorder, prepend, rebind and nonfinal removal.
-- [ ] Prepending leaves the former terminal signal terminal; appending converts it to internal without replacing it.
-- [ ] Removing the final remaining block requires Line removal. Line/member removal preserves shared detection, existing facility/channel views and unrelated configuration.
-- [ ] All eight three-block occupancy combinations match policy, physical outputs and published/received restrictions in both orientations. Cover same-node, cross-node, swapped-host and A-B-A placements; the full one-/two-/three-block physical matrix achieves 100% agreement.
-- [ ] With all blocks clear except the last, terminal Stop yields middle Approach and first Clear. Middle occupied yields middle Stop and first Approach; own occupancy always takes precedence.
-- [ ] Orientation-only edits change the diagram but produce zero hardware patches and preserve operating order, identities, protected blocks, bindings, links and claims.
-- [ ] Maintenance participates in Save/discard/close/reset behavior, including toolbar, breakdown, in-memory-edit and close-prompt consumers, and consistent effective facility/catalog views online and offline.
-- [ ] Equivalent guided/headless maintenance and destructive inputs agree on normalized proposals/issues and use the established lifecycle.
-- [ ] At least 4/5 modelers unfamiliar with Signal-LCC logic identify protected block, expected indication and required output wiring from review without consulting raw configuration.
+- [ ] The receiver on the upstream board binds to the downstream board's Link Address read fresh from hardware, and readback verifies it.
+- [ ] Cross-board Stop, Approach and Clear match the policy on the bench.
+- [ ] Review lists every affected board.
+- [ ] When writes fail partway, each board's outcome is shown (written and verified, written but unverified, not attempted) and the facility is never shown complete. The outcome survives reopening.
+- [ ] Unfinished work stays visible in the Save toolbar, the unsaved-changes breakdown and the close prompts.
+- [ ] The receiver-restart manual check passes before this slice is accepted.
+
+**Architecture note**: Widens E4's readback across boards that cannot be written atomically, without a second executor or resource registry.
+
+### E6: Maintain a three-block facility [AFK]
+
+**Intent**: The modeler reorders blocks, adds one at the start, or removes a middle block, and surviving signals keep their identity and wiring.
+**Boundary**: Editor → compiler → drafts → Save.
+**Blocked by**: E5.
+**Status**: sketched
+
+**Acceptance criteria**:
+- [ ] All eight three-block occupancy combinations match the policy on the bench.
+- [ ] Adding a block at the start leaves the former last signal as the last one; adding at the end gives it a signal after it without replacing it.
+- [ ] After reorder, prepend or middle removal, surviving signals keep their identity, name, outputs and claimed slots through Save and reopen.
+- [ ] Removing the only remaining block requires removing the facility. Removal keeps block detection and unrelated configuration.
+- [ ] Maintenance edits show in the Save toolbar, the unsaved-changes breakdown and the close prompts, and can be discarded.
 
 ## Architecture and Acceptance Guardrails
 
-- Preserve [assessment findings and audit dispositions](plan.md#findings).
-  Unknown audit rows are not passes. Correct directly touched contracts and Line
-  surfaces, not a repository-wide facade migration; do not recreate the deleted
-  saved-tree cache or copy prefix-based identity gates.
-- Use the [seam Consumer lists](../../aiwiki/seams.md) as coverage checklists.
-  Dirty-state acceptance covers every consumer, not just a store predicate.
-  Preserve snapshot/save, CDI access, catalog and effective facility composition
-  when extending persistent layout state. Resolve stale mirror-consumer contracts
-  at S4/S5 rather than treating obsolete implementations as target architecture.
+- Follow the [2026-11-22 assessment](plan.md#architecture-assessment-end-to-end-first-release-2026-11-22).
+  The 2026-11-07 findings and audit dispositions still hold where it does
+  not replace them. Unknown audit rows are not passes.
+- Use the [seam Consumer lists](../../aiwiki/seams.md) as coverage
+  checklists. Dirty-state acceptance covers every consumer (Save toolbar,
+  unsaved-changes breakdown, in-memory edits, navigation and window-close
+  prompts), not just a store predicate. New layout-scoped state registers
+  with the Lifecycle Reset seam.
+- Every configuration value goes through `configEditor.applyEdit`. No
+  direct `setModifiedValue` calls, no second write path, no separate Apply.
 - Follow [code placement and ownership](../../product/architecture/code-placement-and-ownership.md).
-  Components render/emit intent; orchestrators sequence workflows; the backend
-  validates facts and effects; core policy/compiler remains pure.
-- Reuse canonical detection, profile paths, binding/style translation and typed
-  node identity. No second Line document, general recipe framework, global role
-  registry, manually allocated Track Circuit identity or apply engine.
-- Any new protocol emission or peer-state behavior requires the ADR-0019
-  JMRI-compatibility gate; existing interface reuse does not authorize new wire
-  behavior by assumption.
-- Apply the [testing strategy](../../product/quality/testing-strategy.md) when
-  each slice is tasked. Automated checks do not replace the manual hardware
-  matrix or five-modeler review; perceived yellow hue is never a pass/fail gate.
-- Update durable behavior/ownership documentation and relevant AIWiki mappings
-  as implementation lands. Extend existing staging/recovery ADRs rather than
-  introducing a generic architecture. Capture deferred issues only with explicit
-  confirmation; do not absorb adjacent ideas into this feature.
+  Components render and emit intent; orchestrators sequence; the backend
+  gathers facts; the compiler stays pure.
+- Reuse canonical detection, profile paths, binding and style translation,
+  and typed node identity. No second Line document, general recipe
+  framework, global role registry or manually allocated Track Circuit.
+- Any new protocol emission requires the ADR-0019 JMRI-compatibility gate.
+- Apply the [testing strategy](../../product/quality/testing-strategy.md)
+  when each slice is tasked. Automated checks do not replace the bench
+  matrix; perceived yellow hue is never a pass/fail gate.
+- Capture deferred ideas as issues only with explicit confirmation.

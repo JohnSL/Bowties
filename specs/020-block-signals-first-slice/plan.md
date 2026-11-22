@@ -136,7 +136,7 @@ Routes compose the editor; components render step state and emit intent; stores 
 
 Confirm shows expected aspects, protected blocks, real outputs, owned allocations/releases and every affected node. Observations carry availability and are never replaced by preview defaults. Partial apply is a persistent, visible recovery state.
 
-#### Approved wizard UX contract
+#### Approved guided-flow UX contract
 
 The [Automatic Block Signals storyboard](../proposals/signaling-ux/signaling-facilities-storyboard.html#line)
 is the approved interaction and visual structure, specifically
@@ -151,10 +151,10 @@ Indicator; it must not become an unrelated inline form.
 Authorized S1 differences are functional, not a UX redesign: one block and one
 direction only; Display, Bindings and Confirm are visibly unavailable; no
 staging, saving or application; unavailable observations remain explicit.
-Preserve the wizard framing and hierarchy when restricting those capabilities.
+Preserve the guided-flow framing and hierarchy when restricting those capabilities.
 Any additional visual/interaction departure requires user approval.
 
-The wizard keeps Cancel flush left and Back/Next flush right on both pages.
+The editor keeps Cancel flush left and Back/Next flush right on both pages.
 Block selection opens a searchable, scrollable selection dialog labelled
 Add block..., not an inline list. Form labels and text boxes use the storyboard's
 horizontal rows. Preserve user-facing ABS emphasis and the Signals track strip,
@@ -165,7 +165,7 @@ Caller acceptance must compare the running Blocks and Signals screens against
 those storyboard sections, including selection, navigation, cancel/close,
 orientation, app styling and narrow-screen usability. Record results and allowed
 differences in `slices.md`; automated field/text assertions alone cannot establish
-wizard completion.
+guided-flow completion.
 
 For this Tauri workflow, visual acceptance must use the native app and user
 screenshots. Do not use the integrated browser as a substitute. Preserve the
@@ -180,7 +180,7 @@ Line's operational membership. Required hardware capabilities remain in the
 backend proposal but are not displayed as routine notices on these steps where
 no save or apply action is offered; actual fact and IPC errors remain visible.
 
-The Line wizard uses the shared dialog's opt-in contained layout. A roomy
+The Line editor uses the shared dialog's opt-in contained layout. A roomy
 viewport keeps the upper context and footer fixed and lets policy/indication
 panes scroll independently; a constrained viewport uses one inner workspace
 scrollbar. Do not add a competing outer body scrollbar or hide unreachable
@@ -442,3 +442,180 @@ ADR-0012/0015 at the staging and recovery seams as the concrete contracts land;
 correct stale invariant text rather than inventing a new generic architecture.
 No terminology change or newly rejected approach requires a separate glossary
 entry or ADR at this stage.
+
+## Architecture Assessment: end-to-end first release (2026-11-22)
+
+Reviewed with the user on 2026-11-22 after the
+[end-to-end pivot](slices.md). This section supersedes the vertical
+slices of the 2026-11-07 assessment above. Its findings and audit
+dispositions still hold except where this section replaces them (F1 below
+replaces the separate-apply route; F2 narrows 2026-11-07 F4).
+
+Scope: one direction, the three-indication policy, no turnouts, one RG
+searchlight head (always lit) per signal on Signal LCC. Steps: Blocks,
+Aspects, Appearance, Wiring, Review.
+
+### Affected Modules
+
+| Module | Layer | Impact | Notes |
+|--------|-------|--------|-------|
+| `bowties-core/src/signaling/` (new `compiler.rs`) | Core | Modified / New | Pure compiler: Line + node facts → configuration edits, claimed slots, issues. The retained S2 binding projection becomes the Wiring check. |
+| `bowties-core/src/behavior_templates.rs` | Core | Modified | Registers `automatic-block-signals` |
+| `bowties-core/src/layout/facilities.rs` | Core | Modified | Optional ABS record on a facility: ordered blocks, direction, signals (ID, name, protected block, channel ID), claimed slots per node. `schemaVersion` "2.0". |
+| `bowties-core/src/layout/manifest.rs` | Core | Modified | `LAYOUT_SCHEMA_VERSION` 5; `validate()` accepts 4 up to the current version, rejects newer |
+| `bowties-core/src/layout/channels.rs` | Core | Touched | Persists `signal-indication` / `signalLccRgOutputs` channels (types already exist) |
+| `app/src-tauri/src/signaling/` | Backend | Modified | Compose command: gathers node facts (free masts and Logic slots, block occupancy event IDs, output owners) and calls the compiler |
+| `app/src/lib/stores/blockSignalsEditor.svelte.ts` | Store | Modified | Five steps, scope gating, Wiring choices, edit mode from a saved record |
+| `app/src/lib/orchestration/blockSignalsEditorOrchestrator.ts` | Orchestrator | Modified | Review Done hands the Line to `facilityOrchestrator` |
+| `app/src/lib/orchestration/facilityOrchestrator.ts` | Orchestrator | Modified | Composes and tears down an ABS facility: record, channels, configuration edits through `configEditor.applyEdit` |
+| `facilities` / `channels` stores | Store | Touched | Existing draft contracts; new entries only |
+| `AppearanceStep`, `WiringStep`, `ReviewStep` | Component | New | Appearance shows fixed values; Wiring picks node, red pin, green pin; Review lists block, behavior, outputs, claimed slots |
+| `BlocksStep`, `AspectsStep`, `EndChipMenu` | Component | Modified | Out-of-scope options shown disabled in the existing APB style |
+
+### Assessment Summary
+
+Bowties already has a route from a facility to the board. A Block
+Indicator facility stages composed event IDs as Pending Changes on node
+configuration. Save writes the layout file and then, when connected, the
+same values to the bus (ADR-0001). Offline, the Sync Panel writes them
+later. The ABS facility uses this route instead of the separate apply
+engine the 2026-11-07 assessment proposed. Dirty state, discard, close
+prompts and lifecycle reset come from the existing draft layer.
+
+Patterns:
+- **Facility composes into Pending Changes.** The facility record is the
+  intent; its hardware effect is ordinary configuration edits that ride
+  Save. No second write path.
+- **Pure compiler, imperative shell.** The core compiles; the backend
+  supplies facts; the orchestrator stages the result.
+- **Claimed resources recorded on the facility.** Recomposition touches
+  the same slots; removal releases only those.
+- **Gated options.** The model and UI keep S2R's broader options; the
+  compiler accepts only this release's scope.
+
+### Findings
+
+**F1: Apply through Save, not a separate Apply**
+- Category: depth / duplication
+- Affected: facilityOrchestrator, configuration drafts, save workflow
+- Concern: a separate apply engine with immutable reviewed revisions is a
+  large new seam before anything lights, and duplicates the existing
+  Save-then-bus and Sync Panel writers.
+- Decision: include. The spec's "save a draft, then apply" maps to Save
+  offline then the Sync Panel, or Save while connected.
+
+**F2: Writing is not verifying**
+- Category: testability / truthfulness (FR-015, SC-005)
+- Affected: `write_modified_values` (`app/src-tauri/src/commands/cdi.rs`), `apply_sync_changes` (`app/src-tauri/src/commands/sync_panel.rs`)
+- Concern: both writers record acknowledgement only; neither reads back.
+- Decision: include as slice E4. E1 never labels written values
+  verified. Readback extends the existing writers; no second executor.
+
+**F3: Signal outputs are Information Channels**
+- Category: duplication / ADR-0013
+- Affected: channels, Railroad panel, ABS record
+- Concern: inline pins would duplicate output-ownership checks and hide
+  signals from the Railroad panel.
+- Decision: include. Each signal's pins become a `signal-indication`
+  channel (style `two-driver-rg-signal`, binding `signalLccRgOutputs`)
+  referenced from the signal record. ADR-0013 extended (2026-11-22).
+
+**F4: Claimed slots are recorded and checked**
+- Category: locality
+- Affected: compiler, backend facts, ABS record
+- Concern: generic facility teardown cannot prove a mast or Logic slot is
+  safe to release (2026-11-07 F3).
+- Decision: include. The compiler picks free slots using the backend's
+  existing owner detection; a needed slot that is not free is a blocking
+  issue, never a silent overwrite. Removal resets only claimed slots,
+  with Direct Lamp rows returned to "Used by Mast".
+
+**F5: Layout version policy**
+- Category: debt / data safety
+- Affected: manifest, facilities document, `docs/technical/layout-file-format.md`
+- Concern: serde ignores unknown fields, so an older Bowties could drop ABS
+  records on re-save; the manifest check requires an exact match, so a
+  plain bump would also reject every existing layout.
+- Decision: include in E1. Manifest version 5 and facilities "2.0";
+  `validate()` accepts 4 up to the current version and rejects newer ones
+  with a "made by a newer Bowties" message. Shipped 0.4.0 already rejects
+  v5. ADR-0005 extended (2026-11-22); fix the stale format doc.
+
+**F6: Terminology**
+- Category: glossary
+- Decision: include. Glossary updated (2026-11-22): Facility no longer
+  claims "no new persistence"; new entries for Automatic Block Signals,
+  Signal, Aspect, Indication and Claimed Resource; Binding notes that
+  "Wiring" is the modeler-facing step name. "Wizard" removed from this plan.
+
+**F7: Seams**
+- Category: debt
+- Decision: include. Duplicate Config Draft Backend Mirror entry removed
+  from `aiwiki/seams.md`; the ABS seam records the planned Done/compose
+  route and Last-audited 2026-11-22. The ABS invariant text is rewritten
+  when E1 lands. Seam ADR audit tables (ADR-0004, 0011, 0012, 0015) carry
+  the 2026-11-07 dispositions; only S2R files changed in those seams
+  since. ABS work fixes only drift it touches (writes through the facade,
+  no-op suppression in compose).
+
+### Vertical Slices
+
+**E1: One-block signal, end to end**
+- Type: HITL
+- Layers: components → editor store/orchestrator → facility orchestrator → facilities/channels/config drafts → backend compose → core compiler → Save → Signal LCC
+- Blocked by: S2R (done); single-board terminal evidence
+- Test: integration test from Blocks through Done shows the facility, one channel and the expected Pending Changes; core compiler tests for the terminal recipe and blocking issues; version-policy tests (newer rejected, version 4 opens)
+- Acceptance: all five steps exercisable with out-of-scope options disabled; Wiring picks node, red pin, green pin; Review lists block, behavior, outputs and claimed slots; Save writes; LED shows red when occupied and green when clear; the layout reopens with the facility
+- Split seam if needed in `/build`: E1a Done + Save to file offline (Pending Changes visible in the node's configuration); E1b Save while connected + bench check
+
+**E2: Edit and remove**
+- Type: HITL
+- Layers: editor → facility orchestrator → compiler → drafts → Save
+- Blocked by: E1
+- Test: rename and orientation changes stage zero configuration edits; rebinding moves outputs; removal resets only claimed slots and keeps block detection
+- Acceptance: on the bench, rebind and remove behave as above
+
+**E3: Two blocks on one board**
+- Type: HITL
+- Layers: editor → compiler (receiver logic, Track Circuit) → drafts → Save → Signal LCC
+- Blocked by: E2; same-board Approach evidence
+- Test: compiler tests for the internal-signal recipe; all four two-block occupancy combinations
+- Acceptance: appending keeps the first signal's identity; red+green for Approach behind an occupied block; Track Circuit Link Address taken from freshly read hardware
+
+**E4: Verify writes**
+- Type: HITL
+- Layers: existing writers → readback → status display
+- Blocked by: E1
+- Test: written values are read back and each signal is marked verified, mismatched or unavailable
+- Acceptance: nothing is shown verified without a readback; unavailable observations are never shown as live
+
+**E5: Across boards**
+- Type: HITL
+- Layers: compiler (cross-node receiver) → drafts → Save / Sync Panel → two nodes
+- Blocked by: E3, E4; cross-board Approach and receiver-restart evidence
+- Test: cross-node Approach; partial failure reports each node's outcome
+- Acceptance: partial application is never shown complete
+
+**E6: Maintain a three-block facility**
+- Type: AFK
+- Layers: editor → compiler → drafts → Save
+- Blocked by: E5
+- Test: reorder, prepend, remove a middle block; all eight occupancy combinations
+- Acceptance: surviving signals keep identity and bindings
+
+Decisions: Review and staging are one slice (E1). Out-of-scope options
+are disabled choices, not hidden. E1 uses one Signal LCC per facility;
+Blink and the Show check are deferred until after E6.
+
+### Deferred Improvements
+
+None proposed. Appearance features (signal types, approach lighting,
+simulated train, APB), turnouts, both directions and 2- or 4-aspect
+policies return as increments after E6, per the
+[2026-11-22 clarification](spec.md#session-2026-11-22).
+
+### Architecture Decisions
+
+- ADR-0001: 2026-11-22 extension (facilities reach hardware through Save; a separate Apply is rejected for now).
+- ADR-0005: 2026-11-22 extension (layout version policy).
+- ADR-0013: 2026-11-22 extension (signal outputs persisted as channels).

@@ -150,3 +150,26 @@ structure (the original ADR commitment), and it hides the in-memory three-layer
 projection (the ADR-0015 commitment). Both are visible to the rest of the backend
 only through intent-shaped functions and the `LayoutState` query / mutation
 surface. See ADR-0015 for the full surface, invariants, and rationale.
+
+## 2026-11-22 extension: layout version policy
+
+A layout folder carries three version markers: `manifest.yaml`
+`schemaVersion` (`LAYOUT_SCHEMA_VERSION` in `layout/manifest.rs`) and the
+per-document `schemaVersion` in `facilities.yaml` and `channels.yaml`.
+Only the manifest is checked when a layout opens.
+
+Rules:
+- **Bump on any change that an older Bowties would mishandle,** including
+  new fields. Serde ignores unknown fields, so an older build would open a
+  newer layout, drop the new data, and lose it on its next save. Bump the
+  manifest version and the affected document's version together.
+- **Accept older, reject newer.** `validate()` accepts any manifest
+  version from the oldest supported one up to the current one, and
+  rejects a newer one with a message that the layout was made by a newer
+  Bowties. Versions 1 to 4 required an exact match; Spec 020 E1 moves to
+  this policy with version 5, accepting 4 and 5. Shipped builds that
+  require an exact match already refuse version 5.
+- **No migration code** while Bowties is pre-1.0 unless a slice needs
+  one. An older document must still deserialize with serde defaults.
+- Tests cover a newer version rejected and the oldest supported version
+  opening.
