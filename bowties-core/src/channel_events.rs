@@ -81,6 +81,19 @@ pub fn resolve_connector_input_path_prefix(
         .cloned()
 }
 
+/// Path prefix for a `SignalLccRgOutputs` signal-indication channel.
+///
+/// Always `None`: live observation of signal-indication state is not
+/// implemented yet (Spec 020 E4), so the channel has no observable state
+/// events and resolves to an empty event-ID map.
+pub fn resolve_signal_lcc_rg_outputs_path_prefix(
+    _tree: &NodeConfigTree,
+    _green_output: u32,
+    _red_output: u32,
+) -> Option<Vec<String>> {
+    None
+}
+
 /// Compute the CDI path prefix for a `Direct Lamp Control` row.
 ///
 /// Walks the tree for a segment named `"Direct Lamp Control"` and returns the
@@ -506,6 +519,12 @@ mod tests {
             result.is_empty(),
             "consumer-only tree must yield zero hits when asked for producer leaves"
         );
+    }
+
+    #[test]
+    fn signal_lcc_rg_outputs_has_no_observable_event_path_prefix() {
+        let tree = make_lamp_tree(8);
+        assert!(resolve_signal_lcc_rg_outputs_path_prefix(&tree, 1, 2).is_none());
     }
 
     #[test]

@@ -4,16 +4,38 @@ import type {
   EntranceEnd,
   ExitEnd,
   FacilitySignalSettings,
+  ComposeIssue,
   ListedBlock,
   Movements,
   SelectedDetectedBlock,
+  SignalOutputHost,
   SignalSettings,
+  SignalWiring,
   TravelDirection,
 } from '$lib/api/signaling';
 import type { TurnoutShape } from '$lib/components/BlockSignals/trackGeometry';
 import { generateUuidV4 } from '$lib/utils/uuid';
 
-export type BlockSignalsStep = 'blocks' | 'aspects';
+export type BlockSignalsStep = 'blocks' | 'aspects' | 'appearance' | 'wiring' | 'review';
+
+/** Review is listed but deferred to a later release; it is never navigable. */
+export const BLOCK_SIGNALS_STEPS: ReadonlyArray<{ id: BlockSignalsStep; enabled: boolean }> = [
+  { id: 'blocks', enabled: true },
+  { id: 'aspects', enabled: true },
+  { id: 'appearance', enabled: true },
+  { id: 'wiring', enabled: true },
+  { id: 'review', enabled: false },
+];
+
+/** The wiring chosen so far for one signal; `null` until chosen. */
+export interface SignalWiringChoice {
+  nodeKey: string;
+  redOutput: number | null;
+  greenOutput: number | null;
+}
+
+/** Settings this release cannot compile; Done is refused while any is set. */
+export type OutOfScopeSetting = 'aspects' | 'approachLighting' | 'movements';
 
 const DEFAULT_SETTINGS: FacilitySignalSettings = {
   aspects: 3,
@@ -36,6 +58,16 @@ export interface BlockSignalsEditorView {
   readonly turnoutShapes: Record<string, TurnoutShape>;
   readonly preview: BlockSignalsPreview | null;
   readonly error: string | null;
+  readonly steps: ReadonlyArray<{ id: BlockSignalsStep; enabled: boolean }>;
+  readonly outputHosts: SignalOutputHost[];
+  readonly wiringComplete: boolean;
+  readonly outOfScopeSettings: OutOfScopeSetting[];
+  readonly issues: ComposeIssue[];
+  readonly finishError: string | null;
+  readonly canFinish: boolean;
+  issuesForSignal(signalId: string): ComposeIssue[];
+  issuesForNode(nodeKey: string): ComposeIssue[];
+  wiringFor(signalId: string): SignalWiringChoice | null;
   canMoveTurnout(turnoutId: string, delta: -1 | 1): boolean;
 }
 
@@ -62,6 +94,10 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
   private _turnoutCount = 0;
   private _preview = $state<BlockSignalsPreview | null>(null);
   private _error = $state<string | null>(null);
+  private _wiring = $state<Record<string, SignalWiringChoice>>({});
+  private _issues = $state<ComposeIssue[]>([]);
+  private _checkFresh = $state(false);
+  private _finishError = $state<string | null>(null);
 
   get open(): boolean { return this._open; }
   get step(): BlockSignalsStep { return this._step; }
@@ -77,6 +113,96 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
   get turnoutShapes(): Record<string, TurnoutShape> { return this._turnoutShapes; }
   get preview(): BlockSignalsPreview | null { return this._preview; }
   get error(): string | null { return this._error; }
+  get steps(): ReadonlyArray<{ id: BlockSignalsStep; enabled: boolean }> { return BLOCK_SIGNALS_STEPS; }
+  get facilityId(): string { return this._facilityId; }
+
+  /** Signal LCC hosts and their outputs as the backend preview reports them. */
+  get outputHosts(): SignalOutputHost[] { return this._preview?.outputHosts ?? []; }
+
+  /** Every signal in the preview has a node and two distinct outputs. */
+  get wiringComplete(): boolean {
+    const signals = this._preview?.signals ?? [];
+    return signals.length > 0 && signals.every((signal) => {
+      const choice = this._wiring[signal.signalId];
+      return !!choice && choice.redOutput !== null && choice.greenOutput !== null;
+    });
+  }
+
+  /** The wiring for the preview's signals; empty unless complete. */
+  signalWirings(): SignalWiring[] {
+    if (!this.wiringComplete) return [];
+    return (this._preview?.signals ?? []).map((signal) => {
+      const choice = this._wiring[signal.signalId];
+      return {
+        signalId: signal.signalId,
+        nodeKey: choice.nodeKey,
+        redOutput: choice.redOutput as number,
+        greenOutput: choice.greenOutput as number,
+      };
+    });
+  }
+
+  /** Settings that this release cannot compile into a facility. */
+  get outOfScopeSettings(): OutOfScopeSetting[] {
+    const found: OutOfScopeSetting[] = [];
+    const overrides = Object.values(this._signalOverrides);
+    if (this._settings.aspects !== 3 || overrides.some((o) => o.aspects !== 3)) found.push('aspects');
+    if (this._settings.approachLighting !== 'alwaysLit' || overrides.some((o) => o.approachLighting !== 'alwaysLit')) {
+      found.push('approachLighting');
+    }
+    if (this._movements !== 'oneDirection') found.push('movements');
+    return found;
+  }
+
+  get issues(): ComposeIssue[] { return this._issues; }
+  get finishError(): string | null { return this._finishError; }
+  issuesForSignal(signalId: string): ComposeIssue[] { return this._issues.filter((i) => i.signalId === signalId); }
+  issuesForNode(nodeKey: string): ComposeIssue[] { return this._issues.filter((i) => i.nodeKey === nodeKey); }
+
+  /** Done is offered only for complete, in-scope wiring whose latest check found nothing. */
+  get canFinish(): boolean {
+    return this._step === 'wiring'
+      && this.wiringComplete
+      && this.outOfScopeSettings.length === 0
+      && this._checkFresh
+      && this._issues.length === 0;
+  }
+
+  /** Any edit makes the last compose check stale. */
+  invalidateCheck(): void {
+    this._checkFresh = false;
+    this._finishError = null;
+  }
+
+  acceptCheck(issues: ComposeIssue[]): void {
+    this._issues = issues;
+    this._checkFresh = true;
+  }
+
+  clearCheck(): void {
+    this._issues = [];
+    this._checkFresh = false;
+  }
+
+  setFinishError(message: string): void { this._finishError = message; }
+
+  wiringFor(signalId: string): SignalWiringChoice | null { return this._wiring[signalId] ?? null; }
+
+  /** Choosing a different node clears the pins chosen on the previous one. */
+  chooseWiringNode(signalId: string, nodeKey: string): void {
+    if (this._wiring[signalId]?.nodeKey === nodeKey) return;
+    this._wiring = { ...this._wiring, [signalId]: { nodeKey, redOutput: null, greenOutput: null } };
+  }
+
+  /** Red and green must differ; a clashing choice is ignored. */
+  chooseRedOutput(signalId: string, output: number): void { this.choosePin(signalId, 'redOutput', 'greenOutput', output); }
+  chooseGreenOutput(signalId: string, output: number): void { this.choosePin(signalId, 'greenOutput', 'redOutput', output); }
+
+  private choosePin(signalId: string, pin: 'redOutput' | 'greenOutput', other: 'redOutput' | 'greenOutput', output: number): void {
+    const choice = this._wiring[signalId];
+    if (!choice || choice[other] === output) return;
+    this._wiring = { ...this._wiring, [signalId]: { ...choice, [pin]: output } };
+  }
 
   start(initialName: string): void {
     this.clear();
@@ -85,7 +211,9 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
     this._facilityId = generateUuidV4();
   }
 
-  navigate(step: BlockSignalsStep): void { this._step = step; }
+  navigate(step: BlockSignalsStep): void {
+    if (BLOCK_SIGNALS_STEPS.some((item) => item.id === step && item.enabled)) this._step = step;
+  }
   setFacilityName(name: string): void { this._facilityName = name; }
   setDirection(direction: TravelDirection): void { this._direction = direction; }
   setMovements(movements: Movements): void { this._movements = movements; }
@@ -248,6 +376,10 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
     this._turnoutCount = 0;
     this._preview = null;
     this._error = null;
+    this._wiring = {};
+    this._issues = [];
+    this._checkFresh = false;
+    this._finishError = null;
   }
 }
 

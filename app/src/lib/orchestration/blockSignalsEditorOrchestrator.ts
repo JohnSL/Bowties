@@ -1,4 +1,5 @@
 import {
+  composeBlockSignals,
   previewBlockSignals,
   type EntranceEnd,
   type ExitEnd,
@@ -10,25 +11,33 @@ import {
 } from '$lib/api/signaling';
 import type { TurnoutShape } from '$lib/components/BlockSignals/trackGeometry';
 import {
+  createBlockSignalsFacility,
+  pendingEditsForWiring,
+} from '$lib/orchestration/facilityOrchestrator';
+import {
   blockSignalsEditorStore as store,
   type BlockSignalsStep,
 } from '$lib/stores/blockSignalsEditor.svelte';
 
 /**
  * Sequences the transient Automatic Block Signals editor: each edit updates
- * the store, then asks the backend for a fresh preview. Only the newest
- * response is accepted; cancel and layout reset discard any in flight.
+ * the store, then asks the backend for a fresh preview. On the wiring step a
+ * complete wiring is also checked by compose (no writes). Only the newest
+ * preview or check is accepted; cancel, Done and layout reset discard any in
+ * flight. Done hands the editor's input to the facility workflow.
  */
 class BlockSignalsEditorOrchestrator {
   private requestGeneration = 0;
+  private finishing = false;
 
   start(initialName: string): void {
     this.requestGeneration += 1;
     store.start(initialName);
   }
 
-  navigate(step: BlockSignalsStep): void {
+  async navigate(step: BlockSignalsStep): Promise<void> {
     store.navigate(step);
+    await this.refreshCheck();
   }
 
   cancel(): void {
@@ -45,17 +54,82 @@ class BlockSignalsEditorOrchestrator {
     store.setTurnoutShape(turnoutId, shape);
   }
 
-  /** Apply an edit to the request, then refresh the preview. */
-  async edit(change: () => void): Promise<void> {
+  /** Wiring choices change no request, so no new preview is needed. */
+  async wire(change: () => void): Promise<void> {
+    store.invalidateCheck();
     change();
-    await this.refreshPreview();
+    await this.refreshCheck();
   }
 
-  private async refreshPreview(): Promise<void> {
+  /** Create the facility from the editor's input; the editor closes only on success. */
+  async finish(): Promise<void> {
+    if (this.finishing || !store.canFinish || !store.preview) return;
+    this.finishing = true;
+    const generation = ++this.requestGeneration;
+    try {
+      const result = await createBlockSignalsFacility({
+        facilityId: store.facilityId,
+        name: store.facilityName,
+        line: store.previewRequest(),
+        wiring: store.signalWirings(),
+        signals: store.preview.signals.map((signal) => ({
+          signalId: signal.signalId,
+          name: signal.name,
+          protectedBlock: signal.protectedBlockIds[0],
+        })),
+      });
+      if (generation !== this.requestGeneration) return;
+      if (result.ok) {
+        this.requestGeneration += 1;
+        store.reset();
+      } else if ('issues' in result) {
+        store.acceptCheck(result.issues);
+      } else {
+        const { error } = result;
+        store.setFinishError(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      this.finishing = false;
+    }
+  }
+
+  /** Apply an edit to the request, then refresh the preview. */
+  async edit(change: () => void): Promise<void> {
+    store.invalidateCheck();
+    change();
+    if (await this.refreshPreview()) await this.refreshCheck();
+  }
+
+  /** Compose-check complete wiring on the wiring step; otherwise clear the check. */
+  private async refreshCheck(): Promise<void> {
+    if (store.step !== 'wiring' || !store.wiringComplete) {
+      store.clearCheck();
+      return;
+    }
+    const requestGeneration = ++this.requestGeneration;
+    const wiring = store.signalWirings();
+    try {
+      const response = await composeBlockSignals({
+        facilityId: store.facilityId,
+        line: store.previewRequest(),
+        wiring,
+        pendingEdits: pendingEditsForWiring(wiring),
+      });
+      if (requestGeneration === this.requestGeneration) store.acceptCheck(response.issues);
+    } catch (error) {
+      if (requestGeneration === this.requestGeneration) {
+        store.clearCheck();
+        store.setFinishError(error instanceof Error ? error.message : String(error));
+      }
+    }
+  }
+
+  /** Resolves true when this request is still the newest once settled. */
+  private async refreshPreview(): Promise<boolean> {
     const requestGeneration = ++this.requestGeneration;
     if (store.blocks.length === 0) {
       store.clearPreview();
-      return;
+      return true;
     }
 
     try {
@@ -68,6 +142,7 @@ class BlockSignalsEditorOrchestrator {
         store.setError(error instanceof Error ? error.message : String(error));
       }
     }
+    return requestGeneration === this.requestGeneration;
   }
 }
 
@@ -75,7 +150,8 @@ export const blockSignalsEditorOrchestrator = new BlockSignalsEditorOrchestrator
 const o = blockSignalsEditorOrchestrator;
 
 export const startBlockSignalsEditor = (initialName: string): void => o.start(initialName);
-export const navigateBlockSignalsEditor = (step: BlockSignalsStep): void => o.navigate(step);
+export const navigateBlockSignalsEditor = (step: BlockSignalsStep): Promise<void> => o.navigate(step);
+export const finishBlockSignalsEditor = (): Promise<void> => o.finish();
 export const cancelBlockSignalsEditor = (): void => o.cancel();
 export const resetBlockSignalsEditorForNewLayout = (): void => o.resetForNewLayout();
 export const setTurnoutShape = (turnoutId: string, shape: TurnoutShape): void => o.setTurnoutShape(turnoutId, shape);
@@ -104,10 +180,14 @@ export const setFacilitySignalSettings = (change: Partial<FacilitySignalSettings
 export const setSignalOverride = (signalId: string, settings: SignalSettings | null) =>
   o.edit(() => store.setSignalOverride(signalId, settings));
 export const setSignalName = (signalId: string, name: string) => o.edit(() => store.setSignalName(signalId, name));
+export const chooseWiringNode = (signalId: string, nodeKey: string) => o.wire(() => store.chooseWiringNode(signalId, nodeKey));
+export const chooseRedOutput = (signalId: string, output: number) => o.wire(() => store.chooseRedOutput(signalId, output));
+export const chooseGreenOutput = (signalId: string, output: number) => o.wire(() => store.chooseGreenOutput(signalId, output));
 
 /** The intents the editor components emit. */
 export const blockSignalsEditorActions = {
   navigate: navigateBlockSignalsEditor,
+  finish: finishBlockSignalsEditor,
   cancel: cancelBlockSignalsEditor,
   setFacilityName,
   addBlock: addSignaledBlock,
@@ -126,5 +206,8 @@ export const blockSignalsEditorActions = {
   setSettings: setFacilitySignalSettings,
   setSignalOverride,
   setSignalName,
+  chooseWiringNode,
+  chooseRedOutput,
+  chooseGreenOutput,
 };
 export type BlockSignalsEditorActions = typeof blockSignalsEditorActions;

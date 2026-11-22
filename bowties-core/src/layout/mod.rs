@@ -553,6 +553,7 @@ mod tests {
             template_id: "block-indicator".to_string(),
             name: "Block 5".to_string(),
             slot_bindings,
+            block_signals: None,
         }]);
 
         let manifest = LayoutManifest::new(

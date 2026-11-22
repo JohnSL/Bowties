@@ -89,7 +89,6 @@
     {/each}
   </div>
   <button type="button" class="end-menu-plant" disabled>Choose a Plant…</button>
-  <span class="end-menu-desc">Interlocking Plants are coming in a later release.</span>
 </div>
 
 <style>

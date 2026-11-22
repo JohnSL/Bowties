@@ -211,7 +211,11 @@ pub fn write_layout_capture(layout_dir: &Path, data: &LayoutDirectoryWriteData) 
     });
     plan.writes.push(PlannedWrite {
         abs_path: layout_dir.join(FACILITIES_FILE),
-        op: WriteOp::Bytes(serialize_yaml(&data.facilities)?),
+        // ADR-0005: the document version travels with the manifest, so every
+        // save stamps the current version regardless of what was read.
+        op: WriteOp::Bytes(serialize_yaml(&FacilitiesDocument::new(
+            data.facilities.facilities.clone(),
+        ))?),
     });
 
     // Per-node snapshots: also prune extras left over from a previous

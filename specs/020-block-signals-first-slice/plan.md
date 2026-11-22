@@ -475,15 +475,15 @@ Aspects, Appearance, Wiring, Review.
 ### Assessment Summary
 
 Bowties already has a route from a facility to the board. A Block
-Indicator facility stages composed event IDs as Pending Changes on node
-configuration. Save writes the layout file and then, when connected, the
-same values to the bus (ADR-0001). Offline, the Sync Panel writes them
+Indicator facility stages composed event IDs as unsaved configuration
+edits on the node. Save writes the layout file and then, when connected, the
+same values to the bus (ADR-0001). Offline, Save stores them as Offline Changes and the Sync Panel writes them
 later. The ABS facility uses this route instead of the separate apply
 engine the 2026-11-07 assessment proposed. Dirty state, discard, close
 prompts and lifecycle reset come from the existing draft layer.
 
 Patterns:
-- **Facility composes into Pending Changes.** The facility record is the
+- **Facility composes into configuration edits.** The facility record is the
   intent; its hardware effect is ordinary configuration edits that ride
   Save. No second write path.
 - **Pure compiler, imperative shell.** The core compiles; the backend
@@ -564,9 +564,9 @@ Patterns:
 - Type: HITL
 - Layers: components → editor store/orchestrator → facility orchestrator → facilities/channels/config drafts → backend compose → core compiler → Save → Signal LCC
 - Blocked by: S2R (done); single-board terminal evidence
-- Test: integration test from Blocks through Done shows the facility, one channel and the expected Pending Changes; core compiler tests for the terminal recipe and blocking issues; version-policy tests (newer rejected, version 4 opens)
+- Test: integration test from Blocks through Done shows the facility, one channel and the expected unsaved configuration edits; core compiler tests for the terminal recipe and blocking issues; version-policy tests (newer rejected, version 4 opens)
 - Acceptance: all five steps exercisable with out-of-scope options disabled; Wiring picks node, red pin, green pin; Review lists block, behavior, outputs and claimed slots; Save writes; LED shows red when occupied and green when clear; the layout reopens with the facility
-- Split seam if needed in `/build`: E1a Done + Save to file offline (Pending Changes visible in the node's configuration); E1b Save while connected + bench check
+- Split seam if needed in `/build`: E1a Done + Save to file offline (unsaved edits visible in the node's configuration; Offline Changes after Save); E1b Save while connected + bench check
 
 **E2: Edit and remove**
 - Type: HITL
@@ -603,7 +603,7 @@ Patterns:
 - Test: reorder, prepend, remove a middle block; all eight occupancy combinations
 - Acceptance: surviving signals keep identity and bindings
 
-Decisions: Review and staging are one slice (E1). Out-of-scope options
+Decisions: Review and staging are one slice (E1). Revised 2026-11-22 at E1a: Review is deferred to E3 and Wiring's Done stages the edits (see the spec's 2026-11-22 clarifications). Out-of-scope options
 are disabled choices, not hidden. E1 uses one Signal LCC per facility;
 Blink and the Show check are deferred until after E6.
 

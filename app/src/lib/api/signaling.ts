@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { ChannelBinding, ChannelRole } from '$lib/api/channels';
+import type { TreeConfigValue } from '$lib/types/nodeTree';
 
 /** A detected block in the layout that can be added to the list. */
 export interface SelectedDetectedBlock {
@@ -59,38 +59,9 @@ export interface BlockSignalsPreviewRequest {
   signalOverrides: SignalOverride[];
   /** Signal names by signal ID. */
   signalNames: Record<string, string>;
-  /**
-   * A transient selection only. It reuses the established role/style/binding
-   * vocabulary but does not create, stage, or save an Information Channel.
-   */
-  bindings?: SignalBindingSelection[];
-}
-
-export type SignalOutputBinding = Extract<
-  ChannelBinding,
-  { kind: 'signalLccRgOutputs' }
->;
-
-export interface SignalBindingSelection {
-  signalId: string;
-  role: Extract<ChannelRole, 'signal-indication'>;
-  style: 'two-driver-rg-signal';
-  binding: SignalOutputBinding;
 }
 
 export type SignalIndication = 'stop' | 'restricting' | 'approach' | 'advanceApproach' | 'clear';
-
-export interface SignalAppearance {
-  indication: 'stop' | 'approach' | 'clear';
-  outputs: Array<'red' | 'green'>;
-}
-
-export interface SignalDisplay {
-  role: Extract<ChannelRole, 'signal-indication'>;
-  style: 'two-driver-rg-signal';
-  binding: SignalOutputBinding | null;
-  appearances: SignalAppearance[];
-}
 
 export interface SignalOutputHost {
   nodeKey: string;
@@ -145,7 +116,6 @@ export interface SignalPreview {
   /** Conditions and resulting indications, most restrictive first. */
   rules: Array<{ condition: RuleCondition; indication: SignalIndication }>;
   observation: 'unavailable';
-  display?: SignalDisplay;
 }
 
 export type ProposalIssue =
@@ -189,4 +159,85 @@ export async function previewBlockSignals(
   request: BlockSignalsPreviewRequest,
 ): Promise<BlockSignalsPreview> {
   return invoke<BlockSignalsPreview>('preview_block_signals', { request });
+}
+
+/** The red/green wiring chosen for one signal. */
+export interface SignalWiring {
+  signalId: string;
+  nodeKey: string;
+  redOutput: number;
+  greenOutput: number;
+}
+
+/** An unsaved configuration edit, keyed as the draft store keys it. */
+export interface ComposeDraftEdit {
+  nodeKey: string;
+  space: number;
+  address: number;
+  value: TreeConfigValue;
+}
+
+export interface ComposeBlockSignalsRequest {
+  /** The facility being composed; its own claimed slots do not count as in use. */
+  facilityId?: string;
+  line: BlockSignalsPreviewRequest;
+  wiring: SignalWiring[];
+  pendingEdits: ComposeDraftEdit[];
+}
+
+/** A generated configuration edit; pass `nodeKey/space/address/value` to `configEditor.applyEdit`. */
+export interface ComposedEdit {
+  nodeKey: string;
+  space: number;
+  address: number;
+  /** Compiler CDI path, for diagnostics. */
+  path: string;
+  value: TreeConfigValue;
+}
+
+export interface ClaimedSlot {
+  nodeKey: string;
+  kind: 'mast' | 'logic';
+  /** 1-based slot number on the node. */
+  index: number;
+}
+
+export type ComposeIssueCode =
+  | 'wiringMissing'
+  | 'bindingInvalid'
+  | 'hardwareUnavailable'
+  | 'styleUnsupported'
+  | 'outputDuplicate'
+  | 'outputInUse'
+  | 'outputCapacity'
+  | 'noFreeMast'
+  | 'noFreeLogic'
+  | 'occupancyEventsMissing'
+  | 'aspectEventsMissing'
+  | 'unsupportedBlockCount'
+  | 'unsupportedMovements'
+  | 'unsupportedEnds'
+  | 'unsupportedAspects'
+  | 'unsupportedApproachLighting';
+
+export interface ComposeIssue {
+  code: ComposeIssueCode;
+  signalId: string | null;
+  nodeKey: string | null;
+  detail: string;
+  bindingIssue?: ProposalIssue;
+}
+
+/** With any issue, `edits` and `claimedSlots` are empty. */
+export interface ComposeBlockSignalsResponse {
+  edits: ComposedEdit[];
+  claimedSlots: ClaimedSlot[];
+  issues: ComposeIssue[];
+}
+
+/** Read-only: generates the edits for the caller to stage; writes nothing. */
+export async function composeBlockSignals(
+  request: ComposeBlockSignalsRequest,
+): Promise<ComposeBlockSignalsResponse> {
+  return invoke<ComposeBlockSignalsResponse>('compose_block_signals', { request });
 }

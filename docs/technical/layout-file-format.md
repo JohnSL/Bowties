@@ -1,14 +1,65 @@
 # Layout File Format
 
-Layout files store the user's bowtie diagram — event ID assignments, names, tags, and any manual role-classification overrides. They are the primary save artifact of Bowties.
+A layout is a **folder**, not a single file. This document describes the
+folder, its version markers and the version policy. The sections after
+"Legacy single-file format" describe the pre-folder `.bowties.yaml` file and
+are kept for reference only.
 
-## File extension
+## Layout folder
+
+| File | Holds | Version marker |
+|------|-------|----------------|
+| `manifest.yaml` | Layout identity and the folder's schema version | `schemaVersion` (integer), checked on open |
+| `bowties.yaml` | Bowtie names, tags and role classifications | — |
+| `event-names.yaml` | User event names | — |
+| `channels.yaml` | Information Channels | `schemaVersion` `"2.0"`, not checked on open |
+| `facilities.yaml` | Facilities, slot bindings, and the Automatic Block Signals record (`blockSignals`) | `schemaVersion` `"2.0"`, not checked on open |
+| `offline-changes.yaml` | Offline Changes waiting for the Sync Panel | — |
+| `nodes/` | Per-node snapshots | — |
+| `cdi/` | Cached CDI files | — |
+
+File names are defined in `bowties-core/src/layout/io.rs`. Field names are
+camelCase. Facilities without an Automatic Block Signals record omit the
+`blockSignals` key.
+
+## Version policy (ADR-0005, 2026-11-22 extension)
+
+- `manifest.yaml` `schemaVersion` is `LAYOUT_SCHEMA_VERSION` (currently **5**)
+  in `bowties-core/src/layout/manifest.rs`. `OLDEST_SUPPORTED_LAYOUT_SCHEMA_VERSION`
+  is **4**.
+- Opening a layout accepts any manifest version from the oldest supported one
+  up to the current one. A newer version is refused with a message that the
+  layout was made by a newer version of Bowties. Versions older than 4 are
+  refused as unsupported.
+- Bump the manifest version, and the affected document's `schemaVersion`,
+  for any change an older Bowties would mishandle, including new fields:
+  serde ignores unknown fields, so an older build would drop the new data on
+  its next save.
+- No migration code while Bowties is pre-1.0 unless a slice needs one. Older
+  documents must still deserialize through serde defaults.
+- Tests: `bowties-core/src/layout/manifest.rs` (unit) and
+  `bowties-core/tests/block_signals_layout_roundtrip.rs` (version 4 opens,
+  version 6 refused through the real open path, version 5 roundtrip).
+
+| Manifest version | Change |
+|------------------|--------|
+| 5 | Facilities may carry an Automatic Block Signals record; `facilities.yaml` `schemaVersion` "2.0" (Spec 020 E1a) |
+| 4 | Oldest version this build opens |
+
+---
+
+## Legacy single-file format
+
+Historical: the pre-folder `.bowties.yaml` format. Current builds do not
+write it.
+
+### File extension
 
 `.bowties.yaml`
 
 The open-file dialog also accepts bare `.yaml` / `.yml`, but **Save As** always defaults to `.bowties.yaml`.
 
-## Serialization
+### Serialization
 
 YAML, written by the Rust [`serde_yaml_ng`](https://crates.io/crates/serde_yaml_ng) crate. Field names use **camelCase** throughout (enforced by `#[serde(rename_all = "camelCase")]` on all Rust types).
 
@@ -16,7 +67,7 @@ Saves use an atomic write strategy: content is written to a `.yaml.tmp` sibling 
 
 ---
 
-## Top-level structure
+### Top-level structure
 
 ```yaml
 schemaVersion: '1.0'
@@ -37,17 +88,17 @@ roleClassifications:
 
 ---
 
-## `schemaVersion`
+### `schemaVersion`
 
 Always `"1.0"`. The Rust loader rejects any other value with an error before returning the layout to the frontend.
 
 ---
 
-## Bowties mapping
+### Bowties mapping
 
 Each key in `bowties` identifies a bowtie. Two key formats are valid:
 
-### Dotted-hex event ID key
+#### Dotted-hex event ID key
 
 Exactly 8 two-hex-digit groups separated by `.`:
 
@@ -57,7 +108,7 @@ Exactly 8 two-hex-digit groups separated by `.`:
 
 Used for bowties that have been wired to a real LCC event ID (either read from a node or assigned by the user).
 
-### Planning placeholder key
+#### Planning placeholder key
 
 `planning-<digits>`, where `<digits>` is a numeric timestamp:
 
@@ -67,7 +118,7 @@ planning-1774216908886
 
 Used for bowties that exist in the diagram but are not yet associated with a real event ID. The timestamp is the Unix millisecond epoch at creation time.
 
-### Bowtie value (`BowtieMetadata`)
+#### Bowtie value (`BowtieMetadata`)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -90,11 +141,11 @@ bowties:
 
 ---
 
-## Role classifications
+### Role classifications
 
 The `roleClassifications` mapping stores manual overrides for event slots that the automatic Producer/Consumer classifier could not resolve unambiguously. It is empty (`{}`) for most layouts.
 
-### Key format
+#### Key format
 
 `"{nodeId}:{elementPath}"` where `elementPath` is the slash-joined path through the CDI tree to the EventID field:
 
@@ -102,7 +153,7 @@ The `roleClassifications` mapping stores manual overrides for event slots that t
 05.02.01.02.03.00:Port I/O/Line #1/Event Produced
 ```
 
-### Value (`RoleClassification`)
+#### Value (`RoleClassification`)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -120,7 +171,7 @@ The loader rejects any `role` value other than `"Producer"` or `"Consumer"`.
 
 ---
 
-## Complete example
+### Complete example
 
 ```yaml
 schemaVersion: '1.0'
@@ -139,7 +190,7 @@ roleClassifications: {}
 
 ---
 
-## Recent-layout sidecar
+### Recent-layout sidecar
 
 Bowties stores the path of the most recently opened layout in a separate JSON sidecar file at:
 
@@ -163,7 +214,7 @@ This file is **not** part of the layout format itself — it is an application s
 
 ---
 
-## Source references
+### Source references
 
 | Purpose | File |
 |---------|------|

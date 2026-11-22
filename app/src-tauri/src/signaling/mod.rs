@@ -1,18 +1,18 @@
 //! Read-only Automatic Block Signals proposal adapter.
 
+pub mod compose;
+
 use std::collections::HashMap;
 
 use bowties_core::{
     layout::channels::{ChannelBinding, ChannelRole, InformationChannel},
     node_key::NodeKey,
-    node_tree::{
-        effective_value, replication_instances, ConfigNode, ConfigValue, NodeConfigTree,
-    },
+    node_tree::NodeConfigTree,
     profile::{make_profile_key, StructureProfile},
     signaling::{
-        preview_block_signals_with_hardware, ProposalIssue, SignalAppearanceSet,
+        outputs::signal_outputs_from_configuration, preview_block_signals_with_hardware, ProposalIssue, SignalAppearanceSet,
         SignalDriver, SignalHardwareEvidence, SignalHardwareFacts, SignalHardwareHost,
-        BlockSignalsPreview, BlockSignalsRequest, SignalOutput, SignalStyle,
+        BlockSignalsPreview, BlockSignalsRequest, SignalStyle,
     },
 };
 
@@ -230,125 +230,6 @@ fn signal_style_from_profile(style: &bowties_core::profile::Style) -> Result<Sig
             clear: drivers(&appearances.clear)?,
         },
     })
-}
-
-/// Interpret the two resource owners documented for Signal-LCC: Direct Lamp
-/// Control rows and active Rule-to-Aspect mast appearances. The number of
-/// replicated Direct Lamp rows is the authoritative current output capacity;
-/// it is not inferred from a detector or manufacturer maximum.
-fn signal_outputs_from_configuration(tree: &NodeConfigTree) -> Result<Vec<SignalOutput>, String> {
-    let direct_lamp_segment = tree
-        .segments
-        .iter()
-        .find(|segment| segment.name == "Direct Lamp Control")
-        .ok_or_else(|| "Direct Lamp Control configuration is unavailable.".to_string())?;
-    let lamps = replication_instances(&direct_lamp_segment.children, "Lamp");
-    if lamps.is_empty() {
-        return Err("Direct Lamp Control has no authoritative output rows.".to_string());
-    }
-    let output_count = lamps.len() as u32;
-    let mut owners = HashMap::<u32, String>::new();
-    for lamp in lamps {
-        let selection = required_int_leaf(&lamp.children, "Lamp Selection")?;
-        record_output_owner(
-            &mut owners,
-            selection,
-            output_count,
-            format!("Direct lamp {}", lamp.instance),
-        )?;
-    }
-
-    let mast_segment = tree
-        .segments
-        .iter()
-        .find(|segment| segment.name == "Rule to Aspect")
-        .ok_or_else(|| "Rule to Aspect configuration is unavailable.".to_string())?;
-    for mast in replication_instances(&mast_segment.children, "Mast") {
-        let processing = required_int_leaf(&mast.children, "Mast Processing")?;
-        if processing == 0 {
-            continue;
-        }
-        if !(1..=2).contains(&processing) {
-            return Err(format!(
-                "Mast {} has an unknown Mast Processing value {}.",
-                mast.instance, processing
-            ));
-        }
-        for rule in replication_instances(&mast.children, "Rule") {
-            for appearance in replication_instances(&rule.children, "Appearance") {
-                let selection = required_int_leaf(&appearance.children, "Lamp Selection")?;
-                record_output_owner(
-                    &mut owners,
-                    selection,
-                    output_count,
-                    format!("Mast {} rule {}", mast.instance, rule.instance),
-                )?;
-            }
-        }
-    }
-
-    Ok((1..=output_count)
-        .map(|ordinal| SignalOutput {
-            ordinal,
-            label: signal_lcc_output_label(ordinal),
-            owner: owners.remove(&ordinal),
-        })
-        .collect())
-}
-
-fn required_int_leaf(children: &[ConfigNode], name: &str) -> Result<i64, String> {
-    find_int_leaf(children, name)
-        .unwrap_or_else(|| Err(format!("{name} is missing from the configuration evidence.")))
-}
-
-fn find_int_leaf(children: &[ConfigNode], name: &str) -> Option<Result<i64, String>> {
-    for child in children {
-        match child {
-            ConfigNode::Leaf(leaf) if leaf.name == name => {
-                return Some(match effective_value(leaf) {
-                    Some(ConfigValue::Int { value }) => Ok(*value),
-                    Some(_) => Err(format!("{name} has a non-integer configuration value.")),
-                    None => Err(format!("{name} has no current configuration evidence.")),
-                });
-            }
-            ConfigNode::Group(group) => {
-                if let Some(value) = find_int_leaf(&group.children, name) {
-                    return Some(value);
-                }
-            }
-            ConfigNode::Leaf(_) => {}
-        }
-    }
-    None
-}
-
-fn record_output_owner(
-    owners: &mut HashMap<u32, String>,
-    selection: i64,
-    output_count: u32,
-    owner: String,
-) -> Result<(), String> {
-    if selection == 0 {
-        return Ok(());
-    }
-    let ordinal = u32::try_from(selection)
-        .ok()
-        .filter(|ordinal| (1..=output_count).contains(ordinal))
-        .ok_or_else(|| format!("{owner} selects invalid output {selection}."))?;
-    if let Some(previous_owner) = owners.insert(ordinal, owner.clone()) {
-        return Err(format!(
-            "Output {} is claimed by both {} and {}.",
-            ordinal, previous_owner, owner
-        ));
-    }
-    Ok(())
-}
-
-fn signal_lcc_output_label(ordinal: u32) -> String {
-    const POSITIONS: [&str; 4] = ["G", "Y", "R", "L"];
-    let head = ((ordinal - 1) / 4) + 1;
-    let position = POSITIONS[((ordinal - 1) % 4) as usize];
-    format!("H{}-{}", head, position)
 }
 
 /// Resolve requested block identities against the active effective layout,

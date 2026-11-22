@@ -5,7 +5,8 @@ import type { LayoutEditDelta } from '$lib/types/bowtie';
  * Hardware-locality grouping key for the Spec 018 / S3 Channels panel.
  * `connectorInput` channels group per (node, connector); `lampRow` channels
  * group per (node, "direct-lamp-control") so S5's lamp-indicator channels
- * land in their own subsystem row without further changes.
+ * land in their own subsystem row without further changes; `signalLccRgOutputs`
+ * channels group per (node, "signal-lcc") (Spec 020 / E1a).
  */
 export function hardwareGroupKey(channel: InformationChannel): string {
   switch (channel.binding.kind) {
@@ -13,6 +14,8 @@ export function hardwareGroupKey(channel: InformationChannel): string {
       return `${channel.binding.nodeKey}|connector:${channel.binding.connector}`;
     case 'lampRow':
       return `${channel.binding.nodeKey}|direct-lamp-control`;
+    case 'signalLccRgOutputs':
+      return `${channel.binding.nodeKey}|signal-lcc`;
   }
 }
 

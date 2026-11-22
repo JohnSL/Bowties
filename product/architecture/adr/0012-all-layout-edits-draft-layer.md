@@ -196,20 +196,6 @@ Automated cascades that flow from an in-app trigger (such as a hardware-owned ch
 - Cascade orchestrators are lifecycle-scoped: mount them in the layout-open path (adjacent to store hydration) and tear them down via `layoutLifecycleOrchestrator.resetForNewLayout()`. A cascade subscription that outlives its layout is drift.
 - When adding a cascade for a new trigger source (spec 019+ hardware seams), extend `facilityCascadeOrchestrator` (or introduce a sibling orchestrator that follows the same diff-based subscription pattern). Never create ad-hoc Svelte effects inside components or route files that mutate the same draft stores — that path breaks the single-orchestrator contract.
 
-## 2026-07-01 extension: cascade side effects appear in the draft layer
-
-Automated cascades that flow from an in-app trigger (such as a hardware-owned channel disappearing from `channelsStore.channels` because the user cleared its BOD daughter-board) MUST stage their side effects in the appropriate draft stores (`facilitiesStore`, `bowtieMetadataStore`, `configChangesStore`) so the user sees them **NEXT TO** their trigger — visible immediately in the toolbar's unsaved-change count, atomic on Save, revertable on Discard.
-
-**Rationale.** The alternative — an on-save "fixup" that only appears at commit time — creates a surprising user experience: Discard restores the trigger (the daughter-board comes back) but the cascade's side effects (facility un-Wiring, bowtie teardown) already collapsed before the user got a chance to see them, so Discard looks like it did nothing to the cascade. The draft-layer approach makes the cascade a first-class part of the transaction: the same Discard restores both.
-
-**Concrete rules:**
-
-- Frontend cascade orchestrators (e.g., `facilityCascadeOrchestrator.svelte.ts`, introduced by Spec 018 / S6) subscribe to the trigger source (a store's reactive state), diff transitions in a private `.root`, and dispatch draft-layer mutations through the same store methods and orchestrator entry points user actions use. They do NOT reach into the backend save flow, do NOT persist a parallel "pending cascade" bucket, and do NOT introduce a new dirty-breakdown category — the cascade's effects surface through the existing `dirtyBreakdown` buckets of the stores it mutates (which joins ADR-0011).
-- On-save "fixup" cascades that only appear at commit time are explicitly ruled out. If a save-flow reconciliation step is genuinely required (e.g., a backend integrity guard), it MUST NOT change user-observable state at commit time; it MUST reject the save with a clear error so the user can adjust their drafts.
-- Cascade orchestrators are lifecycle-scoped: mount them in the layout-open path (adjacent to store hydration) and tear them down via `layoutLifecycleOrchestrator.resetForNewLayout()`. A cascade subscription that outlives its layout is drift.
-- When adding a cascade for a new trigger source (spec 019+ hardware seams), extend `facilityCascadeOrchestrator` (or introduce a sibling orchestrator that follows the same diff-based subscription pattern). Never create ad-hoc Svelte effects inside components or route files that mutate the same draft stores — that path breaks the single-orchestrator contract.
-
-
 ## 2026-07-03 extension: load-time schema repairs stage as drafts
 
 When layout open detects a schema inconsistency that a backend read path already normalises in memory (e.g., `read_layout_capture` running `normalize_facility_channel_refs` against `channels.yaml` and finding a facility slot binding whose channel id is absent from the channel inventory), the frontend MUST stage the equivalent fix-up as a normal draft edit — the same seam any user-triggered edit would use — rather than treating the toast as sufficient.
@@ -307,3 +293,30 @@ config drafts (e.g. a batched `setModifiedValues` in a future extension),
 it MUST replace the mirror's emission, not run in parallel — the
 single-owner property is what makes the "someone forgot to flush" bug
 class impossible.
+
+## 2026-11-22 extension: compiled facility intent
+
+Spec 020 E1a adds the first facility whose hardware effect is compiled, not
+mapped: Automatic Block Signals.
+
+- **Whole-record replace.** The facility's `blockSignals` record (blocks,
+  direction, settings, signals with their channel IDs, claimed slots) changes
+  as one unit through `setBlockSignalsRecord`; a new facility carries it in
+  `AddFacility`. `facilitiesStore` suppresses a record equal to the effective
+  one and drops the pending entry when it returns to the saved one. Rejected:
+  one delta per kind of change (add signal, reorder, rebind, set claims),
+  whose ordering rules would have to track the compiler's whole-Line input.
+- **The mapping rule is scoped to bowtie-composing templates.** The
+  2026-07-03 rule that new templates compose through `BehaviorTemplate.mapping`
+  applies to templates that compose bowties (`composes_bowties()`). Automatic
+  Block Signals has no mapping; its configuration edits come from the pure
+  compiler (`bowties-core/src/signaling/compiler.rs`) through
+  `compose_block_signals`, and `facilityOrchestrator.createBlockSignalsFacility`
+  stages them with the shared `applyConfigEdits` over `configEditor.applyEdit`.
+  Reversal uses the claimed slots recorded on the facility (Spec 020 E2), not
+  the event-ID search, which cannot find mast or Logic integer fields.
+- **Fresh facts before staging.** Done syncs facility and channel drafts, then
+  compiles again with the target node's unsaved configuration edits in the
+  request, and stages nothing if any blocking issue is reported. A failure
+  after staging starts rolls back the channel, the facility and each staged
+  edit (restoring any earlier hand edit on the same field).

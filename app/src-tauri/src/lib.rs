@@ -224,6 +224,16 @@ async fn preview_block_signals(
     signaling::preview(state.inner(), request).await
 }
 
+/// Compose the Automatic Block Signals configuration edits for a Line and its
+/// wiring. Read-only: the frontend stages the returned edits.
+#[tauri::command]
+async fn compose_block_signals(
+    state: tauri::State<'_, AppState>,
+    request: signaling::compose::ComposeBlockSignalsRequest,
+) -> Result<signaling::compose::ComposeBlockSignalsResponse, String> {
+    signaling::compose::compose(state.inner(), request).await
+}
+
 /// Disconnect from the LCC network
 #[tauri::command]
 async fn disconnect_lcc(
@@ -414,6 +424,7 @@ pub fn run() {
             commands::list_channels,               // Spec 015 / S1: information channel inventory (writes ride LayoutEditDelta via save_layout_directory)
             commands::list_behavior_templates,     // Spec 018 / S1: hardcoded behavior template registry
             preview_block_signals,
+            compose_block_signals,
             commands::list_facilities,             // Spec 018 / S1: facility inventory (read-only; CRUD via delta save)
             commands::compose_facility_bowties,    // Spec 018 / S6 (D2): compose bowtie ops for a Wired facility
             commands::sync_layout_drafts,          // Spec 018 / S6 bugfix: mirror frontend drafts into LayoutState

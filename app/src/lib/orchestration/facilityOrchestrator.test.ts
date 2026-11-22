@@ -576,3 +576,149 @@ describe('deleteFacility (Spec 018 / S6 — D2 wrapper)', () => {
     removeSpy.mockRestore();
   });
 });
+
+// ── Spec 020 / E1a — createBlockSignalsFacility (facilityOrchestrator owns it) ──
+
+import type { ComposeBlockSignalsRequest } from '$lib/api/signaling';
+import { configEditor } from '$lib/stores/configEditor.svelte';
+import { effectiveNodeStore } from '$lib/layout/effectiveNodeStore.svelte';
+import { editKeyForLeaf } from '$lib/utils/editKey';
+
+vi.mock('$lib/api/signaling', () => ({
+  composeBlockSignals: vi.fn(),
+}));
+const { composeBlockSignals } = await import('$lib/api/signaling');
+
+const ABS_TEMPLATE: BehaviorTemplate = {
+  templateId: 'automatic-block-signals',
+  displayName: 'Automatic Block Signals',
+  slots: [
+    { label: 'signals', displayLabel: 'signals', kind: 'consumer', requiredRole: 'signal-indication', minChannels: 0, maxChannels: null },
+  ],
+  mapping: [],
+};
+
+const ABS_NODE = '050101018800';
+const OTHER_NODE = '050101018899';
+
+function absArgs(): Parameters<typeof orch.createBlockSignalsFacility>[0] {
+  return {
+    facilityId: 'abs-1',
+    name: 'Main line',
+    line: { facilityId: 'abs-1', facilityName: 'Main line' } as never,
+    wiring: [{ signalId: 's1', nodeKey: ABS_NODE, redOutput: 1, greenOutput: 2 }],
+    signals: [{ signalId: 's1', name: 'Signal A', protectedBlock: 'b1' }],
+  };
+}
+
+const COMPOSED = {
+  edits: [
+    { nodeKey: ABS_NODE, space: 253, address: 10, path: 'a', value: { type: 'int', value: 1 } },
+    { nodeKey: ABS_NODE, space: 253, address: 20, path: 'b', value: { type: 'int', value: 2 } },
+  ],
+  claimedSlots: [{ nodeKey: ABS_NODE, kind: 'mast', index: 1 }],
+  issues: [],
+};
+
+describe('createBlockSignalsFacility (Spec 020 / E1a — facilityOrchestrator)', () => {
+  beforeEach(async () => {
+    vi.restoreAllMocks();
+    bowtieMetadataStore.clearAll();
+    configChangesStore.clearAllDrafts();
+    facilitiesStore.hydrateBaseline([]);
+    channelsStore.hydrateBaseline([]);
+    vi.mocked(composeFacilityBowties).mockReset();
+    vi.mocked(syncLayoutDrafts).mockClear();
+    vi.mocked(composeBlockSignals).mockReset();
+    vi.mocked(composeBlockSignals).mockResolvedValue(COMPOSED as never);
+    listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR, ABS_TEMPLATE]);
+    behaviorTemplatesStore.reset();
+    await behaviorTemplatesStore.loadBehaviorTemplates();
+  });
+
+  it('stages facility, record, channel, attach and edits, dirtying the Save toolbar facade', async () => {
+    expect(effectiveNodeStore.isDirty).toBe(false);
+    const result = await orch.createBlockSignalsFacility(absArgs());
+
+    expect(result).toEqual({ ok: true });
+    const facility = facilitiesStore.facilities.find((f) => f.facilityId === 'abs-1')!;
+    const channel = channelsStore.channels.find((c) => c.name === 'Signal A')!;
+    expect(channel).toMatchObject({
+      role: 'signal-indication',
+      style: 'two-driver-rg-signal',
+      ownership: 'user-owned',
+      binding: { kind: 'signalLccRgOutputs', nodeKey: ABS_NODE, redOutput: 1, greenOutput: 2 },
+    });
+    expect(facility.slotBindings.signals).toEqual([channel.id]);
+    expect(facility.blockSignals?.signals).toEqual([
+      { signalId: 's1', name: 'Signal A', protectedBlock: 'b1', channelId: channel.id },
+    ]);
+    expect(facility.blockSignals?.claimedSlots).toEqual(COMPOSED.claimedSlots);
+    expect(configChangesStore.draftEntries().map((d) => d.key)).toEqual([
+      editKeyForLeaf(ABS_NODE, 253, 10),
+      editKeyForLeaf(ABS_NODE, 253, 20),
+    ]);
+    expect(effectiveNodeStore.isDirty).toBe(true);
+    expect(effectiveNodeStore.dirtyBreakdown).toMatchObject({ config: 2, channels: 1, facilities: 1 });
+    expect(composeFacilityBowties).not.toHaveBeenCalled();
+  });
+
+  it('passes only the wiring node\'s unsaved edits and syncs drafts before composing', async () => {
+    configEditor.applyEdit(editKeyForLeaf(ABS_NODE, 253, 99), { type: 'int', value: 7 });
+    configEditor.applyEdit(editKeyForLeaf(OTHER_NODE, 253, 98), { type: 'int', value: 8 });
+
+    await orch.createBlockSignalsFacility(absArgs());
+
+    const request = vi.mocked(composeBlockSignals).mock.calls[0][0] as ComposeBlockSignalsRequest;
+    expect(request.facilityId).toBe('abs-1');
+    expect(request.pendingEdits).toEqual([
+      { nodeKey: ABS_NODE, space: 253, address: 99, value: { type: 'int', value: 7 } },
+    ]);
+    expect(vi.mocked(syncLayoutDrafts).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(composeBlockSignals).mock.invocationCallOrder[0]);
+  });
+
+  it('stages nothing when compose reports issues', async () => {
+    const issues = [{ code: 'outputInUse', signalId: 's1', nodeKey: ABS_NODE, detail: 'busy' }];
+    vi.mocked(composeBlockSignals).mockResolvedValue({ edits: [], claimedSlots: [], issues } as never);
+
+    const result = await orch.createBlockSignalsFacility(absArgs());
+
+    expect(result).toEqual({ ok: false, issues });
+    expect(facilitiesStore.pendingCreations).toHaveLength(0);
+    expect(channelsStore.channels).toHaveLength(0);
+    expect(effectiveNodeStore.isDirty).toBe(false);
+  });
+
+  it('rolls everything back when staging an edit fails', async () => {
+    configEditor.applyEdit(editKeyForLeaf(ABS_NODE, 253, 10), { type: 'int', value: 5 });
+    const realApply = configEditor.applyEdit.bind(configEditor);
+    let calls = 0;
+    vi.spyOn(configEditor, 'applyEdit').mockImplementation((k, v) => {
+      if (++calls === 2) throw new Error('boom');
+      realApply(k, v);
+    });
+
+    const result = await orch.createBlockSignalsFacility(absArgs());
+
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { error: unknown }).error).toBeInstanceOf(Error);
+    expect(facilitiesStore.pendingCreations).toHaveLength(0);
+    expect(channelsStore.channels).toHaveLength(0);
+    // The unrelated pre-existing hand edit is restored, the staged one removed.
+    expect(configChangesStore.draftEntries()).toEqual([
+      { key: editKeyForLeaf(ABS_NODE, 253, 10), value: { type: 'int', value: 5 } },
+    ]);
+  });
+
+  it('leaves the facade clean after a failed staging with no prior edits', async () => {
+    const realApply = configEditor.applyEdit.bind(configEditor);
+    let calls = 0;
+    vi.spyOn(configEditor, 'applyEdit').mockImplementation((k, v) => {
+      if (++calls === 2) throw new Error('boom');
+      realApply(k, v);
+    });
+    await orch.createBlockSignalsFacility(absArgs());
+    expect(effectiveNodeStore.isDirty).toBe(false);
+  });
+});

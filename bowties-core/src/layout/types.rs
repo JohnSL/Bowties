@@ -241,6 +241,13 @@ pub enum LayoutEditDelta {
     AddFacility {
         facility: crate::layout::facilities::Facility,
     },
+    /// Replace an Automatic Block Signals facility's whole `blockSignals`
+    /// record (Spec 020 / E1a - D2). Errors on an unknown facility id.
+    #[serde(rename_all = "camelCase")]
+    SetBlockSignalsRecord {
+        facility_id: String,
+        record: crate::layout::facilities::BlockSignalsRecord,
+    },
     /// Rename a facility (no-op if `facility_id` is unknown).
     #[serde(rename_all = "camelCase")]
     RenameFacility {
@@ -407,6 +414,7 @@ pub fn apply_layout_deltas(layout: &mut LayoutFile, deltas: Vec<LayoutEditDelta>
                 // permitted-write set.
             }
             LayoutEditDelta::AddFacility { .. }
+            | LayoutEditDelta::SetBlockSignalsRecord { .. }
             | LayoutEditDelta::RenameFacility { .. }
             | LayoutEditDelta::DeleteFacility { .. }
             | LayoutEditDelta::AttachChannelToSlot { .. }

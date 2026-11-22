@@ -9,6 +9,7 @@ import { render, screen } from '@testing-library/svelte';
 import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
 import type { InformationChannel } from '$lib/api/channels';
 import type { Facility } from '$lib/api/facilities';
+import type { NodeConfigTree } from '$lib/types/nodeTree';
 
 const listBehaviorTemplatesMock = vi.fn<() => Promise<BehaviorTemplate[]>>(async () => []);
 vi.mock('$lib/api/behaviorTemplates', () => ({
@@ -104,5 +105,57 @@ describe('FacilityCard status pill (Spec 018 / S6 — D5)', () => {
     render(FacilityCard, { props: { facility: f, template: BLOCK_INDICATOR } });
 
     expect(screen.getByText(/Signal LCC RG Outputs · Node 0501010114a1 · Outputs 1 \/ 3/)).toBeInTheDocument();
+  });
+});
+
+describe('FacilityCard Automatic Block Signals (Spec 020 / E1a)', () => {
+  const ABS: BehaviorTemplate = {
+    templateId: 'automatic-block-signals',
+    displayName: 'Automatic Block Signals',
+    slots: [{ label: 'signals', displayLabel: 'signals', kind: 'consumer', requiredRole: 'signal-indication', minChannels: 1, maxChannels: null }],
+    mapping: [],
+  };
+  const signal: InformationChannel = {
+    id: 'sig-1',
+    name: 'Mill curve East',
+    role: 'signal-indication',
+    style: 'two-driver-rg-signal',
+    ownership: 'user-owned',
+    binding: { kind: 'signalLccRgOutputs', nodeKey: '020157000001', greenOutput: 1, redOutput: 3 },
+  };
+  const lampTree = {
+    nodeId: '020157000001',
+    identity: null,
+    segments: [{
+      name: 'Rule to Aspect', description: null, origin: 0, space: 253,
+      children: [{
+        kind: 'leaf', name: 'Lamp Selection', description: null, elementType: 'int',
+        address: 0, size: 1, space: 253, path: ['seg:0', 'elem:0'], value: null, eventRole: null,
+        constraints: { min: null, max: null, defaultValue: null, mapEntries: [{ value: 1, label: '#1 H1-G' }, { value: 3, label: '#3 H1-R' }] },
+      }],
+    }],
+  } as unknown as NodeConfigTree;
+
+  it('shows each signal read-only with its lamp names and no add or remove controls', () => {
+    const f: Facility = { facilityId: 'f-abs', templateId: 'automatic-block-signals', name: 'ABS East', slotBindings: { signals: [signal.id] } };
+    channelsStore.hydrateBaseline([signal]);
+    facilitiesStore.hydrateBaseline([f]);
+
+    render(FacilityCard, { props: { facility: f, template: ABS, nodeTree: () => lampTree } });
+
+    expect(screen.getByText('Mill curve East')).toBeInTheDocument();
+    expect(screen.getByText(/#3 H1-R/)).toBeInTheDocument();
+    expect(screen.getByText(/#1 H1-G/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /add channel|select channel|remove|detach/i })).toBeNull();
+    expect(screen.queryByTestId('add-channel-button')).toBeNull();
+  });
+
+  it('offers no Add channel picker when the signals slot is empty', () => {
+    const f: Facility = { facilityId: 'f-abs', templateId: 'automatic-block-signals', name: 'ABS East', slotBindings: { signals: [] } };
+    facilitiesStore.hydrateBaseline([f]);
+
+    render(FacilityCard, { props: { facility: f, template: ABS } });
+
+    expect(screen.queryByTestId('add-channel-button')).toBeNull();
   });
 });

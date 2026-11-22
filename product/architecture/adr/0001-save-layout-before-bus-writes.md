@@ -17,10 +17,11 @@ The fix is to reorder: save the layout file first (with pending changes staged a
 Automatic Block Signals (Spec 020) is the first facility that generates
 Signal LCC logic (mast, Rule to Aspect, conditionals). It reaches the
 board through this ADR's route, as Block Indicator already does:
-`facilityOrchestrator` stages the compiled values as Pending Changes
-through `configEditor.applyEdit`. Save writes the layout file first and
-then, when connected, writes those values to the bus. Offline, the Sync
-Panel writes them later.
+`facilityOrchestrator` stages the compiled values as unsaved configuration
+edits through `configEditor.applyEdit`. Save writes the layout file first
+and then, when connected, writes those values to the bus. An offline Save
+stores them as Offline Changes, which the Sync Panel writes after
+reconnecting.
 
 Considered and rejected for the first applied release: a separate Apply
 action with an immutable reviewed proposal, snapshot generations and its

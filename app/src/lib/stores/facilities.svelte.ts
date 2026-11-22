@@ -1,4 +1,4 @@
-import { listFacilities, type Facility, type SlotBinding } from '$lib/api/facilities';
+import { listFacilities, type BlockSignalsRecord, type Facility, type SlotBinding } from '$lib/api/facilities';
 import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
 import type { LayoutEditDelta } from '$lib/types/bowtie';
 import { generateUuidV4 } from '$lib/utils/uuid';
@@ -41,6 +41,12 @@ class FacilitiesStore {
    * produce attach / detach deltas (set diff, order-insensitive).
    */
   private _pendingSlotBindings = $state<Map<string, Map<string, string[]>>>(new Map());
+  /**
+   * Pending whole-record replacements of a baseline facility's `blockSignals`
+   * (Spec 020 / E1a, ADR-0012 extension). Pending creations carry the record
+   * inside their own entry instead.
+   */
+  private _pendingBlockSignals = $state<Map<string, BlockSignalsRecord>>(new Map());
 
   /** Effective view: baseline (minus deletions) + pending creations, with pending renames + slot edits applied. */
   get facilities(): Facility[] {
@@ -51,7 +57,8 @@ class FacilitiesStore {
     return raw.map((f) => {
       const newName = this._pendingRenames.get(f.facilityId);
       const slotOverrides = this._pendingSlotBindings.get(f.facilityId);
-      if (newName === undefined && !slotOverrides) return f;
+      const blockSignals = this._pendingBlockSignals.get(f.facilityId);
+      if (newName === undefined && !slotOverrides && !blockSignals) return f;
       const slotBindings: Record<string, SlotBinding> = { ...f.slotBindings };
       if (slotOverrides) {
         for (const [label, vec] of slotOverrides) {
@@ -61,6 +68,7 @@ class FacilitiesStore {
       return {
         ...f,
         ...(newName !== undefined ? { name: newName } : {}),
+        ...(blockSignals ? { blockSignals } : {}),
         slotBindings,
       };
     });
@@ -78,6 +86,7 @@ class FacilitiesStore {
       || this._pendingRenames.size > 0
       || this._pendingDeletions.size > 0
       || this._pendingSlotBindings.size > 0
+      || this._pendingBlockSignals.size > 0
     );
   }
 
@@ -89,6 +98,7 @@ class FacilitiesStore {
       + this._pendingRenames.size
       + this._pendingDeletions.size
       + slotEdits
+      + this._pendingBlockSignals.size
     );
   }
 
@@ -111,6 +121,7 @@ class FacilitiesStore {
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
+    this._pendingBlockSignals = new Map();
   }
 
   /** Replace the baseline after a successful save; clear all drafts. */
@@ -120,6 +131,7 @@ class FacilitiesStore {
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
+    this._pendingBlockSignals = new Map();
   }
 
   /** Collect deltas for the save orchestrator. */
@@ -169,6 +181,9 @@ class FacilitiesStore {
         }
       }
     }
+    for (const [facilityId, record] of this._pendingBlockSignals) {
+      deltas.push({ type: 'setBlockSignalsRecord', facilityId, record });
+    }
     return deltas;
   }
 
@@ -182,24 +197,33 @@ class FacilitiesStore {
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
+    this._pendingBlockSignals = new Map();
   }
 
   /**
    * Add a new facility for the given template + name.
    * Materialises empty slot bindings (Spec 018 / S4: `[]` per D8) from the
    * template's slot definitions so the facility is renderable immediately.
+   * A caller may supply the facility ID (the Block Signals editor mints it
+   * before composing) and the compiled `blockSignals` record.
    * Returns the newly created facility.
    */
-  addFacility(template: BehaviorTemplate, name: string): Facility {
+  addFacility(
+    template: BehaviorTemplate,
+    name: string,
+    facilityId?: string,
+    blockSignals?: BlockSignalsRecord,
+  ): Facility {
     const slotBindings: Record<string, SlotBinding> = {};
     for (const slot of template.slots) {
       slotBindings[slot.label] = [];
     }
     const facility: Facility = {
-      facilityId: generateUuidV4(),
+      facilityId: facilityId ?? generateUuidV4(),
       templateId: template.templateId,
       name: name.trim(),
       slotBindings,
+      ...(blockSignals ? { blockSignals } : {}),
     };
     this._pendingCreations = [...this._pendingCreations, facility];
     return facility;
@@ -247,6 +271,33 @@ class FacilitiesStore {
   }
 
   /**
+   * Replace a facility's whole `blockSignals` record (Spec 020 / E1a).
+   * No-op suppression (ADR-0012): equal to the effective record → no draft;
+   * equal to the saved record → any pending replacement is dropped.
+   * Returns true when the effective record changed.
+   */
+  setBlockSignalsRecord(facilityId: string, record: BlockSignalsRecord): boolean {
+    const effective = this.facilities.find((f) => f.facilityId === facilityId);
+    if (!effective) return false;
+    if (deepEqual(effective.blockSignals, record)) return false;
+
+    const creationIdx = this._pendingCreations.findIndex((f) => f.facilityId === facilityId);
+    if (creationIdx >= 0) {
+      const next = this._pendingCreations.slice();
+      next[creationIdx] = { ...next[creationIdx], blockSignals: record };
+      this._pendingCreations = next;
+      return true;
+    }
+
+    const baseline = this._baseline.find((f) => f.facilityId === facilityId);
+    const next = new Map(this._pendingBlockSignals);
+    if (baseline && deepEqual(baseline.blockSignals, record)) next.delete(facilityId);
+    else next.set(facilityId, record);
+    this._pendingBlockSignals = next;
+    return true;
+  }
+
+  /**
    * Mark a facility for deletion. Pending creations are removed
    * immediately (never persisted); baseline facilities are tracked
    * in `_pendingDeletions` for save flush.
@@ -267,6 +318,11 @@ class FacilitiesStore {
       const next = new Map(this._pendingSlotBindings);
       next.delete(facilityId);
       this._pendingSlotBindings = next;
+    }
+    if (this._pendingBlockSignals.has(facilityId)) {
+      const next = new Map(this._pendingBlockSignals);
+      next.delete(facilityId);
+      this._pendingBlockSignals = next;
     }
   }
 
@@ -370,6 +426,7 @@ class FacilitiesStore {
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
+    this._pendingBlockSignals = new Map();
   }
 
   resetForNewLayout(): void {
@@ -382,6 +439,19 @@ function sameSet(a: readonly string[], b: readonly string[]): boolean {
   const set = new Set(a);
   for (const x of b) if (!set.has(x)) return false;
   return true;
+}
+
+/** Structural equality for JSON-shaped records (key order insensitive). */
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const ka = Object.keys(a as object);
+  const kb = Object.keys(b as object);
+  if (ka.length !== kb.length) return false;
+  return ka.every((k) =>
+    Object.prototype.hasOwnProperty.call(b, k)
+    && deepEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
 }
 
 export const facilitiesStore = new FacilitiesStore();

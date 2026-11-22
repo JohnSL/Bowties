@@ -1,8 +1,8 @@
 <script lang="ts">
   /**
    * BlockSignalsEditor — the transient "New Automatic Block Signals" dialog.
-   * Blocks and Aspects are available; Physical signals and Review are shown
-   * but not yet available, so nothing can be saved or applied.
+   * Blocks, Aspects, Appearance and Wiring are available; Review is listed but
+   * disabled. Done on Wiring is offered only when the store allows finishing.
    *
    * The shared look of both steps (panels, outlined choices, section labels,
    * two-choice selectors, tables) lives here, scoped under `.abs-editor`.
@@ -16,6 +16,8 @@
   import Button from '$lib/components/Dialog/Button.svelte';
   import BlocksStep from './BlocksStep.svelte';
   import AspectsStep from './AspectsStep.svelte';
+  import AppearanceStep from './AppearanceStep.svelte';
+  import WiringStep from './WiringStep.svelte';
   import type { BlockOccupancyMap } from './occupancy';
 
   let {
@@ -34,7 +36,16 @@
   let pickerOpen = $state(false);
   let selectedSignalId = $state<string | null>(null);
 
-  const STEP_TITLE: Record<BlockSignalsStep, string> = { blocks: 'Blocks', aspects: 'Aspects' };
+  const STEP_TITLE: Record<BlockSignalsStep, string> = {
+    blocks: 'Blocks',
+    aspects: 'Aspects',
+    appearance: 'Appearance',
+    wiring: 'Wiring',
+    review: 'Review',
+  };
+  const STEPS = $derived(view.steps.map((item) => ({ ...item, title: STEP_TITLE[item.id] })));
+  const stepIndex = (step: BlockSignalsStep) => STEPS.findIndex((item) => item.id === step);
+  const isEnabled = (step: BlockSignalsStep) => STEPS.find((item) => item.id === step)?.enabled ?? false;
   const hasBlocks = $derived(view.blocks.length > 0);
   const dialogLabel = $derived(`New Automatic Block Signals · ${STEP_TITLE[view.step]}`);
 </script>
@@ -59,20 +70,15 @@
 
   <div class="abs-editor">
     <ol class="stepper" aria-label="Automatic Block Signals steps">
-      <li class="step" class:active={view.step === 'blocks'} class:done={view.step === 'aspects'}>
-        <button type="button" aria-current={view.step === 'blocks' ? 'step' : undefined} onclick={() => intents.navigate('blocks')}>
-          <span class="step-n">1</span>Blocks
-        </button>
-      </li>
-      <li class="step" class:active={view.step === 'aspects'}>
-        <button type="button" aria-current={view.step === 'aspects' ? 'step' : undefined} disabled={!hasBlocks} onclick={() => intents.navigate('aspects')}>
-          <span class="step-n">2</span>Aspects
-        </button>
-      </li>
-      {#each ['Physical signals', 'Review'] as future, index}
-        <li class="step unavailable">
-          <button type="button" disabled aria-label={`${future}: available in a later release`} title="Available in a later release">
-            <span class="step-n">{index + 3}</span>{future}
+      {#each STEPS as item, index}
+        <li class="step" class:active={view.step === item.id} class:done={stepIndex(view.step) > index} class:unavailable={!isEnabled(item.id)}>
+          <button
+            type="button"
+            aria-current={view.step === item.id ? 'step' : undefined}
+            disabled={!isEnabled(item.id) || (item.id !== 'blocks' && !hasBlocks)}
+            onclick={() => intents.navigate(item.id)}
+          >
+            <span class="step-n">{index + 1}</span>{item.title}
           </button>
         </li>
       {/each}
@@ -84,20 +90,29 @@
     <div class="workspace">
       {#if view.step === 'blocks'}
         <BlocksStep {view} actions={intents} {detectedBlocks} {occupancy} bind:pickerOpen />
-      {:else}
+      {:else if view.step === 'aspects'}
         <AspectsStep {view} actions={intents} {occupancy} bind:selectedSignalId />
+      {:else if view.step === 'appearance'}
+        <AppearanceStep {view} />
+      {:else if view.step === 'wiring'}
+        <WiringStep {view} actions={intents} {occupancy} bind:selectedSignalId bind:pickerOpen />
       {/if}
     </div>
   </div>
 
   {#snippet actions()}
     <DialogActions {leading}>
-      {#if view.step === 'aspects'}
-        <span class="later">Physical signals: available in a later release</span>
-        <Button appearance="secondary" onclick={() => intents.navigate('blocks')}>Back</Button>
-        <Button appearance="primary" disabled>Next: Physical signals</Button>
-      {:else}
+      {#if view.step === 'blocks'}
         <Button appearance="primary" disabled={!hasBlocks} onclick={() => intents.navigate('aspects')}>Next: Aspects</Button>
+      {:else if view.step === 'aspects'}
+        <Button appearance="secondary" onclick={() => intents.navigate('blocks')}>Back</Button>
+        <Button appearance="primary" onclick={() => intents.navigate('appearance')}>Next: Appearance</Button>
+      {:else if view.step === 'appearance'}
+        <Button appearance="secondary" onclick={() => intents.navigate('aspects')}>Back</Button>
+        <Button appearance="primary" onclick={() => intents.navigate('wiring')}>Next: Wiring</Button>
+      {:else if view.step === 'wiring'}
+        <Button appearance="secondary" onclick={() => intents.navigate('appearance')}>Back</Button>
+        <Button appearance="primary" disabled={!view.canFinish} onclick={intents.finish}>Done</Button>
       {/if}
     </DialogActions>
   {/snippet}
@@ -143,7 +158,6 @@
 
   .workspace { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow: hidden; }
   .error { margin: 0 0 12px; color: var(--fluent-dangerBackground); }
-  .later { margin-right: 8px; color: var(--fluent-neutralForeground3); font-size: 12px; align-self: center; }
 
   /* ---- shared look of both steps ---- */
   .abs-editor :global(h3) { margin: 0 0 8px; font-size: 14px; font-weight: 600; }

@@ -14,6 +14,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::behavior_templates;
+use crate::signaling::{
+    EntranceEnd, ExitEnd, FacilitySignalSettings, Movements, SelectedBlock, TravelDirection,
+};
 
 /// A single facility persisted in `facilities.yaml`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -31,6 +34,56 @@ pub struct Facility {
     /// the listed channel ids. The cap is enforced per template slot
     /// by `max_channels` (Spec 018 / S4 — D8).
     pub slot_bindings: BTreeMap<String, Vec<String>>,
+    /// Compiled Automatic Block Signals intent (Spec 020 / E1a — D2).
+    /// Absent for Block Indicator facilities and for documents written
+    /// before schema "2.0".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_signals: Option<BlockSignalsRecord>,
+}
+
+/// Whole-record intent of an Automatic Block Signals facility. Replaced
+/// wholesale by `SetBlockSignalsRecord`; never patched field by field.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockSignalsRecord {
+    pub direction: TravelDirection,
+    pub movements: Movements,
+    pub entrance_end: EntranceEnd,
+    pub exit_end: ExitEnd,
+    /// Blocks in travel order.
+    pub blocks: Vec<SelectedBlock>,
+    pub settings: FacilitySignalSettings,
+    pub signals: Vec<SignalRecord>,
+    /// Mast / Logic slots this facility's generated configuration occupies.
+    pub claimed_slots: Vec<ClaimedSlot>,
+}
+
+/// One signal of the facility and the channel that represents it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SignalRecord {
+    pub signal_id: String,
+    pub name: String,
+    pub protected_block: String,
+    pub channel_id: String,
+}
+
+/// Kind of node-owned slot a facility claims.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ClaimedSlotKind {
+    Mast,
+    Logic,
+}
+
+/// A node slot (mast or Logic) claimed by a facility.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimedSlot {
+    pub node_key: String,
+    pub kind: ClaimedSlotKind,
+    /// 1-based slot number on the node.
+    pub index: u32,
 }
 
 /// Root structure for `facilities.yaml` persistence.
@@ -44,7 +97,7 @@ pub struct FacilitiesDocument {
 }
 
 impl FacilitiesDocument {
-    pub const SCHEMA_VERSION: &'static str = "1.0";
+    pub const SCHEMA_VERSION: &'static str = "2.0";
     pub const FILE_NAME: &'static str = "facilities.yaml";
 
     pub fn new(facilities: Vec<Facility>) -> Self {
@@ -70,6 +123,15 @@ pub enum FacilityApplyError {
         facility_id: String,
         slot_label: String,
         max_channels: u32,
+    },
+    /// An Automatic Block Signals facility's `blockSignals` record names
+    /// signal channels that differ from its `signals` slot set.
+    BlockSignalsChannelMismatch {
+        facility_id: String,
+        /// In the record but not bound to the slot.
+        missing_from_slot: Vec<String>,
+        /// Bound to the slot but not in the record.
+        missing_from_record: Vec<String>,
     },
     /// The facility's template was not found in the registry.
     UnknownTemplate {
@@ -100,6 +162,15 @@ impl std::fmt::Display for FacilityApplyError {
                 f,
                 "slot '{}' on facility {} is already at max ({} channels)",
                 slot_label, facility_id, max_channels
+            ),
+            Self::BlockSignalsChannelMismatch {
+                facility_id,
+                missing_from_slot,
+                missing_from_record,
+            } => write!(
+                f,
+                "facility {} blockSignals record and 'signals' slot disagree (record channels not in slot: {:?}; slot channels not in record: {:?})",
+                facility_id, missing_from_slot, missing_from_record
             ),
             Self::UnknownTemplate {
                 facility_id,
@@ -156,6 +227,30 @@ pub fn normalize_facility_channel_refs(
         }
     }
     warnings
+}
+
+/// A facility with a `blockSignals` record must bind exactly the record's
+/// signal channel ids to its `signals` slot (Spec 020 / E1a - D1). A
+/// mismatch is an explicit error, never a silent drop.
+pub fn check_block_signals_agreement(facility: &Facility) -> Result<(), FacilityApplyError> {
+    let Some(record) = &facility.block_signals else {
+        return Ok(());
+    };
+    let in_record: std::collections::BTreeSet<&String> =
+        record.signals.iter().map(|s| &s.channel_id).collect();
+    let in_slot: std::collections::BTreeSet<&String> = facility
+        .slot_bindings
+        .get("signals")
+        .map(|v| v.iter().collect())
+        .unwrap_or_default();
+    if in_record == in_slot {
+        return Ok(());
+    }
+    Err(FacilityApplyError::BlockSignalsChannelMismatch {
+        facility_id: facility.facility_id.clone(),
+        missing_from_slot: in_record.difference(&in_slot).map(|s| s.to_string()).collect(),
+        missing_from_record: in_slot.difference(&in_record).map(|s| s.to_string()).collect(),
+    })
 }
 
 /// Apply the facility-relevant variants of [`LayoutEditDelta`] to a
@@ -282,10 +377,24 @@ pub fn apply_facility_deltas(
                     touched = true;
                 }
             }
+            LayoutEditDelta::SetBlockSignalsRecord { facility_id, record } => {
+                let facility = doc
+                    .facilities
+                    .iter_mut()
+                    .find(|f| &f.facility_id == facility_id)
+                    .ok_or_else(|| FacilityApplyError::UnknownFacility {
+                        facility_id: facility_id.clone(),
+                    })?;
+                facility.block_signals = Some(record.clone());
+                touched = true;
+            }
             _ => {}
         }
     }
-    if touched && doc.schema_version.is_empty() {
+    for facility in &doc.facilities {
+        check_block_signals_agreement(facility)?;
+    }
+    if touched {
         doc.schema_version = FacilitiesDocument::SCHEMA_VERSION.to_string();
     }
     Ok(())
@@ -304,6 +413,7 @@ mod tests {
             template_id: "block-indicator".to_string(),
             name: name.to_string(),
             slot_bindings,
+            block_signals: None,
         }
     }
 
@@ -318,7 +428,7 @@ mod tests {
         let yaml = serde_yaml_ng::to_string(&doc).unwrap();
         let parsed: FacilitiesDocument = serde_yaml_ng::from_str(&yaml).unwrap();
 
-        assert_eq!(parsed.schema_version, "1.0");
+        assert_eq!(parsed.schema_version, "2.0");
         assert_eq!(parsed.facilities.len(), 1);
         assert_eq!(parsed.facilities[0], facility);
     }
@@ -406,8 +516,20 @@ mod tests {
             &[LayoutEditDelta::AddFacility { facility: f.clone() }],
         )
         .unwrap();
-        assert_eq!(doc.schema_version, "1.0");
+        assert_eq!(doc.schema_version, "2.0");
         assert_eq!(doc.facilities, vec![f]);
+    }
+
+    #[test]
+    fn apply_add_facility_upgrades_a_loaded_v1_document_to_current_schema_version() {
+        let mut doc: FacilitiesDocument =
+            serde_yaml_ng::from_str("schemaVersion: \"1.0\"
+facilities: []
+").unwrap();
+        assert_eq!(doc.schema_version, "1.0");
+        let f = block_indicator_with_empty_slots("id-1", "Block 5");
+        apply_facility_deltas(&mut doc, &[LayoutEditDelta::AddFacility { facility: f }]).unwrap();
+        assert_eq!(doc.schema_version, "2.0");
     }
 
     #[test]
@@ -787,5 +909,197 @@ mod tests {
             vec!["ch-a".to_string()]
         );
         assert!(facilities.facilities[1].slot_bindings["output"].is_empty());
+    }
+
+    // -- blockSignals record (Spec 020 / E1a) --------------------------------
+
+    fn sample_record(channel_ids: &[&str]) -> BlockSignalsRecord {
+        use crate::signaling::{FacilitySignalSettings, SelectedBlock, TravelDirection};
+        BlockSignalsRecord {
+            direction: TravelDirection::Westward,
+            movements: crate::signaling::Movements::OneDirection,
+            entrance_end: crate::signaling::EntranceEnd::NoPlant,
+            exit_end: crate::signaling::ExitEnd::NothingBeyond,
+            blocks: vec![SelectedBlock {
+                block_id: "blk-1".to_string(),
+                name: "Main 1".to_string(),
+                joined_to_previous: false,
+                turnouts: vec![],
+            }],
+            settings: FacilitySignalSettings::default(),
+            signals: channel_ids
+                .iter()
+                .enumerate()
+                .map(|(i, ch)| SignalRecord {
+                    signal_id: format!("sig-{i}"),
+                    name: format!("Signal {i}"),
+                    protected_block: "blk-1".to_string(),
+                    channel_id: ch.to_string(),
+                })
+                .collect(),
+            claimed_slots: vec![ClaimedSlot {
+                node_key: "050101010700".to_string(),
+                kind: ClaimedSlotKind::Mast,
+                index: 3,
+            }],
+        }
+    }
+
+    fn abs_facility(id: &str, record: Option<BlockSignalsRecord>) -> Facility {
+        Facility {
+            facility_id: id.to_string(),
+            template_id: "automatic-block-signals".to_string(),
+            name: "ABS".to_string(),
+            slot_bindings: BTreeMap::from([(
+                "signals".to_string(),
+                record
+                    .as_ref()
+                    .map(|r| r.signals.iter().map(|s| s.channel_id.clone()).collect())
+                    .unwrap_or_default(),
+            )]),
+            block_signals: record,
+        }
+    }
+
+    #[test]
+    fn block_signals_record_round_trips_yaml() {
+        let f = abs_facility("abs-1", Some(sample_record(&["ch-a"])));
+        let doc = FacilitiesDocument::new(vec![f.clone()]);
+        let yaml = serde_yaml_ng::to_string(&doc).unwrap();
+        assert!(yaml.contains("blockSignals:"), "{yaml}");
+        assert!(yaml.contains("claimedSlots:"), "{yaml}");
+        assert!(yaml.contains("protectedBlock:"), "{yaml}");
+        let parsed: FacilitiesDocument = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(parsed.facilities[0], f);
+    }
+
+    #[test]
+    fn v1_document_without_block_signals_loads() {
+        let yaml = "schemaVersion: \"1.0\"
+facilities:
+  - facilityId: f1
+    templateId: block-indicator
+    name: B
+    slotBindings: {}
+";
+        let doc: FacilitiesDocument = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(doc.facilities[0].block_signals, None);
+    }
+
+    #[test]
+    fn block_indicator_yaml_has_no_block_signals_key() {
+        let doc = FacilitiesDocument::new(vec![block_indicator_with_empty_slots("id-1", "B")]);
+        let yaml = serde_yaml_ng::to_string(&doc).unwrap();
+        assert!(!yaml.contains("blockSignals"), "{yaml}");
+    }
+
+    #[test]
+    fn set_block_signals_record_replaces_added_record_wholesale() {
+        let mut doc = FacilitiesDocument::default();
+        apply_facility_deltas(
+            &mut doc,
+            &[LayoutEditDelta::AddFacility {
+                facility: abs_facility("abs-1", Some(sample_record(&["ch-a", "ch-b"]))),
+            }],
+        )
+        .unwrap();
+        assert_eq!(doc.facilities[0].block_signals, Some(sample_record(&["ch-a", "ch-b"])));
+        let replacement = sample_record(&["ch-z"]);
+        let slot = |ch: &str, attach: bool| {
+            let (facility_id, slot_label, channel_id) =
+                ("abs-1".to_string(), "signals".to_string(), ch.to_string());
+            if attach {
+                LayoutEditDelta::AttachChannelToSlot { facility_id, slot_label, channel_id }
+            } else {
+                LayoutEditDelta::DetachChannelFromSlot { facility_id, slot_label, channel_id }
+            }
+        };
+        apply_facility_deltas(
+            &mut doc,
+            &[
+                LayoutEditDelta::SetBlockSignalsRecord {
+                    facility_id: "abs-1".to_string(),
+                    record: replacement.clone(),
+                },
+                slot("ch-a", false),
+                slot("ch-b", false),
+                slot("ch-z", true),
+            ],
+        )
+        .unwrap();
+        assert_eq!(doc.facilities[0].block_signals, Some(replacement));
+    }
+
+    #[test]
+    fn set_block_signals_record_on_unknown_facility_is_an_error() {
+        let mut doc = FacilitiesDocument::default();
+        let err = apply_facility_deltas(
+            &mut doc,
+            &[LayoutEditDelta::SetBlockSignalsRecord {
+                facility_id: "nope".to_string(),
+                record: sample_record(&[]),
+            }],
+        )
+        .unwrap_err();
+        assert_eq!(err, FacilityApplyError::UnknownFacility { facility_id: "nope".to_string() });
+    }
+
+    // -- automatic-block-signals template + signals slot (Spec 020 / E1a) ----
+
+    fn attach(facility_id: &str, ch: &str) -> LayoutEditDelta {
+        LayoutEditDelta::AttachChannelToSlot {
+            facility_id: facility_id.to_string(),
+            slot_label: "signals".to_string(),
+            channel_id: ch.to_string(),
+        }
+    }
+
+    #[test]
+    fn signals_slot_accepts_multiple_channels() {
+        let mut doc = FacilitiesDocument::new(vec![abs_facility("abs-1", None)]);
+        apply_facility_deltas(&mut doc, &[attach("abs-1", "ch-a"), attach("abs-1", "ch-b")])
+            .unwrap();
+        assert_eq!(
+            doc.facilities[0].slot_bindings.get("signals"),
+            Some(&vec!["ch-a".to_string(), "ch-b".to_string()])
+        );
+    }
+
+    #[test]
+    fn record_signal_channels_must_equal_signals_slot_set() {
+        let mut doc = FacilitiesDocument::new(vec![abs_facility("abs-1", None)]);
+        let err = apply_facility_deltas(
+            &mut doc,
+            &[
+                LayoutEditDelta::SetBlockSignalsRecord {
+                    facility_id: "abs-1".to_string(),
+                    record: sample_record(&["ch-a", "ch-b"]),
+                },
+                attach("abs-1", "ch-a"),
+            ],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, FacilityApplyError::BlockSignalsChannelMismatch { facility_id, .. } if facility_id == "abs-1"),
+            "{err:?}"
+        );
+        assert!(err.to_string().contains("ch-b"), "{err}");
+    }
+
+    #[test]
+    fn matching_record_and_slot_set_is_accepted_in_any_order() {
+        let mut doc = FacilitiesDocument::new(vec![abs_facility("abs-1", None)]);
+        apply_facility_deltas(
+            &mut doc,
+            &[
+                attach("abs-1", "ch-b"),
+                attach("abs-1", "ch-a"),
+                LayoutEditDelta::SetBlockSignalsRecord {
+                    facility_id: "abs-1".to_string(),
+                    record: sample_record(&["ch-a", "ch-b"]),
+                },
+            ],
+        )
+        .unwrap();
     }
 }

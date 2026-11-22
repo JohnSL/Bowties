@@ -746,6 +746,7 @@ mod tests {
                     ("input".to_string(), Vec::new()),
                     ("output".to_string(), Vec::new()),
                 ]),
+                block_signals: None,
             },
         }
     }

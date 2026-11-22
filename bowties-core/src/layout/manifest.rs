@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use super::types::ConnectionConfig;
 
-pub const LAYOUT_SCHEMA_VERSION: u32 = 4;
+pub const LAYOUT_SCHEMA_VERSION: u32 = 5;
+/// Oldest manifest version this build still opens (ADR-0005 version policy).
+pub const OLDEST_SUPPORTED_LAYOUT_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,10 +58,17 @@ impl LayoutManifest {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if self.schema_version != LAYOUT_SCHEMA_VERSION {
+        if self.schema_version > LAYOUT_SCHEMA_VERSION {
             return Err(format!(
-                "Unsupported layout schema version {} (expected {})",
+                "This layout was made by a newer version of Bowties (layout schema version {}, this version supports up to {}). Update Bowties to open it.",
+                self.schema_version, LAYOUT_SCHEMA_VERSION
+            ));
+        }
+        if self.schema_version < OLDEST_SUPPORTED_LAYOUT_SCHEMA_VERSION {
+            return Err(format!(
+                "Unsupported layout schema version {} (supported: {} to {})",
                 self.schema_version,
+                OLDEST_SUPPORTED_LAYOUT_SCHEMA_VERSION,
                 LAYOUT_SCHEMA_VERSION
             ));
         }
@@ -158,5 +167,45 @@ mod tests {
         assert_eq!(m.match_thresholds.likely_same, 90);
         assert_eq!(m.match_thresholds.uncertain_min, 50);
         assert_eq!(m.last_saved_at, "2026-06-01T00:01:00Z");
+    }
+
+    fn manifest_with_version(v: u32) -> LayoutManifest {
+        let mut m = LayoutManifest::new(
+            "layout-a".to_string(),
+            "2026-06-01T00:00:00Z".to_string(),
+            "2026-06-01T00:00:01Z".to_string(),
+        );
+        m.schema_version = v;
+        m
+    }
+
+    #[test]
+    fn validate_accepts_oldest_supported_through_current() {
+        assert!(manifest_with_version(OLDEST_SUPPORTED_LAYOUT_SCHEMA_VERSION)
+            .validate()
+            .is_ok());
+        assert!(manifest_with_version(4).validate().is_ok());
+        assert!(manifest_with_version(5).validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_newer_version_with_newer_bowties_message() {
+        let err = manifest_with_version(6).validate().unwrap_err();
+        assert!(err.contains("newer version of Bowties"), "{err}");
+    }
+
+    #[test]
+    fn validate_still_rejects_versions_below_oldest_supported() {
+        let err = manifest_with_version(3).validate().unwrap_err();
+        assert!(err.contains("Unsupported"), "{err}");
+    }
+
+    #[test]
+    fn new_manifests_and_saves_write_version_five() {
+        let m = manifest_with_version(5);
+        assert_eq!(LayoutManifest::new("a".into(), "t".into(), "t".into()).schema_version, 5);
+        let saved = build_save_manifest(Some(&manifest_with_version(4)), "a".into(), "t".into(), "t".into());
+        assert_eq!(saved.schema_version, 5);
+        assert_eq!(m.schema_version, LAYOUT_SCHEMA_VERSION);
     }
 }

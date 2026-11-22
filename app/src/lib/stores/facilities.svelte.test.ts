@@ -234,3 +234,70 @@ describe('S4: attachChannel / detachChannel on a baseline facility', () => {
     expect(facilitiesStore.collectDeltas()).toEqual([]);
   });
 });
+
+// ── Spec 020 / E1a: block-signals record ────────────────────────────────────
+
+import type { BlockSignalsRecord } from '$lib/api/facilities';
+
+const SIGNALS_TEMPLATE: BehaviorTemplate = {
+  templateId: 'automatic-block-signals',
+  displayName: 'Automatic Block Signals',
+  slots: [
+    { label: 'signals', displayLabel: 'signals', kind: 'consumer', requiredRole: 'signal-indication', minChannels: 0, maxChannels: 64 },
+  ],
+  mapping: [],
+};
+
+function record(overrides: Partial<BlockSignalsRecord> = {}): BlockSignalsRecord {
+  return {
+    direction: 'forward',
+    movements: 'oneWay',
+    entranceEnd: 'a',
+    exitEnd: 'b',
+    blocks: [],
+    settings: {},
+    signals: [{ signalId: 's-1', name: 'Mast 1', protectedBlock: 'b-1', channelId: 'ch-sig' }],
+    claimedSlots: [],
+    ...overrides,
+  } as unknown as BlockSignalsRecord;
+}
+
+describe('Spec 020 / E1a: facility block-signals record', () => {
+  it('addFacility keeps a caller-supplied id and emits the record inside one addFacility delta with its slot binding', () => {
+    const rec = record();
+    const added = facilitiesStore.addFacility(SIGNALS_TEMPLATE, 'ABS 1', 'fac-fixed', rec);
+    facilitiesStore.attachChannel('fac-fixed', 'signals', 'ch-sig');
+
+    expect(added.facilityId).toBe('fac-fixed');
+    expect(facilitiesStore.facilities[0].blockSignals).toEqual(rec);
+    const deltas = facilitiesStore.collectDeltas();
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0]).toMatchObject({
+      type: 'addFacility',
+      facility: { facilityId: 'fac-fixed', blockSignals: rec, slotBindings: { signals: ['ch-sig'] } },
+    });
+  });
+
+  it('setBlockSignalsRecord on a saved facility replaces wholesale, suppresses no-ops and drops the entry when reverted', () => {
+    const saved = record();
+    facilitiesStore.hydrateBaseline([
+      { facilityId: 'f-1', templateId: 'automatic-block-signals', name: 'ABS 1', slotBindings: { signals: ['ch-sig'] }, blockSignals: saved },
+    ]);
+
+    expect(facilitiesStore.setBlockSignalsRecord('f-1', record())).toBe(false);
+    expect(facilitiesStore.isDirty).toBe(false);
+
+    const changed = record({ settings: { changed: true } } as unknown as Partial<BlockSignalsRecord>);
+    expect(facilitiesStore.setBlockSignalsRecord('f-1', changed)).toBe(true);
+    expect(facilitiesStore.facilities[0].blockSignals).toEqual(changed);
+    expect(facilitiesStore.editCount).toBe(1);
+    expect(facilitiesStore.collectDeltas()).toEqual([
+      { type: 'setBlockSignalsRecord', facilityId: 'f-1', record: changed },
+    ]);
+
+    expect(facilitiesStore.setBlockSignalsRecord('f-1', changed)).toBe(false);
+    expect(facilitiesStore.setBlockSignalsRecord('f-1', saved)).toBe(true);
+    expect(facilitiesStore.isDirty).toBe(false);
+    expect(facilitiesStore.collectDeltas()).toEqual([]);
+  });
+});

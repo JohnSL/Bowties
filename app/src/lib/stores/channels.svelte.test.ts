@@ -63,6 +63,24 @@ describe('channelsStore', () => {
     expect(grouped.get('block-occupancy')?.length).toBe(2);
   });
 
+  describe('groupedByHardware (Spec 020 / E1a signal channels)', () => {
+    it('groups signalLccRgOutputs channels per node, apart from connector groups', () => {
+      const sig = (id: string, nodeKey: string, g: number, r: number) =>
+        makeChannel({
+          id,
+          role: 'signal-indication',
+          style: 'two-driver-rg-signal',
+          binding: { kind: 'signalLccRgOutputs', nodeKey, greenOutput: g, redOutput: r },
+        });
+      channelsStore.setChannels([sig('s1', 'nodeA', 1, 3), sig('s2', 'nodeA', 4, 6), sig('s3', 'nodeB', 1, 3), makeChannel()]);
+
+      const groups = channelsStore.groupedByHardware;
+      expect(groups.size).toBe(3);
+      expect(groups.get('nodeA|signal-lcc')?.map((c) => c.id)).toEqual(['s1', 's2']);
+      expect(groups.get('nodeB|signal-lcc')?.map((c) => c.id)).toEqual(['s3']);
+    });
+  });
+
   describe('groupedByHardware (Spec 018 / S3)', () => {
     it('returns an empty map when no channels are present', () => {
       expect(channelsStore.groupedByHardware.size).toBe(0);

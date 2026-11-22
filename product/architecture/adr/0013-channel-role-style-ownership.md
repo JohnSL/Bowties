@@ -114,3 +114,11 @@ Railroad panel and dirty state use one path. Considered and rejected:
 storing the two pins inline in the signal record, which would need a
 second output-ownership check and would hide signals from the Railroad
 panel.
+
+The signal's channel ID is mirrored in the facility's `signals` slot
+(template `automatic-block-signals`, any number of signal-indication
+channels), so slot bindings remain the only source of channel membership for
+"Used by", facility status, cleanup, cascade and load repair. Core rejects a
+facility whose record channel IDs differ from its `signals` slot set
+(`check_block_signals_agreement`, Spec 020 E1a).
+

@@ -88,6 +88,8 @@ export type LayoutEditDelta =
   | { type: 'clearNodeModeSelection'; nodeKey: string; modeId: string }
   /** Add a facility to `facilities.yaml` (Spec 018 / S1). */
   | { type: 'addFacility'; facility: import('$lib/api/facilities').Facility }
+  /** Replace a facility's whole `blockSignals` record (Spec 020 / E1a). */
+  | { type: 'setBlockSignalsRecord'; facilityId: string; record: import('$lib/api/facilities').BlockSignalsRecord }
   /** Rename a facility (Spec 018 / S1). */
   | { type: 'renameFacility'; facilityId: string; newName: string }
   /** Delete a facility (Spec 018 / S1). */

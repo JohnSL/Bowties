@@ -284,6 +284,25 @@ describe('dirty aggregate — facilities store', () => {
   });
 });
 
+describe('dirty aggregate — facility block-signals record', () => {
+  it('a record replacement on a saved facility lights the Save toolbar input and the facilities bucket', () => {
+    const record = (direction: string) => ({
+      direction, movements: 'oneWay', entranceEnd: 'a', exitEnd: 'b',
+      blocks: [], settings: {}, signals: [], claimedSlots: [],
+    }) as unknown as import('$lib/api/facilities').BlockSignalsRecord;
+    facilitiesStore.hydrateBaseline([{
+      facilityId: 'f-abs', templateId: 'automatic-block-signals', name: 'ABS',
+      slotBindings: { signals: [] }, blockSignals: record('forward'),
+    }]);
+    expect(effectiveNodeStore.isDirty).toBe(false);
+
+    facilitiesStore.setBlockSignalsRecord('f-abs', record('reverse'));
+
+    expect(effectiveNodeStore.isDirty).toBe(true);
+    expectOnlyBuckets(effectiveNodeStore.dirtyBreakdown, { facilities: 1 });
+  });
+});
+
 describe('dirty aggregate — connector selections', () => {
   it('flips isDirty and surfaces a connectorSelections bucket count (currently missing — RED)', async () => {
     await connectorSelectionsStore.loadNode(LIVE_A_DOTTED, CONNECTOR_PROFILE);

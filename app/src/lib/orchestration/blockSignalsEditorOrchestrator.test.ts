@@ -2,12 +2,36 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   BlockSignalsPreview,
   BlockSignalsPreviewRequest,
+  ComposeBlockSignalsRequest,
+  ComposeBlockSignalsResponse,
+  SignalOutputHost,
 } from '$lib/api/signaling';
 
 const previewBlockSignalsMock = vi.fn<(request: BlockSignalsPreviewRequest) => Promise<BlockSignalsPreview>>();
 
+vi.mock('$lib/api/behaviorTemplates', () => ({
+  listBehaviorTemplates: async () => [
+    {
+      templateId: 'automatic-block-signals',
+      displayName: 'Automatic Block Signals',
+      slots: [{ label: 'signals', displayLabel: 'signals', kind: 'consumer', requiredRole: 'signal-indication', minChannels: 0, maxChannels: null }],
+      mapping: [],
+    },
+  ],
+}));
+vi.mock('$lib/api/facilities', () => ({ listFacilities: async () => [] }));
+vi.mock('$lib/api/channels', () => ({ listChannels: async () => [] }));
+vi.mock('$lib/api/facilityBowties', () => ({ composeFacilityBowties: vi.fn() }));
+vi.mock('$lib/api/layout', () => ({
+  syncLayoutDrafts: vi.fn(async () => undefined),
+  clearLayoutDrafts: vi.fn(async () => undefined),
+}));
+
+const composeBlockSignalsMock = vi.fn<(request: ComposeBlockSignalsRequest) => Promise<ComposeBlockSignalsResponse>>();
+
 vi.mock('$lib/api/signaling', () => ({
   previewBlockSignals: previewBlockSignalsMock,
+  composeBlockSignals: composeBlockSignalsMock,
 }));
 
 const { blockSignalsEditorStore: store } = await import('$lib/stores/blockSignalsEditor.svelte');
@@ -15,11 +39,16 @@ const {
   addSignaledBlock,
   addTurnout,
   cancelBlockSignalsEditor,
+  chooseGreenOutput,
+  chooseRedOutput,
+  chooseWiringNode,
+  finishBlockSignalsEditor,
   moveTurnout,
   navigateBlockSignalsEditor,
   removeSignaledBlock,
   resetBlockSignalsEditorForNewLayout,
   setExitEnd,
+  setBlockSignalsMovements,
   setFacilitySignalSettings,
   setJoinedToPrevious,
   setSignalName,
@@ -161,5 +190,220 @@ describe('blockSignalsEditorOrchestrator', () => {
     expect(store.step).toBe('aspects');
     expect(store.turnoutShapes[turnoutId]).toEqual({ face: 'east', side: 'above' });
     expect(previewBlockSignalsMock.mock.calls.length).toBe(calls);
+  });
+});
+
+// ── Spec 020 / E1a B11a — steps and wiring state ─────────────────────────
+
+const HOST: SignalOutputHost = {
+  nodeKey: '050101018800',
+  nodeName: 'Signal LCC',
+  style: { styleId: 'two-driver-rg-signal', bindingKind: 'signalLccRgOutputs', appearances: { stop: ['red'], approach: ['red', 'green'], clear: ['green'] } },
+  evidence: 'complete',
+  outputs: [
+    { ordinal: 1, label: 'Output 1', owner: null },
+    { ordinal: 2, label: 'Output 2', owner: 'Other signal' },
+    { ordinal: 3, label: 'Output 3', owner: null },
+  ],
+};
+
+function signalPreview(): BlockSignalsPreview {
+  return {
+    ...preview(),
+    outputHosts: [HOST],
+    signals: [{ signalId: 's1', name: 'Signal 1', protectedBlockIds: ['block:cedar'] } as never],
+  };
+}
+
+describe('blockSignalsEditor steps and wiring (E1a B11a)', () => {
+  beforeEach(() => {
+    previewBlockSignalsMock.mockReset();
+    previewBlockSignalsMock.mockImplementation(async () => signalPreview());
+    composeBlockSignalsMock.mockReset();
+    composeBlockSignalsMock.mockResolvedValue({ edits: [], claimedSlots: [], issues: [] });
+    resetBlockSignalsEditorForNewLayout();
+  });
+
+  it('orders steps blocks, aspects, appearance, wiring and keeps review disabled', () => {
+    startBlockSignalsEditor('Main');
+    expect(store.steps).toEqual([
+      { id: 'blocks', enabled: true },
+      { id: 'aspects', enabled: true },
+      { id: 'appearance', enabled: true },
+      { id: 'wiring', enabled: true },
+      { id: 'review', enabled: false },
+    ]);
+    navigateBlockSignalsEditor('wiring');
+    expect(store.step).toBe('wiring');
+    navigateBlockSignalsEditor('review');
+    expect(store.step).toBe('wiring');
+  });
+
+  it('exposes preview hosts and outputs, and keeps node, red and green choices consistent', async () => {
+    startBlockSignalsEditor('Main');
+    await addSignaledBlock(CEDAR);
+    expect(store.outputHosts).toEqual([HOST]);
+
+    await chooseWiringNode('s1', HOST.nodeKey);
+    await chooseRedOutput('s1', 1);
+    await chooseGreenOutput('s1', 1);
+    expect(store.wiringFor('s1')).toEqual({ nodeKey: HOST.nodeKey, redOutput: 1, greenOutput: null });
+    await chooseGreenOutput('s1', 3);
+    expect(store.wiringFor('s1')).toEqual({ nodeKey: HOST.nodeKey, redOutput: 1, greenOutput: 3 });
+    expect(store.wiringComplete).toBe(true);
+
+    await chooseWiringNode('s1', '050101018899');
+    expect(store.wiringFor('s1')).toEqual({ nodeKey: '050101018899', redOutput: null, greenOutput: null });
+    expect(store.wiringComplete).toBe(false);
+  });
+
+  it('flags out-of-scope settings and clears wiring with the layout', async () => {
+    startBlockSignalsEditor('Main');
+    await addSignaledBlock(CEDAR);
+    await chooseWiringNode('s1', HOST.nodeKey);
+    await chooseRedOutput('s1', 1);
+    await chooseGreenOutput('s1', 3);
+    expect(store.outOfScopeSettings).toEqual([]);
+
+    await setFacilitySignalSettings({ aspects: 4 });
+    await setBlockSignalsMovements('bothDirections');
+    expect(store.outOfScopeSettings).toEqual(['aspects', 'movements']);
+    resetBlockSignalsEditorForNewLayout();
+    expect(store.wiringFor('s1')).toBeNull();
+  });
+});
+
+// ── Spec 020 / E1a B11b — compose check and Done ─────────────────────────
+
+const { facilitiesStore } = await import('$lib/stores/facilities.svelte');
+const { channelsStore } = await import('$lib/stores/channels.svelte');
+const { behaviorTemplatesStore } = await import('$lib/stores/behaviorTemplates.svelte');
+const { configChangesStore } = await import('$lib/stores/configChanges.svelte');
+const { configEditor } = await import('$lib/stores/configEditor.svelte');
+const { effectiveNodeStore } = await import('$lib/layout/effectiveNodeStore.svelte');
+const { editKeyForLeaf } = await import('$lib/utils/editKey');
+
+const OTHER_NODE = '050101018899';
+
+async function wireSignal(): Promise<void> {
+  startBlockSignalsEditor('Main line');
+  await addSignaledBlock(CEDAR);
+  navigateBlockSignalsEditor('wiring');
+  await chooseWiringNode('s1', HOST.nodeKey);
+  await chooseRedOutput('s1', 1);
+  await chooseGreenOutput('s1', 3);
+}
+
+describe('blockSignalsEditor compose check and Done (E1a B11b)', () => {
+  beforeEach(async () => {
+    previewBlockSignalsMock.mockReset();
+    previewBlockSignalsMock.mockImplementation(async () => signalPreview());
+    composeBlockSignalsMock.mockReset();
+    composeBlockSignalsMock.mockResolvedValue({ edits: [], claimedSlots: [], issues: [] });
+    resetBlockSignalsEditorForNewLayout();
+    configChangesStore.clearAllDrafts();
+    facilitiesStore.hydrateBaseline([]);
+    channelsStore.hydrateBaseline([]);
+    behaviorTemplatesStore.reset();
+    await behaviorTemplatesStore.loadBehaviorTemplates();
+  });
+
+  it('checks complete wiring with the wiring node\'s unsaved edits, and edits make the check stale', async () => {
+    configEditor.applyEdit(editKeyForLeaf(HOST.nodeKey, 253, 99), { type: 'int', value: 7 });
+    configEditor.applyEdit(editKeyForLeaf(OTHER_NODE, 253, 98), { type: 'int', value: 8 });
+    expect(store.canFinish).toBe(false);
+
+    await wireSignal();
+
+    const request = composeBlockSignalsMock.mock.lastCall![0];
+    expect(request.facilityId).toBe(store.facilityId);
+    expect(request.wiring).toEqual([{ signalId: 's1', nodeKey: HOST.nodeKey, redOutput: 1, greenOutput: 3 }]);
+    expect(request.pendingEdits).toEqual([
+      { nodeKey: HOST.nodeKey, space: 253, address: 99, value: { type: 'int', value: 7 } },
+    ]);
+    expect(store.canFinish).toBe(true);
+
+    const slow = deferred<BlockSignalsPreview>();
+    previewBlockSignalsMock.mockReturnValueOnce(slow.promise);
+    const pending = setSignalName('s1', 'Renamed');
+    expect(store.canFinish).toBe(false);
+    slow.resolve(signalPreview());
+    await pending;
+    expect(store.canFinish).toBe(true);
+  });
+
+  it('ignores a stale compose response and shows issues by signal and node', async () => {
+    const stale = deferred<ComposeBlockSignalsResponse>();
+    composeBlockSignalsMock.mockReturnValueOnce(stale.promise);
+    startBlockSignalsEditor('Main line');
+    await addSignaledBlock(CEDAR);
+    navigateBlockSignalsEditor('wiring');
+    await chooseWiringNode('s1', HOST.nodeKey);
+    await chooseRedOutput('s1', 1);
+    const first = chooseGreenOutput('s1', 3);
+    const issue = { code: 'outputInUse' as const, signalId: 's1', nodeKey: HOST.nodeKey, detail: 'busy' };
+    composeBlockSignalsMock.mockResolvedValueOnce({ edits: [], claimedSlots: [], issues: [issue] });
+    await chooseGreenOutput('s1', 2);
+    stale.resolve({ edits: [], claimedSlots: [], issues: [] });
+    await first;
+
+    expect(store.issuesForSignal('s1')).toEqual([issue]);
+    expect(store.issuesForNode(HOST.nodeKey)).toEqual([issue]);
+    expect(store.canFinish).toBe(false);
+  });
+
+  it('on Done creates the facility, closes the editor and dirties the Save toolbar', async () => {
+    composeBlockSignalsMock.mockResolvedValue({
+      edits: [{ nodeKey: HOST.nodeKey, space: 253, address: 10, path: 'a', value: { type: 'int', value: 1 } }],
+      claimedSlots: [{ nodeKey: HOST.nodeKey, kind: 'mast', index: 1 }],
+      issues: [],
+    });
+    await wireSignal();
+    const facilityId = store.facilityId;
+    expect(effectiveNodeStore.isDirty).toBe(false);
+
+    await finishBlockSignalsEditor();
+
+    expect(store.open).toBe(false);
+    const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId)!;
+    expect(facility.name).toBe('Main line');
+    expect(facility.blockSignals?.signals).toMatchObject([{ signalId: 's1', name: 'Signal 1', protectedBlock: 'block:cedar' }]);
+    expect(effectiveNodeStore.isDirty).toBe(true);
+  });
+
+  it('on Done with issues keeps the editor open and shows them', async () => {
+    await wireSignal();
+    const issue = { code: 'outputInUse' as const, signalId: 's1', nodeKey: HOST.nodeKey, detail: 'taken meanwhile' };
+    composeBlockSignalsMock.mockResolvedValueOnce({ edits: [], claimedSlots: [], issues: [issue] });
+
+    await finishBlockSignalsEditor();
+
+    expect(store.open).toBe(true);
+    expect(store.issuesForSignal('s1')).toEqual([issue]);
+    expect(store.canFinish).toBe(false);
+    expect(facilitiesStore.pendingCreations).toHaveLength(0);
+  });
+
+  it('on Done with an error keeps the editor open with a message', async () => {
+    await wireSignal();
+    composeBlockSignalsMock.mockRejectedValueOnce(new Error('ipc down'));
+
+    await finishBlockSignalsEditor();
+
+    expect(store.open).toBe(true);
+    expect(store.finishError).toBe('ipc down');
+    expect(facilitiesStore.pendingCreations).toHaveLength(0);
+  });
+
+  it('never carries an out-of-scope setting into Done', async () => {
+    await wireSignal();
+    await setFacilitySignalSettings({ aspects: 4 });
+    await chooseGreenOutput('s1', 3);
+    expect(store.canFinish).toBe(false);
+
+    await finishBlockSignalsEditor();
+
+    expect(store.open).toBe(true);
+    expect(facilitiesStore.pendingCreations).toHaveLength(0);
   });
 });

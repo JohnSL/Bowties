@@ -19,12 +19,23 @@ import { channelsStore } from '$lib/stores/channels.svelte';
 import { facilitiesStore } from '$lib/stores/facilities.svelte';
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
 import { configEditor } from '$lib/stores/configEditor.svelte';
+import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
 import { composeFacilityBowties, type CompositionOp } from '$lib/api/facilityBowties';
 import { syncLayoutDrafts } from '$lib/api/layout';
 import { canonicalEventIdHex } from '$lib/utils/serialize';
-import { editKeyForLeaf } from '$lib/utils/editKey';
+import { editKeyForLeaf, parseEditKey } from '$lib/utils/editKey';
+import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
+import {
+  composeBlockSignals,
+  type BlockSignalsPreviewRequest,
+  type ComposeDraftEdit,
+  type ComposeIssue,
+  type SignalWiring,
+} from '$lib/api/signaling';
+import type { BlockSignalsRecord } from '$lib/api/facilities';
+import type { TreeConfigValue } from '$lib/types/nodeTree';
 import { generateFreshEventIdForNode } from '$lib/utils/eventIds';
 import { collectEventIdLeaves, findLeafByPath } from '$lib/types/nodeTree';
 
@@ -391,18 +402,140 @@ export async function deleteFacility(facilityId: string): Promise<void> {
   }
 }
 
+// ── Automatic Block Signals creation (Spec 020 / E1a) ────────────────────
+
+const BLOCK_SIGNALS_TEMPLATE_ID = 'automatic-block-signals';
+const BLOCK_SIGNALS_SLOT = 'signals';
+
+export interface CreateBlockSignalsFacilityArgs {
+  /** ID minted by the editor; the compose request and the facility share it. */
+  facilityId: string;
+  name: string;
+  line: BlockSignalsPreviewRequest;
+  wiring: SignalWiring[];
+  /** The facility's signals in order; channel IDs are assigned here. */
+  signals: { signalId: string; name: string; protectedBlock: string }[];
+}
+
+/** Unsaved configuration edits on the wiring nodes, as compose takes them. */
+export function pendingEditsForWiring(wiring: readonly SignalWiring[]): ComposeDraftEdit[] {
+  const wiringNodes = new Set(wiring.map((w) => toCanonicalNodeKey(w.nodeKey)));
+  return configChangesStore.draftEntries().flatMap(({ key, value }) => {
+    const { normalizedNodeId, space, address } = parseEditKey(key);
+    return wiringNodes.has(normalizedNodeId)
+      ? [{ nodeKey: normalizedNodeId, space, address, value }]
+      : [];
+  });
+}
+
+export type CreateBlockSignalsFacilityResult =
+  | { ok: true }
+  | { ok: false; issues: ComposeIssue[] }
+  | { ok: false; error: unknown };
+
+/**
+ * Workflow owner: create an Automatic Block Signals facility.
+ *
+ * Mirrors drafts so the backend sees other unsaved claims, composes with
+ * fresh facts (wiring nodes' unsaved edits included), refuses on any issue
+ * without staging anything, then stages the signal channels, the facility
+ * with its compiled record, the slot attaches and the configuration edits
+ * as ordinary drafts. Any failure after the first staged mutation removes
+ * everything staged here. Never composes bowties (the template has no mapping).
+ */
+export async function createBlockSignalsFacility(
+  args: CreateBlockSignalsFacilityArgs,
+): Promise<CreateBlockSignalsFacilityResult> {
+  const { facilityId, name, line, wiring, signals } = args;
+  const template = behaviorTemplatesStore.findByTemplateId(BLOCK_SIGNALS_TEMPLATE_ID);
+  if (!template) return { ok: false, error: new UnknownReferenceError('template') };
+
+  let composed;
+  try {
+    await syncDraftsForComposition();
+    composed = await composeBlockSignals({ facilityId, line, wiring, pendingEdits: pendingEditsForWiring(wiring) });
+  } catch (error) {
+    return { ok: false, error };
+  }
+  if (composed.issues.length > 0) return { ok: false, issues: composed.issues };
+
+  const priorDrafts = new Map(configChangesStore.draftEntries().map((d) => [d.key, d.value]));
+  const createdChannelIds: string[] = [];
+  let facilityAdded = false;
+  try {
+    const wiringBySignal = new Map(wiring.map((w) => [w.signalId, w]));
+    const recordSignals: BlockSignalsRecord['signals'] = signals.map((signal) => {
+      const wired = wiringBySignal.get(signal.signalId);
+      if (!wired) throw new Error(`No wiring for signal '${signal.signalId}'`);
+      const channel = channelsStore.createUserOwnedChannel({
+        role: 'signal-indication',
+        style: 'two-driver-rg-signal',
+        binding: {
+          kind: 'signalLccRgOutputs',
+          nodeKey: wired.nodeKey,
+          greenOutput: wired.greenOutput,
+          redOutput: wired.redOutput,
+        },
+        name: signal.name,
+      });
+      createdChannelIds.push(channel.id);
+      return { ...signal, channelId: channel.id };
+    });
+
+    const record: BlockSignalsRecord = {
+      direction: line.direction,
+      movements: line.movements,
+      entranceEnd: line.entranceEnd,
+      exitEnd: line.exitEnd,
+      blocks: line.blocks,
+      settings: line.settings,
+      signals: recordSignals,
+      claimedSlots: composed.claimedSlots,
+    };
+    facilitiesStore.addFacility(template, name, facilityId, record);
+    facilityAdded = true;
+    for (const channelId of createdChannelIds) {
+      if (!facilitiesStore.attachChannel(facilityId, BLOCK_SIGNALS_SLOT, channelId)) {
+        throw new Error(`Failed to attach channel '${channelId}' to facility '${facilityId}'`);
+      }
+    }
+
+    applyConfigEdits(composed.edits);
+    return { ok: true };
+  } catch (error) {
+    for (const edit of composed.edits) {
+      const key = editKeyForLeaf(edit.nodeKey, edit.space, edit.address);
+      const prior = priorDrafts.get(key);
+      if (prior) configChangesStore.set(key, prior);
+      else configChangesStore.revert(key);
+    }
+    if (facilityAdded) facilitiesStore.deleteFacility(facilityId);
+    for (const channelId of createdChannelIds) channelsStore.removeUserOwnedChannel(channelId);
+    return { ok: false, error };
+  }
+}
+
 // ── Private helpers ─────────────────────────────────────────────────────
+
+/** Stage configuration edits as ordinary drafts so they ride the existing save path. */
+function applyConfigEdits(
+  edits: readonly { nodeKey: string; space: number; address: number; value: TreeConfigValue }[],
+): void {
+  for (const edit of edits) {
+    configEditor.applyEdit(editKeyForLeaf(edit.nodeKey, edit.space, edit.address), edit.value);
+  }
+}
 
 function applyCompositionOps(ops: readonly CompositionOp[]): void {
   for (const op of ops) {
     const bytes = op.eventIdBytes.slice();
     const hex = canonicalEventIdHex(bytes);
-    // Dispatch the consumer leaf write via the config editor so the
-    // draft flows through the existing save path.
-    configEditor.applyEdit(
-      editKeyForLeaf(op.consumerNodeKey, op.consumerLeafSpace, op.consumerLeafAddress),
-      { type: 'eventId', bytes, hex },
-    );
+    applyConfigEdits([{
+      nodeKey: op.consumerNodeKey,
+      space: op.consumerLeafSpace,
+      address: op.consumerLeafAddress,
+      value: { type: 'eventId', bytes, hex },
+    }]);
     // Register the bowtie with the createdByFacility back-reference.
     bowtieMetadataStore.createBowtie(hex, op.bowtieName, {
       createdByFacility: op.createdByFacility,

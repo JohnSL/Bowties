@@ -1,4 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
+import type {
+  EntranceEnd,
+  ExitEnd,
+  FacilitySignalSettings,
+  ListedBlock,
+  Movements,
+  TravelDirection,
+} from '$lib/api/signaling';
 
 /**
  * Per-slot binding list (Spec 018 / S4 — D8 cardinality contract).
@@ -13,6 +21,20 @@ export interface Facility {
   templateId: string;
   name: string;
   slotBindings: Record<string, SlotBinding>;
+  /** Compiled Automatic Block Signals intent; absent on other templates. */
+  blockSignals?: BlockSignalsRecord;
+}
+
+/// Wire form of `bowties_core::layout::facilities::BlockSignalsRecord`.
+export interface BlockSignalsRecord {
+  direction: TravelDirection;
+  movements: Movements;
+  entranceEnd: EntranceEnd;
+  exitEnd: ExitEnd;
+  blocks: ListedBlock[];
+  settings: FacilitySignalSettings;
+  signals: { signalId: string; name: string; protectedBlock: string; channelId: string }[];
+  claimedSlots: { nodeKey: string; kind: 'mast' | 'logic'; index: number }[];
 }
 
 /// Derived status of a facility (never persisted on the entity).

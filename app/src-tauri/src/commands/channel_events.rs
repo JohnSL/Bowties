@@ -16,6 +16,10 @@ pub enum ChannelResolutionBinding {
     ConnectorInput { connector: String, input: u32 },
     #[serde(rename_all = "camelCase")]
     LampRow { row_ordinal: u32 },
+    /// Signal-indication channel (green/red outputs). No observable state
+    /// events until Spec 020 E4; resolves to an empty map.
+    #[serde(rename_all = "camelCase")]
+    SignalLccRgOutputs { green_output: u32, red_output: u32 },
 }
 
 /// Role the resolver should match against the CDI tree (`producer` for
@@ -66,6 +70,7 @@ pub struct ChannelResolutionResult {
 ///   to find the Line group prefix, then collects leaves matching `role`.
 /// - `lampRow` — walks the `Direct Lamp Control` segment for `Lamp#N`, then
 ///   collects leaves matching `role`.
+/// - `signalLccRgOutputs` — no observable events yet; always an empty map.
 ///
 /// Channels whose trees are not yet available — or whose binding does not
 /// resolve to a CDI path — return empty `event_ids` maps.
@@ -96,6 +101,14 @@ pub async fn resolve_channel_event_ids(
                             *row_ordinal,
                         )
                     }
+                    ChannelResolutionBinding::SignalLccRgOutputs {
+                        green_output,
+                        red_output,
+                    } => bowties_core::channel_events::resolve_signal_lcc_rg_outputs_path_prefix(
+                        tree,
+                        *green_output,
+                        *red_output,
+                    ),
                 };
 
                 match path_prefix {

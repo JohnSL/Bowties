@@ -62,7 +62,7 @@ flowchart LR
     Editor -->|Done| FOrch[Facility orchestrator]
     FOrch --> Compose[Backend compose: node facts]
     Compose --> Compiler[Core compiler: edits, claimed slots, issues]
-    FOrch --> Drafts[Facility record, signal channel, Pending Changes]
+    FOrch --> Drafts[Facility record, signal channel, unsaved configuration edits]
     Drafts --> Save[Save: file first, then bus writes]
     Drafts --> Sync[Sync Panel writes when offline]
     Save --> Nodes[Signal LCC]
@@ -72,9 +72,9 @@ flowchart LR
 
 ### Patterns
 
-- **Facility composes into Pending Changes**: the facility record is the
-  intent; its hardware effect is ordinary configuration edits that ride Save
-  and the Sync Panel. No second write path.
+- **Facility composes into configuration edits**: the facility record is the
+  intent; its hardware effect is ordinary unsaved configuration edits that
+  ride Save (Offline Changes when offline) and the Sync Panel. No second write path.
 - **Pure compiler, imperative shell**: the core compiles a Line plus node
   facts into configuration edits, claimed slots and issues; the backend
   supplies facts; the orchestrator stages the result.
@@ -103,7 +103,7 @@ flowchart LR
 
 | Slice | User-visible change | Demoable? |
 |---|---|---|
-| E1a: Stage and save a one-block signal offline | Five steps, Done, Pending Changes, Save and reopen | Yes |
+| E1a: Stage and save a one-block signal offline | Four steps, Done, unsaved edits, offline Save and reopen | Yes |
 | E1b: Light the signal on the bench | LED red when occupied, green when clear | Yes, bench |
 | E2: Edit and remove | Rename, reorient, rebind and remove a saved facility | Yes, bench |
 | E3: Two blocks on one board | Approach behind an occupied block | Yes, bench |
@@ -118,7 +118,7 @@ flowchart LR
 | S1 | Choose blocks and name signals | HITL | None | done |
 | S2 | Choose display and bind real outputs | HITL | S1 | superseded by E1a (Wiring) |
 | S2R | Feedback release: Blocks and Aspects per revised storyboard | HITL | S1, S2 checkpoint | done |
-| E1a | Stage and save a one-block signal offline | HITL | S2R | sketched |
+| E1a | Stage and save a one-block signal offline | HITL | S2R | tasked |
 | E1b | Light the signal on the bench | HITL | E1a + terminal-recipe evidence | sketched |
 | E2 | Edit and remove | HITL | E1b | sketched |
 | E3 | Two blocks on one board | HITL | E2 + same-board Approach evidence | sketched |
@@ -669,23 +669,66 @@ Deferred until the save/apply slice:
 
 ### E1a: Stage and save a one-block signal offline [HITL]
 
-**Intent**: The modeler completes all five steps, clicks Done, and saves offline; the facility, its signal channel and the Pending Changes survive reopening.
+**Intent**: The modeler completes Blocks, Aspects, Appearance and Wiring, clicks Done, and saves offline; the facility, its signal channel and the configuration edits (saved as Offline Changes) survive reopening.
 **Boundary**: Step components → editor store/orchestrator → facility orchestrator → facility, channel and configuration drafts → backend compose → core compiler → layout file.
 **Blocked by**: S2R.
-**Status**: sketched
+**Status**: tasked
+**Complexity**: large
+**User stories**: US1 (offline portion), US4 (output and resource checks)
+
+**Change layers** (existing, unchanged): Done stages *unsaved configuration edits* through `configEditor.applyEdit`, like hand edits; an offline Save stores them as *Offline Changes* (`offline-changes.yaml`), which the Sync Panel writes after reconnecting (E1b); *live values* on the board change only through a connected Save or the Sync Panel.
+
+**Decisions (approved 2026-11-22)**:
+- D1 A: the `automatic-block-signals` template (registered in core) declares one `signals` slot (role signal-indication, any number of channels, no bowtie mapping). Each signal record also keeps its channel ID; core checks the two agree. ADR-0013 extension gains one line.
+- D2 A: typed optional `blockSignals` record on the facility; `AddFacility` carries it; one whole-record replace delta with no-op suppression; `addFacility` accepts the editor's facility ID. ADR-0012 extension: whole-record replace for compiled facility intent.
+- D3 A: pure core compiler (`bowties-core/src/signaling/compiler.rs`) absorbs the S2 binding check; backend `compose_block_signals` gathers facts (effective layout and configuration, ADR-0015) and returns edits (node, space, address, typed value), claimed slots and issues. Wiring calls it without writing; Done calls it again and refuses on any blocking issue; a shared facility-orchestrator applier stages edits through `configEditor.applyEdit`. ADR-0012's mapping rule is scoped to bowtie-composing templates.
+- D4 A: the compose request carries the target node's unsaved configuration edits so offline slot checks see them.
+- D5: storyboard frame, stepper, order and footers kept. Appearance ([`#line-appearance`](../proposals/signaling-ux/signaling-facilities-storyboard.html#line-appearance)) shows fixed values with other choices disabled and no "Try the signals" simulator. Wiring ([`#line-wiring`](../proposals/signaling-ux/signaling-facilities-storyboard.html#line-wiring)) keeps the "Runs on" picker and pin grid but asks only for red and green; Customize lamps, Blink and Show disabled. Review ([`#line-review`](../proposals/signaling-ux/signaling-facilities-storyboard.html#line-review)) is deferred to E3 and shown disabled in the stepper; Wiring's footer has Done.
 
 **Acceptance criteria**:
-- [ ] Blocks, Aspects, Appearance, Wiring and Review are all exercisable. Aspects and Appearance show this release's fixed values.
-- [ ] Options outside this release's scope are shown disabled with no "coming later" text, including the existing S2R notes (APB, Interlocking Plant, physical signals). No disabled option can reach a saved facility.
-- [ ] Wiring lets the modeler pick a node, a red pin and a green pin. A pin already in use, or a mast or Logic slot that is not free, shows a blocking issue on Review, and Done is unavailable.
-- [ ] Review lists the protected block, the behavior (red when occupied, green when clear), the outputs and the claimed slots.
-- [ ] Done adds a facility card to the Railroad tab, adds a signal-indication channel to the Railroad panel whose "Used by" names the facility, and shows the generated values as Pending Changes in the node's configuration.
-- [ ] Facility-only edits enable the Save toolbar, appear in the unsaved-changes breakdown, count as in-memory edits, and trigger the navigation/layout-close and window-close prompts. Canceling a close keeps the edits.
-- [ ] Discard removes the facility, the channel and the Pending Changes together, and the toolbar and prompts return to clean.
-- [ ] Saving offline and reopening restores the facility, the channel and the Pending Changes. Closing the layout or starting a new one leaves no editor, draft or mirror state behind.
+- [ ] Blocks, Aspects, Appearance and Wiring are all exercisable, and Review is shown disabled in the step list. Aspects and Appearance show this release's fixed values.
+- [ ] Options outside this release's scope are shown disabled with no "coming later" text, including the existing S2R notes in the editor (APB, Interlocking Plant end choice, physical signals). No disabled option can reach a saved facility.
+- [ ] Wiring lets the modeler pick a Signal LCC, a red pin and a green pin. A pin already in use, or a mast or Logic slot that is not free (including one with an unsaved hand edit), shows a blocking issue on Wiring, and Done is unavailable.
+- [ ] Done adds a facility card to the Railroad tab, adds a signal-indication channel to the Railroad panel (in its own Signal LCC group) whose "Used by" names the facility, and shows the generated values as unsaved edits in the node's configuration.
+- [ ] Those edits enable the Save toolbar, appear in the unsaved-changes breakdown, count as in-memory edits, and trigger the navigation/layout-close and window-close prompts. Canceling a close keeps the edits.
+- [ ] Discard removes the facility, the channel and the configuration edits together, and the toolbar and prompts return to clean.
+- [ ] Saving offline and reopening restores the facility, the channel and the configuration edits as Offline Changes. Closing the layout or starting a new one leaves no editor, draft or mirror state behind.
 - [ ] A version-4 layout opens unchanged. A layout with a newer manifest version is refused with a "made by a newer Bowties" message. `docs/technical/layout-file-format.md` describes the policy.
 
-**Architecture note**: Introduces the pure compiler and claimed slots recorded on the facility, and makes Automatic Block Signals the first facility that composes mast and Logic configuration into Pending Changes and the first to persist a signal channel (ADR-0001, ADR-0005 and ADR-0013 2026-11-22 extensions). Rewrite the ABS seam invariant in `aiwiki/seams.md` when this lands.
+**Architecture note**: Introduces the pure compiler and claimed slots recorded on the facility, and makes Automatic Block Signals the first facility that composes mast and Logic configuration into configuration edits and the first to persist a signal channel (ADR-0001, ADR-0005, ADR-0012 and ADR-0013 extensions). Rewrite the ABS seam invariant in `aiwiki/seams.md` when this lands.
+
+**Tasks**:
+- [x] E1a-T1: Integration test — in `RailroadPanel.integration.test.ts`, Add facility → Blocks → Aspects → Appearance → Wiring (node, red, green) → Done shows the facility card, the channel row "Used by" the facility, the edits in the Save toolbar/unsaved breakdown; Discard clears all three.
+- [x] E1a-T2: Core version policy — `LAYOUT_SCHEMA_VERSION` 5; `validate()` accepts 4..=5, rejects newer with a "newer Bowties" message; facilities `schemaVersion` "2.0".
+- [x] E1a-T3: Core facility record — `blockSignals` record type, `AddFacility` carries it, whole-record replace delta with no-op, save/load roundtrip, signals-slot ↔ record channel-ID agreement check.
+- [x] E1a-T4: Core template — register `automatic-block-signals` with the `signals` slot and no mapping; bowtie composition skips it; facility status is not driven Wired into bowtie composition.
+- [x] E1a-T5: Core compiler — Line + node facts (+ unsaved edits) → typed edits, claimed slots, issues for the terminal recipe (mast processing, Rules 1/2/3, one Logic conditional on the block's occupied/clear events, lamp selection); issues for output in use, no free mast, no free Logic, missing occupancy events; absorbs `project_signal_binding`.
+- [x] E1a-T6: Backend — `compose_block_signals` command gathering free mast/Logic facts, occupancy event IDs and output owners from the effective view plus request drafts; IPC registration; TS API.
+- [x] E1a-T7: Stores — `facilitiesStore.addFacility` accepts an ID and record; record replace with no-op; dirty count includes it.
+- [x] E1a-T8: Railroad panel plumbing — `signalLccRgOutputs` in `hardwareGroupKey`, `ChannelsPanel` group label/node, `ChannelRow` role label and location; channel event resolver arm.
+- [x] E1a-T9: Editor store/orchestrator — Appearance and Wiring steps (Review disabled), Wiring choices, compose check with generation guard, Done intent.
+- [x] E1a-T10: facilityOrchestrator — create ABS facility: fresh compose, refuse on issues, add facility with record, create channel, attach to `signals`, stage edits through `configEditor.applyEdit`, roll back on failure, close the editor.
+- [x] E1a-T11: Components — `AppearanceStep`, `WiringStep` (Runs on picker, red/green pin grid, issues, Done), stepper with Review disabled; remove "later" text in the editor.
+- [x] E1a-T12: Offline save and reopen — facility, channel and Offline Changes roundtrip; lifecycle reset leaves no editor state.
+- [x] E1a-T13: Docs — `docs/technical/layout-file-format.md`, ADR-0012 and ADR-0013 extension lines, seams (ABS invariant, Lifecycle Reset participant, Railroad panel, Slot Binding), owners.
+- [ ] E1a-T14: Validate — vitest, `cargo test -p bowties-core`, app backend check/tests, svelte-check; native review against the storyboard sections above.
+
+**Validation (2026-11-22)**:
+- `cargo test` in `bowties-core`: all passing (453 unit tests + 9 integration binaries, incl. `block_signals_compiler.rs`, `block_signals_layout_roundtrip.rs`, and a test that resolves every compiled edit against the bundled Signal LCC CDI).
+- `app/src-tauri`: `cargo check --tests` clean. Its test executable does not start on this machine (`STATUS_ENTRYPOINT_NOT_FOUND`), so `compose.rs` and the command glue have compile-only evidence.
+- `npx vitest run`: 1543 passed, 2 failed. The 2 failures are 5 s timeouts in older S2R tests in `RailroadPanel.integration.test.ts` ("shows live occupancy…", "builds a travel-order list…") under full-suite load; the file passes alone (13/13). The slice made that file's shared `openEditor` setup heavier. Open: decide between a per-test timeout and splitting the file.
+- svelte-check: no errors in touched files (pre-existing errors elsewhere unchanged).
+- **Pending:** native review in the running app against `#line-appearance` and `#line-wiring`, and an offline Save → reopen check that the compiled edits appear as Offline Changes (core round trip is tested; the app-side conversion of drafts to Offline Change rows is the existing path for every configuration edit).
+
+**Implementation differences from the storyboard (for native review)**: Appearance shows three disabled signal types with RG searchlight checked, omits "Restricting looks like", shows a disabled "Override for this signal", and a fixed Indication × Mast table. Wiring has no "Next unwired signal" or progress counter (one signal); "Runs on" is a field button with "Change ▾" and no usage line; the picker is the shared `SearchableSingleSelectDialog` without the "Only nodes that can host" filter; lamps are two radios (Red lamp, Green lamp) instead of head cards; Customize lamps, Blink and Show are disabled; taken and this-signal pins are disabled (no swap or clear); no colour legend; issues show in an amber "Choices needing attention" box.
+
+**Native review fixes (2026-11-22)**: the pin grid was empty because output ownership counted each mast rule as a separate owner (a mast reusing red in Stop and Approach became a "conflict" and the host's facts were marked invalid); ownership moved to `bowties-core/src/signaling/outputs.rs` with one owner per mast, and Wiring now explains an unusable host instead of showing an empty grid. The node picker and "Runs on" use the shared node name with "<model> · <address>" underneath. Pin labels include the number ("#1 H1-G"). `facilities.yaml` written by this build is stamped "2.0" (a saved bench layout showed "1.0" with a `blockSignals` record). Bench result from the user's saved layout: signal on mast 2 / Logic 1, red #7, green #8, saved connected, LED follows the block (Stop/Clear).
+
+**Open items found during build**:
+- Deleting an Automatic Block Signals facility removes the facility and channel but does not reset its claimed mast/Logic slots on the board (that is E2). Decision pending: disable delete for ABS facilities until E2, or move removal ahead of E1b.
+- `channels.yaml` has the same latent version-stamp behavior (keeps a loaded "1.0").
+- "Used by" reads "<facility> / signals" because `usedBy` is built from the raw slot key, not the template's slot label. Fixing it changes the `usedBy` contract (all facility slots); candidate for a small follow-up.
+- Hardware questions before E1b: (1) the Logic sends the mast's own Rule 1/Rule 3 "set aspect" events read from the board; (2) the compiler writes "Delay before action" = 0 ms although the CDI label reads 1–60000, and zeroes unused Appearance lamps and Actions 3–4.
 
 ### E1b: Light the signal on the bench [HITL]
 
@@ -699,7 +742,7 @@ Deferred until the save/apply slice:
 - [ ] On the bench, an occupied block shows red and a clear block shows green, following each change in occupancy.
 - [ ] Nothing in the app says the signal is verified after writing; readback arrives in E4.
 - [ ] Block detection and unrelated configuration on the board are unchanged.
-- [ ] Reopening after a connected Save shows the facility with no leftover Pending Changes, and the Bowties catalog shows the same cards before and after reopening.
+- [ ] Reopening after a connected Save shows the facility with no leftover Offline Changes, and the Bowties catalog shows the same cards before and after reopening.
 
 **Architecture note**: First use of the existing Save and Sync Panel writers for a facility that generates logic, with no separate Apply. A failure here that cannot be reported truthfully through those writers is the trigger the ADR-0001 extension names for revisiting.
 
@@ -722,13 +765,14 @@ Deferred until the save/apply slice:
 
 ### E3: Two blocks on one board [HITL]
 
-**Intent**: The modeler adds a second block; the first signal keeps its identity and shows Approach behind an occupied block.
+**Intent**: The modeler adds a second block; the first signal keeps its identity and shows Approach behind an occupied block. This slice also adds the Review step (deferred from E1a).
 **Boundary**: Editor → compiler (receiving logic, Track Circuit) → drafts → Save → Signal LCC.
 **Blocked by**: E2 + same-board Approach evidence (passed).
 **Status**: sketched
 
 **Acceptance criteria**:
 - [ ] Adding a block keeps the first signal's identity, name, protected block and outputs; the new signal protects only its own block.
+- [ ] The Review step is enabled after Wiring and shows each signal's block, behavior, outputs, expected indications, affected configuration and claimed slots (FR-010); Done moves from Wiring to Review.
 - [ ] Review explains that the first signal now has a signal after it, and lists the added logic and claimed slots.
 - [ ] All four two-block occupancy combinations match the policy on the bench: own block occupied gives Stop (red); clear with the next block occupied gives Approach (red and green together); both clear gives Clear (green).
 - [ ] The Track Circuit Link Address comes from values freshly read from the board, not saved or assumed ones.

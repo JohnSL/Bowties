@@ -48,12 +48,7 @@
     }
     return states;
   });
-  const blockSignalsTemplate: BehaviorTemplate = {
-    templateId: 'automatic-block-signals',
-    displayName: 'Automatic Block Signals',
-    slots: [],
-    mapping: [],
-  };
+  const BLOCK_SIGNALS_TEMPLATE_ID = 'automatic-block-signals';
 
   // Shown in Add facility so people can see what's planned; it can't be chosen yet.
   const interlockingPlantChoice = {
@@ -72,7 +67,7 @@
   };
 
   const facilityChoices = $derived(
-    [...behaviorTemplatesStore.templates, blockSignalsTemplate]
+    behaviorTemplatesStore.templates
       .map((template) => ({ ...template, description: FACILITY_DESCRIPTIONS[template.templateId] }))
       .concat(interlockingPlantChoice),
   );
@@ -82,7 +77,7 @@
   }
 
   function handleAddConfirm(template: BehaviorTemplate, name: string) {
-    if (template.templateId === blockSignalsTemplate.templateId) {
+    if (template.templateId === BLOCK_SIGNALS_TEMPLATE_ID) {
       startBlockSignalsEditor(name);
       showAddDialog = false;
       return;

@@ -13,6 +13,7 @@
     roleForChannelState,
     type ChannelState,
   } from '$lib/utils/channelState';
+  import { signalOutputLabel } from '$lib/utils/signalOutputLabels';
   import FacilitySlot from './FacilitySlot.svelte';
 
   let {
@@ -46,6 +47,26 @@
   let status = $derived<FacilityStatus>(
     effectiveLayoutStore.facilityStatus(facility.facilityId),
   );
+
+  // Spec 020 / E1a: the Automatic Block Signals editor creates and owns the
+  // facility's signal channels, so its card lists them read-only (editing is E2).
+  const isAutomaticBlockSignals = $derived(
+    (template?.templateId ?? facility.templateId) === 'automatic-block-signals',
+  );
+
+  function signalsOf(binding: string[]) {
+    return binding.flatMap((id) => {
+      const channel = channelsStore.channels.find((candidate) => candidate.id === id);
+      if (!channel || channel.binding.kind !== 'signalLccRgOutputs') return [];
+      const tree = nodeTree?.(channel.binding.nodeKey);
+      return [{
+        id,
+        name: channel.name,
+        red: signalOutputLabel(tree, channel.binding.redOutput),
+        green: signalOutputLabel(tree, channel.binding.greenOutput),
+      }];
+    });
+  }
 
   let isEditingName = $state(false);
   let nameEditValue = $state('');
@@ -178,6 +199,16 @@
     </div>
   </header>
 
+  {#if isAutomaticBlockSignals}
+    <ul class="signal-list" aria-label="Signals" data-testid="facility-signals">
+      {#each slotsOrdered().flatMap(([, binding]) => signalsOf(binding)) as signal (signal.id)}
+        <li class="signal-item">
+          <span class="signal-name">{signal.name}</span>
+          <span class="signal-lamps">Red {signal.red} · Green {signal.green}</span>
+        </li>
+      {/each}
+    </ul>
+  {:else}
   <div class="slot-grid">
     {#each slotsOrdered() as [label, binding], i (label)}
       {@const d = displayFor(binding)}
@@ -197,6 +228,7 @@
       />
     {/each}
   </div>
+  {/if}
 </article>
 
 <style>
@@ -293,6 +325,23 @@
     align-items: stretch;
     gap: 0.5rem;
   }
+  .signal-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .signal-item {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.8125rem;
+  }
+  .signal-name { font-weight: 600; color: var(--text-primary, #242424); }
+  .signal-lamps { font-size: 0.75rem; color: var(--text-muted, #616161); }
   .slot-arrow {
     display: flex;
     align-items: center;

@@ -8,6 +8,9 @@ import type { InformationChannel } from '$lib/api/channels';
 import type { BlockSignalsPreview, BlockSignalsPreviewRequest, ListedBlock, TravelDirection } from '$lib/api/signaling';
 import { cancelBlockSignalsEditor } from '$lib/orchestration/blockSignalsEditorOrchestrator';
 import { eventStateStore } from '$lib/stores/eventState.svelte';
+import { effectiveLayoutStore, effectiveNodeStore } from '$lib/layout';
+import { configChangesStore } from '$lib/stores/configChanges.svelte';
+import SaveControls from '../ElementCardDeck/SaveControls.svelte';
 
 const invoke = vi.hoisted(() => vi.fn());
 
@@ -220,17 +223,29 @@ describe('RailroadPanel (Spec 018 / S3 — hardware-organised Channels panel)', 
     async function openEditor(
       name = 'Cedar Hill — Eastward',
       resolvedEventIds?: ReadonlyMap<string, Record<string, string>>,
+      ipc: Record<string, (args?: unknown) => unknown> = {},
     ) {
       channelsStore.hydrateBaseline(blocks);
       invoke.mockImplementation((command: string, args?: { request: BlockSignalsPreviewRequest }) => {
+        if (command in ipc) return Promise.resolve(ipc[command](args));
         if (command === 'list_behavior_templates') {
-          return Promise.resolve([{ templateId: 'block-indicator', displayName: 'Block Indicator', slots: [], mapping: [] }]);
+          return Promise.resolve([
+            { templateId: 'block-indicator', displayName: 'Block Indicator', slots: [], mapping: [] },
+            {
+              templateId: 'automatic-block-signals',
+              displayName: 'Automatic Block Signals',
+              slots: [{ label: 'signals', displayLabel: 'signals', kind: 'consumer', requiredRole: 'signal-indication', minChannels: 1, maxChannels: null }],
+              mapping: [],
+            },
+          ]);
         }
         if (command === 'preview_block_signals') return Promise.resolve(fakePreview(args!.request));
         throw new Error(`unexpected IPC command: ${command}`);
       });
       await behaviorTemplatesStore.loadBehaviorTemplates();
-      render(RailroadPanel, { props: { nodeName: stubNodeName, resolvedEventIds } });
+      // the route supplies Used by from the facade; do the same here
+      const usedBy = (channelId: string) => effectiveLayoutStore.channelUsageMap.get(channelId) ?? [];
+      render(RailroadPanel, { props: { nodeName: stubNodeName, resolvedEventIds, usedBy } });
       await fireEvent.click(screen.getByTestId('add-facility-button'));
       await startBlockSignals(name);
       return screen.getByRole('dialog', { name: /new automatic block signals/i });
@@ -263,7 +278,7 @@ describe('RailroadPanel (Spec 018 / S3 — hardware-organised Channels panel)', 
     });
 
     it('offers Interlocking Plant disabled beside Automatic Block Signals in Add facility', async () => {
-      invoke.mockResolvedValue([{ templateId: 'block-indicator', displayName: 'Block Indicator', slots: [], mapping: [] }]);
+      invoke.mockResolvedValue([{ templateId: 'block-indicator', displayName: 'Block Indicator', slots: [], mapping: [] }, { templateId: 'automatic-block-signals', displayName: 'Automatic Block Signals', slots: [], mapping: [] }]);
       await behaviorTemplatesStore.loadBehaviorTemplates();
       render(RailroadPanel, { props: { nodeName: stubNodeName } });
       await fireEvent.click(screen.getByTestId('add-facility-button'));
@@ -311,12 +326,10 @@ describe('RailroadPanel (Spec 018 / S3 — hardware-organised Channels panel)', 
         'A protected block occupiedStopMill siding not lined for the main, or position unknownStopProtected blocks clearClear',
       );
 
-      await fireEvent.click(within(editor).getByRole('radio', { name: 'Restricting' }));
-      await waitFor(() => expect(within(editor).getByRole('table', { name: 'Rules for Cedar Hill East' }))
-        .toHaveTextContent('Mill siding not lined for the main, or position unknownRestricting'));
-
-      expect(within(editor).getByRole('button', { name: 'Next: Physical signals' })).toBeDisabled();
-      expect(within(editor).getByRole('button', { name: /physical signals: available in a later release/i })).toBeDisabled();
+      // Restricting is outside this release's scope: offered, but not selectable
+      expect(within(editor).getByRole('radio', { name: 'Restricting' })).toBeDisabled();
+      expect(within(editor).getByRole('button', { name: 'Next: Appearance' })).toBeEnabled();
+      expect(within(editor).getByRole('button', { name: /^\d?\s*Review$/ })).toBeDisabled();
       expect(within(editor).queryByRole('button', { name: /save|apply|confirm/i })).not.toBeInTheDocument();
       expect(facilitiesStore.isEmpty).toBe(true);
     });
@@ -330,6 +343,7 @@ describe('RailroadPanel (Spec 018 / S3 — hardware-organised Channels panel)', 
       const menu = within(editor).getByRole('dialog', { name: 'What lies beyond Mill curve' });
       expect(within(menu).getByRole('radio', { name: /^Nothing beyond The last signal/ })).toBeChecked();
       expect(within(menu).getByRole('button', { name: 'Choose a Plant…' })).toBeDisabled();
+      expect(menu.textContent).not.toMatch(/later release/i);
       await fireEvent.click(within(menu).getByRole('radio', { name: /treat as stop/i }));
 
       await waitFor(() => expect(lastRequest().exitEnd).toEqual({ kind: 'treatAsStop' }));
@@ -342,23 +356,129 @@ describe('RailroadPanel (Spec 018 / S3 — hardware-organised Channels panel)', 
       expect(within(editor).getByText(/shows Approach at best/)).toBeInTheDocument();
     });
 
-    it('draws both directions and keeps the list order when the direction changes', async () => {
+    it('shows Both directions disabled and keeps the list order when the direction changes', async () => {
       const editor = await openEditor();
       await addBlock('Cedar Hill');
       await addBlock('Mill curve');
 
-      await fireEvent.click(within(editor).getByRole('radio', { name: /both directions/i }));
-      expect(within(editor).getByText('List order')).toBeInTheDocument();
-      expect(within(editor).getByRole('radio', { name: /coordinate traffic through the single-track section/i })).toBeDisabled();
+      expect(within(editor).getByRole('radio', { name: /both directions/i })).toBeDisabled();
+      expect(within(editor).getByRole('radio', { name: /one direction/i })).toBeEnabled();
       await fireEvent.click(within(editor).getByRole('radio', { name: 'Westward' }));
 
-      await waitFor(() => expect(lastRequest()).toMatchObject({ movements: 'bothDirections', direction: 'westward' }));
+      await waitFor(() => expect(lastRequest()).toMatchObject({ movements: 'oneDirection', direction: 'westward' }));
       expect(lastRequest().blocks.map((block) => block.blockId)).toEqual(['block:cedar', 'block:mill']);
       expect(within(editor).getByText('Track, in westward order')).toBeInTheDocument();
 
       await fireEvent.click(within(editor).getByRole('button', { name: 'Next: Aspects' }));
       expect(await within(editor).findByRole('button', { name: /configure cedar hill west/i })).toBeInTheDocument();
-      expect(within(editor).getByRole('button', { name: /configure mill curve east/i })).toBeInTheDocument();
+      expect(within(editor).getByRole('button', { name: /configure mill curve west/i })).toBeInTheDocument();
+    });
+
+    describe('Done to Discard (E1a-T1)', () => {
+      const SIGNAL_NODE = '020157000001';
+      const hosts = [{
+        nodeKey: SIGNAL_NODE,
+        nodeName: 'Signal LCC 1',
+        style: {
+          styleId: 'two-driver-rg-signal',
+          bindingKind: 'signalLccRgOutputs',
+          appearances: { stop: ['red'], approach: ['red', 'green'], clear: ['green'] },
+        },
+        evidence: 'complete',
+        outputs: [
+          { ordinal: 1, label: '#1 H1-G', owner: null },
+          { ordinal: 3, label: 'H1-R', owner: null },
+        ],
+      }];
+      let composeIssues: unknown[] = [];
+
+      const ipc = {
+        preview_block_signals: (args: unknown) => ({
+          ...fakePreview((args as { request: BlockSignalsPreviewRequest }).request),
+          outputHosts: hosts,
+        }),
+        compose_block_signals: () => composeIssues.length > 0
+          ? { edits: [], claimedSlots: [], issues: composeIssues }
+          : {
+            edits: [{ nodeKey: SIGNAL_NODE, space: 253, address: 100, path: 'mast#1', value: { type: 'int', value: 3 } }],
+            claimedSlots: [{ nodeKey: SIGNAL_NODE, kind: 'mast', index: 1 }],
+            issues: [],
+          },
+        sync_layout_drafts: () => undefined,
+        clear_layout_drafts: () => undefined,
+        discard_modified_values: () => 0,
+      };
+
+      beforeEach(() => {
+        composeIssues = [];
+        configChangesStore.clearAllDrafts();
+      });
+
+      async function wireFirstSignal(editor: HTMLElement) {
+        await addBlock('Cedar Hill');
+        await fireEvent.click(within(editor).getByRole('button', { name: 'Next: Aspects' }));
+        await fireEvent.click(await within(editor).findByRole('button', { name: 'Next: Appearance' }));
+        await fireEvent.click(within(editor).getByRole('button', { name: 'Next: Wiring' }));
+        await fireEvent.click(await within(editor).findByRole('button', { name: /Runs on/ }));
+        const picker = await screen.findByRole('dialog', { name: 'Choose a Signal LCC' });
+        await fireEvent.click(within(picker).getByRole('radio', { name: /02.01.57.00.00.01/ }));
+        await fireEvent.click(within(picker).getByRole('button', { name: 'Confirm' }));
+        const grid = await within(editor).findByRole('group', { name: 'Pins on 02.01.57.00.00.01' });
+        await fireEvent.click(within(grid).getByRole('button', { name: /H1-R/ }));
+        await fireEvent.click(within(grid).getByRole('button', { name: /#1 H1-G/ }));
+      }
+
+      it('adds the facility card, channel row and configuration edits on Done, and Discard removes all three', async () => {
+        const editor = await openEditor('Cedar Hill — Eastward', undefined, ipc);
+        render(SaveControls, { props: { toolbar: true } });
+        expect(screen.queryByRole('group', { name: 'Configuration save controls' })).not.toBeInTheDocument();
+
+        await wireFirstSignal(editor);
+        const done = within(editor).getByRole('button', { name: 'Done' });
+        await waitFor(() => expect(done).toBeEnabled());
+        await fireEvent.click(done);
+
+        await waitFor(() => expect(screen.queryByRole('dialog', { name: /new automatic block signals/i })).not.toBeInTheDocument());
+
+        // the facility card lists the signal read-only
+        const card = await screen.findByTestId('facility-card');
+        expect(card).toHaveTextContent('Cedar Hill — Eastward');
+        expect(within(card).getByText('Cedar Hill East')).toBeInTheDocument();
+        expect(within(card).queryByTestId('add-channel-button')).not.toBeInTheDocument();
+
+        // the channel appears in its own Signal LCC group, used by the facility
+        const row = within(screen.getByRole('table')).getByText('Cedar Hill East').closest('tr')!;
+        expect(within(row).getByText('Signal')).toBeInTheDocument();
+        expect(row).toHaveTextContent('Cedar Hill — Eastward / signals');
+        expect(within(screen.getByRole('table')).getByText(/Signal LCC/)).toBeInTheDocument();
+
+        // the Save toolbar lights up and the breakdown counts all three kinds of edit
+        const toolbar = await screen.findByRole('group', { name: 'Configuration save controls' });
+        expect(within(toolbar).getByRole('button', { name: 'Discard pending changes' })).toBeEnabled();
+        expect(effectiveNodeStore.isDirty).toBe(true);
+        expect(effectiveNodeStore.dirtyBreakdown).toMatchObject({ facilities: 1, channels: 1, config: 1, configNodes: 1 });
+
+        // Discard clears the card, the channel row and the configuration edits together
+        await fireEvent.click(within(toolbar).getByRole('button', { name: 'Discard pending changes' }));
+        await fireEvent.click(await screen.findByRole('button', { name: 'Revert' }));
+
+        await waitFor(() => expect(screen.queryByTestId('facility-card')).not.toBeInTheDocument());
+        expect(within(screen.getByRole('table')).queryByText('Cedar Hill East')).not.toBeInTheDocument();
+        expect(effectiveNodeStore.isDirty).toBe(false);
+        expect(effectiveNodeStore.dirtyBreakdown).toMatchObject({ facilities: 0, channels: 0, config: 0 });
+        expect(screen.queryByRole('group', { name: 'Configuration save controls' })).not.toBeInTheDocument();
+      });
+
+      it('shows a compose issue on Wiring and keeps Done disabled', async () => {
+        composeIssues = [{ code: 'outputInUse', signalId: null, nodeKey: SIGNAL_NODE, detail: 'H1-R is used' }];
+        const editor = await openEditor('Cedar Hill — Eastward', undefined, ipc);
+
+        await wireFirstSignal(editor);
+
+        expect(await within(editor).findByText('A chosen pin is already in use by another signal. Choose a free pin.')).toBeInTheDocument();
+        expect(within(editor).getByRole('button', { name: 'Done' })).toBeDisabled();
+        expect(facilitiesStore.isEmpty).toBe(true);
+      });
     });
 
     it('shows missing detection facts and explains Restricting in a help bubble that closes on an outside click', async () => {

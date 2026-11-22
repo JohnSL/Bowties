@@ -9,6 +9,9 @@
 //! bus operation.
 
 mod chain;
+pub mod compiler;
+pub mod outputs;
+pub mod slots;
 
 use std::collections::BTreeMap;
 
