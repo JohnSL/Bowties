@@ -3,6 +3,28 @@
 **Status**: Proposed extensions to existing facilities/layout contracts, not implemented types.
 **Owner**: `bowties-core` owns serializable domain values and deterministic transitions; the backend supplies authoritative snapshots and lifecycle evidence.
 
+## Implemented: transient preview model (S2R)
+
+The feedback release implements only an unsaved preview. Its types live in
+`bowties-core/src/signaling/` and are mirrored in `app/src/lib/api/signaling.ts`; the request and
+response shapes are in [contracts/tauri-ipc.md](contracts/tauri-ipc.md). None of these values are
+persisted, and the sections after this one remain the proposed model for saving and applying.
+
+| Concept | Rule in the preview |
+|---|---|
+| Block list | Detected blocks in travel order for the list direction. Changing direction redraws and rewords; it never reorders the list. |
+| Signal block | A block plus every following block with `joinedToPrevious`. `joinedToPrevious` on the first block is ignored. One entrance signal per signal block per chain. |
+| Signal identity | Derived from the facility ID, the first block of the signal block and the direction it governs, so renames keep identity. |
+| Chains | `oneDirection` gives the with-list chain. `bothDirections` adds an against-list chain that enters each signal block from its far end. No APB or opposing coordination is derived. |
+| Ends | Entrance: no Plant or a Plant (read by the against-list chain). Exit: nothing beyond (Stop / Clear), treat as Stop (Approach at best), or a Plant entrance as the next signal. |
+| Settings | Facility-wide aspects (2, 3 or 4), turnout-not-lined policy (Stop or Restricting) and approach lighting. A per-signal override replaces aspects and approach lighting for that signal only. Unsupported counts are reported and previewed as 3. |
+| Rules | Conditions and indications, most restrictive first: block occupied, each turnout not lined, then clear conditions that read the next signal (2 aspects reads only its own block; 4 adds Advance Approach). |
+| Placeholder turnout | `{ turnoutId, name }` owned by the request. Its position is always unknown and reported as `turnoutPositionUnavailable`. |
+| Capability | Always `incompletePreview`; stage, save and apply are `unavailable`. |
+
+The S2 hardware projection (`SignalBindingSelection`, `SignalOutputHost`, `SignalDisplay`) is still
+in the core and backend but the UI does not call it; Wiring will revisit it.
+
 ## Automatic Block Signals facility
 
 Persist within the existing facilities document and draft delta pipeline.

@@ -2329,7 +2329,7 @@
         <ul>
           <li>Lamps are the passengers and pins are the seats. Select a lamp, then click a pin: a free pin places it and selection moves to the next lamp without a pin; the selected lamp's own pin clears it; another lamp's pin on this signal swaps the two. Pins taken by other signals or facilities are disabled and name their owner.</li>
           <li>The selected lamp's pin is filled in the grid, and every pin this signal uses shows its lamp name, so the mapping reads both ways without a second control.</li>
-          <li>Header labels (H1–H4) place every lamp of the selected lamp's head on that header by position (G, Y, R, L), which wires most signals in one click. Pin names are positional only, so Blink confirms the result.</li>
+          <li>Header labels (H1–H4) place every lamp of the selected lamp's head on that header, matching lamps to the G, Y, R, L pin labels, which wires most signals in one click. The labels are only a suggestion: any pin can drive any LED, so the user can place lamps on any pins, and Blink confirms the result.</li>
           <li>Signal type comes from Appearance; Wiring only chooses how each head is driven. Two choices are a segmented control and one is plain text; the electrical detail is a tooltip.</li>
         </ul>
         <h4>Lamp patterns stay closed</h4>
@@ -2340,7 +2340,7 @@
         <h4>Checking the wiring</h4>
         <ul>
           <li>Blink proves one pin is wired to the right lamp. It briefly uses Direct Lamp Control, so Bowties must always return that lamp to Used by Mast afterwards; a lamp left in direct mode silently breaks every aspect.</li>
-          <li>Show proves a whole aspect by sending the rule's set aspect event, the same staged order as the community bring-up procedure. Both need the node online and the signal fully wired. When nothing lights, the hint points at the board's CA/CC jumper.</li>
+          <li>Show proves a whole aspect by sending the rule's set aspect event, the same staged order as the community bring-up procedure. Both need the node online and the signal fully wired. When nothing lights, the hint points at the board's CA/CC jumper, which sets whether the outputs pull up or pull down to light an LED, to match common-anode or common-cathode wiring.</li>
         </ul>
         <h4>Mockup limitations</h4>
         <ul>
@@ -2348,11 +2348,16 @@
           <li>When a head has no pins yet for its signal type, drive, or node, Bowties keeps it on the same header if that header is free, and otherwise uses the first free one. Earlier pins are kept so switching back restores them; removed heads release their pins.</li>
           <li>With both directions, only the chain for the list direction is wired here. Opposite-direction signals and coordination resources are not allocated.</li>
         </ul>
+        <h4>Open questions</h4>
+        <ul>
+          <li>Blink: does changing a lamp to Direct Lamp Control take effect without restarting the node? When the lamp returns to Used by Mast, does it show the current aspect at once or only at the next aspect change?</li>
+          <li>How many conditionals does a signal really use? The usage line is an estimate until Bowties generates the logic.</li>
+        </ul>
       </aside>
     </div>
 
     <div class="wizard-frame" id="line-review">
-      <p class="frame-heading"><strong>Step 5 of 5 — Review.</strong> Review behavior, turnout restrictions, approach lighting, every head, and all output assignments. Nothing is saved or applied.</p>
+      <p class="frame-heading"><strong>Step 5 of 5 — Review.</strong> Review behavior, turnout restrictions, appearance, each signal's Signal LCC, and every lamp-to-pin assignment. Nothing is saved or applied.</p>
       <div class="dialog wide">
         <div class="dialog-head"><span data-line-context-title>New Automatic Block Signals</span> · Review</div>
         <div class="dialog-body">
@@ -2395,7 +2400,7 @@
         <ul>
           <li>Review differences against the existing configuration, including membership,
           resource releases, and changed links. Editing must not recreate unchanged signal identities.</li>
-          <li>All four Cancel buttons are preview-only: nothing is saved or applied, local choices
+          <li>All five Cancel buttons are preview-only: nothing is saved or applied, local choices
           remain until reload. Real draft cancellation/persistence is not implemented here.</li>
           <li>The operating summary describes intent, not validated delivery. Unanswered
           coordination stays explicit.</li>
@@ -2407,7 +2412,7 @@
           <li>Save/apply controls are disabled because authoritative checks remain pending. Edit mode compares against the initial sample, not a loaded layout; change counts include effective settings, relationships, and active bindings.</li>
           <li>The checks here are limited sample checks. Still required before applying, and not validated by this mockup: detection and turnout position sources, downstream semantics, and unavailable-input behavior; catalog mappings, board capabilities, external output claims, and logic capacity; effects on signals outside this facility and safe application order.</li>
           <li>Aspects, Wiring, and Review configure one directional chain only. Appearance simulates both directions and APB, but that behavior is not validated hardware logic.</li>
-          <li>Try changing the signal type or adding a second head on Appearance, then RG/RYG searchlight implementations or position-light center circuitry on Wiring; move a signal to another Signal LCC, clear a lamp's pin, or customize a rule past 4 lamps, then follow a Wiring correction link. Backtracking retains unrelated choices.</li>
+          <li>Try changing the signal type or adding a second head on Appearance, then RG/RYG searchlight drives or the position-light center (always on, or on a pin for approach lighting) on Wiring; move a signal to another Signal LCC, clear a lamp's pin, or customize a rule past 4 lamps, then follow a Wiring correction link. Backtracking retains unrelated choices.</li>
         </ul>
         <h4>Open questions</h4>
         <ul>
@@ -2907,7 +2912,7 @@
     }
     const LINE_DRIVE_SHORT = {
       'blend-rg': 'RG blend · 2 pins', 'search-ryg': 'RYG channels · 3 pins',
-      'position-center': 'Shared center · 4 pins', 'position-external': 'External center · 3 pins',
+      'position-center': 'Shared center · 4 pins', 'position-external': 'Center always on · 3 pins',
     };
     const LINE_ELECTRICAL = {
       'fixed-ryg': 'Three fixed colored lamps, three independently controlled pins.',
@@ -2916,12 +2921,12 @@
       'search-ryg': 'One variable-color aperture, separate red/yellow/green channels. Three pins.',
       'position-center': 'Three two-lamp pattern groups plus one shared center pin. Center lit for every lit indication; all four pins off for Dark.',
       'cpl-pairs': 'Three pairs of colored lamps (red horizontal, yellow diagonal, green vertical), one pin per pair. No center lamp.',
-      'position-external': 'External circuitry keeps the center lamp lit whenever any row is lit. Three pins, plus that circuitry.',
+      'position-external': 'The center lamp is wired to stay lit, and three pins drive the pattern rows. Not with approach lighting: the center would stay lit while the signal is dark.',
     };
     const lineImplementations = {
       color: [['fixed-ryg', 'Fixed red / yellow / green lamps · 3 outputs']],
       searchlight: [['blend-rg', 'RG blend · 2 independently driven channels'], ['search-ryg', 'RYG channels · 3 outputs']],
-      position: [['position-center', '3 pattern groups + shared center · 4 outputs'], ['position-external', '3 groups + external center-light circuitry · 3 outputs']],
+      position: [['position-center', '3 pattern groups + shared center · 4 outputs'], ['position-external', '3 pattern groups, center wired always on · 3 outputs']],
       cpl: [['cpl-pairs', '3 colored lamp pairs · 3 outputs']],
       lunar: [['lunar-single', 'One lunar lamp · 1 output']],
     };
@@ -4177,6 +4182,9 @@
           }
         }
       }
+      if (signalDark(signal) === 'approach' && signal.heads.some(head => head.implementation === 'position-external')) {
+        issues.push({ step: 'wiring', message: 'Approach lighting needs the center lamp on a pin so it can go dark. Drive the position-light head as Shared center · 4 pins.' });
+      }
       const board = lineBoards[signal.node];
       if (!board.online) issues.push({ step: 'wiring', message: `${board.name} is offline; Bowties cannot read or write its configuration.` });
       if (lineMastSlot(index) > SIGNAL_LCC.masts) issues.push({ step: 'wiring', message: `${board.name} has no free mast. Choose another node.` });
@@ -5101,8 +5109,8 @@
         Object.values(head.outputs).filter(Boolean).map(output => claimKey(head, output)))));
       const released = [...initialOutputs].filter(output => !claims.has(output));
       document.getElementById('line-resource-changes').textContent = editing
-        ? `Released sample outputs: ${released.length ? released.join(', ') : 'none'}. Membership is unchanged. External effects still require validation.`
-        : 'Existing blocks, their detection, and turnout position inputs are reused. Output availability outside this sample is not checked.';
+        ? `Released sample pins: ${released.length ? released.join(', ') : 'none'}. Membership is unchanged. External effects still require validation.`
+        : 'Existing blocks, their detection, and turnout position inputs are reused. Pin availability outside this sample is not checked.';
       const issueList = document.getElementById('line-confirm-issues');
       issueList.replaceChildren();
       for (const [index, signal] of lineSignals.entries()) {

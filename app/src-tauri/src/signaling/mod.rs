@@ -10,9 +10,9 @@ use bowties_core::{
     },
     profile::{make_profile_key, StructureProfile},
     signaling::{
-        preview_block_signals_with_hardware, ProposalIssue, SelectedBlock, SignalAppearanceSet,
+        preview_block_signals_with_hardware, ProposalIssue, SignalAppearanceSet,
         SignalDriver, SignalHardwareEvidence, SignalHardwareFacts, SignalHardwareHost,
-        SignalIndication, BlockSignalsPreview, BlockSignalsRequest, SignalOutput, SignalStyle,
+        BlockSignalsPreview, BlockSignalsRequest, SignalOutput, SignalStyle,
     },
 };
 
@@ -373,6 +373,7 @@ pub async fn preview(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bowties_core::signaling::{SelectedBlock, SignalIndication};
     use bowties_core::layout::channels::{
         ChannelBinding, ChannelOwnership, ChannelsDocument, InformationChannel,
     };

@@ -2,7 +2,7 @@
 
 Branch: 020-block-signals-first-slice
 Generated: 2026-11-07
-Status: 1/8 slices complete
+Status: 2/9 slices complete (S1, S2R); S2 superseded; S3–S8 to be re-sketched
 
 Approved input: [Architecture Assessment](plan.md#architecture-assessment) and
 [feature specification](spec.md). Roadmap review split the assessment's first
@@ -13,7 +13,35 @@ application. The remaining five slices preserve the approved design contracts.
 including user-confirmed native Tauri review. S2 is checkpointed (commit
 `7b1b641`) with its resource check and visual gate still open. S2R, a
 feedback release that rebuilds Blocks and Aspects to the revised storyboard,
-is the active card; downstream cards remain `sketched`.
+is done. Downstream cards remain `sketched`.
+
+**Pivot (2026-11-22): end-to-end first, then add features.** The release
+with Blocks and Aspects drew no feedback. Instead of building more preview
+pages, the next work makes the spec's original scope work end to end:
+- one direction;
+- the three-indication policy;
+- no turnouts;
+- one RG searchlight head, always lit;
+- save, apply, and check on the bench.
+
+Features beyond that scope are added one at a time after it works (see the
+[2026-11-22 clarification](spec.md#session-2026-11-22)).
+
+Consequences for the roadmap:
+- **The Appearance feedback slice is paused.** Its design (expected aspects
+  evaluated in the core on a scene, a simulated train, signal type and the
+  mast drawing, optional APB) was presented on 2026-11-19 but not decided or
+  recorded in `plan.md`. Two of its findings carry into the pivot:
+  - the core owns rule evaluation, which Review and bench checks need;
+  - signal type stays separate from channel Style.
+- **The steps become Blocks, Aspects, Appearance, Wiring, Review.** Aspects
+  and Appearance show this scope's fixed values. S2R options outside the
+  scope show as "Coming in a later release" and must not reach a saved Line.
+- **Wiring replaces S2's Display and Bindings.** S2's output-binding work
+  in `7b1b641` is the starting point for the Wiring step.
+- **S3 to S8 need re-sketching before `/build`.** Run `/design` for the
+  end-to-end path; it re-sketches these cards against the S2R pages and the
+  five steps.
 
 ## Architecture
 
@@ -113,8 +141,8 @@ Proposed module names are placements, not assertions that those modules exist.
 | # | Slice title | Label | Blocked by | Status |
 |---|---|---|---|---|
 | S1 | Choose blocks and name signals | HITL | None | done |
-| S2 | Choose display and bind real outputs | HITL | S1 | tasked |
-| S2R | Feedback release: Blocks and Aspects per revised storyboard | HITL | S1, S2 checkpoint | tasked |
+| S2 | Choose display and bind real outputs | HITL | S1 | superseded by Wiring (re-sketch) |
+| S2R | Feedback release: Blocks and Aspects per revised storyboard | HITL | S1, S2 checkpoint | done |
 | S3 | Review the complete terminal proposal | HITL | S2 | sketched |
 | S4 | Keep or discard Line drafts | HITL | S3 | sketched |
 | S5 | Safely operate one signal | HITL | S4 + terminal-recipe evidence | sketched |
@@ -529,7 +557,7 @@ preview away.
 
 ### S2R: Feedback release — Blocks and Aspects per revised storyboard [HITL]
 
-**Status**: tasked
+**Status**: done
 **Complexity**: large
 **Purpose**: ship a build people can try so feedback comes from use rather
 than screenshots. Nothing can be saved, staged or applied, so the release
@@ -584,10 +612,15 @@ carries no layout risk.
   shared drawing, geometry in a tested pure helper, replacing
   `BlockSignalsSelector`), Blocks and Aspects steps, end-chip menu, disabled
   Plant picker, `HelpTip`, disabled Physical signals step.
-- [ ] S2R-T6: Docs — aiwiki owners/flows/seams (done), data model and IPC contract (still to do).
-- [ ] S2R-T7: Validate — core/backend/frontend suites, type check against
+- [x] S2R-T6: Docs — aiwiki owners/flows/seams, plus the implemented preview in
+  [data-model.md](data-model.md) and [contracts/tauri-ipc.md](contracts/tauri-ipc.md).
+- [x] S2R-T7: Validate — core/backend/frontend suites, type check against
   the recorded baseline, production build, and a running-app comparison with
-  the storyboard at roomy and narrow/short sizes.
+  the storyboard at roomy and narrow/short sizes (browser with a fake backend;
+  see the progress notes).
+- [x] S2R-T8: Native Tauri review of Blocks and Aspects against the storyboard
+  (user, 2026-11-19). Both pages match, except approach lighting, which the
+  storyboard has since moved to Appearance; the Appearance slice moves it.
 
 **S2R progress (2026-11-15)**:
 
@@ -609,9 +642,58 @@ carries no layout risk.
   westward with both directions, Aspects with "treat as Stop"). Native Tauri
   review is still pending.
 
+**S2R validation (2026-11-18)**:
+
+- Core: `cargo test` in `bowties-core` passes, including the 25
+  `block_signals_policy.rs` tests.
+- Backend: `cargo test --no-run` compiles with no warnings after moving two
+  test-only imports into the test module of `app/src-tauri/src/signaling/mod.rs`.
+  The tests still cannot run on this Windows machine
+  (`STATUS_ENTRYPOINT_NOT_FOUND`).
+- Frontend: Vitest 1503 of 1504 passed in the full run. The one failure was
+  the S2R integration test "builds a travel-order list…", which timed out at
+  the 5 s default while cargo builds ran alongside it. Run alone it passes
+  in about 2 s (all 11 tests in the file pass). It is the slowest S2R test and
+  may need a longer timeout if it flakes again.
+- Type check: 114 errors, the recorded baseline; none in S2R files.
+- Production build passes.
+
+**S2R test coverage decision (2026-11-18)**:
+
+Blocks and Aspects are a feedback release: they cannot save or apply, and the
+first release that does is expected to turn most options off (for example,
+3-aspect ABS in one direction with no turnouts). Tests for the UI layer are
+therefore deferred, not skipped. They must be added in the slice that first
+makes these pages save or apply, for the options that slice keeps enabled.
+
+Covered now, and kept because the signaling rules are what reviewers judge:
+- Core policy (`bowties-core/tests/block_signals_policy.rs`, 25 tests): signal
+  blocks, joins, identity, both chains, ends, 2/3/4 aspects, turnout policy,
+  overrides and issues. These were written after the code, so no RED step
+  was recorded.
+- Orchestrator (`blockSignalsEditorOrchestrator.test.ts`, 6 tests): request
+  shape, stale responses and cancel, turnout moves.
+- Geometry and wording helpers (`trackGeometry.test.ts`): 8 tests.
+- Integration (`RailroadPanel.integration.test.ts`, 6 S2R tests): the real
+  editor through IPC mocks, covering Add facility, list building, ends, both
+  directions, missing detection and cancel.
+
+Deferred until the save/apply slice:
+- Component tests for `BlocksStep`, `AspectsStep`, `EndChipMenu`, `RowMenu`,
+  `HelpTip` and `TrackDiagram` rendering (now covered only through the
+  integration tests).
+- Direct store tests for `blockSignalsEditor.svelte.ts` transitions (add,
+  remove, reorder, join, turnout moves, overrides); now covered only through
+  the orchestrator.
+- UI tests for per-signal overrides on Aspects and for the row menu join and
+  remove actions.
+- Running the backend adapter and headless parity tests on a machine where
+  the Tauri test executable starts.
+
 ### S3: Review the complete terminal proposal [HITL]
 
-**Intent**: Exercise Confirm and complete five-step navigation before saving/applying exists.
+**Intent**: Exercise Review and complete five-step navigation before saving/applying exists.
+**Pivot note (2026-11-22)**: Re-sketch with `/design`. The steps are now Blocks, Aspects, Appearance, Wiring, Review, and "Confirm" below means Review.
 **Boundary**: Rendering -> orchestration -> backend immutable proposal -> core compiler/resource diff.
 **Blocked by**: S2.
 **Status**: sketched
@@ -642,6 +724,11 @@ carries no layout risk.
 - [ ] Close/new/recovery reset leaves no prior Line editor, draft, mirror or observation state in another layout; a fresh live session does not carry stale observations.
 - [ ] Reopened review, catalog and existing facility composition consume consistent effective saved/draft state. Snapshot/save and CDI access preserve existing CDI-backed views online and offline.
 - [ ] Older layouts load unchanged; malformed or unknown Line records produce explicit load/reconciliation errors rather than disappearing.
+- [ ] Layout file versions are bumped for the Line schema change. Decide in `/design` which markers change and how the manifest check treats older versions:
+  - `manifest.yaml`'s `LAYOUT_SCHEMA_VERSION` is 4 (`bowties-core/src/layout/manifest.rs:7`). `validate()` rejects any other value.
+  - The per-file `schemaVersion` is `"1.0"` in `facilities.yaml` (`facilities.rs:47`) and `"2.0"` in `channels.yaml` (`channels.rs:98`). Neither is checked on read.
+  - Serde ignores unknown fields, so without a version check an older Bowties could open a newer layout and silently drop its Line records on save.
+  - Tests cover both directions: a layout with a newer version is rejected with a clear message, and a layout from before the change still opens as the chosen policy says.
 - [ ] Guided/headless callers share the acknowledged staging/save/discard lifecycle; neither bypasses validation or creates another persistent draft owner.
 
 **Architecture note**: Settle frontend draft authority, awaited synchronization and headless lifecycle contracts. Extend existing facility drafts, dirty aggregation and reset participation while consolidating overlapping flush ownership.

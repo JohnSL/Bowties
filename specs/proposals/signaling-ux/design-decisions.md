@@ -33,18 +33,31 @@ because "Linked to Previous" means something different there.
   lamp without a pin. The selected lamp's own pin clears it, and another lamp's pin on the same
   signal swaps the two. The selected lamp's pin is highlighted, and every pin the signal uses shows
   its lamp name. There is no per-lamp pin dropdown. Header labels H1–H4 place a whole head by
-  position letter (G, Y, R, L). Pin names are only positions, so the per-pin Blink check confirms
-  the result.
+  position letter (G, Y, R, L). The pin labels are only a suggestion: any pin can drive any LED,
+  so the per-pin Blink check confirms the result.
 - **Rule to Aspect.** A table in a section that starts closed, with one row per rule (Signal LCC rule names) and
   one column per pin the signal uses. It shows exactly what each rule's Appearance list will
   contain, including flash phase. It is derived from Appearance and read-only by default.
   "Customize lamps" allows editing for unusual signals: edits are marked, a rule may light at most
   4 lamps, and "Reset to Appearance" discards the edits.
 - **Removed from Wiring.** The "All signals" summary of sources and relationships: detection reuse
-  belongs on Blocks, and each signal's node is shown in quick picks and on Review.
+  belongs on Blocks, and each signal's node is shown on Wiring and on Review.
 - **Choosing a control by number of choices.** One choice is plain text; two to four use a segmented control or
   radio buttons; a short fixed list uses a dropdown; a list that grows with the layout (nodes)
   uses a search dialog.
+- **Head types are lamp counts.** A searchlight is set up entirely by the rules in Rule to Aspect: each
+  rule lights 1–4 lamps, so an RG searchlight uses two lamps and an RYG searchlight uses three. No
+  other hardware setting is involved.
+- **Flashing.** Lamp Phase is set per lamp in each rule's Appearance list: Steady, A-Slow/Medium/Fast,
+  or B-Slow/Medium/Fast. Lamps on the same bank and rate flash together, and A and B alternate, so a
+  rule can mix steady and flashing lamps, and a red-plus-green yellow flashes as one when both lamps
+  use the same A setting.
+- **Position-light center.** The center lamp can be wired to stay lit and use no pin (3 pins). With
+  approach lighting the center must go dark too, so it needs its own pin (4 pins); Review flags the
+  3-pin drive on an approach-lit signal.
+- **Across boards.** Testing two aspects across boards (Stop and Clear, already passed on the bench)
+  is enough. The same track-circuit mechanism carries every aspect, so each aspect does not need its
+  own cross-board test.
 - **Wiring checks.** Blink proves one pin and must always return the lamp to Used by Mast. Show
   proves one aspect by sending the rule's set aspect event. This follows the community bring-up order.
 
