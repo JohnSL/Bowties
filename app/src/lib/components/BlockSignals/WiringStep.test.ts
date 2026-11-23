@@ -1,4 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { NodeConfigTree } from '$lib/types/nodeTree';
+
+const { focusConfigFieldMock } = vi.hoisted(() => ({ focusConfigFieldMock: vi.fn() }));
+vi.mock('$lib/stores/configFocus.svelte', () => ({
+  configFocusStore: { focusConfigField: focusConfigFieldMock },
+}));
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import BlockSignalsEditor from './BlockSignalsEditor.svelte';
 import WiringStep from './WiringStep.svelte';
@@ -33,16 +39,36 @@ const HOSTS: SignalOutputHost[] = [
     outputs: [
       { ordinal: 1, label: '#1 H1-R', owner: null },
       { ordinal: 2, label: '#2 H1-G', owner: null },
-      { ordinal: 3, label: '#3 H2-R', owner: 'Mill Signal' },
+      { ordinal: 3, label: '#3 H2-R', owner: 'Mast 2', facility: { facilityId: 'fac-1', name: 'Mill Signals' } },
+      { ordinal: 4, label: '#4 H2-L', owner: 'Mast 3' },
+      { ordinal: 5, label: '#5 H3-G', owner: 'Mast 3' },
+      { ordinal: 6, label: '#6 H3-Y', owner: 'Direct lamp 1' },
     ],
   },
   { nodeKey: NODE_B, nodeName: 'Signal-LCC · 02.01.57.10.0A.01', style: STYLE, evidence: 'complete', outputs: [] },
 ];
 
-function show(extra = {}) {
+function ownerTree(): NodeConfigTree {
+  const group = (name: string, i: number, seg: number) => ({
+    kind: 'group' as const, name, description: null, instance: i, instanceLabel: `${name} ${i}`,
+    replicationOf: name, replicationCount: 4, path: [`seg:${seg}`, `elem:0#${i}`], displayName: null, children: [],
+  });
+  const segment = (name: string, seg: number, children: NodeConfigTree['segments'][number]['children']) => ({
+    name, description: null, origin: 0, space: 1, children, seg,
+  });
+  return {
+    nodeId: NODE_A, identity: null,
+    segments: [
+      segment('Rule to Aspect', 0, [1, 2, 3, 4].map((i) => group('Mast', i, 0))),
+      segment('Direct Lamp Control', 1, [1, 2].map((i) => group('Lamp', i, 1))),
+    ],
+  } as unknown as NodeConfigTree;
+}
+
+function show(extra = {}, nodeTree: ((nodeKey: string) => NodeConfigTree | undefined) | undefined = undefined) {
   const actions = spyActions();
   const view = fakeView({ step: 'wiring', outputHosts: HOSTS, ...extra });
-  render(WiringStep, { props: { view, actions } });
+  render(WiringStep, { props: { view, actions, nodeTree } });
   return actions;
 }
 
@@ -61,11 +87,15 @@ describe('WiringStep', () => {
     expect(screen.queryByRole('dialog', { name: 'Choose a Signal LCC' })).not.toBeInTheDocument();
   });
 
-  it('shows the chosen node\'s pins as Free, This signal or Taken and emits red and green choices', async () => {
+  it('shows the chosen node\'s pins as Free, This signal or used by its owner and emits red and green choices', async () => {
     const actions = show({ wiringFor: chosen(NODE_A, 1, null) });
     const grid = screen.getByRole('group', { name: 'Pins on Yard Signals' });
     expect(within(grid).getByRole('button', { name: /#1 H1-R.*This signal/ })).toBeDisabled();
-    expect(within(grid).getByRole('button', { name: /#3 H2-R.*Taken/ })).toBeDisabled();
+    expect(within(grid).getByRole('button', { name: '#3 H2-R: Used by Mill Signals' })).toBeDisabled();
+    expect(within(grid).getByRole('button', { name: '#4 H2-L: Used by Mast 3, not managed by Bowties' })).toBeDisabled();
+    expect(within(grid).getByRole('button', { name: /#3 H2-R/ })).toHaveTextContent('Mill Signals');
+    expect(within(grid).getByRole('button', { name: /#4 H2-L/ })).toHaveTextContent('Mast 3');
+    expect(document.body.textContent).not.toContain('Taken');
 
     expect(within(grid).getByText('#1 H1-R')).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /Red lamp.*#1 H1-R/ })).toBeInTheDocument();
@@ -79,6 +109,26 @@ describe('WiringStep', () => {
     await fireEvent.click(screen.getByRole('radio', { name: /Red lamp/ }));
     await fireEvent.click(within(grid).getByRole('button', { name: /#2 H1-G.*Free/ }));
     expect(actions.chooseRedOutput).toHaveBeenCalledWith('sig-1', 2);
+  });
+
+  it('lists pins used outside Bowties by owner with a Show in Configuration action', async () => {
+    focusConfigFieldMock.mockClear();
+    show({ wiringFor: chosen(NODE_A, null, null) }, (key) => (key === NODE_A ? ownerTree() : undefined));
+    const section = screen.getByRole('region', { name: 'Pins in use outside Bowties' });
+    const rows = within(section).getAllByRole('listitem').map((li) => li.textContent?.replace(/\s+/g, ' ').trim());
+    expect(rows).toEqual([
+      expect.stringContaining('Mast 3 · #4 H2-L, #5 H3-G'),
+      expect.stringContaining('Direct lamp 1 · #6 H3-Y'),
+    ]);
+    expect(within(section).queryByText(/Mill Signals|Mast 2/)).not.toBeInTheDocument();
+    await fireEvent.click(within(section).getByRole('button', { name: 'Show Mast 3 in Configuration' }));
+    expect(focusConfigFieldMock).toHaveBeenCalledWith(NODE_A, ['seg:0', 'elem:0#3']);
+  });
+
+  it('omits the Show in Configuration button when no node tree resolves the owner', () => {
+    show({ wiringFor: chosen(NODE_A, null, null) });
+    expect(screen.getByRole('region', { name: 'Pins in use outside Bowties' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /in Configuration/ })).not.toBeInTheDocument();
   });
 
   it('keeps Customize lamps, Blink and Show disabled without explanatory "later" text', () => {

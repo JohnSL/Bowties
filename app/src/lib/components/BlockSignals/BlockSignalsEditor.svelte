@@ -8,6 +8,7 @@
    * two-choice selectors, tables) lives here, scoped under `.abs-editor`.
    */
   import type { SelectedDetectedBlock } from '$lib/api/signaling';
+  import type { NodeConfigTree } from '$lib/types/nodeTree';
   import type { BlockSignalsEditorView, BlockSignalsStep } from '$lib/stores/blockSignalsEditor.svelte';
   import type { BlockSignalsEditorActions } from '$lib/orchestration/blockSignalsEditorOrchestrator';
   import Dialog from '$lib/components/Dialog/Dialog.svelte';
@@ -25,12 +26,15 @@
     actions: intents,
     detectedBlocks,
     occupancy,
+    nodeTree,
   }: {
     view: BlockSignalsEditorView;
     actions: BlockSignalsEditorActions;
     detectedBlocks: SelectedDetectedBlock[];
     /** Live occupancy by block id; missing blocks show as unavailable. */
     occupancy?: BlockOccupancyMap;
+    /** Resolves a node's configuration tree, for jumping to a pin's owner in Configuration. */
+    nodeTree?: (nodeKey: string) => NodeConfigTree | undefined;
   } = $props();
 
   let pickerOpen = $state(false);
@@ -99,7 +103,7 @@
       {:else if view.step === 'appearance'}
         <AppearanceStep {view} />
       {:else if view.step === 'wiring'}
-        <WiringStep {view} actions={intents} {occupancy} bind:selectedSignalId bind:pickerOpen />
+        <WiringStep {view} actions={intents} {occupancy} {nodeTree} bind:selectedSignalId bind:pickerOpen />
       {/if}
     </div>
   </div>

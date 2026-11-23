@@ -43,7 +43,7 @@ fn host() -> SignalHardwareHost {
         evidence: SignalHardwareEvidence::Complete,
         evidence_detail: None,
         outputs: (1..=16)
-            .map(|ordinal| SignalOutput { ordinal, label: format!("#{ordinal}"), owner: None })
+            .map(|ordinal| SignalOutput { ordinal, label: format!("#{ordinal}"), owner: None, facility: None })
             .collect(),
     }
 }

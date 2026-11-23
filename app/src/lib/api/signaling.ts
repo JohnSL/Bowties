@@ -81,6 +81,8 @@ export interface SignalOutputHost {
     ordinal: number;
     label: string;
     owner: string | null;
+    /** The Bowties facility that owns this pin's mast; absent when configured outside Bowties. */
+    facility?: { facilityId: string; name: string };
   }>;
 }
 

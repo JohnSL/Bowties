@@ -330,6 +330,18 @@ pub struct SignalOutput {
     pub ordinal: u32,
     pub label: String,
     pub owner: Option<SignalOutputOwner>,
+    /// The Bowties facility that owns this output's mast, when one does.
+    /// Absent for direct lamps and for masts configured outside Bowties.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub facility: Option<OutputFacility>,
+}
+
+/// A Bowties facility that owns a physical output through a claimed mast.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputFacility {
+    pub facility_id: String,
+    pub name: String,
 }
 
 /// Who currently drives a physical output. Serialized as its display label

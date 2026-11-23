@@ -157,6 +157,7 @@
       actions={blockSignalsEditorActions}
       detectedBlocks={effectiveLayoutStore.detectedBlocks}
       occupancy={blockOccupancy}
+      {nodeTree}
     />
   {/if}
 </section>

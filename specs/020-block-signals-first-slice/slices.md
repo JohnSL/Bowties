@@ -2,7 +2,7 @@
 
 Branch: 020-block-signals-first-slice
 Generated: 2026-11-07; roadmap regenerated 2026-11-22 for the end-to-end pivot
-Status: 5/10 slices complete (S1, S2R, E1a, E1b, E2a); S2 and the old S3–S8 superseded by E1a–E6
+Status: 5/11 slices complete (S1, S2R, E1a, E1b, E2a); S2 and the old S3–S8 superseded by E1a–E6
 
 Approved input: the
 [2026-11-22 Architecture Assessment](plan.md#architecture-assessment-end-to-end-first-release-2026-11-22)
@@ -107,6 +107,7 @@ flowchart LR
 | E1b: Light the signal on the bench | LED red when occupied, green when clear | Yes, bench |
 | E2a: Edit a saved facility | Rename, reorient and rebind a saved facility; write it online and through the Sync Panel | Yes, bench |
 | E2b: Remove a facility | Removal resets only the claimed slots; the signal goes dark | Yes, bench |
+| E2c: Release pins used outside Bowties | A pin held by a mast or Direct Lamp row that no facility owns can be released and used, undoably | Yes, bench |
 | E3: Two blocks on one board | Approach behind an occupied block | Yes, bench |
 | E4: Verify writes | Signals marked verified, mismatched or unavailable | Yes, bench |
 | E5: Across boards | Signals on two boards coordinate; partial failure shown | Yes, two boards |
@@ -123,6 +124,7 @@ flowchart LR
 | E1b | Light the signal on the bench | HITL | E1a + terminal-recipe evidence | done (Sync Panel check moved to E2a) |
 | E2a | Edit a saved facility | HITL | E1b | done |
 | E2b | Remove a facility | HITL | E2a | sketched |
+| E2c | Release pins used outside Bowties | HITL | E2b | sketched |
 | E3 | Two blocks on one board | HITL | E2b + same-board Approach evidence | sketched |
 | E4 | Verify writes | HITL | E1b | sketched |
 | E5 | Across boards | HITL | E3 + E4 + cross-board Approach and receiver-restart evidence | sketched |
@@ -817,6 +819,25 @@ Deferred until the save/apply slice:
 - [ ] On the bench, the signal goes dark after removal.
 
 **Architecture note**: Generic facility teardown is not proof that a slot is safe to release; release is computed from the claimed slots on the record.
+
+### E2c: Release pins used outside Bowties [HITL]
+
+**Intent**: On Wiring, the modeler releases a pin held by a mast or Direct Lamp row that no facility owns, and uses it for the signal; the release is staged with the facility's edits and can be discarded.
+**Boundary**: WiringStep → editor store/orchestrator → compose request (released owners) → compiler (reset edits for untracked owners, reusing E2b's release edits) → configuration edits → Save.
+**Blocked by**: E2b (reuses its slot-reset edits).
+**Status**: sketched
+
+**Context**: Bench testing after E2a found pins taken by configuration left from earlier testing. The Wiring step now names each owner and links to it in Configuration (quick change after E2a); this slice adds the overwrite path. Importing existing configuration as a facility is recorded separately in [specs/ideas/features/import-existing-signal-configuration.md](../ideas/features/import-existing-signal-configuration.md).
+
+**Acceptance criteria**:
+- [ ] A pin held by a mast or Direct Lamp row that no facility claims offers "Release and use". Pins owned by a facility (including this one's other signals) cannot be released.
+- [ ] Releasing asks for confirmation that names the owner and every pin it frees, then frees all of that owner's pins, not only the chosen one.
+- [ ] Releasing a mast also resets the Logic conditionals that set its aspects (matched by set-aspect event ID); a conditional whose actions also send events something else consumes is kept and named in the confirmation.
+- [ ] The reset edits for the released owner are staged with the facility's edits: they appear in the node's configuration, the Save toolbar, the unsaved-changes breakdown and the close prompts, and Discard restores the owner.
+- [ ] A mast or Logic slot used outside Bowties that blocks Done ("no free mast/Logic") names how many slots are in use outside Bowties.
+- [ ] On the bench, the previous configuration stops driving the pin and the new signal follows its block.
+
+**Architecture note**: Releasing an untracked owner is a removal with no facility record. The compiler must produce its reset edits through the same release path as E2b, never a second reset implementation, and never silently: an untracked owner is released only when the request names it.
 
 ### E3: Two blocks on one board [HITL]
 

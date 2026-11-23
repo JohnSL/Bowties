@@ -899,6 +899,21 @@
   #line .line-pin-key i.mine { border-color: var(--brand); background: var(--bg-selected); }
   #line .line-pin-key i.facility { background: #eef1f5; }
   #line .line-pin-key i.conflict { border-color: #d13438; background: #fde7e9; }
+  #line .line-pin.outside { border-style: dashed; border-color: #b07a00; background: #fff8e6; color: var(--text-secondary); }
+  #line .line-pin.outside:hover, #line .line-pin.outside.inspected { border-style: solid; box-shadow: 0 0 0 2px #f3dca0; }
+  #line .line-pin-key i.outside { border-style: dashed; border-color: #b07a00; background: #fff8e6; }
+  #line .line-outside-card { margin-top: 10px; padding: 10px 12px; border: 1px solid #e0c36a; border-radius: 5px; background: #fffaf0; font-size: 12px; }
+  #line .line-outside-card h4 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 4px; font-size: 13px; }
+  #line .line-outside-tag { color: #8a5d00; font-size: 11px; font-weight: 600; }
+  #line .line-outside-card p { margin: 2px 0; color: var(--text-secondary); }
+  #line .line-outside-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+  #line .rr-panel { border: 1px solid var(--border); border-radius: 6px; background: #fff; overflow: hidden; }
+  #line .rr-group-head { display: flex; align-items: baseline; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: #f5f6f8; font-size: 12px; }
+  #line .rr-group-head .muted { color: var(--text-muted); font-size: 11px; }
+  #line .rr-panel table { margin: 0; }
+  #line .rr-outside { margin: 0; padding: 8px 12px; border-top: 1px solid var(--border); background: #fffaf0; font-size: 12px; color: var(--text-secondary); }
+  #line .rr-outside a { color: var(--brand); }
+  #line .rr-state { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #9aa0a6; }
   #line .line-rta-panel { margin-top: 14px; }
   #line .line-rta-panel summary { cursor: pointer; }
   #line .line-rta-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 10px; }
@@ -2281,10 +2296,12 @@
               <h3>Pins on <span id="line-pin-node-name"></span></h3>
               <p class="line-sim-hint" id="line-pin-hint"></p>
               <div class="line-pin-grid" id="line-pin-grid"></div>
+              <section class="line-outside-card" id="line-outside-card" aria-live="polite" hidden></section>
               <div class="line-pin-key" aria-hidden="true">
                 <span><i class="selected"></i>Selected lamp</span>
                 <span><i class="mine"></i>This signal</span>
-                <span><i class="facility"></i>Taken</span>
+                <span><i class="facility"></i>Used by a facility</span>
+                <span><i class="outside"></i>Used outside Bowties</span>
                 <span><i class="conflict"></i>Assigned twice</span>
                 <span><i></i>Free</span>
               </div>
@@ -2327,10 +2344,18 @@
         </ul>
         <h4>Lamps and pins work like a seat map</h4>
         <ul>
-          <li>Lamps are the passengers and pins are the seats. Select a lamp, then click a pin: a free pin places it and selection moves to the next lamp without a pin; the selected lamp's own pin clears it; another lamp's pin on this signal swaps the two. Pins taken by other signals or facilities are disabled and name their owner.</li>
+          <li>Lamps are the passengers and pins are the seats. Select a lamp, then click a pin: a free pin places it and selection moves to the next lamp without a pin; the selected lamp's own pin clears it; another lamp's pin on this signal swaps the two. Pins used by other signals or facilities are disabled and show the facility's name.</li>
           <li>The selected lamp's pin is filled in the grid, and every pin this signal uses shows its lamp name, so the mapping reads both ways without a second control.</li>
           <li>Header labels (H1–H4) place every lamp of the selected lamp's head on that header, matching lamps to the G, Y, R, L pin labels, which wires most signals in one click. The labels are only a suggestion: any pin can drive any LED, so the user can place lamps on any pins, and Blink confirms the result.</li>
           <li>Signal type comes from Appearance; Wiring only chooses how each head is driven. Two choices are a segmented control and one is plain text; the electrical detail is a tooltip.</li>
+        </ul>
+        <h4>Pins used outside Bowties</h4>
+        <ul>
+          <li>A Signal LCC can already drive pins from configuration Bowties does not manage: a mast or Direct Lamp row set up by hand, by another tool, or by earlier testing. Each such pin shows its owner ("Mast 3", "Direct lamp 4") with a dashed outline, so it is never just "Taken".</li>
+          <li>Clicking one opens its details in place: the owner, its description, every pin it drives and, for a mast, its rules and the Logic conditionals that set its aspects. Those are found by event ID: a conditional whose action sends one of the mast's set-aspect events drives that mast.</li>
+          <li>Show in Configuration is a button, not a link, because it leaves a dialog. The editor is not closed or saved: its choices stay, and returning to the Railroad tab shows it again where it was. The status line says so when the user leaves. The Railroad panel also links to the same configuration without an open dialog (see <a href="#line-railroad">After Done</a>).</li>
+          <li>Release and use frees every pin of that owner, not just the one clicked, and places the selected lamp on the clicked pin. A released mast is reset together with the conditionals that set its aspects, since they exist only to drive it; a conditional whose actions also send events something else consumes is kept and named in the confirmation. The resets are staged with the facility's own edits: they show as unsaved changes in the node's configuration, and Discard brings them back. Pins used by a Bowties facility cannot be released here.</li>
+          <li>Built in Spec 020 E2c, after facility removal (E2b), which supplies the reset edits. Until then the details show and Release and use is disabled. Importing such configuration as a facility is a separate idea (specs/ideas/features/import-existing-signal-configuration.md).</li>
         </ul>
         <h4>Lamp patterns stay closed</h4>
         <ul>
@@ -2418,6 +2443,32 @@
         <ul>
           <li>Facility persistence, deletion, unavailable-state handling, and application/failure policy
           remain unsettled. Unvalidated dependencies must not be presented as safe to apply.</li>
+        </ul>
+      </aside>
+    </div>
+
+    <div class="wizard-frame" id="line-railroad">
+      <p class="frame-heading"><strong>After Done — Railroad panel.</strong> Each Signal LCC group lists the signals Bowties manages on it, then the configuration it found there that no facility manages, with a link to it in the Config tab.</p>
+      <div class="rr-panel" role="group" aria-label="Signal LCC West Staging">
+        <div class="rr-group-head"><strong>Signal LCC · West Staging</strong><span class="muted">05.01.01.01.22.01</span></div>
+        <table>
+          <thead><tr><th></th><th>Name</th><th>Role</th><th>Location</th><th>Used by</th></tr></thead>
+          <tbody>
+            <tr><td><span class="rr-state" aria-label="Unknown"></span></td><td>Cedar Hill East</td><td>Signal</td><td>#3 H1-R / #1 H1-G</td><td>Cedar Hill — Eastward / signals</td></tr>
+            <tr><td><span class="rr-state" aria-label="Unknown"></span></td><td>Mill curve East</td><td>Signal</td><td>#7 H2-R / #5 H2-G</td><td>Cedar Hill — Eastward / signals</td></tr>
+          </tbody>
+        </table>
+        <p class="rr-outside">In use outside Bowties:
+          <a href="#line-railroad" data-rr-config="Mast 3">Mast 3</a> · #9 H3-G, #10 H3-Y, #12 H3-L;
+          <a href="#line-railroad" data-rr-config="Direct lamp 4">Direct lamp 4</a> · #16 H4-L</p>
+        <p class="rr-outside" id="line-rr-status" role="status" hidden></p>
+      </div>
+      <aside class="design-notes" aria-label="Design notes for the Railroad panel">
+        <h3>Design notes — not product UI</h3>
+        <ul>
+          <li>The link to Configuration lives here, not in the editor. No dialog is open on this panel, so a hyperlink behaves as it does elsewhere in the app (channel Location links, facility slot links): it switches to the Config tab and focuses the mast or lamp row.</li>
+          <li>The line lists every mast and Direct Lamp row that drives a pin but is not claimed by a facility, so leftovers are visible before the editor is opened. It is omitted when there are none.</li>
+          <li>Mockup limitation: the links only report where they would go.</li>
         </ul>
       </aside>
     </div>
@@ -2877,7 +2928,12 @@
     }
     const lineBoards = {
       west: { name: 'West Staging', node: '05.01.01.01.22.01', location: 'Under west approach', capacity: 16, online: true,
-        other: { masts: 0, conditionals: 0, circuits: 0, pins: {} } },
+        other: { masts: 0, conditionals: 0, circuits: 0, pins: {} },
+        // configuration on the board that no Bowties facility manages
+        outside: [
+          { owner: 'Mast 3', kind: 'mast', description: 'Bench test', pins: [9, 10, 12], rules: 3, logic: [7, 8] },
+          { owner: 'Direct lamp 4', kind: 'lamp', description: 'Fascia LED', pins: [16] },
+        ] },
       east: { name: 'East Approach', node: '05.01.01.01.22.02', location: 'East fascia cabinet', capacity: 16, online: true,
         other: { masts: 1, conditionals: 4, circuits: 0, pins: otherPins(13, 15, 'Yard Lead dwarf (Yard Lead facility)') } },
       depot: { name: 'Depot Street', node: '05.01.01.01.22.06', location: 'Under the depot', capacity: 16, online: true,
@@ -4140,12 +4196,25 @@
       return link;
     }
 
+    // configuration on a board outside any Bowties facility, minus owners released in this session
+    const lineReleased = new Set();
+    let lineInspected = null; // { node, owner, pin, confirming }
+    function lineOutsideOwners(board) {
+      return (board.outside ?? []).filter(entry => !lineReleased.has(`${board.node}/${entry.owner}`));
+    }
+    function lineOutsideAt(board, pin) {
+      return lineOutsideOwners(board).find(entry => entry.pins.includes(Number(pin)));
+    }
+
     // every pin claim on every sample node: this facility's lamps plus pins used outside it;
     // `skipHead` leaves one head out, to ask which pins are taken by anything else
     function lineClaims({ skipHead = null } = {}) {
       const claims = new Map();
       for (const board of Object.values(lineBoards)) {
         for (const [pin, owner] of Object.entries(board.other.pins)) claims.set(`${board.node} / output ${pin}`, [owner]);
+        for (const entry of lineOutsideOwners(board)) {
+          for (const pin of entry.pins) claims.set(`${board.node} / output ${pin}`, [`${entry.owner} (not managed by Bowties)`]);
+        }
       }
       for (const signal of lineSignals) {
         for (const [headIndex, head] of signal.heads.entries()) {
@@ -4747,6 +4816,14 @@
       if (text !== undefined) element.textContent = text;
       return element;
     }
+    for (const link of document.querySelectorAll('#line [data-rr-config]')) {
+      link.addEventListener('click', event => {
+        event.preventDefault();
+        const status = document.getElementById('line-rr-status');
+        status.hidden = false;
+        status.textContent = `Preview only: would switch to the Config tab and focus ${link.dataset.rrConfig} on West Staging.`;
+      });
+    }
     function lineWiringRender(focus) {
       lineWiringFocus = focus;
       renderLineSignal();
@@ -4755,6 +4832,65 @@
       return lineIssues(index, claims).some(issue => issue.step === 'wiring');
     }
     function capitalize(text) { return text[0].toUpperCase() + text.slice(1); }
+
+    // details for a pin used outside Bowties, shown in place; the dialog never navigates away
+    function renderLineOutsideCard(board, signal, index, activeLamp) {
+      const card = document.getElementById('line-outside-card');
+      const entry = lineInspected?.node === board.node ? lineOutsideOwners(board).find(item => item.owner === lineInspected.owner) : null;
+      if (!entry) { lineInspected = null; card.hidden = true; card.replaceChildren(); return; }
+      card.hidden = false;
+      const title = lineEl('h4');
+      title.append(lineEl('span', '', entry.owner), lineEl('span', 'line-outside-tag', 'Not managed by Bowties'));
+      const pins = entry.pins.map(pinLabel).join(', ');
+      const facts = [
+        lineEl('p', '', entry.description ? `Description: "${entry.description}"` : 'No description.'),
+        lineEl('p', '', `${entry.kind === 'mast' ? `Rule to Aspect, ${entry.rules} rules` : 'Direct Lamp Control row'} · drives ${pins}`),
+        ...(entry.logic?.length ? [lineEl('p', '', `Aspects set by ${entry.logic.map(n => `Logic ${n}`).join(', ')}`)] : []),
+        lineEl('p', '', `Configured on ${board.name} outside Bowties, for example by hand, by another tool, or in earlier testing.`),
+      ];
+      const actions = lineEl('div', 'line-outside-actions');
+      if (lineInspected.confirming) {
+        const resets = [entry.owner, ...(entry.logic ?? []).map(n => `Logic ${n}`)].join(', ');
+        facts.push(lineEl('p', '', `Release ${entry.owner}? ${entry.pins.length > 1 ? `All ${entry.pins.length} of its pins` : 'Its pin'} (${pins}) become free, and ${resets} ${entry.logic?.length ? 'are' : 'is'} reset when you save. Discard undoes it.`));
+        const cancel = lineEl('button', 'btn', 'Cancel');
+        cancel.type = 'button';
+        cancel.dataset.focusKey = 'outside-cancel';
+        cancel.addEventListener('click', () => { lineInspected.confirming = false; lineWiringRender('outside-release'); });
+        const release = lineEl('button', 'btn btn-primary', `Release and put ${activeLamp.channel} on ${pinLabel(lineInspected.pin)}`);
+        release.type = 'button';
+        release.dataset.focusKey = 'outside-confirm';
+        release.addEventListener('click', () => {
+          const pin = lineInspected.pin;
+          lineReleased.add(`${board.node}/${entry.owner}`);
+          headOutputs(activeLamp.head)[activeLamp.channel] = String(pin);
+          const next = lineLamps(signal).find(lamp => !lamp.pin);
+          if (next) lineActiveLamp = { signal: index, key: next.key };
+          lineInspected = null;
+          lineWiringRender(`pin:${pin}`);
+          lineCheckStatus.textContent = `Preview only: ${entry.owner} released (its reset would be staged as unsaved changes on ${board.name}) and ${activeLamp.channel} placed on ${pinLabel(pin)}.`;
+        });
+        actions.append(cancel, release);
+      } else {
+        const close = lineEl('button', 'btn', 'Close');
+        close.type = 'button';
+        close.dataset.focusKey = 'outside-close';
+        close.addEventListener('click', () => { const pin = lineInspected.pin; lineInspected = null; lineWiringRender(`pin:${pin}`); });
+        const show = lineEl('button', 'btn', 'Show in Configuration');
+        show.type = 'button';
+        show.dataset.focusKey = 'outside-show';
+        show.setAttribute('aria-label', `Show ${entry.owner} in Configuration`);
+        show.addEventListener('click', () => {
+          lineCheckStatus.textContent = `Preview only: would switch to the Config tab and focus ${entry.owner} on ${board.name}. This editor stays open with your choices; return to the Railroad tab to continue.`;
+        });
+        const release = lineEl('button', 'btn', 'Release and use…');
+        release.type = 'button';
+        release.dataset.focusKey = 'outside-release';
+        release.addEventListener('click', () => { lineInspected.confirming = true; lineWiringRender('outside-confirm'); });
+        actions.append(close, show, release);
+      }
+      card.setAttribute('aria-label', `${entry.owner}, not managed by Bowties`);
+      card.replaceChildren(title, ...facts, actions);
+    }
 
     function renderLineWiring(claims, issues) {
       const index = selectedLineSignal;
@@ -4877,18 +5013,30 @@
           const owners = claims.get(`${board.node} / output ${output}`) ?? [];
           const seated = lampAtPin(output);
           const selected = seated?.key === activeLamp.key;
-          const state = owners.length > 1 ? 'conflict' : seated ? 'mine' : board.other.pins[output] ? 'external' : owners.length ? 'facility' : 'free';
+          const outside = seated ? null : lineOutsideAt(board, output);
+          const state = owners.length > 1 ? 'conflict' : seated ? 'mine' : outside ? 'outside' : owners.length ? 'facility' : 'free';
           if (state === 'free') free += 1;
-          const button = lineEl('button', `line-pin ${state}${selected ? ' selected' : ''}`);
+          const inspected = outside && lineInspected?.node === board.node && lineInspected.owner === outside.owner;
+          const button = lineEl('button', `line-pin ${state}${selected ? ' selected' : ''}${inspected ? ' inspected' : ''}`);
           button.type = 'button';
           button.dataset.focusKey = `pin:${output}`;
-          button.append(lineEl('span', 'line-pin-label', `H${header}-${suffix}`), lineEl('span', 'line-pin-who', seated ? lampName(seated) : `#${output}`));
+          // a taken pin names its owner: the facility or signal, else the board's own mast or lamp row
+          const ownerName = outside ? outside.owner : owners.length ? owners[0].split(' · ')[0] : `#${output}`;
+          button.append(lineEl('span', 'line-pin-label', `H${header}-${suffix}`), lineEl('span', 'line-pin-who', seated ? lampName(seated) : ownerName));
           const others = owners.filter(owner => !owner.startsWith(`${signal.name} ·`));
           const who = seated ? `${lampName(seated)}${others.length ? `; also ${others.join('; ')}` : ''}` : owners.join('; ');
-          button.title = who || 'Free';
+          button.title = outside ? `${outside.owner}, not managed by Bowties. Click for details.` : who || 'Free';
           button.setAttribute('aria-pressed', String(selected));
-          button.setAttribute('aria-label', `${pinLabel(output)}: ${who || 'free'}`);
-          button.disabled = state === 'external' || state === 'facility';
+          button.setAttribute('aria-label', outside ? `${pinLabel(output)}: used by ${outside.owner}, not managed by Bowties. Show details` : `${pinLabel(output)}: ${who || 'free'}`);
+          button.disabled = state === 'facility';
+          if (outside) {
+            button.addEventListener('click', () => {
+              lineInspected = inspected ? null : { node: board.node, owner: outside.owner, pin: output, confirming: false };
+              lineWiringRender(button.dataset.focusKey);
+            });
+            grid.push(button);
+            continue;
+          }
           button.addEventListener('click', () => {
             const outputs = headOutputs(activeLamp.head);
             if (selected) {
@@ -4906,6 +5054,7 @@
         }
       }
       document.getElementById('line-pin-grid').replaceChildren(...grid);
+      renderLineOutsideCard(board, signal, index, activeLamp);
       document.getElementById('line-board-availability').textContent = `${free} of ${board.capacity} pins free on ${board.name}.`;
 
       // Rule to Aspect: what will be written to the mast

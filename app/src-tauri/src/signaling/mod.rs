@@ -11,7 +11,7 @@ use bowties_core::{
     node_tree::NodeConfigTree,
     profile::{make_profile_key, StructureProfile},
     signaling::{
-        outputs::signal_outputs_from_configuration, preview_block_signals_with_hardware, ProposalIssue, SignalAppearanceSet,
+        outputs::{attribute_output_facilities, signal_outputs_from_configuration}, preview_block_signals_with_hardware, ProposalIssue, SignalAppearanceSet,
         SignalDriver, SignalHardwareEvidence, SignalHardwareFacts, SignalHardwareHost,
         BlockSignalsPreview, BlockSignalsRequest, SavedSignalIdentity, SignalStyle,
     },
@@ -172,7 +172,8 @@ fn proposal_facts_from_layout(
         .into_iter()
         .filter_map(|key| layout.config_tree(&key).cloned().map(|tree| (key, tree)))
         .collect::<HashMap<_, _>>();
-    let hardware = signal_hardware_facts(&trees, profiles);
+    let mut hardware = signal_hardware_facts(&trees, profiles);
+    attribute_output_facilities(&mut hardware.hosts, layout.effective_facilities());
     ProposalFacts::with_hardware(channels, trees, hardware)
 }
 

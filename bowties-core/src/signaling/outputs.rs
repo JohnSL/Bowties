@@ -10,7 +10,9 @@
 
 use std::collections::HashMap;
 
-use super::{SignalOutput, SignalOutputOwner};
+use super::{OutputFacility, SignalHardwareHost, SignalOutput, SignalOutputOwner};
+use crate::layout::facilities::{ClaimedSlotKind, FacilitiesDocument};
+use crate::node_key::NodeKey;
 use crate::node_tree::{
     effective_value, replication_instances, ConfigNode, ConfigValue, NodeConfigTree,
 };
@@ -72,8 +74,37 @@ pub fn signal_outputs_from_configuration(tree: &NodeConfigTree) -> Result<Vec<Si
             ordinal,
             label: signal_lcc_output_label(ordinal),
             owner: owners.remove(&ordinal),
+            facility: None,
         })
         .collect())
+}
+
+/// Name the Bowties facility behind each mast-owned output: the facility
+/// whose claimed Mast slot on the host matches the output's owner. Node keys
+/// are compared canonically. Direct lamps and unclaimed masts stay `None`.
+pub fn attribute_output_facilities(hosts: &mut [SignalHardwareHost], facilities: &FacilitiesDocument) {
+    for host in hosts {
+        let Ok(host_key) = NodeKey::parse(&host.node_key) else { continue };
+        for output in &mut host.outputs {
+            let Some(SignalOutputOwner::Mast(mast)) = output.owner else { continue };
+            output.facility = facilities
+                .facilities
+                .iter()
+                .find(|facility| {
+                    facility.block_signals.as_ref().is_some_and(|record| {
+                        record.claimed_slots.iter().any(|slot| {
+                            slot.kind == ClaimedSlotKind::Mast
+                                && slot.index == mast
+                                && NodeKey::parse(&slot.node_key).is_ok_and(|key| key == host_key)
+                        })
+                    })
+                })
+                .map(|facility| OutputFacility {
+                    facility_id: facility.facility_id.clone(),
+                    name: facility.name.clone(),
+                });
+        }
+    }
 }
 
 fn required_int_leaf(children: &[ConfigNode], name: &str) -> Result<i64, String> {
@@ -195,6 +226,71 @@ mod tests {
 
     fn owner_of(outputs: &[SignalOutput], ordinal: u32) -> Option<String> {
         outputs[(ordinal - 1) as usize].owner.map(|o| o.to_string())
+    }
+
+    fn mast_facility_doc(node_key: &str, mast: u32) -> FacilitiesDocument {
+        use crate::layout::facilities::{BlockSignalsRecord, ClaimedSlot, Facility};
+        use crate::signaling::{
+            EntranceEnd, ExitEnd, FacilitySignalSettings, Movements, TravelDirection,
+        };
+        let mut record = BlockSignalsRecord {
+            direction: TravelDirection::default(),
+            movements: Movements::default(),
+            entrance_end: EntranceEnd::default(),
+            exit_end: ExitEnd::default(),
+            blocks: vec![],
+            settings: FacilitySignalSettings::default(),
+            signals: vec![],
+            claimed_slots: vec![],
+        };
+        record.claimed_slots.push(ClaimedSlot {
+            node_key: node_key.to_string(),
+            kind: ClaimedSlotKind::Mast,
+            index: mast,
+        });
+        FacilitiesDocument::new(vec![Facility {
+            facility_id: "fac-1".into(),
+            template_id: "automatic-block-signals".into(),
+            name: "East Siding".into(),
+            slot_bindings: Default::default(),
+            block_signals: Some(record),
+        }])
+    }
+
+    #[test]
+    fn claimed_mast_outputs_name_their_facility_and_others_stay_unattributed() {
+        let mut tree = tree();
+        set_int(&mut tree, &mast_processing(1), 1);
+        set_int(&mut tree, &mast_lamp(1, 1, 1), 3);
+        set_int(&mut tree, &mast_processing(2), 1);
+        set_int(&mut tree, &mast_lamp(2, 1, 1), 5);
+        set_int(&mut tree, "Direct Lamp Control/Lamp[1]/Lamp Selection", 7);
+        let outputs = signal_outputs_from_configuration(&tree).expect("no conflict");
+        let mut hosts = vec![crate::signaling::SignalHardwareHost {
+            node_key: "05.01.01.01.07.00".to_string(),
+            node_name: "host".into(),
+            style: crate::signaling::SignalStyle {
+                style_id: "s".into(),
+                binding_kind: "signalLccRgOutputs".into(),
+                appearances: crate::signaling::SignalAppearanceSet {
+                    stop: vec![],
+                    approach: vec![],
+                    clear: vec![],
+                },
+            },
+            evidence: crate::signaling::SignalHardwareEvidence::Complete,
+            evidence_detail: None,
+            outputs,
+        }];
+        // Claimed slot uses the canonical (undotted) form of the same node key.
+        attribute_output_facilities(&mut hosts, &mast_facility_doc("050101010700", 1));
+        let facility = |ordinal: usize| hosts[0].outputs[ordinal - 1].facility.clone();
+        assert_eq!(
+            facility(3),
+            Some(OutputFacility { facility_id: "fac-1".into(), name: "East Siding".into() })
+        );
+        assert_eq!(facility(5), None, "unclaimed mast stays unattributed");
+        assert_eq!(facility(7), None, "direct lamp stays unattributed");
     }
 
     #[test]

@@ -8,6 +8,9 @@
   import type { ComposeIssue, SignalOutputHost } from '$lib/api/signaling';
   import { resolveNodeParts } from '$lib/layout';
   import { nodeIdToDisplayHex } from '$lib/utils/nodeId';
+  import type { NodeConfigTree } from '$lib/types/nodeTree';
+  import { configFocusStore } from '$lib/stores/configFocus.svelte';
+  import { resolveSignalOutputOwnerTarget } from '$lib/utils/channelConfigNavigation';
   import type { BlockSignalsEditorView } from '$lib/stores/blockSignalsEditor.svelte';
   import type { BlockSignalsEditorActions } from '$lib/orchestration/blockSignalsEditorOrchestrator';
   import SearchableSingleSelectDialog from '$lib/components/SingleSelectList/SearchableSingleSelectDialog.svelte';
@@ -25,12 +28,14 @@
     selectedSignalId = $bindable(null),
     pickerOpen = $bindable(false),
     occupancy,
+    nodeTree,
   }: {
     view: BlockSignalsEditorView;
     actions: BlockSignalsEditorActions;
     selectedSignalId?: string | null;
     pickerOpen?: boolean;
     occupancy?: BlockOccupancyMap;
+    nodeTree?: (nodeKey: string) => NodeConfigTree | undefined;
   } = $props();
 
   /** The lamp the user picked to place next; otherwise the first lamp still without a pin. */
@@ -71,12 +76,37 @@
     return [...found, ...onNode.filter((issue) => !found.includes(issue))];
   });
 
-  function pinState(output: { ordinal: number; owner: string | null }): 'mine' | 'taken' | 'free' {
+  type PinOutput = SignalOutputHost['outputs'][number];
+
+  function pinState(output: PinOutput): 'mine' | 'taken' | 'free' {
     if (output.ordinal === wiring?.redOutput || output.ordinal === wiring?.greenOutput) return 'mine';
     return output.owner !== null ? 'taken' : 'free';
   }
 
-  const PIN_STATE_TEXT = { mine: 'This signal', taken: 'Taken', free: 'Free' } as const;
+  /** Who a taken pin belongs to: the Bowties facility name, else the board's own owner label. */
+  const takenBy = (output: PinOutput) => output.facility?.name ?? output.owner;
+
+  const pinStateText = (output: PinOutput, state: 'mine' | 'taken' | 'free') =>
+    state === 'mine' ? 'This signal' : state === 'free' ? 'Free' : takenBy(output);
+
+  const pinAriaLabel = (output: PinOutput, state: 'mine' | 'taken' | 'free') =>
+    state === 'taken'
+      ? `${output.label}: Used by ${takenBy(output)}${output.facility ? '' : ', not managed by Bowties'}`
+      : `${output.label}: ${pinStateText(output, state)}`;
+
+  /** Pins whose owner is configured on the board outside any Bowties facility, grouped by owner. */
+  const untrackedOwners = $derived.by(() => {
+    const byOwner = new Map<string, string[]>();
+    for (const output of host?.outputs ?? []) {
+      if (pinState(output) !== 'taken' || output.facility || output.owner === null) continue;
+      byOwner.set(output.owner, [...(byOwner.get(output.owner) ?? []), output.label]);
+    }
+    return [...byOwner].map(([owner, pins]) => ({
+      owner,
+      pins,
+      target: host ? resolveSignalOutputOwnerTarget(nodeTree?.(host.nodeKey), owner) : undefined,
+    }));
+  });
 
   function choosePin(ordinal: number): void {
     if (!signal) return;
@@ -184,14 +214,35 @@
                 type="button"
                 class={`pin ${state}`}
                 disabled={state !== 'free'}
-                aria-label={`${output.label}: ${state === 'taken' ? `Taken by ${output.owner}` : PIN_STATE_TEXT[state]}`}
+                aria-label={pinAriaLabel(output, state)}
                 onclick={() => choosePin(output.ordinal)}
               >
                 <span class="pin-name">{output.label}</span>
-                <span class="pin-state">{PIN_STATE_TEXT[state]}</span>
+                <span class="pin-state">{pinStateText(output, state)}</span>
               </button>
             {/each}
           </div>
+          {#if untrackedOwners.length > 0}
+            <section class="outside-pins" aria-labelledby="abs-outside-pins">
+              <h4 id="abs-outside-pins">Pins in use outside Bowties</h4>
+              <ul>
+                {#each untrackedOwners as entry (entry.owner)}
+                  <li>
+                    <span>{entry.owner} · {entry.pins.join(', ')}</span>
+                    {#if entry.target}
+                      {@const target = entry.target}
+                      <button
+                        type="button"
+                        class="btn"
+                        aria-label={`Show ${entry.owner} in Configuration`}
+                        onclick={() => configFocusStore.focusConfigField(target.nodeId, target.elementPath)}
+                      >Show in Configuration</button>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            </section>
+          {/if}
           {/if}
         {:else}
           <h3>Pins</h3>
@@ -256,6 +307,10 @@
   .pin:disabled { cursor: default; }
   .pin.mine { border-color: var(--abs-brand); background: var(--abs-selected); color: var(--abs-text); }
   .pin.taken { background: var(--abs-subtle); color: #a0a0a0; }
+  .outside-pins { margin-top: 12px; }
+  .outside-pins h4 { margin: 0 0 4px; font-size: 12px; }
+  .outside-pins ul { margin: 0; padding: 0; list-style: none; }
+  .outside-pins li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
   .pin-name { font-weight: 600; }
   .pin-state { font-size: 10px; color: var(--abs-muted); }
 </style>
