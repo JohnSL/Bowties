@@ -19,14 +19,17 @@ import { generateUuidV4 } from '$lib/utils/uuid';
 
 export type BlockSignalsStep = 'blocks' | 'aspects' | 'appearance' | 'wiring' | 'review';
 
-/** Review is listed but deferred to a later release; it is never navigable. */
-export const BLOCK_SIGNALS_STEPS: ReadonlyArray<{ id: BlockSignalsStep; enabled: boolean }> = [
-  { id: 'blocks', enabled: true },
-  { id: 'aspects', enabled: true },
-  { id: 'appearance', enabled: true },
-  { id: 'wiring', enabled: true },
-  { id: 'review', enabled: false },
-];
+/** The editor's steps in order; Review is listed but deferred to a later release. */
+const STEP_ORDER: ReadonlyArray<BlockSignalsStep> = ['blocks', 'aspects', 'appearance', 'wiring', 'review'];
+
+/** How a step stands, derived from the facility's data rather than its position. */
+export type BlockSignalsStepStatus = 'complete' | 'needsWork' | 'todo' | 'unavailable';
+
+export interface BlockSignalsStepState {
+  id: BlockSignalsStep;
+  status: BlockSignalsStepStatus;
+  unavailableReason?: string;
+}
 
 /** The wiring chosen so far for one signal; `null` until chosen. */
 export interface SignalWiringChoice {
@@ -71,7 +74,7 @@ export interface BlockSignalsEditorView {
   readonly turnoutShapes: Record<string, TurnoutShape>;
   readonly preview: BlockSignalsPreview | null;
   readonly error: string | null;
-  readonly steps: ReadonlyArray<{ id: BlockSignalsStep; enabled: boolean }>;
+  readonly steps: ReadonlyArray<BlockSignalsStepState>;
   readonly outputHosts: SignalOutputHost[];
   readonly wiringComplete: boolean;
   readonly outOfScopeSettings: OutOfScopeSetting[];
@@ -94,6 +97,7 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
   private _open = $state(false);
   private _mode = $state<BlockSignalsEditorMode>('create');
   private _step = $state<BlockSignalsStep>('blocks');
+  private _furthest = $state(0);
   private _facilityName = $state('');
   private _facilityId = $state('');
   private _direction = $state<TravelDirection>('eastward');
@@ -128,7 +132,31 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
   get turnoutShapes(): Record<string, TurnoutShape> { return this._turnoutShapes; }
   get preview(): BlockSignalsPreview | null { return this._preview; }
   get error(): string | null { return this._error; }
-  get steps(): ReadonlyArray<{ id: BlockSignalsStep; enabled: boolean }> { return BLOCK_SIGNALS_STEPS; }
+  get steps(): ReadonlyArray<BlockSignalsStepState> {
+    return STEP_ORDER.map((id, index) => ({ id, ...this.stepStatus(id, index) }));
+  }
+
+  private stepStatus(id: BlockSignalsStep, index: number): { status: BlockSignalsStepStatus; unavailableReason?: string } {
+    if (id === 'review') return { status: 'unavailable', unavailableReason: 'Not in this release' };
+    if (id !== 'blocks' && this._blocks.length === 0) {
+      return { status: 'unavailable', unavailableReason: 'Add a block first' };
+    }
+    const reached = this._mode === 'edit' || index <= this._furthest;
+    if (!reached) return { status: 'todo' };
+    const outOfScope = this.outOfScopeSettings;
+    switch (id) {
+      case 'blocks':
+        if (outOfScope.includes('movements')) return { status: 'needsWork' };
+        return { status: this._blocks.length > 0 ? 'complete' : 'todo' };
+      case 'aspects':
+        return { status: outOfScope.includes('aspects') || outOfScope.includes('approachLighting') ? 'needsWork' : 'complete' };
+      case 'appearance':
+        return { status: 'complete' };
+      default:
+        if (this.wiringComplete) return { status: 'complete' };
+        return { status: this._preview && this._preview.signals.length > 0 ? 'needsWork' : 'todo' };
+    }
+  }
   get facilityId(): string { return this._facilityId; }
 
   /** Signal LCC hosts and their outputs as the backend preview reports them. */
@@ -245,7 +273,10 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
   }
 
   navigate(step: BlockSignalsStep): void {
-    if (BLOCK_SIGNALS_STEPS.some((item) => item.id === step && item.enabled)) this._step = step;
+    const state = this.steps.find((item) => item.id === step);
+    if (!state || state.status === 'unavailable') return;
+    this._step = step;
+    this._furthest = Math.max(this._furthest, STEP_ORDER.indexOf(step));
   }
   setFacilityName(name: string): void { this._facilityName = name; }
   setDirection(direction: TravelDirection): void { this._direction = direction; }
@@ -396,6 +427,7 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
     this._open = false;
     this._mode = 'create';
     this._step = 'blocks';
+    this._furthest = 0;
     this._facilityName = '';
     this._facilityId = '';
     this._direction = 'eastward';

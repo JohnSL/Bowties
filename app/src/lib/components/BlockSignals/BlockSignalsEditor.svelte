@@ -48,8 +48,6 @@
     review: 'Review',
   };
   const STEPS = $derived(view.steps.map((item) => ({ ...item, title: STEP_TITLE[item.id] })));
-  const stepIndex = (step: BlockSignalsStep) => STEPS.findIndex((item) => item.id === step);
-  const isEnabled = (step: BlockSignalsStep) => STEPS.find((item) => item.id === step)?.enabled ?? false;
   const hasBlocks = $derived(view.blocks.length > 0);
   const dialogHeading = $derived(
     view.mode === 'edit'
@@ -79,14 +77,21 @@
   <div class="abs-editor">
     <ol class="stepper" aria-label="Automatic Block Signals steps">
       {#each STEPS as item, index}
-        <li class="step" class:active={view.step === item.id} class:done={stepIndex(view.step) > index} class:unavailable={!isEnabled(item.id)}>
+        <li class="step {item.status}" class:active={view.step === item.id}>
           <button
             type="button"
             aria-current={view.step === item.id ? 'step' : undefined}
-            disabled={!isEnabled(item.id) || (item.id !== 'blocks' && !hasBlocks)}
+            disabled={item.status === 'unavailable'}
+            title={item.status === 'unavailable' ? item.unavailableReason : undefined}
             onclick={() => intents.navigate(item.id)}
           >
-            <span class="step-n">{index + 1}</span>{item.title}
+            <span class="step-n">{index + 1}</span>{item.title}{#if item.status === 'complete'}
+              <span class="step-mark" aria-hidden="true">✓</span><span class="visually-hidden">, complete</span>
+            {:else if item.status === 'needsWork'}
+              <span class="step-mark warn" aria-hidden="true">!</span><span class="visually-hidden">, needs attention</span>
+            {:else if item.status === 'unavailable' && item.unavailableReason}
+              <span class="visually-hidden">, {item.unavailableReason.toLowerCase()}</span>
+            {/if}
           </button>
         </li>
       {/each}
@@ -154,10 +159,13 @@
   .step { flex: 1; min-width: 0; border: 1px solid var(--abs-border); border-right: 0; background: var(--abs-subtle); }
   .step:first-child { border-radius: 5px 0 0 5px; }
   .step:last-child { border-right: 1px solid var(--abs-border); border-radius: 0 5px 5px 0; }
-  .step button { width: 100%; padding: 8px 10px; border: 0; background: transparent; color: var(--abs-muted); font: inherit; font-size: 11px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
-  .step button:disabled { cursor: default; }
-  .step.done { background: #eefaf4; }
-  .step.done button { color: #166534; }
+  .step button { width: 100%; padding: 8px 10px; border: 0; background: transparent; color: var(--abs-text); font: inherit; font-size: 11px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+  .step button:hover:not(:disabled) { background: rgba(15, 108, 189, .08); }
+  .step button:disabled { cursor: not-allowed; }
+  .step.complete { background: #eefaf4; }
+  .step.complete button { color: #166534; }
+  .step-mark { margin-left: 6px; font-weight: 700; }
+  .step-mark.warn { display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: #d97706; color: #fff; font-size: 10px; line-height: 14px; text-align: center; }
   .step.active { border-color: var(--abs-brand); background: var(--abs-selected); }
   .step.active + .step { border-left-color: var(--abs-brand); }
   .step.active button { color: var(--abs-text); font-weight: 650; }

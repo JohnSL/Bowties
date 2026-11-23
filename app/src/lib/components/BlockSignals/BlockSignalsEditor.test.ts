@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import BlockSignalsEditor from './BlockSignalsEditor.svelte';
-import { fakeView, spyActions } from './editorTestSupport';
+import { fakeView, spyActions, stepsWith } from './editorTestSupport';
 import type { BlockSignalsStep } from '$lib/stores/blockSignalsEditor.svelte';
 
 function open(step: BlockSignalsStep, extra = {}) {
@@ -11,12 +11,45 @@ function open(step: BlockSignalsStep, extra = {}) {
 }
 
 describe('BlockSignalsEditor shell', () => {
-  it('lists Blocks, Aspects, Appearance, Wiring and Review with only Review disabled, and no "later" text', () => {
+  const names = (stepper: HTMLElement) => within(stepper).getAllByRole('button').map((b) => {
+    const copy = b.cloneNode(true) as HTMLElement;
+    copy.querySelectorAll('[aria-hidden="true"]').forEach((node) => node.remove());
+    return copy.textContent?.replace(/^\d/, '').replace(/\s+/g, ' ').trim();
+  });
+
+  it('lists the five steps with only Review disabled, and no "later" text', () => {
     const { stepper } = open('aspects');
     const buttons = within(stepper).getAllByRole('button');
-    expect(buttons.map((b) => b.textContent?.replace(/^\d/, '').trim())).toEqual(['Blocks', 'Aspects', 'Appearance', 'Wiring', 'Review']);
     expect(buttons.map((b) => (b as HTMLButtonElement).disabled)).toEqual([false, false, false, false, true]);
     expect(document.body.textContent).not.toMatch(/later release/i);
+  });
+
+  it('shows every step of a saved facility as complete in its accessible name', () => {
+    const { stepper } = open('blocks', { mode: 'edit' });
+    expect(names(stepper)).toEqual([
+      'Blocks, complete', 'Aspects, complete', 'Appearance, complete', 'Wiring, complete', 'Review, not in this release',
+    ]);
+  });
+
+  it('disables an unavailable step and explains why in its tooltip', () => {
+    const { stepper } = open('blocks', { steps: stepsWith({ aspects: 'unavailable' }).map((s) => s.id === 'aspects' ? { ...s, unavailableReason: 'Add a block first' } : s) });
+    const aspects = within(stepper).getByRole('button', { name: /^2\s*Aspects/ }) as HTMLButtonElement;
+    expect(aspects.disabled).toBe(true);
+    expect(aspects.title).toBe('Add a block first');
+  });
+
+  it('names a step that needs work as needing attention and keeps it clickable', async () => {
+    const { stepper, actions } = open('blocks', { steps: stepsWith({ wiring: 'needsWork' }) });
+    const wiring = within(stepper).getByRole('button', { name: /Wiring, needs attention/ });
+    await fireEvent.click(wiring);
+    expect(actions.navigate).toHaveBeenCalledWith('wiring');
+  });
+
+  it('shows a todo step as plain text, clickable', () => {
+    const { stepper } = open('blocks', { steps: stepsWith({ wiring: 'todo' }) });
+    const wiring = within(stepper).getByRole('button', { name: /Wiring/ }) as HTMLButtonElement;
+    expect(wiring.disabled).toBe(false);
+    expect(names(stepper)[3]).toBe('Wiring');
   });
 
   it('offers Back and Next: Appearance on Aspects, and navigates', async () => {

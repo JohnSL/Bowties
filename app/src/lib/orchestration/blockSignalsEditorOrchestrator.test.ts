@@ -226,15 +226,10 @@ describe('blockSignalsEditor steps and wiring (E1a B11a)', () => {
     resetBlockSignalsEditorForNewLayout();
   });
 
-  it('orders steps blocks, aspects, appearance, wiring and keeps review disabled', () => {
+  it('orders steps blocks, aspects, appearance, wiring and keeps review unavailable', () => {
     startBlockSignalsEditor('Main');
-    expect(store.steps).toEqual([
-      { id: 'blocks', enabled: true },
-      { id: 'aspects', enabled: true },
-      { id: 'appearance', enabled: true },
-      { id: 'wiring', enabled: true },
-      { id: 'review', enabled: false },
-    ]);
+    expect(store.steps.map((s) => s.id)).toEqual(['blocks', 'aspects', 'appearance', 'wiring', 'review']);
+    store.addBlock({ blockId: 'block:a', name: 'A' });
     navigateBlockSignalsEditor('wiring');
     expect(store.step).toBe('wiring');
     navigateBlockSignalsEditor('review');

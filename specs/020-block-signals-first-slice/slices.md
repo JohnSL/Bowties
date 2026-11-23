@@ -806,6 +806,21 @@ Deferred until the save/apply slice:
 - Per-signal setting overrides are not saved in the record, so edit mode starts without them (no overrides are reachable in this release).
 - `ChannelApplyError` has separate `UnknownRenameTarget` and `UnknownBindingTarget` variants; could merge into one unknown-channel error later.
 
+**Follow-up changes after E2a (2026-11-22, from bench review)**:
+- `d435078`: Wiring names the owner of each taken pin (the facility's name, else "Mast N" / "Direct lamp N"). Core `attribute_output_facilities` links an output to the facility whose claimed mast slot holds it. This commit also added the E2c card and the deferred idea [import-existing-signal-configuration.md](../ideas/features/import-existing-signal-configuration.md), and designed the storyboard's "used outside Bowties" card and the Railroad panel line.
+- `466afbf`: Wiring follows the storyboard [`#line-wiring`](../proposals/signaling-ux/signaling-facilities-storyboard.html#line-wiring) layout:
+  - a head card with one button per lamp, the selected lamp highlighted;
+  - the pin grid in header rows (H1–H4) with a legend;
+  - Blink and Show removed.
+
+  Clicking a pin used outside Bowties opens a details card with its description, its pins and Show in Configuration. Release and use stays disabled until E2c. The card closes with ×, with Escape (which closes only the card) or by clicking the pin again, and focus returns to the pin.
+- Step bar: each step shows its state from the facility's data, not its position. A check means complete, an amber "!" means it needs attention, plain text means not reached yet and gray means unavailable, with a tooltip giving the reason. In edit mode every step counts as reached, so a saved facility opens with a check on every step. The store owns the statuses and refuses navigation to an unavailable step. The storyboard step bars match, with a Create/Edit preview and a "Step bar" design note. Validation: `npx vitest run` 1592/1592.
+- Still open from these changes:
+  - the card's rules count and "Aspects set by Logic …" line, which need the backend to link a mast to its conditionals;
+  - the Railroad panel "In use outside Bowties" line, which exists only in the storyboard;
+  - clicking a header to place a whole head;
+  - clearing or swapping this signal's own pin.
+
 ### E2b: Remove a facility [HITL]
 
 **Intent**: The modeler removes an Automatic Block Signals facility, and only its claimed slots are reset.

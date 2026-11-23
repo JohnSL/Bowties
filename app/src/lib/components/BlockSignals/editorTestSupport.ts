@@ -1,8 +1,7 @@
 /** Test doubles for the Automatic Block Signals editor components: a plain view and spy intents. */
 import { vi } from 'vitest';
 import type { BlockSignalsPreview, SignalPreview } from '$lib/api/signaling';
-import type { BlockSignalsEditorView, BlockSignalsStep } from '$lib/stores/blockSignalsEditor.svelte';
-import { BLOCK_SIGNALS_STEPS } from '$lib/stores/blockSignalsEditor.svelte';
+import type { BlockSignalsEditorView, BlockSignalsStep, BlockSignalsStepState, BlockSignalsStepStatus } from '$lib/stores/blockSignalsEditor.svelte';
 import type { BlockSignalsEditorActions } from '$lib/orchestration/blockSignalsEditorOrchestrator';
 
 export const SIGNAL: SignalPreview = {
@@ -37,6 +36,14 @@ export function previewWith(signals: SignalPreview[] = [SIGNAL]): BlockSignalsPr
   };
 }
 
+/** Step states for a view: every step but Review `complete` unless overridden. */
+export function stepsWith(overrides: Partial<Record<BlockSignalsStep, BlockSignalsStepStatus>> = {}): BlockSignalsStepState[] {
+  const ids: BlockSignalsStep[] = ['blocks', 'aspects', 'appearance', 'wiring', 'review'];
+  return ids.map((id) => id === 'review'
+    ? { id, status: 'unavailable', unavailableReason: 'Not in this release' }
+    : { id, status: overrides[id] ?? 'complete' });
+}
+
 export function fakeView(overrides: Partial<BlockSignalsEditorView> = {}): BlockSignalsEditorView {
   return {
     mode: 'create',
@@ -53,7 +60,7 @@ export function fakeView(overrides: Partial<BlockSignalsEditorView> = {}): Block
     turnoutShapes: {},
     preview: previewWith(),
     error: null,
-    steps: BLOCK_SIGNALS_STEPS,
+    steps: stepsWith(),
     outputHosts: [],
     wiringComplete: false,
     outOfScopeSettings: [],

@@ -798,7 +798,16 @@
   .line-custom-signaling[hidden] { display: none; }
   .line-editor-layout > .panel + .panel { margin-top: 0; }
   .line-editor-layout .field-label { display: block; margin-top: 12px; }
-  #line .stepper { overflow-x: auto; }
+  #line .stepper { overflow-x: auto; padding: 0; list-style: none; }
+  #line .step { padding: 0; color: var(--text); }
+  #line .step > a, #line .step > span.step-label { display: flex; align-items: center; gap: 5px; padding: 8px 10px; color: inherit; text-decoration: none; overflow: hidden; text-overflow: ellipsis; }
+  #line .step > a:hover { background: #e8f1fb; }
+  #line .step.done { color: #166534; }
+  #line .step.unavailable { color: #a0a0a0; }
+  #line .step.unavailable > span.step-label { cursor: not-allowed; }
+  #line .step-mark { margin-left: auto; font-weight: 700; }
+  #line .step-mark.check { color: #166534; }
+  #line .step-mark.warn { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; background: #f7b955; color: #3d2a00; font-size: 10px; }
   .line-selected-heading { margin: 14px 0 6px; }
   #line .line-mast-example { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px; background: var(--bg-subtle); border-radius: 6px; min-width: 100px; }
   #line .line-head-example { display: flex; align-items: center; gap: 8px; }
@@ -1869,6 +1878,9 @@
         <label for="line-online">Occupancy preview — not live hardware</label>
         <select id="line-online"><option value="online">Online · sample observations</option><option value="offline">Offline · occupancy unavailable</option></select>
       </div>
+      <div class="form-row">
+        <label><input type="checkbox" id="line-review-unavailable"> Show Review as not in this release (as the app does today)</label>
+      </div>
       <p id="line-session-status" role="status">Local sample only. Cancel never saves or applies; preview choices remain until reload.</p>
     </div>
 
@@ -1877,13 +1889,7 @@
       <div class="dialog wide">
         <div class="dialog-head"><span data-line-context-title>New Automatic Block Signals</span> · Blocks</div>
         <div class="dialog-body">
-          <div class="stepper">
-            <div class="step active"><span class="step-n">1</span>Blocks</div>
-            <div class="step"><span class="step-n">2</span>Aspects</div>
-            <div class="step"><span class="step-n">3</span>Appearance</div>
-            <div class="step"><span class="step-n">4</span>Wiring</div>
-            <div class="step"><span class="step-n">5</span>Review</div>
-          </div>
+          <ol class="stepper" data-line-stepper="blocks" aria-label="Automatic Block Signals steps"></ol>
           <div class="form-row"><label for="line-name">Name</label><input class="input" id="line-name" value="Cedar Hill — Eastward"></div>
           <div class="line-diagram-panel">
             <div class="line-diagram-head"><span class="field-label">Track diagram · derived from the list</span><div class="line-turnout-shape" id="line-turnout-shape"></div><span data-line-online-status style="color:var(--text-muted);font-size:11px">Live occupancy</span></div>
@@ -1967,6 +1973,13 @@
       <p class="note warning" id="line-merge-note" style="margin-top:12px" hidden><strong>Mockup limitation, not product UI:</strong> joined blocks change the derived signals in the page 1 diagram only. Later pages still show the three-signal sample.</p>
       <aside class="design-notes" aria-label="Design notes for blocks and switches">
         <h3>Design notes — not product UI</h3>
+        <h4>Step bar</h4>
+        <ul>
+          <li>Each step shows the state of the facility's data, not its position. A check means the step is complete; an amber "!" means it needs attention (a missing pin, a setting this release cannot build). Both are also said to screen readers.</li>
+          <li>When creating, a step not reached yet shows only its number and name, in normal text: it can still be clicked. When editing, every step has been reached, so a saved facility opens with a check on every step.</li>
+          <li>Gray and a not-allowed cursor mean the step cannot be opened, with a tooltip saying why: "Not in this release" for Review today, or "Add a block first" for the later steps while the list is empty.</li>
+          <li>Try switching the preview to Edit, then clearing a lamp's pin on Wiring: the Wiring step turns amber on every step bar.</li>
+        </ul>
         <h4>Behavior</h4>
         <ul>
           <li>One block is sufficient. Select existing named, detected blocks without renaming
@@ -2048,13 +2061,7 @@
       <div class="dialog wide">
         <div class="dialog-head"><span data-line-context-title>New Automatic Block Signals</span> · Aspects</div>
         <div class="dialog-body">
-          <div class="stepper">
-            <div class="step done"><span class="step-n">1</span>Blocks</div>
-            <div class="step active"><span class="step-n">2</span>Aspects</div>
-            <div class="step"><span class="step-n">3</span>Appearance</div>
-            <div class="step"><span class="step-n">4</span>Wiring</div>
-            <div class="step"><span class="step-n">5</span>Review</div>
-          </div>
+          <ol class="stepper" data-line-stepper="aspects" aria-label="Automatic Block Signals steps"></ol>
           <div class="field-label" id="line-travel-heading">Eastward travel → · select a signal to configure</div>
           <p data-line-online-status style="margin-bottom:4px;color:var(--text-muted);font-size:11px">Live occupancy</p>
           <div data-line-selector data-line-with-endpoint></div>
@@ -2145,13 +2152,7 @@
       <div class="dialog wide">
         <div class="dialog-head"><span data-line-context-title>New Automatic Block Signals</span> · Appearance</div>
         <div class="dialog-body">
-          <div class="stepper">
-            <div class="step done"><span class="step-n">1</span>Blocks</div>
-            <div class="step done"><span class="step-n">2</span>Aspects</div>
-            <div class="step active"><span class="step-n">3</span>Appearance</div>
-            <div class="step"><span class="step-n">4</span>Wiring</div>
-            <div class="step"><span class="step-n">5</span>Review</div>
-          </div>
+          <ol class="stepper" data-line-stepper="appearance" aria-label="Automatic Block Signals steps"></ol>
           <div class="panel line-sim-panel" aria-label="Try the signals">
             <div class="line-sim-head">
               <h3>Try the signals</h3>
@@ -2260,13 +2261,7 @@
       <div class="dialog wide">
         <div class="dialog-head"><span data-line-context-title>New Automatic Block Signals</span> · Wiring</div>
         <div class="dialog-body">
-          <div class="stepper">
-            <div class="step done"><span class="step-n">1</span>Blocks</div>
-            <div class="step done"><span class="step-n">2</span>Aspects</div>
-            <div class="step done"><span class="step-n">3</span>Appearance</div>
-            <div class="step active"><span class="step-n">4</span>Wiring</div>
-            <div class="step"><span class="step-n">5</span>Review</div>
-          </div>
+          <ol class="stepper" data-line-stepper="wiring" aria-label="Automatic Block Signals steps"></ol>
           <div class="field-label" data-line-selection-heading>Select a signal to configure</div>
           <p data-line-online-status style="color:var(--text-muted);font-size:11px">Live occupancy</p>
           <div data-line-selector></div>
@@ -2389,13 +2384,7 @@
       <div class="dialog wide">
         <div class="dialog-head"><span data-line-context-title>New Automatic Block Signals</span> · Review</div>
         <div class="dialog-body">
-          <div class="stepper">
-            <div class="step done"><span class="step-n">1</span>Blocks</div>
-            <div class="step done"><span class="step-n">2</span>Aspects</div>
-            <div class="step done"><span class="step-n">3</span>Appearance</div>
-            <div class="step done"><span class="step-n">4</span>Wiring</div>
-            <div class="step active"><span class="step-n">5</span>Review</div>
-          </div>
+          <ol class="stepper" data-line-stepper="review" aria-label="Automatic Block Signals steps"></ol>
           <div class="panel subtle" style="margin-bottom:12px">
             <h3 style="margin:0 0 6px">Intended operating behavior</h3>
             <strong id="line-operation-title">Directional automatic block signaling (ABS) · Eastward</strong>
@@ -2907,6 +2896,10 @@
     });
 
     const lineContext = document.getElementById('line-context');
+    document.getElementById('line-review-unavailable').addEventListener('change', event => {
+      lineStepsUnavailable.review = event.target.checked;
+      renderLineSignal();
+    });
     lineContext.addEventListener('change', () => {
       const editing = lineContext.value === 'edit';
       for (const title of document.querySelectorAll('#line [data-line-context-title]')) {
@@ -4782,6 +4775,65 @@
       renderLineSignal();
     });
 
+    // Step bars: state comes from the facility's data, not from which step is shown.
+    const LINE_STEPS = [
+      { key: 'blocks', title: 'Blocks', frame: 'line-blocks' },
+      { key: 'aspects', title: 'Aspects', frame: 'line-signaling', issueStep: 'signaling' },
+      { key: 'appearance', title: 'Appearance', frame: 'line-appearance', issueStep: 'appearance' },
+      { key: 'wiring', title: 'Wiring', frame: 'line-wiring', issueStep: 'wiring' },
+      { key: 'review', title: 'Review', frame: 'line-review' },
+    ];
+    function lineStepStatus(step, claims) {
+      if (step.key === 'review') return lineStepsUnavailable.review ? 'unavailable' : 'todo';
+      if (step.key === 'blocks') return document.getElementById('line-name').value.trim() ? 'complete' : 'needsWork';
+      const flagged = lineSignals.some((_, i) => lineIssues(i, claims).some(issue => issue.step === step.issueStep));
+      return flagged ? 'needsWork' : 'complete';
+    }
+    const lineStepsUnavailable = { review: false };
+    function renderLineSteppers(claims) {
+      const editing = lineContext.value === 'edit';
+      const statuses = LINE_STEPS.map(step => lineStepStatus(step, claims));
+      for (const bar of document.querySelectorAll('#line [data-line-stepper]')) {
+        const current = LINE_STEPS.findIndex(step => step.key === bar.dataset.lineStepper);
+        bar.replaceChildren(...LINE_STEPS.map((step, index) => {
+          // Creating: a step not reached yet has no state to show. Editing: every step is reached.
+          const reached = editing || index <= current;
+          const status = statuses[index] === 'unavailable' ? 'unavailable' : reached ? statuses[index] : 'todo';
+          const item = document.createElement('li');
+          item.className = `step${index === current ? ' active' : ''}${status === 'complete' && index !== current ? ' done' : ''}${status === 'unavailable' ? ' unavailable' : ''}`;
+          const label = document.createElement(status === 'unavailable' ? 'span' : 'a');
+          if (status === 'unavailable') {
+            label.className = 'step-label';
+            label.title = 'Not in this release';
+          } else {
+            label.href = `#${step.frame}`;
+            if (index === current) label.setAttribute('aria-current', 'step');
+          }
+          const n = document.createElement('span');
+          n.className = 'step-n';
+          n.textContent = String(index + 1);
+          label.append(n, step.title);
+          if (status === 'complete' || status === 'needsWork') {
+            const mark = document.createElement('span');
+            mark.className = `step-mark ${status === 'complete' ? 'check' : 'warn'}`;
+            mark.setAttribute('aria-hidden', 'true');
+            mark.textContent = status === 'complete' ? '✓' : '!';
+            const said = document.createElement('span');
+            said.className = 'visually-hidden';
+            said.textContent = status === 'complete' ? ', complete' : ', needs attention';
+            label.append(mark, said);
+          } else if (status === 'unavailable') {
+            const said = document.createElement('span');
+            said.className = 'visually-hidden';
+            said.textContent = ', not in this release';
+            label.append(said);
+          }
+          item.append(label);
+          return item;
+        }));
+      }
+    }
+
     function renderLineLaterSteps() {
       syncHeadStyles();
       if (!lineShownDirections()[lineSim.dir]) { lineSim.dir = 'fwd'; lineSim.pos = null; stopSimRun(); }
@@ -4792,6 +4844,7 @@
       const claims = lineClaims();
       const issues = lineIssues(selectedLineSignal, claims);
       renderSignalDiagrams(claims);
+      renderLineSteppers(claims);
       for (const heading of document.querySelectorAll('[data-line-selection-heading]')) {
         heading.textContent = `${selectedLineChoice(lineDirection) === 'westward' ? 'Westward ←' : 'Eastward →'} · select a signal`;
       }
