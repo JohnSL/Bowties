@@ -189,6 +189,23 @@ export interface ComposedEdit {
   value: TreeConfigValue;
 }
 
+/** A removal asks the caller to generate a new event ID for the leaf, breaking its connections. */
+export interface FreshEventIdValue {
+  type: 'freshEventId';
+}
+
+/** An edit from a removal: like a `ComposedEdit`, but may ask for a fresh event ID. */
+export interface RemovalEdit extends Omit<ComposedEdit, 'value'> {
+  value: TreeConfigValue | FreshEventIdValue;
+}
+
+/** With any issue, `edits` is empty. `claimedSlots` is always empty. */
+export interface RemovalResponse {
+  edits: RemovalEdit[];
+  claimedSlots: ClaimedSlot[];
+  issues: ComposeIssue[];
+}
+
 export interface ClaimedSlot {
   nodeKey: string;
   kind: 'mast' | 'logic';
@@ -235,4 +252,21 @@ export async function composeBlockSignals(
   request: ComposeBlockSignalsRequest,
 ): Promise<ComposeBlockSignalsResponse> {
   return invoke<ComposeBlockSignalsResponse>('compose_block_signals', { request });
+}
+
+/**
+ * Read-only: the edits that return the facility's claimed masts (lamps
+ * cleared) and Logic to their unused state, for the caller to stage when
+ * removing the facility. The Logic's recipe events come back as
+ * `freshEventId` for the caller to replace with generated event IDs.
+ * `claimedSlots` is empty. A node whose configuration is not loaded, or a
+ * claimed slot that is missing, comes back as a `claimedSlotUnavailable` issue
+ * with no edits.
+ */
+export async function composeBlockSignalsRemoval(
+  facilityId: string,
+): Promise<RemovalResponse> {
+  return invoke<RemovalResponse>('compose_block_signals', {
+    request: { facilityId, remove: true },
+  });
 }

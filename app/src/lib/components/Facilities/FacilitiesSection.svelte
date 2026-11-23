@@ -6,11 +6,15 @@
   import * as facilityOrchestrator from '$lib/orchestration/facilityOrchestrator';
   import AddFacilityDialog from './AddFacilityDialog.svelte';
   import FacilityCard from './FacilityCard.svelte';
+  import BlockSignalsRemoveDialog from './BlockSignalsRemoveDialog.svelte';
   import BlockSignalsEditor from '$lib/components/BlockSignals/BlockSignalsEditor.svelte';
   import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
   import { blockSignalsEditorStore } from '$lib/stores/blockSignalsEditor.svelte';
   import { channelsStore } from '$lib/stores/channels.svelte';
   import { eventStateStore } from '$lib/stores/eventState.svelte';
+  import { resolveNodeParts } from '$lib/layout';
+  import { nodeIdToDisplayHex } from '$lib/utils/nodeId';
+  import { issueText } from '$lib/components/BlockSignals/wiringText';
   import { deriveChannelState } from '$lib/utils/channelState';
   import { occupancyFromChannelState, type BlockOccupancy } from '$lib/components/BlockSignals/occupancy';
   import {
@@ -35,6 +39,29 @@
   } = $props();
 
   let showAddDialog = $state(false);
+
+  // Spec 020 / E2b: the Automatic Block Signals removal awaiting confirmation.
+  let removal = $state<{ facilityId: string; reason?: string; error?: string } | null>(null);
+  const removalFacility = $derived(
+    removal ? facilitiesStore.facilities.find((f) => f.facilityId === removal!.facilityId) : undefined,
+  );
+  const removalBoardName = $derived.by(() => {
+    const nodeKey = removalFacility?.blockSignals?.claimedSlots[0]?.nodeKey;
+    if (!nodeKey) return '';
+    return resolveNodeParts(nodeKey).name || nodeIdToDisplayHex(nodeKey) || nodeKey;
+  });
+
+  async function confirmRemoval(leaveBoard: boolean) {
+    if (!removal) return;
+    const result = await facilityOrchestrator.removeBlockSignalsFacility({ facilityId: removal.facilityId, leaveBoard });
+    if (result.ok) {
+      removal = null;
+    } else if ('issues' in result) {
+      removal = { facilityId: removal.facilityId, reason: result.issues.map(issueText).join(' ') };
+    } else {
+      removal = { facilityId: removal.facilityId, error: 'The facility could not be removed. Try again.' };
+    }
+  }
 
   // Live occupancy of each detected block, from the same events as the Channels panel.
   const blockOccupancy = $derived.by(() => {
@@ -93,6 +120,11 @@
     facilitiesStore.renameFacility(facilityId, newName);
   }
   function handleDelete(facilityId: string) {
+    const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+    if (facility?.templateId === BLOCK_SIGNALS_TEMPLATE_ID && facility.blockSignals) {
+      removal = { facilityId };
+      return;
+    }
     // Spec 018 / S6 — route through the orchestrator so composed
     // bowties are torn down before the facility is removed. Calling
     // `facilitiesStore.deleteFacility` directly would leave orphan
@@ -148,6 +180,19 @@
       templates={facilityChoices}
       onConfirm={handleAddConfirm}
       onCancel={handleAddCancel}
+    />
+  {/if}
+
+  {#if removal && removalFacility?.blockSignals}
+    <BlockSignalsRemoveDialog
+      facilityName={removalFacility.name}
+      boardName={removalBoardName}
+      claimedSlots={removalFacility.blockSignals.claimedSlots}
+      reason={removal.reason}
+      error={removal.error}
+      onConfirm={() => confirmRemoval(false)}
+      onConfirmLeaveBoard={() => confirmRemoval(true)}
+      onCancel={() => (removal = null)}
     />
   {/if}
 

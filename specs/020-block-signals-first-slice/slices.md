@@ -2,7 +2,7 @@
 
 Branch: 020-block-signals-first-slice
 Generated: 2026-11-07; roadmap regenerated 2026-11-22 for the end-to-end pivot
-Status: 5/11 slices complete (S1, S2R, E1a, E1b, E2a); S2 and the old S3–S8 superseded by E1a–E6
+Status: 6/11 slices complete (S1, S2R, E1a, E1b, E2a, E2b); S2 and the old S3–S8 superseded by E1a–E6
 
 Approved input: the
 [2026-11-22 Architecture Assessment](plan.md#architecture-assessment-end-to-end-first-release-2026-11-22)
@@ -123,7 +123,7 @@ flowchart LR
 | E1a | Stage and save a one-block signal offline | HITL | S2R | done |
 | E1b | Light the signal on the bench | HITL | E1a + terminal-recipe evidence | done (Sync Panel check moved to E2a) |
 | E2a | Edit a saved facility | HITL | E1b | done |
-| E2b | Remove a facility | HITL | E2a | sketched |
+| E2b | Remove a facility | HITL | E2a | done |
 | E2c | Release pins used outside Bowties | HITL | E2b | sketched |
 | E3 | Two blocks on one board | HITL | E2b + same-board Approach evidence | sketched |
 | E4 | Verify writes | HITL | E1b | sketched |
@@ -826,14 +826,44 @@ Deferred until the save/apply slice:
 **Intent**: The modeler removes an Automatic Block Signals facility, and only its claimed slots are reset.
 **Boundary**: Facility card → facility orchestrator → compiler (release edits for claimed slots) → drafts → Save.
 **Blocked by**: E2a.
-**Status**: sketched
+**Status**: done
+**Complexity**: medium
+**User stories**: US1 (remove)
 
 **Acceptance criteria**:
-- [ ] Removal resets only the claimed slots, returns Direct Lamp rows to "Used by Mast", keeps block detection, and removes the facility card and channel.
-- [ ] Removal shows in the Save toolbar, the unsaved-changes breakdown and the close prompts, and Discard restores the saved facility.
-- [ ] On the bench, the signal goes dark after removal.
+- [x] Removal resets only the claimed slots (each claimed mast: Mast Processing 0, its description cleared, and Lamp Selection / Effects Lamp of Rules 1–3 set to Unused; each claimed Logic: Logic Function 0, its description cleared, and a fresh event ID on each event field the recipe wrote, so the Bowties catalog shows no leftover connection), keeps block detection, and removes the facility card and channel. The facility claims no Direct Lamp rows, so removal changes none; a test proves every release edit lies inside a claimed slot.
+- [x] Delete asks for confirmation naming the facility, the board, the mast and Logic slots it resets, that hand edits to those slots are lost, and that Discard restores everything until Save.
+- [x] If the release cannot be worked out (the board's configuration is not loaded, or a claimed slot is missing), removal is refused with a message, and the confirmation offers "Remove without resetting the board", which removes the facility and channel and leaves the board as it is.
+- [x] Removal shows in the Save toolbar, the unsaved-changes breakdown and the close prompts, and Discard restores the saved facility, channel and configuration.
+- [x] On the bench, the signal goes dark after removal.
 
 **Architecture note**: Generic facility teardown is not proof that a slot is safe to release; release is computed from the claimed slots on the record.
+
+**Decisions (approved 2026-11-23)**:
+- D1 A: a core `release_slots(claims)` next to the compiler's recipe edits produces the reset edits; the compose request gains a removal mode in which the backend loads the record's claimed slots from the effective layout. The facility orchestrator stages it as a third `remove` target of the shared pipeline (fresh compose → guard → stage → roll back). E2c reuses `release_slots` for untracked owners.
+- D2 C: reset set per claimed slot is Mast Processing 0 + Mast Description "" and Logic Function 0 + Logic Description "". A slot is free when its processing/function is 0 and unclaimed, so this is enough to free it. E2c rule: event-ID matching skips a Logic whose Function is 0.
+- Extended 2026-11-23 (user): the release also clears a released mast's lamps, and breaks the Logic's event connections with fresh event IDs (ADR-0012 2026-07-03 teardown rule; one frontend generator, core marks the fields). The catalog's disregard of profile relevance rules is a separate gap, not needed here.
+- D3 A: the card criterion is amended (no Direct Lamp rows are claimed, so none are reset); a test asserts release edits ⊆ claimed slots.
+- D4 B: removal is refused by default when release cannot be resolved (blocking issue); an explicit `leaveBoard` choice on the same target removes without resetting. Delete gets a destructive confirmation (Dialog README convention). spec.md FR-014 wording updated to match.
+- Builds on `d0a1785` (effective configuration view): the release reads claimed slots and descriptions through `effective_config_tree`.
+
+**Tasks**:
+- [x] E2b-T1: Integration test — in `RailroadPanel.edit.integration.test.ts` (seed via `seedSavedBlockSignals`, now with a Logic claim): Delete on the ABS card → confirmation names facility, board, Mast and Logic → Remove → card and channel gone, the four release edits staged and shown in the Save toolbar/unsaved breakdown; Discard restores facility, channel and configuration. Cancel changes nothing.
+- [x] E2b-T2: Core — `signaling::release_slots(claims, trees)` → reset edits for each claimed mast/Logic; `ClaimedSlotUnavailable` when a claimed slot is missing; edits ⊆ claimed slots; recompiling after release finds the slots free.
+- [x] E2b-T3: Backend — compose request removal mode: loads the record's claimed slots from the effective layout, returns release edits or blocking issues (no tree loaded, missing slot); TS API types.
+- [x] E2b-T4: facilityOrchestrator — `remove` target of the shared pipeline: compose release → refuse on issues unless `leaveBoard` → delete facility + channel → stage edits → roll back on failure. Generic `deleteFacility` routes ABS facilities here.
+- [x] E2b-T5: Components — FacilityCard Delete opens a destructive confirmation for ABS (facility, board, slots, hand edits, Discard); a refused release shows the reason and offers "Remove without resetting the board".
+- [x] E2b-T6: Docs — ADR-0012 dated extension (three targets: create, update, remove), `aiwiki/seams.md` ABS entry with removal, owners/flows, spec.md FR-014 wording, backlog.
+- [x] E2b-T7: Validate — vitest, `cargo test` in `bowties-core`, backend `cargo check --tests`, svelte-check; bench: remove saved connected, signal goes dark, detection unchanged.
+
+**Validation (2026-11-23)**:
+- `cargo test` in `bowties-core`: all passing (471 unit tests + integration binaries; new release tests in `block_signals_compiler.rs` incl. edits ⊆ claims, and `slots.rs` proof that released slots count as free).
+- `app/src-tauri`: `cargo check --tests` clean (compile-only evidence for `release_from_layout`).
+- Release extended (batch 4): mast lamps cleared (Rules 1–3 Lamp Selection + Effects Lamp) and the Logic's four recipe event fields marked `FreshEventId` in core (`ResolvedValue` in `slots.rs`; create/update refuse it), filled by the orchestrator with `generateFreshEventIdForNode` through a shared `freshEventIdValue` helper also used by bowtie teardown. `cargo test` in core: 532 passed. `npx vitest run`: 1608/1608 on two runs; one earlier full run had a single failure that did not reproduce (not captured; likely the known 5 s timeout under load).
+- `npx vitest run` (before batch 4): 1606/1606. New: `api/signaling.test.ts`, 6 `removeBlockSignalsFacility` tests in `facilityOrchestrator.test.ts`, `BlockSignalsRemoveDialog.test.ts`, 2 E2b walk-throughs in `RailroadPanel.edit.integration.test.ts` (seed now claims Mast 1 and Logic 1).
+- svelte-check: no errors in touched files (113 pre-existing elsewhere).
+- Implementation notes: removal is a sibling `removeBlockSignalsFacility` sharing helpers with the create/update pipeline (`restoreConfigDrafts`, `deleteFacilityAndChannels`) rather than a third `target` value; rollback works by ordering (release edits staged before the non-throwing deletes), so no store un-delete primitive was needed. The generic `deleteFacility` routes ABS facilities to it and throws `BlockSignalsRemovalError` on refusal. The dialog sequencing lives in `FacilitiesSection.svelte`, which already owned the Delete call. No separate refactor pass was run; the batches already extracted the shared helpers.
+- Bench (2026-11-23, user): confirmed.
 
 ### E2c: Release pins used outside Bowties [HITL]
 
@@ -851,6 +881,8 @@ Deferred until the save/apply slice:
 - [ ] The reset edits for the released owner are staged with the facility's edits: they appear in the node's configuration, the Save toolbar, the unsaved-changes breakdown and the close prompts, and Discard restores the owner.
 - [ ] A mast or Logic slot used outside Bowties that blocks Done ("no free mast/Logic") names how many slots are in use outside Bowties.
 - [ ] On the bench, the previous configuration stops driving the pin and the new signal follows its block.
+
+**From E2b (D2)**: a released Logic is reset to Function 0, so event-ID matching of a mast's conditionals skips any Logic whose Function is 0.
 
 **Architecture note**: Releasing an untracked owner is a removal with no facility record. The compiler must produce its reset edits through the same release path as E2b, never a second reset implementation, and never silently: an untracked owner is released only when the request names it.
 

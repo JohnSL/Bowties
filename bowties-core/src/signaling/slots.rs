@@ -43,7 +43,39 @@ pub struct ResolvedEdit {
     pub space: u8,
     pub address: u32,
     pub path: String,
-    pub value: ConfigValue,
+    pub value: ResolvedValue,
+}
+
+/// The value of a resolved edit: a concrete configuration value, or a request
+/// for the frontend to generate a fresh event ID (removal only).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResolvedValue {
+    Config(ConfigValue),
+    FreshEventId,
+}
+
+impl Serialize for ResolvedValue {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        match self {
+            ResolvedValue::Config(value) => value.serialize(serializer),
+            ResolvedValue::FreshEventId => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("type", "freshEventId")?;
+                map.end()
+            }
+        }
+    }
+}
+
+impl ResolvedValue {
+    /// The concrete value, or `None` for a fresh-event-ID request.
+    pub fn config(&self) -> Option<&ConfigValue> {
+        match self {
+            ResolvedValue::Config(value) => Some(value),
+            ResolvedValue::FreshEventId => None,
+        }
+    }
 }
 
 /// An unsaved edit as the frontend draft store keys it.
@@ -205,15 +237,23 @@ pub fn resolve_edits(
                 .and_then(|i| i.leaf(&edit.path))
                 .ok_or_else(unknown)?;
             let (value, kind, expected) = match &edit.value {
-                EditValue::Int { value } => (ConfigValue::Int { value: *value }, "integer", LeafType::Int),
-                EditValue::String { value } => {
-                    (ConfigValue::String { value: value.clone() }, "string", LeafType::String)
+                EditValue::Int { value } => {
+                    (ResolvedValue::Config(ConfigValue::Int { value: *value }), "integer", LeafType::Int)
                 }
+                EditValue::String { value } => (
+                    ResolvedValue::Config(ConfigValue::String { value: value.clone() }),
+                    "string",
+                    LeafType::String,
+                ),
                 EditValue::EventId { bytes } => (
-                    ConfigValue::EventId { bytes: *bytes, hex: lcc_rs::EventID::new(*bytes).to_canonical() },
+                    ResolvedValue::Config(ConfigValue::EventId {
+                        bytes: *bytes,
+                        hex: lcc_rs::EventID::new(*bytes).to_canonical(),
+                    }),
                     "event ID",
                     LeafType::EventId,
                 ),
+                EditValue::FreshEventId => (ResolvedValue::FreshEventId, "event ID", LeafType::EventId),
             };
             if leaf.element_type != expected {
                 return Err(SlotsError::TypeMismatch {
@@ -324,6 +364,55 @@ mod tests {
     }
 
     #[test]
+    fn released_slots_count_as_free_once_the_release_edits_are_applied() {
+        use crate::signaling::compiler::{release_slots, EditValue};
+        let mut tree = zeroed_tree();
+        set_int(&mut tree, &mast_processing_path(2), 1);
+        set_int(&mut tree, &logic_function_path(1), 2);
+        let claims = vec![
+            ClaimedSlot { node_key: NODE.into(), kind: ClaimedSlotKind::Mast, index: 2 },
+            ClaimedSlot { node_key: NODE.into(), kind: ClaimedSlotKind::Logic, index: 1 },
+        ];
+        let before = node_slot_facts(NODE, &tree, &[]);
+        assert!(before.masts[1].in_use && before.logic[0].in_use);
+
+        let released = release_slots(&claims, &[before]);
+        assert_eq!(released.issues, vec![]);
+        for edit in &released.edits {
+            let value = match &edit.value {
+                EditValue::Int { value } => ConfigValue::Int { value: *value },
+                EditValue::String { value } => ConfigValue::String { value: value.clone() },
+                // The frontend generates the new ID; any distinct non-zero one frees the slot.
+                EditValue::EventId { .. } | EditValue::FreshEventId => {
+                    ConfigValue::EventId { bytes: [9, 9, 9, 9, 9, 9, 9, 9], hex: String::new() }
+                }
+            };
+            set_value(&mut tree, &edit.path, value);
+        }
+        let after = node_slot_facts(NODE, &tree, &[]);
+        assert!(!after.masts[1].in_use && !after.logic[0].in_use);
+    }
+
+    #[test]
+    fn every_release_edit_resolves_in_the_real_cdi_and_fresh_event_ids_serialize_as_such() {
+        use crate::signaling::compiler::release_slots;
+        let tree = zeroed_tree();
+        let claims = vec![
+            ClaimedSlot { node_key: NODE.into(), kind: ClaimedSlotKind::Mast, index: 2 },
+            ClaimedSlot { node_key: NODE.into(), kind: ClaimedSlotKind::Logic, index: 1 },
+        ];
+        let released = release_slots(&claims, &[node_slot_facts(NODE, &tree, &[])]);
+        assert_eq!(released.issues, vec![]);
+        let indexes = HashMap::from([(NODE.to_string(), LeafPathIndex::new(&tree))]);
+        let resolved = resolve_edits(&indexes, &released.edits).expect("release edits resolve with matching kinds");
+        let fresh: Vec<_> = resolved.iter().filter(|e| e.value == ResolvedValue::FreshEventId).collect();
+        assert_eq!(fresh.len(), 4);
+        assert_eq!(serde_json::to_value(&fresh[0].value).unwrap(), serde_json::json!({"type": "freshEventId"}));
+        let int = resolved.iter().find(|e| e.path.ends_with("/Mast Processing")).unwrap();
+        assert_eq!(serde_json::to_value(&int.value).unwrap(), serde_json::json!({"type": "int", "value": 0}));
+    }
+
+    #[test]
     fn recipe_paths_resolve_to_cdi_addresses() {
         let tree = tree();
         let indexes = HashMap::from([(NODE.to_string(), LeafPathIndex::new(&tree))]);
@@ -344,7 +433,10 @@ mod tests {
         assert_eq!(resolved[2].address, 1648 + 32 + 1 + 3);
         // Action#2[2] lies after Action#1 in the same Logic.
         assert!(resolved[1].address > resolved[3].address);
-        assert_eq!(resolved[1].value, ConfigValue::EventId { bytes, hex: "0102030405060708".into() });
+        assert_eq!(
+            resolved[1].value,
+            ResolvedValue::Config(ConfigValue::EventId { bytes, hex: "0102030405060708".into() })
+        );
     }
 
     #[test]

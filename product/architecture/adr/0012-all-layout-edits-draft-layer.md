@@ -344,3 +344,38 @@ Spec 020 E2a edits a saved Automatic Block Signals facility.
   unmatched signals get a derived ID. This keeps names, channels and the
   `signals` slot attached across reorient, and is the rule later block-list
   edits refine.
+
+## 2026-11-23 extension: removing compiled facility intent
+
+Spec 020 E2b removes a saved Automatic Block Signals facility.
+
+- **Release is computed from the record, in one place.** Core
+  `release_slots(claims, nodes)` turns the record's claimed slots into reset
+  edits: each claimed mast gets Mast Processing 0, an empty description and
+  its lamps cleared (Lamp Selection and Effects Lamp of the rules the recipe
+  writes → Unused); each claimed Logic gets Function 0, an empty description
+  and a fresh event ID on every event field the recipe wrote. Processing or
+  function 0 alone makes the slot free; clearing the lamps keeps a hand
+  re-enable from driving pins another signal now uses, and the fresh event
+  IDs break the connections removal undoes, following the 2026-07-03
+  teardown rule (core marks the fields, the frontend's one generator fills
+  them). Without them the CDI-scan catalog keeps showing the detector→Logic
+  and Logic→mast bowties, because it matches event IDs in inactive slots. Every release
+  edit lies inside a claimed slot; the facility claims no Direct Lamp rows,
+  so removal changes none. E2c reuses this function for owners no facility
+  claims. Rejected: generic facility teardown, which has no proof that a slot
+  is safe to reset, and a second reset path for untracked owners.
+- **Third target of the facility orchestrator.** `removeBlockSignalsFacility`
+  syncs drafts, composes the release (compose request `remove: true`, which
+  reads the record from the effective layout), stages nothing on a blocking
+  issue, then stages the release edits and deletes the facility and its signal
+  channels. The edits are staged before the deletes, the only step that can
+  fail, so a failure restores prior drafts and leaves the facility untouched.
+  The generic `deleteFacility` routes ABS facilities here.
+- **Refuse by default, leave the board on request.** When the release cannot
+  be worked out (the board's configuration is not loaded, or a claimed slot is
+  missing), removal is refused with the reason. An explicit `leaveBoard`
+  choice removes the facility and channels without resetting the board.
+  Delete asks for a destructive confirmation naming the facility, board and
+  slots. All of it is ordinary drafts: Discard restores everything until
+  Save.

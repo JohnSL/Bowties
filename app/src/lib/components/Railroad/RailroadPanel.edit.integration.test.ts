@@ -15,11 +15,14 @@ import type { ComposeBlockSignalsRequest } from '$lib/api/signaling';
 import SaveControls from '../ElementCardDeck/SaveControls.svelte';
 import {
   mockIpc,
+  removalIpc,
   renderRailroadPanel,
   SAVED_FACILITY_ID,
   SAVED_FACILITY_NAME,
   SAVED_SIGNAL_CHANNEL_ID,
   seedSavedBlockSignals,
+  seedSignalNodeTree,
+  SIGNAL_NODE,
   signalIpc,
 } from './railroadPanelTestSupport';
 
@@ -104,5 +107,85 @@ describe('Edit a saved Automatic Block Signals facility (E2a-T1)', () => {
 
     await screen.findByRole('group', { name: 'Configuration save controls' });
     expect(effectiveNodeStore.dirtyBreakdown).toMatchObject({ facilities: 1, config: 0, configNodes: 0, channels: 0 });
+  });
+});
+
+describe('Remove a saved Automatic Block Signals facility (E2b-T1)', () => {
+  beforeEach(async () => {
+    channelsStore.reset();
+    facilitiesStore.reset();
+    behaviorTemplatesStore.reset();
+    configChangesStore.clearAllDrafts();
+    cancelBlockSignalsEditor();
+    invoke.mockReset();
+    seedSavedBlockSignals();
+  });
+
+  async function setup(ipc: ReturnType<typeof removalIpc>) {
+    seedSignalNodeTree();
+    mockIpc(invoke, ipc);
+    await renderRailroadPanel();
+    render(SaveControls, { props: { toolbar: true } });
+  }
+
+  const card = () => screen.queryByTestId('facility-card');
+  const signalRow = () => within(screen.getByRole('table')).queryByText('Cedar Hill East');
+  const removeDialog = () => screen.queryByRole('alertdialog', { name: `Remove ${SAVED_FACILITY_NAME}?` });
+  const openRemove = async () => {
+    await fireEvent.click(within(screen.getByTestId('facility-card')).getByRole('button', { name: 'Delete facility' }));
+    return screen.findByRole('alertdialog', { name: `Remove ${SAVED_FACILITY_NAME}?` });
+  };
+
+  it('confirms first, stages the release edits with the removal, and Discard restores everything', { timeout: 20000 }, async () => {
+    await setup(removalIpc());
+    expect(effectiveNodeStore.isDirty).toBe(false);
+
+    const dialog = await openRemove();
+    expect(within(dialog).getByText(/02\.01\.57\.00\.00\.01/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Mast 1 and Logic 1/)).toBeInTheDocument();
+
+    // Cancel changes nothing
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(removeDialog()).not.toBeInTheDocument());
+    expect(card()).toBeInTheDocument();
+    expect(effectiveNodeStore.isDirty).toBe(false);
+
+    // Remove stages the release edits and removes the facility and its channel
+    await openRemove();
+    await fireEvent.click(within(removeDialog()!).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(card()).not.toBeInTheDocument());
+    expect(removeDialog()).not.toBeInTheDocument();
+    expect(signalRow()).not.toBeInTheDocument();
+    expect(effectiveNodeStore.dirtyBreakdown).toMatchObject({ config: 7, configNodes: 1, facilities: 1, channels: 1 });
+    const toolbar = await screen.findByRole('group', { name: 'Configuration save controls' });
+
+    // Discard restores the facility card and its channel
+    await fireEvent.click(within(toolbar).getByRole('button', { name: 'Discard pending changes' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Revert' }));
+    await waitFor(() => expect(card()).toBeInTheDocument());
+    expect(signalRow()).toBeInTheDocument();
+    expect(effectiveNodeStore.isDirty).toBe(false);
+  });
+
+  it('when the board cannot be reset, shows why and removes without resetting it', { timeout: 20000 }, async () => {
+    const issue = {
+      code: 'hardwareUnavailable',
+      signalId: null,
+      nodeKey: SIGNAL_NODE,
+      detail: 'unavailable',
+    };
+    await setup(removalIpc(() => [issue]));
+
+    await openRemove();
+    await fireEvent.click(within(removeDialog()!).getByRole('button', { name: 'Remove' }));
+    const refused = await screen.findByRole('alert');
+    expect(refused).toHaveTextContent('The Signal LCC settings could not be read');
+    expect(card()).toBeInTheDocument();
+    expect(effectiveNodeStore.isDirty).toBe(false);
+
+    await fireEvent.click(within(removeDialog()!).getByRole('button', { name: 'Remove without resetting the board' }));
+    await waitFor(() => expect(card()).not.toBeInTheDocument());
+    expect(signalRow()).not.toBeInTheDocument();
+    expect(effectiveNodeStore.dirtyBreakdown).toMatchObject({ config: 0, facilities: 1, channels: 1 });
   });
 });

@@ -28,12 +28,14 @@ import { canonicalEventIdHex } from '$lib/utils/serialize';
 import { editKeyForLeaf, parseEditKey } from '$lib/utils/editKey';
 import {
   composeBlockSignals,
+  composeBlockSignalsRemoval,
   type BlockSignalsPreviewRequest,
   type ComposeIssue,
+  type RemovalEdit,
   type SignalWiring,
 } from '$lib/api/signaling';
 import type { BlockSignalsRecord } from '$lib/api/facilities';
-import type { TreeConfigValue } from '$lib/types/nodeTree';
+import type { NodeConfigTree, TreeConfigValue } from '$lib/types/nodeTree';
 import { generateFreshEventIdForNode } from '$lib/utils/eventIds';
 import { collectEventIdLeaves, findLeafByPath } from '$lib/types/nodeTree';
 
@@ -324,13 +326,9 @@ async function resetComposedLeavesForFacility(facilityId: string): Promise<void>
       if (!tree) continue;
       const leaf = findLeafByPath(tree, op.consumerLeafPath);
       if (!leaf) continue;
-      const freshHex = generateFreshEventIdForNode(op.consumerNodeKey, tree);
-      const bytes = hexToBytes(freshHex);
-      if (!bytes) continue;
-      configEditor.applyEdit(
-        editKeyForLeaf(op.consumerNodeKey, leaf.space, leaf.address),
-        { type: 'eventId', bytes, hex: canonicalEventIdHex(bytes) },
-      );
+      const fresh = freshEventIdValue(op.consumerNodeKey, tree);
+      if (!fresh) continue;
+      configEditor.applyEdit(editKeyForLeaf(op.consumerNodeKey, leaf.space, leaf.address), fresh);
     }
     return;
   }
@@ -342,13 +340,9 @@ async function resetComposedLeavesForFacility(facilityId: string): Promise<void>
       const value = effectiveLayoutStore.effectiveValue(nodeKey, leaf);
       if (!value || value.type !== 'eventId') continue;
       if (!targetHexes.has(value.hex)) continue;
-      const freshHex = generateFreshEventIdForNode(nodeKey, tree);
-      const bytes = hexToBytes(freshHex);
-      if (!bytes) continue;
-      configEditor.applyEdit(
-        editKeyForLeaf(nodeKey, leaf.space, leaf.address),
-        { type: 'eventId', bytes, hex: canonicalEventIdHex(bytes) },
-      );
+      const fresh = freshEventIdValue(nodeKey, tree);
+      if (!fresh) continue;
+      configEditor.applyEdit(editKeyForLeaf(nodeKey, leaf.space, leaf.address), fresh);
     }
   }
 }
@@ -381,24 +375,36 @@ export async function tearDownFacilityBowties(facilityId: string): Promise<void>
  * interfere with our teardown/delete sequence.
  */
 export async function deleteFacility(facilityId: string): Promise<void> {
-  // Snapshot user-owned channel IDs before the facility is deleted.
-  const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
-  const userOwnedChannelIds: string[] = [];
-  if (facility) {
-    for (const channelId of Object.values(facility.slotBindings).flat()) {
-      const channel = channelsStore.channels.find((c) => c.id === channelId);
-      if (channel?.ownership === 'user-owned') {
-        userOwnedChannelIds.push(channelId);
-      }
-    }
+  // An Automatic Block Signals facility owns claimed board slots; deleting it
+  // generically would strand them. Route through the release workflow (Spec
+  // 020 / E2b) and surface a refusal as a typed error.
+  const target = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+  if (target?.templateId === BLOCK_SIGNALS_TEMPLATE_ID && target.blockSignals) {
+    const result = await removeBlockSignalsFacility({ facilityId });
+    if (!result.ok) throw new BlockSignalsRemovalError(result);
+    return;
   }
 
+  const userOwnedChannelIds = userOwnedChannelIdsOf(facilityId);
   await tearDownFacilityBowties(facilityId);
-  facilitiesStore.deleteFacility(facilityId);
+  deleteFacilityAndChannels(facilityId, userOwnedChannelIds);
+}
 
-  // Remove user-owned channels after the facility is gone from the
-  // effective view — the cascade sees the channel disappear but finds
-  // no slot bindings, so it no-ops.
+/** User-owned channel IDs bound to the facility's slots (snapshot before delete). */
+function userOwnedChannelIdsOf(facilityId: string): string[] {
+  const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+  const ids: string[] = [];
+  if (!facility) return ids;
+  for (const channelId of Object.values(facility.slotBindings).flat()) {
+    const channel = channelsStore.channels.find((c) => c.id === channelId);
+    if (channel?.ownership === 'user-owned') ids.push(channelId);
+  }
+  return ids;
+}
+
+/** Facility first, then channels, so the cascade orchestrator finds no slot bindings. */
+function deleteFacilityAndChannels(facilityId: string, userOwnedChannelIds: string[]): void {
+  facilitiesStore.deleteFacility(facilityId);
   for (const channelId of userOwnedChannelIds) {
     channelsStore.removeUserOwnedChannel(channelId);
   }
@@ -540,12 +546,7 @@ async function stageBlockSignalsFacility(
     applyConfigEdits(composed.edits);
     return { ok: true };
   } catch (error) {
-    for (const edit of composed.edits) {
-      const key = editKeyForLeaf(edit.nodeKey, edit.space, edit.address);
-      const prior = priorDrafts.get(key);
-      if (prior) configChangesStore.set(key, prior);
-      else configChangesStore.revert(key);
-    }
+    restoreConfigDrafts(composed.edits, priorDrafts);
     if (facilityAdded) facilitiesStore.deleteFacility(facilityId);
     for (const channelId of createdChannelIds) channelsStore.removeUserOwnedChannel(channelId);
     if (priorFacility?.blockSignals) {
@@ -562,7 +563,118 @@ async function stageBlockSignalsFacility(
   }
 }
 
+// ── Automatic Block Signals removal (Spec 020 / E2b) ─────────────────────
+
+export interface RemoveBlockSignalsFacilityArgs {
+  facilityId: string;
+  /** Skip releasing the claimed board slots: delete the facility and channels only. */
+  leaveBoard?: boolean;
+}
+
+export type RemoveBlockSignalsFacilityResult = CreateBlockSignalsFacilityResult;
+
+/** Thrown by the generic `deleteFacility` when an ABS release is refused or fails. */
+export class BlockSignalsRemovalError extends Error {
+  readonly issues?: ComposeIssue[];
+  readonly cause?: unknown;
+  constructor(result: { ok: false; issues: ComposeIssue[] } | { ok: false; error: unknown } | { ok: false }) {
+    super('Could not remove the Automatic Block Signals facility');
+    this.name = 'BlockSignalsRemovalError';
+    if ('issues' in result) this.issues = result.issues;
+    if ('error' in result) this.cause = result.error;
+  }
+}
+
+/**
+ * Workflow owner: remove an Automatic Block Signals facility, releasing its
+ * claimed mast/Logic slots as ordinary configuration drafts (unless
+ * `leaveBoard`) and deleting the facility and its user-owned signal channels.
+ *
+ * Ordering is the rollback strategy: the only step that can throw
+ * (`applyConfigEdits`) runs first, so a failure restores the prior drafts and
+ * the facility/channels were never touched. The deletes that follow are
+ * non-throwing store transitions. Refuses on any release issue with nothing
+ * staged. Never tears down bowties (the template has no mapping).
+ */
+export async function removeBlockSignalsFacility(
+  args: RemoveBlockSignalsFacilityArgs,
+): Promise<RemoveBlockSignalsFacilityResult> {
+  const { facilityId, leaveBoard = false } = args;
+  const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+  if (!facility?.blockSignals) {
+    return { ok: false, error: new UnknownReferenceError('facility') };
+  }
+
+  let edits: readonly RemovalEdit[] = [];
+  if (!leaveBoard) {
+    try {
+      await syncDraftsForComposition();
+      const composed = await composeBlockSignalsRemoval(facilityId);
+      if (composed.issues.length > 0) return { ok: false, issues: composed.issues };
+      edits = composed.edits;
+    } catch (error) {
+      return { ok: false, error };
+    }
+  }
+
+  const priorDrafts = new Map(configChangesStore.draftEntries().map((d) => [d.key, d.value]));
+  try {
+    stageRemovalEdits(edits);
+  } catch (error) {
+    restoreConfigDrafts(edits, priorDrafts);
+    return { ok: false, error };
+  }
+  deleteFacilityAndChannels(facilityId, userOwnedChannelIdsOf(facilityId));
+  return { ok: true };
+}
+
 // ── Private helpers ─────────────────────────────────────────────────────
+
+/**
+ * A concrete event ID value that no leaf of the node's tree (including staged
+ * drafts) holds yet, or null when the generator yields no valid ID. Staging the
+ * returned value before the next call keeps successive IDs distinct.
+ */
+function freshEventIdValue(nodeKey: string, tree: NodeConfigTree): TreeConfigValue | null {
+  const bytes = hexToBytes(generateFreshEventIdForNode(nodeKey, tree));
+  return bytes ? { type: 'eventId', bytes, hex: canonicalEventIdHex(bytes) } : null;
+}
+
+/**
+ * Stage removal edits, replacing each `freshEventId` request with a generated
+ * event ID. Every needed node tree is checked first so a missing one throws
+ * before anything is staged; each ID is staged before the next is generated.
+ */
+function stageRemovalEdits(edits: readonly RemovalEdit[]): void {
+  for (const edit of edits) {
+    if (edit.value.type === 'freshEventId' && !nodeTreeStore.getTree(edit.nodeKey)) {
+      throw new Error(`Configuration for node ${edit.nodeKey} is not loaded`);
+    }
+  }
+  for (const edit of edits) {
+    let value: TreeConfigValue | null;
+    if (edit.value.type === 'freshEventId') {
+      value = freshEventIdValue(edit.nodeKey, nodeTreeStore.getTree(edit.nodeKey)!);
+      if (!value) throw new Error(`Could not generate an event ID for node ${edit.nodeKey}`);
+    } else {
+      value = edit.value;
+    }
+    configEditor.applyEdit(editKeyForLeaf(edit.nodeKey, edit.space, edit.address), value);
+  }
+}
+
+/** Put each edited leaf's draft back to its prior value (or drop it if it had none). */
+function restoreConfigDrafts(
+  edits: readonly { nodeKey: string; space: number; address: number }[],
+  priorDrafts: ReadonlyMap<string, TreeConfigValue>,
+): void {
+  for (const edit of edits) {
+    const key = editKeyForLeaf(edit.nodeKey, edit.space, edit.address);
+    const prior = priorDrafts.get(key);
+    if (prior) configChangesStore.set(key, prior);
+    else configChangesStore.revert(key);
+  }
+}
 
 /** Stage configuration edits as ordinary drafts so they ride the existing save path. */
 function applyConfigEdits(

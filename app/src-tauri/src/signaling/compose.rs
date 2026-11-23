@@ -13,7 +13,8 @@ use bowties_core::{
     profile::StructureProfile,
     signaling::{
         compiler::{
-            compile_block_signals, BlockOccupancyEvents, CompileInput, CompileIssue, SignalWiring,
+            compile_block_signals, release_slots, BlockOccupancyEvents, CompileInput, CompileIssue,
+            SignalWiring,
         },
         slots::{
             claimed_slots_from_facilities, node_slot_facts, resolve_edits, LeafPathIndex,
@@ -33,7 +34,13 @@ pub struct ComposeBlockSignalsRequest {
     /// The facility being composed; its own claimed slots do not count as in use.
     #[serde(default)]
     pub facility_id: Option<String>,
+    /// Removal mode: release the facility's claimed slots instead of compiling
+    /// a recipe. Needs `facility_id`; `line` and `wiring` are ignored.
+    #[serde(default)]
+    pub remove: bool,
+    #[serde(default)]
     pub line: BlockSignalsRequest,
+    #[serde(default)]
     pub wiring: Vec<SignalWiring>,
 }
 
@@ -62,6 +69,9 @@ fn compose_from_layout(
     profiles: &HashMap<String, Option<StructureProfile>>,
     mut request: ComposeBlockSignalsRequest,
 ) -> Result<ComposeBlockSignalsResponse, String> {
+    if request.remove {
+        return release_from_layout(layout, profiles, request.facility_id.as_deref());
+    }
     request.line.saved_signals = request
         .facility_id
         .as_deref()
@@ -120,5 +130,43 @@ fn compose_from_layout(
         own_claims,
     });
     let edits = resolve_edits(&indexes, &compiled.edits).map_err(|e| e.to_string())?;
+    // Only removal asks the frontend for fresh event IDs; a recipe never does.
+    if edits.iter().any(|e| e.value.config().is_none()) {
+        return Err("The compiled recipe contains an unresolved fresh event ID.".to_string());
+    }
     Ok(ComposeBlockSignalsResponse { edits, claimed_slots: compiled.claimed_slots, issues: compiled.issues })
+}
+
+/// Removal mode: the edits that unclaim the saved facility's mast and Logic,
+/// built from the effective trees of the nodes that hold its claims.
+fn release_from_layout(
+    layout: &LayoutState,
+    profiles: &HashMap<String, Option<StructureProfile>>,
+    facility_id: Option<&str>,
+) -> Result<ComposeBlockSignalsResponse, String> {
+    let facility_id = facility_id.ok_or("Removal needs a facility id.")?;
+    let claims = layout
+        .effective_facilities()
+        .facilities
+        .iter()
+        .find(|f| f.facility_id == facility_id)
+        .and_then(|f| f.block_signals.as_ref())
+        .map(|record| record.claimed_slots.clone())
+        .ok_or_else(|| format!("No Automatic Block Signals facility '{facility_id}' is saved."))?;
+    let facts = proposal_facts_from_layout(layout, profiles);
+
+    let mut trees: HashMap<String, &NodeConfigTree> = HashMap::new();
+    for claim in &claims {
+        let key = NodeKey::parse(&claim.node_key).map_err(|e| format!("Invalid node key '{}': {e}", claim.node_key))?;
+        if let Some(tree) = facts.trees.get(&key) {
+            trees.insert(claim.node_key.clone(), tree);
+        }
+    }
+    let indexes: HashMap<String, LeafPathIndex<'_>> =
+        trees.iter().map(|(k, t)| (k.clone(), LeafPathIndex::new(t))).collect();
+    let nodes: Vec<_> = trees.iter().map(|(node_key, tree)| node_slot_facts(node_key, tree, &[])).collect();
+
+    let released = release_slots(&claims, &nodes);
+    let edits = resolve_edits(&indexes, &released.edits).map_err(|e| e.to_string())?;
+    Ok(ComposeBlockSignalsResponse { edits, claimed_slots: released.claimed_slots, issues: released.issues })
 }

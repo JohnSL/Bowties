@@ -34,6 +34,10 @@ pub enum EditValue {
     Int { value: i64 },
     EventId { bytes: [u8; 8] },
     String { value: String },
+    /// A new event ID for the caller to generate, so the leaf no longer shares
+    /// an event with anything. Only `release_slots` produces it; the frontend
+    /// owns the single event-ID generator and swaps it for an `EventId`.
+    FreshEventId,
 }
 
 /// One configuration edit on a node, addressed by CDI path.
@@ -355,14 +359,138 @@ fn claimed_slots<'a>(
     (mast, logic)
 }
 
+/// Path of a mast's group; every leaf the recipe or a release touches lies under it.
+fn mast_path(mast: u32) -> String {
+    format!("Rule to Aspect/Mast[{mast}]")
+}
+
+/// Path of a Logic's group; every leaf the recipe or a release touches lies under it.
+fn logic_path(logic: u32) -> String {
+    format!("Conditionals/Logic[{logic}]")
+}
+
 /// Path of a mast's processing leaf, for callers building pending edits.
 pub fn mast_processing_path(mast: u32) -> String {
-    format!("Rule to Aspect/Mast[{mast}]/Mast Processing")
+    format!("{}/Mast Processing", mast_path(mast))
 }
 
 /// Path of a Logic's function leaf, for callers building pending edits.
 pub fn logic_function_path(logic: u32) -> String {
-    format!("Conditionals/Logic[{logic}]/Function")
+    format!("{}/Function", logic_path(logic))
+}
+
+/// Rules the recipe writes on a mast (Stop, Approach, Clear).
+const RECIPE_RULES: u32 = 3;
+/// Appearances per rule, each with one `Lamp Selection`.
+const RECIPE_APPEARANCES: u32 = 4;
+
+fn rule_path(mast: u32, rule: u32) -> String {
+    format!("{}/Rule[{rule}]", mast_path(mast))
+}
+
+fn appearance_lamp_path(mast: u32, rule: u32, appearance: u32) -> String {
+    format!("{}/Appearance[{appearance}]/Lamp Selection", rule_path(mast, rule))
+}
+
+fn effects_lamp_path(mast: u32, rule: u32) -> String {
+    format!("{}/Effects Lamp", rule_path(mast, rule))
+}
+
+/// Every lamp leaf the recipe sets on a mast: the lit lamps of each
+/// appearance and each rule's effects lamp.
+fn recipe_lamp_paths(mast: u32) -> Vec<String> {
+    let mut paths = Vec::new();
+    for rule in 1..=RECIPE_RULES {
+        for appearance in 1..=RECIPE_APPEARANCES {
+            paths.push(appearance_lamp_path(mast, rule, appearance));
+        }
+        paths.push(effects_lamp_path(mast, rule));
+    }
+    paths
+}
+
+fn occupied_event_path(logic: u32) -> String {
+    format!("{}/Variable #1/set true", logic_path(logic))
+}
+
+fn clear_event_path(logic: u32) -> String {
+    format!("{}/Variable #1/set false", logic_path(logic))
+}
+
+fn stop_action_event_path(logic: u32) -> String {
+    format!("{}/Action#2[1]/Action Event", logic_path(logic))
+}
+
+fn clear_action_event_path(logic: u32) -> String {
+    format!("{}/Action#2[2]/Action Event", logic_path(logic))
+}
+
+/// Every event-ID leaf the recipe writes on a Logic: the block's occupied and
+/// clear triggers and the two set-aspect actions.
+fn recipe_logic_event_paths(logic: u32) -> [String; 4] {
+    [
+        occupied_event_path(logic),
+        clear_event_path(logic),
+        stop_action_event_path(logic),
+        clear_action_event_path(logic),
+    ]
+}
+
+/// Release the slots a removed facility claimed: return each claimed mast and
+/// Logic to its unused state (Processing / Function 0, empty description) so
+/// it counts as free again. A mast's lamps are cleared, and every event the
+/// recipe wired into the Logic is marked `FreshEventId`, breaking its
+/// connections. Edits touch only the claimed slots, ordered by
+/// `claims`. A claim whose node has no facts (configuration not loaded) or
+/// whose slot is missing is a blocking `ClaimedSlotUnavailable` issue; then
+/// `edits` is empty.
+pub fn release_slots(claims: &[ClaimedSlot], nodes: &[NodeSlotFacts]) -> CompiledBlockSignals {
+    let mut out = CompiledBlockSignals::default();
+    let int = |value: i64| EditValue::Int { value };
+    let empty = || EditValue::String { value: String::new() };
+    for claim in claims {
+        let node = nodes.iter().find(|n| n.node_key == claim.node_key);
+        let present = node.is_some_and(|n| match claim.kind {
+            ClaimedSlotKind::Mast => n.masts.iter().any(|m| m.index == claim.index),
+            ClaimedSlotKind::Logic => n.logic.iter().any(|l| l.index == claim.index),
+        });
+        if !present {
+            out.issues.push(CompileIssue {
+                code: CompileIssueCode::ClaimedSlotUnavailable,
+                signal_id: None,
+                node_key: Some(claim.node_key.clone()),
+                detail: "A mast or Logic this facility uses cannot be found on its Signal LCC; its configuration may not be loaded.".to_string(),
+                binding_issue: None,
+            });
+            continue;
+        }
+        let (processing, description) = match claim.kind {
+            ClaimedSlotKind::Mast => {
+                (mast_processing_path(claim.index), format!("{}/Mast Description", mast_path(claim.index)))
+            }
+            ClaimedSlotKind::Logic => {
+                (logic_function_path(claim.index), format!("{}/Description", logic_path(claim.index)))
+            }
+        };
+        let mut writes = vec![(processing, int(0)), (description, empty())];
+        match claim.kind {
+            ClaimedSlotKind::Mast => {
+                writes.extend(recipe_lamp_paths(claim.index).into_iter().map(|p| (p, int(0))));
+            }
+            ClaimedSlotKind::Logic => {
+                writes.extend(
+                    recipe_logic_event_paths(claim.index).into_iter().map(|p| (p, EditValue::FreshEventId)),
+                );
+            }
+        }
+        for (path, value) in writes {
+            out.edits.push(NodeConfigEdit { node_key: claim.node_key.clone(), path, value });
+        }
+    }
+    if !out.issues.is_empty() {
+        out.edits.clear();
+    }
+    out
 }
 
 fn free_mast(node: &NodeSlotFacts) -> Option<&MastFact> {
@@ -392,33 +520,37 @@ fn recipe_edits(
         edits.push(NodeConfigEdit { node_key: node_key.clone(), path, value });
     };
     let int = |value: i64| EditValue::Int { value };
-    let m = format!("Rule to Aspect/Mast[{mast}]");
+    let m = mast_path(mast);
     put(format!("{m}/Mast Description"), EditValue::String { value: name.to_string() });
     put(format!("{m}/Lamp Fade"), int(0));
     let (red, green) = (i64::from(wiring.red_output), i64::from(wiring.green_output));
     // Rule name, Track Speed and lit lamps for Stop, Approach and Clear.
     let rules: [(i64, i64, &[i64]); 3] =
         [(0, 0, &[red]), (21, 5, &[red, green]), (29, 7, &[green])];
+    debug_assert_eq!(rules.len() as u32, RECIPE_RULES);
     for (index, (rule_name, speed, lamps)) in rules.iter().enumerate() {
-        let r = format!("{m}/Rule[{}]", index + 1);
+        let rule = index as u32 + 1;
+        let r = rule_path(mast, rule);
         put(format!("{r}/Rule Name"), int(*rule_name));
         put(format!("{r}/Track Speed"), int(*speed));
-        for slot in 0..4 {
-            let a = format!("{r}/Appearance[{}]", slot + 1);
-            put(format!("{a}/Lamp Selection"), int(lamps.get(slot).copied().unwrap_or(0)));
-            put(format!("{a}/Lamp Phase (A-B) - Flash Rate"), int(0));
+        for slot in 0..RECIPE_APPEARANCES {
+            put(
+                appearance_lamp_path(mast, rule, slot + 1),
+                int(lamps.get(slot as usize).copied().unwrap_or(0)),
+            );
+            put(format!("{r}/Appearance[{}]/Lamp Phase (A-B) - Flash Rate", slot + 1), int(0));
         }
         put(format!("{r}/Appearance Effects"), int(0));
-        put(format!("{r}/Effects Lamp"), int(0));
+        put(effects_lamp_path(mast, rule), int(0));
     }
     put(format!("{m}/Mast Processing"), int(MAST_NORMAL));
 
-    let l = format!("Conditionals/Logic[{logic}]");
+    let l = logic_path(logic);
     put(format!("{l}/Description"), EditValue::String { value: format!("{name} occupancy") });
     put(format!("{l}/Variable #1/Trigger"), int(1));
     put(format!("{l}/Variable #1/Source"), int(0));
-    put(format!("{l}/Variable #1/set true"), EditValue::EventId { bytes: occupied });
-    put(format!("{l}/Variable #1/set false"), EditValue::EventId { bytes: clear });
+    put(occupied_event_path(logic), EditValue::EventId { bytes: occupied });
+    put(clear_event_path(logic), EditValue::EventId { bytes: clear });
     put(format!("{l}/Logic Operation"), int(7));
     put(format!("{l}/Variable #2/Trigger"), int(2));
     put(format!("{l}/Action#1/when true"), int(0));
@@ -426,9 +558,9 @@ fn recipe_edits(
     put(format!("{l}/Time Delay before action/Delay Time (1-60000)"), int(0));
     put(format!("{l}/Time Delay before action/Units"), int(0));
     put(format!("{l}/Action#2[1]/Condition"), int(3));
-    put(format!("{l}/Action#2[1]/Action Event"), EditValue::EventId { bytes: stop_event });
+    put(stop_action_event_path(logic), EditValue::EventId { bytes: stop_event });
     put(format!("{l}/Action#2[2]/Condition"), int(4));
-    put(format!("{l}/Action#2[2]/Action Event"), EditValue::EventId { bytes: clear_event });
+    put(clear_action_event_path(logic), EditValue::EventId { bytes: clear_event });
     put(format!("{l}/Action#2[3]/Condition"), int(0));
     put(format!("{l}/Action#2[4]/Condition"), int(0));
     put(format!("{l}/Function"), int(LOGIC_LAST_SINGLE));

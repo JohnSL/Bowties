@@ -586,8 +586,9 @@ import { editKeyForLeaf } from '$lib/utils/editKey';
 
 vi.mock('$lib/api/signaling', () => ({
   composeBlockSignals: vi.fn(),
+  composeBlockSignalsRemoval: vi.fn(),
 }));
-const { composeBlockSignals } = await import('$lib/api/signaling');
+const { composeBlockSignals, composeBlockSignalsRemoval } = await import('$lib/api/signaling');
 
 const ABS_TEMPLATE: BehaviorTemplate = {
   templateId: 'automatic-block-signals',
@@ -861,5 +862,186 @@ describe('updateBlockSignalsFacility (Spec 020 / E2a — facilityOrchestrator)',
     ]);
     expect(facilitiesStore.collectDeltas()).toEqual([]);
     expect(channelsStore.collectDeltas()).toEqual([]);
+  });
+});
+
+// ── Spec 020 / E2b — removeBlockSignalsFacility ──
+
+describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)', () => {
+  const RELEASE = {
+    edits: [
+      { nodeKey: ABS_NODE, space: 253, address: 10, path: 'a', value: { type: 'int', value: 0 } },
+      { nodeKey: ABS_NODE, space: 253, address: 20, path: 'b', value: { type: 'string', value: '' } },
+    ],
+    claimedSlots: [],
+    issues: [],
+  };
+
+  function savedChannel(): InformationChannel {
+    return {
+      id: 'ch-sig-1', name: 'Signal A', role: 'signal-indication', style: 'two-driver-rg-signal',
+      ownership: 'user-owned',
+      binding: { kind: 'signalLccRgOutputs', nodeKey: ABS_NODE, redOutput: 1, greenOutput: 2 },
+    } as InformationChannel;
+  }
+
+  beforeEach(async () => {
+    vi.restoreAllMocks();
+    bowtieMetadataStore.clearAll();
+    configChangesStore.clearAllDrafts();
+    vi.mocked(syncLayoutDrafts).mockClear();
+    vi.mocked(composeBlockSignalsRemoval).mockReset();
+    vi.mocked(composeBlockSignalsRemoval).mockResolvedValue(RELEASE as never);
+    listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR, ABS_TEMPLATE]);
+    behaviorTemplatesStore.reset();
+    await behaviorTemplatesStore.loadBehaviorTemplates();
+    channelsStore.hydrateBaseline([savedChannel()]);
+    facilitiesStore.hydrateBaseline([{
+      facilityId: 'abs-1',
+      templateId: 'automatic-block-signals',
+      name: 'Main line',
+      slotBindings: { signals: ['ch-sig-1'] },
+      blockSignals: {
+        direction: 'bidirectional', movements: 'both', entranceEnd: 'a', exitEnd: 'b',
+        blocks: [{ blockId: 'b1' }], settings: {},
+        signals: [{ signalId: 's1', name: 'Signal A', protectedBlock: 'b1', channelId: 'ch-sig-1' }],
+        claimedSlots: [{ nodeKey: ABS_NODE, kind: 'mast', index: 9 }],
+      },
+    } as never]);
+  });
+
+  it('stages the release edits and deletes the facility and its signal channels', async () => {
+    const result = await orch.removeBlockSignalsFacility({ facilityId: 'abs-1' });
+
+    expect(result).toEqual({ ok: true });
+    expect(vi.mocked(syncLayoutDrafts).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(composeBlockSignalsRemoval).mock.invocationCallOrder[0]);
+    expect(facilitiesStore.facilities).toHaveLength(0);
+    expect(channelsStore.channels).toHaveLength(0);
+    expect(configChangesStore.draftEntries().map((d) => d.key)).toEqual([
+      editKeyForLeaf(ABS_NODE, 253, 10),
+      editKeyForLeaf(ABS_NODE, 253, 20),
+    ]);
+    expect(facilitiesStore.collectDeltas()).toEqual([{ type: 'deleteFacility', facilityId: 'abs-1' }]);
+  });
+
+  it('stages nothing when the release reports issues', async () => {
+    const issues = [{ code: 'claimedSlotUnavailable', nodeKey: ABS_NODE, detail: 'not loaded' }];
+    vi.mocked(composeBlockSignalsRemoval).mockResolvedValue({ edits: [], claimedSlots: [], issues } as never);
+
+    const result = await orch.removeBlockSignalsFacility({ facilityId: 'abs-1' });
+
+    expect(result).toEqual({ ok: false, issues });
+    expect(facilitiesStore.facilities).toHaveLength(1);
+    expect(channelsStore.channels).toHaveLength(1);
+    expect(configChangesStore.draftEntries()).toHaveLength(0);
+  });
+
+  it('leaveBoard deletes the facility and channels without composing or staging config edits', async () => {
+    const result = await orch.removeBlockSignalsFacility({ facilityId: 'abs-1', leaveBoard: true });
+
+    expect(result).toEqual({ ok: true });
+    expect(composeBlockSignalsRemoval).not.toHaveBeenCalled();
+    expect(facilitiesStore.facilities).toHaveLength(0);
+    expect(channelsStore.channels).toHaveLength(0);
+    expect(configChangesStore.draftEntries()).toHaveLength(0);
+  });
+
+  it('restores drafts and keeps the facility and channels when staging fails', async () => {
+    configEditor.applyEdit(editKeyForLeaf(ABS_NODE, 253, 10), { type: 'int', value: 5 });
+    const realApply = configEditor.applyEdit.bind(configEditor);
+    let calls = 0;
+    vi.spyOn(configEditor, 'applyEdit').mockImplementation((k, v) => {
+      if (++calls === 2) throw new Error('boom');
+      realApply(k, v);
+    });
+
+    const result = await orch.removeBlockSignalsFacility({ facilityId: 'abs-1' });
+
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { error: unknown }).error).toBeInstanceOf(Error);
+    expect(facilitiesStore.facilities).toHaveLength(1);
+    expect(channelsStore.channels).toHaveLength(1);
+    expect(configChangesStore.draftEntries()).toEqual([
+      { key: editKeyForLeaf(ABS_NODE, 253, 10), value: { type: 'int', value: 5 } },
+    ]);
+    expect(facilitiesStore.collectDeltas()).toEqual([]);
+    expect(channelsStore.collectDeltas()).toEqual([]);
+  });
+
+  describe('fresh event IDs', () => {
+    const FRESH_RELEASE = {
+      edits: [
+        { nodeKey: ABS_NODE, space: 253, address: 10, path: 'a', value: { type: 'int', value: 0 } },
+        { nodeKey: ABS_NODE, space: 253, address: 30, path: 'e1', value: { type: 'freshEventId' } },
+        { nodeKey: ABS_NODE, space: 253, address: 38, path: 'e2', value: { type: 'freshEventId' } },
+      ],
+      claimedSlots: [],
+      issues: [],
+    };
+
+    beforeEach(() => {
+      vi.mocked(composeBlockSignalsRemoval).mockResolvedValue(FRESH_RELEASE as never);
+    });
+
+    it('stages each fresh event ID leaf as a concrete event ID, distinct per leaf', async () => {
+      nodeTreeStore.setTree(ABS_NODE, {
+        nodeId: ABS_NODE, identity: null, connectorProfile: null, profileApplied: true,
+        unknownVariants: [],
+        segments: [{
+          name: 'Conditionals', description: null, origin: 0, space: 253,
+          children: [30, 38].map((address) => ({
+            kind: 'leaf', name: `Event ${address}`, description: null,
+            elementType: 'eventId', address, size: 8, space: 253,
+            path: ['Conditionals', `Event ${address}`],
+            value: { type: 'eventId', bytes: [2, 1, 1, 1, 1, 1, 1, 1], hex: '0201010101010101' },
+            eventRole: 'Consumer', constraints: null, readOnly: false, modifiedValue: null,
+          })),
+        }],
+      } as unknown as Parameters<typeof nodeTreeStore.setTree>[1]);
+
+      const result = await orch.removeBlockSignalsFacility({ facilityId: 'abs-1' });
+
+      expect(result).toEqual({ ok: true });
+      const drafts = new Map(configChangesStore.draftEntries().map((d) => [d.key, d.value]));
+      const first = drafts.get(editKeyForLeaf(ABS_NODE, 253, 30));
+      const second = drafts.get(editKeyForLeaf(ABS_NODE, 253, 38));
+      expect(first).toMatchObject({ type: 'eventId' });
+      expect(second).toMatchObject({ type: 'eventId' });
+      const hexOf = (v: unknown) => (v as { hex: string }).hex;
+      expect(hexOf(first)).toMatch(/^[0-9A-F]{16}$/i);
+      expect(hexOf(first)).not.toBe(hexOf(second));
+      expect(drafts.get(editKeyForLeaf(ABS_NODE, 253, 10))).toEqual({ type: 'int', value: 0 });
+    });
+
+    it('restores drafts and keeps the facility when a node tree is missing', async () => {
+      nodeTreeStore.reset();
+      configEditor.applyEdit(editKeyForLeaf(ABS_NODE, 253, 10), { type: 'int', value: 5 });
+
+      const result = await orch.removeBlockSignalsFacility({ facilityId: 'abs-1' });
+
+      expect(result).toMatchObject({ ok: false });
+      expect(facilitiesStore.facilities).toHaveLength(1);
+      expect(channelsStore.channels).toHaveLength(1);
+      expect(configChangesStore.draftEntries()).toEqual([
+        { key: editKeyForLeaf(ABS_NODE, 253, 10), value: { type: 'int', value: 5 } },
+      ]);
+    });
+  });
+
+  it('generic deleteFacility routes an ABS facility through the release', async () => {
+    await orch.deleteFacility('abs-1');
+
+    expect(composeBlockSignalsRemoval).toHaveBeenCalledWith('abs-1');
+    expect(facilitiesStore.facilities).toHaveLength(0);
+    expect(configChangesStore.draftEntries()).toHaveLength(2);
+  });
+
+  it('generic deleteFacility throws and stages nothing when the ABS release is refused', async () => {
+    const issues = [{ code: 'claimedSlotUnavailable', nodeKey: ABS_NODE, detail: 'not loaded' }];
+    vi.mocked(composeBlockSignalsRemoval).mockResolvedValue({ edits: [], claimedSlots: [], issues } as never);
+
+    await expect(orch.deleteFacility('abs-1')).rejects.toBeInstanceOf(orch.BlockSignalsRemovalError);
+    expect(facilitiesStore.facilities).toHaveLength(1);
   });
 });

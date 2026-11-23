@@ -319,3 +319,81 @@ fn recompile_never_repicks_when_a_claimed_slot_is_unavailable() {
         assert!(result.claimed_slots.is_empty(), "{name}");
     }
 }
+
+fn release_claims() -> Vec<ClaimedSlot> {
+    vec![claim(ClaimedSlotKind::Mast, 2), claim(ClaimedSlotKind::Logic, 1)]
+}
+
+fn release_edit(path: &str, value: EditValue) -> NodeConfigEdit {
+    NodeConfigEdit { node_key: NODE.into(), path: path.into(), value }
+}
+
+#[test]
+fn release_unclaims_each_claimed_slot_with_edits_confined_to_it() {
+    let result = release_slots(&release_claims(), &[free_node()]);
+    assert_eq!(result.issues, vec![]);
+    assert!(result.claimed_slots.is_empty());
+    let int0 = || EditValue::Int { value: 0 };
+    let mut expected = vec![
+        release_edit("Rule to Aspect/Mast[2]/Mast Processing", int0()),
+        release_edit("Rule to Aspect/Mast[2]/Mast Description", EditValue::String { value: String::new() }),
+    ];
+    for rule in 1..=3 {
+        for appearance in 1..=4 {
+            expected.push(release_edit(
+                &format!("Rule to Aspect/Mast[2]/Rule[{rule}]/Appearance[{appearance}]/Lamp Selection"),
+                int0(),
+            ));
+        }
+        expected.push(release_edit(&format!("Rule to Aspect/Mast[2]/Rule[{rule}]/Effects Lamp"), int0()));
+    }
+    expected.push(release_edit("Conditionals/Logic[1]/Function", int0()));
+    expected.push(release_edit("Conditionals/Logic[1]/Description", EditValue::String { value: String::new() }));
+    for leaf in ["Variable #1/set true", "Variable #1/set false", "Action#2[1]/Action Event", "Action#2[2]/Action Event"] {
+        expected.push(release_edit(&format!("Conditionals/Logic[1]/{leaf}"), EditValue::FreshEventId));
+    }
+    assert_eq!(result.edits, expected);
+    for edit in &result.edits {
+        let inside = release_claims().iter().any(|c| {
+            let prefix = match c.kind {
+                ClaimedSlotKind::Mast => format!("Rule to Aspect/Mast[{}]/", c.index),
+                ClaimedSlotKind::Logic => format!("Conditionals/Logic[{}]/", c.index),
+            };
+            c.node_key == edit.node_key && edit.path.starts_with(&prefix)
+        });
+        assert!(inside, "edit outside the claimed slots: {edit:?}");
+    }
+}
+
+#[test]
+fn release_with_unavailable_claims_is_blocked_with_no_edits() {
+    let mut missing_index = free_node();
+    missing_index.masts.retain(|m| m.index != 2);
+    let no_facts = NodeSlotFacts { node_key: "050101010999".into(), ..free_node() };
+    for (name, nodes) in [("missing index", vec![missing_index]), ("node without facts", vec![no_facts])] {
+        let result = release_slots(&release_claims(), &nodes);
+        assert!(codes(&result).contains(&CompileIssueCode::ClaimedSlotUnavailable), "{name}: {:?}", result.issues);
+        assert!(result.edits.is_empty(), "{name}");
+        assert!(result.claimed_slots.is_empty(), "{name}");
+    }
+}
+
+#[test]
+fn release_freshens_exactly_the_event_leaves_the_recipe_wires_into_the_logic() {
+    let recipe = compile_block_signals(&recompile_input());
+    assert_eq!(recipe.issues, vec![]);
+    let recipe_event_paths: std::collections::BTreeSet<_> = recipe
+        .edits
+        .iter()
+        .filter(|e| e.path.starts_with("Conditionals/") && matches!(e.value, EditValue::EventId { .. }))
+        .map(|e| e.path.clone())
+        .collect();
+    let fresh: std::collections::BTreeSet<_> = release_slots(&release_claims(), &[free_node()])
+        .edits
+        .iter()
+        .filter(|e| e.value == EditValue::FreshEventId)
+        .map(|e| e.path.clone())
+        .collect();
+    assert!(!fresh.is_empty());
+    assert_eq!(fresh, recipe_event_paths);
+}

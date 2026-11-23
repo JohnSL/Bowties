@@ -5,6 +5,7 @@ import RailroadPanel from './RailroadPanel.svelte';
 import { channelsStore } from '$lib/stores/channels.svelte';
 import { facilitiesStore } from '$lib/stores/facilities.svelte';
 import type { Facility } from '$lib/api/facilities';
+import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { behaviorTemplatesStore } from '$lib/stores/behaviorTemplates.svelte';
 import type { InformationChannel } from '$lib/api/channels';
 import type { BlockSignalsPreview, BlockSignalsPreviewRequest, ListedBlock, TravelDirection } from '$lib/api/signaling';
@@ -204,6 +205,67 @@ export function signalIpc(
   };
 }
 
+/** Addresses of the Logic event leaves a removal replaces with fresh event IDs. */
+const REMOVAL_EVENT_ADDRESSES = [202, 210];
+
+/** Give the Signal LCC a node tree holding the Logic event leaves, as a loaded node has. */
+export function seedSignalNodeTree() {
+  nodeTreeStore.setTree(SIGNAL_NODE, {
+    nodeId: SIGNAL_NODE,
+    identity: null,
+    connectorProfile: null,
+    profileApplied: true,
+    unknownVariants: [],
+    segments: [{
+      name: 'Conditionals',
+      description: null,
+      origin: 0,
+      space: 253,
+      children: REMOVAL_EVENT_ADDRESSES.map((address) => ({
+        kind: 'leaf',
+        name: `Event ${address}`,
+        description: null,
+        elementType: 'eventId',
+        address,
+        size: 8,
+        space: 253,
+        path: ['Conditionals', `Event ${address}`],
+        value: { type: 'eventId', bytes: [1, 1, 1, 1, 1, 1, 0, 1], hex: '0101010101010001' },
+        eventRole: 'Consumer',
+        constraints: null,
+        readOnly: false,
+        modifiedValue: null,
+      })),
+    }],
+  } as unknown as Parameters<typeof nodeTreeStore.setTree>[1]);
+}
+
+/**
+ * IPC stub for removing the saved facility: seven release edits (mast 1
+ * function, description and one lamp; Logic 1 function, description and two
+ * fresh event IDs), or `issues`. Call `seedSignalNodeTree()` first.
+ */
+export function removalIpc(issues: () => unknown[] = () => []): IpcStubs {
+  const release = (address: number, path: string, value: unknown) => ({ nodeKey: SIGNAL_NODE, space: 253, address, path, value });
+  return {
+    ...signalIpc(),
+    compose_block_signals: () => issues().length > 0
+      ? { edits: [], claimedSlots: [], issues: issues() }
+      : {
+        edits: [
+          release(100, 'mast#1/function', { type: 'int', value: 0 }),
+          release(101, 'mast#1/description', { type: 'string', value: '' }),
+          release(102, 'mast#1/lamp', { type: 'int', value: 0 }),
+          release(200, 'logic#1/function', { type: 'int', value: 0 }),
+          release(201, 'logic#1/description', { type: 'string', value: '' }),
+          ...REMOVAL_EVENT_ADDRESSES.map((address) => release(address, `logic#1/event@${address}`, { type: 'freshEventId' })),
+        ],
+        claimedSlots: [],
+        issues: [],
+      },
+  };
+}
+
 export async function chooseWiringNode(editor: HTMLElement) {
   await fireEvent.click(await within(editor).findByRole('button', { name: /Runs on/ }));
   const picker = await screen.findByRole('dialog', { name: 'Choose a Signal LCC' });
@@ -246,7 +308,10 @@ export function seedSavedBlockSignals() {
         protectedBlock: 'block:cedar',
         channelId: SAVED_SIGNAL_CHANNEL_ID,
       }],
-      claimedSlots: [{ nodeKey: SIGNAL_NODE, kind: 'mast', index: 1 }],
+      claimedSlots: [
+        { nodeKey: SIGNAL_NODE, kind: 'mast', index: 1 },
+        { nodeKey: SIGNAL_NODE, kind: 'logic', index: 1 },
+      ],
     },
   } as Facility;
   const signalChannel = {
