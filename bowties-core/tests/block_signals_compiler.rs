@@ -63,7 +63,6 @@ fn free_node() -> NodeSlotFacts {
             })
             .collect(),
         logic: (1..=32).map(|i| LogicFact { index: i, in_use: false }).collect(),
-        pending_edits: vec![],
     }
 }
 
@@ -225,22 +224,14 @@ fn blocking_issues_are_coded_scoped_and_suppress_all_edits() {
     c.nodes[0].masts[0].set_aspect_events[2] = None;
     cases.push(("no aspect event", c, AspectEventsMissing, true));
 
-    // A slot that is free in the facts but taken by an unsaved edit.
+    // No slot is free.
     let mut c = input();
-    c.nodes[0].masts.iter_mut().skip(1).for_each(|m| m.in_use = true);
-    c.nodes[0].pending_edits.push(PendingEdit {
-        path: "Rule to Aspect/Mast[1]/Mast Processing".into(),
-        value: int(1),
-    });
-    cases.push(("mast taken by unsaved edit", c, NoFreeMast, true));
+    c.nodes[0].masts.iter_mut().for_each(|m| m.in_use = true);
+    cases.push(("every mast in use", c, NoFreeMast, true));
 
     let mut c = input();
-    c.nodes[0].logic.iter_mut().skip(1).for_each(|l| l.in_use = true);
-    c.nodes[0].pending_edits.push(PendingEdit {
-        path: "Conditionals/Logic[1]/Function".into(),
-        value: int(2),
-    });
-    cases.push(("logic taken by unsaved edit", c, NoFreeLogic, true));
+    c.nodes[0].logic.iter_mut().for_each(|l| l.in_use = true);
+    cases.push(("every logic in use", c, NoFreeLogic, true));
 
     let mut c = input();
     c.line.settings.aspects = 2;
@@ -282,14 +273,6 @@ fn recompile_input() -> CompileInput {
     c.own_claims = vec![claim(ClaimedSlotKind::Mast, 2), claim(ClaimedSlotKind::Logic, 1)];
     c.nodes[0].masts[1].in_use = true;
     c.nodes[0].logic[0].in_use = true;
-    c.nodes[0].pending_edits.push(PendingEdit {
-        path: "Rule to Aspect/Mast[2]/Mast Processing".into(),
-        value: int(1),
-    });
-    c.nodes[0].pending_edits.push(PendingEdit {
-        path: "Conditionals/Logic[1]/Function".into(),
-        value: int(2),
-    });
     for o in c.hardware.hosts[0].outputs.iter_mut().filter(|o| o.ordinal == 9 || o.ordinal == 10) {
         o.owner = Some(SignalOutputOwner::Mast(2));
     }

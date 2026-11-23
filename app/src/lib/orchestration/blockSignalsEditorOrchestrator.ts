@@ -12,7 +12,7 @@ import {
 import type { TurnoutShape } from '$lib/components/BlockSignals/trackGeometry';
 import {
   createBlockSignalsFacility,
-  pendingEditsForWiring,
+  syncDraftsForComposition,
   updateBlockSignalsFacility,
 } from '$lib/orchestration/facilityOrchestrator';
 import { channelsStore } from '$lib/stores/channels.svelte';
@@ -135,11 +135,11 @@ class BlockSignalsEditorOrchestrator {
     const requestGeneration = ++this.requestGeneration;
     const wiring = store.signalWirings();
     try {
+      await syncDraftsForComposition();
       const response = await composeBlockSignals({
         facilityId: store.facilityId,
         line: store.previewRequest(),
         wiring,
-        pendingEdits: pendingEditsForWiring(wiring),
       });
       if (requestGeneration === this.requestGeneration) store.acceptCheck(response.issues);
     } catch (error) {
@@ -159,6 +159,7 @@ class BlockSignalsEditorOrchestrator {
     }
 
     try {
+      await syncDraftsForComposition();
       const preview = await previewBlockSignals(store.previewRequest());
       if (requestGeneration === this.requestGeneration) {
         store.acceptPreview(preview);

@@ -26,11 +26,9 @@ import { composeFacilityBowties, type CompositionOp } from '$lib/api/facilityBow
 import { syncLayoutDrafts } from '$lib/api/layout';
 import { canonicalEventIdHex } from '$lib/utils/serialize';
 import { editKeyForLeaf, parseEditKey } from '$lib/utils/editKey';
-import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
 import {
   composeBlockSignals,
   type BlockSignalsPreviewRequest,
-  type ComposeDraftEdit,
   type ComposeIssue,
   type SignalWiring,
 } from '$lib/api/signaling';
@@ -253,12 +251,16 @@ export async function addChannelForSlot(
  * the on-demand mirror described in ADR-0015. Callers send the
  * complete current delta set (idempotent w.r.t. re-sync).
  */
-async function syncDraftsForComposition(): Promise<void> {
+export async function syncDraftsForComposition(): Promise<void> {
   const deltas = [
     ...facilitiesStore.collectDeltas(),
     ...channelsStore.collectDeltas(),
   ];
-  await syncLayoutDrafts(deltas);
+  const configDrafts = configChangesStore.draftEntries().map(({ key, value }) => {
+    const { normalizedNodeId, space, address } = parseEditKey(key);
+    return { nodeKey: normalizedNodeId, space, address, value };
+  });
+  await syncLayoutDrafts(deltas, configDrafts);
 }
 
 /**
@@ -417,17 +419,6 @@ export interface CreateBlockSignalsFacilityArgs {
   signals: { signalId: string; name: string; protectedBlock: string }[];
 }
 
-/** Unsaved configuration edits on the wiring nodes, as compose takes them. */
-export function pendingEditsForWiring(wiring: readonly SignalWiring[]): ComposeDraftEdit[] {
-  const wiringNodes = new Set(wiring.map((w) => toCanonicalNodeKey(w.nodeKey)));
-  return configChangesStore.draftEntries().flatMap(({ key, value }) => {
-    const { normalizedNodeId, space, address } = parseEditKey(key);
-    return wiringNodes.has(normalizedNodeId)
-      ? [{ nodeKey: normalizedNodeId, space, address, value }]
-      : [];
-  });
-}
-
 export type CreateBlockSignalsFacilityResult =
   | { ok: true }
   | { ok: false; issues: ComposeIssue[] }
@@ -483,7 +474,7 @@ async function stageBlockSignalsFacility(
   let composed;
   try {
     await syncDraftsForComposition();
-    composed = await composeBlockSignals({ facilityId, line, wiring, pendingEdits: pendingEditsForWiring(wiring) });
+    composed = await composeBlockSignals({ facilityId, line, wiring });
   } catch (error) {
     return { ok: false, error };
   }

@@ -172,19 +172,11 @@ export interface SignalWiring {
 }
 
 /** An unsaved configuration edit, keyed as the draft store keys it. */
-export interface ComposeDraftEdit {
-  nodeKey: string;
-  space: number;
-  address: number;
-  value: TreeConfigValue;
-}
-
 export interface ComposeBlockSignalsRequest {
   /** The facility being composed; its own claimed slots do not count as in use. */
   facilityId?: string;
   line: BlockSignalsPreviewRequest;
   wiring: SignalWiring[];
-  pendingEdits: ComposeDraftEdit[];
 }
 
 /** A generated configuration edit; pass `nodeKey/space/address/value` to `configEditor.applyEdit`. */

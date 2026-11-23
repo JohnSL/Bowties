@@ -10,6 +10,7 @@
 
 mod chain;
 pub mod compiler;
+pub mod facts;
 pub mod outputs;
 pub mod slots;
 

@@ -23,7 +23,8 @@ use crate::layout::node_snapshot::NodeSnapshot;
 use crate::layout::offline_changes::OfflineChange;
 use crate::layout::types::LayoutFile;
 use crate::node_key::NodeKey;
-use crate::node_tree::NodeConfigTree;
+use crate::node_tree::{ConfigNode, LeafNode, NodeConfigTree};
+use crate::signaling::slots::DraftEdit;
 
 /// Persisted-on-disk data for one node in the open layout.
 ///
@@ -67,6 +68,10 @@ pub struct CapturedNode {
 pub struct DraftLayer {
     pub pending_facilities: Option<FacilitiesDocument>,
     pub pending_channels: Option<ChannelsDocument>,
+    /// Unsaved configuration edits (frontend `configChangesStore` drafts),
+    /// addressed by node + space + address. Laid over the stored trees by
+    /// [`LayoutState::effective_config_tree`]; never written into them.
+    pub pending_config: Vec<DraftEdit>,
 }
 
 /// Error surface of [`LayoutState::sync_drafts`]. Wraps the two
@@ -375,6 +380,55 @@ impl LayoutState {
         Ok(())
     }
 
+    /// Replace the pending configuration drafts. Callers send the complete
+    /// current set on every sync, so repeating a call is idempotent.
+    pub fn sync_config_drafts(&mut self, drafts: Vec<DraftEdit>) {
+        self.drafts.pending_config = drafts;
+    }
+
+    /// The node's configuration tree as the user currently sees it. Precedence,
+    /// lowest first: saved/captured value, tree `modified_value` (the connected
+    /// bus-write queue), pending offline Config changes, synced config drafts.
+    /// Computed on a clone; the stored tree is never mutated. Borrowed when
+    /// nothing overlays the node.
+    pub fn effective_config_tree(&self, key: &NodeKey) -> Option<std::borrow::Cow<'_, NodeConfigTree>> {
+        use crate::layout::offline_changes::{OfflineChangeKind, OfflineChangeStatus};
+        let stored = self.config_tree(key)?;
+        let is_this_node = |raw: &str| NodeKey::parse(raw).ok().as_ref() == Some(key);
+        let offline: Vec<(u8, u32, &str)> = self
+            .offline_changes
+            .iter()
+            .filter(|c| c.kind == OfflineChangeKind::Config && c.status == OfflineChangeStatus::Pending)
+            .filter(|c| c.node_key.as_deref().is_some_and(is_this_node))
+            .filter_map(|c| {
+                let offset = c.offset.as_deref()?;
+                let address = u32::from_str_radix(
+                    offset.trim_start_matches("0x").trim_start_matches("0X"),
+                    16,
+                )
+                .ok()?;
+                Some((c.space?, address, c.planned_value.as_str()))
+            })
+            .collect();
+        let drafts: Vec<&DraftEdit> =
+            self.drafts.pending_config.iter().filter(|d| is_this_node(&d.node_key)).collect();
+        if offline.is_empty() && drafts.is_empty() {
+            return Some(std::borrow::Cow::Borrowed(stored));
+        }
+        let mut tree = stored.clone();
+        for (space, address, planned) in offline {
+            let parsed = find_leaf_at(&tree, space, address)
+                .and_then(|leaf| crate::sync::field_meta::string_to_config_value(planned, leaf));
+            if let Some(value) = parsed {
+                crate::node_tree::set_modified_value(&mut tree, space, address, value);
+            }
+        }
+        for draft in drafts {
+            crate::node_tree::set_modified_value(&mut tree, draft.space, draft.address, draft.value.clone());
+        }
+        Some(std::borrow::Cow::Owned(tree))
+    }
+
     /// Drop the drafts layer. Called after save (drafts have been folded
     /// into the saved layer + written to disk) and on frontend Discard.
     pub fn clear_drafts(&mut self) {
@@ -437,9 +491,21 @@ impl LayoutState {
     }
 }
 
+fn find_leaf_at(tree: &NodeConfigTree, space: u8, address: u32) -> Option<&LeafNode> {
+    fn walk(nodes: &[ConfigNode], space: u8, address: u32) -> Option<&LeafNode> {
+        nodes.iter().find_map(|node| match node {
+            ConfigNode::Leaf(l) if l.space == space && l.address == address => Some(l),
+            ConfigNode::Leaf(_) => None,
+            ConfigNode::Group(g) => walk(&g.children, space, address),
+        })
+    }
+    tree.segments.iter().find_map(|s| walk(&s.children, space, address))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::node_tree::ConfigValue;
     use crate::layout::node_snapshot::{
         CaptureStatus, CdiReference, NodeSnapshot, NodeSnapshotLifecycle, SnipSnapshot,
     };
@@ -920,6 +986,134 @@ mod tests {
         // Now config_tree returns it via captured-over-saved precedence.
         let tree = state.config_tree(&key).expect("tree stored");
         assert_eq!(tree.node_id, "02.01.57.00.02.D9");
+    }
+
+    // ── Effective configuration (saved < pending offline < config drafts) ──
+
+    const CFG_NODE: &str = "0201570002D9";
+    const CFG_SPACE: u8 = 253;
+    const CFG_ADDR: u32 = 100;
+
+    fn int_leaf_tree(committed: i64) -> NodeConfigTree {
+        use crate::node_tree::{ConfigNode, SegmentNode};
+        use crate::sync::field_meta::{field_meta_to_leaf, FieldMeta};
+        let mut leaf = field_meta_to_leaf(
+            &FieldMeta {
+                leaf_type: crate::node_tree::LeafType::Int,
+                size: 1,
+                field_label: String::new(),
+            },
+            CFG_SPACE,
+            CFG_ADDR,
+        );
+        leaf.name = "Mast Processing".to_string();
+        leaf.value = Some(ConfigValue::Int { value: committed });
+        let mut tree = minimal_tree("02.01.57.00.02.D9");
+        tree.segments.push(SegmentNode {
+            name: "Rule to Aspect".to_string(),
+            description: None,
+            origin: 0,
+            space: CFG_SPACE,
+            children: vec![ConfigNode::Leaf(leaf)],
+        });
+        tree
+    }
+
+    fn cfg_state(committed: i64) -> LayoutState {
+        let key = NodeKey::parse(CFG_NODE).unwrap();
+        LayoutState::from_loaded(
+            PathBuf::from("/tmp"),
+            loaded_with(vec![live_snapshot(CFG_NODE)]),
+            HashMap::new(),
+            HashMap::from([(key, int_leaf_tree(committed))]),
+        )
+    }
+
+    fn cfg_draft(node: &str, value: i64) -> crate::signaling::slots::DraftEdit {
+        crate::signaling::slots::DraftEdit {
+            node_key: node.to_string(),
+            space: CFG_SPACE,
+            address: CFG_ADDR,
+            value: ConfigValue::Int { value },
+        }
+    }
+
+    fn offline_cfg(
+        node: &str,
+        planned: &str,
+        status: crate::layout::offline_changes::OfflineChangeStatus,
+    ) -> OfflineChange {
+        OfflineChange {
+            change_id: format!("c-{planned}-{status:?}"),
+            kind: crate::layout::offline_changes::OfflineChangeKind::Config,
+            node_key: Some(node.to_string()),
+            space: Some(CFG_SPACE),
+            offset: Some("0x00000064".to_string()),
+            baseline_value: "1".to_string(),
+            planned_value: planned.to_string(),
+            status,
+            error: None,
+            updated_at: "2026-06-28T00:00:00Z".to_string(),
+        }
+    }
+
+    fn effective_int(state: &LayoutState, node: &str) -> Option<i64> {
+        let key = NodeKey::parse(node).unwrap();
+        let tree = state.effective_config_tree(&key)?;
+        let leaf = match &tree.segments[0].children[0] {
+            crate::node_tree::ConfigNode::Leaf(l) => l,
+            _ => unreachable!(),
+        };
+        match crate::node_tree::effective_value(leaf) {
+            Some(ConfigValue::Int { value }) => Some(*value),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn effective_config_draft_overrides_saved_without_mutating_stored_tree() {
+        let mut state = cfg_state(1);
+        state.sync_config_drafts(vec![cfg_draft(CFG_NODE, 0)]);
+        assert_eq!(effective_int(&state, CFG_NODE), Some(0));
+        let key = NodeKey::parse(CFG_NODE).unwrap();
+        match &state.config_tree(&key).unwrap().segments[0].children[0] {
+            crate::node_tree::ConfigNode::Leaf(l) => assert!(l.modified_value.is_none()),
+            _ => unreachable!(),
+        }
+        // Idempotent: the same set again yields the same view.
+        state.sync_config_drafts(vec![cfg_draft(CFG_NODE, 0)]);
+        assert_eq!(effective_int(&state, CFG_NODE), Some(0));
+    }
+
+    #[test]
+    fn effective_config_pending_offline_change_overrides_saved_and_drafts_override_it() {
+        use crate::layout::offline_changes::OfflineChangeStatus;
+        let mut state = cfg_state(1);
+        state.set_offline_changes(vec![offline_cfg(CFG_NODE, "0", OfflineChangeStatus::Pending)]);
+        assert_eq!(effective_int(&state, CFG_NODE), Some(0));
+        state.sync_config_drafts(vec![cfg_draft(CFG_NODE, 2)]);
+        assert_eq!(effective_int(&state, CFG_NODE), Some(2));
+    }
+
+    #[test]
+    fn effective_config_ignores_applied_skipped_and_other_node_changes() {
+        use crate::layout::offline_changes::OfflineChangeStatus;
+        let mut state = cfg_state(1);
+        state.set_offline_changes(vec![
+            offline_cfg(CFG_NODE, "0", OfflineChangeStatus::Applied),
+            offline_cfg(CFG_NODE, "5", OfflineChangeStatus::Skipped),
+            offline_cfg("020157100997", "7", OfflineChangeStatus::Pending),
+        ]);
+        state.sync_config_drafts(vec![cfg_draft("020157100997", 9)]);
+        assert_eq!(effective_int(&state, CFG_NODE), Some(1));
+    }
+
+    #[test]
+    fn clear_drafts_drops_config_drafts() {
+        let mut state = cfg_state(1);
+        state.sync_config_drafts(vec![cfg_draft(CFG_NODE, 0)]);
+        state.clear_drafts();
+        assert_eq!(effective_int(&state, CFG_NODE), Some(1));
     }
 
     // ── Discovered roles (catalog-merge elimination) ───────────────────────

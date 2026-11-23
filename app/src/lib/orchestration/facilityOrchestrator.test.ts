@@ -663,7 +663,7 @@ describe('createBlockSignalsFacility (Spec 020 / E1a — facilityOrchestrator)',
     expect(composeFacilityBowties).not.toHaveBeenCalled();
   });
 
-  it('passes only the wiring node\'s unsaved edits and syncs drafts before composing', async () => {
+  it('syncs every unsaved config edit with the drafts before composing, not in the compose request', async () => {
     configEditor.applyEdit(editKeyForLeaf(ABS_NODE, 253, 99), { type: 'int', value: 7 });
     configEditor.applyEdit(editKeyForLeaf(OTHER_NODE, 253, 98), { type: 'int', value: 8 });
 
@@ -671,8 +671,11 @@ describe('createBlockSignalsFacility (Spec 020 / E1a — facilityOrchestrator)',
 
     const request = vi.mocked(composeBlockSignals).mock.calls[0][0] as ComposeBlockSignalsRequest;
     expect(request.facilityId).toBe('abs-1');
-    expect(request.pendingEdits).toEqual([
+    expect(request).not.toHaveProperty('pendingEdits');
+    const [, configDrafts] = vi.mocked(syncLayoutDrafts).mock.calls[0] as [unknown, unknown];
+    expect(configDrafts).toEqual([
       { nodeKey: ABS_NODE, space: 253, address: 99, value: { type: 'int', value: 7 } },
+      { nodeKey: OTHER_NODE, space: 253, address: 98, value: { type: 'int', value: 8 } },
     ]);
     expect(vi.mocked(syncLayoutDrafts).mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(composeBlockSignals).mock.invocationCallOrder[0]);

@@ -45,14 +45,6 @@ pub struct NodeConfigEdit {
     pub value: EditValue,
 }
 
-/// An unsaved edit already pending on a node, treated as a current value.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct PendingEdit {
-    pub path: String,
-    pub value: EditValue,
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct MastFact {
@@ -79,8 +71,6 @@ pub struct NodeSlotFacts {
     pub node_key: String,
     pub masts: Vec<MastFact>,
     pub logic: Vec<LogicFact>,
-    #[serde(default)]
-    pub pending_edits: Vec<PendingEdit>,
 }
 
 /// The protected block's detector event IDs.
@@ -375,26 +365,12 @@ pub fn logic_function_path(logic: u32) -> String {
     format!("Conditionals/Logic[{logic}]/Function")
 }
 
-/// In use after applying the node's unsaved edits to the base fact.
-fn in_use(node: &NodeSlotFacts, base: bool, path: &str) -> bool {
-    match node.pending_edits.iter().rev().find(|e| e.path == path) {
-        Some(PendingEdit { value: EditValue::Int { value }, .. }) => *value != 0,
-        _ => base,
-    }
-}
-
 fn free_mast(node: &NodeSlotFacts) -> Option<&MastFact> {
-    node.masts
-        .iter()
-        .filter(|m| !in_use(node, m.in_use, &mast_processing_path(m.index)))
-        .min_by_key(|m| m.index)
+    node.masts.iter().filter(|m| !m.in_use).min_by_key(|m| m.index)
 }
 
 fn free_logic(node: &NodeSlotFacts) -> Option<&LogicFact> {
-    node.logic
-        .iter()
-        .filter(|l| !in_use(node, l.in_use, &logic_function_path(l.index)))
-        .min_by_key(|l| l.index)
+    node.logic.iter().filter(|l| !l.in_use).min_by_key(|l| l.index)
 }
 
 /// Mast Processing value Normal, from the Signal-LCC CDI.

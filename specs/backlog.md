@@ -194,3 +194,6 @@
   * Follow-up:
     1. Extract the examples into `product/hardware/signal-lcc/` so the signaling UX proposal and future mockups can cite them.
     2. Confirm the extracted recipes match the cascade and condition derivation in `signaling-ux-proposal.md` §3.
+* Bowtie catalog reads configuration through the effective view
+  * The catalog (`app/src-tauri/src/commands/bowties.rs` ~385-450) builds its own overlay of pending Offline Changes on event leaves. Move it onto `LayoutState::effective_config_tree` (ADR-0015 2026-11-23) so unsaved drafts and Offline Changes resolve the same way for every backend reader.
+  * Related: Offline Changes are held both in `AppState.offline_changes_cache` and `LayoutState.offline_changes`; `sync_layout_drafts` copies the cache in. Make `LayoutState` the single owner (see `aiwiki/architecture-health.md`).

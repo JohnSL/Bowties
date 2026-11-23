@@ -19,7 +19,7 @@ use thiserror::Error;
 
 use super::compiler::{
     logic_function_path, mast_processing_path, EditValue, LogicFact, MastFact, NodeConfigEdit,
-    NodeSlotFacts, PendingEdit,
+    NodeSlotFacts,
 };
 use crate::layout::facilities::{ClaimedSlot, ClaimedSlotKind, FacilitiesDocument};
 use crate::node_tree::{
@@ -30,8 +30,6 @@ use crate::node_tree::{
 pub enum SlotsError {
     #[error("Node {node_key} has no configuration element at '{path}'.")]
     UnknownPath { node_key: String, path: String },
-    #[error("Node {node_key} has no configuration element at space {space}, address {address}.")]
-    UnknownAddress { node_key: String, space: u8, address: u32 },
     #[error("Element '{path}' on node {node_key} does not take a {value_kind} value.")]
     TypeMismatch { node_key: String, path: String, value_kind: &'static str },
 }
@@ -61,7 +59,6 @@ pub struct DraftEdit {
 /// Path <-> location index over one node's configuration tree.
 pub struct LeafPathIndex<'a> {
     by_path: HashMap<String, &'a LeafNode>,
-    by_location: HashMap<(u8, u32), String>,
 }
 
 impl<'a> LeafPathIndex<'a> {
@@ -75,21 +72,14 @@ impl<'a> LeafPathIndex<'a> {
             collect_leaves(children, &component(name, total, ordinal), &mut leaves);
         }
         let mut by_path = HashMap::new();
-        let mut by_location = HashMap::new();
         for (path, leaf) in leaves {
-            by_location.entry((leaf.space, leaf.address)).or_insert_with(|| path.clone());
             by_path.entry(path).or_insert(leaf);
         }
-        Self { by_path, by_location }
+        Self { by_path }
     }
 
     pub fn leaf(&self, path: &str) -> Option<&'a LeafNode> {
         self.by_path.get(path).copied()
-    }
-
-    /// The compiler path of the leaf starting at `(space, address)`.
-    pub fn path_of(&self, space: u8, address: u32) -> Option<&str> {
-        self.by_location.get(&(space, address)).map(String::as_str)
     }
 }
 
@@ -180,7 +170,7 @@ pub fn node_slot_facts(node_key: &str, tree: &NodeConfigTree, claimed: &[Claimed
             in_use: nonzero(&logic_function_path(i)) || is_claimed(ClaimedSlotKind::Logic, i),
         })
         .collect();
-    NodeSlotFacts { node_key: node_key.to_string(), masts, logic, pending_edits: Vec::new() }
+    NodeSlotFacts { node_key: node_key.to_string(), masts, logic }
 }
 
 /// Slots claimed by Automatic Block Signals facilities, excluding the facility
@@ -195,32 +185,6 @@ pub fn claimed_slots_from_facilities(
         .filter_map(|f| f.block_signals.as_ref())
         .flat_map(|r| r.claimed_slots.iter().cloned())
         .collect()
-}
-
-/// Convert frontend draft edits to compiler pending edits by reversing each
-/// `(space, address)` to its path. Float drafts are dropped: no slot fact
-/// depends on a float. An address outside the tree is an error.
-pub fn pending_edits_from_drafts(
-    node_key: &str,
-    index: &LeafPathIndex<'_>,
-    drafts: &[DraftEdit],
-) -> Result<Vec<PendingEdit>, SlotsError> {
-    let mut out = Vec::new();
-    for draft in drafts.iter().filter(|d| d.node_key == node_key) {
-        let path = index.path_of(draft.space, draft.address).ok_or_else(|| SlotsError::UnknownAddress {
-            node_key: node_key.to_string(),
-            space: draft.space,
-            address: draft.address,
-        })?;
-        let value = match &draft.value {
-            ConfigValue::Int { value } => EditValue::Int { value: *value },
-            ConfigValue::String { value } => EditValue::String { value: value.clone() },
-            ConfigValue::EventId { bytes, .. } => EditValue::EventId { bytes: *bytes },
-            ConfigValue::Float { .. } => continue,
-        };
-        out.push(PendingEdit { path: path.to_string(), value });
-    }
-    Ok(out)
 }
 
 /// Resolve compiled edits to memory locations. Unknown paths and edits whose
@@ -419,21 +383,6 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, SlotsError::TypeMismatch { .. }));
-    }
-
-    #[test]
-    fn draft_edit_reverses_to_the_path_the_compiler_overrides() {
-        let tree = tree();
-        let index = LeafPathIndex::new(&tree);
-        let leaf = index.leaf(&mast_processing_path(2)).expect("leaf");
-        let drafts = [
-            DraftEdit { node_key: NODE.into(), space: leaf.space, address: leaf.address, value: ConfigValue::Int { value: 1 } },
-            DraftEdit { node_key: "OTHER".into(), space: 253, address: 1, value: ConfigValue::Int { value: 1 } },
-        ];
-        let pending = pending_edits_from_drafts(NODE, &index, &drafts).expect("reverses");
-        assert_eq!(pending, vec![PendingEdit { path: mast_processing_path(2), value: EditValue::Int { value: 1 } }]);
-        let bad = [DraftEdit { node_key: NODE.into(), space: 253, address: 999_999, value: ConfigValue::Int { value: 1 } }];
-        assert!(matches!(pending_edits_from_drafts(NODE, &index, &bad), Err(SlotsError::UnknownAddress { .. })));
     }
 
     #[test]

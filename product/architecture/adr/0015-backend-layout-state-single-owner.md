@@ -449,3 +449,52 @@ lose edits. The `RwLock::write()` guard serializes all mutations.
 state, alias. These are pure bus-IO working buffers with no concurrent-
 mutation race (actor mailbox serializes them) and no save-flow concern.
 Moving them is not warranted (YAGNI).
+
+## 2026-11-23 extension: effective configuration view for backend readers
+
+**Problem.** Configuration drafts are owned by the frontend
+`configChangesStore` (ADR-0012). The backend's `LeafNode.modified_value`
+is filled by the config-draft mirror only while connected, because it is
+the queue of bus writes for a connected Save; offline edits must reach
+the bus only through Offline Changes and the Sync Panel (ADR-0001,
+2026-11-22). Backend readers of configuration therefore missed offline
+drafts and never saw saved-but-unapplied Offline Changes. Spec 020
+patched one reader (compose took the drafts in its request); the Wiring
+preview did not, so the pin grid and Done could disagree.
+
+**Decision.** `LayoutState` holds the configuration drafts in the drafts
+layer and exposes one read view:
+
+- `DraftLayer.pending_config` (node key, space, address, typed value) is
+  replaced on every `sync_layout_drafts(deltas, configDrafts)` and cleared
+  by `clear_drafts`. The same sync refreshes `LayoutState.offline_changes`
+  from the app's offline-changes cache.
+- `effective_config_tree(key)` returns the node's tree with, in order of
+  increasing precedence: stored value, `modified_value`, pending Config
+  Offline Changes, configuration drafts. It borrows the stored tree when
+  nothing overlays it and never mutates it.
+- Backend readers that interpret configuration read through it. Today:
+  signaling facts (`bowties-core/src/signaling/facts.rs::effective_trees`),
+  used by preview, pin ownership and compose.
+- The frontend awaits `sync_layout_drafts` before such a read
+  (`facilityOrchestrator.syncDraftsForComposition`), as the 2026-07-03
+  extension already requires for facilities and channels.
+
+**Rejected.** Mirroring drafts into `modified_value` while offline: it
+would put offline edits into the connected-Save bus queue (bypassing the
+Sync Panel), keep removed or skipped rows queued, leave stale entries on
+offline Discard, and cannot address placeholder nodes. Passing drafts in
+each request: every new reader must remember it, and it cannot see saved
+Offline Changes.
+
+**Invariants.**
+- `modified_value` means only "pending bus writes for a connected Save".
+  Read-only views never write it.
+- A backend reader that interprets configuration uses
+  `effective_config_tree`, not `config_tree`, unless it deliberately needs
+  the stored layer (save, bus writes, Sync Panel).
+- Requests do not carry configuration drafts.
+
+**Follow-up.** The bowtie catalog keeps its own overlay of pending
+Offline Changes (`commands/bowties.rs`); moving it onto this view is
+tracked in `specs/backlog.md`.

@@ -35,6 +35,7 @@ vi.mock('$lib/api/signaling', () => ({
 }));
 
 const { blockSignalsEditorStore: store } = await import('$lib/stores/blockSignalsEditor.svelte');
+const { syncLayoutDrafts } = await import('$lib/api/layout');
 const {
   addSignaledBlock,
   addTurnout,
@@ -115,6 +116,20 @@ describe('blockSignalsEditorOrchestrator', () => {
     await late;
     expect(store.open).toBe(false);
     expect(store.preview).toBeNull();
+  });
+
+  it('syncs unsaved config edits to the backend before requesting a preview', async () => {
+    vi.mocked(syncLayoutDrafts).mockClear();
+    configEditor.applyEdit(editKeyForLeaf('050101010700', 253, 99), { type: 'int', value: 7 });
+    startBlockSignalsEditor('Main');
+    await addSignaledBlock(CEDAR);
+    const calls = vi.mocked(syncLayoutDrafts).mock.calls as unknown as [unknown, unknown][];
+    expect(calls.at(-1)![1]).toEqual([
+      { nodeKey: '050101010700', space: 253, address: 99, value: { type: 'int', value: 7 } },
+    ]);
+    expect(vi.mocked(syncLayoutDrafts).mock.invocationCallOrder.at(-1))
+      .toBeLessThan(previewBlockSignalsMock.mock.invocationCallOrder.at(-1)!);
+    configChangesStore.clearAllDrafts();
   });
 
   it('sends the travel-order list with joins, turnouts, ends, settings, overrides and names', async () => {
@@ -315,9 +330,14 @@ describe('blockSignalsEditor compose check and Done (E1a B11b)', () => {
     const request = composeBlockSignalsMock.mock.lastCall![0];
     expect(request.facilityId).toBe(store.facilityId);
     expect(request.wiring).toEqual([{ signalId: 's1', nodeKey: HOST.nodeKey, redOutput: 1, greenOutput: 3 }]);
-    expect(request.pendingEdits).toEqual([
+    expect(request).not.toHaveProperty('pendingEdits');
+    const syncCalls = vi.mocked(syncLayoutDrafts).mock.calls as unknown as [unknown, unknown][];
+    expect(syncCalls.at(-1)![1]).toEqual([
       { nodeKey: HOST.nodeKey, space: 253, address: 99, value: { type: 'int', value: 7 } },
+      { nodeKey: OTHER_NODE, space: 253, address: 98, value: { type: 'int', value: 8 } },
     ]);
+    expect(vi.mocked(syncLayoutDrafts).mock.invocationCallOrder.at(-1))
+      .toBeLessThan(composeBlockSignalsMock.mock.invocationCallOrder.at(-1)!);
     expect(store.canFinish).toBe(true);
 
     const slow = deferred<BlockSignalsPreview>();

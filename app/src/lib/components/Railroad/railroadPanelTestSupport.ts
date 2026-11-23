@@ -124,6 +124,7 @@ export async function addBlock(name: string) {
 export function mockIpc(invoke: Invoke, ipc: IpcStubs = {}) {
   invoke.mockImplementation((command: string, args?: unknown) => {
     if (command in ipc) return Promise.resolve(ipc[command](args));
+    if (command === 'sync_layout_drafts') return Promise.resolve(undefined);
     if (command === 'list_behavior_templates') {
       return Promise.resolve([
         { templateId: 'block-indicator', displayName: 'Block Indicator', slots: [], mapping: [] },

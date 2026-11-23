@@ -342,9 +342,11 @@ describe('RailroadPanel (Spec 018 / S3 — hardware-organised Channels panel)', 
         if (command === 'preview_block_signals') {
           return new Promise((resolve) => { release = () => resolve(fakePreview(args!.request)); });
         }
+        if (command === 'sync_layout_drafts') return Promise.resolve(undefined);
         throw new Error(`unexpected IPC command: ${command}`);
       });
       await addBlock('Cedar Hill');
+      await waitFor(() => expect(release).toBeDefined());
       await fireEvent.click(within(editor).getByRole('button', { name: 'Cancel' }));
       release(undefined as never);
 

@@ -16,8 +16,8 @@ use bowties_core::{
             compile_block_signals, BlockOccupancyEvents, CompileInput, CompileIssue, SignalWiring,
         },
         slots::{
-            claimed_slots_from_facilities, node_slot_facts, pending_edits_from_drafts, resolve_edits,
-            DraftEdit, LeafPathIndex, ResolvedEdit,
+            claimed_slots_from_facilities, node_slot_facts, resolve_edits, LeafPathIndex,
+            ResolvedEdit,
         },
         BlockSignalsRequest,
     },
@@ -35,9 +35,6 @@ pub struct ComposeBlockSignalsRequest {
     pub facility_id: Option<String>,
     pub line: BlockSignalsRequest,
     pub wiring: Vec<SignalWiring>,
-    /// Unsaved configuration edits, as the frontend draft store keys them.
-    #[serde(default)]
-    pub pending_edits: Vec<DraftEdit>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -107,13 +104,12 @@ fn compose_from_layout(
     let indexes: HashMap<String, LeafPathIndex<'_>> =
         trees.iter().map(|(k, t)| (k.clone(), LeafPathIndex::new(t))).collect();
 
-    let mut nodes = Vec::new();
-    for (node_key, tree) in &trees {
-        let mut node = node_slot_facts(node_key, tree, &claimed);
-        node.pending_edits = pending_edits_from_drafts(node_key, &indexes[node_key], &request.pending_edits)
-            .map_err(|e| e.to_string())?;
-        nodes.push(node);
-    }
+    // The trees are the effective configuration, so slot facts already see
+    // unsaved drafts and pending offline changes.
+    let nodes = trees
+        .iter()
+        .map(|(node_key, tree)| node_slot_facts(node_key, tree, &claimed))
+        .collect();
 
     let compiled = compile_block_signals(&CompileInput {
         line: request.line,

@@ -9,11 +9,11 @@ use bowties_core::{
     layout::state::LayoutState,
     node_key::NodeKey,
     node_tree::NodeConfigTree,
-    profile::{make_profile_key, StructureProfile},
+    profile::StructureProfile,
     signaling::{
-        outputs::{attribute_output_facilities, signal_outputs_from_configuration}, preview_block_signals_with_hardware, ProposalIssue, SignalAppearanceSet,
-        SignalDriver, SignalHardwareEvidence, SignalHardwareFacts, SignalHardwareHost,
-        BlockSignalsPreview, BlockSignalsRequest, SavedSignalIdentity, SignalStyle,
+        facts::{effective_trees, signal_hardware_facts}, outputs::attribute_output_facilities,
+        preview_block_signals_with_hardware, ProposalIssue, SignalHardwareFacts,
+        BlockSignalsPreview, BlockSignalsRequest, SavedSignalIdentity,
     },
 };
 
@@ -167,96 +167,10 @@ fn proposal_facts_from_layout(
     profiles: &HashMap<String, Option<StructureProfile>>,
 ) -> ProposalFacts {
     let channels = layout.effective_channels().channels.clone();
-    let trees = layout
-        .all_tree_keys()
-        .into_iter()
-        .filter_map(|key| layout.config_tree(&key).cloned().map(|tree| (key, tree)))
-        .collect::<HashMap<_, _>>();
+    let trees = effective_trees(layout);
     let mut hardware = signal_hardware_facts(&trees, profiles);
     attribute_output_facilities(&mut hardware.hosts, layout.effective_facilities());
     ProposalFacts::with_hardware(channels, trees, hardware)
-}
-
-/// Project the profile declarations and complete effective configuration of
-/// each compatible Signal-LCC into read-only output facts. This is deliberately
-/// a narrow interpreter, not an allocator or claims registry.
-fn signal_hardware_facts(
-    trees: &HashMap<NodeKey, NodeConfigTree>,
-    profiles: &HashMap<String, Option<StructureProfile>>,
-) -> SignalHardwareFacts {
-    let hosts = trees
-        .iter()
-        .filter_map(|(node_key, tree)| signal_hardware_host(node_key, tree, profiles))
-        .collect();
-    SignalHardwareFacts { hosts }
-}
-
-fn signal_hardware_host(
-    node_key: &NodeKey,
-    tree: &NodeConfigTree,
-    profiles: &HashMap<String, Option<StructureProfile>>,
-) -> Option<SignalHardwareHost> {
-    let identity = tree.identity.as_ref()?;
-    let manufacturer = identity.manufacturer.as_deref()?;
-    let model = identity.model.as_deref()?;
-    let profile = profiles
-        .get(&make_profile_key(manufacturer, model))
-        .and_then(|profile| profile.as_ref())?;
-    let style = profile
-        .styles
-        .iter()
-        .find(|style| {
-            style.binding_kind == "signalLccRgOutputs" && style.signal_appearances.is_some()
-        })?;
-    let style = signal_style_from_profile(style).ok()?;
-    let node_name = format!("{} · {}", model, tree.node_id);
-    match signal_outputs_from_configuration(tree) {
-        Ok(outputs) => Some(SignalHardwareHost {
-            node_key: node_key.to_string(),
-            node_name,
-            style,
-            evidence: SignalHardwareEvidence::Complete,
-            evidence_detail: None,
-            outputs,
-        }),
-        Err(detail) => Some(SignalHardwareHost {
-            node_key: node_key.to_string(),
-            node_name,
-            style,
-            evidence: SignalHardwareEvidence::Invalid,
-            evidence_detail: Some(detail),
-            outputs: Vec::new(),
-        }),
-    }
-}
-
-fn signal_style_from_profile(style: &bowties_core::profile::Style) -> Result<SignalStyle, String> {
-    let appearances = style
-        .signal_appearances
-        .as_ref()
-        .ok_or_else(|| format!("Style '{}' has no signal appearance map.", style.style_id))?;
-    let drivers = |values: &[String]| {
-        values
-            .iter()
-            .map(|value| match value.as_str() {
-                "red" => Ok(SignalDriver::Red),
-                "green" => Ok(SignalDriver::Green),
-                _ => Err(format!(
-                    "Style '{}' declares unsupported signal driver '{}'.",
-                    style.style_id, value
-                )),
-            })
-            .collect::<Result<Vec<_>, _>>()
-    };
-    Ok(SignalStyle {
-        style_id: style.style_id.clone(),
-        binding_kind: style.binding_kind.clone(),
-        appearances: SignalAppearanceSet {
-            stop: drivers(&appearances.stop)?,
-            approach: drivers(&appearances.approach)?,
-            clear: drivers(&appearances.clear)?,
-        },
-    })
 }
 
 /// Resolve requested block identities against the active effective layout,

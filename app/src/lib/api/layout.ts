@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { NodeConfigTree } from '$lib/types/nodeTree';
+import type { NodeConfigTree, TreeConfigValue } from '$lib/types/nodeTree';
 import type { LayoutFile, LayoutEditDelta } from '$lib/types/bowtie';
 import { toCanonicalNodeKey, type NodeKeyInput } from '$lib/utils/nodeKey';
 
@@ -142,6 +142,14 @@ export async function saveLayoutDirectory(
   return invoke<SaveLayoutResult>('save_layout_directory', { path, overwrite, deltas });
 }
 
+/** An unsaved configuration edit, as the backend's effective-configuration view keys it. */
+export interface ConfigDraftEdit {
+  nodeKey: string;
+  space: number;
+  address: number;
+  value: TreeConfigValue;
+}
+
 /**
  * Spec 018 / S6 bugfix — mirror the frontend's currently-collected
  * `LayoutEditDelta`s into `LayoutState.drafts` on the backend so read
@@ -152,8 +160,11 @@ export async function saveLayoutDirectory(
  * Used by the facility bowtie composition path (`composeFacilityBowties`),
  * which reads facility + channel state through `LayoutState.effective_*`.
  */
-export async function syncLayoutDrafts(deltas: LayoutEditDelta[]): Promise<void> {
-  await invoke('sync_layout_drafts', { deltas });
+export async function syncLayoutDrafts(
+  deltas: LayoutEditDelta[],
+  configDrafts: ConfigDraftEdit[] = [],
+): Promise<void> {
+  await invoke('sync_layout_drafts', { deltas, configDrafts });
 }
 
 /**
