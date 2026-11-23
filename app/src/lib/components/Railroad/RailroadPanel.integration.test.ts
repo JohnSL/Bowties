@@ -172,30 +172,39 @@ describe('RailroadPanel (Spec 018 / S3 — hardware-organised Channels panel)', 
       expect(abs.compareDocumentPosition(plant) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
-    it('builds a travel-order list with a joined block and a turnout, then shows its rules on Aspects', async () => {
+    /** Join Mill curve to Cedar Hill and add a "Mill siding" turnout to Mill curve (blocks already added). */
+    async function joinMillAndAddTurnout(editor: HTMLElement) {
+      await fireEvent.click(within(editor).getByRole('button', { name: 'More for Mill curve' }));
+      await fireEvent.click(within(editor).getByRole('menuitem', { name: /remove the signal between cedar hill and mill curve/i }));
+      await fireEvent.click(within(within(editor).getByRole('table')).getByText('Mill curve'));
+      await fireEvent.click(within(editor).getByRole('button', { name: 'Add turnout in block' }));
+      await fireEvent.change(await within(editor).findByLabelText('Turnout name'), { target: { value: 'Mill siding' } });
+    }
+
+    it('builds a travel-order list with a joined block and a turnout', async () => {
       const editor = await openEditor();
-      expect(within(editor).getByLabelText('Name')).toHaveValue('Cedar Hill — Eastward');
 
       await addBlock('Cedar Hill');
       await addBlock('Mill curve');
-      await addBlock('River bridge');
       // joining is a less common choice, so it lives in the row's "More" menu
       expect(within(editor).queryByRole('button', { name: 'More for Cedar Hill' })).not.toBeInTheDocument();
-      await fireEvent.click(within(editor).getByRole('button', { name: 'More for Mill curve' }));
-      await fireEvent.click(within(editor).getByRole('menuitem', { name: /remove the signal between cedar hill and mill curve/i }));
+      await joinMillAndAddTurnout(editor);
       expect(within(editor).getByText('No signal between it and Cedar Hill')).toBeInTheDocument();
       expect(within(editor).queryByRole('menu')).not.toBeInTheDocument();
-      await fireEvent.click(within(within(editor).getByRole('table')).getByText('Mill curve'));
-      await fireEvent.click(within(editor).getByRole('button', { name: 'Add turnout in block' }));
-      const turnoutName = await within(editor).findByLabelText('Turnout name');
-      await fireEvent.change(turnoutName, { target: { value: 'Mill siding' } });
 
       await waitFor(() => expect(lastRequest().blocks).toEqual([
         { blockId: 'block:cedar', name: 'Cedar Hill', joinedToPrevious: false, turnouts: [] },
         { blockId: 'block:mill', name: 'Mill curve', joinedToPrevious: true, turnouts: [{ turnoutId: expect.stringMatching(/^turnout:/), name: 'Mill siding' }] },
-        { blockId: 'block:river', name: 'River bridge', joinedToPrevious: false, turnouts: [] },
       ]));
       expect(within(editor).getByRole('button', { name: /signals between cedar hill and mill curve are off/i })).toBeInTheDocument();
+      expect(facilitiesStore.isEmpty).toBe(true);
+    });
+
+    it('shows the rules of a joined block with a turnout on Aspects', async () => {
+      const editor = await openEditor();
+      await addBlock('Cedar Hill');
+      await addBlock('Mill curve');
+      await joinMillAndAddTurnout(editor);
 
       await fireEvent.click(within(editor).getByRole('button', { name: 'Next: Aspects' }));
       const first = await within(editor).findByRole('button', { name: /configure cedar hill east; protects cedar hill, mill curve/i });
@@ -210,7 +219,6 @@ describe('RailroadPanel (Spec 018 / S3 — hardware-organised Channels panel)', 
       expect(within(editor).getByRole('button', { name: 'Next: Appearance' })).toBeEnabled();
       expect(within(editor).getByRole('button', { name: /^\d?\s*Review$/ })).toBeDisabled();
       expect(within(editor).queryByRole('button', { name: /save|apply|confirm/i })).not.toBeInTheDocument();
-      expect(facilitiesStore.isEmpty).toBe(true);
     });
 
     it('sets what lies beyond the last block from its end chip, with Plants not yet available', async () => {

@@ -3,6 +3,8 @@ import { expect, type Mock } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import RailroadPanel from './RailroadPanel.svelte';
 import { channelsStore } from '$lib/stores/channels.svelte';
+import { facilitiesStore } from '$lib/stores/facilities.svelte';
+import type { Facility } from '$lib/api/facilities';
 import { behaviorTemplatesStore } from '$lib/stores/behaviorTemplates.svelte';
 import type { InformationChannel } from '$lib/api/channels';
 import type { BlockSignalsPreview, BlockSignalsPreviewRequest, ListedBlock, TravelDirection } from '$lib/api/signaling';
@@ -113,11 +115,9 @@ export function lastRequest(invoke: Invoke): BlockSignalsPreviewRequest {
 export async function addBlock(name: string) {
   await fireEvent.click(screen.getByRole('button', { name: 'Add block…' }));
   const picker = await screen.findByRole('dialog', { name: /add block/i });
-  await fireEvent.click(within(picker).getByRole('radio', { name }));
+  await fireEvent.click(within(picker).getByLabelText(name));
   await fireEvent.click(within(picker).getByRole('button', { name: 'Confirm' }));
-  await waitFor(() => {
-    expect(screen.queryByRole('dialog', { name: /add block/i })).not.toBeInTheDocument();
-  });
+  await waitFor(() => expect(picker).not.toBeInTheDocument());
 }
 
 /** Route IPC through `ipc` stubs, falling back to the templates list and the fake preview. */
@@ -219,4 +219,43 @@ export async function wireFirstSignal(editor: HTMLElement) {
   const grid = await within(editor).findByRole('group', { name: 'Pins on 02.01.57.00.00.01' });
   await fireEvent.click(within(grid).getByRole('button', { name: /H1-R/ }));
   await fireEvent.click(within(grid).getByRole('button', { name: /#1 H1-G/ }));
+}
+
+export const SAVED_FACILITY_NAME = 'Cedar Hill — Eastward';
+export const SAVED_FACILITY_ID = 'b01e7a6a-51a3-41d3-a340-b83ca1aa7c34';
+export const SAVED_SIGNAL_CHANNEL_ID = 'f741d85e-a696-4741-b79a-21a857f9d867';
+
+/** The layout as it loads from disk: one saved one-block Automatic Block Signals facility on the Signal LCC (red #3, green #1). */
+export function seedSavedBlockSignals() {
+  const facility = {
+    facilityId: SAVED_FACILITY_ID,
+    templateId: 'automatic-block-signals',
+    name: SAVED_FACILITY_NAME,
+    slotBindings: { signals: [SAVED_SIGNAL_CHANNEL_ID] },
+    blockSignals: {
+      direction: 'eastward',
+      movements: 'oneDirection',
+      entranceEnd: { kind: 'noPlant' },
+      exitEnd: { kind: 'nothingBeyond' },
+      blocks: [{ blockId: 'block:cedar', name: 'Cedar Hill', joinedToPrevious: false, turnouts: [] }],
+      settings: { aspects: 3, turnoutNotLined: 'stop', approachLighting: 'alwaysLit' },
+      signals: [{
+        signalId: `signal:${SAVED_FACILITY_ID}:block:cedar:eastward`,
+        name: 'Cedar Hill East',
+        protectedBlock: 'block:cedar',
+        channelId: SAVED_SIGNAL_CHANNEL_ID,
+      }],
+      claimedSlots: [{ nodeKey: SIGNAL_NODE, kind: 'mast', index: 1 }],
+    },
+  } as Facility;
+  const signalChannel = {
+    id: SAVED_SIGNAL_CHANNEL_ID,
+    name: 'Cedar Hill East',
+    role: 'signal-indication',
+    style: 'two-driver-rg-signal',
+    ownership: 'user-owned',
+    binding: { kind: 'signalLccRgOutputs', nodeKey: SIGNAL_NODE, greenOutput: 1, redOutput: 3 },
+  } as InformationChannel;
+  channelsStore.hydrateBaseline([...blocks, signalChannel]);
+  facilitiesStore.hydrateBaseline([facility]);
 }
