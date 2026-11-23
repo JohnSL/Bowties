@@ -16,11 +16,12 @@
   import SearchableSingleSelectDialog from '$lib/components/SingleSelectList/SearchableSingleSelectDialog.svelte';
   import TrackDiagram from './TrackDiagram.svelte';
   import { occupancyStatus, type BlockOccupancyMap } from './occupancy';
-  import { endChipLabel } from './aspectText';
+  import { signalOutputOwnerDescription, signalOutputRows } from '$lib/utils/signalOutputLabels';
+  import { endChipLabel, SEARCHLIGHT_TYPE_NAME } from './aspectText';
   import { issueText } from './wiringText';
 
   type Lamp = 'red' | 'green';
-  const LAMPS: Array<[Lamp, string]> = [['red', 'Red lamp'], ['green', 'Green lamp']];
+  const LAMPS: Array<[Lamp, string]> = [['red', 'Red'], ['green', 'Green']];
 
   let {
     view,
@@ -66,8 +67,7 @@
     h.evidence === 'unavailable'
       ? [`This Signal LCC's configuration hasn't been read yet, so its pins can't be shown.`, h.evidenceDetail].filter(Boolean).join(' ')
       : `This Signal LCC's pins can't be used until its configuration is fixed: ${h.evidenceDetail ?? 'its configuration could not be interpreted.'}`;
-  const pinLabel = (ordinal: number | null) =>
-    ordinal === null ? 'No pin chosen' : (host?.outputs.find((o) => o.ordinal === ordinal)?.label ?? `#${ordinal}`);
+  const pinLabel = (ordinal: number) => host?.outputs.find((o) => o.ordinal === ordinal)?.label ?? `#${ordinal}`;
 
   const issues = $derived.by<ComposeIssue[]>(() => {
     if (!signal) return [];
@@ -77,36 +77,79 @@
   });
 
   type PinOutput = SignalOutputHost['outputs'][number];
+  type PinState = 'selected' | 'mine' | 'facility' | 'outside' | 'free';
 
-  function pinState(output: PinOutput): 'mine' | 'taken' | 'free' {
+  function pinState(output: PinOutput): PinState {
+    if (output.ordinal === pinOf(selectedLamp)) return 'selected';
     if (output.ordinal === wiring?.redOutput || output.ordinal === wiring?.greenOutput) return 'mine';
-    return output.owner !== null ? 'taken' : 'free';
+    if (output.facility) return 'facility';
+    return output.owner !== null ? 'outside' : 'free';
   }
 
-  /** Who a taken pin belongs to: the Bowties facility name, else the board's own owner label. */
-  const takenBy = (output: PinOutput) => output.facility?.name ?? output.owner;
+  const lampName = (output: PinOutput) => LAMPS.find(([lamp]) => pinOf(lamp) === output.ordinal)?.[1] ?? '';
 
-  const pinStateText = (output: PinOutput, state: 'mine' | 'taken' | 'free') =>
-    state === 'mine' ? 'This signal' : state === 'free' ? 'Free' : takenBy(output);
+  /** The "who" line under a pin: its lamp, its facility, its outside owner, or its number. */
+  function pinWho(output: PinOutput, state: PinState): string {
+    if (state === 'selected' || state === 'mine') return lampName(output);
+    if (state === 'facility') return output.facility?.name ?? '';
+    if (state === 'outside') return output.owner ?? '';
+    return `#${output.ordinal}`;
+  }
 
-  const pinAriaLabel = (output: PinOutput, state: 'mine' | 'taken' | 'free') =>
-    state === 'taken'
-      ? `${output.label}: Used by ${takenBy(output)}${output.facility ? '' : ', not managed by Bowties'}`
-      : `${output.label}: ${pinStateText(output, state)}`;
+  function pinAriaLabel(output: PinOutput, state: PinState): string {
+    if (state === 'selected' || state === 'mine') return `${output.label}: This signal`;
+    if (state === 'facility') return `${output.label}: Used by ${output.facility?.name}`;
+    if (state === 'outside') return `${output.label}: Used by ${output.owner}, not managed by Bowties. Show details`;
+    return `${output.label}: Free`;
+  }
 
-  /** Pins whose owner is configured on the board outside any Bowties facility, grouped by owner. */
-  const untrackedOwners = $derived.by(() => {
-    const byOwner = new Map<string, string[]>();
-    for (const output of host?.outputs ?? []) {
-      if (pinState(output) !== 'taken' || output.facility || output.owner === null) continue;
-      byOwner.set(output.owner, [...(byOwner.get(output.owner) ?? []), output.label]);
-    }
-    return [...byOwner].map(([owner, pins]) => ({
-      owner,
-      pins,
-      target: host ? resolveSignalOutputOwnerTarget(nodeTree?.(host.nodeKey), owner) : undefined,
-    }));
+  const pinRows = $derived(signalOutputRows(host?.outputs ?? []));
+  const pinColumns = $derived(Math.max(1, ...pinRows.map((row) => row.cells.length)));
+
+  /** Owner whose details card is open, when it still exists on the chosen node. */
+  let inspectedOwner = $state<string | null>(null);
+  $effect(() => {
+    signal?.signalId;
+    host?.nodeKey;
+    inspectedOwner = null;
   });
+  const inspected = $derived.by(() => {
+    if (!host || inspectedOwner === null) return null;
+    const pins = host.outputs.filter((output) => !output.facility && output.owner === inspectedOwner);
+    if (pins.length === 0) return null;
+    const tree = nodeTree?.(host.nodeKey);
+    return {
+      owner: inspectedOwner,
+      pins,
+      description: signalOutputOwnerDescription(tree, inspectedOwner),
+      target: resolveSignalOutputOwnerTarget(tree, inspectedOwner),
+    };
+  });
+
+  let pinGrid = $state<HTMLElement | null>(null);
+
+  /** Close the details card and return focus to the first pin of its owner. */
+  function closeCard(): void {
+    const owner = inspectedOwner;
+    inspectedOwner = null;
+    if (owner === null) return;
+    const pin = [...(pinGrid?.querySelectorAll<HTMLButtonElement>('button[data-owner]') ?? [])]
+      .find((button) => button.dataset.owner === owner);
+    pin?.focus();
+  }
+
+  /** Escape closes only the card; the editor dialog listens for Escape on the window. */
+  function cardKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Escape') return;
+    event.stopPropagation();
+    event.preventDefault();
+    closeCard();
+  }
+
+  function pinClicked(output: PinOutput, state: PinState): void {
+    if (state === 'outside') inspectedOwner = inspectedOwner === output.owner ? null : output.owner;
+    else choosePin(output.ordinal);
+  }
 
   function choosePin(ordinal: number): void {
     if (!signal) return;
@@ -182,23 +225,30 @@
     <div class="columns wiring-columns">
       <section class="panel" aria-label="Lamps">
         <h3>Lamps</h3>
-        <fieldset class="choices">
-          <legend class="visually-hidden">Lamp to place</legend>
+        <div class="head-card">
+          <h4>Head 1 · {SEARCHLIGHT_TYPE_NAME}</h4>
           {#each LAMPS as [lamp, title] (lamp)}
-            <label class="radio-choice" class:selected={selectedLamp === lamp}>
-              <input type="radio" name="abs-lamp" checked={selectedLamp === lamp} disabled={!host} onchange={() => (pickedLamp = lamp)} />
-              <span><span class="radio-title">{title}</span><span class="radio-desc">{pinLabel(pinOf(lamp))}</span></span>
-            </label>
+            {@const pin = pinOf(lamp)}
+            {@const pinText = pin === null ? 'No pin' : pinLabel(pin)}
+            <div class="lamp-row" class:active={selectedLamp === lamp}>
+              <button
+                type="button"
+                class="lamp-pick"
+                aria-pressed={selectedLamp === lamp}
+                aria-label={`${title} lamp: ${pinText}`}
+                disabled={!host}
+                onclick={() => (pickedLamp = lamp)}
+              >
+                <span>{title}</span>
+                <span class="lamp-pin" class:none={pin === null}>{pinText}</span>
+              </button>
+            </div>
           {/each}
-        </fieldset>
+        </div>
         <label class="radio-choice unavailable">
           <input type="checkbox" disabled />
           <span><span class="radio-title">Customize lamps</span></span>
         </label>
-        <div class="lamp-tests">
-          <button type="button" class="btn" disabled>Blink</button>
-          <button type="button" class="btn" disabled>Show</button>
-        </div>
       </section>
 
       <section class="panel" aria-label="Pins">
@@ -207,42 +257,56 @@
           {#if host.evidence !== 'complete'}
             <p class="muted evidence-note">{evidenceText(host)}</p>
           {:else}
-          <div class="pin-grid" role="group" aria-label={`Pins on ${hostName(host.nodeKey)}`}>
-            {#each host.outputs as output (output.ordinal)}
-              {@const state = pinState(output)}
-              <button
-                type="button"
-                class={`pin ${state}`}
-                disabled={state !== 'free'}
-                aria-label={pinAriaLabel(output, state)}
-                onclick={() => choosePin(output.ordinal)}
-              >
-                <span class="pin-name">{output.label}</span>
-                <span class="pin-state">{pinStateText(output, state)}</span>
-              </button>
+          <div class="pin-grid" role="group" aria-label={`Pins on ${hostName(host.nodeKey)}`} style:--pin-columns={pinColumns} bind:this={pinGrid}>
+            {#each pinRows as row (row.header)}
+              <span class="pin-header">{row.header}</span>
+              {#each row.cells as { output, short } (output.ordinal)}
+                {@const state = pinState(output)}
+                <button
+                  type="button"
+                  class={`pin ${state}`}
+                  class:inspected={state === 'outside' && output.owner === inspected?.owner}
+                  disabled={state === 'facility' || state === 'selected' || state === 'mine'}
+                  aria-label={pinAriaLabel(output, state)}
+                  data-owner={state === 'outside' ? output.owner : undefined}
+                  onclick={() => pinClicked(output, state)}
+                >
+                  <span class="pin-label">{short}</span>
+                  <span class="pin-who">{pinWho(output, state)}</span>
+                </button>
+              {/each}
             {/each}
           </div>
-          {#if untrackedOwners.length > 0}
-            <section class="outside-pins" aria-labelledby="abs-outside-pins">
-              <h4 id="abs-outside-pins">Pins in use outside Bowties</h4>
-              <ul>
-                {#each untrackedOwners as entry (entry.owner)}
-                  <li>
-                    <span>{entry.owner} · {entry.pins.join(', ')}</span>
-                    {#if entry.target}
-                      {@const target = entry.target}
-                      <button
-                        type="button"
-                        class="btn"
-                        aria-label={`Show ${entry.owner} in Configuration`}
-                        onclick={() => configFocusStore.focusConfigField(target.nodeId, target.elementPath)}
-                      >Show in Configuration</button>
-                    {/if}
-                  </li>
-                {/each}
-              </ul>
+          {#if inspected}
+            {@const card = inspected}
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <section class="outside-card" aria-label={`${card.owner}, not managed by Bowties`} onkeydown={cardKeydown}>
+              <button type="button" class="card-close" aria-label={`Close ${card.owner} details`} onclick={closeCard}>×</button>
+              <h4>{card.owner} <span class="outside-tag">Not managed by Bowties</span></h4>
+              <p>{card.description ? `Description: "${card.description}"` : 'No description.'}</p>
+              <p>Drives {card.pins.map((pin) => pin.label).join(', ')}</p>
+              <p>Configured on {hostName(host.nodeKey)} outside Bowties, for example by hand, by another tool, or in earlier testing.</p>
+              <div class="outside-actions">
+                {#if card.target}
+                  {@const target = card.target}
+                  <button
+                    type="button"
+                    class="btn"
+                    aria-label={`Show ${card.owner} in Configuration`}
+                    onclick={() => configFocusStore.focusConfigField(target.nodeId, target.elementPath)}
+                  >Show in Configuration</button>
+                {/if}
+                <button type="button" class="btn" disabled>Release and use…</button>
+              </div>
             </section>
           {/if}
+          <div class="pin-key" aria-hidden="true">
+            <span><i class="selected"></i>Selected lamp</span>
+            <span><i class="mine"></i>This signal</span>
+            <span><i class="facility"></i>Used by a facility</span>
+            <span><i class="outside"></i>Used outside Bowties</span>
+            <span><i class="free"></i>Free</span>
+          </div>
           {/if}
         {:else}
           <h3>Pins</h3>
@@ -297,20 +361,56 @@
   .attention .field-label { margin-bottom: 4px; }
   .issues { margin: 0; padding-left: 18px; font-size: 12px; }
   .wiring-columns { grid-template-columns: minmax(260px, .8fr) minmax(0, 1.4fr); }
-  .lamp-tests { display: flex; gap: 8px; margin-top: 12px; }
-  .pin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
-  .pin {
-    display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; border: 1px solid var(--abs-border);
-    border-radius: 4px; background: #fff; color: var(--abs-text); font: inherit; font-size: 12px; text-align: left; cursor: pointer;
+  .head-card { margin-bottom: 10px; padding: 10px 12px; border: 1px solid var(--abs-border); border-radius: 6px; }
+  .head-card h4 { margin: 0; font-size: 13px; }
+  .lamp-row { margin-top: 6px; }
+  .lamp-pick {
+    display: flex; justify-content: space-between; gap: 8px; width: 100%; padding: 5px 8px;
+    border: 1px solid var(--abs-border); border-radius: 4px; background: #fff; color: var(--abs-text);
+    font: inherit; font-size: 12px; text-align: left; cursor: pointer;
   }
-  .pin.free:hover { border-color: var(--abs-brand); background: var(--abs-selected); }
-  .pin:disabled { cursor: default; }
-  .pin.mine { border-color: var(--abs-brand); background: var(--abs-selected); color: var(--abs-text); }
-  .pin.taken { background: var(--abs-subtle); color: #a0a0a0; }
-  .outside-pins { margin-top: 12px; }
-  .outside-pins h4 { margin: 0 0 4px; font-size: 12px; }
-  .outside-pins ul { margin: 0; padding: 0; list-style: none; }
-  .outside-pins li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
-  .pin-name { font-weight: 600; }
-  .pin-state { font-size: 10px; color: var(--abs-muted); }
+  .lamp-pick:hover:not(:disabled) { border-color: var(--abs-brand); }
+  .lamp-pick:disabled { cursor: default; }
+  .lamp-row.active .lamp-pick { border: 2px solid var(--abs-brand); padding: 4px 7px; background: var(--abs-selected); font-weight: 650; }
+  .lamp-pin { color: var(--abs-muted); font-weight: 400; }
+  .lamp-pin.none { font-style: italic; }
+  .pin-grid { display: grid; grid-template-columns: auto repeat(var(--pin-columns, 4), minmax(0, 1fr)); gap: 4px; align-items: stretch; margin-top: 8px; font-size: 12px; }
+  .pin-header { display: flex; align-items: center; padding: 0 8px; color: var(--abs-brand); font-size: 12px; font-weight: 700; }
+  .pin {
+    display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 0; padding: 4px 2px;
+    border: 1px solid var(--abs-border); border-radius: 4px; background: #fff; color: var(--abs-text);
+    font: inherit; font-size: 11px; line-height: 1.2; cursor: pointer;
+  }
+  .pin .pin-label { font-weight: 650; }
+  .pin .pin-who { max-width: 100%; overflow: hidden; color: var(--abs-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+  .pin.free:hover { border-color: var(--abs-brand); }
+  .pin.mine { border-color: var(--abs-brand); background: var(--abs-selected); }
+  .pin.mine .pin-who { color: var(--abs-brand-hover); font-weight: 650; }
+  .pin.selected { border-color: var(--abs-brand); background: var(--abs-brand); color: #fff; box-shadow: 0 0 0 2px var(--abs-selected); }
+  .pin.selected .pin-who { color: #fff; }
+  .pin.facility { background: #eef1f5; color: var(--abs-muted); }
+  .pin.outside { border-style: dashed; border-color: #b07a00; background: #fff8e6; color: var(--abs-text-secondary); }
+  .pin.outside:hover, .pin.outside.inspected { border-style: solid; box-shadow: 0 0 0 2px #f3dca0; }
+  .pin:disabled { cursor: not-allowed; }
+  .pin-key { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 11px; color: var(--abs-muted); }
+  .pin-key span { display: inline-flex; align-items: center; gap: 4px; }
+  .pin-key i { display: inline-block; width: 12px; height: 12px; border: 1px solid var(--abs-border); border-radius: 3px; background: #fff; }
+  .pin-key i.selected { border-color: var(--abs-brand); background: var(--abs-brand); }
+  .pin-key i.mine { border-color: var(--abs-brand); background: var(--abs-selected); }
+  .pin-key i.facility { background: #eef1f5; }
+  .pin-key i.outside { border-style: dashed; border-color: #b07a00; background: #fff8e6; }
+  .outside-card h4 { padding-right: 28px; }
+  .card-close {
+    position: absolute; top: 6px; right: 6px; width: 24px; height: 24px;
+    display: inline-flex; align-items: center; justify-content: center; padding: 0;
+    border: none; border-radius: 4px; background: transparent; color: var(--abs-muted);
+    font-size: 16px; line-height: 1; cursor: pointer;
+  }
+  .card-close:hover { background: #f3e6c4; color: var(--abs-text); }
+  .card-close:focus-visible { outline: 2px solid var(--abs-brand); outline-offset: 1px; }
+  .outside-card { position: relative; margin-top: 10px; padding: 10px 12px; border: 1px solid #e0c36a; border-radius: 5px; background: #fffaf0; font-size: 12px; }
+  .outside-card h4 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 4px; font-size: 13px; }
+  .outside-tag { color: #8a5d00; font-size: 11px; font-weight: 600; }
+  .outside-card p { margin: 2px 0; color: var(--abs-text-secondary); }
+  .outside-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
 </style>

@@ -902,8 +902,10 @@
   #line .line-pin.outside { border-style: dashed; border-color: #b07a00; background: #fff8e6; color: var(--text-secondary); }
   #line .line-pin.outside:hover, #line .line-pin.outside.inspected { border-style: solid; box-shadow: 0 0 0 2px #f3dca0; }
   #line .line-pin-key i.outside { border-style: dashed; border-color: #b07a00; background: #fff8e6; }
-  #line .line-outside-card { margin-top: 10px; padding: 10px 12px; border: 1px solid #e0c36a; border-radius: 5px; background: #fffaf0; font-size: 12px; }
-  #line .line-outside-card h4 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 4px; font-size: 13px; }
+  #line .line-outside-close { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: none; border-radius: 4px; background: transparent; color: var(--text-muted); font-size: 16px; line-height: 1; cursor: pointer; }
+  #line .line-outside-close:hover { background: #f3e6c4; color: var(--text); }
+  #line .line-outside-card { position: relative; margin-top: 10px; padding: 10px 12px; border: 1px solid #e0c36a; border-radius: 5px; background: #fffaf0; font-size: 12px; }
+  #line .line-outside-card h4 { padding-right: 28px; display: flex; align-items: baseline; gap: 8px; margin: 0 0 4px; font-size: 13px; }
   #line .line-outside-tag { color: #8a5d00; font-size: 11px; font-weight: 600; }
   #line .line-outside-card p { margin: 2px 0; color: var(--text-secondary); }
   #line .line-outside-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
@@ -2353,6 +2355,7 @@
         <ul>
           <li>A Signal LCC can already drive pins from configuration Bowties does not manage: a mast or Direct Lamp row set up by hand, by another tool, or by earlier testing. Each such pin shows its owner ("Mast 3", "Direct lamp 4") with a dashed outline, so it is never just "Taken".</li>
           <li>Clicking one opens its details in place: the owner, its description, every pin it drives and, for a mast, its rules and the Logic conditionals that set its aspects. Those are found by event ID: a conditional whose action sends one of the mast's set-aspect events drives that mast.</li>
+          <li>The card closes with the × in its corner (named "Close Mast 3 details", since the editor has its own close), by clicking the pin again, or with Escape, which closes only the card. Focus returns to the pin. In E2c's confirmation, Cancel goes back to the details and × closes the card.</li>
           <li>Show in Configuration is a button, not a link, because it leaves a dialog. The editor is not closed or saved: its choices stay, and returning to the Railroad tab shows it again where it was. The status line says so when the user leaves. The Railroad panel also links to the same configuration without an open dialog (see <a href="#line-railroad">After Done</a>).</li>
           <li>Release and use frees every pin of that owner, not just the one clicked, and places the selected lamp on the clicked pin. A released mast is reset together with the conditionals that set its aspects, since they exist only to drive it; a conditional whose actions also send events something else consumes is kept and named in the confirmation. The resets are staged with the facility's own edits: they show as unsaved changes in the node's configuration, and Discard brings them back. Pins used by a Bowties facility cannot be released here.</li>
           <li>Built in Spec 020 E2c, after facility removal (E2b), which supplies the reset edits. Until then the details show and Release and use is disabled. Importing such configuration as a facility is a separate idea (specs/ideas/features/import-existing-signal-configuration.md).</li>
@@ -4839,6 +4842,13 @@
       const entry = lineInspected?.node === board.node ? lineOutsideOwners(board).find(item => item.owner === lineInspected.owner) : null;
       if (!entry) { lineInspected = null; card.hidden = true; card.replaceChildren(); return; }
       card.hidden = false;
+      const closeCard = () => { const pin = lineInspected.pin; lineInspected = null; lineWiringRender(`pin:${pin}`); };
+      const closeX = lineEl('button', 'line-outside-close', '×');
+      closeX.type = 'button';
+      closeX.dataset.focusKey = 'outside-close';
+      closeX.setAttribute('aria-label', `Close ${entry.owner} details`);
+      closeX.addEventListener('click', closeCard);
+      card.onkeydown = event => { if (event.key === 'Escape') { event.stopPropagation(); event.preventDefault(); closeCard(); } };
       const title = lineEl('h4');
       title.append(lineEl('span', '', entry.owner), lineEl('span', 'line-outside-tag', 'Not managed by Bowties'));
       const pins = entry.pins.map(pinLabel).join(', ');
@@ -4871,10 +4881,6 @@
         });
         actions.append(cancel, release);
       } else {
-        const close = lineEl('button', 'btn', 'Close');
-        close.type = 'button';
-        close.dataset.focusKey = 'outside-close';
-        close.addEventListener('click', () => { const pin = lineInspected.pin; lineInspected = null; lineWiringRender(`pin:${pin}`); });
         const show = lineEl('button', 'btn', 'Show in Configuration');
         show.type = 'button';
         show.dataset.focusKey = 'outside-show';
@@ -4886,10 +4892,10 @@
         release.type = 'button';
         release.dataset.focusKey = 'outside-release';
         release.addEventListener('click', () => { lineInspected.confirming = true; lineWiringRender('outside-confirm'); });
-        actions.append(close, show, release);
+        actions.append(show, release);
       }
       card.setAttribute('aria-label', `${entry.owner}, not managed by Bowties`);
-      card.replaceChildren(title, ...facts, actions);
+      card.replaceChildren(closeX, title, ...facts, actions);
     }
 
     function renderLineWiring(claims, issues) {

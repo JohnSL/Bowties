@@ -8,6 +8,9 @@ import type {
   SignalPreview,
 } from '$lib/api/signaling';
 
+/** The one signal type this release builds, as the Appearance and Wiring steps name it. */
+export const SEARCHLIGHT_TYPE_NAME = 'Searchlight (red and green)';
+
 export const INDICATION_LABEL: Record<SignalIndication, string> = {
   stop: 'Stop',
   restricting: 'Restricting',

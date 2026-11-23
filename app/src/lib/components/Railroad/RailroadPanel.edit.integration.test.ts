@@ -69,7 +69,7 @@ describe('Edit a saved Automatic Block Signals facility (E2a-T1)', () => {
     // change red then green
     editValue = 5;
     await fireEvent.click(within(grid).getByRole('button', { name: '#2 H2-R: Free' }));
-    await fireEvent.click(within(editor).getByRole('radio', { name: /Green lamp/ }));
+    await fireEvent.click(within(editor).getByRole('button', { name: /Green lamp/ }));
     await fireEvent.click(within(grid).getByRole('button', { name: '#4 H2-G: Free' }));
     const done = within(editor).getByRole('button', { name: 'Done' });
     await waitFor(() => expect(done).toBeEnabled());

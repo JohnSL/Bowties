@@ -6,12 +6,12 @@
    * the other choices disabled, beside the lamps each indication lights.
    */
   import type { BlockSignalsEditorView } from '$lib/stores/blockSignalsEditor.svelte';
-  import { INDICATION_LABEL, indicationTone } from './aspectText';
+  import { INDICATION_LABEL, SEARCHLIGHT_TYPE_NAME, indicationTone } from './aspectText';
 
   let { view }: { view: BlockSignalsEditorView } = $props();
 
   const SIGNAL_TYPES: Array<[string, string, boolean]> = [
-    ['Searchlight (red and green)', 'One head with a single lens that shows red, green, or both together.', true],
+    [SEARCHLIGHT_TYPE_NAME, 'One head with a single lens that shows red, green, or both together.', true],
     ['Color light', 'Separate lamps for each color.', false],
     ['Position light', 'Rows of lights whose angle shows the indication.', false],
   ];
