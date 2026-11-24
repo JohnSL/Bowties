@@ -101,19 +101,26 @@ export interface NewLayoutResult {
   createdAt: string;
 }
 
-export interface WriteModifiedResult {
-  total: number;
-  succeeded: number;
+/** Outcome counts of the connected Save's Phase 2 (rows this Save recorded). */
+export interface SaveWriteCounts {
+  /** Rows the board accepted a write for, with no readback (removed from the Pending Changes). */
+  written: number;
+  /** Write failed (row becomes `failed`). */
   failed: number;
-  readOnlyRejected: number;
+  /** Field is read-only on the board (row cleared). */
+  readOnly: number;
+  /** Rows still waiting after the Save (including rows recorded by earlier Saves). */
+  waiting: number;
 }
 
 /** Result of `save_layout_with_bus_writes` — the three-phase save command. */
 export interface SaveWithBusWriteResult {
   /** Layout was successfully saved to disk. */
   layoutSaved: boolean;
-  /** Bus write outcome (null if offline or no pending writes). */
-  busWrites: WriteModifiedResult | null;
+  /** Per-row outcome of the bus writes for the change IDs this Save recorded. */
+  writeCounts: SaveWriteCounts;
+  /** One human-readable reason per refused, failed or conflicting row. */
+  writeErrors: string[];
   /** Whether a reconcile re-save was performed (≥1 bus write succeeded). */
   reconciled: boolean;
   /** Whether the bowtie catalog was rebuilt by the backend. */
@@ -127,6 +134,8 @@ export interface SaveWithBusWriteResult {
   /** Node snapshots written to disk. Cached by the page so disconnect can
    *  rehydrate the offline view without re-opening the layout. */
   nodeSnapshots: OfflineNodeSnapshot[];
+  /** Nodes whose config trees the bus writes changed; reload them before clearing drafts. */
+  writtenNodeIds: string[];
 }
 
 export async function captureLayoutSnapshot(includeProducerEvents = true): Promise<CaptureSummary> {
@@ -176,13 +185,22 @@ export async function clearLayoutDrafts(): Promise<void> {
   await invoke('clear_layout_drafts');
 }
 
-/** Three-phase save: layout first, then bus writes (if connected), then reconcile. */
+/**
+ * Three-phase save: layout first, then bus writes (if connected) for exactly
+ * `recordedChangeIds` (the Pending Change rows this Save recorded), then reconcile.
+ */
 export async function saveLayoutWithBusWrites(
   path: string,
   deltas: LayoutEditDelta[] = [],
+  recordedChangeIds: string[] = [],
   overwrite = true,
 ): Promise<SaveWithBusWriteResult> {
-  return invoke<SaveWithBusWriteResult>('save_layout_with_bus_writes', { path, overwrite, deltas });
+  return invoke<SaveWithBusWriteResult>('save_layout_with_bus_writes', {
+    path,
+    overwrite,
+    deltas,
+    recordedChangeIds,
+  });
 }
 
 /** Open a layout from its `.layout` manifest path. */

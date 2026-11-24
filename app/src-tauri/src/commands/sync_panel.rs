@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use tauri::Manager;
 use crate::layout::pending_changes::{PendingChange, PendingChangeKind, PendingChangeStatus};
-use crate::state::{AppState, ActiveLayoutMode, SyncMode};
+use crate::state::{AppState, SyncMode};
 
 use bowties_core::sync::writer::{
     self, BaselineUpdate, BusNodeError, LayoutNodeResources, LeafUpdate, MemoryPort,
@@ -168,16 +168,6 @@ pub async fn set_pending_change(
     change: PendingChangeInput,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
-    // Verify active offline layout
-    {
-        let guard = state.active_layout.read().await;
-        guard
-            .as_ref()
-            .cloned()
-            .filter(|c| c.mode == ActiveLayoutMode::OfflineFile)
-            .ok_or_else(|| "No offline layout is active".to_string())?;
-    }
-
     // Generate unique change ID (UUID + timestamp)
     let change_id = format!(
         "{}-{}",
@@ -226,16 +216,6 @@ pub async fn revert_pending_change(
     change_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
-    // Verify active offline layout
-    {
-        let guard = state.active_layout.read().await;
-        guard
-            .as_ref()
-            .cloned()
-            .filter(|c| c.mode == ActiveLayoutMode::OfflineFile)
-            .ok_or_else(|| "No offline layout is active".to_string())?;
-    }
-
     // Remove from in-memory cache
     let (removed, row_count) = {
         let mut guard = state.layout_state.write().await;
@@ -267,16 +247,6 @@ pub async fn revert_pending_change(
 pub async fn list_pending_changes(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<PendingChangeRow>, String> {
-    // Verify active offline layout
-    let _context = {
-        let guard = state.active_layout.read().await;
-        guard
-            .as_ref()
-            .cloned()
-            .filter(|c| c.mode == ActiveLayoutMode::OfflineFile)
-            .ok_or_else(|| "No offline layout is active".to_string())?
-    };
-
     let layout_guard = state.layout_state.read().await;
     let changes = layout_guard
         .as_ref()
@@ -299,55 +269,6 @@ pub async fn list_pending_changes(
         .collect();
 
     Ok(rows)
-}
-
-#[tauri::command]
-pub async fn replace_pending_changes(
-    changes: Vec<PendingChangeInput>,
-    state: tauri::State<'_, AppState>,
-) -> Result<usize, String> {
-    // Verify active offline layout
-    {
-        let guard = state.active_layout.read().await;
-        guard
-            .as_ref()
-            .cloned()
-            .filter(|c| c.mode == ActiveLayoutMode::OfflineFile)
-            .ok_or_else(|| "No offline layout is active".to_string())?;
-    }
-
-    let now = chrono::Utc::now().to_rfc3339();
-    let mut rows = Vec::with_capacity(changes.len());
-    for change in changes {
-        let row = PendingChange {
-            change_id: format!("{}-{}", Uuid::new_v4(), chrono::Utc::now().timestamp_millis()),
-            kind: change.kind,
-            node_key: change.node_id,
-            space: change.space,
-            offset: change.offset,
-            baseline_value: change.baseline_value,
-            planned_value: change.planned_value,
-            status: PendingChangeStatus::Pending,
-            error: None,
-            updated_at: now.clone(),
-        };
-        row.validate()?;
-        rows.push(row);
-    }
-
-    let count = rows.len();
-    {
-        let mut guard = state.layout_state.write().await;
-        let layout = guard.as_mut().ok_or_else(|| "No layout is open".to_string())?;
-        layout.set_pending_changes(rows);
-    }
-
-    let mut guard = state.active_layout.write().await;
-    if let Some(ctx) = &mut *guard {
-        ctx.pending_change_count = count;
-    }
-
-    Ok(count)
 }
 
 #[tauri::command]
@@ -398,32 +319,26 @@ pub async fn build_sync_session(
     let changes = current_pending_changes(&state).await;
     let port = LivePort { state: &state, root_path: &context.root_path, app: &app };
     let outcome = writer::classify_session(&port, &changes).await;
-    let already_applied_ids = outcome.already_applied_ids;
 
-    if !already_applied_ids.is_empty() {
-        let cache_snapshot = {
-            let mut guard = state.layout_state.write().await;
-            match guard.as_mut() {
-                Some(layout) => {
-                    layout.remove_pending_changes(&already_applied_ids);
-                    layout.pending_changes().to_vec()
-                }
-                None => Vec::new(),
-            }
-        };
-
-        {
-            let mut guard = state.active_layout.write().await;
-            if let Some(ctx) = &mut *guard {
-                ctx.pending_change_count = cache_snapshot.len();
-            }
-        }
-
-        if let Err(e) = crate::layout::update_pending_changes(
-            std::path::Path::new(&context.root_path),
-            &cache_snapshot,
-        ) {
-            eprintln!("[sync] Failed to persist offline-changes after already-applied clear: {}", e);
+    // Rows the board already holds: commit the leaf and the snapshot baseline as
+    // a write would, refresh the tree, drop the rows. The session's
+    // `already_applied_count` tells the user.
+    if !outcome.already_applied_ids.is_empty() {
+        let errors = apply_write_effects(
+            &state,
+            &app,
+            &context.root_path,
+            WriteEffects {
+                leaf_updates: &outcome.leaf_updates,
+                nodes_written: &std::collections::HashSet::new(),
+                baseline_updates: &outcome.baseline_updates,
+                updated_rows: Vec::new(),
+                cleared_ids: &outcome.already_applied_ids,
+            },
+        )
+        .await;
+        for e in errors {
+            eprintln!("[sync] {}", e);
         }
     }
 
@@ -647,6 +562,208 @@ async fn current_pending_changes(state: &AppState) -> Vec<PendingChange> {
         .unwrap_or_default()
 }
 
+/// A writer's results to fold into the app: tree leaf changes, Update Complete
+/// targets, snapshot baselines, and the per-row results.
+pub(crate) struct WriteEffects<'a> {
+    pub leaf_updates: &'a [LeafUpdate],
+    pub nodes_written: &'a std::collections::HashSet<String>,
+    pub baseline_updates: &'a [BaselineUpdate],
+    /// Rows whose status or reason changed and which stay pending.
+    pub updated_rows: Vec<PendingChange>,
+    /// Rows to remove (applied, already applied, read-only cleared).
+    pub cleared_ids: &'a std::collections::HashSet<String>,
+}
+
+/// Fold a writer's results into the app: commit or mark leaves in the
+/// `LayoutState` trees and saved snapshots, send Update Complete to written
+/// nodes, update and persist the Pending Change rows, and persist snapshot
+/// baselines. Shared by the Sync Panel apply and the Save write path. Returns
+/// persistence failures as messages (the row and tree updates still stand).
+pub(crate) async fn apply_write_effects(
+    state: &AppState,
+    app: &tauri::AppHandle,
+    root_path: &str,
+    effects: WriteEffects<'_>,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    // Trees changed by this write, with their leaf counts, announced after the
+    // guard is released so the frontend reloads them.
+    let mut changed_trees: Vec<(String, usize)> = Vec::new();
+
+    // Commit values / read-only marks in the LayoutState tree
+    if !effects.leaf_updates.is_empty() || !effects.baseline_updates.is_empty() {
+        let mut layout_guard = state.layout_state.write().await;
+        if let Some(ls) = layout_guard.as_mut() {
+            for update in effects.leaf_updates {
+                let node_key = match update {
+                    LeafUpdate::Commit { node_key, .. } | LeafUpdate::MarkReadOnly { node_key, .. } => node_key,
+                };
+                let Ok(nk) = crate::node_key::NodeKey::parse(node_key) else { continue };
+                let Some(tree) = ls.config_tree_mut(&nk) else { continue };
+                match update {
+                    LeafUpdate::Commit { space, address, value, .. } => {
+                        crate::node_tree::update_leaf_value(tree, *space, *address, value.clone());
+                    }
+                    LeafUpdate::MarkReadOnly { space, address, .. } => {
+                        crate::node_tree::revert_and_mark_leaf_read_only(tree, *space, *address);
+                    }
+                }
+            }
+            for node_key in writer::changed_node_keys(effects.leaf_updates) {
+                let Ok(nk) = crate::node_key::NodeKey::parse(&node_key) else { continue };
+                if let Some(tree) = ls.config_tree(&nk) {
+                    changed_trees.push((node_key, crate::node_tree::count_leaves(tree)));
+                }
+            }
+            // Keep the in-memory saved snapshot at the written baseline so a
+            // later re-save does not restore the pre-write value.
+            for BaselineUpdate { node_key, space, offset, planned_value } in effects.baseline_updates {
+                if let Ok(nk) = crate::node_key::NodeKey::parse(node_key) {
+                    ls.update_snapshot_config(&nk, *space, offset, planned_value);
+                }
+            }
+        }
+    }
+
+    for (node_key, leaf_count) in &changed_trees {
+        super::cdi::emit_node_tree_updated(app, node_key, *leaf_count);
+    }
+
+    // Send Update Complete to each node that had successful writes
+    if !effects.nodes_written.is_empty() {
+        if let Some(connection) = state.connection_arc().await {
+            for node_key in effects.nodes_written {
+                let nk = match crate::node_key::NodeKey::parse(node_key) {
+                    Ok(nk) => nk,
+                    Err(_) => continue,
+                };
+                if let Some(proxy) = state.node_registry.get_by_node_key(&nk).await {
+                    let mut conn = connection.lock().await;
+                    if let Err(e) = conn.send_update_complete(proxy.alias()).await {
+                        errors.push(format!("Update Complete failed for {}: {}", node_key, e));
+                    }
+                }
+            }
+        }
+    }
+
+    // Update and remove rows in LayoutState
+    let rows_changed = !effects.cleared_ids.is_empty() || !effects.updated_rows.is_empty();
+    if rows_changed {
+        let row_count = {
+            let mut guard = state.layout_state.write().await;
+            match guard.as_mut() {
+                Some(layout) => layout.apply_pending_row_results(effects.updated_rows, effects.cleared_ids),
+                None => 0,
+            }
+        };
+
+        // Update pending count
+        let mut guard = state.active_layout.write().await;
+        if let Some(ctx) = &mut *guard {
+            ctx.pending_change_count = row_count;
+        }
+    }
+
+    // Persist pending changes and update node snapshot baselines on disk
+    let base_file = std::path::Path::new(root_path);
+    if rows_changed {
+        let rows = current_pending_changes(state).await;
+        if let Err(e) = crate::layout::update_pending_changes(base_file, &rows) {
+            errors.push(format!("Failed to persist pending changes: {}", e));
+        }
+    }
+
+    if !effects.baseline_updates.is_empty() {
+        // Update node snapshot baselines for successfully applied config changes
+        let mut updated_snapshots: std::collections::HashMap<String, crate::layout::node_snapshot::NodeSnapshot> =
+            std::collections::HashMap::new();
+        let applied_at = chrono::Utc::now().to_rfc3339();
+
+        for BaselineUpdate { node_key: canonical_nid, space, offset: offset_hex, planned_value } in effects.baseline_updates {
+            if !updated_snapshots.contains_key(canonical_nid) {
+                match crate::layout::read_node_snapshot(base_file, canonical_nid) {
+                    Ok(snapshot) => {
+                        updated_snapshots.insert(canonical_nid.clone(), snapshot);
+                    }
+                    Err(e) => {
+                        errors.push(format!("Failed to read snapshot for {}: {}", canonical_nid, e));
+                        continue;
+                    }
+                }
+            }
+            if let Some(snapshot) = updated_snapshots.get_mut(canonical_nid) {
+                crate::layout::node_snapshot::update_snapshot_baseline_and_capture_time(
+                    snapshot,
+                    *space,
+                    offset_hex,
+                    planned_value,
+                    &applied_at,
+                );
+            }
+        }
+
+        // Write back modified snapshots in one partial-update call
+        let to_write: Vec<crate::layout::node_snapshot::NodeSnapshot> =
+            updated_snapshots.into_values().collect();
+        if !to_write.is_empty() {
+            if let Err(e) = crate::layout::update_node_snapshots(base_file, &to_write) {
+                errors.push(format!("Failed to persist snapshot updates: {}", e));
+            }
+        }
+    }
+
+    errors
+}
+
+/// What a Save's bus-write phase did.
+pub(crate) struct RecordedWriteReport {
+    pub counts: writer::SaveWriteCounts,
+    /// Persistence or Update Complete failures; the per-row results stand.
+    pub errors: Vec<String>,
+    /// Nodes whose config trees the writes changed (the frontend reloads them
+    /// before it drops the drafts).
+    pub written_node_ids: Vec<String>,
+}
+
+/// Write the Config rows a Save recorded (`recorded_ids`) through the one
+/// writer, read them back, and fold the results into `LayoutState` and the
+/// layout files at `root_path`. Rows not in `recorded_ids` are not touched.
+pub(crate) async fn write_recorded_rows(
+    state: &AppState,
+    app: &tauri::AppHandle,
+    root_path: &str,
+    recorded_ids: &std::collections::HashSet<String>,
+) -> RecordedWriteReport {
+    let rows = current_pending_changes(state).await;
+    let port = LivePort { state, root_path, app };
+    let outcome = writer::write_recorded_changes(&port, &rows, recorded_ids).await;
+    let written_node_ids = writer::changed_node_keys(&outcome.leaf_updates);
+    let errors = apply_write_effects(
+        state,
+        app,
+        root_path,
+        WriteEffects {
+            leaf_updates: &outcome.leaf_updates,
+            nodes_written: &outcome.nodes_written,
+            baseline_updates: &outcome.baseline_updates,
+            updated_rows: outcome.updated_rows,
+            cleared_ids: &outcome.cleared_ids,
+        },
+    )
+    .await;
+    RecordedWriteReport { counts: outcome.counts, errors, written_node_ids }
+}
+
+/// Number of Pending Change rows still waiting in the open layout.
+pub(crate) async fn waiting_pending_change_count(state: &AppState) -> usize {
+    current_pending_changes(state)
+        .await
+        .iter()
+        .filter(|r| r.status.is_waiting())
+        .count()
+}
+
 #[tauri::command]
 pub async fn apply_sync_changes(
     apply_change_ids: Vec<String>,
@@ -664,133 +781,30 @@ pub async fn apply_sync_changes(
     };
 
     // Must be connected
-    let connection = state.connection_arc().await
-        .ok_or("Not connected to network")?;
+    if !state.is_connected().await {
+        return Err("Not connected to network".to_string());
+    }
 
     let changes = current_pending_changes(&state).await;
     let port = LivePort { state: &state, root_path: &context.root_path, app: &app };
     let outcome = writer::apply_changes(&port, &changes, &apply_change_ids, &skip_change_ids).await;
 
-    // Commit values / read-only marks in the LayoutState tree
-    if !outcome.leaf_updates.is_empty() {
-        let mut layout_guard = state.layout_state.write().await;
-        if let Some(ls) = layout_guard.as_mut() {
-            for update in &outcome.leaf_updates {
-                let node_key = match update {
-                    LeafUpdate::Commit { node_key, .. } | LeafUpdate::MarkReadOnly { node_key, .. } => node_key,
-                };
-                let Ok(nk) = crate::node_key::NodeKey::parse(node_key) else { continue };
-                let Some(tree) = ls.config_tree_mut(&nk) else { continue };
-                match update {
-                    LeafUpdate::Commit { space, address, value, .. } => {
-                        crate::node_tree::update_leaf_value(tree, *space, *address, value.clone());
-                    }
-                    LeafUpdate::MarkReadOnly { space, address, .. } => {
-                        crate::node_tree::revert_and_mark_leaf_read_only(tree, *space, *address);
-                    }
-                }
-            }
-        }
-    }
-
-    // Send Update Complete to each node that had successful writes
-    for node_key in &outcome.nodes_written {
-        let nk = match crate::node_key::NodeKey::parse(node_key) {
-            Ok(nk) => nk,
-            Err(_) => continue,
-        };
-        if let Some(proxy) = state.node_registry.get_by_node_key(&nk).await {
-            let mut conn = connection.lock().await;
-            if let Err(e) = conn.send_update_complete(proxy.alias()).await {
-                eprintln!("[sync] Update Complete failed for {}: {}", node_key, e);
-            }
-        }
-    }
-
-    // Remove applied and read-only-cleared rows from pending changes cache
-    {
-        let all_cleared = outcome.cleared_ids();
-
-        let row_count = {
-            let mut guard = state.layout_state.write().await;
-            match guard.as_mut() {
-                Some(layout) => {
-                    layout.remove_pending_changes(&all_cleared);
-                    layout.pending_changes().len()
-                }
-                None => 0,
-            }
-        };
-
-        // Update pending count
-        let mut guard = state.active_layout.write().await;
-        if let Some(ctx) = &mut *guard {
-            ctx.pending_change_count = row_count;
-        }
-    }
-
-    // Persist pending changes and update node snapshot baselines on disk
-    if !outcome.cleared_ids().is_empty() {
-        let base_file = std::path::Path::new(&context.root_path);
-
-        // Write updated pending changes
-        let cache_snapshot = current_pending_changes(&state).await;
-        if let Err(e) = crate::layout::update_pending_changes(base_file, &cache_snapshot) {
-            eprintln!("[sync] Failed to persist offline-changes: {}", e);
-        }
-
-        // Update node snapshot baselines for successfully applied config changes
-        let mut updated_snapshots: std::collections::HashMap<String, crate::layout::node_snapshot::NodeSnapshot> =
-            std::collections::HashMap::new();
-        let applied_at = chrono::Utc::now().to_rfc3339();
-
-        for BaselineUpdate { node_key: canonical_nid, space, offset: offset_hex, planned_value } in &outcome.baseline_updates {
-            let snapshot = updated_snapshots.entry(canonical_nid.clone()).or_insert_with(|| {
-                match crate::layout::read_node_snapshot(base_file, canonical_nid) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        eprintln!("[sync] Failed to read snapshot for {}: {}", canonical_nid, e);
-                        // Return a dummy that won't be saved (sentinel: empty node_key)
-                        crate::layout::node_snapshot::NodeSnapshot {
-                            node_key: String::new(),
-                            node_id: None,
-                            profile_stem: None,
-                            lifecycle: crate::layout::node_snapshot::NodeSnapshotLifecycle::Persisted,
-                            captured_at: String::new(),
-                            capture_status: crate::layout::node_snapshot::CaptureStatus::Complete,
-                            missing: Vec::new(),
-                            snip: crate::layout::node_snapshot::SnipSnapshot::default(),
-                            cdi_ref: crate::layout::node_snapshot::CdiReference {
-                                cache_key: String::new(),
-                                version: String::new(),
-                                fingerprint: String::new(),
-                            },
-                            config: std::collections::BTreeMap::new(),
-                            producer_identified_events: Vec::new(),
-                        }
-                    }
-                }
-            });
-
-            crate::layout::node_snapshot::update_snapshot_baseline_and_capture_time(
-                snapshot,
-                *space,
-                offset_hex,
-                planned_value,
-                &applied_at,
-            );
-        }
-
-        // Write back modified snapshots in one partial-update call
-        let to_write: Vec<crate::layout::node_snapshot::NodeSnapshot> = updated_snapshots
-            .into_values()
-            .filter(|s| !s.node_key.is_empty())
-            .collect();
-        if !to_write.is_empty() {
-            if let Err(e) = crate::layout::update_node_snapshots(base_file, &to_write) {
-                eprintln!("[sync] Failed to persist snapshot updates: {}", e);
-            }
-        }
+    let cleared_ids = outcome.cleared_ids();
+    let errors = apply_write_effects(
+        &state,
+        &app,
+        &context.root_path,
+        WriteEffects {
+            leaf_updates: &outcome.leaf_updates,
+            nodes_written: &outcome.nodes_written,
+            baseline_updates: &outcome.baseline_updates,
+            updated_rows: Vec::new(),
+            cleared_ids: &cleared_ids,
+        },
+    )
+    .await;
+    for e in errors {
+        eprintln!("[sync] {}", e);
     }
 
     Ok(outcome.result)

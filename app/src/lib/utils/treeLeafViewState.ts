@@ -56,6 +56,19 @@ export function resolveLeafOfflineValueState(args: {
   };
 }
 
+/**
+ * The reason a field's waiting Pending Change row was not written to the board
+ * (status failed or conflict), or null when the row is plain pending (shown as
+ * "saved in layout, pending apply") or absent. E3b D3: the row is the only
+ * record of a write result.
+ */
+export function resolveLeafNotWrittenMessage(row: PendingChangeRow | null): string | null {
+  if (!row || (row.status !== 'failed' && row.status !== 'conflict')) {
+    return null;
+  }
+  return row.error?.trim() || 'Not written to the board';
+}
+
 export function resolveLeafSelectViewState(args: {
   leaf: LeafConfigNode;
   displayValue: TreeConfigValue | null;

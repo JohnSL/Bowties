@@ -239,20 +239,12 @@ _Avoid_: session manager, node registry (that is the app-layer `NodeRegistry`), 
 ## Data & Workflow
 
 **Sync Session**:
-A temporary session object that classifies offline changes into conflict/clean/already-applied/node-missing rows, presenting unresolved conflicts to the user for apply/skip choices.
+A temporary session object that classifies Pending Changes into conflict/clean/already-applied/node-missing rows, presenting unresolved conflicts to the user for apply/skip choices.
 _Avoid_: sync state, sync job, sync operation
 
-**Modified Value**:
-A node configuration field value that has been changed from its baseline (bus state when layout was opened) and persisted in the node tree's `modified_value` field.
-_Avoid_: edited value, override, pending value
-
 **Pending Change**:
-An offline-authored modification to a node configuration that has not yet been synced to the physical bus, ready to sync at next connection.
-_Avoid_: unsaved change, draft
-
-**Offline Change**:
-A configuration modification authored or recorded while the layout is disconnected from the bus, stored in `offline-changes.yaml` alongside the layout file and replayed during reconciliation.
-_Avoid_: queued change, saved change
+A configuration or bowtie edit recorded in the layout file that the board has not confirmed. Every Save records configuration drafts as Pending Changes, whether connected or not; a connected Save writes the ones it recorded and reads them back. Each row has a status (pending, conflict, failed, skipped, ...) and, when the board did not take the value, a reason. A row is removed once the board holds the planned value. Stored in `offline-changes.yaml` (legacy file name) alongside the layout file. A Pending Change is not a draft: drafts are unsaved edits that become Pending Changes when saved.
+_Avoid_: offline change, modified value, unsaved change, draft, queued change
 
 **Config Read Session**:
 A multi-step orchestrated process that sequentially reads CDI and PIP from each discovered node, updates the node tree, and signals completion.
@@ -307,8 +299,7 @@ _Avoid_: "node store" (overloaded), "dirty store"
 - The **Peer Session Registry** owns exactly one **Peer Session** per remote **Node ID**; **Node Alias** renegotiation updates that session in place rather than spawning a duplicate
 - A **Profile** is specific to one node model; it may contain **Relevance Rules** and **Cascade Rules**
 - **Relevance Rules** govern CDI sections (many-to-many: one rule may affect multiple sections; one section may be governed by multiple rules)
-- **Offline Changes** are a superset of **Pending Changes** (all pending changes are offline; not all offline changes are pending)
-- A **Sync Session** classifies **Offline Changes** into actionable rows
+- A **Sync Session** classifies **Pending Changes** into actionable rows
 - An **Information Channel** has exactly one **Binding** linking it to pin(s) on a subsystem on a node (replaces the pre-018 **Hardware Reference**)
 - An **Information Channel** has exactly one **Role** (state vocabulary + slot-binding contract) and exactly one **Style** (hardware-shape realisation); every channel's Style realises its Role
 - An **Information Channel** has exactly one **Channel Ownership** (`hardware-owned` or `user-owned`) deciding its lifecycle
@@ -324,7 +315,7 @@ _Avoid_: "node store" (overloaded), "dirty store"
 
 - **"Element"** is used for (a) Connection Element (bowtie producer/consumer), (b) CDI DataElement (leaf config field), and (c) abstract "node/element pair". Qualify on first use: "Connection Element" for (a), "Config Element" or "CDI Element" for (b).
 - **"Display Name"** vs "friendly name": Display Name is canonical. Retire "friendly name" in code comments and docs.
-- **"Pending" vs "Offline"**: "Offline Change" = stored on disk in offline-changes.yaml. "Pending Change" = subset ready to sync at connect. Offline ⊇ Pending.
+- **"Offline Change" and "Modified Value"** are retired (Spec 020 E3b): both are now **Pending Changes**, recorded by every Save whether connected or not. The file keeps its legacy name `offline-changes.yaml`.
 - **"Config Read"** is vague — refers to (a) reading CDI from one node, (b) reading PIP flags, (c) entire multi-node session. Use "Config Read Session" for (c), "read CDI" for (a), "read PIP" for (b).
 - **"Profile" scope**: "Structure Profile" = `.profile.yaml` shipped with app. "Extraction Profile" = full 7-file set from manual authoring. Ship only structure profiles.
 - **"Cascade Rules"** are defined in specs but not yet fully implemented. Reserve term until implementation lands.

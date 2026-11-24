@@ -2,7 +2,7 @@
 
 Branch: 020-block-signals-first-slice
 Generated: 2026-11-07; roadmap regenerated 2026-11-22 for the end-to-end pivot
-Status: 8/14 slices complete (S1, S2R, E1a, E1b, E2a, E2b, E2c, E3b-0); S2 and the old S3–S8 superseded by E1a–E6
+Status: 9/15 slices complete (S1, S2R, E1a, E1b, E2a, E2b, E2c, E3b-0, E3b-1); S2 and the old S3–S8 superseded by E1a–E6
 
 Approved input: the
 [2026-11-22 Architecture Assessment](plan.md#architecture-assessment-end-to-end-first-release-2026-11-22)
@@ -97,7 +97,7 @@ flowchart LR
 | Editor store and orchestrator | Blocks and Aspects preview | Five steps, scope gating, Wiring choices, edit mode; Done hands off to the facility orchestrator |
 | Facility orchestrator | Composes Block Indicator facilities | Also composes and tears down ABS facilities |
 | Step components | BlocksStep, AspectsStep | Plus AppearanceStep, WiringStep, ReviewStep; out-of-scope options disabled |
-| Existing writers (Save, Sync Panel) | Two writers; a connected Save writes only drafts copied while connected, and records acknowledgement | E3b: every Save records configuration as Pending Changes and one writer sends them with readback; E4 builds on its row results |
+| Existing writers (Save, Sync Panel) | Two writers; a connected Save writes only drafts copied while connected, and records acknowledgement | E3b: every Save records configuration as Pending Changes and one writer sends them; E4 adds readback to its row results |
 
 ### Behavior Summary
 
@@ -110,7 +110,7 @@ flowchart LR
 | E2c: Release pins used outside Bowties | A pin held by a mast or Direct Lamp row that no facility owns can be released and used, undoably | Yes, bench |
 | E3: Two blocks on one board | Approach behind an occupied block | Yes, bench |
 | E3b-0: One owner and one writer for Pending Changes [REFACTOR] | None: Sync Panel, offline Save and open behave as before | No (invariants) |
-| E3b-1: Save writes configuration through Pending Changes | Edits made offline reach the board on a later connected Save; a refused value stays pending with the board's value and a reason | Yes, bench |
+| E3b-1: Save writes configuration through Pending Changes | Edits made offline reach the board on a later connected Save; a failed write stays waiting with a reason; waiting changes open the Sync Panel from the toolbar | Yes, bench |
 | E3b-2: Accept or keep a refused value | In the Sync Panel, accept the board's value (change dropped) or keep yours | Yes, bench |
 | E4: Verify writes | Signals marked verified, mismatched or unavailable | Yes, bench |
 | E5: Across boards | Signals on two boards coordinate; partial failure shown | Yes, two boards |
@@ -130,11 +130,12 @@ flowchart LR
 | E2c | Release pins used outside Bowties | HITL | E2b | done |
 | E3 | Two blocks on one board | HITL | E2b + same-board Approach evidence | sketched |
 | E3b-0 | One owner and one writer for Pending Changes | REFACTOR | E2c | done |
-| E3b-1 | Save writes configuration through Pending Changes | HITL | E3b-0 | sketched |
-| E3b-2 | Accept or keep a refused value | HITL | E3b-1 | sketched |
+| E3b-1 | Save writes configuration through Pending Changes | HITL | E3b-0 | done |
+| E3b-2 | Accept or keep a refused value | HITL | E4 | sketched |
 | E4 | Verify writes | HITL | E1b, E3b-1 | sketched |
 | E5 | Across boards | HITL | E3 + E4 + cross-board Approach and receiver-restart evidence | sketched |
 | E6 | Maintain a three-block facility | AFK | E5 | sketched |
+| F1 | Hand off: lcc-rs inbound routing under a loaded bus | HITL | E6 | sketched |
 
 Hardware gates refer to [single-board evidence](manual-track-circuit-test.md)
 and [two-board evidence](manual-two-board-test.md). The terminal recipe and
@@ -998,29 +999,107 @@ Deferred until the save/apply slice:
 
 ### E3b-1: Save writes configuration through Pending Changes [HITL]
 
-**Intent**: Every Save records configuration drafts as Pending Changes; a connected Save writes the rows it recorded through the one writer, reads them back and reports what is left.
+**Intent**: Every Save records configuration drafts as Pending Changes; a connected Save writes the rows it recorded through the one writer and reports what is left (readback moved to E4).
 **Boundary**: Save orchestrator (`+page.svelte`, `saveLayoutOrchestrator.ts`) → backend Save (`save_layout_with_bus_writes`) → the writer from E3b-0 (pre-read when needed, readback, range planner, row status and reason) → `pendingChangesStore` → field markers, Sync Panel, Save result, dirty counts.
 **Blocked by**: E3b-0.
-**Status**: sketched
+**Status**: done
+
+**Re-cut at tasking (2026-11-23)**:
+- Today a connected Save reaches the bus through the draft mirror (`configDraftMirrorOrchestrator` → `set_modified_value`) plus `write_modified_values` in Phase 2. Drafts are staged as rows only offline (`+page.svelte:658`), and `flushPending` and `reloadPendingChanges` also run only offline.
+- `build_read_plan` (`cdi.rs`) already merges reads within a 64-byte span but has no gap limit. D4 moves it to the shared planner, so CDI reads also stop merging across gaps larger than 8 bytes.
+- **Refused value.** The board accepted the write, but readback differs from the planned value.
+  - The row becomes `Conflict`. Its existing `error` field holds the reason with the board's value ("The board kept 5").
+  - The row format is unchanged (D2). E3b-2 re-reads the board when the user accepts.
+- **Write failure.** The row becomes `Failed` with the reason. 0x1083 keeps today's handling: the row is cleared and the field becomes read-only.
+- **Pre-read.** It is needed only when the node's tree was not read from this bus during this connection, which is the offline-edited case. A pre-read conflict (bus ≠ baseline and ≠ planned) becomes `Conflict` and is not written.
 
 **Acceptance criteria**:
-- [ ] Edit offline, connect, Save: the edits reach the board and the layout's node snapshot; nothing is lost.
-- [ ] Edit one value while connected and Save: no Sync Panel opens, and the Save takes about as long as today (one write and one readback for that value).
-- [ ] A value the board does not take stays pending with the board's value and a reason, shown on the field, in the Save result and in the Sync Panel.
-- [ ] A write failure or conflict stays pending after Save, visible on the field, in the Sync Panel and in the Save toolbar, unsaved-changes breakdown and close prompts; drafts are cleared only once recorded in the layout file.
-- [ ] A value reverted, discarded or rolled back before Save is never written.
-- [ ] Rows recorded by an earlier Save, or skipped in the Sync Panel, are not written by a later Save; the Save result says how many are waiting.
-- [ ] A facility Done (about 50 values) is read back in merged ranges, not one read per field.
-- [ ] UI and user docs say "Pending Changes"; the glossary is corrected (D2).
-- [ ] The draft mirror, `flushDraftToBackend`, `set_modified_value` / `write_modified_values` as the Save path, the `modified_value` layer and connector repair's connected branch are gone; the offline-change IPCs no longer require offline mode.
-- [ ] The Save toolbar counts only configuration changes, with one wording whether offline or connected: "N configuration change(s)" when only configuration is unsaved, "N configuration change(s) + other edits" when layout edits (bowtie names, facilities, channels, connector selections) are also unsaved, and "Unsaved changes" when only layout edits are unsaved. The close prompt follows the same rule (configuration with a count, other edits listed without numbers). Approved 2026-11-23 after the E3b-0 bench test ("4 unsaved" vs "2 pending").
-- [ ] Offline Save, the Sync Panel and the E1b/E2a/E2b/E2c bench flows behave as before.
+- [x] Edit offline, connect, Save: the edits reach the board and the layout's node snapshot; nothing is lost.
+- [x] Edit one value while connected and Save: no Sync Panel opens, and the Save takes about as long as today (one write for that value).
+- ~~A value the board does not take stays pending with the board's value and a reason~~ → moved to E4 (bench re-cut 2026-11-23). In E3b-1 a write the board rejects stays pending as failed with the reason, shown on the field, in the Save result and in the Sync Panel.
+- [x] A write failure or conflict stays pending after Save, visible on the field, in the Sync Panel and in the Save toolbar, unsaved-changes breakdown and close prompts; drafts are cleared only once recorded in the layout file.
+- [x] A value reverted, discarded or rolled back before Save is never written.
+- [x] Rows recorded by an earlier Save, or skipped in the Sync Panel, are not written by a later Save; the Save result says how many are waiting.
+- ~~A facility Done (about 50 values) is read back in merged ranges~~ → moved to E4 (bench re-cut 2026-11-23).
+- [x] After a connected Save, each field shows the value the board now holds (no field falls back to its old value).
+- [x] Changes still waiting can be written while connected: the toolbar's waiting line opens the Sync Panel.
+- [x] UI and user docs say "Pending Changes"; the glossary is corrected (D2).
+- [x] The draft mirror, `flushDraftToBackend`, `set_modified_value` / `write_modified_values` as the Save path, the `modified_value` layer and connector repair's connected branch are gone; the offline-change IPCs no longer require offline mode.
+- [x] The Save toolbar counts only configuration changes, with one wording whether offline or connected: "N configuration change(s)" when only configuration is unsaved, "N configuration change(s) + other edits" when layout edits (bowtie names, facilities, channels, connector selections) are also unsaved, and "Unsaved changes" when only layout edits are unsaved. The close prompt follows the same rule (configuration with a count, other edits listed without numbers). Approved 2026-11-23 after the E3b-0 bench test ("4 unsaved" vs "2 pending").
+- [x] Offline Save, the Sync Panel and the E1b/E2a/E2b/E2c bench flows behave as before.
+
+**Tasks**:
+- [x] E3b-1-T1: Range planner. A shared `bowties-core` planner merges (space, address, length) items into reads of at most 64 bytes, merging gaps of 8 bytes or less; it splits items over 64 bytes. `cdi.rs` `build_read_plan` uses it. Rust tests.
+- [x] E3b-1-T2: Writer Save path (integration test first, fake port). `write_recorded_changes` writes only the given row IDs:
+  - pre-reads when the port says the baseline was not read this connection;
+  - writes each field;
+  - reads back through the planner;
+  - returns per-row results: applied (removed, leaf committed, baseline updated), refused → `Conflict` with the board's value in the reason, failure → `Failed` with the reason, 0x1083 as today, pre-read conflict → `Conflict` not written.
+  - Other rows are untouched. The outcome counts the rows still waiting.
+- [x] E3b-1-T3: Backend Save cutover.
+  - `save_layout_with_bus_writes` takes the IDs this Save recorded. Phase 1 saves the layout with them; Phase 2 runs the writer through `LivePort` and persists the row results. The Save result reports written, refused, failed and waiting counts.
+  - The pending-change IPCs drop the `OfflineFile` gate.
+  - Remove `write_modified_values`, `set_modified_value`, `discard_modified_values`, `has_modified_values`, the `modified_value` layer of `effective_config_tree`, the leaf `modified_value` / `WriteState` / `write_error`, and their node_tree helpers.
+- [x] E3b-1-T4: Frontend Save cutover.
+  - `saveCurrentCaptureToFile` / `saveLayoutOrchestrated` always stage drafts as rows and flush them, pass the recorded IDs to the connected Save, clear drafts only after the rows are recorded, and always reload rows.
+  - The Save result shows leftovers and never opens the Sync Panel.
+  - Remove the mirror, `flushDraftToBackend` and its three callers, the `setModifiedValue` / `writeModifiedValues` wrappers, and connector repair's connected branch (it uses the draft path on both sides).
+- [x] E3b-1-T5: One "still waiting" predicate (TS and Rust): status is not applied, already applied or clean. It replaces the `status === 'pending'` filters.
+  - Field markers derive refused/failed/conflict from the row's status and reason (no `writeState`).
+  - Failed and conflict rows count in the Save toolbar, the unsaved-changes breakdown and the close prompts.
+- [x] E3b-1-T6: Toolbar and close prompt count only configuration changes, with one wording (criterion above); `saveControlsPresenter`, `UnsavedChangesDialog`; tests.
+- [x] E3b-1-T7: Wording:
+  - UI strings say "Pending Changes": SyncPanel, the "Saved in layout, pending apply to node" markers, and the `offlineDrafts` / `offlineRevertedPersisted` / `offlinePending` bucket keys and the `offline-change-msg` class.
+  - User docs (`docs/user/using.md`, `README.md`) are updated.
+  - The glossary: one Pending Change entry; Offline Change, "Offline ⊇ Pending" and Modified Value retired.
+- [x] E3b-1-T8: Docs:
+  - ADR-0001 dated extension (Save routes configuration through Pending Changes, D1 scope, D4 planner);
+  - ADR-0012 mirror extension marked superseded;
+  - ADR-0015 note (no `modified_value` layer);
+  - `aiwiki` owners/seams/flows/architecture-health;
+  - `specs/backlog.md`.
+- [x] E3b-1-T9: Validate:
+  - `cargo test` in `bowties-core`;
+  - `cargo check --tests` in `app/src-tauri`;
+  - `npx vitest run`;
+  - svelte-check (baseline 113);
+  - bench: offline edit → connect → Save; one connected edit (the field keeps the new value, and a second edit of it saves too); facility Done; a waiting row written through "Review in Sync Panel"; reopen and connect with a row already on the board (the notice appears).
+
+**Bench re-cut (2026-11-23, approved)**: The first bench run failed.
+- After a successful write the field fell back to its old value.
+- A later Save timed out: Bowties sent its next read 1 ms before acknowledging the board's reply; the Signal LCC rejected it with 0x2020 (busy, resend allowed); lcc-rs did not resend.
+- The Signal LCC also restarts about a second after Update Complete, so readback must wait for it to finish starting up.
+- The user approved Option A:
+  - E3b-1 drops the pre-read and the readback: a connected Save writes each recorded field and sends one Update Complete per node, as before E3b-1.
+  - E4 owns verification: readback relative to Update Complete, waiting for a board that restarts, refused values and merged readback ranges.
+  - E3b-2 now waits on E4.
+  - The shared read planner stays (CDI reads use it).
+  - The lcc-rs acknowledge/resend defect is not fixed here. After discussion (2026-11-23) it became a wider refactor of lcc-rs inbound routing for a loaded bus, recorded in F1 as the input for its own feature.
+  - Per-board Update Complete (as JMRI's manual button) is captured as an idea for E4.
+- Still fixed in E3b-1: the field shows the committed value after Save, and the waiting line opens the Sync Panel.
+
+**Bench re-cut tasks (2026-11-23, approved: Option A, 1A, 2)**:
+- [x] E3b-1-T10: Writer without verification.
+  - `write_recorded_changes` writes each recorded row: no pre-read, no readback. A written row is removed, its leaf committed and its baseline updated. A rejected write is `Failed` with the reason. 0x1083 is handled as today.
+  - `MemoryPort::baseline_read_this_connection` and the `config_read_nodes` tracking are removed; E4 adds back what it needs.
+  - The planner stays (CDI reads).
+- [x] E3b-1-T11: Trees refresh after every write (1A).
+  - `apply_write_effects` emits `node-tree-updated` for each node whose tree changed (Save and the Sync Panel).
+  - A connected Save clears the drafts only after the written nodes' trees are reloaded, so the field shows the board's new value and the next edit starts from it.
+- [x] E3b-1-T12: "Already on the board" is visible (2).
+  - When the Sync Panel finds a row the board already holds, it commits the leaf and the snapshot baseline (as a write does), refreshes the tree and tells the user how many were already on the board. Nothing is removed silently.
+- [x] E3b-1-T13: "Review in Sync Panel" (2): a button on the toolbar's waiting line and on the field's "Not written" marker opens the Sync Panel.
+- [x] E3b-1-T14: Docs: ADR-0001 2026-11-23 extension and `aiwiki` text drop readback and pre-read; validation as T9.
+- Re-cut validation (2026-11-23, automated): `bowties-core` `cargo test` 580 passed, 0 warnings; `app/src-tauri` `cargo check --tests` clean; vitest 1662 passed (124 files); svelte-check 113 (baseline). The Sync Panel also opens when every waiting row was already on the board (`hasSyncSessionContent`). Bench retest passed (2026-11-24): offline edit → connect → Save, a connected edit edited and saved twice, facility Done, Review in Sync Panel from the toolbar, and the "already on the board" notice after reopen and connect.
+- Not done: taking the board value as a connected draft's baseline. A waiting row's baseline is the value the board still holds, and the stale baseline seen on the bench came from the tree not refreshing, which T11 fixes.
+
+**Validation (2026-11-23, automated)**: `bowties-core` `cargo test` 583 passed, 0 warnings; `app/src-tauri` `cargo check --tests` clean; vitest 1654 passed (124 files; run from PowerShell, Git Bash breaks the vitest runner); svelte-check 113 errors (baseline). Bench check (T9) pending. Notes: `replace_pending_changes` IPC removed (Save records rows with ID-preserving `set_pending_change`); the field marker says "Unsaved edit"; `is_waiting` counts `Skipped`, which nothing sets yet (aiwiki/architecture-health.md watch item).
 
 ### E3b-2: Accept or keep a refused value [HITL]
 
 **Intent**: In the Sync Panel, a refused value shows the board's value; accepting it drops the change, keeping it leaves it pending. No automatic retry.
 **Boundary**: Sync Panel component and store → writer row resolution → `LayoutState` rows.
-**Blocked by**: E3b-1.
+**Blocked by**: E4 (readback and refused values moved there, 2026-11-23).
 **Status**: sketched
 
 **Acceptance criteria**:
@@ -1034,6 +1113,14 @@ Deferred until the save/apply slice:
 **Boundary**: The single writer from E3b-1 (its row results, including readback) → status on the facility card and Review.
 **Blocked by**: E1b, E3b-1 (readback lives in the one writer).
 **Status**: sketched
+
+**Moved here from E3b-1 (2026-11-23)**:
+- Readback in the one writer. Decide its timing relative to Update Complete: some boards commit only on Update Complete, and the Signal LCC restarts about a second after it.
+- Wait for a restarting board (Initialization Complete) before the next access.
+- A pre-read when the baseline was not read this connection.
+- Merged readback ranges through `sync::read_plan` (a facility Done of about 50 values is not read one field at a time).
+- A refused value stays pending with the board's value and a reason.
+- Consider per-board Update Complete (JMRI makes it a user action).
 
 **Acceptance criteria**:
 - [ ] After a connected Save or a Sync Panel write, each signal is marked verified only when its values read back as written.
@@ -1073,6 +1160,61 @@ Deferred until the save/apply slice:
 - [ ] After reorder, prepend or middle removal, surviving signals keep their identity, name, outputs and claimed slots through Save and reopen.
 - [ ] Removing the only remaining block requires removing the facility. Removal keeps block detection and unrelated configuration.
 - [ ] Maintenance edits show in the Save toolbar, the unsaved-changes breakdown and the close prompts, and can be discarded.
+
+### F1: Hand off — lcc-rs inbound routing under a loaded bus [HITL]
+
+**Intent**: Turn the findings below into the input for a new feature (`/speckit.specify`), so that Bowties stays reliable on a heavily loaded bus. This slice writes no code. It produces the new feature's description and, with confirmation, a `kind/idea` issue.
+**Boundary**: Planning only: this card → the new feature's spec input; a proposed issue (`area/lcc-rs`, `area/transport`).
+**Blocked by**: E6 (finish this feature first). If E4 needs restart detection sooner, pull item 3 below forward into E4 as a focused bugfix.
+**Status**: sketched
+
+**Origin (E3b-1 bench, 2026-11-23)**: A connected Save timed out on a read.
+- The Signal LCC restarted after Update Complete and announced its events: hundreds of frames in about two seconds.
+- Those frames filled the board's per-peer inbox. The resulting Lagged marker made the session resend its read before it acknowledged the board's reply.
+- The board answered with DatagramRejected 0x2020 (busy, resend allowed). lcc-rs ignores a resend on reads, so the read waited out its timeout.
+
+**How inbound frames flow today** (lcc-rs, read 2026-11-23):
+- `transport_actor.rs` broadcasts every frame to `subscribe_all()` subscribers (`BROADCAST_CAPACITY` = 2048). `subscribe_mti` also exists.
+- Event consumers (occupancy, monitor, spawn watcher) are independent broadcast subscribers. Changing the demux does not hide events from them.
+- `PeerSessionRegistry` runs `demux_loop`, a broadcast subscriber that routes every frame by source alias (`route_frame`) into a per-peer mpsc (`INBOUND_CAPACITY` = 256, `peer_session.rs`).
+  - On overflow it counts `pending_drops` and delivers `InboundEvent::Lagged(n)` before the next frame.
+  - On upstream broadcast lag it signals every route ("over-signalling is safe", S7 D2=C).
+- `PeerSession::run` polls its inbox only while an exchange is active, so an idle session's inbox fills with that board's event traffic.
+- `handle_inbound_lag` resends the active request (Recover / RecoverRead / RecoverWrite), or aborts after `max_retries`.
+- `on_memory_read_frame` ignores a resend-OK DatagramRejected. Writes resend it.
+- `PeerCommand::PeerReinitialised` has no production sender. A same-alias Initialization Complete is a no-op in the spawn watcher.
+
+**Problems on a loaded bus**:
+1. Each per-peer inbox collects all of its board's traffic but is drained only during an exchange.
+2. "Lost frames → resend the request" is unsafe for datagram exchanges. It sends duplicates while a reply is in flight (0x2020), or throws away a partly received reply (timeout).
+3. Upstream lag signals every session at once, so every session resends together: load causes resends, and resends add load.
+4. A resend-OK DatagramRejected on a read is ignored.
+5. A board restarting is not noticed, so an in-flight request waits out its full timeout.
+6. Everything hangs off one fixed broadcast ring. On a full CAN bus (about 1000–2000 frames/s) it holds one to two seconds of traffic, and any slow subscriber can lag.
+
+**JMRI reference (ADR-0019)**:
+- `DatagramMeteringBuffer.java:273-287` resends on DatagramRejected when `canResend()`.
+- `MemoryConfigurationService` retries on timeout (`MAX_TRIES` = 3).
+- JMRI has no lag-triggered re-issue.
+- `CdiPanel` sends Update Complete only on a user action.
+
+**Refactor directions to evaluate** (not decided):
+1. Classify each frame once: exchange traffic addressed to our alias (datagrams, datagram OK/rejected, addressed replies) goes to that peer's session; global traffic (events, identify, verified node) goes to the event path only.
+2. JMRI-style recovery: no resend on lost frames; retry on timeout, a bounded number of times; resend on a resend-OK DatagramRejected for reads as well as writes.
+3. Board restart is visible: a same-alias Initialization Complete sends `PeerReinitialised`, which ends the in-flight request at once. The next access waits until the board finishes starting up (E4 needs this too).
+4. A slow subscriber cannot cost a session its reply frames, and any subscriber that does lose frames is told how many (the broadcast already reports `Lagged`).
+5. A load test: flood the simulated bus with thousands of event frames per second during memory reads. Check that no request is sent twice, no reply is lost and no event loss is silent.
+
+**Open questions for the new feature**:
+- Is one transport broadcast still the right hub, or should exchange routing sit before it?
+- Does the mock harness's pre-queued-reply model (the reason idle inboxes are not drained) still hold after classification?
+- Which ADR to extend (ADR-0016, dated extension) and what to cite from JMRI for each emit or resend site.
+- What frame rate and duration define "highly loaded" for the acceptance load test?
+
+**Acceptance criteria**:
+- [ ] The new feature's description covers the origin, current flow, problems, JMRI reference, directions and open questions above, with nothing lost.
+- [ ] A `kind/idea` issue is proposed (title, labels, body) and created only after the user confirms.
+- [ ] `specs/backlog.md` and `aiwiki/architecture-health.md` point to the new feature or issue instead of repeating the details.
 
 ## Architecture and Acceptance Guardrails
 

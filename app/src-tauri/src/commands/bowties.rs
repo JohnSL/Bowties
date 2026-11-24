@@ -388,7 +388,7 @@ pub async fn build_bowtie_catalog_command(
         let changes = layout_state_ref.map(|ls| ls.pending_changes()).unwrap_or(&[]);
         let pending_config: Vec<_> = changes.iter()
             .filter(|c| c.kind == crate::layout::pending_changes::PendingChangeKind::Config
-                && c.status == crate::layout::pending_changes::PendingChangeStatus::Pending
+                && c.status.is_waiting()
                 && c.node_key.is_some()
                 && c.space.is_some()
                 && c.offset.is_some())

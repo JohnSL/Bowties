@@ -289,9 +289,6 @@ mod tests {
             action_value: 0,
             hint_slider: None,
             hint_radio: false,
-            modified_value: None,
-            write_state: None,
-            write_error: None,
             read_only: false,
         });
         NodeConfigTree {
@@ -410,9 +407,6 @@ mod tests {
             action_value: 0,
             hint_slider: None,
             hint_radio: false,
-            modified_value: None,
-            write_state: None,
-            write_error: None,
             read_only: false,
         })
     }

@@ -22,6 +22,17 @@ pub enum PendingChangeStatus {
     Failed,
 }
 
+impl PendingChangeStatus {
+    /// True while the board has not confirmed the change: anything except
+    /// applied, already applied or clean.
+    pub fn is_waiting(&self) -> bool {
+        !matches!(
+            self,
+            PendingChangeStatus::Applied | PendingChangeStatus::AlreadyApplied | PendingChangeStatus::Clean
+        )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingChange {

@@ -5,13 +5,17 @@
  * `save_layout_with_bus_writes` command (see `commands/layout_capture.rs`):
  *
  *   - `saving-layout`   — phase 1, layout-file write
- *   - `writing-config`  — phase 2, per-field bus writes (with current/total)
+ *   - `writing-config`  — phase 2, bus writes for the rows this Save recorded (current/total)
  *   - `reconciling`     — phase 3, post-bus-write layout re-save
  *   - `complete`        — final phase, includes `failedCount`
+ *   - `saved-with-notice` — frontend-only: the Save finished but Pending Changes
+ *     are still waiting (failed or recorded earlier); the
+ *     dialog stays up with the counts and reasons until dismissed
  *
  * The store also exposes direct setters so the frontend orchestrator can drive
  * the offline-save path (which does not go through `save_layout_with_bus_writes`
- * and therefore does not emit backend `save-progress` events).
+ * and therefore does not emit backend `save-progress` events). The backend emits
+ * no per-field labels; `writing-config` carries only current/total.
  *
  * Lifecycle:
  *   - `startListening()` registers a Tauri listener; safe to call repeatedly.
@@ -29,7 +33,14 @@ export type SavePhase =
   | 'writing-config'
   | 'reconciling'
   | 'complete'
+  | 'saved-with-notice'
   | 'error';
+
+/** Phase 2 outcome of a connected Save (see `SaveWithBusWriteResult`). */
+export interface SaveWriteOutcome {
+  counts: { failed: number; waiting: number };
+  errors: string[];
+}
 
 interface SaveProgressPayload {
   phase: SavePhase;
@@ -46,6 +57,8 @@ class SaveProgressStore {
   private _currentLabel = $state<string | null>(null);
   private _failedCount = $state<number>(0);
   private _errorMessage = $state<string | null>(null);
+  private _notice = $state<string | null>(null);
+  private _noticeDetails = $state<string[]>([]);
   private _unlisten: UnlistenFn | null = null;
 
   get phase(): SavePhase { return this._phase; }
@@ -54,10 +67,17 @@ class SaveProgressStore {
   get currentLabel(): string | null { return this._currentLabel; }
   get failedCount(): number { return this._failedCount; }
   get errorMessage(): string | null { return this._errorMessage; }
+  get notice(): string | null { return this._notice; }
+  get noticeDetails(): string[] { return this._noticeDetails; }
 
-  /** True when a save is in progress (phase neither idle nor complete). */
+  /** True when a save is in progress (phase neither idle nor finished). */
   get isActive(): boolean {
-    return this._phase !== 'idle' && this._phase !== 'complete' && this._phase !== 'error';
+    return (
+      this._phase !== 'idle' &&
+      this._phase !== 'complete' &&
+      this._phase !== 'saved-with-notice' &&
+      this._phase !== 'error'
+    );
   }
 
   /** True when the dialog should be displayed. */
@@ -79,6 +99,27 @@ class SaveProgressStore {
     }
   }
 
+  /**
+   * Finish a successful Save. When Pending Changes are still waiting, keep a
+   * notice (with the reasons) visible instead of dismissing; the Save never
+   * opens the Sync Panel. `outcome` is absent for an offline Save.
+   */
+  finish(outcome?: SaveWriteOutcome): void {
+    const waiting = outcome?.counts.waiting ?? 0;
+    if (!outcome || (waiting === 0 && outcome.errors.length === 0)) {
+      this.apply({ phase: 'complete', failedCount: 0 });
+      return;
+    }
+    this._failedCount = outcome.counts.failed;
+    this._notice =
+      waiting === 1
+        ? 'Saved. 1 change is still waiting to be written.'
+        : `Saved. ${waiting} changes are still waiting to be written.`;
+    this._noticeDetails = [...outcome.errors];
+    this._currentLabel = null;
+    this._phase = 'saved-with-notice';
+  }
+
   /** Mark the save as started (used by the orchestrator for offline saves). */
   begin(): void {
     this._phase = 'saving-layout';
@@ -87,6 +128,8 @@ class SaveProgressStore {
     this._currentLabel = null;
     this._failedCount = 0;
     this._errorMessage = null;
+    this._notice = null;
+    this._noticeDetails = [];
   }
 
   /**
@@ -109,6 +152,8 @@ class SaveProgressStore {
     this._currentLabel = null;
     this._failedCount = 0;
     this._errorMessage = null;
+    this._notice = null;
+    this._noticeDetails = [];
   }
 
   resetForNewLayout(): void {

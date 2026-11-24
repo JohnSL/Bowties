@@ -261,9 +261,7 @@ impl LiveNodeProxy {
                     // CDI XML, config values, and config tree are all backed
                     // by NV memory — they survive a node reboot and stay
                     // valid across reinit.  Clearing them here would force
-                    // set_modified_value / get_node_tree to rebuild from CDI
-                    // without values, zeroing every field the user hasn't
-                    // just edited.
+                    // get_node_tree to rebuild from CDI without values.
                 }
                 ProxyMessage::Shutdown => {
                     break;
@@ -731,9 +729,6 @@ impl NodeProxyHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node_tree::{
-        ConfigNode, ConfigValue, LeafNode, LeafType, NodeConfigTree, SegmentNode,
-    };
     use std::collections::HashMap;
 
     /// Create a dummy TransportHandle that doesn't connect to anything.
@@ -742,48 +737,6 @@ mod tests {
         let (all_tx, _) = tokio::sync::broadcast::channel(1);
         let mti_senders = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
         TransportHandle::from_parts(tx, all_tx, mti_senders)
-    }
-
-    /// Build a minimal tree with one event-ID leaf carrying a known value.
-    fn tree_with_event_id(hex: &str, bytes: [u8; 8]) -> NodeConfigTree {
-        NodeConfigTree {
-            node_id: "05.02.01.02.03.00".into(),
-            identity: None,
-            connector_profile: None,
-            connector_profile_warning: None,
-            unknown_variants: Vec::new(),
-            profile_applied: false,
-            segments: vec![SegmentNode {
-                name: "Configuration".into(),
-                description: None,
-                origin: 0,
-                space: 0xFD,
-                children: vec![ConfigNode::Leaf(LeafNode {
-                    name: "Event ID".into(),
-                    description: None,
-                    element_type: LeafType::EventId,
-                    address: 100,
-                    size: 8,
-                    space: 0xFD,
-                    path: vec!["seg:0".into(), "elem:0".into()],
-                    value: Some(ConfigValue::EventId {
-                        bytes,
-                        hex: hex.into(),
-                    }),
-                    event_role: None,
-                    constraints: None,
-                    button_text: None,
-                    dialog_text: None,
-                    action_value: 0,
-                    hint_slider: None,
-                    hint_radio: false,
-                    modified_value: None,
-                    write_state: None,
-                    write_error: None,
-                    read_only: false,
-                })],
-            }],
-        }
     }
 
     /// Live proxy no longer holds config_tree (ADR-0015) — get_config_tree

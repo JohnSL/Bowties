@@ -241,18 +241,6 @@ pub struct GroupNode {
     pub read_only: bool,
 }
 
-/// Write lifecycle state for a pending modification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum WriteState {
-    /// User has set a modified value that differs from the on-node value.
-    Dirty,
-    /// A write to the node is in progress.
-    Writing,
-    /// The last write attempt failed.
-    Error,
-}
-
 /// A leaf configuration element (int, string, eventid, float, action, blob).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -292,17 +280,6 @@ pub struct LeafNode {
     /// Radio-button hint (int elements with radiobutton hint only)
     #[serde(default)]
     pub hint_radio: bool,
-    /// User-modified value not yet written to the node.
-    /// When `Some`, this is the value the user intends to write.
-    /// `value` retains the last-confirmed on-node value.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub modified_value: Option<ConfigValue>,
-    /// Write lifecycle state.  `None` when no modification is pending.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub write_state: Option<WriteState>,
-    /// Error message from the last failed write attempt.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub write_error: Option<String>,
     /// Set to true at runtime when the device rejects a write with a read-only
     /// error (0x1083).  Disables the control for the rest of the session.
     #[serde(default)]
@@ -581,9 +558,6 @@ fn build_children(
                     action_value: 0,
                     hint_slider: e.hints.as_ref().and_then(|h| h.slider.clone()),
                     hint_radio: e.hints.as_ref().map(|h| h.radiobutton).unwrap_or(false),
-                    modified_value: None,
-                    write_state: None,
-                    write_error: None,
                     read_only: false,
                 }));
                 cursor += e.size as i32;
@@ -609,9 +583,6 @@ fn build_children(
                     action_value: 0,
                     hint_slider: None,
                     hint_radio: false,
-                    modified_value: None,
-                    write_state: None,
-                    write_error: None,
                     read_only: false,
                 }));
                 cursor += s.size as i32;
@@ -637,9 +608,6 @@ fn build_children(
                     action_value: 0,
                     hint_slider: None,
                     hint_radio: false,
-                    modified_value: None,
-                    write_state: None,
-                    write_error: None,
                     read_only: false,
                 }));
                 cursor += 8;
@@ -670,9 +638,6 @@ fn build_children(
                     action_value: 0,
                     hint_slider: None,
                     hint_radio: false,
-                    modified_value: None,
-                    write_state: None,
-                    write_error: None,
                     read_only: false,
                 }));
                 cursor += e.size as i32;
@@ -698,9 +663,6 @@ fn build_children(
                     action_value: e.value,
                     hint_slider: None,
                     hint_radio: false,
-                    modified_value: None,
-                    write_state: None,
-                    write_error: None,
                     read_only: false,
                 }));
                 cursor += e.size as i32;
@@ -726,9 +688,6 @@ fn build_children(
                     action_value: 0,
                     hint_slider: None,
                     hint_radio: false,
-                    modified_value: None,
-                    write_state: None,
-                    write_error: None,
                     read_only: false,
                 }));
                 cursor += b.size as i32;
@@ -1091,7 +1050,7 @@ fn collect_event_leaves_recursive(children: &[ConfigNode], results: &mut Vec<Eve
                 collect_event_leaves_recursive(&g.children, results);
             }
             ConfigNode::Leaf(leaf) if leaf.element_type == LeafType::EventId => {
-                let value = match effective_value(leaf) {
+                let value = match leaf.value.as_ref() {
                     Some(ConfigValue::EventId { bytes, .. }) => Some(*bytes),
                     _ => None,
                 };
@@ -1216,225 +1175,9 @@ pub fn classify_leaf_roles_from_protocol(
     result
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Modified value operations
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Set a modified value on a leaf identified by `(space, address)`.
-///
-/// If `new_value` equals the leaf's committed `value`, the modification is
-/// automatically cleared (the user reverted to the original).
-/// Returns `true` if the leaf was found.
-pub fn set_modified_value(
-    tree: &mut NodeConfigTree,
-    space: u8,
-    address: u32,
-    new_value: ConfigValue,
-) -> bool {
-    for segment in &mut tree.segments {
-        if set_modified_in_children(&mut segment.children, space, address, &new_value) {
-            return true;
-        }
-    }
-    false
-}
-
-fn set_modified_in_children(
-    children: &mut [ConfigNode],
-    space: u8,
-    address: u32,
-    new_value: &ConfigValue,
-) -> bool {
-    for child in children.iter_mut() {
-        match child {
-            ConfigNode::Group(g) => {
-                if set_modified_in_children(&mut g.children, space, address, new_value) {
-                    return true;
-                }
-            }
-            ConfigNode::Leaf(leaf) if leaf.space == space && leaf.address == address => {
-                // Auto-revert: if the new value equals the committed value, clear the edit.
-                if leaf.value.as_ref() == Some(new_value) {
-                    leaf.modified_value = None;
-                    leaf.write_state = None;
-                    leaf.write_error = None;
-                } else {
-                    leaf.modified_value = Some(new_value.clone());
-                    leaf.write_state = Some(WriteState::Dirty);
-                    leaf.write_error = None;
-                }
-                return true;
-            }
-            _ => {}
-        }
-    }
-    false
-}
-
-/// Clear all modified values in the tree (discard all pending edits).
-pub fn discard_all_modified(tree: &mut NodeConfigTree) {
-    for segment in &mut tree.segments {
-        discard_in_children(&mut segment.children);
-    }
-}
-
-fn discard_in_children(children: &mut [ConfigNode]) {
-    for child in children.iter_mut() {
-        match child {
-            ConfigNode::Group(g) => discard_in_children(&mut g.children),
-            ConfigNode::Leaf(leaf) => {
-                leaf.modified_value = None;
-                leaf.write_state = None;
-                leaf.write_error = None;
-            }
-        }
-    }
-}
-
-/// Returns `true` if any leaf in the tree has a pending modification.
-pub fn has_modified_values(tree: &NodeConfigTree) -> bool {
-    tree.segments
-        .iter()
-        .any(|s| has_modified_in_children(&s.children))
-}
-
-fn has_modified_in_children(children: &[ConfigNode]) -> bool {
-    children.iter().any(|c| match c {
-        ConfigNode::Group(g) => has_modified_in_children(&g.children),
-        ConfigNode::Leaf(leaf) => leaf.modified_value.is_some(),
-    })
-}
-
-/// Info about a leaf with a pending modification, used by the write pipeline.
-#[derive(Debug, Clone)]
-pub struct ModifiedLeafInfo {
-    pub address: u32,
-    pub space: u8,
-    pub size: u32,
-    pub element_type: LeafType,
-    pub path: Vec<String>,
-    pub name: String,
-    pub value: ConfigValue,
-}
-
-/// Collect all leaves that have pending modifications (write_state == Dirty or Error).
-pub fn collect_modified_leaves(tree: &NodeConfigTree) -> Vec<ModifiedLeafInfo> {
-    let mut results = Vec::new();
-    for segment in &tree.segments {
-        collect_modified_recursive(&segment.children, &mut results);
-    }
-    results
-}
-
-fn collect_modified_recursive(children: &[ConfigNode], results: &mut Vec<ModifiedLeafInfo>) {
-    for child in children {
-        match child {
-            ConfigNode::Group(g) => collect_modified_recursive(&g.children, results),
-            ConfigNode::Leaf(leaf) => {
-                if let Some(ref modified) = leaf.modified_value {
-                    match leaf.write_state {
-                        Some(WriteState::Dirty) | Some(WriteState::Error) => {
-                            results.push(ModifiedLeafInfo {
-                                address: leaf.address,
-                                space: leaf.space,
-                                size: leaf.size,
-                                element_type: leaf.element_type,
-                                path: leaf.path.clone(),
-                                name: leaf.name.clone(),
-                                value: modified.clone(),
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Update the write_state for a specific leaf identified by (space, address).
-pub fn set_leaf_write_state(
-    tree: &mut NodeConfigTree,
-    space: u8,
-    address: u32,
-    state: WriteState,
-    error: Option<String>,
-) -> bool {
-    for segment in &mut tree.segments {
-        if set_write_state_in_children(&mut segment.children, space, address, state, &error) {
-            return true;
-        }
-    }
-    false
-}
-
-fn set_write_state_in_children(
-    children: &mut [ConfigNode],
-    space: u8,
-    address: u32,
-    state: WriteState,
-    error: &Option<String>,
-) -> bool {
-    for child in children.iter_mut() {
-        match child {
-            ConfigNode::Group(g) => {
-                if set_write_state_in_children(&mut g.children, space, address, state, error) {
-                    return true;
-                }
-            }
-            ConfigNode::Leaf(leaf) if leaf.space == space && leaf.address == address => {
-                leaf.write_state = Some(state);
-                leaf.write_error = error.clone();
-                return true;
-            }
-            _ => {}
-        }
-    }
-    false
-}
-
-/// Promote a leaf's `modified_value` to `value` after a successful write,
-/// clearing the modification state.
-pub fn commit_leaf_value(
-    tree: &mut NodeConfigTree,
-    space: u8,
-    address: u32,
-) -> bool {
-    for segment in &mut tree.segments {
-        if commit_in_children(&mut segment.children, space, address) {
-            return true;
-        }
-    }
-    false
-}
-
-fn commit_in_children(children: &mut [ConfigNode], space: u8, address: u32) -> bool {
-    for child in children.iter_mut() {
-        match child {
-            ConfigNode::Group(g) => {
-                if commit_in_children(&mut g.children, space, address) {
-                    return true;
-                }
-            }
-            ConfigNode::Leaf(leaf) if leaf.space == space && leaf.address == address => {
-                if let Some(modified) = leaf.modified_value.take() {
-                    leaf.value = Some(modified);
-                }
-                leaf.write_state = None;
-                leaf.write_error = None;
-                return true;
-            }
-            _ => {}
-        }
-    }
-    false
-}
-
-/// Revert a leaf's pending modification and mark it as permanently read-only.
+/// Mark a leaf as permanently read-only for the rest of the session.
 ///
 /// Called when the device rejects a write with error 0x1083 (address is read-only).
-/// Clears `modified_value`, `write_state`, and `write_error`, and sets
-/// `read_only = true` so the control is disabled for the rest of the session.
 pub fn revert_and_mark_leaf_read_only(
     tree: &mut NodeConfigTree,
     space: u8,
@@ -1461,9 +1204,6 @@ fn revert_read_only_in_children(
                 }
             }
             ConfigNode::Leaf(leaf) if leaf.space == space && leaf.address == address => {
-                leaf.modified_value = None;
-                leaf.write_state = None;
-                leaf.write_error = None;
                 leaf.read_only = true;
                 return true;
             }
@@ -1473,12 +1213,7 @@ fn revert_read_only_in_children(
     false
 }
 
-/// Return the "effective" value for a leaf: `modified_value` if present, else `value`.
-pub fn effective_value(leaf: &LeafNode) -> Option<&ConfigValue> {
-    leaf.modified_value.as_ref().or(leaf.value.as_ref())
-}
-
-/// Directly set a leaf's committed `value` (without going through modified_value).
+/// Directly set a leaf's committed `value`.
 ///
 /// Used by sync apply to reflect a successfully written value in the tree.
 pub fn update_leaf_value(
@@ -1505,9 +1240,6 @@ fn update_leaf_in_children(children: &mut [ConfigNode], space: u8, address: u32,
             }
             ConfigNode::Leaf(leaf) if leaf.space == space && leaf.address == address => {
                 leaf.value = Some(value.clone());
-                leaf.modified_value = None;
-                leaf.write_state = None;
-                leaf.write_error = None;
                 return true;
             }
             _ => {}
@@ -2016,7 +1748,7 @@ mod tests {
         assert_eq!(leaves[2].name, "Evt B"); // instance 2
     }
 
-    /// Regression: after commit_leaf_value promotes modified_value → value,
+    /// Regression: after update_leaf_value commits a written value,
     /// collect_event_id_leaves must return the committed bytes, not stale/None.
     #[test]
     fn collect_event_leaves_sees_committed_value() {
@@ -2035,11 +1767,8 @@ mod tests {
             hex: "0502010200 00FF01".to_string(),
         };
 
-        // Stage a user edit
-        assert!(set_modified_value(&mut tree, 253, 0, new_value));
-
         // Commit (simulates successful bus write)
-        assert!(commit_leaf_value(&mut tree, 253, 0));
+        assert!(update_leaf_value(&mut tree, 253, 0, new_value));
 
         // The catalog builder's data source must see the committed bytes
         let leaves = collect_event_id_leaves(&tree);
@@ -2047,7 +1776,7 @@ mod tests {
         assert_eq!(
             leaves[0].value,
             Some(new_bytes),
-            "collect_event_id_leaves must return committed value after commit_leaf_value"
+            "collect_event_id_leaves must return committed value after update_leaf_value"
         );
     }
 
@@ -3403,177 +3132,6 @@ mod tests {
         assert_eq!(v.to_snapshot_string(), "3.14");
     }
 
-    // ── set_modified_value tests ────────────────────────────────────────
-
-    #[test]
-    fn set_modified_value_marks_leaf_dirty() {
-        let mut tree = tree_from_xml(
-            r#"<cdi>
-                <segment space="253" origin="0">
-                    <name>Config</name>
-                    <int size="1"><name>Speed</name></int>
-                </segment>
-            </cdi>"#,
-        );
-        let result = set_modified_value(
-            &mut tree,
-            253,
-            0,
-            ConfigValue::Int { value: 42 },
-        );
-        assert!(result, "should find the leaf");
-        match &tree.segments[0].children[0] {
-            ConfigNode::Leaf(l) => {
-                assert_eq!(
-                    l.modified_value,
-                    Some(ConfigValue::Int { value: 42 })
-                );
-                assert_eq!(l.write_state, Some(WriteState::Dirty));
-                assert!(l.write_error.is_none());
-            }
-            _ => panic!("Expected leaf"),
-        }
-    }
-
-    #[test]
-    fn set_modified_value_autorevert_when_same_as_committed() {
-        let mut tree = tree_from_xml(
-            r#"<cdi>
-                <segment space="253" origin="0">
-                    <name>Config</name>
-                    <int size="1"><name>Speed</name><default>10</default></int>
-                </segment>
-            </cdi>"#,
-        );
-        // First set a different value to make it dirty
-        set_modified_value(&mut tree, 253, 0, ConfigValue::Int { value: 42 });
-        match &tree.segments[0].children[0] {
-            ConfigNode::Leaf(l) => assert!(l.modified_value.is_some()),
-            _ => panic!("Expected leaf"),
-        }
-        // Now set it back to the committed value — should auto-revert
-        set_modified_value(&mut tree, 253, 0, ConfigValue::Int { value: 10 });
-        match &tree.segments[0].children[0] {
-            ConfigNode::Leaf(l) => {
-                assert!(l.modified_value.is_none(), "should auto-revert");
-                assert!(l.write_state.is_none(), "write_state cleared on auto-revert");
-                assert!(l.write_error.is_none());
-            }
-            _ => panic!("Expected leaf"),
-        }
-    }
-
-    #[test]
-    fn set_modified_value_returns_false_for_missing_leaf() {
-        let mut tree = tree_from_xml(
-            r#"<cdi>
-                <segment space="253" origin="0">
-                    <name>Config</name>
-                    <int size="1"><name>Speed</name></int>
-                </segment>
-            </cdi>"#,
-        );
-        // Wrong address — leaf is at 0, not 999
-        let result = set_modified_value(
-            &mut tree,
-            253,
-            999,
-            ConfigValue::Int { value: 1 },
-        );
-        assert!(!result, "should not find leaf at wrong address");
-    }
-
-    #[test]
-    fn set_modified_value_wrong_space_returns_false() {
-        let mut tree = tree_from_xml(
-            r#"<cdi>
-                <segment space="253" origin="0">
-                    <name>Config</name>
-                    <int size="1"><name>Speed</name></int>
-                </segment>
-            </cdi>"#,
-        );
-        // Right address but wrong space
-        let result = set_modified_value(
-            &mut tree,
-            251,
-            0,
-            ConfigValue::Int { value: 1 },
-        );
-        assert!(!result, "should not find leaf in wrong space");
-    }
-
-    #[test]
-    fn set_modified_value_finds_nested_leaf_in_group() {
-        let mut tree = tree_from_xml(
-            r#"<cdi>
-                <segment space="253" origin="0">
-                    <name>Config</name>
-                    <group>
-                        <name>Settings</name>
-                        <int size="2"><name>Volume</name></int>
-                    </group>
-                </segment>
-            </cdi>"#,
-        );
-        let result = set_modified_value(
-            &mut tree,
-            253,
-            0,
-            ConfigValue::Int { value: 100 },
-        );
-        assert!(result, "should find nested leaf");
-        // Navigate into the group
-        match &tree.segments[0].children[0] {
-            ConfigNode::Group(g) => match &g.children[0] {
-                ConfigNode::Leaf(l) => {
-                    assert_eq!(l.modified_value, Some(ConfigValue::Int { value: 100 }));
-                }
-                _ => panic!("Expected leaf inside group"),
-            },
-            _ => panic!("Expected group"),
-        }
-    }
-
-    #[test]
-    fn set_modified_value_targets_correct_leaf_among_siblings() {
-        let mut tree = tree_from_xml(
-            r#"<cdi>
-                <segment space="253" origin="0">
-                    <name>Config</name>
-                    <int size="1"><name>First</name></int>
-                    <int size="1"><name>Second</name></int>
-                    <int size="1"><name>Third</name></int>
-                </segment>
-            </cdi>"#,
-        );
-        // Modify the second leaf (address=1, since size of first is 1)
-        let result = set_modified_value(
-            &mut tree,
-            253,
-            1,
-            ConfigValue::Int { value: 77 },
-        );
-        assert!(result);
-        // First leaf should be untouched
-        match &tree.segments[0].children[0] {
-            ConfigNode::Leaf(l) => assert!(l.modified_value.is_none(), "first leaf unchanged"),
-            _ => panic!("Expected leaf"),
-        }
-        // Second leaf should be modified
-        match &tree.segments[0].children[1] {
-            ConfigNode::Leaf(l) => {
-                assert_eq!(l.modified_value, Some(ConfigValue::Int { value: 77 }));
-            }
-            _ => panic!("Expected leaf"),
-        }
-        // Third leaf should be untouched
-        match &tree.segments[0].children[2] {
-            ConfigNode::Leaf(l) => assert!(l.modified_value.is_none(), "third leaf unchanged"),
-            _ => panic!("Expected leaf"),
-        }
-    }
-
     // ── merge_snapshot_path_values tests ─────────────────────────────────
 
     #[test]
@@ -3689,130 +3247,6 @@ mod tests {
         // Mode should now have the snapshot value
         match &tree.segments[0].children[1] {
             ConfigNode::Leaf(l) => assert_eq!(l.value, Some(ConfigValue::Int { value: 3 })),
-            _ => panic!("Expected leaf"),
-        }
-    }
-
-    /// This is the regression test for Issue 1: a CDI-built tree without
-    /// snapshot values shows empty strings where the node actually has data.
-    /// After merging snapshot values, set_modified_value should still work
-    /// and the other leaves should retain their snapshot values.
-    #[test]
-    fn set_modified_on_snapshot_merged_tree_preserves_other_values() {
-        use crate::layout::node_snapshot::{SnapshotLeafValue, SnapshotValueNode};
-
-        // Build a bare CDI tree (no config values — simulates proxy fallback)
-        let mut tree = tree_from_xml(
-            r#"<cdi>
-                <segment space="253" origin="0">
-                    <name>Segment A</name>
-                    <string size="20"><name>Name</name></string>
-                    <int size="1"><name>Speed</name></int>
-                </segment>
-                <segment space="253" origin="100">
-                    <name>Segment B</name>
-                    <int size="2"><name>Volume</name></int>
-                    <string size="32"><name>Label</name></string>
-                </segment>
-            </cdi>"#,
-        );
-
-        // Merge layout snapshot values into the bare tree
-        let mut config = BTreeMap::new();
-        config.insert(
-            "seg:0".to_string(),
-            SnapshotValueNode::Branch({
-                let mut seg = BTreeMap::new();
-                seg.insert(
-                    "elem:0".to_string(),
-                    SnapshotValueNode::Leaf(SnapshotLeafValue {
-                        value: "My Node".to_string(),
-                        space: Some(253),
-                        offset: Some("0x00000000".to_string()),
-                    }),
-                );
-                seg.insert(
-                    "elem:1".to_string(),
-                    SnapshotValueNode::Leaf(SnapshotLeafValue {
-                        value: "8".to_string(),
-                        space: Some(253),
-                        offset: Some("0x00000014".to_string()),
-                    }),
-                );
-                seg
-            }),
-        );
-        config.insert(
-            "seg:1".to_string(),
-            SnapshotValueNode::Branch({
-                let mut seg = BTreeMap::new();
-                seg.insert(
-                    "elem:0".to_string(),
-                    SnapshotValueNode::Leaf(SnapshotLeafValue {
-                        value: "500".to_string(),
-                        space: Some(253),
-                        offset: Some("0x00000064".to_string()),
-                    }),
-                );
-                seg.insert(
-                    "elem:1".to_string(),
-                    SnapshotValueNode::Leaf(SnapshotLeafValue {
-                        value: "Main Speaker".to_string(),
-                        space: Some(253),
-                        offset: Some("0x00000066".to_string()),
-                    }),
-                );
-                seg
-            }),
-        );
-
-        merge_snapshot_path_values(&mut tree, &config);
-
-        // Modify a leaf in Segment A
-        let result = set_modified_value(
-            &mut tree,
-            253,
-            0,
-            ConfigValue::String { value: "New Name".to_string() },
-        );
-        assert!(result);
-
-        // Segment A: Name should have modified_value, Speed should keep snapshot value
-        match &tree.segments[0].children[0] {
-            ConfigNode::Leaf(l) => {
-                assert_eq!(
-                    l.modified_value,
-                    Some(ConfigValue::String { value: "New Name".to_string() })
-                );
-                // Original snapshot value still present
-                assert_eq!(l.value, Some(ConfigValue::String { value: "My Node".to_string() }));
-            }
-            _ => panic!("Expected leaf"),
-        }
-        match &tree.segments[0].children[1] {
-            ConfigNode::Leaf(l) => {
-                assert_eq!(l.value, Some(ConfigValue::Int { value: 8 }));
-                assert!(l.modified_value.is_none(), "Speed should be untouched");
-            }
-            _ => panic!("Expected leaf"),
-        }
-
-        // Segment B: both leaves should retain snapshot values
-        match &tree.segments[1].children[0] {
-            ConfigNode::Leaf(l) => {
-                assert_eq!(l.value, Some(ConfigValue::Int { value: 500 }));
-                assert!(l.modified_value.is_none(), "Volume should be untouched");
-            }
-            _ => panic!("Expected leaf"),
-        }
-        match &tree.segments[1].children[1] {
-            ConfigNode::Leaf(l) => {
-                assert_eq!(
-                    l.value,
-                    Some(ConfigValue::String { value: "Main Speaker".to_string() })
-                );
-                assert!(l.modified_value.is_none(), "Label should be untouched");
-            }
             _ => panic!("Expected leaf"),
         }
     }

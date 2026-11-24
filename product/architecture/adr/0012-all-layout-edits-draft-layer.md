@@ -230,6 +230,8 @@ The inverse of composition MUST be reversible from every state a facility can re
 
 ## 2026-07-03 extension: connected-mode draft-to-backend mirror
 
+> **Superseded 2026-11-23 (Spec 020 E3b-1).** The mirror, `flushDraftToBackend` and the `modified_value` layer are removed; every Save records drafts as Pending Changes and writes them through one writer. See ADR-0001, 2026-11-23 extension.
+
 Every user- or workflow-initiated config-value edit lands in
 `configChangesStore` through the same single entry point (`ConfigEditor.applyEdit`).
 `ConfigEditor.applyEdit` stays synchronous and IPC-free; a reactive

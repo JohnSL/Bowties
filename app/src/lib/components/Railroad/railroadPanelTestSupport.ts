@@ -201,7 +201,6 @@ export function signalIpc(
       },
     sync_layout_drafts: () => undefined,
     clear_layout_drafts: () => undefined,
-    discard_modified_values: () => 0,
   };
 }
 
@@ -234,7 +233,6 @@ export function seedSignalNodeTree() {
         eventRole: 'Consumer',
         constraints: null,
         readOnly: false,
-        modifiedValue: null,
       })),
     }],
   } as unknown as Parameters<typeof nodeTreeStore.setTree>[1]);

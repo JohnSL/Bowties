@@ -17,7 +17,6 @@
   import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
   import { nodeRoster } from '$lib/stores/nodeRoster.svelte';
   import { configEditor } from '$lib/stores/configEditor.svelte';
-  import { flushDraftToBackend } from '$lib/orchestration/configDraftOrchestrator';
   import { editKeyForLeaf } from '$lib/utils/editKey';
   import BowtieCard from '$lib/components/Bowtie/BowtieCard.svelte';
   import EmptyState from '$lib/components/Bowtie/EmptyState.svelte';
@@ -217,10 +216,6 @@
     const key = editKeyForLeaf(element.nodeId, element.space, element.address);
     configEditor.applyEdit(key, newValue);
 
-    // Online: mirror to backend
-    if (!layoutStore.isOfflineMode) {
-      flushDraftToBackend(key);
-    }
   }
 
   // ── T030: Add element ──────────────────────────────────────────────────
@@ -312,9 +307,6 @@
     const key = editKeyForLeaf(entry.node_key, leaf.space, leaf.address);
     configEditor.applyEdit(key, newValue);
 
-    if (!layoutStore.isOfflineMode) {
-      flushDraftToBackend(key);
-    }
   }
 
   // ── T032: Delete confirmation ──────────────────────────────────────────

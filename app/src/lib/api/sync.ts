@@ -85,10 +85,6 @@ export async function listPendingChanges(): Promise<PendingChangeRow[]> {
   return invoke<PendingChangeRow[]>('list_pending_changes');
 }
 
-export async function replacePendingChanges(changes: PendingChangeInput[]): Promise<number> {
-  return invoke<number>('replace_pending_changes', { changes });
-}
-
 export async function computeLayoutMatchStatus(discoveredNodeIds: string[]): Promise<LayoutMatchStatus> {
   return invoke<LayoutMatchStatus>('compute_layout_match_status', { discoveredNodeIds });
 }

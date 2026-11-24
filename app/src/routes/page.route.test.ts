@@ -678,6 +678,30 @@ describe('window close unsaved-changes guard', () => {
     });
   });
 
+  it('does not prompt when only saved Pending Changes are waiting for the board', async () => {
+    pendingChangesStore.setRows([
+      {
+        changeId: 'row-1',
+        kind: 'config',
+        nodeId: '05.02.01.02.03.00',
+        space: 253,
+        offset: '0x00000010',
+        baselineValue: '1',
+        plannedValue: '5',
+        status: 'conflict',
+        error: 'The board kept 3',
+      },
+    ]);
+    render(Page);
+    await waitFor(() => expect(closeRequestedHandler.current).toBeTypeOf('function'));
+
+    const event = { preventDefault: vi.fn() };
+    await closeRequestedHandler.current!(event);
+
+    expect(screen.queryByText('Unsaved Changes')).not.toBeInTheDocument();
+    await waitFor(() => expect(appWindowMock.close).toHaveBeenCalled());
+  });
+
   it('disconnects gracefully and closes when no unsaved changes', async () => {
     render(Page);
     await waitFor(() => expect(closeRequestedHandler.current).toBeTypeOf('function'));

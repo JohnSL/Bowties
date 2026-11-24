@@ -1,3 +1,4 @@
+import { isWaitingPendingChange } from '$lib/utils/pendingChangeStatus';
 import type { DiscoveredNode } from '$lib/api/tauri';
 import type { PendingChangeRow } from '$lib/api/sync';
 import { pipConfirmsConfigReadable, pipConfirmsNoCdi } from '$lib/orchestration/configReadOrchestrator';
@@ -168,7 +169,7 @@ function offsetFromAddress(address: number): string {
 function hasPendingApplyForNode(nodeId: string, persistedRows: PendingChangeRow[]): boolean {
   const canonical = canonicalNodeId(nodeId);
   return persistedRows.some(
-    (row) => row.kind === 'config' && row.status === 'pending' && canonicalNodeId(row.nodeId ?? '') === canonical,
+    (row) => row.kind === 'config' && isWaitingPendingChange(row) && canonicalNodeId(row.nodeId ?? '') === canonical,
   );
 }
 
@@ -181,7 +182,7 @@ function hasPendingApplyInChildren(
     if (isLeaf(child)) {
       const hasMatch = persistedRows.some((row) => (
         row.kind === 'config'
-        && row.status === 'pending'
+        && isWaitingPendingChange(row)
         && canonicalNodeId(row.nodeId ?? '') === canonicalNodeId(nodeId)
         && row.space === child.space
         && row.offset === offsetFromAddress(child.address)

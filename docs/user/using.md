@@ -10,7 +10,7 @@ When Bowties starts, it opens to the layout picker. Choose one of these options 
 - Click **New Layout** to create a new layout folder.
 - Click **Browse...** to open an existing layout folder from disk.
 
-Once a layout is open, Bowties restores the saved node snapshots, pending offline changes, and any layout-specific connections.
+Once a layout is open, Bowties restores the saved node snapshots, pending changes, and any layout-specific connections.
 
 > **Tip:** A layout is a self-contained folder. You can share it with others, back it up, or move it to another computer by copying the entire folder and its contents.
 
@@ -76,14 +76,11 @@ Once complete, you can click into any node to view or edit its configuration, or
 
 After reading node configuration, **Save** and **Discard** buttons appear in the toolbar.
 
-**While connected to the bus:**
-- Edit configuration fields in the cards and click **Apply** to write directly to the node hardware.
-- When all pending edits are applied, click **Save** in the toolbar to persist node snapshots and bowtie metadata to the layout.
-
-**While disconnected (offline mode):**
-- Edit configuration fields and click **Apply**. These edits are staged locally as pending changes.
-- Click **Save** to write your pending changes to the layout.
-- Click **Discard** to abandon all pending edits and restore the last saved layout state.
+- Edit configuration fields in the cards. The toolbar shows how many configuration changes are unsaved.
+- Click **Save** to save your changes in the layout. Each configuration change is recorded in the layout as a **pending change** first.
+- **While connected to the bus**, Save then writes those changes to the boards. A change the board accepted is no longer pending. A write that failed stays pending and the field shows the reason. Save tells you how many changes are still waiting.
+- **While disconnected**, the changes stay pending in the layout until you reconnect (see below).
+- Click **Discard** to abandon unsaved edits and restore the last saved layout state.
 
 Your layout always reflects the state you last saved, so you can safely close and reopen Bowties without losing work.
 
@@ -230,17 +227,17 @@ The **Physical signals** and **Review** pages are not available yet. Feedback on
 
 ---
 
-## Reconnecting with pending offline changes
+## Reconnecting with pending changes
 
-If you saved a layout with pending offline changes and later reconnect with that layout, Bowties opens the **Sync Offline Changes** flow so you can review and apply them safely.
+If you saved a layout with pending changes and later reconnect with that layout, Bowties opens the **Sync Pending Changes** flow so you can review and apply them safely.
 
 ---
 
-## Syncing offline changes back to the bus
+## Syncing pending changes back to the bus
 
-When a saved layout with pending offline changes is open and you reconnect to the bus, Bowties compares the planned values in the layout with the current live values.
+When a saved layout with pending changes is open and you reconnect to the bus, Bowties compares the planned values in the layout with the current live values.
 
-- **Conflicts** require you to choose whether to apply the offline value or skip it.
+- **Conflicts** require you to choose whether to apply your value or skip it.
 - **Clean changes** are ready to apply and are selected by default.
 - **Already applied** changes are cleared automatically and reported as a count.
 - **Missing nodes** stay pending in the layout until those nodes are present again.

@@ -44,7 +44,6 @@ import { syncPanelStore } from '$lib/stores/syncPanel.svelte';
 import { cdiCacheStore } from '$lib/stores/cdiCache.svelte';
 import { connectorSlotFocusStore } from '$lib/stores/connectorSlotFocus.svelte';
 import { facilityCascadeOrchestrator } from '$lib/orchestration/facilityCascadeOrchestrator.svelte';
-import { configDraftMirrorOrchestrator } from '$lib/orchestration/configDraftMirrorOrchestrator.svelte';
 import { blockSignalsEditorOrchestrator } from '$lib/orchestration/blockSignalsEditorOrchestrator';
 
 import type { CloseLayoutResult } from '$lib/api/layout';
@@ -78,7 +77,6 @@ export const layoutScopedParticipants: LayoutScopedParticipant[] = [
   channelsStore,
   facilitiesStore,
   facilityCascadeOrchestrator,
-  configDraftMirrorOrchestrator,
   configSidebarStore,
   nodeTreeStore,
   bowtieCatalogStore,

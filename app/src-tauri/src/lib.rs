@@ -396,7 +396,6 @@ pub fn run() {
             commands::set_pending_change,  // Spec 010: pending change scaffolding
             commands::revert_pending_change,  // Spec 010: pending change scaffolding
             commands::list_pending_changes,  // Spec 010: pending change scaffolding
-            commands::replace_pending_changes,  // Spec 010: bulk replace pending changes cache
             commands::get_connector_profile,
             commands::preview_connector_compatibility,
             commands::list_bundled_profiles_command,    // Spec 014 / S8: placeholder picker
@@ -410,10 +409,6 @@ pub fn run() {
             commands::get_node_tree,  // Spec 007: unified node tree
             commands::write_config_value,  // Spec 007: write config value
             commands::send_update_complete,  // Spec 007: send update complete
-            commands::set_modified_value,  // Modified value: set pending edit on tree
-            commands::discard_modified_values,  // Modified value: discard pending edits
-            commands::write_modified_values,  // Modified value: write all pending edits
-            commands::has_modified_values,  // Modified value: check for pending edits
             commands::trigger_action,         // Action element: fire-once write
             commands::list_serial_ports,
             commands::get_layout_connections,   // Spec 013 / S4: per-layout connection registry

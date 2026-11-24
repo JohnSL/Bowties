@@ -509,12 +509,18 @@ tracked in `specs/backlog.md`.
 
 **Decision.**
 - `AppState.offline_changes_cache` is removed. `LayoutState.pending_changes` is the only in-memory store of the rows. IPCs write through `LayoutState::upsert_pending_change` (same target resets the row to pending and keeps its id), `remove_pending_changes` (by id) and `set_pending_changes`; Sync session builds and Sync applies remove rows there directly. `sync_layout_drafts` no longer copies rows in.
-- The concept is named Pending Change in code (`PendingChange`, `PendingChangeKind`, `PendingChangeStatus`, `bowties-core/src/layout/pending_changes.rs`, `pendingChangesStore`, IPCs `set_pending_change` / `revert_pending_change` / `list_pending_changes` / `replace_pending_changes`). The file keeps its legacy name `offline-changes.yaml`; the row format and schema version are unchanged.
+- The concept is named Pending Change in code (`PendingChange`, `PendingChangeKind`, `PendingChangeStatus`, `bowties-core/src/layout/pending_changes.rs`, `pendingChangesStore`, IPCs `set_pending_change` / `revert_pending_change` / `list_pending_changes` / `replace_pending_changes`, the last removed in E3b-1). The file keeps its legacy name `offline-changes.yaml`; the row format and schema version are unchanged.
 - The Sync Panel's classify and apply loop lives in `bowties-core/src/sync/writer.rs` behind `MemoryPort`; `commands/sync_panel.rs` is its adapter and keeps persistence and Update Complete. Spec 020 E3b-1 makes this the only writer for Save as well.
 
 **Invariants added.**
 - No row store of Pending Changes exists outside `LayoutState`. While no layout is open, IPCs that record a row fail with "No layout is open".
 - Removing a row (applied, already applied, read-only) removes it from `LayoutState` in the same command that decides it.
 
-**Still open.** The `modified_value` layer and the connected Save writer (`write_modified_values`) remain until E3b-1 retires them; the bowtie catalog's own overlay remains (backlog).
+**Still open.** The bowtie catalog's own overlay remains (backlog).
 
+## 2026-11-23 extension: no modified-value layer (Spec 020 E3b-1)
+
+- The node tree has no `modified_value`, `write_state` or `write_error`; the commands `set_modified_value`, `discard_modified_values`, `write_modified_values` and `has_modified_values` are removed. `effective_config_tree` overlays still-waiting Pending Change rows and then drafts on a clone of the stored tree; the stored tree changes only when the board confirms a value.
+- The pending-change IPCs require only an open layout (no offline-mode gate): every Save records rows.
+- "Still waiting" is one predicate, `PendingChangeStatus::is_waiting` (not applied, already applied or clean), mirrored in TypeScript.
+- Which nodes had their configuration read from the bus during the current connection is held by `ConnectionSession` (dies with the connection; cleared on layout open and close).

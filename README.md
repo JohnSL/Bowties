@@ -18,7 +18,7 @@ Bowties transforms complex LCC (Layout Command Control) event configuration into
 - **Displays** full node configuration using a sidebar and card-based CDI browser — read and write any setting
 - **Maps** event producer/consumer relationships across all nodes in the Bowties view
 - **Captures** the current layout so you can reopen it offline, browse saved node data, and plan changes away from the bus
-- **Syncs** pending offline changes back to the bus with conflict review when you reconnect
+- **Syncs** pending changes (edits saved in the layout that a board has not yet confirmed) back to the bus with conflict review when you reconnect
 - **Links** events between nodes: click **+ New Connection**, pick a producer and a consumer, and Bowties writes the matching event ID to the node
 
 ## Supported hardware

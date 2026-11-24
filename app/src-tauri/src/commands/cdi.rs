@@ -122,6 +122,15 @@ pub fn load_bundled_cdi(
     lcc_rs::cdi::parser::parse_cdi(&xml).map_err(|e| format!("InvalidXml: {e}"))
 }
 
+/// Tell the frontend a node's `LayoutState` config tree changed so its
+/// `nodeTreeStore` reloads it (`node-tree-updated`, payload `{nodeId, leafCount}`).
+pub(crate) fn emit_node_tree_updated(app: &tauri::AppHandle, node_id: &str, leaf_count: usize) {
+    let _ = app.emit("node-tree-updated", serde_json::json!({
+        "nodeId": node_id,
+        "leafCount": leaf_count,
+    }));
+}
+
 /// Resolve the search directories for bundled `.cdi.xml` files.
 ///
 /// Mirrors `profile/loader.rs::profile_search_dirs` because bundled profiles
@@ -2079,9 +2088,10 @@ struct ReadPlan {
 /// Build an optimised read plan from a list of CDI elements.
 ///
 /// Large elements (> 64 bytes) are split into 64-byte chunks.  All items are
-/// sorted by `(space, address)` and then packed into batches: elements that share
-/// an address space and whose combined span fits within 64 bytes are merged into
-/// a single batch read (gap bytes are read and discarded).
+/// sorted by `(space, address)` and then packed into batches by the shared range
+/// planner (`bowties_core::sync::read_plan`): items in one address space with a
+/// gap of 8 bytes or less, whose combined span fits within 64 bytes, share a
+/// batch read (gap bytes are read and discarded).
 fn build_read_plan(all_elements: &[ElementWithAddress<'_>]) -> ReadPlan {
     let mut multi_chunk_indices = std::collections::BTreeSet::new();
     let mut items: Vec<ReadItem> = Vec::new();
@@ -2122,40 +2132,21 @@ fn build_read_plan(all_elements: &[ElementWithAddress<'_>]) -> ReadPlan {
 
     items.sort_by_key(|item| (item.space, item.absolute_address));
 
-    let mut batches: Vec<Vec<usize>> = Vec::new();
-    {
-        let mut current_batch: Vec<usize> = Vec::new();
-        let mut batch_start_addr: u32 = 0;
-        let mut batch_end_addr: u32 = 0;
-        let mut batch_space: u8 = 0;
-
-        for (i, item) in items.iter().enumerate() {
-            // An item fits in the current batch when it shares the same address space
-            // and the span from batch start to this item's end fits in 64 bytes.
-            let fits = !current_batch.is_empty()
-                && item.space == batch_space
-                && (item.absolute_address + item.size - batch_start_addr) <= 64;
-
-            if fits {
-                let item_end = item.absolute_address + item.size;
-                if item_end > batch_end_addr {
-                    batch_end_addr = item_end;
-                }
-                current_batch.push(i);
-            } else {
-                if !current_batch.is_empty() {
-                    batches.push(std::mem::take(&mut current_batch));
-                }
-                batch_start_addr = item.absolute_address;
-                batch_end_addr = item.absolute_address + item.size;
-                batch_space = item.space;
-                current_batch.push(i);
-            }
-        }
-        if !current_batch.is_empty() {
-            batches.push(current_batch);
-        }
-    }
+    // Items are already <= 64 bytes, so the shared planner only merges them.
+    let planner_items: Vec<bowties_core::sync::read_plan::ReadItem<usize>> = items
+        .iter()
+        .enumerate()
+        .map(|(i, item)| bowties_core::sync::read_plan::ReadItem {
+            space: item.space,
+            address: item.absolute_address,
+            length: item.size,
+            key: i,
+        })
+        .collect();
+    let batches: Vec<Vec<usize>> = bowties_core::sync::read_plan::plan_reads(&planner_items)
+        .into_iter()
+        .map(|read| read.items.into_iter().map(|slice| slice.key).collect())
+        .collect();
 
     ReadPlan { items, batches, multi_chunk_indices, invalid_element_count }
 }
@@ -2661,10 +2652,7 @@ pub async fn read_all_config_values(
                     node_id, raw_data_by_space_address.len(), leaf_count);
 
                 // Emit node-tree-updated event so the frontend can refresh.
-                let _ = app_handle.emit("node-tree-updated", serde_json::json!({
-                    "nodeId": node_id,
-                    "leafCount": leaf_count,
-                }));
+                emit_node_tree_updated(&app_handle, &node_id, leaf_count);
             }
         }
     }
@@ -2798,10 +2786,7 @@ pub async fn read_all_config_values(
                         })
                     }).unwrap_or(0)
                 };
-                let _ = app_handle.emit("node-tree-updated", serde_json::json!({
-                    "nodeId": nid,
-                    "leafCount": leaf_count,
-                }));
+                emit_node_tree_updated(&app_handle, nid, leaf_count);
             }
         }
 
@@ -3410,440 +3395,8 @@ pub async fn send_update_complete(
         .map_err(|e| format!("Failed to send update complete: {}", e))
 }
 
-// ── Modified value commands ───────────────────────────────────────────────────
-
-/// Set a modified (pending) value on a leaf in the in-memory tree.
-///
-/// The modification is stored alongside the committed value so both are
-/// available for display and catalog building.  If the new value matches
-/// the committed value the modification is automatically cleared (revert).
-///
-/// The tree lives in `LayoutState` (ADR-0015). Mutations happen under
-/// the `layout_state` write lock, which serializes concurrent callers
-/// and eliminates the TOCTOU race that existed when the tree was cloned
-/// from the NodeProxy actor mailbox.
-///
-/// Emits `node-tree-updated` so the frontend reactively picks up the change.
-#[tauri::command]
-pub async fn set_modified_value(
-    state: tauri::State<'_, AppState>,
-    app_handle: tauri::AppHandle,
-    node_id: String,
-    address: u32,
-    space: u8,
-    value: crate::node_tree::ConfigValue,
-) -> Result<bool, String> {
-    let parsed_node_id = lcc_rs::NodeID::from_hex_string(&node_id)
-        .map_err(|e| format!("InvalidNodeId: {}", e))?;
-    let node_key = crate::node_key::NodeKey::from_node_id(parsed_node_id);
-
-    // Check if we need to build a tree first (read lock only).
-    let needs_tree = {
-        let layout_guard = state.layout_state.read().await;
-        let ls = layout_guard
-            .as_ref()
-            .ok_or_else(|| "No layout open".to_string())?;
-        ls.config_tree(&node_key).is_none()
-    };
-
-    // Build the tree outside any layout_state lock to avoid deadlock:
-    // get_cdi_from_cache → get_cdi_xml acquires layout_state.read().
-    if needs_tree {
-        let cdi = get_cdi_from_cache(&node_id, &app_handle, &state).await
-            .map_err(|e| format!(
-                "No tree loaded and CDI not available for node {}: {}",
-                node_id, e
-            ))?;
-        let mut t = crate::node_tree::build_node_config_tree(&node_id, &cdi);
-        if let Some(identity) = &cdi.identification {
-            let manufacturer = identity.manufacturer.as_deref().unwrap_or("");
-            let model = identity.model.as_deref().unwrap_or("");
-            if !manufacturer.is_empty() || !model.is_empty() {
-                if let Some(profile) = crate::profile::load_profile(
-                    manufacturer, model, &cdi, &app_handle, &state.profiles,
-                ).await {
-                    let selections = active_node_mode_selections(&state, &node_id).await;
-                    let report = crate::profile::annotate_tree(&mut t, &profile, &selections, &cdi);
-                    t.unknown_variants = report.unknown_variants.clone();
-                }
-            }
-        }
-        // Populate config values from the layout snapshot so that other
-        // segments don't show empty values after the frontend refreshes
-        // from node-tree-updated.
-        if let Some(context) = state.active_layout.read().await.as_ref() {
-            let base_file = std::path::Path::new(&context.root_path);
-            let canonical = node_id.replace('.', "").to_uppercase();
-            if let Ok(snapshot) =
-                crate::layout::read_node_snapshot(base_file, &canonical)
-            {
-                crate::node_tree::merge_snapshot_path_values(
-                    &mut t,
-                    &snapshot.config,
-                );
-            }
-        }
-        // Now acquire write lock to store the tree
-        let mut layout_guard = state.layout_state.write().await;
-        if let Some(ls) = layout_guard.as_mut() {
-            // Re-check: another concurrent call may have stored a tree
-            if ls.config_tree(&node_key).is_none() {
-                ls.set_config_tree(node_key, t);
-            }
-        }
-    }
-
-    // Acquire write lock for the mutation (the tree is guaranteed to exist)
-    let mut layout_guard = state.layout_state.write().await;
-    let ls = layout_guard
-        .as_mut()
-        .ok_or_else(|| "No layout open".to_string())?;
-
-    let tree = ls.config_tree_mut(&node_key)
-        .ok_or_else(|| format!("Tree not available for node {}", node_id))?;
-
-    let found = crate::node_tree::set_modified_value(tree, space, address, value);
-    if !found {
-        return Err(format!(
-            "Leaf not found at space={}, address={} in node {}",
-            space, address, node_id
-        ));
-    }
-
-    // Drop the write lock before emitting events
-    drop(layout_guard);
-
-    let _ = app_handle.emit(
-        "node-tree-updated",
-        serde_json::json!({ "nodeId": node_id }),
-    );
-
-    Ok(found)
-}
-
-/// Discard all modified values across all loaded trees (or for a specific node).
-///
-/// Emits `node-tree-updated` for each affected node.
-#[tauri::command]
-pub async fn discard_modified_values(
-    state: tauri::State<'_, AppState>,
-    app_handle: tauri::AppHandle,
-    node_id: Option<String>,
-) -> Result<u32, String> {
-    let mut count = 0u32;
-    let mut affected_node_ids: Vec<String> = Vec::new();
-
-    {
-        let mut layout_guard = state.layout_state.write().await;
-        let ls = match layout_guard.as_mut() {
-            Some(ls) => ls,
-            None => return Ok(0),
-        };
-
-        if let Some(nid) = &node_id {
-            // Discard for a specific node
-            let parsed = lcc_rs::NodeID::from_hex_string(nid)
-                .map_err(|e| format!("InvalidNodeId: {}", e))?;
-            let key = crate::node_key::NodeKey::from_node_id(parsed);
-            if let Some(tree) = ls.config_tree_mut(&key) {
-                if crate::node_tree::has_modified_values(tree) {
-                    crate::node_tree::discard_all_modified(tree);
-                    count += 1;
-                    affected_node_ids.push(nid.clone());
-                }
-            }
-        } else {
-            // Discard across all nodes
-            for key in ls.all_tree_keys() {
-                if let Some(tree) = ls.config_tree_mut(&key) {
-                    if crate::node_tree::has_modified_values(tree) {
-                        crate::node_tree::discard_all_modified(tree);
-                        count += 1;
-                        affected_node_ids.push(key.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    // Emit events after releasing the write lock
-    for nid in &affected_node_ids {
-        let _ = app_handle.emit(
-            "node-tree-updated",
-            serde_json::json!({ "nodeId": nid }),
-        );
-    }
-
-    Ok(count)
-}
-
-/// Write all pending modifications to their respective nodes.
-///
-/// Iterates every tree, collects leaves with `write_state == Dirty | Error`,
-/// writes each to the network, updates states, and emits events.
-/// Returns the number of successful + failed writes.
-#[tauri::command]
-pub async fn write_modified_values(
-    state: tauri::State<'_, AppState>,
-    app_handle: tauri::AppHandle,
-) -> Result<WriteModifiedResult, String> {
-    // Collect all modifications across all nodes from LayoutState
-    let mut work: Vec<(String, crate::node_tree::ModifiedLeafInfo)> = Vec::new();
-    {
-        let layout_guard = state.layout_state.read().await;
-        if let Some(ls) = layout_guard.as_ref() {
-            for key in ls.all_tree_keys() {
-                if let Some(tree) = ls.config_tree(&key) {
-                    for leaf in crate::node_tree::collect_modified_leaves(tree) {
-                        work.push((key.to_string(), leaf));
-                    }
-                }
-            }
-        }
-    }
-
-    if work.is_empty() {
-        return Ok(WriteModifiedResult {
-            total: 0,
-            succeeded: 0,
-            failed: 0,
-            read_only_rejected: 0,
-        });
-    }
-
-    // Retained for the post-write Update Complete pass (send_update_complete
-    // is not a memory read/write primitive and stays on the bare connection).
-    let connection = state.connection_arc().await
-        .ok_or("Not connected to network")?;
-
-    let mut succeeded = 0u32;
-    let mut failed = 0u32;
-    let mut read_only_rejected = 0u32;
-    let mut success_node_ids = std::collections::HashSet::new();
-    // Track successfully written leaves for layout snapshot updates
-    let mut written_leaves: Vec<(String, u8, u32, String)> = Vec::new(); // (nodeId, space, address, value_string)
-
-    // Spec 013 / S3: emit per-field bus-write progress so the SaveProgressDialog
-    // can show "Writing N of M: <field>…". Total is known up front.
-    let total_writes = work.len();
-
-    for (idx, (node_id, leaf_info)) in work.iter().enumerate() {
-        // Emit progress for this iteration (current is 1-based count of items in flight).
-        let _ = app_handle.emit("save-progress", serde_json::json!({
-            "phase": "writing-config",
-            "current": idx + 1,
-            "total": total_writes,
-            "label": leaf_info.name,
-        }));
-
-        let parsed_nid = lcc_rs::NodeID::from_hex_string(node_id)
-            .map_err(|e| format!("Invalid node ID: {}", e))?;
-        let node_key = crate::node_key::NodeKey::from_node_id(parsed_nid);
-        let session_handle = state.peer_session(parsed_nid).await?;
-
-        // Mark as writing in LayoutState
-        {
-            let mut layout_guard = state.layout_state.write().await;
-            if let Some(ls) = layout_guard.as_mut() {
-                if let Some(tree) = ls.config_tree_mut(&node_key) {
-                    crate::node_tree::set_leaf_write_state(
-                        tree,
-                        leaf_info.space,
-                        leaf_info.address,
-                        crate::node_tree::WriteState::Writing,
-                        None,
-                    );
-                }
-            }
-        }
-
-        // Serialize and write
-        let bytes = bowties_core::sync::field_meta::serialize_config_value(&leaf_info.value, leaf_info.element_type, leaf_info.size);
-        let result = session_handle
-            .write_memory(leaf_info.space, leaf_info.address, bytes, lcc_rs::constants::WRITE_MEMORY_TIMEOUT_MS)
-            .await;
-
-        {
-            let mut layout_guard = state.layout_state.write().await;
-            if let Some(ls) = layout_guard.as_mut() {
-                if let Some(tree) = ls.config_tree_mut(&node_key) {
-                    match result {
-                        Ok(()) => {
-                            // Commit: promote modified_value → value
-                            crate::node_tree::commit_leaf_value(tree, leaf_info.space, leaf_info.address);
-                            succeeded += 1;
-                            success_node_ids.insert(node_id.clone());
-                            written_leaves.push((
-                                node_id.clone(),
-                                leaf_info.space,
-                                leaf_info.address,
-                                leaf_info.value.to_snapshot_string(),
-                            ));
-                        }
-                        Err(e) => {
-                            let err_str = e.to_string();
-                            if err_str.contains("1083") {
-                                crate::node_tree::revert_and_mark_leaf_read_only(
-                                    tree,
-                                    leaf_info.space,
-                                    leaf_info.address,
-                                );
-                                read_only_rejected += 1;
-                                eprintln!(
-                                    "[write] {} @{:#010x}: read-only rejection (0x1083), reverting '{}'",
-                                    node_id, leaf_info.address, leaf_info.name
-                                );
-                            } else {
-                                crate::node_tree::set_leaf_write_state(
-                                    tree,
-                                    leaf_info.space,
-                                    leaf_info.address,
-                                    crate::node_tree::WriteState::Error,
-                                    Some(err_str),
-                                );
-                                failed += 1;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Send Update Complete to each node that had successful writes
-    for nid in &success_node_ids {
-        let parsed_nid = match lcc_rs::NodeID::from_hex_string(nid) {
-            Ok(id) => id,
-            Err(_) => continue,
-        };
-        if let Some(proxy) = state.node_registry.get(&parsed_nid).await {
-            let alias = proxy.alias();
-            let mut conn = connection.lock().await;
-            let _ = conn.send_update_complete(alias).await;
-        }
-    }
-
-    // Emit tree updates for all affected nodes
-    let affected_nodes: std::collections::HashSet<&String> = work.iter().map(|(nid, _)| nid).collect();
-    for nid in affected_nodes {
-        let _ = app_handle.emit(
-            "node-tree-updated",
-            serde_json::json!({ "nodeId": nid }),
-        );
-    }
-
-    // Update node snapshot YAML files in the layout directory so the saved
-    // layout reflects the values just written to hardware.
-    if !written_leaves.is_empty() {
-        if let Some(context) = state.active_layout.read().await.as_ref() {
-            let base_file = std::path::Path::new(&context.root_path);
-            let mut snapshot_cache: std::collections::HashMap<
-                String,
-                crate::layout::node_snapshot::NodeSnapshot,
-            > = std::collections::HashMap::new();
-
-            for (node_id, space, address, value_str) in &written_leaves {
-                let canonical = node_id.replace('.', "").to_uppercase();
-                let snapshot = snapshot_cache.entry(canonical.clone()).or_insert_with(|| {
-                    crate::layout::read_node_snapshot(base_file, &canonical).unwrap_or_else(|_| {
-                        // Node not in layout — use a dummy that won't be saved
-                        // (sentinel: empty node_key).
-                        crate::layout::node_snapshot::NodeSnapshot {
-                            node_key: String::new(),
-                            node_id: None,
-                            profile_stem: None,
-                            lifecycle: crate::layout::node_snapshot::NodeSnapshotLifecycle::Persisted,
-                            captured_at: String::new(),
-                            capture_status: crate::layout::node_snapshot::CaptureStatus::Complete,
-                            missing: Vec::new(),
-                            snip: crate::layout::node_snapshot::SnipSnapshot::default(),
-                            cdi_ref: crate::layout::node_snapshot::CdiReference {
-                                cache_key: String::new(),
-                                version: String::new(),
-                                fingerprint: String::new(),
-                            },
-                            config: std::collections::BTreeMap::new(),
-                            producer_identified_events: Vec::new(),
-                        }
-                    })
-                });
-
-                let offset_hex = format!("0x{:08X}", address);
-                crate::layout::node_snapshot::update_snapshot_baseline(
-                    &mut snapshot.config,
-                    *space,
-                    &offset_hex,
-                    value_str,
-                );
-            }
-
-            let to_write: Vec<crate::layout::node_snapshot::NodeSnapshot> = snapshot_cache
-                .into_values()
-                .filter(|s| !s.node_key.is_empty())
-                .collect();
-            if !to_write.is_empty() {
-                if let Err(e) = crate::layout::update_node_snapshots(base_file, &to_write) {
-                    eprintln!("[write] Failed to update snapshots: {}", e);
-                }
-            }
-        }
-
-        // Also update LayoutState.saved[].snapshot.config so Phase 3
-        // reconcile re-save doesn't overwrite the disk with stale baselines.
-        {
-            let mut layout_guard = state.layout_state.write().await;
-            if let Some(ls) = layout_guard.as_mut() {
-                for (node_id, space, address, value_str) in &written_leaves {
-                    let canonical = node_id.replace('.', "").to_uppercase();
-                    if let Ok(key) = crate::node_key::NodeKey::parse(&canonical) {
-                        let offset_hex = format!("0x{:08X}", address);
-                        ls.update_snapshot_config(&key, *space, &offset_hex, value_str);
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(WriteModifiedResult {
-        total: work.len() as u32,
-        succeeded,
-        failed,
-        read_only_rejected,
-    })
-}
-
-/// Result of a `write_modified_values` operation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WriteModifiedResult {
-    pub total: u32,
-    pub succeeded: u32,
-    pub failed: u32,
-    /// Number of writes silently reverted because the device returned 0x1083
-    /// (address is read-only).  Not counted in `failed`.
-    pub read_only_rejected: u32,
-}
-
-/// Check whether any loaded tree has pending modifications.
-#[tauri::command]
-pub async fn has_modified_values(
-    state: tauri::State<'_, AppState>,
-) -> Result<bool, String> {
-    let layout_guard = state.layout_state.read().await;
-    if let Some(ls) = layout_guard.as_ref() {
-        for key in ls.all_tree_keys() {
-            if let Some(tree) = ls.config_tree(&key) {
-                if crate::node_tree::has_modified_values(tree) {
-                    return Ok(true);
-                }
-            }
-        }
-    }
-    Ok(false)
-}
-
 /// Write an action element's trigger value to a node's memory space.
-/// This is a fire-once write that bypasses the modified-value pipeline.
+/// This is a fire-once write that does not go through Pending Changes.
 #[tauri::command]
 pub async fn trigger_action(
     state: tauri::State<'_, AppState>,
@@ -4905,9 +4458,6 @@ mod node_key_lookup_tests {
                     action_value: 0,
                     hint_slider: None,
                     hint_radio: false,
-                    modified_value: None,
-                    write_state: None,
-                    write_error: None,
                     read_only: false,
                 })],
             }],

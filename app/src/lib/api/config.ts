@@ -5,7 +5,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import type { WriteResult, TreeConfigValue } from '$lib/types/nodeTree';
+import type { WriteResult } from '$lib/types/nodeTree';
 import { toCanonicalNodeKey, type NodeKeyInput } from '$lib/utils/nodeKey';
 
 /**
@@ -48,68 +48,10 @@ export async function sendUpdateComplete(nodeId: NodeKeyInput): Promise<void> {
   return await invoke<void>('send_update_complete', { nodeId: toCanonicalNodeKey(nodeId) });
 }
 
-// ── Modified value commands ──────────────────────────────────────────────────
-
-/**
- * Set a modified (pending) value on a leaf in the Rust-side tree.
- *
- * If the new value matches the committed value, the modification is
- * automatically cleared (revert). Emits `node-tree-updated`.
- */
-export async function setModifiedValue(
-  nodeId: NodeKeyInput,
-  address: number,
-  space: number,
-  value: TreeConfigValue,
-): Promise<boolean> {
-  return await invoke<boolean>('set_modified_value', {
-    nodeId: toCanonicalNodeKey(nodeId),
-    address,
-    space,
-    value,
-  });
-}
-
-/** Result of writing all modified values. */
-export interface WriteModifiedResult {
-  total: number;
-  succeeded: number;
-  failed: number;
-  /** Fields silently reverted because the device returned 0x1083 (read-only). */
-  readOnlyRejected: number;
-}
-
-/**
- * Write all pending modifications across all loaded trees to their nodes.
- *
- * Handles marking write state, sending Update Complete, and committing
- * values on success. Emits `node-tree-updated` for affected nodes.
- */
-export async function writeModifiedValues(): Promise<WriteModifiedResult> {
-  return await invoke<WriteModifiedResult>('write_modified_values');
-}
-
-/**
- * Discard all pending modifications, reverting to committed values.
- *
- * @param nodeId If provided, discard only for that node. Otherwise all nodes.
- * @returns Number of nodes affected.
- */
-export async function discardModifiedValues(nodeId?: NodeKeyInput): Promise<number> {
-  return await invoke<number>('discard_modified_values', { nodeId: nodeId == null ? null : toCanonicalNodeKey(nodeId) });
-}
-
-/**
- * Check whether any loaded tree has pending modifications.
- */
-export async function hasModifiedValues(): Promise<boolean> {
-  return await invoke<boolean>('has_modified_values');
-}
-
 /**
  * Trigger an action element: write `value` to the node's memory at the
  * given space/address. This is a fire-once write that bypasses the
- * modified-value pipeline.
+ * Save / Pending Change pipeline.
  *
  * @param nodeId   Node ID in dotted-hex.
  * @param space    Address space byte.

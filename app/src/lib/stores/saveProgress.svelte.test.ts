@@ -116,3 +116,38 @@ describe('saveProgressStore', () => {
     expect(listeners.has('save-progress')).toBe(false);
   });
 });
+
+describe('saveProgressStore.finish (E3b-1 B3: Save result reports leftovers)', () => {
+  beforeEach(() => {
+    saveProgressStore.reset();
+  });
+
+  const counts = { written: 0, failed: 0, readOnly: 0, waiting: 0 };
+
+  it('completes silently when nothing is left over', () => {
+    saveProgressStore.begin();
+    saveProgressStore.finish({ counts: { ...counts, written: 3 }, errors: [] });
+    expect(saveProgressStore.phase).toBe('complete');
+    expect(saveProgressStore.notice).toBeNull();
+  });
+
+  it('keeps a notice visible with the waiting count and the reasons, without opening the Sync Panel', () => {
+    saveProgressStore.begin();
+    saveProgressStore.finish({
+      counts: { ...counts, failed: 1, waiting: 2 },
+      errors: ['timeout'],
+    });
+    expect(saveProgressStore.phase).toBe('saved-with-notice');
+    expect(saveProgressStore.isVisible).toBe(true);
+    expect(saveProgressStore.isActive).toBe(false);
+    expect(saveProgressStore.notice).toBe('Saved. 2 changes are still waiting to be written.');
+    expect(saveProgressStore.noticeDetails).toEqual(['timeout']);
+  });
+
+  it('uses the singular for one waiting change', () => {
+    saveProgressStore.begin();
+    saveProgressStore.finish({ counts: { ...counts, waiting: 1 }, errors: [] });
+    expect(saveProgressStore.notice).toBe('Saved. 1 change is still waiting to be written.');
+  });
+});
+

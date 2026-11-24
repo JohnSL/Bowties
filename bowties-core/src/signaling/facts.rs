@@ -18,7 +18,7 @@ use super::{
 use crate::layout::facilities::{ClaimedSlot, ClaimedSlotKind};
 use crate::layout::state::LayoutState;
 use crate::node_key::NodeKey;
-use crate::node_tree::{effective_value, ConfigNode, ConfigValue, NodeConfigTree};
+use crate::node_tree::{ConfigNode, ConfigValue, NodeConfigTree};
 use crate::profile::{make_profile_key, StructureProfile};
 
 /// The effective configuration tree of every node with a stored tree.
@@ -83,7 +83,7 @@ pub fn overlay_releases(
         let claims = claims_on(claimed, &key, &request.node_key);
         let index = LeafPathIndex::new(tree);
         let nonzero = |path: &str| {
-            matches!(index.leaf(path).and_then(effective_value), Some(ConfigValue::Int { value }) if *value != 0)
+            matches!(index.leaf(path).and_then(|leaf| leaf.value.as_ref()), Some(ConfigValue::Int { value }) if *value != 0)
         };
         let problem = match request.owner {
             SignalOutputOwner::Mast(n) if claims.iter().any(|c| c.kind == ClaimedSlotKind::Mast && c.index == n) => {
@@ -153,13 +153,12 @@ fn event_value(bytes: [u8; 8]) -> ConfigValue {
     ConfigValue::EventId { bytes, hex: lcc_rs::EventID::new(bytes).to_canonical() }
 }
 
-/// Set a leaf's effective value, replacing any unsaved edit on it.
+/// Set a leaf's effective value.
 fn set_leaf_value(nodes: &mut [ConfigNode], at: (u8, u32), value: &ConfigValue) {
     for node in nodes {
         match node {
             ConfigNode::Leaf(leaf) if (leaf.space, leaf.address) == at => {
                 leaf.value = Some(value.clone());
-                leaf.modified_value = None;
             }
             ConfigNode::Leaf(_) => {}
             ConfigNode::Group(group) => set_leaf_value(&mut group.children, at, value),

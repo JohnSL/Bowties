@@ -2,16 +2,15 @@
   /**
    * SaveControls — Global Save button and progress display.
    *
-   * Operates on ALL modified tree leaves across every node and segment.
-   * The Rust backend writes all modified values in one batch via
-   * `write_modified_values`, then sends Update Complete per node.
+   * Thin shell over the page's Save: the page stages configuration drafts as
+   * Pending Changes and the backend writes the rows this Save recorded (E3b).
+   * Discard drops drafts only.
    *
    * Per FR-013a (progress feedback), FR-022 (Update Complete after all writes).
    *
    * Spec: 007-edit-node-config.
    */
-  import type { SaveProgress, SaveState } from '$lib/types/nodeTree';
-  import { discardModifiedValues } from '$lib/api/config';
+  import type { SaveProgress } from '$lib/types/nodeTree';
   import { clearLayoutDrafts } from '$lib/api/layout';
   import { toast } from '@zerodevx/svelte-toast';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
@@ -21,6 +20,7 @@
   import { facilitiesStore } from '$lib/stores/facilities.svelte';
   import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
   import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
+  import { syncReviewRequestStore } from '$lib/stores/syncReviewRequest.svelte';
   import { discardAllConfigDrafts } from '$lib/orchestration/configDraftOrchestrator';
   import { deriveSaveControlsViewState } from '$lib/components/ElementCardDeck/saveControlsPresenter';
   import DiscardConfirmDialog from '$lib/components/DiscardConfirmDialog.svelte';
@@ -63,9 +63,20 @@
     breakdown: effectiveNodeStore.dirtyBreakdown,
     connectorWarningCount: connectorSelectionsStore.totalWarningCount,
     layoutIsOfflineMode: layoutStore.isOfflineMode,
+    layoutIsConnected: layoutStore.isConnected,
     offlineDraftRows: pendingChangesStore.draftRows,
     saveProgressState: saveProgress.state,
   }));
+
+  // Only waiting Pending Changes (nothing unsaved): show the waiting line
+  // without Save / Discard buttons.
+  let waitingOnly = $derived(
+    !viewState.hasEdits
+      && viewState.hasWaitingChanges
+      && !viewState.isSaving
+      && saveProgress.state !== 'completed'
+      && saveProgress.state !== 'partial-failure',
+  );
 
   // Whether the discard confirmation dialog is open.
   let showDiscardDialog = $state(false);
@@ -128,27 +139,12 @@
     showDiscardDialog = true;
   }
 
-  // T020: Unified discard — clear both tree modifications and bowtie metadata
+  // T020: Unified discard — clear config drafts and bowtie metadata
   async function handleConfirmDiscard() {
     showDiscardDialog = false;
 
-    if (layoutStore.isOfflineMode) {
-      await pendingChangesStore.revertAllPending();
-      discardAllConfigDrafts();
-      bowtieMetadataStore.clearAll();
-      connectorSelectionsStore.discard();
-      channelsStore.discard();
-      facilitiesStore.discard();
-      layoutStore.revertToSaved();
-      rehydrateConnectorSelectionsFromLayout();
-      // Spec 018 / S6 bugfix — drop any facility/channel drafts mirrored
-      // into LayoutState so the next compose reads a clean saved-only view.
-      await clearLayoutDrafts();
-      saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
-      return;
-    }
-
-    await discardModifiedValues();
+    // Discard is drafts only (E3b): nothing was written or recorded until Save.
+    await pendingChangesStore.revertAllPending();
     discardAllConfigDrafts();
     bowtieMetadataStore.clearAll();
     connectorSelectionsStore.discard();
@@ -156,7 +152,8 @@
     facilitiesStore.discard();
     layoutStore.revertToSaved();
     rehydrateConnectorSelectionsFromLayout();
-    // Spec 018 / S6 bugfix — see offline branch above.
+    // Spec 018 / S6 bugfix — drop any facility/channel drafts mirrored
+    // into LayoutState so the next compose reads a clean saved-only view.
     await clearLayoutDrafts();
     saveProgress = { state: 'idle', total: 0, completed: 0, failed: 0, currentFieldLabel: null };
   }
@@ -178,7 +175,7 @@
   }
 </script>
 
-{#if viewState.hasEdits || viewState.isSaving || saveProgress.state === 'completed' || saveProgress.state === 'partial-failure'}
+{#if viewState.hasEdits || viewState.hasWaitingChanges || viewState.isSaving || saveProgress.state === 'completed' || saveProgress.state === 'partial-failure'}
 <div
   class="save-controls"
   class:save-controls--toolbar={toolbar}
@@ -206,16 +203,25 @@
     ⚠ {saveProgress.completed} saved, {saveProgress.failed} failed
   </span>
 
-{:else if viewState.hasEdits}
-  <!-- Idle with pending edits -->
+{:else if viewState.hasEdits || viewState.hasWaitingChanges}
+  <!-- Idle with unsaved edits and / or Pending Changes waiting for the board -->
   <div class="pending-summary" role="status">
-    <span class="pending-hint">{viewState.pendingHintText}</span>
+    {#if viewState.hasEdits}
+      <span class="pending-hint">{viewState.pendingHintText}</span>
+    {/if}
+    {#if viewState.hasWaitingChanges}
+      <span class="waiting-hint">{viewState.waitingHintText}</span>
+      {#if viewState.canReviewWaiting}
+        <button class="review-sync-btn" onclick={() => syncReviewRequestStore.request()}>Review in Sync Panel</button>
+      {/if}
+    {/if}
     {#if viewState.connectorWarningCount > 0}
       <span class="repair-warning">{viewState.connectorWarningCount} connector warning{viewState.connectorWarningCount === 1 ? '' : 's'}</span>
     {/if}
   </div>
 {/if}
 
+{#if !waitingOnly}
 <button
   class="save-btn"
   disabled={!viewState.canSave}
@@ -233,6 +239,7 @@
 >
   Discard
 </button>
+{/if}
 
 </div>
 {/if}
@@ -284,12 +291,30 @@
     font-style: italic;
   }
 
+  .waiting-hint {
+    flex: 1;
+    color: #115e59;                                /* teal: saved, waiting for the board */
+    font-style: italic;
+  }
+
   .pending-summary {
     flex: 1;
     display: flex;
     gap: 8px;
     align-items: center;
     flex-wrap: wrap;
+  }
+
+  .review-sync-btn {
+    padding: 2px 8px;
+    font-size: 12px;
+    font-family: inherit;
+    color: #0078d4;
+    background: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
   }
 
   .repair-warning {

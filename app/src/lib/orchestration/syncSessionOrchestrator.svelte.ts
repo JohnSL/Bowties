@@ -86,7 +86,8 @@ export function hasSyncSessionContent(session: SyncSession | null): boolean {
   return !!session && (
     session.conflictRows.length > 0 ||
     session.cleanRows.length > 0 ||
-    session.nodeMissingRows.length > 0
+    session.nodeMissingRows.length > 0 ||
+    session.alreadyAppliedCount > 0
   );
 }
 

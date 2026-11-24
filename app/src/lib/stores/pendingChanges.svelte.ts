@@ -1,17 +1,21 @@
 /**
  * Pending change store for baseline/planned row tracking.
  *
- * Phase 2 foundation: this holds pending rows loaded from or written to
- * offline-changes.yaml. UI integration is added in later phases.
+ * Phase 2 foundation: this holds Pending Change rows loaded from or written to
+ * the layout's pending-changes file.
  */
 
-import type { PendingChangeInput, PendingChangeRow } from '$lib/api/sync';
-import { listPendingChanges, replacePendingChanges, revertPendingChange } from '$lib/api/sync';
+import type { PendingChangeRow } from '$lib/api/sync';
+import { listPendingChanges, revertPendingChange, setPendingChange } from '$lib/api/sync';
 import { effectiveValue, type LeafConfigNode, type TreeConfigValue } from '$lib/types/nodeTree';
 import { normalizeNodeId } from '$lib/utils/nodeId';
 import type { StagedRepair } from '$lib/types/connectorProfile';
+import { isWaitingPendingChange } from '$lib/utils/pendingChangeStatus';
 import { parseOfflineStoredValueForLeaf } from '$lib/utils/treeConfigValuePersistence';
 
+// Filters over `_draftRows` keep `status === 'pending'`: a draft is a local row
+// that has never been recorded or classified, so it is always 'pending'. Filters
+// over persisted / saved / effective rows use `isWaitingPendingChange`.
 class PendingChangesStore {
   private _persistedRows = $state<PendingChangeRow[]>([]);
   private _savedRows = $state<PendingChangeRow[]>([]);
@@ -60,7 +64,7 @@ class PendingChangesStore {
   }
 
   get pendingApplyCount(): number {
-    return this._persistedRows.filter((r) => r.status === 'pending').length;
+    return this._persistedRows.filter(isWaitingPendingChange).length;
   }
 
   get draftCount(): number {
@@ -79,8 +83,28 @@ class PendingChangesStore {
       this._persistedRows.map((r) => this.targetKeyForRow(r)),
     );
     return this._savedRows.filter(
-      (r) => r.status === 'pending' && !persistedKeys.has(this.targetKeyForRow(r)),
+      (r) => isWaitingPendingChange(r) && !persistedKeys.has(this.targetKeyForRow(r)),
     ).length;
+  }
+
+  /**
+   * Config rows whose change is not yet saved in the layout file: draft rows
+   * that differ from their baseline, plus persisted rows reverted in the
+   * working set. Rows already saved and still waiting are not included (they
+   * are `pendingApplyCount`).
+   */
+  get unsavedConfigRows(): PendingChangeRow[] {
+    const persistedKeys = new Set(this._persistedRows.map((r) => this.targetKeyForRow(r)));
+    const drafts = this._draftRows.filter(
+      (r) => r.kind === 'config' && r.status === 'pending' && r.plannedValue !== r.baselineValue,
+    );
+    const reverted = this._savedRows.filter(
+      (r) =>
+        r.kind === 'config' &&
+        isWaitingPendingChange(r) &&
+        !persistedKeys.has(this.targetKeyForRow(r)),
+    );
+    return [...drafts, ...reverted];
   }
 
   setRows(rows: PendingChangeRow[]): void {
@@ -190,7 +214,7 @@ class PendingChangesStore {
     return this._persistedRows.find(
       (r) =>
         r.kind === 'config' &&
-        r.status === 'pending' &&
+        isWaitingPendingChange(r) &&
         normalizeNodeId(r.nodeId) === normalizeNodeId(nodeId) &&
         r.space === space &&
         r.offset === offset
@@ -201,7 +225,7 @@ class PendingChangesStore {
     return this.effectiveRows.find(
       (r) =>
         r.kind === 'config' &&
-        r.status === 'pending' &&
+        isWaitingPendingChange(r) &&
         normalizeNodeId(r.nodeId) === normalizeNodeId(nodeId) &&
         r.space === space &&
         r.offset === offset
@@ -227,7 +251,7 @@ class PendingChangesStore {
   findPersistedBowtieMetadataChange(eventIdHex: string): PendingChangeRow | null {
     const baselineKey = `event:${eventIdHex}`;
     return this._persistedRows.find(
-      (r) => r.kind === 'bowtieMetadata' && r.status === 'pending' && r.baselineValue === baselineKey
+      (r) => r.kind === 'bowtieMetadata' && isWaitingPendingChange(r) && r.baselineValue === baselineKey
     ) ?? null;
   }
 
@@ -357,22 +381,37 @@ class PendingChangesStore {
     return pending;
   }
 
-  async flushPendingToBackend(): Promise<number> {
+  /**
+   * Record this Save's drafts as Pending Change rows in the backend and return
+   * the IDs of the rows it recorded (E3b D1: a connected Save writes only
+   * these). Rows recorded earlier (including failed / conflict rows) are left
+   * untouched; a draft that returns a persisted row to its baseline removes
+   * that row. Reloads the rows from the backend afterwards.
+   */
+  async recordDraftsToBackend(): Promise<string[]> {
     this._busy = true;
     try {
-      const merged = this.effectiveRows.filter((r) => r.status === 'pending');
-      const payload: PendingChangeInput[] = merged.map((r) => ({
-        kind: r.kind,
-        nodeId: r.nodeId,
-        space: r.space,
-        offset: r.offset,
-        baselineValue: r.baselineValue,
-        plannedValue: r.plannedValue,
-      }));
-
-      const count = await replacePendingChanges(payload);
+      const recordedIds: string[] = [];
+      for (const draft of this._draftRows) {
+        if (draft.plannedValue === draft.baselineValue) {
+          const persisted = this._persistedRows.find(
+            (r) => this.targetKeyForRow(r) === this.targetKeyForRow(draft),
+          );
+          if (persisted) await revertPendingChange(persisted.changeId);
+          continue;
+        }
+        const id = await setPendingChange({
+          kind: draft.kind,
+          nodeId: draft.nodeId,
+          space: draft.space,
+          offset: draft.offset,
+          baselineValue: draft.baselineValue,
+          plannedValue: draft.plannedValue,
+        });
+        if (draft.kind === 'config') recordedIds.push(id);
+      }
       await this.reloadFromBackend();
-      return count;
+      return recordedIds;
     } finally {
       this._busy = false;
     }

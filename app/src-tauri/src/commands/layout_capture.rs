@@ -88,9 +88,13 @@ pub struct NewLayoutResult {
 pub struct SaveWithBusWriteResult {
     /// Layout was successfully saved to disk in phase 1.
     pub layout_saved: bool,
-    /// Bus write result from phase 2 (None if not connected or no pending writes).
-    pub bus_writes: Option<super::cdi::WriteModifiedResult>,
-    /// Phase 3 reconcile save completed (only true when ≥1 bus write succeeded).
+    /// What the Save did with Pending Changes. `waiting` counts every row still
+    /// waiting, whether this Save recorded it or an earlier one did.
+    pub write_counts: bowties_core::sync::writer::SaveWriteCounts,
+    /// Persistence or Update Complete failures from the bus-write phase. The
+    /// per-row results (status and reason) are on the Pending Change rows.
+    pub write_errors: Vec<String>,
+    /// Phase 3 reconcile save completed (only true when ≥1 row was written or cleared).
     pub reconciled: bool,
     /// Catalog was rebuilt by the backend after save.
     pub catalog_rebuilt: bool,
@@ -103,6 +107,9 @@ pub struct SaveWithBusWriteResult {
     /// Node snapshots written to disk. Frontend caches these so the disconnect
     /// transition can rehydrate the offline view without re-opening the layout.
     pub node_snapshots: Vec<NodeSnapshot>,
+    /// Nodes whose config trees the bus writes changed. The frontend reloads
+    /// their trees before it clears the drafts.
+    pub written_node_ids: Vec<String>,
 }
 
 
@@ -461,9 +468,7 @@ pub async fn save_layout_directory(
     // persist the in-memory offline delta cache as the authoritative set.
     let active_context = state.active_layout.read().await.clone();
     if let Some(ctx) = active_context {
-        if ctx.mode == ActiveLayoutMode::OfflineFile
-            && std::path::Path::new(&ctx.root_path) == target
-        {
+        if std::path::Path::new(&ctx.root_path) == target {
             pending_changes = state
                 .layout_state
                 .read()
@@ -759,9 +764,6 @@ mod tests {
                     action_value: 0,
                     hint_slider: None,
                     hint_radio: false,
-                    modified_value: None,
-                    write_state: None,
-                    write_error: None,
                     read_only: false,
                 })],
             }],
@@ -1060,11 +1062,17 @@ pub async fn create_new_layout_capture(
     })
 }
 
-/// Three-phase save: layout first, then bus writes (if connected), then reconcile.
+/// Save: layout first, then bus writes of the rows this Save recorded (if
+/// connected), then reconcile.
 ///
-/// Phase 1 — Persist layout to disk (with all resolved event roles from the live catalog).
-/// Phase 2 — If connected and there are pending modified values, write them to bus nodes.
-/// Phase 3 — If any writes succeeded, re-save the layout to clear succeeded pending changes.
+/// Phase 1 — Persist layout to disk (with all resolved event roles from the live catalog),
+///           including every Pending Change row in `LayoutState`.
+/// Phase 2 — If connected, write the Config rows in `recorded_change_ids` through the one
+///           writer (pre-read only when the node's baseline was not read this connection,
+///           readback always) and record each row's result. Rows recorded by an earlier
+///           Save, or skipped in the Sync Panel, are not written; they are counted as waiting.
+/// Phase 3 — If any row was written or cleared, re-save the layout so snapshots hold the
+///           written values and the cleared rows are gone.
 /// Phase 4 — Rebuild the bowtie catalog.
 ///
 /// Progress events (type `save-progress`) are emitted on the Tauri event bus before each phase.
@@ -1073,6 +1081,7 @@ pub async fn save_layout_with_bus_writes(
     path: String,
     overwrite: bool,
     deltas: Vec<crate::layout::types::LayoutEditDelta>,
+    recorded_change_ids: Vec<String>,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<SaveWithBusWriteResult, String> {
@@ -1091,34 +1100,36 @@ pub async fn save_layout_with_bus_writes(
     ).await?;
 
     // Phase 2: Bus writes (only when connected).
-    let bus_writes = if is_connected {
+    let mut write_errors = Vec::new();
+    let mut written_node_ids = Vec::new();
+    let mut write_counts = bowties_core::sync::writer::SaveWriteCounts::default();
+    if is_connected {
         let _ = app.emit("save-progress", serde_json::json!({
             "phase": "writing-config",
             "current": 0,
-            "total": 0,
+            "total": recorded_change_ids.len(),
         }));
-        let result = super::cdi::write_modified_values(state.clone(), app.clone()).await
-            .unwrap_or_else(|_| super::cdi::WriteModifiedResult {
-                total: 0,
-                succeeded: 0,
-                failed: 0,
-                read_only_rejected: 0,
-            });
-        if result.total > 0 { Some(result) } else { None }
+        let recorded: std::collections::HashSet<String> = recorded_change_ids.into_iter().collect();
+        let report = super::sync_panel::write_recorded_rows(&state, &app, &path, &recorded).await;
+        write_counts = report.counts;
+        write_errors = report.errors;
+        written_node_ids = report.written_node_ids;
+        let _ = app.emit("save-progress", serde_json::json!({
+            "phase": "writing-config",
+            "current": recorded.len(),
+            "total": recorded.len(),
+        }));
     } else {
-        None
-    };
+        write_counts.waiting = super::sync_panel::waiting_pending_change_count(&state).await;
+    }
 
-    // Phase 3: Reconcile — re-save if any writes succeeded to clear applied pending changes.
-    let reconciled = if let Some(ref writes) = bus_writes {
-        if writes.succeeded > 0 {
-            let _ = app.emit("save-progress", serde_json::json!({ "phase": "reconciling" }));
-            // Reconcile re-save: no deltas needed, just re-persist current state.
-            save_layout_directory(path.clone(), true, vec![], app.clone(), state.clone()).await?;
-            true
-        } else {
-            false
-        }
+    // Phase 3: Reconcile — re-save if any row was written or cleared so the
+    // snapshots and the rows file reflect the bus.
+    let reconciled = if write_counts.written > 0 || write_counts.read_only > 0 {
+        let _ = app.emit("save-progress", serde_json::json!({ "phase": "reconciling" }));
+        // Reconcile re-save: no deltas needed, just re-persist current state.
+        save_layout_directory(path.clone(), true, vec![], app.clone(), state.clone()).await?;
+        true
     } else {
         false
     };
@@ -1139,7 +1150,7 @@ pub async fn save_layout_with_bus_writes(
         .map(|loaded| loaded.bowties)
         .unwrap_or_else(|| save_result.layout.clone());
 
-    let failed_count = bus_writes.as_ref().map(|w| w.failed).unwrap_or(0);
+    let failed_count = write_counts.failed;
     let _ = app.emit("save-progress", serde_json::json!({
         "phase": "complete",
         "failedCount": failed_count,
@@ -1147,13 +1158,15 @@ pub async fn save_layout_with_bus_writes(
 
     Ok(SaveWithBusWriteResult {
         layout_saved: true,
-        bus_writes,
+        write_counts,
+        write_errors,
         reconciled,
         catalog_rebuilt,
         warnings: save_result.warnings,
         layout: persisted_layout,
         persisted_node_ids: save_result.persisted_node_ids,
         node_snapshots: save_result.node_snapshots,
+        written_node_ids,
     })
 }
 

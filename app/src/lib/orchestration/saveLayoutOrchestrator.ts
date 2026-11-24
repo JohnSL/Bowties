@@ -9,7 +9,7 @@
  * - **Online path** (`saveWithBusWrites` provided): delegates the full three-phase
  *   save (layout → bus writes → reconcile → catalog rebuild) to the backend.
  * - **Offline path** (`saveFile` + `rebuildCatalog` + `setCatalog` provided): the
- *   original two-step flow used for offline-only saves.
+ *   original two-step flow used for saves with no bus connection.
  *
  * Callers do not need to remember individual cleanup steps; this function owns:
  * flush → save → hydrate layout → rebuild catalog → set context → update partial
@@ -17,7 +17,7 @@
  */
 
 import type { LayoutFile, LayoutEditDelta } from '$lib/types/bowtie';
-import type { SaveLayoutResult, SaveWithBusWriteResult, OfflineNodeSnapshot } from '$lib/api/layout';
+import type { SaveLayoutResult, SaveWithBusWriteResult, SaveWriteCounts, OfflineNodeSnapshot } from '$lib/api/layout';
 import type { ActiveLayoutContext } from '$lib/stores/layout.svelte';
 import { normalizeLayoutTitle } from '$lib/utils/layoutPath';
 
@@ -27,7 +27,11 @@ export interface SaveLayoutOrchestratedArgs {
    * Three-phase save command (wraps `save_layout_with_bus_writes` IPC).
    * When provided, `saveFile`, `rebuildCatalog`, and `setCatalog` are ignored.
    */
-  saveWithBusWrites?: (path: string, deltas: LayoutEditDelta[]) => Promise<SaveWithBusWriteResult>;
+  saveWithBusWrites?: (
+    path: string,
+    deltas: LayoutEditDelta[],
+    recordedChangeIds: string[],
+  ) => Promise<SaveWithBusWriteResult>;
 
   // ── Offline path ─────────────────────────────────────────────────────────
   /** Persist the layout file to disk (wraps saveLayoutDirectory IPC). */
@@ -65,8 +69,12 @@ export interface SaveLayoutOrchestratedArgs {
    * Symmetric to `inMemorySnapshotKeys` (S8 / Bug 3).
    */
   inMemoryRemovedKeys?: string[];
-  /** Optional: flush pending changes to backend before saving. */
-  flushPending?: () => Promise<void>;
+  /**
+   * Record this Save's configuration drafts as Pending Change rows in the
+   * backend before the Save IPC, and return the IDs of the rows it recorded
+   * (E3b D1: a connected Save writes only these).
+   */
+  recordPending?: () => Promise<string[]>;
   /** Update the active layout context in the store after save. */
   setActiveContext: (context: ActiveLayoutContext) => void;
   /** Update the set of partially-captured node IDs from save warnings. */
@@ -99,19 +107,24 @@ export interface SaveLayoutOrchestratedArgs {
    */
   clearPersistedRemovals?: () => void;
   /**
-   * Reload pending change rows from the backend after a successful save.
-   * Only supplied in offline mode — the backend rewrites pending changes
-   * during the save, so the frontend mirror must be re-pulled. Online
-   * mode omits this callback (no pending change state to reload).
+   * Reload pending change rows from the backend after a successful save, so
+   * rows the Save rewrote (applied → removed, failed with
+   * a reason) are what the UI shows.
    */
   reloadPendingChanges?: () => Promise<void>;
+  /**
+   * Reload the config trees of nodes the connected Save wrote to. Awaited
+   * before the drafts are cleared, so a field shows the committed value (not
+   * the old tree value) the moment its draft goes away.
+   */
+  reloadNodeTrees?: (nodeIds: string[]) => Promise<void>;
 }
 
 export interface SaveLayoutOrchestratedResult {
   /** Warnings from the save (e.g. partial capture nodes). */
   warnings: string[];
-  /** Bus write result (only present when saveWithBusWrites was used). */
-  busWriteResult?: SaveWithBusWriteResult['busWrites'];
+  /** Phase 2 outcome (only present on a connected Save): per-row counts and reasons. */
+  writeOutcome?: { counts: SaveWriteCounts; errors: string[] };
   /** Node snapshots persisted by this save. The page caches these so
    *  disconnect can rehydrate the offline view (Bug 2b fix). */
   nodeSnapshots: OfflineNodeSnapshot[];
@@ -136,7 +149,7 @@ export async function saveLayoutOrchestrated({
   deltas,
   inMemorySnapshotKeys,
   inMemoryRemovedKeys,
-  flushPending,
+  recordPending,
   setActiveContext,
   updatePartialCaptureNodes,
   getPendingChangeCount,
@@ -144,11 +157,10 @@ export async function saveLayoutOrchestrated({
   clearPersistedPlaceholders,
   clearPersistedRemovals,
   reloadPendingChanges,
+  reloadNodeTrees,
 }: SaveLayoutOrchestratedArgs): Promise<SaveLayoutOrchestratedResult> {
-  // 1. Flush pending changes (if applicable)
-  if (flushPending) {
-    await flushPending();
-  }
+  // 1. Record this Save's configuration drafts as Pending Change rows.
+  const recordedChangeIds = recordPending ? await recordPending() : [];
 
   // S8.11: promote any in-memory nodes (real or placeholder) into the
   // layout roster by appending unified `AddNode { nodeKey }` deltas.
@@ -166,19 +178,21 @@ export async function saveLayoutOrchestrated({
       : [...deltas, ...addNodeDeltas, ...removeNodeDeltas];
 
   let warnings: string[];
-  let busWriteResult: SaveWithBusWriteResult['busWrites'] | undefined;
+  let writeOutcome: SaveLayoutOrchestratedResult['writeOutcome'];
   let persistedLayout: LayoutFile;
   let persistedNodeIds: string[];
   let nodeSnapshots: OfflineNodeSnapshot[];
+  let writtenNodeIds: string[] = [];
 
   if (saveWithBusWrites) {
     // ── Online path: backend owns all three phases + catalog rebuild ──────
-    const result = await saveWithBusWrites(path, effectiveDeltas);
+    const result = await saveWithBusWrites(path, effectiveDeltas, recordedChangeIds);
     warnings = result.warnings;
-    busWriteResult = result.busWrites ?? undefined;
+    writeOutcome = { counts: result.writeCounts, errors: result.writeErrors };
     persistedLayout = result.layout;
     persistedNodeIds = result.persistedNodeIds;
     nodeSnapshots = result.nodeSnapshots;
+    writtenNodeIds = result.writtenNodeIds ?? [];
   } else {
     // ── Offline path: explicit save → rebuild → set catalog ───────────────
     if (!saveFile || !rebuildCatalog || !setCatalog) {
@@ -202,22 +216,15 @@ export async function saveLayoutOrchestrated({
   // 3. Update partial capture nodes
   updatePartialCaptureNodes(warnings);
 
-  // 4. Update the active layout context (S8: include the post-save node roster
-  //    so the dirty signal recomputes — any previously-unsaved discovered
-  //    nodes that were promoted in this save are now in `layoutNodeIds`).
-  const layoutId = normalizeLayoutTitle(path) ?? 'layout';
-  setActiveContext({
-    layoutId,
-    rootPath: path,
-    mode: 'offline_file',
-    capturedAt: new Date().toISOString(),
-    pendingChangeCount: getPendingChangeCount(),
-    layoutNodeIds: persistedNodeIds,
-  });
-
   // 5. Clear pending state
   clearMetadata();
   markClean();
+
+  // 5b. The backend committed the written values to its trees. Reload those
+  //     trees before the drafts go, so no field falls back to its old value.
+  if (reloadNodeTrees && writtenNodeIds.length > 0) {
+    await reloadNodeTrees(writtenNodeIds);
+  }
 
   // 6. ADR-0004: drop config drafts whose values are now persisted on disk,
   //    so the effective read model never reads a stale draft after the
@@ -245,12 +252,26 @@ export async function saveLayoutOrchestrated({
     clearPersistedRemovals();
   }
 
-  // 9. Offline mode only: reload pending change rows from the backend so
-  //    the frontend mirror matches the rewritten pending set. Online mode
-  //    omits this callback.
+  // 9. Reload pending change rows from the backend so the frontend mirror
+  //    matches the rewritten pending set (offline or connected).
   if (reloadPendingChanges) {
     await reloadPendingChanges();
   }
 
-  return { warnings, busWriteResult, nodeSnapshots };
+  // 10. Update the active layout context (S8: include the post-save node roster
+  //    so the dirty signal recomputes — any previously-unsaved discovered
+  //    nodes that were promoted in this save are now in `layoutNodeIds`).
+  //    Runs after the rows are reloaded so the count reflects the rows the
+  //    Save left waiting, not the pre-write rows.
+  const layoutId = normalizeLayoutTitle(path) ?? 'layout';
+  setActiveContext({
+    layoutId,
+    rootPath: path,
+    mode: 'offline_file',
+    capturedAt: new Date().toISOString(),
+    pendingChangeCount: getPendingChangeCount(),
+    layoutNodeIds: persistedNodeIds,
+  });
+
+  return { warnings, writeOutcome, nodeSnapshots };
 }

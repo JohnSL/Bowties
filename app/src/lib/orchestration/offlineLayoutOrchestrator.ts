@@ -284,9 +284,6 @@ function createOfflineLeaf(
     actionValue: 0,
     hintSlider: null,
     hintRadio: false,
-    modifiedValue: null,
-    writeState: null,
-    writeError: null,
     readOnly: true,
   };
 }

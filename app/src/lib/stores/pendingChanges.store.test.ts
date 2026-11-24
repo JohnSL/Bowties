@@ -16,13 +16,13 @@ import type { LeafConfigNode } from '$lib/types/nodeTree';
 // ─── Mock backend IPC ─────────────────────────────────────────────────────────
 
 const mockListPendingChanges = vi.fn<() => Promise<PendingChangeRow[]>>().mockResolvedValue([]);
-const mockReplacePendingChanges = vi.fn().mockResolvedValue(undefined);
 const mockRevertPendingChange = vi.fn().mockResolvedValue(undefined);
+const mockSetPendingChange = vi.fn<(input: unknown) => Promise<string>>();
 
 vi.mock('$lib/api/sync', () => ({
   listPendingChanges: mockListPendingChanges,
-  replacePendingChanges: mockReplacePendingChanges,
   revertPendingChange: mockRevertPendingChange,
+  setPendingChange: mockSetPendingChange,
 }));
 
 // ─── Import store AFTER mocks ────────────────────────────────────────────────
@@ -185,7 +185,6 @@ describe('revertToBaseline — persisted row updates working state only', () => 
 
     // Draft reverts never touch the backend — no opportunity to trigger dirty state
     expect(mockRevertPendingChange).not.toHaveBeenCalled();
-    expect(mockReplacePendingChanges).not.toHaveBeenCalled();
   });
 });
 
@@ -580,5 +579,58 @@ describe('clearDraftConfigChanges', () => {
     ]);
 
     expect(pendingChangesStore.draftRows).toHaveLength(1);
+  });
+});
+
+describe('recordDraftsToBackend (E3b-1: IDs this Save recorded)', () => {
+  it('records each draft as a Pending Change and returns only those IDs, leaving earlier rows alone', async () => {
+    const earlier = makeDraftRow({
+      changeId: 'earlier-conflict', offset: '0x00000010', status: 'conflict', error: 'The board kept 5',
+    });
+    pendingChangesStore.setRows([earlier]);
+    pendingChangesStore.upsertRow(makeDraftRow({ changeId: 'draft-a', offset: '0x00000000', plannedValue: '7' }));
+    mockSetPendingChange.mockResolvedValue('backend-id-a');
+    mockListPendingChanges.mockResolvedValue([
+      earlier,
+      makeDraftRow({ changeId: 'backend-id-a', offset: '0x00000000', plannedValue: '7' }),
+    ]);
+
+    const ids = await pendingChangesStore.recordDraftsToBackend();
+
+    expect(ids).toEqual(['backend-id-a']);
+    expect(mockSetPendingChange).toHaveBeenCalledTimes(1);
+    expect(mockSetPendingChange).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'config', offset: '0x00000000', plannedValue: '7',
+    }));
+    expect(pendingChangesStore.persistedRows.map((r) => r.changeId)).toEqual(['earlier-conflict', 'backend-id-a']);
+    expect(pendingChangesStore.draftRows).toHaveLength(0);
+  });
+});
+
+describe('still-waiting rows (E3b D3: failed and conflict rows are not applied)', () => {
+  beforeEach(() => {
+    pendingChangesStore.clear();
+  });
+
+  it('counts failed and conflict rows as waiting, but not applied or clean rows', () => {
+    pendingChangesStore.setRows([
+      makeDraftRow({ changeId: 'a', offset: '0x00000001', status: 'pending' }),
+      makeDraftRow({ changeId: 'b', offset: '0x00000002', status: 'failed', error: 'timeout' }),
+      makeDraftRow({ changeId: 'c', offset: '0x00000003', status: 'conflict', error: 'The board kept 5' }),
+      makeDraftRow({ changeId: 'd', offset: '0x00000004', status: 'applied' }),
+      makeDraftRow({ changeId: 'e', offset: '0x00000005', status: 'clean' }),
+    ]);
+
+    expect(pendingChangesStore.pendingCount).toBe(3);
+  });
+
+  it('finds a conflict row as the persisted change for its field', () => {
+    pendingChangesStore.setRows([
+      makeDraftRow({ changeId: 'c', offset: '0x00000003', status: 'conflict', error: 'The board kept 5' }),
+    ]);
+
+    expect(
+      pendingChangesStore.findPersistedConfigChange('05.02.01.02.03.00', 253, '0x00000003')?.changeId,
+    ).toBe('c');
   });
 });

@@ -86,6 +86,11 @@ pub struct SessionOutcome {
     /// Rows whose bus value already equals the planned value; the caller
     /// removes them from the pending rows and persists.
     pub already_applied_ids: HashSet<String>,
+    /// Leaf commits for the already-applied rows: the board holds the planned
+    /// value, so the tree shows it (same shape a write produces).
+    pub leaf_updates: Vec<LeafUpdate>,
+    /// Snapshot baselines for the already-applied rows, as a write would move them.
+    pub baseline_updates: Vec<BaselineUpdate>,
 }
 
 fn sync_row(
@@ -116,12 +121,14 @@ pub async fn classify_session<P: MemoryPort>(
     let mut clean_rows = Vec::new();
     let mut already_applied_count: usize = 0;
     let mut already_applied_ids = HashSet::new();
+    let mut leaf_updates = Vec::new();
+    let mut baseline_updates = Vec::new();
     let mut node_missing_rows = Vec::new();
 
     // Cache snapshot + parsed CDI per node to avoid reloading for each change.
     let mut resources_cache: HashMap<String, LayoutNodeResources> = HashMap::new();
 
-    for change in changes.iter().filter(|c| c.status == PendingChangeStatus::Pending) {
+    for change in changes.iter().filter(|c| c.status.is_waiting()) {
         // Only config changes go through bus comparison; bowtie metadata
         // changes are always clean (they don't live on the bus).
         if change.kind != PendingChangeKind::Config {
@@ -244,6 +251,20 @@ pub async fn classify_session<P: MemoryPort>(
             SyncClassification::AlreadyApplied => {
                 already_applied_count += 1;
                 already_applied_ids.insert(change.change_id.clone());
+                if let Some(value) = planned_config_value(&meta, space, address, &change.planned_value) {
+                    leaf_updates.push(LeafUpdate::Commit {
+                        node_key: node_key.clone(),
+                        space,
+                        address,
+                        value,
+                    });
+                    baseline_updates.extend(change.offset.as_ref().map(|offset| BaselineUpdate {
+                        node_key: node_key.clone(),
+                        space,
+                        offset: offset.clone(),
+                        planned_value: change.planned_value.clone(),
+                    }));
+                }
             }
             SyncClassification::Clean => {
                 clean_rows.push(sync_row(
@@ -274,6 +295,8 @@ pub async fn classify_session<P: MemoryPort>(
             node_missing_rows,
         },
         already_applied_ids,
+        leaf_updates,
+        baseline_updates,
     }
 }
 
@@ -318,6 +341,131 @@ impl ApplyOutcome {
     }
 }
 
+/// Node keys whose config tree a set of leaf updates changes, each once, in
+/// first-seen order. The caller tells the frontend to reload these trees.
+pub fn changed_node_keys(updates: &[LeafUpdate]) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::new();
+    for update in updates {
+        let (LeafUpdate::Commit { node_key, .. } | LeafUpdate::MarkReadOnly { node_key, .. }) = update;
+        if !keys.contains(node_key) {
+            keys.push(node_key.clone());
+        }
+    }
+    keys
+}
+
+/// A Config row resolved to the bytes to write.
+struct PreparedWrite {
+    node_key: String,
+    space: u8,
+    address: u32,
+    config_val: ConfigValue,
+    bytes: Vec<u8>,
+}
+
+/// Resolve a Config row to its node, field metadata and bytes: the node must be
+/// on the bus with a peer session, and the planned value must convert.
+async fn prepare_write<P: MemoryPort>(
+    port: &P,
+    change: &PendingChange,
+    cdi_cache: &mut HashMap<String, Cdi>,
+) -> Result<PreparedWrite, String> {
+    let node_key = match &change.node_key {
+        Some(key) => key.clone(),
+        None => return Err("No node ID on change".to_string()),
+    };
+
+    // Synthesized (placeholder) nodes cannot be written to the bus.
+    if let Err(e) = port.resolve_bus_node(&node_key).await {
+        return Err(match e {
+            BusNodeError::NotOnBus => format!("Node not found on bus: {}", node_key),
+            BusNodeError::InvalidNodeKey => format!("Invalid node key: {}", node_key),
+        });
+    }
+    port.peer_session_ready(&node_key).await?;
+
+    let space = change.space.unwrap_or(0);
+    let address = change.offset.as_deref().and_then(parse_offset).unwrap_or(0);
+
+    // Resolve field metadata from layout CDI
+    if !cdi_cache.contains_key(&node_key) {
+        let res = port
+            .load_layout_resources(&node_key)
+            .map_err(|e| format!("CDI unavailable: {}", e))?;
+        cdi_cache.insert(node_key.clone(), res.cdi);
+    }
+    let cdi = &cdi_cache[&node_key];
+
+    let meta = find_field_meta_in_cdi(cdi, space, address).ok_or_else(|| {
+        format!("Field not found in CDI at space={} address={:#010x}", space, address)
+    })?;
+
+    // Build a synthetic leaf for value conversion
+    let config_val = planned_config_value(&meta, space, address, &change.planned_value).ok_or_else(|| {
+        format!(
+            "Cannot convert planned value '{}' to bytes for leaf type {:?}",
+            change.planned_value, meta.leaf_type
+        )
+    })?;
+    let bytes = serialize_config_value(&config_val, meta.leaf_type, meta.size);
+
+    Ok(PreparedWrite { node_key, space, address, config_val, bytes })
+}
+
+/// The planned value as the typed config value its field holds, or `None` when
+/// it does not convert.
+fn planned_config_value(
+    meta: &crate::sync::field_meta::FieldMeta,
+    space: u8,
+    address: u32,
+    planned_value: &str,
+) -> Option<ConfigValue> {
+    let leaf = field_meta_to_leaf(meta, space, address);
+    string_to_config_value(planned_value, &leaf)
+}
+
+async fn write_prepared<P: MemoryPort>(port: &P, prepared: &PreparedWrite) -> Result<(), String> {
+    port.write_memory(
+        &prepared.node_key,
+        prepared.space,
+        prepared.address,
+        prepared.bytes.clone(),
+        SYNC_MEMORY_TIMEOUT_MS,
+    )
+    .await
+}
+
+/// Error 0x1083 = read-only field (FR-017b).
+fn is_read_only_error(err: &str) -> bool {
+    err.contains("1083")
+}
+
+fn baseline_update_for(change: &PendingChange, prepared: &PreparedWrite) -> Option<BaselineUpdate> {
+    change.offset.as_ref().map(|offset| BaselineUpdate {
+        node_key: prepared.node_key.clone(),
+        space: prepared.space,
+        offset: offset.clone(),
+        planned_value: change.planned_value.clone(),
+    })
+}
+
+fn commit_update(prepared: PreparedWrite) -> LeafUpdate {
+    LeafUpdate::Commit {
+        node_key: prepared.node_key,
+        space: prepared.space,
+        address: prepared.address,
+        value: prepared.config_val,
+    }
+}
+
+fn mark_read_only_update(prepared: &PreparedWrite) -> LeafUpdate {
+    LeafUpdate::MarkReadOnly {
+        node_key: prepared.node_key.clone(),
+        space: prepared.space,
+        address: prepared.address,
+    }
+}
+
 /// Write the chosen rows to the bus. `skip_ids` are only echoed; their rows stay pending.
 pub async fn apply_changes<P: MemoryPort>(
     port: &P,
@@ -355,94 +503,23 @@ pub async fn apply_changes<P: MemoryPort>(
             continue;
         }
 
-        let node_key = match &change.node_key {
-            Some(key) => key.clone(),
-            None => fail!(change_id, "No node ID on change".to_string()),
+        let prepared = match prepare_write(port, change, &mut cdi_cache).await {
+            Ok(p) => p,
+            Err(reason) => fail!(change_id, reason),
         };
 
-        // Synthesized (placeholder) nodes cannot be written to the bus.
-        if let Err(e) = port.resolve_bus_node(&node_key).await {
-            let reason = match e {
-                BusNodeError::NotOnBus => format!("Node not found on bus: {}", node_key),
-                BusNodeError::InvalidNodeKey => format!("Invalid node key: {}", node_key),
-            };
-            fail!(change_id, reason);
-        }
-        if let Err(e) = port.peer_session_ready(&node_key).await {
-            fail!(change_id, e);
-        }
-
-        let space = change.space.unwrap_or(0);
-        let address = change.offset.as_deref().and_then(parse_offset).unwrap_or(0);
-
-        // Resolve field metadata from layout CDI
-        if !cdi_cache.contains_key(&node_key) {
-            match port.load_layout_resources(&node_key) {
-                Ok(res) => {
-                    cdi_cache.insert(node_key.clone(), res.cdi);
-                }
-                Err(e) => fail!(change_id, format!("CDI unavailable: {}", e)),
-            }
-        }
-        let cdi = &cdi_cache[&node_key];
-
-        let meta = match find_field_meta_in_cdi(cdi, space, address) {
-            Some(m) => m,
-            None => fail!(
-                change_id,
-                format!("Field not found in CDI at space={} address={:#010x}", space, address)
-            ),
-        };
-
-        // Build a synthetic leaf for value conversion
-        let leaf = field_meta_to_leaf(&meta, space, address);
-
-        let config_val = match string_to_config_value(&change.planned_value, &leaf) {
-            Some(v) => v,
-            None => fail!(
-                change_id,
-                format!(
-                    "Cannot convert planned value '{}' to bytes for leaf type {:?}",
-                    change.planned_value, meta.leaf_type
-                )
-            ),
-        };
-
-        let bytes = serialize_config_value(&config_val, meta.leaf_type, meta.size);
-
-        match port
-            .write_memory(&node_key, space, address, bytes, SYNC_MEMORY_TIMEOUT_MS)
-            .await
-        {
+        match write_prepared(port, &prepared).await {
             Ok(()) => {
                 applied.push(change_id.clone());
-                nodes_written.insert(node_key.clone());
-
-                if let Some(offset_hex) = &change.offset {
-                    baseline_updates.push(BaselineUpdate {
-                        node_key: node_key.clone(),
-                        space,
-                        offset: offset_hex.clone(),
-                        planned_value: change.planned_value.clone(),
-                    });
-                }
-
-                leaf_updates.push(LeafUpdate::Commit {
-                    node_key: node_key.clone(),
-                    space,
-                    address,
-                    value: config_val,
-                });
+                nodes_written.insert(prepared.node_key.clone());
+                baseline_updates.extend(baseline_update_for(change, &prepared));
+                leaf_updates.push(commit_update(prepared));
             }
             Err(err_str) => {
                 // Error 0x1083 = read-only field (FR-017b)
-                if err_str.contains("1083") {
+                if is_read_only_error(&err_str) {
                     read_only_cleared.push(change_id.clone());
-                    leaf_updates.push(LeafUpdate::MarkReadOnly {
-                        node_key: node_key.clone(),
-                        space,
-                        address,
-                    });
+                    leaf_updates.push(mark_read_only_update(&prepared));
                 } else {
                     failed.push(ApplySyncFailure { change_id: change_id.clone(), reason: err_str });
                 }
@@ -456,6 +533,98 @@ pub async fn apply_changes<P: MemoryPort>(
         leaf_updates,
         baseline_updates,
     }
+}
+
+/// Counts for the Save result.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveWriteCounts {
+    /// Rows the board accepted a write for (no readback; verification is slice E4).
+    pub written: usize,
+    /// Rows that could not be written.
+    pub failed: usize,
+    /// Rows the board refused as read-only (0x1083); cleared.
+    pub read_only: usize,
+    /// Rows still waiting after this Save, recorded by it or earlier.
+    pub waiting: usize,
+}
+
+/// Result of [`write_recorded_changes`], as data for the caller to persist and apply.
+#[derive(Debug, Clone, Default)]
+pub struct SaveWriteOutcome {
+    /// Rows whose status or reason changed and which stay pending; persist them.
+    pub updated_rows: Vec<PendingChange>,
+    /// Rows to remove: written and read-only cleared.
+    pub cleared_ids: HashSet<String>,
+    pub leaf_updates: Vec<LeafUpdate>,
+    pub baseline_updates: Vec<BaselineUpdate>,
+    /// Nodes that received a write (for Update Complete).
+    pub nodes_written: HashSet<String>,
+    pub counts: SaveWriteCounts,
+}
+
+/// Write the Config rows a Save recorded (`recorded_ids`) and report per-row
+/// results. There is no pre-read and no readback: a write the board accepts is
+/// treated as written (verification is slice E4). All other rows are untouched.
+pub async fn write_recorded_changes<P: MemoryPort>(
+    port: &P,
+    rows: &[PendingChange],
+    recorded_ids: &HashSet<String>,
+) -> SaveWriteOutcome {
+    let mut out = SaveWriteOutcome::default();
+    let mut cdi_cache: HashMap<String, Cdi> = HashMap::new();
+    // Rows whose status changed but stay pending, by change id.
+    let mut updated: HashMap<String, PendingChange> = HashMap::new();
+
+    let keep = |updated: &mut HashMap<String, PendingChange>, row: &PendingChange, reason: String| {
+        let mut next = row.clone();
+        next.status = PendingChangeStatus::Failed;
+        next.error = Some(reason);
+        updated.insert(row.change_id.clone(), next);
+    };
+
+    for row in rows
+        .iter()
+        .filter(|r| r.kind == PendingChangeKind::Config && recorded_ids.contains(&r.change_id))
+    {
+        let prepared = match prepare_write(port, row, &mut cdi_cache).await {
+            Ok(prepared) => prepared,
+            Err(reason) => {
+                keep(&mut updated, row, reason);
+                out.counts.failed += 1;
+                continue;
+            }
+        };
+        match write_prepared(port, &prepared).await {
+            Ok(()) => {
+                out.nodes_written.insert(prepared.node_key.clone());
+                out.cleared_ids.insert(row.change_id.clone());
+                out.baseline_updates.extend(baseline_update_for(row, &prepared));
+                out.leaf_updates.push(commit_update(prepared));
+                out.counts.written += 1;
+            }
+            Err(err) if is_read_only_error(&err) => {
+                out.cleared_ids.insert(row.change_id.clone());
+                out.leaf_updates.push(mark_read_only_update(&prepared));
+                out.counts.read_only += 1;
+            }
+            Err(err) => {
+                keep(&mut updated, row, err);
+                out.counts.failed += 1;
+            }
+        }
+    }
+
+    out.counts.waiting = rows
+        .iter()
+        .filter(|r| !out.cleared_ids.contains(&r.change_id))
+        .filter(|r| updated.get(&r.change_id).map_or(&r.status, |u| &u.status).is_waiting())
+        .count();
+    out.updated_rows = rows
+        .iter()
+        .filter_map(|r| updated.remove(&r.change_id))
+        .collect();
+    out
 }
 
 #[cfg(test)]
@@ -540,6 +709,7 @@ mod tests {
         on_bus: bool,
         reads: HashMap<(u8, u32), Result<Vec<u8>, String>>,
         write_results: HashMap<(u8, u32), Result<(), String>>,
+        cdi: Option<Cdi>,
         read_calls: RefCell<Vec<(u8, u32, u8, u64)>>,
         write_calls: RefCell<Vec<(u8, u32, Vec<u8>, u64)>>,
     }
@@ -552,7 +722,10 @@ mod tests {
 
     impl MemoryPort for FakePort {
         fn load_layout_resources(&self, node_key: &str) -> Result<LayoutNodeResources, String> {
-            Ok(LayoutNodeResources { snapshot: snapshot(node_key), cdi: cdi() })
+            Ok(LayoutNodeResources {
+                snapshot: snapshot(node_key),
+                cdi: self.cdi.clone().unwrap_or_else(cdi),
+            })
         }
 
         async fn resolve_bus_node(&self, _node_key: &str) -> Result<(), BusNodeError> {
@@ -583,8 +756,9 @@ mod tests {
             data: Vec<u8>,
             timeout_ms: u64,
         ) -> Result<(), String> {
-            self.write_calls.borrow_mut().push((space, address, data, timeout_ms));
-            self.write_results.get(&(space, address)).cloned().unwrap_or(Ok(()))
+            self.write_calls.borrow_mut().push((space, address, data.clone(), timeout_ms));
+            let result = self.write_results.get(&(space, address)).cloned().unwrap_or(Ok(()));
+            result
         }
     }
 
@@ -604,6 +778,31 @@ mod tests {
         assert!(out.session.clean_rows.is_empty());
         assert!(out.session.conflict_rows.is_empty());
         assert!(out.session.node_missing_rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn already_applied_row_commits_the_leaf_and_moves_the_baseline_like_a_write() {
+        let port = port_with_value(vec![0, 20]);
+        let out = classify_session(&port, &[change("r1", "0x00000010", "10", "20")]).await;
+
+        assert_eq!(
+            out.leaf_updates,
+            vec![LeafUpdate::Commit {
+                node_key: NODE.to_string(),
+                space: 253,
+                address: 0x10,
+                value: ConfigValue::Int { value: 20 },
+            }]
+        );
+        assert_eq!(
+            out.baseline_updates,
+            vec![BaselineUpdate {
+                node_key: NODE.to_string(),
+                space: 253,
+                offset: "0x00000010".to_string(),
+                planned_value: "20".to_string(),
+            }]
+        );
     }
 
     #[tokio::test]
@@ -663,6 +862,18 @@ mod tests {
 
         assert!(out.session.clean_rows.is_empty());
         assert!(port.read_calls.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn failed_and_conflict_rows_are_classified_again_in_the_session() {
+        let port = port_with_value(vec![0, 99]);
+        let mut failed = change("r1", "0x00000010", "10", "20");
+        failed.status = PendingChangeStatus::Failed;
+        let mut conflict = change("r2", "0x00000010", "10", "20");
+        conflict.status = PendingChangeStatus::Conflict;
+        let out = classify_session(&port, &[failed, conflict]).await;
+
+        assert_eq!(out.session.conflict_rows.len(), 2);
     }
 
     #[tokio::test]
@@ -787,5 +998,152 @@ mod tests {
         assert_eq!(out.result.applied, vec!["r1".to_string()]);
         assert!(port.write_calls.borrow().is_empty());
         assert!(out.baseline_updates.is_empty());
+    }
+
+    // ---- write_recorded_changes (Save path) ----
+
+    fn ids(list: &[&str]) -> HashSet<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[tokio::test]
+    async fn one_value_save_does_one_write_and_zero_reads_and_commits() {
+        let port = FakePort::on_bus();
+        let rows = [change("r1", "0x00000010", "10", "20")];
+        let out = write_recorded_changes(&port, &rows, &ids(&["r1"])).await;
+
+        assert_eq!(port.write_calls.borrow().len(), 1);
+        assert!(port.read_calls.borrow().is_empty(), "no pre-read and no readback");
+        assert_eq!(out.cleared_ids, ids(&["r1"]));
+        assert!(out.updated_rows.is_empty());
+        assert_eq!(
+            out.leaf_updates,
+            vec![LeafUpdate::Commit {
+                node_key: NODE.to_string(),
+                space: 253,
+                address: 0x10,
+                value: ConfigValue::Int { value: 20 },
+            }]
+        );
+        assert_eq!(out.baseline_updates.len(), 1);
+        assert_eq!(out.baseline_updates[0].planned_value, "20");
+        assert_eq!(out.nodes_written, ids(&[NODE]));
+        assert_eq!(out.counts, SaveWriteCounts { written: 1, ..Default::default() });
+    }
+
+    #[tokio::test]
+    async fn rows_not_recorded_by_this_save_are_untouched_and_counted_waiting() {
+        let port = FakePort::on_bus();
+        let rows = [
+            change("r1", "0x00000010", "10", "20"),
+            change("old", "0x00000020", "a", "b"),
+        ];
+        let out = write_recorded_changes(&port, &rows, &ids(&["r1"])).await;
+
+        assert_eq!(port.write_calls.borrow().len(), 1);
+        assert_eq!(out.cleared_ids, ids(&["r1"]));
+        assert!(out.updated_rows.iter().all(|r| r.change_id != "old"));
+        assert_eq!(out.counts.waiting, 1);
+    }
+
+    #[tokio::test]
+    async fn error_1083_clears_the_row_and_marks_the_field_read_only() {
+        let mut port = FakePort::on_bus();
+        port.write_results.insert((253, 0x10), Err("Write rejected: error 0x1083".to_string()));
+        let rows = [change("r1", "0x00000010", "10", "20")];
+        let out = write_recorded_changes(&port, &rows, &ids(&["r1"])).await;
+
+        assert_eq!(out.cleared_ids, ids(&["r1"]));
+        assert_eq!(
+            out.leaf_updates,
+            vec![LeafUpdate::MarkReadOnly { node_key: NODE.to_string(), space: 253, address: 0x10 }]
+        );
+        assert!(port.read_calls.borrow().is_empty());
+        assert_eq!(out.counts.read_only, 1);
+    }
+
+    #[tokio::test]
+    async fn other_write_error_keeps_the_row_failed_with_the_reason() {
+        let mut port = FakePort::on_bus();
+        port.write_results.insert((253, 0x10), Err("timeout".to_string()));
+        let rows = [change("r1", "0x00000010", "10", "20")];
+        let out = write_recorded_changes(&port, &rows, &ids(&["r1"])).await;
+
+        assert!(out.cleared_ids.is_empty());
+        assert_eq!(out.updated_rows[0].status, PendingChangeStatus::Failed);
+        assert_eq!(out.updated_rows[0].error.as_deref(), Some("timeout"));
+        assert!(out.leaf_updates.is_empty());
+        assert!(out.baseline_updates.is_empty());
+        assert_eq!(out.counts.failed, 1);
+        assert_eq!(out.counts.waiting, 1);
+    }
+
+    fn many_int_cdi(n: usize) -> Cdi {
+        let element = |i: usize| {
+            DataElement::Int(IntElement {
+                name: Some(format!("F{i}")),
+                description: None,
+                size: 2,
+                offset: 0,
+                min: None,
+                max: None,
+                default: None,
+                map: None,
+                hints: None,
+            })
+        };
+        Cdi {
+            identification: None,
+            acdi: None,
+            segments: vec![Segment {
+                name: Some("Config".to_string()),
+                description: None,
+                space: 253,
+                origin: 0,
+                elements: (0..n).map(element).collect(),
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn fifty_fields_are_fifty_writes_and_zero_reads() {
+        let mut port = FakePort::on_bus();
+        port.cdi = Some(many_int_cdi(50));
+        let rows: Vec<PendingChange> = (0..50)
+            .map(|i| change(&format!("r{i}"), &format!("0x{:08x}", i * 2), "0", "7"))
+            .collect();
+        let recorded: HashSet<String> = rows.iter().map(|r| r.change_id.clone()).collect();
+        let out = write_recorded_changes(&port, &rows, &recorded).await;
+
+        assert_eq!(port.write_calls.borrow().len(), 50);
+        assert!(port.read_calls.borrow().is_empty());
+        assert_eq!(out.cleared_ids.len(), 50);
+        assert_eq!(out.counts.written, 50);
+        assert_eq!(out.counts.waiting, 0);
+    }
+}
+
+#[cfg(test)]
+mod changed_nodes_tests {
+    use super::*;
+
+    #[test]
+    fn nodes_whose_trees_changed_are_listed_once_each() {
+        let commit = |node: &str, address: u32| LeafUpdate::Commit {
+            node_key: node.to_string(),
+            space: 253,
+            address,
+            value: ConfigValue::Int { value: 1 },
+        };
+        let updates = vec![
+            commit("050201020300", 0x10),
+            LeafUpdate::MarkReadOnly { node_key: "050201020301".to_string(), space: 253, address: 0x20 },
+            commit("050201020300", 0x12),
+        ];
+
+        assert_eq!(
+            changed_node_keys(&updates),
+            vec!["050201020300".to_string(), "050201020301".to_string()]
+        );
     }
 }

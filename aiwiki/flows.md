@@ -58,7 +58,7 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **Orchestrator:** `configDraftOrchestrator.ts`
 - **Store:** `configChanges.svelte.ts`, `configEditor.svelte.ts`
 - **API:** `config.ts`
-- **Backend:** `commands/cdi.rs` (`set_modified_value`, `write_modified_values`, `discard_modified_values`)
+- **Backend:** drafts stay in the frontend until Save; `commands/layout_capture.rs` `save_layout_with_bus_writes` → `bowties-core` `sync::writer::write_recorded_changes` via `commands/sync_panel.rs` `LivePort` (Spec 020 E3b-1)
 - **lcc-rs:** `protocol/memory_config.rs`
 
 ## Config Editing (Offline)

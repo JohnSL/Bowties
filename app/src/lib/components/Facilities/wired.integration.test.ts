@@ -263,7 +263,7 @@ function synthConsumerTree(rowOrdinal: number) {
                 eventRole: 'Consumer' as const,
                 constraints: null,
                 readOnly: false,
-                modifiedValue: null,
+
               },
               {
                 kind: 'leaf' as const,
@@ -282,7 +282,7 @@ function synthConsumerTree(rowOrdinal: number) {
                 eventRole: 'Consumer' as const,
                 constraints: null,
                 readOnly: false,
-                modifiedValue: null,
+
               },
             ],
           },

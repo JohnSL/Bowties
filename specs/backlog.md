@@ -173,4 +173,4 @@
     2. Confirm the extracted recipes match the cascade and condition derivation in `signaling-ux-proposal.md` §3.
 * Bowtie catalog reads configuration through the effective view
   * The catalog (`app/src-tauri/src/commands/bowties.rs` ~385-450) builds its own overlay of Pending Changes on event leaves. Move it onto `LayoutState::effective_config_tree` (ADR-0015 2026-11-23) so unsaved drafts and Pending Changes resolve the same way for every backend reader.
-  * Planned together with Spec 020 E3b-1 ([slices.md](020-block-signals-first-slice/slices.md)), which retires the `modified_value` layer. `LayoutState` is already the single owner of Pending Changes (E3b-0).
+  * The `modified_value` layer is gone (Spec 020 E3b-1) and `LayoutState` is the single owner of Pending Changes (E3b-0); this overlay is the last parallel reader. It already uses the shared still-waiting predicate.

@@ -297,10 +297,10 @@ impl LayoutState {
     }
 
     /// Update the saved-layer snapshot's config baseline for a single
-    /// address. Called after `write_modified_values` successfully writes
-    /// a leaf to the bus so the snapshot stays in sync with the committed
-    /// tree values. Without this, a Phase 3 reconcile re-save would
-    /// overwrite the disk snapshot with the stale pre-write baseline.
+    /// address. Called after a Save or Sync apply writes a leaf to the bus so
+    /// the snapshot stays in sync with the committed tree values. Without
+    /// this, a reconcile re-save would overwrite the disk snapshot with the
+    /// stale pre-write baseline.
     pub fn update_snapshot_config(
         &mut self,
         key: &NodeKey,
@@ -387,18 +387,18 @@ impl LayoutState {
     }
 
     /// The node's configuration tree as the user currently sees it. Precedence,
-    /// lowest first: saved/captured value, tree `modified_value` (the connected
-    /// bus-write queue), pending offline Config changes, synced config drafts.
+    /// lowest first: saved/captured value, pending Config changes, synced config
+    /// drafts.
     /// Computed on a clone; the stored tree is never mutated. Borrowed when
     /// nothing overlays the node.
     pub fn effective_config_tree(&self, key: &NodeKey) -> Option<std::borrow::Cow<'_, NodeConfigTree>> {
-        use crate::layout::pending_changes::{PendingChangeKind, PendingChangeStatus};
+        use crate::layout::pending_changes::PendingChangeKind;
         let stored = self.config_tree(key)?;
         let is_this_node = |raw: &str| NodeKey::parse(raw).ok().as_ref() == Some(key);
         let offline: Vec<(u8, u32, &str)> = self
             .pending_changes
             .iter()
-            .filter(|c| c.kind == PendingChangeKind::Config && c.status == PendingChangeStatus::Pending)
+            .filter(|c| c.kind == PendingChangeKind::Config && c.status.is_waiting())
             .filter(|c| c.node_key.as_deref().is_some_and(is_this_node))
             .filter_map(|c| {
                 let offset = c.offset.as_deref()?;
@@ -420,11 +420,11 @@ impl LayoutState {
             let parsed = find_leaf_at(&tree, space, address)
                 .and_then(|leaf| crate::sync::field_meta::string_to_config_value(planned, leaf));
             if let Some(value) = parsed {
-                crate::node_tree::set_modified_value(&mut tree, space, address, value);
+                crate::node_tree::update_leaf_value(&mut tree, space, address, value);
             }
         }
         for draft in drafts {
-            crate::node_tree::set_modified_value(&mut tree, draft.space, draft.address, draft.value.clone());
+            crate::node_tree::update_leaf_value(&mut tree, draft.space, draft.address, draft.value.clone());
         }
         Some(std::borrow::Cow::Owned(tree))
     }
@@ -492,6 +492,23 @@ impl LayoutState {
     /// Remove the rows whose ids are in `ids`; returns how many were removed.
     pub fn remove_pending_changes(&mut self, ids: &std::collections::HashSet<String>) -> usize {
         crate::sync::changes::remove_changes_by_id(&mut self.pending_changes, ids)
+    }
+
+    /// Apply a writer's per-row results: replace each row in `updated` that is
+    /// still present (matched by id), then remove the `cleared` rows. Returns
+    /// the number of rows left.
+    pub fn apply_pending_row_results(
+        &mut self,
+        updated: Vec<PendingChange>,
+        cleared: &std::collections::HashSet<String>,
+    ) -> usize {
+        for next in updated {
+            if let Some(row) = self.pending_changes.iter_mut().find(|r| r.change_id == next.change_id) {
+                *row = next;
+            }
+        }
+        self.remove_pending_changes(cleared);
+        self.pending_changes.len()
     }
 
     /// Record protocol-discovered role classifications.
@@ -1090,7 +1107,7 @@ mod tests {
             crate::node_tree::ConfigNode::Leaf(l) => l,
             _ => unreachable!(),
         };
-        match crate::node_tree::effective_value(leaf) {
+        match leaf.value.as_ref() {
             Some(ConfigValue::Int { value }) => Some(*value),
             _ => None,
         }
@@ -1103,7 +1120,7 @@ mod tests {
         assert_eq!(effective_int(&state, CFG_NODE), Some(0));
         let key = NodeKey::parse(CFG_NODE).unwrap();
         match &state.config_tree(&key).unwrap().segments[0].children[0] {
-            crate::node_tree::ConfigNode::Leaf(l) => assert!(l.modified_value.is_none()),
+            crate::node_tree::ConfigNode::Leaf(l) => assert_eq!(l.value, Some(ConfigValue::Int { value: 1 })),
             _ => unreachable!(),
         }
         // Idempotent: the same set again yields the same view.
@@ -1122,12 +1139,21 @@ mod tests {
     }
 
     #[test]
-    fn effective_config_ignores_applied_skipped_and_other_node_changes() {
+    fn effective_config_keeps_showing_the_planned_value_of_failed_and_conflict_rows() {
+        use crate::layout::pending_changes::PendingChangeStatus;
+        for status in [PendingChangeStatus::Failed, PendingChangeStatus::Conflict] {
+            let mut state = cfg_state(1);
+            state.set_pending_changes(vec![offline_cfg(CFG_NODE, "0", status.clone())]);
+            assert_eq!(effective_int(&state, CFG_NODE), Some(0), "{status:?}");
+        }
+    }
+
+    #[test]
+    fn effective_config_ignores_applied_and_other_node_changes() {
         use crate::layout::pending_changes::PendingChangeStatus;
         let mut state = cfg_state(1);
         state.set_pending_changes(vec![
             offline_cfg(CFG_NODE, "0", PendingChangeStatus::Applied),
-            offline_cfg(CFG_NODE, "5", PendingChangeStatus::Skipped),
             offline_cfg("020157100997", "7", PendingChangeStatus::Pending),
         ]);
         state.sync_config_drafts(vec![cfg_draft("020157100997", 9)]);
@@ -1185,6 +1211,29 @@ mod tests {
         assert_eq!(removed, 2);
         assert_eq!(state.pending_changes().len(), 1);
         assert_eq!(state.pending_changes()[0].change_id, keep_id);
+    }
+
+    #[test]
+    fn apply_pending_row_results_replaces_updated_rows_and_removes_cleared_ones() {
+        use crate::layout::pending_changes::PendingChangeStatus;
+        let mut state = cfg_state(1);
+        let untouched = offline_cfg(CFG_NODE, "0", PendingChangeStatus::Pending);
+        let refused = offline_cfg(CFG_NODE, "1", PendingChangeStatus::Pending);
+        let done = offline_cfg(CFG_NODE, "2", PendingChangeStatus::Pending);
+        let mut refused_after = refused.clone();
+        refused_after.status = PendingChangeStatus::Conflict;
+        refused_after.error = Some("The board kept 5".to_string());
+        let cleared: std::collections::HashSet<String> = [done.change_id.clone()].into();
+        state.set_pending_changes(vec![untouched.clone(), refused, done]);
+
+        let remaining = state.apply_pending_row_results(vec![refused_after], &cleared);
+
+        assert_eq!(remaining, 2);
+        let rows = state.pending_changes();
+        assert_eq!(rows[0].change_id, untouched.change_id);
+        assert_eq!(rows[0].status, PendingChangeStatus::Pending);
+        assert_eq!(rows[1].status, PendingChangeStatus::Conflict);
+        assert_eq!(rows[1].error.as_deref(), Some("The board kept 5"));
     }
 
     #[test]

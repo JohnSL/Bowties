@@ -14,7 +14,7 @@ use super::{OutputFacility, SignalHardwareHost, SignalOutput, SignalOutputOwner}
 use crate::layout::facilities::{ClaimedSlotKind, FacilitiesDocument};
 use crate::node_key::NodeKey;
 use crate::node_tree::{
-    effective_value, replication_instances, ConfigNode, ConfigValue, NodeConfigTree,
+    replication_instances, ConfigNode, ConfigValue, NodeConfigTree,
 };
 
 /// Interpret the configuration into one [`SignalOutput`] per physical output.
@@ -116,7 +116,7 @@ fn find_int_leaf(children: &[ConfigNode], name: &str) -> Option<Result<i64, Stri
     for child in children {
         match child {
             ConfigNode::Leaf(leaf) if leaf.name == name => {
-                return Some(match effective_value(leaf) {
+                return Some(match leaf.value.as_ref() {
                     Some(ConfigValue::Int { value }) => Ok(*value),
                     Some(_) => Err(format!("{name} has a non-integer configuration value.")),
                     None => Err(format!("{name} has no current configuration evidence.")),

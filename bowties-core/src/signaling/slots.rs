@@ -23,7 +23,7 @@ use super::compiler::{
 };
 use crate::layout::facilities::{ClaimedSlot, ClaimedSlotKind, FacilitiesDocument};
 use crate::node_tree::{
-    effective_value, ConfigNode, ConfigValue, LeafNode, LeafType, NodeConfigTree,
+    ConfigNode, ConfigValue, LeafNode, LeafType, NodeConfigTree,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -167,7 +167,7 @@ fn collect_leaves<'a>(
 }
 
 fn event_value(index: &LeafPathIndex<'_>, path: &str) -> Option<[u8; 8]> {
-    match index.leaf(path).and_then(effective_value) {
+    match index.leaf(path).and_then(|leaf| leaf.value.as_ref()) {
         Some(ConfigValue::EventId { bytes, .. }) => Some(*bytes),
         _ => None,
     }
@@ -182,7 +182,7 @@ pub fn node_slot_facts(node_key: &str, tree: &NodeConfigTree, claimed: &[Claimed
     let is_claimed = |kind: ClaimedSlotKind, i: u32| {
         claimed.iter().any(|c| c.node_key == node_key && c.kind == kind && c.index == i)
     };
-    let nonzero = |path: &str| match index.leaf(path).and_then(effective_value) {
+    let nonzero = |path: &str| match index.leaf(path).and_then(|leaf| leaf.value.as_ref()) {
         Some(ConfigValue::Int { value }) => *value != 0,
         _ => true,
     };
@@ -209,7 +209,7 @@ pub fn node_slot_facts(node_key: &str, tree: &NodeConfigTree, claimed: &[Claimed
                 .take_while(|a| index.leaf(&format!("Conditionals/Logic[{i}]/Action#2[{a}]/Condition")).is_some())
                 .map(|a| {
                     let base = format!("Conditionals/Logic[{i}]/Action#2[{a}]");
-                    let condition = match index.leaf(&format!("{base}/Condition")).and_then(effective_value) {
+                    let condition = match index.leaf(&format!("{base}/Condition")).and_then(|leaf| leaf.value.as_ref()) {
                         Some(ConfigValue::Int { value }) => Some(*value),
                         _ => None,
                     };

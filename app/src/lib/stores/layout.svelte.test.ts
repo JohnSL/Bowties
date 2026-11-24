@@ -12,8 +12,8 @@
  * |             |           |               |               | sync panel triggers               |
  *
  * These tests verify the store-level computed properties that drive:
- * - Edit routing (modifiedValue vs pendingChangesStore)
- * - Save routing (writeModifiedValues vs saveLayoutFile)
+ * - Edit routing (drafts; the Save records Pending Changes)
+ * - Save routing (saveLayoutFile vs three-phase Save)
  * - Sync panel triggering
  * - UI visibility (connect area, save controls, config CTA, partial badge)
  * - Save Layout menu availability
@@ -164,7 +164,7 @@ describe('State matrix: layout open, connected (online with layout)', () => {
     layoutStore.setConnected(true);
   });
 
-  it('isOfflineMode is false — edits route to hardware (modifiedValue)', () => {
+  it('isOfflineMode is false — connected with a layout', () => {
     expect(layoutStore.isOfflineMode).toBe(false);
   });
 
@@ -401,25 +401,6 @@ describe('Save routing: isOfflineMode drives SaveControls path', () => {
   });
 
   it('saves to hardware when connected without layout', () => {
-    layoutStore.setConnected(true);
-    expect(layoutStore.isOfflineMode).toBe(false);
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PENDING CHANGES FLUSH GUARD
-// ═══════════════════════════════════════════════════════════════════════════════
-
-describe('Pending changes flush guard', () => {
-  // saveCurrentCaptureToFile: if (layoutStore.isOfflineMode) → flushPendingToBackend
-
-  it('flushes pending changes only when truly offline with layout', () => {
-    setOfflineLayoutContext();
-    expect(layoutStore.isOfflineMode).toBe(true);
-  });
-
-  it('does NOT flush when layout open but connected (edits went to hardware)', () => {
-    setOfflineLayoutContext();
     layoutStore.setConnected(true);
     expect(layoutStore.isOfflineMode).toBe(false);
   });

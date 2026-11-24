@@ -150,28 +150,32 @@ const CONNECTOR_PROFILE = {
 type BucketName =
   | 'config'
   | 'configNodes'
+  | 'configChanges'
   | 'metadata'
   | 'channels'
   | 'facilities'
   | 'connectorSelections'
-  | 'offlineDrafts'
-  | 'offlineRevertedPersisted'
+  | 'pendingDrafts'
+  | 'revertedPendingChanges'
   | 'layoutStruct'
   | 'unsavedNewNodes'
-  | 'unsavedRemovedNodes';
+  | 'unsavedRemovedNodes'
+  | 'waitingPendingChanges';
 
 const ALL_BUCKETS: readonly BucketName[] = [
   'config',
   'configNodes',
+  'configChanges',
   'metadata',
   'channels',
   'facilities',
   'connectorSelections',
-  'offlineDrafts',
-  'offlineRevertedPersisted',
+  'pendingDrafts',
+  'revertedPendingChanges',
   'layoutStruct',
   'unsavedNewNodes',
   'unsavedRemovedNodes',
+  'waitingPendingChanges',
 ] as const;
 
 function emptyBreakdown(): Record<BucketName, number> {
@@ -230,6 +234,7 @@ describe('dirty aggregate — config drafts', () => {
     expectOnlyBuckets(effectiveNodeStore.dirtyBreakdown, {
       config: 1,
       configNodes: 1,
+      configChanges: 1,
     });
   });
 
@@ -241,6 +246,7 @@ describe('dirty aggregate — config drafts', () => {
     expectOnlyBuckets(effectiveNodeStore.dirtyBreakdown, {
       config: 3,
       configNodes: 2,
+      configChanges: 3,
     });
   });
 });
@@ -320,7 +326,7 @@ describe('dirty aggregate — connector selections', () => {
 });
 
 describe('dirty aggregate — offline drafts', () => {
-  it('flips isDirty and surfaces an offlineDrafts bucket count', () => {
+  it('flips isDirty and surfaces an pendingDrafts bucket count', () => {
     setActiveLayoutWith([]);
     pendingChangesStore.upsertConfigChange({
       nodeId: LIVE_A_DOTTED,
@@ -332,8 +338,49 @@ describe('dirty aggregate — offline drafts', () => {
 
     expect(effectiveNodeStore.isDirty).toBe(true);
     const bd = effectiveNodeStore.dirtyBreakdown;
-    expect(bd.offlineDrafts).toBeGreaterThan(0);
-    expectOnlyBuckets(bd, { offlineDrafts: bd.offlineDrafts });
+    expect(bd.pendingDrafts).toBeGreaterThan(0);
+    expectOnlyBuckets(bd, { pendingDrafts: bd.pendingDrafts, configChanges: 1 });
+  });
+
+  it('counts one configuration change when a config draft and a pending draft row target the same field', () => {
+    setActiveLayoutWith([]);
+    configChangesStore.set(editKeyForLeaf(LIVE_A_DOTTED, 251, 0), intVal(5));
+    pendingChangesStore.upsertConfigChange({
+      nodeId: LIVE_A_DOTTED,
+      space: 251,
+      offset: '0x00000000',
+      baselineValue: '0',
+      plannedValue: '5',
+    });
+
+    expect(effectiveNodeStore.dirtyBreakdown.configChanges).toBe(1);
+  });
+});
+
+describe('dirty aggregate — waiting Pending Changes', () => {
+  const waitingRow = (status: 'failed' | 'conflict' | 'pending' | 'applied') => ({
+    changeId: `row-${status}`,
+    kind: 'config' as const,
+    nodeId: LIVE_A_DOTTED,
+    space: 251,
+    offset: '0x00000010',
+    baselineValue: '0',
+    plannedValue: '5',
+    status,
+    error: status === 'conflict' ? 'The board kept 3' : undefined,
+  });
+
+  it('counts failed, conflict and pending rows as waiting without making the layout dirty', () => {
+    setActiveLayoutWith([]);
+    pendingChangesStore.setRows([
+      waitingRow('failed'),
+      { ...waitingRow('conflict'), offset: '0x00000020' },
+      { ...waitingRow('pending'), offset: '0x00000030' },
+      { ...waitingRow('applied'), offset: '0x00000040' },
+    ]);
+
+    expect(effectiveNodeStore.isDirty).toBe(false);
+    expectOnlyBuckets(effectiveNodeStore.dirtyBreakdown, { waitingPendingChanges: 3 });
   });
 });
 
@@ -384,6 +431,7 @@ describe('dirty aggregate — mixed buckets', () => {
       channels: 1,
       config: 1,
       configNodes: 1,
+      configChanges: 1,
     });
   });
 });

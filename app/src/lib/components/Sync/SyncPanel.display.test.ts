@@ -121,6 +121,22 @@ describe('SyncPanel display metadata', () => {
     expect(screen.getByText('02.01.57.00.02.D9')).toBeInTheDocument();
   });
 
+  it('tells the user how many changes were already on the board', () => {
+    const row = makeRow({ changeId: 'conflict-1', busValue: '02.01.57.00.02.D9.02.77' });
+    syncRef.conflictRows = [row];
+    syncRef.alreadyAppliedCount = 2;
+    syncRef.session = {
+      conflictRows: [row],
+      cleanRows: [],
+      alreadyAppliedCount: 2,
+      nodeMissingRows: [],
+    };
+
+    render(SyncPanel, { visible: true });
+
+    expect(screen.getByText(/2 changes were already on the board\./)).toBeInTheDocument();
+  });
+
   it('renders node-missing rows with field and node metadata', () => {
     const row = makeRow({ changeId: 'missing-1', busValue: undefined });
     syncRef.nodeMissingRows = [row];

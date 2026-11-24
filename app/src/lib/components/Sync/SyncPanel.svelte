@@ -83,11 +83,11 @@
       class="sp-content"
       role="dialog"
       aria-modal="true"
-      aria-label="Sync offline changes"
+      aria-label="Sync pending changes"
     >
       <!-- Header -->
       <div class="sp-header">
-        <h2 class="sp-title">Sync Offline Changes</h2>
+        <h2 class="sp-title">Sync Pending Changes</h2>
         {#if syncPanelStore.matchStatus}
           <span
             class="sp-match-badge"
@@ -119,14 +119,14 @@
               onclick={() => handleModeChoice('target_layout_bus')}
             >
               Target layout bus
-              <span class="sp-mode-desc">Sync offline changes to this bus</span>
+              <span class="sp-mode-desc">Write pending changes to this bus</span>
             </button>
             <button
               class="sp-mode-btn sp-mode-bench"
               onclick={() => handleModeChoice('bench_other_bus')}
             >
               Bench / other bus
-              <span class="sp-mode-desc">Keep offline changes pending</span>
+              <span class="sp-mode-desc">Keep changes pending for later</span>
             </button>
           </div>
         </div>
@@ -172,13 +172,13 @@
               <CleanSummarySection />
             {/if}
 
-            <!-- Already-applied count -->
+            <!-- Rows the board already held (leaf and baseline were updated) -->
             {#if syncPanelStore.alreadyAppliedCount > 0}
               <section class="sp-section sp-section-applied">
                 <p class="sp-applied-text">
-                  {syncPanelStore.alreadyAppliedCount}
-                  {syncPanelStore.alreadyAppliedCount === 1 ? 'change' : 'changes'}
-                  already applied — cleared automatically.
+                  {syncPanelStore.alreadyAppliedCount === 1
+                    ? '1 change was already on the board.'
+                    : `${syncPanelStore.alreadyAppliedCount} changes were already on the board.`}
                 </p>
               </section>
             {/if}
