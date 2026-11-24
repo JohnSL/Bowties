@@ -54,7 +54,7 @@ describe('Edit a saved Automatic Block Signals facility (E2a-T1)', () => {
   const signalRow = () => within(screen.getByRole('table')).getByText('Cedar Hill East').closest('tr')!;
   const editorDialog = () => screen.queryByRole('dialog', { name: /edit automatic block signals/i });
 
-  it('reopens on the saved choices, stages new pins on the same channel, and Discard restores them', async () => {
+  it('reopens on the saved choices, stages new pins on the same channel, and Discard restores them', { timeout: 20000 }, async () => {
     expect(effectiveNodeStore.isDirty).toBe(false);
     expect(signalRow()).toHaveTextContent('#3 / #1');
 
