@@ -9,8 +9,8 @@ use bowties_core::layout::channels::{
     InformationChannel,
 };
 use bowties_core::layout::facilities::{
-    apply_facility_deltas, BlockSignalsRecord, ClaimedSlot, ClaimedSlotKind, FacilitiesDocument,
-    Facility, SignalRecord,
+    apply_facility_deltas, BlockSignalsRecord, FacilitiesDocument,
+    Facility, NodeLogicPlacement, PlacedLogicGroup, SignalRecord, SignalResources,
 };
 use bowties_core::layout::io::{read_layout_capture, write_layout_capture, LayoutDirectoryWriteData};
 use bowties_core::layout::manifest::LayoutManifest;
@@ -67,11 +67,11 @@ fn abs_facility() -> Facility {
                 name: "Signal 1".into(),
                 protected_block: "blk-1".into(),
                 channel_id: "ch-sig-1".into(),
-            }],
-            claimed_slots: vec![ClaimedSlot {
-                node_key: NODE.into(),
-                kind: ClaimedSlotKind::Mast,
-                index: 3,
+                resources: SignalResources {
+                    node_key: NODE.into(),
+                    mast: 3,
+                    track_circuits: vec![1, 2],
+                },
             }],
         }),
     }
@@ -101,6 +101,15 @@ fn offline_save_and_reopen_preserves_block_signals_facility() {
             facility_id: "abs-1".into(),
             slot_label: "signals".into(),
             channel_id: "ch-sig-1".into(),
+        },
+        LayoutEditDelta::SetLogicPlacement {
+            node_key: NODE.into(),
+            groups: vec![PlacedLogicGroup {
+                facility_id: "abs-1".into(),
+                signal_id: "sig-0".into(),
+                first: 4,
+                length: 2,
+            }],
         },
     ];
     let mut facilities = FacilitiesDocument::default();
@@ -138,7 +147,20 @@ fn offline_save_and_reopen_preserves_block_signals_facility() {
     assert_eq!(read.facilities.facilities, vec![abs_facility()]);
     let record = read.facilities.facilities[0].block_signals.as_ref().unwrap();
     assert_eq!(record.signals[0].channel_id, "ch-sig-1");
-    assert_eq!(record.claimed_slots[0].index, 3);
+    assert_eq!(record.signals[0].resources.mast, 3);
+    assert_eq!(record.signals[0].resources.track_circuits, vec![1, 2]);
+    assert_eq!(
+        read.facilities.logic_placement,
+        vec![NodeLogicPlacement {
+            node_key: NODE.into(),
+            groups: vec![PlacedLogicGroup {
+                facility_id: "abs-1".into(),
+                signal_id: "sig-0".into(),
+                first: 4,
+                length: 2,
+            }],
+        }]
+    );
     assert_eq!(read.facilities.facilities[0].slot_bindings["signals"], vec!["ch-sig-1"]);
     assert_eq!(read.channels.channels, vec![signal_channel()]);
     assert!(read.load_warnings.is_empty(), "{:?}", read.load_warnings);

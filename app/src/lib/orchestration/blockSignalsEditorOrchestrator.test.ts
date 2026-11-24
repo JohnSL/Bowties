@@ -238,7 +238,7 @@ describe('blockSignalsEditor steps and wiring (E1a B11a)', () => {
     previewBlockSignalsMock.mockReset();
     previewBlockSignalsMock.mockImplementation(async () => signalPreview());
     composeBlockSignalsMock.mockReset();
-    composeBlockSignalsMock.mockResolvedValue({ edits: [], claimedSlots: [], issues: [] });
+    composeBlockSignalsMock.mockResolvedValue({ edits: [], signalResources: [], logicPlacement: [], issues: [] });
     resetBlockSignalsEditorForNewLayout();
   });
 
@@ -312,7 +312,12 @@ describe('blockSignalsEditor compose check and Done (E1a B11b)', () => {
     previewBlockSignalsMock.mockReset();
     previewBlockSignalsMock.mockImplementation(async () => signalPreview());
     composeBlockSignalsMock.mockReset();
-    composeBlockSignalsMock.mockResolvedValue({ edits: [], claimedSlots: [], issues: [] });
+    composeBlockSignalsMock.mockResolvedValue({
+      edits: [],
+      signalResources: [{ signalId: 's1', resources: { nodeKey: HOST.nodeKey, mast: 1, trackCircuits: [] } }],
+      logicPlacement: [],
+      issues: [],
+    });
     resetBlockSignalsEditorForNewLayout();
     configChangesStore.clearAllDrafts();
     facilitiesStore.hydrateBaseline([]);
@@ -360,9 +365,9 @@ describe('blockSignalsEditor compose check and Done (E1a B11b)', () => {
     await chooseRedOutput('s1', 1);
     const first = chooseGreenOutput('s1', 3);
     const issue = { code: 'outputInUse' as const, signalId: 's1', nodeKey: HOST.nodeKey, detail: 'busy' };
-    composeBlockSignalsMock.mockResolvedValueOnce({ edits: [], claimedSlots: [], issues: [issue] });
+    composeBlockSignalsMock.mockResolvedValueOnce({ edits: [], signalResources: [], logicPlacement: [], issues: [issue] });
     await chooseGreenOutput('s1', 2);
-    stale.resolve({ edits: [], claimedSlots: [], issues: [] });
+    stale.resolve({ edits: [], signalResources: [], logicPlacement: [], issues: [] });
     await first;
 
     expect(store.issuesForSignal('s1')).toEqual([issue]);
@@ -373,7 +378,8 @@ describe('blockSignalsEditor compose check and Done (E1a B11b)', () => {
   it('on Done creates the facility, closes the editor and dirties the Save toolbar', async () => {
     composeBlockSignalsMock.mockResolvedValue({
       edits: [{ nodeKey: HOST.nodeKey, space: 253, address: 10, path: 'a', value: { type: 'int', value: 1 } }],
-      claimedSlots: [{ nodeKey: HOST.nodeKey, kind: 'mast', index: 1 }],
+      signalResources: [{ signalId: 's1', resources: { nodeKey: HOST.nodeKey, mast: 1, trackCircuits: [] } }],
+      logicPlacement: [],
       issues: [],
     });
     await wireSignal();
@@ -392,7 +398,7 @@ describe('blockSignalsEditor compose check and Done (E1a B11b)', () => {
   it('on Done with issues keeps the editor open and shows them', async () => {
     await wireSignal();
     const issue = { code: 'outputInUse' as const, signalId: 's1', nodeKey: HOST.nodeKey, detail: 'taken meanwhile' };
-    composeBlockSignalsMock.mockResolvedValueOnce({ edits: [], claimedSlots: [], issues: [issue] });
+    composeBlockSignalsMock.mockResolvedValueOnce({ edits: [], signalResources: [], logicPlacement: [], issues: [issue] });
 
     await finishBlockSignalsEditor();
 
@@ -439,8 +445,10 @@ describe('blockSignalsEditor edit mode (E2a B5b)', () => {
       exitEnd: { kind: 'treatAsStop' },
       blocks: [{ blockId: 'block:cedar', name: 'Cedar Hill', joinedToPrevious: false, turnouts: [] }],
       settings: { aspects: 3, turnoutNotLined: 'restricting', approachLighting: 'alwaysLit' },
-      signals: [{ signalId: 's1', name: 'Saved signal', protectedBlock: 'block:cedar', channelId: 'ch-sig-1' }],
-      claimedSlots: [{ nodeKey: HOST.nodeKey, kind: 'mast' as const, index: 9 }],
+      signals: [{
+        signalId: 's1', name: 'Saved signal', protectedBlock: 'block:cedar', channelId: 'ch-sig-1',
+        resources: { nodeKey: HOST.nodeKey, mast: 9, trackCircuits: [] },
+      }],
     },
   };
 
@@ -448,7 +456,12 @@ describe('blockSignalsEditor edit mode (E2a B5b)', () => {
     previewBlockSignalsMock.mockReset();
     previewBlockSignalsMock.mockImplementation(async () => signalPreview());
     composeBlockSignalsMock.mockReset();
-    composeBlockSignalsMock.mockResolvedValue({ edits: [], claimedSlots: SAVED.blockSignals.claimedSlots, issues: [] });
+    composeBlockSignalsMock.mockResolvedValue({
+      edits: [],
+      signalResources: [{ signalId: 's1', resources: SAVED.blockSignals.signals[0].resources }],
+      logicPlacement: [],
+      issues: [],
+    });
     resetBlockSignalsEditorForNewLayout();
     configChangesStore.clearAllDrafts();
     behaviorTemplatesStore.reset();
@@ -525,7 +538,12 @@ describe('blockSignalsEditor released owners (E2c B2)', () => {
     previewBlockSignalsMock.mockReset();
     previewBlockSignalsMock.mockImplementation(async () => signalPreview());
     composeBlockSignalsMock.mockReset();
-    composeBlockSignalsMock.mockResolvedValue({ edits: [], claimedSlots: [], issues: [] });
+    composeBlockSignalsMock.mockResolvedValue({
+      edits: [],
+      signalResources: [{ signalId: 's1', resources: { nodeKey: HOST.nodeKey, mast: 1, trackCircuits: [] } }],
+      logicPlacement: [],
+      issues: [],
+    });
     resetBlockSignalsEditorForNewLayout();
     configChangesStore.clearAllDrafts();
     facilitiesStore.hydrateBaseline([]);

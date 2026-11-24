@@ -424,3 +424,22 @@ testing) and use its pins for a signal.
   Discard restores the owner. Rejected: staging the release at confirmation,
   which would make the editor a staging owner and leave orphaned releases on
   every exit path that forgot to undo them.
+
+## 2026-11-24 extension: Logic placement moves out of the facility record
+
+Spec 020 E3a. Supersedes, for Logic only, "Recompilation stays in the
+claimed slots ... never a re-pick" (2026-11-22) and the facility's persisted
+`ClaimedSlot` list (2026-11-23).
+
+- **Masts and Track Circuits stay put; Logic is placed per board.** Each
+  signal of a `blockSignals` record carries its own `resources` (board,
+  mast, Track Circuits), which recompilation never re-picks. Logic placement
+  belongs to the board planner ([ADR-0020](0020-board-logic-placement.md))
+  and is recorded in the facilities document's `logicPlacement`, changed
+  only by the whole-board `SetLogicPlacement` delta.
+- **Done stages both.** Create, update and remove stage the facility record
+  and the board's placement together; Discard and rollback restore both.
+- **Release scope.** Release edits lie inside the facility's claims: its
+  signals' masts plus every slot of its placed Logic groups
+  (`slots::facility_claimed_slots`). `release_slots` stays the one release
+  path.

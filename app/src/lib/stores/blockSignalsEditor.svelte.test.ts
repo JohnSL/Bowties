@@ -18,8 +18,10 @@ function seed(): BlockSignalsEditSeed {
       exitEnd: { kind: 'nothingBeyond' },
       blocks: [{ blockId: 'block:cedar', name: 'Cedar Hill', joinedToPrevious: false, turnouts: [] }],
       settings: { aspects: 3, turnoutNotLined: 'stop', approachLighting: 'alwaysLit' },
-      signals: [{ signalId: 'sig-1', name: 'Cedar Hill East', protectedBlock: 'block:cedar', channelId: 'ch-1' }],
-      claimedSlots: [],
+      signals: [{
+        signalId: 'sig-1', name: 'Cedar Hill East', protectedBlock: 'block:cedar', channelId: 'ch-1',
+        resources: { nodeKey: '020157000001', mast: 1, trackCircuits: [] },
+      }],
     },
   };
 }

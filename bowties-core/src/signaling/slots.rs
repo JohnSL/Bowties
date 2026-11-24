@@ -176,7 +176,7 @@ fn event_value(index: &LeafPathIndex<'_>, path: &str) -> Option<[u8; 8]> {
 /// Slot facts for one node: which masts and Logic conditionals are in use
 /// (non-zero effective processing/function, missing evidence, or claimed by
 /// `claimed`), which of those a facility claims, every mast rule's `set aspect`
-/// event, each Logic's four actions and the Direct Lamp rows present.
+/// event, each Logic's raw Function and four actions and the Direct Lamp rows present.
 pub fn node_slot_facts(node_key: &str, tree: &NodeConfigTree, claimed: &[ClaimedSlot]) -> NodeSlotFacts {
     let index = LeafPathIndex::new(tree);
     let is_claimed = |kind: ClaimedSlotKind, i: u32| {
@@ -204,6 +204,10 @@ pub fn node_slot_facts(node_key: &str, tree: &NodeConfigTree, claimed: &[Claimed
         .map(|i| LogicFact {
             index: i,
             in_use: nonzero(&logic_function_path(i)) || is_claimed(ClaimedSlotKind::Logic, i),
+            function: match index.leaf(&logic_function_path(i)).and_then(|leaf| leaf.value.as_ref()) {
+                Some(ConfigValue::Int { value }) => Some(*value),
+                _ => None,
+            },
             claimed: is_claimed(ClaimedSlotKind::Logic, i),
             actions: (1..)
                 .take_while(|a| index.leaf(&format!("Conditionals/Logic[{i}]/Action#2[{a}]/Condition")).is_some())
@@ -224,18 +228,47 @@ pub fn node_slot_facts(node_key: &str, tree: &NodeConfigTree, claimed: &[Claimed
     NodeSlotFacts { node_key: node_key.to_string(), masts, logic, direct_lamps }
 }
 
-/// Slots claimed by Automatic Block Signals facilities, excluding the facility
-/// being composed.
+/// Slots occupied by Automatic Block Signals facilities, excluding the facility
+/// being composed. Derived from the signals' resources (masts) and the
+/// recorded Logic placement; nothing is stored flat.
 pub fn claimed_slots_from_facilities(
     doc: &FacilitiesDocument,
     exclude_facility_id: Option<&str>,
 ) -> Vec<ClaimedSlot> {
-    doc.facilities
+    claimed_slots_where(doc, |id| Some(id) != exclude_facility_id)
+}
+
+/// The slots one facility occupies (its signals' masts and placed Logic): the
+/// release targets of removing it.
+pub fn facility_claimed_slots(doc: &FacilitiesDocument, facility_id: &str) -> Vec<ClaimedSlot> {
+    claimed_slots_where(doc, |id| id == facility_id)
+}
+
+fn claimed_slots_where(doc: &FacilitiesDocument, include: impl Fn(&str) -> bool) -> Vec<ClaimedSlot> {
+    let masts = doc
+        .facilities
         .iter()
-        .filter(|f| Some(f.facility_id.as_str()) != exclude_facility_id)
+        .filter(|f| include(&f.facility_id))
         .filter_map(|f| f.block_signals.as_ref())
-        .flat_map(|r| r.claimed_slots.iter().cloned())
-        .collect()
+        .flat_map(|record| record.signals.iter())
+        .map(|signal| ClaimedSlot {
+            node_key: signal.resources.node_key.clone(),
+            kind: ClaimedSlotKind::Mast,
+            index: signal.resources.mast,
+        });
+    let logic = doc.logic_placement.iter().flat_map(|board| {
+        board
+            .groups
+            .iter()
+            .filter(|group| include(&group.facility_id))
+            .flat_map(move |group| group.first..group.first + group.length)
+            .map(move |index| ClaimedSlot {
+                node_key: board.node_key.clone(),
+                kind: ClaimedSlotKind::Logic,
+                index,
+            })
+    });
+    masts.chain(logic).collect()
 }
 
 /// Resolve compiled edits to memory locations. Unknown paths and edits whose
@@ -295,7 +328,9 @@ pub fn resolve_edits(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::facilities::{BlockSignalsRecord, Facility};
+    use crate::layout::facilities::{
+            BlockSignalsRecord, Facility, NodeLogicPlacement, PlacedLogicGroup, SignalRecord, SignalResources,
+        };
     use crate::node_tree::build_node_config_tree;
     use lcc_rs::cdi::parser::parse_cdi;
 
@@ -395,20 +430,39 @@ mod tests {
     #[test]
     fn slot_claimed_by_another_facility_is_in_use_and_own_facility_is_excluded() {
         let tree = zeroed_tree();
-        let record = |slots| BlockSignalsRecord { claimed_slots: slots, ..sample_record() };
-        let claim = |kind, index| ClaimedSlot { node_key: NODE.into(), kind, index };
         let doc = FacilitiesDocument {
-            facilities: vec![
-                facility("other", record(vec![claim(ClaimedSlotKind::Mast, 2), claim(ClaimedSlotKind::Logic, 3)])),
-                facility("mine", record(vec![claim(ClaimedSlotKind::Mast, 1)])),
-            ],
+            facilities: vec![facility("other", record_with_mast(2)), facility("mine", record_with_mast(1))],
+            logic_placement: vec![NodeLogicPlacement {
+                node_key: NODE.into(),
+                groups: vec![
+                    PlacedLogicGroup { facility_id: "other".into(), signal_id: "s".into(), first: 3, length: 1 },
+                    PlacedLogicGroup { facility_id: "mine".into(), signal_id: "s".into(), first: 5, length: 2 },
+                ],
+            }],
             ..Default::default()
         };
+        let own = facility_claimed_slots(&doc, "mine");
+        assert_eq!(
+            own.iter().map(|c| (c.kind, c.index)).collect::<Vec<_>>(),
+            vec![(ClaimedSlotKind::Mast, 1), (ClaimedSlotKind::Logic, 5), (ClaimedSlotKind::Logic, 6)]
+        );
         let claimed = claimed_slots_from_facilities(&doc, Some("mine"));
         let facts = node_slot_facts(NODE, &tree, &claimed);
         assert!(!facts.masts[0].in_use, "own facility's claim is excluded");
         assert!(facts.masts[1].in_use);
         assert!(facts.logic[2].in_use && !facts.logic[1].in_use);
+        assert!(!facts.logic[4].in_use, "own facility's group is excluded");
+    }
+
+    #[test]
+    fn logic_facts_carry_the_raw_function_value() {
+        let mut tree = zeroed_tree();
+        set_int(&mut tree, &logic_function_path(1), 3);
+        set_int(&mut tree, &logic_function_path(2), 2);
+        let facts = node_slot_facts(NODE, &tree, &[]);
+        assert_eq!(facts.logic[0].function, Some(3));
+        assert_eq!(facts.logic[1].function, Some(2));
+        assert_eq!(facts.logic[2].function, Some(0));
     }
 
     #[test]
@@ -622,17 +676,13 @@ mod tests {
                 occupied: Some([1, 1, 1, 1, 1, 1, 0, 1]),
                 clear: Some([1, 1, 1, 1, 1, 1, 0, 2]),
             }],
-            own_claims: vec![],
+            saved_resources: vec![],
+            logic_placement: vec![],
         });
         assert!(compiled.issues.is_empty(), "{:?}", compiled.issues);
         assert!(!compiled.edits.is_empty());
-        assert_eq!(
-            compiled.claimed_slots,
-            vec![
-                ClaimedSlot { node_key: NODE.into(), kind: ClaimedSlotKind::Mast, index: 1 },
-                ClaimedSlot { node_key: NODE.into(), kind: ClaimedSlotKind::Logic, index: 1 },
-            ]
-        );
+        assert_eq!(compiled.resources[0].resources.mast, 1);
+        assert_eq!(compiled.placement[0].groups[0].first, 1);
         let indexes = HashMap::from([(NODE.to_string(), LeafPathIndex::new(&tree))]);
         let resolved = resolve_edits(&indexes, &compiled.edits).expect("every compiled edit resolves");
         assert_eq!(resolved.len(), compiled.edits.len());
@@ -642,15 +692,23 @@ mod tests {
         assert_eq!(addresses.len(), resolved.len(), "no two edits target the same leaf");
     }
 
-    fn sample_record() -> BlockSignalsRecord {
-        serde_json::from_value(serde_json::json!({
+    fn record_with_mast(mast: u32) -> BlockSignalsRecord {
+        let mut record: BlockSignalsRecord = serde_json::from_value(serde_json::json!({
             "direction": "eastward", "movements": "oneDirection",
             "entranceEnd": {"kind": "noPlant"}, "exitEnd": {"kind": "nothingBeyond"},
             "blocks": [],
             "settings": {"aspects": 3, "turnoutNotLined": "stop", "approachLighting": "alwaysLit"},
-            "signals": [], "claimedSlots": []
+            "signals": []
         }))
-        .expect("record")
+        .expect("record");
+        record.signals.push(SignalRecord {
+            signal_id: "s".into(),
+            name: "S".into(),
+            protected_block: "b".into(),
+            channel_id: "c".into(),
+            resources: SignalResources { node_key: NODE.into(), mast, track_circuits: vec![] },
+        });
+        record
     }
 
     fn facility(id: &str, record: BlockSignalsRecord) -> Facility {

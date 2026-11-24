@@ -14,9 +14,9 @@ import type {
 } from '$lib/api/signaling';
 
 describe('composeBlockSignalsRemoval', () => {
-  it('asks the compose command to release the facility claimed slots', async () => {
+  it('asks the compose command to release the facility mast and Logic', async () => {
     invokeMock.mockReset();
-    invokeMock.mockResolvedValue({ edits: [], claimedSlots: [], issues: [] });
+    invokeMock.mockResolvedValue({ edits: [], signalResources: [], logicPlacement: [], issues: [] });
     await composeBlockSignalsRemoval('abs:main');
     expect(invokeMock).toHaveBeenCalledWith('compose_block_signals', {
       request: { facilityId: 'abs:main', remove: true },
@@ -42,7 +42,7 @@ describe('released owners', () => {
   it('sends released owners with the compose request and accepts fresh event IDs in its edits', async () => {
     invokeMock.mockReset();
     const edit = { nodeKey: '050101010700', space: 253, address: 1, path: 'p', value: { type: 'freshEventId' } };
-    invokeMock.mockResolvedValue({ edits: [edit], claimedSlots: [], issues: [] });
+    invokeMock.mockResolvedValue({ edits: [edit], signalResources: [], logicPlacement: [], issues: [] });
     const request: ComposeBlockSignalsRequest = {
       line,
       wiring: [],

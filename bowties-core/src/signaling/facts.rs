@@ -66,6 +66,7 @@ pub fn overlay_releases(
         node_key: Some(node_key.to_string()),
         detail,
         binding_issue: None,
+        logic: Vec::new(),
     };
     let mut owners = Vec::new();
     let mut facts: Vec<NodeSlotFacts> = Vec::new();
@@ -500,7 +501,8 @@ mod tests {
                 occupied: Some([1, 1, 1, 1, 1, 1, 0, 1]),
                 clear: Some([1, 1, 1, 1, 1, 1, 0, 2]),
             }],
-            own_claims: vec![],
+            saved_resources: vec![],
+            logic_placement: vec![],
         })
     }
 
@@ -523,11 +525,8 @@ mod tests {
 
         let compiled = compile_with(&overlay.trees);
         assert_eq!(compiled.issues, vec![]);
-        assert_eq!(
-            compiled.claimed_slots.iter().map(|c| c.index).collect::<Vec<_>>(),
-            vec![1, 1],
-            "the freed Mast 1 and Logic 1 are the lowest free slots"
-        );
+        assert_eq!(compiled.resources[0].resources.mast, 1, "the freed Mast 1 is the lowest free mast");
+        assert_eq!(compiled.placement[0].groups[0].first, 1, "the freed Logic 1 is the lowest free Logic");
 
         let merged = merge_release_edits(overlay.edits, compiled.edits);
         let at = |path: &str| -> Vec<EditValue> {

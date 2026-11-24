@@ -2,7 +2,7 @@
 
 Branch: 020-block-signals-first-slice
 Generated: 2026-11-07; roadmap regenerated 2026-11-22 for the end-to-end pivot
-Status: 9/15 slices complete (S1, S2R, E1a, E1b, E2a, E2b, E2c, E3b-0, E3b-1); S2 and the old S3–S8 superseded by E1a–E6
+Status: 10/17 slices complete (S1, S2R, E1a, E1b, E2a, E2b, E2c, E3a, E3b-0, E3b-1); S2 and the old S3–S8 superseded by E1a–E6
 
 Approved input: the
 [2026-11-22 Architecture Assessment](plan.md#architecture-assessment-end-to-end-first-release-2026-11-22)
@@ -108,7 +108,9 @@ flowchart LR
 | E2a: Edit a saved facility | Rename, reorient and rebind a saved facility; write it online and through the Sync Panel | Yes, bench |
 | E2b: Remove a facility | Removal resets only the claimed slots; the signal goes dark | Yes, bench |
 | E2c: Release pins used outside Bowties | A pin held by a mast or Direct Lamp row that no facility owns can be released and used, undoably | Yes, bench |
+| E3a: Board Logic planner [REFACTOR + guard] | One-block create, edit and remove behave as before; Done is blocked, naming the Logic, when the board has Logic Bowties does not own with an undefined Function value or a group with no end | Yes (guard) |
 | E3: Two blocks on one board | Approach behind an occupied block | Yes, bench |
+| E3r: Review step | Review lists each signal, its outputs, claimed slots and moved Logic before Done | Yes |
 | E3b-0: One owner and one writer for Pending Changes [REFACTOR] | None: Sync Panel, offline Save and open behave as before | No (invariants) |
 | E3b-1: Save writes configuration through Pending Changes | Edits made offline reach the board on a later connected Save; a failed write stays waiting with a reason; waiting changes open the Sync Panel from the toolbar | Yes, bench |
 | E3b-2: Accept or keep a refused value | In the Sync Panel, accept the board's value (change dropped) or keep yours | Yes, bench |
@@ -128,12 +130,14 @@ flowchart LR
 | E2a | Edit a saved facility | HITL | E1b | done |
 | E2b | Remove a facility | HITL | E2a | done |
 | E2c | Release pins used outside Bowties | HITL | E2b | done |
-| E3 | Two blocks on one board | HITL | E2b + same-board Approach evidence | sketched |
+| E3a | Board Logic planner | AFK | E3b-1 | done |
+| E3 | Two blocks on one board | HITL | E3a + same-board Approach evidence (passed) + E3 bench gate | sketched |
+| E3r | Review step | HITL | E3 | sketched |
 | E3b-0 | One owner and one writer for Pending Changes | REFACTOR | E2c | done |
 | E3b-1 | Save writes configuration through Pending Changes | HITL | E3b-0 | done |
 | E3b-2 | Accept or keep a refused value | HITL | E4 | sketched |
 | E4 | Verify writes | HITL | E1b, E3b-1 | sketched |
-| E5 | Across boards | HITL | E3 + E4 + cross-board Approach and receiver-restart evidence | sketched |
+| E5 | Across boards | HITL | E3r + E4 + cross-board Approach and receiver-restart evidence | sketched |
 | E6 | Maintain a three-block facility | AFK | E5 | sketched |
 | F1 | Hand off: lcc-rs inbound routing under a loaded bus | HITL | E6 | sketched |
 
@@ -930,23 +934,80 @@ Deferred until the save/apply slice:
 - Save loses configuration drafts staged while not connected (architecture, not E2c): the draft mirror copies drafts to the backend only while connected and never re-sends them after connecting; a connected Save writes only what was copied, then `clearAllDrafts()` drops everything. Same symptom class as the ADR-0012 2026-07-03 extension; ADR-0001 says an online Save stages pending changes as Offline Changes first, which the code does not do. Moved to slice E3b (Save writes configuration through Pending Changes); bench-check E2c while already connected until then.
 - Idea from the user: a "force write" of a node's saved configuration to the node, so the board matches the layout. Noted on the E3b card as a separate feature built on its writer; no issue.
 
+### E3 decisions (approved 2026-11-24)
+
+Taken while tasking E3, which split it into E3a, E3 and E3r.
+- **Logic placement (D2, user direction)**: "never a re-pick" is revisited. The compiler describes each signal's Logic rungs without slot numbers; one pure per-board Logic planner places every Bowties group on that board and owns the board-wide rule (each group is consecutive Logic ending in a valid `Last (Single)`; Logic Bowties does not own can break groups after it). Groups stay put unless room is needed; then the fewest slots move, our own group first. The planner reports Logic it does not own with an undefined Function value or a `Group` run with no end, and places nothing on that board; a fix is only a named release the modeler confirms (E2c rule), never automatic. Placement is recorded per board in the layout (keyed by facility, signal and rung order), not in the facility record, so moving one facility's group never edits another facility's record. Rejected: handles held by facilities (a second identity next to the signal ID, and the board-wide rule stays split across compiles); deriving ownership from board content (a hand edit silently disowns a group).
+- **Claims (D3 A)**: masts and Track Circuits never move (a mast's set-aspect events and Link Address are generated by the board and used by others; Logic refers to circuits by number). Each signal records its own mast and Track Circuits; the facility-wide `claimedSlots` list goes away.
+- **No migration**: facilities "2.0" and layout 5 exist only on this branch, so the record shape changes in place with no version bump or old-shape reader. Remove the bench facility (or start the layout over) before opening it with E3a.
+- **Link Address (D1 D)**: the receiver's Track Circuit takes the publisher mast's Link Address from the layout. The field is read-only in the profile, so its only source is a read of the board; the bench failure (`...04.68`) came from an edited value, which that lock now prevents. E4 checks the publisher's Link Address too. Rejected for now: a read at Done (loses offline Done for lines with two or more blocks; adds an observation layer).
+- **Scope (D5)**: any number of blocks with every signal on one board; a line across boards is a scoped issue (E5). Three-block maintenance stays in E6.
+- **Review (D4)**: moved to its own slice, E3r. Done stays on Wiring in E3a and E3.
+- **Bench gate before E3's recipe values are fixed**: on the existing bench (Mast 1 receiver, Mast 2 publisher), put Mast 1's own occupancy as a `Group` in Logic 7 and the Track Circuit rung as `Last (Single)` in Logic 8, then check: the four occupancy combinations; a Track Circuit change while the own block is occupied stays Stop; the aspect right after writing, before any detector changes; a factory-reset Track Circuit's Link Address (decides when a circuit is free and what release writes); a `Blocked` Logic ends a group; the Signal LCC acts on Logic writes only after Update Complete. Also confirm the writer writes a board's rows in recorded order (code check).
+
+### E3a: Board Logic planner [AFK]
+
+**Intent**: One module places Bowties' Logic on each board and refuses a board whose Logic it cannot read safely; one-block signals behave exactly as before.
+**Boundary**: Core record (`layout/facilities.rs`) → core planner (new `signaling/logic_placement.rs`) → compiler (`compiler.rs`, `slots.rs`, `facts.rs`, `outputs.rs`) → backend compose (`signaling/compose.rs`, `signaling/mod.rs`) → frontend types, facilities store, facility orchestrator, Remove dialog → layout file.
+**Blocked by**: E3b-1.
+**Status**: done
+**Complexity**: large
+
+**Acceptance criteria**:
+- [x] A one-block facility can be created, edited, removed and saved and reopened as before. The same mast and Logic are chosen, and the same edits are produced (pinned by the existing compiler, roundtrip and RailroadPanel tests).
+- [x] Each signal records its own mast (node and number) and Track Circuits (none until E3). The facility no longer stores `claimedSlots`. The layout records Logic placement for each board, and Done, Discard, Save and reopen keep it in step with the facility.
+- [x] Editing a saved facility keeps its Logic where it is. A new facility's group goes in the lowest free run that is safe.
+- [x] When Logic Bowties does not own on the chosen board has a Function value the CDI does not define, or a run of `Group` entries with no `Last (Single)`, Done is blocked with an issue that names the Logic number(s). Nothing is written.
+- [x] Removing a facility releases its mast and its placed Logic, and its placement disappears. The Remove dialog and the Wiring "Used by" names are unchanged.
+- [x] The change shows in the Save toolbar, the unsaved-changes breakdown and the close prompts, and can be discarded (the facilities bucket).
+
+**Tasks**:
+- [x] E3a-T1: Integration test first. A RailroadPanel test: on a board whose Logic it does not own has an undefined Function value, Done stays disabled and Wiring shows the issue naming the Logic. A core test runs compile and placement for one block through to the claims and placement written.
+- [x] E3a-T2: Record. Add `SignalRecord.resources { nodeKey, mast, trackCircuits }` and remove `BlockSignalsRecord.claimedSlots`. Add a `logicPlacement` section to the facilities document (per board: groups of facility ID, signal ID, first Logic and length). Add one whole-board replace delta for it, applied in `apply_facility_deltas`. Roundtrip tests.
+- [x] E3a-T3: Planner (pure, `signaling/logic_placement.rs`). Input: the board's Logic facts (raw Function values), the recorded placement, and the groups wanted. Output: a placement, plus issues for undefined Function values or `Group` runs with no end on Logic Bowties does not own. Placed groups stay put; a new group goes in the lowest free run that is safe. Unit tests. Moves come with two-rung groups in E3.
+- [x] E3a-T4: Compiler. The recipe describes Logic content relative to the group; the planner supplies the slot. Own claims come from the signal's resources and the placement. Release targets come from the same two sources. `slots.rs` "claimed", `facts.rs` releases and `outputs.rs` attribution read the signal's resources and the placement. Existing compiler tests stay green.
+- [x] E3a-T5: Backend compose. Pass the effective placement in, and return the planned placement for the board. Remove returns the placement without the facility's groups.
+- [x] E3a-T6: Frontend. Types (`api/facilities.ts`, `api/signaling.ts`), the placement delta in the facilities store (dirty, discard, hydrate), and `stageBlockSignalsFacility` / `removeBlockSignalsFacility` staging the placement. `BlockSignalsRemoveDialog` and `FacilitiesSection` read the signal's resources and the placement. Product wording for the new issues goes in `wiringText.ts`.
+- [x] E3a-T7: Docs. A new ADR, "Board Logic placement". An ADR-0012 dated extension replacing "never a re-pick": masts and circuits never move; only the planner places Logic; release edits ⊆ claims ∪ placement. `aiwiki/owners.md`, the seams entry "Automatic Block Signals Progressive Proposal", and `product/hardware/signal-lcc/conditionals.md` (link to the planner).
+- [x] E3a-T8: Validate. `cargo test` in `bowties-core`, `cargo check --tests` in `app/src-tauri`, `npx vitest run`, svelte-check (baseline 113).
+
+**Validation (2026-11-24, automated)**:
+- `cargo test` in `bowties-core`: 602 passed, 0 failed, 0 warnings (was 580). New: planner unit tests (stay put, lowest free run, other facility untouched, drop undemanded, undefined Function, unterminated Group run, terminated outside group allowed, no room, unread); record and delta tests (resources and placement roundtrip, `SetLogicPlacement` replace/remove/no-op, `DeleteFacility` prunes); compiler tests (one block beside an outside group gives the pinned edits plus resources and placement; recompile keeps the placed Logic when a lower slot frees; an undefined Function blocks and names the Logic).
+- `app/src-tauri`: `cargo check --tests` clean (its test binary does not start on this machine; compose and `list_facilities` have compile-only evidence, logic is in core).
+- `npx vitest run`: 1676 passed, 125 files (was 1662/124). svelte-check: 113 errors, the baseline.
+- Found while building: the layout writer dropped `logicPlacement` (caught by the roundtrip test, fixed in `layout/io.rs`); no command sent the placement to the frontend, so `list_facilities` now returns `{ facilities, logicPlacement }` and the store hydrates both from one read.
+- Refactor pass: one lenient node-key canonicaliser (`layout::facilities::canonical_node_key`) replaces two private copies in the compiler; the derived `ClaimedSlot` view lost its unused serde derives.
+- Docs: [ADR-0020](../../product/architecture/adr/0020-board-logic-placement.md), ADR-0012 2026-11-24 extension, `aiwiki/owners.md`, `aiwiki/seams.md` (Automatic Block Signals entry), `product/hardware/signal-lcc/conditionals.md`.
+- Bench: passed (2026-11-24): one-block create, edit and remove used the same mast and Logic as before; Save and reopen kept them; an unterminated `Group` Logic outside Bowties blocked Done and named the Logic, and setting it back to Blocked cleared it; Discard removed the facility, its edits and its placement.
+
 ### E3: Two blocks on one board [HITL]
 
-**Intent**: The modeler adds a second block; the first signal keeps its identity and shows Approach behind an occupied block. This slice also adds the Review step (deferred from E1a).
-**Boundary**: Editor → compiler (receiving logic, Track Circuit) → drafts → Save → Signal LCC.
-**Blocked by**: E2b + same-board Approach evidence (passed).
+**Intent**: The modeler adds a second block; the first signal keeps its identity and shows Approach behind an occupied block.
+**Boundary**: Editor → compiler (internal-signal recipe, Track Circuit, planner moves) → drafts → Save → Signal LCC.
+**Blocked by**: E3a + same-board Approach evidence (passed) + the E3 bench gate above.
 **Status**: sketched
 
 **Acceptance criteria**:
 - [ ] Adding a block keeps the first signal's identity, name, protected block and outputs; the new signal protects only its own block.
-- [ ] The Review step is enabled after Wiring and shows each signal's block, behavior, outputs, expected indications, affected configuration and claimed slots (FR-010); Done moves from Wiring to Review.
-- [ ] Review explains that the first signal now has a signal after it, and lists the added logic and claimed slots.
+- [ ] An internal signal gets a two-rung group (own occupancy, then the Track Circuit) and a Track Circuit bound to the next signal's mast Link Address from the layout; the terminal recipe is unchanged.
 - [ ] All four two-block occupancy combinations match the policy on the bench: own block occupied gives Stop (red); clear with the next block occupied gives Approach (red and green together); both clear gives Clear (green).
-- [ ] The Track Circuit Link Address comes from values freshly read from the board, not saved or assumed ones.
-- [ ] A needed slot that is not free blocks Done with a scoped issue; nothing is overwritten.
+- [ ] When the group cannot grow in place, the planner moves the fewest slots (our own group first) in a safe write order; a needed slot or circuit that cannot be found blocks Done with a scoped issue; nothing is overwritten.
+- [ ] A line whose signals are on more than one board is a scoped issue (E5).
 - [ ] The change shows in the Save toolbar, the unsaved-changes breakdown and the close prompts, and can be discarded.
 
-**Architecture note**: Adds the receiving-logic recipe and a Track Circuit derived from block order, not a separately stored link graph.
+**Architecture note**: Adds the internal-signal recipe and a Track Circuit derived from block order (no separately stored link graph), and planner moves for two-rung groups.
+
+### E3r: Review step [HITL]
+
+**Intent**: Before Done, Review shows what the facility will change on each board.
+**Boundary**: Editor store and steps (new `ReviewStep`) → compose result (edits, claims, placement, moves).
+**Blocked by**: E3.
+**Status**: sketched
+
+**Acceptance criteria**:
+- [ ] Review is enabled after Wiring and shows each signal's block, behavior, outputs, expected indications, affected configuration and claimed slots (FR-010); Done moves from Wiring to Review.
+- [ ] Review explains that a signal now has a signal after it, and lists the added logic, claimed slots, and any Logic moved (including other facilities' groups).
+- [ ] Layout follows the storyboard's [`#line-review`](../proposals/signaling-ux/signaling-facilities-storyboard.html#line-review) (behavior panel, summary cards, per-signal table, choices needing attention), with one Done in place of "Save new draft" and "Create and apply".
 
 ### E3b: Save writes configuration through Pending Changes (split into E3b-0, E3b-1, E3b-2)
 
@@ -1121,6 +1182,7 @@ Deferred until the save/apply slice:
 - Merged readback ranges through `sync::read_plan` (a facility Done of about 50 values is not read one field at a time).
 - A refused value stays pending with the board's value and a reason.
 - Consider per-board Update Complete (JMRI makes it a user action).
+- Read each publisher mast's Link Address and flag a Track Circuit bound to a different value (E3 D1).
 
 **Acceptance criteria**:
 - [ ] After a connected Save or a Sync Panel write, each signal is marked verified only when its values read back as written.
@@ -1134,7 +1196,7 @@ Deferred until the save/apply slice:
 
 **Intent**: Signals hosted on two Signal LCC boards coordinate correctly, and a partial failure is reported per board.
 **Boundary**: Compiler (cross-node receiver) → drafts → Save / Sync Panel → two nodes.
-**Blocked by**: E3 + E4 + cross-board Approach and receiver-restart evidence (outstanding).
+**Blocked by**: E3r + E4 + cross-board Approach and receiver-restart evidence (outstanding).
 **Status**: sketched
 
 **Acceptance criteria**:

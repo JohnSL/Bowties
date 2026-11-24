@@ -3,11 +3,13 @@
 // Covers spec 018 S1 acceptance criteria AC1, AC4, AC5 and SC-002 at the store seam.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Facility } from '$lib/api/facilities';
+import type { FacilitiesListing, Facility, NodeLogicPlacement, PlacedLogicGroup } from '$lib/api/facilities';
 import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
 import type { LayoutEditDelta } from '$lib/types/bowtie';
 
-const listFacilitiesMock = vi.fn<() => Promise<Facility[]>>(async () => []);
+const EMPTY_LISTING: FacilitiesListing = { facilities: [], logicPlacement: [] };
+const listing = (facilities: Facility[], logicPlacement: NodeLogicPlacement[] = []): FacilitiesListing => ({ facilities, logicPlacement });
+const listFacilitiesMock = vi.fn<() => Promise<FacilitiesListing>>(async () => EMPTY_LISTING);
 const listBehaviorTemplatesMock = vi.fn<() => Promise<BehaviorTemplate[]>>(async () => []);
 
 vi.mock('$lib/api/facilities', () => ({
@@ -38,7 +40,7 @@ beforeEach(() => {
   facilitiesStore.reset();
   behaviorTemplatesStore.reset();
   listFacilitiesMock.mockReset();
-  listFacilitiesMock.mockResolvedValue([]);
+  listFacilitiesMock.mockResolvedValue(EMPTY_LISTING);
   listBehaviorTemplatesMock.mockReset();
   listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR]);
 });
@@ -85,7 +87,7 @@ describe('S1: Facility CRUD with empty slots — end-to-end round-trip', () => {
     facilitiesStore.reset();
     expect(facilitiesStore.facilities).toEqual([]);
 
-    listFacilitiesMock.mockResolvedValue([persistedAfterAdd]);
+    listFacilitiesMock.mockResolvedValue(listing([persistedAfterAdd]));
     await facilitiesStore.loadFacilities();
     expect(facilitiesStore.facilities).toEqual([persistedAfterAdd]); // SC-002: round-trip exact
     expect(facilitiesStore.isDirty).toBe(false);
@@ -104,7 +106,7 @@ describe('S1: Facility CRUD with empty slots — end-to-end round-trip', () => {
     // Save and reopen ─ persistence carries the new name.
     facilitiesStore.hydrateBaseline([{ ...persistedAfterAdd, name: 'Block 7' }]);
     facilitiesStore.reset();
-    listFacilitiesMock.mockResolvedValue([{ ...persistedAfterAdd, name: 'Block 7' }]);
+    listFacilitiesMock.mockResolvedValue(listing([{ ...persistedAfterAdd, name: 'Block 7' }]));
     await facilitiesStore.loadFacilities();
     expect(facilitiesStore.facilities[0].name).toBe('Block 7');
     expect(facilitiesStore.isDirty).toBe(false);
@@ -122,7 +124,7 @@ describe('S1: Facility CRUD with empty slots — end-to-end round-trip', () => {
     // Save and reopen ─ facility is gone.
     facilitiesStore.hydrateBaseline([]);
     facilitiesStore.reset();
-    listFacilitiesMock.mockResolvedValue([]);
+    listFacilitiesMock.mockResolvedValue(EMPTY_LISTING);
     await facilitiesStore.loadFacilities();
     expect(facilitiesStore.facilities).toEqual([]);
     expect(facilitiesStore.isDirty).toBe(false);
@@ -248,6 +250,8 @@ const SIGNALS_TEMPLATE: BehaviorTemplate = {
   mapping: [],
 };
 
+const BOARD = '020157000001';
+
 function record(overrides: Partial<BlockSignalsRecord> = {}): BlockSignalsRecord {
   return {
     direction: 'forward',
@@ -256,8 +260,10 @@ function record(overrides: Partial<BlockSignalsRecord> = {}): BlockSignalsRecord
     exitEnd: 'b',
     blocks: [],
     settings: {},
-    signals: [{ signalId: 's-1', name: 'Mast 1', protectedBlock: 'b-1', channelId: 'ch-sig' }],
-    claimedSlots: [],
+    signals: [{
+      signalId: 's-1', name: 'Mast 1', protectedBlock: 'b-1', channelId: 'ch-sig',
+      resources: { nodeKey: BOARD, mast: 1, trackCircuits: [] },
+    }],
     ...overrides,
   } as unknown as BlockSignalsRecord;
 }
@@ -299,5 +305,80 @@ describe('Spec 020 / E1a: facility block-signals record', () => {
     expect(facilitiesStore.setBlockSignalsRecord('f-1', saved)).toBe(true);
     expect(facilitiesStore.isDirty).toBe(false);
     expect(facilitiesStore.collectDeltas()).toEqual([]);
+  });
+});
+
+describe('Spec 020 / E3a: board Logic placement', () => {
+  const group = (facilityId: string, signalId: string, first: number, length = 1): PlacedLogicGroup => ({
+    facilityId, signalId, first, length,
+  });
+  const absFacility = (facilityId: string): Facility => ({
+    facilityId, templateId: 'automatic-block-signals', name: facilityId, slotBindings: { signals: [] }, blockSignals: record(),
+  });
+  const saved: NodeLogicPlacement[] = [{ nodeKey: BOARD, groups: [group('f-1', 's-1', 1), group('f-2', 's-2', 2)] }];
+
+  it('loadFacilities hydrates the placement from the same read as the facilities, clean', async () => {
+    listFacilitiesMock.mockResolvedValue(listing([absFacility('f-1'), absFacility('f-2')], saved));
+    await facilitiesStore.loadFacilities();
+
+    expect(facilitiesStore.logicPlacement).toEqual(saved);
+    expect(facilitiesStore.isDirty).toBe(false);
+    expect(facilitiesStore.collectDeltas()).toEqual([]);
+  });
+
+  it('setLogicPlacement replaces a board wholesale, suppresses no-ops, emits one delta and discards back to the saved placement', () => {
+    facilitiesStore.hydrateBaseline([absFacility('f-1'), absFacility('f-2')], saved);
+
+    expect(facilitiesStore.setLogicPlacement(BOARD, saved[0].groups)).toBe(false);
+    expect(facilitiesStore.isDirty).toBe(false);
+
+    const moved = [group('f-1', 's-1', 3), group('f-2', 's-2', 2)];
+    expect(facilitiesStore.setLogicPlacement(BOARD, moved)).toBe(true);
+    expect(facilitiesStore.logicPlacement).toEqual([{ nodeKey: BOARD, groups: moved }]);
+    expect(facilitiesStore.isDirty).toBe(true);
+    expect(facilitiesStore.collectDeltas()).toEqual([{ type: 'setLogicPlacement', nodeKey: BOARD, groups: moved }]);
+
+    expect(facilitiesStore.setLogicPlacement(BOARD, moved)).toBe(false);
+    facilitiesStore.discard();
+    expect(facilitiesStore.logicPlacement).toEqual(saved);
+    expect(facilitiesStore.isDirty).toBe(false);
+    expect(facilitiesStore.collectDeltas()).toEqual([]);
+
+    expect(facilitiesStore.setLogicPlacement(BOARD, moved)).toBe(true);
+    expect(facilitiesStore.setLogicPlacement(BOARD, saved[0].groups)).toBe(true);
+    expect(facilitiesStore.isDirty).toBe(false);
+  });
+
+  it('a board with no groups left has no entry, and a new board is added with its groups', () => {
+    facilitiesStore.hydrateBaseline([absFacility('f-1')], [{ nodeKey: BOARD, groups: [group('f-1', 's-1', 1)] }]);
+
+    expect(facilitiesStore.setLogicPlacement(BOARD, [])).toBe(true);
+    expect(facilitiesStore.logicPlacement).toEqual([]);
+    expect(facilitiesStore.collectDeltas()).toEqual([{ type: 'setLogicPlacement', nodeKey: BOARD, groups: [] }]);
+
+    expect(facilitiesStore.setLogicPlacement('020157000002', [group('f-1', 's-1', 4)])).toBe(true);
+    expect(facilitiesStore.logicPlacement).toEqual([{ nodeKey: '020157000002', groups: [group('f-1', 's-1', 4)] }]);
+  });
+
+  it('deleting a facility prunes its groups from the effective placement, and from staged placement, as the backend does', () => {
+    facilitiesStore.hydrateBaseline([absFacility('f-1'), absFacility('f-2')], saved);
+    facilitiesStore.deleteFacility('f-1');
+
+    expect(facilitiesStore.logicPlacement).toEqual([{ nodeKey: BOARD, groups: [group('f-2', 's-2', 2)] }]);
+    expect(facilitiesStore.collectDeltas()).toEqual([{ type: 'deleteFacility', facilityId: 'f-1' }]);
+
+    facilitiesStore.setLogicPlacement('020157000002', [group('new', 's-9', 1)]);
+    facilitiesStore.addFacility(SIGNALS_TEMPLATE, 'New', 'new', record());
+    facilitiesStore.deleteFacility('new');
+    expect(facilitiesStore.logicPlacement).toEqual([{ nodeKey: BOARD, groups: [group('f-2', 's-2', 2)] }]);
+    expect(facilitiesStore.collectDeltas()).toEqual([{ type: 'deleteFacility', facilityId: 'f-1' }]);
+  });
+
+  it('counts a placement-only change as one facility edit, and not on top of the facility edit it comes with', () => {
+    facilitiesStore.setLogicPlacement(BOARD, [group('f-1', 's-1', 1)]);
+    expect(facilitiesStore.editCount).toBe(1);
+
+    facilitiesStore.addFacility(SIGNALS_TEMPLATE, 'ABS', 'f-1', record());
+    expect(facilitiesStore.editCount).toBe(1);
   });
 });

@@ -7,17 +7,17 @@
 use std::collections::HashMap;
 
 use bowties_core::{
-    layout::{channels::ChannelRole, facilities::ClaimedSlot, state::LayoutState},
+    layout::{channels::ChannelRole, facilities::NodeLogicPlacement, state::LayoutState},
     node_key::NodeKey,
     node_tree::{parse_event_id_hex, NodeConfigTree},
     profile::StructureProfile,
     signaling::{
         compiler::{
             compile_block_signals, merge_release_edits, release_slots, BlockOccupancyEvents, CompileInput,
-            CompileIssue, EditValue, ReleaseTarget, SignalWiring,
+            CompileIssue, EditValue, PlannedSignalResources, ReleaseTarget, SignalWiring,
         },
         slots::{
-            claimed_slots_from_facilities, node_slot_facts, resolve_edits, LeafPathIndex,
+            claimed_slots_from_facilities, facility_claimed_slots, node_slot_facts, resolve_edits, LeafPathIndex,
             ResolvedEdit,
         },
         BlockSignalsRequest, ReleaseRequest,
@@ -53,7 +53,10 @@ pub struct ComposeBlockSignalsRequest {
 #[serde(rename_all = "camelCase")]
 pub struct ComposeBlockSignalsResponse {
     pub edits: Vec<ResolvedEdit>,
-    pub claimed_slots: Vec<ClaimedSlot>,
+    /// Each signal's mast and Track Circuits (empty on removal and on issues).
+    pub signal_resources: Vec<PlannedSignalResources>,
+    /// The whole new Logic placement of each affected board (empty on issues).
+    pub logic_placement: Vec<NodeLogicPlacement>,
     pub issues: Vec<CompileIssue>,
 }
 
@@ -86,13 +89,20 @@ fn compose_from_layout(
     // facts and free-slot pick below all see the released configuration.
     let facts = proposal_facts_from_layout(layout, profiles, &request.release);
     let claimed = claimed_slots_from_facilities(layout.effective_facilities(), request.facility_id.as_deref());
-    // Recompiling a saved facility: its own claimed slots are reused, not re-picked.
-    let own_claims = request
+    // Recompiling a saved facility: each signal keeps its mast, and the board's
+    // planner keeps the facility's Logic groups where they are.
+    let saved_resources = request
         .facility_id
         .as_deref()
         .and_then(|id| layout.effective_facilities().facilities.iter().find(|f| f.facility_id == id))
         .and_then(|f| f.block_signals.as_ref())
-        .map(|record| record.claimed_slots.clone())
+        .map(|record| {
+            record
+                .signals
+                .iter()
+                .map(|s| PlannedSignalResources { signal_id: s.signal_id.clone(), resources: s.resources.clone() })
+                .collect()
+        })
         .unwrap_or_default();
 
     let mut occupancy = Vec::new();
@@ -138,7 +148,8 @@ fn compose_from_layout(
         hardware: facts.hardware.clone(),
         nodes,
         occupancy,
-        own_claims,
+        saved_resources,
+        logic_placement: layout.effective_facilities().logic_placement.clone(),
     });
     // Only a release asks the frontend for fresh event IDs; a recipe never does.
     if compiled.edits.iter().any(|e| e.value == EditValue::FreshEventId) {
@@ -146,31 +157,35 @@ fn compose_from_layout(
     }
     let mut issues = facts.release_issues.clone();
     issues.extend(compiled.issues);
-    let (merged, claimed_slots) = if issues.is_empty() {
-        (merge_release_edits(facts.release_edits.clone(), compiled.edits), compiled.claimed_slots)
+    let (merged, signal_resources, logic_placement) = if issues.is_empty() {
+        (
+            merge_release_edits(facts.release_edits.clone(), compiled.edits),
+            compiled.resources,
+            compiled.placement,
+        )
     } else {
-        (Vec::new(), Vec::new())
+        (Vec::new(), Vec::new(), Vec::new())
     };
     let edits = resolve_edits(&indexes, &merged).map_err(|e| e.to_string())?;
-    Ok(ComposeBlockSignalsResponse { edits, claimed_slots, issues })
+    Ok(ComposeBlockSignalsResponse { edits, signal_resources, logic_placement, issues })
 }
 
-/// Removal mode: the edits that unclaim the saved facility's mast and Logic,
-/// built from the effective trees of the nodes that hold its claims.
+/// Removal mode: the edits that release the saved facility's masts and placed
+/// Logic, built from the effective trees of the nodes that hold them, and each
+/// affected board's placement without the facility's groups.
 fn release_from_layout(
     layout: &LayoutState,
     profiles: &HashMap<String, Option<StructureProfile>>,
     facility_id: Option<&str>,
 ) -> Result<ComposeBlockSignalsResponse, String> {
     let facility_id = facility_id.ok_or("Removal needs a facility id.")?;
-    let claims = layout
-        .effective_facilities()
-        .facilities
+    let doc = layout.effective_facilities();
+    doc.facilities
         .iter()
         .find(|f| f.facility_id == facility_id)
         .and_then(|f| f.block_signals.as_ref())
-        .map(|record| record.claimed_slots.clone())
         .ok_or_else(|| format!("No Automatic Block Signals facility '{facility_id}' is saved."))?;
+    let claims = facility_claimed_slots(doc, facility_id);
     let facts = proposal_facts_from_layout(layout, profiles, &[]);
 
     let mut trees: HashMap<String, &NodeConfigTree> = HashMap::new();
@@ -187,5 +202,22 @@ fn release_from_layout(
     let targets: Vec<_> = claims.iter().map(ReleaseTarget::from).collect();
     let released = release_slots(&targets, &nodes);
     let edits = resolve_edits(&indexes, &released.edits).map_err(|e| e.to_string())?;
-    Ok(ComposeBlockSignalsResponse { edits, claimed_slots: released.claimed_slots, issues: released.issues })
+    let logic_placement = if released.issues.is_empty() {
+        doc.logic_placement
+            .iter()
+            .filter(|board| board.groups.iter().any(|g| g.facility_id == facility_id))
+            .map(|board| NodeLogicPlacement {
+                node_key: board.node_key.clone(),
+                groups: board.groups.iter().filter(|g| g.facility_id != facility_id).cloned().collect(),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    Ok(ComposeBlockSignalsResponse {
+        edits,
+        signal_resources: Vec::new(),
+        logic_placement,
+        issues: released.issues,
+    })
 }

@@ -1,4 +1,6 @@
-use bowties_core::layout::facilities::{ClaimedSlot, ClaimedSlotKind};
+use bowties_core::layout::facilities::{
+    ClaimedSlot, ClaimedSlotKind, NodeLogicPlacement, PlacedLogicGroup, SignalResources,
+};
 use bowties_core::signaling::compiler::*;
 use bowties_core::signaling::{
     BlockSignalsRequest, SignalOutputOwner, SelectedBlock, SignalAppearanceSet, SignalDriver, SignalHardwareEvidence,
@@ -63,7 +65,9 @@ fn free_node() -> NodeSlotFacts {
                 ],
             })
             .collect(),
-        logic: (1..=32).map(|i| LogicFact { index: i, in_use: false, claimed: false, actions: vec![] }).collect(),
+        logic: (1..=32)
+            .map(|i| LogicFact { index: i, in_use: false, function: Some(0), claimed: false, actions: vec![] })
+            .collect(),
         direct_lamps: (1..=16).collect(),
     }
 }
@@ -93,8 +97,15 @@ fn input() -> CompileInput {
             occupied: Some(OCC),
             clear: Some(CLR),
         }],
-        own_claims: vec![],
+        saved_resources: vec![],
+        logic_placement: vec![],
     }
+}
+
+/// A Logic configured with Function Last (Single).
+fn use_logic(l: &mut LogicFact) {
+    l.in_use = true;
+    l.function = Some(2);
 }
 
 fn int(v: i64) -> EditValue {
@@ -169,18 +180,13 @@ fn terminal_recipe_uses_lowest_free_slots_and_is_deterministic() {
     // Mast 1 and Logic 1 are taken, so the lowest free slots are 2 and 2.
     let mut taken = input();
     taken.nodes[0].masts[0].in_use = true;
-    taken.nodes[0].logic[0].in_use = true;
+    use_logic(&mut taken.nodes[0].logic[0]);
     let first = compile_block_signals(&taken);
     assert_eq!(first.issues, vec![]);
     assert_eq!(pairs(&first), expected_edits(2, 2, 10, 9));
     assert!(first.edits.iter().all(|e| e.node_key == NODE));
-    assert_eq!(
-        first.claimed_slots,
-        vec![
-            ClaimedSlot { node_key: NODE.into(), kind: ClaimedSlotKind::Mast, index: 2 },
-            ClaimedSlot { node_key: NODE.into(), kind: ClaimedSlotKind::Logic, index: 2 },
-        ]
-    );
+    assert_eq!(first.resources, vec![resources_for(2)]);
+    assert_eq!(first.placement, vec![placement_of(&[2])]);
     assert_eq!(first, compile_block_signals(&taken));
 }
 
@@ -215,7 +221,7 @@ fn blocking_issues_are_coded_scoped_and_suppress_all_edits() {
     cases.push(("no free mast", c, NoFreeMast, true));
 
     let mut c = input();
-    c.nodes[0].logic.iter_mut().for_each(|l| l.in_use = true);
+    c.nodes[0].logic.iter_mut().for_each(use_logic);
     cases.push(("no free logic", c, NoFreeLogic, true));
 
     let mut c = input();
@@ -232,7 +238,7 @@ fn blocking_issues_are_coded_scoped_and_suppress_all_edits() {
     cases.push(("every mast in use", c, NoFreeMast, true));
 
     let mut c = input();
-    c.nodes[0].logic.iter_mut().for_each(|l| l.in_use = true);
+    c.nodes[0].logic.iter_mut().for_each(use_logic);
     cases.push(("every logic in use", c, NoFreeLogic, true));
 
     let mut c = input();
@@ -255,12 +261,36 @@ fn blocking_issues_are_coded_scoped_and_suppress_all_edits() {
         let result = compile_block_signals(&case);
         assert!(codes(&result).contains(&expected), "{name}: {:?}", result.issues);
         assert!(result.edits.is_empty(), "{name}: edits must be empty");
-        assert!(result.claimed_slots.is_empty(), "{name}: claims must be empty");
+        assert!(result.resources.is_empty() && result.placement.is_empty(), "{name}: records must be empty");
         let issue = result.issues.iter().find(|i| i.code == expected).unwrap();
         if signal_scoped {
             assert_eq!(issue.signal_id.as_deref(), Some(sid.as_str()), "{name}");
             assert_eq!(issue.node_key.as_deref(), Some(NODE), "{name}");
         }
+    }
+}
+
+fn own_resources(mast: u32) -> SignalResources {
+    SignalResources { node_key: NODE.into(), mast, track_circuits: vec![] }
+}
+
+fn resources_for(mast: u32) -> PlannedSignalResources {
+    PlannedSignalResources { signal_id: signal_id(&line()), resources: own_resources(mast) }
+}
+
+/// The board's placement holding this facility's one signal group per `first`.
+fn placement_of(firsts: &[u32]) -> NodeLogicPlacement {
+    NodeLogicPlacement {
+        node_key: NODE.into(),
+        groups: firsts
+            .iter()
+            .map(|first| PlacedLogicGroup {
+                facility_id: "abs:test".into(),
+                signal_id: signal_id(&line()),
+                first: *first,
+                length: 1,
+            })
+            .collect(),
     }
 }
 
@@ -272,9 +302,10 @@ fn claim(kind: ClaimedSlotKind, index: u32) -> ClaimedSlot {
 /// Mast 2 drives pins 9 and 10.
 fn recompile_input() -> CompileInput {
     let mut c = input();
-    c.own_claims = vec![claim(ClaimedSlotKind::Mast, 2), claim(ClaimedSlotKind::Logic, 1)];
+    c.saved_resources = vec![PlannedSignalResources { signal_id: signal_id(&c.line), resources: own_resources(2) }];
+    c.logic_placement = vec![placement_of(&[1])];
     c.nodes[0].masts[1].in_use = true;
-    c.nodes[0].logic[0].in_use = true;
+    use_logic(&mut c.nodes[0].logic[0]);
     for o in c.hardware.hosts[0].outputs.iter_mut().filter(|o| o.ordinal == 9 || o.ordinal == 10) {
         o.owner = Some(SignalOutputOwner::Mast(2));
     }
@@ -286,10 +317,8 @@ fn recompile_reuses_own_claimed_slots_and_own_pins() {
     let result = compile_block_signals(&recompile_input());
     assert_eq!(result.issues, vec![]);
     assert_eq!(pairs(&result), expected_edits(2, 1, 10, 9));
-    assert_eq!(
-        result.claimed_slots,
-        vec![claim(ClaimedSlotKind::Mast, 2), claim(ClaimedSlotKind::Logic, 1)]
-    );
+    assert_eq!(result.resources, vec![resources_for(2)]);
+    assert_eq!(result.placement, vec![placement_of(&[1])]);
 }
 
 #[test]
@@ -306,7 +335,7 @@ fn recompile_never_repicks_when_a_claimed_slot_is_unavailable() {
     use CompileIssueCode::ClaimedSlotUnavailable;
 
     let mut other_node = recompile_input();
-    other_node.own_claims[0].node_key = "050101010999".into();
+    other_node.saved_resources[0].resources.node_key = "050101010999".into();
 
     let mut missing_mast = recompile_input();
     missing_mast.nodes[0].masts.retain(|m| m.index != 2);
@@ -318,7 +347,7 @@ fn recompile_never_repicks_when_a_claimed_slot_is_unavailable() {
         let result = compile_block_signals(&case);
         assert!(codes(&result).contains(&ClaimedSlotUnavailable), "{name}: {:?}", result.issues);
         assert!(result.edits.is_empty(), "{name}");
-        assert!(result.claimed_slots.is_empty(), "{name}");
+        assert!(result.resources.is_empty() && result.placement.is_empty(), "{name}");
     }
 }
 
@@ -340,7 +369,6 @@ fn release_resets_every_rule_of_a_mast_every_event_of_a_logic_and_the_lamp_row()
     targets.push(ReleaseTarget { node_key: NODE.into(), slot: ReleaseSlot::DirectLamp(5) });
     let result = release_slots(&targets, &[free_node()]);
     assert_eq!(result.issues, vec![]);
-    assert!(result.claimed_slots.is_empty());
     let int0 = || EditValue::Int { value: 0 };
     let empty = || EditValue::String { value: String::new() };
     let mut expected = vec![
@@ -399,7 +427,6 @@ fn release_with_unavailable_claims_is_blocked_with_no_edits() {
         let result = release_slots(&release_targets(), &nodes);
         assert!(codes(&result).contains(&CompileIssueCode::ClaimedSlotUnavailable), "{name}: {:?}", result.issues);
         assert!(result.edits.is_empty(), "{name}");
-        assert!(result.claimed_slots.is_empty(), "{name}");
     }
 }
 
@@ -431,7 +458,7 @@ fn no_free_slot_issues_say_how_many_slots_are_configured_outside_bowties() {
         mast.claimed = n >= 3; // Masts 1-3 are configured outside Bowties.
     }
     for (n, logic) in c.nodes[0].logic.iter_mut().enumerate() {
-        logic.in_use = true;
+        use_logic(logic);
         logic.claimed = n >= 1; // Only Logic 1 is configured outside Bowties.
     }
     let result = compile_block_signals(&c);
@@ -567,4 +594,45 @@ fn untracked_release_targets_never_name_a_slot_or_leaf_twice() {
     leaves.sort();
     leaves.dedup();
     assert_eq!(leaves.len(), total, "no two release edits target the same leaf");
+}
+
+#[test]
+fn a_one_block_compile_beside_an_outside_group_yields_the_pinned_edits_resources_and_placement() {
+    // Logic 1 is a terminated group configured outside Bowties; Logic 2+ are free.
+    let mut c = input();
+    use_logic(&mut c.nodes[0].logic[0]);
+    let result = compile_block_signals(&c);
+    assert_eq!(result.issues, vec![]);
+    assert_eq!(pairs(&result), expected_edits(1, 2, 10, 9), "same edits as the flat-claims compiler");
+    assert_eq!(result.resources, vec![resources_for(1)]);
+    assert_eq!(result.placement, vec![placement_of(&[2])]);
+}
+
+#[test]
+fn recompiling_with_recorded_placement_keeps_the_same_logic_even_when_a_lower_slot_is_free() {
+    let mut c = recompile_input();
+    // The recorded group sits at Logic 3; Logic 1 is free (Blocked) and lower.
+    c.nodes[0].logic[0] = LogicFact { index: 1, in_use: false, function: Some(0), claimed: false, actions: vec![] };
+    use_logic(&mut c.nodes[0].logic[2]);
+    c.logic_placement = vec![placement_of(&[3])];
+    let result = compile_block_signals(&c);
+    assert_eq!(result.issues, vec![]);
+    assert_eq!(pairs(&result), expected_edits(2, 3, 10, 9));
+    assert_eq!(result.placement, vec![placement_of(&[3])]);
+}
+
+#[test]
+fn outside_logic_with_an_undefined_function_blocks_the_board_and_names_the_logic() {
+    let mut c = input();
+    c.nodes[0].logic[1].in_use = true;
+    c.nodes[0].logic[1].function = Some(3);
+    let result = compile_block_signals(&c);
+    let issue = result
+        .issues
+        .iter()
+        .find(|i| i.code == CompileIssueCode::LogicUndefinedFunction)
+        .unwrap_or_else(|| panic!("{:?}", result.issues));
+    assert!(issue.detail.contains("Logic 2"), "{}", issue.detail);
+    assert_eq!(issue.signal_id.as_deref(), Some(signal_id(&line()).as_str()));
+    assert!(result.edits.is_empty() && result.resources.is_empty() && result.placement.is_empty());
 }

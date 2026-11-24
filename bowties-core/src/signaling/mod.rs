@@ -11,6 +11,7 @@
 mod chain;
 pub mod compiler;
 pub mod facts;
+pub mod logic_placement;
 pub mod outputs;
 pub mod slots;
 

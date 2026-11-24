@@ -182,6 +182,20 @@ export const hosts = [{
   ],
 }];
 
+/** What compose plans for each wired signal: mast 1 and the lowest Logic, in wiring order. */
+function plannedFor(request: { facilityId: string; wiring: Array<{ signalId: string }> }) {
+  return {
+    signalResources: request.wiring.map((w) => ({
+      signalId: w.signalId,
+      resources: { nodeKey: SIGNAL_NODE, mast: 1, trackCircuits: [] },
+    })),
+    logicPlacement: [{
+      nodeKey: SIGNAL_NODE,
+      groups: request.wiring.map((w, i) => ({ facilityId: request.facilityId, signalId: w.signalId, first: 1 + i, length: 1 })),
+    }],
+  };
+}
+
 /** IPC stubs for the Done flow: preview carries the Signal LCC host; compose reports `issues()` or one mast edit. */
 export function signalIpc(
   issues: () => unknown[] = () => [],
@@ -192,11 +206,11 @@ export function signalIpc(
       ...fakePreview((args as { request: BlockSignalsPreviewRequest }).request),
       outputHosts: hosts,
     }),
-    compose_block_signals: () => issues().length > 0
-      ? { edits: [], claimedSlots: [], issues: issues() }
+    compose_block_signals: (args: unknown) => issues().length > 0
+      ? { edits: [], signalResources: [], logicPlacement: [], issues: issues() }
       : {
         edits: [{ nodeKey: SIGNAL_NODE, space: 253, address: 100, path: 'mast#1', value: { type: 'int', value: editValue() } }],
-        claimedSlots: [{ nodeKey: SIGNAL_NODE, kind: 'mast', index: 1 }],
+        ...plannedFor((args as { request: Parameters<typeof plannedFor>[0] }).request),
         issues: [],
       },
     sync_layout_drafts: () => undefined,
@@ -248,7 +262,7 @@ export function removalIpc(issues: () => unknown[] = () => []): IpcStubs {
   return {
     ...signalIpc(),
     compose_block_signals: () => issues().length > 0
-      ? { edits: [], claimedSlots: [], issues: issues() }
+      ? { edits: [], signalResources: [], logicPlacement: [], issues: issues() }
       : {
         edits: [
           release(100, 'mast#1/function', { type: 'int', value: 0 }),
@@ -258,7 +272,8 @@ export function removalIpc(issues: () => unknown[] = () => []): IpcStubs {
           release(201, 'logic#1/description', { type: 'string', value: '' }),
           ...REMOVAL_EVENT_ADDRESSES.map((address) => release(address, `logic#1/event@${address}`, { type: 'freshEventId' })),
         ],
-        claimedSlots: [],
+        signalResources: [],
+        logicPlacement: [{ nodeKey: SIGNAL_NODE, groups: [] }],
         issues: [],
       },
   };
@@ -294,7 +309,7 @@ export function releaseOutsideIpc(): IpcStubs {
       };
     },
     compose_block_signals: (args: unknown) => {
-      const request = (args as { request: { release?: Array<{ owner: string }> } }).request;
+      const request = (args as { request: Parameters<typeof plannedFor>[0] & { release?: Array<{ owner: string }> } }).request;
       return {
         edits: [
           { nodeKey: SIGNAL_NODE, space: 253, address: 100, path: 'mast#1', value: { type: 'int', value: 3 } },
@@ -305,7 +320,7 @@ export function releaseOutsideIpc(): IpcStubs {
             ]
             : []),
         ],
-        claimedSlots: [{ nodeKey: SIGNAL_NODE, kind: 'mast', index: 1 }],
+        ...plannedFor(request),
         issues: [],
       };
     },
@@ -353,11 +368,8 @@ export function seedSavedBlockSignals() {
         name: 'Cedar Hill East',
         protectedBlock: 'block:cedar',
         channelId: SAVED_SIGNAL_CHANNEL_ID,
+        resources: { nodeKey: SIGNAL_NODE, mast: 1, trackCircuits: [] },
       }],
-      claimedSlots: [
-        { nodeKey: SIGNAL_NODE, kind: 'mast', index: 1 },
-        { nodeKey: SIGNAL_NODE, kind: 'logic', index: 1 },
-      ],
     },
   } as Facility;
   const signalChannel = {
@@ -369,5 +381,8 @@ export function seedSavedBlockSignals() {
     binding: { kind: 'signalLccRgOutputs', nodeKey: SIGNAL_NODE, greenOutput: 1, redOutput: 3 },
   } as InformationChannel;
   channelsStore.hydrateBaseline([...blocks, signalChannel]);
-  facilitiesStore.hydrateBaseline([facility]);
+  facilitiesStore.hydrateBaseline([facility], [{
+    nodeKey: SIGNAL_NODE,
+    groups: [{ facilityId: SAVED_FACILITY_ID, signalId: `signal:${SAVED_FACILITY_ID}:block:cedar:eastward`, first: 1, length: 1 }],
+  }]);
 }

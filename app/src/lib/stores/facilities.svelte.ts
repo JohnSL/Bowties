@@ -1,4 +1,11 @@
-import { listFacilities, type BlockSignalsRecord, type Facility, type SlotBinding } from '$lib/api/facilities';
+import {
+  listFacilities,
+  type BlockSignalsRecord,
+  type Facility,
+  type NodeLogicPlacement,
+  type PlacedLogicGroup,
+  type SlotBinding,
+} from '$lib/api/facilities';
 import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
 import type { LayoutEditDelta } from '$lib/types/bowtie';
 import { deepEqual } from '$lib/utils/deepEqual';
@@ -48,6 +55,14 @@ class FacilitiesStore {
    * inside their own entry instead.
    */
   private _pendingBlockSignals = $state<Map<string, BlockSignalsRecord>>(new Map());
+  /** Per-board Logic placement loaded from disk (baseline). */
+  private _baselinePlacement = $state<NodeLogicPlacement[]>([]);
+  /**
+   * Pending whole-board placement replacements: nodeKey → groups (empty
+   * removes the board's entry). Only boards that differ from the saved
+   * placement, net of deleted facilities, are kept (ADR-0012 no-op suppression).
+   */
+  private _pendingPlacement = $state<Map<string, PlacedLogicGroup[]>>(new Map());
 
   /** Effective view: baseline (minus deletions) + pending creations, with pending renames + slot edits applied. */
   get facilities(): Facility[] {
@@ -88,19 +103,47 @@ class FacilitiesStore {
       || this._pendingDeletions.size > 0
       || this._pendingSlotBindings.size > 0
       || this._pendingBlockSignals.size > 0
+      || this._pendingPlacement.size > 0
     );
   }
 
   get editCount(): number {
     let slotEdits = 0;
     for (const slots of this._pendingSlotBindings.values()) slotEdits += slots.size;
-    return (
+    const facilityEdits = (
       this._pendingCreations.length
       + this._pendingRenames.size
       + this._pendingDeletions.size
       + slotEdits
       + this._pendingBlockSignals.size
     );
+    // Placement follows the facility edit that planned it, so it is not a
+    // second edit; a placement change alone still counts.
+    return facilityEdits > 0 ? facilityEdits : this._pendingPlacement.size;
+  }
+
+  /** Effective Logic placement per board: saved placement net of deleted facilities, with staged boards applied. */
+  get logicPlacement(): NodeLogicPlacement[] {
+    const nodeKeys = new Set([
+      ...this._baselinePlacement.map((board) => board.nodeKey),
+      ...this._pendingPlacement.keys(),
+    ]);
+    const boards: NodeLogicPlacement[] = [];
+    for (const nodeKey of nodeKeys) {
+      const groups = this._effectiveGroups(nodeKey);
+      if (groups.length > 0) boards.push({ nodeKey, groups });
+    }
+    return boards;
+  }
+
+  /** The saved groups of one board, without those of facilities pending deletion. */
+  private _savedGroups(nodeKey: string): PlacedLogicGroup[] {
+    const groups = this._baselinePlacement.find((board) => board.nodeKey === nodeKey)?.groups ?? [];
+    return groups.filter((g) => !this._pendingDeletions.has(g.facilityId));
+  }
+
+  private _effectiveGroups(nodeKey: string): PlacedLogicGroup[] {
+    return this._pendingPlacement.get(nodeKey) ?? this._savedGroups(nodeKey);
   }
 
   get pendingCreations(): Facility[] {
@@ -123,16 +166,19 @@ class FacilitiesStore {
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
     this._pendingBlockSignals = new Map();
+    this._pendingPlacement = new Map();
   }
 
-  /** Replace the baseline after a successful save; clear all drafts. */
-  hydrateBaseline(facilities: Facility[]): void {
+  /** Replace the baseline (facilities and Logic placement) after a successful save; clear all drafts. */
+  hydrateBaseline(facilities: Facility[], logicPlacement: NodeLogicPlacement[] = []): void {
     this._baseline = facilities;
+    this._baselinePlacement = logicPlacement;
     this._pendingCreations = [];
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();
     this._pendingSlotBindings = new Map();
     this._pendingBlockSignals = new Map();
+    this._pendingPlacement = new Map();
   }
 
   /** Collect deltas for the save orchestrator. */
@@ -185,6 +231,9 @@ class FacilitiesStore {
     for (const [facilityId, record] of this._pendingBlockSignals) {
       deltas.push({ type: 'setBlockSignalsRecord', facilityId, record });
     }
+    for (const [nodeKey, groups] of this._pendingPlacement) {
+      deltas.push({ type: 'setLogicPlacement', nodeKey, groups });
+    }
     return deltas;
   }
 
@@ -193,7 +242,9 @@ class FacilitiesStore {
   /** Load facilities from the backend baseline. */
   async loadFacilities(): Promise<void> {
     const result = await listFacilities();
-    this._baseline = Array.isArray(result) ? result : [];
+    this._baseline = Array.isArray(result?.facilities) ? result.facilities : [];
+    this._baselinePlacement = Array.isArray(result?.logicPlacement) ? result.logicPlacement : [];
+    this._pendingPlacement = new Map();
     this._pendingCreations = [];
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();
@@ -299,6 +350,25 @@ class FacilitiesStore {
   }
 
   /**
+   * Replace one board's whole Logic placement (Spec 020 / E3a). No-op
+   * suppression (ADR-0012): equal to the effective placement → no draft;
+   * equal to the saved placement → any staged replacement is dropped.
+   * Returns true when the effective placement changed.
+   */
+  setLogicPlacement(nodeKey: string, groups: PlacedLogicGroup[]): boolean {
+    if (deepEqual(this._effectiveGroups(nodeKey), groups)) return false;
+    this._stagePlacement(nodeKey, groups);
+    return true;
+  }
+
+  private _stagePlacement(nodeKey: string, groups: PlacedLogicGroup[]): void {
+    const next = new Map(this._pendingPlacement);
+    if (deepEqual(this._savedGroups(nodeKey), groups)) next.delete(nodeKey);
+    else next.set(nodeKey, groups);
+    this._pendingPlacement = next;
+  }
+
+  /**
    * Mark a facility for deletion. Pending creations are removed
    * immediately (never persisted); baseline facilities are tracked
    * in `_pendingDeletions` for save flush.
@@ -324,6 +394,12 @@ class FacilitiesStore {
       const next = new Map(this._pendingBlockSignals);
       next.delete(facilityId);
       this._pendingBlockSignals = next;
+    }
+    // Mirror the backend's DeleteFacility: the facility's groups leave every board.
+    for (const [nodeKey, groups] of this._pendingPlacement) {
+      if (groups.some((g) => g.facilityId === facilityId)) {
+        this._stagePlacement(nodeKey, groups.filter((g) => g.facilityId !== facilityId));
+      }
     }
   }
 
@@ -423,6 +499,8 @@ class FacilitiesStore {
   /** Clear all facility state. Called on layout close. */
   reset(): void {
     this._baseline = [];
+    this._baselinePlacement = [];
+    this._pendingPlacement = new Map();
     this._pendingCreations = [];
     this._pendingRenames = new Map();
     this._pendingDeletions = new Set();

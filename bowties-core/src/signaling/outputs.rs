@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 
 use super::{OutputFacility, SignalHardwareHost, SignalOutput, SignalOutputOwner};
-use crate::layout::facilities::{ClaimedSlotKind, FacilitiesDocument};
+use crate::layout::facilities::FacilitiesDocument;
 use crate::node_key::NodeKey;
 use crate::node_tree::{
     replication_instances, ConfigNode, ConfigValue, NodeConfigTree,
@@ -80,7 +80,7 @@ pub fn signal_outputs_from_configuration(tree: &NodeConfigTree) -> Result<Vec<Si
 }
 
 /// Name the Bowties facility behind each mast-owned output: the facility
-/// whose claimed Mast slot on the host matches the output's owner. Node keys
+/// with a signal whose resources hold the output's owning mast. Node keys
 /// are compared canonically. Direct lamps and unclaimed masts stay `None`.
 pub fn attribute_output_facilities(hosts: &mut [SignalHardwareHost], facilities: &FacilitiesDocument) {
     for host in hosts {
@@ -92,10 +92,9 @@ pub fn attribute_output_facilities(hosts: &mut [SignalHardwareHost], facilities:
                 .iter()
                 .find(|facility| {
                     facility.block_signals.as_ref().is_some_and(|record| {
-                        record.claimed_slots.iter().any(|slot| {
-                            slot.kind == ClaimedSlotKind::Mast
-                                && slot.index == mast
-                                && NodeKey::parse(&slot.node_key).is_ok_and(|key| key == host_key)
+                        record.signals.iter().any(|signal| {
+                            signal.resources.mast == mast
+                                && NodeKey::parse(&signal.resources.node_key).is_ok_and(|key| key == host_key)
                         })
                     })
                 })
@@ -229,25 +228,25 @@ mod tests {
     }
 
     fn mast_facility_doc(node_key: &str, mast: u32) -> FacilitiesDocument {
-        use crate::layout::facilities::{BlockSignalsRecord, ClaimedSlot, Facility};
+        use crate::layout::facilities::{BlockSignalsRecord, Facility, SignalRecord, SignalResources};
         use crate::signaling::{
             EntranceEnd, ExitEnd, FacilitySignalSettings, Movements, TravelDirection,
         };
-        let mut record = BlockSignalsRecord {
+        let record = BlockSignalsRecord {
             direction: TravelDirection::default(),
             movements: Movements::default(),
             entrance_end: EntranceEnd::default(),
             exit_end: ExitEnd::default(),
             blocks: vec![],
             settings: FacilitySignalSettings::default(),
-            signals: vec![],
-            claimed_slots: vec![],
+            signals: vec![SignalRecord {
+                signal_id: "sig-1".into(),
+                name: "Signal".into(),
+                protected_block: "blk".into(),
+                channel_id: "ch".into(),
+                resources: SignalResources { node_key: node_key.to_string(), mast, track_circuits: vec![] },
+            }],
         };
-        record.claimed_slots.push(ClaimedSlot {
-            node_key: node_key.to_string(),
-            kind: ClaimedSlotKind::Mast,
-            index: mast,
-        });
         FacilitiesDocument::new(vec![Facility {
             facility_id: "fac-1".into(),
             template_id: "automatic-block-signals".into(),

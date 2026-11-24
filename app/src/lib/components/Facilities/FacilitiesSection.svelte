@@ -14,6 +14,7 @@
   import { eventStateStore } from '$lib/stores/eventState.svelte';
   import { resolveNodeParts } from '$lib/layout';
   import { nodeIdToDisplayHex } from '$lib/utils/nodeId';
+  import { facilityBoardSlots } from '$lib/utils/facilityBoardSlots';
   import { issueText } from '$lib/components/BlockSignals/wiringText';
   import { deriveChannelState } from '$lib/utils/channelState';
   import { occupancyFromChannelState, type BlockOccupancy } from '$lib/components/BlockSignals/occupancy';
@@ -45,8 +46,11 @@
   const removalFacility = $derived(
     removal ? facilitiesStore.facilities.find((f) => f.facilityId === removal!.facilityId) : undefined,
   );
+  const removalBoard = $derived(
+    removalFacility ? facilityBoardSlots(removalFacility, facilitiesStore.logicPlacement) : { nodeKey: undefined, slots: [] },
+  );
   const removalBoardName = $derived.by(() => {
-    const nodeKey = removalFacility?.blockSignals?.claimedSlots[0]?.nodeKey;
+    const nodeKey = removalBoard.nodeKey;
     if (!nodeKey) return '';
     return resolveNodeParts(nodeKey).name || nodeIdToDisplayHex(nodeKey) || nodeKey;
   });
@@ -187,7 +191,7 @@
     <BlockSignalsRemoveDialog
       facilityName={removalFacility.name}
       boardName={removalBoardName}
-      claimedSlots={removalFacility.blockSignals.claimedSlots}
+      slots={removalBoard.slots}
       reason={removal.reason}
       error={removal.error}
       onConfirm={() => confirmRemoval(false)}

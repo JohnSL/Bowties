@@ -7,12 +7,12 @@
   import DialogTitle from '$lib/components/Dialog/DialogTitle.svelte';
   import DialogActions from '$lib/components/Dialog/DialogActions.svelte';
   import Button from '$lib/components/Dialog/Button.svelte';
-  import type { ClaimedSlot } from '$lib/api/signaling';
+  import type { BoardSlot } from '$lib/utils/facilityBoardSlots';
 
   let {
     facilityName,
     boardName,
-    claimedSlots,
+    slots,
     reason,
     error,
     onConfirm,
@@ -21,7 +21,8 @@
   }: {
     facilityName: string;
     boardName: string;
-    claimedSlots: readonly ClaimedSlot[];
+    /** The masts and Logic the facility occupies on the board. */
+    slots: readonly BoardSlot[];
     /** Why the board could not be reset; offers removal without resetting it. */
     reason?: string;
     /** A short message when the removal itself failed. */
@@ -32,7 +33,7 @@
   } = $props();
 
   const slotsText = $derived.by(() => {
-    const labels = claimedSlots
+    const labels = slots
       .map((slot) => ({ order: slot.kind === 'mast' ? 0 : 1, index: slot.index, text: `${slot.kind === 'mast' ? 'Mast' : 'Logic'} ${slot.index}` }))
       .sort((a, b) => a.order - b.order || a.index - b.index)
       .map((slot) => slot.text);

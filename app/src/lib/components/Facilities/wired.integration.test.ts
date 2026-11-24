@@ -39,7 +39,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
-import type { Facility } from '$lib/api/facilities';
+import type { FacilitiesListing, Facility } from '$lib/api/facilities';
 import type { InformationChannel } from '$lib/api/channels';
 import type { CompositionOp } from '$lib/api/facilityBowties';
 
@@ -56,7 +56,7 @@ const {
   clearLayoutDraftsMock,
 } = vi.hoisted(() => ({
   listBehaviorTemplatesMock: vi.fn<() => Promise<BehaviorTemplate[]>>(async () => []),
-  listFacilitiesMock: vi.fn<() => Promise<Facility[]>>(async () => []),
+  listFacilitiesMock: vi.fn<() => Promise<FacilitiesListing>>(async () => ({ facilities: [], logicPlacement: [] })),
   listChannelsMock: vi.fn<() => Promise<InformationChannel[]>>(async () => []),
   resolveChannelEventIdsMock: vi.fn(
     async (
@@ -305,7 +305,7 @@ beforeEach(async () => {
   listBehaviorTemplatesMock.mockReset();
   listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR]);
   listFacilitiesMock.mockReset();
-  listFacilitiesMock.mockResolvedValue([]);
+  listFacilitiesMock.mockResolvedValue({ facilities: [], logicPlacement: [] });
   listChannelsMock.mockReset();
   listChannelsMock.mockResolvedValue([]);
   composeFacilityBowtiesMock.mockReset();

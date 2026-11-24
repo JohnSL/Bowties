@@ -294,7 +294,7 @@ describe('dirty aggregate — facility block-signals record', () => {
   it('a record replacement on a saved facility lights the Save toolbar input and the facilities bucket', () => {
     const record = (direction: string) => ({
       direction, movements: 'oneWay', entranceEnd: 'a', exitEnd: 'b',
-      blocks: [], settings: {}, signals: [], claimedSlots: [],
+      blocks: [], settings: {}, signals: [],
     }) as unknown as import('$lib/api/facilities').BlockSignalsRecord;
     facilitiesStore.hydrateBaseline([{
       facilityId: 'f-abs', templateId: 'automatic-block-signals', name: 'ABS',

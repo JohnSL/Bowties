@@ -321,6 +321,56 @@ describe('RailroadPanel (Spec 018 / S3 — hardware-organised Channels panel)', 
         expect(within(editor).getByRole('button', { name: 'Done' })).toBeDisabled();
         expect(facilitiesStore.isEmpty).toBe(true);
       });
+
+      it('names the Logic on Wiring when the board has Logic Bowties cannot read, keeps Done disabled and stages nothing', async () => {
+        composeIssues = [{
+          code: 'logicUndefinedFunction',
+          signalId: null,
+          nodeKey: SIGNAL_NODE,
+          detail: 'Logic 3 has a Function value the CDI does not define.',
+          logic: [3],
+        }];
+        const editor = await openEditor('Cedar Hill — Eastward', undefined, ipc);
+
+        await wireFirstSignal(editor);
+
+        expect(await within(editor).findByText(
+          'Logic 3 has a Function value this board does not define. Fix it on the board, or release it, before Bowties places signals here.',
+        )).toBeInTheDocument();
+        expect(within(editor).getByRole('button', { name: 'Done' })).toBeDisabled();
+        expect(facilitiesStore.isEmpty).toBe(true);
+        expect(facilitiesStore.collectDeltas()).toEqual([]);
+        expect(configChangesStore.draftEntries()).toEqual([]);
+      });
+
+      it('stages each signal resources and the board placement on Done, and Discard removes both', async () => {
+        const editor = await openEditor('Cedar Hill — Eastward', undefined, ipc);
+        render(SaveControls, { props: { toolbar: true } });
+
+        await wireFirstSignal(editor);
+        const done = within(editor).getByRole('button', { name: 'Done' });
+        await waitFor(() => expect(done).toBeEnabled());
+        await fireEvent.click(done);
+        await waitFor(() => expect(screen.queryByRole('dialog', { name: /new automatic block signals/i })).not.toBeInTheDocument());
+
+        const facility = facilitiesStore.facilities[0];
+        const signal = facility.blockSignals!.signals[0];
+        expect(signal.resources).toEqual({ nodeKey: SIGNAL_NODE, mast: 1, trackCircuits: [] });
+        const deltas = facilitiesStore.collectDeltas();
+        expect(deltas.find((d) => d.type === 'setLogicPlacement')).toEqual({
+          type: 'setLogicPlacement',
+          nodeKey: SIGNAL_NODE,
+          groups: [{ facilityId: facility.facilityId, signalId: signal.signalId, first: 1, length: 1 }],
+        });
+        expect(await screen.findByRole('group', { name: 'Configuration save controls' })).toBeInTheDocument();
+        expect(effectiveNodeStore.dirtyBreakdown).toMatchObject({ facilities: 1 });
+
+        await fireEvent.click(screen.getByRole('button', { name: 'Discard pending changes' }));
+        await fireEvent.click(await screen.findByRole('button', { name: 'Revert' }));
+        await waitFor(() => expect(facilitiesStore.isEmpty).toBe(true));
+        expect(facilitiesStore.collectDeltas()).toEqual([]);
+        expect(facilitiesStore.logicPlacement).toEqual([]);
+      });
     });
 
     it('shows missing detection facts and explains Restricting in a help bubble that closes on an outside click', async () => {

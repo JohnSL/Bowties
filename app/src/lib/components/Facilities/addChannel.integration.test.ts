@@ -31,7 +31,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
-import type { Facility } from '$lib/api/facilities';
+import type { FacilitiesListing } from '$lib/api/facilities';
 import type { InformationChannel } from '$lib/api/channels';
 
 // ── IPC mocks ────────────────────────────────────────────────────────────
@@ -44,7 +44,7 @@ const {
   eligibleLampRowsMock,
 } = vi.hoisted(() => ({
   listBehaviorTemplatesMock: vi.fn<() => Promise<BehaviorTemplate[]>>(async () => []),
-  listFacilitiesMock: vi.fn<() => Promise<Facility[]>>(async () => []),
+  listFacilitiesMock: vi.fn<() => Promise<FacilitiesListing>>(async () => ({ facilities: [], logicPlacement: [] })),
   listChannelsMock: vi.fn<() => Promise<InformationChannel[]>>(async () => []),
   resolveChannelEventIdsMock: vi.fn(
     async (
@@ -181,7 +181,7 @@ beforeEach(async () => {
   listBehaviorTemplatesMock.mockReset();
   listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR]);
   listFacilitiesMock.mockReset();
-  listFacilitiesMock.mockResolvedValue([]);
+  listFacilitiesMock.mockResolvedValue({ facilities: [], logicPlacement: [] });
   listChannelsMock.mockReset();
   listChannelsMock.mockResolvedValue([]);
 
@@ -466,14 +466,17 @@ describe('Spec 018 / S5 — Add-channel user journey (integration)', () => {
     channelsStore.reset();
     facilitiesStore.reset();
     listChannelsMock.mockResolvedValue([persistedChannel]);
-    listFacilitiesMock.mockResolvedValue([
-      {
-        facilityId: 'f-block-5',
-        templateId: 'block-indicator',
-        name: 'Block 5',
-        slotBindings: { input: ['ch-bod-1'], output: [channelId] },
-      },
-    ]);
+    listFacilitiesMock.mockResolvedValue({
+      facilities: [
+        {
+          facilityId: 'f-block-5',
+          templateId: 'block-indicator',
+          name: 'Block 5',
+          slotBindings: { input: ['ch-bod-1'], output: [channelId] },
+        },
+      ],
+      logicPlacement: [],
+    });
     await channelsStore.loadChannels();
     await facilitiesStore.loadFacilities();
 

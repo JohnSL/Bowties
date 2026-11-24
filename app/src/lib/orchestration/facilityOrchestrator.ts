@@ -35,7 +35,7 @@ import {
   type RemovalEdit,
   type SignalWiring,
 } from '$lib/api/signaling';
-import type { BlockSignalsRecord } from '$lib/api/facilities';
+import type { BlockSignalsRecord, NodeLogicPlacement } from '$lib/api/facilities';
 import type { NodeConfigTree, TreeConfigValue } from '$lib/types/nodeTree';
 import { generateFreshEventIdForNode } from '$lib/utils/eventIds';
 import { collectEventIdLeaves, findLeafByPath } from '$lib/types/nodeTree';
@@ -459,7 +459,7 @@ export function updateBlockSignalsFacility(
  *
  * Mirrors drafts so the backend sees other unsaved claims, composes with
  * fresh facts (wiring nodes' unsaved edits included, facilityId so an update
- * recompiles into its own claimed slots), refuses on any issue without
+ * recompiles around its own mast and Logic), refuses on any issue without
  * staging anything, then stages the facility/record/channels and the
  * configuration edits as ordinary drafts. Any failure after the first staged
  * mutation restores everything staged here. Never composes bowties (the
@@ -490,6 +490,7 @@ async function stageBlockSignalsFacility(
   if (composed.issues.length > 0) return { ok: false, issues: composed.issues };
 
   const priorDrafts = new Map(configChangesStore.draftEntries().map((d) => [d.key, d.value]));
+  const priorPlacement = placementOf(composed.logicPlacement);
   const priorChannels = new Map(channelsStore.channels.map((c) => [c.id, c]));
   const createdChannelIds: string[] = [];
   let facilityAdded = false;
@@ -501,6 +502,8 @@ async function stageBlockSignalsFacility(
     const recordSignals: BlockSignalsRecord['signals'] = signals.map((signal) => {
       const wired = wiringBySignal.get(signal.signalId);
       if (!wired) throw new Error(`No wiring for signal '${signal.signalId}'`);
+      const resources = composed.signalResources.find((r) => r.signalId === signal.signalId)?.resources;
+      if (!resources) throw new Error(`No board resources planned for signal '${signal.signalId}'`);
       const binding = {
         kind: 'signalLccRgOutputs' as const,
         nodeKey: wired.nodeKey,
@@ -511,7 +514,7 @@ async function stageBlockSignalsFacility(
       if (savedChannelId) {
         channelsStore.renameChannel(savedChannelId, signal.name);
         channelsStore.rebindChannel(savedChannelId, binding);
-        return { ...signal, channelId: savedChannelId };
+        return { ...signal, channelId: savedChannelId, resources };
       }
       const channel = channelsStore.createUserOwnedChannel({
         role: 'signal-indication',
@@ -520,7 +523,7 @@ async function stageBlockSignalsFacility(
         name: signal.name,
       });
       createdChannelIds.push(channel.id);
-      return { ...signal, channelId: channel.id };
+      return { ...signal, channelId: channel.id, resources };
     });
 
     const record: BlockSignalsRecord = {
@@ -531,7 +534,6 @@ async function stageBlockSignalsFacility(
       blocks: line.blocks,
       settings: line.settings,
       signals: recordSignals,
-      claimedSlots: composed.claimedSlots,
     };
     if (target === 'create') {
       facilitiesStore.addFacility(template, name, facilityId, record);
@@ -546,11 +548,13 @@ async function stageBlockSignalsFacility(
       }
     }
 
+    stageLogicPlacement(composed.logicPlacement);
     stageComposedEdits(composed.edits);
     return { ok: true };
   } catch (error) {
     restoreConfigDrafts(composed.edits, priorDrafts);
     if (facilityAdded) facilitiesStore.deleteFacility(facilityId);
+    stageLogicPlacement(priorPlacement);
     for (const channelId of createdChannelIds) channelsStore.removeUserOwnedChannel(channelId);
     if (priorFacility?.blockSignals) {
       facilitiesStore.setBlockSignalsRecord(facilityId, priorFacility.blockSignals);
@@ -570,7 +574,7 @@ async function stageBlockSignalsFacility(
 
 export interface RemoveBlockSignalsFacilityArgs {
   facilityId: string;
-  /** Skip releasing the claimed board slots: delete the facility and channels only. */
+  /** Skip releasing the board's mast and Logic: delete the facility and channels only. */
   leaveBoard?: boolean;
 }
 
@@ -590,7 +594,7 @@ export class BlockSignalsRemovalError extends Error {
 
 /**
  * Workflow owner: remove an Automatic Block Signals facility, releasing its
- * claimed mast/Logic slots as ordinary configuration drafts (unless
+ * mast and Logic as ordinary configuration drafts (unless
  * `leaveBoard`) and deleting the facility and its user-owned signal channels.
  *
  * Ordering is the rollback strategy: the only step that can throw
@@ -609,12 +613,14 @@ export async function removeBlockSignalsFacility(
   }
 
   let edits: readonly RemovalEdit[] = [];
+  let placement: NodeLogicPlacement[] = [];
   if (!leaveBoard) {
     try {
       await syncDraftsForComposition();
       const composed = await composeBlockSignalsRemoval(facilityId);
       if (composed.issues.length > 0) return { ok: false, issues: composed.issues };
       edits = composed.edits;
+      placement = composed.logicPlacement;
     } catch (error) {
       return { ok: false, error };
     }
@@ -628,10 +634,27 @@ export async function removeBlockSignalsFacility(
     return { ok: false, error };
   }
   deleteFacilityAndChannels(facilityId, userOwnedChannelIdsOf(facilityId));
+  // After the delete, which already drops the facility's own groups: only a board
+  // whose remaining groups differ from that (another facility's group moved) stages a delta.
+  stageLogicPlacement(placement);
   return { ok: true };
 }
 
 // ── Private helpers ─────────────────────────────────────────────────────
+
+/** Stage each board's whole placement as the compiler planned it (a no-op where it matches). */
+function stageLogicPlacement(boards: readonly NodeLogicPlacement[]): void {
+  for (const board of boards) facilitiesStore.setLogicPlacement(board.nodeKey, board.groups);
+}
+
+/** The effective placement of the boards `planned` names (none left = empty groups), to restore on rollback. */
+function placementOf(planned: readonly NodeLogicPlacement[]): NodeLogicPlacement[] {
+  const current = facilitiesStore.logicPlacement;
+  return planned.map(({ nodeKey }) => ({
+    nodeKey,
+    groups: current.find((board) => board.nodeKey === nodeKey)?.groups ?? [],
+  }));
+}
 
 /**
  * A concrete event ID value that no leaf of the node's tree (including staged

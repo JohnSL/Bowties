@@ -615,8 +615,14 @@ const COMPOSED = {
     { nodeKey: ABS_NODE, space: 253, address: 10, path: 'a', value: { type: 'int', value: 1 } },
     { nodeKey: ABS_NODE, space: 253, address: 20, path: 'b', value: { type: 'int', value: 2 } },
   ],
-  claimedSlots: [{ nodeKey: ABS_NODE, kind: 'mast', index: 1 }],
+  signalResources: [{ signalId: 's1', resources: { nodeKey: ABS_NODE, mast: 1, trackCircuits: [] } }],
+  logicPlacement: [{ nodeKey: ABS_NODE, groups: [{ facilityId: 'abs-1', signalId: 's1', first: 1, length: 1 }] }],
   issues: [],
+};
+
+const SAVED_PLACEMENT = {
+  nodeKey: ABS_NODE,
+  groups: [{ facilityId: 'abs-1', signalId: 's1', first: 5, length: 1 }],
 };
 
 describe('createBlockSignalsFacility (Spec 020 / E1a — facilityOrchestrator)', () => {
@@ -650,9 +656,10 @@ describe('createBlockSignalsFacility (Spec 020 / E1a — facilityOrchestrator)',
     });
     expect(facility.slotBindings.signals).toEqual([channel.id]);
     expect(facility.blockSignals?.signals).toEqual([
-      { signalId: 's1', name: 'Signal A', protectedBlock: 'b1', channelId: channel.id },
+      { signalId: 's1', name: 'Signal A', protectedBlock: 'b1', channelId: channel.id, resources: COMPOSED.signalResources[0].resources },
     ]);
-    expect(facility.blockSignals?.claimedSlots).toEqual(COMPOSED.claimedSlots);
+    expect(facilitiesStore.logicPlacement).toEqual(COMPOSED.logicPlacement);
+    expect(facilitiesStore.collectDeltas()).toContainEqual({ type: 'setLogicPlacement', ...COMPOSED.logicPlacement[0] });
     expect(configChangesStore.draftEntries().map((d) => d.key)).toEqual([
       editKeyForLeaf(ABS_NODE, 253, 10),
       editKeyForLeaf(ABS_NODE, 253, 20),
@@ -682,7 +689,7 @@ describe('createBlockSignalsFacility (Spec 020 / E1a — facilityOrchestrator)',
 
   it('stages nothing when compose reports issues', async () => {
     const issues = [{ code: 'outputInUse', signalId: 's1', nodeKey: ABS_NODE, detail: 'busy' }];
-    vi.mocked(composeBlockSignals).mockResolvedValue({ edits: [], claimedSlots: [], issues } as never);
+    vi.mocked(composeBlockSignals).mockResolvedValue({ edits: [], signalResources: [], logicPlacement: [], issues } as never);
 
     const result = await orch.createBlockSignalsFacility(absArgs());
 
@@ -711,6 +718,21 @@ describe('createBlockSignalsFacility (Spec 020 / E1a — facilityOrchestrator)',
     expect(configChangesStore.draftEntries()).toEqual([
       { key: editKeyForLeaf(ABS_NODE, 253, 10), value: { type: 'int', value: 5 } },
     ]);
+  });
+
+  it('leaves no placement staged when staging an edit fails', async () => {
+    const realApply = configEditor.applyEdit.bind(configEditor);
+    let calls = 0;
+    vi.spyOn(configEditor, 'applyEdit').mockImplementation((k, v) => {
+      if (++calls === 2) throw new Error('boom');
+      realApply(k, v);
+    });
+
+    const result = await orch.createBlockSignalsFacility(absArgs());
+
+    expect(result).toMatchObject({ ok: false });
+    expect(facilitiesStore.logicPlacement).toEqual([]);
+    expect(facilitiesStore.collectDeltas()).toEqual([]);
   });
 
   it('leaves the facade clean after a failed staging with no prior edits', async () => {
@@ -776,10 +798,12 @@ describe('updateBlockSignalsFacility (Spec 020 / E2a — facilityOrchestrator)',
       slotBindings: { signals: ['ch-sig-1'] },
       blockSignals: {
         ...SAVED_LINE,
-        signals: [{ signalId: 's1', name: 'Signal A', protectedBlock: 'b1', channelId: 'ch-sig-1' }],
-        claimedSlots: [{ nodeKey: ABS_NODE, kind: 'mast', index: 9 }],
+        signals: [{
+          signalId: 's1', name: 'Signal A', protectedBlock: 'b1', channelId: 'ch-sig-1',
+          resources: { nodeKey: ABS_NODE, mast: 9, trackCircuits: [] },
+        }],
       },
-    } as never]);
+    } as never], [SAVED_PLACEMENT]);
   });
 
   it('replaces the record, rebinds the same channel and stages the compiled edits', async () => {
@@ -790,7 +814,8 @@ describe('updateBlockSignalsFacility (Spec 020 / E2a — facilityOrchestrator)',
     expect(request.facilityId).toBe('abs-1');
     const facility = facilitiesStore.facilities.find((f) => f.facilityId === 'abs-1')!;
     expect(facility.blockSignals?.settings).toEqual({ mode: 'new' });
-    expect(facility.blockSignals?.claimedSlots).toEqual(COMPOSED.claimedSlots);
+    expect(facility.blockSignals?.signals[0].resources).toEqual(COMPOSED.signalResources[0].resources);
+    expect(facilitiesStore.logicPlacement).toEqual(COMPOSED.logicPlacement);
     expect(facility.blockSignals?.signals[0].channelId).toBe('ch-sig-1');
     expect(channelsStore.channels).toHaveLength(1);
     expect(channelsStore.channels[0].binding).toMatchObject({ redOutput: 3, greenOutput: 4 });
@@ -812,7 +837,12 @@ describe('updateBlockSignalsFacility (Spec 020 / E2a — facilityOrchestrator)',
   });
 
   it('stages no configuration edits for a name-only change', async () => {
-    vi.mocked(composeBlockSignals).mockResolvedValue({ edits: [], claimedSlots: [{ nodeKey: ABS_NODE, kind: 'mast', index: 9 }], issues: [] } as never);
+    vi.mocked(composeBlockSignals).mockResolvedValue({
+      edits: [],
+      signalResources: [{ signalId: 's1', resources: { nodeKey: ABS_NODE, mast: 9, trackCircuits: [] } }],
+      logicPlacement: [SAVED_PLACEMENT],
+      issues: [],
+    } as never);
 
     const result = await orch.updateBlockSignalsFacility(updateArgs({
       name: 'Renamed line',
@@ -823,11 +853,12 @@ describe('updateBlockSignalsFacility (Spec 020 / E2a — facilityOrchestrator)',
     expect(result).toEqual({ ok: true });
     expect(configChangesStore.draftEntries()).toHaveLength(0);
     expect(facilitiesStore.facilities[0].name).toBe('Renamed line');
+    expect(facilitiesStore.collectDeltas().some((d) => d.type === 'setLogicPlacement')).toBe(false);
   });
 
   it('stages nothing when compose reports issues', async () => {
     const issues = [{ code: 'outputInUse', signalId: 's1', nodeKey: ABS_NODE, detail: 'busy' }];
-    vi.mocked(composeBlockSignals).mockResolvedValue({ edits: [], claimedSlots: [], issues } as never);
+    vi.mocked(composeBlockSignals).mockResolvedValue({ edits: [], signalResources: [], logicPlacement: [], issues } as never);
 
     const result = await orch.updateBlockSignalsFacility(updateArgs({ name: 'Renamed line' }));
 
@@ -871,7 +902,8 @@ describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)',
       { nodeKey: ABS_NODE, space: 253, address: 10, path: 'a', value: { type: 'int', value: 0 } },
       { nodeKey: ABS_NODE, space: 253, address: 20, path: 'b', value: { type: 'string', value: '' } },
     ],
-    claimedSlots: [],
+    signalResources: [],
+    logicPlacement: [{ nodeKey: ABS_NODE, groups: [] }],
     issues: [],
   };
 
@@ -902,10 +934,12 @@ describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)',
       blockSignals: {
         direction: 'bidirectional', movements: 'both', entranceEnd: 'a', exitEnd: 'b',
         blocks: [{ blockId: 'b1' }], settings: {},
-        signals: [{ signalId: 's1', name: 'Signal A', protectedBlock: 'b1', channelId: 'ch-sig-1' }],
-        claimedSlots: [{ nodeKey: ABS_NODE, kind: 'mast', index: 9 }],
+        signals: [{
+          signalId: 's1', name: 'Signal A', protectedBlock: 'b1', channelId: 'ch-sig-1',
+          resources: { nodeKey: ABS_NODE, mast: 9, trackCircuits: [] },
+        }],
       },
-    } as never]);
+    } as never], [SAVED_PLACEMENT]);
   });
 
   it('stages the release edits and deletes the facility and its signal channels', async () => {
@@ -921,11 +955,27 @@ describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)',
       editKeyForLeaf(ABS_NODE, 253, 20),
     ]);
     expect(facilitiesStore.collectDeltas()).toEqual([{ type: 'deleteFacility', facilityId: 'abs-1' }]);
+    expect(facilitiesStore.logicPlacement).toEqual([]);
+  });
+
+  it('keeps the groups of other facilities the release leaves on the board', async () => {
+    const other = { facilityId: 'other', signalId: 'x', first: 1, length: 1 };
+    facilitiesStore.hydrateBaseline(facilitiesStore.facilities, [
+      { nodeKey: ABS_NODE, groups: [other, ...SAVED_PLACEMENT.groups] },
+    ]);
+    vi.mocked(composeBlockSignalsRemoval).mockResolvedValue(
+      { ...RELEASE, logicPlacement: [{ nodeKey: ABS_NODE, groups: [other] }] } as never,
+    );
+
+    await orch.removeBlockSignalsFacility({ facilityId: 'abs-1' });
+
+    expect(facilitiesStore.logicPlacement).toEqual([{ nodeKey: ABS_NODE, groups: [other] }]);
+    expect(facilitiesStore.collectDeltas()).toEqual([{ type: 'deleteFacility', facilityId: 'abs-1' }]);
   });
 
   it('stages nothing when the release reports issues', async () => {
     const issues = [{ code: 'claimedSlotUnavailable', nodeKey: ABS_NODE, detail: 'not loaded' }];
-    vi.mocked(composeBlockSignalsRemoval).mockResolvedValue({ edits: [], claimedSlots: [], issues } as never);
+    vi.mocked(composeBlockSignalsRemoval).mockResolvedValue({ edits: [], signalResources: [], logicPlacement: [], issues } as never);
 
     const result = await orch.removeBlockSignalsFacility({ facilityId: 'abs-1' });
 
@@ -974,7 +1024,8 @@ describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)',
         { nodeKey: ABS_NODE, space: 253, address: 30, path: 'e1', value: { type: 'freshEventId' } },
         { nodeKey: ABS_NODE, space: 253, address: 38, path: 'e2', value: { type: 'freshEventId' } },
       ],
-      claimedSlots: [],
+      signalResources: [],
+      logicPlacement: [],
       issues: [],
     };
 
@@ -1037,7 +1088,7 @@ describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)',
 
   it('generic deleteFacility throws and stages nothing when the ABS release is refused', async () => {
     const issues = [{ code: 'claimedSlotUnavailable', nodeKey: ABS_NODE, detail: 'not loaded' }];
-    vi.mocked(composeBlockSignalsRemoval).mockResolvedValue({ edits: [], claimedSlots: [], issues } as never);
+    vi.mocked(composeBlockSignalsRemoval).mockResolvedValue({ edits: [], signalResources: [], logicPlacement: [], issues } as never);
 
     await expect(orch.deleteFacility('abs-1')).rejects.toBeInstanceOf(orch.BlockSignalsRemovalError);
     expect(facilitiesStore.facilities).toHaveLength(1);
@@ -1052,7 +1103,8 @@ describe('createBlockSignalsFacility with released owners (Spec 020 / E2c B3)', 
       { nodeKey: ABS_NODE, space: 253, address: 30, path: 'e1', value: { type: 'freshEventId' } },
       { nodeKey: ABS_NODE, space: 253, address: 38, path: 'e2', value: { type: 'freshEventId' } },
     ],
-    claimedSlots: [{ nodeKey: ABS_NODE, kind: 'mast', index: 1 }],
+    signalResources: [{ signalId: 's1', resources: { nodeKey: ABS_NODE, mast: 1, trackCircuits: [] } }],
+    logicPlacement: [],
     issues: [],
   };
 

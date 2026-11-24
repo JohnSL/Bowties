@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { TreeConfigValue } from '$lib/types/nodeTree';
+import type { NodeLogicPlacement, SignalResources } from '$lib/api/facilities';
 
 /** A detected block in the layout that can be added to the list. */
 export interface SelectedDetectedBlock {
@@ -200,7 +201,7 @@ export interface SignalWiring {
 
 /** An unsaved configuration edit, keyed as the draft store keys it. */
 export interface ComposeBlockSignalsRequest {
-  /** The facility being composed; its own claimed slots do not count as in use. */
+  /** The facility being composed; its own mast and Logic do not count as in use. */
   facilityId?: string;
   line: BlockSignalsPreviewRequest;
   wiring: SignalWiring[];
@@ -232,18 +233,22 @@ export interface RemovalEdit extends Omit<ComposedEdit, 'value'> {
   value: TreeConfigValue | FreshEventIdValue;
 }
 
-/** With any issue, `edits` is empty. `claimedSlots` is always empty. */
+/**
+ * With any issue, `edits` and `logicPlacement` are empty. `signalResources` is
+ * always empty. `logicPlacement` has one entry per board that held this
+ * facility's Logic: the groups that remain there (empty when none do).
+ */
 export interface RemovalResponse {
   edits: RemovalEdit[];
-  claimedSlots: ClaimedSlot[];
+  signalResources: SignalResourcesEntry[];
+  logicPlacement: NodeLogicPlacement[];
   issues: ComposeIssue[];
 }
 
-export interface ClaimedSlot {
-  nodeKey: string;
-  kind: 'mast' | 'logic';
-  /** 1-based slot number on the node. */
-  index: number;
+/** One signal's board resources as the compiler chose them. */
+export interface SignalResourcesEntry {
+  signalId: string;
+  resources: SignalResources;
 }
 
 export type ComposeIssueCode =
@@ -257,6 +262,10 @@ export type ComposeIssueCode =
   | 'noFreeMast'
   | 'noFreeLogic'
   | 'claimedSlotUnavailable'
+  | 'logicUndefinedFunction'
+  | 'logicUnterminatedGroup'
+  | 'logicUnread'
+  | 'logicResizeUnsupported'
   | 'releaseInvalid'
   | 'occupancyEventsMissing'
   | 'aspectEventsMissing'
@@ -272,15 +281,19 @@ export interface ComposeIssue {
   nodeKey: string | null;
   detail: string;
   bindingIssue?: ProposalIssue;
+  /** The Logic numbers a Logic placement issue names; absent for other issues. */
+  logic?: number[];
 }
 
 /**
- * With any issue, `edits` and `claimedSlots` are empty. Edits from released
- * owners may carry `freshEventId`; the recipe's never do.
+ * With any issue, `edits`, `signalResources` and `logicPlacement` are empty.
+ * `logicPlacement` is the wiring board's whole new placement. Edits from
+ * released owners may carry `freshEventId`; the recipe's never do.
  */
 export interface ComposeBlockSignalsResponse {
   edits: RemovalEdit[];
-  claimedSlots: ClaimedSlot[];
+  signalResources: SignalResourcesEntry[];
+  logicPlacement: NodeLogicPlacement[];
   issues: ComposeIssue[];
 }
 
@@ -296,7 +309,7 @@ export async function composeBlockSignals(
  * cleared) and Logic to their unused state, for the caller to stage when
  * removing the facility. The Logic's recipe events come back as
  * `freshEventId` for the caller to replace with generated event IDs.
- * `claimedSlots` is empty. A node whose configuration is not loaded, or a
+ * `logicPlacement` names each board's remaining groups. A node whose configuration is not loaded, or a
  * claimed slot that is missing, comes back as a `claimedSlotUnavailable` issue
  * with no edits.
  */

@@ -2,9 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import BlockSignalsRemoveDialog from './BlockSignalsRemoveDialog.svelte';
 
-const claimedSlots = [
-  { nodeKey: '020157000001', kind: 'logic' as const, index: 1 },
-  { nodeKey: '020157000001', kind: 'mast' as const, index: 1 },
+const slots = [
+  { kind: 'logic' as const, index: 1 },
+  { kind: 'mast' as const, index: 1 },
 ];
 
 function setup(extra: Record<string, unknown> = {}) {
@@ -15,7 +15,7 @@ function setup(extra: Record<string, unknown> = {}) {
     props: {
       facilityName: 'Cedar Hill — Eastward',
       boardName: 'Signal LCC 1',
-      claimedSlots,
+      slots,
       onConfirm,
       onConfirmLeaveBoard,
       onCancel,

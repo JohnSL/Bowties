@@ -14,6 +14,11 @@
 //! Slot "in use" criteria: a mast is in use when `Mast Processing != 0`
 //! (Unused); a Logic is in use when `Function != 0` (Blocked). Unsaved edits
 //! on the node override the base facts for those two leaves.
+//!
+//! Masts never move: a saved signal keeps the mast in its recorded resources.
+//! Logic placement is board-wide and owned by [`super::logic_placement`]: the
+//! recipe describes its Logic relative to the group's first slot and the
+//! planner supplies the slot.
 
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +27,12 @@ use super::{
     ProposalIssue, SignalBindingSelection, SignalHardwareFacts, SignalOutputOwner, SignalPreview,
 };
 use crate::layout::channels::{ChannelBinding, ChannelRole};
-use crate::layout::facilities::{ClaimedSlot, ClaimedSlotKind};
+use super::logic_placement::{
+    plan_logic_placement, LogicGroupDemand, LogicPlacementIssue, LogicPlacementIssueCode, LogicSlotFact,
+};
+use crate::layout::facilities::{
+    canonical_node_key, ClaimedSlot, ClaimedSlotKind, NodeLogicPlacement, PlacedLogicGroup, SignalResources,
+};
 
 /// Style the compiled recipe realises.
 pub const TWO_DRIVER_RG_STYLE: &str = "two-driver-rg-signal";
@@ -72,6 +82,9 @@ pub struct LogicFact {
     pub index: u32,
     /// Function is not Blocked, or another facility claims the Logic.
     pub in_use: bool,
+    /// The raw Function value; `None` when it has not been read.
+    #[serde(default)]
+    pub function: Option<i64>,
     /// A facility's claimed slot (as opposed to configuration found on the
     /// board that no facility owns).
     #[serde(default)]
@@ -129,11 +142,23 @@ pub struct CompileInput {
     pub hardware: SignalHardwareFacts,
     pub nodes: Vec<NodeSlotFacts>,
     pub occupancy: Vec<BlockOccupancyEvents>,
-    /// The facility's own claimed slots when recompiling a saved facility. The
-    /// recipe is placed in exactly these slots and their pins and values are
-    /// not reported as in use. Empty when creating (lowest free slots).
+    /// The resources the facility's saved signals already hold. A saved
+    /// signal keeps its mast (masts never move) and its pins are not reported
+    /// as in use. Empty when creating (lowest free mast).
     #[serde(default)]
-    pub own_claims: Vec<ClaimedSlot>,
+    pub saved_resources: Vec<PlannedSignalResources>,
+    /// Every board's recorded Logic placement, of every facility. The board's
+    /// planner keeps this facility's groups where they are.
+    #[serde(default)]
+    pub logic_placement: Vec<NodeLogicPlacement>,
+}
+
+/// The board resources one signal uses.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlannedSignalResources {
+    pub signal_id: String,
+    pub resources: SignalResources,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -149,6 +174,14 @@ pub enum CompileIssueCode {
     NoFreeMast,
     NoFreeLogic,
     ClaimedSlotUnavailable,
+    /// Logic outside Bowties has a Function value the CDI does not define.
+    LogicUndefinedFunction,
+    /// Logic outside Bowties has a run of `Group` entries with no `Last (Single)`.
+    LogicUnterminatedGroup,
+    /// A Logic's Function has not been read.
+    LogicUnread,
+    /// A saved group would need a different length (not supported yet).
+    LogicResizeUnsupported,
     /// A requested release names an owner that is facility-owned, not an
     /// owner, or not on a loaded node.
     ReleaseInvalid,
@@ -171,19 +204,25 @@ pub struct CompileIssue {
     /// The underlying binding issue when it came from the shared check.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding_issue: Option<ProposalIssue>,
+    /// The Logic numbers a planner issue names; empty for every other issue.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub logic: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct CompiledBlockSignals {
     pub edits: Vec<NodeConfigEdit>,
-    pub claimed_slots: Vec<ClaimedSlot>,
+    /// Each signal's mast and Track Circuits.
+    pub resources: Vec<PlannedSignalResources>,
+    /// The wiring board's whole new Logic placement (one entry).
+    pub placement: Vec<NodeLogicPlacement>,
     pub issues: Vec<CompileIssue>,
 }
 
 /// Compile the one-block terminal recipe. Deterministic: signals, slots and
 /// edits are chosen and ordered from the inputs alone, lowest free slot first.
-/// With any issue, `edits` and `claimed_slots` are empty.
+/// With any issue, `edits`, `resources` and `placement` are empty.
 pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
     let mut out = CompiledBlockSignals::default();
     let mut ctx = IssueSink { issues: &mut out.issues, signal_id: None, node_key: None };
@@ -199,30 +238,72 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
     };
     ctx.node_key = Some(wiring.node_key.clone());
 
-    let own_masts: Vec<u32> = input
-        .own_claims
+    let facility_id = input.line.facility_id.clone();
+    let own = input
+        .saved_resources
         .iter()
-        .filter(|c| c.kind == ClaimedSlotKind::Mast && c.node_key == wiring.node_key)
-        .map(|c| c.index)
+        .find(|r| r.signal_id == signal.signal_id)
+        .map(|r| &r.resources);
+    let own_masts: Vec<u32> = own
+        .filter(|r| same_node(&r.node_key, &wiring.node_key))
+        .map(|r| r.mast)
+        .into_iter()
         .collect();
     check_binding(&mut signal, wiring, &input.hardware, &own_masts, &mut ctx);
 
-    let node = input.nodes.iter().find(|n| n.node_key == wiring.node_key);
-    let (mast, logic) = if input.own_claims.is_empty() {
+    let node = input.nodes.iter().find(|n| same_node(&n.node_key, &wiring.node_key));
+    let mast = if own.is_some() {
+        let mast = own_masts
+            .first()
+            .and_then(|i| node.and_then(|n| n.masts.iter().find(|m| m.index == *i)));
+        if mast.is_none() {
+            ctx.push(
+                CompileIssueCode::ClaimedSlotUnavailable,
+                "The mast this facility already uses is not available on the chosen Signal LCC.",
+            );
+        }
+        mast
+    } else {
         let mast = node.and_then(free_mast);
         if mast.is_none() {
             let outside = node.map_or(0, |n| n.masts.iter().filter(|m| m.in_use && !m.claimed).count());
             ctx.push(CompileIssueCode::NoFreeMast, &no_free_detail("mast", outside));
         }
-        let logic = node.and_then(free_logic);
-        if logic.is_none() {
-            let outside = node.map_or(0, |n| n.logic.iter().filter(|l| l.in_use && !l.claimed).count());
-            ctx.push(CompileIssueCode::NoFreeLogic, &no_free_detail("Logic conditional", outside));
-        }
-        (mast, logic)
-    } else {
-        claimed_slots(&input.own_claims, wiring, node, &mut ctx)
+        mast
     };
+
+    let recorded: Vec<PlacedLogicGroup> = input
+        .logic_placement
+        .iter()
+        .filter(|board| same_node(&board.node_key, &wiring.node_key))
+        .flat_map(|board| board.groups.iter().cloned())
+        .collect();
+    let slot_facts: Vec<LogicSlotFact> = node
+        .map(|n| n.logic.iter().map(|l| LogicSlotFact { index: l.index, function: l.function }).collect())
+        .unwrap_or_default();
+    // One group of one Logic per signal in this release.
+    let demand = [LogicGroupDemand { signal_id: signal.signal_id.clone(), length: 1 }];
+    let planned = plan_logic_placement(&slot_facts, &recorded, &facility_id, &demand);
+    let outside_logic = node.map_or(0, |n| n.logic.iter().filter(|l| l.in_use && !l.claimed).count());
+    for issue in &planned.issues {
+        let (code, detail) = map_placement_issue(issue, outside_logic);
+        ctx.push_logic(code, &detail, issue.logic.clone());
+    }
+    let group = planned
+        .placement
+        .iter()
+        .find(|g| g.facility_id == facility_id && g.signal_id == signal.signal_id)
+        .cloned();
+    if let Some(group) = &group {
+        let missing = (group.first..group.first + group.length)
+            .any(|i| !node.is_some_and(|n| n.logic.iter().any(|l| l.index == i)));
+        if missing {
+            ctx.push(
+                CompileIssueCode::ClaimedSlotUnavailable,
+                "The Logic this facility already uses is not available on the chosen Signal LCC.",
+            );
+        }
+    }
     let occupancy = input
         .occupancy
         .iter()
@@ -246,17 +327,53 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
     if !out.issues.is_empty() {
         return out;
     }
-    let (Some(mast), Some(logic), Some(occupancy), Some(aspect_events)) =
-        (mast, logic, occupancy, aspect_events)
+    let (Some(mast), Some(group), Some(occupancy), Some(aspect_events)) =
+        (mast, group, occupancy, aspect_events)
     else {
         return out;
     };
-    out.edits = recipe_edits(&signal.name, mast.index, logic.index, wiring, occupancy, aspect_events);
-    out.claimed_slots = vec![
-        ClaimedSlot { node_key: wiring.node_key.clone(), kind: ClaimedSlotKind::Mast, index: mast.index },
-        ClaimedSlot { node_key: wiring.node_key.clone(), kind: ClaimedSlotKind::Logic, index: logic.index },
-    ];
+    out.edits = recipe_edits(&signal.name, mast.index, group.first, wiring, occupancy, aspect_events);
+    out.resources = vec![PlannedSignalResources {
+        signal_id: signal.signal_id.clone(),
+        resources: SignalResources {
+            node_key: wiring.node_key.clone(),
+            mast: mast.index,
+            track_circuits: own.map(|r| r.track_circuits.clone()).unwrap_or_default(),
+        },
+    }];
+    out.placement =
+        vec![NodeLogicPlacement { node_key: wiring.node_key.clone(), groups: planned.placement }];
     out
+}
+
+/// Whether two node keys name the same node (dotted and undotted forms alike).
+fn same_node(a: &str, b: &str) -> bool {
+    canonical_node_key(a) == canonical_node_key(b)
+}
+
+/// Map a planner issue to a compile issue whose detail names the Logic.
+fn map_placement_issue(issue: &LogicPlacementIssue, outside_logic: usize) -> (CompileIssueCode, String) {
+    let names = |logic: &[u32]| {
+        let list: Vec<String> = logic.iter().map(u32::to_string).collect();
+        format!(" (Logic {})", list.join(", "))
+    };
+    match issue.code {
+        LogicPlacementIssueCode::NoFreeLogic => {
+            (CompileIssueCode::NoFreeLogic, no_free_detail("Logic conditional", outside_logic))
+        }
+        LogicPlacementIssueCode::UndefinedFunction => {
+            (CompileIssueCode::LogicUndefinedFunction, issue.detail.clone())
+        }
+        LogicPlacementIssueCode::UnterminatedGroup => {
+            (CompileIssueCode::LogicUnterminatedGroup, format!("{}{}", issue.detail, names(&issue.logic)))
+        }
+        LogicPlacementIssueCode::LogicUnread => {
+            (CompileIssueCode::LogicUnread, format!("{}{}", issue.detail, names(&issue.logic)))
+        }
+        LogicPlacementIssueCode::ResizeUnsupported => {
+            (CompileIssueCode::LogicResizeUnsupported, format!("{}{}", issue.detail, names(&issue.logic)))
+        }
+    }
 }
 
 /// "The board has no free mast", naming how many slots are configured
@@ -287,7 +404,15 @@ impl IssueSink<'_> {
             node_key: self.node_key.clone(),
             detail: detail.to_string(),
             binding_issue,
+            logic: Vec::new(),
         });
+    }
+
+    fn push_logic(&mut self, code: CompileIssueCode, detail: &str, logic: Vec<u32>) {
+        self.push(code, detail);
+        if let Some(issue) = self.issues.last_mut() {
+            issue.logic = logic;
+        }
     }
 }
 
@@ -368,34 +493,6 @@ fn check_binding(
         };
         ctx.push_binding(code, &detail, Some(issue));
     }
-}
-
-/// The facility's own mast and Logic, which must exist on the wiring node.
-/// Never re-picks: a claim that cannot be honoured is a blocking issue.
-fn claimed_slots<'a>(
-    claims: &[ClaimedSlot],
-    wiring: &SignalWiring,
-    node: Option<&'a NodeSlotFacts>,
-    ctx: &mut IssueSink<'_>,
-) -> (Option<&'a MastFact>, Option<&'a LogicFact>) {
-    let on_node = |kind: ClaimedSlotKind| {
-        claims
-            .iter()
-            .find(|c| c.kind == kind && c.node_key == wiring.node_key)
-            .map(|c| c.index)
-    };
-    let mast = on_node(ClaimedSlotKind::Mast)
-        .and_then(|i| node.and_then(|n| n.masts.iter().find(|m| m.index == i)));
-    let logic = on_node(ClaimedSlotKind::Logic)
-        .and_then(|i| node.and_then(|n| n.logic.iter().find(|l| l.index == i)));
-    let off_node = claims.iter().any(|c| c.node_key != wiring.node_key);
-    if mast.is_none() || logic.is_none() || off_node {
-        ctx.push(
-            CompileIssueCode::ClaimedSlotUnavailable,
-            "The mast and Logic this facility already uses are not available on the chosen Signal LCC.",
-        );
-    }
-    (mast, logic)
 }
 
 /// Path of a mast's group; every leaf the recipe or a release touches lies under it.
@@ -682,6 +779,7 @@ pub fn release_slots(targets: &[ReleaseTarget], nodes: &[NodeSlotFacts]) -> Comp
                 node_key: Some(target.node_key.clone()),
                 detail: "A mast, Logic or lamp being released cannot be found on its Signal LCC; its configuration may not be loaded.".to_string(),
                 binding_issue: None,
+                logic: Vec::new(),
             });
             continue;
         };
@@ -699,12 +797,11 @@ pub fn release_slots(targets: &[ReleaseTarget], nodes: &[NodeSlotFacts]) -> Comp
 /// the recipe's value, so no leaf is edited twice. Release-only edits come
 /// first, then the recipe in its own order.
 pub fn merge_release_edits(release: Vec<NodeConfigEdit>, recipe: Vec<NodeConfigEdit>) -> Vec<NodeConfigEdit> {
-    let canonical = |key: &str| crate::node_key::NodeKey::parse(key).map_or_else(|_| key.to_string(), |k| k.to_string());
     let recipe_leaves: std::collections::HashSet<(String, String)> =
-        recipe.iter().map(|e| (canonical(&e.node_key), e.path.clone())).collect();
+        recipe.iter().map(|e| (canonical_node_key(&e.node_key), e.path.clone())).collect();
     let mut merged: Vec<NodeConfigEdit> = release
         .into_iter()
-        .filter(|e| !recipe_leaves.contains(&(canonical(&e.node_key), e.path.clone())))
+        .filter(|e| !recipe_leaves.contains(&(canonical_node_key(&e.node_key), e.path.clone())))
         .collect();
     merged.extend(recipe);
     merged
@@ -714,19 +811,17 @@ fn free_mast(node: &NodeSlotFacts) -> Option<&MastFact> {
     node.masts.iter().filter(|m| !m.in_use).min_by_key(|m| m.index)
 }
 
-fn free_logic(node: &NodeSlotFacts) -> Option<&LogicFact> {
-    node.logic.iter().filter(|l| !l.in_use).min_by_key(|l| l.index)
-}
-
 /// Mast Processing value Normal, from the Signal-LCC CDI.
 const MAST_NORMAL: i64 = 1;
 /// Logic Function value Last (Single).
 const LOGIC_LAST_SINGLE: i64 = 2;
+/// Offset from the group's first Logic of the rung holding the signal's own occupancy.
+const OCCUPANCY_RUNG: u32 = 0;
 
 fn recipe_edits(
     name: &str,
     mast: u32,
-    logic: u32,
+    group_first: u32,
     wiring: &SignalWiring,
     (occupied, clear): ([u8; 8], [u8; 8]),
     (stop_event, clear_event): ([u8; 8], [u8; 8]),
@@ -762,6 +857,8 @@ fn recipe_edits(
     }
     put(format!("{m}/Mast Processing"), int(MAST_NORMAL));
 
+    // The one rung of this release's group: the signal's own occupancy.
+    let logic = group_first + OCCUPANCY_RUNG;
     let l = logic_path(logic);
     put(format!("{l}/Description"), EditValue::String { value: format!("{name} occupancy") });
     put(format!("{l}/Variable #1/Trigger"), int(1));
