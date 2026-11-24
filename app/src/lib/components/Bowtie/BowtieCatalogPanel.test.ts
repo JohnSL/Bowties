@@ -81,8 +81,8 @@ vi.mock('$lib/stores/layout.svelte', () => ({
   },
 }));
 
-vi.mock('$lib/stores/offlineChanges.svelte', () => ({
-  offlineChangesStore: {
+vi.mock('$lib/stores/pendingChanges.svelte', () => ({
+  pendingChangesStore: {
     upsertConfigChange: mockUpsertConfigChange,
     findDraftConfigChange: vi.fn(() => mockDraftConfigChange.value),
     findPersistedConfigChange: vi.fn(() => null),

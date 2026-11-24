@@ -105,7 +105,7 @@ Steps:
 1. `store.applySelected()` calls the backend `apply_sync_changes` command.
 2. The backend writes selected rows to the bus and returns an `ApplySyncResult`.
 3. `syncApplyOrchestrator.ts` — `reconcileOfflineTreesAfterSyncApply()` runs post-apply cleanup:
-   - Reloads `offlineChangesStore` from the backend (already-applied rows removed).
+   - Reloads `pendingChangesStore` from the backend (already-applied rows removed).
    - Rebuilds node trees for all affected nodes by fetching fresh offline tree snapshots.
    - Restamps offline pending values onto the rebuilt trees.
 4. If no rows failed, the sync panel dismisses automatically.

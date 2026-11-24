@@ -26,9 +26,6 @@ pub async fn sync_layout_drafts(
     config_drafts: Option<Vec<bowties_core::signaling::slots::DraftEdit>>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    // Pending offline Config rows live in the app cache; mirror them so the
-    // effective configuration view lays them under the drafts.
-    let offline_changes = state.offline_changes_cache.read().await.clone();
     let mut layout_guard = state.layout_state.write().await;
     let layout_state = layout_guard
         .as_mut()
@@ -37,7 +34,6 @@ pub async fn sync_layout_drafts(
         .sync_drafts(&deltas)
         .map_err(|e| e.to_string())?;
     layout_state.sync_config_drafts(config_drafts.unwrap_or_default());
-    layout_state.set_offline_changes(offline_changes);
     Ok(())
 }
 

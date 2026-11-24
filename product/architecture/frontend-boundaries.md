@@ -101,7 +101,7 @@ Current stores include:
 
 - `layout.svelte.ts`
 - `layoutOpenLifecycle.ts`
-- `offlineChanges.svelte.ts`
+- `pendingChanges.svelte.ts`
 - `syncPanel.svelte.ts`
 - `bowtieMetadata.svelte.ts`
 - `bowties.svelte.ts`

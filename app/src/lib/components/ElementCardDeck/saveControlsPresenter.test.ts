@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { OfflineChangeRow } from '$lib/api/sync';
+import type { PendingChangeRow } from '$lib/api/sync';
 import type { DirtyBreakdown } from '$lib/layout';
 import { deriveSaveControlsViewState } from './saveControlsPresenter';
 
@@ -152,7 +152,7 @@ describe('deriveSaveControlsViewState — facilities and channels (S1.2)', () =>
 
 describe('deriveSaveControlsViewState — offlineDirtyNodeCount', () => {
   it('counts distinct nodeIds in pending offline rows', () => {
-    const rows: OfflineChangeRow[] = [
+    const rows: PendingChangeRow[] = [
       {
         changeId: 'd1',
         kind: 'config',

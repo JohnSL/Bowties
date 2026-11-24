@@ -372,7 +372,7 @@ mod tests {
                 },
                 node_snapshots: vec![],
                 bowties: Default::default(),
-                offline_changes: vec![],
+                pending_changes: vec![],
                 recovery_occurred: false,
                 channels: ChannelsDocument::new(channels),
                 facilities: Default::default(),
@@ -569,7 +569,7 @@ mod tests {
         let (channels_before, effective_channels_before) = {
             let layout = state.layout_state.read().await;
             let layout = layout.as_ref().expect("test layout is loaded");
-            assert!(layout.offline_changes().is_empty());
+            assert!(layout.pending_changes().is_empty());
             (
                 layout.channels() as *const _,
                 layout.effective_channels() as *const _,
@@ -597,7 +597,7 @@ mod tests {
             layout.effective_channels() as *const _,
             effective_channels_before
         );
-        assert!(layout.offline_changes().is_empty());
+        assert!(layout.pending_changes().is_empty());
     }
 
     #[tokio::test]
@@ -669,7 +669,7 @@ mod tests {
         );
         let layout = state.layout_state.read().await;
         let layout = layout.as_ref().expect("test layout remains loaded");
-        assert!(layout.offline_changes().is_empty());
+        assert!(layout.pending_changes().is_empty());
         assert_eq!(layout.channels().channels.len(), 1);
     }
 

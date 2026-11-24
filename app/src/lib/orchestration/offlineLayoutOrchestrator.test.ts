@@ -4,7 +4,7 @@ import type { LayoutFile } from '$lib/types/bowtie';
 
 const {
   layoutStoreRef,
-  offlineChangesStoreRef,
+  pendingChangesStoreRef,
   connectorSelectionsStoreRef,
   lifecycleRef,
 } = vi.hoisted(() => ({
@@ -12,7 +12,7 @@ const {
     hydrateOfflineLayout: vi.fn(),
     setActiveContext: vi.fn(),
   },
-  offlineChangesStoreRef: {
+  pendingChangesStoreRef: {
     reloadFromBackend: vi.fn(async () => {}),
   },
   connectorSelectionsStoreRef: {
@@ -32,8 +32,8 @@ vi.mock('$lib/stores/layout.svelte', () => ({
   layoutStore: layoutStoreRef,
 }));
 
-vi.mock('$lib/stores/offlineChanges.svelte', () => ({
-  offlineChangesStore: offlineChangesStoreRef,
+vi.mock('$lib/stores/pendingChanges.svelte', () => ({
+  pendingChangesStore: pendingChangesStoreRef,
 }));
 
 vi.mock('$lib/stores/connectorSelections.svelte', () => ({
@@ -91,7 +91,7 @@ describe('openOfflineLayoutWithReplay', () => {
       layout: makeLayout(),
       offlineMode: true,
       nodeCount: 0,
-      pendingOfflineChangeCount: 2,
+      pendingChangeCount: 2,
       partialNodes: [],
       nodeSnapshots: [],
       recoveryOccurred: false,
@@ -109,14 +109,14 @@ describe('openOfflineLayoutWithReplay', () => {
 
     expect(opened).toEqual(result);
     expect(hydrateOfflineSnapshots).toHaveBeenCalledWith([]);
-    expect(offlineChangesStoreRef.reloadFromBackend).toHaveBeenCalledTimes(1);
+    expect(pendingChangesStoreRef.reloadFromBackend).toHaveBeenCalledTimes(1);
     expect(onOpened).toHaveBeenCalledTimes(1);
     expect(layoutStoreRef.hydrateOfflineLayout).toHaveBeenCalledWith(makeLayout(), {
       layoutId: 'yard-layout',
       rootPath: 'D:/Layouts/yard.layout.yaml',
       mode: 'offline_file',
       capturedAt: '2026-04-25T00:00:00.000Z',
-      pendingOfflineChangeCount: 2,
+      pendingChangeCount: 2,
       layoutNodeIds: [],
     });
     expect(connectorSelectionsStoreRef.hydrateFromLayout).toHaveBeenCalledWith(makeLayout());
@@ -131,7 +131,7 @@ describe('openOfflineLayoutWithReplay', () => {
       layout: makeLayout(),
       offlineMode: true,
       nodeCount: 0,
-      pendingOfflineChangeCount: 0,
+      pendingChangeCount: 0,
       partialNodes: [],
       nodeSnapshots: [],
       recoveryOccurred: false,
@@ -312,7 +312,7 @@ describe('offline snapshot helpers', () => {
       clearConfigReadStatus: vi.fn(),
       resetNodeTrees: vi.fn(),
       clearMetadata: vi.fn(),
-      clearOfflineChanges: vi.fn(),
+      clearPendingChanges: vi.fn(),
       resetLayoutStore: vi.fn(),
       resetSyncSessionAutoTrigger: vi.fn(),
       resetSidebar: vi.fn(),
@@ -333,7 +333,7 @@ describe('offline snapshot helpers', () => {
       clearConfigReadStatus: vi.fn(),
       resetNodeTrees: vi.fn(),
       clearMetadata: vi.fn(),
-      clearOfflineChanges: vi.fn(),
+      clearPendingChanges: vi.fn(),
       resetLayoutStore: vi.fn(),
       resetSyncSessionAutoTrigger: vi.fn(),
       resetSidebar,
@@ -369,7 +369,7 @@ describe('offline snapshot helpers', () => {
         offlineMode: true,
         nodeCount: 1,
         partialNodes: [],
-        pendingOfflineChangeCount: 0,
+        pendingChangeCount: 0,
         nodeSnapshots: [makeSnapshot()],
         layout: makeLayout(),
         recoveryOccurred: false,

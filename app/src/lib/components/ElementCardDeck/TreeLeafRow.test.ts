@@ -101,8 +101,8 @@ vi.mock('$lib/api/config', () => ({
   triggerAction: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('$lib/stores/offlineChanges.svelte', () => ({
-  offlineChangesStore: {
+vi.mock('$lib/stores/pendingChanges.svelte', () => ({
+  pendingChangesStore: {
     isBusy: false,
     findPersistedConfigChange: vi.fn().mockReturnValue(null),
     revertToBaseline: vi.fn().mockResolvedValue(true),

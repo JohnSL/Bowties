@@ -34,7 +34,7 @@ import { partialCaptureNodesStore } from '$lib/stores/partialCaptureNodes.svelte
 import { layoutStore } from '$lib/stores/layout.svelte';
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
-import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
 import { facilitiesStore } from '$lib/stores/facilities.svelte';
 import { channelsStore } from '$lib/stores/channels.svelte';
 import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
@@ -69,7 +69,7 @@ export interface DirtyBreakdown {
   facilities: number;
   /** Connector slot selections diverging from baseline. */
   connectorSelections: number;
-  /** Offline-changes draft rows (Spec 013). */
+  /** Pending-changes draft rows (Spec 013). */
   offlineDrafts: number;
   /** Persisted offline rows that have been reverted in-memory. */
   offlineRevertedPersisted: number;
@@ -202,8 +202,8 @@ class EffectiveNodeStore {
       channels: channelsStore.editCount,
       facilities: facilitiesStore.editCount,
       connectorSelections: connectorSelectionsStore.editCount,
-      offlineDrafts: offlineChangesStore.draftCount,
-      offlineRevertedPersisted: offlineChangesStore.revertedPersistedCount,
+      offlineDrafts: pendingChangesStore.draftCount,
+      offlineRevertedPersisted: pendingChangesStore.revertedPersistedCount,
       layoutStruct: layoutStore.isDirty ? 1 : 0,
       unsavedNewNodes: this.unsavedInMemoryNodeIds.length,
       unsavedRemovedNodes: this.unsavedRemovedNodeIds.length,

@@ -1,13 +1,13 @@
-//! Offline change helpers — pure functions for managing change caches.
+//! Pending change helpers — pure functions for managing change caches.
 
-use crate::layout::offline_changes::OfflineChange;
+use crate::layout::pending_changes::PendingChange;
 
-/// Returns `true` when two offline changes target the same field on the same node.
+/// Returns `true` when two pending changes target the same field on the same node.
 ///
 /// Used for upsert-on-same-target semantics: when a new change targets a field
 /// that already has a pending change, the existing entry is updated in place
 /// rather than creating a duplicate.
-pub fn same_change_target(a: &OfflineChange, b: &OfflineChange) -> bool {
+pub fn same_change_target(a: &PendingChange, b: &PendingChange) -> bool {
     a.kind == b.kind
         && a.node_key == b.node_key
         && a.space == b.space
@@ -15,11 +15,11 @@ pub fn same_change_target(a: &OfflineChange, b: &OfflineChange) -> bool {
         && a.baseline_value == b.baseline_value
 }
 
-/// Remove offline changes whose IDs appear in `cleared_ids`.
+/// Remove pending changes whose IDs appear in `cleared_ids`.
 ///
 /// Returns the number of changes removed.
 pub fn remove_changes_by_id(
-    cache: &mut Vec<OfflineChange>,
+    cache: &mut Vec<PendingChange>,
     cleared_ids: &std::collections::HashSet<String>,
 ) -> usize {
     let initial_len = cache.len();
@@ -30,19 +30,19 @@ pub fn remove_changes_by_id(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::offline_changes::{OfflineChange, OfflineChangeKind, OfflineChangeStatus};
+    use crate::layout::pending_changes::{PendingChange, PendingChangeKind, PendingChangeStatus};
     use std::collections::HashSet;
 
-    fn make_change(change_id: &str) -> OfflineChange {
-        OfflineChange {
+    fn make_change(change_id: &str) -> PendingChange {
+        PendingChange {
             change_id: change_id.to_string(),
-            kind: OfflineChangeKind::Config,
+            kind: PendingChangeKind::Config,
             node_key: Some("050201020300".to_string()),
             space: Some(253),
             offset: Some("0x00000010".to_string()),
             baseline_value: "10".to_string(),
             planned_value: "20".to_string(),
-            status: OfflineChangeStatus::Pending,
+            status: PendingChangeStatus::Pending,
             error: None,
             updated_at: "2026-04-25T00:00:00Z".to_string(),
         }
@@ -91,7 +91,7 @@ mod tests {
     fn same_change_target_rejects_different_kind() {
         let a = make_change("a");
         let mut b = make_change("b");
-        b.kind = OfflineChangeKind::BowtieMetadata;
+        b.kind = PendingChangeKind::BowtieMetadata;
         assert!(!same_change_target(&a, &b));
     }
 }

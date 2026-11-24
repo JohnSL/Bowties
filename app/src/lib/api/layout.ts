@@ -34,7 +34,7 @@ export interface OpenLayoutResult {
   offlineMode: boolean;
   nodeCount: number;
   partialNodes: string[];
-  pendingOfflineChangeCount: number;
+  pendingChangeCount: number;
   nodeSnapshots: OfflineNodeSnapshot[];
   /**
    * True when the layout journal rolled back an interrupted prior

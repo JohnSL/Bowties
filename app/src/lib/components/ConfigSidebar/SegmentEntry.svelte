@@ -7,7 +7,7 @@
   export let isSelected: boolean = false;
   /** Whether this segment has unsaved pending edits (FR-012b) */
   export let hasPendingEdits: boolean = false;
-  /** Whether this segment has saved offline changes pending apply */
+  /** Whether this segment has saved pending changes pending apply */
   export let hasPendingApply: boolean = false;
 
   const dispatch = createEventDispatcher<{ select: { segmentId: string; segmentName: string } }>();

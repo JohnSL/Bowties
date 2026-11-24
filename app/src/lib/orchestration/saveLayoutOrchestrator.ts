@@ -65,13 +65,13 @@ export interface SaveLayoutOrchestratedArgs {
    * Symmetric to `inMemorySnapshotKeys` (S8 / Bug 3).
    */
   inMemoryRemovedKeys?: string[];
-  /** Optional: flush pending offline changes to backend before saving. */
+  /** Optional: flush pending changes to backend before saving. */
   flushPending?: () => Promise<void>;
   /** Update the active layout context in the store after save. */
   setActiveContext: (context: ActiveLayoutContext) => void;
   /** Update the set of partially-captured node IDs from save warnings. */
   updatePartialCaptureNodes: (warnings: string[]) => void;
-  /** Returns the current pending offline change count for the context update. */
+  /** Returns the current pending change count for the context update. */
   getPendingChangeCount: () => number;
   /**
    * Clear `configChangesStore` drafts that have now been persisted (ADR-0004).
@@ -99,12 +99,12 @@ export interface SaveLayoutOrchestratedArgs {
    */
   clearPersistedRemovals?: () => void;
   /**
-   * Reload offline-change rows from the backend after a successful save.
+   * Reload pending change rows from the backend after a successful save.
    * Only supplied in offline mode — the backend rewrites pending changes
    * during the save, so the frontend mirror must be re-pulled. Online
-   * mode omits this callback (no offline-change state to reload).
+   * mode omits this callback (no pending change state to reload).
    */
-  reloadOfflineChanges?: () => Promise<void>;
+  reloadPendingChanges?: () => Promise<void>;
 }
 
 export interface SaveLayoutOrchestratedResult {
@@ -143,9 +143,9 @@ export async function saveLayoutOrchestrated({
   clearPersistedDrafts,
   clearPersistedPlaceholders,
   clearPersistedRemovals,
-  reloadOfflineChanges,
+  reloadPendingChanges,
 }: SaveLayoutOrchestratedArgs): Promise<SaveLayoutOrchestratedResult> {
-  // 1. Flush pending offline changes (if applicable)
+  // 1. Flush pending changes (if applicable)
   if (flushPending) {
     await flushPending();
   }
@@ -211,7 +211,7 @@ export async function saveLayoutOrchestrated({
     rootPath: path,
     mode: 'offline_file',
     capturedAt: new Date().toISOString(),
-    pendingOfflineChangeCount: getPendingChangeCount(),
+    pendingChangeCount: getPendingChangeCount(),
     layoutNodeIds: persistedNodeIds,
   });
 
@@ -245,11 +245,11 @@ export async function saveLayoutOrchestrated({
     clearPersistedRemovals();
   }
 
-  // 9. Offline mode only: reload offline-change rows from the backend so
+  // 9. Offline mode only: reload pending change rows from the backend so
   //    the frontend mirror matches the rewritten pending set. Online mode
   //    omits this callback.
-  if (reloadOfflineChanges) {
-    await reloadOfflineChanges();
+  if (reloadPendingChanges) {
+    await reloadPendingChanges();
   }
 
   return { warnings, busWriteResult, nodeSnapshots };

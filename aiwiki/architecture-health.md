@@ -28,10 +28,10 @@ Open candidates:
 
 ## Entries
 
-### Offline Changes held in two places (open, 2026-11-23)
-- **Area**: `AppState.offline_changes_cache` (live rows, app crate) and `LayoutState.offline_changes` (bowties-core), plus the bowtie catalog's private overlay in `app/src-tauri/src/commands/bowties.rs:385`.
-- **Risk**: `LayoutState.offline_changes` was written only at open and save, so a core reader saw stale rows. `sync_layout_drafts` now copies the cache in before `effective_config_tree` reads it, which makes the copy correct at every synced read but leaves two stores of the same rows. The catalog builds its own overlay instead of using the effective view.
-- **Direction**: make `LayoutState` the single owner of Offline Changes (the cache becomes a view or is removed), then move the catalog onto `effective_config_tree`. Tracked in `specs/backlog.md`.
+### Pending Changes held in two places (partly resolved, 2026-11-23)
+- **Area**: `LayoutState.pending_changes` (bowties-core) and the bowtie catalog's private overlay in `app/src-tauri/src/commands/bowties.rs` (~385).
+- **Resolved (E3b-0, 2026-11-23)**: `AppState.offline_changes_cache` is gone. Every IPC reads and writes rows through `LayoutState` (`upsert_pending_change`, `remove_pending_changes`, `set_pending_changes`); a Sync apply or session build removes rows from `LayoutState` directly, and `sync_layout_drafts` no longer copies rows in. The concept is named Pending Change in code; the file stays `offline-changes.yaml`.
+- **Open**: the catalog still builds its own overlay instead of reading `effective_config_tree`. Tracked in `specs/backlog.md` ("Bowtie catalog reads configuration through the effective view").
 
 ### `TerminateDueToError` emission narrowed to our-fault-live-wire — peer-initiated terminals no longer emit TDE (resolved 2026-07-25)
 - **Area**: `lcc-rs/src/peer_session.rs` (three OIR branches, three non-resend-DR branches / retry-cap-exhaustion, two `ReadReply::Failed` branches — eight inline emit sites removed), `lcc-rs/tests/peer_session_cdi.rs` + `peer_session_config.rs` (eight per-terminal-class tests renamed to `..._no_tde` with count-assertions flipped `== 1` → `== 0`), ADR-0016 §2026-07-25 extension + ADR-0018 §2026-07-25 extension.

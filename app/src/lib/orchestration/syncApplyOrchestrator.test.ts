@@ -6,14 +6,14 @@ const {
   buildOfflineNodeTreeRef,
   markNodeConfigReadRef,
   nodeTreeStoreRef,
-  offlineChangesStoreRef,
+  pendingChangesStoreRef,
 } = vi.hoisted(() => ({
   buildOfflineNodeTreeRef: vi.fn(),
   markNodeConfigReadRef: vi.fn(),
   nodeTreeStoreRef: {
     setTree: vi.fn(),
   },
-  offlineChangesStoreRef: {
+  pendingChangesStoreRef: {
     persistedRows: [] as Array<{ changeId: string; nodeId?: string; plannedValue: string; baselineValue: string; status: string; kind: string; space?: number; offset?: string }>,
     get effectiveRows() { return this.persistedRows; },
     reloadFromBackend: vi.fn(async () => {}),
@@ -32,8 +32,8 @@ vi.mock('$lib/stores/nodeTree.svelte', () => ({
   nodeTreeStore: nodeTreeStoreRef,
 }));
 
-vi.mock('$lib/stores/offlineChanges.svelte', () => ({
-  offlineChangesStore: offlineChangesStoreRef,
+vi.mock('$lib/stores/pendingChanges.svelte', () => ({
+  pendingChangesStore: pendingChangesStoreRef,
 }));
 
 function makeTree(nodeId: string): NodeConfigTree {
@@ -46,7 +46,7 @@ function makeTree(nodeId: string): NodeConfigTree {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  offlineChangesStoreRef.persistedRows = [
+  pendingChangesStoreRef.persistedRows = [
     {
       changeId: 'row-2',
       kind: 'config',
@@ -94,7 +94,7 @@ describe('reconcileOfflineTreesAfterSyncApply', () => {
       },
     );
 
-    expect(offlineChangesStoreRef.reloadFromBackend).toHaveBeenCalledTimes(1);
+    expect(pendingChangesStoreRef.reloadFromBackend).toHaveBeenCalledTimes(1);
     expect(buildOfflineNodeTreeRef).toHaveBeenCalledTimes(1);
     expect(buildOfflineNodeTreeRef).toHaveBeenCalledWith('050201020300');
     expect(nodeTreeStoreRef.setTree).toHaveBeenCalledWith('05.02.01.02.03.00', makeTree('05.02.01.02.03.00'));

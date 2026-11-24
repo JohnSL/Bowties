@@ -7,3 +7,5 @@
 pub mod changes;
 pub mod classifier;
 pub mod field_meta;
+
+pub mod writer;

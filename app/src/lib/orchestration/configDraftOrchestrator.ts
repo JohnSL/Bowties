@@ -5,16 +5,16 @@
  * ConfigChangesStore) and backend/persistence side effects:
  *
  * - Online: mirrors each draft to the Rust backend via setModifiedValue IPC.
- * - Offline save: stages current config drafts into offlineChangesStore before flush.
+ * - Offline save: stages current config drafts into pendingChangesStore before flush.
  * - Offline discard: clears config drafts and restores persisted rows.
  * - Tree refresh: prunes drafts whose refreshed baseline now matches.
  *
- * Components never call IPC or offlineChangesStore for edit operations directly.
+ * Components never call IPC or pendingChangesStore for edit operations directly.
  */
 
 import { setModifiedValue } from '$lib/api/config';
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
-import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
 import {
   parseEditKey,
   addressToOffsetHex,
@@ -48,15 +48,15 @@ export function flushDraftToBackend(key: string): void {
 }
 
 /**
- * Stage all current config drafts into offlineChangesStore before an offline save.
+ * Stage all current config drafts into pendingChangesStore before an offline save.
  *
  * For each draft entry, finds the baseline value (from the persisted offline row
- * or the tree leaf) and upserts an offline change row. After staging, clears the
+ * or the tree leaf) and upserts a pending change row. After staging, clears the
  * staged config drafts so the display falls back to the newly-persisted layer.
  *
  * Post-S8.11 all node species (real and placeholder) flow through the same
- * offline-change channel. Placeholder NodeKeys are accepted verbatim by
- * the `replace_offline_changes` IPC (S8.11 root-cause fix).
+ * pending change channel. Placeholder NodeKeys are accepted verbatim by
+ * the `replace_pending_changes` IPC (S8.11 root-cause fix).
  */
 export function stageDraftsForOfflineSave(): void {
   const entries = configChangesStore.draftEntries();
@@ -67,15 +67,15 @@ export function stageDraftsForOfflineSave(): void {
     const dottedNodeId = findDottedNodeId(normalizedNodeId) ?? normalizedNodeId;
 
     // Resolve baseline: prefer existing offline row baseline, fall back to tree leaf
-    const existingDraft = offlineChangesStore.findDraftConfigChange(normalizedNodeId, space, offset);
-    const existingPersisted = offlineChangesStore.findPersistedConfigChange(normalizedNodeId, space, offset);
+    const existingDraft = pendingChangesStore.findDraftConfigChange(normalizedNodeId, space, offset);
+    const existingPersisted = pendingChangesStore.findPersistedConfigChange(normalizedNodeId, space, offset);
     let baselineValue = existingDraft?.baselineValue ?? existingPersisted?.baselineValue;
     if (!baselineValue) {
       const leaf = findLeafInTree(normalizedNodeId, address);
       baselineValue = leaf?.value ? configValueToOfflineString(leaf.value) : '';
     }
 
-    offlineChangesStore.upsertConfigChange({
+    pendingChangesStore.upsertConfigChange({
       nodeId: dottedNodeId,
       space,
       offset,

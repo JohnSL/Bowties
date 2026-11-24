@@ -21,7 +21,7 @@
   import { layoutOpenInProgress } from '$lib/stores/layoutOpenLifecycle';
   import { configChangesStore } from '$lib/stores/configChanges.svelte';
   import { configEditor } from '$lib/stores/configEditor.svelte';
-  import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+  import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
   import { flushDraftToBackend } from '$lib/orchestration/configDraftOrchestrator';
   import { editKeyForLeaf } from '$lib/utils/editKey';
   import { formatTreeConfigValue } from '$lib/utils/formatters';
@@ -298,8 +298,8 @@
     if (nodeId) void recomputeConnectorCompatibility(nodeId);
   }
 
-  async function revertPersistedOfflineChange(changeId: string): Promise<void> {
-    await offlineChangesStore.revertToBaseline(changeId);
+  async function revertPersistedPendingChange(changeId: string): Promise<void> {
+    await pendingChangesStore.revertToBaseline(changeId);
     if (nodeId) void recomputeConnectorCompatibility(nodeId);
   }
 
@@ -668,7 +668,7 @@
         onclick={() => void revertDraft()}
         title="Revert to captured baseline value"
         aria-label="Revert to baseline"
-        disabled={offlineChangesStore.isBusy}
+        disabled={pendingChangesStore.isBusy}
       >↩ Revert</button>
     {/if}
 
@@ -683,12 +683,12 @@
         class="revert-baseline-btn"
         onclick={() => {
           const offsetKey = `0x${leaf.address.toString(16).toUpperCase().padStart(8, '0')}`;
-          const row = offlineChangesStore.findPersistedConfigChange(nodeId, leaf.space, offsetKey);
-          if (row) void revertPersistedOfflineChange(row.changeId);
+          const row = pendingChangesStore.findPersistedConfigChange(nodeId, leaf.space, offsetKey);
+          if (row) void revertPersistedPendingChange(row.changeId);
         }}
         title="Revert to captured baseline value"
         aria-label="Revert to baseline"
-        disabled={offlineChangesStore.isBusy}
+        disabled={pendingChangesStore.isBusy}
       >↩ Revert</button>
       {/if}
     {/if}

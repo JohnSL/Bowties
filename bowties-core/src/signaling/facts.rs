@@ -1,7 +1,7 @@
 //! Effective-configuration fact assembly for Automatic Block Signals: every
 //! reader (preview, pin ownership, compose) projects the same
 //! [`LayoutState::effective_config_tree`] view, so unsaved drafts and pending
-//! offline changes are seen identically.
+//! pending changes are seen identically.
 
 use std::collections::HashMap;
 
@@ -284,7 +284,7 @@ mod tests {
     use crate::layout::facilities::FacilitiesDocument;
     use crate::layout::io::LayoutDirectoryReadData;
     use crate::layout::manifest::LayoutManifest;
-    use crate::layout::offline_changes::{OfflineChange, OfflineChangeKind, OfflineChangeStatus};
+    use crate::layout::pending_changes::{PendingChange, PendingChangeKind, PendingChangeStatus};
     use crate::layout::state::LayoutState;
     use crate::layout::types::LayoutFile;
     use crate::node_key::NodeKey;
@@ -361,7 +361,7 @@ mod tests {
             },
             node_snapshots: Vec::new(),
             bowties: LayoutFile::default(),
-            offline_changes: Vec::new(),
+            pending_changes: Vec::new(),
             recovery_occurred: false,
             channels: ChannelsDocument::default(),
             facilities: FacilitiesDocument::default(),
@@ -412,18 +412,18 @@ mod tests {
     }
 
     #[test]
-    fn pending_offline_change_deactivating_a_mast_frees_its_pin_and_slot() {
+    fn pending_change_deactivating_a_mast_frees_its_pin_and_slot() {
         let mut layout = layout();
         let (space, address) = mast_processing_location(&active_mast_tree());
-        layout.set_offline_changes(vec![OfflineChange {
+        layout.set_pending_changes(vec![PendingChange {
             change_id: "c1".to_string(),
-            kind: OfflineChangeKind::Config,
+            kind: PendingChangeKind::Config,
             node_key: Some(NODE.to_string()),
             space: Some(space),
             offset: Some(format!("0x{address:08X}")),
             baseline_value: "1".to_string(),
             planned_value: "0".to_string(),
-            status: OfflineChangeStatus::Pending,
+            status: PendingChangeStatus::Pending,
             error: None,
             updated_at: "2026-06-28T00:00:00Z".to_string(),
         }]);

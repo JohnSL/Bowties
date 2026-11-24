@@ -50,7 +50,7 @@ const { partialCaptureNodesStore } = await import(
 const { layoutStore } = await import('$lib/stores/layout.svelte');
 const { configChangesStore } = await import('$lib/stores/configChanges.svelte');
 const { bowtieMetadataStore } = await import('$lib/stores/bowtieMetadata.svelte');
-const { offlineChangesStore } = await import('$lib/stores/offlineChanges.svelte');
+const { pendingChangesStore } = await import('$lib/stores/pendingChanges.svelte');
 const { facilitiesStore } = await import('$lib/stores/facilities.svelte');
 const { channelsStore } = await import('$lib/stores/channels.svelte');
 const { connectorSelectionsStore } = await import(
@@ -99,7 +99,7 @@ function setActiveLayoutWith(nodeIds: string[]): void {
     layoutId: '/test/layout',
     rootPath: '/test/layout',
     mode: 'offline_file',
-    pendingOfflineChangeCount: 0,
+    pendingChangeCount: 0,
     layoutNodeIds: [...nodeIds],
   });
 }
@@ -199,7 +199,7 @@ beforeEach(async () => {
   layoutStore.reset();
   configChangesStore.clearAllDrafts();
   bowtieMetadataStore.clearAll();
-  offlineChangesStore.clear();
+  pendingChangesStore.clear();
   facilitiesStore.reset();
   channelsStore.reset();
   connectorSelectionsStore.reset();
@@ -322,7 +322,7 @@ describe('dirty aggregate — connector selections', () => {
 describe('dirty aggregate — offline drafts', () => {
   it('flips isDirty and surfaces an offlineDrafts bucket count', () => {
     setActiveLayoutWith([]);
-    offlineChangesStore.upsertConfigChange({
+    pendingChangesStore.upsertConfigChange({
       nodeId: LIVE_A_DOTTED,
       space: 251,
       offset: '0x00000000',

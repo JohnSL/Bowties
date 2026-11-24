@@ -10,7 +10,7 @@
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { effectiveLayoutStore } from '$lib/layout';
   import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
-  import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+  import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';

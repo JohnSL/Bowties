@@ -165,8 +165,8 @@ vi.mock('$lib/stores/facilities.svelte', () => ({
   facilitiesStore: facilitiesRef,
 }));
 
-vi.mock('$lib/stores/offlineChanges.svelte', () => ({
-  offlineChangesStore: offlineRef,
+vi.mock('$lib/stores/pendingChanges.svelte', () => ({
+  pendingChangesStore: offlineRef,
 }));
 
 vi.mock('@zerodevx/svelte-toast', () => ({
@@ -528,9 +528,9 @@ describe('SaveControls.svelte', () => {
 
     it('delegates offline save to the page route (no direct reloadFromBackend or markClean)', async () => {
       // Post-Step 7 Option H: SaveControls is a thin delegate.
-      // `offlineChangesStore.reloadFromBackend` and `layoutStore.markClean`
+      // `pendingChangesStore.reloadFromBackend` and `layoutStore.markClean`
       // are now called by `saveLayoutOrchestrator` via the wired
-      // `reloadOfflineChanges` / `markClean` callbacks, not by the component.
+      // `reloadPendingChanges` / `markClean` callbacks, not by the component.
       layoutRef.isOfflineMode = true;
       layoutRef.hasLayoutFile = true;
       configChangesRef.draftCount = 1;
@@ -904,7 +904,7 @@ describe('SaveControls.svelte', () => {
     });
 
     it('counts only config drafts and layout dirty in offline pending total', async () => {
-      // Offline draft rows in offlineChangesStore are persistence staging;
+      // Offline draft rows in pendingChangesStore are persistence staging;
       // the pending count uses configDraftCount (display layer) + layout dirty.
       layoutRef.isOfflineMode = true;
       configChangesRef.draftCount = 3;
@@ -925,7 +925,7 @@ describe('SaveControls.svelte', () => {
   // once, and does NOT reach into store cleanup. Cleanup ownership moved
   // into `saveLayoutOrchestrator` via wired callbacks
   // (`markClean`, `clearMetadata`, `clearPersistedDrafts`,
-  // `reloadOfflineChanges`).
+  // `reloadPendingChanges`).
   //
   // The first test is a regression contract for the Save no-op: an empty
   // layout + connect + Read all config produces `unsavedInMemoryNodeIds`

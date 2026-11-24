@@ -172,5 +172,5 @@
     1. Extract the examples into `product/hardware/signal-lcc/` so the signaling UX proposal and future mockups can cite them.
     2. Confirm the extracted recipes match the cascade and condition derivation in `signaling-ux-proposal.md` §3.
 * Bowtie catalog reads configuration through the effective view
-  * The catalog (`app/src-tauri/src/commands/bowties.rs` ~385-450) builds its own overlay of pending Offline Changes on event leaves. Move it onto `LayoutState::effective_config_tree` (ADR-0015 2026-11-23) so unsaved drafts and Offline Changes resolve the same way for every backend reader.
-  * Planned together with Spec 020 E3b ([slices.md](020-block-signals-first-slice/slices.md)), which retires the `modified_value` layer and makes `LayoutState` the single owner of Offline Changes.
+  * The catalog (`app/src-tauri/src/commands/bowties.rs` ~385-450) builds its own overlay of Pending Changes on event leaves. Move it onto `LayoutState::effective_config_tree` (ADR-0015 2026-11-23) so unsaved drafts and Pending Changes resolve the same way for every backend reader.
+  * Planned together with Spec 020 E3b-1 ([slices.md](020-block-signals-first-slice/slices.md)), which retires the `modified_value` layer. `LayoutState` is already the single owner of Pending Changes (E3b-0).

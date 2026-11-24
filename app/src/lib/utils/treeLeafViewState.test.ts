@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { OfflineChangeRow } from '$lib/api/sync';
+import type { PendingChangeRow } from '$lib/api/sync';
 import type { LeafConfigNode } from '$lib/types/nodeTree';
 import type { ConnectorConstraintState } from '$lib/utils/connectorConstraints';
 import { resolveLeafOfflineValueState, resolveLeafSelectViewState } from '$lib/utils/treeLeafViewState';
@@ -30,7 +30,7 @@ function makeLeaf(overrides: Partial<LeafConfigNode> = {}): LeafConfigNode {
   };
 }
 
-function makeRow(overrides: Partial<OfflineChangeRow> = {}): OfflineChangeRow {
+function makeRow(overrides: Partial<PendingChangeRow> = {}): PendingChangeRow {
   return {
     changeId: 'draft-1',
     kind: 'config',

@@ -393,10 +393,10 @@ pub fn run() {
             commands::create_new_layout_capture,  // Spec 010: new capture lifecycle scaffolding
             commands::save_layout_with_bus_writes,  // Spec 013: three-phase save with bus writes
             commands::build_offline_node_tree,  // Spec 010: CDI-structured offline tree
-            commands::set_offline_change,  // Spec 010: offline change scaffolding
-            commands::revert_offline_change,  // Spec 010: offline change scaffolding
-            commands::list_offline_changes,  // Spec 010: offline change scaffolding
-            commands::replace_offline_changes,  // Spec 010: bulk replace offline changes cache
+            commands::set_pending_change,  // Spec 010: pending change scaffolding
+            commands::revert_pending_change,  // Spec 010: pending change scaffolding
+            commands::list_pending_changes,  // Spec 010: pending change scaffolding
+            commands::replace_pending_changes,  // Spec 010: bulk replace pending changes cache
             commands::get_connector_profile,
             commands::preview_connector_compatibility,
             commands::list_bundled_profiles_command,    // Spec 014 / S8: placeholder picker

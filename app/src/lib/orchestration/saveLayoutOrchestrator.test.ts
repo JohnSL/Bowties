@@ -204,7 +204,7 @@ describe('saveLayoutOrchestrated', () => {
         layoutId: 'yard',
         rootPath: '/layouts/yard',
         mode: 'offline_file',
-        pendingOfflineChangeCount: 3,
+        pendingChangeCount: 3,
       }),
     );
   });
@@ -366,7 +366,7 @@ describe('saveLayoutOrchestrated — saveWithBusWrites path', () => {
         layoutId: 'yard',
         rootPath: '/layouts/yard',
         mode: 'offline_file',
-        pendingOfflineChangeCount: 5,
+        pendingChangeCount: 5,
       }),
     );
   });

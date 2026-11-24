@@ -15,7 +15,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NodeConfigTree, LeafConfigNode, TreeConfigValue } from '$lib/types/nodeTree';
-import type { OfflineChangeRow } from '$lib/api/sync';
+import type { PendingChangeRow } from '$lib/api/sync';
 import { editKeyForLeaf, addressToOffsetHex } from '$lib/utils/editKey';
 import { normalizeNodeId } from '$lib/utils/nodeId';
 
@@ -32,14 +32,14 @@ vi.mock('$lib/stores/nodeTree.svelte', () => ({
   },
 }));
 
-// Mock offlineChangesStore
-let mockPersistedRows: OfflineChangeRow[] = [];
-let mockDraftRows: OfflineChangeRow[] = [];
+// Mock pendingChangesStore
+let mockPersistedRows: PendingChangeRow[] = [];
+let mockDraftRows: PendingChangeRow[] = [];
 
-vi.mock('$lib/stores/offlineChanges.svelte', () => ({
-  offlineChangesStore: {
+vi.mock('$lib/stores/pendingChanges.svelte', () => ({
+  pendingChangesStore: {
     findPersistedConfigChange: vi.fn(
-      (nodeId: string, space: number, offset: string): OfflineChangeRow | null => {
+      (nodeId: string, space: number, offset: string): PendingChangeRow | null => {
         return (
           mockPersistedRows.find(
             (r) =>
@@ -52,8 +52,8 @@ vi.mock('$lib/stores/offlineChanges.svelte', () => ({
       },
     ),
     findEffectiveConfigChange: vi.fn(
-      (nodeId: string, space: number, offset: string): OfflineChangeRow | null => {
-        const match = (r: OfflineChangeRow) =>
+      (nodeId: string, space: number, offset: string): PendingChangeRow | null => {
+        const match = (r: PendingChangeRow) =>
           normalizeNodeId(r.nodeId ?? '') === normalizeNodeId(nodeId) &&
           r.space === space &&
           r.offset === offset &&
@@ -68,7 +68,7 @@ vi.mock('$lib/stores/offlineChanges.svelte', () => ({
       },
     ),
     findDraftConfigChange: vi.fn(
-      (nodeId: string, space: number, offset: string): OfflineChangeRow | null => {
+      (nodeId: string, space: number, offset: string): PendingChangeRow | null => {
         return (
           mockDraftRows.find(
             (r) =>
@@ -137,8 +137,8 @@ function makeTree(nodeId: string, leafAddress: number, leafValue: TreeConfigValu
 }
 
 function makeOfflineRow(
-  overrides: Partial<OfflineChangeRow> = {},
-): OfflineChangeRow {
+  overrides: Partial<PendingChangeRow> = {},
+): PendingChangeRow {
   return {
     changeId: 'row-1',
     kind: 'config',
@@ -178,7 +178,7 @@ describe('layer priority — visibleValue', () => {
     expect(configChangesStore.visibleValue(KEY)).toEqual(intVal(7));
   });
 
-  it('ignores offlineChanges draft rows when no configChanges draft exists', () => {
+  it('ignores pendingChanges draft rows when no configChanges draft exists', () => {
     mockTreesMap.set(NODE_ID, makeTree(NODE_ID, ADDRESS, intVal(3)));
     mockDraftRows = [makeOfflineRow({ plannedValue: '5' })];
     expect(configChangesStore.visibleValue(KEY)).toEqual(intVal(3));
@@ -279,7 +279,7 @@ describe('changeLayers', () => {
     expect(layers[1]).toEqual({ type: 'baseline', value: intVal(3) });
   });
 
-  it('does not surface offlineChanges draft rows as a display layer', () => {
+  it('does not surface pendingChanges draft rows as a display layer', () => {
     mockTreesMap.set(NODE_ID, makeTree(NODE_ID, ADDRESS, intVal(3)));
     mockDraftRows = [makeOfflineRow({ plannedValue: '7' })];
     const layers = configChangesStore.changeLayers(KEY);
@@ -375,7 +375,7 @@ describe('set', () => {
     mockTreesMap.set(NODE_ID, makeTree(NODE_ID, ADDRESS, intVal(3)));
     mockPersistedRows = [makeOfflineRow({ plannedValue: '7' })];
     // User edits to baseline value — but offlinePending exists, so this is
-    // still a meaningful override (reverting the offline change)
+    // still a meaningful override (reverting the pending change)
     configChangesStore.set(KEY, intVal(3));
     expect(configChangesStore.hasDraftsForNode(NODE_ID)).toBe(true);
   });
@@ -404,7 +404,7 @@ describe('clearAllDrafts', () => {
     expect(configChangesStore.visibleValue(key2)).toBeNull();
   });
 
-  it('does not affect offline rows (those are owned by offlineChangesStore)', () => {
+  it('does not affect offline rows (those are owned by pendingChangesStore)', () => {
     mockPersistedRows = [makeOfflineRow({ plannedValue: '7' })];
     configChangesStore.set(KEY, intVal(9));
     configChangesStore.clearAllDrafts();

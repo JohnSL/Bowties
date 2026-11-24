@@ -570,3 +570,168 @@ mod tests {
         assert_eq!(resolve_snapshot_node_name(&snapshot, "020157000200"), "020157000200");
     }
 }
+
+// ── Value serialization ─────────────────────────────────────────────────────
+
+/// Encode an f64 as IEEE 754 half-precision (binary16), big-endian.
+fn f64_to_f16_bytes(v: f64) -> [u8; 2] {
+    // Encode f64 as IEEE 754 half-precision (binary16) big-endian
+    let bits = if v.is_nan() {
+        0x7E00u16 // quiet NaN
+    } else if v.is_infinite() {
+        if v > 0.0 { 0x7C00u16 } else { 0xFC00u16 }
+    } else if v == 0.0 {
+        if v.is_sign_negative() { 0x8000u16 } else { 0x0000u16 }
+    } else {
+        let sign: u16 = if v < 0.0 { 1 } else { 0 };
+        let abs = v.abs();
+        let exp = abs.log2().floor() as i32;
+        if exp > 15 {
+            // overflow → infinity
+            (sign << 15) | 0x7C00
+        } else if exp < -24 {
+            // underflow → zero
+            sign << 15
+        } else if exp < -14 {
+            // subnormal
+            let mantissa = (abs / 2.0f64.powi(-24)).round() as u16;
+            (sign << 15) | mantissa
+        } else {
+            let biased_exp = (exp + 15) as u16;
+            let mantissa = ((abs / 2.0f64.powi(exp) - 1.0) * 1024.0).round() as u16;
+            (sign << 15) | (biased_exp << 10) | (mantissa & 0x3FF)
+        }
+    };
+    bits.to_be_bytes()
+}
+
+/// Serialize a ConfigValue to raw bytes for writing to a node.
+pub fn serialize_config_value(
+    value: &crate::node_tree::ConfigValue,
+    _element_type: crate::node_tree::LeafType,
+    size: u32,
+) -> Vec<u8> {
+    match value {
+        crate::node_tree::ConfigValue::Int { value: v } => {
+            match size {
+                1 => vec![*v as u8],
+                2 => (*v as i16).to_be_bytes().to_vec(),
+                4 => (*v as i32).to_be_bytes().to_vec(),
+                8 => v.to_be_bytes().to_vec(),
+                _ => vec![*v as u8],
+            }
+        }
+        crate::node_tree::ConfigValue::String { value: s } => {
+            let mut bytes: Vec<u8> = s.bytes().take(size as usize - 1).collect();
+            // NUL-terminate, pad to full size
+            bytes.push(0);
+            while bytes.len() < size as usize {
+                bytes.push(0);
+            }
+            bytes
+        }
+        crate::node_tree::ConfigValue::EventId { bytes, .. } => bytes.to_vec(),
+        crate::node_tree::ConfigValue::Float { value: v } => {
+            match size {
+                2 => f64_to_f16_bytes(*v).to_vec(),
+                8 => v.to_be_bytes().to_vec(),
+                _ => (*v as f32).to_be_bytes().to_vec(), // default: 4-byte f32
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod serialize_config_value_tests {
+    use super::{serialize_config_value, f64_to_f16_bytes};
+    use crate::node_tree::{ConfigValue, LeafType};
+
+    // ── Float serialization ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_serialize_float_f32() {
+        let val = ConfigValue::Float { value: 1.5f64 };
+        let bytes = serialize_config_value(&val, LeafType::Float, 4);
+        assert_eq!(bytes, 1.5f32.to_be_bytes().to_vec());
+    }
+
+    #[test]
+    fn test_serialize_float_f64() {
+        let val = ConfigValue::Float { value: 1.5f64 };
+        let bytes = serialize_config_value(&val, LeafType::Float, 8);
+        assert_eq!(bytes, 1.5f64.to_be_bytes().to_vec());
+    }
+
+    #[test]
+    fn test_serialize_float_f16_one() {
+        // 1.0 in f16 big-endian = [0x3C, 0x00]
+        let val = ConfigValue::Float { value: 1.0f64 };
+        let bytes = serialize_config_value(&val, LeafType::Float, 2);
+        assert_eq!(bytes, vec![0x3Cu8, 0x00u8]);
+    }
+
+    #[test]
+    fn test_serialize_float_f16_zero() {
+        let val = ConfigValue::Float { value: 0.0f64 };
+        let bytes = serialize_config_value(&val, LeafType::Float, 2);
+        assert_eq!(bytes, vec![0x00u8, 0x00u8]);
+    }
+
+    #[test]
+    fn test_serialize_float_f16_negative_one() {
+        // -1.0 in f16 = [0xBC, 0x00]
+        let val = ConfigValue::Float { value: -1.0f64 };
+        let bytes = serialize_config_value(&val, LeafType::Float, 2);
+        assert_eq!(bytes, vec![0xBCu8, 0x00u8]);
+    }
+
+    // ── f64_to_f16_bytes known values ───────────────────────────────────────
+
+    #[test]
+    fn test_f64_to_f16_bytes_one() {
+        assert_eq!(f64_to_f16_bytes(1.0f64), [0x3Cu8, 0x00u8]);
+    }
+
+    #[test]
+    fn test_f64_to_f16_bytes_zero() {
+        assert_eq!(f64_to_f16_bytes(0.0f64), [0x00u8, 0x00u8]);
+    }
+
+    #[test]
+    fn test_f64_to_f16_bytes_pos_inf() {
+        // +inf in f16 = 0x7C00
+        assert_eq!(f64_to_f16_bytes(f64::INFINITY), [0x7Cu8, 0x00u8]);
+    }
+
+    #[test]
+    fn test_f64_to_f16_bytes_neg_inf() {
+        // -inf in f16 = 0xFC00
+        assert_eq!(f64_to_f16_bytes(f64::NEG_INFINITY), [0xFCu8, 0x00u8]);
+    }
+
+    #[test]
+    fn test_f64_to_f16_bytes_nan() {
+        // quiet NaN in f16 = 0x7E00
+        assert_eq!(f64_to_f16_bytes(f64::NAN), [0x7Eu8, 0x00u8]);
+    }
+
+    // ── Int serialization ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_serialize_int_1_byte() {
+        let val = ConfigValue::Int { value: 42 };
+        assert_eq!(serialize_config_value(&val, LeafType::Int, 1), vec![42u8]);
+    }
+
+    #[test]
+    fn test_serialize_int_2_bytes() {
+        let val = ConfigValue::Int { value: 0x0102 };
+        assert_eq!(serialize_config_value(&val, LeafType::Int, 2), vec![0x01u8, 0x02u8]);
+    }
+
+    #[test]
+    fn test_serialize_int_4_bytes() {
+        let val = ConfigValue::Int { value: 0x01020304 };
+        assert_eq!(serialize_config_value(&val, LeafType::Int, 4), vec![0x01u8, 0x02, 0x03, 0x04]);
+    }
+}

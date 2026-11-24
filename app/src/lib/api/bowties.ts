@@ -62,7 +62,7 @@ export async function buildBowtieCatalog(layoutMetadata?: LayoutFile | null): Pr
 }
 
 /**
- * Persist a bowtie metadata edit as an offline change row when offline.
+ * Persist a bowtie metadata edit as a pending change row when offline.
  * Returns the created change ID in offline mode.
  */
 export async function setBowtieMetadata(

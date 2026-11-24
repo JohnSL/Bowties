@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { DiscoveredNode } from '$lib/api/tauri';
-import type { OfflineChangeRow } from '$lib/api/sync';
+import type { PendingChangeRow } from '$lib/api/sync';
 import type { NodeConfigTree } from '$lib/types/nodeTree';
 import { nodeInfoStore } from '$lib/stores/nodeInfo';
 import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
@@ -198,7 +198,7 @@ describe('shouldShowConfigNotReadBadge', () => {
 });
 
 describe('pending state helpers', () => {
-  const pendingRows: OfflineChangeRow[] = [
+  const pendingRows: PendingChangeRow[] = [
     {
       baselineValue: '10',
       changeId: 'cfg-1',

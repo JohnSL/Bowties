@@ -7,7 +7,7 @@ import { canonicalEventIdHex, parseEventIdHex } from '$lib/utils/serialize';
 import { buildBowtieCatalog } from '$lib/api/bowties';
 import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
 import { layoutStore } from '$lib/stores/layout.svelte';
-import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
 import {
   failLayoutOpen,
   finishLayoutHydration,
@@ -50,7 +50,7 @@ interface ResetLayoutStateForNoLayoutArgs {
   clearConfigReadStatus: () => void;
   resetNodeTrees: () => void;
   clearMetadata: () => void;
-  clearOfflineChanges: () => void;
+  clearPendingChanges: () => void;
   resetLayoutStore: () => void;
   resetSyncSessionAutoTrigger: () => void;
   resetSidebar: () => void;
@@ -174,7 +174,7 @@ export async function resetLayoutStateForNoLayout({
   clearConfigReadStatus,
   resetNodeTrees,
   clearMetadata,
-  clearOfflineChanges,
+  clearPendingChanges,
   resetLayoutStore,
   resetSyncSessionAutoTrigger,
   resetSidebar,
@@ -186,7 +186,7 @@ export async function resetLayoutStateForNoLayout({
   clearConfigReadStatus();
   resetNodeTrees();
   clearMetadata();
-  clearOfflineChanges();
+  clearPendingChanges();
   resetLayoutStore();
   resetSyncSessionAutoTrigger();
   resetSidebar();
@@ -400,7 +400,7 @@ export async function openOfflineLayoutWithReplay({
       rootPath: path,
       mode: 'offline_file',
       capturedAt: result.capturedAt,
-      pendingOfflineChangeCount: result.pendingOfflineChangeCount,
+      pendingChangeCount: result.pendingChangeCount,
       // S8/S9: seed the saved-node roster from the snapshots that just came
       // from disk. For real nodes, normalize to canonical (uppercase, no dots).
       // For placeholders, use nodeKey as-is (it's already canonical).
@@ -413,7 +413,7 @@ export async function openOfflineLayoutWithReplay({
   hydrateConnectorSelections?.(result.layout);
 
     startOfflineReplay();
-    await offlineChangesStore.reloadFromBackend();
+    await pendingChangesStore.reloadFromBackend();
     onOpened?.();
     finishOfflineReplay();
 

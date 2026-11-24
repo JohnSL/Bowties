@@ -502,3 +502,19 @@ Offline Changes.
 **Follow-up.** The bowtie catalog keeps its own overlay of pending
 Offline Changes (`commands/bowties.rs`); moving it onto this view is
 tracked in `specs/backlog.md`.
+
+## 2026-11-23 extension: Pending Changes have one owner (Spec 020 E3b-0)
+
+**Problem.** Offline Change rows lived in two places: `AppState.offline_changes_cache` (written by the Sync Panel and bowtie-metadata IPCs) and `LayoutState.offline_changes` (refreshed only at open, save and `sync_layout_drafts`). A Sync apply removed rows from the cache but not from `LayoutState`, so `effective_config_tree` could still overlay a value already written to the board. The Invariants above already named the cache as drift.
+
+**Decision.**
+- `AppState.offline_changes_cache` is removed. `LayoutState.pending_changes` is the only in-memory store of the rows. IPCs write through `LayoutState::upsert_pending_change` (same target resets the row to pending and keeps its id), `remove_pending_changes` (by id) and `set_pending_changes`; Sync session builds and Sync applies remove rows there directly. `sync_layout_drafts` no longer copies rows in.
+- The concept is named Pending Change in code (`PendingChange`, `PendingChangeKind`, `PendingChangeStatus`, `bowties-core/src/layout/pending_changes.rs`, `pendingChangesStore`, IPCs `set_pending_change` / `revert_pending_change` / `list_pending_changes` / `replace_pending_changes`). The file keeps its legacy name `offline-changes.yaml`; the row format and schema version are unchanged.
+- The Sync Panel's classify and apply loop lives in `bowties-core/src/sync/writer.rs` behind `MemoryPort`; `commands/sync_panel.rs` is its adapter and keeps persistence and Update Complete. Spec 020 E3b-1 makes this the only writer for Save as well.
+
+**Invariants added.**
+- No row store of Pending Changes exists outside `LayoutState`. While no layout is open, IPCs that record a row fail with "No layout is open".
+- Removing a row (applied, already applied, read-only) removes it from `LayoutState` in the same command that decides it.
+
+**Still open.** The `modified_value` layer and the connected Save writer (`write_modified_values`) remain until E3b-1 retires them; the bowtie catalog's own overlay remains (backlog).
+

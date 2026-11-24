@@ -18,7 +18,7 @@ import {
   setSyncMode as setSyncModeIpc,
   applySyncChanges,
 } from '$lib/api/sync';
-import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
 
 export type ConflictResolution = 'apply' | 'skip';
 
@@ -188,7 +188,7 @@ class SyncPanelStore {
     }
   }
 
-  /** Build the sync session from pending offline changes vs live bus values. */
+  /** Build the sync session from pending changes vs live bus values. */
   async loadSession(): Promise<void> {
     this._loading = true;
     this._error = null;
@@ -199,7 +199,7 @@ class SyncPanelStore {
     try {
       this._session = await buildSyncSession();
       if ((this._session?.alreadyAppliedCount ?? 0) > 0) {
-        await offlineChangesStore.reloadFromBackend();
+        await pendingChangesStore.reloadFromBackend();
       }
     } catch (e) {
       this._error = e instanceof Error ? e.message : String(e);

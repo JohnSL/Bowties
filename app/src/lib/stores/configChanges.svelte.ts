@@ -6,18 +6,18 @@
  *
  * Layer resolution order (highest to lowest):
  *   1. draft         — user edit not yet saved (owned by this store)
- *   2. offlinePending — persisted offline change from offlineChangesStore
+ *   2. offlinePending — persisted pending change from pendingChangesStore
  *   3. baseline      — authoritative device value from the tree (leaf.value)
  *
  * Design constraints (from refactor plan):
  * - Never mutates the tree store.
  * - No knowledge of online/offline mode.
- * - Reads nodeTreeStore and offlineChangesStore on demand (lazy resolution).
+ * - Reads nodeTreeStore and pendingChangesStore on demand (lazy resolution).
  * - Write interface restricted to: ConfigEditor, save/discard orchestration.
  */
 
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
-import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
 import { findLeafByAddress, isLeaf, isGroup } from '$lib/types/nodeTree';
 import type { TreeConfigValue, NodeConfigTree, ConfigNode, LeafConfigNode } from '$lib/types/nodeTree';
 import {
@@ -229,7 +229,7 @@ class ConfigChangesStore {
    * Atomic save commit: clear all drafts.
    *
    * Post-S8.11, the save flow stages every draft (real-node and placeholder
-   * alike) into `offlineChangesStore` before persisting. Once staged, all
+   * alike) into `pendingChangesStore` before persisting. Once staged, all
    * drafts are cleared uniformly — no species-based partitioning.
    */
   commitForSave(): void {
@@ -277,16 +277,16 @@ class ConfigChangesStore {
   // ── Private layer resolution ──────────────────────────────────────────────
 
   /**
-   * Read the offline pending value from offlineChangesStore for this key.
+   * Read the offline pending value from pendingChangesStore for this key.
    *
-   * Returns the persisted offline row only. Draft rows in offlineChangesStore
+   * Returns the persisted offline row only. Draft rows in pendingChangesStore
    * are persistence staging; connector repairs that need display visibility
    * are written separately to the config-draft layer.
    */
   private _resolveOfflinePending(key: string): TreeConfigValue | null {
     const { normalizedNodeId, space, address } = parseEditKey(key);
     const offset = addressToOffsetHex(address);
-    const row = offlineChangesStore.findPersistedConfigChange(
+    const row = pendingChangesStore.findPersistedConfigChange(
       normalizedNodeId,
       space,
       offset,

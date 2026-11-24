@@ -17,7 +17,7 @@
  *   5. unsavedInMemoryNodeIds — live persistable additions not yet in the
  *       layout roster.
  *   6. isDirty               — any persistable addition OR any draft /
- *       metadata / offline-change / layout-struct edit.
+ *       metadata / pending change / layout-struct edit.
  *       Regression contract for R6: an unread real node alone does not
  *       flip isDirty.
  */
@@ -46,7 +46,7 @@ const { partialCaptureNodesStore } = await import('$lib/stores/partialCaptureNod
 const { layoutStore } = await import('$lib/stores/layout.svelte');
 const { configChangesStore } = await import('$lib/stores/configChanges.svelte');
 const { bowtieMetadataStore } = await import('$lib/stores/bowtieMetadata.svelte');
-const { offlineChangesStore } = await import('$lib/stores/offlineChanges.svelte');
+const { pendingChangesStore } = await import('$lib/stores/pendingChanges.svelte');
 const { effectiveNodeStore } = await import('./effectiveNodeStore.svelte');
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -106,7 +106,7 @@ function setActiveLayoutWith(nodeIds: string[]): void {
     layoutId: '/test/layout',
     rootPath: '/test/layout',
     mode: 'offline_file',
-    pendingOfflineChangeCount: 0,
+    pendingChangeCount: 0,
     layoutNodeIds: [...nodeIds],
   });
 }
@@ -119,7 +119,7 @@ beforeEach(() => {
   layoutStore.reset();
   configChangesStore.clearAllDrafts();
   bowtieMetadataStore.clearAll();
-  offlineChangesStore.clear();
+  pendingChangesStore.clear();
 });
 
 // ── 1. nodeOrigin ────────────────────────────────────────────────────────────
@@ -284,9 +284,9 @@ describe('effectiveNodeStore.isDirty', () => {
     expect(effectiveNodeStore.isDirty).toBe(true);
   });
 
-  it('is true when offline changes are pending', () => {
+  it('is true when pending changes are pending', () => {
     setActiveLayoutWith([]);
-    offlineChangesStore.upsertConfigChange({
+    pendingChangesStore.upsertConfigChange({
       nodeId: LIVE_A_DOTTED,
       space: 251,
       offset: '0x00000000',

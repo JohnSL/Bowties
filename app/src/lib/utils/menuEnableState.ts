@@ -38,7 +38,7 @@ export interface MenuEnableInputs {
   hasLayoutFile: boolean;
   /** Aggregate "any in-memory change" signal (ADR-0011 facade). */
   hasInMemoryEdits: boolean;
-  /** Count of pending offline changes awaiting sync to the bus. */
+  /** Count of pending changes awaiting sync to the bus. */
   pendingSyncCount: number;
 }
 

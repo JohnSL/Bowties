@@ -14,7 +14,7 @@ use bowties_core::layout::facilities::{
 };
 use bowties_core::layout::io::{read_layout_capture, write_layout_capture, LayoutDirectoryWriteData};
 use bowties_core::layout::manifest::LayoutManifest;
-use bowties_core::layout::offline_changes::{OfflineChange, OfflineChangeKind, OfflineChangeStatus};
+use bowties_core::layout::pending_changes::{PendingChange, PendingChangeKind, PendingChangeStatus};
 use bowties_core::layout::types::{LayoutEditDelta, LayoutFile};
 use bowties_core::signaling::{
     EntranceEnd, ExitEnd, FacilitySignalSettings, Movements, SelectedBlock, TravelDirection,
@@ -77,16 +77,16 @@ fn abs_facility() -> Facility {
     }
 }
 
-fn config_change(id: &str, offset: &str, value: &str) -> OfflineChange {
-    OfflineChange {
+fn config_change(id: &str, offset: &str, value: &str) -> PendingChange {
+    PendingChange {
         change_id: id.into(),
-        kind: OfflineChangeKind::Config,
+        kind: PendingChangeKind::Config,
         node_key: Some(NODE.into()),
         space: Some(253),
         offset: Some(offset.into()),
         baseline_value: "0".into(),
         planned_value: value.into(),
-        status: OfflineChangeStatus::Pending,
+        status: PendingChangeStatus::Pending,
         error: None,
         updated_at: "2026-11-22T00:00:00Z".into(),
     }
@@ -116,7 +116,7 @@ fn offline_save_and_reopen_preserves_block_signals_facility() {
         ),
         node_snapshots: Vec::new(),
         bowties: LayoutFile::default(),
-        offline_changes: vec![
+        pending_changes: vec![
             config_change("chg-1", "0x00000010", "5"),
             config_change("chg-2", "0x00000020", "7"),
         ],
@@ -142,10 +142,10 @@ fn offline_save_and_reopen_preserves_block_signals_facility() {
     assert_eq!(read.facilities.facilities[0].slot_bindings["signals"], vec!["ch-sig-1"]);
     assert_eq!(read.channels.channels, vec![signal_channel()]);
     assert!(read.load_warnings.is_empty(), "{:?}", read.load_warnings);
-    assert_eq!(read.offline_changes.len(), 2);
-    assert!(read.offline_changes.iter().all(|c| c.node_key.as_deref() == Some(NODE)));
-    assert_eq!(read.offline_changes[1].offset.as_deref(), Some("0x00000020"));
-    assert_eq!(read.offline_changes[1].planned_value, "7");
+    assert_eq!(read.pending_changes.len(), 2);
+    assert!(read.pending_changes.iter().all(|c| c.node_key.as_deref() == Some(NODE)));
+    assert_eq!(read.pending_changes[1].offset.as_deref(), Some("0x00000020"));
+    assert_eq!(read.pending_changes[1].planned_value, "7");
 }
 
 fn write_v4_layout(dir: &PathBuf) {
@@ -194,7 +194,7 @@ fn data_with_facilities(facilities: FacilitiesDocument) -> LayoutDirectoryWriteD
         ),
         node_snapshots: Vec::new(),
         bowties: LayoutFile::default(),
-        offline_changes: Vec::new(),
+        pending_changes: Vec::new(),
         cdi_files: Vec::new(),
         channels: ChannelsDocument::default(),
         facilities,

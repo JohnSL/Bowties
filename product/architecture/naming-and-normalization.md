@@ -148,7 +148,7 @@ above.
 
 These normalization and display-name rules apply to:
 
-- All store lookups by Node ID (`nodeTreeStore`, `nodeInfo`, `configReadStatus`, `offlineChangesStore`, `syncPanel.svelte.ts`)
+- All store lookups by Node ID (`nodeTreeStore`, `nodeInfo`, `configReadStatus`, `pendingChangesStore`, `syncPanel.svelte.ts`)
 - All offline-change row matching (offline change `nodeId` field compared to discovered node IDs)
 - Sync session node-match classification (matching offline layout nodes to live discovered nodes)
 - Post-apply tree reconciliation (identifying which trees need rebuilding)

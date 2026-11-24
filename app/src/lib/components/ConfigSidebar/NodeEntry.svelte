@@ -16,7 +16,7 @@
   export let configNotRead: boolean = false;
   /** Whether this node has unsaved pending edits (FR-012a) */
   export let hasPendingEdits: boolean = false;
-  /** Whether this node has saved offline changes still pending apply to device */
+  /** Whether this node has saved pending changes still pending apply to device */
   export let hasPendingApply: boolean = false;
   /**
    * S8: this node is visible to the frontend but has NOT yet been persisted

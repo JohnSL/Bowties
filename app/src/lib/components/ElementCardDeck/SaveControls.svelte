@@ -20,7 +20,7 @@
   import { channelsStore } from '$lib/stores/channels.svelte';
   import { facilitiesStore } from '$lib/stores/facilities.svelte';
   import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
-  import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+  import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
   import { discardAllConfigDrafts } from '$lib/orchestration/configDraftOrchestrator';
   import { deriveSaveControlsViewState } from '$lib/components/ElementCardDeck/saveControlsPresenter';
   import DiscardConfirmDialog from '$lib/components/DiscardConfirmDialog.svelte';
@@ -63,7 +63,7 @@
     breakdown: effectiveNodeStore.dirtyBreakdown,
     connectorWarningCount: connectorSelectionsStore.totalWarningCount,
     layoutIsOfflineMode: layoutStore.isOfflineMode,
-    offlineDraftRows: offlineChangesStore.draftRows,
+    offlineDraftRows: pendingChangesStore.draftRows,
     saveProgressState: saveProgress.state,
   }));
 
@@ -78,7 +78,7 @@
   // ── Save handler ────────────────────────────────────────────────────────────
   //
   // Thin delegate: the page route owns draft staging, orchestrator wiring,
-  // and post-save cleanup (markClean, clearMetadata, offline-changes reload,
+  // and post-save cleanup (markClean, clearMetadata, pending changes reload,
   // configChangesStore commit). This handler exists only to:
   //   1. Honour the presenter's `canSave` gate (no parallel gate divergence).
   //   2. Drive `saveProgress` so the UI reflects in-flight state.
@@ -133,7 +133,7 @@
     showDiscardDialog = false;
 
     if (layoutStore.isOfflineMode) {
-      await offlineChangesStore.revertAllPending();
+      await pendingChangesStore.revertAllPending();
       discardAllConfigDrafts();
       bowtieMetadataStore.clearAll();
       connectorSelectionsStore.discard();

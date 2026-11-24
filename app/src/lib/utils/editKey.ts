@@ -8,7 +8,7 @@
  * contain an internal `:`, the parser splits from the right and treats
  * everything before the last two `:` segments as the NodeKey.
  *
- * Offline change rows store addresses as hex offset strings ("0x00000064").
+ * Pending change rows store addresses as hex offset strings ("0x00000064").
  * This module provides the conversion layer so the rest of the system
  * can work exclusively in decimal addresses.
  */
@@ -62,7 +62,7 @@ export function parseEditKey(key: string): {
 
 /**
  * Convert a decimal address to the hex offset string format used by
- * offlineChangesStore rows.
+ * pendingChangesStore rows.
  *
  * @example
  * addressToOffsetHex(100) === '0x00000064'
@@ -73,7 +73,7 @@ export function addressToOffsetHex(address: number): string {
 }
 
 /**
- * Parse a hex offset string from offlineChangesStore back to a decimal address.
+ * Parse a hex offset string from pendingChangesStore back to a decimal address.
  * Handles both "0x" and "0X" prefixes, and upper/lowercase hex digits.
  *
  * @example
@@ -117,10 +117,10 @@ export function parseOfflineValueString(raw: string): TreeConfigValue {
 }
 
 /**
- * Serialize a TreeConfigValue to the string format stored in offline change rows.
+ * Serialize a TreeConfigValue to the string format stored in pending change rows.
  *
  * This is the single replacement for `valueToOfflineString` in TreeLeafRow.svelte.
- * Used only at save time when writing a row to offlineChangesStore.
+ * Used only at save time when writing a row to pendingChangesStore.
  */
 export function configValueToOfflineString(value: TreeConfigValue): string {
   switch (value.type) {

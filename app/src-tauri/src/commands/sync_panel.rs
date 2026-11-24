@@ -8,32 +8,21 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use tauri::Manager;
-use crate::layout::offline_changes::{OfflineChange, OfflineChangeKind, OfflineChangeStatus};
+use crate::layout::pending_changes::{PendingChange, PendingChangeKind, PendingChangeStatus};
 use crate::state::{AppState, ActiveLayoutMode, SyncMode};
 
-use bowties_core::sync::changes::{same_change_target, remove_changes_by_id};
-use bowties_core::sync::field_meta::{
-    find_field_meta_in_cdi, find_snapshot_field_label, fallback_field_label,
-    field_meta_to_leaf, parse_offset, raw_bytes_to_value_string, resolve_snapshot_node_name,
-    string_to_config_value,
+use bowties_core::sync::writer::{
+    self, BaselineUpdate, BusNodeError, LayoutNodeResources, LeafUpdate, MemoryPort,
 };
-use bowties_core::sync::classifier::{
-    self, compute_layout_match, classify_sync_row, SyncClassification,
-};
+use bowties_core::sync::classifier::compute_layout_match;
 
 // Re-export types used in IPC contracts from bowties-core.
 pub use bowties_core::sync::classifier::{
-    LayoutMatchStatus, SyncRow, SyncSession,
-    ApplySyncFailure, ApplySyncResult,
+    LayoutMatchStatus, SyncSession,
+    ApplySyncResult,
 };
 
 // ── CDI / layout resolution (Tauri-dependent, stays here) ───────────────────
-
-#[derive(Debug, Clone)]
-struct LayoutNodeResources {
-    snapshot: crate::layout::node_snapshot::NodeSnapshot,
-    cdi: lcc_rs::cdi::Cdi,
-}
 
 fn load_layout_snapshot(
     canonical_node_id: &str,
@@ -62,15 +51,6 @@ fn resolve_layout_cdi_from_snapshot(
         .map_err(|e| format!("Cannot parse CDI for {}: {}", snapshot.node_key, e))
 }
 
-fn resolve_layout_cdi(
-    canonical_node_id: &str,
-    root_path: &str,
-    app: &tauri::AppHandle,
-) -> Result<lcc_rs::cdi::Cdi, String> {
-    let snapshot = load_layout_snapshot(canonical_node_id, root_path)?;
-    resolve_layout_cdi_from_snapshot(&snapshot, root_path, app)
-}
-
 fn load_layout_node_resources(
     canonical_node_id: &str,
     root_path: &str,
@@ -81,32 +61,84 @@ fn load_layout_node_resources(
     Ok(LayoutNodeResources { snapshot, cdi })
 }
 
-/// Build a `SyncRow` from an `OfflineChange` using the bowties-core builder.
-fn sync_row_from_change(
-    change: &OfflineChange,
-    node_name: Option<String>,
-    field_label: Option<String>,
-    bus_value: Option<String>,
-    error: Option<String>,
-) -> SyncRow {
-    classifier::build_sync_row(
-        &change.change_id,
-        change.node_key.as_deref(),
-        node_name,
-        field_label,
-        &change.baseline_value,
-        &change.planned_value,
-        bus_value,
-        error,
-    )
+/// Adapts the live connection (peer sessions, node registry) and the active
+/// layout's files to the writer's `MemoryPort`.
+struct LivePort<'a> {
+    state: &'a AppState,
+    root_path: &'a str,
+    app: &'a tauri::AppHandle,
 }
 
+impl LivePort<'_> {
+    /// Resolve the peer session for a node. Placeholder (synthesized) nodes
+    /// have no node ID and are not on the bus.
+    async fn session(&self, node_key: &str) -> Result<lcc_rs::PeerSessionHandle, String> {
+        let nk = crate::node_key::NodeKey::parse(node_key)
+            .map_err(|_| format!("Invalid node key: {}", node_key))?;
+        let node_id = self
+            .state
+            .node_registry
+            .get_by_node_key(&nk)
+            .await
+            .and_then(|p| p.node_id())
+            .ok_or_else(|| format!("Node not on bus: {}", node_key))?;
+        self.state.peer_session(node_id).await
+    }
+}
 
+impl MemoryPort for LivePort<'_> {
+    fn load_layout_resources(&self, node_key: &str) -> Result<LayoutNodeResources, String> {
+        load_layout_node_resources(node_key, self.root_path, self.app)
+    }
+
+    async fn resolve_bus_node(&self, node_key: &str) -> Result<(), BusNodeError> {
+        let nk = crate::node_key::NodeKey::parse(node_key).map_err(|_| BusNodeError::InvalidNodeKey)?;
+        match self.state.node_registry.get_by_node_key(&nk).await {
+            Some(p) if p.node_id().is_some() => Ok(()),
+            _ => Err(BusNodeError::NotOnBus),
+        }
+    }
+
+    async fn peer_session_ready(&self, node_key: &str) -> Result<(), String> {
+        self.session(node_key).await.map(|_| ())
+    }
+
+    async fn read_memory(
+        &self,
+        node_key: &str,
+        space: u8,
+        address: u32,
+        size: u8,
+        timeout_ms: u64,
+    ) -> Result<Vec<u8>, String> {
+        let session = self.session(node_key).await?;
+        session
+            .read_memory(space, address, size, timeout_ms)
+            .await
+            .map(|(data, _timing)| data)
+            .map_err(|e| e.to_string())
+    }
+
+    async fn write_memory(
+        &self,
+        node_key: &str,
+        space: u8,
+        address: u32,
+        data: Vec<u8>,
+        timeout_ms: u64,
+    ) -> Result<(), String> {
+        let session = self.session(node_key).await?;
+        session
+            .write_memory(space, address, data, timeout_ms)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OfflineChangeInput {
-    pub kind: OfflineChangeKind,
+pub struct PendingChangeInput {
+    pub kind: PendingChangeKind,
     pub node_id: Option<String>,
     pub space: Option<u8>,
     pub offset: Option<String>,
@@ -116,15 +148,15 @@ pub struct OfflineChangeInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OfflineChangeRow {
+pub struct PendingChangeRow {
     pub change_id: String,
-    pub kind: OfflineChangeKind,
+    pub kind: PendingChangeKind,
     pub node_id: Option<String>,
     pub space: Option<u8>,
     pub offset: Option<String>,
     pub baseline_value: String,
     pub planned_value: String,
-    pub status: OfflineChangeStatus,
+    pub status: PendingChangeStatus,
     pub error: Option<String>,
     pub updated_at: String,
 }
@@ -132,8 +164,8 @@ pub struct OfflineChangeRow {
 
 
 #[tauri::command]
-pub async fn set_offline_change(
-    change: OfflineChangeInput,
+pub async fn set_pending_change(
+    change: PendingChangeInput,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
     // Verify active offline layout
@@ -153,8 +185,8 @@ pub async fn set_offline_change(
         chrono::Utc::now().timestamp_millis()
     );
 
-    // Create the offline change record
-    let offline_change = OfflineChange {
+    // Create the pending change record
+    let pending_change = PendingChange {
         change_id: change_id.clone(),
         kind: change.kind,
         node_key: change.node_id,
@@ -162,34 +194,27 @@ pub async fn set_offline_change(
         offset: change.offset,
         baseline_value: change.baseline_value,
         planned_value: change.planned_value,
-        status: OfflineChangeStatus::Pending,
+        status: PendingChangeStatus::Pending,
         error: None,
         updated_at: chrono::Utc::now().to_rfc3339(),
     };
 
     // Validate the change
-    offline_change.validate()?;
+    pending_change.validate()?;
 
     // In-memory only pre-save path: upsert on same target.
-    let mut change_id_out = change_id;
-    {
-        let mut cache = state.offline_changes_cache.write().await;
-        if let Some(existing) = cache.iter_mut().find(|c| same_change_target(c, &offline_change)) {
-            existing.planned_value = offline_change.planned_value;
-            existing.updated_at = offline_change.updated_at;
-            existing.status = OfflineChangeStatus::Pending;
-            existing.error = None;
-            change_id_out = existing.change_id.clone();
-        } else {
-            cache.push(offline_change);
-        }
-    }
+    let (change_id_out, row_count) = {
+        let mut guard = state.layout_state.write().await;
+        let layout = guard.as_mut().ok_or_else(|| "No layout is open".to_string())?;
+        let id = layout.upsert_pending_change(pending_change);
+        (id, layout.pending_changes().len())
+    };
 
     // Update pending count in active layout context
     {
         let mut guard = state.active_layout.write().await;
         if let Some(ctx) = &mut *guard {
-            ctx.pending_offline_change_count = state.offline_changes_cache.read().await.len();
+            ctx.pending_change_count = row_count;
         }
     }
 
@@ -197,7 +222,7 @@ pub async fn set_offline_change(
 }
 
 #[tauri::command]
-pub async fn revert_offline_change(
+pub async fn revert_pending_change(
     change_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
@@ -212,11 +237,15 @@ pub async fn revert_offline_change(
     }
 
     // Remove from in-memory cache
-    let removed = {
-        let mut cache = state.offline_changes_cache.write().await;
-        let initial_len = cache.len();
-        cache.retain(|c| c.change_id != change_id);
-        cache.len() < initial_len
+    let (removed, row_count) = {
+        let mut guard = state.layout_state.write().await;
+        match guard.as_mut() {
+            Some(layout) => {
+                let ids = std::collections::HashSet::from([change_id.clone()]);
+                (layout.remove_pending_changes(&ids) > 0, layout.pending_changes().len())
+            }
+            None => (false, 0),
+        }
     };
 
     if !removed {
@@ -227,7 +256,7 @@ pub async fn revert_offline_change(
     {
         let mut guard = state.active_layout.write().await;
         if let Some(ctx) = &mut *guard {
-            ctx.pending_offline_change_count = state.offline_changes_cache.read().await.len();
+            ctx.pending_change_count = row_count;
         }
     }
 
@@ -235,9 +264,9 @@ pub async fn revert_offline_change(
 }
 
 #[tauri::command]
-pub async fn list_offline_changes(
+pub async fn list_pending_changes(
     state: tauri::State<'_, AppState>,
-) -> Result<Vec<OfflineChangeRow>, String> {
+) -> Result<Vec<PendingChangeRow>, String> {
     // Verify active offline layout
     let _context = {
         let guard = state.active_layout.read().await;
@@ -248,10 +277,14 @@ pub async fn list_offline_changes(
             .ok_or_else(|| "No offline layout is active".to_string())?
     };
 
-    let changes = state.offline_changes_cache.read().await;
+    let layout_guard = state.layout_state.read().await;
+    let changes = layout_guard
+        .as_ref()
+        .map(|layout| layout.pending_changes())
+        .unwrap_or(&[]);
     let rows = changes
         .iter()
-        .map(|c| OfflineChangeRow {
+        .map(|c| PendingChangeRow {
             change_id: c.change_id.clone(),
             kind: c.kind.clone(),
             node_id: c.node_key.clone(),
@@ -269,8 +302,8 @@ pub async fn list_offline_changes(
 }
 
 #[tauri::command]
-pub async fn replace_offline_changes(
-    changes: Vec<OfflineChangeInput>,
+pub async fn replace_pending_changes(
+    changes: Vec<PendingChangeInput>,
     state: tauri::State<'_, AppState>,
 ) -> Result<usize, String> {
     // Verify active offline layout
@@ -286,7 +319,7 @@ pub async fn replace_offline_changes(
     let now = chrono::Utc::now().to_rfc3339();
     let mut rows = Vec::with_capacity(changes.len());
     for change in changes {
-        let row = OfflineChange {
+        let row = PendingChange {
             change_id: format!("{}-{}", Uuid::new_v4(), chrono::Utc::now().timestamp_millis()),
             kind: change.kind,
             node_key: change.node_id,
@@ -294,7 +327,7 @@ pub async fn replace_offline_changes(
             offset: change.offset,
             baseline_value: change.baseline_value,
             planned_value: change.planned_value,
-            status: OfflineChangeStatus::Pending,
+            status: PendingChangeStatus::Pending,
             error: None,
             updated_at: now.clone(),
         };
@@ -303,11 +336,15 @@ pub async fn replace_offline_changes(
     }
 
     let count = rows.len();
-    *state.offline_changes_cache.write().await = rows;
+    {
+        let mut guard = state.layout_state.write().await;
+        let layout = guard.as_mut().ok_or_else(|| "No layout is open".to_string())?;
+        layout.set_pending_changes(rows);
+    }
 
     let mut guard = state.active_layout.write().await;
     if let Some(ctx) = &mut *guard {
-        ctx.pending_offline_change_count = count;
+        ctx.pending_change_count = count;
     }
 
     Ok(count)
@@ -358,209 +395,31 @@ pub async fn build_sync_session(
         return Err("Not connected to network".to_string());
     }
 
-    let changes = state.offline_changes_cache.read().await.clone();
-    let pending: Vec<&OfflineChange> = changes
-        .iter()
-        .filter(|c| c.status == OfflineChangeStatus::Pending)
-        .collect();
-
-    let mut conflict_rows = Vec::new();
-    let mut clean_rows = Vec::new();
-    let mut already_applied_count: usize = 0;
-    let mut already_applied_ids = std::collections::HashSet::new();
-    let mut node_missing_rows = Vec::new();
-
-    // Cache snapshot + parsed CDI per node to avoid reloading for each change.
-    let mut node_resources_cache: std::collections::HashMap<String, LayoutNodeResources> = std::collections::HashMap::new();
-
-    for change in pending {
-        // Only config changes go through bus comparison; bowtie metadata
-        // changes are always clean (they don't live on the bus).
-        if change.kind != OfflineChangeKind::Config {
-            clean_rows.push(sync_row_from_change(change, None, None, None, None));
-            continue;
-        }
-
-        let parsed_node_key = match &change.node_key {
-            Some(key) => key.clone(),
-            None => {
-                node_missing_rows.push(sync_row_from_change(
-                    change,
-                    None,
-                    fallback_field_label(change.space, change.offset.as_deref()),
-                    None,
-                    Some("No node ID".to_string()),
-                ));
-                continue;
-            }
-        };
-
-        if !node_resources_cache.contains_key(&parsed_node_key) {
-            if let Ok(resources) = load_layout_node_resources(&parsed_node_key, &context.root_path, &app) {
-                node_resources_cache.insert(parsed_node_key.clone(), resources);
-            }
-        }
-        let resources = node_resources_cache.get(&parsed_node_key);
-        let node_name = resources
-            .map(|res| resolve_snapshot_node_name(&res.snapshot, &parsed_node_key))
-            .or_else(|| Some(parsed_node_key.clone()));
-        let field_label = if let (Some(space), Some(offset)) = (change.space, change.offset.as_deref()) {
-            resources
-                .and_then(|res| {
-                    find_snapshot_field_label(&res.snapshot, space, offset).or_else(|| {
-                        parse_offset(offset).and_then(|address| {
-                            find_field_meta_in_cdi(&res.cdi, space, address).map(|meta| meta.field_label)
-                        })
-                    })
-                })
-                .or_else(|| fallback_field_label(change.space, change.offset.as_deref()))
-        } else {
-            fallback_field_label(change.space, change.offset.as_deref())
-        };
-
-        // Try to find this node on the bus via the node registry.
-        // Synthesized (placeholder) proxies are not on the bus — treat as missing.
-        let proxy = match crate::node_key::NodeKey::parse(&parsed_node_key)
-            .ok()
-            .and_then(|nk| Some(nk))
-        {
-            Some(nk) => match state.node_registry.get_by_node_key(&nk).await {
-                Some(p) if p.node_id().is_some() => p,
-                _ => {
-                    node_missing_rows.push(sync_row_from_change(change, node_name, field_label, None, None));
-                    continue;
-                }
-            },
-            None => {
-                node_missing_rows.push(sync_row_from_change(change, node_name, field_label, None, None));
-                continue;
-            }
-        };
-
-        let space = change.space.unwrap_or(0);
-        let address = change
-            .offset
-            .as_deref()
-            .and_then(parse_offset)
-            .unwrap_or(0);
-
-        let cdi = match resources {
-            Some(resources) => &resources.cdi,
-            None => {
-                node_missing_rows.push(sync_row_from_change(
-                    change,
-                    node_name,
-                    field_label,
-                    None,
-                    Some("CDI unavailable for sync row".to_string()),
-                ));
-                continue;
-            }
-        };
-
-        // Find the field metadata (type, size) from CDI
-        let meta = match find_field_meta_in_cdi(cdi, space, address) {
-            Some(m) => m,
-            None => {
-                node_missing_rows.push(sync_row_from_change(
-                    change,
-                    node_name,
-                    field_label,
-                    None,
-                    Some(format!(
-                        "Field not found in CDI at space={} address={:#010x}",
-                        space, address
-                    )),
-                ));
-                continue;
-            }
-        };
-
-        // Targeted read: fetch only this field from the live bus via the
-        // peer session (S4 D2=ii — never the bare connection).
-        let read_size = meta.size.min(64) as u8;
-        let raw = match proxy.node_id() {
-            Some(nid) => match state.peer_session(nid).await {
-                Ok(session) => session
-                    .read_memory(space, address, read_size, 3000)
-                    .await
-                    .map(|(data, _timing)| data)
-                    .map_err(|e| e.to_string()),
-                Err(e) => Err(e),
-            },
-            None => Err("Node not on bus".to_string()),
-        };
-
-        let raw = match raw {
-            Ok(data) => data,
-            Err(e) => {
-                node_missing_rows.push(sync_row_from_change(
-                    change,
-                    node_name,
-                    field_label,
-                    None,
-                    Some(format!("Read failed: {}", e)),
-                ));
-                continue;
-            }
-        };
-
-        let bus_value = match raw_bytes_to_value_string(&meta, &raw) {
-            Some(v) => v,
-            None => {
-                node_missing_rows.push(sync_row_from_change(
-                    change,
-                    node_name,
-                    field_label,
-                    None,
-                    Some("Cannot parse bus value".to_string()),
-                ));
-                continue;
-            }
-        };
-
-        // Classify the row
-        match classify_sync_row(&bus_value, &change.baseline_value, &change.planned_value) {
-            SyncClassification::AlreadyApplied => {
-                already_applied_count += 1;
-                already_applied_ids.insert(change.change_id.clone());
-            }
-            SyncClassification::Clean => {
-                clean_rows.push(sync_row_from_change(
-                    change,
-                    node_name,
-                    Some(field_label.unwrap_or_else(|| meta.field_label.clone())),
-                    Some(bus_value),
-                    None,
-                ));
-            }
-            SyncClassification::Conflict => {
-                conflict_rows.push(sync_row_from_change(
-                    change,
-                    node_name,
-                    Some(field_label.unwrap_or_else(|| meta.field_label.clone())),
-                    Some(bus_value),
-                    None,
-                ));
-            }
-        }
-    }
+    let changes = current_pending_changes(&state).await;
+    let port = LivePort { state: &state, root_path: &context.root_path, app: &app };
+    let outcome = writer::classify_session(&port, &changes).await;
+    let already_applied_ids = outcome.already_applied_ids;
 
     if !already_applied_ids.is_empty() {
         let cache_snapshot = {
-            let mut cache = state.offline_changes_cache.write().await;
-            remove_changes_by_id(&mut cache, &already_applied_ids);
-            cache.clone()
+            let mut guard = state.layout_state.write().await;
+            match guard.as_mut() {
+                Some(layout) => {
+                    layout.remove_pending_changes(&already_applied_ids);
+                    layout.pending_changes().to_vec()
+                }
+                None => Vec::new(),
+            }
         };
 
         {
             let mut guard = state.active_layout.write().await;
             if let Some(ctx) = &mut *guard {
-                ctx.pending_offline_change_count = cache_snapshot.len();
+                ctx.pending_change_count = cache_snapshot.len();
             }
         }
 
-        if let Err(e) = crate::layout::update_offline_changes(
+        if let Err(e) = crate::layout::update_pending_changes(
             std::path::Path::new(&context.root_path),
             &cache_snapshot,
         ) {
@@ -568,34 +427,30 @@ pub async fn build_sync_session(
         }
     }
 
-    Ok(SyncSession {
-        conflict_rows,
-        clean_rows,
-        already_applied_count,
-        node_missing_rows,
-    })
+    Ok(outcome.session)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{find_field_meta_in_cdi, find_snapshot_field_label, remove_changes_by_id};
+    use bowties_core::sync::changes::remove_changes_by_id;
+    use bowties_core::sync::field_meta::{find_field_meta_in_cdi, find_snapshot_field_label};
     use crate::layout::node_snapshot::{NodeSnapshot, SnapshotLeafValue};
-    use crate::layout::offline_changes::{OfflineChange, OfflineChangeKind, OfflineChangeStatus};
+    use crate::layout::pending_changes::{PendingChange, PendingChangeKind, PendingChangeStatus};
     use crate::layout::node_snapshot::{CdiReference, CaptureStatus, SnipSnapshot};
     use lcc_rs::NodeID;
     use lcc_rs::cdi::{Cdi, DataElement, EventIdElement, Group, Segment};
     use std::collections::HashSet;
 
-    fn make_change(change_id: &str) -> OfflineChange {
-        OfflineChange {
+    fn make_change(change_id: &str) -> PendingChange {
+        PendingChange {
             change_id: change_id.to_string(),
-            kind: OfflineChangeKind::Config,
+            kind: PendingChangeKind::Config,
             node_key: Some(NodeID::new([0x05, 0x02, 0x01, 0x02, 0x03, 0x00]).to_canonical()),
             space: Some(253),
             offset: Some("0x00000010".to_string()),
             baseline_value: "10".to_string(),
             planned_value: "20".to_string(),
-            status: OfflineChangeStatus::Pending,
+            status: PendingChangeStatus::Pending,
             error: None,
             updated_at: "2026-04-25T00:00:00Z".to_string(),
         }
@@ -705,65 +560,65 @@ mod tests {
     }
 
     #[test]
-    fn offline_change_kind_serializes_to_camel_case() {
-        // OfflineChangeKind has serde(rename_all = "camelCase"), so serde
+    fn pending_change_kind_serializes_to_camel_case() {
+        // PendingChangeKind has serde(rename_all = "camelCase"), so serde
         // serialization must produce "bowtieMetadata" not "bowtiemetadata".
         // The kind round-trips through list → replace via serde, so this
         // validates the enum variants produce correct IPC strings.
-        let json = serde_json::to_string(&OfflineChangeKind::BowtieMetadata).unwrap();
+        let json = serde_json::to_string(&PendingChangeKind::BowtieMetadata).unwrap();
         assert_eq!(json, r#""bowtieMetadata""#);
 
-        let json = serde_json::to_string(&OfflineChangeKind::BowtieEvent).unwrap();
+        let json = serde_json::to_string(&PendingChangeKind::BowtieEvent).unwrap();
         assert_eq!(json, r#""bowtieEvent""#);
 
-        let json = serde_json::to_string(&OfflineChangeKind::Config).unwrap();
+        let json = serde_json::to_string(&PendingChangeKind::Config).unwrap();
         assert_eq!(json, r#""config""#);
     }
 
     #[test]
-    fn offline_change_kind_round_trips_through_serde_json() {
+    fn pending_change_kind_round_trips_through_serde_json() {
         // Deserializing a camelCase string must produce the correct enum variant.
-        let kind: OfflineChangeKind = serde_json::from_str(r#""bowtieMetadata""#).unwrap();
-        assert_eq!(kind, OfflineChangeKind::BowtieMetadata);
+        let kind: PendingChangeKind = serde_json::from_str(r#""bowtieMetadata""#).unwrap();
+        assert_eq!(kind, PendingChangeKind::BowtieMetadata);
 
-        let kind: OfflineChangeKind = serde_json::from_str(r#""bowtieEvent""#).unwrap();
-        assert_eq!(kind, OfflineChangeKind::BowtieEvent);
+        let kind: PendingChangeKind = serde_json::from_str(r#""bowtieEvent""#).unwrap();
+        assert_eq!(kind, PendingChangeKind::BowtieEvent);
 
-        let kind: OfflineChangeKind = serde_json::from_str(r#""config""#).unwrap();
-        assert_eq!(kind, OfflineChangeKind::Config);
+        let kind: PendingChangeKind = serde_json::from_str(r#""config""#).unwrap();
+        assert_eq!(kind, PendingChangeKind::Config);
     }
 
-    /// S8.11-T1: a placeholder NodeKey must round-trip through OfflineChange
+    /// S8.11-T1: a placeholder NodeKey must round-trip through PendingChange
     /// without crashing. Previously, `parse_opt_node_id` called
     /// `NodeID::from_hex_string` which rejects `placeholder:*` keys.
     #[test]
-    fn offline_change_accepts_placeholder_node_key() {
+    fn pending_change_accepts_placeholder_node_key() {
         let placeholder_key = "placeholder:a1b2c3d4-e5f6-7890-abcd-ef1234567890".to_string();
-        let change = OfflineChange {
+        let change = PendingChange {
             change_id: "test-placeholder".to_string(),
-            kind: OfflineChangeKind::Config,
+            kind: PendingChangeKind::Config,
             node_key: Some(placeholder_key.clone()),
             space: Some(253),
             offset: Some("0x00000010".to_string()),
             baseline_value: "0".to_string(),
             planned_value: "1".to_string(),
-            status: OfflineChangeStatus::Pending,
+            status: PendingChangeStatus::Pending,
             error: None,
             updated_at: "2026-05-26T00:00:00Z".to_string(),
         };
         // Round-trip through serde_yaml (disk format)
         let yaml = serde_yaml_ng::to_string(&change).unwrap();
-        let restored: OfflineChange = serde_yaml_ng::from_str(&yaml).unwrap();
+        let restored: PendingChange = serde_yaml_ng::from_str(&yaml).unwrap();
         assert_eq!(restored.node_key.as_deref(), Some(placeholder_key.as_str()));
     }
 
     /// S8.11-T1: backward compat — existing changes with canonical hex NodeIDs
     /// still round-trip correctly after the type change.
     #[test]
-    fn offline_change_round_trips_hex_node_id() {
+    fn pending_change_round_trips_hex_node_id() {
         let change = make_change("compat-test");
         let yaml = serde_yaml_ng::to_string(&change).unwrap();
-        let restored: OfflineChange = serde_yaml_ng::from_str(&yaml).unwrap();
+        let restored: PendingChange = serde_yaml_ng::from_str(&yaml).unwrap();
         assert_eq!(restored.node_key, change.node_key);
     }
 }
@@ -779,6 +634,17 @@ pub async fn set_sync_mode(
     };
     *state.sync_mode.write().await = Some(mode);
     Ok(mode_str.to_string())
+}
+
+/// Snapshot of the open layout's Pending Changes (empty when no layout is open).
+async fn current_pending_changes(state: &AppState) -> Vec<PendingChange> {
+    state
+        .layout_state
+        .read()
+        .await
+        .as_ref()
+        .map(|layout| layout.pending_changes().to_vec())
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -801,210 +667,34 @@ pub async fn apply_sync_changes(
     let connection = state.connection_arc().await
         .ok_or("Not connected to network")?;
 
-    let mut applied = Vec::new();
-    let mut skipped = Vec::new();
-    let mut failed = Vec::new();
-    let mut read_only_cleared = Vec::new();
+    let changes = current_pending_changes(&state).await;
+    let port = LivePort { state: &state, root_path: &context.root_path, app: &app };
+    let outcome = writer::apply_changes(&port, &changes, &apply_change_ids, &skip_change_ids).await;
 
-    // Mark explicitly skipped rows
-    for id in &skip_change_ids {
-        skipped.push(id.clone());
-    }
-
-    // Process apply rows
-    let changes = state.offline_changes_cache.read().await.clone();
-
-    // Cache parsed CDIs per node to avoid re-parsing for each change
-    let mut cdi_cache: std::collections::HashMap<String, lcc_rs::cdi::Cdi> = std::collections::HashMap::new();
-
-    // Track which nodes had successful writes for Update Complete
-    let mut write_success_nodes = std::collections::HashSet::new();
-
-    // Track applied config changes for snapshot baseline updates: (canonical_node_id, space, offset_hex, planned_value)
-    let mut applied_config_details: Vec<(String, u8, String, String)> = Vec::new();
-
-    for change_id in &apply_change_ids {
-        let change = match changes.iter().find(|c| &c.change_id == change_id) {
-            Some(c) => c,
-            None => {
-                failed.push(ApplySyncFailure {
-                    change_id: change_id.clone(),
-                    reason: "Change not found in cache".to_string(),
-                });
-                continue;
-            }
-        };
-
-        // Non-config changes (bowtie metadata) don't require bus writes
-        if change.kind != OfflineChangeKind::Config {
-            applied.push(change_id.clone());
-            continue;
-        }
-
-        let parsed_node_key = match &change.node_key {
-            Some(key) => key.clone(),
-            None => {
-                failed.push(ApplySyncFailure {
-                    change_id: change_id.clone(),
-                    reason: "No node ID on change".to_string(),
-                });
-                continue;
-            }
-        };
-
-        // Synthesized (placeholder) proxies cannot be written to the bus.
-        let proxy = match crate::node_key::NodeKey::parse(&parsed_node_key) {
-            Ok(nk) => match state.node_registry.get_by_node_key(&nk).await {
-                Some(p) if p.node_id().is_some() => p,
-                _ => {
-                    failed.push(ApplySyncFailure {
-                        change_id: change_id.clone(),
-                        reason: format!("Node not found on bus: {}", parsed_node_key),
-                    });
-                    continue;
-                }
-            },
-            Err(_) => {
-                failed.push(ApplySyncFailure {
-                    change_id: change_id.clone(),
-                    reason: format!("Invalid node key: {}", parsed_node_key),
-                });
-                continue;
-            }
-        };
-        // Resolve the per-peer session handle (S4 D2=ii — writes serialise
-        // through the peer session, never the bare connection).
-        let session_handle = match proxy.node_id() {
-            Some(nid) => match state.peer_session(nid).await {
-                Ok(session) => session,
-                Err(e) => {
-                    failed.push(ApplySyncFailure {
-                        change_id: change_id.clone(),
-                        reason: e,
-                    });
-                    continue;
-                }
-            },
-            None => {
-                failed.push(ApplySyncFailure {
-                    change_id: change_id.clone(),
-                    reason: format!("Node not on bus: {}", parsed_node_key),
-                });
-                continue;
-            }
-        };
-
-        let space = change.space.unwrap_or(0);
-        let address = change
-            .offset
-            .as_deref()
-            .and_then(parse_offset)
-            .unwrap_or(0);
-
-        // Resolve field metadata from layout CDI
-        let cdi = if let Some(c) = cdi_cache.get(&parsed_node_key) {
-            c
-        } else {
-            match resolve_layout_cdi(&parsed_node_key, &context.root_path, &app) {
-                Ok(c) => {
-                    cdi_cache.insert(parsed_node_key.clone(), c);
-                    cdi_cache.get(&parsed_node_key).unwrap()
-                }
-                Err(e) => {
-                    failed.push(ApplySyncFailure {
-                        change_id: change_id.clone(),
-                        reason: format!("CDI unavailable: {}", e),
-                    });
-                    continue;
-                }
-            }
-        };
-
-        let meta = match find_field_meta_in_cdi(cdi, space, address) {
-            Some(m) => m,
-            None => {
-                failed.push(ApplySyncFailure {
-                    change_id: change_id.clone(),
-                    reason: format!("Field not found in CDI at space={} address={:#010x}", space, address),
-                });
-                continue;
-            }
-        };
-
-        // Build a synthetic leaf for value conversion
-        let leaf = field_meta_to_leaf(&meta, space, address);
-
-        // Convert the planned value string to a ConfigValue, then serialize to bytes
-        let config_val = match string_to_config_value(&change.planned_value, &leaf) {
-            Some(v) => v,
-            None => {
-                failed.push(ApplySyncFailure {
-                    change_id: change_id.clone(),
-                    reason: format!("Cannot convert planned value '{}' to bytes for leaf type {:?}",
-                        change.planned_value, meta.leaf_type),
-                });
-                continue;
-            }
-        };
-
-        let bytes = crate::commands::cdi::serialize_config_value(&config_val, meta.leaf_type, meta.size);
-
-        // Write to the bus node via the peer session
-        let result = session_handle
-            .write_memory(space, address, bytes, 3000)
-            .await;
-
-        match result {
-            Ok(()) => {
-                applied.push(change_id.clone());
-                write_success_nodes.insert(parsed_node_key.clone());
-
-                // Record details for snapshot baseline update
-                if let Some(offset_hex) = &change.offset {
-                    applied_config_details.push((
-                        parsed_node_key.clone(),
-                        space,
-                        offset_hex.clone(),
-                        change.planned_value.clone(),
-                    ));
-                }
-
-                // Commit the value in the LayoutState tree
-                if let Ok(nk) = crate::node_key::NodeKey::parse(&parsed_node_key) {
-                    let mut layout_guard = state.layout_state.write().await;
-                    if let Some(ls) = layout_guard.as_mut() {
-                        if let Some(tree) = ls.config_tree_mut(&nk) {
-                            crate::node_tree::update_leaf_value(tree, space, address, config_val);
-                        }
+    // Commit values / read-only marks in the LayoutState tree
+    if !outcome.leaf_updates.is_empty() {
+        let mut layout_guard = state.layout_state.write().await;
+        if let Some(ls) = layout_guard.as_mut() {
+            for update in &outcome.leaf_updates {
+                let node_key = match update {
+                    LeafUpdate::Commit { node_key, .. } | LeafUpdate::MarkReadOnly { node_key, .. } => node_key,
+                };
+                let Ok(nk) = crate::node_key::NodeKey::parse(node_key) else { continue };
+                let Some(tree) = ls.config_tree_mut(&nk) else { continue };
+                match update {
+                    LeafUpdate::Commit { space, address, value, .. } => {
+                        crate::node_tree::update_leaf_value(tree, *space, *address, value.clone());
                     }
-                }
-            }
-            Err(e) => {
-                let err_str = e.to_string();
-                // Error 0x1083 = read-only field (FR-017b)
-                if err_str.contains("1083") {
-                    read_only_cleared.push(change_id.clone());
-                    // Mark leaf as read-only in LayoutState tree
-                    if let Ok(nk) = crate::node_key::NodeKey::parse(&parsed_node_key) {
-                        let mut layout_guard = state.layout_state.write().await;
-                        if let Some(ls) = layout_guard.as_mut() {
-                            if let Some(tree) = ls.config_tree_mut(&nk) {
-                                crate::node_tree::revert_and_mark_leaf_read_only(tree, space, address);
-                            }
-                        }
+                    LeafUpdate::MarkReadOnly { space, address, .. } => {
+                        crate::node_tree::revert_and_mark_leaf_read_only(tree, *space, *address);
                     }
-                } else {
-                    failed.push(ApplySyncFailure {
-                        change_id: change_id.clone(),
-                        reason: err_str,
-                    });
                 }
             }
         }
     }
 
     // Send Update Complete to each node that had successful writes
-    for node_key in &write_success_nodes {
+    for node_key in &outcome.nodes_written {
         let nk = match crate::node_key::NodeKey::parse(node_key) {
             Ok(nk) => nk,
             Err(_) => continue,
@@ -1017,29 +707,35 @@ pub async fn apply_sync_changes(
         }
     }
 
-    // Remove applied and read-only-cleared rows from offline changes cache
+    // Remove applied and read-only-cleared rows from pending changes cache
     {
-        let all_cleared: std::collections::HashSet<&String> = applied.iter()
-            .chain(read_only_cleared.iter())
-            .collect();
+        let all_cleared = outcome.cleared_ids();
 
-        let mut cache = state.offline_changes_cache.write().await;
-        cache.retain(|c| !all_cleared.contains(&c.change_id));
+        let row_count = {
+            let mut guard = state.layout_state.write().await;
+            match guard.as_mut() {
+                Some(layout) => {
+                    layout.remove_pending_changes(&all_cleared);
+                    layout.pending_changes().len()
+                }
+                None => 0,
+            }
+        };
 
         // Update pending count
         let mut guard = state.active_layout.write().await;
         if let Some(ctx) = &mut *guard {
-            ctx.pending_offline_change_count = cache.len();
+            ctx.pending_change_count = row_count;
         }
     }
 
-    // Persist offline-changes and update node snapshot baselines on disk
-    if !applied.is_empty() || !read_only_cleared.is_empty() {
+    // Persist pending changes and update node snapshot baselines on disk
+    if !outcome.cleared_ids().is_empty() {
         let base_file = std::path::Path::new(&context.root_path);
 
-        // Write updated offline-changes
-        let cache_snapshot = state.offline_changes_cache.read().await.clone();
-        if let Err(e) = crate::layout::update_offline_changes(base_file, &cache_snapshot) {
+        // Write updated pending changes
+        let cache_snapshot = current_pending_changes(&state).await;
+        if let Err(e) = crate::layout::update_pending_changes(base_file, &cache_snapshot) {
             eprintln!("[sync] Failed to persist offline-changes: {}", e);
         }
 
@@ -1048,7 +744,7 @@ pub async fn apply_sync_changes(
             std::collections::HashMap::new();
         let applied_at = chrono::Utc::now().to_rfc3339();
 
-        for (canonical_nid, space, offset_hex, planned_value) in &applied_config_details {
+        for BaselineUpdate { node_key: canonical_nid, space, offset: offset_hex, planned_value } in &outcome.baseline_updates {
             let snapshot = updated_snapshots.entry(canonical_nid.clone()).or_insert_with(|| {
                 match crate::layout::read_node_snapshot(base_file, canonical_nid) {
                     Ok(s) => s,
@@ -1097,10 +793,5 @@ pub async fn apply_sync_changes(
         }
     }
 
-    Ok(ApplySyncResult {
-        applied,
-        skipped,
-        failed,
-        read_only_cleared,
-    })
+    Ok(outcome.result)
 }

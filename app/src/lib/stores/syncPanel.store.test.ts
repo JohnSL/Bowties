@@ -33,11 +33,11 @@ vi.mock('$lib/api/sync', () => ({
   applySyncChanges: (...args: unknown[]) => mockApplySyncChanges(...args),
 }));
 
-const mockReloadOfflineChanges = vi.fn(async () => {});
+const mockReloadPendingChanges = vi.fn(async () => {});
 
-vi.mock('$lib/stores/offlineChanges.svelte', () => ({
-  offlineChangesStore: {
-    reloadFromBackend: (...args: unknown[]) => mockReloadOfflineChanges(...args),
+vi.mock('$lib/stores/pendingChanges.svelte', () => ({
+  pendingChangesStore: {
+    reloadFromBackend: (...args: unknown[]) => mockReloadPendingChanges(...args),
   },
 }));
 
@@ -155,7 +155,7 @@ describe('loadSession() after dismiss()', () => {
     expect(syncPanelStore.isActive).toBe(true);
   });
 
-  it('reloads offline changes after session build when already-applied rows were auto-cleared', async () => {
+  it('reloads pending changes after session build when already-applied rows were auto-cleared', async () => {
     mockBuildSyncSession.mockResolvedValue({
       ...makeEmptySession(),
       alreadyAppliedCount: 2,
@@ -163,15 +163,15 @@ describe('loadSession() after dismiss()', () => {
 
     await syncPanelStore.loadSession();
 
-    expect(mockReloadOfflineChanges).toHaveBeenCalledTimes(1);
+    expect(mockReloadPendingChanges).toHaveBeenCalledTimes(1);
   });
 
-  it('does not reload offline changes when no already-applied rows were cleared', async () => {
+  it('does not reload pending changes when no already-applied rows were cleared', async () => {
     mockBuildSyncSession.mockResolvedValue(makeSessionWithCleanRow());
 
     await syncPanelStore.loadSession();
 
-    expect(mockReloadOfflineChanges).not.toHaveBeenCalled();
+    expect(mockReloadPendingChanges).not.toHaveBeenCalled();
   });
 });
 

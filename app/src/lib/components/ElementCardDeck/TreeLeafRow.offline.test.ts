@@ -6,7 +6,7 @@
  * - Draft layer annotation shows "Unsaved offline edit: {from} -> {to}"
  * - Persisted offline pending annotation shows "Bus: {baseline} | Pending: {pending}"
  * - Clicking "Revert" on a draft calls configChangesStore.revert()
- * - Clicking "Revert" on a persisted row calls offlineChangesStore.revertToBaseline()
+ * - Clicking "Revert" on a persisted row calls pendingChangesStore.revertToBaseline()
  * - Annotations are suppressed while layoutOpenInProgress is true.
  */
 
@@ -55,14 +55,14 @@ vi.mock('$lib/orchestration/configDraftOrchestrator', () => ({
   flushDraftToBackend: vi.fn(),
 }));
 
-// ─── Mock offlineChangesStore (persisted row revert) ─────────────────────────
+// ─── Mock pendingChangesStore (persisted row revert) ─────────────────────────
 
 const mockRevertToBaseline = vi.fn().mockResolvedValue(true);
 const mockFindPersistedConfigChange = vi.fn().mockReturnValue(null);
 let mockIsBusy = false;
 
-vi.mock('$lib/stores/offlineChanges.svelte', () => ({
-  offlineChangesStore: {
+vi.mock('$lib/stores/pendingChanges.svelte', () => ({
+  pendingChangesStore: {
     get isBusy() { return mockIsBusy; },
     findPersistedConfigChange: (...args: unknown[]) => mockFindPersistedConfigChange(...args),
     revertToBaseline: (...args: unknown[]) => mockRevertToBaseline(...args),
@@ -242,7 +242,7 @@ describe('persisted offline pending', () => {
     expect(row).not.toHaveClass('dirty');
   });
 
-  it('calls offlineChangesStore.revertToBaseline on persisted revert click', async () => {
+  it('calls pendingChangesStore.revertToBaseline on persisted revert click', async () => {
     mockChangeLayers = [
       { type: 'offlinePending', value: { type: 'int', value: 7 } },
       { type: 'baseline', value: { type: 'int', value: 3 } },

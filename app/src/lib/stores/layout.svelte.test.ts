@@ -12,7 +12,7 @@
  * |             |           |               |               | sync panel triggers               |
  *
  * These tests verify the store-level computed properties that drive:
- * - Edit routing (modifiedValue vs offlineChangesStore)
+ * - Edit routing (modifiedValue vs pendingChangesStore)
  * - Save routing (writeModifiedValues vs saveLayoutFile)
  * - Sync panel triggering
  * - UI visibility (connect area, save controls, config CTA, partial badge)
@@ -49,7 +49,7 @@ function setOfflineLayoutContext(): void {
     layoutId: 'test-layout',
     rootPath: '/tmp/test.layout',
     mode: 'offline_file',
-    pendingOfflineChangeCount: 0,
+    pendingChangeCount: 0,
   });
 }
 
@@ -58,7 +58,7 @@ function setLegacyLayoutContext(): void {
     layoutId: 'legacy-layout',
     rootPath: '/tmp/legacy.yaml',
     mode: 'legacy_file',
-    pendingOfflineChangeCount: 0,
+    pendingChangeCount: 0,
   });
 }
 
@@ -145,7 +145,7 @@ describe('State matrix: layout open, disconnected (pure offline editing)', () =>
     setOfflineLayoutContext();
   });
 
-  it('isOfflineMode is true — edits route to offlineChangesStore', () => {
+  it('isOfflineMode is true — edits route to pendingChangesStore', () => {
     expect(layoutStore.isOfflineMode).toBe(true);
   });
 
@@ -407,13 +407,13 @@ describe('Save routing: isOfflineMode drives SaveControls path', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// OFFLINE CHANGES FLUSH GUARD
+// PENDING CHANGES FLUSH GUARD
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('Offline changes flush guard', () => {
+describe('Pending changes flush guard', () => {
   // saveCurrentCaptureToFile: if (layoutStore.isOfflineMode) → flushPendingToBackend
 
-  it('flushes offline changes only when truly offline with layout', () => {
+  it('flushes pending changes only when truly offline with layout', () => {
     setOfflineLayoutContext();
     expect(layoutStore.isOfflineMode).toBe(true);
   });

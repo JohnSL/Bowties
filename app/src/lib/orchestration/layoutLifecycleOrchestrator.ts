@@ -32,7 +32,7 @@ import { partialCaptureNodesStore } from '$lib/stores/partialCaptureNodes.svelte
 import { layoutStore, type ActiveLayoutMode } from '$lib/stores/layout.svelte';
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
-import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
 import { configSidebarStore } from '$lib/stores/configSidebar';
 import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
 import { channelsStore } from '$lib/stores/channels.svelte';
@@ -71,7 +71,7 @@ export const layoutScopedParticipants: LayoutScopedParticipant[] = [
   partialCaptureNodesStore,
   nodeRoster,
   bowtieMetadataStore,
-  offlineChangesStore,
+  pendingChangesStore,
   configChangesStore,
   layoutStore,
   connectorSelectionsStore,

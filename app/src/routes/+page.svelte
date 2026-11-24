@@ -54,7 +54,7 @@
   import MissingCaptureBadge from '$lib/components/Layout/MissingCaptureBadge.svelte';
   import ConnectionManager from '$lib/ConnectionManager.svelte';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
-   import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+   import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
   import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
   import { configFocusStore } from '$lib/stores/configFocus.svelte';
   import { setPillSelection } from '$lib/stores/pillSelection';
@@ -652,7 +652,7 @@
       const deltas = collectAllSaveDeltas();
 
       // Offline mode owns draft staging: promote config drafts into the
-      // offline-change channel before the orchestrator runs. The component
+      // pending change channel before the orchestrator runs. The component
       // (SaveControls) no longer reaches into draft state — it just calls
       // `onSave()` and trusts the page/orchestrator to do the right thing.
       if (layoutStore.isOfflineMode) {
@@ -668,14 +668,14 @@
         hydrateLayout: (layout: import('$lib/types/bowtie').LayoutFile) =>
           layoutStore.hydrateFromBackend(layout),
         flushPending: layoutStore.isOfflineMode
-          ? async () => { await offlineChangesStore.flushPendingToBackend(); }
+          ? async () => { await pendingChangesStore.flushPendingToBackend(); }
           : undefined,
         setActiveContext: (ctx: import('$lib/stores/layout.svelte').ActiveLayoutContext) =>
           layoutStore.setActiveContext(ctx),
         updatePartialCaptureNodes: (warnings: string[]) => {
           partialCaptureNodesStore.replace(warnings);
         },
-        getPendingChangeCount: () => offlineChangesStore.pendingCount,
+        getPendingChangeCount: () => pendingChangesStore.pendingCount,
         // ADR-0004 (S2c): drop config drafts that are now persisted on disk so
         // the effective read model never observes a stale draft after the
         // catalog has been rebuilt from the saved layout.
@@ -693,11 +693,11 @@
           nodeRoster.markPlaceholdersPersisted(nodeKeys);
         },
         clearPersistedRemovals: () => nodeRoster.clearPersistedRemovals(),
-        // Offline mode only: the backend rewrites pending offline changes
+        // Offline mode only: the backend rewrites pending changes
         // during the save, so the frontend mirror must be re-pulled before
         // the UI settles. Online mode omits this callback.
-        reloadOfflineChanges: layoutStore.isOfflineMode
-          ? async () => { await offlineChangesStore.reloadFromBackend(); }
+        reloadPendingChanges: layoutStore.isOfflineMode
+          ? async () => { await pendingChangesStore.reloadFromBackend(); }
           : undefined,
       };
       const orchestratorArgs: SaveLayoutOrchestratedArgs = layoutStore.isConnected
@@ -1047,7 +1047,7 @@
         // last node-discovered event before triggering sync.
         syncSessionOrchestrator.scheduleAutoSync({
           hasLayoutFile: layoutStore.hasLayoutFile,
-          pendingCount: offlineChangesStore.pendingCount,
+          pendingCount: pendingChangesStore.pendingCount,
           triggerSync: () => maybeTriggerSync(),
         });
       }));
@@ -1176,7 +1176,7 @@
   async function maybeTriggerSync() {
     await syncSessionOrchestrator.maybeTriggerSync({
       hasLayoutFile: layoutStore.hasLayoutFile,
-      pendingCount: offlineChangesStore.pendingCount,
+      pendingCount: pendingChangesStore.pendingCount,
       discoveredNodeIds: nodes.map((node) => canonicalizeNodeId(formatNodeId(node.node_id))),
       syncPanelStore,
       showSyncPanel: () => {
@@ -1189,7 +1189,7 @@
   async function forceSyncPanel() {
     await syncSessionOrchestrator.forceSyncPanel({
       hasLayoutFile: layoutStore.hasLayoutFile,
-      pendingCount: offlineChangesStore.pendingCount,
+      pendingCount: pendingChangesStore.pendingCount,
       discoveredNodeIds: nodes.map((node) => canonicalizeNodeId(formatNodeId(node.node_id))),
       syncPanelStore,
       showSyncPanel: () => {
@@ -1345,7 +1345,7 @@
       hasActiveLayout: !!layoutStore.activeContext,
       hasLayoutFile: layoutStore.hasLayoutFile,
       hasInMemoryEdits: effectiveNodeStore.isDirty,
-      pendingSyncCount: offlineChangesStore.pendingCount,
+      pendingSyncCount: pendingChangesStore.pendingCount,
     });
 
     syncMenuState(

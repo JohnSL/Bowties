@@ -385,10 +385,10 @@ pub async fn build_bowtie_catalog_command(
     // Merge pending offline config changes into snapshot-based config values
     // so the catalog reflects the user's pending event-ID assignments.
     if use_offline {
-        let changes = state.offline_changes_cache.read().await;
+        let changes = layout_state_ref.map(|ls| ls.pending_changes()).unwrap_or(&[]);
         let pending_config: Vec<_> = changes.iter()
-            .filter(|c| c.kind == crate::layout::offline_changes::OfflineChangeKind::Config
-                && c.status == crate::layout::offline_changes::OfflineChangeStatus::Pending
+            .filter(|c| c.kind == crate::layout::pending_changes::PendingChangeKind::Config
+                && c.status == crate::layout::pending_changes::PendingChangeStatus::Pending
                 && c.node_key.is_some()
                 && c.space.is_some()
                 && c.offset.is_some())
@@ -571,7 +571,7 @@ pub async fn get_bowties(
     Ok(catalog.clone())
 }
 
-/// T034a: Set bowtie name/tags (emits offline change when offline, saves layout when online).
+/// T034a: Set bowtie name/tags (emits pending change when offline, saves layout when online).
 /// Returns a change ID if offline, empty string if online.
 #[tauri::command]
 pub async fn set_bowtie_metadata(
@@ -591,55 +591,45 @@ pub async fn set_bowtie_metadata(
     };
 
     if is_offline {
-        // Offline mode: emit an offline change
+        // Offline mode: emit a pending change
         // For bowtie metadata, we use a JSON representation of the new state as planned_value
         let planned_value = serde_json::json!({
             "name": name,
             "tags": tags,
         }).to_string();
 
-        let offline_change = crate::layout::offline_changes::OfflineChange {
+        let pending_change = crate::layout::pending_changes::PendingChange {
             change_id: format!(
                 "{}-{}",
                 uuid::Uuid::new_v4(),
                 chrono::Utc::now().timestamp_millis()
             ),
-            kind: crate::layout::offline_changes::OfflineChangeKind::BowtieMetadata,
+            kind: crate::layout::pending_changes::PendingChangeKind::BowtieMetadata,
             node_key: None,
             space: None,
             offset: None,
             baseline_value: format!("event:{}", event_id_hex),
             planned_value,
-            status: crate::layout::offline_changes::OfflineChangeStatus::Pending,
+            status: crate::layout::pending_changes::PendingChangeStatus::Pending,
             error: None,
             updated_at: chrono::Utc::now().to_rfc3339(),
         };
 
-        offline_change.validate()?;
+        pending_change.validate()?;
 
         // In-memory only pre-save path: upsert same bowtie metadata target.
-        let mut change_id_out = offline_change.change_id.clone();
-        {
-            let mut cache = state.offline_changes_cache.write().await;
-            if let Some(existing) = cache.iter_mut().find(|c|
-                c.kind == crate::layout::offline_changes::OfflineChangeKind::BowtieMetadata
-                    && c.baseline_value == offline_change.baseline_value
-            ) {
-                existing.planned_value = offline_change.planned_value.clone();
-                existing.updated_at = offline_change.updated_at.clone();
-                existing.status = crate::layout::offline_changes::OfflineChangeStatus::Pending;
-                existing.error = None;
-                change_id_out = existing.change_id.clone();
-            } else {
-                cache.push(offline_change);
-            }
-        }
+        let (change_id_out, row_count) = {
+            let mut guard = state.layout_state.write().await;
+            let layout = guard.as_mut().ok_or_else(|| "No layout is open".to_string())?;
+            let id = layout.upsert_pending_change(pending_change);
+            (id, layout.pending_changes().len())
+        };
 
         // Update pending count
         {
             let mut guard = state.active_layout.write().await;
             if let Some(ctx) = &mut *guard {
-                ctx.pending_offline_change_count = state.offline_changes_cache.read().await.len();
+                ctx.pending_change_count = row_count;
             }
         }
 

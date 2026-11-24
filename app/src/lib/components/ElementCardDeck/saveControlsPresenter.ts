@@ -1,4 +1,4 @@
-import type { OfflineChangeRow } from '$lib/api/sync';
+import type { PendingChangeRow } from '$lib/api/sync';
 import type { DirtyBreakdown } from '$lib/layout';
 import type { SaveProgress } from '$lib/types/nodeTree';
 
@@ -35,7 +35,7 @@ export function deriveSaveControlsViewState(args: {
   breakdown: DirtyBreakdown;
   connectorWarningCount: number;
   layoutIsOfflineMode: boolean;
-  offlineDraftRows: OfflineChangeRow[];
+  offlineDraftRows: PendingChangeRow[];
   saveProgressState: SaveProgress['state'];
 }): SaveControlsViewState {
   const {

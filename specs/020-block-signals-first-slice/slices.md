@@ -2,7 +2,7 @@
 
 Branch: 020-block-signals-first-slice
 Generated: 2026-11-07; roadmap regenerated 2026-11-22 for the end-to-end pivot
-Status: 7/12 slices complete (S1, S2R, E1a, E1b, E2a, E2b, E2c); S2 and the old S3–S8 superseded by E1a–E6
+Status: 8/14 slices complete (S1, S2R, E1a, E1b, E2a, E2b, E2c, E3b-0); S2 and the old S3–S8 superseded by E1a–E6
 
 Approved input: the
 [2026-11-22 Architecture Assessment](plan.md#architecture-assessment-end-to-end-first-release-2026-11-22)
@@ -109,7 +109,9 @@ flowchart LR
 | E2b: Remove a facility | Removal resets only the claimed slots; the signal goes dark | Yes, bench |
 | E2c: Release pins used outside Bowties | A pin held by a mast or Direct Lamp row that no facility owns can be released and used, undoably | Yes, bench |
 | E3: Two blocks on one board | Approach behind an occupied block | Yes, bench |
-| E3b: Save writes configuration through Pending Changes | Edits made offline reach the board on a later connected Save; values the board refuses stay pending with the board's value | Yes, bench |
+| E3b-0: One owner and one writer for Pending Changes [REFACTOR] | None: Sync Panel, offline Save and open behave as before | No (invariants) |
+| E3b-1: Save writes configuration through Pending Changes | Edits made offline reach the board on a later connected Save; a refused value stays pending with the board's value and a reason | Yes, bench |
+| E3b-2: Accept or keep a refused value | In the Sync Panel, accept the board's value (change dropped) or keep yours | Yes, bench |
 | E4: Verify writes | Signals marked verified, mismatched or unavailable | Yes, bench |
 | E5: Across boards | Signals on two boards coordinate; partial failure shown | Yes, two boards |
 | E6: Maintain a three-block facility | Reorder, prepend, remove a middle block | Yes |
@@ -127,8 +129,10 @@ flowchart LR
 | E2b | Remove a facility | HITL | E2a | done |
 | E2c | Release pins used outside Bowties | HITL | E2b | done |
 | E3 | Two blocks on one board | HITL | E2b + same-board Approach evidence | sketched |
-| E3b | Save writes configuration through Pending Changes | HITL | E2c | sketched |
-| E4 | Verify writes | HITL | E1b, E3b | sketched |
+| E3b-0 | One owner and one writer for Pending Changes | REFACTOR | E2c | done |
+| E3b-1 | Save writes configuration through Pending Changes | HITL | E3b-0 | sketched |
+| E3b-2 | Accept or keep a refused value | HITL | E3b-1 | sketched |
+| E4 | Verify writes | HITL | E1b, E3b-1 | sketched |
 | E5 | Across boards | HITL | E3 + E4 + cross-board Approach and receiver-restart evidence | sketched |
 | E6 | Maintain a three-block facility | AFK | E5 | sketched |
 
@@ -943,12 +947,9 @@ Deferred until the save/apply slice:
 
 **Architecture note**: Adds the receiving-logic recipe and a Track Circuit derived from block order, not a separately stored link graph.
 
-### E3b: Save writes configuration through Pending Changes [HITL]
+### E3b: Save writes configuration through Pending Changes (split into E3b-0, E3b-1, E3b-2)
 
 **Intent**: Every Save records configuration edits in the layout file as Pending Changes before any bus write, and one writer sends them with readback, so an edit reaches the board whatever the connection was when it was made, and a value the board does not take is never shown as written.
-**Boundary**: Save orchestrator (`+page.svelte` save wiring, `saveLayoutOrchestrator.ts`) → backend Save (`save_layout_with_bus_writes`) → one writer extracted from the Sync Panel's `apply_sync_changes` (with `build_sync_session` classification) → Pending Change rows (`LayoutState` single owner) → Sync Panel and Save result.
-**Blocked by**: E2c.
-**Status**: sketched
 
 **Context**: E2c bench attempt (2026-11-23): Done staged configuration drafts while not connected; the app connected; a connected Save wrote nothing and `clearAllDrafts()` dropped them. Architecture assessment (2026-11-23): Save has no single, Save-time definition of its configuration input. The draft mirror decides each edit's route at edit time by connection state, the connected writer reads the mirrored `modified_value`, and drafts are cleared whether or not they were written. ADR-0001 already says Phase 1 stages pending changes as Offline Changes; the connected path never did. Same class as the ADR-0012 2026-07-03 extension. Other symptoms of the same cause: a value reverted or rolled back while connected is still written; failed writes vanish after Save; staging and writing use different predicates (`isOfflineMode` vs `isConnected`); the two writers update `LayoutState` differently.
 
@@ -958,27 +959,80 @@ Deferred until the save/apply slice:
 - Always read after writing. Read before writing only when the baseline was not read during the current connection.
 - A value the board does not take (for example a field not marked read-only in the CDI) stays pending with the board's value and a reason; the user accepts the board's value (the change is dropped) or keeps it. No automatic retry.
 
+**Decisions at tasking (approved 2026-11-23)**:
+- D1: A connected Save writes only the rows this Save recorded. Rows recorded earlier (offline Saves, rows skipped or kept pending in the Sync Panel, earlier failures) belong to the Sync Panel; the Save result counts every row still waiting. Matches JMRI's CdiPanel "Save Changes" (writes only the entries just edited).
+- D2: Rename "Offline Change" to "Pending Change" end to end: types, store, IPC commands, `LayoutState` field, UI strings, glossary and docs. The file stays `offline-changes.yaml`; row format and schema version unchanged. Glossary: one Pending Change entry (a configuration or bowtie edit recorded in the layout file that the board has not confirmed, with a status and reason), no "Offline ⊇ Pending", Modified Value retired, drafts distinct from Pending Changes.
+- D3: The Pending Change row is the only record of a write result. Field markers, the Sync Panel, the Save result and dirty counts derive from row status and reason; leaf `WriteState` / `write_error` are removed (read-only stays a field capability). One shared "still waiting" predicate (not applied, already applied or clean) replaces the `status === 'pending'` filters.
+- D4: One shared app-side range planner merges pre-reads and readbacks into reads of up to 64 bytes (gaps of 8 bytes or less merged, as JMRI `RangeCacheUtil` / `MemorySpaceCache`); writes stay one per field. `build_read_plan` uses the same planner. A failed range read leaves its rows pending with a reason.
+- D5: Three slices. E3b-0 (REFACTOR) pins today's Sync Panel writer behavior and gives Pending Changes one owner and one name; E3b-1 cuts Save over and retires every old write path in the same slice (never two Save writers); E3b-2 adds accept/keep for refused values.
+
+**Architecture note**: Supersedes the ADR-0012 2026-07-03 mirror extension; extends ADR-0001 (Save routes configuration through Pending Changes, one writer, D1 scope, D4 planner); amends ADR-0015 (no `modified_value` layer; `LayoutState` single owner of Pending Changes). Resolves the ADR-0012 follow-ups (retire per-callsite `flushDraftToBackend`, batched `set_modified_values`, flush on connect) and the architecture-health entry "Offline Changes held in two places". Related idea: writing a node's saved configuration to the node ("force write") reuses this writer; a separate feature, no issue.
+
+### E3b-0: One owner and one writer for Pending Changes [REFACTOR]
+
+**Intent**: Pending Changes have one owner (`LayoutState`) and one name, and the Sync Panel's write loop is a backend module behind a memory port, with its current behavior pinned by tests. Nothing the user sees changes.
+**Boundary**: `bowties-core` (Pending Change type, `LayoutState`, new writer module in `sync/`) → `app/src-tauri` (`sync_panel.rs`, `layout_capture.rs`, `bowties.rs`, `layout_drafts.rs`, `state.rs`) → frontend identifiers (`api/sync.ts`, `offlineChangesStore` → `pendingChangesStore` and callers).
+**Blocked by**: E2c.
+**Status**: done
+
+**Acceptance criteria (invariants preserved)**:
+- [x] Sync Panel session and apply results are unchanged, pinned by Rust tests on a fake memory port: bus == planned → already applied and removed; bus == baseline → clean; otherwise conflict; read failure → node missing with a reason; skipped rows stay pending; a successful write removes the row, updates the tree leaf and the snapshot baseline; 0x1083 clears the row and marks the field read-only; other errors leave the row pending and count as failed.
+- [x] `AppState.offline_changes_cache` no longer exists; every reader and writer uses `LayoutState`'s rows. The one intended difference: rows removed by a Sync apply also leave `LayoutState`.
+- [x] Code names say Pending Change (types, store, IPC commands, field); `offline-changes.yaml`, the row format and the schema version are unchanged. UI strings are unchanged in this slice (they change in E3b-1).
+- [x] Offline Save, layout open/close, the Sync Panel and the existing vitest suite behave as before.
+
+**Tasks**:
+- [x] E3b-0-T1: Characterization: extract the Sync Panel's classify and apply loop from `build_sync_session` / `apply_sync_changes` into `bowties-core/src/sync/writer.rs` behind a `MemoryPort` trait (read, write); the Tauri commands adapt the live connection to it. Rust tests on a fake port pin every behavior in the first criterion.
+- [x] E3b-0-T2: Single owner: fold `AppState.offline_changes_cache` into `LayoutState` (writers in `sync_panel.rs`, `bowties.rs`, `layout_capture.rs`; readers in `bowties.rs`, `layout_capture.rs`, `layout_drafts.rs`, `sync_panel.rs`); keep the `ActiveLayoutMode::OfflineFile` gate for now; a test for the applied-row removal.
+- [x] E3b-0-T3: Rename: `OfflineChange*` → `PendingChange*`, `offline_changes` → `pending_changes`, `offlineChangesStore` → `pendingChangesStore`, the four IPC commands → `*_pending_change(s)`; `OFFLINE_CHANGES_FILE` kept and documented as the legacy file name. Behavior-neutral (tdd-refactor).
+- [x] E3b-0-T4: Docs: ADR-0015 dated note (cache folded), `aiwiki/owners.md`, `aiwiki/seams.md` (new Pending Changes entry: owner, writer, consumers), `aiwiki/architecture-health.md` (double ownership resolved).
+- [x] E3b-0-T5: Validate: `cargo test` in `bowties-core`, `cargo check --tests` in `app/src-tauri`, `npx vitest run`, svelte-check (baseline 113).
+
+**Validation (2026-11-23)**:
+- `cargo test` in `bowties-core`: 570 passed, 0 failed. New: 14 writer tests on a fake `MemoryPort` (session: already applied, clean, conflict, read failure, non-Config, non-pending excluded, read size and timeout, node not on bus; apply: skip echoed, success with leaf and baseline update, 0x1083 read-only, other error stays pending with reason, unknown id, non-Config); 3 `LayoutState` row tests (upsert same target resets to pending and keeps its id, upsert new appends, remove by id). `serialize_config_value` and its tests moved from `commands/cdi.rs` to `sync/field_meta.rs`.
+- `app/src-tauri`: `cargo check --tests` clean. Its test binary does not start on this machine (STATUS_ENTRYPOINT_NOT_FOUND), so the adapters (`LivePort`, the rewired IPCs) have compile-only evidence; their logic is in core and tested there.
+- `npx vitest run`: 1630/1630. svelte-check: 113 errors, the baseline.
+- Differences: rows removed by a Sync apply or session build also leave `LayoutState`; while no layout is open, IPCs that record a row return "No layout is open" (only reachable inside new-layout creation, where the frontend makes no such call). The layout-capture result field `pendingOfflineChangeCount` is now `pendingChangeCount` (IPC only, not persisted).
+- Kept for E3b-1: UI strings and user docs saying "offline changes", the `offline-change-msg` CSS class, Dirty Aggregation bucket keys (`offlineDrafts`, `offlineRevertedPersisted`, `offlinePending`), two log lines naming the file.
+- ADR bodies before 2026-11-23 keep the old names; the ADR-0015 E3b-0 extension records the rename.
+
+### E3b-1: Save writes configuration through Pending Changes [HITL]
+
+**Intent**: Every Save records configuration drafts as Pending Changes; a connected Save writes the rows it recorded through the one writer, reads them back and reports what is left.
+**Boundary**: Save orchestrator (`+page.svelte`, `saveLayoutOrchestrator.ts`) → backend Save (`save_layout_with_bus_writes`) → the writer from E3b-0 (pre-read when needed, readback, range planner, row status and reason) → `pendingChangesStore` → field markers, Sync Panel, Save result, dirty counts.
+**Blocked by**: E3b-0.
+**Status**: sketched
+
 **Acceptance criteria**:
 - [ ] Edit offline, connect, Save: the edits reach the board and the layout's node snapshot; nothing is lost.
 - [ ] Edit one value while connected and Save: no Sync Panel opens, and the Save takes about as long as today (one write and one readback for that value).
-- [ ] A value the board does not take stays pending with the board's value and a reason, shown in the Save result and the Sync Panel; accepting the board's value drops it, keeping it leaves it pending.
-- [ ] A write failure or conflict stays pending after Save, visible in the Sync Panel and the unsaved/pending indicators; drafts are cleared only once recorded in the layout file.
+- [ ] A value the board does not take stays pending with the board's value and a reason, shown on the field, in the Save result and in the Sync Panel.
+- [ ] A write failure or conflict stays pending after Save, visible on the field, in the Sync Panel and in the Save toolbar, unsaved-changes breakdown and close prompts; drafts are cleared only once recorded in the layout file.
 - [ ] A value reverted, discarded or rolled back before Save is never written.
-- [ ] Offline Save, the Sync Panel and E1b/E2a/E2b bench flows behave as before.
+- [ ] Rows recorded by an earlier Save, or skipped in the Sync Panel, are not written by a later Save; the Save result says how many are waiting.
+- [ ] A facility Done (about 50 values) is read back in merged ranges, not one read per field.
+- [ ] UI and user docs say "Pending Changes"; the glossary is corrected (D2).
+- [ ] The draft mirror, `flushDraftToBackend`, `set_modified_value` / `write_modified_values` as the Save path, the `modified_value` layer and connector repair's connected branch are gone; the offline-change IPCs no longer require offline mode.
+- [ ] The Save toolbar counts only configuration changes, with one wording whether offline or connected: "N configuration change(s)" when only configuration is unsaved, "N configuration change(s) + other edits" when layout edits (bowtie names, facilities, channels, connector selections) are also unsaved, and "Unsaved changes" when only layout edits are unsaved. The close prompt follows the same rule (configuration with a count, other edits listed without numbers). Approved 2026-11-23 after the E3b-0 bench test ("4 unsaved" vs "2 pending").
+- [ ] Offline Save, the Sync Panel and the E1b/E2a/E2b/E2c bench flows behave as before.
 
-**Open decisions (for tasking)**:
-1. Does a connected Save write every safe pending change, or only the ones this Save recorded? Depends on what the Sync Panel's skip leaves behind.
-2. Rename "Offline Change" to "Pending Change" in the UI and glossary?
-3. Replace the per-field writing state in the configuration view with row status?
-4. Group reads per memory range for large Saves (a facility Done writes about 50 values)?
+### E3b-2: Accept or keep a refused value [HITL]
 
-**Architecture note**: Supersedes the ADR-0012 2026-07-03 mirror extension; extends ADR-0001 (Save routes configuration through Pending Changes, one writer); amends ADR-0015 (no `modified_value` layer; `LayoutState` single owner of Pending Changes). Resolves backlog items "Retire per-callsite flushDraftToBackend", "Batched set_modified_values", "Flush pending drafts on connect" and the Offline Changes double-ownership note. Related idea: writing a node's saved configuration to the node ("force write") reuses this writer; proposed as a separate feature.
+**Intent**: In the Sync Panel, a refused value shows the board's value; accepting it drops the change, keeping it leaves it pending. No automatic retry.
+**Boundary**: Sync Panel component and store → writer row resolution → `LayoutState` rows.
+**Blocked by**: E3b-1.
+**Status**: sketched
+
+**Acceptance criteria**:
+- [ ] A refused row shows the planned value, the board's value and the reason.
+- [ ] Accepting the board's value removes the row and the field shows the board's value; keeping it leaves the row pending and visible.
+- [ ] Neither action writes to the board.
 
 ### E4: Verify writes [HITL]
 
 **Intent**: After writing, Bowties reads the values back and marks each signal verified, mismatched or unavailable.
-**Boundary**: The single writer from E3b (its row results, including readback) → status on the facility card and Review.
-**Blocked by**: E1b, E3b (readback lives in the one writer).
+**Boundary**: The single writer from E3b-1 (its row results, including readback) → status on the facility card and Review.
+**Blocked by**: E1b, E3b-1 (readback lives in the one writer).
 **Status**: sketched
 
 **Acceptance criteria**:

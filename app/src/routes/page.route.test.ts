@@ -9,7 +9,7 @@ import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { layoutStore } from '$lib/stores/layout.svelte';
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
 import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
-import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
 import { channelsStore } from '$lib/stores/channels.svelte';
 import { eventStateStore } from '$lib/stores/eventState.svelte';
 import { resetLayoutOpenPhase } from '$lib/stores/layoutOpenLifecycle';
@@ -52,7 +52,7 @@ const {
     layout: { schemaVersion: '1.0', bowties: {}, roleClassifications: {} } as OpenLayoutResult['layout'],
     offlineMode: true,
     nodeCount: 0,
-    pendingOfflineChangeCount: 0,
+    pendingChangeCount: 0,
     partialNodes: [],
     nodeSnapshots: [],
     recoveryOccurred: false,
@@ -138,7 +138,7 @@ vi.mock('$lib/api/layout', () => ({
     layout: { schemaVersion: '1.0', bowties: {}, roleClassifications: {} },
     offlineMode: true,
     nodeCount: 0,
-    pendingOfflineChangeCount: 0,
+    pendingChangeCount: 0,
     partialNodes: [],
     nodeSnapshots: [],
     recoveryOccurred: false,
@@ -226,7 +226,7 @@ beforeEach(() => {
         config: { name: 'Bench Bus' },
       };
     }
-    if (command === 'list_offline_changes') {
+    if (command === 'list_pending_changes') {
       return [];
     }
     return null;
@@ -240,7 +240,7 @@ beforeEach(() => {
   channelsStore.reset();
   layoutStore.reset();
   bowtieMetadataStore.clearAll();
-  offlineChangesStore.clear();
+  pendingChangesStore.clear();
   resetLayoutOpenPhase();
   getCdiXmlRef.mockReset();
   getCdiXmlRef.mockImplementation(async () => ({ xmlContent: '<cdi />' }));
@@ -263,7 +263,7 @@ beforeEach(() => {
     layout: makeOfflineLayout(),
     offlineMode: true,
     nodeCount: 0,
-    pendingOfflineChangeCount: 0,
+    pendingChangeCount: 0,
     partialNodes: [],
     nodeSnapshots: [],
     recoveryOccurred: false,
@@ -278,7 +278,7 @@ beforeEach(() => {
     layoutId: 'test-pre-seeded',
     rootPath: '',
     mode: 'legacy_file',
-    pendingOfflineChangeCount: 0,
+    pendingChangeCount: 0,
   });
 });
 
@@ -315,7 +315,7 @@ describe('+page route discovery CTA', () => {
           config: null,
         };
       }
-      if (command === 'list_offline_changes') {
+      if (command === 'list_pending_changes') {
         return [];
       }
       return null;
@@ -358,7 +358,7 @@ describe('+page route discovery CTA', () => {
       layoutId: 'test-pre-seeded',
       rootPath: '',
       mode: 'legacy_file',
-      pendingOfflineChangeCount: 0,
+      pendingChangeCount: 0,
     });
 
     await waitFor(() => {
@@ -390,7 +390,7 @@ describe('+page route discovery CTA', () => {
           config: null,
         };
       }
-      if (command === 'list_offline_changes') {
+      if (command === 'list_pending_changes') {
         return [];
       }
       return null;
@@ -551,7 +551,7 @@ describe('+page route discovery CTA', () => {
       layout: makeOfflineLayout(),
       offlineMode: true,
       nodeCount: 0,
-      pendingOfflineChangeCount: 0,
+      pendingChangeCount: 0,
       partialNodes: [],
       nodeSnapshots: [],
       recoveryOccurred: false,
@@ -751,7 +751,7 @@ describe('+page disconnect lifecycle (Spec 016 / S2)', () => {
 
     invokeRef.mockImplementation(async (command: string) => {
       if (command === 'disconnect_lcc') return null;
-      if (command === 'list_offline_changes') return [];
+      if (command === 'list_pending_changes') return [];
       return null;
     });
 
@@ -797,7 +797,7 @@ describe('+page channel resolution timing (Spec 017 / S1)', () => {
       if (command === 'get_connection_status') {
         return { connected: true, config: { name: 'Bench Bus' } };
       }
-      if (command === 'list_offline_changes') return [];
+      if (command === 'list_pending_changes') return [];
       if (command === 'resolve_channel_event_ids') return [];
       if (command === 'register_node') return null;
       return null;

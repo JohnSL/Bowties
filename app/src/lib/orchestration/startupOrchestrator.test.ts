@@ -34,7 +34,7 @@ function makeOpenResult(over: Partial<OpenLayoutResult> = {}): OpenLayoutResult 
     } as OpenLayoutResult['layout'],
     offlineMode: true,
     nodeCount: 0,
-    pendingOfflineChangeCount: 0,
+    pendingChangeCount: 0,
     partialNodes: [],
     nodeSnapshots: [],
     recoveryOccurred: false,

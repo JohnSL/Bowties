@@ -1,4 +1,4 @@
-import type { OfflineChangeRow } from '$lib/api/sync';
+import type { PendingChangeRow } from '$lib/api/sync';
 import { effectiveValue, type LeafConfigNode, type TreeConfigValue, type TreeMapEntry } from '$lib/types/nodeTree';
 import {
   filterAllowedMapEntries,
@@ -44,7 +44,7 @@ export function resolveConnectorCompatibilityMessage(args: {
 
 export function resolveLeafOfflineValueState(args: {
   leaf: LeafConfigNode;
-  effectiveOfflineRow: OfflineChangeRow | null;
+  effectiveOfflineRow: PendingChangeRow | null;
 }): LeafOfflineValueState {
   const offlinePlannedValue = args.effectiveOfflineRow
     ? parseOfflineStoredValueForLeaf(args.leaf, args.effectiveOfflineRow.plannedValue)

@@ -7,7 +7,7 @@ use tauri::{Emitter, Manager};
 use crate::layout::node_snapshot::{
     CaptureStatus, NodeSnapshot,
 };
-use crate::layout::offline_changes::OfflineChange;
+use crate::layout::pending_changes::PendingChange;
 use crate::layout::types::LayoutFile;
 use crate::state::{ActiveLayoutContext, ActiveLayoutMode, AppState};
 
@@ -47,7 +47,7 @@ pub struct OpenLayoutResult {
     pub offline_mode: bool,
     pub node_count: usize,
     pub partial_nodes: Vec<String>,
-    pub pending_offline_change_count: usize,
+    pub pending_change_count: usize,
     pub node_snapshots: Vec<NodeSnapshot>,
     /// True when the layout journal (ADR-0006) rolled back an
     /// interrupted prior save before this open. The frontend surfaces
@@ -260,7 +260,7 @@ pub async fn save_layout_directory(
 
     let captured_at = chrono::Utc::now().to_rfc3339();
 
-    // Read existing layout data once (needed for layout_id, bowties, offline_changes,
+    // Read existing layout data once (needed for layout_id, bowties, pending_changes,
     // and as fallback snapshot source when re-saving offline).
     let previous = if target.exists() {
         crate::layout::read_capture(target).ok()
@@ -449,12 +449,12 @@ pub async fn save_layout_directory(
     crate::layout::channels::apply_channel_deltas(&mut channels_doc, &deltas)
         .map_err(|e| format!("Failed to apply channel deltas: {}", e))?;
     crate::layout::types::apply_layout_deltas(&mut bowties, deltas);
-    let mut offline_changes = Vec::<OfflineChange>::new();
+    let mut pending_changes = Vec::<PendingChange>::new();
 
     if let Some(prev) = previous.as_ref() {
         layout_id = prev.manifest.layout_id.clone();
         manifest_captured_at = prev.manifest.captured_at.clone();
-        offline_changes = prev.offline_changes.clone();
+        pending_changes = prev.pending_changes.clone();
     }
 
     // Single pre-save edit path: if saving the currently active offline layout,
@@ -464,7 +464,13 @@ pub async fn save_layout_directory(
         if ctx.mode == ActiveLayoutMode::OfflineFile
             && std::path::Path::new(&ctx.root_path) == target
         {
-            offline_changes = state.offline_changes_cache.read().await.clone();
+            pending_changes = state
+                .layout_state
+                .read()
+                .await
+                .as_ref()
+                .map(|layout| layout.pending_changes().to_vec())
+                .unwrap_or(pending_changes);
         }
     }
 
@@ -545,7 +551,7 @@ pub async fn save_layout_directory(
         manifest,
         node_snapshots: snapshots,
         bowties,
-        offline_changes,
+        pending_changes,
         cdi_files,
         channels: channels_doc,
         facilities,
@@ -566,7 +572,7 @@ pub async fn save_layout_directory(
             *layout_state.facilities_mut() = write_data.facilities.clone();
             *layout_state.channels_mut() = write_data.channels.clone();
             *layout_state.bowties_mut() = write_data.bowties.clone();
-            layout_state.set_offline_changes(write_data.offline_changes.clone());
+            layout_state.set_pending_changes(write_data.pending_changes.clone());
             layout_state.clear_drafts();
             layout_state.clear_discovered_roles();
         }
@@ -582,11 +588,10 @@ pub async fn save_layout_directory(
         root_path: path.clone(),
         mode: ActiveLayoutMode::OfflineFile,
         captured_at: Some(manifest_captured_at),
-        pending_offline_change_count: write_data.offline_changes.len(),
+        pending_change_count: write_data.pending_changes.len(),
         layout_node_keys,
     };
     *state.active_layout.write().await = Some(context);
-    *state.offline_changes_cache.write().await = write_data.offline_changes.clone();
 
     Ok(SaveLayoutResult {
         manifest_path: target.to_string_lossy().to_string(),
@@ -817,9 +822,6 @@ pub async fn open_layout_directory(
 
     let _ = crate::commands::bowties::set_recent_layout(recent_path.clone(), app.clone()).await;
 
-    // Load offline changes into cache
-    *state.offline_changes_cache.write().await = loaded.offline_changes.clone();
-
     // Build the per-node CDI XML + profile-annotated tree maps that feed
     // `LayoutState` (ADR-0015). Trees carry `event_role` annotations and
     // `profile_applied = true` so channel resolution works without a CDI
@@ -977,7 +979,7 @@ pub async fn open_layout_directory(
         root_path: recent_path.clone(),
         mode: ActiveLayoutMode::OfflineFile,
         captured_at: Some(loaded.manifest.captured_at.clone()),
-        pending_offline_change_count: loaded.offline_changes.len(),
+        pending_change_count: loaded.pending_changes.len(),
         layout_node_keys,
     };
     *state.active_layout.write().await = Some(context);
@@ -1001,7 +1003,7 @@ pub async fn open_layout_directory(
         offline_mode: true,
         node_count: loaded.node_snapshots.len(),
         partial_nodes,
-        pending_offline_change_count: loaded.offline_changes.len(),
+        pending_change_count: loaded.pending_changes.len(),
         node_snapshots: loaded.node_snapshots,
         recovery_occurred: loaded.recovery_occurred,
         load_warnings: loaded.load_warnings,
@@ -1022,7 +1024,6 @@ pub async fn close_layout(
     }
 
     *state.active_layout.write().await = None;
-    *state.offline_changes_cache.write().await = Vec::new();
     *state.layout_state.write().await = None;
     state.node_registry.clear_layout_scope().await;
     crate::commands::bowties::clear_recent_layout(app).await?;
@@ -1045,11 +1046,13 @@ pub async fn create_new_layout_capture(
         root_path: String::new(),
         mode: ActiveLayoutMode::OfflineFile,
         captured_at: Some(created_at.clone()),
-        pending_offline_change_count: 0,
+        pending_change_count: 0,
         layout_node_keys: Vec::new(),
     };
     *state.active_layout.write().await = Some(context);
-    *state.offline_changes_cache.write().await = Vec::new();
+    if let Some(layout) = state.layout_state.write().await.as_mut() {
+        layout.set_pending_changes(Vec::new());
+    }
 
     Ok(NewLayoutResult {
         layout_id,
@@ -1061,7 +1064,7 @@ pub async fn create_new_layout_capture(
 ///
 /// Phase 1 — Persist layout to disk (with all resolved event roles from the live catalog).
 /// Phase 2 — If connected and there are pending modified values, write them to bus nodes.
-/// Phase 3 — If any writes succeeded, re-save the layout to clear succeeded offline changes.
+/// Phase 3 — If any writes succeeded, re-save the layout to clear succeeded pending changes.
 /// Phase 4 — Rebuild the bowtie catalog.
 ///
 /// Progress events (type `save-progress`) are emitted on the Tauri event bus before each phase.
@@ -1106,7 +1109,7 @@ pub async fn save_layout_with_bus_writes(
         None
     };
 
-    // Phase 3: Reconcile — re-save if any writes succeeded to clear applied offline changes.
+    // Phase 3: Reconcile — re-save if any writes succeeded to clear applied pending changes.
     let reconciled = if let Some(ref writes) = bus_writes {
         if writes.succeeded > 0 {
             let _ = app.emit("save-progress", serde_json::json!({ "phase": "reconciling" }));

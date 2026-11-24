@@ -64,9 +64,9 @@ Which modules participate in each major workflow. For full ownership rules, see 
 ## Config Editing (Offline)
 - **Route:** `config/+page.svelte`
 - **Orchestrator:** `configDraftOrchestrator.ts` (`stageDraftsForOfflineSave()`)
-- **Store:** `configChanges.svelte.ts`, `offlineChanges.svelte.ts`
+- **Store:** `configChanges.svelte.ts`, `pendingChanges.svelte.ts`
 - **API:** `sync.ts`
-- **Backend:** `commands/sync_panel.rs` (`set_offline_change`, `revert_offline_change`)
+- **Backend:** `commands/sync_panel.rs` (`set_pending_change`, `revert_pending_change`)
 - **No protocol** — local-only until sync apply
 
 ## Configuration Target Navigation
@@ -108,7 +108,7 @@ Which modules participate in each major workflow. For full ownership rules, see 
 
 ## Sync Apply
 - **Orchestrator:** `syncApplyOrchestrator.ts`, `syncPanelViewOrchestrator.ts`
-- **Store:** `offlineChanges.svelte.ts`, `syncPanel.svelte.ts`
+- **Store:** `pendingChanges.svelte.ts`, `syncPanel.svelte.ts`
 - **API:** `sync.ts`
 - **Backend:** `commands/sync_panel.rs` (bus I/O and AppState coordination; value conversion via `bowties_core::sync::field_meta`)
 - **lcc-rs:** `protocol/memory_config.rs` (applies writes)

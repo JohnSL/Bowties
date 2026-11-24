@@ -1,7 +1,7 @@
 //! Sync session classification — layout match scoring and sync row types.
 //!
 //! Pure functions for computing layout overlap, classifying sync rows,
-//! and building sync row structs from offline changes.
+//! and building sync row structs from pending changes.
 
 use serde::{Deserialize, Serialize};
 
@@ -78,7 +78,7 @@ pub struct SyncRow {
     pub error: Option<String>,
 }
 
-/// Build a `SyncRow` from an offline change and resolved context.
+/// Build a `SyncRow` from a pending change and resolved context.
 pub fn build_sync_row(
     change_id: &str,
     node_key: Option<&str>,

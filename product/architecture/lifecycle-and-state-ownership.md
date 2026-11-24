@@ -129,7 +129,7 @@ idle → opening_file → hydrating_snapshots → replaying_offline_changes → 
 
 - `layoutOpenPhase` → `idle`
 - `layout.svelte.ts` layout state cleared
-- `offlineChangesStore` rows cleared
+- `pendingChangesStore` rows cleared
 - Node tree cleared
 
 **Do not:** drive close/discard from a route or component. The route emits intent (user pressed Close); the orchestrator executes the transition.
@@ -167,7 +167,7 @@ idle → opening_file → hydrating_snapshots → replaying_offline_changes → 
 | Layout file and path | `layout.svelte.ts` | Store |
 | Active layout context | `layout.svelte.ts` | Store |
 | Layout open phase machine | `layoutOpenLifecycle.ts` | Store |
-| Offline change rows (persisted + draft) | `offlineChanges.svelte.ts` | Store |
+| Offline change rows (persisted + draft) | `pendingChanges.svelte.ts` | Store |
 | Sync panel session and resolutions | `syncPanel.svelte.ts` | Store |
 | Node tree | `nodeTree.svelte.ts` | Store |
 | Connector selection profiles, documents, warnings, and staged repairs | `connectorSelections.svelte.ts` | Store |

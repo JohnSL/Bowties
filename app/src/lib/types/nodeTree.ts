@@ -207,7 +207,7 @@ export interface LeafConfigNode extends ConfigNodeBase {
    */
   readOnly?: boolean;
   /**
-   * Backend-only: set to true when a persisted offline change is pending.
+   * Backend-only: set to true when a persisted pending change is pending.
    * The frontend derives pending state from configChangesStore layers
    * instead of reading this field directly.
    */
