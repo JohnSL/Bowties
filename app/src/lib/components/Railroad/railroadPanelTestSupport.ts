@@ -266,6 +266,54 @@ export function removalIpc(issues: () => unknown[] = () => []): IpcStubs {
   };
 }
 
+/**
+ * IPC stub for releasing a pin held outside Bowties: pins 3 and 4 are held by an
+ * untracked "Mast 2" (Logic 1 sets its aspects) until a request names it in
+ * `release`; compose then returns the signal's mast edit plus Mast 2's reset
+ * (a function edit and two fresh event IDs). Call `seedSignalNodeTree()` first.
+ */
+export function releaseOutsideIpc(): IpcStubs {
+  const isReleased = (request: { release?: Array<{ owner: string }> }) =>
+    (request.release ?? []).some((entry) => entry.owner === 'Mast 2');
+  const reset = (address: number, path: string, value: unknown) => ({ nodeKey: SIGNAL_NODE, space: 253, address, path, value });
+  return {
+    ...signalIpc(),
+    preview_block_signals: (args: unknown) => {
+      const request = (args as { request: BlockSignalsPreviewRequest & { release?: Array<{ owner: string }> } }).request;
+      const free = isReleased(request);
+      return {
+        ...fakePreview(request),
+        outputHosts: [{
+          ...hosts[0],
+          outputs: [
+            { ordinal: 1, label: '#1 H1-G', owner: null },
+            { ordinal: 2, label: '#2 H2-R', owner: null },
+            { ordinal: 3, label: '#3 H3-R', owner: free ? null : 'Mast 2' },
+            { ordinal: 4, label: '#4 H3-G', owner: free ? null : 'Mast 2' },
+          ],
+        }],
+        outsideOwners: free ? [] : [{ nodeKey: SIGNAL_NODE, owner: 'Mast 2', matchedLogic: [1], keptLogic: [] }],
+      };
+    },
+    compose_block_signals: (args: unknown) => {
+      const request = (args as { request: { release?: Array<{ owner: string }> } }).request;
+      return {
+        edits: [
+          { nodeKey: SIGNAL_NODE, space: 253, address: 100, path: 'mast#1', value: { type: 'int', value: 3 } },
+          ...(isReleased(request)
+            ? [
+              reset(300, 'mast#2/function', { type: 'int', value: 0 }),
+              ...REMOVAL_EVENT_ADDRESSES.map((address) => reset(address, `logic#1/event@${address}`, { type: 'freshEventId' })),
+            ]
+            : []),
+        ],
+        claimedSlots: [{ nodeKey: SIGNAL_NODE, kind: 'mast', index: 1 }],
+        issues: [],
+      };
+    },
+  };
+}
+
 export async function chooseWiringNode(editor: HTMLElement) {
   await fireEvent.click(await within(editor).findByRole('button', { name: /Runs on/ }));
   const picker = await screen.findByRole('dialog', { name: 'Choose a Signal LCC' });

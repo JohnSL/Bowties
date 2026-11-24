@@ -20,6 +20,7 @@ const ISSUE_TEXT: Record<ComposeIssueCode, string> = {
   unsupportedEnds: 'This release does not build signals for these track ends.',
   unsupportedAspects: 'This release builds three-aspect signals only.',
   unsupportedApproachLighting: 'This release builds always-lit signals only.',
+  releaseInvalid: 'A released mast or lamp can no longer be released.',
 };
 
 export function issueText(issue: ComposeIssue): string {

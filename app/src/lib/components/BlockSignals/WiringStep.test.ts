@@ -8,7 +8,7 @@ vi.mock('$lib/stores/configFocus.svelte', () => ({
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import BlockSignalsEditor from './BlockSignalsEditor.svelte';
 import WiringStep from './WiringStep.svelte';
-import { fakeView, spyActions } from './editorTestSupport';
+import { fakeView, previewWith, spyActions } from './editorTestSupport';
 import type { SignalOutputHost } from '$lib/api/signaling';
 import type { DiscoveredNode } from '$lib/api/tauri';
 import { nodeInfoStore } from '$lib/stores/nodeInfo';
@@ -146,13 +146,13 @@ describe('WiringStep', () => {
     const card = screen.getByRole('region', { name: 'Mast 3, not managed by Bowties' });
     expect(within(card).getByRole('heading', { name: /Mast 3/ })).toHaveTextContent('Not managed by Bowties');
     expect(card).toHaveTextContent('Description: "Cedar Hill East"');
-    expect(card).toHaveTextContent('Drives #4 H2-L, #5 H3-G');
+    expect(card).toHaveTextContent('Rule to Aspect · drives #4 H2-L, #5 H3-G');
     expect(card).toHaveTextContent('Configured on Yard Signals outside Bowties, for example by hand, by another tool, or in earlier testing.');
     expect(within(grid).getByRole('button', { name: /#4 H2-L/ })).toHaveClass('inspected');
     expect(within(grid).getByRole('button', { name: /#5 H3-G/ })).toHaveClass('inspected');
     expect(within(grid).getByRole('button', { name: /#6 H3-Y/ })).not.toHaveClass('inspected');
-    expect(within(card).getByRole('button', { name: 'Release and use…' })).toBeDisabled();
-    expect(card).not.toHaveTextContent(/rules|Aspects set by Logic/);
+    expect(within(card).getByRole('button', { name: 'Release and use…' })).toBeEnabled();
+    expect(card).not.toHaveTextContent(/Aspects set by Logic/);
 
     await fireEvent.click(within(card).getByRole('button', { name: 'Show Mast 3 in Configuration' }));
     expect(focusConfigFieldMock).toHaveBeenCalledWith(NODE_A, ['seg:0', 'elem:0#3']);
@@ -264,5 +264,66 @@ describe('WiringStep', () => {
     expect(screen.getByRole('region', { name: 'Pins' })).toHaveTextContent(
       "This Signal LCC's configuration hasn't been read yet, so its pins can't be shown.",
     );
+  });
+
+  describe('releasing a pin used outside Bowties', () => {
+    const OWNERS = [{ nodeKey: NODE_A, owner: 'Mast 3', matchedLogic: [2, 4], keptLogic: [4] }];
+    const showWithOwners = () => show({
+      wiringFor: chosen(NODE_A, null, null),
+      preview: { ...previewWith(), outsideOwners: OWNERS },
+    });
+    const openCard = async (pin: RegExp) => {
+      const grid = screen.getByRole('group', { name: 'Pins on Yard Signals' });
+      await fireEvent.click(within(grid).getByRole('button', { name: pin }));
+      return { grid, card: screen.getByRole('region', { name: /not managed by Bowties/ }) };
+    };
+
+    it('shows the Logic that set aspects of a mast and confirms the release in the card', async () => {
+      const actions = showWithOwners();
+      const { card } = await openCard(/#5 H3-G/);
+      expect(card).toHaveTextContent('Aspects set by Logic 2, Logic 4');
+      await fireEvent.click(within(card).getByRole('button', { name: 'Release and use…' }));
+      expect(card).toHaveTextContent('Release Mast 3? All 2 of its pins (#4 H2-L, #5 H3-G) become free, and Mast 3, Logic 2 are reset when you save. Discard undoes it.');
+      expect(card).toHaveTextContent("Logic 4 also sends other events, so it is kept; only its actions that set Mast 3's aspects are disconnected.");
+      expect(card).toHaveTextContent('Other boards or JMRI may still send events to Mast 3.');
+      expect(within(card).queryByRole('button', { name: 'Release and use…' })).not.toBeInTheDocument();
+
+      await fireEvent.click(within(card).getByRole('button', { name: 'Cancel' }));
+      expect(within(card).getByRole('button', { name: 'Release and use…' })).toHaveFocus();
+      expect(card).not.toHaveTextContent('Release Mast 3?');
+      expect(actions.releaseAndPlaceOutput).not.toHaveBeenCalled();
+
+      await fireEvent.click(within(card).getByRole('button', { name: 'Release and use…' }));
+      await fireEvent.click(within(card).getByRole('button', { name: 'Release and put Red on #5 H3-G' }));
+      expect(actions.releaseAndPlaceOutput).toHaveBeenCalledWith('sig-1', 'red', { nodeKey: NODE_A, owner: 'Mast 3' }, 5);
+    });
+
+    it('places the selected lamp and names just the row for a Direct Lamp row', async () => {
+      const actions = showWithOwners();
+      await fireEvent.click(screen.getByRole('button', { name: /Green lamp/ }));
+      const { card } = await openCard(/#6 H3-Y/);
+      expect(card).toHaveTextContent('Direct Lamp Control row · drives #6 H3-Y');
+      expect(card).not.toHaveTextContent('Aspects set by');
+      await fireEvent.click(within(card).getByRole('button', { name: 'Release and use…' }));
+      expect(card).toHaveTextContent('Release Direct lamp 1? Its pin (#6 H3-Y) becomes free, and Direct lamp 1 is reset when you save. Discard undoes it.');
+      expect(card).not.toHaveTextContent('JMRI');
+      await fireEvent.click(within(card).getByRole('button', { name: 'Release and put Green on #6 H3-Y' }));
+      expect(actions.releaseAndPlaceOutput).toHaveBeenCalledWith('sig-1', 'green', { nodeKey: NODE_A, owner: 'Direct lamp 1' }, 6);
+    });
+
+    it('closes only the card with Escape or ×, from the confirmation too', async () => {
+      showWithOwners();
+      const { card } = await openCard(/#4 H2-L/);
+      await fireEvent.click(within(card).getByRole('button', { name: 'Release and use…' }));
+      await fireEvent.click(within(card).getByRole('button', { name: 'Close Mast 3 details' }));
+      expect(screen.queryByRole('region', { name: /not managed by Bowties/ })).not.toBeInTheDocument();
+      const again = (await openCard(/#4 H2-L/)).card;
+      expect(again).not.toHaveTextContent('Release Mast 3?');
+    });
+
+    it('offers no release on a pin a facility owns', () => {
+      showWithOwners();
+      expect(screen.getByRole('button', { name: /#3 H2-R: Used by Mill Signals/ })).toBeDisabled();
+    });
   });
 });

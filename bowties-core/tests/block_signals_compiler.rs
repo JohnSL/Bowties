@@ -55,14 +55,16 @@ fn free_node() -> NodeSlotFacts {
             .map(|i| MastFact {
                 index: i,
                 in_use: false,
-                set_aspect_events: [
+                claimed: false,
+                set_aspect_events: vec![
                     Some(set_aspect(i as u8, 1)),
                     Some(set_aspect(i as u8, 2)),
                     Some(set_aspect(i as u8, 3)),
                 ],
             })
             .collect(),
-        logic: (1..=32).map(|i| LogicFact { index: i, in_use: false }).collect(),
+        logic: (1..=32).map(|i| LogicFact { index: i, in_use: false, claimed: false, actions: vec![] }).collect(),
+        direct_lamps: (1..=16).collect(),
     }
 }
 
@@ -324,20 +326,28 @@ fn release_claims() -> Vec<ClaimedSlot> {
     vec![claim(ClaimedSlotKind::Mast, 2), claim(ClaimedSlotKind::Logic, 1)]
 }
 
+fn release_targets() -> Vec<ReleaseTarget> {
+    release_claims().iter().map(ReleaseTarget::from).collect()
+}
+
 fn release_edit(path: &str, value: EditValue) -> NodeConfigEdit {
     NodeConfigEdit { node_key: NODE.into(), path: path.into(), value }
 }
 
 #[test]
-fn release_unclaims_each_claimed_slot_with_edits_confined_to_it() {
-    let result = release_slots(&release_claims(), &[free_node()]);
+fn release_resets_every_rule_of_a_mast_every_event_of_a_logic_and_the_lamp_row() {
+    let mut targets = release_targets();
+    targets.push(ReleaseTarget { node_key: NODE.into(), slot: ReleaseSlot::DirectLamp(5) });
+    let result = release_slots(&targets, &[free_node()]);
     assert_eq!(result.issues, vec![]);
     assert!(result.claimed_slots.is_empty());
     let int0 = || EditValue::Int { value: 0 };
+    let empty = || EditValue::String { value: String::new() };
     let mut expected = vec![
         release_edit("Rule to Aspect/Mast[2]/Mast Processing", int0()),
-        release_edit("Rule to Aspect/Mast[2]/Mast Description", EditValue::String { value: String::new() }),
+        release_edit("Rule to Aspect/Mast[2]/Mast Description", empty()),
     ];
+    // free_node's masts carry 3 set-aspect events; the reset covers that many rules.
     for rule in 1..=3 {
         for appearance in 1..=4 {
             expected.push(release_edit(
@@ -348,20 +358,35 @@ fn release_unclaims_each_claimed_slot_with_edits_confined_to_it() {
         expected.push(release_edit(&format!("Rule to Aspect/Mast[2]/Rule[{rule}]/Effects Lamp"), int0()));
     }
     expected.push(release_edit("Conditionals/Logic[1]/Function", int0()));
-    expected.push(release_edit("Conditionals/Logic[1]/Description", EditValue::String { value: String::new() }));
-    for leaf in ["Variable #1/set true", "Variable #1/set false", "Action#2[1]/Action Event", "Action#2[2]/Action Event"] {
+    expected.push(release_edit("Conditionals/Logic[1]/Description", empty()));
+    for leaf in [
+        "Variable #1/set true",
+        "Variable #1/set false",
+        "Variable #2/set true",
+        "Variable #2/set false",
+        "Action#2[1]/Action Event",
+        "Action#2[2]/Action Event",
+        "Action#2[3]/Action Event",
+        "Action#2[4]/Action Event",
+    ] {
         expected.push(release_edit(&format!("Conditionals/Logic[1]/{leaf}"), EditValue::FreshEventId));
     }
+    expected.push(release_edit("Direct Lamp Control/Lamp[5]/Lamp Selection", int0()));
+    expected.push(release_edit("Direct Lamp Control/Lamp[5]/Lamp Description", empty()));
+    expected.push(release_edit("Direct Lamp Control/Lamp[5]/Lamp On", EditValue::FreshEventId));
+    expected.push(release_edit("Direct Lamp Control/Lamp[5]/Lamp Off", EditValue::FreshEventId));
     assert_eq!(result.edits, expected);
     for edit in &result.edits {
-        let inside = release_claims().iter().any(|c| {
-            let prefix = match c.kind {
-                ClaimedSlotKind::Mast => format!("Rule to Aspect/Mast[{}]/", c.index),
-                ClaimedSlotKind::Logic => format!("Conditionals/Logic[{}]/", c.index),
+        let inside = targets.iter().any(|t| {
+            let prefix = match &t.slot {
+                ReleaseSlot::Mast(i) => format!("Rule to Aspect/Mast[{i}]/"),
+                ReleaseSlot::Logic(i) => format!("Conditionals/Logic[{i}]/"),
+                ReleaseSlot::DirectLamp(i) => format!("Direct Lamp Control/Lamp[{i}]/"),
+                ReleaseSlot::LogicActions { index, .. } => format!("Conditionals/Logic[{index}]/"),
             };
-            c.node_key == edit.node_key && edit.path.starts_with(&prefix)
+            t.node_key == edit.node_key && edit.path.starts_with(&prefix)
         });
-        assert!(inside, "edit outside the claimed slots: {edit:?}");
+        assert!(inside, "edit outside the released slots: {edit:?}");
     }
 }
 
@@ -371,7 +396,7 @@ fn release_with_unavailable_claims_is_blocked_with_no_edits() {
     missing_index.masts.retain(|m| m.index != 2);
     let no_facts = NodeSlotFacts { node_key: "050101010999".into(), ..free_node() };
     for (name, nodes) in [("missing index", vec![missing_index]), ("node without facts", vec![no_facts])] {
-        let result = release_slots(&release_claims(), &nodes);
+        let result = release_slots(&release_targets(), &nodes);
         assert!(codes(&result).contains(&CompileIssueCode::ClaimedSlotUnavailable), "{name}: {:?}", result.issues);
         assert!(result.edits.is_empty(), "{name}");
         assert!(result.claimed_slots.is_empty(), "{name}");
@@ -379,7 +404,7 @@ fn release_with_unavailable_claims_is_blocked_with_no_edits() {
 }
 
 #[test]
-fn release_freshens_exactly_the_event_leaves_the_recipe_wires_into_the_logic() {
+fn release_freshens_at_least_the_event_leaves_the_recipe_wires_into_the_logic() {
     let recipe = compile_block_signals(&recompile_input());
     assert_eq!(recipe.issues, vec![]);
     let recipe_event_paths: std::collections::BTreeSet<_> = recipe
@@ -388,12 +413,158 @@ fn release_freshens_exactly_the_event_leaves_the_recipe_wires_into_the_logic() {
         .filter(|e| e.path.starts_with("Conditionals/") && matches!(e.value, EditValue::EventId { .. }))
         .map(|e| e.path.clone())
         .collect();
-    let fresh: std::collections::BTreeSet<_> = release_slots(&release_claims(), &[free_node()])
+    let fresh: std::collections::BTreeSet<_> = release_slots(&release_targets(), &[free_node()])
         .edits
         .iter()
         .filter(|e| e.value == EditValue::FreshEventId)
         .map(|e| e.path.clone())
         .collect();
     assert!(!fresh.is_empty());
-    assert_eq!(fresh, recipe_event_paths);
+    assert!(fresh.is_superset(&recipe_event_paths), "release must cover every event the recipe wrote");
+}
+
+#[test]
+fn no_free_slot_issues_say_how_many_slots_are_configured_outside_bowties() {
+    let mut c = input();
+    for (n, mast) in c.nodes[0].masts.iter_mut().enumerate() {
+        mast.in_use = true;
+        mast.claimed = n >= 3; // Masts 1-3 are configured outside Bowties.
+    }
+    for (n, logic) in c.nodes[0].logic.iter_mut().enumerate() {
+        logic.in_use = true;
+        logic.claimed = n >= 1; // Only Logic 1 is configured outside Bowties.
+    }
+    let result = compile_block_signals(&c);
+    let detail = |code| result.issues.iter().find(|i| i.code == code).map(|i| i.detail.clone());
+    assert_eq!(
+        detail(CompileIssueCode::NoFreeMast).as_deref(),
+        Some("The board has no free mast; 3 are configured outside Bowties.")
+    );
+    assert_eq!(
+        detail(CompileIssueCode::NoFreeLogic).as_deref(),
+        Some("The board has no free Logic conditional; 1 is configured outside Bowties.")
+    );
+}
+
+fn logic_sending(node: &mut NodeSlotFacts, index: u32, actions: &[(i64, [u8; 8])]) {
+    let logic = &mut node.logic[index as usize - 1];
+    logic.in_use = true;
+    logic.actions = (0..4)
+        .map(|n| match actions.get(n) {
+            Some((condition, event)) => LogicAction { condition: Some(*condition), event: Some(*event) },
+            None => LogicAction { condition: Some(0), event: None },
+        })
+        .collect();
+}
+
+#[test]
+fn untracked_mast_release_matches_same_node_logic_by_aspect_event_and_keeps_logic_with_other_actions() {
+    let other: [u8; 8] = [9, 9, 9, 9, 9, 9, 9, 9];
+    let mut node = free_node();
+    // Logic 1: only sets the mast's aspects -> matched, fully released.
+    logic_sending(&mut node, 1, &[(3, set_aspect(2, 1)), (4, set_aspect(2, 3))]);
+    // Logic 2: sets one aspect and also sends another event -> matched and kept.
+    logic_sending(&mut node, 2, &[(3, set_aspect(2, 2)), (1, other)]);
+    // Logic 3: matching event but Function is 0 (not in use) -> not matched.
+    logic_sending(&mut node, 3, &[(3, set_aspect(2, 1))]);
+    node.logic[2].in_use = false;
+    // Logic 4: sends events for a different mast -> not matched.
+    logic_sending(&mut node, 4, &[(3, set_aspect(5, 1))]);
+    // Logic 5: matching event but claimed by a facility -> not matched.
+    logic_sending(&mut node, 5, &[(3, set_aspect(2, 1))]);
+    node.logic[4].claimed = true;
+    // Logic 6: a matching action whose condition is 0 still counts as a match; a
+    // different event under condition 0 sends nothing, so the Logic is not kept.
+    logic_sending(&mut node, 6, &[(0, set_aspect(2, 3)), (0, other)]);
+
+    let owners = vec![
+        (NODE.to_string(), SignalOutputOwner::Mast(2)),
+        (NODE.to_string(), SignalOutputOwner::DirectLamp(7)),
+    ];
+    let result = untracked_release_targets(&owners, &[node.clone()]);
+
+    assert_eq!(
+        result.owners,
+        vec![
+            UntrackedOwnerRelease {
+                node_key: NODE.into(),
+                owner: SignalOutputOwner::Mast(2),
+                matched_logic: vec![1, 2, 6],
+                kept_logic: vec![2],
+            },
+            UntrackedOwnerRelease {
+                node_key: NODE.into(),
+                owner: SignalOutputOwner::DirectLamp(7),
+                matched_logic: vec![],
+                kept_logic: vec![],
+            },
+        ]
+    );
+    let target = |slot| ReleaseTarget { node_key: NODE.into(), slot };
+    assert_eq!(
+        result.targets,
+        vec![
+            target(ReleaseSlot::Mast(2)),
+            target(ReleaseSlot::Logic(1)),
+            target(ReleaseSlot::LogicActions { index: 2, actions: vec![1] }),
+            target(ReleaseSlot::Logic(6)),
+            target(ReleaseSlot::DirectLamp(7)),
+        ]
+    );
+
+    // The kept Logic gets fresh IDs on only its mast-matching action; edits stay inside the targets.
+    let released = release_slots(&result.targets, &[node]);
+    assert_eq!(released.issues, vec![]);
+    let logic2: Vec<_> = released.edits.iter().filter(|e| e.path.starts_with("Conditionals/Logic[2]/")).collect();
+    assert_eq!(
+        logic2,
+        vec![&release_edit("Conditionals/Logic[2]/Action#2[1]/Action Event", EditValue::FreshEventId)]
+    );
+    assert!(released.edits.iter().any(|e| e.path == "Conditionals/Logic[1]/Function"));
+    assert!(released.edits.iter().all(|e| {
+        ["Rule to Aspect/Mast[2]/", "Conditionals/Logic[1]/", "Conditionals/Logic[2]/Action#2[1]/",
+         "Conditionals/Logic[6]/", "Direct Lamp Control/Lamp[7]/"]
+            .iter()
+            .any(|prefix| e.path.starts_with(prefix))
+    }));
+}
+
+#[test]
+fn untracked_release_targets_never_name_a_slot_or_leaf_twice() {
+    let mut node = free_node();
+    // Mast 3 also answers to Mast 2's Stop-rule event and to one extra event.
+    node.masts[2].set_aspect_events[0] = Some(set_aspect(2, 1));
+    node.masts[2].set_aspect_events[1] = Some(set_aspect(2, 2));
+    node.masts[2].set_aspect_events[2] = Some([9; 8]);
+    // Logic 1 matches both masts and sends nothing else for either -> released once.
+    logic_sending(&mut node, 1, &[(3, set_aspect(2, 1))]);
+    // Logic 2 is kept for Mast 2 (it also sends [9; 8]) but is all Mast 3's -> full release wins.
+    logic_sending(&mut node, 2, &[(3, set_aspect(2, 2)), (1, [9; 8])]);
+    // Logic 3 is kept for both masts, each matching a different action -> actions are unioned.
+    logic_sending(&mut node, 3, &[(3, set_aspect(2, 3)), (3, [9; 8]), (1, [8; 8])]);
+
+    let owners = vec![
+        (NODE.to_string(), SignalOutputOwner::Mast(2)),
+        (NODE.to_string(), SignalOutputOwner::Mast(3)),
+    ];
+    let result = untracked_release_targets(&owners, &[node.clone()]);
+    let target = |slot| ReleaseTarget { node_key: NODE.into(), slot };
+    let logic_targets: Vec<_> =
+        result.targets.iter().filter(|t| !matches!(t.slot, ReleaseSlot::Mast(_))).cloned().collect();
+    assert_eq!(
+        logic_targets,
+        vec![
+            target(ReleaseSlot::Logic(1)),
+            target(ReleaseSlot::Logic(2)),
+            target(ReleaseSlot::LogicActions { index: 3, actions: vec![1, 2] }),
+        ]
+    );
+
+    let released = release_slots(&result.targets, &[node]);
+    assert_eq!(released.issues, vec![]);
+    let mut leaves: Vec<_> = released.edits.iter().map(|e| (e.node_key.clone(), e.path.clone())).collect();
+    let total = leaves.len();
+    leaves.sort();
+    leaves.dedup();
+    assert_eq!(leaves.len(), total, "no two release edits target the same leaf");
 }

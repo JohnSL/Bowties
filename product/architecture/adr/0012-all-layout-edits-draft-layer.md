@@ -379,3 +379,46 @@ Spec 020 E2b removes a saved Automatic Block Signals facility.
   Delete asks for a destructive confirmation naming the facility, board and
   slots. All of it is ordinary drafts: Discard restores everything until
   Save.
+
+## 2026-11-23 extension: releasing configuration Bowties does not own
+
+Spec 020 E2c lets the modeler release a mast or Direct Lamp row that no
+facility claims (configuration left by hand, another tool or earlier
+testing) and use its pins for a signal.
+
+- **Named releases only.** The editor holds the released owners; the
+  preview and compose requests carry them as `release: [{nodeKey, owner}]`.
+  An owner a facility claims, or one that owns nothing, is a blocking
+  `releaseInvalid` issue. A slot in use outside Bowties is still a blocking
+  issue unless the request names its owner: never a silent overwrite.
+- **One release path and one reset set.** `release_slots` takes
+  `ReleaseTarget` (Mast | Logic | DirectLamp | LogicActions); a facility's
+  persisted `ClaimedSlot` (Mast | Logic) converts into it, so removal (E2b)
+  and E2c share it. Every release clears a mast's Processing, description,
+  every rule's Appearance lamps and Effects Lamp; gives a Logic Function 0,
+  an empty description and fresh event IDs on all eight event fields; and
+  gives a Direct Lamp row Lamp Selection 0 ("Used by Mast", inactive), an
+  empty description and fresh Lamp On / Lamp Off. This replaces the E2b
+  wording "the rules the recipe writes" and "every event field the recipe
+  wrote": a reused mast must not inherit lamps on rules the recipe does not
+  write.
+- **A released mast takes its conditionals with it.**
+  `untracked_release_targets` matches same-node Logic whose Function is not 0
+  and whose Action Event equals one of the mast's set-aspect events. A
+  matched Logic that also sends other events (another action whose Condition
+  is not 0) is kept: only its actions aimed at the mast get fresh event IDs,
+  so it stops driving the mast, which the recipe usually reuses. Others get
+  the full Logic release. Consumers Bowties cannot see (JMRI, other buses,
+  unloaded nodes) are why the keep rule looks at the conditional's own
+  actions instead of searching for consumers. Rejected: deciding from
+  consumers found in loaded trees or in the bowtie catalog.
+- **Staged on Done with the facility.** The backend applies the release
+  edits to a request-scoped copy of the effective trees (ADR-0015) before it
+  derives pin owners, slot facts and the free-slot pick, so "free" has one
+  definition. Compose returns release edits merged with the recipe's (the
+  recipe wins on a shared leaf; fresh event IDs only in release edits), and
+  `stageBlockSignalsFacility` stages them together through the one
+  `stageComposedEdits` helper that fills fresh IDs. Cancel drops the list;
+  Discard restores the owner. Rejected: staging the release at confirmation,
+  which would make the editor a staging owner and leave orphaned releases on
+  every exit path that forgot to undo them.

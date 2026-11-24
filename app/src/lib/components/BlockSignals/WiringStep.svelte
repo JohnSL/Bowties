@@ -5,9 +5,11 @@
    * and green lamps, with the problems the last check found. It renders the
    * store's view and emits wiring intents; the check itself is the store's.
    */
+  import { tick } from 'svelte';
   import type { ComposeIssue, SignalOutputHost } from '$lib/api/signaling';
   import { resolveNodeParts } from '$lib/layout';
   import { nodeIdToDisplayHex } from '$lib/utils/nodeId';
+  import { canonicalizeNodeId } from '$lib/utils/nodeRoster';
   import type { NodeConfigTree } from '$lib/types/nodeTree';
   import { configFocusStore } from '$lib/stores/configFocus.svelte';
   import { resolveSignalOutputOwnerTarget } from '$lib/utils/channelConfigNavigation';
@@ -118,8 +120,16 @@
     const pins = host.outputs.filter((output) => !output.facility && output.owner === inspectedOwner);
     if (pins.length === 0) return null;
     const tree = nodeTree?.(host.nodeKey);
+    const nodeKey = canonicalizeNodeId(host.nodeKey);
+    const logic = view.preview?.outsideOwners?.find(
+      (entry) => entry.owner === inspectedOwner && canonicalizeNodeId(entry.nodeKey) === nodeKey,
+    );
     return {
       owner: inspectedOwner,
+      nodeKey: host.nodeKey,
+      isMast: inspectedOwner.startsWith('Mast '),
+      matchedLogic: logic?.matchedLogic ?? [],
+      keptLogic: logic?.keptLogic ?? [],
       pins,
       description: signalOutputOwnerDescription(tree, inspectedOwner),
       target: resolveSignalOutputOwnerTarget(tree, inspectedOwner),
@@ -127,6 +137,28 @@
   });
 
   let pinGrid = $state<HTMLElement | null>(null);
+  /** The details card is showing the release confirmation instead of the details. */
+  let confirmingRelease = $state(false);
+  let releaseButton = $state<HTMLButtonElement | null>(null);
+  $effect(() => {
+    inspectedOwner;
+    confirmingRelease = false;
+  });
+
+  const logicList = (numbers: number[]) => numbers.map((n) => `Logic ${n}`).join(', ');
+
+  function cancelRelease(): void {
+    confirmingRelease = false;
+    void tick().then(() => releaseButton?.focus());
+  }
+
+  /** Release the inspected owner and put the selected lamp on the clicked pin. */
+  function releaseAndUse(card: NonNullable<typeof inspected>, ordinal: number): void {
+    if (!signal) return;
+    void actions.releaseAndPlaceOutput(signal.signalId, selectedLamp, { nodeKey: card.nodeKey, owner: card.owner }, ordinal);
+    pickedLamp = null;
+    inspectedOwner = null;
+  }
 
   /** Close the details card and return focus to the first pin of its owner. */
   function closeCard(): void {
@@ -146,8 +178,14 @@
     closeCard();
   }
 
+  /** The pin the user clicked to open the card; the lamp goes there when the release is confirmed. */
+  let inspectedPin = $state<number | null>(null);
+
   function pinClicked(output: PinOutput, state: PinState): void {
-    if (state === 'outside') inspectedOwner = inspectedOwner === output.owner ? null : output.owner;
+    if (state === 'outside') {
+      inspectedOwner = inspectedOwner === output.owner ? null : output.owner;
+      inspectedPin = output.ordinal;
+    }
     else choosePin(output.ordinal);
   }
 
@@ -284,8 +322,28 @@
               <button type="button" class="card-close" aria-label={`Close ${card.owner} details`} onclick={closeCard}>×</button>
               <h4>{card.owner} <span class="outside-tag">Not managed by Bowties</span></h4>
               <p>{card.description ? `Description: "${card.description}"` : 'No description.'}</p>
-              <p>Drives {card.pins.map((pin) => pin.label).join(', ')}</p>
+              <p>{card.isMast ? 'Rule to Aspect' : 'Direct Lamp Control row'} · drives {card.pins.map((pin) => pin.label).join(', ')}</p>
+              {#if card.isMast && card.matchedLogic.length > 0}
+                <p>Aspects set by {logicList(card.matchedLogic)}</p>
+              {/if}
               <p>Configured on {hostName(host.nodeKey)} outside Bowties, for example by hand, by another tool, or in earlier testing.</p>
+              {#if confirmingRelease}
+                {@const resets = [card.owner, ...card.matchedLogic.filter((n) => !card.keptLogic.includes(n)).map((n) => `Logic ${n}`)]}
+                {@const pinLabels = card.pins.map((pin) => pin.label).join(', ')}
+                <p>Release {card.owner}? {card.pins.length > 1 ? `All ${card.pins.length} of its pins` : 'Its pin'} ({pinLabels}) {card.pins.length > 1 ? 'become' : 'becomes'} free, and {resets.join(', ')} {resets.length > 1 ? 'are' : 'is'} reset when you save. Discard undoes it.</p>
+                {#each card.keptLogic as n (n)}
+                  <p>Logic {n} also sends other events, so it is kept; only its actions that set {card.owner}'s aspects are disconnected.</p>
+                {/each}
+                {#if card.isMast}
+                  <p>Other boards or JMRI may still send events to {card.owner}.</p>
+                {/if}
+                <div class="outside-actions">
+                  <button type="button" class="btn" onclick={cancelRelease}>Cancel</button>
+                  <button type="button" class="btn btn-primary" onclick={() => releaseAndUse(card, inspectedPin ?? card.pins[0].ordinal)}>
+                    Release and put {selectedLamp === 'red' ? 'Red' : 'Green'} on {pinLabel(inspectedPin ?? card.pins[0].ordinal)}
+                  </button>
+                </div>
+              {:else}
               <div class="outside-actions">
                 {#if card.target}
                   {@const target = card.target}
@@ -296,8 +354,9 @@
                     onclick={() => configFocusStore.focusConfigField(target.nodeId, target.elementPath)}
                   >Show in Configuration</button>
                 {/if}
-                <button type="button" class="btn" disabled>Release and use…</button>
+                <button type="button" class="btn" bind:this={releaseButton} onclick={() => (confirmingRelease = true)}>Release and use…</button>
               </div>
+              {/if}
             </section>
           {/if}
           <div class="pin-key" aria-hidden="true">

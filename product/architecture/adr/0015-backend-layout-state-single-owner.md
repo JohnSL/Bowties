@@ -494,6 +494,10 @@ Offline Changes.
   `effective_config_tree`, not `config_tree`, unless it deliberately needs
   the stored layer (save, bus writes, Sync Panel).
 - Requests do not carry configuration drafts.
+- A request may name changes the reader should assume (Spec 020 E2c
+  `release`). The reader applies them to its own copy of the effective
+  trees for that request only (`facts.rs::overlay_releases`), once, before
+  any fact is derived; it never writes them back.
 
 **Follow-up.** The bowtie catalog keeps its own overlay of pending
 Offline Changes (`commands/bowties.rs`); moving it onto this view is

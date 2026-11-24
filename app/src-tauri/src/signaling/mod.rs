@@ -11,8 +11,12 @@ use bowties_core::{
     node_tree::NodeConfigTree,
     profile::StructureProfile,
     signaling::{
-        facts::{effective_trees, signal_hardware_facts}, outputs::attribute_output_facilities,
-        preview_block_signals_with_hardware, ProposalIssue, SignalHardwareFacts,
+        compiler::{CompileIssue, NodeConfigEdit, UntrackedOwnerRelease},
+        facts::{effective_trees, outside_mast_owners, overlay_releases, signal_hardware_facts},
+        outputs::attribute_output_facilities,
+        preview_block_signals_with_hardware,
+        slots::claimed_slots_from_facilities,
+        ProposalIssue, ReleaseRequest, SignalHardwareFacts,
         BlockSignalsPreview, BlockSignalsRequest, SavedSignalIdentity,
     },
 };
@@ -29,6 +33,11 @@ pub struct ProposalFacts {
     channels: Vec<InformationChannel>,
     trees: HashMap<NodeKey, NodeConfigTree>,
     hardware: SignalHardwareFacts,
+    /// Edits that release the request's named untracked owners; their effect
+    /// is already applied to `trees` and `hardware`.
+    release_edits: Vec<NodeConfigEdit>,
+    release_issues: Vec<CompileIssue>,
+    outside_owners: Vec<UntrackedOwnerRelease>,
 }
 
 impl ProposalFacts {
@@ -36,11 +45,7 @@ impl ProposalFacts {
         channels: Vec<InformationChannel>,
         trees: HashMap<NodeKey, NodeConfigTree>,
     ) -> Self {
-        Self {
-            channels,
-            trees,
-            hardware: SignalHardwareFacts::default(),
-        }
+        Self::with_hardware(channels, trees, SignalHardwareFacts::default())
     }
 
     pub fn with_hardware(
@@ -52,6 +57,9 @@ impl ProposalFacts {
             channels,
             trees,
             hardware,
+            release_edits: Vec::new(),
+            release_issues: Vec::new(),
+            outside_owners: Vec::new(),
         }
     }
 }
@@ -95,6 +103,7 @@ pub fn propose(
 
     let mut preview = preview_block_signals_with_hardware(request, facts.hardware.clone());
     preview.issues.extend(issues);
+    preview.outside_owners = facts.outside_owners.clone();
     Ok(preview)
 }
 
@@ -162,15 +171,27 @@ fn detection_event_mapping(style: &str) -> Option<HashMap<String, u32>> {
 /// from every captured/saved configuration tree, not from detector-channel
 /// bindings, so a compatible Signal-LCC is visible even when it hosts no
 /// detector.
+///
+/// The request's named releases are applied here, once, before any fact is
+/// derived: pin owners, slot facts and the free-slot pick all read the
+/// released trees, so preview and compose cannot disagree.
 fn proposal_facts_from_layout(
     layout: &bowties_core::layout::state::LayoutState,
     profiles: &HashMap<String, Option<StructureProfile>>,
+    release: &[ReleaseRequest],
 ) -> ProposalFacts {
     let channels = layout.effective_channels().channels.clone();
-    let trees = effective_trees(layout);
-    let mut hardware = signal_hardware_facts(&trees, profiles);
+    let claimed = claimed_slots_from_facilities(layout.effective_facilities(), None);
+    let overlay = overlay_releases(effective_trees(layout), release, &claimed);
+    let mut hardware = signal_hardware_facts(&overlay.trees, profiles);
     attribute_output_facilities(&mut hardware.hosts, layout.effective_facilities());
-    ProposalFacts::with_hardware(channels, trees, hardware)
+    let outside_owners = outside_mast_owners(&overlay.trees, &hardware.hosts, &claimed);
+    ProposalFacts {
+        release_edits: overlay.edits,
+        release_issues: overlay.issues,
+        outside_owners,
+        ..ProposalFacts::with_hardware(channels, overlay.trees, hardware)
+    }
 }
 
 /// Resolve requested block identities against the active effective layout,
@@ -188,8 +209,11 @@ pub async fn preview(
         };
         request.saved_signals = saved_signals_from_layout(layout, &request.facility_id);
         let profiles = state.profiles.read().await;
-        proposal_facts_from_layout(layout, &profiles)
+        proposal_facts_from_layout(layout, &profiles, &request.release)
     };
+    if let Some(issue) = facts.release_issues.first() {
+        return Err(issue.detail.clone());
+    }
 
     propose(&facts, request)
 }
@@ -620,6 +644,7 @@ mod tests {
             proposal_facts_from_layout(
                 layout.as_ref().expect("test layout is loaded"),
                 &profiles,
+                &[],
             )
         };
         let headless = propose(&facts, request.clone()).expect("headless proposal succeeds");

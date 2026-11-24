@@ -77,3 +77,40 @@ describe('blockSignalsEditorStore step statuses', () => {
     expect(store.steps[3].status).toBe('needsWork');
   });
 });
+
+describe('blockSignalsEditorStore released owners (E2c B1)', () => {
+  beforeEach(() => store.reset());
+
+  const owner = { nodeKey: '05.01.01.01.88.00', owner: 'Mast 2' };
+
+  it('holds each released owner once by canonical node key, and clears on reset, create and edit', () => {
+    store.start('Main');
+    store.releaseOwner(owner);
+    store.releaseOwner({ nodeKey: '050101018800', owner: 'Mast 2' });
+    store.releaseOwner({ nodeKey: '050101018800', owner: 'Direct lamp 3' });
+    expect(store.released).toHaveLength(2);
+    expect(store.previewRequest().release).toEqual(store.released);
+
+    store.start('Again');
+    expect(store.released).toEqual([]);
+
+    store.releaseOwner(owner);
+    store.startEdit({ ...seed(), wiring: {} });
+    expect(store.released).toEqual([]);
+
+    store.releaseOwner(owner);
+    store.reset();
+    expect(store.released).toEqual([]);
+  });
+
+  it('releases an owner and places the clicked pin as one intent', () => {
+    store.start('Main');
+    store.chooseWiringNode('s1', '050101018800');
+    store.releaseAndPlace('s1', 'red', owner, 4);
+    expect(store.released).toEqual([owner]);
+    expect(store.wiringFor('s1')).toMatchObject({ redOutput: 4, greenOutput: null });
+    store.releaseAndPlace('s1', 'green', { nodeKey: '050101018800', owner: 'Mast 3' }, 5);
+    expect(store.wiringFor('s1')).toMatchObject({ redOutput: 4, greenOutput: 5 });
+    expect(store.released).toHaveLength(2);
+  });
+});

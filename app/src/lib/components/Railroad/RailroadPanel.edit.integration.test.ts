@@ -14,7 +14,11 @@ import { effectiveNodeStore } from '$lib/layout';
 import type { ComposeBlockSignalsRequest } from '$lib/api/signaling';
 import SaveControls from '../ElementCardDeck/SaveControls.svelte';
 import {
+  addBlock,
+  chooseWiringNode,
   mockIpc,
+  openEditor,
+  releaseOutsideIpc,
   removalIpc,
   renderRailroadPanel,
   SAVED_FACILITY_ID,
@@ -187,5 +191,77 @@ describe('Remove a saved Automatic Block Signals facility (E2b-T1)', () => {
     await waitFor(() => expect(card()).not.toBeInTheDocument());
     expect(signalRow()).not.toBeInTheDocument();
     expect(effectiveNodeStore.dirtyBreakdown).toMatchObject({ config: 0, facilities: 1, channels: 1 });
+  });
+});
+
+describe('Release a pin used outside Bowties (E2c-T1)', () => {
+  beforeEach(() => {
+    channelsStore.reset();
+    facilitiesStore.reset();
+    behaviorTemplatesStore.reset();
+    configChangesStore.clearAllDrafts();
+    cancelBlockSignalsEditor();
+    invoke.mockReset();
+  });
+
+  /** Open the editor on Wiring for a new facility, click the pin Mast 2 holds and confirm its release. */
+  async function releaseHeldPin() {
+    seedSignalNodeTree();
+    const editor = await openEditor(invoke, 'Cedar Hill — Eastward', undefined, releaseOutsideIpc());
+    render(SaveControls, { props: { toolbar: true } });
+    await addBlock('Cedar Hill');
+    await fireEvent.click(within(editor).getByRole('button', { name: 'Next: Aspects' }));
+    await fireEvent.click(await within(editor).findByRole('button', { name: 'Next: Appearance' }));
+    await fireEvent.click(within(editor).getByRole('button', { name: 'Next: Wiring' }));
+    await chooseWiringNode(editor);
+    const grid = await within(editor).findByRole('group', { name: 'Pins on 02.01.57.00.00.01' });
+    await fireEvent.click(within(grid).getByRole('button', { name: /#3 H3-R/ }));
+    const card = within(editor).getByRole('region', { name: 'Mast 2, not managed by Bowties' });
+    expect(card).toHaveTextContent('Aspects set by Logic 1');
+    await fireEvent.click(within(card).getByRole('button', { name: 'Release and use…' }));
+    expect(card).toHaveTextContent('Release Mast 2? All 2 of its pins (#3 H3-R, #4 H3-G) become free, and Mast 2, Logic 1 are reset when you save.');
+    await fireEvent.click(within(card).getByRole('button', { name: 'Release and put Red on #3 H3-R' }));
+    return { editor, grid };
+  }
+
+  const requestsTo = (command: string) =>
+    invoke.mock.calls
+      .filter(([name]) => name === command)
+      .map(([, args]) => (args as { request: { release?: Array<{ owner: string }> } }).request);
+
+  it('releases the owner with the facility, stages its resets with fresh IDs, and Discard restores them', { timeout: 20000 }, async () => {
+    const { editor, grid } = await releaseHeldPin();
+
+    await waitFor(() => expect(within(grid).getByRole('button', { name: '#3 H3-R: This signal' })).toBeInTheDocument());
+    expect(within(grid).getByRole('button', { name: '#4 H3-G: Free' })).toBeInTheDocument();
+    expect(within(editor).queryByRole('region', { name: /not managed by Bowties/ })).not.toBeInTheDocument();
+    const previews = requestsTo('preview_block_signals');
+    expect(previews[previews.length - 1].release).toEqual([{ nodeKey: SIGNAL_NODE, owner: 'Mast 2' }]);
+
+    await fireEvent.click(within(grid).getByRole('button', { name: /#1 H1-G/ }));
+    const done = within(editor).getByRole('button', { name: 'Done' });
+    await waitFor(() => expect(done).toBeEnabled());
+    await fireEvent.click(done);
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /automatic block signals/i })).not.toBeInTheDocument());
+
+    const composes = requestsTo('compose_block_signals');
+    expect(composes[composes.length - 1].release).toEqual([{ nodeKey: SIGNAL_NODE, owner: 'Mast 2' }]);
+
+    // the mast edit, Mast 2's function reset and two fresh event IDs are unsaved changes
+    expect(effectiveNodeStore.dirtyBreakdown).toMatchObject({ config: 4, configNodes: 1 });
+    const toolbar = await screen.findByRole('group', { name: 'Configuration save controls' });
+
+    await fireEvent.click(within(toolbar).getByRole('button', { name: 'Discard pending changes' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Revert' }));
+    await waitFor(() => expect(effectiveNodeStore.isDirty).toBe(false));
+    expect(effectiveNodeStore.dirtyBreakdown).toMatchObject({ config: 0 });
+  });
+
+  it('Cancel after releasing stages nothing', { timeout: 20000 }, async () => {
+    const { editor } = await releaseHeldPin();
+    await fireEvent.click(within(editor).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /automatic block signals/i })).not.toBeInTheDocument());
+    expect(effectiveNodeStore.isDirty).toBe(false);
+    expect(effectiveNodeStore.dirtyBreakdown).toMatchObject({ config: 0, configNodes: 0 });
   });
 });

@@ -59,6 +59,18 @@ export interface BlockSignalsPreviewRequest {
   signalOverrides: SignalOverride[];
   /** Signal names by signal ID. */
   signalNames: Record<string, string>;
+  /**
+   * Untracked owners (a mast or Direct Lamp row no facility claims) released
+   * so their pins read as free. Optional; empty when omitted.
+   */
+  release?: ReleasedOwner[];
+}
+
+/** An untracked owner named for release; the backend never releases one that is not listed. */
+export interface ReleasedOwner {
+  nodeKey: string;
+  /** "Mast N" or "Direct lamp N", the form the output hosts report owners in. */
+  owner: string;
 }
 
 export type SignalIndication = 'stop' | 'restricting' | 'approach' | 'advanceApproach' | 'clear';
@@ -148,6 +160,11 @@ export interface BlockSignalsPreview {
   exitEnd: ExitEnd;
   signals: SignalPreview[];
   outputHosts?: SignalOutputHost[];
+  /**
+   * Every mast outside Bowties that drives a pin on an output host, with the
+   * Logic that sets its aspects.
+   */
+  outsideOwners?: OutsideOwner[];
   capability: {
     kind: 'incompletePreview';
     stage: 'unavailable';
@@ -155,6 +172,16 @@ export interface BlockSignalsPreview {
     apply: 'unavailable';
   };
   issues: ProposalIssue[];
+}
+
+export interface OutsideOwner {
+  nodeKey: string;
+  /** "Mast N". */
+  owner: string;
+  /** Logic numbers on the same node whose actions set the mast's aspects. */
+  matchedLogic: number[];
+  /** The subset of `matchedLogic` that also sends other events; kept, with only the matching actions reset. */
+  keptLogic: number[];
 }
 
 export async function previewBlockSignals(
@@ -177,6 +204,12 @@ export interface ComposeBlockSignalsRequest {
   facilityId?: string;
   line: BlockSignalsPreviewRequest;
   wiring: SignalWiring[];
+  /**
+   * Untracked owners released for this facility. Their reset edits come back
+   * merged with the recipe's (recipe wins on a shared leaf) and their pins and
+   * slots count as free.
+   */
+  release?: ReleasedOwner[];
 }
 
 /** A generated configuration edit; pass `nodeKey/space/address/value` to `configEditor.applyEdit`. */
@@ -194,7 +227,7 @@ export interface FreshEventIdValue {
   type: 'freshEventId';
 }
 
-/** An edit from a removal: like a `ComposedEdit`, but may ask for a fresh event ID. */
+/** An edit that may ask for a fresh event ID: a removal's or a release's. */
 export interface RemovalEdit extends Omit<ComposedEdit, 'value'> {
   value: TreeConfigValue | FreshEventIdValue;
 }
@@ -224,6 +257,7 @@ export type ComposeIssueCode =
   | 'noFreeMast'
   | 'noFreeLogic'
   | 'claimedSlotUnavailable'
+  | 'releaseInvalid'
   | 'occupancyEventsMissing'
   | 'aspectEventsMissing'
   | 'unsupportedBlockCount'
@@ -240,9 +274,12 @@ export interface ComposeIssue {
   bindingIssue?: ProposalIssue;
 }
 
-/** With any issue, `edits` and `claimedSlots` are empty. */
+/**
+ * With any issue, `edits` and `claimedSlots` are empty. Edits from released
+ * owners may carry `freshEventId`; the recipe's never do.
+ */
 export interface ComposeBlockSignalsResponse {
-  edits: ComposedEdit[];
+  edits: RemovalEdit[];
   claimedSlots: ClaimedSlot[];
   issues: ComposeIssue[];
 }

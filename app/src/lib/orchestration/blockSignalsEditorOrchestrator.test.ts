@@ -43,6 +43,7 @@ const {
   chooseGreenOutput,
   chooseRedOutput,
   chooseWiringNode,
+  releaseAndPlaceOutput,
   finishBlockSignalsEditor,
   moveTurnout,
   navigateBlockSignalsEditor,
@@ -514,5 +515,53 @@ describe('blockSignalsEditor edit mode (E2a B5b)', () => {
     expect(store.open).toBe(false);
     expect(effectiveNodeStore.isDirty).toBe(false);
     expect(facilitiesStore.facilities[0].name).toBe('Saved line');
+  });
+});
+
+describe('blockSignalsEditor released owners (E2c B2)', () => {
+  const OWNER = { nodeKey: HOST.nodeKey, owner: 'Mast 2' };
+
+  beforeEach(async () => {
+    previewBlockSignalsMock.mockReset();
+    previewBlockSignalsMock.mockImplementation(async () => signalPreview());
+    composeBlockSignalsMock.mockReset();
+    composeBlockSignalsMock.mockResolvedValue({ edits: [], claimedSlots: [], issues: [] });
+    resetBlockSignalsEditorForNewLayout();
+    configChangesStore.clearAllDrafts();
+    facilitiesStore.hydrateBaseline([]);
+    channelsStore.hydrateBaseline([]);
+    behaviorTemplatesStore.reset();
+    await behaviorTemplatesStore.loadBehaviorTemplates();
+  });
+
+  it('sends the released owners with preview and check, and Done stages them; Cancel stages nothing', async () => {
+    startBlockSignalsEditor('Main line');
+    await addSignaledBlock(CEDAR);
+    navigateBlockSignalsEditor('wiring');
+    await chooseWiringNode('s1', HOST.nodeKey);
+    await chooseGreenOutput('s1', 3);
+    await releaseAndPlaceOutput('s1', 'red', OWNER, 1);
+
+    expect(previewBlockSignalsMock.mock.lastCall![0].release).toEqual([OWNER]);
+    await setSignalName('s1', 'Renamed');
+    expect(previewBlockSignalsMock.mock.lastCall![0].release).toEqual([OWNER]);
+    expect(composeBlockSignalsMock.mock.lastCall![0].release).toEqual([OWNER]);
+    expect(store.canFinish).toBe(true);
+
+    composeBlockSignalsMock.mockClear();
+    await finishBlockSignalsEditor();
+    expect(composeBlockSignalsMock.mock.lastCall![0].release).toEqual([OWNER]);
+    expect(store.open).toBe(false);
+    expect(store.released).toEqual([]);
+
+    startBlockSignalsEditor('Second');
+    await addSignaledBlock(CEDAR);
+    navigateBlockSignalsEditor('wiring');
+    await chooseWiringNode('s1', HOST.nodeKey);
+    await releaseAndPlaceOutput('s1', 'red', OWNER, 1);
+    configChangesStore.clearAllDrafts();
+    cancelBlockSignalsEditor();
+    expect(store.released).toEqual([]);
+    expect(configChangesStore.draftEntries()).toEqual([]);
   });
 });

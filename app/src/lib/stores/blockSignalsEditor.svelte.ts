@@ -7,6 +7,7 @@ import type {
   ComposeIssue,
   ListedBlock,
   Movements,
+  ReleasedOwner,
   SelectedDetectedBlock,
   SignalOutputHost,
   SignalSettings,
@@ -15,6 +16,7 @@ import type {
 } from '$lib/api/signaling';
 import type { BlockSignalsRecord } from '$lib/api/facilities';
 import type { TurnoutShape } from '$lib/components/BlockSignals/trackGeometry';
+import { canonicalizeNodeId } from '$lib/utils/nodeRoster';
 import { generateUuidV4 } from '$lib/utils/uuid';
 
 export type BlockSignalsStep = 'blocks' | 'aspects' | 'appearance' | 'wiring' | 'review';
@@ -116,6 +118,7 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
   private _issues = $state<ComposeIssue[]>([]);
   private _checkFresh = $state(false);
   private _finishError = $state<string | null>(null);
+  private _released = $state<ReleasedOwner[]>([]);
 
   get open(): boolean { return this._open; }
   get mode(): BlockSignalsEditorMode { return this._mode; }
@@ -130,6 +133,8 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
   get signalOverrides(): Record<string, SignalSettings> { return this._signalOverrides; }
   get signalNames(): Record<string, string> { return this._signalNames; }
   get turnoutShapes(): Record<string, TurnoutShape> { return this._turnoutShapes; }
+  /** Untracked owners the user chose to release so their pins can be used. */
+  get released(): ReleasedOwner[] { return this._released; }
   get preview(): BlockSignalsPreview | null { return this._preview; }
   get error(): string | null { return this._error; }
   get steps(): ReadonlyArray<BlockSignalsStepState> {
@@ -245,6 +250,20 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
     const choice = this._wiring[signalId];
     if (!choice || choice[other] === output) return;
     this._wiring = { ...this._wiring, [signalId]: { ...choice, [pin]: output } };
+  }
+
+  /** Release an untracked owner; the same owner is held once. */
+  releaseOwner(owner: ReleasedOwner): void {
+    const key = canonicalizeNodeId(owner.nodeKey);
+    if (this._released.some((r) => canonicalizeNodeId(r.nodeKey) === key && r.owner === owner.owner)) return;
+    this._released = [...this._released, { ...owner }];
+  }
+
+  /** Release an owner and place the lamp on its (now free) pin in one step. */
+  releaseAndPlace(signalId: string, lamp: 'red' | 'green', owner: ReleasedOwner, output: number): void {
+    this.releaseOwner(owner);
+    if (lamp === 'red') this.chooseRedOutput(signalId, output);
+    else this.chooseGreenOutput(signalId, output);
   }
 
   start(initialName: string): void {
@@ -399,6 +418,7 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
       settings: this._settings,
       signalOverrides: Object.entries(this._signalOverrides).map(([signalId, settings]) => ({ signalId, ...settings })),
       signalNames: this._signalNames,
+      release: this._released,
     };
   }
 
@@ -446,6 +466,7 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
     this._issues = [];
     this._checkFresh = false;
     this._finishError = null;
+    this._released = [];
   }
 }
 

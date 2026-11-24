@@ -5,14 +5,20 @@
 
 use std::collections::HashMap;
 
-use super::outputs::signal_outputs_from_configuration;
-use super::{
-    SignalAppearanceSet, SignalDriver, SignalHardwareEvidence, SignalHardwareFacts,
-    SignalHardwareHost, SignalStyle,
+use super::compiler::{
+    mast_processing_path, release_slots, untracked_release_targets, CompileIssue, CompileIssueCode, EditValue,
+    NodeConfigEdit, NodeSlotFacts, UntrackedOwnerRelease,
 };
+use super::outputs::signal_outputs_from_configuration;
+use super::slots::{node_slot_facts, LeafPathIndex};
+use super::{
+    ReleaseRequest, SignalAppearanceSet, SignalDriver, SignalHardwareEvidence, SignalHardwareFacts,
+    SignalHardwareHost, SignalOutputOwner, SignalStyle,
+};
+use crate::layout::facilities::{ClaimedSlot, ClaimedSlotKind};
 use crate::layout::state::LayoutState;
 use crate::node_key::NodeKey;
-use crate::node_tree::NodeConfigTree;
+use crate::node_tree::{effective_value, ConfigNode, ConfigValue, NodeConfigTree};
 use crate::profile::{make_profile_key, StructureProfile};
 
 /// The effective configuration tree of every node with a stored tree.
@@ -22,6 +28,168 @@ pub fn effective_trees(layout: &LayoutState) -> HashMap<NodeKey, NodeConfigTree>
         .into_iter()
         .filter_map(|key| layout.effective_config_tree(&key).map(|tree| (key, tree.into_owned())))
         .collect()
+}
+
+/// The effective trees as they read once the requested releases are applied,
+/// and the release edits that produce that state.
+#[derive(Debug, Clone, Default)]
+pub struct ReleaseOverlay {
+    /// Every tree, with the release edits applied. Unchanged when `issues`
+    /// is not empty.
+    pub trees: HashMap<NodeKey, NodeConfigTree>,
+    /// The release edits (paths on the request's node keys); empty on issues.
+    pub edits: Vec<NodeConfigEdit>,
+    /// Blocking issues: a named owner that cannot be released.
+    pub issues: Vec<CompileIssue>,
+}
+
+/// Apply the named releases to a request-scoped copy of the effective trees.
+///
+/// This is the one place releases take effect: pin owners, slot facts and the
+/// free-slot pick are all derived from `trees` afterwards. An owner is released
+/// only when named, and only when it is a mast or Direct Lamp row that is
+/// really in use and that no facility claims (`claimed` holds every
+/// facility's slots, including the one being composed). Fresh event IDs the
+/// frontend will generate read as placeholders that match no real event.
+pub fn overlay_releases(
+    trees: HashMap<NodeKey, NodeConfigTree>,
+    release: &[ReleaseRequest],
+    claimed: &[ClaimedSlot],
+) -> ReleaseOverlay {
+    let mut overlay = ReleaseOverlay { trees, ..Default::default() };
+    if release.is_empty() {
+        return overlay;
+    }
+    let invalid = |node_key: &str, detail: String| CompileIssue {
+        code: CompileIssueCode::ReleaseInvalid,
+        signal_id: None,
+        node_key: Some(node_key.to_string()),
+        detail,
+        binding_issue: None,
+    };
+    let mut owners = Vec::new();
+    let mut facts: Vec<NodeSlotFacts> = Vec::new();
+    for request in release {
+        let Some((key, tree)) = NodeKey::parse(&request.node_key)
+            .ok()
+            .and_then(|key| overlay.trees.get(&key).map(|tree| (key, tree)))
+        else {
+            overlay.issues.push(invalid(
+                &request.node_key,
+                format!("{} is on a node whose configuration is not loaded.", request.owner),
+            ));
+            continue;
+        };
+        let claims = claims_on(claimed, &key, &request.node_key);
+        let index = LeafPathIndex::new(tree);
+        let nonzero = |path: &str| {
+            matches!(index.leaf(path).and_then(effective_value), Some(ConfigValue::Int { value }) if *value != 0)
+        };
+        let problem = match request.owner {
+            SignalOutputOwner::Mast(n) if claims.iter().any(|c| c.kind == ClaimedSlotKind::Mast && c.index == n) => {
+                Some("is owned by a facility and cannot be released here")
+            }
+            SignalOutputOwner::Mast(n) if !nonzero(&mast_processing_path(n)) => Some("is not in use"),
+            SignalOutputOwner::DirectLamp(n)
+                if !nonzero(&format!("Direct Lamp Control/Lamp[{n}]/Lamp Selection")) =>
+            {
+                Some("is not in use")
+            }
+            _ => None,
+        };
+        if let Some(problem) = problem {
+            overlay.issues.push(invalid(&request.node_key, format!("{} {problem}.", request.owner)));
+            continue;
+        }
+        if !facts.iter().any(|f| f.node_key == request.node_key) {
+            facts.push(node_slot_facts(&request.node_key, tree, &claims));
+        }
+        owners.push((request.node_key.clone(), request.owner));
+    }
+    if !overlay.issues.is_empty() {
+        return overlay;
+    }
+    let untracked = untracked_release_targets(&owners, &facts);
+    let released = release_slots(&untracked.targets, &facts);
+    overlay.issues = released.issues;
+    if !overlay.issues.is_empty() {
+        return overlay;
+    }
+    let mut placeholder = 0u16;
+    for edit in &released.edits {
+        let Some(tree) = NodeKey::parse(&edit.node_key).ok().and_then(|key| overlay.trees.get_mut(&key)) else {
+            continue;
+        };
+        let Some(at) = LeafPathIndex::new(tree).leaf(&edit.path).map(|l| (l.space, l.address)) else { continue };
+        let value = match &edit.value {
+            EditValue::Int { value } => ConfigValue::Int { value: *value },
+            EditValue::String { value } => ConfigValue::String { value: value.clone() },
+            EditValue::EventId { bytes } => event_value(*bytes),
+            EditValue::FreshEventId => {
+                placeholder += 1;
+                let [hi, lo] = placeholder.to_be_bytes();
+                event_value([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, hi, lo])
+            }
+        };
+        for segment in &mut tree.segments {
+            set_leaf_value(&mut segment.children, at, &value);
+        }
+    }
+    overlay.edits = released.edits;
+    overlay
+}
+
+/// The facilities' claims on one node, re-keyed to the string the request uses
+/// (slot facts compare node keys as strings).
+fn claims_on(claimed: &[ClaimedSlot], key: &NodeKey, as_key: &str) -> Vec<ClaimedSlot> {
+    claimed
+        .iter()
+        .filter(|c| NodeKey::parse(&c.node_key).is_ok_and(|k| &k == key))
+        .map(|c| ClaimedSlot { node_key: as_key.to_string(), ..c.clone() })
+        .collect()
+}
+
+fn event_value(bytes: [u8; 8]) -> ConfigValue {
+    ConfigValue::EventId { bytes, hex: lcc_rs::EventID::new(bytes).to_canonical() }
+}
+
+/// Set a leaf's effective value, replacing any unsaved edit on it.
+fn set_leaf_value(nodes: &mut [ConfigNode], at: (u8, u32), value: &ConfigValue) {
+    for node in nodes {
+        match node {
+            ConfigNode::Leaf(leaf) if (leaf.space, leaf.address) == at => {
+                leaf.value = Some(value.clone());
+                leaf.modified_value = None;
+            }
+            ConfigNode::Leaf(_) => {}
+            ConfigNode::Group(group) => set_leaf_value(&mut group.children, at, value),
+        }
+    }
+}
+
+/// Every mast outside Bowties that drives a pin on a host, with the Logic
+/// that sets its aspects, so the Wiring step can describe it before any
+/// release. Read from the same (overlaid) trees as the hosts' pin owners.
+pub fn outside_mast_owners(
+    trees: &HashMap<NodeKey, NodeConfigTree>,
+    hosts: &[SignalHardwareHost],
+    claimed: &[ClaimedSlot],
+) -> Vec<UntrackedOwnerRelease> {
+    let mut owners: Vec<(String, SignalOutputOwner)> = Vec::new();
+    let mut facts = Vec::new();
+    for host in hosts {
+        let Ok(key) = NodeKey::parse(&host.node_key) else { continue };
+        let Some(tree) = trees.get(&key) else { continue };
+        facts.push(node_slot_facts(&host.node_key, tree, &claims_on(claimed, &key, &host.node_key)));
+        for output in &host.outputs {
+            let Some(owner @ SignalOutputOwner::Mast(_)) = output.owner else { continue };
+            let entry = (host.node_key.clone(), owner);
+            if output.facility.is_none() && !owners.contains(&entry) {
+                owners.push(entry);
+            }
+        }
+    }
+    untracked_release_targets(&owners, &facts).owners
 }
 
 /// Project the profile declarations and complete effective configuration of
@@ -261,5 +429,158 @@ mod tests {
         }]);
         assert_eq!(mast_owner(&layout), None);
         assert!(!mast_slot_in_use(&layout));
+    }
+
+    fn set_event(tree: &mut NodeConfigTree, path: &str, bytes: [u8; 8]) {
+        let at = LeafPathIndex::new(tree).leaf(path).map(|l| (l.space, l.address)).expect(path);
+        fn go(nodes: &mut [ConfigNode], at: (u8, u32), bytes: [u8; 8]) {
+            for node in nodes {
+                match node {
+                    ConfigNode::Leaf(l) if (l.space, l.address) == at => {
+                        l.value = Some(ConfigValue::EventId { bytes, hex: String::new() });
+                    }
+                    ConfigNode::Leaf(_) => {}
+                    ConfigNode::Group(g) => go(&mut g.children, at, bytes),
+                }
+            }
+        }
+        for seg in &mut tree.segments {
+            go(&mut seg.children, at, bytes);
+        }
+    }
+
+    fn set_path_int(tree: &mut NodeConfigTree, path: &str, value: i64) {
+        let at = LeafPathIndex::new(tree).leaf(path).map(|l| (l.space, l.address)).expect(path);
+        for seg in &mut tree.segments {
+            set_leaf(&mut seg.children, at.0, at.1, value);
+        }
+    }
+
+    /// Mast 1 (Processing Normal) owns pins 3 and 1 and its rule 4 lamp 5; Logic 1 sets
+    /// its aspects. Masts 1 and 2 carry Stop/Clear set-aspect events.
+    fn leftover_tree() -> NodeConfigTree {
+        let mut tree = active_mast_tree();
+        for mast in 1..=2u8 {
+            for rule in 1..=3u8 {
+                set_event(&mut tree, &format!("Rule to Aspect/Mast[{mast}]/Rule[{rule}]/set aspect"), [2, 0, 0, 0, 0, 0, mast, rule]);
+            }
+        }
+        set_path_int(&mut tree, "Rule to Aspect/Mast[1]/Rule[2]/Appearance[1]/Lamp Selection", 1);
+        set_path_int(&mut tree, "Rule to Aspect/Mast[1]/Rule[4]/Appearance[1]/Lamp Selection", 5);
+        set_path_int(&mut tree, &crate::signaling::compiler::logic_function_path(1), 2);
+        set_path_int(&mut tree, "Conditionals/Logic[1]/Action#2[1]/Condition", 3);
+        set_event(&mut tree, "Conditionals/Logic[1]/Action#2[1]/Action Event", [2, 0, 0, 0, 0, 0, 1, 1]);
+        tree
+    }
+
+    fn compile_with(
+        trees: &HashMap<NodeKey, NodeConfigTree>,
+    ) -> crate::signaling::compiler::CompiledBlockSignals {
+        use crate::signaling::compiler::{compile_block_signals, BlockOccupancyEvents, CompileInput, SignalWiring};
+        use crate::signaling::{preview_block_signals, BlockSignalsRequest, SelectedBlock};
+        let line = BlockSignalsRequest {
+            facility_id: "abs:test".into(),
+            facility_name: "Main".into(),
+            blocks: vec![SelectedBlock {
+                block_id: "block:a".into(),
+                name: "Block A".into(),
+                joined_to_previous: false,
+                turnouts: vec![],
+            }],
+            ..Default::default()
+        };
+        let signal_id = preview_block_signals(line.clone()).signals[0].signal_id.clone();
+        let key = NodeKey::parse(NODE).unwrap();
+        compile_block_signals(&CompileInput {
+            line,
+            wiring: vec![SignalWiring { signal_id, node_key: NODE.into(), red_output: 3, green_output: 1 }],
+            hardware: signal_hardware_facts(trees, &profiles()),
+            nodes: vec![node_slot_facts(NODE, &trees[&key], &[])],
+            occupancy: vec![BlockOccupancyEvents {
+                block_id: "block:a".into(),
+                occupied: Some([1, 1, 1, 1, 1, 1, 0, 1]),
+                clear: Some([1, 1, 1, 1, 1, 1, 0, 2]),
+            }],
+            own_claims: vec![],
+        })
+    }
+
+    fn release_of(owner: SignalOutputOwner) -> Vec<crate::signaling::ReleaseRequest> {
+        vec![crate::signaling::ReleaseRequest { node_key: NODE.into(), owner }]
+    }
+
+    #[test]
+    fn releasing_an_untracked_mast_frees_its_pins_and_slots_and_release_edits_merge_under_the_recipe() {
+        use crate::signaling::compiler::{merge_release_edits, EditValue};
+        let key = NodeKey::parse(NODE).unwrap();
+        let trees = HashMap::from([(key.clone(), leftover_tree())]);
+        let blocked = compile_with(&trees);
+        assert!(blocked.issues.iter().any(|i| i.code == crate::signaling::compiler::CompileIssueCode::OutputInUse));
+
+        let overlay = overlay_releases(trees, &release_of(SignalOutputOwner::Mast(1)), &[]);
+        assert_eq!(overlay.issues, vec![]);
+        let hardware = signal_hardware_facts(&overlay.trees, &profiles());
+        assert!(hardware.hosts[0].outputs.iter().all(|o| o.owner.is_none()), "released mast's pins have no owner");
+
+        let compiled = compile_with(&overlay.trees);
+        assert_eq!(compiled.issues, vec![]);
+        assert_eq!(
+            compiled.claimed_slots.iter().map(|c| c.index).collect::<Vec<_>>(),
+            vec![1, 1],
+            "the freed Mast 1 and Logic 1 are the lowest free slots"
+        );
+
+        let merged = merge_release_edits(overlay.edits, compiled.edits);
+        let at = |path: &str| -> Vec<EditValue> {
+            merged.iter().filter(|e| e.path == path).map(|e| e.value.clone()).collect()
+        };
+        let mut leaves: Vec<_> = merged.iter().map(|e| (e.node_key.clone(), e.path.clone())).collect();
+        let total = leaves.len();
+        leaves.sort();
+        leaves.dedup();
+        assert_eq!(leaves.len(), total, "no leaf is edited twice");
+        // Release-only leaves survive: rule 4 lamp and a Logic variable event.
+        assert_eq!(at("Rule to Aspect/Mast[1]/Rule[4]/Appearance[1]/Lamp Selection"), vec![EditValue::Int { value: 0 }]);
+        assert_eq!(at("Conditionals/Logic[1]/Variable #2/set true"), vec![EditValue::FreshEventId]);
+        // Leaves both write take the recipe value.
+        assert_eq!(at("Rule to Aspect/Mast[1]/Rule[1]/Appearance[1]/Lamp Selection"), vec![EditValue::Int { value: 3 }]);
+        assert_eq!(
+            at("Conditionals/Logic[1]/Variable #1/set true"),
+            vec![EditValue::EventId { bytes: [1, 1, 1, 1, 1, 1, 0, 1] }]
+        );
+    }
+
+    #[test]
+    fn outside_masts_on_a_host_report_matched_logic_and_facility_masts_are_left_out() {
+        let mut tree = leftover_tree();
+        // Mast 2 drives pin 7 and a facility owns it.
+        set_path_int(&mut tree, &mast_processing_path(2), 1);
+        set_path_int(&mut tree, "Rule to Aspect/Mast[2]/Rule[1]/Appearance[1]/Lamp Selection", 7);
+        let trees = HashMap::from([(NodeKey::parse(NODE).unwrap(), tree)]);
+        let mut hosts = signal_hardware_facts(&trees, &profiles()).hosts;
+        hosts[0].outputs[6].facility =
+            Some(crate::signaling::OutputFacility { facility_id: "f".into(), name: "F".into() });
+
+        let outside = outside_mast_owners(&trees, &hosts, &[]);
+        assert_eq!(outside.len(), 1);
+        assert_eq!(outside[0].owner, SignalOutputOwner::Mast(1));
+        assert_eq!(outside[0].matched_logic, vec![1]);
+        assert!(outside[0].kept_logic.is_empty());
+    }
+
+    #[test]
+    fn releasing_a_facility_owned_mast_or_a_non_owner_is_a_blocking_issue_never_a_release() {
+        use crate::layout::facilities::{ClaimedSlot, ClaimedSlotKind};
+        let key = NodeKey::parse(NODE).unwrap();
+        let trees = HashMap::from([(key, leftover_tree())]);
+        let claimed = [ClaimedSlot { node_key: NODE.into(), kind: ClaimedSlotKind::Mast, index: 1 }];
+        let facility_owned = overlay_releases(trees.clone(), &release_of(SignalOutputOwner::Mast(1)), &claimed);
+        let idle_mast = overlay_releases(trees.clone(), &release_of(SignalOutputOwner::Mast(2)), &[]);
+        let idle_lamp = overlay_releases(trees, &release_of(SignalOutputOwner::DirectLamp(9)), &[]);
+        for overlay in [facility_owned, idle_mast, idle_lamp] {
+            assert_eq!(overlay.issues.len(), 1);
+            assert_eq!(overlay.issues[0].code, crate::signaling::compiler::CompileIssueCode::ReleaseInvalid);
+            assert!(overlay.edits.is_empty());
+        }
     }
 }

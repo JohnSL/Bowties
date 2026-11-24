@@ -31,6 +31,7 @@ import {
   composeBlockSignalsRemoval,
   type BlockSignalsPreviewRequest,
   type ComposeIssue,
+  type ReleasedOwner,
   type RemovalEdit,
   type SignalWiring,
 } from '$lib/api/signaling';
@@ -421,6 +422,8 @@ export interface CreateBlockSignalsFacilityArgs {
   name: string;
   line: BlockSignalsPreviewRequest;
   wiring: SignalWiring[];
+  /** Untracked owners released for this facility; their reset edits are staged with the recipe's. */
+  release?: ReleasedOwner[];
   /** The facility's signals in order; channel IDs are assigned here. */
   signals: { signalId: string; name: string; protectedBlock: string }[];
 }
@@ -466,7 +469,7 @@ async function stageBlockSignalsFacility(
   target: 'create' | 'update',
   args: CreateBlockSignalsFacilityArgs,
 ): Promise<CreateBlockSignalsFacilityResult> {
-  const { facilityId, name, line, wiring, signals } = args;
+  const { facilityId, name, line, wiring, signals, release } = args;
   const template = behaviorTemplatesStore.findByTemplateId(BLOCK_SIGNALS_TEMPLATE_ID);
   if (!template) return { ok: false, error: new UnknownReferenceError('template') };
 
@@ -480,7 +483,7 @@ async function stageBlockSignalsFacility(
   let composed;
   try {
     await syncDraftsForComposition();
-    composed = await composeBlockSignals({ facilityId, line, wiring });
+    composed = await composeBlockSignals({ facilityId, line, wiring, release });
   } catch (error) {
     return { ok: false, error };
   }
@@ -543,7 +546,7 @@ async function stageBlockSignalsFacility(
       }
     }
 
-    applyConfigEdits(composed.edits);
+    stageComposedEdits(composed.edits);
     return { ok: true };
   } catch (error) {
     restoreConfigDrafts(composed.edits, priorDrafts);
@@ -591,7 +594,7 @@ export class BlockSignalsRemovalError extends Error {
  * `leaveBoard`) and deleting the facility and its user-owned signal channels.
  *
  * Ordering is the rollback strategy: the only step that can throw
- * (`applyConfigEdits`) runs first, so a failure restores the prior drafts and
+ * (`stageComposedEdits`) runs first, so a failure restores the prior drafts and
  * the facility/channels were never touched. The deletes that follow are
  * non-throwing store transitions. Refuses on any release issue with nothing
  * staged. Never tears down bowties (the template has no mapping).
@@ -619,7 +622,7 @@ export async function removeBlockSignalsFacility(
 
   const priorDrafts = new Map(configChangesStore.draftEntries().map((d) => [d.key, d.value]));
   try {
-    stageRemovalEdits(edits);
+    stageComposedEdits(edits);
   } catch (error) {
     restoreConfigDrafts(edits, priorDrafts);
     return { ok: false, error };
@@ -641,11 +644,11 @@ function freshEventIdValue(nodeKey: string, tree: NodeConfigTree): TreeConfigVal
 }
 
 /**
- * Stage removal edits, replacing each `freshEventId` request with a generated
+ * Stage composed edits (a facility's recipe, a release or a removal), replacing each `freshEventId` request with a generated
  * event ID. Every needed node tree is checked first so a missing one throws
  * before anything is staged; each ID is staged before the next is generated.
  */
-function stageRemovalEdits(edits: readonly RemovalEdit[]): void {
+function stageComposedEdits(edits: readonly RemovalEdit[]): void {
   for (const edit of edits) {
     if (edit.value.type === 'freshEventId' && !nodeTreeStore.getTree(edit.nodeKey)) {
       throw new Error(`Configuration for node ${edit.nodeKey} is not loaded`);

@@ -5,6 +5,7 @@ import {
   type ExitEnd,
   type FacilitySignalSettings,
   type Movements,
+  type ReleasedOwner,
   type SelectedDetectedBlock,
   type SignalSettings,
   type TravelDirection,
@@ -98,6 +99,7 @@ class BlockSignalsEditorOrchestrator {
         name: store.facilityName,
         line: store.previewRequest(),
         wiring: store.signalWirings(),
+        release: store.released,
         signals: store.preview.signals.map((signal) => ({
           signalId: signal.signalId,
           name: signal.name,
@@ -140,6 +142,7 @@ class BlockSignalsEditorOrchestrator {
         facilityId: store.facilityId,
         line: store.previewRequest(),
         wiring,
+        release: store.released,
       });
       if (requestGeneration === this.requestGeneration) store.acceptCheck(response.issues);
     } catch (error) {
@@ -211,6 +214,9 @@ export const setSignalName = (signalId: string, name: string) => o.edit(() => st
 export const chooseWiringNode = (signalId: string, nodeKey: string) => o.wire(() => store.chooseWiringNode(signalId, nodeKey));
 export const chooseRedOutput = (signalId: string, output: number) => o.wire(() => store.chooseRedOutput(signalId, output));
 export const chooseGreenOutput = (signalId: string, output: number) => o.wire(() => store.chooseGreenOutput(signalId, output));
+/** Release an untracked owner and place the lamp on its pin; the release rides every later preview and check. */
+export const releaseAndPlaceOutput = (signalId: string, lamp: 'red' | 'green', owner: ReleasedOwner, output: number) =>
+  o.edit(() => store.releaseAndPlace(signalId, lamp, owner, output));
 
 /** The intents the editor components emit. */
 export const blockSignalsEditorActions = {
@@ -237,5 +243,6 @@ export const blockSignalsEditorActions = {
   chooseWiringNode,
   chooseRedOutput,
   chooseGreenOutput,
+  releaseAndPlaceOutput,
 };
 export type BlockSignalsEditorActions = typeof blockSignalsEditorActions;

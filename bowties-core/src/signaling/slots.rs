@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::compiler::{
-    logic_function_path, mast_processing_path, EditValue, LogicFact, MastFact, NodeConfigEdit,
+    logic_function_path, mast_processing_path, EditValue, LogicAction, LogicFact, MastFact, NodeConfigEdit,
     NodeSlotFacts,
 };
 use crate::layout::facilities::{ClaimedSlot, ClaimedSlotKind, FacilitiesDocument};
@@ -166,9 +166,17 @@ fn collect_leaves<'a>(
     }
 }
 
+fn event_value(index: &LeafPathIndex<'_>, path: &str) -> Option<[u8; 8]> {
+    match index.leaf(path).and_then(effective_value) {
+        Some(ConfigValue::EventId { bytes, .. }) => Some(*bytes),
+        _ => None,
+    }
+}
+
 /// Slot facts for one node: which masts and Logic conditionals are in use
 /// (non-zero effective processing/function, missing evidence, or claimed by
-/// `claimed`) and each mast's Rule 1..3 `set aspect` events.
+/// `claimed`), which of those a facility claims, every mast rule's `set aspect`
+/// event, each Logic's four actions and the Direct Lamp rows present.
 pub fn node_slot_facts(node_key: &str, tree: &NodeConfigTree, claimed: &[ClaimedSlot]) -> NodeSlotFacts {
     let index = LeafPathIndex::new(tree);
     let is_claimed = |kind: ClaimedSlotKind, i: u32| {
@@ -181,17 +189,13 @@ pub fn node_slot_facts(node_key: &str, tree: &NodeConfigTree, claimed: &[Claimed
     let masts = (1..)
         .take_while(|i| index.leaf(&mast_processing_path(*i)).is_some())
         .map(|i| {
-            let event = |rule: u32| {
-                let path = format!("Rule to Aspect/Mast[{i}]/Rule[{rule}]/set aspect");
-                match index.leaf(&path).and_then(effective_value) {
-                    Some(ConfigValue::EventId { bytes, .. }) => Some(*bytes),
-                    _ => None,
-                }
-            };
+            let rule_path = |rule: u32| format!("Rule to Aspect/Mast[{i}]/Rule[{rule}]/set aspect");
+            let event = |rule: u32| event_value(&index, &rule_path(rule));
             MastFact {
                 index: i,
                 in_use: nonzero(&mast_processing_path(i)) || is_claimed(ClaimedSlotKind::Mast, i),
-                set_aspect_events: [event(1), event(2), event(3)],
+                claimed: is_claimed(ClaimedSlotKind::Mast, i),
+                set_aspect_events: (1..).take_while(|r| index.leaf(&rule_path(*r)).is_some()).map(event).collect(),
             }
         })
         .collect();
@@ -200,9 +204,24 @@ pub fn node_slot_facts(node_key: &str, tree: &NodeConfigTree, claimed: &[Claimed
         .map(|i| LogicFact {
             index: i,
             in_use: nonzero(&logic_function_path(i)) || is_claimed(ClaimedSlotKind::Logic, i),
+            claimed: is_claimed(ClaimedSlotKind::Logic, i),
+            actions: (1..)
+                .take_while(|a| index.leaf(&format!("Conditionals/Logic[{i}]/Action#2[{a}]/Condition")).is_some())
+                .map(|a| {
+                    let base = format!("Conditionals/Logic[{i}]/Action#2[{a}]");
+                    let condition = match index.leaf(&format!("{base}/Condition")).and_then(effective_value) {
+                        Some(ConfigValue::Int { value }) => Some(*value),
+                        _ => None,
+                    };
+                    LogicAction { condition, event: event_value(&index, &format!("{base}/Action Event")) }
+                })
+                .collect(),
         })
         .collect();
-    NodeSlotFacts { node_key: node_key.to_string(), masts, logic }
+    let direct_lamps = (1..)
+        .take_while(|i| index.leaf(&format!("Direct Lamp Control/Lamp[{i}]/Lamp Selection")).is_some())
+        .collect();
+    NodeSlotFacts { node_key: node_key.to_string(), masts, logic, direct_lamps }
 }
 
 /// Slots claimed by Automatic Block Signals facilities, excluding the facility
@@ -332,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn set_aspect_events_come_from_rules_one_to_three() {
+    fn set_aspect_events_come_from_the_rule_that_holds_them() {
         let mut tree = zeroed_tree();
         let bytes = [2, 0, 0, 0, 0, 0, 1, 3];
         set_value(
@@ -341,7 +360,36 @@ mod tests {
             ConfigValue::EventId { bytes, hex: String::new() },
         );
         let facts = node_slot_facts(NODE, &tree, &[]);
-        assert_eq!(facts.masts[0].set_aspect_events, [None, None, Some(bytes)]);
+        let mut expected = vec![None; 8];
+        expected[2] = Some(bytes);
+        assert_eq!(facts.masts[0].set_aspect_events, expected);
+    }
+
+    #[test]
+    fn facts_read_all_eight_rules_every_logic_action_and_who_claims_each_slot() {
+        let mut tree = zeroed_tree();
+        let event = |last: u8| ConfigValue::EventId { bytes: [2, 0, 0, 0, 0, 0, 1, last], hex: String::new() };
+        set_value(&mut tree, "Rule to Aspect/Mast[1]/Rule[8]/set aspect", event(8));
+        set_int(&mut tree, &mast_processing_path(1), 1);
+        set_int(&mut tree, &mast_processing_path(2), 1);
+        set_int(&mut tree, &logic_function_path(3), 2);
+        set_int(&mut tree, "Conditionals/Logic[3]/Action#2[1]/Condition", 0);
+        set_int(&mut tree, "Conditionals/Logic[3]/Action#2[2]/Condition", 4);
+        set_value(&mut tree, "Conditionals/Logic[3]/Action#2[2]/Action Event", event(9));
+        let claimed = [ClaimedSlot { node_key: NODE.into(), kind: ClaimedSlotKind::Mast, index: 2 }];
+        let facts = node_slot_facts(NODE, &tree, &claimed);
+
+        assert_eq!(facts.masts[0].set_aspect_events.len(), 8);
+        assert_eq!(facts.masts[0].set_aspect_events[7], Some([2, 0, 0, 0, 0, 0, 1, 8]));
+        assert!(facts.masts[0].in_use && !facts.masts[0].claimed, "configured outside Bowties");
+        assert!(facts.masts[1].in_use && facts.masts[1].claimed, "claimed by a facility");
+
+        let logic = &facts.logic[2];
+        assert_eq!(logic.actions.len(), 4);
+        assert_eq!(logic.actions[1].condition, Some(4));
+        assert_eq!(logic.actions[1].event, Some([2, 0, 0, 0, 0, 0, 1, 9]));
+        assert_eq!(logic.actions[0].condition, Some(0));
+        assert!(logic.in_use && !logic.claimed);
     }
 
     #[test]
@@ -365,7 +413,7 @@ mod tests {
 
     #[test]
     fn released_slots_count_as_free_once_the_release_edits_are_applied() {
-        use crate::signaling::compiler::{release_slots, EditValue};
+        use crate::signaling::compiler::{release_slots, EditValue, ReleaseTarget};
         let mut tree = zeroed_tree();
         set_int(&mut tree, &mast_processing_path(2), 1);
         set_int(&mut tree, &logic_function_path(1), 2);
@@ -376,7 +424,8 @@ mod tests {
         let before = node_slot_facts(NODE, &tree, &[]);
         assert!(before.masts[1].in_use && before.logic[0].in_use);
 
-        let released = release_slots(&claims, &[before]);
+        let targets: Vec<_> = claims.iter().map(ReleaseTarget::from).collect();
+        let released = release_slots(&targets, &[before]);
         assert_eq!(released.issues, vec![]);
         for edit in &released.edits {
             let value = match &edit.value {
@@ -395,21 +444,60 @@ mod tests {
 
     #[test]
     fn every_release_edit_resolves_in_the_real_cdi_and_fresh_event_ids_serialize_as_such() {
-        use crate::signaling::compiler::release_slots;
+        use crate::signaling::compiler::{release_slots, ReleaseSlot, ReleaseTarget};
         let tree = zeroed_tree();
         let claims = vec![
             ClaimedSlot { node_key: NODE.into(), kind: ClaimedSlotKind::Mast, index: 2 },
             ClaimedSlot { node_key: NODE.into(), kind: ClaimedSlotKind::Logic, index: 1 },
         ];
-        let released = release_slots(&claims, &[node_slot_facts(NODE, &tree, &[])]);
+        let mut targets: Vec<_> = claims.iter().map(ReleaseTarget::from).collect();
+        targets.push(ReleaseTarget { node_key: NODE.into(), slot: ReleaseSlot::DirectLamp(3) });
+        let released = release_slots(&targets, &[node_slot_facts(NODE, &tree, &[])]);
         assert_eq!(released.issues, vec![]);
         let indexes = HashMap::from([(NODE.to_string(), LeafPathIndex::new(&tree))]);
         let resolved = resolve_edits(&indexes, &released.edits).expect("release edits resolve with matching kinds");
         let fresh: Vec<_> = resolved.iter().filter(|e| e.value == ResolvedValue::FreshEventId).collect();
-        assert_eq!(fresh.len(), 4);
+        // Logic: 4 variable events + 4 action events; Direct Lamp: On and Off.
+        assert_eq!(fresh.len(), 10);
         assert_eq!(serde_json::to_value(&fresh[0].value).unwrap(), serde_json::json!({"type": "freshEventId"}));
         let int = resolved.iter().find(|e| e.path.ends_with("/Mast Processing")).unwrap();
         assert_eq!(serde_json::to_value(&int.value).unwrap(), serde_json::json!({"type": "int", "value": 0}));
+    }
+
+    #[test]
+    fn untracked_release_of_a_real_tree_matches_logic_and_its_edits_resolve_in_the_cdi() {
+        use crate::signaling::compiler::{release_slots, untracked_release_targets};
+        use crate::signaling::SignalOutputOwner;
+        let mut tree = zeroed_tree();
+        let aspect = ConfigValue::EventId { bytes: [2, 0, 0, 0, 0, 0, 4, 1], hex: String::new() };
+        let other = ConfigValue::EventId { bytes: [7; 8], hex: String::new() };
+        set_int(&mut tree, &mast_processing_path(4), 1);
+        set_value(&mut tree, "Rule to Aspect/Mast[4]/Rule[1]/set aspect", aspect.clone());
+        for logic in [2, 5] {
+            set_int(&mut tree, &logic_function_path(logic), 2);
+            for action in [1, 2, 4] {
+                set_int(&mut tree, &format!("Conditionals/Logic[{logic}]/Action#2[{action}]/Condition"), 0);
+            }
+            set_int(&mut tree, &format!("Conditionals/Logic[{logic}]/Action#2[3]/Condition"), 3);
+            set_value(&mut tree, &format!("Conditionals/Logic[{logic}]/Action#2[3]/Action Event"), aspect.clone());
+        }
+        set_int(&mut tree, "Conditionals/Logic[5]/Action#2[4]/Condition", 1);
+        set_value(&mut tree, "Conditionals/Logic[5]/Action#2[4]/Action Event", other);
+        let facts = node_slot_facts(NODE, &tree, &[]);
+        let owners = [(NODE.to_string(), SignalOutputOwner::Mast(4)), (NODE.to_string(), SignalOutputOwner::DirectLamp(16))];
+        let untracked = untracked_release_targets(&owners, &[facts.clone()]);
+        assert_eq!(untracked.owners[0].matched_logic, vec![2, 5]);
+        assert_eq!(untracked.owners[0].kept_logic, vec![5]);
+
+        let released = release_slots(&untracked.targets, &[facts]);
+        assert_eq!(released.issues, vec![]);
+        let indexes = HashMap::from([(NODE.to_string(), LeafPathIndex::new(&tree))]);
+        let resolved = resolve_edits(&indexes, &released.edits).expect("untracked release edits resolve");
+        // Mast 4 has 8 rules x (4 appearance lamps + effects lamp) + Processing and Description.
+        assert_eq!(resolved.iter().filter(|e| e.path.starts_with("Rule to Aspect/Mast[4]/")).count(), 2 + 8 * 5);
+        let kept: Vec<_> = resolved.iter().filter(|e| e.path.starts_with("Conditionals/Logic[5]/")).collect();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].value, ResolvedValue::FreshEventId);
     }
 
     #[test]

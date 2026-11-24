@@ -1045,3 +1045,76 @@ describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)',
     expect(facilitiesStore.facilities).toHaveLength(1);
   });
 });
+
+describe('createBlockSignalsFacility with released owners (Spec 020 / E2c B3)', () => {
+  const RELEASE = [{ nodeKey: ABS_NODE, owner: 'Mast 2' }];
+  const RELEASED = {
+    edits: [
+      { nodeKey: ABS_NODE, space: 253, address: 10, path: 'a', value: { type: 'int', value: 1 } },
+      { nodeKey: ABS_NODE, space: 253, address: 30, path: 'e1', value: { type: 'freshEventId' } },
+      { nodeKey: ABS_NODE, space: 253, address: 38, path: 'e2', value: { type: 'freshEventId' } },
+    ],
+    claimedSlots: [{ nodeKey: ABS_NODE, kind: 'mast', index: 1 }],
+    issues: [],
+  };
+
+  function loadTree(): void {
+    nodeTreeStore.setTree(ABS_NODE, {
+      nodeId: ABS_NODE, identity: null, connectorProfile: null, profileApplied: true,
+      unknownVariants: [],
+      segments: [{
+        name: 'Conditionals', description: null, origin: 0, space: 253,
+        children: [30, 38].map((address) => ({
+          kind: 'leaf', name: `Event ${address}`, description: null,
+          elementType: 'eventId', address, size: 8, space: 253,
+          path: ['Conditionals', `Event ${address}`],
+          value: { type: 'eventId', bytes: [2, 1, 1, 1, 1, 1, 1, 1], hex: '0201010101010101' },
+          eventRole: 'Consumer', constraints: null, readOnly: false, modifiedValue: null,
+        })),
+      }],
+    } as unknown as Parameters<typeof nodeTreeStore.setTree>[1]);
+  }
+
+  beforeEach(async () => {
+    vi.restoreAllMocks();
+    bowtieMetadataStore.clearAll();
+    configChangesStore.clearAllDrafts();
+    facilitiesStore.hydrateBaseline([]);
+    channelsStore.hydrateBaseline([]);
+    vi.mocked(composeBlockSignals).mockReset();
+    vi.mocked(composeBlockSignals).mockResolvedValue(RELEASED as never);
+    listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR, ABS_TEMPLATE]);
+    behaviorTemplatesStore.reset();
+    await behaviorTemplatesStore.loadBehaviorTemplates();
+    nodeTreeStore.reset();
+    loadTree();
+  });
+
+  it('composes with the released owners and stages their fresh event IDs beside the recipe values', async () => {
+    const result = await orch.createBlockSignalsFacility({ ...absArgs(), release: RELEASE });
+
+    expect(result).toEqual({ ok: true });
+    expect((vi.mocked(composeBlockSignals).mock.calls[0][0] as ComposeBlockSignalsRequest).release).toEqual(RELEASE);
+    const drafts = new Map(configChangesStore.draftEntries().map((d) => [d.key, d.value]));
+    const first = drafts.get(editKeyForLeaf(ABS_NODE, 253, 30)) as { type: string; hex: string };
+    const second = drafts.get(editKeyForLeaf(ABS_NODE, 253, 38)) as { type: string; hex: string };
+    expect(first.type).toBe('eventId');
+    expect(first.hex).toMatch(/^050101018800[0-9A-F]{4}$/i);
+    expect(first.hex).not.toBe(second.hex);
+    expect(drafts.get(editKeyForLeaf(ABS_NODE, 253, 10))).toEqual({ type: 'int', value: 1 });
+  });
+
+  it('rolls everything back when a released owner\'s node tree is not loaded', async () => {
+    nodeTreeStore.reset();
+    configEditor.applyEdit(editKeyForLeaf(ABS_NODE, 253, 10), { type: 'int', value: 5 });
+
+    const result = await orch.createBlockSignalsFacility({ ...absArgs(), release: RELEASE });
+
+    expect(result).toMatchObject({ ok: false });
+    expect(facilitiesStore.pendingCreations).toHaveLength(0);
+    expect(channelsStore.channels).toHaveLength(0);
+    expect(configChangesStore.draftEntries()).toEqual([
+      { key: editKeyForLeaf(ABS_NODE, 253, 10), value: { type: 'int', value: 5 } },
+    ]);
+  });
+});

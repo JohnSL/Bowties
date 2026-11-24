@@ -141,6 +141,16 @@ pub struct SignalOverride {
     pub approach_lighting: ApproachLighting,
 }
 
+/// A named release of an untracked owner on one node. Never implied: an owner
+/// is released only when the request lists it.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseRequest {
+    pub node_key: String,
+    /// Serialized as "Mast N" / "Direct lamp N".
+    pub owner: SignalOutputOwner,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockSignalsRequest {
@@ -165,6 +175,11 @@ pub struct BlockSignalsRequest {
     /// Signal names by signal ID; signals without one get a default name.
     #[serde(default)]
     pub signal_names: BTreeMap<String, String>,
+    /// Untracked owners (a mast or Direct Lamp row no facility claims) the
+    /// modeler chose to release, so their pins read as free. Applied to the
+    /// effective configuration before any fact is derived.
+    #[serde(default)]
+    pub release: Vec<ReleaseRequest>,
     /// Ephemeral user selections. These reuse the existing Information
     /// Channel role/style/binding vocabulary, but are never persisted as
     /// channels in S2.
@@ -511,6 +526,12 @@ pub struct BlockSignalsPreview {
     pub capability: ProposalCapability,
     #[serde(default)]
     pub output_hosts: Vec<SignalHardwareHost>,
+    /// Every mast outside Bowties that drives a pin on an output host, with
+    /// the Logic that sets its aspects (`matchedLogic`) and the part of that
+    /// kept when it also sends other events (`keptLogic`). Filled by the
+    /// backend from the effective configuration; empty from the pure policy.
+    #[serde(default)]
+    pub outside_owners: Vec<compiler::UntrackedOwnerRelease>,
     #[serde(default)]
     pub issues: Vec<ProposalIssue>,
 }
@@ -559,6 +580,7 @@ pub fn preview_block_signals_with_hardware(
         signals,
         capability: incomplete_preview_capability(),
         output_hosts: hardware.hosts,
+        outside_owners: Vec::new(),
         issues,
     }
 }
