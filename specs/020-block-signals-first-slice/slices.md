@@ -2,7 +2,7 @@
 
 Branch: 020-block-signals-first-slice
 Generated: 2026-11-07; roadmap regenerated 2026-11-22 for the end-to-end pivot
-Status: 6/12 slices complete (S1, S2R, E1a, E1b, E2a, E2b); S2 and the old S3–S8 superseded by E1a–E6
+Status: 7/12 slices complete (S1, S2R, E1a, E1b, E2a, E2b, E2c); S2 and the old S3–S8 superseded by E1a–E6
 
 Approved input: the
 [2026-11-22 Architecture Assessment](plan.md#architecture-assessment-end-to-end-first-release-2026-11-22)
@@ -125,7 +125,7 @@ flowchart LR
 | E1b | Light the signal on the bench | HITL | E1a + terminal-recipe evidence | done (Sync Panel check moved to E2a) |
 | E2a | Edit a saved facility | HITL | E1b | done |
 | E2b | Remove a facility | HITL | E2a | done |
-| E2c | Release pins used outside Bowties | HITL | E2b | tasked |
+| E2c | Release pins used outside Bowties | HITL | E2b | done |
 | E3 | Two blocks on one board | HITL | E2b + same-board Approach evidence | sketched |
 | E3b | Save writes configuration through Pending Changes | HITL | E2c | sketched |
 | E4 | Verify writes | HITL | E1b, E3b | sketched |
@@ -872,7 +872,7 @@ Deferred until the save/apply slice:
 **Intent**: On Wiring, the modeler releases a pin held by a mast or Direct Lamp row that no facility owns, and uses it for the signal; the release is staged with the facility's edits and can be discarded.
 **Boundary**: WiringStep → editor store/orchestrator → compose request (released owners) → compiler (reset edits for untracked owners, reusing E2b's release edits) → configuration edits → Save.
 **Blocked by**: E2b (reuses its slot-reset edits).
-**Status**: tasked
+**Status**: done
 **Complexity**: high
 **User stories**: US1 (wire a signal on a board with leftover configuration)
 **Storyboard**: [`#line-wiring`](../proposals/signaling-ux/signaling-facilities-storyboard.html#line-wiring), "Pins used outside Bowties" notes and `renderLineOutsideCard`: the confirmation replaces the card's details in place ("Release Mast 3? All N of its pins (…) become free, and Mast 3, Logic 2 are reset when you save. Discard undoes it."), Cancel returns to the details, × closes the card, and the primary button "Release and put <lamp> on <pin>" places the selected lamp and moves selection to the next lamp without a pin. A mast's details list "Aspects set by Logic …".
@@ -880,12 +880,12 @@ Deferred until the save/apply slice:
 **Context**: Bench testing after E2a found pins taken by configuration left from earlier testing. The Wiring step now names each owner and links to it in Configuration (quick change after E2a); this slice adds the overwrite path. Importing existing configuration as a facility is recorded separately in [specs/ideas/features/import-existing-signal-configuration.md](../ideas/features/import-existing-signal-configuration.md).
 
 **Acceptance criteria**:
-- [ ] A pin held by a mast or Direct Lamp row that no facility claims offers "Release and use". Pins owned by a facility (including this one's other signals) cannot be released.
-- [ ] Releasing asks for confirmation that names the owner and every pin it frees, then frees all of that owner's pins, not only the chosen one.
-- [ ] Releasing a mast also resets the Logic conditionals on the same board that set its aspects (Function ≠ 0 and an Action Event equal to one of the mast's set-aspect events). A conditional whose actions also send other events (another action with Condition ≠ 0) is kept: only its actions that set the released mast's aspects get new event IDs, and it is named in the confirmation. The confirmation says that other boards or JMRI may still send to the mast.
-- [ ] The reset edits for the released owner are staged with the facility's edits: they appear in the node's configuration, the Save toolbar, the unsaved-changes breakdown and the close prompts, and Discard restores the owner.
-- [ ] A mast or Logic slot used outside Bowties that blocks Done ("no free mast/Logic") names how many slots are in use outside Bowties.
-- [ ] On the bench, the previous configuration stops driving the pin and the new signal follows its block.
+- [x] A pin held by a mast or Direct Lamp row that no facility claims offers "Release and use". Pins owned by a facility (including this one's other signals) cannot be released.
+- [x] Releasing asks for confirmation that names the owner and every pin it frees, then frees all of that owner's pins, not only the chosen one.
+- [x] Releasing a mast also resets the Logic conditionals on the same board that set its aspects (Function ≠ 0 and an Action Event equal to one of the mast's set-aspect events). A conditional whose actions also send other events (another action with Condition ≠ 0) is kept: only its actions that set the released mast's aspects get new event IDs, and it is named in the confirmation. The confirmation says that other boards or JMRI may still send to the mast.
+- [x] The reset edits for the released owner are staged with the facility's edits: they appear in the node's configuration, the Save toolbar, the unsaved-changes breakdown and the close prompts, and Discard restores the owner.
+- [x] A mast or Logic slot used outside Bowties that blocks Done ("no free mast/Logic") names how many slots are in use outside Bowties.
+- [x] On the bench, the previous configuration stops driving the pin and the new signal follows its block.
 
 **From E2b (D2)**: a released Logic is reset to Function 0, so event-ID matching of a mast's conditionals skips any Logic whose Function is 0.
 
@@ -906,7 +906,7 @@ Deferred until the save/apply slice:
 - [x] E2c-T5: Frontend — editor store `released` owners (seeded empty, dropped on Cancel), orchestrator sends them in preview/compose; `stageBlockSignalsFacility` fills FreshEventId through the shared helper; rollback unchanged.
 - [x] E2c-T6: Components — WiringStep details show "Aspects set by Logic …"; Release and use opens the in-card confirmation per the storyboard; confirming releases the owner and places the selected lamp.
 - [x] E2c-T7: Docs — ADR-0012 dated extension (named releases, overlay, one reset set), ADR-0015 note on the request-scoped overlay, `aiwiki/seams.md` ABS invariant, owners.md, backlog.
-- [ ] E2c-T8: Validate — `cargo test` in `bowties-core`, `cargo check --tests` in `app/src-tauri`, `npx vitest run`, svelte-check; bench: release a leftover mast, the old configuration stops driving the pin and the new signal follows its block.
+- [x] E2c-T8: Validate — `cargo test` in `bowties-core`, `cargo check --tests` in `app/src-tauri`, `npx vitest run`, svelte-check; bench: release a leftover mast, the old configuration stops driving the pin and the new signal follows its block.
 
 **Validation (2026-11-23)**:
 - `cargo test` in `bowties-core`: 540 passed, 0 failed. New: release with `ReleaseTarget` and the D4 reset set (every rule's lamps, all 8 Logic event fields, Direct Lamp row) resolving against the real Signal-LCC CDI; facts for all rules, Logic actions and claimed/outside split; no-free issues with the outside count; `untracked_release_targets` matching, keeping and deduping; `overlay_releases` (release frees the pins and slots, compile picks the freed mast, merged edits have no duplicate leaf, recipe wins) and `releaseInvalid` for a facility-owned or idle owner.
@@ -914,14 +914,15 @@ Deferred until the save/apply slice:
 - `npx vitest run`: 1621/1621. New: store `released`/`releaseAndPlace`, orchestrator `releaseAndPlaceOutput` (preview, check and Done carry `release`; Cancel stages nothing), `stageBlockSignalsFacility` with releases (fresh IDs filled through the shared `stageComposedEdits`, renamed from `stageRemovalEdits`; missing tree rolls back), 4 WiringStep tests, and two E2c-T1 walk-throughs (release → Done → Save toolbar config:4 → Discard; release then editor Cancel stages nothing).
 - svelte-check: 113 errors, the pre-existing baseline; none in touched files.
 - Red evidence: the T1 integration test passed on first run because it was written after the pieces it exercises (batch 4); the fill of fresh IDs is asserted in `facilityOrchestrator.test.ts`, not in T1. No separate refactor pass was run.
-- Bench: pending. A first attempt (2026-11-23) did not reach the board: Done ran while not connected, the app connected before Save, and the connected Save wrote nothing and dropped the configuration drafts (facility and channel were saved). This is the Save seam, not E2c: see "Save loses configuration drafts staged while not connected" below. Re-run the bench check with the release done while connected.
+- Bench: passed (2026-11-23), connected throughout: the released mast stopped driving the pins and the signal followed its block on the new pins. A first attempt the same day did not reach the board because a connected Save dropped configuration drafts staged while not connected; that is the Save seam, moved to E3b.
+- After the bench: each Wiring pin shows the board's full "#N Hx-Y" label, and the line below always says who holds it (lamp, facility, owner outside Bowties, or Free); the storyboard matches.
 - Not done: producers of a released mast's set-aspect events on other boards or in JMRI are neither reset nor listed; the confirmation says they may still send to the mast.
 
 **Bugs found during the E2c bench attempt (2026-11-23)**:
 - [x] Wiring disables pins held by this facility's own mast: `WiringStep.svelte` `pinState` returns `facility` for any pin with `output.facility`, even when it is the facility being edited, so they show the facility name ("Test") and cannot be chosen. The backend already treats them as this signal's (`held_by_other` exempts `own_masts`). Fix: a pin whose facility is the one being edited counts as free for this signal.
 - [x] A chosen pin held outside Bowties says "A chosen pin is already in use by another signal": the `outputInUse` text in `wiringText.ts` does not name the owner (the backend issue carries it, e.g. "Mast 1"). Fix: name the owner, and say when it is configured outside Bowties.
 - [x] No way to release a chosen pin held outside Bowties: a pin that is this signal's choice renders as Red/Green, so its owner's details card (and Release and use) cannot be opened. Happens when a saved facility's pins were taken by configuration outside Bowties, or when a release was lost. Fix: a chosen pin with an outside owner shows that owner and opens its details.
-- [ ] Save loses configuration drafts staged while not connected (architecture, not E2c): the draft mirror copies drafts to the backend only while connected and never re-sends them after connecting; a connected Save writes only what was copied, then `clearAllDrafts()` drops everything. Same symptom class as the ADR-0012 2026-07-03 extension; ADR-0001 says an online Save stages pending changes as Offline Changes first, which the code does not do. Moved to slice E3b (Save writes configuration through Pending Changes); bench-check E2c while already connected until then.
+- Save loses configuration drafts staged while not connected (architecture, not E2c): the draft mirror copies drafts to the backend only while connected and never re-sends them after connecting; a connected Save writes only what was copied, then `clearAllDrafts()` drops everything. Same symptom class as the ADR-0012 2026-07-03 extension; ADR-0001 says an online Save stages pending changes as Offline Changes first, which the code does not do. Moved to slice E3b (Save writes configuration through Pending Changes); bench-check E2c while already connected until then.
 - Idea from the user: a "force write" of a node's saved configuration to the node, so the board matches the layout. Noted on the E3b card as a separate feature built on its writer; no issue.
 
 ### E3: Two blocks on one board [HITL]

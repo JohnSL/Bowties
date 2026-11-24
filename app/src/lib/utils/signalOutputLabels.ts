@@ -30,16 +30,10 @@ export function signalOutputLabel(tree: NodeConfigTree | undefined, ordinal: num
   return `#${ordinal}`;
 }
 
-export interface SignalOutputCell<T> {
-  output: T;
-  /** The label relative to its header row, e.g. `H1-G`. */
-  short: string;
-}
-
 export interface SignalOutputRow<T> {
   /** Header name (`H1`), or '' when the labels do not follow the `#N Hx-Y` form. */
   header: string;
-  cells: SignalOutputCell<T>[];
+  cells: T[];
 }
 
 const OUTPUT_LABEL = /^#\d+\s+(H\d+)-\S+$/;
@@ -50,14 +44,14 @@ export function signalOutputRows<T extends { ordinal: number; label: string }>(o
   const parsed = ordered.map((output) => ({ output, match: OUTPUT_LABEL.exec(output.label) }));
   if (parsed.length === 0) return [];
   if (parsed.some((p) => !p.match)) {
-    return [{ header: '', cells: ordered.map((output) => ({ output, short: output.label })) }];
+    return [{ header: '', cells: ordered }];
   }
   const rows: SignalOutputRow<T>[] = [];
   for (const { output, match } of parsed) {
     const header = match![1];
     let row = rows.find((r) => r.header === header);
     if (!row) rows.push((row = { header, cells: [] }));
-    row.cells.push({ output, short: output.label.replace(/^#\d+\s+/, '') });
+    row.cells.push(output);
   }
   return rows;
 }

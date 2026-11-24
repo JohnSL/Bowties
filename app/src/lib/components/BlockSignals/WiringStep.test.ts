@@ -135,11 +135,12 @@ describe('WiringStep', () => {
     expect(key.textContent).not.toContain('Assigned twice');
   });
 
-  it('marks free pins with their number and opens a details card for an outside owner', async () => {
+  it('labels every pin with its number and says who holds it, and opens a details card for an outside owner', async () => {
     focusConfigFieldMock.mockClear();
     show({ wiringFor: chosen(NODE_A, null, null) }, (key) => (key === NODE_A ? ownerTree('Cedar Hill East') : undefined));
     const grid = screen.getByRole('group', { name: 'Pins on Yard Signals' });
-    expect(within(grid).getByRole('button', { name: /#1 H1-R: Free/ })).toHaveTextContent('#1');
+    expect(within(grid).getByRole('button', { name: /#1 H1-R: Free/ })).toHaveTextContent(/^#1 H1-R\s*Free$/);
+    expect(within(grid).getByRole('button', { name: /#4 H2-L/ })).toHaveTextContent(/^#4 H2-L\s*Mast 3$/);
     expect(screen.queryByRole('region', { name: /not managed by Bowties/ })).not.toBeInTheDocument();
 
     await fireEvent.click(within(grid).getByRole('button', { name: /#4 H2-L/ }));
@@ -283,7 +284,7 @@ describe('WiringStep', () => {
     const grid = screen.getByRole('group', { name: 'Pins on Yard Signals' });
     const own = within(grid).getByRole('button', { name: /#3 H2-R: Free/ });
     expect(own).toBeEnabled();
-    expect(own).toHaveTextContent('#3');
+    expect(own).toHaveTextContent(/^#3 H2-R\s*Free$/);
     await fireEvent.click(own);
     expect(actions.chooseRedOutput).toHaveBeenCalledWith('sig-1', 3);
   });

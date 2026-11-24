@@ -891,7 +891,7 @@
   #line .line-pin-header[aria-pressed="true"] { background: var(--bg-selected); }
   #line .line-pin-header:disabled { color: var(--text-muted); cursor: not-allowed; }
   #line .line-pin { display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 0; padding: 4px 2px; border: 1px solid var(--border); border-radius: 4px; background: #fff; color: var(--text); font: inherit; font-size: 11px; line-height: 1.2; cursor: pointer; }
-  #line .line-pin .line-pin-label { font-weight: 650; }
+  #line .line-pin .line-pin-label { font-weight: 650; white-space: nowrap; }
   #line .line-pin .line-pin-who { max-width: 100%; overflow: hidden; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
   #line .line-pin.free:hover { border-color: var(--brand); }
   #line .line-pin.mine { border-color: var(--brand); background: var(--bg-selected); }
@@ -2343,6 +2343,7 @@
         <ul>
           <li>Lamps are the passengers and pins are the seats. Select a lamp, then click a pin: a free pin places it and selection moves to the next lamp without a pin; the selected lamp's own pin clears it; another lamp's pin on this signal swaps the two. Pins used by other signals or facilities are disabled and show the facility's name.</li>
           <li>The selected lamp's pin is filled in the grid, and every pin this signal uses shows its lamp name, so the mapping reads both ways without a second control.</li>
+          <li>Each pin is labeled as the board names it, "#10 H3-Y", the form messages and Configuration use. The line below always says who holds the pin: its lamp, a facility, an owner outside Bowties, or Free.</li>
           <li>Header labels (H1–H4) place every lamp of the selected lamp's head on that header, matching lamps to the G, Y, R, L pin labels, which wires most signals in one click. The labels are only a suggestion: any pin can drive any LED, so the user can place lamps on any pins, and Blink confirms the result.</li>
           <li>Signal type comes from Appearance; Wiring only chooses how each head is driven. Two choices are a segmented control and one is plain text; the electrical detail is a tooltip.</li>
         </ul>
@@ -5079,9 +5080,9 @@
           const button = lineEl('button', `line-pin ${state}${selected ? ' selected' : ''}${inspected ? ' inspected' : ''}`);
           button.type = 'button';
           button.dataset.focusKey = `pin:${output}`;
-          // a taken pin names its owner: the facility or signal, else the board's own mast or lamp row
-          const ownerName = outside ? outside.owner : owners.length ? owners[0].split(' · ')[0] : `#${output}`;
-          button.append(lineEl('span', 'line-pin-label', `H${header}-${suffix}`), lineEl('span', 'line-pin-who', seated ? lampName(seated) : ownerName));
+          // the label is the board's own "#N Hx-Y"; the line below says who holds the pin, or Free
+          const ownerName = outside ? outside.owner : owners.length ? owners[0].split(' · ')[0] : 'Free';
+          button.append(lineEl('span', 'line-pin-label', pinLabel(output)), lineEl('span', 'line-pin-who', seated ? lampName(seated) : ownerName));
           const others = owners.filter(owner => !owner.startsWith(`${signal.name} ·`));
           const who = seated ? `${lampName(seated)}${others.length ? `; also ${others.join('; ')}` : ''}` : owners.join('; ');
           button.title = outside ? `${outside.owner}, not managed by Bowties. Click for details.` : who || 'Free';

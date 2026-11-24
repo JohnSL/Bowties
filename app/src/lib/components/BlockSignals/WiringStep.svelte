@@ -97,12 +97,12 @@
   /** A pin this signal chose that something outside Bowties still holds. */
   const heldOutside = (output: PinOutput) => lampOf(output) !== null && output.owner !== null && !output.facility;
 
-  /** The "who" line under a pin: its lamp, its facility, its outside owner, or its number. */
+  /** The "who" line under a pin: its lamp, its facility, its outside owner, or Free. */
   function pinWho(output: PinOutput, state: PinState): string {
     if (state === 'selected' || state === 'mine') return lampName(output);
     if (state === 'facility') return output.facility?.name ?? '';
     if (state === 'outside') return output.owner ?? '';
-    return `#${output.ordinal}`;
+    return 'Free';
   }
 
   function pinAriaLabel(output: PinOutput, state: PinState): string {
@@ -309,7 +309,7 @@
           <div class="pin-grid" role="group" aria-label={`Pins on ${hostName(host.nodeKey)}`} style:--pin-columns={pinColumns} bind:this={pinGrid}>
             {#each pinRows as row (row.header)}
               <span class="pin-header">{row.header}</span>
-              {#each row.cells as { output, short } (output.ordinal)}
+              {#each row.cells as output (output.ordinal)}
                 {@const state = pinState(output)}
                 <button
                   type="button"
@@ -320,7 +320,7 @@
                   data-owner={state === 'outside' || heldOutside(output) ? output.owner : undefined}
                   onclick={() => pinClicked(output, state)}
                 >
-                  <span class="pin-label">{short}</span>
+                  <span class="pin-label">{output.label}</span>
                   <span class="pin-who">{pinWho(output, state)}{#if heldOutside(output)} <span class="held-mark" aria-hidden="true">⚠</span>{/if}</span>
                 </button>
               {/each}
@@ -455,7 +455,7 @@
     border: 1px solid var(--abs-border); border-radius: 4px; background: #fff; color: var(--abs-text);
     font: inherit; font-size: 11px; line-height: 1.2; cursor: pointer;
   }
-  .pin .pin-label { font-weight: 650; }
+  .pin .pin-label { font-weight: 650; white-space: nowrap; }
   .pin .pin-who { max-width: 100%; overflow: hidden; color: var(--abs-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
   .pin.free:hover { border-color: var(--abs-brand); }
   .pin.mine { border-color: var(--abs-brand); background: var(--abs-selected); }

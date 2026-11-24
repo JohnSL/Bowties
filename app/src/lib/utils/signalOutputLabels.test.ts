@@ -5,21 +5,20 @@ import { signalOutputOwnerDescription, signalOutputRows } from './signalOutputLa
 const out = (ordinal: number, label: string) => ({ ordinal, label, owner: null });
 
 describe('signalOutputRows', () => {
-  it('groups outputs into one row per header with the header-relative short label', () => {
+  it('groups outputs into one row per header, in ordinal order', () => {
     const rows = signalOutputRows([
       out(1, '#1 H1-G'), out(2, '#2 H1-Y'), out(5, '#5 H2-G'), out(9, '#9 H3-G'),
     ]);
     expect(rows.map((r) => r.header)).toEqual(['H1', 'H2', 'H3']);
-    expect(rows[0].cells.map((c) => c.short)).toEqual(['H1-G', 'H1-Y']);
-    expect(rows[0].cells[0].output.ordinal).toBe(1);
-    expect(rows[2].cells.map((c) => c.short)).toEqual(['H3-G']);
+    expect(rows[0].cells.map((c) => c.label)).toEqual(['#1 H1-G', '#2 H1-Y']);
+    expect(rows[2].cells.map((c) => c.label)).toEqual(['#9 H3-G']);
   });
 
   it('falls back to a single unlabeled row when any label does not parse', () => {
     const rows = signalOutputRows([out(1, '#1 H1-G'), out(2, 'Output two')]);
     expect(rows).toHaveLength(1);
     expect(rows[0].header).toBe('');
-    expect(rows[0].cells.map((c) => c.short)).toEqual(['#1 H1-G', 'Output two']);
+    expect(rows[0].cells.map((c) => c.label)).toEqual(['#1 H1-G', 'Output two']);
   });
 });
 
