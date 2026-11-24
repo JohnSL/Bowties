@@ -49,6 +49,7 @@ export function fakeView(overrides: Partial<BlockSignalsEditorView> = {}): Block
     mode: 'create',
     step: 'blocks' as BlockSignalsStep,
     facilityName: 'Cedar Hill',
+    facilityId: 'facility-under-edit',
     direction: 'eastward',
     movements: 'oneDirection',
     blocks: [{ blockId: 'block:cedar', name: 'Cedar Hill', joinedToPrevious: false, turnouts: [] }],

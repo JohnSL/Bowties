@@ -81,14 +81,21 @@
   type PinOutput = SignalOutputHost['outputs'][number];
   type PinState = 'selected' | 'mine' | 'facility' | 'outside' | 'free';
 
+  /** The facility being edited owns this pin's mast, so the backend lets its signals reuse it. */
+  const isOwnFacility = (output: PinOutput) => !!output.facility && output.facility.facilityId === view.facilityId;
+
   function pinState(output: PinOutput): PinState {
     if (output.ordinal === pinOf(selectedLamp)) return 'selected';
     if (output.ordinal === wiring?.redOutput || output.ordinal === wiring?.greenOutput) return 'mine';
+    if (isOwnFacility(output)) return 'free';
     if (output.facility) return 'facility';
     return output.owner !== null ? 'outside' : 'free';
   }
 
   const lampName = (output: PinOutput) => LAMPS.find(([lamp]) => pinOf(lamp) === output.ordinal)?.[1] ?? '';
+  const lampOf = (output: PinOutput): Lamp | null => LAMPS.find(([lamp]) => pinOf(lamp) === output.ordinal)?.[0] ?? null;
+  /** A pin this signal chose that something outside Bowties still holds. */
+  const heldOutside = (output: PinOutput) => lampOf(output) !== null && output.owner !== null && !output.facility;
 
   /** The "who" line under a pin: its lamp, its facility, its outside owner, or its number. */
   function pinWho(output: PinOutput, state: PinState): string {
@@ -99,6 +106,7 @@
   }
 
   function pinAriaLabel(output: PinOutput, state: PinState): string {
+    if (heldOutside(output)) return `${output.label}: ${lampName(output)}, held by ${output.owner} outside Bowties. Show details`;
     if (state === 'selected' || state === 'mine') return `${output.label}: This signal`;
     if (state === 'facility') return `${output.label}: Used by ${output.facility?.name}`;
     if (state === 'outside') return `${output.label}: Used by ${output.owner}, not managed by Bowties. Show details`;
@@ -152,10 +160,10 @@
     void tick().then(() => releaseButton?.focus());
   }
 
-  /** Release the inspected owner and put the selected lamp on the clicked pin. */
+  /** Release the inspected owner and put the lamp on the clicked pin: its own lamp, else the selected one. */
   function releaseAndUse(card: NonNullable<typeof inspected>, ordinal: number): void {
     if (!signal) return;
-    void actions.releaseAndPlaceOutput(signal.signalId, selectedLamp, { nodeKey: card.nodeKey, owner: card.owner }, ordinal);
+    void actions.releaseAndPlaceOutput(signal.signalId, inspectedLamp ?? selectedLamp, { nodeKey: card.nodeKey, owner: card.owner }, ordinal);
     pickedLamp = null;
     inspectedOwner = null;
   }
@@ -180,11 +188,14 @@
 
   /** The pin the user clicked to open the card; the lamp goes there when the release is confirmed. */
   let inspectedPin = $state<number | null>(null);
+  /** The lamp already on the clicked pin, when it is one this signal chose; otherwise null. */
+  let inspectedLamp = $state<Lamp | null>(null);
 
   function pinClicked(output: PinOutput, state: PinState): void {
-    if (state === 'outside') {
+    if (state === 'outside' || heldOutside(output)) {
       inspectedOwner = inspectedOwner === output.owner ? null : output.owner;
       inspectedPin = output.ordinal;
+      inspectedLamp = lampOf(output);
     }
     else choosePin(output.ordinal);
   }
@@ -252,7 +263,7 @@
         <div class="field-label">Choices needing attention</div>
         <ul class="issues" aria-label="Choices needing attention">
           {#each issues as issue}
-            <li>{issueText(issue)}</li>
+            <li>{issueText(issue, host?.outputs ?? [])}</li>
           {/each}
         </ul>
       </div>
@@ -303,14 +314,14 @@
                 <button
                   type="button"
                   class={`pin ${state}`}
-                  class:inspected={state === 'outside' && output.owner === inspected?.owner}
-                  disabled={state === 'facility' || state === 'selected' || state === 'mine'}
+                  class:inspected={(state === 'outside' || heldOutside(output)) && output.owner === inspected?.owner}
+                  disabled={(state === 'facility' || state === 'selected' || state === 'mine') && !heldOutside(output)}
                   aria-label={pinAriaLabel(output, state)}
-                  data-owner={state === 'outside' ? output.owner : undefined}
+                  data-owner={state === 'outside' || heldOutside(output) ? output.owner : undefined}
                   onclick={() => pinClicked(output, state)}
                 >
                   <span class="pin-label">{short}</span>
-                  <span class="pin-who">{pinWho(output, state)}</span>
+                  <span class="pin-who">{pinWho(output, state)}{#if heldOutside(output)} <span class="held-mark" aria-hidden="true">⚠</span>{/if}</span>
                 </button>
               {/each}
             {/each}
@@ -340,7 +351,11 @@
                 <div class="outside-actions">
                   <button type="button" class="btn" onclick={cancelRelease}>Cancel</button>
                   <button type="button" class="btn btn-primary" onclick={() => releaseAndUse(card, inspectedPin ?? card.pins[0].ordinal)}>
-                    Release and put {selectedLamp === 'red' ? 'Red' : 'Green'} on {pinLabel(inspectedPin ?? card.pins[0].ordinal)}
+                    {#if inspectedLamp}
+                      Release {card.owner}
+                    {:else}
+                      Release and put {selectedLamp === 'red' ? 'Red' : 'Green'} on {pinLabel(inspectedPin ?? card.pins[0].ordinal)}
+                    {/if}
                   </button>
                 </div>
               {:else}
@@ -450,6 +465,8 @@
   .pin.facility { background: #eef1f5; color: var(--abs-muted); }
   .pin.outside { border-style: dashed; border-color: #b07a00; background: #fff8e6; color: var(--abs-text-secondary); }
   .pin.outside:hover, .pin.outside.inspected { border-style: solid; box-shadow: 0 0 0 2px #f3dca0; }
+  .pin .held-mark { color: #b07a00; font-weight: 700; }
+  .pin.selected .held-mark { color: #fff; }
   .pin:disabled { cursor: not-allowed; }
   .pin-key { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 11px; color: var(--abs-muted); }
   .pin-key span { display: inline-flex; align-items: center; gap: 4px; }

@@ -57,7 +57,7 @@
     if (result.ok) {
       removal = null;
     } else if ('issues' in result) {
-      removal = { facilityId: removal.facilityId, reason: result.issues.map(issueText).join(' ') };
+      removal = { facilityId: removal.facilityId, reason: result.issues.map((issue) => issueText(issue, [])).join(' ') };
     } else {
       removal = { facilityId: removal.facilityId, error: 'The facility could not be removed. Try again.' };
     }

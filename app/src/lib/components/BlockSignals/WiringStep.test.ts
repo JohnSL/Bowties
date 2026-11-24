@@ -220,6 +220,18 @@ describe('WiringStep', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Could not stage the changes.');
   });
 
+  it('names the pin and its owner when a chosen pin is in use', () => {
+    show({
+      wiringFor: chosen(NODE_A, 4, 2),
+      issuesForNode: () => [{
+        code: 'outputInUse', signalId: 'sig-1', nodeKey: NODE_A, detail: 'x',
+        bindingIssue: { kind: 'signalOutputConflict', signalId: 'sig-1', nodeKey: NODE_A, output: 4, owner: 'Mast 3' },
+      }],
+    });
+    const attention = screen.getByRole('list', { name: 'Choices needing attention' });
+    expect(attention).toHaveTextContent('#4 H2-L is used by Mast 3, configured outside Bowties.');
+  });
+
   it('has Done disabled until the store allows finishing, then emits finish', async () => {
     const actions = spyActions();
     const { rerender } = render(BlockSignalsEditor, { props: { view: fakeView({ step: 'wiring', outputHosts: HOSTS }), actions, detectedBlocks: [] } });
@@ -264,6 +276,21 @@ describe('WiringStep', () => {
     expect(screen.getByRole('region', { name: 'Pins' })).toHaveTextContent(
       "This Signal LCC's configuration hasn't been read yet, so its pins can't be shown.",
     );
+  });
+
+  it('treats pins of the facility being edited as free', async () => {
+    const actions = show({ facilityId: 'fac-1', wiringFor: chosen(NODE_A, null, null) });
+    const grid = screen.getByRole('group', { name: 'Pins on Yard Signals' });
+    const own = within(grid).getByRole('button', { name: /#3 H2-R: Free/ });
+    expect(own).toBeEnabled();
+    expect(own).toHaveTextContent('#3');
+    await fireEvent.click(own);
+    expect(actions.chooseRedOutput).toHaveBeenCalledWith('sig-1', 3);
+  });
+
+  it('keeps pins of other facilities disabled', () => {
+    show({ facilityId: 'fac-other', wiringFor: chosen(NODE_A, null, null) });
+    expect(screen.getByRole('button', { name: '#3 H2-R: Used by Mill Signals' })).toBeDisabled();
   });
 
   describe('releasing a pin used outside Bowties', () => {
@@ -319,6 +346,37 @@ describe('WiringStep', () => {
       expect(screen.queryByRole('region', { name: /not managed by Bowties/ })).not.toBeInTheDocument();
       const again = (await openCard(/#4 H2-L/)).card;
       expect(again).not.toHaveTextContent('Release Mast 3?');
+    });
+
+    it('lets a chosen pin held outside Bowties open its owner and release it for that lamp', async () => {
+      const actions = show({
+        wiringFor: chosen(NODE_A, 4, null),
+        preview: { ...previewWith(), outsideOwners: OWNERS },
+      });
+      const grid = screen.getByRole('group', { name: 'Pins on Yard Signals' });
+      const pin = within(grid).getByRole('button', { name: '#4 H2-L: Red, held by Mast 3 outside Bowties. Show details' });
+      expect(pin).toBeEnabled();
+      expect(pin).toHaveTextContent('Red');
+      expect(pin).toHaveTextContent('⚠');
+      expect(pin).toHaveAttribute('data-owner', 'Mast 3');
+
+      await fireEvent.click(pin);
+      const card = screen.getByRole('region', { name: 'Mast 3, not managed by Bowties' });
+      await fireEvent.click(within(card).getByRole('button', { name: 'Release and use…' }));
+      expect(within(card).queryByRole('button', { name: /Release and put/ })).not.toBeInTheDocument();
+      await fireEvent.click(within(card).getByRole('button', { name: 'Release Mast 3' }));
+      expect(actions.releaseAndPlaceOutput).toHaveBeenCalledWith('sig-1', 'red', { nodeKey: NODE_A, owner: 'Mast 3' }, 4);
+    });
+
+    it('closes the card when the held chosen pin is clicked again, and leaves other chosen pins disabled', async () => {
+      show({ wiringFor: chosen(NODE_A, 4, 1) });
+      const grid = screen.getByRole('group', { name: 'Pins on Yard Signals' });
+      expect(within(grid).getByRole('button', { name: /#1 H1-R.*This signal/ })).toBeDisabled();
+      const pin = within(grid).getByRole('button', { name: /#4 H2-L: Red, held by Mast 3/ });
+      await fireEvent.click(pin);
+      expect(screen.getByRole('region', { name: /Mast 3, not managed/ })).toBeInTheDocument();
+      await fireEvent.click(pin);
+      expect(screen.queryByRole('region', { name: /not managed by Bowties/ })).not.toBeInTheDocument();
     });
 
     it('offers no release on a pin a facility owns', () => {

@@ -1,5 +1,5 @@
 /** Product wording for the problems found when checking the signals' wiring. */
-import type { ComposeIssue, ComposeIssueCode } from '$lib/api/signaling';
+import type { ComposeIssue, ComposeIssueCode, SignalOutputHost } from '$lib/api/signaling';
 
 const ISSUE_TEXT: Record<ComposeIssueCode, string> = {
   wiringMissing: 'Choose a Signal LCC and a red and a green pin for this signal.',
@@ -23,6 +23,22 @@ const ISSUE_TEXT: Record<ComposeIssueCode, string> = {
   releaseInvalid: 'A released mast or lamp can no longer be released.',
 };
 
-export function issueText(issue: ComposeIssue): string {
+/** Which pin and owner an outputInUse issue names, as words; null when the issue does not say. */
+function outputInUseText(issue: ComposeIssue, outputs: SignalOutputHost['outputs']): string | null {
+  const conflict = issue.bindingIssue;
+  if (conflict?.kind !== 'signalOutputConflict') return null;
+  const pin = outputs.find((output) => output.ordinal === conflict.output);
+  const label = pin?.label ?? `#${conflict.output}`;
+  return pin?.facility
+    ? `${label} is used by ${pin.facility.name}.`
+    : `${label} is used by ${conflict.owner}, configured outside Bowties.`;
+}
+
+/** `outputs` are the chosen Signal LCC's pins, used to name the pin an issue is about. */
+export function issueText(issue: ComposeIssue, outputs: SignalOutputHost['outputs']): string {
+  if (issue.code === 'outputInUse') {
+    const named = outputInUseText(issue, outputs);
+    if (named) return named;
+  }
   return ISSUE_TEXT[issue.code] ?? issue.detail;
 }

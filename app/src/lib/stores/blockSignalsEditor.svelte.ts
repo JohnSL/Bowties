@@ -65,6 +65,7 @@ export interface BlockSignalsEditorView {
   readonly mode: BlockSignalsEditorMode;
   readonly step: BlockSignalsStep;
   readonly facilityName: string;
+  readonly facilityId: string;
   readonly direction: TravelDirection;
   readonly movements: Movements;
   readonly blocks: ListedBlock[];
