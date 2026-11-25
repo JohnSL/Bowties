@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+  import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
 
   interface Props {
     capturedAt: string | null;
@@ -12,7 +12,7 @@
   let { capturedAt, layoutId = null, isConnected = false, isSyncDismissed = false, onsyncrequest }: Props = $props();
 
   const capturedText = $derived(capturedAt ? new Date(capturedAt).toLocaleString() : 'unknown time');
-  const showSyncButton = $derived(isConnected && isSyncDismissed && offlineChangesStore.pendingCount > 0);
+  const showSyncButton = $derived(isConnected && isSyncDismissed && pendingChangesStore.pendingCount > 0);
 </script>
 
 <div class="offline-banner" role="status" aria-live="polite">
@@ -23,10 +23,10 @@
     <span class="sep">•</span>
     <span>{layoutId}</span>
   {/if}
-  {#if offlineChangesStore.pendingCount > 0}
+  {#if pendingChangesStore.pendingCount > 0}
     <span class="sep">•</span>
     <span class="pending-badge">
-      {offlineChangesStore.pendingCount} pending {offlineChangesStore.pendingCount === 1 ? 'change' : 'changes'}
+      {pendingChangesStore.pendingCount} pending {pendingChangesStore.pendingCount === 1 ? 'change' : 'changes'}
     </span>
   {/if}
   {#if showSyncButton}

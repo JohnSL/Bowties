@@ -19,12 +19,24 @@ import { channelsStore } from '$lib/stores/channels.svelte';
 import { facilitiesStore } from '$lib/stores/facilities.svelte';
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
 import { configEditor } from '$lib/stores/configEditor.svelte';
+import { configChangesStore, type ConfigDraftEntry } from '$lib/stores/configChanges.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
 import { composeFacilityBowties, type CompositionOp } from '$lib/api/facilityBowties';
 import { syncLayoutDrafts } from '$lib/api/layout';
 import { canonicalEventIdHex } from '$lib/utils/serialize';
-import { editKeyForLeaf } from '$lib/utils/editKey';
+import { editKeyForLeaf, parseEditKey } from '$lib/utils/editKey';
+import {
+  composeBlockSignals,
+  composeBlockSignalsRemoval,
+  type BlockSignalsPreviewRequest,
+  type ComposeIssue,
+  type ReleasedOwner,
+  type RemovalEdit,
+  type SignalWiring,
+} from '$lib/api/signaling';
+import type { BlockSignalsRecord, NodeLogicPlacement } from '$lib/api/facilities';
+import type { NodeConfigTree, TreeConfigValue } from '$lib/types/nodeTree';
 import { generateFreshEventIdForNode } from '$lib/utils/eventIds';
 import { collectEventIdLeaves, findLeafByPath } from '$lib/types/nodeTree';
 
@@ -242,12 +254,16 @@ export async function addChannelForSlot(
  * the on-demand mirror described in ADR-0015. Callers send the
  * complete current delta set (idempotent w.r.t. re-sync).
  */
-async function syncDraftsForComposition(): Promise<void> {
+export async function syncDraftsForComposition(): Promise<void> {
   const deltas = [
     ...facilitiesStore.collectDeltas(),
     ...channelsStore.collectDeltas(),
   ];
-  await syncLayoutDrafts(deltas);
+  const configDrafts = configChangesStore.draftEntries().map(({ key, value }) => {
+    const { normalizedNodeId, space, address } = parseEditKey(key);
+    return { nodeKey: normalizedNodeId, space, address, value };
+  });
+  await syncLayoutDrafts(deltas, configDrafts);
 }
 
 /**
@@ -311,13 +327,9 @@ async function resetComposedLeavesForFacility(facilityId: string): Promise<void>
       if (!tree) continue;
       const leaf = findLeafByPath(tree, op.consumerLeafPath);
       if (!leaf) continue;
-      const freshHex = generateFreshEventIdForNode(op.consumerNodeKey, tree);
-      const bytes = hexToBytes(freshHex);
-      if (!bytes) continue;
-      configEditor.applyEdit(
-        editKeyForLeaf(op.consumerNodeKey, leaf.space, leaf.address),
-        { type: 'eventId', bytes, hex: canonicalEventIdHex(bytes) },
-      );
+      const fresh = freshEventIdValue(op.consumerNodeKey, tree);
+      if (!fresh) continue;
+      configEditor.applyEdit(editKeyForLeaf(op.consumerNodeKey, leaf.space, leaf.address), fresh);
     }
     return;
   }
@@ -329,13 +341,9 @@ async function resetComposedLeavesForFacility(facilityId: string): Promise<void>
       const value = effectiveLayoutStore.effectiveValue(nodeKey, leaf);
       if (!value || value.type !== 'eventId') continue;
       if (!targetHexes.has(value.hex)) continue;
-      const freshHex = generateFreshEventIdForNode(nodeKey, tree);
-      const bytes = hexToBytes(freshHex);
-      if (!bytes) continue;
-      configEditor.applyEdit(
-        editKeyForLeaf(nodeKey, leaf.space, leaf.address),
-        { type: 'eventId', bytes, hex: canonicalEventIdHex(bytes) },
-      );
+      const fresh = freshEventIdValue(nodeKey, tree);
+      if (!fresh) continue;
+      configEditor.applyEdit(editKeyForLeaf(nodeKey, leaf.space, leaf.address), fresh);
     }
   }
 }
@@ -368,41 +376,366 @@ export async function tearDownFacilityBowties(facilityId: string): Promise<void>
  * interfere with our teardown/delete sequence.
  */
 export async function deleteFacility(facilityId: string): Promise<void> {
-  // Snapshot user-owned channel IDs before the facility is deleted.
-  const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
-  const userOwnedChannelIds: string[] = [];
-  if (facility) {
-    for (const channelId of Object.values(facility.slotBindings).flat()) {
-      const channel = channelsStore.channels.find((c) => c.id === channelId);
-      if (channel?.ownership === 'user-owned') {
-        userOwnedChannelIds.push(channelId);
-      }
-    }
+  // An Automatic Block Signals facility owns claimed board slots; deleting it
+  // generically would strand them. Route through the release workflow (Spec
+  // 020 / E2b) and surface a refusal as a typed error.
+  const target = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+  if (target?.templateId === BLOCK_SIGNALS_TEMPLATE_ID && target.blockSignals) {
+    const result = await removeBlockSignalsFacility({ facilityId });
+    if (!result.ok) throw new BlockSignalsRemovalError(result);
+    return;
   }
 
+  const userOwnedChannelIds = userOwnedChannelIdsOf(facilityId);
   await tearDownFacilityBowties(facilityId);
-  facilitiesStore.deleteFacility(facilityId);
+  deleteFacilityAndChannels(facilityId, userOwnedChannelIds);
+}
 
-  // Remove user-owned channels after the facility is gone from the
-  // effective view — the cascade sees the channel disappear but finds
-  // no slot bindings, so it no-ops.
+/** User-owned channel IDs bound to the facility's slots (snapshot before delete). */
+function userOwnedChannelIdsOf(facilityId: string): string[] {
+  const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+  const ids: string[] = [];
+  if (!facility) return ids;
+  for (const channelId of Object.values(facility.slotBindings).flat()) {
+    const channel = channelsStore.channels.find((c) => c.id === channelId);
+    if (channel?.ownership === 'user-owned') ids.push(channelId);
+  }
+  return ids;
+}
+
+/** Facility first, then channels, so the cascade orchestrator finds no slot bindings. */
+function deleteFacilityAndChannels(facilityId: string, userOwnedChannelIds: string[]): void {
+  facilitiesStore.deleteFacility(facilityId);
   for (const channelId of userOwnedChannelIds) {
     channelsStore.removeUserOwnedChannel(channelId);
   }
 }
 
+// ── Automatic Block Signals creation (Spec 020 / E1a) ────────────────────
+
+const BLOCK_SIGNALS_TEMPLATE_ID = 'automatic-block-signals';
+const BLOCK_SIGNALS_SLOT = 'signals';
+
+export interface CreateBlockSignalsFacilityArgs {
+  /** ID minted by the editor; the compose request and the facility share it. */
+  facilityId: string;
+  name: string;
+  line: BlockSignalsPreviewRequest;
+  wiring: SignalWiring[];
+  /** Untracked owners released for this facility; their reset edits are staged with the recipe's. */
+  release?: ReleasedOwner[];
+  /** The facility's signals in order; channel IDs are assigned here. */
+  signals: { signalId: string; name: string; protectedBlock: string }[];
+}
+
+export type CreateBlockSignalsFacilityResult =
+  | { ok: true }
+  | { ok: false; issues: ComposeIssue[] }
+  | { ok: false; error: unknown };
+
+export type UpdateBlockSignalsFacilityArgs = CreateBlockSignalsFacilityArgs;
+export type UpdateBlockSignalsFacilityResult = CreateBlockSignalsFacilityResult;
+
+/** Workflow owner: create an Automatic Block Signals facility (see `stageBlockSignalsFacility`). */
+export function createBlockSignalsFacility(
+  args: CreateBlockSignalsFacilityArgs,
+): Promise<CreateBlockSignalsFacilityResult> {
+  return stageBlockSignalsFacility('create', args);
+}
+
+/**
+ * Workflow owner: update a saved Automatic Block Signals facility. Same
+ * pipeline as create; the facility keeps its ID, signal channels and slot
+ * attachments, and its record, names and channel wiring are replaced.
+ */
+export function updateBlockSignalsFacility(
+  args: UpdateBlockSignalsFacilityArgs,
+): Promise<UpdateBlockSignalsFacilityResult> {
+  return stageBlockSignalsFacility('update', args);
+}
+
+/**
+ * Shared staging pipeline for Automatic Block Signals (create and update).
+ *
+ * Mirrors drafts so the backend sees other unsaved claims, composes with
+ * fresh facts (wiring nodes' unsaved edits included, facilityId so an update
+ * recompiles around its own mast and Logic), refuses on any issue without
+ * staging anything, then stages the facility/record/channels and the
+ * configuration edits as ordinary drafts. Any failure after the first staged
+ * mutation restores everything staged here. Never composes bowties (the
+ * template has no mapping).
+ */
+async function stageBlockSignalsFacility(
+  target: 'create' | 'update',
+  args: CreateBlockSignalsFacilityArgs,
+): Promise<CreateBlockSignalsFacilityResult> {
+  const { facilityId, name, line, wiring, signals, release } = args;
+  const template = behaviorTemplatesStore.findByTemplateId(BLOCK_SIGNALS_TEMPLATE_ID);
+  if (!template) return { ok: false, error: new UnknownReferenceError('template') };
+
+  const priorFacility = target === 'update'
+    ? facilitiesStore.facilities.find((f) => f.facilityId === facilityId)
+    : undefined;
+  if (target === 'update' && !priorFacility?.blockSignals) {
+    return { ok: false, error: new UnknownReferenceError('facility') };
+  }
+
+  let composed;
+  try {
+    await syncDraftsForComposition();
+    composed = await composeBlockSignals({ facilityId, line, wiring, release });
+  } catch (error) {
+    return { ok: false, error };
+  }
+  if (composed.issues.length > 0) return { ok: false, issues: composed.issues };
+
+  const priorDrafts = new Map(configChangesStore.draftEntries().map((d) => [d.key, d]));
+  const priorPlacement = placementOf(composed.logicPlacement);
+  const priorChannels = new Map(channelsStore.channels.map((c) => [c.id, c]));
+  const createdChannelIds: string[] = [];
+  let facilityAdded = false;
+  try {
+    const wiringBySignal = new Map(wiring.map((w) => [w.signalId, w]));
+    const savedChannelIds = new Map(
+      (priorFacility?.blockSignals?.signals ?? []).map((s) => [s.signalId, s.channelId]),
+    );
+    const recordSignals: BlockSignalsRecord['signals'] = signals.map((signal) => {
+      const wired = wiringBySignal.get(signal.signalId);
+      if (!wired) throw new Error(`No wiring for signal '${signal.signalId}'`);
+      const resources = composed.signalResources.find((r) => r.signalId === signal.signalId)?.resources;
+      if (!resources) throw new Error(`No board resources planned for signal '${signal.signalId}'`);
+      const binding = {
+        kind: 'signalLccRgOutputs' as const,
+        nodeKey: wired.nodeKey,
+        greenOutput: wired.greenOutput,
+        redOutput: wired.redOutput,
+      };
+      const savedChannelId = savedChannelIds.get(signal.signalId);
+      if (savedChannelId) {
+        channelsStore.renameChannel(savedChannelId, signal.name);
+        channelsStore.rebindChannel(savedChannelId, binding);
+        return { ...signal, channelId: savedChannelId, resources };
+      }
+      const channel = channelsStore.createUserOwnedChannel({
+        role: 'signal-indication',
+        style: 'two-driver-rg-signal',
+        binding,
+        name: signal.name,
+      });
+      createdChannelIds.push(channel.id);
+      return { ...signal, channelId: channel.id, resources };
+    });
+
+    const record: BlockSignalsRecord = {
+      direction: line.direction,
+      movements: line.movements,
+      entranceEnd: line.entranceEnd,
+      exitEnd: line.exitEnd,
+      blocks: line.blocks,
+      settings: line.settings,
+      signals: recordSignals,
+    };
+    if (target === 'create') {
+      facilitiesStore.addFacility(template, name, facilityId, record);
+      facilityAdded = true;
+    } else {
+      facilitiesStore.setBlockSignalsRecord(facilityId, record);
+      facilitiesStore.renameFacility(facilityId, name);
+    }
+    for (const channelId of createdChannelIds) {
+      if (!facilitiesStore.attachChannel(facilityId, BLOCK_SIGNALS_SLOT, channelId)) {
+        throw new Error(`Failed to attach channel '${channelId}' to facility '${facilityId}'`);
+      }
+    }
+
+    stageLogicPlacement(composed.logicPlacement);
+    stageComposedEdits(composed.edits, facilityId);
+
+    // Signals the edit turned off lose their channel. This runs after the only
+    // staging step that can throw, so a failure never leaves one half removed;
+    // Discard restores both through the draft layer (ADR-0012).
+    const keptSignalIds = new Set(signals.map((s) => s.signalId));
+    for (const saved of priorFacility?.blockSignals?.signals ?? []) {
+      if (keptSignalIds.has(saved.signalId)) continue;
+      facilitiesStore.detachChannel(facilityId, BLOCK_SIGNALS_SLOT, saved.channelId);
+      channelsStore.removeUserOwnedChannel(saved.channelId);
+    }
+    return { ok: true };
+  } catch (error) {
+    restoreConfigDrafts(composed.edits, priorDrafts);
+    if (facilityAdded) facilitiesStore.deleteFacility(facilityId);
+    stageLogicPlacement(priorPlacement);
+    for (const channelId of createdChannelIds) channelsStore.removeUserOwnedChannel(channelId);
+    if (priorFacility?.blockSignals) {
+      facilitiesStore.setBlockSignalsRecord(facilityId, priorFacility.blockSignals);
+      facilitiesStore.renameFacility(facilityId, priorFacility.name);
+      for (const s of priorFacility.blockSignals.signals) {
+        const prior = priorChannels.get(s.channelId);
+        if (!prior) continue;
+        channelsStore.renameChannel(prior.id, prior.name);
+        channelsStore.rebindChannel(prior.id, prior.binding);
+      }
+    }
+    return { ok: false, error };
+  }
+}
+
+// ── Automatic Block Signals removal (Spec 020 / E2b) ─────────────────────
+
+export interface RemoveBlockSignalsFacilityArgs {
+  facilityId: string;
+  /** Skip releasing the board's mast and Logic: delete the facility and channels only. */
+  leaveBoard?: boolean;
+}
+
+export type RemoveBlockSignalsFacilityResult = CreateBlockSignalsFacilityResult;
+
+/** Thrown by the generic `deleteFacility` when an ABS release is refused or fails. */
+export class BlockSignalsRemovalError extends Error {
+  readonly issues?: ComposeIssue[];
+  readonly cause?: unknown;
+  constructor(result: { ok: false; issues: ComposeIssue[] } | { ok: false; error: unknown } | { ok: false }) {
+    super('Could not remove the Automatic Block Signals facility');
+    this.name = 'BlockSignalsRemovalError';
+    if ('issues' in result) this.issues = result.issues;
+    if ('error' in result) this.cause = result.error;
+  }
+}
+
+/**
+ * Workflow owner: remove an Automatic Block Signals facility, releasing its
+ * mast and Logic as ordinary configuration drafts (unless
+ * `leaveBoard`) and deleting the facility and its user-owned signal channels.
+ *
+ * Ordering is the rollback strategy: the only step that can throw
+ * (`stageComposedEdits`) runs first, so a failure restores the prior drafts and
+ * the facility/channels were never touched. The deletes that follow are
+ * non-throwing store transitions. Refuses on any release issue with nothing
+ * staged. Never tears down bowties (the template has no mapping).
+ */
+export async function removeBlockSignalsFacility(
+  args: RemoveBlockSignalsFacilityArgs,
+): Promise<RemoveBlockSignalsFacilityResult> {
+  const { facilityId, leaveBoard = false } = args;
+  const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+  if (!facility?.blockSignals) {
+    return { ok: false, error: new UnknownReferenceError('facility') };
+  }
+
+  let edits: readonly RemovalEdit[] = [];
+  let placement: NodeLogicPlacement[] = [];
+  if (!leaveBoard) {
+    try {
+      await syncDraftsForComposition();
+      const composed = await composeBlockSignalsRemoval(facilityId);
+      if (composed.issues.length > 0) return { ok: false, issues: composed.issues };
+      edits = composed.edits;
+      placement = composed.logicPlacement;
+    } catch (error) {
+      return { ok: false, error };
+    }
+  }
+
+  const priorDrafts = new Map(configChangesStore.draftEntries().map((d) => [d.key, d]));
+  try {
+    stageComposedEdits(edits, facilityId);
+  } catch (error) {
+    restoreConfigDrafts(edits, priorDrafts);
+    return { ok: false, error };
+  }
+  deleteFacilityAndChannels(facilityId, userOwnedChannelIdsOf(facilityId));
+  // After the delete, which already drops the facility's own groups: only a board
+  // whose remaining groups differ from that (another facility's group moved) stages a delta.
+  stageLogicPlacement(placement);
+  return { ok: true };
+}
+
 // ── Private helpers ─────────────────────────────────────────────────────
+
+/** Stage each board's whole placement as the compiler planned it (a no-op where it matches). */
+function stageLogicPlacement(boards: readonly NodeLogicPlacement[]): void {
+  for (const board of boards) facilitiesStore.setLogicPlacement(board.nodeKey, board.groups);
+}
+
+/** The effective placement of the boards `planned` names (none left = empty groups), to restore on rollback. */
+function placementOf(planned: readonly NodeLogicPlacement[]): NodeLogicPlacement[] {
+  const current = facilitiesStore.logicPlacement;
+  return planned.map(({ nodeKey }) => ({
+    nodeKey,
+    groups: current.find((board) => board.nodeKey === nodeKey)?.groups ?? [],
+  }));
+}
+
+/**
+ * A concrete event ID value that no leaf of the node's tree (including staged
+ * drafts) holds yet, or null when the generator yields no valid ID. Staging the
+ * returned value before the next call keeps successive IDs distinct.
+ */
+function freshEventIdValue(nodeKey: string, tree: NodeConfigTree): TreeConfigValue | null {
+  const bytes = hexToBytes(generateFreshEventIdForNode(nodeKey, tree));
+  return bytes ? { type: 'eventId', bytes, hex: canonicalEventIdHex(bytes) } : null;
+}
+
+/**
+ * Stage composed edits (a facility's recipe, a release or a removal), replacing each `freshEventId` request with a generated
+ * event ID. Every needed node tree is checked first so a missing one throws
+ * before anything is staged; each ID is staged before the next is generated.
+ */
+function stageComposedEdits(edits: readonly RemovalEdit[], facilityId: string): void {
+  for (const edit of edits) {
+    if (edit.value.type === 'freshEventId' && !nodeTreeStore.getTree(edit.nodeKey)) {
+      throw new Error(`Configuration for node ${edit.nodeKey} is not loaded`);
+    }
+  }
+  for (const edit of edits) {
+    let value: TreeConfigValue | null;
+    if (edit.value.type === 'freshEventId') {
+      value = freshEventIdValue(edit.nodeKey, nodeTreeStore.getTree(edit.nodeKey)!);
+      if (!value) throw new Error(`Could not generate an event ID for node ${edit.nodeKey}`);
+    } else {
+      value = edit.value;
+    }
+    configEditor.applyEdit(editKeyForLeaf(edit.nodeKey, edit.space, edit.address), value, { facilityId });
+  }
+}
+
+/** Put each edited leaf's draft back to its prior value (or drop it if it had none). */
+function restoreConfigDrafts(
+  edits: readonly { nodeKey: string; space: number; address: number }[],
+  priorDrafts: ReadonlyMap<string, ConfigDraftEntry>,
+): void {
+  for (const edit of edits) {
+    const key = editKeyForLeaf(edit.nodeKey, edit.space, edit.address);
+    const prior = priorDrafts.get(key);
+    if (prior) configChangesStore.set(key, prior.value, prior.origin);
+    else configChangesStore.revert(key);
+  }
+}
+
+/** Stage configuration edits as ordinary drafts so they ride the existing save path. */
+function applyConfigEdits(
+  edits: readonly { nodeKey: string; space: number; address: number; value: TreeConfigValue; facilityId: string }[],
+): void {
+  for (const edit of edits) {
+    configEditor.applyEdit(
+      editKeyForLeaf(edit.nodeKey, edit.space, edit.address),
+      edit.value,
+      { facilityId: edit.facilityId },
+    );
+  }
+}
 
 function applyCompositionOps(ops: readonly CompositionOp[]): void {
   for (const op of ops) {
     const bytes = op.eventIdBytes.slice();
     const hex = canonicalEventIdHex(bytes);
-    // Dispatch the consumer leaf write via the config editor so the
-    // draft flows through the existing save path.
-    configEditor.applyEdit(
-      editKeyForLeaf(op.consumerNodeKey, op.consumerLeafSpace, op.consumerLeafAddress),
-      { type: 'eventId', bytes, hex },
-    );
+    applyConfigEdits([{
+      nodeKey: op.consumerNodeKey,
+      space: op.consumerLeafSpace,
+      address: op.consumerLeafAddress,
+      value: { type: 'eventId', bytes, hex },
+      facilityId: op.createdByFacility,
+    }]);
     // Register the bowtie with the createdByFacility back-reference.
     bowtieMetadataStore.createBowtie(hex, op.bowtieName, {
       createdByFacility: op.createdByFacility,

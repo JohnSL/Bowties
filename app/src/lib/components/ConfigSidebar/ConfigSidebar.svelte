@@ -5,7 +5,7 @@
   import { configSidebarStore } from '$lib/stores/configSidebar';
   import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
   import { configReadNodesStore } from '$lib/stores/configReadStatus';
-  import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+  import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
   import { layoutStore } from '$lib/stores/layout.svelte';
   import { effectiveNodeStore } from '$lib/layout';
   import { layoutOpenInProgress } from '$lib/stores/layoutOpenLifecycle';
@@ -122,7 +122,7 @@
   let nodeEntries = $derived(buildSidebarNodeEntries(nodes, layoutStore.activeContext?.layoutNodeIds));
   let sidebarState = $derived($configSidebarStore);
   let configReadNodes = $derived($configReadNodesStore);
-  let persistedRows = $derived(offlineChangesStore.persistedRows);
+  let persistedRows = $derived(pendingChangesStore.persistedRows);
   let connectorRevision = $derived(connectorSelectionsStore.revision);
   // S8: the threshold-gated list of fully-captured unsaved-new nodes; used in
   // the loop below to flip the per-node "unsaved" dot on once a node crosses

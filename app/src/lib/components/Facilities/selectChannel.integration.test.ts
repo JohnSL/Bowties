@@ -23,14 +23,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { fireEvent, render, screen, within, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
-import type { Facility } from '$lib/api/facilities';
+import type { FacilitiesListing, Facility } from '$lib/api/facilities';
 import type { InformationChannel } from '$lib/api/channels';
 
 // ── IPC mocks ────────────────────────────────────────────────────────────
 
 const { listBehaviorTemplatesMock, listFacilitiesMock, listChannelsMock } = vi.hoisted(() => ({
   listBehaviorTemplatesMock: vi.fn<() => Promise<BehaviorTemplate[]>>(async () => []),
-  listFacilitiesMock: vi.fn<() => Promise<Facility[]>>(async () => []),
+  listFacilitiesMock: vi.fn<() => Promise<FacilitiesListing>>(async () => ({ facilities: [], logicPlacement: [] })),
   listChannelsMock: vi.fn<() => Promise<InformationChannel[]>>(async () => []),
 }));
 
@@ -121,7 +121,7 @@ beforeEach(async () => {
   listBehaviorTemplatesMock.mockReset();
   listBehaviorTemplatesMock.mockResolvedValue([BLOCK_INDICATOR]);
   listFacilitiesMock.mockReset();
-  listFacilitiesMock.mockResolvedValue([]);
+  listFacilitiesMock.mockResolvedValue({ facilities: [], logicPlacement: [] });
   listChannelsMock.mockReset();
   listChannelsMock.mockResolvedValue([]);
 
@@ -295,7 +295,7 @@ describe('Spec 018 / S4 — Select-channel user journey (integration)', () => {
 
     // "Reopen": reset + reload from the persisted backend.
     facilitiesStore.reset();
-    listFacilitiesMock.mockResolvedValue([persistedFacility]);
+    listFacilitiesMock.mockResolvedValue({ facilities: [persistedFacility], logicPlacement: [] });
     await facilitiesStore.loadFacilities();
     expect(facilitiesStore.facilities[0].slotBindings.input).toEqual(['ch-bod-1']);
   });

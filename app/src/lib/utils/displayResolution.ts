@@ -15,7 +15,7 @@
  *
  * Value resolution order (highest priority first):
  *   1. draft           — unsaved user edit (configChangesStore)
- *   2. offlinePending  — persisted offline change (offlineChangesStore via
+ *   2. offlinePending  — persisted pending change (pendingChangesStore via
  *                        configChangesStore.overrideValue)
  *   3. baseline        — leaf.value from the tree (caller already holds it)
  *

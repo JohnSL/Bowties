@@ -161,36 +161,16 @@
     1. Write a short design note or spec covering the profile-language extension. Decide between (A)/(B)/(C)/(D) with an ADR extension to ADR-0013 if the answer is (A)/(B)/(C).
     2. Reconcile with the Style Constraint Contract seam.
     3. When designed, restore an appropriate user-facing affordance (picker, row tooltip, and/or slot state) driven by the chosen mechanism.
-* Retire per-callsite `flushDraftToBackend` — Commit 2 of the ADR-0012 2026-07-03 draft-mirror activation
-  * Root cause: Commit 1 built `configDraftMirrorOrchestrator` as the sole reactive owner of the config-draft → backend IPC path, but the two legacy callsites (`TreeLeafRow.svelte` leaf-row commit; `BowtieCatalogPanel.svelte` `handleNewConnection` + `handleClearConnection`) still call `flushDraftToBackend` directly. The mirror already emits the same `setModifiedValue` for those same edits, so the legacy calls are now redundant work rather than the source of correctness. Leaving them in place indefinitely keeps a second, silent contributor to the seam alive — the exact "someone forgot to flush" pattern the mirror exists to prevent from re-emerging under a different name.
-  * Approach: after Commit 1 has soaked (no user reports of missed writes, no test flakes tied to the mirror), delete the three `flushDraftToBackend` invocations, delete the exported function from `configDraftOrchestrator.ts`, delete the `flushDraftToBackend` describe block in `configDraftOrchestrator.test.ts`, and delete the `flushDraftToBackend` mocks from `TreeLeafRow.test.ts`, `TreeLeafRow.offline.test.ts`, and `BowtieCatalogPanel.test.ts`. Shape 2 (`applyEdit` calls the mirror), Shape 3 (keep per-callsite flushes), and Shape 4 (fold mirror into `configDraftOrchestrator`) were considered and rejected on 2026-07-03 — see ADR-0012 §"2026-07-03 extension: connected-mode draft-to-backend mirror".
-  * Prerequisite: Commit 1 landed (this session). No user-facing behaviour change expected.
-  * Follow-up:
-    1. Delete the three call sites and the exported function.
-    2. Delete the associated tests and mocks.
-    3. Confirm the full app test suite still passes.
-* Batched `set_modified_values` IPC + emission coalesce for the Config Draft Backend Mirror
-  * Root cause: `configDraftMirrorOrchestrator` (ADR-0012 2026-07-03 extension) emits one `setModifiedValue` IPC per new/changed draft. Facility composition writes 2 consumer leaves per bowtie in the same reactive tick, so a facility with N bowties emits 2N IPCs. Fine for current layout sizes but wasteful.
-  * Approach: introduce a batched `set_modified_values(nodeId, entries[])` IPC (backend accumulates into `NodeProxy.modified_value` in one lock cycle); have the mirror coalesce all pending emissions from a single reactive tick into per-node batches before invoking IPC. MUST replace the mirror's current per-draft emission, not run in parallel — the single-owner property of the seam is what makes the "someone forgot to flush" bug class impossible. Defer until profiling shows a real cost.
-  * Prerequisite: Commit 2 above (retire `flushDraftToBackend`) — do not add a batching seam while a legacy per-draft flush still exists.
-  * Follow-up:
-    1. Measure the IPC cost on a realistic layout (Tower-LCC + Signal-LCC, several facilities).
-    2. If material, add the batched IPC + coalesce.
-    3. Update ADR-0012 §"2026-07-03 extension" with the batching contract.
-* "Flush pending drafts on connect" for the Config Draft Backend Mirror
-  * Root cause: `configDraftMirrorOrchestrator` reads `layoutStore.isConnected` inside its effect body, NOT as a reactive dependency, so a user who edits while offline then connects does not automatically flush the backlog to the backend. This is intentional (the mirror is not a re-emit engine — its diff advances even when offline so reconnects do not fire spurious IPCs), but it does mean an offline-edit → connect → connected-save sequence relies on `stageDraftsForOfflineSave` at offline-save time. If we later want the mirror to also observe connect transitions and flush pending offline drafts to the backend on connect (so the user can save without switching to offline mode first), that is a separate deliberate feature.
-  * Approach: needs design. Options include (A) a one-shot `flushOnConnect()` hook that walks `configChangesStore.draftEntries()` and emits `setModifiedValue` for each non-placeholder key, wired to a `layoutStore.isConnected` transition observer; (B) an explicit user affordance ("Push offline edits to bus") that keeps the timing under user control; (C) leaving the current offline-vs-online contract intact and treating the workflow as "close and reopen in the appropriate mode".
-  * Prerequisite: none; independent of Commit 2 and the batching item above.
-  * Follow-up:
-    1. Decide whether the feature is worth building (real user report? Or a theoretical smoothness win?).
-    2. If yes, pick option A/B/C and add an ADR-0012 extension covering the connect-transition contract.
 * Signaling UX — glossary gap in [product/glossary.md](../product/glossary.md)
-  * Root cause: **signal type**, **head**, **indication**, **aspect**, **section**, and **signalling system** are load-bearing terms in the [signaling UX charter](proposals/signaling-ux/goals-and-constraints.md) and [proposal](proposals/signaling-ux/signaling-ux-proposal.md) but have no glossary entries yet.
+  * Root cause: **signal type**, **head**, **section**, and **signalling system** are load-bearing terms in the [signaling UX charter](proposals/signaling-ux/goals-and-constraints.md) and [proposal](proposals/signaling-ux/signaling-ux-proposal.md) but have no glossary entries yet. (**Aspect** and **Indication** were added by Spec 020; **head** appears only as an _Avoid_ term under **Signal**.)
   * Follow-up:
-    1. Add glossary entries for the six terms before the proposal is treated as settled.
+    1. Add glossary entries for the four remaining terms before the proposal is treated as settled.
     2. Cross-reference the proposal §1 (signal type) and §4 (system-level terms).
 * Signaling UX — extract the Signal-LCC manual's ABS/APB worked examples
   * Root cause: the manual's section 9, pages 35–47, contains worked ABS and APB configuration examples that were skipped in `profile-extractions/signal-lcc/recipes.yaml`. This is the highest-value gap in the current Signal-LCC profile extraction.
   * Follow-up:
     1. Extract the examples into `product/hardware/signal-lcc/` so the signaling UX proposal and future mockups can cite them.
     2. Confirm the extracted recipes match the cascade and condition derivation in `signaling-ux-proposal.md` §3.
+* Bowtie catalog reads configuration through the effective view
+  * The catalog (`app/src-tauri/src/commands/bowties.rs` ~385-450) builds its own overlay of Pending Changes on event leaves. Move it onto `LayoutState::effective_config_tree` (ADR-0015 2026-11-23) so unsaved drafts and Pending Changes resolve the same way for every backend reader.
+  * The `modified_value` layer is gone (Spec 020 E3b-1) and `LayoutState` is the single owner of Pending Changes (E3b-0); this overlay is the last parallel reader. It already uses the shared still-waiting predicate.

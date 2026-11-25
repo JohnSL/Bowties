@@ -49,6 +49,10 @@ describe('hasSyncSessionContent', () => {
     expect(hasSyncSessionContent({ conflictRows: [], cleanRows: [], alreadyAppliedCount: 0, nodeMissingRows: [{} as any] })).toBe(true);
     expect(hasSyncSessionContent({ conflictRows: [], cleanRows: [], alreadyAppliedCount: 0, nodeMissingRows: [] })).toBe(false);
   });
+
+  it('counts a session where every row was already on the board as content, so the notice is shown', () => {
+    expect(hasSyncSessionContent({ conflictRows: [], cleanRows: [], alreadyAppliedCount: 2, nodeMissingRows: [] })).toBe(true);
+  });
 });
 
 describe('connectLiveSession', () => {

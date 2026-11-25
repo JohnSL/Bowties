@@ -112,7 +112,7 @@ class BowtieCatalogStore {
    * modified but not yet saved (pending / unsaved consumers or producers).
    *
    * For committed entries the structural identity lookup is used (same as
-   * nodeSlotMap).  For leaves that only have a `modifiedValue`, the effective
+   * nodeSlotMap).  For leaves that only have an unsaved draft, the effective
    * hex value is matched against catalog event IDs so the "Used in" link
    * appears immediately after an assignment is made.
    */

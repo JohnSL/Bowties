@@ -17,7 +17,6 @@ import BowtieCatalogPanel from './BowtieCatalogPanel.svelte';
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
 const {
-  mockSetModifiedValue,
   mockTreeByNodeId,
   mockDraftConfigChange,
   mockUpsertConfigChange,
@@ -28,7 +27,6 @@ const {
 } = vi.hoisted(() => {
   const draftConfigChange = { value: null as any };
   return {
-    mockSetModifiedValue: vi.fn(),
     mockTreeByNodeId: new Map<string, any>(),
     mockDraftConfigChange: draftConfigChange,
     mockUpsertConfigChange: vi.fn((change) => {
@@ -81,8 +79,8 @@ vi.mock('$lib/stores/layout.svelte', () => ({
   },
 }));
 
-vi.mock('$lib/stores/offlineChanges.svelte', () => ({
-  offlineChangesStore: {
+vi.mock('$lib/stores/pendingChanges.svelte', () => ({
+  pendingChangesStore: {
     upsertConfigChange: mockUpsertConfigChange,
     findDraftConfigChange: vi.fn(() => mockDraftConfigChange.value),
     findPersistedConfigChange: vi.fn(() => null),
@@ -125,19 +123,11 @@ vi.mock('$lib/stores/bowtieFocus.svelte', () => ({
   },
 }));
 
-vi.mock('$lib/api/config', () => ({
-  setModifiedValue: mockSetModifiedValue,
-}));
-
 const mockApplyEdit = vi.fn();
 vi.mock('$lib/stores/configEditor.svelte', () => ({
   configEditor: {
     applyEdit: (...args: unknown[]) => mockApplyEdit(...args),
   },
-}));
-
-vi.mock('$lib/orchestration/configDraftOrchestrator', () => ({
-  flushDraftToBackend: vi.fn(),
 }));
 
 vi.mock('$lib/utils/eventIds', async (importOriginal) => {
@@ -184,8 +174,7 @@ function makeEventLeaf(overrides: Record<string, any> = {}) {
     actionValue: 0,
     hintSlider: null,
     hintRadio: false,
-    modifiedValue: null,
-    writeState: null,
+
     writeError: null,
     readOnly: false,
     ...overrides,
@@ -425,14 +414,12 @@ describe('BowtieCatalogPanel — catalog content (readComplete=true, hasUnreadNo
 
     await fireEvent.click(screen.getByRole('button', { name: /^remove$/i }));
 
-    // After refactor: remove goes through configEditor.applyEdit + flushDraftToBackend
+    // After refactor: remove goes through configEditor.applyEdit (a draft; the Save records it)
     expect(mockApplyEdit).toHaveBeenCalled();
     const [key, value] = mockApplyEdit.mock.calls[0];
     expect(key).toContain(nodeId.replace(/\./g, '').toUpperCase());
     expect(value.type).toBe('eventId');
     expect(value.hex).toBe('0000000000000000');
-    // Should NOT use the old setModifiedValue IPC directly
-    expect(mockSetModifiedValue).not.toHaveBeenCalled();
   });
 });
 

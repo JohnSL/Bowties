@@ -9,6 +9,11 @@
 //! bus operation.
 
 mod chain;
+pub mod compiler;
+pub mod facts;
+pub mod logic_placement;
+pub mod outputs;
+pub mod slots;
 
 use std::collections::BTreeMap;
 
@@ -137,6 +142,16 @@ pub struct SignalOverride {
     pub approach_lighting: ApproachLighting,
 }
 
+/// A named release of an untracked owner on one node. Never implied: an owner
+/// is released only when the request lists it.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseRequest {
+    pub node_key: String,
+    /// Serialized as "Mast N" / "Direct lamp N".
+    pub owner: SignalOutputOwner,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockSignalsRequest {
@@ -161,11 +176,29 @@ pub struct BlockSignalsRequest {
     /// Signal names by signal ID; signals without one get a default name.
     #[serde(default)]
     pub signal_names: BTreeMap<String, String>,
+    /// Untracked owners (a mast or Direct Lamp row no facility claims) the
+    /// modeler chose to release, so their pins read as free. Applied to the
+    /// effective configuration before any fact is derived.
+    #[serde(default)]
+    pub release: Vec<ReleaseRequest>,
     /// Ephemeral user selections. These reuse the existing Information
     /// Channel role/style/binding vocabulary, but are never persisted as
     /// channels in S2.
     #[serde(default)]
     pub bindings: Vec<SignalBindingSelection>,
+    /// Signals already saved for this facility, filled by the backend from the
+    /// layout. A derived signal whose protected block matches one keeps its
+    /// saved signal ID, so names and channels stay attached across edits.
+    #[serde(default)]
+    pub saved_signals: Vec<SavedSignalIdentity>,
+}
+
+/// The identity of one saved signal: its ID and the block it protects.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedSignalIdentity {
+    pub signal_id: String,
+    pub protected_block: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -313,7 +346,55 @@ pub enum SignalHardwareEvidence {
 pub struct SignalOutput {
     pub ordinal: u32,
     pub label: String,
-    pub owner: Option<String>,
+    pub owner: Option<SignalOutputOwner>,
+    /// The Bowties facility that owns this output's mast, when one does.
+    /// Absent for direct lamps and for masts configured outside Bowties.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub facility: Option<OutputFacility>,
+}
+
+/// A Bowties facility that owns a physical output through a claimed mast.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputFacility {
+    pub facility_id: String,
+    pub name: String,
+}
+
+/// Who currently drives a physical output. Serialized as its display label
+/// ("Mast 2", "Direct lamp 1") so the frontend can show "Taken by ...".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignalOutputOwner {
+    /// A Rule-to-Aspect mast (1-based).
+    Mast(u32),
+    /// A Direct Lamp Control row (1-based).
+    DirectLamp(u32),
+}
+
+impl std::fmt::Display for SignalOutputOwner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Mast(n) => write!(f, "Mast {n}"),
+            Self::DirectLamp(n) => write!(f, "Direct lamp {n}"),
+        }
+    }
+}
+
+impl Serialize for SignalOutputOwner {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for SignalOutputOwner {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let label = String::deserialize(deserializer)?;
+        let number = |prefix: &str| label.strip_prefix(prefix)?.parse::<u32>().ok();
+        number("Mast ")
+            .map(Self::Mast)
+            .or_else(|| number("Direct lamp ").map(Self::DirectLamp))
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown output owner '{label}'")))
+    }
 }
 
 /// Read-only, profile-supported output host facts. The backend gathers these
@@ -446,6 +527,12 @@ pub struct BlockSignalsPreview {
     pub capability: ProposalCapability,
     #[serde(default)]
     pub output_hosts: Vec<SignalHardwareHost>,
+    /// Every mast outside Bowties that drives a pin on an output host, with
+    /// the Logic that sets its aspects (`matchedLogic`) and the part of that
+    /// kept when it also sends other events (`keptLogic`). Filled by the
+    /// backend from the effective configuration; empty from the pure policy.
+    #[serde(default)]
+    pub outside_owners: Vec<compiler::UntrackedOwnerRelease>,
     #[serde(default)]
     pub issues: Vec<ProposalIssue>,
 }
@@ -476,7 +563,7 @@ pub fn preview_block_signals_with_hardware(
             .iter()
             .find(|candidate| candidate.signal_id == signal.signal_id);
         match binding {
-            Some(binding) => project_signal_binding(signal, binding, &hardware, &mut issues),
+            Some(binding) => project_signal_binding(signal, binding, &hardware, &[], &mut issues),
             None => unbound = true,
         }
     }
@@ -494,6 +581,7 @@ pub fn preview_block_signals_with_hardware(
         signals,
         capability: incomplete_preview_capability(),
         output_hosts: hardware.hosts,
+        outside_owners: Vec::new(),
         issues,
     }
 }
@@ -502,8 +590,15 @@ fn project_signal_binding(
     signal: &mut SignalPreview,
     selection: &SignalBindingSelection,
     hardware: &SignalHardwareFacts,
+    own_masts: &[u32],
     issues: &mut Vec<ProposalIssue>,
 ) {
+    // Pins held by the facility's own masts are free to it.
+    let held_by_other = |output: &SignalOutput| match output.owner {
+        None => false,
+        Some(SignalOutputOwner::Mast(n)) => !own_masts.contains(&n),
+        Some(SignalOutputOwner::DirectLamp(_)) => true,
+    };
     if selection.role != ChannelRole::SignalIndication {
         issues.push(ProposalIssue::InvalidSignalBinding {
             signal_id: signal.signal_id.clone(),
@@ -590,7 +685,7 @@ fn project_signal_binding(
     let available = host
         .outputs
         .iter()
-        .filter(|output| output.owner.is_none())
+        .filter(|output| !held_by_other(output))
         .count();
     if available < 2 {
         issues.push(ProposalIssue::InsufficientSignalOutputCapacity {
@@ -608,12 +703,12 @@ fn project_signal_binding(
             .iter()
             .find(|output| output.ordinal == output_ordinal)
             .expect("validated output remains present");
-        if let Some(owner) = &output.owner {
+        if let Some(owner) = output.owner.filter(|_| held_by_other(output)) {
             issues.push(ProposalIssue::SignalOutputConflict {
                 signal_id: signal.signal_id.clone(),
                 node_key: node_key.clone(),
                 output: output_ordinal,
-                owner: owner.clone(),
+                owner: owner.to_string(),
             });
         }
     }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { facilitiesStore } from '$lib/stores/facilities.svelte';
   import { behaviorTemplatesStore } from '$lib/stores/behaviorTemplates.svelte';
   import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
@@ -6,16 +7,23 @@
   import * as facilityOrchestrator from '$lib/orchestration/facilityOrchestrator';
   import AddFacilityDialog from './AddFacilityDialog.svelte';
   import FacilityCard from './FacilityCard.svelte';
+  import BlockSignalsRemoveDialog from './BlockSignalsRemoveDialog.svelte';
   import BlockSignalsEditor from '$lib/components/BlockSignals/BlockSignalsEditor.svelte';
   import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
   import { blockSignalsEditorStore } from '$lib/stores/blockSignalsEditor.svelte';
   import { channelsStore } from '$lib/stores/channels.svelte';
   import { eventStateStore } from '$lib/stores/eventState.svelte';
-  import { deriveChannelState } from '$lib/utils/channelState';
-  import { occupancyFromChannelState, type BlockOccupancy } from '$lib/components/BlockSignals/occupancy';
+  import { resolveNodeParts } from '$lib/layout';
+  import { nodeIdToDisplayHex } from '$lib/utils/nodeId';
+  import { facilityBoardSlots } from '$lib/utils/facilityBoardSlots';
+  import { issueText } from '$lib/components/BlockSignals/wiringText';
+  import { blockOccupancyMap } from '$lib/components/BlockSignals/occupancy';
+  import { facilityDiagramOrchestrator } from '$lib/orchestration/facilityDiagramOrchestrator';
+  import { facilityDiagramsStore } from '$lib/stores/facilityDiagrams.svelte';
   import {
     blockSignalsEditorActions,
     startBlockSignalsEditor,
+    startEditBlockSignalsEditor,
   } from '$lib/orchestration/blockSignalsEditorOrchestrator';
 
   let {
@@ -35,25 +43,42 @@
 
   let showAddDialog = $state(false);
 
-  // Live occupancy of each detected block, from the same events as the Channels panel.
-  const blockOccupancy = $derived.by(() => {
-    const states = new Map<string, BlockOccupancy>();
-    if (!blockSignalsEditorStore.open) return states;
-    const events = eventStateStore.events;
-    for (const channel of channelsStore.channels) {
-      if (channel.role !== 'block-occupancy') continue;
-      const ids = resolvedEventIds?.get(channel.id);
-      const state = deriveChannelState(events, ids?.['occupied'], ids?.['clear'], 'block-occupancy');
-      states.set(channel.id, occupancyFromChannelState(state));
+  // Spec 020 / E2b: the Automatic Block Signals removal awaiting confirmation.
+  let removal = $state<{ facilityId: string; reason?: string; error?: string } | null>(null);
+  const removalFacility = $derived(
+    removal ? facilitiesStore.facilities.find((f) => f.facilityId === removal!.facilityId) : undefined,
+  );
+  const removalBoards = $derived(
+    (removalFacility ? facilityBoardSlots(removalFacility, facilitiesStore.logicPlacement) : []).map((group) => ({
+      name: resolveNodeParts(group.nodeKey).name || nodeIdToDisplayHex(group.nodeKey) || group.nodeKey,
+      slots: group.slots,
+    })),
+  );
+
+  async function confirmRemoval(leaveBoard: boolean) {
+    if (!removal) return;
+    const result = await facilityOrchestrator.removeBlockSignalsFacility({ facilityId: removal.facilityId, leaveBoard });
+    if (result.ok) {
+      removal = null;
+    } else if ('issues' in result) {
+      removal = { facilityId: removal.facilityId, reason: result.issues.map((issue) => issueText(issue, [])).join(' ') };
+    } else {
+      removal = { facilityId: removal.facilityId, error: 'The facility could not be removed. Try again.' };
     }
-    return states;
+  }
+
+  // Live occupancy of each detected block, from the same events as the Channels panel.
+  const blockOccupancy = $derived(
+    blockOccupancyMap(channelsStore.channels, resolvedEventIds, eventStateStore.events),
+  );
+  // Saved Automatic Block Signals facilities draw their track diagram from a backend preview;
+  // the orchestrator refetches only the facilities whose saved record changed.
+  $effect(() => {
+    const facilities = facilitiesStore.facilities;
+    // sync reads and writes the diagram store; only a facilities change should re-run it.
+    untrack(() => void facilityDiagramOrchestrator.sync(facilities));
   });
-  const blockSignalsTemplate: BehaviorTemplate = {
-    templateId: 'automatic-block-signals',
-    displayName: 'Automatic Block Signals',
-    slots: [],
-    mapping: [],
-  };
+  const BLOCK_SIGNALS_TEMPLATE_ID = 'automatic-block-signals';
 
   // Shown in Add facility so people can see what's planned; it can't be chosen yet.
   const interlockingPlantChoice = {
@@ -72,7 +97,7 @@
   };
 
   const facilityChoices = $derived(
-    [...behaviorTemplatesStore.templates, blockSignalsTemplate]
+    behaviorTemplatesStore.templates
       .map((template) => ({ ...template, description: FACILITY_DESCRIPTIONS[template.templateId] }))
       .concat(interlockingPlantChoice),
   );
@@ -82,7 +107,7 @@
   }
 
   function handleAddConfirm(template: BehaviorTemplate, name: string) {
-    if (template.templateId === blockSignalsTemplate.templateId) {
+    if (template.templateId === BLOCK_SIGNALS_TEMPLATE_ID) {
       startBlockSignalsEditor(name);
       showAddDialog = false;
       return;
@@ -97,6 +122,11 @@
     facilitiesStore.renameFacility(facilityId, newName);
   }
   function handleDelete(facilityId: string) {
+    const facility = facilitiesStore.facilities.find((f) => f.facilityId === facilityId);
+    if (facility?.templateId === BLOCK_SIGNALS_TEMPLATE_ID && facility.blockSignals) {
+      removal = { facilityId };
+      return;
+    }
     // Spec 018 / S6 — route through the orchestrator so composed
     // bowties are torn down before the facility is removed. Calling
     // `facilitiesStore.deleteFacility` directly would leave orphan
@@ -135,11 +165,14 @@
             template={templateFor(facility.templateId)}
             {resolvedEventIds}
             onRename={handleRename}
+            onEdit={startEditBlockSignalsEditor}
             onDelete={handleDelete}
             {onSelectChannel}
             {onAddChannel}
             {onRemoveFromSlot}
             {nodeTree}
+            diagram={facilityDiagramsStore.get(facility.facilityId)}
+            occupancy={blockOccupancy}
           />
         </li>
       {/each}
@@ -154,12 +187,25 @@
     />
   {/if}
 
+  {#if removal && removalFacility?.blockSignals}
+    <BlockSignalsRemoveDialog
+      facilityName={removalFacility.name}
+      boards={removalBoards}
+      reason={removal.reason}
+      error={removal.error}
+      onConfirm={() => confirmRemoval(false)}
+      onConfirmLeaveBoard={() => confirmRemoval(true)}
+      onCancel={() => (removal = null)}
+    />
+  {/if}
+
   {#if blockSignalsEditorStore.open}
     <BlockSignalsEditor
       view={blockSignalsEditorStore}
       actions={blockSignalsEditorActions}
       detectedBlocks={effectiveLayoutStore.detectedBlocks}
       occupancy={blockOccupancy}
+      {nodeTree}
     />
   {/if}
 </section>

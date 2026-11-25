@@ -235,7 +235,7 @@ class NodeTreeStore {
    *
    * The optional `onTreeLoaded` callback fires after each tree load completes.
    * Callers can use this to apply post-load transformations (e.g. pending
-   * offline change values) without coupling stores together.
+   * pending change values) without coupling stores together.
    *
    * Safe to call multiple times — subsequent calls are no-ops.
    */

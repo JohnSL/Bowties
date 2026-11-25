@@ -22,7 +22,6 @@ import { editKeyForLeaf } from '$lib/utils/editKey';
 import { triggerAction } from '$lib/api/config';
 
 const mockApplyEdit = vi.fn();
-const mockFlushDraftToBackend = vi.fn();
 
 let mockLayers: import('$lib/stores/configChanges.svelte').ChangeLayer[] = [];
 let mockVisible: TreeConfigValue | null = null;
@@ -41,10 +40,6 @@ vi.mock('$lib/stores/configEditor.svelte', () => ({
   configEditor: {
     applyEdit: (...args: unknown[]) => mockApplyEdit(...args),
   },
-}));
-
-vi.mock('$lib/orchestration/configDraftOrchestrator', () => ({
-  flushDraftToBackend: (...args: unknown[]) => mockFlushDraftToBackend(...args),
 }));
 
 // Mock $app/navigation
@@ -97,12 +92,11 @@ vi.mock('$lib/stores/configFocus.svelte', () => ({
 }));
 
 vi.mock('$lib/api/config', () => ({
-  setModifiedValue: vi.fn().mockResolvedValue(undefined),
   triggerAction: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('$lib/stores/offlineChanges.svelte', () => ({
-  offlineChangesStore: {
+vi.mock('$lib/stores/pendingChanges.svelte', () => ({
+  pendingChangesStore: {
     isBusy: false,
     findPersistedConfigChange: vi.fn().mockReturnValue(null),
     revertToBaseline: vi.fn().mockResolvedValue(true),
@@ -692,7 +686,7 @@ describe('TreeLeafRow.svelte', () => {
       };
       const { unmount } = render(TreeLeafRow, {
         props: {
-          leaf: makeLeaf({ elementType: 'eventId', value: eventValue, size: 8, readOnly: true, writeState: 'writing' }),
+          leaf: makeLeaf({ elementType: 'eventId', value: eventValue, size: 8, readOnly: true }),
           nodeId: NODE_ID,
           isNodeOffline: true,
           connectorConstraintState,
@@ -983,40 +977,6 @@ describe('dirty and write state display', () => {
     });
     render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
     expect(screen.getByRole('spinbutton')).toHaveValue(55);
-  });
-
-  it('disables input when writeState is writing', () => {
-    const leaf = makeLeaf({
-      elementType: 'int',
-      value: { type: 'int', value: 5 },
-      constraints: { min: 0, max: 10, defaultValue: null, mapEntries: null },
-      writeState: 'writing',
-    });
-    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
-    expect(screen.getByRole('spinbutton')).toBeDisabled();
-  });
-
-  it('shows write error message when writeState is error', () => {
-    const leaf = makeLeaf({
-      elementType: 'string',
-      value: { type: 'string', value: 'Hello' },
-      size: 16,
-      modifiedValue: { type: 'string', value: 'New Value' },
-      writeState: 'error',
-      writeError: 'Node did not respond',
-    });
-    render(TreeLeafRow, { props: { leaf, nodeId: NODE_ID } });
-    expect(screen.getByText(/⚠ Node did not respond/)).toBeInTheDocument();
-  });
-
-  it('applies write-error class when writeState is error', () => {
-    const leaf = makeLeaf({
-      modifiedValue: { type: 'int', value: 1 },
-      writeState: 'error',
-      writeError: 'Timeout',
-    });
-    render(TreeLeafRow, { props: { leaf } });
-    expect(screen.getByRole('listitem')).toHaveClass('write-error');
   });
 });
 

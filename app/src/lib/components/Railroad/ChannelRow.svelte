@@ -8,10 +8,12 @@
     channelStateLabel,
     type ChannelState,
   } from '$lib/utils/channelState';
+  import { signalOutputLabel } from '$lib/utils/signalOutputLabels';
 
   const ROLE_LABELS: Record<string, string> = {
     'block-occupancy': 'Block occupancy',
     'lamp-indicator': 'Lamp indicator',
+    'signal-indication': 'Signal',
   };
 
   /**
@@ -109,7 +111,8 @@
     if (channel.binding.kind === 'lampRow') {
       return `Row ${channel.binding.rowOrdinal}`;
     }
-    return '';
+    const tree = nodeTree?.(channel.binding.nodeKey);
+    return `${signalOutputLabel(tree, channel.binding.redOutput)} / ${signalOutputLabel(tree, channel.binding.greenOutput)}`;
   });
   let usedByText = $derived.by(() => {
     if (!usedBy || usedBy.length === 0) return '—';

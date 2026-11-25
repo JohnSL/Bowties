@@ -1,18 +1,23 @@
 //! Read-only Automatic Block Signals proposal adapter.
 
+pub mod compose;
+
 use std::collections::HashMap;
 
 use bowties_core::{
     layout::channels::{ChannelBinding, ChannelRole, InformationChannel},
+    layout::state::LayoutState,
     node_key::NodeKey,
-    node_tree::{
-        effective_value, replication_instances, ConfigNode, ConfigValue, NodeConfigTree,
-    },
-    profile::{make_profile_key, StructureProfile},
+    node_tree::NodeConfigTree,
+    profile::StructureProfile,
     signaling::{
-        preview_block_signals_with_hardware, ProposalIssue, SignalAppearanceSet,
-        SignalDriver, SignalHardwareEvidence, SignalHardwareFacts, SignalHardwareHost,
-        BlockSignalsPreview, BlockSignalsRequest, SignalOutput, SignalStyle,
+        compiler::{CompileIssue, NodeConfigEdit, UntrackedOwnerRelease},
+        facts::{effective_trees, outside_mast_owners, overlay_releases, signal_hardware_facts},
+        outputs::attribute_output_facilities,
+        preview_block_signals_with_hardware,
+        slots::claimed_slots_from_facilities,
+        ProposalIssue, ReleaseRequest, SignalHardwareFacts,
+        BlockSignalsPreview, BlockSignalsRequest, SavedSignalIdentity,
     },
 };
 
@@ -28,6 +33,11 @@ pub struct ProposalFacts {
     channels: Vec<InformationChannel>,
     trees: HashMap<NodeKey, NodeConfigTree>,
     hardware: SignalHardwareFacts,
+    /// Edits that release the request's named untracked owners; their effect
+    /// is already applied to `trees` and `hardware`.
+    release_edits: Vec<NodeConfigEdit>,
+    release_issues: Vec<CompileIssue>,
+    outside_owners: Vec<UntrackedOwnerRelease>,
 }
 
 impl ProposalFacts {
@@ -35,11 +45,7 @@ impl ProposalFacts {
         channels: Vec<InformationChannel>,
         trees: HashMap<NodeKey, NodeConfigTree>,
     ) -> Self {
-        Self {
-            channels,
-            trees,
-            hardware: SignalHardwareFacts::default(),
-        }
+        Self::with_hardware(channels, trees, SignalHardwareFacts::default())
     }
 
     pub fn with_hardware(
@@ -51,6 +57,9 @@ impl ProposalFacts {
             channels,
             trees,
             hardware,
+            release_edits: Vec::new(),
+            release_issues: Vec::new(),
+            outside_owners: Vec::new(),
         }
     }
 }
@@ -94,7 +103,33 @@ pub fn propose(
 
     let mut preview = preview_block_signals_with_hardware(request, facts.hardware.clone());
     preview.issues.extend(issues);
+    preview.outside_owners = facts.outside_owners.clone();
     Ok(preview)
+}
+
+/// The saved signals of an existing facility, so editing keeps their IDs.
+/// Empty when the facility is new or has no Automatic Block Signals record.
+pub(crate) fn saved_signals_from_layout(
+    layout: &LayoutState,
+    facility_id: &str,
+) -> Vec<SavedSignalIdentity> {
+    layout
+        .effective_facilities()
+        .facilities
+        .iter()
+        .find(|f| f.facility_id == facility_id)
+        .and_then(|f| f.block_signals.as_ref())
+        .map(|record| {
+            record
+                .signals
+                .iter()
+                .map(|s| SavedSignalIdentity {
+                    signal_id: s.signal_id.clone(),
+                    protected_block: s.protected_block.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn resolved_detection_events(
@@ -136,219 +171,27 @@ fn detection_event_mapping(style: &str) -> Option<HashMap<String, u32>> {
 /// from every captured/saved configuration tree, not from detector-channel
 /// bindings, so a compatible Signal-LCC is visible even when it hosts no
 /// detector.
+///
+/// The request's named releases are applied here, once, before any fact is
+/// derived: pin owners, slot facts and the free-slot pick all read the
+/// released trees, so preview and compose cannot disagree.
 fn proposal_facts_from_layout(
     layout: &bowties_core::layout::state::LayoutState,
     profiles: &HashMap<String, Option<StructureProfile>>,
+    release: &[ReleaseRequest],
 ) -> ProposalFacts {
     let channels = layout.effective_channels().channels.clone();
-    let trees = layout
-        .all_tree_keys()
-        .into_iter()
-        .filter_map(|key| layout.config_tree(&key).cloned().map(|tree| (key, tree)))
-        .collect::<HashMap<_, _>>();
-    let hardware = signal_hardware_facts(&trees, profiles);
-    ProposalFacts::with_hardware(channels, trees, hardware)
-}
-
-/// Project the profile declarations and complete effective configuration of
-/// each compatible Signal-LCC into read-only output facts. This is deliberately
-/// a narrow interpreter, not an allocator or claims registry.
-fn signal_hardware_facts(
-    trees: &HashMap<NodeKey, NodeConfigTree>,
-    profiles: &HashMap<String, Option<StructureProfile>>,
-) -> SignalHardwareFacts {
-    let hosts = trees
-        .iter()
-        .filter_map(|(node_key, tree)| signal_hardware_host(node_key, tree, profiles))
-        .collect();
-    SignalHardwareFacts { hosts }
-}
-
-fn signal_hardware_host(
-    node_key: &NodeKey,
-    tree: &NodeConfigTree,
-    profiles: &HashMap<String, Option<StructureProfile>>,
-) -> Option<SignalHardwareHost> {
-    let identity = tree.identity.as_ref()?;
-    let manufacturer = identity.manufacturer.as_deref()?;
-    let model = identity.model.as_deref()?;
-    let profile = profiles
-        .get(&make_profile_key(manufacturer, model))
-        .and_then(|profile| profile.as_ref())?;
-    let style = profile
-        .styles
-        .iter()
-        .find(|style| {
-            style.binding_kind == "signalLccRgOutputs" && style.signal_appearances.is_some()
-        })?;
-    let style = signal_style_from_profile(style).ok()?;
-    let node_name = format!("{} · {}", model, tree.node_id);
-    match signal_outputs_from_configuration(tree) {
-        Ok(outputs) => Some(SignalHardwareHost {
-            node_key: node_key.to_string(),
-            node_name,
-            style,
-            evidence: SignalHardwareEvidence::Complete,
-            evidence_detail: None,
-            outputs,
-        }),
-        Err(detail) => Some(SignalHardwareHost {
-            node_key: node_key.to_string(),
-            node_name,
-            style,
-            evidence: SignalHardwareEvidence::Invalid,
-            evidence_detail: Some(detail),
-            outputs: Vec::new(),
-        }),
+    let claimed = claimed_slots_from_facilities(layout.effective_facilities(), None);
+    let overlay = overlay_releases(effective_trees(layout), release, &claimed);
+    let mut hardware = signal_hardware_facts(&overlay.trees, profiles);
+    attribute_output_facilities(&mut hardware.hosts, layout.effective_facilities());
+    let outside_owners = outside_mast_owners(&overlay.trees, &hardware.hosts, &claimed);
+    ProposalFacts {
+        release_edits: overlay.edits,
+        release_issues: overlay.issues,
+        outside_owners,
+        ..ProposalFacts::with_hardware(channels, overlay.trees, hardware)
     }
-}
-
-fn signal_style_from_profile(style: &bowties_core::profile::Style) -> Result<SignalStyle, String> {
-    let appearances = style
-        .signal_appearances
-        .as_ref()
-        .ok_or_else(|| format!("Style '{}' has no signal appearance map.", style.style_id))?;
-    let drivers = |values: &[String]| {
-        values
-            .iter()
-            .map(|value| match value.as_str() {
-                "red" => Ok(SignalDriver::Red),
-                "green" => Ok(SignalDriver::Green),
-                _ => Err(format!(
-                    "Style '{}' declares unsupported signal driver '{}'.",
-                    style.style_id, value
-                )),
-            })
-            .collect::<Result<Vec<_>, _>>()
-    };
-    Ok(SignalStyle {
-        style_id: style.style_id.clone(),
-        binding_kind: style.binding_kind.clone(),
-        appearances: SignalAppearanceSet {
-            stop: drivers(&appearances.stop)?,
-            approach: drivers(&appearances.approach)?,
-            clear: drivers(&appearances.clear)?,
-        },
-    })
-}
-
-/// Interpret the two resource owners documented for Signal-LCC: Direct Lamp
-/// Control rows and active Rule-to-Aspect mast appearances. The number of
-/// replicated Direct Lamp rows is the authoritative current output capacity;
-/// it is not inferred from a detector or manufacturer maximum.
-fn signal_outputs_from_configuration(tree: &NodeConfigTree) -> Result<Vec<SignalOutput>, String> {
-    let direct_lamp_segment = tree
-        .segments
-        .iter()
-        .find(|segment| segment.name == "Direct Lamp Control")
-        .ok_or_else(|| "Direct Lamp Control configuration is unavailable.".to_string())?;
-    let lamps = replication_instances(&direct_lamp_segment.children, "Lamp");
-    if lamps.is_empty() {
-        return Err("Direct Lamp Control has no authoritative output rows.".to_string());
-    }
-    let output_count = lamps.len() as u32;
-    let mut owners = HashMap::<u32, String>::new();
-    for lamp in lamps {
-        let selection = required_int_leaf(&lamp.children, "Lamp Selection")?;
-        record_output_owner(
-            &mut owners,
-            selection,
-            output_count,
-            format!("Direct lamp {}", lamp.instance),
-        )?;
-    }
-
-    let mast_segment = tree
-        .segments
-        .iter()
-        .find(|segment| segment.name == "Rule to Aspect")
-        .ok_or_else(|| "Rule to Aspect configuration is unavailable.".to_string())?;
-    for mast in replication_instances(&mast_segment.children, "Mast") {
-        let processing = required_int_leaf(&mast.children, "Mast Processing")?;
-        if processing == 0 {
-            continue;
-        }
-        if !(1..=2).contains(&processing) {
-            return Err(format!(
-                "Mast {} has an unknown Mast Processing value {}.",
-                mast.instance, processing
-            ));
-        }
-        for rule in replication_instances(&mast.children, "Rule") {
-            for appearance in replication_instances(&rule.children, "Appearance") {
-                let selection = required_int_leaf(&appearance.children, "Lamp Selection")?;
-                record_output_owner(
-                    &mut owners,
-                    selection,
-                    output_count,
-                    format!("Mast {} rule {}", mast.instance, rule.instance),
-                )?;
-            }
-        }
-    }
-
-    Ok((1..=output_count)
-        .map(|ordinal| SignalOutput {
-            ordinal,
-            label: signal_lcc_output_label(ordinal),
-            owner: owners.remove(&ordinal),
-        })
-        .collect())
-}
-
-fn required_int_leaf(children: &[ConfigNode], name: &str) -> Result<i64, String> {
-    find_int_leaf(children, name)
-        .unwrap_or_else(|| Err(format!("{name} is missing from the configuration evidence.")))
-}
-
-fn find_int_leaf(children: &[ConfigNode], name: &str) -> Option<Result<i64, String>> {
-    for child in children {
-        match child {
-            ConfigNode::Leaf(leaf) if leaf.name == name => {
-                return Some(match effective_value(leaf) {
-                    Some(ConfigValue::Int { value }) => Ok(*value),
-                    Some(_) => Err(format!("{name} has a non-integer configuration value.")),
-                    None => Err(format!("{name} has no current configuration evidence.")),
-                });
-            }
-            ConfigNode::Group(group) => {
-                if let Some(value) = find_int_leaf(&group.children, name) {
-                    return Some(value);
-                }
-            }
-            ConfigNode::Leaf(_) => {}
-        }
-    }
-    None
-}
-
-fn record_output_owner(
-    owners: &mut HashMap<u32, String>,
-    selection: i64,
-    output_count: u32,
-    owner: String,
-) -> Result<(), String> {
-    if selection == 0 {
-        return Ok(());
-    }
-    let ordinal = u32::try_from(selection)
-        .ok()
-        .filter(|ordinal| (1..=output_count).contains(ordinal))
-        .ok_or_else(|| format!("{owner} selects invalid output {selection}."))?;
-    if let Some(previous_owner) = owners.insert(ordinal, owner.clone()) {
-        return Err(format!(
-            "Output {} is claimed by both {} and {}.",
-            ordinal, previous_owner, owner
-        ));
-    }
-    Ok(())
-}
-
-fn signal_lcc_output_label(ordinal: u32) -> String {
-    const POSITIONS: [&str; 4] = ["G", "Y", "R", "L"];
-    let head = ((ordinal - 1) / 4) + 1;
-    let position = POSITIONS[((ordinal - 1) % 4) as usize];
-    format!("H{}-{}", head, position)
 }
 
 /// Resolve requested block identities against the active effective layout,
@@ -356,16 +199,21 @@ fn signal_lcc_output_label(ordinal: u32) -> String {
 /// draft, claim, configuration, or bus-write effect.
 pub async fn preview(
     state: &AppState,
-    request: BlockSignalsRequest,
+    mut request: BlockSignalsRequest,
 ) -> Result<BlockSignalsPreview, String> {
     let facts = {
         let layout = state.layout_state.read().await;
         let Some(layout) = layout.as_ref() else {
+            request.saved_signals = Vec::new();
             return propose(&ProposalFacts::default(), request);
         };
+        request.saved_signals = saved_signals_from_layout(layout, &request.facility_id);
         let profiles = state.profiles.read().await;
-        proposal_facts_from_layout(layout, &profiles)
+        proposal_facts_from_layout(layout, &profiles, &request.release)
     };
+    if let Some(issue) = facts.release_issues.first() {
+        return Err(issue.detail.clone());
+    }
 
     propose(&facts, request)
 }
@@ -373,6 +221,7 @@ pub async fn preview(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bowties_core::signaling::{SelectedBlock, SignalIndication};
     use bowties_core::layout::channels::{
         ChannelBinding, ChannelOwnership, ChannelsDocument, InformationChannel,
     };
@@ -384,7 +233,6 @@ mod tests {
         LeafType, NodeConfigTree, SegmentNode,
     };
     use bowties_core::profile::{make_profile_key, StructureProfile};
-    use bowties_core::signaling::{SelectedBlock, SignalIndication};
     use lcc_rs::cdi::{EventRole, Identification};
     use std::path::PathBuf;
 
@@ -441,9 +289,6 @@ mod tests {
             action_value: 0,
             hint_slider: None,
             hint_radio: false,
-            modified_value: None,
-            write_state: None,
-            write_error: None,
             read_only: false,
         });
         NodeConfigTree {
@@ -524,7 +369,7 @@ mod tests {
                 },
                 node_snapshots: vec![],
                 bowties: Default::default(),
-                offline_changes: vec![],
+                pending_changes: vec![],
                 recovery_occurred: false,
                 channels: ChannelsDocument::new(channels),
                 facilities: Default::default(),
@@ -562,9 +407,6 @@ mod tests {
             action_value: 0,
             hint_slider: None,
             hint_radio: false,
-            modified_value: None,
-            write_state: None,
-            write_error: None,
             read_only: false,
         })
     }
@@ -721,7 +563,7 @@ mod tests {
         let (channels_before, effective_channels_before) = {
             let layout = state.layout_state.read().await;
             let layout = layout.as_ref().expect("test layout is loaded");
-            assert!(layout.offline_changes().is_empty());
+            assert!(layout.pending_changes().is_empty());
             (
                 layout.channels() as *const _,
                 layout.effective_channels() as *const _,
@@ -749,7 +591,7 @@ mod tests {
             layout.effective_channels() as *const _,
             effective_channels_before
         );
-        assert!(layout.offline_changes().is_empty());
+        assert!(layout.pending_changes().is_empty());
     }
 
     #[tokio::test]
@@ -796,6 +638,7 @@ mod tests {
             proposal_facts_from_layout(
                 layout.as_ref().expect("test layout is loaded"),
                 &profiles,
+                &[],
             )
         };
         let headless = propose(&facts, request.clone()).expect("headless proposal succeeds");
@@ -810,8 +653,8 @@ mod tests {
         assert_eq!(guided.output_hosts.len(), 1);
         assert_eq!(guided.output_hosts[0].outputs.len(), 3);
         assert_eq!(
-            guided.output_hosts[0].outputs[1].owner.as_deref(),
-            Some("Mast 1 rule 1"),
+            guided.output_hosts[0].outputs[1].owner,
+            Some(bowties_core::signaling::SignalOutputOwner::Mast(1)),
             "current active mast appearances must make their physical output unavailable",
         );
         assert_eq!(
@@ -820,7 +663,7 @@ mod tests {
         );
         let layout = state.layout_state.read().await;
         let layout = layout.as_ref().expect("test layout remains loaded");
-        assert!(layout.offline_changes().is_empty());
+        assert!(layout.pending_changes().is_empty());
         assert_eq!(layout.channels().channels.len(), 1);
     }
 

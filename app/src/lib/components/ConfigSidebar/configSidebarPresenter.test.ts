@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { DiscoveredNode } from '$lib/api/tauri';
-import type { OfflineChangeRow } from '$lib/api/sync';
+import type { PendingChangeRow } from '$lib/api/sync';
 import type { NodeConfigTree } from '$lib/types/nodeTree';
 import { nodeInfoStore } from '$lib/stores/nodeInfo';
 import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
@@ -87,7 +87,6 @@ function makeTree(): NodeConfigTree {
             elementType: 'int',
             eventRole: null,
             kind: 'leaf',
-            modifiedValue: { type: 'int', value: 12 },
             name: 'Channel',
             path: ['seg:0', 'elem:0'],
             size: 1,
@@ -198,7 +197,7 @@ describe('shouldShowConfigNotReadBadge', () => {
 });
 
 describe('pending state helpers', () => {
-  const pendingRows: OfflineChangeRow[] = [
+  const pendingRows: PendingChangeRow[] = [
     {
       baselineValue: '10',
       changeId: 'cfg-1',
@@ -222,6 +221,27 @@ describe('pending state helpers', () => {
       hasPendingApply: true,
       hasPendingEdits: true,
     });
+  });
+
+  it.each(['failed', 'conflict'] as const)(
+    'keeps reporting a pending apply for a %s row (still waiting)',
+    (status) => {
+      expect(getNodePendingState(
+        '02.01.57.00.00.01',
+        makeTree(),
+        false,
+        pendingRows.map((row) => ({ ...row, status })),
+      ).hasPendingApply).toBe(true);
+    },
+  );
+
+  it('does not report a pending apply for an applied row', () => {
+    expect(getNodePendingState(
+      '02.01.57.00.00.01',
+      makeTree(),
+      false,
+      pendingRows.map((row) => ({ ...row, status: 'applied' as const })),
+    ).hasPendingApply).toBe(false);
   });
 
   it('reports segment-level pending edits and applies for the matching segment origin', () => {

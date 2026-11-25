@@ -13,6 +13,10 @@
     roleForChannelState,
     type ChannelState,
   } from '$lib/utils/channelState';
+  import TrackDiagram from '$lib/components/BlockSignals/TrackDiagram.svelte';
+  import { trackInputFor } from '$lib/components/BlockSignals/trackInput';
+  import type { BlockOccupancyMap } from '$lib/components/BlockSignals/occupancy';
+  import type { FacilityDiagramEntry } from '$lib/stores/facilityDiagrams.svelte';
   import FacilitySlot from './FacilitySlot.svelte';
 
   let {
@@ -20,17 +24,21 @@
     template,
     resolvedEventIds,
     onRename,
+    onEdit,
     onDelete,
     onSelectChannel,
     onAddChannel,
     onRemoveFromSlot,
     nodeTree,
+    diagram,
+    occupancy,
   }: {
     facility: Facility;
     template?: BehaviorTemplate;
     /** Map from channelId to state-name → eventId (Spec 018 / S5 D6). */
     resolvedEventIds?: ReadonlyMap<string, Record<string, string>>;
     onRename?: (facilityId: string, newName: string) => void;
+    onEdit?: (facilityId: string) => void;
     onDelete?: (facilityId: string) => void;
     /** Spec 018 / S4 — producer-side input slot's Select channel intent. */
     onSelectChannel?: (facilityId: string, slotLabel: string) => void;
@@ -38,6 +46,9 @@
     onAddChannel?: (facilityId: string, slotLabel: string) => void;
     onRemoveFromSlot?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
     nodeTree?: (nodeKey: string) => NodeConfigTree | undefined;
+    /** Backend preview state for an Automatic Block Signals card's track diagram. */
+    diagram?: FacilityDiagramEntry;
+    occupancy?: BlockOccupancyMap;
   } = $props();
 
   // Spec 018 / S6 (D5): status is derived by the effectiveLayoutStore facade
@@ -45,6 +56,20 @@
   // from the facade call — no local slot-fullness check.
   let status = $derived<FacilityStatus>(
     effectiveLayoutStore.facilityStatus(facility.facilityId),
+  );
+
+  // Spec 020 / E5-T4: per-board write outcome from the Pending Change rows this
+  // facility staged. While any are waiting the card is not shown as complete.
+  const writeOutcome = $derived(effectiveLayoutStore.facilityWriteOutcome(facility.facilityId));
+
+  function plural(n: number): string {
+    return `${n} ${n === 1 ? 'change' : 'changes'}`;
+  }
+
+  // Spec 020: the Automatic Block Signals editor creates and owns the facility's
+  // signals, so its card draws them read-only as a track diagram (edited via the same editor).
+  const isAutomaticBlockSignals = $derived(
+    (template?.templateId ?? facility.templateId) === 'automatic-block-signals',
   );
 
   let isEditingName = $state(false);
@@ -168,16 +193,45 @@
         </button>
       {/if}
       <span class="template-label">{template?.displayName ?? facility.templateId}</span>
-      <span class="status-pill" class:wired={status === 'Wired'} class:incomplete={status === 'Incomplete'}>
-        <span class="pulse" aria-hidden="true"></span>{status}
-      </span>
+      {#if writeOutcome.hasWaiting}
+        <span class="status-pill incomplete"><span class="pulse" aria-hidden="true"></span>Waiting</span>
+      {:else}
+        <span class="status-pill" class:wired={status === 'Wired'} class:incomplete={status === 'Incomplete'}>
+          <span class="pulse" aria-hidden="true"></span>{status}
+        </span>
+      {/if}
     </div>
     <div class="actions">
+      {#if isAutomaticBlockSignals}
+        <button type="button" class="btn-link" onclick={() => onEdit?.(facility.facilityId)} aria-label="Edit facility">Edit</button>
+      {/if}
       <button type="button" class="btn-link" onclick={startRename} aria-label="Rename facility">Rename</button>
       <button type="button" class="btn-link danger" onclick={handleDelete} aria-label="Delete facility">Delete</button>
     </div>
   </header>
 
+  {#if writeOutcome.hasWaiting}
+    <ul class="write-outcome" aria-label="Write outcome" data-testid="facility-write-outcome">
+      {#each writeOutcome.boards as board (board.nodeKey)}
+        {#if board.waiting > 0}
+          <li>{plural(board.waiting)} waiting on {board.nodeName}{board.waitingReasons.length > 0 ? `: ${board.waitingReasons[0]}` : ''}</li>
+        {/if}
+        {#if board.notAttempted > 0}
+          <li>{plural(board.notAttempted)} not yet written to {board.nodeName}</li>
+        {/if}
+      {/each}
+    </ul>
+  {/if}
+
+  {#if isAutomaticBlockSignals}
+    {#if diagram?.status === 'ready' && diagram.preview}
+      <TrackDiagram input={trackInputFor(diagram.preview, 'summary')} {occupancy} />
+    {:else if diagram?.status === 'failed'}
+      <p class="diagram-note">The track diagram couldn't be drawn. {diagram.error}</p>
+    {:else}
+      <p class="diagram-note">Drawing the track…</p>
+    {/if}
+  {:else}
   <div class="slot-grid">
     {#each slotsOrdered() as [label, binding], i (label)}
       {@const d = displayFor(binding)}
@@ -197,6 +251,7 @@
       />
     {/each}
   </div>
+  {/if}
 </article>
 
 <style>
@@ -292,6 +347,18 @@
     grid-template-columns: 1fr 28px 1fr;
     align-items: stretch;
     gap: 0.5rem;
+  }
+  .diagram-note {
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--text-muted, #616161);
+  }
+  .write-outcome {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.75rem;
+    color: #bc4b09;
   }
   .slot-arrow {
     display: flex;

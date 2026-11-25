@@ -18,7 +18,7 @@ export interface ActiveLayoutContext {
   rootPath: string;
   mode: ActiveLayoutMode;
   capturedAt?: string;
-  pendingOfflineChangeCount: number;
+  pendingChangeCount: number;
   /**
    * Canonical (uppercase, no-dots) node IDs persisted in this layout's
    * companion `nodes/` directory (S8). The layout is the durable source
@@ -73,7 +73,7 @@ class LayoutStore {
    * role classifications, connector selections). The aggregate "any
    * in-memory change" signal lives on `effectiveNodeStore.isDirty`
    * (ADR-0011) — this getter intentionally does NOT include drafts,
-   * offline changes, or fully-captured discovered-but-unsaved nodes.
+   * pending changes, or fully-captured discovered-but-unsaved nodes.
    */
   get isDirty(): boolean {
     return this._dirty;
@@ -146,7 +146,7 @@ class LayoutStore {
         layoutId: filePath,
         rootPath: filePath,
         mode: 'legacy_file',
-        pendingOfflineChangeCount: 0,
+        pendingChangeCount: 0,
       };
 
       // Remember as recent layout
@@ -209,7 +209,7 @@ class LayoutStore {
         layoutId: selected,
         rootPath: selected,
         mode: 'legacy_file',
-        pendingOfflineChangeCount: 0,
+        pendingChangeCount: 0,
       };
 
       // Remember as recent layout
@@ -327,7 +327,7 @@ class LayoutStore {
   /**
    * Update the bus connection status.
    * When connected, isOfflineMode returns false even if a layout file is open,
-   * so edits go to hardware instead of offline changes.
+   * so edits go to hardware instead of pending changes.
    */
   setConnected(connected: boolean): void {
     this._connected = connected;

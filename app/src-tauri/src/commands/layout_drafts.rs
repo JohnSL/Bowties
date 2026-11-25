@@ -8,10 +8,12 @@
 //! drafts layer was designed for exactly this seam; S6 activated it.
 //!
 //! Contract:
-//! * `sync_layout_drafts(deltas)` — the frontend sends its *complete*
-//!   current delta set (matches `collectDeltas()` semantics); the
-//!   backend clones the saved documents and applies the deltas into the
-//!   drafts layer. Idempotent w.r.t. any given delta set.
+//! * `sync_layout_drafts(deltas, configDrafts)` — the frontend sends its
+//!   *complete* current delta set (matches `collectDeltas()` semantics) and
+//!   its complete unsaved configuration edits; the backend clones the saved
+//!   documents and applies the deltas into the drafts layer, and keeps the
+//!   config drafts for `LayoutState::effective_config_tree`. Idempotent
+//!   w.r.t. any given input. `configDrafts` may be omitted (empty).
 //! * `clear_layout_drafts()` — called on Discard and after Save (the
 //!   save flow also folds drafts into the saved layer as part of the
 //!   same write).
@@ -21,6 +23,7 @@ use crate::state::AppState;
 #[tauri::command]
 pub async fn sync_layout_drafts(
     deltas: Vec<crate::layout::types::LayoutEditDelta>,
+    config_drafts: Option<Vec<bowties_core::signaling::slots::DraftEdit>>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let mut layout_guard = state.layout_state.write().await;
@@ -30,6 +33,7 @@ pub async fn sync_layout_drafts(
     layout_state
         .sync_drafts(&deltas)
         .map_err(|e| e.to_string())?;
+    layout_state.sync_config_drafts(config_drafts.unwrap_or_default());
     Ok(())
 }
 

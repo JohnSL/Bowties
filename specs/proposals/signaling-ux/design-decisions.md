@@ -14,6 +14,58 @@ Entries are dated. Newer entries appear at the top.
 
 ---
 
+## 2026-11-18 — ABS Wiring: one Signal LCC per signal, lamps on pins, Rule to Aspect from Appearance
+
+**Decision.** The Automatic Block Signals Wiring page starts by choosing the node a signal runs
+on. That node holds the signal's mast (Rule to Aspect), its conditionals, and its track circuit
+receiver, so the choice is made once per signal, and every head, including a lunar head, uses it.
+Only the Signal LCC is offered. The page is written for the Signal LCC specifically, not driven by
+profiles, because no other LCC board in use hosts signal logic. The Signal LCC 32H is left out
+because "Linked to Previous" means something different there.
+
+- **Node choice.** No quick-pick chips: the seat map makes the rest of the page fast, and chips that read "Same as Cedar Hill East" were unclear about what they did. The chosen node is itself the control: a field-style button showing the name, location, node ID, an Offline badge when needed, and "Change ▾", so the thing you change is the thing you click (a separate "Choose node…" button at the end of the row was easy to miss). Clicking it opens a search dialog that matches name, description, and node ID, and
+  by default hides nodes that are offline, have no free mast, or lack the pins this signal needs.
+  The page shows what the signal uses on the node: masts, pins, conditionals (an estimate until
+  logic is generated, because conditionals run out first), and track circuits. Bowties picks
+  the mast slot.
+- **Lamps to pins, like a seat map.** Lamps are the passengers and pins are the seats. The user
+  selects a lamp, then clicks a pin. A free pin places the lamp and selection moves to the next
+  lamp without a pin. The selected lamp's own pin clears it, and another lamp's pin on the same
+  signal swaps the two. The selected lamp's pin is highlighted, and every pin the signal uses shows
+  its lamp name. There is no per-lamp pin dropdown. Header labels H1–H4 place a whole head by
+  position letter (G, Y, R, L). The pin labels are only a suggestion: any pin can drive any LED,
+  so the per-pin Blink check confirms the result.
+- **Rule to Aspect.** A table in a section that starts closed, with one row per rule (Signal LCC rule names) and
+  one column per pin the signal uses. It shows exactly what each rule's Appearance list will
+  contain, including flash phase. It is derived from Appearance and read-only by default.
+  "Customize lamps" allows editing for unusual signals: edits are marked, a rule may light at most
+  4 lamps, and "Reset to Appearance" discards the edits.
+- **Removed from Wiring.** The "All signals" summary of sources and relationships: detection reuse
+  belongs on Blocks, and each signal's node is shown on Wiring and on Review.
+- **Choosing a control by number of choices.** One choice is plain text; two to four use a segmented control or
+  radio buttons; a short fixed list uses a dropdown; a list that grows with the layout (nodes)
+  uses a search dialog.
+- **Head types are lamp counts.** A searchlight is set up entirely by the rules in Rule to Aspect: each
+  rule lights 1–4 lamps, so an RG searchlight uses two lamps and an RYG searchlight uses three. No
+  other hardware setting is involved.
+- **Flashing.** Lamp Phase is set per lamp in each rule's Appearance list: Steady, A-Slow/Medium/Fast,
+  or B-Slow/Medium/Fast. Lamps on the same bank and rate flash together, and A and B alternate, so a
+  rule can mix steady and flashing lamps, and a red-plus-green yellow flashes as one when both lamps
+  use the same A setting.
+- **Position-light center.** The center lamp can be wired to stay lit and use no pin (3 pins). With
+  approach lighting the center must go dark too, so it needs its own pin (4 pins); Review flags the
+  3-pin drive on an approach-lit signal.
+- **Across boards.** Testing two aspects across boards (Stop and Clear, already passed on the bench)
+  is enough. The same track-circuit mechanism carries every aspect, so each aspect does not need its
+  own cross-board test.
+- **Wiring checks.** Blink proves one pin and must always return the lamp to Used by Mast. Show
+  proves one aspect by sending the rule's set aspect event. This follows the community bring-up order.
+
+**Rejected.** A per-head node choice: it would split one mast's logic across nodes. Binding aspects
+directly instead of lamps: an aspect can light several lamps (an RG-blend Approach lights two),
+and Appearance already defines that mapping. Editable Rule to Aspect cells by default: that would
+make Appearance and the written mast two sources of truth.
+
 ## 2026-11-15 — Rename to Automatic Block Signals and Interlocking Plant
 
 **Decision.** The facility called *Signal Line* is now **Automatic Block Signals** (2026-11-14),

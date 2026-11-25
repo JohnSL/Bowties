@@ -9,10 +9,8 @@ import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte
 import { layoutStore } from '$lib/stores/layout.svelte';
 import { clearConfigReadStatus, markNodeConfigRead } from '$lib/stores/configReadStatus';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
-import { setModifiedValue } from '$lib/api/config';
 
 vi.mock('$lib/api/config', () => ({
-  setModifiedValue: vi.fn().mockResolvedValue(true),
   triggerAction: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -178,8 +176,7 @@ describe('SegmentView connector selectors', () => {
                   space: 253,
                   path: ['seg:0', 'elem:0#1', 'elem:0'],
                   value: { type: 'int', value: 0 },
-                  modifiedValue: null,
-                  writeState: null,
+
                   writeError: null,
                   readOnly: false,
                   constraints: null,
@@ -207,8 +204,7 @@ describe('SegmentView connector selectors', () => {
                   space: 253,
                   path: ['seg:0', 'elem:0#9', 'elem:0'],
                   value: { type: 'int', value: 0 },
-                  modifiedValue: null,
-                  writeState: null,
+
                   writeError: null,
                   readOnly: false,
                   constraints: null,
@@ -572,8 +568,7 @@ describe('SegmentView connector selectors', () => {
                       space: 253,
                       path: ['seg:0', 'elem:0#1', 'elem:0'],
                       value: { type: 'int', value: 0 },
-                      modifiedValue: null,
-                      writeState: null,
+
                       writeError: null,
                       readOnly: false,
                       constraints: {
@@ -596,8 +591,7 @@ describe('SegmentView connector selectors', () => {
                       space: 253,
                       path: ['seg:0', 'elem:0#1', 'elem:1'],
                       value: { type: 'int', value: 1 },
-                      modifiedValue: null,
-                      writeState: null,
+
                       writeError: null,
                       readOnly: false,
                       constraints: {
@@ -670,12 +664,7 @@ describe('SegmentView connector selectors', () => {
     });
   });
 
-  it('shows the corrected governed value before the backend modified-value write resolves', async () => {
-    let resolveSetModifiedValue: ((value: boolean) => void) | null = null;
-    vi.mocked(setModifiedValue).mockImplementationOnce(() => new Promise<boolean>((resolve) => {
-      resolveSetModifiedValue = resolve;
-    }));
-
+  it('shows the corrected governed value immediately as a draft', async () => {
     nodeTreeStore.setTree(NODE_ID, {
       nodeId: NODE_ID,
       identity: null,
@@ -786,11 +775,6 @@ describe('SegmentView connector selectors', () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText('Input Function')).toHaveValue('2');
-    });
-
-    resolveSetModifiedValue?.(true);
-    await waitFor(() => {
-      expect(vi.mocked(setModifiedValue)).toHaveBeenCalled();
     });
   });
 });

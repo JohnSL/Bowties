@@ -798,15 +798,151 @@
   .line-custom-signaling[hidden] { display: none; }
   .line-editor-layout > .panel + .panel { margin-top: 0; }
   .line-editor-layout .field-label { display: block; margin-top: 12px; }
-  #line .stepper { overflow-x: auto; }
+  #line .stepper { overflow-x: auto; padding: 0; list-style: none; }
+  #line .step { padding: 0; color: var(--text); }
+  #line .step > a, #line .step > span.step-label { display: flex; align-items: center; gap: 5px; padding: 8px 10px; color: inherit; text-decoration: none; overflow: hidden; text-overflow: ellipsis; }
+  #line .step > a:hover { background: #e8f1fb; }
+  #line .step.done { color: #166534; }
+  #line .step.unavailable { color: #a0a0a0; }
+  #line .step.unavailable > span.step-label { cursor: not-allowed; }
+  #line .step-mark { margin-left: auto; font-weight: 700; }
+  #line .step-mark.check { color: #166534; }
+  #line .step-mark.warn { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; background: #f7b955; color: #3d2a00; font-size: 10px; }
   .line-selected-heading { margin: 14px 0 6px; }
-  #line .line-mast-example { display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 8px; background: var(--bg-subtle); border-radius: 6px; min-width: 100px; }
+  #line .line-mast-example { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px; background: var(--bg-subtle); border-radius: 6px; min-width: 100px; }
   #line .line-head-example { display: flex; align-items: center; gap: 8px; }
-  #line .line-head-example svg { width: 58px; height: 68px; flex-shrink: 0; }
+  #line .line-head-example svg { display: block; flex-shrink: 0; }
   #line .line-head-example span { font-size: 11px; }
-  #line .line-output-binding { margin-top: 8px; }
-  #line .line-output-binding label { display: block; font-size: 12px; }
-  #line .line-output-binding select { width: 100%; }
+  #line .line-sim-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+  #line .line-sim-head .line-sim-badge { margin-left: auto; }
+  #line .line-sim-source { min-width: 0; margin: 0; padding: 0; border: 0; }
+  #line .line-sim-source .segment { white-space: nowrap; }
+  #line .line-sim-hint { margin: 6px 0 0; color: var(--text-muted); font-size: 12px; }
+  #line-restricting-look[hidden] { display: none; }
+  #line .line-sim-head h3 { margin: 0; }
+  #line .line-sim-badge { font-size: 11px; font-weight: 600; color: #8a5a00; background: #fff4ce; border: 1px solid #f1d38a; border-radius: 10px; padding: 1px 8px; }
+  #line .line-sim-train { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-top: 10px; }
+  #line .line-sim-train select { width: auto; }
+  #line .line-sim-train[hidden] { display: none; }
+  #line .line-sim-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+  #line .line-sim-status { margin: 8px 0 2px; font-size: 12px; color: var(--text-muted); }
+  #line .line-sim-main { display: flex; flex-wrap: wrap; align-items: stretch; gap: 0 12px; }
+  #line .line-sim-track { flex: 1 1 420px; min-width: 0; }
+  #line .line-sim-preview { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; min-width: 96px; margin: 6px 0 14px; padding: 0 12px; border-left: 1px solid var(--border); }
+  #line .line-sim-preview .line-mast-example { background: none; padding: 0; min-width: 0; }
+  #line .line-mast-post { width: 5px; height: 26px; margin-top: -2px; border-radius: 0 0 2px 2px; background: #737b86; }
+  #line .line-display-table { margin-top: 8px; }
+  #line .line-display-table td { padding-top: 4px; padding-bottom: 4px; vertical-align: middle; }
+  #line .line-display-table .line-mast-example { align-items: flex-start; background: none; padding: 0; min-width: 0; }
+  #line .line-sim-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11px; color: var(--text-muted); }
+  #line .line-sim-legend > span { display: inline-flex; align-items: center; gap: 5px; }
+  #line .line-sim-key { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid #20242a; }
+  #line .line-sim-key.clear { background: #13a10e; }
+  #line .line-sim-key.approach { background: #f2c200; }
+  #line .line-sim-key.stop { background: #d13438; }
+  #line .line-sim-key.flash { background: #d13438; animation: line-flash 1s steps(1, end) infinite; }
+  #line .line-sim-key.dark { background: #20242a; border-color: #8a929c; }
+  #line .line-sim-key.unknown { background: #fff; border: 1.5px dashed #8a929c; }
+  #line .line-sim-strip-wrap { margin-top: 6px; font-size: 12px; }
+  #line .line-mast-strip { display: flex; gap: 8px; overflow-x: auto; padding: 8px 0 2px; }
+  #line .line-strip-item { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 96px; padding: 6px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: var(--text); font: inherit; font-size: 11px; cursor: pointer; }
+  #line .line-strip-item[aria-pressed="true"] { border-color: var(--brand); background: var(--bg-selected); }
+  #line .line-strip-item .line-mast-example { padding: 4px; min-width: 0; }
+  #line tr.line-current td { background: #fff4ce; }
+  #line .line-now { margin-left: 6px; font-size: 10px; font-weight: 700; color: #8a5a00; }
+  #line-custom-appearance[hidden] { display: none; }
+  .line-diagram-canvas .line-sim-block { cursor: pointer; }
+  .line-diagram-canvas .line-sim-block:focus { outline: none; }
+  .line-diagram-canvas .line-sim-block:focus-visible circle { stroke-width: 3; }
+  @keyframes line-flash { 50% { opacity: .2; } }
+  .line-flash { animation: line-flash 1s steps(1, end) infinite; }
+  @media (prefers-reduced-motion: reduce) { .line-flash, #line .line-sim-key.flash { animation: none; } }
+  #line .line-wiring-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 14px 0 6px; }
+  #line .line-wiring-title .line-selected-heading { margin: 0; }
+  #line .line-wiring-progress { margin-left: auto; color: var(--text-muted); font-size: 12px; }
+  #line .line-node-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 10px; }
+  #line .line-node-panel > .field-label { margin: 0; }
+  #line .line-node-field { display: inline-flex; align-items: center; gap: 16px; flex: 0 1 auto; max-width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+  #line .line-node-field:hover { border-color: var(--brand); background: var(--bg-subtle); }
+  #line .line-node-field:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+  #line .line-node-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+  #line .line-node-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  #line .line-node-title strong { font-size: 14px; }
+  #line .line-node-badge { padding: 0 6px; border-radius: 8px; background: var(--warning-bg); color: var(--warning); font-size: 11px; font-weight: 600; }
+  #line .line-node-meta { color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+  #line .line-node-action { flex: none; color: var(--brand); font-size: 12px; font-weight: 600; }
+  #line .line-node-usage { flex: 1 1 220px; margin: 0; font-size: 12px; color: var(--text-muted); }
+  #line .line-check-status { margin: 10px 0 0; padding: 6px 10px; border-radius: 6px; background: var(--bg-subtle); font-size: 12px; }
+  #line .line-check-status:empty { display: none; }
+  #line .line-head-card { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; }
+  #line .line-head-card h4 { margin: 0; font-size: 13px; }
+  #line .line-head-card .line-sim-hint { margin-top: 2px; }
+  #line .line-head-card .line-policy-choices { margin-top: 8px; }
+  #line .line-head-card .segment { white-space: nowrap; }
+  #line .line-lamp-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; margin-top: 6px; }
+  #line .line-lamp-pick { display: flex; justify-content: space-between; gap: 8px; width: 100%; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; background: #fff; color: var(--text); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+  #line .line-lamp-pick:hover { border-color: var(--brand); }
+  #line .line-lamp-row.active .line-lamp-pick { border: 2px solid var(--brand); padding: 4px 7px; background: var(--bg-selected); font-weight: 650; }
+  #line .line-lamp-pin { color: var(--text-muted); font-weight: 400; }
+  #line .line-lamp-pin.none { font-style: italic; }
+  #line .line-pin-grid { display: grid; grid-template-columns: auto repeat(4, minmax(0, 1fr)); gap: 4px; align-items: stretch; margin-top: 8px; font-size: 12px; }
+  #line .line-pin-header { padding: 0 8px; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--brand); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+  #line .line-pin-header:hover:not(:disabled) { border-color: var(--brand); }
+  #line .line-pin-header[aria-pressed="true"] { background: var(--bg-selected); }
+  #line .line-pin-header:disabled { color: var(--text-muted); cursor: not-allowed; }
+  #line .line-pin { display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 0; padding: 4px 2px; border: 1px solid var(--border); border-radius: 4px; background: #fff; color: var(--text); font: inherit; font-size: 11px; line-height: 1.2; cursor: pointer; }
+  #line .line-pin .line-pin-label { font-weight: 650; white-space: nowrap; }
+  #line .line-pin .line-pin-who { max-width: 100%; overflow: hidden; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+  #line .line-pin.free:hover { border-color: var(--brand); }
+  #line .line-pin.mine { border-color: var(--brand); background: var(--bg-selected); }
+  #line .line-pin.mine .line-pin-who { color: var(--brand-hover); font-weight: 650; }
+  #line .line-pin.selected { border-color: var(--brand); background: var(--brand); color: #fff; box-shadow: 0 0 0 2px var(--bg-selected); }
+  #line .line-pin.selected .line-pin-who { color: #fff; }
+  #line .line-pin.facility, #line .line-pin.external { background: #eef1f5; color: var(--text-muted); }
+  #line .line-pin.conflict { border-color: #d13438; background: #fde7e9; }
+  #line .line-pin:disabled { cursor: not-allowed; }
+  #line .line-pin-key { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 11px; color: var(--text-muted); }
+  #line .line-pin-key span { display: inline-flex; align-items: center; gap: 4px; }
+  #line .line-pin-key i { display: inline-block; width: 12px; height: 12px; border: 1px solid var(--border); border-radius: 3px; background: #fff; }
+  #line .line-pin-key i.selected { border-color: var(--brand); background: var(--brand); }
+  #line .line-pin-key i.mine { border-color: var(--brand); background: var(--bg-selected); }
+  #line .line-pin-key i.facility { background: #eef1f5; }
+  #line .line-pin-key i.conflict { border-color: #d13438; background: #fde7e9; }
+  #line .line-pin.outside { border-style: dashed; border-color: #b07a00; background: #fff8e6; color: var(--text-secondary); }
+  #line .line-pin.outside:hover, #line .line-pin.outside.inspected { border-style: solid; box-shadow: 0 0 0 2px #f3dca0; }
+  #line .line-pin-key i.outside { border-style: dashed; border-color: #b07a00; background: #fff8e6; }
+  #line .line-outside-close { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: none; border-radius: 4px; background: transparent; color: var(--text-muted); font-size: 16px; line-height: 1; cursor: pointer; }
+  #line .line-outside-close:hover { background: #f3e6c4; color: var(--text); }
+  #line .line-outside-card { position: relative; margin-top: 10px; padding: 10px 12px; border: 1px solid #e0c36a; border-radius: 5px; background: #fffaf0; font-size: 12px; }
+  #line .line-outside-card h4 { padding-right: 28px; display: flex; align-items: baseline; gap: 8px; margin: 0 0 4px; font-size: 13px; }
+  #line .line-outside-tag { color: #8a5d00; font-size: 11px; font-weight: 600; }
+  #line .line-outside-card p { margin: 2px 0; color: var(--text-secondary); }
+  #line .line-outside-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+  #line .rr-card { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+  #line .rr-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  #line .rr-card-name { font-weight: 600; font-size: 14px; color: #20242a; }
+  #line .rr-card-template { color: var(--text-muted); font-size: 12px; }
+  #line .rr-card-status { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border-radius: 10px; background: #e7f4e8; color: #0e700e; font-size: 11px; font-weight: 600; }
+  #line .rr-card-status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #0e700e; }
+  #line .rr-card-actions { margin-left: auto; display: flex; gap: 12px; font-size: 12px; }
+  #line .rr-card-actions span { color: var(--brand); }
+  #line .rr-card-actions span.danger { color: #c50f1f; }
+  #line .line-rta-panel { margin-top: 14px; }
+  #line .line-rta-panel summary { cursor: pointer; }
+  #line .line-rta-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 10px; }
+  #line .line-rta-head h3 { margin: 0; }
+  #line .line-rta-head label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+  #line .line-rta-head .btn { margin-left: auto; }
+  #line .line-rta-table th, #line .line-rta-table td { text-align: center; vertical-align: middle; padding-top: 4px; padding-bottom: 4px; }
+  #line .line-rta-table th:first-child { text-align: left; white-space: nowrap; }
+  #line .line-rta-table thead small { display: block; font-weight: 400; color: var(--text-muted); font-size: 10px; }
+  #line .line-rta-table select { width: auto; font-size: 11px; }
+  #line .line-rta-lamp { font-size: 12px; white-space: nowrap; }
+  #line .line-rta-lamp.off { color: var(--text-muted); }
+  #line td.line-rta-edited { box-shadow: inset 0 0 0 2px #f1d38a; }
+  #line .line-rta-count.over { color: #d13438; font-weight: 700; }
+  .line-node-dialog .line-node-filter { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; }
+  .line-node-dialog .radio-choice.unavailable { opacity: .6; }
   .line-validation { padding-left: 20px; }
   .line-validation li { margin: 7px 0; }
 
@@ -897,9 +1033,9 @@
       Rulebook entries, and lamp assignments are illustrative, not validated mappings.</li>
       <li>Selected controls preview choices, not a synchronized end-to-end plan. Automatic Block Signals'
       later signal counts, links, and connection tables retain the baseline example.</li>
-      <li data-line-bidirectional-preview hidden>Both directions records operating intent only.
-      Opposing signal views, two-ended external connections, and bidirectional/APB logic are
-      not implemented.</li>
+      <li data-line-bidirectional-preview hidden>Both directions: Appearance simulates opposing signals and
+      APB direction as expected aspects only. Configuring opposing signals, two-ended external connections,
+      and validated bidirectional/APB logic are not implemented.</li>
     </ul>
   </aside>
 
@@ -1722,11 +1858,11 @@
       <div>
         <h2>3. Automatic Block Signals — a stretch of track, including hand-thrown turnouts</h2>
         <p class="section-caption">
-          Four pages — Blocks, Aspects, Physical signals, and Review. Signals stand along the main
+          Five pages — Blocks, Aspects, Appearance, Wiring, and Review. Signals stand along the main
           track only; sidings reached by hand-thrown turnouts stay unsignaled, and a reversed turnout
           restricts the signals approaching it. Creating and editing use the same screens. Step 1 previews one- or two-direction
-          operating intent; the later screens retain a one-direction example.
-          Bidirectional/APB logic remains deferred.
+          operating intent. Appearance simulates both directions, including APB; Aspects and Wiring
+          still configure a one-direction example.
         </p>
       </div>
       <span class="object-tag">Create and edit</span>
@@ -1744,20 +1880,18 @@
         <label for="line-online">Occupancy preview — not live hardware</label>
         <select id="line-online"><option value="online">Online · sample observations</option><option value="offline">Offline · occupancy unavailable</option></select>
       </div>
+      <div class="form-row">
+        <label><input type="checkbox" id="line-review-unavailable"> Show Review as not in this release (as the app does today)</label>
+      </div>
       <p id="line-session-status" role="status">Local sample only. Cancel never saves or applies; preview choices remain until reload.</p>
     </div>
 
     <div class="wizard-frame" id="line-blocks">
-      <p class="frame-heading"><strong>Step 1 of 4 — Blocks.</strong> Name the facility, choose the movements signals govern, then list detected blocks and hand-thrown turnouts in the order a train passes them. The diagram shows the signals Bowties derives.</p>
+      <p class="frame-heading"><strong>Step 1 of 5 — Blocks.</strong> Name the facility, choose the movements signals govern, then list detected blocks and hand-thrown turnouts in the order a train passes them. The diagram shows the signals Bowties derives.</p>
       <div class="dialog wide">
         <div class="dialog-head"><span data-line-context-title>New Automatic Block Signals</span> · Blocks</div>
         <div class="dialog-body">
-          <div class="stepper">
-            <div class="step active"><span class="step-n">1</span>Blocks</div>
-            <div class="step"><span class="step-n">2</span>Aspects</div>
-            <div class="step"><span class="step-n">3</span>Physical signals</div>
-            <div class="step"><span class="step-n">4</span>Review</div>
-          </div>
+          <ol class="stepper" data-line-stepper="blocks" aria-label="Automatic Block Signals steps"></ol>
           <div class="form-row"><label for="line-name">Name</label><input class="input" id="line-name" value="Cedar Hill — Eastward"></div>
           <div class="line-diagram-panel">
             <div class="line-diagram-head"><span class="field-label">Track diagram · derived from the list</span><div class="line-turnout-shape" id="line-turnout-shape"></div><span data-line-online-status style="color:var(--text-muted);font-size:11px">Live occupancy</span></div>
@@ -1838,9 +1972,16 @@
         </div>
         <div class="dialog-foot"><button class="btn" data-line-cancel>Cancel</button><span class="dialog-foot-spacer"></span><a class="btn btn-primary" href="#line-signaling">Next: Aspects</a></div>
       </div>
-      <p class="note warning" id="line-merge-note" style="margin-top:12px" hidden><strong>Mockup limitation, not product UI:</strong> joined blocks change the derived signals in the page 1 diagram only. Pages 2–4 still show the three-signal sample.</p>
+      <p class="note warning" id="line-merge-note" style="margin-top:12px" hidden><strong>Mockup limitation, not product UI:</strong> joined blocks change the derived signals in the page 1 diagram only. Later pages still show the three-signal sample.</p>
       <aside class="design-notes" aria-label="Design notes for blocks and switches">
         <h3>Design notes — not product UI</h3>
+        <h4>Step bar</h4>
+        <ul>
+          <li>Each step shows the state of the facility's data, not its position. A check means the step is complete; an amber "!" means it needs attention (a missing pin, a setting this release cannot build). Both are also said to screen readers.</li>
+          <li>When creating, a step not reached yet shows only its number and name, in normal text: it can still be clicked. When editing, every step has been reached, so a saved facility opens with a check on every step.</li>
+          <li>Gray and a not-allowed cursor mean the step cannot be opened, with a tooltip saying why: "Not in this release" for Review today, or "Add a block first" for the later steps while the list is empty.</li>
+          <li>Try switching the preview to Edit, then clearing a lamp's pin on Wiring: the Wiring step turns amber on every step bar.</li>
+        </ul>
         <h4>Behavior</h4>
         <ul>
           <li>One block is sufficient. Select existing named, detected blocks without renaming
@@ -1918,16 +2059,11 @@
 
     <div class="wizard-frame" id="line-signaling">
       <span id="line-signals"></span>
-      <p class="frame-heading"><strong>Step 2 of 4 — Aspects.</strong> Choose how many aspects the signals show and how hand-thrown turnouts restrict them, independently of physical heads.</p>
+      <p class="frame-heading"><strong>Step 2 of 5 — Aspects.</strong> Choose how many aspects the signals show and how hand-thrown turnouts restrict them, independently of physical heads.</p>
       <div class="dialog wide">
         <div class="dialog-head"><span data-line-context-title>New Automatic Block Signals</span> · Aspects</div>
         <div class="dialog-body">
-          <div class="stepper">
-            <div class="step done"><span class="step-n">1</span>Blocks</div>
-            <div class="step active"><span class="step-n">2</span>Aspects</div>
-            <div class="step"><span class="step-n">3</span>Physical signals</div>
-            <div class="step"><span class="step-n">4</span>Review</div>
-          </div>
+          <ol class="stepper" data-line-stepper="aspects" aria-label="Automatic Block Signals steps"></ol>
           <div class="field-label" id="line-travel-heading">Eastward travel → · select a signal to configure</div>
           <p data-line-online-status style="margin-bottom:4px;color:var(--text-muted);font-size:11px">Live occupancy</p>
           <div data-line-selector data-line-with-endpoint></div>
@@ -1940,7 +2076,6 @@
               <fieldset class="line-policy-choices" id="line-aspect-count"><legend class="field-label">Aspects</legend></fieldset>
               <div><fieldset class="line-policy-choices line-two-choice" id="line-switch-policy"><legend class="line-legend-row"><span class="field-label">When a turnout isn't lined for the main, the signals protecting it show</span><details class="line-help-tip"><summary aria-label="About Stop and Restricting">?</summary><div>This changes the aspect the signal shows. Restricting is its own aspect, such as flashing red or red over lunar. Railroads differ here. Either way the signal before shows Approach. No diverging indication is shown; a signal that shows the route belongs to an Interlocking Plant.</div></details></legend><div class="segmented"><label class="segment selected"><input type="radio" name="line-switch-policy" value="stop" checked>Stop</label><label class="segment"><input type="radio" name="line-switch-policy" value="restricting">Restricting</label></div></fieldset></div>
               <div class="line-short-help">Restricting needs a head that can show it.</div>
-              <div><fieldset class="line-policy-choices line-two-choice" id="line-dark-policy"><legend class="line-legend-row"><span class="field-label">Approach lighting</span><details class="line-help-tip"><summary aria-label="About approach lighting">?</summary><div>Lit when a train approaches keeps the heads dark until a train nears the signal, as many prototype signals do. Dark is a display choice, never Stop, Clear, or an unknown occupancy observation.</div></details></legend><div class="segmented"><label class="segment selected"><input type="radio" name="line-dark-policy" value="always" checked>Always lit</label><label class="segment"><input type="radio" name="line-dark-policy" value="approach">Lit when a train approaches</label></div></fieldset></div>
               <div class="line-signaling-overrides">
                 <h3>Selected signal only</h3>
                 <p id="line-inheritance-status">Uses the settings for all signals.</p>
@@ -1950,7 +2085,6 @@
                 </label>
                 <div class="line-custom-signaling" id="line-custom-signaling" hidden>
                   <fieldset class="line-policy-choices" id="line-signal-aspect-count"><legend class="field-label">Aspects</legend></fieldset>
-                  <fieldset class="line-policy-choices line-two-choice" id="line-signal-dark-policy"><legend class="field-label">Approach lighting</legend><div class="segmented"><label class="segment selected"><input type="radio" name="line-signal-dark-policy" value="always" checked>Always lit</label><label class="segment"><input type="radio" name="line-signal-dark-policy" value="approach">Lit when a train approaches</label></div></fieldset>
                 </div>
               </div>
             </div>
@@ -1972,7 +2106,7 @@
             </div>
           </div>
         </div>
-        <div class="dialog-foot"><button class="btn" data-line-cancel>Cancel</button><span class="dialog-foot-spacer"></span><a class="btn" href="#line-blocks">Back</a><a class="btn btn-primary" href="#line-physical">Next: Physical signals</a></div>
+        <div class="dialog-foot"><button class="btn" data-line-cancel>Cancel</button><span class="dialog-foot-spacer"></span><a class="btn" href="#line-blocks">Back</a><a class="btn btn-primary" href="#line-appearance">Next: Appearance</a></div>
       </div>
       <aside class="design-notes" aria-label="Design notes for aspects">
         <h3>Design notes — not product UI</h3>
@@ -1996,8 +2130,8 @@
           <li>Automatic block signals show a small, nearly universal set: Clear, Approach, and Stop.
           Speed versus route signaling, rulebook vocabularies, and diverging indications belong to
           Interlocking Plants, which govern routes.</li>
-          <li>The rules table is a meaning preview, not live indications or authority. Physical signals
-          maps these meanings to appearances separately; a head never chooses the meaning.</li>
+          <li>The rules table is a meaning preview, not live indications or authority. Appearance
+          maps these meanings to signal types and lets the modeler try them; a head never chooses the meaning.</li>
           <li>Longer explanations sit behind small "?" help bubbles so the settings stay compact. A bubble closes on a click outside it or Escape.</li>
           <li>A reversed or unknown turnout adds a distinct Stop or Restricting condition to each
           affected signal; it never produces a diverging indication.</li>
@@ -2014,88 +2148,246 @@
       </aside>
     </div>
 
-    <div class="wizard-frame" id="line-physical">
-      <span id="line-display"></span><span id="line-bindings"></span><span id="line-connections"></span>
-      <p class="frame-heading"><strong>Step 3 of 4 — Physical signals.</strong> Select a signal, configure its mast heads and electrical implementation, then connect nearby installed hardware.</p>
+    <div class="wizard-frame" id="line-appearance">
+      <span id="line-physical"></span><span id="line-display"></span>
+      <p class="frame-heading"><strong>Step 3 of 5 — Appearance.</strong> Choose what the signals look like, then try them: watch the expected aspects follow live occupancy, or run a simulated train through the blocks.</p>
       <div class="dialog wide">
-        <div class="dialog-head"><span data-line-context-title>New Automatic Block Signals</span> · Physical signals</div>
+        <div class="dialog-head"><span data-line-context-title>New Automatic Block Signals</span> · Appearance</div>
         <div class="dialog-body">
-          <div class="stepper">
-            <div class="step done"><span class="step-n">1</span>Blocks</div>
-            <div class="step done"><span class="step-n">2</span>Aspects</div>
-            <div class="step active"><span class="step-n">3</span>Physical signals</div>
-            <div class="step"><span class="step-n">4</span>Review</div>
+          <ol class="stepper" data-line-stepper="appearance" aria-label="Automatic Block Signals steps"></ol>
+          <div class="panel line-sim-panel" aria-label="Try the signals">
+            <div class="line-sim-head">
+              <h3>Try the signals</h3>
+              <fieldset class="line-sim-source" id="line-sim-source" aria-label="Occupancy">
+                <div class="segmented">
+                  <label class="segment selected"><input type="radio" name="line-sim-source" value="live" checked>Live occupancy</label>
+                  <label class="segment"><input type="radio" name="line-sim-source" value="sim">Simulated train</label>
+                </div>
+              </fieldset>
+              <span class="line-sim-badge">Expected aspects</span>
+            </div>
+            <div class="line-sim-train" id="line-sim-train" hidden>
+              <fieldset class="line-sim-source" id="line-sim-direction" aria-label="Train direction"><div class="segmented"></div></fieldset>
+              <div class="line-sim-buttons">
+                <button class="btn" id="line-sim-start">Place at start</button>
+                <button class="btn" id="line-sim-back" aria-label="Move the train back half a block">◀ Back</button>
+                <button class="btn btn-primary" id="line-sim-step" aria-label="Move the train forward half a block">Step ▶</button>
+                <button class="btn" id="line-sim-play" aria-pressed="false">Run</button>
+                <button class="btn" id="line-sim-reset">Reset</button>
+              </div>
+            </div>
+            <p class="line-sim-status" id="line-sim-status" role="status"></p>
+            <div class="line-sim-main">
+              <div class="line-sim-track" data-line-selector data-line-simulate></div>
+              <div class="line-sim-preview" id="line-sim-selected" role="img"></div>
+            </div>
+            <div class="line-sim-legend" aria-hidden="true">
+              <span><span class="line-sim-key clear"></span>Clear</span>
+              <span><span class="line-sim-key approach"></span>Approach</span>
+              <span><span class="line-sim-key stop"></span>Stop</span>
+              <span><span class="line-sim-key flash"></span>Flashing · Restricting or Advance Approach</span>
+              <span><span class="line-sim-key dark"></span>Dark · approach lighting</span>
+              <span><span class="line-sim-key unknown"></span>Unknown</span>
+            </div>
+            <details class="line-sim-strip-wrap" id="line-sim-strip-wrap">
+              <summary>All masts in track order</summary>
+              <div class="line-mast-strip" id="line-mast-strip"></div>
+            </details>
           </div>
+          <div class="two-col line-editor-layout" style="margin-top:14px">
+            <div class="panel subtle" aria-label="Signal type">
+              <h3>Settings for all signals</h3>
+              <fieldset class="line-policy-choices" id="line-style"><legend class="field-label">Signal type</legend></fieldset>
+              <fieldset class="line-policy-choices line-two-choice" id="line-restricting-look" hidden>
+                <legend class="field-label">Restricting looks like</legend>
+                <div class="segmented"><label class="segment selected"><input type="radio" name="line-restricting-look" value="flash" checked>Flashing red</label><label class="segment"><input type="radio" name="line-restricting-look" value="lunar">Red over lunar</label></div>
+                <p class="line-sim-hint">Red over lunar adds a small lunar lamp below each signal that protects a turnout.</p>
+              </fieldset>
+              <fieldset class="line-policy-choices line-two-choice" id="line-dark-policy"><legend class="line-legend-row"><span class="field-label">Approach lighting</span><details class="line-help-tip"><summary aria-label="About approach lighting">?</summary><div>Lit when a train approaches keeps the heads dark until a train nears the signal, as many prototype signals do. Dark is a display choice, never Stop, Clear, or an unknown occupancy observation.</div></details></legend><div class="segmented"><label class="segment selected"><input type="radio" name="line-dark-policy" value="always" checked>Always lit</label><label class="segment"><input type="radio" name="line-dark-policy" value="approach">Lit when a train approaches</label></div></fieldset>
+              <div class="line-signaling-overrides">
+                <h3 style="margin:0">Selected signal only · <span data-line-selected-name>Cedar Hill East</span></h3>
+                <p id="line-style-status" class="line-sim-hint"></p>
+                <label class="radio-choice" style="margin-top:8px">
+                  <input type="checkbox" id="line-override-appearance">
+                  <span><span class="radio-title">Override for this signal</span><br><span class="radio-desc">For example, a leftover color light among searchlights.</span></span>
+                </label>
+                <div id="line-custom-appearance" hidden>
+                <div class="form-row"><label for="line-signal-style">Signal type</label><select id="line-signal-style"></select></div>
+                <fieldset class="line-policy-choices line-two-choice" id="line-signal-dark-policy"><legend class="field-label">Approach lighting</legend><div class="segmented"><label class="segment selected"><input type="radio" name="line-signal-dark-policy" value="always" checked>Always lit</label><label class="segment"><input type="radio" name="line-signal-dark-policy" value="approach">Lit when a train approaches</label></div></fieldset>
+                </div>
+              </div>
+            </div>
+            <div class="panel" aria-label="Appearance for each indication">
+              <h3>Appearance for each indication · <span data-line-selected-name>Cedar Hill East</span></h3>
+              <p id="line-appearance-practice" class="line-sim-hint"></p>
+              <table class="line-display-table"><thead><tr><th scope="col">Indication</th><th scope="col">Mast</th></tr></thead><tbody id="line-display-appearances"></tbody></table>
+              <div class="note warning" id="line-display-status" role="status" hidden></div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-foot"><button class="btn" data-line-cancel>Cancel</button><span class="dialog-foot-spacer"></span><a class="btn" href="#line-signaling">Back</a><a class="btn btn-primary" href="#line-wiring">Next: Wiring</a></div>
+      </div>
+      <aside class="design-notes" aria-label="Design notes for Line appearance">
+        <h3>Design notes — not product UI</h3>
+        <h4>Why Appearance is its own page</h4>
+        <ul>
+          <li>Appearance answers what the modeler will see; Wiring answers which Signal LCC pins drive it. They are often decided at different times. Appearance hands Wiring the lamps each head needs and which lamps each aspect lights; Wiring turns that into the Rule to Aspect table.</li>
+          <li>Signal type is one choice for the whole facility, with a per-signal exception, matching the all-signals / selected-signal pattern on Aspects. Most ABS lines use one type throughout.</li>
+          <li>One head by default: Clear, Approach, Advance Approach, Stop, and flashing-red Restricting fit on one head for every type shown. A second head appears only when it is needed: Red over lunar adds a one-lamp lunar head below the signals that protect a turnout. It is its own small head with one output, not a copy of the main head. Other multi-head masts are mostly an Interlocking Plant concern.</li>
+        </ul>
+        <h4>Two kinds of trying it</h4>
+        <ul>
+          <li><strong>Live</strong> follows real block detectors and turnout positions. For ABS the aspects follow directly from occupancy.</li>
+          <li><strong>Live, APB:</strong> occupancy alone is not enough. Which way traffic is established depends on which end a train entered, which is history. Bowties must have seen the train enter, or read the direction state from configured hardware; until then opposing signals show Unknown, never a guess.</li>
+          <li><strong>Simulated train</strong> places a train with a direction and steps it block by block, so APB direction comes with the train. Clicking a block adds or removes standing cars (occupancy with no direction); clicking a turnout lines it for the main or the siding.</li>
+          <li>Both kinds are expectations computed from these settings, never observations of the signals. Simulated occupancy is drawn differently from live readings, and nothing is sent to the bus.</li>
+        </ul>
+        <h4>Small signals on the track</h4>
+        <ul>
+          <li>The diagram shows one simple mark per signal: color for the aspect, blinking for flashing, an empty dark lamp for approach-lit Dark, and a dashed ? for unknown. It reads at any size and does not depend on signal type.</li>
+          <li>The selected signal's mast is drawn beside the track in its real type, with no text; its name, aspect, and reason are in the tooltip. "All masts in track order" shows the realistic sequence a crew would see.</li>
+          <li>Head shapes: searchlight is a round black target around one colored lens; color light is a black capsule; position and color position lights sit on a round black target.</li>
+        </ul>
+        <h4>Mockup limitations</h4>
+        <ul>
+          <li>Opposite-direction signals use the settings for all signals; per-signal settings for them are not designed yet.</li>
+          <li>A Plant at either end is assumed to show Stop. Joined blocks are not reflected here. Live APB uses the static sample, so the traffic direction is never observed.</li>
+          <li>Appearances are illustrative, not rulebook-certified, and catalog and hardware compatibility still require validation. Restricting is drawn as flashing red or red over lunar, and Advance Approach as flashing Approach; position light has no Advance Approach mapping here.</li>
+        </ul>
+      </aside>
+    </div>
+
+    <div class="wizard-frame" id="line-wiring">
+      <span id="line-bindings"></span><span id="line-connections"></span>
+      <p class="frame-heading"><strong>Step 4 of 5 — Wiring.</strong> Select a signal, choose the Signal LCC it runs on, then connect each lamp to a pin. The Rule to Aspect table follows from Appearance.</p>
+      <div class="dialog wide">
+        <div class="dialog-head"><span data-line-context-title>New Automatic Block Signals</span> · Wiring</div>
+        <div class="dialog-body">
+          <ol class="stepper" data-line-stepper="wiring" aria-label="Automatic Block Signals steps"></ol>
           <div class="field-label" data-line-selection-heading>Select a signal to configure</div>
           <p data-line-online-status style="color:var(--text-muted);font-size:11px">Live occupancy</p>
           <div data-line-selector></div>
-          <h3 class="line-selected-heading" data-line-selected-name>Cedar Hill East</h3>
+          <div class="line-wiring-title">
+            <h3 class="line-selected-heading" data-line-selected-name>Cedar Hill East</h3>
+            <span class="line-wiring-progress" id="line-wiring-progress"></span>
+            <button class="btn" id="line-next-unwired" data-focus-key="next-unwired">Next unwired signal ▶</button>
+          </div>
           <p data-line-selected-context></p>
+          <div class="line-node-panel" role="group" aria-label="Signal LCC for the selected signal">
+            <span class="field-label" id="line-node-label">Runs on</span>
+            <button type="button" class="line-node-field" id="line-node-change" data-focus-key="node-change" aria-haspopup="dialog" aria-labelledby="line-node-label line-node-change">
+              <span class="line-node-text">
+                <span class="line-node-title"><strong id="line-node-name"></strong><span class="line-node-badge" id="line-node-offline" hidden>Offline</span></span>
+                <span class="line-node-meta" id="line-node-meta"></span>
+              </span>
+              <span class="line-node-action" aria-hidden="true">Change ▾</span>
+            </button>
+            <p class="line-node-usage" id="line-node-usage"></p>
+          </div>
+          <p class="line-check-status" id="line-check-status" role="status"></p>
           <div class="two-col line-editor-layout" style="margin-top:14px">
-            <div class="panel" aria-label="Selected-signal head and output editor">
-              <h3>Mast arrangement · heads from top to bottom</h3>
-              <div class="form-row"><label for="line-head-select">Selected head</label><select id="line-head-select"></select></div>
-              <button class="btn" id="line-add-head">Add lower head</button>
-              <button class="btn" id="line-remove-head">Remove selected head</button>
-              <p>Heads are individual physical objects, not a facility-wide display default. Adding a head preserves other heads and assignments; new outputs start unassigned.</p>
-              <div class="form-row"><label for="line-head-kind">Head appearance</label><select id="line-head-kind"><option value="color">Color light · fixed colored lamps</option><option value="searchlight">Searchlight · one variable-color aperture</option><option value="position">Position light · grouped lamp positions</option></select></div>
-              <div class="form-row"><label for="line-head-implementation">Electrical implementation</label><select id="line-head-implementation"></select></div>
-              <p id="line-head-electrical"></p>
-              <div class="form-row"><label for="line-output-board">Nearby installed board</label><select id="line-output-board"><option value="west">West Staging · under west approach · node …01</option><option value="east">East Approach · east fascia cabinet · node …02</option></select></div>
-              <p id="line-board-context"></p>
-              <h4>Output bindings · selected head</h4>
-              <div id="line-head-outputs"></div>
-              <div class="note" id="line-binding-status" role="status"></div>
-              <p id="line-board-availability"></p>
-              <details><summary>Claims on this board</summary><table><thead><tr><th scope="col">Output</th><th scope="col">Assigned to</th></tr></thead><tbody id="line-output-claims"></tbody></table></details>
+            <div class="panel" aria-label="Lamps">
+              <h3>Lamps</h3>
+              <div id="line-head-cards"></div>
+              <div class="note warning" id="line-binding-status" role="status" style="margin-top:10px" hidden></div>
             </div>
-            <div class="panel" aria-label="Selected-signal display editor">
-              <h3>Appearance for each indication</h3>
-              <p id="line-display-required"></p>
-              <p id="line-appearance-practice"></p>
-              <div class="form-row"><label for="line-appearance-preset">Mast mapping</label><select id="line-appearance-preset"><option value="basic">One-head Stop / Approach / Clear example</option><option value="two-head">Two-head example · upper varies, lower Stop</option></select></div>
-              <p>Supported examples only, not rulebook-certified. Two-head example requires exactly two heads; arbitrary multi-head combinations and richer vocabularies need a validated mapping.</p>
-              <button class="btn" disabled>Advanced indication mapping…</button>
-              <div class="table-scroll"><table style="margin-top:12px"><thead><tr><th scope="col">Required indication / policy</th><th scope="col">Mast appearance · top to bottom</th></tr></thead><tbody id="line-display-appearances"></tbody></table></div>
-              <div class="note" id="line-display-status" role="status"></div>
-              <a href="#line-signaling">Change aspects or approach lighting in Aspects</a>
+            <div class="panel" aria-label="Pins on the node">
+              <h3>Pins on <span id="line-pin-node-name"></span></h3>
+              <p class="line-sim-hint" id="line-pin-hint"></p>
+              <div class="line-pin-grid" id="line-pin-grid"></div>
+              <section class="line-outside-card" id="line-outside-card" aria-live="polite" hidden></section>
+              <div class="line-pin-key" aria-hidden="true">
+                <span><i class="selected"></i>Selected lamp</span>
+                <span><i class="mine"></i>This signal</span>
+                <span><i class="facility"></i>Used by a facility</span>
+                <span><i class="outside"></i>Used outside Bowties</span>
+                <span><i class="conflict"></i>Assigned twice</span>
+                <span><i></i>Free</span>
+              </div>
+              <p class="line-sim-hint" id="line-board-availability"></p>
             </div>
           </div>
-          <details class="panel subtle">
-            <summary><strong>All signals · sources and signal relationships</strong></summary>
-            <p style="margin-top:8px">The selected blocks already have detection configured. Reuse those sources and turnout position inputs; do not connect detectors again here. Internal next-signal references follow block order.</p>
-            <div class="table-scroll"><table><thead><tr><th scope="col">Signal</th><th scope="col">Existing detection and turnout inputs</th><th scope="col">Uses next signal</th></tr></thead><tbody id="line-source-summary"></tbody></table></div>
-            <a href="#line-signaling">Change aspects or the external downstream connection</a>
+          <details class="panel line-rta-panel">
+            <summary><strong>Lamp patterns (Rule to Aspect) · <span id="line-rta-mast"></span></strong></summary>
+            <div class="line-rta-head">
+              <label><input type="checkbox" id="line-rta-customize">Customize lamps</label>
+              <button class="btn" id="line-rta-reset" data-focus-key="rta-reset" hidden>Reset to Appearance</button>
+            </div>
+            <p class="line-sim-hint" id="line-rta-hint"></p>
+            <div class="table-scroll"><table class="line-rta-table"><thead id="line-rta-thead"></thead><tbody id="line-rta-body"></tbody></table></div>
+            <p class="line-sim-hint">● steady · ◐ flashing, with its Signal LCC phase · · off. Show sends the rule's set aspect event; the node clears the previous aspect itself.</p>
           </details>
+          <div class="line-plant-dialog-backdrop" id="line-node-dialog" hidden>
+            <div class="dialog line-plant-dialog line-node-dialog" role="dialog" aria-modal="true" aria-labelledby="line-node-dialog-title">
+              <div class="dialog-head" id="line-node-dialog-title">Choose a Signal LCC</div>
+              <div class="dialog-body">
+                <p class="line-short-help" id="line-node-dialog-context" style="margin:0 0 10px"></p>
+                <input class="input" id="line-node-search" type="search" placeholder="Search by name, description, or node ID" aria-label="Search Signal LCC nodes">
+                <label class="line-node-filter"><input type="checkbox" id="line-node-fits" checked>Only nodes that can host this signal</label>
+                <div class="line-plant-results" id="line-node-results" role="radiogroup" aria-label="Signal LCC nodes"></div>
+              </div>
+              <div class="dialog-foot"><button class="btn" id="line-node-cancel">Cancel</button><span class="dialog-foot-spacer"></span><button class="btn btn-primary" id="line-node-choose" disabled>Use this node</button></div>
+            </div>
+          </div>
         </div>
-        <div class="dialog-foot"><button class="btn" data-line-cancel>Cancel</button><span class="dialog-foot-spacer"></span><a class="btn" href="#line-signaling">Back</a><a class="btn btn-primary" href="#line-review">Next: Review</a></div>
+        <div class="dialog-foot"><button class="btn" data-line-cancel>Cancel</button><span class="dialog-foot-spacer"></span><a class="btn" href="#line-appearance">Back</a><a class="btn btn-primary" href="#line-review">Next: Review</a></div>
       </div>
-      <aside class="design-notes" aria-label="Design notes for Line physical signals">
+      <aside class="design-notes" aria-label="Design notes for Line wiring">
         <h3>Design notes — not product UI</h3>
+        <h4>One Signal LCC per signal</h4>
         <ul>
-          <li>Aspects and Physical signals share the track drawing from Blocks. Signal selection, head selection, names, policies, and bindings survive navigation in this session.</li>
-          <li>Future UX: sample hardware and illustrative appearances only, not current S2 support. Choose the board physically near this signal, not whichever board has free outputs; the mockup never switches boards.</li>
-          <li>The board line is a mock resource check over sample boards, not an allocator or live availability, and the board stays selected if outputs run out. Mast mappings are examples, not rulebook-certified; advanced mapping is future design.</li>
-          <li>With both directions, only the chain for the list direction is shown. Opposite-direction signals and coordination resources are not allocated.</li>
-          <li>Head appearance is independent of electrical implementation: RG searchlight blending uses two outputs; RYG searchlight uses three. Fixed RYG lamps use three. Position-light groups plus shared center use four, or three with explicitly selected external center-light circuitry.</li>
-          <li>Center is lit for every lit position-light indication and dark when the head darkens. Output counts are independently controlled board outputs, not total physical wires.</li>
-          <li>Sample checks cover active outputs across all heads/signals, scoped by node, and illustrative capacity. Existing external claims and actual hardware remain unvalidated. No auto-allocation or automatic board switching.</li>
-          <li>Changing appearance/implementation/board retains previous binding variants for restoration; removed heads release their claims. Plant reuse is a future editor seam, not a change to the Plant pages.</li>
+          <li>The node is chosen first because it is where the signal runs: its mast (Rule to Aspect), its conditionals, and the track circuit receiver for the next signal all live there. Every head on the signal, including a lunar head, uses that node.</li>
+          <li>Only Signal LCC nodes are offered; the Signal LCC 32H is left out because "Linked to Previous" chains heads there, not rules. This page is Signal LCC–specific by design, not profile driven.</li>
+          <li>Bowties picks the mast slot; it is shown for traceability, not chosen. The usage line counts pins, conditionals, and masts on the node. Conditionals run out first, so they are shown as an estimate (about one per rule) until the logic is generated.</li>
+          <li>The node is shown in a field-style button (name, location, node ID, "Change ▾"); clicking anywhere on it opens a search dialog that matches name, description, and node ID, and by default hides nodes that are offline, have no free mast, or lack enough free pins.</li>
+        </ul>
+        <h4>Lamps and pins work like a seat map</h4>
+        <ul>
+          <li>Lamps are the passengers and pins are the seats. Select a lamp, then click a pin: a free pin places it and selection moves to the next lamp without a pin; the selected lamp's own pin clears it; another lamp's pin on this signal swaps the two. Pins used by other signals or facilities are disabled and show the facility's name.</li>
+          <li>The selected lamp's pin is filled in the grid, and every pin this signal uses shows its lamp name, so the mapping reads both ways without a second control.</li>
+          <li>Each pin is labeled as the board names it, "#10 H3-Y", the form messages and Configuration use. The line below always says who holds the pin: its lamp, a facility, an owner outside Bowties, or Free.</li>
+          <li>Header labels (H1–H4) place every lamp of the selected lamp's head on that header, matching lamps to the G, Y, R, L pin labels, which wires most signals in one click. The labels are only a suggestion: any pin can drive any LED, so the user can place lamps on any pins, and Blink confirms the result.</li>
+          <li>Signal type comes from Appearance; Wiring only chooses how each head is driven. Two choices are a segmented control and one is plain text; the electrical detail is a tooltip.</li>
+        </ul>
+        <h4>Pins used outside Bowties</h4>
+        <ul>
+          <li>A Signal LCC can already drive pins from configuration Bowties does not manage: a mast or Direct Lamp row set up by hand, by another tool, or by earlier testing. Each such pin shows its owner ("Mast 3", "Direct lamp 4") with a dashed outline, so it is never just "Taken".</li>
+          <li>Clicking one opens its details in place: the owner, its description, every pin it drives and, for a mast, its rules and the Logic conditionals that set its aspects. Those are found by event ID: a conditional whose action sends one of the mast's set-aspect events drives that mast.</li>
+          <li>The card closes with the × in its corner (named "Close Mast 3 details", since the editor has its own close), by clicking the pin again, or with Escape, which closes only the card. Focus returns to the pin. In E2c's confirmation, Cancel goes back to the details and × closes the card.</li>
+          <li>Show in Configuration is a button, not a link, because it leaves a dialog. The editor is not closed or saved: its choices stay, and returning to the Railroad tab shows it again where it was. The status line says so when the user leaves.</li>
+          <li>Release and use frees every pin of that owner, not just the one clicked, and places the selected lamp on the clicked pin. A released mast is reset together with the conditionals that set its aspects, since they exist only to drive it; a conditional whose actions also send events something else consumes is kept and named in the confirmation. The resets are staged with the facility's own edits: they show as unsaved changes in the node's configuration, and Discard brings them back. Pins used by a Bowties facility cannot be released here.</li>
+          <li>Built in Spec 020 E2c, after facility removal (E2b), which supplies the reset edits. Until then the details show and Release and use is disabled. Importing such configuration as a facility is a separate idea (specs/ideas/features/import-existing-signal-configuration.md).</li>
+        </ul>
+        <h4>Lamp patterns stay closed</h4>
+        <ul>
+          <li>The Rule to Aspect table is derived from Appearance and the pins, so it starts closed. It shows what will be written to the mast: one row per Signal LCC rule, one column per pin, each cell a lamp in that rule's Appearance list with its phase. Flashing lamps share phase A so a blended yellow flashes as one.</li>
+          <li>Customize lamps is the escape hatch for unusual signals: edits are outlined, a rule lights at most 4 lamps, and Reset to Appearance discards them. The Show check lives here because it works per rule.</li>
+        </ul>
+        <h4>Checking the wiring</h4>
+        <ul>
+          <li>Blink proves one pin is wired to the right lamp. It briefly uses Direct Lamp Control, so Bowties must always return that lamp to Used by Mast afterwards; a lamp left in direct mode silently breaks every aspect.</li>
+          <li>Show proves a whole aspect by sending the rule's set aspect event, the same staged order as the community bring-up procedure. Both need the node online and the signal fully wired. When nothing lights, the hint points at the board's CA/CC jumper, which sets whether the outputs pull up or pull down to light an LED, to match common-anode or common-cathode wiring.</li>
+        </ul>
+        <h4>Mockup limitations</h4>
+        <ul>
+          <li>Nodes, pins, and usage outside this facility are sample data. Blink and Show send nothing.</li>
+          <li>When a head has no pins yet for its signal type, drive, or node, Bowties keeps it on the same header if that header is free, and otherwise uses the first free one. Earlier pins are kept so switching back restores them; removed heads release their pins.</li>
+          <li>With both directions, only the chain for the list direction is wired here. Opposite-direction signals and coordination resources are not allocated.</li>
+        </ul>
+        <h4>Open questions</h4>
+        <ul>
+          <li>Blink: does changing a lamp to Direct Lamp Control take effect without restarting the node? When the lamp returns to Used by Mast, does it show the current aspect at once or only at the next aspect change?</li>
+          <li>How many conditionals does a signal really use? The usage line is an estimate until Bowties generates the logic.</li>
         </ul>
       </aside>
     </div>
 
     <div class="wizard-frame" id="line-review">
-      <p class="frame-heading"><strong>Step 4 of 4 — Review.</strong> Review behavior, turnout restrictions, approach lighting, every head, and all output assignments. Nothing is saved or applied.</p>
+      <p class="frame-heading"><strong>Step 5 of 5 — Review.</strong> Review behavior, turnout restrictions, appearance, each signal's Signal LCC, and every lamp-to-pin assignment. Nothing is saved or applied.</p>
       <div class="dialog wide">
         <div class="dialog-head"><span data-line-context-title>New Automatic Block Signals</span> · Review</div>
         <div class="dialog-body">
-          <div class="stepper">
-            <div class="step done"><span class="step-n">1</span>Blocks</div>
-            <div class="step done"><span class="step-n">2</span>Aspects</div>
-            <div class="step done"><span class="step-n">3</span>Physical signals</div>
-            <div class="step active"><span class="step-n">4</span>Review</div>
-          </div>
+          <ol class="stepper" data-line-stepper="review" aria-label="Automatic Block Signals steps"></ol>
           <div class="panel subtle" style="margin-bottom:12px">
             <h3 style="margin:0 0 6px">Intended operating behavior</h3>
             <strong id="line-operation-title">Directional automatic block signaling (ABS) · Eastward</strong>
@@ -2104,7 +2396,7 @@
           <div class="summary-grid">
             <div class="summary-card"><strong id="line-change-summary">3 new signals</strong><span id="line-confirm-name">Cedar Hill — Eastward</span></div>
             <div class="summary-card"><strong id="line-link-summary"></strong><span id="line-end-summary"></span></div>
-            <div class="summary-card"><strong id="line-lamp-summary"></strong><span>Output bindings</span></div>
+            <div class="summary-card"><strong id="line-lamp-summary"></strong><span>Signal LCC pins</span></div>
           </div>
           <p id="line-confirm-baseline" style="margin-top:10px;color:var(--text-muted);font-size:12px"></p>
           <div class="table-scroll" style="margin-top:12px">
@@ -2120,7 +2412,7 @@
             <p style="margin-top:10px">These checks describe configuration, not permission to move trains.</p>
           </div>
         </div>
-        <div class="dialog-foot"><button class="btn" data-line-cancel>Cancel</button><span class="dialog-foot-spacer"></span><a class="btn" href="#line-physical">Back</a><button class="btn" disabled data-create-text="Save new draft" data-edit-text="Save draft changes">Save new draft</button><button class="btn btn-primary" disabled data-create-text="Create and apply" data-edit-text="Apply changes">Create and apply</button></div>
+        <div class="dialog-foot"><button class="btn" data-line-cancel>Cancel</button><span class="dialog-foot-spacer"></span><a class="btn" href="#line-wiring">Back</a><button class="btn" disabled data-create-text="Save new draft" data-edit-text="Save draft changes">Save new draft</button><button class="btn btn-primary" disabled data-create-text="Create and apply" data-edit-text="Apply changes">Create and apply</button></div>
       </div>
       <aside class="design-notes" aria-label="Design notes for Line review">
         <h3>Design notes — not product UI</h3>
@@ -2128,7 +2420,7 @@
         <ul>
           <li>Review differences against the existing configuration, including membership,
           resource releases, and changed links. Editing must not recreate unchanged signal identities.</li>
-          <li>All four Cancel buttons are preview-only: nothing is saved or applied, local choices
+          <li>All five Cancel buttons are preview-only: nothing is saved or applied, local choices
           remain until reload. Real draft cancellation/persistence is not implemented here.</li>
           <li>The operating summary describes intent, not validated delivery. Unanswered
           coordination stays explicit.</li>
@@ -2139,13 +2431,37 @@
         <ul>
           <li>Save/apply controls are disabled because authoritative checks remain pending. Edit mode compares against the initial sample, not a loaded layout; change counts include effective settings, relationships, and active bindings.</li>
           <li>The checks here are limited sample checks. Still required before applying, and not validated by this mockup: detection and turnout position sources, downstream semantics, and unavailable-input behavior; catalog mappings, board capabilities, external output claims, and logic capacity; effects on signals outside this facility and safe application order.</li>
-          <li>Later pages model one directional chain only; both-direction and APB behavior remain unvalidated.</li>
-          <li>Try RG/RYG searchlight implementations, position-light center circuitry, and a second head; assign an already-claimed output, then follow a Physical signals correction link. Backtracking retains unrelated choices.</li>
+          <li>Aspects, Wiring, and Review configure one directional chain only. Appearance simulates both directions and APB, but that behavior is not validated hardware logic.</li>
+          <li>Try changing the signal type or adding a second head on Appearance, then RG/RYG searchlight drives or the position-light center (always on, or on a pin for approach lighting) on Wiring; move a signal to another Signal LCC, clear a lamp's pin, or customize a rule past 4 lamps, then follow a Wiring correction link. Backtracking retains unrelated choices.</li>
         </ul>
         <h4>Open questions</h4>
         <ul>
           <li>Facility persistence, deletion, unavailable-state handling, and application/failure policy
           remain unsettled. Unvalidated dependencies must not be presented as safe to apply.</li>
+        </ul>
+      </aside>
+    </div>
+
+    <div class="wizard-frame" id="line-railroad">
+      <p class="frame-heading"><strong>After Done — Railroad tab.</strong> The facility card shows its track and signals as the editor left them. The diagram follows the choices made on the pages above.</p>
+      <article class="rr-card" aria-label="Cedar Hill facility">
+        <header class="rr-card-head">
+          <span class="rr-card-name">Cedar Hill</span>
+          <span class="rr-card-template">Automatic Block Signals</span>
+          <span class="rr-card-status">Wired</span>
+          <span class="rr-card-actions" aria-hidden="true"><span>Edit</span><span>Rename</span><span class="danger">Delete</span></span>
+        </header>
+        <div data-line-selector data-line-summary></div>
+      </article>
+      <aside class="design-notes" aria-label="Design notes for the Railroad facility card">
+        <h3>Design notes — not product UI</h3>
+        <ul>
+          <li>The card body is the same track diagram the editor draws, read-only: blocks, turnouts, what lies at each end, each block's occupancy, and each signal where the editor placed it. Joined blocks share one signal, as on Blocks. It replaces the list of signals with their red and green pins.</li>
+          <li>Nothing on the diagram is selectable for now. The rest of the Railroad tab needs rethinking first, and that will decide what a click should do.</li>
+          <li>Pin assignments per board move to a possible printable wiring document: <code>specs/ideas/features/printable-wiring-documentation.md</code>. The earlier board-grouped table drawn here was never reviewed.</li>
+          <li>Header, status and actions stay as in the app today. A board waiting to be written still shows its line under the header.</li>
+          <li>Occupancy works as it does in the editor: filled red when occupied, white when clear, dashed when Bowties is not connected or has not heard the block's state.</li>
+          <li>A possible later step: each head lit with its current aspect.</li>
         </ul>
       </aside>
     </div>
@@ -2581,6 +2897,10 @@
     });
 
     const lineContext = document.getElementById('line-context');
+    document.getElementById('line-review-unavailable').addEventListener('change', event => {
+      lineStepsUnavailable.review = event.target.checked;
+      renderLineSignal();
+    });
     lineContext.addEventListener('change', () => {
       const editing = lineContext.value === 'edit';
       for (const title of document.querySelectorAll('#line [data-line-context-title]')) {
@@ -2592,14 +2912,76 @@
       renderLineSignal();
     });
 
+    // Signal LCC resources (CDI replication counts) and its positional pin names: #1 H1-G .. #16 H4-L
+    const SIGNAL_LCC = { masts: 8, pins: 16, conditionals: 32, circuits: 8, lampsPerRule: 4 };
+    const PIN_SUFFIX = ['G', 'Y', 'R', 'L'];
+    function pinLabel(pin) {
+      const n = Number(pin);
+      return `#${n} H${Math.ceil(n / 4)}-${PIN_SUFFIX[(n - 1) % 4]}`;
+    }
+    // sample nodes; `other` is what facilities outside this one already use on each node
+    function otherPins(from, to, owner) {
+      return Object.fromEntries(Array.from({ length: to - from + 1 }, (_, i) => [String(from + i), owner]));
+    }
     const lineBoards = {
-      west: { name: 'West Staging', node: '05.01.01.01.22.01', location: 'Under west approach', capacity: 8 },
-      east: { name: 'East Approach', node: '05.01.01.01.22.02', location: 'East fascia cabinet', capacity: 8 },
+      west: { name: 'West Staging', node: '05.01.01.01.22.01', location: 'Under west approach', capacity: 16, online: true,
+        other: { masts: 0, conditionals: 0, circuits: 0, pins: {} },
+        // configuration on the board that no Bowties facility manages
+        outside: [
+          { owner: 'Mast 3', kind: 'mast', description: 'Bench test', pins: [9, 10, 12], rules: 3, logic: [7, 8] },
+          { owner: 'Direct lamp 4', kind: 'lamp', description: 'Fascia LED', pins: [16] },
+        ] },
+      east: { name: 'East Approach', node: '05.01.01.01.22.02', location: 'East fascia cabinet', capacity: 16, online: true,
+        other: { masts: 1, conditionals: 4, circuits: 0, pins: otherPins(13, 15, 'Yard Lead dwarf (Yard Lead facility)') } },
+      depot: { name: 'Depot Street', node: '05.01.01.01.22.06', location: 'Under the depot', capacity: 16, online: true,
+        other: { masts: 0, conditionals: 0, circuits: 0, pins: {} } },
+      mill: { name: 'Mill Yard', node: '05.01.01.01.22.03', location: 'Mill yard fascia', capacity: 16, online: true,
+        other: { masts: 5, conditionals: 24, circuits: 4, pins: otherPins(1, 15, 'Mill Yard signals') } },
+      summit: { name: 'Summit Plant', node: '05.01.01.01.22.05', location: 'Summit tower cabinet', capacity: 16, online: true,
+        other: { masts: 8, conditionals: 30, circuits: 6, pins: otherPins(1, 12, 'Summit Plant') } },
+      bridge: { name: 'River Bridge', node: '05.01.01.01.22.04', location: 'Bridge abutment', capacity: 16, online: false,
+        other: { masts: 0, conditionals: 0, circuits: 0, pins: {} } },
+    };
+    const LINE_RULE_NAMES = { Stop: '0-Stop', Restricting: '4-Restricting', Approach: '21-Approach', 'Advance Approach': '22-Advance-Approach', Clear: '29-Clear', Dark: '31-Dark' };
+    const LAMP_PHASES = ['Steady', 'A-Slow', 'A-Med', 'A-Fast', 'B-Slow', 'B-Med', 'B-Fast'];
+    // which channels each base indication lights, per electrical implementation
+    const RYG_LAMPS = { Stop: ['red'], Approach: ['yellow'], Clear: ['green'] };
+    const LAMP_CHANNELS = {
+      'fixed-ryg': RYG_LAMPS,
+      'search-ryg': RYG_LAMPS,
+      'blend-rg': { Stop: ['red'], Approach: ['red', 'green'], Clear: ['green'] },
+      'position-center': { Stop: ['stop group', 'shared center'], Approach: ['approach group', 'shared center'], Clear: ['clear group', 'shared center'] },
+      'position-external': { Stop: ['stop group'], Approach: ['approach group'], Clear: ['clear group'] },
+      'cpl-pairs': { Stop: ['red pair'], Approach: ['yellow pair'], Clear: ['green pair'] },
+    };
+    // "Use header" puts each channel on the header pin with the matching position letter
+    const CHANNEL_SUFFIX = {
+      red: 'R', yellow: 'Y', green: 'G', lunar: 'L',
+      'stop group': 'R', 'approach group': 'Y', 'clear group': 'G', 'shared center': 'L',
+      'red pair': 'R', 'yellow pair': 'Y', 'green pair': 'G',
+    };
+    function headerPin(header, channel) {
+      return String((header - 1) * 4 + PIN_SUFFIX.indexOf(CHANNEL_SUFFIX[channel]) + 1);
+    }
+    const LINE_DRIVE_SHORT = {
+      'blend-rg': 'RG blend · 2 pins', 'search-ryg': 'RYG channels · 3 pins',
+      'position-center': 'Shared center · 4 pins', 'position-external': 'Center always on · 3 pins',
+    };
+    const LINE_ELECTRICAL = {
+      'fixed-ryg': 'Three fixed colored lamps, three independently controlled pins.',
+      'blend-rg': 'One lens with a red and a green channel; both together make yellow. Two pins.',
+      'lunar-single': 'One lunar lamp, lit under red for Restricting. One pin.',
+      'search-ryg': 'One variable-color aperture, separate red/yellow/green channels. Three pins.',
+      'position-center': 'Three two-lamp pattern groups plus one shared center pin. Center lit for every lit indication; all four pins off for Dark.',
+      'cpl-pairs': 'Three pairs of colored lamps (red horizontal, yellow diagonal, green vertical), one pin per pair. No center lamp.',
+      'position-external': 'The center lamp is wired to stay lit, and three pins drive the pattern rows. Not with approach lighting: the center would stay lit while the signal is dark.',
     };
     const lineImplementations = {
       color: [['fixed-ryg', 'Fixed red / yellow / green lamps · 3 outputs']],
       searchlight: [['blend-rg', 'RG blend · 2 independently driven channels'], ['search-ryg', 'RYG channels · 3 outputs']],
-      position: [['position-center', '3 pattern groups + shared center · 4 outputs'], ['position-external', '3 groups + external center-light circuitry · 3 outputs']],
+      position: [['position-center', '3 pattern groups + shared center · 4 outputs'], ['position-external', '3 pattern groups, center wired always on · 3 outputs']],
+      cpl: [['cpl-pairs', '3 colored lamp pairs · 3 outputs']],
+      lunar: [['lunar-single', 'One lunar lamp · 1 output']],
     };
     const lineChannels = {
       'fixed-ryg': ['red', 'yellow', 'green'],
@@ -2607,21 +2989,69 @@
       'search-ryg': ['red', 'yellow', 'green'],
       'position-center': ['stop group', 'approach group', 'clear group', 'shared center'],
       'position-external': ['stop group', 'approach group', 'clear group'],
+      'cpl-pairs': ['red pair', 'yellow pair', 'green pair'],
+      'lunar-single': ['lunar'],
     };
+    // Appearance: one signal type for the whole facility, with a per-signal exception
+    const LINE_STYLES = [
+      ['searchlight', 'Searchlight', 'One lens that changes color.'],
+      ['color', 'Color light', 'Separate red, yellow, and green lamps.'],
+      ['position', 'Position light', 'Rows of lamps; the angle of the row is the aspect.'],
+      ['cpl', 'Color position light', 'Pairs of colored lamps; color and angle both carry the aspect.'],
+    ];
+    const LINE_STYLE_NAME = { ...Object.fromEntries(LINE_STYLES.map(([value, name]) => [value, name])), lunar: 'Lunar lamp' };
+    let lineRestrictingLook = 'flash';
+    let lineDark = 'always';
+    function signalDark(signal) { return signal.dark ?? lineDark; }
+    let lineStyle = 'searchlight';
+    function signalStyle(signal) { return signal.style ?? lineStyle; }
+    // a lower lunar head exists only where Restricting is shown as red over lunar
+    function needsLunar(index) {
+      return selectedLineChoice(lineSwitchPolicy) === 'restricting' && lineRestrictingLook === 'lunar' && lineSwitchesIn(index).length > 0;
+    }
+    // the main head follows the signal's type (an implementation that no longer fits gets the type's first);
+    // a removed lunar head is kept so its outputs come back with it
+    function syncHeadStyles() {
+      lineSignals.forEach((signal, index) => {
+        const head = signal.heads[0];
+        const kind = signalStyle(signal);
+        if (head.kind !== kind) {
+          const header = headHeader(head);
+          head.kind = kind;
+          head.implementation = lineImplementations[kind][0][0];
+          lineFillHeader(head, header);
+        }
+        // a new lunar head starts on the L pin of the main head's header
+        if (needsLunar(index) && signal.heads.length === 1) {
+          signal.heads.push(signal.lunarHead ?? makeLineHead('lunar', 'lunar-single', signal.node, { lunar: headerPin(headHeader(head) ?? 1, 'lunar') }));
+        }
+        if (!needsLunar(index) && signal.heads.length > 1) signal.lunarHead = signal.heads.splice(1)[0];
+        // every head runs on the signal's node
+        for (const item of [...signal.heads, signal.lunarHead].filter(Boolean)) item.board = signal.node;
+      });
+    }
+    // the header a head is on, from its first assigned pin
+    function headHeader(head) {
+      const pins = Object.values(head.variants[`${head.implementation}:${head.board}`] ?? {}).filter(Boolean);
+      return pins.length ? Math.ceil(Number(pins[0]) / 4) : null;
+    }
     function makeLineHead(kind, implementation, board, outputs = {}) {
       return { kind, implementation, board, variants: { [`${implementation}:${board}`]: { ...outputs } } };
     }
     const lineSignals = [
-      { name: 'Cedar Hill East', block: 'Cedar Hill', signaling: null, preset: 'basic', selectedHead: 0,
-        heads: [makeLineHead('searchlight', 'blend-rg', 'west', { red: '1', green: '2' })] },
-      { name: 'Mill curve East', block: 'Mill curve', signaling: null, preset: 'basic', selectedHead: 0,
-        heads: [makeLineHead('color', 'fixed-ryg', 'west', { red: '4', yellow: '5', green: '6' })] },
-      { name: 'River bridge East', block: 'River bridge', signaling: null, preset: 'basic', selectedHead: 0,
-        heads: [makeLineHead('searchlight', 'search-ryg', 'east', { red: '1', yellow: '2', green: '3' })] },
+      { name: 'Cedar Hill East', block: 'Cedar Hill', signaling: null, style: null, dark: null, node: 'west',
+        heads: [makeLineHead('searchlight', 'blend-rg', 'west', { red: '3', green: '1' })] },
+      { name: 'Mill curve East', block: 'Mill curve', signaling: null, style: 'color', dark: 'always', node: 'west',
+        heads: [makeLineHead('color', 'fixed-ryg', 'west', { red: '7', yellow: '6', green: '5' })] },
+      { name: 'River bridge East', block: 'River bridge', signaling: null, style: null, dark: null, node: 'east',
+        heads: [makeLineHead('searchlight', 'search-ryg', 'east', { red: '3', yellow: '2', green: '1' })] },
     ];
     let lineBaseline = null;
     // each sample signal has a name for each direction; `name` follows the selected direction
     for (const signal of lineSignals) {
+      // lamp settings that differ from Appearance, keyed `${indication}|${head}:${channel}`
+      signal.customLamps = {};
+      signal.customizing = false;
       const eastName = signal.name;
       delete signal.name;
       Object.assign(signal, { eastName, westName: `${signal.block} West` });
@@ -2692,8 +3122,6 @@
     const overrideLineSignaling = document.getElementById('line-override-signaling');
     const signalAspectCount = document.getElementById('line-signal-aspect-count');
     const lineSwitchPolicy = document.getElementById('line-switch-policy');
-    const lineDarkPolicy = document.getElementById('line-dark-policy');
-    const signalDarkPolicy = document.getElementById('line-signal-dark-policy');
     // sample Plants: the entrance signal faces trains arriving from these blocks; the exit signal sends trains into them
     const LINE_PLANTS = {
       'cedar-jct': { short: 'Cedar Jct', where: 'Junction with the mill branch', entrance: 'Cedar Jct East Home', exit: 'Cedar Jct East Exit' },
@@ -2758,7 +3186,7 @@
     }
 
     function lineSignaling() {
-      return { aspects: selectedLineChoice(lineAspectCount), dark: selectedLineChoice(lineDarkPolicy) };
+      return { aspects: selectedLineChoice(lineAspectCount) };
     }
 
     function lineAspects(index) {
@@ -2813,7 +3241,6 @@
       document.getElementById('line-custom-signaling').hidden = !overrideLineSignaling.checked;
       renderLineChoice(lineAspectCount, selectedLineChoice(lineAspectCount));
       renderLineChoice(signalAspectCount, policy.aspects);
-      renderLineChoice(signalDarkPolicy, policy.dark);
       document.getElementById('line-inheritance-status').textContent = signal.signaling
         ? 'Uses a selected-signal override; changes to all signals will not replace it.'
         : 'Uses the settings for all signals.';
@@ -3035,13 +3462,11 @@
       lineSignals[selectedLineSignal].signaling = overrideLineSignaling.checked ? lineSignaling() : null;
       renderLineSignal();
     });
-    for (const control of [signalAspectCount, signalDarkPolicy]) {
-      control.addEventListener('change', () => {
-        lineSignals[selectedLineSignal].signaling = { aspects: selectedLineChoice(signalAspectCount), dark: selectedLineChoice(signalDarkPolicy) };
-        renderLineSignal();
-      });
-    }
-    for (const control of [lineAspectCount, lineSwitchPolicy, lineDarkPolicy]) {
+    signalAspectCount.addEventListener('change', () => {
+      lineSignals[selectedLineSignal].signaling = { aspects: selectedLineChoice(signalAspectCount) };
+      renderLineSignal();
+    });
+    for (const control of [lineAspectCount, lineSwitchPolicy]) {
       control.addEventListener('change', renderLineSignal);
     }
     const lineTrack = {
@@ -3355,14 +3780,19 @@
     // signal pickers on later pages (mode 'signals': each block's signal is selectable; one direction).
     function buildTrackSvg(opts) {
       const blocksMode = opts.mode === 'blocks';
+      const simMode = opts.mode === 'simulate';
+      // the Railroad tab's facility card: the same drawing, read-only, signals as the editor placed them
+      const summaryMode = opts.mode === 'summary';
+      const simTrain = simMode && lineSim.source === 'sim';
       const turnouts = orderedTurnouts();
-      const groups = blocksMode ? lineSignalGroups() : lineSignals.map((_, i) => [i]);
-      const dirs = blocksMode ? lineShownDirections() : { fwd: true, back: false };
+      const groups = blocksMode || summaryMode ? lineSignalGroups() : lineSignals.map((_, i) => [i]);
+      const dirs = blocksMode || simMode ? lineShownDirections() : { fwd: true, back: false };
       const geo = { east: dirs.fwd && geoDirection('fwd') === 'east' || dirs.back && geoDirection('back') === 'east' };
       geo.west = dirs.fwd && !geo.east || dirs.back;
       const flip = lineWestward();
       const online = document.getElementById('line-online').value === 'online';
-      const extra = blocksMode ? 0 : 12; // room for "to resolve" under signal names
+      // room for a second line ("to resolve" or the expected aspect) under signal names, so a 50px selection box fits
+      const extra = blocksMode || summaryMode ? 0 : 16;
       const Y = geo.west ? 72 + extra : 42;
       const H = geo.east ? Y + 52 + extra : Y + 28;
       const PAD = 104, GAP = 5;
@@ -3390,6 +3820,8 @@
       svg.setAttribute('role', 'img');
       svg.setAttribute('aria-label', blocksMode
         ? `Track diagram derived from the list: blocks, turnouts, and derived signals; the list runs ${flip ? 'right to left' : 'left to right'}`
+        : simMode ? 'Expected aspects along the track; select a signal to see it larger'
+        : summaryMode ? `Track and signals for ${flip ? 'westward' : 'eastward'} travel`
         : `Signals for ${flip ? 'westward' : 'eastward'} travel; select a signal to configure it`);
       // every x below is in list order; el() mirrors it for a westward list
       function el(tag, attrs, parent = svg, fixed = false) {
@@ -3443,13 +3875,17 @@
         const dir = t.face === 'west' ? 1 : -1;
         const sy = t.side === 'below' ? 1 : -1;
         const selected = selectedTurnout === t;
-        const colour = selected ? '#0f6cbd' : '#56606d';
-        const width = selected ? 4 : 3;
+        const reversed = simMode && simTurnoutState(t) === 'reversed';
+        const colour = selected ? '#0f6cbd' : reversed ? '#9d5d00' : '#56606d';
+        const width = selected || reversed ? 4 : 3;
+        const lined = reversed ? 'lined for the siding' : 'lined for the main';
         const g = blocksMode
           ? el('g', { class: 'line-turnout', tabindex: 0, role: 'button', 'aria-label': `${t.name}: ${turnoutPlace(t)}`, 'aria-pressed': String(selected) })
+          : simTrain
+          ? el('g', { class: 'line-turnout', tabindex: 0, role: 'button', 'aria-pressed': String(reversed), 'aria-label': `${t.name}: ${lined} (simulated). Activate to line it for the ${reversed ? 'main' : 'siding'}.` })
           : el('g', {});
-        el('title', {}, g).textContent = `${t.name} · ${turnoutPlace(t)}`;
-        if (blocksMode) el('rect', { class: 'line-turnout-hit', x: px - 34, y: Y - 26, width: 68, height: 52, fill: 'transparent', stroke: 'transparent', 'stroke-width': 6, rx: 6 }, g);
+        el('title', {}, g).textContent = simMode ? `${t.name} · ${simTurnoutState(t) === 'unknown' ? 'position unknown' : lined}` : `${t.name} · ${turnoutPlace(t)}`;
+        if (blocksMode || simTrain) el('rect', { class: 'line-turnout-hit', x: px - 34, y: Y - 26, width: 68, height: 52, fill: 'transparent', stroke: 'transparent', 'stroke-width': 6, rx: 6 }, g);
         const lx = px + dir * 24, ly = Y + sy * 18;
         // a selected turnout highlights its points and straight route as well as the diverging leg
         if (selected) el('line', { x1: px - dir * 8, y1: Y, x2: px + dir * 32, y2: Y, stroke: colour, 'stroke-width': width }, g);
@@ -3461,7 +3897,16 @@
           el('line', { x1: lx, y1: ly, x2: px + dir * 52, y2: ly, stroke: colour, 'stroke-width': width }, g);
           el('line', { x1: px + dir * 52, y1: ly - 5, x2: px + dir * 52, y2: ly + 5, stroke: colour, 'stroke-width': 2 }, g);
         }
-        if (!blocksMode) continue;
+        if (!blocksMode) {
+          if (simTrain) {
+            const focusKey = `${opts.key}:turnout:${t.id}`;
+            g.dataset.focusKey = focusKey;
+            const toggle = () => { lineSim.turnouts[t.id] = reversed ? 'normal' : 'reversed'; lineSignalFocus = focusKey; renderLineSignal(); };
+            g.addEventListener('click', toggle);
+            g.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(); } });
+          }
+          continue;
+        }
         const choose = () => { lineTrackSelection = { type: 'turnout', id: t.id }; renderLineSignal(); };
         g.addEventListener('click', choose);
         g.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); lineTrackFocus = `diagram:${t.id}`; choose(); } });
@@ -3469,17 +3914,48 @@
       }
 
       // block names in a top row and occupancy on the track, both at the centre of each block
+      // a simulated train: a fixed-length band, shorter than the shortest block, centred in its block or
+      // on the joint while it crosses into the next one; a chevron marks the head end
+      if (simTrain && lineSimResult.train.length && !simGone()) {
+        const n = lineSignals.length;
+        const span = b => b < 0 ? [16, joints[0] - GAP - 6] : b >= n ? [joints[n] + GAP + 6, W - 16] : [joints[b] + GAP + 6, joints[b + 1] - GAP - 6];
+        const length = 0.7 * Math.min(...Array.from({ length: n + 2 }, (_, k) => { const [a, b] = span(k - 1); return b - a; }));
+        const [head, rear] = lineSimResult.train;
+        const centre = rear === undefined ? (span(head)[0] + span(head)[1]) / 2 : joints[Math.max(head, rear)];
+        const [x0, x1] = [centre - length / 2, centre + length / 2];
+        const band = el('rect', { x: x0, y: Y - 5, width: x1 - x0, height: 10, rx: 5, fill: '#0f6cbd', 'fill-opacity': 0.25, stroke: '#0f6cbd', 'stroke-width': 1.5 });
+        el('title', {}, band).textContent = 'Simulated train';
+        const tip = lineSim.dir === 'fwd' ? x1 : x0, back = lineSim.dir === 'fwd' ? -7 : 7;
+        el('line', { x1: tip + back, y1: Y - 9, x2: tip, y2: Y, stroke: '#0f6cbd', 'stroke-width': 2.5 });
+        el('line', { x1: tip + back, y1: Y + 9, x2: tip, y2: Y, stroke: '#0f6cbd', 'stroke-width': 2.5 });
+      }
       lineSignals.forEach((signal, i) => {
         const cx = (joints[i] + joints[i + 1]) / 2;
         text(signal.block, { x: cx, y: 14, 'font-weight': 700, 'font-size': 11, fill: '#20242a' });
-        const state = online ? lineObservations[i].state : 'unknown';
-        const dot = el('circle', { cx, cy: Y, r: 6, fill: state === 'occupied' ? '#c50f1f' : '#fff', stroke: state === 'unknown' ? '#8a929c' : '#20242a', 'stroke-width': 2, 'stroke-dasharray': state === 'unknown' ? '3 2' : 'none' });
-        el('title', {}, dot).textContent = `${signal.block}: ${online ? lineObservations[i].label : 'occupancy unavailable'}`;
+        const state = simMode ? lineSimResult.occ[i] : online ? lineObservations[i].state : 'unknown';
+        const label = simTrain ? `${state} (simulated)` : simMode && state !== 'unknown' ? state : online ? lineObservations[i].label : 'occupancy unavailable';
+        const holder = simTrain
+          ? el('g', { class: 'line-sim-block', tabindex: 0, role: 'button', 'aria-pressed': String(lineSim.cars.has(i)), 'data-focus-key': `${opts.key}:block:${i}`,
+            'aria-label': `${signal.block}: ${label}. Activate to ${lineSim.cars.has(i) ? 'remove' : 'add'} standing cars.` })
+          : svg;
+        // simulated occupancy gets a dashed blue ring so it never reads as a live detector
+        if (simTrain) el('circle', { cx, cy: Y, r: 10, fill: '#fff', stroke: '#0f6cbd', 'stroke-width': 1.5, 'stroke-dasharray': '2 2' }, holder);
+        const dot = el('circle', { cx, cy: Y, r: 6, fill: state === 'occupied' ? '#c50f1f' : '#fff', stroke: state === 'unknown' ? '#8a929c' : '#20242a', 'stroke-width': 2, 'stroke-dasharray': state === 'unknown' ? '3 2' : 'none' }, holder);
+        el('title', {}, simTrain ? holder : dot).textContent = `${signal.block}: ${label}${simTrain ? ' · click to add or remove standing cars' : ''}`;
+        if (simTrain) {
+          const toggle = () => {
+            if (lineSim.cars.has(i)) lineSim.cars.delete(i); else lineSim.cars.add(i);
+            lineSignalFocus = `${opts.key}:block:${i}`;
+            renderLineSignal();
+          };
+          holder.addEventListener('click', toggle);
+          holder.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(); } });
+        }
       });
 
       // derived signals: a 'fwd' signal sits at the list-start end of its signal block, 'back' at the other end.
       // Eastward signals stand below the track and westward ones above, whichever way the list runs.
-      function drawSignal(jx, rel, name, mode, parent = svg) {
+      function drawSignal(jx, rel, name, mode, parent = svg, lamp = null) {
         const k = rel === 'fwd' ? 1 : -1;
         const x0 = jx - 22 * k;
         const sy = geoDirection(rel) === 'east' ? 1 : -1;
@@ -3490,30 +3966,39 @@
         el('line', { x1: x0, y1: y, x2: x0 + k * 10, y2: y, 'stroke-width': 2, ...line }, parent);
         el('circle', ghost
           ? { cx: x0 + k * 16, cy: y, r: 6, fill: '#fff', stroke: '#8a929c', 'stroke-width': 1.5, 'stroke-dasharray': '2.5 2' }
+          : lamp
+          ? { cx: x0 + k * 16, cy: y, r: 6, fill: lamp.fill, stroke: lamp.stroke, 'stroke-width': 1.5, 'stroke-dasharray': lamp.dash ?? 'none', class: lamp.flash ? 'line-flash' : 'line-lamp' }
           : { cx: x0 + k * 16, cy: y, r: 6, fill: '#fff', stroke: '#20242a', 'stroke-width': 1.5 }, parent);
+        if (lamp?.unknown) text('?', { x: x0 + k * 16, y: y + 3.5, 'font-size': 9, 'font-weight': 700, fill: '#737b86' }, parent);
         const picked = mode === 'selected';
         text(ghost ? `${name} · off` : name, { x: x0 + k * 8, y: Y + sy * 46 + (sy < 0 ? 4 : 0), 'font-weight': picked ? 700 : 400,
           'font-style': ghost ? 'italic' : 'normal', fill: ghost ? '#8a929c' : picked ? '#0f6cbd' : '#424a55' }, parent);
       }
       // later pages: a selectable signal, with its unresolved items under the name
       function drawPickSignal(i, jx, rel, name) {
-        const selected = i === selectedLineSignal;
-        const issues = opts.issues?.[i] ?? [];
+        const entry = simMode ? lineSimResult.display.get(simKey(i, rel)) : null;
+        const selected = simMode ? lineSim.selected.i === i && lineSim.selected.rel === rel : i === selectedLineSignal;
+        const issues = simMode ? [] : opts.issues?.[i] ?? [];
         const k = rel === 'fwd' ? 1 : -1;
         const sy = geoDirection(rel) === 'east' ? 1 : -1;
         const cx = jx - 14 * k;
-        const focusKey = `${opts.key}:${i}`;
+        const focusKey = `${opts.key}:${rel}:${i}`;
         const g = el('g', { class: 'line-pick-signal', tabindex: 0, role: 'button', 'aria-pressed': String(selected), 'data-line-signal': i, 'data-focus-key': focusKey,
-          'aria-label': `Configure ${name}; protects ${lineSignals[i].block}${issues.length ? `; ${issues.length} to resolve` : ''}` });
-        el('title', {}, g).textContent = `${name} · protects ${lineSignals[i].block}${issues.length ? ` · ${issues.map(issue => issue.message).join(' ')}` : ''}`;
+          'aria-label': entry
+            ? `${name}: expected ${simAspectWord(entry)}; protects ${lineSignals[i].block}. Activate to show it larger.`
+            : `Configure ${name}; protects ${lineSignals[i].block}${issues.length ? `; ${issues.length} to resolve` : ''}` });
+        el('title', {}, g).textContent = entry
+          ? `${name} · expected ${simAspectWord(entry)} · ${entry.why}`
+          : `${name} · protects ${lineSignals[i].block}${issues.length ? ` · ${issues.map(issue => issue.message).join(' ')}` : ''}`;
         const w = Math.max(60, name.length * 5.6 + 16);
         // equal 6px margins around the signal, its name, and any "to resolve" line
-        const h = issues.length ? 50 : 40;
+        const h = issues.length || entry ? 50 : 40;
         el('rect', { x: cx - w / 2, y: sy > 0 ? Y + 16 : Y - 16 - h, width: w, height: h, rx: 6,
           fill: selected ? '#ebf3fc' : 'transparent', 'fill-opacity': 0.7, stroke: selected ? '#0f6cbd' : 'transparent', 'stroke-width': 1.5 }, g);
-        drawSignal(jx, rel, name, selected ? 'selected' : 'normal', g);
+        drawSignal(jx, rel, name, selected ? 'selected' : 'normal', g, entry ? simLamp(entry) : null);
         if (issues.length) text(`${issues.length} to resolve`, { x: cx, y: sy > 0 ? Y + 58 : Y - 54, 'font-size': 9, fill: '#9d5d00' }, g);
-        const choose = () => opts.onSelect(i);
+        if (entry) text(simAspectWord(entry), { x: cx, y: sy > 0 ? Y + 58 : Y - 54, 'font-size': 9, 'font-weight': 600, fill: '#424a55' }, g);
+        const choose = () => opts.onSelect(i, rel);
         g.addEventListener('click', choose);
         g.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); lineSignalFocus = focusKey; choose(); } });
       }
@@ -3521,7 +4006,7 @@
         for (const rel of ['fwd', 'back']) {
           if (!dirs[rel]) continue;
           const jx = rel === 'fwd' ? joints[group[0]] : joints[group[group.length - 1] + 1];
-          if (blocksMode) drawSignal(jx, rel, groupSignalName(group, rel), 'normal');
+          if (blocksMode || summaryMode) drawSignal(jx, rel, groupSignalName(group, rel), 'normal');
           else drawPickSignal(group[0], jx, rel, groupSignalName(group, rel));
         }
       });
@@ -3578,7 +4063,11 @@
     function renderSignalDiagrams(claims) {
       const issues = lineSignals.map((_, i) => lineIssues(i, claims));
       document.querySelectorAll('[data-line-selector]').forEach((container, n) => {
-        const { svg, W } = buildTrackSvg({ mode: 'signals', issues, key: `picker${n}`, onSelect: selectLineSignal });
+        const { svg, W } = container.hasAttribute('data-line-summary')
+          ? buildTrackSvg({ mode: 'summary' })
+          : container.hasAttribute('data-line-simulate')
+          ? buildTrackSvg({ mode: 'simulate', key: `sim${n}`, onSelect: selectSimSignal })
+          : buildTrackSvg({ mode: 'signals', issues, key: `picker${n}`, onSelect: selectLineSignal });
         const canvas = container.querySelector('.line-diagram-canvas');
         canvas.style.width = `${W}px`;
         canvas.replaceChildren(svg);
@@ -3654,17 +4143,6 @@
     }
     lineOnline.addEventListener('change', renderLineSignal);
 
-    const headSelect = document.getElementById('line-head-select');
-    const headKind = document.getElementById('line-head-kind');
-    const headImplementation = document.getElementById('line-head-implementation');
-    const outputBoard = document.getElementById('line-output-board');
-    const appearancePreset = document.getElementById('line-appearance-preset');
-
-    function selectedHead() {
-      const signal = lineSignals[selectedLineSignal];
-      return signal.heads[signal.selectedHead];
-    }
-
     function headOutputs(head) {
       const key = `${head.implementation}:${head.board}`;
       return head.variants[key] ??= {};
@@ -3678,10 +4156,6 @@
       return `${lineBoards[head.board].node} / output ${output}`;
     }
 
-    function mappingSupported(signal) {
-      return signal.preset === 'basic' ? signal.heads.length === 1 : signal.heads.length === 2;
-    }
-
     function lineNextSignal(index) {
       if (lineAspects(index) < 3) return 'Occupancy only · no downstream signal used';
       if (!lineUsesNext(index)) return 'Nothing beyond · Stop / Clear only';
@@ -3693,9 +4167,9 @@
 
     function lineSnapshot(signal, index) {
       return {
-        name: signal.name, block: signal.block, signaling: signal.signaling ?? lineSignaling(),
+        name: signal.name, block: signal.block, signaling: signal.signaling ?? lineSignaling(), dark: signalDark(signal),
         switchPolicy: lineSwitchesIn(index).length ? selectedLineChoice(lineSwitchPolicy) : null, turnouts: lineSwitchesIn(index).map(t => t.name), next: lineNextSignal(index), direction: selectedLineChoice(lineDirection),
-        preset: signal.preset,
+        node: signal.node, customLamps: { ...signal.customLamps },
         heads: signal.heads.map(head => ({
           kind: head.kind, implementation: head.implementation, board: head.board,
           outputs: Object.fromEntries(lineChannels[head.implementation].map(channel => [channel, headOutputs(head)[channel] || ''])),
@@ -3724,10 +4198,29 @@
       return link;
     }
 
-    function lineClaims() {
+    // configuration on a board outside any Bowties facility, minus owners released in this session
+    const lineReleased = new Set();
+    let lineInspected = null; // { node, owner, pin, confirming }
+    function lineOutsideOwners(board) {
+      return (board.outside ?? []).filter(entry => !lineReleased.has(`${board.node}/${entry.owner}`));
+    }
+    function lineOutsideAt(board, pin) {
+      return lineOutsideOwners(board).find(entry => entry.pins.includes(Number(pin)));
+    }
+
+    // every pin claim on every sample node: this facility's lamps plus pins used outside it;
+    // `skipHead` leaves one head out, to ask which pins are taken by anything else
+    function lineClaims({ skipHead = null } = {}) {
       const claims = new Map();
+      for (const board of Object.values(lineBoards)) {
+        for (const [pin, owner] of Object.entries(board.other.pins)) claims.set(`${board.node} / output ${pin}`, [owner]);
+        for (const entry of lineOutsideOwners(board)) {
+          for (const pin of entry.pins) claims.set(`${board.node} / output ${pin}`, [`${entry.owner} (not managed by Bowties)`]);
+        }
+      }
       for (const signal of lineSignals) {
         for (const [headIndex, head] of signal.heads.entries()) {
+          if (head === skipHead) continue;
           for (const channel of lineChannels[head.implementation]) {
             const output = headOutputs(head)[channel];
             if (!output) continue;
@@ -3744,107 +4237,620 @@
       const signal = lineSignals[index];
       const issues = [];
       if (!signal.name.trim()) issues.push({ step: 'signaling', message: 'Enter a signal name.' });
-      if (!mappingSupported(signal)) {
-        issues.push({ step: 'physical', message: 'Head count does not match the selected illustrative preset. Advanced mapping is not available.' });
-      }
       if (lineRules(index).some(rule => rule[1] === 'Advance Approach') && signal.heads.some(head => head.kind === 'position')) {
-        issues.push({ step: 'physical', message: 'Advance Approach has no supported position-light appearance in these presets. A validated mapping is required.' });
+        issues.push({ step: 'appearance', message: 'Position light has no Advance Approach appearance here. Choose another signal type, or 3 aspects.' });
       }
       for (const [headIndex, head] of signal.heads.entries()) {
         for (const channel of lineChannels[head.implementation]) {
           const output = headOutputs(head)[channel];
           const prefix = `Head ${headIndex + 1} · ${channel}`;
-          if (!output) issues.push({ step: 'physical', message: `${prefix}: choose a sample output.` });
+          if (!output) issues.push({ step: 'wiring', message: `${prefix}: choose a pin.` });
           else if (Number(output) > lineBoards[head.board].capacity) {
-            issues.push({ step: 'physical', message: `${prefix}: output ${output} exceeds this sample board's capacity.` });
+            issues.push({ step: 'wiring', message: `${prefix}: pin ${output} is not on this node.` });
           } else if (claims.get(claimKey(head, output)).length > 1) {
-            issues.push({ step: 'physical', message: `${prefix}: ${claimKey(head, output)} is assigned more than once.` });
+            const others = claims.get(claimKey(head, output)).filter(owner => owner !== `${signal.name} · head ${headIndex + 1} · ${channel}`);
+            issues.push({ step: 'wiring', message: `${prefix}: ${pinLabel(output)} is also used by ${others.join('; ')}.` });
           }
         }
-        const node = lineBoards[head.board].node;
-        const activeCount = [...claims].filter(([key]) => key.startsWith(`${node} /`)).reduce((count, [, owners]) => count + owners.length, 0);
-        if (activeCount > lineBoards[head.board].capacity) {
-          issues.push({ step: 'physical', message: `Head ${headIndex + 1}: ${activeCount} assignments exceed ${lineBoards[head.board].name}'s ${lineBoards[head.board].capacity} sample outputs. Board remains selected; review wiring, do not relocate automatically.` });
+      }
+      if (signalDark(signal) === 'approach' && signal.heads.some(head => head.implementation === 'position-external')) {
+        issues.push({ step: 'wiring', message: 'Approach lighting needs the center lamp on a pin so it can go dark. Drive the position-light head as Shared center · 4 pins.' });
+      }
+      const board = lineBoards[signal.node];
+      if (!board.online) issues.push({ step: 'wiring', message: `${board.name} is offline; Bowties cannot read or write its configuration.` });
+      if (lineMastSlot(index) > SIGNAL_LCC.masts) issues.push({ step: 'wiring', message: `${board.name} has no free mast. Choose another node.` });
+      for (const indication of lineRuleIndications(index)) {
+        const lit = lineLitCount(signal, indication);
+        if (lit > SIGNAL_LCC.lampsPerRule) {
+          issues.push({ step: 'wiring', message: `${LINE_RULE_NAMES[indication]} lights ${lit} lamps; a Signal LCC rule lights at most ${SIGNAL_LCC.lampsPerRule}.` });
         }
       }
       return issues;
     }
 
-    function headAppearance(head, indication) {
+    // ---- Wiring: one Signal LCC per signal, lamps on pins, Rule to Aspect from Appearance ----
+    function lineLamps(signal) {
+      return signal.heads.flatMap((head, headIndex) => lineChannels[head.implementation].map(channel => ({
+        head, headIndex, channel, key: `${headIndex}:${channel}`, pin: headOutputs(head)[channel] || '',
+      })));
+    }
+    // the rules this signal's mast needs: one per indication, plus Dark for approach lighting
+    function lineRuleIndications(index) {
+      const rows = [...new Set(lineRules(index).map(rule => rule[1]))];
+      if (signalDark(lineSignals[index]) === 'approach') rows.push('Dark');
+      return rows;
+    }
+    // the lamps Appearance lights for one indication, as Signal LCC phases keyed `${head}:${channel}`
+    function appearanceLamps(signal, indication) {
+      const lit = {};
+      if (indication === 'Dark') return lit;
+      const head = signal.heads[0];
+      const lunar = signal.heads.length > 1;
+      const flashing = (indication === 'Restricting' && !lunar) || indication === 'Advance Approach';
+      const base = indication === 'Restricting' ? 'Stop' : indication === 'Advance Approach' ? 'Approach' : indication;
+      if (!(indication === 'Advance Approach' && head.kind === 'position')) {
+        for (const channel of LAMP_CHANNELS[head.implementation][base]) lit[`0:${channel}`] = flashing ? 'A-Med' : 'Steady';
+      }
+      if (lunar && indication === 'Restricting') lit['1:lunar'] = 'Steady';
+      return lit;
+    }
+    function lineLampPhase(signal, indication, key) {
+      return signal.customLamps[`${indication}|${key}`] ?? appearanceLamps(signal, indication)[key] ?? 'Off';
+    }
+    function lineLitCount(signal, indication) {
+      return lineLamps(signal).filter(lamp => lineLampPhase(signal, indication, lamp.key) !== 'Off').length;
+    }
+    // edits that still apply to a current rule and lamp
+    function lineLampEdits(index) {
+      const signal = lineSignals[index];
+      const keys = new Set(lineLamps(signal).map(lamp => lamp.key));
+      const indications = new Set(lineRuleIndications(index));
+      return Object.keys(signal.customLamps).filter(entry => {
+        const [indication, key] = entry.split('|');
+        return indications.has(indication) && keys.has(key);
+      }).length;
+    }
+    // Bowties assigns masts in facility order after the masts already used on the node
+    function lineMastSlot(index) {
+      const signal = lineSignals[index];
+      return lineBoards[signal.node].other.masts + lineSignals.slice(0, index).filter(item => item.node === signal.node).length + 1;
+    }
+    // an estimate until logic is generated: about one conditional per rule
+    function lineConditionals(index) { return lineRules(index).length; }
+    function lineNodeUsage(nodeId, claims, exclude = -1) {
+      const board = lineBoards[nodeId];
+      const members = lineSignals.map((_, i) => i).filter(i => i !== exclude && lineSignals[i].node === nodeId);
+      let pins = Object.keys(board.other.pins).length;
+      for (const i of members) pins += lineLamps(lineSignals[i]).filter(lamp => lamp.pin).length;
+      return {
+        masts: board.other.masts + members.length,
+        pins: Math.min(pins, board.capacity),
+        conditionals: board.other.conditionals + members.reduce((total, i) => total + lineConditionals(i), 0),
+        circuits: board.other.circuits + members.filter(i => lineUsesNext(i)).length,
+      };
+    }
+    // a header is blocked for a head when any pin it needs is taken by anything else
+    function lineHeaderBlocked(head, header) {
+      const claims = lineClaims({ skipHead: head });
+      return lineChannels[head.implementation].some(channel => claims.has(claimKey(head, headerPin(header, channel))));
+    }
+    function lineUseHeader(head, header) {
+      const outputs = headOutputs(head);
+      for (const channel of lineChannels[head.implementation]) outputs[channel] = headerPin(header, channel);
+    }
+    function lineChooseNode(index, nodeId) {
+      const signal = lineSignals[index];
+      signal.node = nodeId;
+      for (const head of [...signal.heads, signal.lunarHead].filter(Boolean)) head.board = nodeId;
+      // lunar prefers the main head's header
+      for (const head of signal.heads) lineFillHeader(head, head === signal.heads[0] ? null : headHeader(signal.heads[0]));
+    }
+    // a head with no pins yet for its current implementation and node gets the preferred header, else the first free one
+    function lineFillHeader(head, preferred) {
+      if (Object.values(headOutputs(head)).some(Boolean)) return;
+      const header = [preferred, 1, 2, 3, 4].find(candidate => candidate && !lineHeaderBlocked(head, candidate));
+      if (header) lineUseHeader(head, header);
+    }
+
+    // one head, drawn at `scale` pixels per unit; the shape follows the type
+    function headAppearance(head, indication, scale = 0.6) {
       const wrapper = document.createElement('div');
       wrapper.className = 'line-head-example';
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      svg.setAttribute('viewBox', '0 0 58 68');
       svg.setAttribute('role', 'img');
       const flashing = indication === 'Restricting' || indication === 'Advance Approach';
       if (indication === 'Restricting') indication = 'Stop';
       if (indication === 'Advance Approach') indication = head.kind === 'position' ? 'Unmapped' : 'Approach';
-      const dark = indication === 'Dark' || indication === 'Unmapped';
-      const color = { Stop: '#ef5350', Approach: '#ffcf44', Clear: '#54c985' }[indication] || '#39414a';
-      function shape(tag, attributes) {
+      const unknown = indication === 'Unknown';
+      const dark = indication === 'Dark' || indication === 'Unmapped' || unknown;
+      const colors = { Stop: '#ef5350', Approach: '#ffcf44', Clear: '#54c985' };
+      const off = '#39414a';
+      const colorWord = { Stop: 'Red', Approach: 'Yellow', Clear: 'Green' }[indication];
+      const angle = { Stop: 'horizontal', Approach: 'diagonal', Clear: 'vertical' }[indication];
+      function shape(tag, attributes, lit = false) {
         const element = document.createElementNS(svg.namespaceURI, tag);
         for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
+        if (lit && flashing) element.classList.add('line-flash');
         svg.append(element);
+        return element;
       }
-      shape('rect', { x: 2, y: 2, width: 54, height: 64, rx: head.kind === 'position' ? 26 : 12, fill: '#15191f', stroke: '#737b86' });
+      const back = { fill: '#15191f', stroke: '#737b86', 'stroke-width': 1.5 };
+      const box = { color: [34, 68], lunar: [30, 30] }[head.kind] ?? [58, 58];
+      svg.setAttribute('viewBox', `0 0 ${box[0]} ${box[1]}`);
+      svg.style.width = `${box[0] * scale}px`;
+      svg.style.height = `${box[1] * scale}px`;
+      const [mx, my] = [box[0] / 2, box[1] / 2];
+      // position and color position lights: the angle of the lit row is the aspect
+      const rows = { Stop: [[14, 29], [44, 29]], Approach: [[18.4, 39.6], [39.6, 18.4]], Clear: [[29, 14], [29, 44]] };
       let description;
-      if (head.kind === 'position') {
-        const points = [[12, 34, 'Stop'], [46, 34, 'Stop'], [12, 51, 'Approach'], [46, 17, 'Approach'], [29, 10, 'Clear'], [29, 58, 'Clear'], [29, 34, 'center']];
-        for (const [cx, cy, group] of points) {
-          shape('circle', { cx, cy, r: 5, fill: !dark && (group === indication || group === 'center') ? '#ffdc7e' : '#39414a' });
+      if (head.kind === 'lunar') {
+        shape('circle', { cx: 15, cy: 15, r: 13.5, ...back });
+        const lit = indication === 'Lunar';
+        shape('circle', { cx: 15, cy: 15, r: 6, fill: lit ? '#e3ebff' : off });
+        description = lit ? 'Lunar lamp lit' : 'Lunar lamp off';
+      } else if (head.kind === 'position') {
+        shape('circle', { cx: 29, cy: 29, r: 27, ...back });
+        for (const [group, points] of Object.entries(rows)) for (const [cx, cy] of points) {
+          const lit = !dark && group === indication;
+          shape('circle', { cx, cy, r: 4.5, fill: lit ? '#ffdc7e' : off }, lit);
         }
-        description = dark ? 'All groups and center off' : `${indication} group + center lit`;
+        shape('circle', { cx: 29, cy: 29, r: 4.5, fill: dark ? off : '#ffdc7e' }, !dark);
+        description = dark ? 'All rows and center off' : `${angle} row and center lit`;
+      } else if (head.kind === 'cpl') {
+        shape('circle', { cx: 29, cy: 29, r: 27, ...back });
+        for (const [group, points] of Object.entries(rows)) for (const [cx, cy] of points) {
+          const lit = !dark && group === indication;
+          shape('circle', { cx, cy, r: 5.5, fill: lit ? colors[group] : off }, lit);
+        }
+        description = dark ? 'All lamp pairs off' : `${colorWord} ${angle} pair lit`;
       } else if (head.kind === 'searchlight') {
-        shape('circle', { cx: 29, cy: 34, r: 15, fill: color });
-        description = dark ? 'Single aperture off' : `${indication === 'Stop' ? 'Red' : indication === 'Approach' ? 'Yellow' : 'Green'} aperture`;
-        if (head.implementation === 'blend-rg' && indication === 'Approach') description += ' · R + G blend';
+        shape('circle', { cx: 29, cy: 29, r: 27, ...back });
+        shape('circle', { cx: 29, cy: 29, r: 10, fill: dark ? off : colors[indication] }, !dark);
+        description = dark ? 'Lens off' : `${colorWord} lens`;
+        if (head.implementation === 'blend-rg' && indication === 'Approach') description += ' (red and green together)';
       } else {
-        for (const [cy, meaning, fill] of [[15, 'Stop', '#ef5350'], [34, 'Approach', '#ffcf44'], [53, 'Clear', '#54c985']]) {
-          shape('circle', { cx: 29, cy, r: 8, fill: indication === meaning ? fill : '#39414a' });
+        shape('rect', { x: 2, y: 2, width: 30, height: 64, rx: 15, ...back });
+        for (const [cy, meaning] of [[17, 'Stop'], [34, 'Approach'], [51, 'Clear']]) {
+          const lit = indication === meaning;
+          shape('circle', { cx: 17, cy, r: 7.5, fill: lit ? colors[meaning] : off }, lit);
         }
-        description = dark ? 'All fixed lamps off' : `${indication === 'Stop' ? 'Red' : indication === 'Approach' ? 'Yellow' : 'Green'} fixed lamp lit`;
+        description = dark ? 'All lamps off' : `${colorWord} lamp lit`;
       }
-      if (flashing && !dark) description += ' · flashing (illustrative)';
-      if (indication === 'Unmapped') description = 'No supported mapping · silhouette only, not Dark';
-      svg.setAttribute('aria-label', `${head.kind}: ${description}`);
-      const text = document.createElement('span');
-      text.textContent = description;
-      wrapper.append(svg, text);
+      if (flashing && !dark) description += ', flashing';
+      if (indication === 'Unmapped') description = 'No appearance for this indication';
+      if (unknown) {
+        shape('text', { x: mx, y: my + 5, 'text-anchor': 'middle', 'font-size': 14, 'font-weight': 700, fill: '#8a929c' }).textContent = '?';
+        description = 'Expected aspect unknown';
+      }
+      svg.setAttribute('aria-label', `${LINE_STYLE_NAME[head.kind]}: ${description}`);
+      wrapper.title = `${LINE_STYLE_NAME[head.kind]}: ${description}`;
+      wrapper.append(svg);
       return wrapper;
+    }
+
+    // a whole mast, top to bottom; a lunar head lights only for Restricting, under a steady red
+    function mastAppearance(signal, indication, { scale = 0.6, post = false } = {}) {
+      const mast = document.createElement('div');
+      mast.className = 'line-mast-example';
+      const lunar = signal.heads.length > 1;
+      for (const [index, head] of signal.heads.entries()) {
+        let shown;
+        if (indication === 'Dark' || indication === 'Unknown') shown = indication;
+        else if (index === 0) shown = indication === 'Restricting' && lunar ? 'Stop' : indication;
+        else shown = indication === 'Restricting' ? 'Lunar' : 'Dark';
+        mast.append(headAppearance(head, shown, scale));
+      }
+      if (post) {
+        const pole = document.createElement('div');
+        pole.className = 'line-mast-post';
+        mast.append(pole);
+      }
+      return mast;
     }
 
     function renderLineAppearances(signal) {
       const policy = signal.signaling ?? lineSignaling();
+      const dark = signalDark(signal);
       const required = [...new Set(lineRules(selectedLineSignal).map(rule => rule[1]))];
-      document.getElementById('line-display-required').textContent = `Required meanings: ${required.join(' / ')}`;
       document.getElementById('line-appearance-practice').textContent =
-        `${policy.aspects} aspects · ${policy.dark === 'approach' ? 'Dark until a train approaches' : 'Keep heads lit'}. Illustrative appearances, not railroad-certified.`;
+        `${LINE_STYLE_NAME[signalStyle(signal)]} · ${policy.aspects} aspects · ${dark === 'approach' ? 'dark until a train approaches' : 'always lit'}`;
       const rows = required.map(indication => [indication, indication]);
-      rows.push([policy.dark === 'approach' ? 'Dark · no train approaching' : 'Dark example only · approach lighting not requested', 'Dark']);
+      if (dark === 'approach') rows.push(['Dark · no train approaching', 'Dark']);
+      const selected = lineSim.selected;
+      const current = selected.rel === 'fwd' && selected.i === selectedLineSignal ? lineSimResult.display.get(simKey(selectedLineSignal, 'fwd'))?.shown : null;
       document.getElementById('line-display-appearances').replaceChildren(...rows.map(([label, indication]) => {
         const row = lineTableRow([label]);
-        const cell = document.createElement('td');
-        const mast = document.createElement('div');
-        mast.className = 'line-mast-example';
-        const supported = mappingSupported(signal);
-        for (const [index, head] of signal.heads.entries()) {
-          const caption = document.createElement('span');
-          caption.textContent = `Head ${index + 1}${index === 0 ? ' · upper' : ' · lower'}`;
-          mast.append(caption, headAppearance(head, indication === 'Dark' ? 'Dark' : !supported ? 'Unmapped' : index === 0 ? indication : 'Stop'));
+        if (current === indication) {
+          row.classList.add('line-current');
+          const now = document.createElement('span');
+          now.className = 'line-now';
+          now.textContent = 'Expected now';
+          row.cells[0].append(now);
         }
-        cell.append(mast);
+        const cell = document.createElement('td');
+        cell.append(mastAppearance(signal, indication, { scale: 0.5 }));
         row.append(cell);
         return row;
       }));
     }
 
-    function renderLineLaterSteps() {
+    // ---- Appearance: signal type for all signals and the selected signal ----
+    const lineStyleGroup = document.getElementById('line-style');
+    createLinePolicyChoices(lineStyleGroup, LINE_STYLES, lineStyle);
+    lineStyleGroup.addEventListener('change', () => {
+      lineStyle = selectedLineChoice(lineStyleGroup);
+      renderLineSignal();
+    });
+    // one override for the selected signal, as on Aspects: it copies the settings for all signals, then
+    // keeps its own signal type and approach lighting
+    const overrideAppearance = document.getElementById('line-override-appearance');
+    const signalStyleSelect = document.getElementById('line-signal-style');
+    signalStyleSelect.append(...LINE_STYLES.map(([value, name]) => new Option(name, value)));
+    overrideAppearance.addEventListener('change', () => {
       const signal = lineSignals[selectedLineSignal];
-      const head = selectedHead();
-      const board = lineBoards[head.board];
+      signal.style = overrideAppearance.checked ? lineStyle : null;
+      signal.dark = overrideAppearance.checked ? lineDark : null;
+      renderLineSignal();
+    });
+    signalStyleSelect.addEventListener('change', () => {
+      lineSignals[selectedLineSignal].style = signalStyleSelect.value;
+      renderLineSignal();
+    });
+    const lineDarkPolicy = document.getElementById('line-dark-policy');
+    lineDarkPolicy.addEventListener('change', () => {
+      lineDark = selectedLineChoice(lineDarkPolicy);
+      renderLineSignal();
+    });
+    const signalDarkPolicy = document.getElementById('line-signal-dark-policy');
+    signalDarkPolicy.addEventListener('change', () => {
+      lineSignals[selectedLineSignal].dark = selectedLineChoice(signalDarkPolicy);
+      renderLineSignal();
+    });
+    const restrictingLook = document.getElementById('line-restricting-look');
+    restrictingLook.addEventListener('change', () => {
+      lineRestrictingLook = selectedLineChoice(restrictingLook);
+      renderLineSignal();
+    });
+    function renderLineStyle(signal) {
+      renderLineChoice(lineStyleGroup, lineStyle);
+      restrictingLook.hidden = selectedLineChoice(lineSwitchPolicy) !== 'restricting';
+      renderLineChoice(restrictingLook, lineRestrictingLook);
+      renderLineChoice(lineDarkPolicy, lineDark);
+      const overridden = signal.style !== null;
+      overrideAppearance.checked = overridden;
+      overrideAppearance.closest('.radio-choice').classList.toggle('selected', overridden);
+      document.getElementById('line-custom-appearance').hidden = !overridden;
+      signalStyleSelect.value = signalStyle(signal);
+      renderLineChoice(signalDarkPolicy, signalDark(signal));
+      const lunar = signal.heads.length > 1
+        ? ` A lunar lamp below shows Restricting for ${lineSwitchesIn(selectedLineSignal).map(t => t.name).join(', ')}.` : '';
+      document.getElementById('line-style-status').textContent = (overridden
+        ? 'Uses a selected-signal override; changes to all signals will not replace it.'
+        : 'Uses the settings for all signals.') + lunar;
+    }
+
+    // ---- Try the signals: expected aspects from live or simulated occupancy ----
+    // 'fwd' signals govern the list direction, 'back' the opposite one (shown with both directions).
+    const lineSim = { source: 'live', dir: 'fwd', pos: null, crossing: false, cars: new Set(), turnouts: {}, selected: { i: 0, rel: 'fwd' }, timer: null };
+    let lineSimResult = null;
+    function simKey(i, rel) { return `${rel}:${i}`; }
+    function lineApb() {
+      return lineShownDirections().back && coordinationChoices.find(input => input.checked)?.value === 'coordinated';
+    }
+    // blocks the simulated train covers, head first; -1 and n are the approaches outside the facility.
+    // The train moves half a block per step: within a block, then crossing into the next (both occupied).
+    function simTrainBlocks() {
+      if (lineSim.source !== 'sim' || lineSim.pos === null) return [];
+      return lineSim.crossing ? [lineSim.pos, lineSim.pos + (lineSim.dir === 'fwd' ? -1 : 1)] : [lineSim.pos];
+    }
+    function simTurnoutState(t) {
+      if (lineSim.source === 'sim') return lineSim.turnouts[t.id] ?? 'normal';
+      return lineOnline.value === 'online' ? 'normal' : 'unknown';
+    }
+    function signalPolicy(i, rel) {
+      return rel === 'fwd' ? (lineSignals[i].signaling ?? lineSignaling()) : lineSignaling();
+    }
+    function computeLineSim() {
+      const n = lineSignals.length;
+      const live = lineSim.source === 'live';
+      const online = lineOnline.value === 'online';
+      const train = simTrainBlocks();
+      const occ = lineSignals.map((_, i) => live
+        ? (online ? lineObservations[i].state : 'unknown')
+        : (lineSim.cars.has(i) || train.includes(i) ? 'occupied' : 'clear'));
+      const outside = { start: train.includes(-1), end: train.includes(n) };
+      const dirs = lineShownDirections();
+      const apb = lineApb();
+      // APB: traffic direction is set by the end a train entered from; occupancy alone cannot tell
+      let traffic = null;
+      if (apb) {
+        if (live) traffic = occ.some(state => state !== 'clear') ? 'unknown' : null;
+        else if (train.some(b => b >= 0 && b < n)) traffic = lineSim.dir;
+      }
+      const meanings = new Map();
+      function evaluate(i, rel) {
+        const key = simKey(i, rel);
+        if (meanings.has(key)) return meanings.get(key);
+        const block = lineSignals[i].block;
+        const aspects = Number(signalPolicy(i, rel).aspects);
+        const lined = lineSwitchesIn(i).filter(t => simTurnoutState(t) !== 'normal');
+        let result;
+        if (occ[i] === 'occupied') result = { ind: 'Stop', why: `${block} is occupied.` };
+        else if (occ[i] === 'unknown') result = { ind: 'Unknown', why: `No occupancy reading for ${block}.` };
+        else if (traffic === 'unknown') result = { ind: 'Unknown', why: 'APB: depends on which end the train entered the section, and Bowties has not seen it enter.' };
+        else if (traffic && traffic !== rel) result = { ind: 'Stop', why: 'APB: a train holds the section for the opposite direction.' };
+        else if (lined.length) {
+          const t = lined[0];
+          result = { ind: selectedLineChoice(lineSwitchPolicy) === 'restricting' ? 'Restricting' : 'Stop',
+            why: `${t.name} is ${simTurnoutState(t) === 'unknown' ? 'in an unknown position' : 'lined for the siding'}.` };
+        } else if (aspects < 3) result = { ind: 'Clear', why: `${block} is clear. With 2 aspects the signal looks only at its own block.` };
+        else {
+          const j = rel === 'fwd' ? i + 1 : i - 1;
+          let next = null;
+          if (j >= 0 && j < n) next = { ind: evaluate(j, rel).ind, name: blockSignalName(j, rel) };
+          else {
+            const end = rel === 'fwd' ? lineEnds.end : lineEnds.start;
+            if (end === 'stop') next = { ind: 'Stop', name: 'the end of signaled track' };
+            else if (LINE_PLANTS[end]) next = { ind: 'Stop', name: `${LINE_PLANTS[end].entrance} (assumed Stop)` };
+          }
+          if (!next) result = { ind: 'Clear', why: `${block} is clear, and nothing beyond it is watched.` };
+          else if (next.ind === 'Unknown') result = { ind: 'Unknown', why: `${block} is clear, but ${next.name} is unknown.` };
+          else if (next.ind === 'Stop' || next.ind === 'Restricting') result = { ind: 'Approach', why: `${block} is clear; ${next.name} shows ${next.ind}.` };
+          else if (next.ind === 'Approach' && aspects >= 4) result = { ind: 'Advance Approach', why: `${block} is clear; ${next.name} shows Approach.` };
+          else result = { ind: 'Clear', why: `${block} is clear; ${next.name} shows ${next.ind}.` };
+        }
+        meanings.set(key, result);
+        return result;
+      }
+      const display = new Map();
+      for (const rel of ['fwd', 'back']) {
+        if (!dirs[rel]) continue;
+        lineSignals.forEach((_, i) => {
+          const result = evaluate(i, rel);
+          let shown = result.ind, why = result.why;
+          if ((rel === 'fwd' ? signalDark(lineSignals[i]) : lineDark) === 'approach' && shown !== 'Unknown') {
+            // the approach is the block before this signal; outside the facility only a simulated train is known
+            const a = rel === 'fwd' ? i - 1 : i + 1;
+            const approach = a < 0 ? (live ? 'unknown' : outside.start ? 'occupied' : 'clear')
+              : a >= n ? (live ? 'unknown' : outside.end ? 'occupied' : 'clear')
+              : occ[a];
+            if (approach === 'clear') { why = `Dark: no train approaching. Lit, it would show ${shown}. ${why}`; shown = 'Dark'; }
+            else if (approach === 'unknown') why = `${why} Lit because the approach has no reading.`;
+          }
+          display.set(simKey(i, rel), { meaning: result.ind, shown, why });
+        });
+      }
+      return { occ, outside, traffic, apb, train, display };
+    }
+    function simAspectWord(entry) {
+      return entry.shown === 'Dark' ? `Dark · ${entry.meaning}` : entry.shown;
+    }
+    function simLamp(entry) {
+      if (entry.shown === 'Unknown') return { fill: '#fff', stroke: '#8a929c', dash: '2.5 2', unknown: true };
+      if (entry.shown === 'Dark') return { fill: '#20242a', stroke: '#8a929c' };
+      const fill = { Stop: '#d13438', Restricting: '#d13438', Approach: '#f2c200', 'Advance Approach': '#f2c200', Clear: '#13a10e' }[entry.shown];
+      return { fill, stroke: '#20242a', flash: entry.shown === 'Restricting' || entry.shown === 'Advance Approach' };
+    }
+    // opposite-direction signals are not configured per signal yet; they use the facility type, one head
+    function simSignalMast(i, rel) {
+      if (rel === 'fwd') return lineSignals[i];
+      return { heads: [{ kind: lineStyle, implementation: lineImplementations[lineStyle][0][0] }] };
+    }
+    // the outside approach the train starts in, and the one it leaves through
+    function simEdges() { const n = lineSignals.length; return lineSim.dir === 'fwd' ? [-1, n] : [n, -1]; }
+    function simGone() {
+      if (lineSim.pos === null) return false;
+      return lineSim.dir === 'fwd' ? lineSim.pos > lineSignals.length : lineSim.pos < -1;
+    }
+    function simPlace() { lineSim.pos = simEdges()[0]; lineSim.crossing = false; }
+    function simStep(delta) {
+      if (lineSim.pos === null) { if (delta > 0) simPlace(); return; }
+      const d = lineSim.dir === 'fwd' ? 1 : -1;
+      const [start, exit] = simEdges();
+      if (delta > 0) {
+        if (simGone()) return;
+        if (lineSim.crossing) lineSim.crossing = false;
+        else { lineSim.pos += d; lineSim.crossing = lineSim.pos - d !== exit; }
+        return;
+      }
+      if (simGone()) { lineSim.pos -= d; return; }
+      if (lineSim.crossing) { lineSim.pos -= d; lineSim.crossing = false; }
+      else if (lineSim.pos === start) lineSim.pos = null;
+      else lineSim.crossing = true;
+    }
+    function stopSimRun() {
+      clearInterval(lineSim.timer);
+      lineSim.timer = null;
+    }
+    function selectSimSignal(i, rel) {
+      lineSim.selected = { i, rel };
+      if (rel === 'fwd') selectedLineSignal = i;
+      renderLineSignal();
+    }
+    function simTrainText(sim) {
+      const n = lineSignals.length;
+      const heading = geoDirection(lineSim.dir) === 'east' ? 'eastward' : 'westward';
+      if (lineSim.pos === null) return 'No train placed. Place a train, or click a block to add standing cars. Click a turnout to line it for the siding.';
+      if (simGone()) return `The ${heading} train has left the signaled blocks.`;
+      const name = b => b >= 0 && b < n ? lineSignals[b].block : null;
+      const [head, rear] = sim.train;
+      if (rear !== undefined) {
+        if (name(rear) === null) return `The ${heading} train is entering ${name(head)}; both it and the approach are occupied.`;
+        if (name(head) === null) return `The ${heading} train is leaving ${name(rear)}.`;
+        return `The ${heading} train is crossing from ${name(rear)} into ${name(head)}; both blocks are occupied.`;
+      }
+      if (name(head) === null) return lineSim.pos === simEdges()[0]
+        ? `The ${heading} train is approaching ${lineSignals[lineSim.dir === 'fwd' ? 0 : n - 1].block}.`
+        : `The ${heading} train has cleared the last block.`;
+      return `The ${heading} train is in ${name(head)}.`;
+    }
+    function renderLineSim() {
+      const sim = lineSimResult;
+      const live = lineSim.source === 'live';
+      const online = lineOnline.value === 'online';
+      const dirs = lineShownDirections();
+      renderLineChoice(document.getElementById('line-sim-source'), lineSim.source);
+      document.getElementById('line-sim-train').hidden = live;
+      document.querySelector('#line-sim-direction .segmented').replaceChildren(...['fwd', 'back'].filter(rel => dirs[rel]).map(rel => {
+        const label = document.createElement('label');
+        label.className = `segment${rel === lineSim.dir ? ' selected' : ''}`;
+        const input = document.createElement('input');
+        Object.assign(input, { type: 'radio', name: 'line-sim-direction', value: rel, checked: rel === lineSim.dir });
+        input.addEventListener('change', () => { lineSim.dir = rel; lineSim.pos = null; stopSimRun(); renderLineSignal(); });
+        label.append(input, geoDirection(rel) === 'east' ? 'Eastward →' : '← Westward');
+        return label;
+      }));
+      document.getElementById('line-sim-back').disabled = lineSim.pos === null;
+      document.getElementById('line-sim-step').disabled = simGone();
+      const play = document.getElementById('line-sim-play');
+      play.textContent = lineSim.timer ? 'Pause' : 'Run';
+      play.setAttribute('aria-pressed', String(!!lineSim.timer));
+
+      const parts = [];
+      if (live) {
+        parts.push(online
+          ? 'Live: expected aspects from the block detectors and turnout positions right now.'
+          : 'Offline: no occupancy readings, so expected aspects are unknown. Choose Simulated train to try the signals.');
+        if (sim.apb && sim.traffic === 'unknown') parts.push('APB: the traffic direction is not known yet. It is set when a train enters the section from one end.');
+      } else {
+        parts.push(`Simulated: ${simTrainText(sim)}`);
+        if (lineSim.cars.size) parts.push(`Standing cars in ${[...lineSim.cars].sort().map(i => lineSignals[i].block).join(', ')}.`);
+        if (sim.apb) parts.push(sim.traffic
+          ? `APB: the train holds the section for ${geoDirection(sim.traffic) === 'east' ? 'eastward' : 'westward'} traffic, so opposing signals show Stop.`
+          : 'APB: no traffic direction is established; standing cars do not set one.');
+        parts.push('Nothing is sent to the bus.');
+      }
+      document.getElementById('line-sim-status').textContent = parts.join(' ');
+
+      const selected = lineSim.selected;
+      const entry = sim.display.get(simKey(selected.i, selected.rel));
+      const preview = document.getElementById('line-sim-selected');
+      const summary = `${blockSignalName(selected.i, selected.rel)}: expected ${simAspectWord(entry)}. ${entry.why}`;
+      preview.title = summary;
+      preview.setAttribute('aria-label', summary);
+      // fit the mast within the track diagram's height so a taller signal type never pushes the legend down
+      const mast = simSignalMast(selected.i, selected.rel);
+      const diagram = document.querySelector('[data-line-simulate] svg');
+      const room = Number(diagram?.getAttribute('height') ?? 120) - 26 - 2 * mast.heads.length - 4;
+      const units = mast.heads.reduce((sum, head) => sum + ({ color: 68, lunar: 30 }[head.kind] ?? 58), 0);
+      preview.replaceChildren(mastAppearance(mast, entry.shown, { scale: Math.min(1.1, room / units), post: true }));
+
+      const order = [];
+      for (const rel of ['fwd', 'back']) {
+        if (!dirs[rel]) continue;
+        const indexes = lineSignals.map((_, i) => i);
+        order.push(...(rel === 'fwd' ? indexes : indexes.reverse()).map(i => [i, rel]));
+      }
+      document.getElementById('line-mast-strip').replaceChildren(...order.map(([i, rel]) => {
+        const item = sim.display.get(simKey(i, rel));
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'line-strip-item';
+        button.setAttribute('aria-pressed', String(selected.i === i && selected.rel === rel));
+        const label = document.createElement('span');
+        label.textContent = blockSignalName(i, rel);
+        const aspect = document.createElement('strong');
+        aspect.textContent = simAspectWord(item);
+        button.append(mastAppearance(simSignalMast(i, rel), item.shown, { scale: 0.55 }), label, aspect);
+        button.addEventListener('click', () => selectSimSignal(i, rel));
+        return button;
+      }));
+    }
+    const simSource = document.getElementById('line-sim-source');
+    simSource.addEventListener('change', () => {
+      lineSim.source = selectedLineChoice(simSource);
+      stopSimRun();
+      renderLineSignal();
+    });
+    document.getElementById('line-sim-start').addEventListener('click', () => { stopSimRun(); simPlace(); renderLineSignal(); });
+    document.getElementById('line-sim-step').addEventListener('click', () => { simStep(1); renderLineSignal(); });
+    document.getElementById('line-sim-back').addEventListener('click', () => { stopSimRun(); simStep(-1); renderLineSignal(); });
+    document.getElementById('line-sim-reset').addEventListener('click', () => {
+      stopSimRun();
+      Object.assign(lineSim, { pos: null, crossing: false, cars: new Set(), turnouts: {} });
+      renderLineSignal();
+    });
+    document.getElementById('line-sim-play').addEventListener('click', () => {
+      if (lineSim.timer) { stopSimRun(); renderLineSignal(); return; }
+      if (lineSim.pos === null || simGone()) simPlace();
+      lineSim.timer = setInterval(() => {
+        simStep(1);
+        if (simGone()) stopSimRun();
+        renderLineSignal();
+      }, 1200);
+      renderLineSignal();
+    });
+
+    // Step bars: state comes from the facility's data, not from which step is shown.
+    const LINE_STEPS = [
+      { key: 'blocks', title: 'Blocks', frame: 'line-blocks' },
+      { key: 'aspects', title: 'Aspects', frame: 'line-signaling', issueStep: 'signaling' },
+      { key: 'appearance', title: 'Appearance', frame: 'line-appearance', issueStep: 'appearance' },
+      { key: 'wiring', title: 'Wiring', frame: 'line-wiring', issueStep: 'wiring' },
+      { key: 'review', title: 'Review', frame: 'line-review' },
+    ];
+    function lineStepStatus(step, claims) {
+      if (step.key === 'review') return lineStepsUnavailable.review ? 'unavailable' : 'todo';
+      if (step.key === 'blocks') return document.getElementById('line-name').value.trim() ? 'complete' : 'needsWork';
+      const flagged = lineSignals.some((_, i) => lineIssues(i, claims).some(issue => issue.step === step.issueStep));
+      return flagged ? 'needsWork' : 'complete';
+    }
+    const lineStepsUnavailable = { review: false };
+    function renderLineSteppers(claims) {
+      const editing = lineContext.value === 'edit';
+      const statuses = LINE_STEPS.map(step => lineStepStatus(step, claims));
+      for (const bar of document.querySelectorAll('#line [data-line-stepper]')) {
+        const current = LINE_STEPS.findIndex(step => step.key === bar.dataset.lineStepper);
+        bar.replaceChildren(...LINE_STEPS.map((step, index) => {
+          // Creating: a step not reached yet has no state to show. Editing: every step is reached.
+          const reached = editing || index <= current;
+          const status = statuses[index] === 'unavailable' ? 'unavailable' : reached ? statuses[index] : 'todo';
+          const item = document.createElement('li');
+          item.className = `step${index === current ? ' active' : ''}${status === 'complete' && index !== current ? ' done' : ''}${status === 'unavailable' ? ' unavailable' : ''}`;
+          const label = document.createElement(status === 'unavailable' ? 'span' : 'a');
+          if (status === 'unavailable') {
+            label.className = 'step-label';
+            label.title = 'Not in this release';
+          } else {
+            label.href = `#${step.frame}`;
+            if (index === current) label.setAttribute('aria-current', 'step');
+          }
+          const n = document.createElement('span');
+          n.className = 'step-n';
+          n.textContent = String(index + 1);
+          label.append(n, step.title);
+          if (status === 'complete' || status === 'needsWork') {
+            const mark = document.createElement('span');
+            mark.className = `step-mark ${status === 'complete' ? 'check' : 'warn'}`;
+            mark.setAttribute('aria-hidden', 'true');
+            mark.textContent = status === 'complete' ? '✓' : '!';
+            const said = document.createElement('span');
+            said.className = 'visually-hidden';
+            said.textContent = status === 'complete' ? ', complete' : ', needs attention';
+            label.append(mark, said);
+          } else if (status === 'unavailable') {
+            const said = document.createElement('span');
+            said.className = 'visually-hidden';
+            said.textContent = ', not in this release';
+            label.append(said);
+          }
+          item.append(label);
+          return item;
+        }));
+      }
+    }
+
+    function renderLineLaterSteps() {
+      syncHeadStyles();
+      if (!lineShownDirections()[lineSim.dir]) { lineSim.dir = 'fwd'; lineSim.pos = null; stopSimRun(); }
+      if (!lineShownDirections()[lineSim.selected.rel]) lineSim.selected = { i: selectedLineSignal, rel: 'fwd' };
+      if (lineSim.selected.rel === 'fwd') lineSim.selected.i = selectedLineSignal;
+      lineSimResult = computeLineSim();
+      const signal = lineSignals[selectedLineSignal];
       const claims = lineClaims();
       const issues = lineIssues(selectedLineSignal, claims);
       renderSignalDiagrams(claims);
+      renderLineSteppers(claims);
       for (const heading of document.querySelectorAll('[data-line-selection-heading]')) {
         heading.textContent = `${selectedLineChoice(lineDirection) === 'westward' ? 'Westward ←' : 'Eastward →'} · select a signal`;
       }
@@ -3852,70 +4858,426 @@
       for (const context of document.querySelectorAll('[data-line-selected-context]')) {
         context.textContent = `Protects ${signal.block} · ${lineUsesNext(selectedLineSignal) ? 'Next signal: ' : ''}${lineNextSignal(selectedLineSignal)}`;
       }
-      headSelect.replaceChildren(...signal.heads.map((item, index) => new Option(`Head ${index + 1} · ${item.kind}`, String(index))));
-      headSelect.value = String(signal.selectedHead);
-      document.getElementById('line-remove-head').disabled = signal.heads.length === 1;
-      headKind.value = head.kind;
-      headImplementation.replaceChildren(...lineImplementations[head.kind].map(([value, name]) => new Option(name, value)));
-      headImplementation.value = head.implementation;
-      outputBoard.value = head.board;
-      appearancePreset.value = signal.preset;
-      const electrical = {
-        'fixed-ryg': 'Three fixed colored lamps, three independently controlled outputs.',
-        'blend-rg': 'One variable-color aperture: red channel, green channel, both blended for illustrative yellow. Two board outputs, not two physical lamps.',
-        'search-ryg': 'One variable-color aperture, separate red/yellow/green channels. Three board outputs.',
-        'position-center': 'Three two-lamp pattern groups plus one shared center output. Center lit for every lit indication; all four outputs off for Dark.',
-        'position-external': 'Explicit external center-light circuitry keeps the center lit whenever any group is lit, and off for Dark. Three board outputs; additional circuitry/wiring is required and not validated.',
-      };
-      document.getElementById('line-head-electrical').textContent = electrical[head.implementation];
-      document.getElementById('line-board-context').textContent = `${board.name} · ${board.location} · node ${board.node}`;
-      document.getElementById('line-head-outputs').replaceChildren(...lineChannels[head.implementation].map((channel, index) => {
-        const row = document.createElement('div');
-        row.className = 'line-output-binding';
-        const label = document.createElement('label');
-        const select = document.createElement('select');
-        select.id = `line-head-output-${index}`;
-        label.htmlFor = select.id;
-        label.textContent = channel;
-        select.add(new Option('Not assigned', ''));
-        for (let output = 1; output <= board.capacity; output++) {
-          select.add(new Option(`${board.name} · OUT ${output} · node ${board.node}`, String(output)));
-        }
-        select.value = headOutputs(head)[channel] || '';
-        select.addEventListener('change', () => {
-          headOutputs(head)[channel] = select.value;
-          renderLineSignal();
-        });
-        row.append(label, select);
-        return row;
-      }));
       renderLineAppearances(signal);
-      const displayIssues = issues.filter(issue => issue.message.includes('mapping') || issue.message.includes('preset'));
+      renderLineStyle(signal);
+      renderLineSim();
+      const displayIssues = issues.filter(issue => issue.step === 'appearance');
       const displayStatus = document.getElementById('line-display-status');
-      displayStatus.classList.toggle('warning', displayIssues.length > 0);
-      displayStatus.textContent = displayIssues.length
-        ? displayIssues.map(issue => issue.message).join(' ')
-        : 'Supported illustrative preset only. Meaning is unchanged by head choice; catalog and hardware compatibility still require validation.';
-      const bindingIssues = issues.filter(issue => !displayIssues.includes(issue) && issue.step === 'physical');
-      const bindingStatus = document.getElementById('line-binding-status');
-      bindingStatus.classList.toggle('warning', bindingIssues.length > 0);
-      bindingStatus.textContent = bindingIssues.length
-        ? bindingIssues.map(issue => issue.message).join(' ')
-        : 'Every active channel on this signal has a distinct sample output on its node. Real hardware/external claims are not checked.';
-      const boardClaims = Array.from({ length: board.capacity }, (_, index) => {
-        const output = String(index + 1);
-        return [output, claims.get(claimKey(head, output)) || []];
-      });
-      const free = boardClaims.filter(([, owners]) => !owners.length).length;
-      const assignments = boardClaims.reduce((count, [, owners]) => count + owners.length, 0);
-      document.getElementById('line-board-availability').textContent =
-        `${board.capacity} outputs on this board; ${free} free; ${assignments} in use across all signals on this node.`;
-      document.getElementById('line-output-claims').replaceChildren(...boardClaims.map(([output, owners]) =>
-        lineTableRow([`${board.node} / OUT ${output}`, owners.length ? `${owners.length > 1 ? 'Conflict: ' : ''}${owners.join('; ')}` : 'Unclaimed in sample only'])));
-      document.getElementById('line-source-summary').replaceChildren(...lineSignals.map((item, index) =>
-        lineTableRow([item.name, `${item.block} · existing detection${lineSwitchesIn(index).map(sw => ` + ${sw.name} position`).join('')}`, lineNextSignal(index)])));
+      displayStatus.hidden = !displayIssues.length;
+      displayStatus.textContent = displayIssues.map(issue => issue.message).join(' ');
+      renderLineWiring(claims, issues);
       renderLineConfirm(claims);
     }
+
+    let lineActiveLamp = null;
+    let lineWiringFocus = null;
+    const lineCheckStatus = document.getElementById('line-check-status');
+    function lineEl(tag, className, text) {
+      const element = document.createElement(tag);
+      if (className) element.className = className;
+      if (text !== undefined) element.textContent = text;
+      return element;
+    }
+    function lineWiringRender(focus) {
+      lineWiringFocus = focus;
+      renderLineSignal();
+    }
+    function lineUnwired(index, claims) {
+      return lineIssues(index, claims).some(issue => issue.step === 'wiring');
+    }
+    function capitalize(text) { return text[0].toUpperCase() + text.slice(1); }
+
+    // details for a pin used outside Bowties, shown in place; the dialog never navigates away
+    function renderLineOutsideCard(board, signal, index, activeLamp) {
+      const card = document.getElementById('line-outside-card');
+      const entry = lineInspected?.node === board.node ? lineOutsideOwners(board).find(item => item.owner === lineInspected.owner) : null;
+      if (!entry) { lineInspected = null; card.hidden = true; card.replaceChildren(); return; }
+      card.hidden = false;
+      const closeCard = () => { const pin = lineInspected.pin; lineInspected = null; lineWiringRender(`pin:${pin}`); };
+      const closeX = lineEl('button', 'line-outside-close', '×');
+      closeX.type = 'button';
+      closeX.dataset.focusKey = 'outside-close';
+      closeX.setAttribute('aria-label', `Close ${entry.owner} details`);
+      closeX.addEventListener('click', closeCard);
+      card.onkeydown = event => { if (event.key === 'Escape') { event.stopPropagation(); event.preventDefault(); closeCard(); } };
+      const title = lineEl('h4');
+      title.append(lineEl('span', '', entry.owner), lineEl('span', 'line-outside-tag', 'Not managed by Bowties'));
+      const pins = entry.pins.map(pinLabel).join(', ');
+      const facts = [
+        lineEl('p', '', entry.description ? `Description: "${entry.description}"` : 'No description.'),
+        lineEl('p', '', `${entry.kind === 'mast' ? `Rule to Aspect, ${entry.rules} rules` : 'Direct Lamp Control row'} · drives ${pins}`),
+        ...(entry.logic?.length ? [lineEl('p', '', `Aspects set by ${entry.logic.map(n => `Logic ${n}`).join(', ')}`)] : []),
+        lineEl('p', '', `Configured on ${board.name} outside Bowties, for example by hand, by another tool, or in earlier testing.`),
+      ];
+      const actions = lineEl('div', 'line-outside-actions');
+      if (lineInspected.confirming) {
+        const resets = [entry.owner, ...(entry.logic ?? []).map(n => `Logic ${n}`)].join(', ');
+        facts.push(lineEl('p', '', `Release ${entry.owner}? ${entry.pins.length > 1 ? `All ${entry.pins.length} of its pins` : 'Its pin'} (${pins}) become free, and ${resets} ${entry.logic?.length ? 'are' : 'is'} reset when you save. Discard undoes it.`));
+        const cancel = lineEl('button', 'btn', 'Cancel');
+        cancel.type = 'button';
+        cancel.dataset.focusKey = 'outside-cancel';
+        cancel.addEventListener('click', () => { lineInspected.confirming = false; lineWiringRender('outside-release'); });
+        const release = lineEl('button', 'btn btn-primary', `Release and put ${activeLamp.channel} on ${pinLabel(lineInspected.pin)}`);
+        release.type = 'button';
+        release.dataset.focusKey = 'outside-confirm';
+        release.addEventListener('click', () => {
+          const pin = lineInspected.pin;
+          lineReleased.add(`${board.node}/${entry.owner}`);
+          headOutputs(activeLamp.head)[activeLamp.channel] = String(pin);
+          const next = lineLamps(signal).find(lamp => !lamp.pin);
+          if (next) lineActiveLamp = { signal: index, key: next.key };
+          lineInspected = null;
+          lineWiringRender(`pin:${pin}`);
+          lineCheckStatus.textContent = `Preview only: ${entry.owner} released (its reset would be staged as unsaved changes on ${board.name}) and ${activeLamp.channel} placed on ${pinLabel(pin)}.`;
+        });
+        actions.append(cancel, release);
+      } else {
+        const show = lineEl('button', 'btn', 'Show in Configuration');
+        show.type = 'button';
+        show.dataset.focusKey = 'outside-show';
+        show.setAttribute('aria-label', `Show ${entry.owner} in Configuration`);
+        show.addEventListener('click', () => {
+          lineCheckStatus.textContent = `Preview only: would switch to the Config tab and focus ${entry.owner} on ${board.name}. This editor stays open with your choices; return to the Railroad tab to continue.`;
+        });
+        const release = lineEl('button', 'btn', 'Release and use…');
+        release.type = 'button';
+        release.dataset.focusKey = 'outside-release';
+        release.addEventListener('click', () => { lineInspected.confirming = true; lineWiringRender('outside-confirm'); });
+        actions.append(show, release);
+      }
+      card.setAttribute('aria-label', `${entry.owner}, not managed by Bowties`);
+      card.replaceChildren(closeX, title, ...facts, actions);
+    }
+
+    function renderLineWiring(claims, issues) {
+      const index = selectedLineSignal;
+      const signal = lineSignals[index];
+      const board = lineBoards[signal.node];
+      const lamps = lineLamps(signal);
+      const online = lineOnline.value === 'online' && board.online;
+      const slot = lineMastSlot(index);
+      if (!lineActiveLamp || lineActiveLamp.signal !== index || !lamps.some(lamp => lamp.key === lineActiveLamp.key)) {
+        lineActiveLamp = { signal: index, key: (lamps.find(lamp => !lamp.pin) ?? lamps[0]).key };
+      }
+      const wiringIssues = issues.filter(issue => issue.step === 'wiring');
+
+      // progress across signals
+      const unwired = lineSignals.map((_, i) => lineUnwired(i, claims));
+      document.getElementById('line-wiring-progress').textContent =
+        `${unwired.filter(value => !value).length} of ${lineSignals.length} signals wired`;
+      const nextUnwired = [...lineSignals.keys()].map(n => (index + 1 + n) % lineSignals.length).find(i => i !== index && unwired[i]);
+      const nextButton = document.getElementById('line-next-unwired');
+      nextButton.disabled = nextUnwired === undefined;
+      nextButton.onclick = () => { selectedLineSignal = nextUnwired; lineWiringRender('next-unwired'); };
+
+      // the node the signal runs on
+      document.getElementById('line-node-name').textContent = board.name;
+      document.getElementById('line-node-meta').textContent =
+        `Signal LCC · ${board.location} · ${board.node}`;
+      document.getElementById('line-node-offline').hidden = board.online;
+      const usage = lineNodeUsage(signal.node, claims);
+      document.getElementById('line-node-usage').textContent =
+        `Mast ${slot} · ${usage.pins} of ${SIGNAL_LCC.pins} pins · ~${usage.conditionals} of ${SIGNAL_LCC.conditionals} conditionals · ${usage.masts} of ${SIGNAL_LCC.masts} masts used on this node`;
+
+      // lamps are the passengers: select one, then click a pin on the seat map
+      const activeLamp = lamps.find(lamp => lamp.key === lineActiveLamp.key);
+      const lampAtPin = output => lamps.find(lamp => lamp.pin === String(output));
+      // channel names are unique across a signal's heads, so the name alone identifies the lamp
+      const lampName = lamp => capitalize(lamp.channel);
+      document.getElementById('line-head-cards').replaceChildren(...signal.heads.map((head, headIndex) => {
+        const card = lineEl('div', 'line-head-card');
+        card.append(lineEl('h4', '', `Head ${headIndex + 1} · ${LINE_STYLE_NAME[head.kind]}`));
+        const options = lineImplementations[head.kind];
+        if (options.length === 1) {
+          const drive = lineEl('p', 'line-sim-hint', `Drive: ${options[0][1]}`);
+          drive.title = LINE_ELECTRICAL[head.implementation];
+          card.append(drive);
+        } else {
+          const fieldset = lineEl('fieldset', 'line-policy-choices');
+          fieldset.append(lineEl('legend', 'field-label', 'Drive as'));
+          const segmented = lineEl('div', 'segmented');
+          for (const [value] of options) {
+            const label = lineEl('label', `segment${value === head.implementation ? ' selected' : ''}`);
+            label.title = LINE_ELECTRICAL[value];
+            const input = document.createElement('input');
+            Object.assign(input, { type: 'radio', name: `line-drive-${headIndex}`, value, checked: value === head.implementation });
+            input.dataset.focusKey = `drive:${headIndex}:${value}`;
+            input.addEventListener('change', () => {
+              const header = headHeader(head);
+              head.implementation = value;
+              lineFillHeader(head, header);
+              lineWiringRender(input.dataset.focusKey);
+            });
+            label.append(input, LINE_DRIVE_SHORT[value]);
+            segmented.append(label);
+          }
+          fieldset.append(segmented);
+          card.append(fieldset);
+        }
+        for (const lamp of lamps.filter(item => item.headIndex === headIndex)) {
+          const active = lamp.key === activeLamp.key;
+          const row = lineEl('div', `line-lamp-row${active ? ' active' : ''}`);
+          const pick = lineEl('button', 'line-lamp-pick');
+          pick.type = 'button';
+          pick.dataset.focusKey = `lamp:${lamp.key}`;
+          pick.setAttribute('aria-pressed', String(active));
+          pick.append(lineEl('span', 'line-lamp-name', capitalize(lamp.channel)),
+            lineEl('span', `line-lamp-pin${lamp.pin ? '' : ' none'}`, lamp.pin ? pinLabel(lamp.pin) : 'No pin'));
+          pick.addEventListener('click', () => { lineActiveLamp = { signal: index, key: lamp.key }; lineWiringRender(pick.dataset.focusKey); });
+          const blink = lineEl('button', 'btn', 'Blink');
+          blink.type = 'button';
+          blink.disabled = !lamp.pin || !online;
+          blink.title = !online ? 'The node must be online' : !lamp.pin ? 'Assign a pin first' : `Blink ${pinLabel(lamp.pin)}`;
+          blink.setAttribute('aria-label', `Blink head ${headIndex + 1} ${lamp.channel}`);
+          blink.addEventListener('click', () => {
+            lineCheckStatus.textContent = `Preview only, nothing sent. Would blink ${pinLabel(lamp.pin)} on ${board.name} (${signal.name}, head ${headIndex + 1} ${lamp.channel}) through Direct Lamp Control, then set that lamp back to Used by Mast. Nothing lit? Check the board's CA/CC jumper (common anode or common cathode).`;
+          });
+          row.append(pick, blink);
+          card.append(row);
+        }
+        return card;
+      }));
+      const bindingStatus = document.getElementById('line-binding-status');
+      bindingStatus.hidden = !wiringIssues.length;
+      bindingStatus.textContent = wiringIssues.map(issue => issue.message).join(' ');
+
+      // the seat map: every pin on the node
+      document.getElementById('line-pin-node-name').textContent = board.name;
+      document.getElementById('line-pin-hint').textContent =
+        `Placing ${activeLamp.channel} (head ${activeLamp.headIndex + 1}). Click a pin to place it, its pin again to clear it, or another lamp's pin to swap. A header label places the whole head.`;
+      const grid = [];
+      let free = 0;
+      const activeHead = activeLamp.head;
+      for (let header = 1; header <= 4; header++) {
+        const on = lineChannels[activeHead.implementation].every(channel => headOutputs(activeHead)[channel] === headerPin(header, channel));
+        const blocked = lineHeaderBlocked(activeHead, header);
+        const headerButton = lineEl('button', 'line-pin-header', `H${header}`);
+        headerButton.type = 'button';
+        headerButton.dataset.focusKey = `header:${header}`;
+        headerButton.setAttribute('aria-pressed', String(on));
+        headerButton.disabled = blocked && !on;
+        headerButton.title = blocked && !on ? `Some H${header} pins are already used` : `Put every lamp of head ${activeLamp.headIndex + 1} on H${header}`;
+        headerButton.setAttribute('aria-label', headerButton.title);
+        headerButton.addEventListener('click', () => {
+          lineUseHeader(activeHead, header);
+          const next = lineLamps(signal).find(lamp => !lamp.pin);
+          if (next) lineActiveLamp = { signal: index, key: next.key };
+          lineWiringRender(headerButton.dataset.focusKey);
+        });
+        grid.push(headerButton);
+        for (const [position, suffix] of PIN_SUFFIX.entries()) {
+          const output = (header - 1) * 4 + position + 1;
+          const owners = claims.get(`${board.node} / output ${output}`) ?? [];
+          const seated = lampAtPin(output);
+          const selected = seated?.key === activeLamp.key;
+          const outside = seated ? null : lineOutsideAt(board, output);
+          const state = owners.length > 1 ? 'conflict' : seated ? 'mine' : outside ? 'outside' : owners.length ? 'facility' : 'free';
+          if (state === 'free') free += 1;
+          const inspected = outside && lineInspected?.node === board.node && lineInspected.owner === outside.owner;
+          const button = lineEl('button', `line-pin ${state}${selected ? ' selected' : ''}${inspected ? ' inspected' : ''}`);
+          button.type = 'button';
+          button.dataset.focusKey = `pin:${output}`;
+          // the label is the board's own "#N Hx-Y"; the line below says who holds the pin, or Free
+          const ownerName = outside ? outside.owner : owners.length ? owners[0].split(' · ')[0] : 'Free';
+          button.append(lineEl('span', 'line-pin-label', pinLabel(output)), lineEl('span', 'line-pin-who', seated ? lampName(seated) : ownerName));
+          const others = owners.filter(owner => !owner.startsWith(`${signal.name} ·`));
+          const who = seated ? `${lampName(seated)}${others.length ? `; also ${others.join('; ')}` : ''}` : owners.join('; ');
+          button.title = outside ? `${outside.owner}, not managed by Bowties. Click for details.` : who || 'Free';
+          button.setAttribute('aria-pressed', String(selected));
+          button.setAttribute('aria-label', outside ? `${pinLabel(output)}: used by ${outside.owner}, not managed by Bowties. Show details` : `${pinLabel(output)}: ${who || 'free'}`);
+          button.disabled = state === 'facility';
+          if (outside) {
+            button.addEventListener('click', () => {
+              lineInspected = inspected ? null : { node: board.node, owner: outside.owner, pin: output, confirming: false };
+              lineWiringRender(button.dataset.focusKey);
+            });
+            grid.push(button);
+            continue;
+          }
+          button.addEventListener('click', () => {
+            const outputs = headOutputs(activeLamp.head);
+            if (selected) {
+              outputs[activeLamp.channel] = '';
+            } else {
+              // a pin held by another lamp of this signal swaps with the selected lamp
+              if (seated) headOutputs(seated.head)[seated.channel] = activeLamp.pin;
+              outputs[activeLamp.channel] = String(output);
+              const next = lineLamps(signal).find(lamp => !lamp.pin);
+              if (next) lineActiveLamp = { signal: index, key: next.key };
+            }
+            lineWiringRender(button.dataset.focusKey);
+          });
+          grid.push(button);
+        }
+      }
+      document.getElementById('line-pin-grid').replaceChildren(...grid);
+      renderLineOutsideCard(board, signal, index, activeLamp);
+      document.getElementById('line-board-availability').textContent = `${free} of ${board.capacity} pins free on ${board.name}.`;
+
+      // Rule to Aspect: what will be written to the mast
+      const customize = document.getElementById('line-rta-customize');
+      customize.checked = signal.customizing;
+      const edits = lineLampEdits(index);
+      document.getElementById('line-rta-reset').hidden = !edits;
+      document.getElementById('line-rta-mast').textContent = `Mast ${slot} on ${board.name}`;
+      document.getElementById('line-rta-hint').textContent = signal.customizing
+        ? `Each lit cell is one lamp in that rule's Appearance list; a rule lights at most ${SIGNAL_LCC.lampsPerRule}. Edited cells are outlined.`
+        : edits
+          ? `${edits} lamp setting${edits === 1 ? '' : 's'} differ from Appearance (outlined).`
+          : 'Filled in from Appearance and the pins above. Turn on Customize lamps only for a signal that needs something different.';
+      const columns = [...lamps].sort((a, b) => (Number(a.pin) || 99) - (Number(b.pin) || 99));
+      const headRow = document.createElement('tr');
+      headRow.append(lineEl('th', '', 'Rule'));
+      for (const lamp of columns) {
+        const th = lineEl('th', '', lamp.pin ? pinLabel(lamp.pin) : 'No pin');
+        th.scope = 'col';
+        th.append(lineEl('small', '', `Head ${lamp.headIndex + 1} ${lamp.channel}`));
+        headRow.append(th);
+      }
+      headRow.append(lineEl('th', '', 'Lamps'), lineEl('th', '', ''));
+      for (const th of headRow.children) th.scope = 'col';
+      document.getElementById('line-rta-thead').replaceChildren(headRow);
+      const canShow = online && !wiringIssues.length;
+      document.getElementById('line-rta-body').replaceChildren(...lineRuleIndications(index).map(indication => {
+        const row = document.createElement('tr');
+        const name = lineEl('th', '', LINE_RULE_NAMES[indication]);
+        name.scope = 'row';
+        row.append(name);
+        const appearance = appearanceLamps(signal, indication);
+        const count = lineLitCount(signal, indication);
+        for (const lamp of columns) {
+          const phase = lineLampPhase(signal, indication, lamp.key);
+          const edited = `${indication}|${lamp.key}` in signal.customLamps;
+          const cell = lineEl('td', edited ? 'line-rta-edited' : '');
+          const where = lamp.pin ? pinLabel(lamp.pin) : `head ${lamp.headIndex + 1} ${lamp.channel}`;
+          if (signal.customizing) {
+            const select = document.createElement('select');
+            select.setAttribute('aria-label', `${LINE_RULE_NAMES[indication]} · ${where}`);
+            select.dataset.focusKey = `rta:${indication}:${lamp.key}`;
+            for (const option of ['Off', ...LAMP_PHASES]) {
+              const item = new Option(option, option);
+              item.disabled = phase === 'Off' && option !== 'Off' && count >= SIGNAL_LCC.lampsPerRule;
+              select.add(item);
+            }
+            select.value = phase;
+            select.addEventListener('change', () => {
+              const entry = `${indication}|${lamp.key}`;
+              if (select.value === (appearance[lamp.key] ?? 'Off')) delete signal.customLamps[entry];
+              else signal.customLamps[entry] = select.value;
+              lineWiringRender(select.dataset.focusKey);
+            });
+            cell.append(select);
+          } else {
+            const text = phase === 'Off' ? '·' : phase === 'Steady' ? '●' : `◐ ${phase}`;
+            const mark = lineEl('span', `line-rta-lamp${phase === 'Off' ? ' off' : ''}`, text);
+            mark.setAttribute('aria-label', `${where}: ${phase === 'Off' ? 'off' : phase}${edited ? ', edited' : ''}`);
+            cell.append(mark);
+          }
+          row.append(cell);
+        }
+        row.append(lineEl('td', `line-rta-count${count > SIGNAL_LCC.lampsPerRule ? ' over' : ''}`, `${count} of ${SIGNAL_LCC.lampsPerRule}`));
+        const showCell = document.createElement('td');
+        const show = lineEl('button', 'btn', 'Show');
+        show.type = 'button';
+        show.disabled = !canShow;
+        show.title = canShow ? `Show ${LINE_RULE_NAMES[indication]} on the real signal` : 'The node must be online and the signal fully wired';
+        show.setAttribute('aria-label', `Show ${LINE_RULE_NAMES[indication]} on the real signal`);
+        show.addEventListener('click', () => {
+          lineCheckStatus.textContent = `Preview only, nothing sent. Would send the set aspect event for ${LINE_RULE_NAMES[indication]} to Mast ${slot} on ${board.name}; the node clears the previous aspect itself.`;
+        });
+        showCell.append(show);
+        row.append(showCell);
+        return row;
+      }));
+      if (lineWiringFocus) {
+        document.querySelector(`#line-wiring [data-focus-key="${lineWiringFocus}"]`)?.focus();
+        lineWiringFocus = null;
+      }
+    }
+
+    // searchable Signal LCC picker
+    const lineNodeDialog = document.getElementById('line-node-dialog');
+    const lineNodeSearch = document.getElementById('line-node-search');
+    const lineNodeFits = document.getElementById('line-node-fits');
+    const lineNodeChoose = document.getElementById('line-node-choose');
+    let lineNodePick = '';
+    // why a node cannot host the selected signal, or '' when it can
+    function lineNodeProblem(nodeId) {
+      const board = lineBoards[nodeId];
+      if (!board.online) return 'Offline · Bowties cannot read or write it';
+      const usage = lineNodeUsage(nodeId, lineClaims(), selectedLineSignal);
+      const needed = lineLamps(lineSignals[selectedLineSignal]).length;
+      if (usage.masts >= SIGNAL_LCC.masts) return 'No free mast';
+      if (board.capacity - usage.pins < needed) return `Only ${board.capacity - usage.pins} free pins; this signal needs ${needed}`;
+      return '';
+    }
+    function renderNodeResults() {
+      const query = lineNodeSearch.value.trim().toLowerCase();
+      const compact = query.replace(/\./g, '');
+      const used = new Set(lineSignals.map(item => item.node));
+      const host = document.getElementById('line-node-results');
+      const matches = Object.entries(lineBoards)
+        .filter(([, board]) => !query || [board.name, board.location].some(value => value.toLowerCase().includes(query))
+          || board.node.toLowerCase().includes(query) || (compact && board.node.replace(/\./g, '').toLowerCase().includes(compact)))
+        .filter(([id]) => !lineNodeFits.checked || !lineNodeProblem(id))
+        .sort(([a, x], [b, y]) => Number(used.has(b)) - Number(used.has(a)) || x.name.localeCompare(y.name));
+      if (!matches.length) {
+        host.replaceChildren(lineEl('p', 'line-short-help', 'No Signal LCC nodes match.'));
+      } else {
+        host.replaceChildren(...matches.map(([id, board]) => {
+          const problem = lineNodeProblem(id);
+          const label = lineEl('label', `radio-choice${id === lineNodePick ? ' selected' : ''}${problem ? ' unavailable' : ''}`);
+          const input = document.createElement('input');
+          Object.assign(input, { type: 'radio', name: 'line-node-pick', value: id, checked: id === lineNodePick, disabled: Boolean(problem) });
+          const text = document.createElement('span');
+          const usage = lineNodeUsage(id, lineClaims(), selectedLineSignal);
+          text.append(
+            lineEl('span', 'radio-title', `${board.name}${used.has(id) ? ' · used in this facility' : ''}`),
+            lineEl('span', 'radio-desc', `${board.location} · ${board.node}`),
+            lineEl('span', 'radio-desc', problem || `Free: ${SIGNAL_LCC.masts - usage.masts} of ${SIGNAL_LCC.masts} masts · ${board.capacity - usage.pins} of ${board.capacity} pins · about ${SIGNAL_LCC.conditionals - usage.conditionals} of ${SIGNAL_LCC.conditionals} conditionals`));
+          input.addEventListener('change', () => {
+            lineNodePick = id;
+            renderNodeResults();
+            document.querySelector(`#line-node-results input[value="${id}"]`)?.focus();
+          });
+          label.append(input, text);
+          return label;
+        }));
+      }
+      lineNodeChoose.disabled = !matches.some(([id]) => id === lineNodePick && !lineNodeProblem(id));
+    }
+    function openNodeDialog() {
+      const signal = lineSignals[selectedLineSignal];
+      lineNodePick = signal.node;
+      document.getElementById('line-node-dialog-title').textContent = `Choose a Signal LCC for ${signal.name}`;
+      document.getElementById('line-node-dialog-context').textContent =
+        `The signal's mast, logic, and every lamp run on this node. It needs a free mast and ${lineLamps(signal).length} free pins.`;
+      lineNodeSearch.value = '';
+      lineNodeFits.checked = true;
+      renderNodeResults();
+      lineNodeDialog.hidden = false;
+      lineNodeSearch.focus();
+    }
+    function closeNodeDialog(choose) {
+      if (choose && lineNodePick) lineChooseNode(selectedLineSignal, lineNodePick);
+      lineNodeDialog.hidden = true;
+      lineWiringRender('node-change');
+    }
+    document.getElementById('line-node-change').addEventListener('click', openNodeDialog);
+    lineNodeSearch.addEventListener('input', renderNodeResults);
+    lineNodeFits.addEventListener('change', renderNodeResults);
+    document.getElementById('line-node-cancel').addEventListener('click', () => closeNodeDialog(false));
+    lineNodeChoose.addEventListener('click', () => closeNodeDialog(true));
+    lineNodeDialog.addEventListener('click', event => { if (event.target === lineNodeDialog) closeNodeDialog(false); });
+    lineNodeDialog.addEventListener('keydown', event => { if (event.key === 'Escape') closeNodeDialog(false); });
+    document.getElementById('line-rta-customize').addEventListener('change', event => {
+      lineSignals[selectedLineSignal].customizing = event.target.checked;
+      renderLineSignal();
+    });
+    document.getElementById('line-rta-reset').addEventListener('click', () => {
+      lineSignals[selectedLineSignal].customLamps = {};
+      lineWiringRender('rta-reset');
+    });
 
     function renderLineConfirm(claims) {
       const editing = lineContext.value === 'edit';
@@ -3930,20 +5292,19 @@
       document.getElementById('line-link-summary').textContent = `${internalLinks} internal downstream links`;
       document.getElementById('line-end-summary').textContent = `Before the first block: ${LINE_PLANTS[lineEnds.start]?.exit ?? 'no Plant'} · Last signal: ${lineNextSignal(lineLastIndex())}`;
       const activeOutputs = lineSignals.reduce((total, item) => total + item.heads.reduce((count, head) => count + lineChannels[head.implementation].length, 0), 0);
-      const assignedOutputs = [...claims.values()].reduce((total, owners) => total + owners.length, 0);
-      document.getElementById('line-lamp-summary').textContent = `${assignedOutputs} of ${activeOutputs} outputs assigned`;
+      const assignedOutputs = lineSignals.reduce((total, item) => total + lineLamps(item).filter(lamp => lamp.pin).length, 0);
+      document.getElementById('line-lamp-summary').textContent = `${assignedOutputs} of ${activeOutputs} lamps on pins`;
       document.getElementById('line-confirm-signals').replaceChildren(...snapshots.map((snapshot, index) => {
         const status = editing ? JSON.stringify(snapshot) === JSON.stringify(lineBaseline[index]) ? 'Unchanged' : 'Changed · identity retained' : 'New';
         const policy = snapshot.signaling;
-        const heads = snapshot.heads.map((head, headIndex) => {
-          const board = lineBoards[head.board];
-          return `Head ${headIndex + 1} (${head.kind}): ${headDescription(head)}; ${board.name}, node ${board.node}; ${Object.entries(head.outputs).map(([channel, output]) => `${channel} → OUT ${output || 'not assigned'}`).join(', ')}`;
-        }).join(' | ');
+        const board = lineBoards[snapshot.node];
+        const heads = `${board.name} (Signal LCC ${board.node}), Mast ${lineMastSlot(index)}${lineLampEdits(index) ? ', lamps customized' : ''}; ` + snapshot.heads.map((head, headIndex) =>
+          `Head ${headIndex + 1} (${head.kind}): ${headDescription(head)}; ${Object.entries(head.outputs).map(([channel, output]) => `${channel} → ${output ? pinLabel(output) : 'no pin'}`).join(', ')}`).join(' | ');
         const switchText = lineSwitchesIn(index).map(sw => `${sw.name} not normal → ${selectedLineChoice(lineSwitchPolicy) === 'restricting' ? 'Restricting' : 'Stop'}`).join('; ');
-        const configuration = `${policy.aspects} aspects; ${[...new Set(lineRules(index).map(rule => rule[1]))].join(' / ')}; ${switchText ? `${switchText}; ` : ''}${snapshot.next}; approach lighting: ${policy.dark === 'always' ? 'always lit' : 'lit when a train approaches'}; ${snapshot.preset === 'basic' ? 'one-head example' : 'two-head example (upper varies, lower Stop)'}${mappingSupported(lineSignals[index]) ? '' : ' — head count mismatch'}; ${heads}.`;
+        const configuration = `${policy.aspects} aspects; ${[...new Set(lineRules(index).map(rule => rule[1]))].join(' / ')}; ${switchText ? `${switchText}; ` : ''}${snapshot.next}; approach lighting: ${snapshot.dark === 'always' ? 'always lit' : 'lit when a train approaches'}; ${snapshot.heads.length > 1 ? 'red over lunar for Restricting' : 'one head'}; ${heads}.`;
         const row = lineTableRow([`${snapshot.name} / ${snapshot.block}`, status, configuration]);
         const actions = document.createElement('td');
-        for (const [step, text] of [['signaling', 'Signaling'], ['physical', 'Physical signals']]) {
+        for (const [step, text] of [['signaling', 'Aspects'], ['appearance', 'Appearance'], ['wiring', 'Wiring']]) {
           if (actions.childNodes.length) actions.append(document.createElement('br'));
           actions.append(lineCorrection(index, step, text));
         }
@@ -3954,8 +5315,8 @@
         Object.values(head.outputs).filter(Boolean).map(output => claimKey(head, output)))));
       const released = [...initialOutputs].filter(output => !claims.has(output));
       document.getElementById('line-resource-changes').textContent = editing
-        ? `Released sample outputs: ${released.length ? released.join(', ') : 'none'}. Membership is unchanged. External effects still require validation.`
-        : 'Existing blocks, their detection, and turnout position inputs are reused. Output availability outside this sample is not checked.';
+        ? `Released sample pins: ${released.length ? released.join(', ') : 'none'}. Membership is unchanged. External effects still require validation.`
+        : 'Existing blocks, their detection, and turnout position inputs are reused. Pin availability outside this sample is not checked.';
       const issueList = document.getElementById('line-confirm-issues');
       issueList.replaceChildren();
       for (const [index, signal] of lineSignals.entries()) {
@@ -3972,41 +5333,6 @@
       }
     }
 
-    headSelect.addEventListener('change', () => {
-      lineSignals[selectedLineSignal].selectedHead = Number(headSelect.value);
-      renderLineSignal();
-    });
-    document.getElementById('line-add-head').addEventListener('click', () => {
-      const signal = lineSignals[selectedLineSignal];
-      signal.heads.push(makeLineHead('color', 'fixed-ryg', selectedHead().board));
-      signal.selectedHead = signal.heads.length - 1;
-      renderLineSignal();
-    });
-    document.getElementById('line-remove-head').addEventListener('click', () => {
-      const signal = lineSignals[selectedLineSignal];
-      if (signal.heads.length === 1) return;
-      signal.heads.splice(signal.selectedHead, 1);
-      signal.selectedHead = Math.min(signal.selectedHead, signal.heads.length - 1);
-      renderLineSignal();
-    });
-    headKind.addEventListener('change', () => {
-      const head = selectedHead();
-      head.kind = headKind.value;
-      head.implementation = lineImplementations[head.kind][0][0];
-      renderLineSignal();
-    });
-    headImplementation.addEventListener('change', () => {
-      selectedHead().implementation = headImplementation.value;
-      renderLineSignal();
-    });
-    outputBoard.addEventListener('change', () => {
-      selectedHead().board = outputBoard.value;
-      renderLineSignal();
-    });
-    appearancePreset.addEventListener('change', () => {
-      lineSignals[selectedLineSignal].preset = appearancePreset.value;
-      renderLineSignal();
-    });
     for (const button of document.querySelectorAll('[data-line-cancel]')) {
       button.addEventListener('click', () => {
         document.getElementById('line-session-status').textContent = 'Cancel preview only: nothing saved or applied. Local choices retained; reload resets the sample.';

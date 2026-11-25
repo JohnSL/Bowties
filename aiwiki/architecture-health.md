@@ -28,6 +28,19 @@ Open candidates:
 
 ## Entries
 
+### lcc-rs per-peer inbound routing breaks under bus load (open, 2026-11-23)
+- **Area**: `lcc-rs` `PeerSessionRegistry` `demux_loop` / `route_frame` and `PeerSession` lag recovery (`handle_inbound_lag`, `on_memory_read_frame`).
+- **Observed**: on the E3b-1 bench a Signal LCC restarting after Update Complete flooded its per-peer inbox. The Lagged marker made the session resend a read before acknowledging the reply; the board answered 0x2020 (resend allowed), which reads ignore, and the read timed out.
+- **Risk**: idle inboxes fill with event traffic; lag-triggered resends duplicate datagram requests (JMRI only retries on timeout and on DatagramRejected); upstream lag makes every session resend at once; a same-alias restart is not detected.
+- **Plan**: captured in full as Spec 020 slice F1 ([slices.md](../specs/020-block-signals-first-slice/slices.md)), the input for a separate feature after E6. This supersedes the "over-signalling is safe" assumption in the S7 entry below.
+
+### Pending Changes held in two places (partly resolved, 2026-11-23)
+- **Area**: `LayoutState.pending_changes` (bowties-core) and the bowtie catalog's private overlay in `app/src-tauri/src/commands/bowties.rs` (~385).
+- **Resolved (E3b-0, 2026-11-23)**: `AppState.offline_changes_cache` is gone. Every IPC reads and writes rows through `LayoutState` (`upsert_pending_change`, `remove_pending_changes`, `set_pending_changes`); a Sync apply or session build removes rows from `LayoutState` directly, and `sync_layout_drafts` no longer copies rows in. The concept is named Pending Change in code; the file stays `offline-changes.yaml`.
+- **Resolved (E3b-1, 2026-11-23)**: the node tree's `modified_value` layer, the draft-to-backend mirror and `write_modified_values` are gone. Save and the Sync Panel write through one writer (`bowties-core/src/sync/writer.rs`), and "still waiting" is one predicate (`is_waiting` / `isWaitingPendingChange`).
+- **Watch**: `is_waiting` counts `Skipped` rows as waiting, but no code sets `Skipped` today. If E3b-2 or the Sync Panel starts persisting it, decide whether skipped rows show in the effective tree and the waiting count.
+- **Open**: the catalog still builds its own overlay instead of reading `effective_config_tree`. Tracked in `specs/backlog.md` ("Bowtie catalog reads configuration through the effective view").
+
 ### SNIP/PIP timeout resend: a deliberate JMRI divergence (resolved 2026-11-20, #28)
 - **Area**: `lcc-rs/src/peer_session.rs` (`handle_deadline`, `issue_snip_request` / `issue_pip_request`, `cached_snip` / `cached_pip`) and `bowties-core/src/node_proxy.rs` (the SNIP/PIP cache-hit gate).
 - **Risk** (resolved): one lost addressed SNIP request poisoned a node for the whole session. Two layers cached Timeout as final, `PeerSession` and `LiveNodeProxy`, so Refresh and any re-query never reached the wire again. With no SNIP data, CDI could not be resolved.

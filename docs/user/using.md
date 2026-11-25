@@ -10,7 +10,7 @@ When Bowties starts, it opens to the layout picker. Choose one of these options 
 - Click **New Layout** to create a new layout folder.
 - Click **Browse...** to open an existing layout folder from disk.
 
-Once a layout is open, Bowties restores the saved node snapshots, pending offline changes, and any layout-specific connections.
+Once a layout is open, Bowties restores the saved node snapshots, pending changes, and any layout-specific connections.
 
 > **Tip:** A layout is a self-contained folder. You can share it with others, back it up, or move it to another computer by copying the entire folder and its contents.
 
@@ -76,14 +76,11 @@ Once complete, you can click into any node to view or edit its configuration, or
 
 After reading node configuration, **Save** and **Discard** buttons appear in the toolbar.
 
-**While connected to the bus:**
-- Edit configuration fields in the cards and click **Apply** to write directly to the node hardware.
-- When all pending edits are applied, click **Save** in the toolbar to persist node snapshots and bowtie metadata to the layout.
-
-**While disconnected (offline mode):**
-- Edit configuration fields and click **Apply**. These edits are staged locally as pending changes.
-- Click **Save** to write your pending changes to the layout.
-- Click **Discard** to abandon all pending edits and restore the last saved layout state.
+- Edit configuration fields in the cards. The toolbar shows how many configuration changes are unsaved.
+- Click **Save** to save your changes in the layout. Each configuration change is recorded in the layout as a **pending change** first.
+- **While connected to the bus**, Save then writes those changes to the boards. A change the board accepted is no longer pending. A write that failed stays pending and the field shows the reason. Save tells you how many changes are still waiting.
+- **While disconnected**, the changes stay pending in the layout until you reconnect (see below).
+- Click **Discard** to abandon unsaved edits and restore the last saved layout state.
 
 Your layout always reflects the state you last saved, so you can safely close and reopen Bowties without losing work.
 
@@ -218,29 +215,34 @@ If you clear a BOD daughter-board selection or reselect it as an incompatible bo
 - If that transitions the facility out of Wired, the composed bowties are torn down at the same time (same mechanism as **Remove from slot**).
 - All cascade side effects appear in the toolbar's unsaved-change count and can be reverted with **Discard**, or committed with **Save**.
 
-### Automatic Block Signals (early preview)
+### Automatic Block Signals
 
-**Add facility** also offers **Automatic Block Signals**, which lets you try out how Bowties will set up automatic block signals. It is an early preview for feedback: you can explore the first two pages, but nothing is saved to the layout or written to your nodes, and **Cancel** discards everything. **Interlocking Plant** is listed too but is not available yet.
+**Add facility** also offers **Automatic Block Signals**, which sets up signals for a run of detected blocks on a Signal-LCC. This first release covers one direction of travel, three aspects (Stop, Approach, Clear) and one red/green searchlight per signal that is always lit. Other choices are shown but greyed out. **Interlocking Plant** is listed too but is not available yet.
 
-- **Blocks.** Name the signals, choose one direction or both, and list your detected blocks in the order a train passes them. Under each block, list its hand-thrown turnouts on the main track. For now turnouts are placeholders entered by name; they are not connected to turnout position inputs, so each one is treated as not lined for the main. The track diagram shows where Bowties puts the signals. Use **⋯** on a block's row to remove the signal between it and the block above, for example for a short detection section. The chips at each end of the track set what lies beyond the last block.
+The editor has four pages. You can move between them with the steps at the top, and **Cancel** discards everything until you press **Done**.
+
+- **Blocks.** List your detected blocks in the order a train passes them. Each block gets a signal at its entrance; use **⋯** on a block's row to join it to the block above, so one signal protects both (for example a short detection section). Under each block you can list its hand-thrown turnouts on the main by name; for now they are placeholders, not connected to turnout position inputs, so each one is treated as not lined for the main. The chips at each end of the track diagram set what lies beyond the last block.
 - **Live occupancy.** While you are connected, each block's dot shows **Occupied** or **Clear** as its detector reports. A dashed dot means there is no reading yet, for example before a train has moved through the block or while you are offline.
-- **Aspects.** Choose 2, 3 or 4 aspects, whether a signal shows Stop or Restricting when a turnout isn't lined for the main, and approach lighting, for all signals or for one selected signal. Bowties shows the rules each signal follows.
+- **Aspects.** Shows the rules each signal follows: Stop while any block it protects is occupied, Approach when the next signal shows Stop, otherwise Clear.
+- **Appearance.** Shows the searchlight each signal uses.
+- **Wiring.** For each signal, choose the Signal-LCC it runs on and the pins its red and green lamps are wired to. Pins already used by another facility can't be chosen. If a pin is used by something configured on the board outside Bowties, you can release it so the signal can use it. Bowties checks your choices and lists anything needing attention before you can press **Done**.
 
-The **Physical signals** and **Review** pages are not available yet. Feedback on this preview is especially welcome.
+When you press **Done**, the facility appears on the Railroad tab and its changes join your unsaved changes; **Discard** undoes them. **Save** records the board settings in the layout and, when you are connected, writes them to each Signal-LCC. Until every setting has been written, the facility card shows **Waiting** with a line for each board. If you saved offline, the settings are written when you next sync. Bowties does not yet read the settings back to confirm them.
+
+The facility card on the Railroad tab draws the facility's track diagram with live occupancy. Use **Edit** on the card to change the facility; every page opens with your saved choices. Use **Remove** to delete it: Bowties lists what it will reset on each board, resets only the settings this facility made, and keeps your blocks and detectors. A facility can span several Signal-LCC boards; Bowties arranges the logic on each board and may move another facility's logic on the same board to make room.
+---
+
+## Reconnecting with pending changes
+
+If you saved a layout with pending changes and later reconnect with that layout, Bowties opens the **Sync Pending Changes** flow so you can review and apply them safely.
 
 ---
 
-## Reconnecting with pending offline changes
+## Syncing pending changes back to the bus
 
-If you saved a layout with pending offline changes and later reconnect with that layout, Bowties opens the **Sync Offline Changes** flow so you can review and apply them safely.
+When a saved layout with pending changes is open and you reconnect to the bus, Bowties compares the planned values in the layout with the current live values.
 
----
-
-## Syncing offline changes back to the bus
-
-When a saved layout with pending offline changes is open and you reconnect to the bus, Bowties compares the planned values in the layout with the current live values.
-
-- **Conflicts** require you to choose whether to apply the offline value or skip it.
+- **Conflicts** require you to choose whether to apply your value or skip it.
 - **Clean changes** are ready to apply and are selected by default.
 - **Already applied** changes are cleared automatically and reported as a count.
 - **Missing nodes** stay pending in the layout until those nodes are present again.

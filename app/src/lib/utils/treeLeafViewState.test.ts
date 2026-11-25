@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { OfflineChangeRow } from '$lib/api/sync';
+import type { PendingChangeRow } from '$lib/api/sync';
 import type { LeafConfigNode } from '$lib/types/nodeTree';
 import type { ConnectorConstraintState } from '$lib/utils/connectorConstraints';
-import { resolveLeafOfflineValueState, resolveLeafSelectViewState } from '$lib/utils/treeLeafViewState';
+import {
+  resolveLeafNotWrittenMessage,
+  resolveLeafOfflineValueState,
+  resolveLeafSelectViewState,
+} from '$lib/utils/treeLeafViewState';
 
 function makeLeaf(overrides: Partial<LeafConfigNode> = {}): LeafConfigNode {
   return {
@@ -30,7 +34,7 @@ function makeLeaf(overrides: Partial<LeafConfigNode> = {}): LeafConfigNode {
   };
 }
 
-function makeRow(overrides: Partial<OfflineChangeRow> = {}): OfflineChangeRow {
+function makeRow(overrides: Partial<PendingChangeRow> = {}): PendingChangeRow {
   return {
     changeId: 'draft-1',
     kind: 'config',
@@ -96,5 +100,25 @@ describe('resolveLeafSelectViewState', () => {
     expect(state.currentSelectFallbackLabel).toBeNull();
     expect(state.currentValueCompatibilityMessage).toBeNull();
     expect(state.managedMapEntries.map((entry) => entry.value)).toEqual([0, 5]);
+  });
+});
+describe('resolveLeafNotWrittenMessage', () => {
+  it('shows the row reason for failed and conflict rows', () => {
+    expect(resolveLeafNotWrittenMessage(makeRow({ status: 'conflict', error: 'The board kept 5' }))).toBe(
+      'The board kept 5',
+    );
+    expect(resolveLeafNotWrittenMessage(makeRow({ status: 'failed', error: 'Write timed out' }))).toBe(
+      'Write timed out',
+    );
+  });
+
+  it('falls back to a generic message when the row has no reason', () => {
+    expect(resolveLeafNotWrittenMessage(makeRow({ status: 'failed' }))).toBe('Not written to the board');
+  });
+
+  it('shows nothing for a plain pending row, an applied row or no row', () => {
+    expect(resolveLeafNotWrittenMessage(makeRow({ status: 'pending' }))).toBeNull();
+    expect(resolveLeafNotWrittenMessage(makeRow({ status: 'applied' }))).toBeNull();
+    expect(resolveLeafNotWrittenMessage(null)).toBeNull();
   });
 });

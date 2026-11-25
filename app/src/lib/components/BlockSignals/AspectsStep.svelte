@@ -9,11 +9,11 @@
   import type { BlockSignalsEditorActions } from '$lib/orchestration/blockSignalsEditorOrchestrator';
   import TrackDiagram from './TrackDiagram.svelte';
   import HelpTip from './HelpTip.svelte';
+  import { trackInputFor } from './trackInput';
   import { occupancyStatus, type BlockOccupancyMap } from './occupancy';
   import {
     INDICATION_LABEL,
     conditionText,
-    endChipLabel,
     exitEndText,
     indicationTone,
     nextSignalText,
@@ -46,6 +46,9 @@
     ['stop', 'Stop'],
     ['restricting', 'Restricting'],
   ];
+
+  /** This release builds only 3-aspect, always-lit signals that show Stop for an unlined turnout. */
+  const IN_SCOPE = { aspects: 3, approachLighting: 'alwaysLit', turnoutNotLined: 'stop' } as const;
 
   const signals = $derived(view.preview?.signals ?? []);
   const signal = $derived<SignalPreview | undefined>(
@@ -87,19 +90,11 @@
 </div>
 
 <TrackDiagram
-  input={{
-    mode: 'signals',
-    blocks: view.blocks,
-    direction: view.direction,
-    movements: view.movements,
-    signals,
-    shapes: view.turnoutShapes,
-    selectedSignalId: signal?.signalId ?? null,
-    endLabels: {
-      start: endChipLabel('start', view.entranceEnd, view.exitEnd),
-      end: endChipLabel('end', view.entranceEnd, view.exitEnd),
-    },
-  }}
+  input={trackInputFor(
+    { blocks: view.blocks, direction: view.direction, movements: view.movements, entranceEnd: view.entranceEnd, exitEnd: view.exitEnd, signals, shapes: view.turnoutShapes },
+    'signals',
+    { selectedSignalId: signal?.signalId ?? null },
+  )}
   {occupancy}
   onSelectSignal={(signalId) => (selectedSignalId = signalId)}
 />
@@ -126,8 +121,8 @@
       <fieldset class="choices">
         <legend class="field-label">Aspects</legend>
         {#each ASPECT_CHOICES as [value, title, description]}
-          <label class="radio-choice" class:selected={view.settings.aspects === value}>
-            <input type="radio" name="abs-aspects" checked={view.settings.aspects === value} onchange={() => actions.setSettings({ aspects: value })} />
+          <label class="radio-choice" class:selected={view.settings.aspects === value} class:unavailable={value !== IN_SCOPE.aspects}>
+            <input type="radio" name="abs-aspects" disabled={value !== IN_SCOPE.aspects} checked={view.settings.aspects === value} onchange={() => actions.setSettings({ aspects: value })} />
             <span><span class="radio-title">{title}</span><span class="radio-desc">{description}</span></span>
           </label>
         {/each}
@@ -146,12 +141,11 @@
         </legend>
         <div class="segmented">
           {#each TURNOUT_CHOICES as [value, label]}
-            <label class="segment" class:selected={view.settings.turnoutNotLined === value}>
-              <input type="radio" name="abs-turnout-policy" checked={view.settings.turnoutNotLined === value} onchange={() => actions.setSettings({ turnoutNotLined: value })} />{label}
+            <label class="segment" class:selected={view.settings.turnoutNotLined === value} class:unavailable={value !== IN_SCOPE.turnoutNotLined}>
+              <input type="radio" name="abs-turnout-policy" disabled={value !== IN_SCOPE.turnoutNotLined} checked={view.settings.turnoutNotLined === value} onchange={() => actions.setSettings({ turnoutNotLined: value })} />{label}
             </label>
           {/each}
         </div>
-        <p class="muted small hint">Restricting needs a head that can show it.</p>
       </fieldset>
 
       <fieldset class="choices">
@@ -166,8 +160,8 @@
         </legend>
         <div class="segmented">
           {#each LIGHTING_CHOICES as [value, label]}
-            <label class="segment" class:selected={view.settings.approachLighting === value}>
-              <input type="radio" name="abs-lighting" checked={view.settings.approachLighting === value} onchange={() => actions.setSettings({ approachLighting: value })} />{label}
+            <label class="segment" class:selected={view.settings.approachLighting === value} class:unavailable={value !== IN_SCOPE.approachLighting}>
+              <input type="radio" name="abs-lighting" disabled={value !== IN_SCOPE.approachLighting} checked={view.settings.approachLighting === value} onchange={() => actions.setSettings({ approachLighting: value })} />{label}
             </label>
           {/each}
         </div>
@@ -193,8 +187,8 @@
           <fieldset class="choices override-choices">
             <legend class="field-label">Aspects</legend>
             {#each ASPECT_CHOICES as [value, title, description]}
-              <label class="radio-choice" class:selected={signal.settings.aspects === value}>
-                <input type="radio" name="abs-signal-aspects" checked={signal.settings.aspects === value} onchange={() => override({ aspects: value })} />
+              <label class="radio-choice" class:selected={signal.settings.aspects === value} class:unavailable={value !== IN_SCOPE.aspects}>
+                <input type="radio" name="abs-signal-aspects" disabled={value !== IN_SCOPE.aspects} checked={signal.settings.aspects === value} onchange={() => override({ aspects: value })} />
                 <span><span class="radio-title">{title}</span><span class="radio-desc">{description}</span></span>
               </label>
             {/each}
@@ -203,8 +197,8 @@
             <legend class="field-label">Approach lighting</legend>
             <div class="segmented">
               {#each LIGHTING_CHOICES as [value, label]}
-                <label class="segment" class:selected={signal.settings.approachLighting === value}>
-                  <input type="radio" name="abs-signal-lighting" checked={signal.settings.approachLighting === value} onchange={() => override({ approachLighting: value })} />{label}
+                <label class="segment" class:selected={signal.settings.approachLighting === value} class:unavailable={value !== IN_SCOPE.approachLighting}>
+                  <input type="radio" name="abs-signal-lighting" disabled={value !== IN_SCOPE.approachLighting} checked={signal.settings.approachLighting === value} onchange={() => override({ approachLighting: value })} />{label}
                 </label>
               {/each}
             </div>
@@ -258,6 +252,7 @@
   .override-choices { margin-top: 12px; }
   .rules { margin: 10px 0; }
   .aspect { font-weight: 600; }
+  :global(.segment.unavailable) { cursor: default; color: #a0a0a0; background: var(--abs-subtle); }
   .aspect.stop { color: #c50f1f; }
   .aspect.approach { color: #8a5a00; }
   .aspect.clear { color: #107c10; }

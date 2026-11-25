@@ -3,6 +3,51 @@
 **Status**: Proposed contract extensions. No HTTP endpoints or new apply engine.
 **Types**: [data-model.md](../data-model.md).
 
+## Implemented: feedback-release preview (S2R)
+
+`preview_block_signals(request: BlockSignalsPreviewRequest) -> BlockSignalsPreview`
+
+This is the only Automatic Block Signals command that exists today. It backs the Blocks and Aspects
+pages of the feedback release. Everything below this section is still the proposed contract for
+the slices that review, save and apply (S3 onward).
+
+| Layer | Owner |
+|---|---|
+| Typed frontend call | `app/src/lib/api/signaling.ts` (`previewBlockSignals`) |
+| Tauri command | `preview_block_signals` in `app/src-tauri/src/lib.rs`; delegates to `signaling::preview` |
+| Fact gathering | `app/src-tauri/src/signaling/mod.rs`: reads the active effective layout and profiles, resolves detection facts per block |
+| Policy | `bowties-core/src/signaling/` (`chain.rs` derives signal blocks, chains, next signals and rules) |
+
+Request (camelCase on the wire; omitted optional fields take the defaults shown):
+
+```text
+{
+  facilityId,                     // editor identity; signal IDs are derived from it
+  facilityName = "",
+  direction = eastward,           // the direction the block list is written in
+  movements = oneDirection,       // or bothDirections
+  blocks: [{ blockId, name, joinedToPrevious = false, turnouts = [{ turnoutId, name }] }],
+  entranceEnd = { kind: noPlant } | { kind: plant, plantId },
+  exitEnd = { kind: nothingBeyond } | { kind: treatAsStop } | { kind: plant, plantId },
+  settings = { aspects: 3, turnoutNotLined: stop, approachLighting: alwaysLit },
+  signalOverrides = [{ signalId, aspects, approachLighting }],   // unknown IDs ignored
+  signalNames = { signalId: name },                             // missing names get a default
+  bindings?                       // S2 hardware selection; kept in the contract, not sent by the UI
+}
+```
+
+Response: the normalized blocks and ends, one `SignalPreview` per derived signal (both chains when
+`bothDirections`), the always-incomplete `capability` (`stage`, `save` and `apply` are
+`unavailable`), and `issues`. Each signal carries its governed direction, entrance block, protected
+blocks and turnouts, effective settings with an `overridden` flag, its `next` signal or end, and its
+rules, most restrictive first. `observation` is always `unavailable`. Live occupancy shown on Blocks
+comes from the existing effective-layout observations, not from this command.
+
+Guarantees: no draft, claim, configuration change or bus write. With no layout open the command
+still answers from the request alone. Placeholder turnouts are request data, not layout objects, and
+always report `turnoutPositionUnavailable`. The frontend keeps only the newest response and drops
+responses that arrive after Cancel (`blockSignalsEditorOrchestrator`).
+
 ## Existing boundaries to reuse
 
 - `sync_layout_drafts(deltas)` / `clear_layout_drafts()` remain authoritative layout-draft synchronization.

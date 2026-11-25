@@ -160,25 +160,25 @@ describe('saveLayoutOrchestrated', () => {
 
   // ── S1 behaviour ─────────────────────────────────────────────────────────
 
-  it('calls flushPending before saveFile when provided', async () => {
+  it('records pending changes before saveFile when provided', async () => {
     const callOrder: string[] = [];
-    const flushPending = vi.fn(async () => { callOrder.push('flush'); });
+    const recordPending = vi.fn(async () => { callOrder.push('flush'); return [] as string[]; });
     saveFile.mockImplementation(async () => { callOrder.push('save'); return makeSaveResult(); });
 
-    await saveLayoutOrchestrated({ ...baseArgs(), flushPending });
+    await saveLayoutOrchestrated({ ...baseArgs(), recordPending });
 
     expect(callOrder).toEqual(['flush', 'save']);
   });
 
-  it('does not require flushPending (backwards compat)', async () => {
+  it('does not require recordPending (backwards compat)', async () => {
     const args = baseArgs();
     await expect(saveLayoutOrchestrated(args)).resolves.toBeDefined();
   });
 
-  it('does not call saveFile if flushPending throws', async () => {
-    const flushPending = vi.fn(async () => { throw new Error('flush failed'); });
+  it('does not call saveFile if recording the pending changes throws', async () => {
+    const recordPending = vi.fn(async (): Promise<string[]> => { throw new Error('flush failed'); });
 
-    await expect(saveLayoutOrchestrated({ ...baseArgs(), flushPending })).rejects.toThrow('flush failed');
+    await expect(saveLayoutOrchestrated({ ...baseArgs(), recordPending })).rejects.toThrow('flush failed');
 
     expect(saveFile).not.toHaveBeenCalled();
     expect(setActiveContext).not.toHaveBeenCalled();
@@ -204,7 +204,7 @@ describe('saveLayoutOrchestrated', () => {
         layoutId: 'yard',
         rootPath: '/layouts/yard',
         mode: 'offline_file',
-        pendingOfflineChangeCount: 3,
+        pendingChangeCount: 3,
       }),
     );
   });
@@ -228,22 +228,28 @@ describe('saveLayoutOrchestrated', () => {
 
 // ── S2: saveWithBusWrites path ────────────────────────────────────────────────
 
+function noWrites(): SaveWithBusWriteResult['writeCounts'] {
+  return { written: 0, failed: 0, readOnly: 0, waiting: 0 };
+}
+
 function makeBusWriteResult(overrides: Partial<SaveWithBusWriteResult> = {}): SaveWithBusWriteResult {
   return {
     layoutSaved: true,
-    busWrites: null,
+    writeCounts: noWrites(),
+    writeErrors: [],
     reconciled: false,
     catalogRebuilt: true,
     warnings: [],
     layout: makeLayout(),
     persistedNodeIds: [],
     nodeSnapshots: [],
+    writtenNodeIds: [],
     ...overrides,
   };
 }
 
 describe('saveLayoutOrchestrated — saveWithBusWrites path', () => {
-  let saveWithBusWrites: ReturnType<typeof vi.fn<(path: string, deltas: LayoutEditDelta[]) => Promise<SaveWithBusWriteResult>>>;
+  let saveWithBusWrites: ReturnType<typeof vi.fn<(path: string, deltas: LayoutEditDelta[], ids: string[]) => Promise<SaveWithBusWriteResult>>>;
   let setCatalog: ReturnType<typeof vi.fn>;
   let clearMetadata: ReturnType<typeof vi.fn>;
   let markClean: ReturnType<typeof vi.fn>;
@@ -253,7 +259,7 @@ describe('saveLayoutOrchestrated — saveWithBusWrites path', () => {
   let getPendingChangeCount: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    saveWithBusWrites = vi.fn<(path: string, deltas: LayoutEditDelta[]) => Promise<SaveWithBusWriteResult>>(async () => makeBusWriteResult());
+    saveWithBusWrites = vi.fn<(path: string, deltas: LayoutEditDelta[], ids: string[]) => Promise<SaveWithBusWriteResult>>(async () => makeBusWriteResult());
     setCatalog = vi.fn();
     clearMetadata = vi.fn();
     markClean = vi.fn();
@@ -281,7 +287,7 @@ describe('saveLayoutOrchestrated — saveWithBusWrites path', () => {
   it('calls saveWithBusWrites with path and deltas', async () => {
     const deltas = makeDeltas();
     await saveLayoutOrchestrated({ ...busWriteArgs(), deltas });
-    expect(saveWithBusWrites).toHaveBeenCalledWith('/test/layout.bowties.yaml', deltas);
+    expect(saveWithBusWrites).toHaveBeenCalledWith('/test/layout.bowties.yaml', deltas, []);
   });
 
   it('hydrates layout store from saveWithBusWrites response (ADR-0002)', async () => {
@@ -327,20 +333,20 @@ describe('saveLayoutOrchestrated — saveWithBusWrites path', () => {
     expect(callOrder).toEqual(['save', 'hydrateLayout', 'clearMetadata', 'markClean']);
   });
 
-  it('calls flushPending before saveWithBusWrites when provided', async () => {
+  it('records pending changes before saveWithBusWrites when provided', async () => {
     const callOrder: string[] = [];
-    const flushPending = vi.fn(async () => { callOrder.push('flush'); });
+    const recordPending = vi.fn(async () => { callOrder.push('flush'); return [] as string[]; });
     saveWithBusWrites.mockImplementation(async () => { callOrder.push('save'); return makeBusWriteResult(); });
 
-    await saveLayoutOrchestrated({ ...busWriteArgs(), flushPending });
+    await saveLayoutOrchestrated({ ...busWriteArgs(), recordPending });
 
     expect(callOrder).toEqual(['flush', 'save']);
   });
 
-  it('does not call saveWithBusWrites if flushPending throws', async () => {
-    const flushPending = vi.fn(async () => { throw new Error('flush failed'); });
+  it('does not call saveWithBusWrites if recording the pending changes throws', async () => {
+    const recordPending = vi.fn(async (): Promise<string[]> => { throw new Error('flush failed'); });
 
-    await expect(saveLayoutOrchestrated({ ...busWriteArgs(), flushPending })).rejects.toThrow('flush failed');
+    await expect(saveLayoutOrchestrated({ ...busWriteArgs(), recordPending })).rejects.toThrow('flush failed');
 
     expect(saveWithBusWrites).not.toHaveBeenCalled();
   });
@@ -366,9 +372,20 @@ describe('saveLayoutOrchestrated — saveWithBusWrites path', () => {
         layoutId: 'yard',
         rootPath: '/layouts/yard',
         mode: 'offline_file',
-        pendingOfflineChangeCount: 5,
+        pendingChangeCount: 5,
       }),
     );
+  });
+
+  it('reloads the Pending Change rows before reading the count for the active context', async () => {
+    let rows = 2;
+    await saveLayoutOrchestrated({
+      ...busWriteArgs(),
+      reloadPendingChanges: async () => { rows = 1; },
+      getPendingChangeCount: () => rows,
+    });
+
+    expect(setActiveContext).toHaveBeenCalledWith(expect.objectContaining({ pendingChangeCount: 1 }));
   });
 
   it('does not call clearMetadata or markClean if saveWithBusWrites throws', async () => {
@@ -381,26 +398,109 @@ describe('saveLayoutOrchestrated — saveWithBusWrites path', () => {
     expect(hydrateLayout).not.toHaveBeenCalled();
   });
 
-  it('returns busWriteResult from saveWithBusWrites in orchestrated result', async () => {
-    const busResult = makeBusWriteResult({
-      busWrites: { total: 3, succeeded: 2, failed: 1, readOnlyRejected: 0 },
-      reconciled: true,
-    });
-    saveWithBusWrites.mockResolvedValue(busResult);
-
-    const result = await saveLayoutOrchestrated(busWriteArgs());
-
-    expect(result.busWriteResult).toMatchObject({ total: 3, succeeded: 2, failed: 1 });
-  });
-
   it('sends empty deltas for first-time save from live bus capture', async () => {
     await saveLayoutOrchestrated({ ...busWriteArgs(), deltas: [] });
 
-    expect(saveWithBusWrites).toHaveBeenCalledWith('/test/layout.bowties.yaml', []);
+    expect(saveWithBusWrites).toHaveBeenCalledWith('/test/layout.bowties.yaml', [], []);
     expect(clearMetadata).toHaveBeenCalled();
     expect(markClean).toHaveBeenCalled();
     expect(hydrateLayout).toHaveBeenCalled();
     expect(setActiveContext).toHaveBeenCalled();
+  });
+});
+
+describe('saveLayoutOrchestrated — recorded Pending Changes (E3b-1 B1)', () => {
+  it('passes exactly the change IDs recorded by this Save to the connected Save, after recording them', async () => {
+    const callOrder: string[] = [];
+    const recordPending = vi.fn(async () => { callOrder.push('record'); return ['row-a', 'row-b']; });
+    const saveWithBusWrites = vi.fn(async () => { callOrder.push('save'); return makeBusWriteResult(); });
+
+    await saveLayoutOrchestrated({
+      saveWithBusWrites,
+      setCatalog: vi.fn(), clearMetadata: vi.fn(), markClean: vi.fn(), hydrateLayout: vi.fn(),
+      setActiveContext: vi.fn(), updatePartialCaptureNodes: vi.fn(), getPendingChangeCount: vi.fn(() => 0),
+      recordPending,
+      path: '/test/layout.bowties.yaml',
+      deltas: makeDeltas(),
+    });
+
+    expect(callOrder).toEqual(['record', 'save']);
+    expect(saveWithBusWrites).toHaveBeenCalledWith('/test/layout.bowties.yaml', makeDeltas(), ['row-a', 'row-b']);
+  });
+});
+
+describe('saveLayoutOrchestrated — drafts and rows after a connected Save (E3b-1 B2)', () => {
+  function onlineArgs(overrides: Partial<SaveLayoutOrchestratedArgs>): SaveLayoutOrchestratedArgs {
+    return {
+      saveWithBusWrites: vi.fn(async () => makeBusWriteResult()),
+      setCatalog: vi.fn(), clearMetadata: vi.fn(), markClean: vi.fn(), hydrateLayout: vi.fn(),
+      setActiveContext: vi.fn(), updatePartialCaptureNodes: vi.fn(), getPendingChangeCount: vi.fn(() => 0),
+      path: '/test/layout.bowties.yaml',
+      deltas: makeDeltas(),
+      ...overrides,
+    };
+  }
+
+  it('keeps drafts and reloads nothing when the Save fails before recording', async () => {
+    const clearPersistedDrafts = vi.fn();
+    const reloadPendingChanges = vi.fn(async () => {});
+    const saveWithBusWrites = vi.fn(async (): Promise<SaveWithBusWriteResult> => { throw new Error('disk full'); });
+
+    await expect(saveLayoutOrchestrated(onlineArgs({ saveWithBusWrites, clearPersistedDrafts, reloadPendingChanges })))
+      .rejects.toThrow('disk full');
+
+    expect(clearPersistedDrafts).not.toHaveBeenCalled();
+    expect(reloadPendingChanges).not.toHaveBeenCalled();
+  });
+
+  it('clears drafts, then reloads the rows so Phase 2 failed/conflict rows are visible', async () => {
+    const callOrder: string[] = [];
+    const clearPersistedDrafts = vi.fn(() => { callOrder.push('clearDrafts'); });
+    const reloadPendingChanges = vi.fn(async () => { callOrder.push('reload'); });
+
+    await saveLayoutOrchestrated(onlineArgs({ clearPersistedDrafts, reloadPendingChanges }));
+
+    expect(callOrder).toEqual(['clearDrafts', 'reload']);
+  });
+});
+
+describe('saveLayoutOrchestrated — trees refresh before drafts clear (E3b-1 T11)', () => {
+  it('reloads the written nodes trees, then clears drafts, so the field never falls back to the old value', async () => {
+    const callOrder: string[] = [];
+    const reloadNodeTrees = vi.fn(async (ids: string[]) => { callOrder.push(`reload:${ids.join(',')}`); });
+    const clearPersistedDrafts = vi.fn(() => { callOrder.push('clearDrafts'); });
+
+    await saveLayoutOrchestrated({
+      saveWithBusWrites: vi.fn(async () => makeBusWriteResult({ writtenNodeIds: ['050201020300'] })),
+      setCatalog: vi.fn(), clearMetadata: vi.fn(), markClean: vi.fn(), hydrateLayout: vi.fn(),
+      setActiveContext: vi.fn(), updatePartialCaptureNodes: vi.fn(), getPendingChangeCount: vi.fn(() => 0),
+      path: '/test/layout.bowties.yaml',
+      deltas: makeDeltas(),
+      reloadNodeTrees,
+      clearPersistedDrafts,
+    });
+
+    expect(callOrder).toEqual(['reload:050201020300', 'clearDrafts']);
+  });
+});
+
+describe('saveLayoutOrchestrated — Save result reports leftovers (E3b-1 B3)', () => {
+  it('returns the write counts and reasons from the connected Save', async () => {
+    const writeCounts = { written: 1, failed: 1, readOnly: 0, waiting: 4 };
+    const saveWithBusWrites = vi.fn(async () => makeBusWriteResult({
+      writeCounts,
+      writeErrors: ['Node 05.02: the board kept 5'],
+    }));
+
+    const result = await saveLayoutOrchestrated({
+      saveWithBusWrites,
+      setCatalog: vi.fn(), clearMetadata: vi.fn(), markClean: vi.fn(), hydrateLayout: vi.fn(),
+      setActiveContext: vi.fn(), updatePartialCaptureNodes: vi.fn(), getPendingChangeCount: vi.fn(() => 0),
+      path: '/test/layout.bowties.yaml',
+      deltas: makeDeltas(),
+    });
+
+    expect(result.writeOutcome).toEqual({ counts: writeCounts, errors: ['Node 05.02: the board kept 5'] });
   });
 });
 
@@ -510,15 +610,17 @@ describe('saveLayoutOrchestrated — clearPersistedDrafts (S2c)', () => {
   });
 
   it('is also called on the saveWithBusWrites (online) path', async () => {
-    const saveWithBusWrites = vi.fn<(path: string, deltas: LayoutEditDelta[]) => Promise<SaveWithBusWriteResult>>(async () => ({
+    const saveWithBusWrites = vi.fn<(path: string, deltas: LayoutEditDelta[], ids: string[]) => Promise<SaveWithBusWriteResult>>(async () => ({
       layoutSaved: true,
-      busWrites: null,
+      writeCounts: noWrites(),
+      writeErrors: [],
       reconciled: false,
       catalogRebuilt: true,
       warnings: [],
       layout: makeLayout(),
       persistedNodeIds: [],
       nodeSnapshots: [],
+      writtenNodeIds: [],
     }));
     const clearPersistedDrafts = vi.fn();
 
@@ -652,7 +754,7 @@ describe('saveLayoutOrchestrated — S8.11 inMemorySnapshotKeys promotion', () =
   });
 
   it('also works on the saveWithBusWrites (online) path', async () => {
-    const saveWithBusWrites = vi.fn<(path: string, deltas: LayoutEditDelta[]) => Promise<SaveWithBusWriteResult>>(
+    const saveWithBusWrites = vi.fn<(path: string, deltas: LayoutEditDelta[], ids: string[]) => Promise<SaveWithBusWriteResult>>(
       async () => makeBusWriteResult(),
     );
     const clearPersistedPlaceholders = vi.fn();

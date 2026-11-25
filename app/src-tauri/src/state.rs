@@ -42,7 +42,7 @@ pub struct ActiveLayoutContext {
     pub root_path: String,
     pub mode: ActiveLayoutMode,
     pub captured_at: Option<String>,
-    pub pending_offline_change_count: usize,
+    pub pending_change_count: usize,
     /// Node keys for every snapshot in the active layout. Real nodes use
     /// the canonical 12-hex form (e.g. `"050201020200"`); placeholders use
     /// `"placeholder:<uuidv4>"`. Populated when the layout is opened; used
@@ -136,16 +136,12 @@ pub struct AppState {
     /// Active layout context for either legacy single-file layout or offline directory layout.
     pub active_layout: Arc<RwLock<Option<ActiveLayoutContext>>>,
 
-    /// Runtime cache of pending offline changes for the active layout.
-    /// Synced to disk on each modification; cleared when layout is closed.
-    pub offline_changes_cache: Arc<RwLock<Vec<crate::layout::offline_changes::OfflineChange>>>,
-
     /// User-selected sync mode when bus match is uncertain.
     pub sync_mode: Arc<RwLock<Option<SyncMode>>>,
 
     /// Single in-memory owner of the open layout (saved → captured → drafts).
     /// Owns the persisted-in-memory projection of the layout file: bowties,
-    /// channels, facilities, offline changes, and per-node snapshot/CDI/tree.
+    /// channels, facilities, pending changes, and per-node snapshot/CDI/tree.
     /// Source of truth for the save flow's per-node snapshot building and for
     /// the offline catalog rebuild. See ADR-0015.
     pub layout_state: Arc<RwLock<Option<bowties_core::layout::state::LayoutState>>>,
@@ -180,7 +176,6 @@ impl AppState {
             config_read_cancel: Arc::new(AtomicBool::new(false)),
             bowties_catalog: Arc::new(RwLock::new(None)),
             active_layout: Arc::new(RwLock::new(None)),
-            offline_changes_cache: Arc::new(RwLock::new(Vec::new())),
             sync_mode: Arc::new(RwLock::new(None)),
             layout_state: Arc::new(RwLock::new(None)),
 

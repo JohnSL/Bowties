@@ -88,6 +88,10 @@ export type LayoutEditDelta =
   | { type: 'clearNodeModeSelection'; nodeKey: string; modeId: string }
   /** Add a facility to `facilities.yaml` (Spec 018 / S1). */
   | { type: 'addFacility'; facility: import('$lib/api/facilities').Facility }
+  /** Replace a facility's whole `blockSignals` record (Spec 020 / E1a). */
+  | { type: 'setBlockSignalsRecord'; facilityId: string; record: import('$lib/api/facilities').BlockSignalsRecord }
+  /** Replace one board's whole Logic placement; empty `groups` removes the board's entry (Spec 020 / E3a). */
+  | { type: 'setLogicPlacement'; nodeKey: string; groups: import('$lib/api/facilities').PlacedLogicGroup[] }
   /** Rename a facility (Spec 018 / S1). */
   | { type: 'renameFacility'; facilityId: string; newName: string }
   /** Delete a facility (Spec 018 / S1). */
@@ -104,6 +108,8 @@ export type LayoutEditDelta =
   | { type: 'createChannel'; channel: import('$lib/api/channels').InformationChannel }
   /** Rename an existing channel (backend rejects unknown ids). */
   | { type: 'renameChannel'; channelId: string; newName: string }
+  /** Replace a channel's whole binding in place (backend rejects unknown ids). */
+  | { type: 'setChannelBinding'; channelId: string; binding: import('$lib/api/channels').ChannelBinding }
   /** Delete an information channel (idempotent for unknown ids). */
   | { type: 'deleteChannel'; channelId: string };
 

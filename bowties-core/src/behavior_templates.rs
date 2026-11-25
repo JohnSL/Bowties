@@ -104,7 +104,26 @@ pub const BLOCK_INDICATOR: BehaviorTemplate = BehaviorTemplate {
     mapping: BLOCK_INDICATOR_MAPPING,
 };
 
-const REGISTRY: &[BehaviorTemplate] = &[BLOCK_INDICATOR];
+const AUTOMATIC_BLOCK_SIGNALS_SLOTS: &[SlotDefinition] = &[SlotDefinition {
+    label: "signals",
+    display_label: "signals",
+    kind: SlotKind::Consumer,
+    required_role: "signal-indication",
+    min_channels: 1,
+    max_channels: None,
+}];
+
+/// Automatic Block Signals (Spec 020 / E1a - D1). One unbounded `signals`
+/// slot and no state mapping: its configuration is compiled by the signaling
+/// compiler, so bowtie composition never applies.
+pub const AUTOMATIC_BLOCK_SIGNALS: BehaviorTemplate = BehaviorTemplate {
+    template_id: "automatic-block-signals",
+    display_name: "Automatic Block Signals",
+    slots: AUTOMATIC_BLOCK_SIGNALS_SLOTS,
+    mapping: &[],
+};
+
+const REGISTRY: &[BehaviorTemplate] = &[BLOCK_INDICATOR, AUTOMATIC_BLOCK_SIGNALS];
 
 /// All registered templates.
 pub fn registered_templates() -> &'static [BehaviorTemplate] {
@@ -119,6 +138,12 @@ pub fn find_template(template_id: &str) -> Option<&'static BehaviorTemplate> {
 }
 
 impl BehaviorTemplate {
+    /// True when the template realises its behaviour as bowties (has a
+    /// producer-state mapping). Templates without one compose nothing.
+    pub fn composes_bowties(&self) -> bool {
+        !self.mapping.is_empty()
+    }
+
     /// Look up a slot by label within this template.
     pub fn find_slot(&self, label: &str) -> Option<&'static SlotDefinition> {
         self.slots.iter().find(|s| s.label == label)
@@ -132,9 +157,17 @@ mod tests {
     #[test]
     fn registry_contains_block_indicator() {
         let templates = registered_templates();
-        assert_eq!(templates.len(), 1);
+        assert_eq!(templates.len(), 2);
         assert_eq!(templates[0].template_id, "block-indicator");
         assert_eq!(templates[0].display_name, "Block Indicator");
+        let abs = find_template("automatic-block-signals").expect("ABS registered");
+        assert_eq!(abs.display_name, "Automatic Block Signals");
+        let signals = abs.find_slot("signals").expect("signals slot");
+        assert_eq!(signals.required_role, "signal-indication");
+        assert_eq!(signals.max_channels, None);
+        assert!(abs.mapping.is_empty());
+        assert!(!abs.composes_bowties());
+        assert!(BLOCK_INDICATOR.composes_bowties());
     }
 
     #[test]

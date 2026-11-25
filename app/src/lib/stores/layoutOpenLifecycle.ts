@@ -4,7 +4,7 @@ export type LayoutOpenPhase =
   | 'idle'
   | 'opening_file'
   | 'hydrating_snapshots'
-  | 'replaying_offline_changes'
+  | 'replaying_pending_changes'
   | 'ready'
   | 'error';
 
@@ -13,8 +13,8 @@ export const layoutOpenPhase = writable<LayoutOpenPhase>('idle');
 const allowedTransitions: Record<LayoutOpenPhase, LayoutOpenPhase[]> = {
   idle: ['opening_file'],
   opening_file: ['hydrating_snapshots', 'error', 'idle'],
-  hydrating_snapshots: ['replaying_offline_changes', 'error', 'idle'],
-  replaying_offline_changes: ['ready', 'error', 'idle'],
+  hydrating_snapshots: ['replaying_pending_changes', 'error', 'idle'],
+  replaying_pending_changes: ['ready', 'error', 'idle'],
   ready: ['opening_file', 'idle'],
   error: ['idle', 'opening_file'],
 };
@@ -41,11 +41,11 @@ export function startLayoutHydration(): void {
 }
 
 export function finishLayoutHydration(): void {
-  setLayoutOpenPhase('replaying_offline_changes');
+  setLayoutOpenPhase('replaying_pending_changes');
 }
 
 export function startOfflineReplay(): void {
-  setLayoutOpenPhase('replaying_offline_changes');
+  setLayoutOpenPhase('replaying_pending_changes');
 }
 
 export function finishOfflineReplay(): void {
@@ -66,7 +66,7 @@ export const layoutOpenStatusText = derived(layoutOpenPhase, (phase) => {
       return 'Opening layout file...';
     case 'hydrating_snapshots':
       return 'Hydrating captured nodes...';
-    case 'replaying_offline_changes':
+    case 'replaying_pending_changes':
       return 'Replaying offline edits...';
     default:
       return '';

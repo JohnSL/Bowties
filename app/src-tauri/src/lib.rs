@@ -224,6 +224,16 @@ async fn preview_block_signals(
     signaling::preview(state.inner(), request).await
 }
 
+/// Compose the Automatic Block Signals configuration edits for a Line and its
+/// wiring. Read-only: the frontend stages the returned edits.
+#[tauri::command]
+async fn compose_block_signals(
+    state: tauri::State<'_, AppState>,
+    request: signaling::compose::ComposeBlockSignalsRequest,
+) -> Result<signaling::compose::ComposeBlockSignalsResponse, String> {
+    signaling::compose::compose(state.inner(), request).await
+}
+
 /// Disconnect from the LCC network
 #[tauri::command]
 async fn disconnect_lcc(
@@ -383,10 +393,9 @@ pub fn run() {
             commands::create_new_layout_capture,  // Spec 010: new capture lifecycle scaffolding
             commands::save_layout_with_bus_writes,  // Spec 013: three-phase save with bus writes
             commands::build_offline_node_tree,  // Spec 010: CDI-structured offline tree
-            commands::set_offline_change,  // Spec 010: offline change scaffolding
-            commands::revert_offline_change,  // Spec 010: offline change scaffolding
-            commands::list_offline_changes,  // Spec 010: offline change scaffolding
-            commands::replace_offline_changes,  // Spec 010: bulk replace offline changes cache
+            commands::set_pending_change,  // Spec 010: pending change scaffolding
+            commands::revert_pending_change,  // Spec 010: pending change scaffolding
+            commands::list_pending_changes,  // Spec 010: pending change scaffolding
             commands::get_connector_profile,
             commands::preview_connector_compatibility,
             commands::list_bundled_profiles_command,    // Spec 014 / S8: placeholder picker
@@ -400,10 +409,6 @@ pub fn run() {
             commands::get_node_tree,  // Spec 007: unified node tree
             commands::write_config_value,  // Spec 007: write config value
             commands::send_update_complete,  // Spec 007: send update complete
-            commands::set_modified_value,  // Modified value: set pending edit on tree
-            commands::discard_modified_values,  // Modified value: discard pending edits
-            commands::write_modified_values,  // Modified value: write all pending edits
-            commands::has_modified_values,  // Modified value: check for pending edits
             commands::trigger_action,         // Action element: fire-once write
             commands::list_serial_ports,
             commands::get_layout_connections,   // Spec 013 / S4: per-layout connection registry
@@ -414,6 +419,7 @@ pub fn run() {
             commands::list_channels,               // Spec 015 / S1: information channel inventory (writes ride LayoutEditDelta via save_layout_directory)
             commands::list_behavior_templates,     // Spec 018 / S1: hardcoded behavior template registry
             preview_block_signals,
+            compose_block_signals,
             commands::list_facilities,             // Spec 018 / S1: facility inventory (read-only; CRUD via delta save)
             commands::compose_facility_bowties,    // Spec 018 / S6 (D2): compose bowtie ops for a Wired facility
             commands::sync_layout_drafts,          // Spec 018 / S6 bugfix: mirror frontend drafts into LayoutState

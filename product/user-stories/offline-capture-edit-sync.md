@@ -16,7 +16,7 @@ It is validated against the implemented parts of spec 010, current orchestration
 - `app/src/lib/orchestration/syncApplyOrchestrator.ts`
 - `app/src/lib/stores/layout.svelte.ts`
 - `app/src/lib/stores/layoutOpenLifecycle.ts`
-- `app/src/lib/stores/offlineChanges.svelte.ts`
+- `app/src/lib/stores/pendingChanges.svelte.ts`
 - `app/src/lib/stores/syncPanel.svelte.ts`
 - `app/src-tauri/src/layout/**`
 - `app/src-tauri/src/commands/layout_capture.rs`

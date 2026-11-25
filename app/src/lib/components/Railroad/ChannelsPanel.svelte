@@ -81,13 +81,11 @@
     if (sample.binding.kind === 'lampRow') {
       return 'Direct Lamp Control';
     }
-    return groupKey;
+    return 'Signal LCC';
   }
 
   function groupNodeKey(sample: InformationChannel): string {
-    return sample.binding.kind === 'connectorInput' || sample.binding.kind === 'lampRow'
-      ? sample.binding.nodeKey
-      : '';
+    return sample.binding.nodeKey;
   }
 </script>
 

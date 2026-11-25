@@ -24,7 +24,7 @@
   import TreeGroupAccordion from './TreeGroupAccordion.svelte';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { configChangesStore } from '$lib/stores/configChanges.svelte';
-  import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+  import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
   import { layoutOpenInProgress } from '$lib/stores/layoutOpenLifecycle';
   import { editKeyForLeaf } from '$lib/utils/editKey';
   import { pillSelections, setPillSelection, makePillKey } from '$lib/stores/pillSelection';
@@ -118,7 +118,7 @@
   function hasPendingApplyInChildren(nId: string, children: ConfigNode[]): boolean {
     for (const child of children) {
       if (isLeaf(child)) {
-        if (offlineChangesStore.hasPersistedConfigChange(nId, child.space, offsetFromAddress(child.address))) {
+        if (pendingChangesStore.hasPersistedConfigChange(nId, child.space, offsetFromAddress(child.address))) {
           return true;
         }
         continue;

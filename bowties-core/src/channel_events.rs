@@ -2,7 +2,7 @@
 //! producer event IDs using the cached config tree and profile annotations.
 
 use crate::node_tree::{
-    effective_value, replication_instances, ConfigNode, ConfigValue, LeafNode, LeafType,
+    replication_instances, ConfigNode, ConfigValue, LeafNode, LeafType,
     NodeConfigTree,
 };
 use lcc_rs::cdi::EventRole;
@@ -37,7 +37,7 @@ pub fn resolve_event_ids(
 
     for (state_name, &leaf_index) in leaf_index_map {
         if let Some(leaf) = leaves.get(leaf_index as usize) {
-            if let Some(ConfigValue::EventId { hex, .. }) = effective_value(leaf) {
+            if let Some(ConfigValue::EventId { hex, .. }) = leaf.value.as_ref() {
                 result.insert(state_name.clone(), hex.clone());
             }
         }
@@ -79,6 +79,19 @@ pub fn resolve_connector_input_path_prefix(
     slot.resolved_affected_paths
         .get((input as usize).saturating_sub(1))
         .cloned()
+}
+
+/// Path prefix for a `SignalLccRgOutputs` signal-indication channel.
+///
+/// Always `None`: live observation of signal-indication state is not
+/// implemented yet (Spec 020 E4), so the channel has no observable state
+/// events and resolves to an empty event-ID map.
+pub fn resolve_signal_lcc_rg_outputs_path_prefix(
+    _tree: &NodeConfigTree,
+    _green_output: u32,
+    _red_output: u32,
+) -> Option<Vec<String>> {
+    None
 }
 
 /// Compute the CDI path prefix for a `Direct Lamp Control` row.
@@ -176,9 +189,6 @@ mod tests {
             action_value: 0,
             hint_slider: None,
             hint_radio: false,
-            modified_value: None,
-            write_state: None,
-            write_error: None,
             read_only: false,
         })
     }
@@ -509,6 +519,12 @@ mod tests {
     }
 
     #[test]
+    fn signal_lcc_rg_outputs_has_no_observable_event_path_prefix() {
+        let tree = make_lamp_tree(8);
+        assert!(resolve_signal_lcc_rg_outputs_path_prefix(&tree, 1, 2).is_none());
+    }
+
+    #[test]
     fn resolve_lamp_row_path_prefix_returns_path_for_instance() {
         let tree = make_lamp_tree(8);
 
@@ -593,80 +609,5 @@ mod tests {
             );
         }
         assert!(resolve_lamp_row_path_prefix(&tree, 17).is_none());
-    }
-
-    /// Spec 020 / S6: regression test — resolver must read drafted modified_value
-    /// in preference to committed value. This locks the fix for the user-visible
-    /// regression where a freshly-wired ABS facility shows "unknown" on its
-    /// FacilityCard signal indicator until Save + reload.
-    #[test]
-    fn resolve_channel_event_ids_returns_drafted_modified_value() {
-        let tree = make_test_tree();
-        let mut event_mapping = HashMap::new();
-        event_mapping.insert("occupied".to_string(), 0u32);
-        event_mapping.insert("clear".to_string(), 1u32);
-
-        // Mutate the first producer leaf (occuped) to have a drafted modified_value
-        // that differs from its committed value. The resolver should prefer the draft.
-        let path_prefix = vec!["seg:0".to_string(), "elem:0#1".to_string()];
-        let leaves = collect_event_leaves_under_prefix(&tree, &path_prefix, EventRole::Producer);
-        assert!(!leaves.is_empty(), "test setup: must have producer leaves");
-
-        // We need to mutate the tree, but leaves is immutable. Reconstruct a mutable tree
-        // with the modified_value set on the first producer leaf.
-        let mut tree = make_test_tree();
-        fn set_modified_value_on_first_producer(
-            children: &mut Vec<ConfigNode>,
-            prefix: &[String],
-            modified_hex: String,
-        ) {
-            for child in children {
-                match child {
-                    ConfigNode::Leaf(leaf) => {
-                        if leaf.element_type == LeafType::EventId
-                            && leaf.event_role == Some(EventRole::Producer)
-                            && path_starts_with(&leaf.path, prefix)
-                            && leaf.modified_value.is_none()
-                        {
-                            leaf.modified_value = Some(ConfigValue::EventId {
-                                bytes: [0; 8],
-                                hex: modified_hex.clone(),
-                            });
-                            return; // Only set the first one
-                        }
-                    }
-                    ConfigNode::Group(group) => {
-                        set_modified_value_on_first_producer(
-                            &mut group.children,
-                            prefix,
-                            modified_hex.clone(),
-                        );
-                    }
-                }
-            }
-        }
-
-        for seg in &mut tree.segments {
-            set_modified_value_on_first_producer(
-                &mut seg.children,
-                &path_prefix,
-                "0501010101DEAF01".to_string(),
-            );
-        }
-
-        let result = resolve_channel_event_ids(&tree, "connector-a", 1, &event_mapping);
-
-        // The drafted modified_value should win over the committed value.
-        assert_eq!(
-            result.get("occupied"),
-            Some(&"0501010101DEAF01".to_string()),
-            "resolver must prefer drafted modified_value over committed value"
-        );
-        // The clear leaf still has only its committed value — should still resolve.
-        assert_eq!(
-            result.get("clear"),
-            Some(&"0501010101000002".to_string()),
-            "resolver must still resolve leaves with only committed value"
-        );
     }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { InformationChannel } from '$lib/api/channels';
 import type { NodeConfigTree } from '$lib/types/nodeTree';
-import { resolveConfigTargets } from './channelConfigNavigation';
+import { resolveConfigTargets, resolveSignalOutputOwnerTarget } from './channelConfigNavigation';
 
 function connectorInputChannel(): InformationChannel {
   return {
@@ -118,5 +118,57 @@ describe('resolveConfigTargets', () => {
       nodeId: '020158000001',
       elementPath: ['seg:0', 'elem:0#2'],
     }]);
+  });
+});
+
+describe('resolveSignalOutputOwnerTarget', () => {
+  const instances = (replicationOf: string, count: number, segIdx: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      kind: 'group' as const,
+      name: replicationOf,
+      description: null,
+      instance: i + 1,
+      instanceLabel: `${replicationOf} ${i + 1}`,
+      replicationOf,
+      replicationCount: count,
+      path: [`seg:${segIdx}`, `elem:0#${i + 1}`],
+      displayName: null,
+      children: [],
+    }));
+
+  function signalTree(): NodeConfigTree {
+    const segment = (name: string, space: number, children: NodeConfigTree['segments'][number]['children']) => ({
+      name, description: null, origin: 0, space, children,
+    });
+    return {
+      nodeId: '050101010700',
+      identity: null,
+      segments: [
+        segment('Rule to Aspect', 1, instances('Mast', 4, 0)),
+        segment('Direct Lamp Control', 2, instances('Lamp', 16, 1)),
+      ],
+    } as NodeConfigTree;
+  }
+
+  it('resolves "Mast N" to that mast under Rule to Aspect', () => {
+    expect(resolveSignalOutputOwnerTarget(signalTree(), 'Mast 3')).toEqual({
+      label: 'Rule to Aspect.Mast 3',
+      nodeId: '050101010700',
+      elementPath: ['seg:0', 'elem:0#3'],
+    });
+  });
+
+  it('resolves "Direct lamp N" to that lamp under Direct Lamp Control', () => {
+    expect(resolveSignalOutputOwnerTarget(signalTree(), 'Direct lamp 2')).toEqual({
+      label: 'Direct Lamp Control.Lamp 2',
+      nodeId: '050101010700',
+      elementPath: ['seg:1', 'elem:0#2'],
+    });
+  });
+
+  it('returns undefined without a tree, for unknown owners and for missing instances', () => {
+    expect(resolveSignalOutputOwnerTarget(undefined, 'Mast 1')).toBeUndefined();
+    expect(resolveSignalOutputOwnerTarget(signalTree(), 'Turnout 1')).toBeUndefined();
+    expect(resolveSignalOutputOwnerTarget(signalTree(), 'Mast 9')).toBeUndefined();
   });
 });

@@ -113,6 +113,8 @@ pub enum ChannelApplyError {
     DuplicateChannelId { channel_id: String },
     /// `RenameChannel` referenced an id not present in the doc.
     UnknownRenameTarget { channel_id: String },
+    /// `SetChannelBinding` referenced an id not present in the doc.
+    UnknownBindingTarget { channel_id: String },
 }
 
 impl std::fmt::Display for ChannelApplyError {
@@ -123,6 +125,9 @@ impl std::fmt::Display for ChannelApplyError {
             }
             Self::UnknownRenameTarget { channel_id } => {
                 write!(f, "unknown channel id for rename: {}", channel_id)
+            }
+            Self::UnknownBindingTarget { channel_id } => {
+                write!(f, "unknown channel id for binding change: {}", channel_id)
             }
         }
     }
@@ -173,6 +178,21 @@ pub fn apply_channel_deltas(
                 };
                 channel.name = new_name.clone();
                 touched = true;
+            }
+            LayoutEditDelta::SetChannelBinding {
+                channel_id,
+                binding,
+            } => {
+                let target = doc.channels.iter_mut().find(|c| c.id == *channel_id);
+                let Some(channel) = target else {
+                    return Err(ChannelApplyError::UnknownBindingTarget {
+                        channel_id: channel_id.clone(),
+                    });
+                };
+                if channel.binding != *binding {
+                    channel.binding = binding.clone();
+                    touched = true;
+                }
             }
             LayoutEditDelta::DeleteChannel { channel_id } => {
                 let before = doc.channels.len();
@@ -418,6 +438,116 @@ mod tests {
                 channel_id: "ch-missing".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn set_channel_binding_replaces_only_the_binding_in_place() {
+        use crate::layout::types::LayoutEditDelta;
+
+        let mut ch = lamp_indicator_channel("ch-1", 1);
+        ch.name = "Keep Me".to_string();
+        let other = lamp_indicator_channel("ch-2", 2);
+        let mut doc = ChannelsDocument::new(vec![ch.clone(), other.clone()]);
+        let new_binding = ChannelBinding::LampRow {
+            node_key: "05010101FF000002".to_string(),
+            row_ordinal: 9,
+        };
+
+        apply_channel_deltas(
+            &mut doc,
+            &[LayoutEditDelta::SetChannelBinding {
+                channel_id: "ch-1".to_string(),
+                binding: new_binding.clone(),
+            }],
+        )
+        .unwrap();
+
+        let mut expected = ch.clone();
+        expected.binding = new_binding.clone();
+        assert_eq!(doc.channels, vec![expected, other]);
+
+        // Same binding again: still fine, nothing changes.
+        let before = doc.clone();
+        apply_channel_deltas(
+            &mut doc,
+            &[LayoutEditDelta::SetChannelBinding {
+                channel_id: "ch-1".to_string(),
+                binding: new_binding,
+            }],
+        )
+        .unwrap();
+        assert_eq!(doc, before);
+    }
+
+    #[test]
+    fn set_channel_binding_noop_does_not_stamp_schema_version() {
+        use crate::layout::types::LayoutEditDelta;
+
+        let ch = lamp_indicator_channel("ch-1", 1);
+        let mut doc = ChannelsDocument {
+            schema_version: String::new(),
+            channels: vec![ch.clone()],
+        };
+
+        apply_channel_deltas(
+            &mut doc,
+            &[LayoutEditDelta::SetChannelBinding {
+                channel_id: "ch-1".to_string(),
+                binding: ch.binding.clone(),
+            }],
+        )
+        .unwrap();
+
+        assert!(doc.schema_version.is_empty());
+    }
+
+    #[test]
+    fn set_channel_binding_rejects_unknown_id_like_rename() {
+        use crate::layout::types::LayoutEditDelta;
+
+        let mut doc = ChannelsDocument::new(vec![lamp_indicator_channel("ch-1", 1)]);
+        let err = apply_channel_deltas(
+            &mut doc,
+            &[LayoutEditDelta::SetChannelBinding {
+                channel_id: "ch-missing".to_string(),
+                binding: ChannelBinding::LampRow {
+                    node_key: "N".to_string(),
+                    row_ordinal: 1,
+                },
+            }],
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ChannelApplyError::UnknownBindingTarget {
+                channel_id: "ch-missing".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn set_channel_binding_delta_serializes_as_camel_case_and_survives_yaml_roundtrip() {
+        use crate::layout::types::LayoutEditDelta;
+
+        let delta = LayoutEditDelta::SetChannelBinding {
+            channel_id: "ch-1".to_string(),
+            binding: ChannelBinding::SignalLccRgOutputs {
+                node_key: "05010101FF000101".to_string(),
+                green_output: 1,
+                red_output: 3,
+            },
+        };
+        let json = serde_json::to_value(&delta).unwrap();
+        assert_eq!(json["type"], "setChannelBinding");
+        assert_eq!(json["channelId"], "ch-1");
+        assert_eq!(json["binding"]["kind"], "signalLccRgOutputs");
+
+        let mut doc = ChannelsDocument::new(vec![lamp_indicator_channel("ch-1", 1)]);
+        apply_channel_deltas(&mut doc, &[delta]).unwrap();
+        let yaml = serde_yaml_ng::to_string(&doc).unwrap();
+        let parsed: ChannelsDocument = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(parsed, doc);
+        assert_eq!(parsed.channels[0].id, "ch-1");
     }
 
     #[test]

@@ -1,10 +1,8 @@
-import { setModifiedValue } from '$lib/api/config';
 import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
 import { channelsStore } from '$lib/stores/channels.svelte';
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
-import { layoutStore } from '$lib/stores/layout.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
-import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
 import { normalizeNodeId } from '$lib/utils/nodeId';
 import { editKeyForLeaf } from '$lib/utils/editKey';
 import { generateDefaultChannelName } from '$lib/utils/channelDefaults';
@@ -98,33 +96,23 @@ export async function recomputeConnectorCompatibility(nodeId: string): Promise<v
     return;
   }
 
-  // In offline mode, clear stale offlineChangesStore draft rows for
-  // connector-governed leaves before computing compatibility. Without this,
-  // cancellation drafts from a previous connector change suppress persisted
-  // pending values and prevent repairs on re-selection.
-  if (layoutStore.isOfflineMode) {
-    clearOfflineConnectorDrafts(nodeId, tree, profile, document);
-  }
-
-  const resolveCurrentValue = layoutStore.isOfflineMode
-    ? (leaf: LeafConfigNode) => offlineChangesStore.resolveEffectiveCurrentValue(nodeId, leaf)
-    : (leaf: LeafConfigNode) => resolveOnlineCurrentValue(nodeId, leaf);
+  // Offline or connected, repairs take the same draft path (E3b D1): the Save
+  // records them as Pending Changes. First clear stale pendingChangesStore
+  // draft rows for connector-governed leaves; without this, cancellation
+  // drafts from a previous connector change suppress persisted pending values
+  // and prevent repairs on re-selection.
+  clearConnectorDrafts(nodeId, tree, profile, document);
 
   const compatibilityState = computeConnectorCompatibilityState(
     tree,
     profile,
     document,
-    resolveCurrentValue,
+    (leaf: LeafConfigNode) => pendingChangesStore.resolveEffectiveCurrentValue(nodeId, leaf),
   );
   connectorSelectionsStore.setCompatibilityWarnings(nodeId, compatibilityState.warnings);
 
-  if (layoutStore.isOfflineMode) {
-    offlineChangesStore.applyConnectorCompatibilityConfigChanges(nodeId, compatibilityState.stagedRepairs);
-    applyOfflineCompatibilityDrafts(nodeId, tree, compatibilityState.stagedRepairs);
-    return;
-  }
-
-  await applyOnlineCompatibilityEdits(nodeId, tree, compatibilityState.stagedRepairs);
+  pendingChangesStore.applyConnectorCompatibilityConfigChanges(nodeId, compatibilityState.stagedRepairs);
+  applyCompatibilityDrafts(nodeId, compatibilityState.stagedRepairs);
 }
 
 /**
@@ -250,52 +238,16 @@ function resolveRepairForLeaf(
   };
 }
 
-async function applyOnlineCompatibilityEdits(
-  nodeId: string,
-  tree: NodeConfigTree,
-  nextRepairs: StagedRepair[],
-): Promise<void> {
-  for (const repair of nextRepairs) {
-    if (repair.space == null || !repair.offset) {
-      continue;
-    }
-
-    const leaf = nodeTreeStore.getLeafByLocation(nodeId, repair.space, parseOffsetHex(repair.offset));
-    if (!leaf) {
-      continue;
-    }
-
-    const nextValue = parseSerializedValueForLeaf(repair.plannedValue, leaf);
-    if (!nextValue) {
-      continue;
-    }
-
-    const key = editKeyForLeaf(nodeId, leaf.space, leaf.address);
-    configChangesStore.set(key, nextValue);
-
-    try {
-      const staged = await setModifiedValue(nodeId, leaf.address, leaf.space, nextValue);
-      if (!staged) {
-        configChangesStore.revert(key);
-      }
-    } catch (error) {
-      configChangesStore.revert(key);
-      throw error;
-    }
-  }
-}
-
 /**
- * Write offline connector repairs to the config-draft layer so they appear
+ * Write connector repairs to the config-draft layer so they appear
  * as visible change badges with "from → to" annotations.
  *
- * The offlineChangesStore owns persistence staging; this writes the same
+ * The pendingChangesStore owns persistence staging; this writes the same
  * repair value to configChangesStore so the display pipeline shows the
  * change relative to the persisted offline pending layer.
  */
-function applyOfflineCompatibilityDrafts(
+function applyCompatibilityDrafts(
   nodeId: string,
-  tree: NodeConfigTree,
   repairs: StagedRepair[],
 ): void {
   for (const repair of repairs) {
@@ -319,27 +271,14 @@ function applyOfflineCompatibilityDrafts(
 }
 
 /**
- * Resolve the current value for a leaf in online mode, preferring any
- * in-flight config draft over the committed baseline.
- *
- * Without this, multi-step connector changes evaluate compatibility against
- * the committed value and miss incompatible drafts from prior repairs.
- */
-function resolveOnlineCurrentValue(nodeId: string, leaf: LeafConfigNode): TreeConfigValue | null {
-  const key = editKeyForLeaf(nodeId, leaf.space, leaf.address);
-  const visible = configChangesStore.visibleValue(key);
-  return visible ?? effectiveValue(leaf);
-}
-
-/**
- * Clear offlineChangesStore draft rows for connector-governed leaves.
+ * Clear pendingChangesStore draft rows for connector-governed leaves.
  *
  * Called before computing compatibility so that stale cancellation drafts
  * from a previous connector change don't suppress persisted pending values.
  * The repair computation then sees the persisted values and can stage fresh
  * repairs as needed.
  */
-function clearOfflineConnectorDrafts(
+function clearConnectorDrafts(
   nodeId: string,
   tree: NodeConfigTree,
   profile: ConnectorProfileView,
@@ -352,7 +291,7 @@ function clearOfflineConnectorDrafts(
     if (!state.slotId) continue;
     locations.push({ space: leaf.space, offset: toOffsetHex(leaf.address) });
   }
-  offlineChangesStore.clearDraftConfigChanges(nodeId, locations);
+  pendingChangesStore.clearDraftConfigChanges(nodeId, locations);
 }
 
 function collectLeaves(children: ConfigNode[]): LeafConfigNode[] {

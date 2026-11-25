@@ -22,6 +22,8 @@ The Bowties release version appears in four files and must stay in sync:
 
 Before you start a release, confirm that all four files already agree on the current version. If they do not, stop and reconcile them before choosing the next version.
 
+The lock files also record the version: `app/package-lock.json` (its top-level `"version"` and the root package entry), `app/src-tauri/Cargo.lock` and `lcc-rs/Cargo.lock`. Don't edit them by hand. Step 3 refreshes `package-lock.json`, and the `cargo test` runs in step 4 refresh the Cargo lock files. Commit them with the version files; otherwise the next `npm install` or build leaves them modified.
+
 Bowties follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`.
 
 ## Part 1: Prepare the release locally
@@ -77,6 +79,15 @@ version = "0.2.0"
 version = "0.2.0"
 ```
 
+Then bring `app/package-lock.json` up to the new version without changing any dependency:
+
+```powershell
+cd app
+npm install --package-lock-only
+```
+
+Its diff should touch only the two version lines.
+
 ### 4. Run validation
 
 Run the standard release validation commands before committing:
@@ -108,7 +119,7 @@ npm run test:refactor-gate
 Include the version files and any release-related doc updates in the same commit:
 
 ```powershell
-git add app/src-tauri/tauri.conf.json app/package.json app/src-tauri/Cargo.toml lcc-rs/Cargo.toml README.md docs/user/installing.md docs/user/using.md docs/project/releasing.md docs/images
+git add app/src-tauri/tauri.conf.json app/package.json app/package-lock.json app/src-tauri/Cargo.toml app/src-tauri/Cargo.lock lcc-rs/Cargo.toml lcc-rs/Cargo.lock README.md docs/user/installing.md docs/user/using.md docs/project/releasing.md docs/images
 git commit -m "chore: bump version to 0.2.0"
 ```
 

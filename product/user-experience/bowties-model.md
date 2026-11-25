@@ -124,52 +124,55 @@ The Configuration tab shows raw CDI structure — nodes, segments, groups, indiv
 
 ---
 
-## Automatic Block Signals Preview
+## Automatic Block Signals
 
-The Railroad tab's **Add facility** dialog also starts a transient Automatic Block Signals
-preview. It does not create a facility, configuration draft, output claim, or
-bus write. The modeler chooses an existing detected block, then names the Line
-and its entrance signal and chooses a presentation orientation. The preview
-states that the signal protects that block only: occupied expects Stop and clear
-expects Clear. An unavailable observation remains unavailable rather than being
-shown as a live state. Display, binding, confirmation, saving, and application
-belong to later workflow steps.
+An Automatic Block Signals facility signals existing detected blocks on a
+Signal LCC. The modeler adds it from the Railroad tab's **Add facility**
+dialog, which requires a name, and builds it in a guided editor with four
+steps: **Blocks**, **Aspects**, **Appearance** and **Wiring**. Nothing is
+created until **Done** on Wiring; Cancel or close discards the editor's work.
 
-Both Block Indicator and Automatic Block Signals require an initial name in Add facility.
-That same name appears in the Line wizard and remains editable. The block picker
-lists candidates alphabetically; this does not reorder a Line's travel order.
-Missing hardware bindings still make the proposal incomplete but do not produce
-a routine notice on pages without save/apply actions.
+- **Blocks.** Detected blocks in travel order, for one direction. A block can
+  be joined to the one before it, so one signal protects both. The track
+  diagram shows the blocks, joins, placeholder turnouts, the entrance and exit
+  ends, each signal at its position, and live occupancy (unavailable when there
+  is no reading).
+- **Aspects.** The three-indication policy (Stop, Approach, Clear) and the
+  rules each signal follows, from the backend preview.
+- **Appearance.** One RG searchlight head, always lit.
+- **Wiring.** For each signal, the Signal LCC it runs on and its red and green
+  pins. Pins used by Bowties for something else cannot be chosen; pins used
+  outside Bowties can be released by name. A check (no writes) reports
+  choices needing attention, per signal and for the facility.
 
-The preview is a wide five-step wizard, not an inline facility form. Blocks
-and Signals are usable in S1; Display, Bindings and Confirm remain numbered
-but visibly unavailable. The Blocks membership row reports unavailable
-occupancy truthfully and can remove only the Line membership, never the shared
-block or detector. The Signals card separates hypothetical Stop/Clear
-expectations from live observation and uses a neutral oriented entrance marker,
-not a red lamp that would imply an observed Stop.
-Blocks uses a searchable, scrollable Add block selection dialog and membership
-card, with the Line name label and input on one row. Signals retains the
-storyboard's selected-signal name, Entire Line policy summary and separate
-When-this-signal-shows table. Cancel/close reset the transient editor through
-orchestration. Cancel stays flush left; Back/Next stay right. The track strip
-shows block occupancy separately from the neutral entrance-signal selection tile
-below it. On narrow screens, cards stack without horizontal overflow.
+Choices outside this release (both directions, APB, more aspects, approach
+lighting, other appearances, Plants at the ends) are shown but disabled.
+A Review step is deferred.
 
-The Line wizard opts into contained dialog layout. On roomy windows, the
-stepper, track/name context and footer stay stationary while the policy and
-indication panes scroll independently. On narrow or short windows, one inner
-workspace scrolls instead; the outer dialog body does not add a second scrollbar.
-The rail labels share explicit line height and equal rail-edge gaps.
+**Done** stages the facility, one `signal-indication` channel per signal and
+the configuration edits as drafts, all or nothing. Saving records the
+configuration as Pending Changes tagged with the facility; a connected Save
+or the Sync Panel writes them to each board through the one writer. The
+facility card shows "Waiting" with per-board lines until every row is
+written. Writes are not yet read back to verify them.
 
-Automatic Block Signals is additive: Block Indicator facilities, lamps, blocks and detectors
-remain unchanged. The Line references a shared block and owns only its entrance
-signal. S1 supports one block; selecting more produces an explicit unsupported
-count issue, not several fabricated terminal signals. A transient Line identity
-scopes signal identities across editor requests, including renaming and diagram
-reorientation. The shared result explicitly has `incompletePreview` capability
-with staging, saving and application unavailable even when detection resolves.
+A facility can span boards: Logic is planned per board (ADR-0020) and may
+move another facility's Logic group to make room. **Edit** reopens the
+editor with every step filled from the saved record and keeps signal
+identities. **Remove** asks for confirmation, naming the slots it resets on
+each board, then resets only the claimed slots and removes the facility and
+its signal channels; the shared blocks and detectors stay.
 
+On the Railroad tab, the facility card draws the same track diagram,
+read-only, with live occupancy. It does not show signal aspects yet.
+
+Automatic Block Signals is additive: Block Indicator facilities, lamps,
+blocks and detectors are unchanged.
+
+The editor uses contained dialog layout: on roomy windows the stepper,
+track context and footer stay put while the step's panes scroll; on narrow
+or short windows one inner workspace scrolls, and cards stack without
+horizontal overflow.
 ---
 
 ## Sources

@@ -75,7 +75,7 @@ Further differential tests changed Logic 1 and then Logic 2 from `On Matching Ev
 
 The restored configuration exposed the root cause. Its earlier conditional pairs used raw Function value `3` for JMRI Logic 2, 4 and 6 even though the C7c CDI defines only `0 = Blocked`, `1 = Group` and `2 = Last (Single)`. Those three entries were intended to terminate preceding groups but appeared as `Reserved value: 3`. A later valid Logic 7 `Group` + Logic 8 `Last (Single)` remained silent even after Logic 7 was corrected from `Blocked` to `Group`. Changing only Logic 2, 4 and 6 from reserved value `3` to `Last (Single)` made the S4r group work correctly.
 
-This establishes a node-wide structural invariant: every active group must use Function values defined by the current CDI, and every run of `Group` entries must reach a valid `Last (Single)` terminator. An undefined Function value in an earlier group can prevent a later, otherwise-valid group from operating. Configuration tooling should flag both an unknown Function enum and any group whose boundary cannot be proven from valid values.
+This establishes a node-wide structural invariant: every active group must use Function values defined by the current CDI, and every run of `Group` entries must reach a valid `Last (Single)` terminator. An undefined Function value in an earlier group can prevent a later, otherwise-valid group from operating. Configuration tooling should flag both an unknown Function enum and any group whose boundary cannot be proven from valid values. In Bowties, the board Logic planner (`bowties-core/src/signaling/logic_placement.rs`, [ADR-0020](../../architecture/adr/0020-board-logic-placement.md)) enforces this: it places no Bowties group on a board whose unowned Logic has an undefined Function value or an unterminated `Group` run, and names the Logic.
 
 ## The Short-Circuit — And Why Your ABS + Occupancy Group Fails
 
@@ -219,6 +219,7 @@ A common beginner failure is leaving `Condition = none`, which silently disables
    > Signal logic never requires looking any further than to the next signal to determine the correct aspect. […] This signal does not need to know why the next is 'stop', it just needs to show 'approach'.
 
    The next signal's `Track Speed` already encodes everything upstream.
+   When a signal protects several joined blocks (an intermediate signal is turned off), each of those blocks is "its own block": Bowties writes one `Group` Stop rung per block before the next-signal rung. A three-rung group (two `Group` Stop rungs, then the next-signal `Last (Single)` rung) worked on the bench (Spec 020, 2026-11-24).
 4. **One group per mast.** Mixing masts, or mixing a mast with unrelated outputs, in one group re-creates the short-circuit problem.
 5. **Latch anything that must persist,** and give every latch an explicit clearer.
 6. **Never share a variable slot between two purposes** — Mark Granville, [#8704](https://groups.io/g/layoutcommandcontrol/message/8704): "You do not set the two variables of a Conditional to the same thing."

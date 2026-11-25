@@ -1,17 +1,23 @@
 import { invoke } from '@tauri-apps/api/core';
 
-export type OfflineChangeKind = 'config' | 'bowtieMetadata' | 'bowtieEvent';
+export type PendingChangeKind = 'config' | 'bowtieMetadata' | 'bowtieEvent';
 
-export interface OfflineChangeInput {
-  kind: OfflineChangeKind;
+export interface PendingChangeInput {
+  kind: PendingChangeKind;
   nodeId?: string;
   space?: number;
   offset?: string;
   baselineValue: string;
   plannedValue: string;
+  origin?: PendingChangeOrigin;
 }
 
-export type OfflineChangeStatus =
+/** Which facility staged a Pending Change row; absent for a hand edit. */
+export interface PendingChangeOrigin {
+  facilityId: string;
+}
+
+export type PendingChangeStatus =
   | 'pending'
   | 'conflict'
   | 'clean'
@@ -20,17 +26,18 @@ export type OfflineChangeStatus =
   | 'applied'
   | 'failed';
 
-export interface OfflineChangeRow {
+export interface PendingChangeRow {
   changeId: string;
-  kind: OfflineChangeKind;
+  kind: PendingChangeKind;
   nodeId?: string;
   space?: number;
   offset?: string;
   baselineValue: string;
   plannedValue: string;
-  status: OfflineChangeStatus;
+  status: PendingChangeStatus;
   error?: string;
   updatedAt?: string;
+  origin?: PendingChangeOrigin;
 }
 
 export type LayoutMatchClassification = 'likely_same' | 'uncertain' | 'likely_different';
@@ -72,21 +79,17 @@ export interface ApplySyncResult {
   readOnlyCleared: string[];
 }
 
-export async function setOfflineChange(change: OfflineChangeInput): Promise<string> {
-  return invoke<string>('set_offline_change', { change });
+export async function setPendingChange(change: PendingChangeInput): Promise<string> {
+  return invoke<string>('set_pending_change', { change });
 }
 
-export async function revertOfflineChange(changeId: string): Promise<{ removed: boolean }> {
-  const removed = await invoke<boolean>('revert_offline_change', { changeId });
+export async function revertPendingChange(changeId: string): Promise<{ removed: boolean }> {
+  const removed = await invoke<boolean>('revert_pending_change', { changeId });
   return { removed };
 }
 
-export async function listOfflineChanges(): Promise<OfflineChangeRow[]> {
-  return invoke<OfflineChangeRow[]>('list_offline_changes');
-}
-
-export async function replaceOfflineChanges(changes: OfflineChangeInput[]): Promise<number> {
-  return invoke<number>('replace_offline_changes', { changes });
+export async function listPendingChanges(): Promise<PendingChangeRow[]> {
+  return invoke<PendingChangeRow[]>('list_pending_changes');
 }
 
 export async function computeLayoutMatchStatus(discoveredNodeIds: string[]): Promise<LayoutMatchStatus> {

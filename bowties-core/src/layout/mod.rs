@@ -21,18 +21,18 @@ pub(crate) mod journal;
 pub mod known_layouts;
 pub mod manifest;
 pub mod node_snapshot;
-pub mod offline_changes;
+pub mod pending_changes;
 pub mod serde_node_id;
 pub mod state;
 pub mod types;
 
 use node_snapshot::NodeSnapshot;
-use offline_changes::OfflineChange;
+use pending_changes::PendingChange;
 
 pub use io::{LayoutDirectoryReadData, LayoutDirectoryWriteData};
 
 /// Save a complete layout: manifest + directory contents
-/// (bowtie metadata, node snapshots, offline changes, CDI files).
+/// (bowtie metadata, node snapshots, pending changes, CDI files).
 ///
 /// Persistence goes through the layout journal (ADR-0006): files are
 /// written in place under a `.save-in-progress` marker so an
@@ -67,9 +67,9 @@ pub fn read_node_snapshot(
 /// The layout directory must already exist (the layout must have been
 /// saved at least once). Routed through the layout journal so a crash
 /// mid-write is recoverable on the next read.
-pub fn update_offline_changes(
+pub fn update_pending_changes(
     layout_dir: &Path,
-    changes: &[OfflineChange],
+    changes: &[PendingChange],
 ) -> Result<(), String> {
     if !layout_dir.exists() {
         return Err(format!(
@@ -262,8 +262,8 @@ mod tests {
     use crate::layout::node_snapshot::{
         CaptureStatus, CdiReference, NodeSnapshot, SnapshotLeafValue, SnipSnapshot,
     };
-    use crate::layout::offline_changes::{
-        OfflineChange, OfflineChangeKind, OfflineChangeStatus,
+    use crate::layout::pending_changes::{
+        PendingChange, PendingChangeKind, PendingChangeStatus,
     };
     use crate::layout::types::LayoutFile;
     use lcc_rs::NodeID;
@@ -311,18 +311,19 @@ mod tests {
         snap
     }
 
-    fn make_change(change_id: &str) -> OfflineChange {
-        OfflineChange {
+    fn make_change(change_id: &str) -> PendingChange {
+        PendingChange {
             change_id: change_id.to_string(),
-            kind: OfflineChangeKind::Config,
+            kind: PendingChangeKind::Config,
             node_key: Some("050101011402".to_string()),
             space: Some(253),
             offset: Some("0x00000010".to_string()),
             baseline_value: "0".to_string(),
             planned_value: "1".to_string(),
-            status: OfflineChangeStatus::Pending,
+            status: PendingChangeStatus::Pending,
             error: None,
             updated_at: "2026-05-23T00:00:00Z".to_string(),
+            origin: None,
         }
     }
 
@@ -336,7 +337,7 @@ mod tests {
             manifest,
             node_snapshots: snapshots,
             bowties: LayoutFile::default(),
-            offline_changes: Vec::new(),
+            pending_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
             facilities: crate::layout::facilities::FacilitiesDocument::default(),
@@ -360,18 +361,53 @@ mod tests {
     }
 
     #[test]
-    fn update_offline_changes_roundtrips_through_read_capture() {
-        let root = fresh_dir("bowties_s2d_offline_changes_roundtrip");
+    fn update_pending_changes_roundtrips_through_read_capture() {
+        let root = fresh_dir("bowties_s2d_pending_changes_roundtrip");
         let layout_dir = root.join("my-layout");
         seed_layout(&layout_dir, vec![make_snapshot("050101011402")]);
 
         let changes = vec![make_change("c1"), make_change("c2")];
-        update_offline_changes(&layout_dir, &changes).unwrap();
+        update_pending_changes(&layout_dir, &changes).unwrap();
 
         let loaded = read_capture(&layout_dir).unwrap();
-        assert_eq!(loaded.offline_changes.len(), 2);
-        assert_eq!(loaded.offline_changes[0].change_id, "c1");
-        assert_eq!(loaded.offline_changes[1].change_id, "c2");
+        assert_eq!(loaded.pending_changes.len(), 2);
+        assert_eq!(loaded.pending_changes[0].change_id, "c1");
+        assert_eq!(loaded.pending_changes[1].change_id, "c2");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn pending_change_origin_roundtrips_and_a_legacy_file_without_it_loads() {
+        use crate::layout::pending_changes::PendingChangeOrigin;
+        let root = fresh_dir("bowties_e5t3_origin_roundtrip");
+        let layout_dir = root.join("my-layout");
+        seed_layout(&layout_dir, vec![make_snapshot("050101011402")]);
+
+        let mut staged = make_change("c1");
+        staged.origin = Some(PendingChangeOrigin { facility_id: "fac-1".to_string() });
+        update_pending_changes(&layout_dir, &[staged, make_change("c2")]).unwrap();
+
+        let loaded = read_capture(&layout_dir).unwrap();
+        assert_eq!(
+            loaded.pending_changes[0].origin,
+            Some(PendingChangeOrigin { facility_id: "fac-1".to_string() })
+        );
+        assert_eq!(loaded.pending_changes[1].origin, None);
+        let text = std::fs::read_to_string(layout_dir.join(io::OFFLINE_CHANGES_FILE)).unwrap();
+        assert_eq!(text.matches("origin").count(), 1, "origin is omitted when None: {text}");
+
+        // A file written before origin existed still loads.
+        let legacy: String = text
+            .lines()
+            .filter(|l| !l.contains("origin") && !l.contains("facilityId"))
+            .collect::<Vec<_>>()
+            .join("
+");
+        std::fs::write(layout_dir.join(io::OFFLINE_CHANGES_FILE), legacy).unwrap();
+        let reloaded = read_capture(&layout_dir).unwrap();
+        assert_eq!(reloaded.pending_changes.len(), 2);
+        assert!(reloaded.pending_changes.iter().all(|c| c.origin.is_none()));
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -420,7 +456,7 @@ mod tests {
         let root = fresh_dir("bowties_s2d_missing_layout_dir");
         let layout_dir = root.join("nope");
         // No seed_layout — directory doesn't exist.
-        let err = update_offline_changes(&layout_dir, &[]).unwrap_err();
+        let err = update_pending_changes(&layout_dir, &[]).unwrap_err();
         assert!(err.contains("not found"), "got: {}", err);
         let err = update_node_snapshots(&layout_dir, &[]).unwrap_err();
         assert!(err.contains("not found"), "got: {}", err);
@@ -465,7 +501,7 @@ mod tests {
             manifest,
             node_snapshots: Vec::new(),
             bowties: LayoutFile::default(),
-            offline_changes: Vec::new(),
+            pending_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: doc.clone(),
             facilities: crate::layout::facilities::FacilitiesDocument::default(),
@@ -496,7 +532,7 @@ mod tests {
             manifest,
             node_snapshots: Vec::new(),
             bowties: LayoutFile::default(),
-            offline_changes: Vec::new(),
+            pending_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
             facilities: crate::layout::facilities::FacilitiesDocument::default(),
@@ -553,6 +589,7 @@ mod tests {
             template_id: "block-indicator".to_string(),
             name: "Block 5".to_string(),
             slot_bindings,
+            block_signals: None,
         }]);
 
         let manifest = LayoutManifest::new(
@@ -564,7 +601,7 @@ mod tests {
             manifest,
             node_snapshots: Vec::new(),
             bowties: LayoutFile::default(),
-            offline_changes: Vec::new(),
+            pending_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels,
             facilities,

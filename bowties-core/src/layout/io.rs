@@ -18,12 +18,13 @@ use std::path::{Path, PathBuf};
 use super::types::LayoutFile;
 use super::manifest::LayoutManifest;
 use super::node_snapshot::NodeSnapshot;
-use super::offline_changes::OfflineChange;
+use super::pending_changes::PendingChange;
 use super::channels::ChannelsDocument;
 use super::facilities::FacilitiesDocument;
 use super::journal::{self, PlannedWrite, PrunePlan, SavePlan, WriteOp};
 
 pub const BOWTIES_FILE: &str = "bowties.yaml";
+/// Legacy file name; holds Pending Changes (kept for layout-format compatibility).
 pub const OFFLINE_CHANGES_FILE: &str = "offline-changes.yaml";
 pub const EVENT_NAMES_FILE: &str = "event-names.yaml";
 pub const CHANNELS_FILE: &str = "channels.yaml";
@@ -137,7 +138,7 @@ pub struct LayoutDirectoryWriteData {
     pub manifest: LayoutManifest,
     pub node_snapshots: Vec<NodeSnapshot>,
     pub bowties: LayoutFile,
-    pub offline_changes: Vec<OfflineChange>,
+    pub pending_changes: Vec<PendingChange>,
     /// List of (cache_key, source_path_to_cdi_file) pairs for CDI files to copy
     pub cdi_files: Vec<(String, std::path::PathBuf)>,
     /// Information channel inventory for the layout.
@@ -151,7 +152,7 @@ pub struct LayoutDirectoryReadData {
     pub manifest: LayoutManifest,
     pub node_snapshots: Vec<NodeSnapshot>,
     pub bowties: LayoutFile,
-    pub offline_changes: Vec<OfflineChange>,
+    pub pending_changes: Vec<PendingChange>,
     /// True when [`read_layout_capture`] rolled back an interrupted
     /// prior save (ADR-0006) before parsing this layout. The frontend
     /// should surface a notice that the previous save was incomplete
@@ -199,7 +200,7 @@ pub fn write_layout_capture(layout_dir: &Path, data: &LayoutDirectoryWriteData) 
     });
     plan.writes.push(PlannedWrite {
         abs_path: layout_dir.join(OFFLINE_CHANGES_FILE),
-        op: WriteOp::Bytes(serialize_yaml(&data.offline_changes)?),
+        op: WriteOp::Bytes(serialize_yaml(&data.pending_changes)?),
     });
     plan.writes.push(PlannedWrite {
         abs_path: layout_dir.join(EVENT_NAMES_FILE),
@@ -211,7 +212,12 @@ pub fn write_layout_capture(layout_dir: &Path, data: &LayoutDirectoryWriteData) 
     });
     plan.writes.push(PlannedWrite {
         abs_path: layout_dir.join(FACILITIES_FILE),
-        op: WriteOp::Bytes(serialize_yaml(&data.facilities)?),
+        // ADR-0005: the document version travels with the manifest, so every
+        // save stamps the current version regardless of what was read.
+        op: WriteOp::Bytes(serialize_yaml(&FacilitiesDocument {
+            schema_version: FacilitiesDocument::SCHEMA_VERSION.to_string(),
+            ..data.facilities.clone()
+        })?),
     });
 
     // Per-node snapshots: also prune extras left over from a previous
@@ -292,7 +298,7 @@ pub fn read_layout_capture(layout_dir: &Path) -> Result<LayoutDirectoryReadData,
     let manifest: LayoutManifest = read_yaml_file(&manifest_path)?;
     manifest.validate()?;
 
-    let (bowties, node_snapshots, offline_changes) = read_companion_contents(layout_dir, &manifest)?;
+    let (bowties, node_snapshots, pending_changes) = read_companion_contents(layout_dir, &manifest)?;
 
     // channels.yaml is optional — pre-015 layouts won't have it.
     let channels_path = layout_dir.join(CHANNELS_FILE);
@@ -321,7 +327,7 @@ pub fn read_layout_capture(layout_dir: &Path) -> Result<LayoutDirectoryReadData,
         manifest,
         node_snapshots,
         bowties,
-        offline_changes,
+        pending_changes,
         recovery_occurred,
         channels,
         facilities,
@@ -332,7 +338,7 @@ pub fn read_layout_capture(layout_dir: &Path) -> Result<LayoutDirectoryReadData,
 fn read_companion_contents(
     root_dir: &Path,
     _manifest: &LayoutManifest,
-) -> Result<(LayoutFile, Vec<NodeSnapshot>, Vec<OfflineChange>), String> {
+) -> Result<(LayoutFile, Vec<NodeSnapshot>, Vec<PendingChange>), String> {
     let bowties_path = root_dir.join(BOWTIES_FILE);
     let bowties: LayoutFile = if bowties_path.exists() {
         read_yaml_file(&bowties_path)?
@@ -340,9 +346,9 @@ fn read_companion_contents(
         LayoutFile::default()
     };
 
-    let offline_changes_path = root_dir.join(OFFLINE_CHANGES_FILE);
-    let offline_changes: Vec<OfflineChange> = if offline_changes_path.exists() {
-        read_yaml_file(&offline_changes_path)?
+    let pending_changes_path = root_dir.join(OFFLINE_CHANGES_FILE);
+    let pending_changes: Vec<PendingChange> = if pending_changes_path.exists() {
+        read_yaml_file(&pending_changes_path)?
     } else {
         Vec::new()
     };
@@ -365,7 +371,7 @@ fn read_companion_contents(
     }
 
     node_snapshots.sort_by(|a, b| a.node_key.cmp(&b.node_key));
-    Ok((bowties, node_snapshots, offline_changes))
+    Ok((bowties, node_snapshots, pending_changes))
 }
 
 /// Locate CDI XML file for a snapshot within a layout directory.
@@ -568,7 +574,7 @@ mod tests {
             manifest,
             node_snapshots: vec![test_node_snapshot("050101011402")],
             bowties: LayoutFile::default(),
-            offline_changes: Vec::new(),
+            pending_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
             facilities: crate::layout::facilities::FacilitiesDocument::default(),
@@ -601,7 +607,7 @@ mod tests {
             manifest,
             node_snapshots: vec![test_node_snapshot("050101011402")],
             bowties: LayoutFile::default(),
-            offline_changes: Vec::new(),
+            pending_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
             facilities: crate::layout::facilities::FacilitiesDocument::default(),
@@ -660,7 +666,7 @@ mod tests {
             manifest,
             node_snapshots: vec![test_node_no_cdi("0201120033CC")],
             bowties: LayoutFile::default(),
-            offline_changes: Vec::new(),
+            pending_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
             facilities: crate::layout::facilities::FacilitiesDocument::default(),
@@ -703,7 +709,7 @@ mod tests {
                 test_node_no_cdi("0201120033CC"),
             ],
             bowties: LayoutFile::default(),
-            offline_changes: Vec::new(),
+            pending_changes: Vec::new(),
             cdi_files: vec![("acme_modelx_1.0".to_string(), cdi_source)],
             channels: crate::layout::channels::ChannelsDocument::default(),
             facilities: crate::layout::facilities::FacilitiesDocument::default(),
@@ -785,7 +791,7 @@ mod tests {
             manifest,
             node_snapshots: vec![placeholder_snap],
             bowties: LayoutFile::default(),
-            offline_changes: Vec::new(),
+            pending_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
             facilities: crate::layout::facilities::FacilitiesDocument::default(),
@@ -838,7 +844,7 @@ mod tests {
             manifest: manifest.clone(),
             node_snapshots: vec![test_node_snapshot("050101011402")],
             bowties: LayoutFile::default(),
-            offline_changes: Vec::new(),
+            pending_changes: Vec::new(),
             cdi_files: vec![("acme_modelx_1.0".to_string(), cdi_source)],
             channels: crate::layout::channels::ChannelsDocument::default(),
             facilities: crate::layout::facilities::FacilitiesDocument::default(),
@@ -850,7 +856,7 @@ mod tests {
             manifest,
             node_snapshots: vec![test_node_snapshot("050101011402")],
             bowties: LayoutFile::default(),
-            offline_changes: Vec::new(),
+            pending_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
             facilities: crate::layout::facilities::FacilitiesDocument::default(),
@@ -900,7 +906,7 @@ mod tests {
             manifest,
             node_snapshots: vec![test_node_snapshot("050101011402")],
             bowties: LayoutFile::default(),
-            offline_changes: Vec::new(),
+            pending_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
             facilities: crate::layout::facilities::FacilitiesDocument::default(),
@@ -941,7 +947,7 @@ mod tests {
             manifest,
             node_snapshots: vec![test_node_snapshot("050101011402")],
             bowties: LayoutFile::default(),
-            offline_changes: Vec::new(),
+            pending_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
             facilities: crate::layout::facilities::FacilitiesDocument::default(),
@@ -1015,7 +1021,7 @@ mod tests {
             manifest: initial_manifest,
             node_snapshots: vec![test_node_snapshot("050101011402")],
             bowties: LayoutFile::default(),
-            offline_changes: Vec::new(),
+            pending_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
             facilities: crate::layout::facilities::FacilitiesDocument::default(),
@@ -1039,7 +1045,7 @@ mod tests {
             manifest: new_manifest,
             node_snapshots: previous.node_snapshots.clone(),
             bowties: LayoutFile::default(),
-            offline_changes: Vec::new(),
+            pending_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
             facilities: crate::layout::facilities::FacilitiesDocument::default(),
@@ -1149,7 +1155,7 @@ mod tests {
             manifest: manifest.clone(),
             node_snapshots: vec![test_node_snapshot("050101011402")],
             bowties: LayoutFile::default(),
-            offline_changes: Vec::new(),
+            pending_changes: Vec::new(),
             cdi_files: Vec::new(),
             channels: crate::layout::channels::ChannelsDocument::default(),
             facilities: crate::layout::facilities::FacilitiesDocument::default(),

@@ -110,3 +110,22 @@ describe('unboundChannelsForRole', () => {
     expect(unbound.map((c) => c.id)).toEqual(['ch-lamp-1']);
   });
 });
+
+describe('channelUsageMap — signal channel on an Automatic Block Signals facility (Spec 020 / E1a)', () => {
+  it('names the facility for a signal channel bound to its signals slot', () => {
+    const sig: InformationChannel = {
+      id: 'ch-sig', name: 'Mast A', role: 'signal-indication', style: 'two-driver-rg-signal',
+      ownership: 'user-owned',
+      binding: { kind: 'signalLccRgOutputs', nodeKey: 'N3', greenOutput: 1, redOutput: 3 },
+    };
+    channelsStore.hydrateBaseline([sig]);
+    facilitiesStore.hydrateBaseline([{
+      facilityId: 'f-abs', templateId: 'automatic-block-signals', name: 'ABS East',
+      slotBindings: { signals: ['ch-sig'] },
+    }]);
+
+    expect(effectiveLayoutStore.channelUsageMap.get('ch-sig')).toEqual([
+      { facilityId: 'f-abs', facilityName: 'ABS East', slotLabel: 'signals' },
+    ]);
+  });
+});

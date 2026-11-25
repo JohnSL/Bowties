@@ -14,7 +14,7 @@
   import HelpTip from './HelpTip.svelte';
   import RowMenu, { type RowMenuItem } from './RowMenu.svelte';
   import { OCCUPANCY_LABEL, occupancyOf, occupancyStatus, type BlockOccupancyMap } from './occupancy';
-  import { endChipLabel } from './aspectText';
+  import { trackInputFor } from './trackInput';
   import { DEFAULT_TURNOUT_SHAPE, type TrackSelection, type TurnoutShape } from './trackGeometry';
 
   let {
@@ -199,19 +199,11 @@
         <p class="empty">No blocks yet. Add an existing detected block to begin.</p>
       {:else}
         <TrackDiagram
-          input={{
-            mode: 'blocks',
-            blocks: view.blocks,
-            direction: view.direction,
-            movements: view.movements,
-            signals: view.preview?.signals ?? [],
-            shapes: view.turnoutShapes,
-            selection,
-            endLabels: {
-              start: endChipLabel('start', view.entranceEnd, view.exitEnd),
-              end: endChipLabel('end', view.entranceEnd, view.exitEnd),
-            },
-          }}
+          input={trackInputFor(
+            { blocks: view.blocks, direction: view.direction, movements: view.movements, entranceEnd: view.entranceEnd, exitEnd: view.exitEnd, signals: view.preview?.signals ?? [], shapes: view.turnoutShapes },
+            'blocks',
+            { selection },
+          )}
           {occupancy}
           onSelectTurnout={(turnoutId) => (selection = { kind: 'turnout', turnoutId })}
           onRestoreBoundary={(blockId) => {
@@ -258,8 +250,8 @@
             <span class="radio-desc">Automatic block signaling (<strong>ABS</strong>) for the selected travel direction. Signals respond to block occupancy and the next signal's restriction.</span>
           </span>
         </label>
-        <label class="radio-choice" class:selected={both}>
-          <input type="radio" name="abs-movements" checked={both} onchange={() => actions.setMovements('bothDirections')} />
+        <label class="radio-choice unavailable" class:selected={both}>
+          <input type="radio" name="abs-movements" checked={both} disabled />
           <span>
             <span class="radio-title">Both directions</span>
             <span class="radio-desc">Signals governing movements in either direction over the same blocks. This alone does not coordinate opposing trains.</span>
@@ -296,7 +288,7 @@
             <input type="radio" name="abs-coordination" disabled />
             <span>
               <span class="radio-title">Coordinate traffic through the single-track section</span>
-              <span class="radio-desc">Absolute Permissive Block (<strong>APB</strong>). Coming in a later release.</span>
+              <span class="radio-desc">Absolute Permissive Block (<strong>APB</strong>).</span>
             </span>
           </label>
         </fieldset>

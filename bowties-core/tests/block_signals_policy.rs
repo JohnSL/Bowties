@@ -481,8 +481,8 @@ fn complete_rg_facts(outputs: Vec<SignalOutput>) -> SignalHardwareFacts {
 
 fn free_outputs() -> Vec<SignalOutput> {
     vec![
-        SignalOutput { ordinal: 1, label: "H1-G".to_string(), owner: None },
-        SignalOutput { ordinal: 2, label: "H1-R".to_string(), owner: None },
+        SignalOutput { ordinal: 1, label: "#1 H1-G".to_string(), owner: None, facility: None },
+        SignalOutput { ordinal: 2, label: "#2 H1-R".to_string(), owner: None, facility: None },
     ]
 }
 
@@ -536,8 +536,8 @@ fn rejects_an_output_that_is_not_in_the_authoritative_host_configuration() {
     let preview = preview_block_signals_with_hardware(
         rg_request(1, 99),
         complete_rg_facts(vec![
-            SignalOutput { ordinal: 1, label: "H1-G".to_string(), owner: None },
-            SignalOutput { ordinal: 2, label: "H1-R".to_string(), owner: None },
+            SignalOutput { ordinal: 1, label: "#1 H1-G".to_string(), owner: None, facility: None },
+            SignalOutput { ordinal: 2, label: "#2 H1-R".to_string(), owner: None, facility: None },
         ]),
     );
 
@@ -553,8 +553,8 @@ fn rejects_an_output_that_is_not_in_the_authoritative_host_configuration() {
 #[test]
 fn rejects_a_style_that_the_selected_host_does_not_declare() {
     let mut facts = complete_rg_facts(vec![
-        SignalOutput { ordinal: 1, label: "H1-G".to_string(), owner: None },
-        SignalOutput { ordinal: 2, label: "H1-R".to_string(), owner: None },
+        SignalOutput { ordinal: 1, label: "#1 H1-G".to_string(), owner: None, facility: None },
+        SignalOutput { ordinal: 2, label: "#2 H1-R".to_string(), owner: None, facility: None },
     ]);
     facts.hosts[0].style.style_id = "single-led-direct-lamp".to_string();
 
@@ -573,8 +573,8 @@ fn rejects_a_style_that_the_selected_host_does_not_declare() {
 #[test]
 fn keeps_a_valid_editor_choice_but_reports_unavailable_hardware_evidence() {
     let mut facts = complete_rg_facts(vec![
-        SignalOutput { ordinal: 1, label: "H1-G".to_string(), owner: None },
-        SignalOutput { ordinal: 2, label: "H1-R".to_string(), owner: None },
+        SignalOutput { ordinal: 1, label: "#1 H1-G".to_string(), owner: None, facility: None },
+        SignalOutput { ordinal: 2, label: "#2 H1-R".to_string(), owner: None, facility: None },
     ]);
     facts.hosts[0].evidence = SignalHardwareEvidence::Unavailable;
     facts.hosts[0].evidence_detail = Some(
@@ -599,11 +599,12 @@ fn reports_insufficient_current_output_capacity_from_complete_configuration() {
     let preview = preview_block_signals_with_hardware(
         rg_request(1, 2),
         complete_rg_facts(vec![
-            SignalOutput { ordinal: 1, label: "H1-G".to_string(), owner: None },
+            SignalOutput { ordinal: 1, label: "#1 H1-G".to_string(), owner: None, facility: None },
             SignalOutput {
                 ordinal: 2,
-                label: "H1-R".to_string(),
-                owner: Some("Existing mast".to_string()),
+                label: "#2 H1-R".to_string(),
+                owner: Some(bowties_core::signaling::SignalOutputOwner::Mast(7)),
+                facility: None,
             },
         ]),
     );
@@ -624,13 +625,14 @@ fn reports_the_current_owner_of_a_selected_conflicting_output() {
     let preview = preview_block_signals_with_hardware(
         rg_request(1, 2),
         complete_rg_facts(vec![
-            SignalOutput { ordinal: 1, label: "H1-G".to_string(), owner: None },
+            SignalOutput { ordinal: 1, label: "#1 H1-G".to_string(), owner: None, facility: None },
             SignalOutput {
                 ordinal: 2,
-                label: "H1-R".to_string(),
-                owner: Some("Existing mast".to_string()),
+                label: "#2 H1-R".to_string(),
+                owner: Some(bowties_core::signaling::SignalOutputOwner::Mast(7)),
+                facility: None,
             },
-            SignalOutput { ordinal: 3, label: "H1-Y".to_string(), owner: None },
+            SignalOutput { ordinal: 3, label: "#3 H1-Y".to_string(), owner: None, facility: None },
         ]),
     );
 
@@ -640,7 +642,7 @@ fn reports_the_current_owner_of_a_selected_conflicting_output() {
             signal_id: WEST_YARD_EAST.to_string(),
             node_key: "05010101FF000101".to_string(),
             output: 2,
-            owner: "Existing mast".to_string(),
+            owner: "Mast 7".to_string(),
         }],
     );
 }

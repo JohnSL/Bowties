@@ -12,15 +12,15 @@
  * Design constraints (from refactor plan):
  * - Purely synchronous. No IPC, no async.
  * - Writes only to configChangesStore, never to the Rust backend.
- * - Online IPC flush is handled by `configDraftMirrorOrchestrator`, mounted
- *   in the layout-open lifecycle (see `+page.svelte`, ADR-0012 2026-07-03
- *   extension). Callers of `applyEdit` do nothing else — the mirror
- *   observes the draft and forwards it to the backend.
+ * - Drafts reach the backend only at Save, as Pending Change rows staged by
+ *   `stageConfigDraftsAsPendingChanges` (configDraftOrchestrator). Callers of
+ *   `applyEdit` do nothing else.
  * - Lives in stores/ because its primary job is coordinating writes into a store.
  */
 
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import type { TreeConfigValue } from '$lib/types/nodeTree';
+import type { PendingChangeOrigin } from '$lib/api/sync';
 
 // ─── ConfigEditor class ───────────────────────────────────────────────────────
 
@@ -32,9 +32,10 @@ class ConfigEditor {
    *
    * @param key - Canonical edit key from editKeyForLeaf()
    * @param value - New value for the field
+   * @param origin - The facility staging the edit; omit for a hand edit
    */
-  applyEdit(key: string, value: TreeConfigValue): void {
-    configChangesStore.set(key, value);
+  applyEdit(key: string, value: TreeConfigValue, origin?: PendingChangeOrigin): void {
+    configChangesStore.set(key, value, origin);
     // Cascade dependency resolution goes here in a future PR
     // when profile cascade rules are authored.
   }

@@ -43,47 +43,20 @@
 
   function formatBreakdown(b: DirtyBreakdown): string[] {
     const out: string[] = [];
-    if (b.config > 0) {
-      const fields = `${b.config} ${plural(b.config, 'config edit')}`;
-      const across = b.configNodes > 0
-        ? ` across ${b.configNodes} ${plural(b.configNodes, 'node')}`
-        : '';
-      out.push(`${fields}${across}`);
+    if (b.configChanges > 0) {
+      out.push(`${b.configChanges} configuration ${plural(b.configChanges, 'change')}`);
     }
-    if (b.metadata > 0) {
-      out.push(`${b.metadata} bowtie metadata ${plural(b.metadata, 'edit')}`);
-    }
-    if (b.facilities > 0) {
-      out.push(`${b.facilities} facility ${plural(b.facilities, 'edit')}`);
-    }
-    if (b.channels > 0) {
-      out.push(`${b.channels} channel ${plural(b.channels, 'edit')}`);
-    }
-    if (b.connectorSelections > 0) {
-      out.push(
-        `${b.connectorSelections} connector selection ${plural(b.connectorSelections, 'change')}`,
-      );
-    }
-    if (b.offlineDrafts > 0) {
-      out.push(`${b.offlineDrafts} offline ${plural(b.offlineDrafts, 'draft')}`);
-    }
-    if (b.offlineRevertedPersisted > 0) {
-      out.push(
-        `${b.offlineRevertedPersisted} reverted persisted ${plural(b.offlineRevertedPersisted, 'change')}`,
-      );
-    }
-    if (b.layoutStruct > 0) {
-      out.push('layout structure edits');
-    }
-    if (b.unsavedNewNodes > 0) {
-      out.push(
-        `${b.unsavedNewNodes} new ${plural(b.unsavedNewNodes, 'node')} not yet added to the layout`,
-      );
-    }
-    if (b.unsavedRemovedNodes > 0) {
-      out.push(
-        `${b.unsavedRemovedNodes} ${plural(b.unsavedRemovedNodes, 'node')} removed but not yet saved`,
-      );
+    // Other (layout) edits are listed without numbers.
+    if (b.metadata > 0) out.push('Bowtie names');
+    if (b.facilities > 0) out.push('Facility edits');
+    if (b.channels > 0) out.push('Channel edits');
+    if (b.connectorSelections > 0) out.push('Connector selections');
+    if (b.layoutStruct > 0) out.push('Layout structure edits');
+    if (b.unsavedNewNodes > 0) out.push('New nodes not yet added to the layout');
+    if (b.unsavedRemovedNodes > 0) out.push('Removed nodes not yet saved');
+    // Saved in the layout but not yet written to the board (not unsaved).
+    if (b.waitingPendingChanges > 0) {
+      out.push(`${b.waitingPendingChanges} waiting to be written to the board`);
     }
     return out;
   }

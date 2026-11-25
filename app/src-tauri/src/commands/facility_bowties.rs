@@ -103,6 +103,12 @@ pub async fn compose_facility_bowties(
             )
         })?;
 
+    // Templates without a state mapping (Automatic Block Signals) compose
+    // nothing; skip before the bowtie-only slot and CDI lookups below.
+    if !template.composes_bowties() {
+        return Ok(Vec::new());
+    }
+
     // Snapshot channels.
     let channels: Vec<InformationChannel> = layout_state.effective_channels().channels.clone();
 

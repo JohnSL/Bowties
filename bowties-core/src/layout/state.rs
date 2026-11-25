@@ -20,10 +20,11 @@ use crate::layout::facilities::FacilitiesDocument;
 use crate::layout::io::LayoutDirectoryReadData;
 use crate::layout::manifest::LayoutManifest;
 use crate::layout::node_snapshot::NodeSnapshot;
-use crate::layout::offline_changes::OfflineChange;
+use crate::layout::pending_changes::PendingChange;
 use crate::layout::types::LayoutFile;
 use crate::node_key::NodeKey;
-use crate::node_tree::NodeConfigTree;
+use crate::node_tree::{ConfigNode, LeafNode, NodeConfigTree};
+use crate::signaling::slots::DraftEdit;
 
 /// Persisted-on-disk data for one node in the open layout.
 ///
@@ -67,6 +68,10 @@ pub struct CapturedNode {
 pub struct DraftLayer {
     pub pending_facilities: Option<FacilitiesDocument>,
     pub pending_channels: Option<ChannelsDocument>,
+    /// Unsaved configuration edits (frontend `configChangesStore` drafts),
+    /// addressed by node + space + address. Laid over the stored trees by
+    /// [`LayoutState::effective_config_tree`]; never written into them.
+    pub pending_config: Vec<DraftEdit>,
 }
 
 /// Error surface of [`LayoutState::sync_drafts`]. Wraps the two
@@ -98,7 +103,7 @@ pub struct LayoutState {
     bowties: LayoutFile,
     channels: ChannelsDocument,
     facilities: FacilitiesDocument,
-    offline_changes: Vec<OfflineChange>,
+    pending_changes: Vec<PendingChange>,
     captured: HashMap<NodeKey, CapturedNode>,
     drafts: DraftLayer,
     discovered_roles: BTreeMap<String, crate::layout::types::RoleClassification>,
@@ -123,7 +128,7 @@ impl LayoutState {
             manifest,
             node_snapshots,
             bowties,
-            offline_changes,
+            pending_changes,
             recovery_occurred: _,
             channels,
             facilities,
@@ -155,7 +160,7 @@ impl LayoutState {
             bowties,
             channels,
             facilities,
-            offline_changes,
+            pending_changes,
             captured: HashMap::new(),
             drafts: DraftLayer::default(),
             discovered_roles: BTreeMap::new(),
@@ -210,8 +215,8 @@ impl LayoutState {
             .unwrap_or(&self.channels)
     }
 
-    pub fn offline_changes(&self) -> &[OfflineChange] {
-        &self.offline_changes
+    pub fn pending_changes(&self) -> &[PendingChange] {
+        &self.pending_changes
     }
 
     /// Iterator over the keys of every node persisted in the open layout
@@ -292,10 +297,10 @@ impl LayoutState {
     }
 
     /// Update the saved-layer snapshot's config baseline for a single
-    /// address. Called after `write_modified_values` successfully writes
-    /// a leaf to the bus so the snapshot stays in sync with the committed
-    /// tree values. Without this, a Phase 3 reconcile re-save would
-    /// overwrite the disk snapshot with the stale pre-write baseline.
+    /// address. Called after a Save or Sync apply writes a leaf to the bus so
+    /// the snapshot stays in sync with the committed tree values. Without
+    /// this, a reconcile re-save would overwrite the disk snapshot with the
+    /// stale pre-write baseline.
     pub fn update_snapshot_config(
         &mut self,
         key: &NodeKey,
@@ -375,6 +380,55 @@ impl LayoutState {
         Ok(())
     }
 
+    /// Replace the pending configuration drafts. Callers send the complete
+    /// current set on every sync, so repeating a call is idempotent.
+    pub fn sync_config_drafts(&mut self, drafts: Vec<DraftEdit>) {
+        self.drafts.pending_config = drafts;
+    }
+
+    /// The node's configuration tree as the user currently sees it. Precedence,
+    /// lowest first: saved/captured value, pending Config changes, synced config
+    /// drafts.
+    /// Computed on a clone; the stored tree is never mutated. Borrowed when
+    /// nothing overlays the node.
+    pub fn effective_config_tree(&self, key: &NodeKey) -> Option<std::borrow::Cow<'_, NodeConfigTree>> {
+        use crate::layout::pending_changes::PendingChangeKind;
+        let stored = self.config_tree(key)?;
+        let is_this_node = |raw: &str| NodeKey::parse(raw).ok().as_ref() == Some(key);
+        let offline: Vec<(u8, u32, &str)> = self
+            .pending_changes
+            .iter()
+            .filter(|c| c.kind == PendingChangeKind::Config && c.status.is_waiting())
+            .filter(|c| c.node_key.as_deref().is_some_and(is_this_node))
+            .filter_map(|c| {
+                let offset = c.offset.as_deref()?;
+                let address = u32::from_str_radix(
+                    offset.trim_start_matches("0x").trim_start_matches("0X"),
+                    16,
+                )
+                .ok()?;
+                Some((c.space?, address, c.planned_value.as_str()))
+            })
+            .collect();
+        let drafts: Vec<&DraftEdit> =
+            self.drafts.pending_config.iter().filter(|d| is_this_node(&d.node_key)).collect();
+        if offline.is_empty() && drafts.is_empty() {
+            return Some(std::borrow::Cow::Borrowed(stored));
+        }
+        let mut tree = stored.clone();
+        for (space, address, planned) in offline {
+            let parsed = find_leaf_at(&tree, space, address)
+                .and_then(|leaf| crate::sync::field_meta::string_to_config_value(planned, leaf));
+            if let Some(value) = parsed {
+                crate::node_tree::update_leaf_value(&mut tree, space, address, value);
+            }
+        }
+        for draft in drafts {
+            crate::node_tree::update_leaf_value(&mut tree, draft.space, draft.address, draft.value.clone());
+        }
+        Some(std::borrow::Cow::Owned(tree))
+    }
+
     /// Drop the drafts layer. Called after save (drafts have been folded
     /// into the saved layer + written to disk) and on frontend Discard.
     pub fn clear_drafts(&mut self) {
@@ -410,8 +464,52 @@ impl LayoutState {
         &mut self.channels
     }
 
-    pub fn set_offline_changes(&mut self, changes: Vec<OfflineChange>) {
-        self.offline_changes = changes;
+    pub fn set_pending_changes(&mut self, changes: Vec<PendingChange>) {
+        self.pending_changes = changes;
+    }
+
+    /// Insert a Pending Change, or reset the existing row for the same target
+    /// to Pending with the new planned value (keeping its id). Returns the
+    /// id of the row that now holds the change.
+    pub fn upsert_pending_change(&mut self, change: PendingChange) -> String {
+        if let Some(existing) = self
+            .pending_changes
+            .iter_mut()
+            .find(|c| crate::sync::changes::same_change_target(c, &change))
+        {
+            existing.planned_value = change.planned_value;
+            existing.updated_at = change.updated_at;
+            existing.status = crate::layout::pending_changes::PendingChangeStatus::Pending;
+            existing.error = None;
+            existing.origin = change.origin;
+            existing.change_id.clone()
+        } else {
+            let id = change.change_id.clone();
+            self.pending_changes.push(change);
+            id
+        }
+    }
+
+    /// Remove the rows whose ids are in `ids`; returns how many were removed.
+    pub fn remove_pending_changes(&mut self, ids: &std::collections::HashSet<String>) -> usize {
+        crate::sync::changes::remove_changes_by_id(&mut self.pending_changes, ids)
+    }
+
+    /// Apply a writer's per-row results: replace each row in `updated` that is
+    /// still present (matched by id), then remove the `cleared` rows. Returns
+    /// the number of rows left.
+    pub fn apply_pending_row_results(
+        &mut self,
+        updated: Vec<PendingChange>,
+        cleared: &std::collections::HashSet<String>,
+    ) -> usize {
+        for next in updated {
+            if let Some(row) = self.pending_changes.iter_mut().find(|r| r.change_id == next.change_id) {
+                *row = next;
+            }
+        }
+        self.remove_pending_changes(cleared);
+        self.pending_changes.len()
     }
 
     /// Record protocol-discovered role classifications.
@@ -437,9 +535,21 @@ impl LayoutState {
     }
 }
 
+fn find_leaf_at(tree: &NodeConfigTree, space: u8, address: u32) -> Option<&LeafNode> {
+    fn walk(nodes: &[ConfigNode], space: u8, address: u32) -> Option<&LeafNode> {
+        nodes.iter().find_map(|node| match node {
+            ConfigNode::Leaf(l) if l.space == space && l.address == address => Some(l),
+            ConfigNode::Leaf(_) => None,
+            ConfigNode::Group(g) => walk(&g.children, space, address),
+        })
+    }
+    tree.segments.iter().find_map(|s| walk(&s.children, space, address))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::node_tree::ConfigValue;
     use crate::layout::node_snapshot::{
         CaptureStatus, CdiReference, NodeSnapshot, NodeSnapshotLifecycle, SnipSnapshot,
     };
@@ -493,7 +603,7 @@ mod tests {
             },
             node_snapshots: snapshots,
             bowties: LayoutFile::default(),
-            offline_changes: Vec::new(),
+            pending_changes: Vec::new(),
             recovery_occurred: false,
             channels: ChannelsDocument::default(),
             facilities: FacilitiesDocument::default(),
@@ -746,6 +856,7 @@ mod tests {
                     ("input".to_string(), Vec::new()),
                     ("output".to_string(), Vec::new()),
                 ]),
+                block_signals: None,
             },
         }
     }
@@ -919,6 +1030,240 @@ mod tests {
         // Now config_tree returns it via captured-over-saved precedence.
         let tree = state.config_tree(&key).expect("tree stored");
         assert_eq!(tree.node_id, "02.01.57.00.02.D9");
+    }
+
+    // ── Effective configuration (saved < pending offline < config drafts) ──
+
+    const CFG_NODE: &str = "0201570002D9";
+    const CFG_SPACE: u8 = 253;
+    const CFG_ADDR: u32 = 100;
+
+    fn int_leaf_tree(committed: i64) -> NodeConfigTree {
+        use crate::node_tree::{ConfigNode, SegmentNode};
+        use crate::sync::field_meta::{field_meta_to_leaf, FieldMeta};
+        let mut leaf = field_meta_to_leaf(
+            &FieldMeta {
+                leaf_type: crate::node_tree::LeafType::Int,
+                size: 1,
+                field_label: String::new(),
+            },
+            CFG_SPACE,
+            CFG_ADDR,
+        );
+        leaf.name = "Mast Processing".to_string();
+        leaf.value = Some(ConfigValue::Int { value: committed });
+        let mut tree = minimal_tree("02.01.57.00.02.D9");
+        tree.segments.push(SegmentNode {
+            name: "Rule to Aspect".to_string(),
+            description: None,
+            origin: 0,
+            space: CFG_SPACE,
+            children: vec![ConfigNode::Leaf(leaf)],
+        });
+        tree
+    }
+
+    fn cfg_state(committed: i64) -> LayoutState {
+        let key = NodeKey::parse(CFG_NODE).unwrap();
+        LayoutState::from_loaded(
+            PathBuf::from("/tmp"),
+            loaded_with(vec![live_snapshot(CFG_NODE)]),
+            HashMap::new(),
+            HashMap::from([(key, int_leaf_tree(committed))]),
+        )
+    }
+
+    fn cfg_draft(node: &str, value: i64) -> crate::signaling::slots::DraftEdit {
+        crate::signaling::slots::DraftEdit {
+            node_key: node.to_string(),
+            space: CFG_SPACE,
+            address: CFG_ADDR,
+            value: ConfigValue::Int { value },
+        }
+    }
+
+    fn offline_cfg(
+        node: &str,
+        planned: &str,
+        status: crate::layout::pending_changes::PendingChangeStatus,
+    ) -> PendingChange {
+        PendingChange {
+            change_id: format!("c-{planned}-{status:?}"),
+            kind: crate::layout::pending_changes::PendingChangeKind::Config,
+            node_key: Some(node.to_string()),
+            space: Some(CFG_SPACE),
+            offset: Some("0x00000064".to_string()),
+            baseline_value: "1".to_string(),
+            planned_value: planned.to_string(),
+            status,
+            error: None,
+            updated_at: "2026-06-28T00:00:00Z".to_string(),
+            origin: None,
+        }
+    }
+
+    fn effective_int(state: &LayoutState, node: &str) -> Option<i64> {
+        let key = NodeKey::parse(node).unwrap();
+        let tree = state.effective_config_tree(&key)?;
+        let leaf = match &tree.segments[0].children[0] {
+            crate::node_tree::ConfigNode::Leaf(l) => l,
+            _ => unreachable!(),
+        };
+        match leaf.value.as_ref() {
+            Some(ConfigValue::Int { value }) => Some(*value),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn effective_config_draft_overrides_saved_without_mutating_stored_tree() {
+        let mut state = cfg_state(1);
+        state.sync_config_drafts(vec![cfg_draft(CFG_NODE, 0)]);
+        assert_eq!(effective_int(&state, CFG_NODE), Some(0));
+        let key = NodeKey::parse(CFG_NODE).unwrap();
+        match &state.config_tree(&key).unwrap().segments[0].children[0] {
+            crate::node_tree::ConfigNode::Leaf(l) => assert_eq!(l.value, Some(ConfigValue::Int { value: 1 })),
+            _ => unreachable!(),
+        }
+        // Idempotent: the same set again yields the same view.
+        state.sync_config_drafts(vec![cfg_draft(CFG_NODE, 0)]);
+        assert_eq!(effective_int(&state, CFG_NODE), Some(0));
+    }
+
+    #[test]
+    fn effective_config_pending_change_overrides_saved_and_drafts_override_it() {
+        use crate::layout::pending_changes::PendingChangeStatus;
+        let mut state = cfg_state(1);
+        state.set_pending_changes(vec![offline_cfg(CFG_NODE, "0", PendingChangeStatus::Pending)]);
+        assert_eq!(effective_int(&state, CFG_NODE), Some(0));
+        state.sync_config_drafts(vec![cfg_draft(CFG_NODE, 2)]);
+        assert_eq!(effective_int(&state, CFG_NODE), Some(2));
+    }
+
+    #[test]
+    fn effective_config_keeps_showing_the_planned_value_of_failed_and_conflict_rows() {
+        use crate::layout::pending_changes::PendingChangeStatus;
+        for status in [PendingChangeStatus::Failed, PendingChangeStatus::Conflict] {
+            let mut state = cfg_state(1);
+            state.set_pending_changes(vec![offline_cfg(CFG_NODE, "0", status.clone())]);
+            assert_eq!(effective_int(&state, CFG_NODE), Some(0), "{status:?}");
+        }
+    }
+
+    #[test]
+    fn effective_config_ignores_applied_and_other_node_changes() {
+        use crate::layout::pending_changes::PendingChangeStatus;
+        let mut state = cfg_state(1);
+        state.set_pending_changes(vec![
+            offline_cfg(CFG_NODE, "0", PendingChangeStatus::Applied),
+            offline_cfg("020157100997", "7", PendingChangeStatus::Pending),
+        ]);
+        state.sync_config_drafts(vec![cfg_draft("020157100997", 9)]);
+        assert_eq!(effective_int(&state, CFG_NODE), Some(1));
+    }
+
+    #[test]
+    fn upsert_pending_change_resets_same_target_row_to_pending_and_keeps_its_id() {
+        use crate::layout::pending_changes::PendingChangeStatus;
+        let mut state = cfg_state(1);
+        let mut existing = offline_cfg(CFG_NODE, "0", PendingChangeStatus::Skipped);
+        existing.error = Some("refused".to_string());
+        let existing_id = existing.change_id.clone();
+        state.set_pending_changes(vec![existing]);
+
+        let incoming = offline_cfg(CFG_NODE, "3", PendingChangeStatus::Pending);
+        let id = state.upsert_pending_change(incoming);
+
+        assert_eq!(id, existing_id);
+        assert_eq!(state.pending_changes().len(), 1);
+        let row = &state.pending_changes()[0];
+        assert_eq!(row.planned_value, "3");
+        assert_eq!(row.status, PendingChangeStatus::Pending);
+        assert_eq!(row.error, None);
+    }
+
+    #[test]
+    fn upsert_pending_change_takes_the_incoming_origin_so_a_hand_edit_clears_it() {
+        use crate::layout::pending_changes::{PendingChangeOrigin, PendingChangeStatus};
+        let mut state = cfg_state(1);
+        let mut existing = offline_cfg(CFG_NODE, "0", PendingChangeStatus::Pending);
+        existing.origin = Some(PendingChangeOrigin { facility_id: "fac-1".to_string() });
+        state.set_pending_changes(vec![existing]);
+
+        state.upsert_pending_change(offline_cfg(CFG_NODE, "3", PendingChangeStatus::Pending));
+        assert_eq!(state.pending_changes()[0].origin, None);
+
+        let mut staged = offline_cfg(CFG_NODE, "4", PendingChangeStatus::Pending);
+        staged.origin = Some(PendingChangeOrigin { facility_id: "fac-2".to_string() });
+        state.upsert_pending_change(staged);
+        assert_eq!(
+            state.pending_changes()[0].origin,
+            Some(PendingChangeOrigin { facility_id: "fac-2".to_string() })
+        );
+    }
+
+    #[test]
+    fn upsert_pending_change_appends_when_target_is_new() {
+        use crate::layout::pending_changes::PendingChangeStatus;
+        let mut state = cfg_state(1);
+        state.set_pending_changes(vec![offline_cfg(CFG_NODE, "0", PendingChangeStatus::Pending)]);
+
+        let incoming = offline_cfg("020157100997", "7", PendingChangeStatus::Pending);
+        let incoming_id = incoming.change_id.clone();
+        let id = state.upsert_pending_change(incoming);
+
+        assert_eq!(id, incoming_id);
+        assert_eq!(state.pending_changes().len(), 2);
+    }
+
+    #[test]
+    fn remove_pending_changes_drops_only_the_named_rows() {
+        use crate::layout::pending_changes::PendingChangeStatus;
+        let mut state = cfg_state(1);
+        let keep = offline_cfg(CFG_NODE, "0", PendingChangeStatus::Pending);
+        let drop_a = offline_cfg(CFG_NODE, "1", PendingChangeStatus::Applied);
+        let drop_b = offline_cfg("020157100997", "7", PendingChangeStatus::Pending);
+        let ids: std::collections::HashSet<String> =
+            [drop_a.change_id.clone(), drop_b.change_id.clone(), "unknown".to_string()].into();
+        let keep_id = keep.change_id.clone();
+        state.set_pending_changes(vec![keep, drop_a, drop_b]);
+
+        let removed = state.remove_pending_changes(&ids);
+
+        assert_eq!(removed, 2);
+        assert_eq!(state.pending_changes().len(), 1);
+        assert_eq!(state.pending_changes()[0].change_id, keep_id);
+    }
+
+    #[test]
+    fn apply_pending_row_results_replaces_updated_rows_and_removes_cleared_ones() {
+        use crate::layout::pending_changes::PendingChangeStatus;
+        let mut state = cfg_state(1);
+        let untouched = offline_cfg(CFG_NODE, "0", PendingChangeStatus::Pending);
+        let refused = offline_cfg(CFG_NODE, "1", PendingChangeStatus::Pending);
+        let done = offline_cfg(CFG_NODE, "2", PendingChangeStatus::Pending);
+        let mut refused_after = refused.clone();
+        refused_after.status = PendingChangeStatus::Conflict;
+        refused_after.error = Some("The board kept 5".to_string());
+        let cleared: std::collections::HashSet<String> = [done.change_id.clone()].into();
+        state.set_pending_changes(vec![untouched.clone(), refused, done]);
+
+        let remaining = state.apply_pending_row_results(vec![refused_after], &cleared);
+
+        assert_eq!(remaining, 2);
+        let rows = state.pending_changes();
+        assert_eq!(rows[0].change_id, untouched.change_id);
+        assert_eq!(rows[0].status, PendingChangeStatus::Pending);
+        assert_eq!(rows[1].status, PendingChangeStatus::Conflict);
+        assert_eq!(rows[1].error.as_deref(), Some("The board kept 5"));
+    }
+
+    #[test]
+    fn clear_drafts_drops_config_drafts() {
+        let mut state = cfg_state(1);
+        state.sync_config_drafts(vec![cfg_draft(CFG_NODE, 0)]);
+        state.clear_drafts();
+        assert_eq!(effective_int(&state, CFG_NODE), Some(1));
     }
 
     // ── Discovered roles (catalog-merge elimination) ───────────────────────

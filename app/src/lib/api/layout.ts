@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { NodeConfigTree } from '$lib/types/nodeTree';
+import type { NodeConfigTree, TreeConfigValue } from '$lib/types/nodeTree';
 import type { LayoutFile, LayoutEditDelta } from '$lib/types/bowtie';
 import { toCanonicalNodeKey, type NodeKeyInput } from '$lib/utils/nodeKey';
 
@@ -34,7 +34,7 @@ export interface OpenLayoutResult {
   offlineMode: boolean;
   nodeCount: number;
   partialNodes: string[];
-  pendingOfflineChangeCount: number;
+  pendingChangeCount: number;
   nodeSnapshots: OfflineNodeSnapshot[];
   /**
    * True when the layout journal rolled back an interrupted prior
@@ -101,19 +101,26 @@ export interface NewLayoutResult {
   createdAt: string;
 }
 
-export interface WriteModifiedResult {
-  total: number;
-  succeeded: number;
+/** Outcome counts of the connected Save's Phase 2 (rows this Save recorded). */
+export interface SaveWriteCounts {
+  /** Rows the board accepted a write for, with no readback (removed from the Pending Changes). */
+  written: number;
+  /** Write failed (row becomes `failed`). */
   failed: number;
-  readOnlyRejected: number;
+  /** Field is read-only on the board (row cleared). */
+  readOnly: number;
+  /** Rows still waiting after the Save (including rows recorded by earlier Saves). */
+  waiting: number;
 }
 
 /** Result of `save_layout_with_bus_writes` — the three-phase save command. */
 export interface SaveWithBusWriteResult {
   /** Layout was successfully saved to disk. */
   layoutSaved: boolean;
-  /** Bus write outcome (null if offline or no pending writes). */
-  busWrites: WriteModifiedResult | null;
+  /** Per-row outcome of the bus writes for the change IDs this Save recorded. */
+  writeCounts: SaveWriteCounts;
+  /** One human-readable reason per refused, failed or conflicting row. */
+  writeErrors: string[];
   /** Whether a reconcile re-save was performed (≥1 bus write succeeded). */
   reconciled: boolean;
   /** Whether the bowtie catalog was rebuilt by the backend. */
@@ -127,6 +134,8 @@ export interface SaveWithBusWriteResult {
   /** Node snapshots written to disk. Cached by the page so disconnect can
    *  rehydrate the offline view without re-opening the layout. */
   nodeSnapshots: OfflineNodeSnapshot[];
+  /** Nodes whose config trees the bus writes changed; reload them before clearing drafts. */
+  writtenNodeIds: string[];
 }
 
 export async function captureLayoutSnapshot(includeProducerEvents = true): Promise<CaptureSummary> {
@@ -142,6 +151,14 @@ export async function saveLayoutDirectory(
   return invoke<SaveLayoutResult>('save_layout_directory', { path, overwrite, deltas });
 }
 
+/** An unsaved configuration edit, as the backend's effective-configuration view keys it. */
+export interface ConfigDraftEdit {
+  nodeKey: string;
+  space: number;
+  address: number;
+  value: TreeConfigValue;
+}
+
 /**
  * Spec 018 / S6 bugfix — mirror the frontend's currently-collected
  * `LayoutEditDelta`s into `LayoutState.drafts` on the backend so read
@@ -152,8 +169,11 @@ export async function saveLayoutDirectory(
  * Used by the facility bowtie composition path (`composeFacilityBowties`),
  * which reads facility + channel state through `LayoutState.effective_*`.
  */
-export async function syncLayoutDrafts(deltas: LayoutEditDelta[]): Promise<void> {
-  await invoke('sync_layout_drafts', { deltas });
+export async function syncLayoutDrafts(
+  deltas: LayoutEditDelta[],
+  configDrafts: ConfigDraftEdit[] = [],
+): Promise<void> {
+  await invoke('sync_layout_drafts', { deltas, configDrafts });
 }
 
 /**
@@ -165,13 +185,22 @@ export async function clearLayoutDrafts(): Promise<void> {
   await invoke('clear_layout_drafts');
 }
 
-/** Three-phase save: layout first, then bus writes (if connected), then reconcile. */
+/**
+ * Three-phase save: layout first, then bus writes (if connected) for exactly
+ * `recordedChangeIds` (the Pending Change rows this Save recorded), then reconcile.
+ */
 export async function saveLayoutWithBusWrites(
   path: string,
   deltas: LayoutEditDelta[] = [],
+  recordedChangeIds: string[] = [],
   overwrite = true,
 ): Promise<SaveWithBusWriteResult> {
-  return invoke<SaveWithBusWriteResult>('save_layout_with_bus_writes', { path, overwrite, deltas });
+  return invoke<SaveWithBusWriteResult>('save_layout_with_bus_writes', {
+    path,
+    overwrite,
+    deltas,
+    recordedChangeIds,
+  });
 }
 
 /** Open a layout from its `.layout` manifest path. */

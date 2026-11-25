@@ -281,9 +281,7 @@ impl LiveNodeProxy {
                     // CDI XML, config values, and config tree are all backed
                     // by NV memory — they survive a node reboot and stay
                     // valid across reinit.  Clearing them here would force
-                    // set_modified_value / get_node_tree to rebuild from CDI
-                    // without values, zeroing every field the user hasn't
-                    // just edited.
+                    // get_node_tree to rebuild from CDI without values.
                 }
                 ProxyMessage::Shutdown => {
                     break;

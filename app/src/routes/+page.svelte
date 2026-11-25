@@ -54,9 +54,10 @@
   import MissingCaptureBadge from '$lib/components/Layout/MissingCaptureBadge.svelte';
   import ConnectionManager from '$lib/ConnectionManager.svelte';
   import { connectionRequestStore } from '$lib/stores/connectionRequest.svelte';
-   import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+   import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
   import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
   import { configFocusStore } from '$lib/stores/configFocus.svelte';
+  import { syncReviewRequestStore } from '$lib/stores/syncReviewRequest.svelte';
   import { setPillSelection } from '$lib/stores/pillSelection';
   import { layoutOpenInProgress, layoutOpenStatusText, failLayoutOpen, resetLayoutOpenPhase } from '$lib/stores/layoutOpenLifecycle';
   import {
@@ -94,7 +95,7 @@
   import { syncPanelStore } from '$lib/stores/syncPanel.svelte';
   import OfflineBanner from '$lib/components/Layout/OfflineBanner.svelte';
   import { saveLayoutOrchestrated, type SaveLayoutOrchestratedArgs } from '$lib/orchestration/saveLayoutOrchestrator';
-  import { stageDraftsForOfflineSave } from '$lib/orchestration/configDraftOrchestrator';
+  import { stageConfigDraftsAsPendingChanges } from '$lib/orchestration/configDraftOrchestrator';
   import { normalizeLayoutTitle } from '$lib/utils/layoutPath';
   import { formatNodeId, nodeIdStringToBytes, normalizeNodeId } from '$lib/utils/nodeId';
   import { canonicalizeNodeId } from '$lib/utils/nodeRoster';
@@ -107,7 +108,6 @@
   import { eventStateStore } from '$lib/stores/eventState.svelte';
   import * as facilityOrchestrator from '$lib/orchestration/facilityOrchestrator';
   import { facilityCascadeOrchestrator } from '$lib/orchestration/facilityCascadeOrchestrator.svelte';
-  import { configDraftMirrorOrchestrator } from '$lib/orchestration/configDraftMirrorOrchestrator.svelte';
   import SelectChannelPicker from '$lib/components/Facilities/SelectChannelPicker.svelte';
   import AddChannelPicker from '$lib/components/Facilities/AddChannelPicker.svelte';
   import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
@@ -267,15 +267,9 @@
   // Spec 018 / S6 (D3): mount the hardware-channel cascade orchestrator once
   // per open layout. The orchestrator itself is idempotent; the
   // `layoutLifecycleOrchestrator.resetForNewLayout()` path stops it on close.
-  //
-  // ADR-0012 2026-07-03 extension: also mount the config draft backend
-  // mirror so every draft producer (facility composition, teardown resets,
-  // load-time repair, edit rows) flows through a single reactive owner and
-  // reaches `NodeProxy.modified_value` on connected save.
   $effect(() => {
     if (layoutStore.activeContext) {
       facilityCascadeOrchestrator.startCascade();
-      configDraftMirrorOrchestrator.startMirror();
     }
   });
 
@@ -651,13 +645,11 @@
 
       const deltas = collectAllSaveDeltas();
 
-      // Offline mode owns draft staging: promote config drafts into the
-      // offline-change channel before the orchestrator runs. The component
+      // Every Save (offline or connected) promotes config drafts into Pending
+      // Change rows before the orchestrator runs (E3b D1). The component
       // (SaveControls) no longer reaches into draft state — it just calls
       // `onSave()` and trusts the page/orchestrator to do the right thing.
-      if (layoutStore.isOfflineMode) {
-        stageDraftsForOfflineSave();
-      }
+      stageConfigDraftsAsPendingChanges();
 
       const sharedOrchestratorArgs = {
         clearMetadata: () => {
@@ -667,15 +659,13 @@
         markClean: () => layoutStore.markClean(),
         hydrateLayout: (layout: import('$lib/types/bowtie').LayoutFile) =>
           layoutStore.hydrateFromBackend(layout),
-        flushPending: layoutStore.isOfflineMode
-          ? async () => { await offlineChangesStore.flushPendingToBackend(); }
-          : undefined,
+        recordPending: () => pendingChangesStore.recordDraftsToBackend(),
         setActiveContext: (ctx: import('$lib/stores/layout.svelte').ActiveLayoutContext) =>
           layoutStore.setActiveContext(ctx),
         updatePartialCaptureNodes: (warnings: string[]) => {
           partialCaptureNodesStore.replace(warnings);
         },
-        getPendingChangeCount: () => offlineChangesStore.pendingCount,
+        getPendingChangeCount: () => pendingChangesStore.pendingCount,
         // ADR-0004 (S2c): drop config drafts that are now persisted on disk so
         // the effective read model never observes a stale draft after the
         // catalog has been rebuilt from the saved layout.
@@ -693,17 +683,20 @@
           nodeRoster.markPlaceholdersPersisted(nodeKeys);
         },
         clearPersistedRemovals: () => nodeRoster.clearPersistedRemovals(),
-        // Offline mode only: the backend rewrites pending offline changes
-        // during the save, so the frontend mirror must be re-pulled before
-        // the UI settles. Online mode omits this callback.
-        reloadOfflineChanges: layoutStore.isOfflineMode
-          ? async () => { await offlineChangesStore.reloadFromBackend(); }
-          : undefined,
+        // The backend rewrites pending changes during the save (applied rows
+        // removed, refused / failed / conflict rows with a reason), so the
+        // frontend mirror is re-pulled before the UI settles.
+        reloadPendingChanges: async () => { await pendingChangesStore.reloadFromBackend(); },
+        // The write committed values in the backend trees; reload them before
+        // the drafts clear so the fields keep showing the written values.
+        reloadNodeTrees: async (nodeIds: string[]) => {
+          await Promise.all(nodeIds.map((id) => nodeTreeStore.refreshTree(id)));
+        },
       };
       const orchestratorArgs: SaveLayoutOrchestratedArgs = layoutStore.isConnected
         ? {
             ...sharedOrchestratorArgs,
-            saveWithBusWrites: (p, d) => saveLayoutWithBusWrites(p, d, true),
+            saveWithBusWrites: (p, d, ids) => saveLayoutWithBusWrites(p, d, ids, true),
           }
         : {
             ...sharedOrchestratorArgs,
@@ -728,7 +721,7 @@
         // transition matrix sees `hasSnapshots: true` and takes the
         // `rehydrated_offline` path instead of clearing everything.
         currentLayoutSnapshots = saveResult.nodeSnapshots;
-        saveProgressStore.apply({ phase: 'complete', failedCount: 0 });
+        saveProgressStore.finish(saveResult.writeOutcome);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         saveProgressStore.fail(`Save failed: ${msg}`);
@@ -1047,7 +1040,7 @@
         // last node-discovered event before triggering sync.
         syncSessionOrchestrator.scheduleAutoSync({
           hasLayoutFile: layoutStore.hasLayoutFile,
-          pendingCount: offlineChangesStore.pendingCount,
+          pendingCount: pendingChangesStore.pendingCount,
           triggerSync: () => maybeTriggerSync(),
         });
       }));
@@ -1109,9 +1102,7 @@
         closeLayout: () => runCloseLayoutAction(),
         saveLayout: () => runSaveLayoutAction(),
         saveLayoutAs: () => runSaveLayoutAsAction(),
-        syncToBus: () => {
-          if (layoutStore.isConnected && layoutStore.hasLayoutFile) forceSyncPanel();
-        },
+        syncToBus: () => runSyncToBus(),
         addPlaceholderBoard: () => {
           // FR-017a: only meaningful with an active offline layout — the menu
           // item is already gated, but guard here too for completeness.
@@ -1176,7 +1167,7 @@
   async function maybeTriggerSync() {
     await syncSessionOrchestrator.maybeTriggerSync({
       hasLayoutFile: layoutStore.hasLayoutFile,
-      pendingCount: offlineChangesStore.pendingCount,
+      pendingCount: pendingChangesStore.pendingCount,
       discoveredNodeIds: nodes.map((node) => canonicalizeNodeId(formatNodeId(node.node_id))),
       syncPanelStore,
       showSyncPanel: () => {
@@ -1185,11 +1176,23 @@
     });
   }
 
+  /** File > Sync to Bus, and every "Review in Sync Panel" button: one entry point. */
+  function runSyncToBus() {
+    if (layoutStore.isConnected && layoutStore.hasLayoutFile) void forceSyncPanel();
+  }
+
+  // Components emit a sync-review request; this is the single consumer.
+  $effect(() => {
+    if (!syncReviewRequestStore.pending) return;
+    untrack(() => syncReviewRequestStore.clear());
+    untrack(() => runSyncToBus());
+  });
+
   /** Re-open the sync panel on demand (e.g. from menu or OfflineBanner button). */
   async function forceSyncPanel() {
     await syncSessionOrchestrator.forceSyncPanel({
       hasLayoutFile: layoutStore.hasLayoutFile,
-      pendingCount: offlineChangesStore.pendingCount,
+      pendingCount: pendingChangesStore.pendingCount,
       discoveredNodeIds: nodes.map((node) => canonicalizeNodeId(formatNodeId(node.node_id))),
       syncPanelStore,
       showSyncPanel: () => {
@@ -1345,7 +1348,7 @@
       hasActiveLayout: !!layoutStore.activeContext,
       hasLayoutFile: layoutStore.hasLayoutFile,
       hasInMemoryEdits: effectiveNodeStore.isDirty,
-      pendingSyncCount: offlineChangesStore.pendingCount,
+      pendingSyncCount: pendingChangesStore.pendingCount,
     });
 
     syncMenuState(

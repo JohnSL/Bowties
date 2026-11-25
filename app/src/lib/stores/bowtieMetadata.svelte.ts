@@ -2,7 +2,7 @@
  * Svelte 5 reactive store for tracking pending (unsaved) bowtie metadata changes.
  *
  * Manages names, tags, role classifications, and bowtie creation/deletion.
- * Works alongside the Rust tree's `modified_value` tracking (which handles
+ * Works alongside the configuration drafts and Pending Change rows (which handle
  * event slot value changes) to provide a unified save/discard lifecycle (FR-018f).
  *
  * Spec: 009-editable-bowties, data-model.md §4, research.md R-004.

@@ -3,17 +3,18 @@
  *
  * TreeLeafRow now reads display state from configChangesStore.changeLayers()
  * and routes edits through configEditor.applyEdit(). These tests verify:
- * - Draft layer annotation shows "Unsaved offline edit: {from} -> {to}"
+ * - Draft layer annotation shows "Unsaved edit: {from} -> {to}"
  * - Persisted offline pending annotation shows "Bus: {baseline} | Pending: {pending}"
  * - Clicking "Revert" on a draft calls configChangesStore.revert()
- * - Clicking "Revert" on a persisted row calls offlineChangesStore.revertToBaseline()
+ * - Clicking "Revert" on a persisted row calls pendingChangesStore.revertToBaseline()
  * - Annotations are suppressed while layoutOpenInProgress is true.
  */
 
 import '@testing-library/jest-dom/vitest';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import TreeLeafRow from './TreeLeafRow.svelte';
+import { syncReviewRequestStore } from '$lib/stores/syncReviewRequest.svelte';
 import type { LeafConfigNode } from '$lib/types/nodeTree';
 import type { ChangeLayer } from '$lib/stores/configChanges.svelte';
 
@@ -51,18 +52,14 @@ vi.mock('$lib/stores/configEditor.svelte', () => ({
   configEditor: { applyEdit: vi.fn() },
 }));
 
-vi.mock('$lib/orchestration/configDraftOrchestrator', () => ({
-  flushDraftToBackend: vi.fn(),
-}));
-
-// ─── Mock offlineChangesStore (persisted row revert) ─────────────────────────
+// ─── Mock pendingChangesStore (persisted row revert) ─────────────────────────
 
 const mockRevertToBaseline = vi.fn().mockResolvedValue(true);
 const mockFindPersistedConfigChange = vi.fn().mockReturnValue(null);
 let mockIsBusy = false;
 
-vi.mock('$lib/stores/offlineChanges.svelte', () => ({
-  offlineChangesStore: {
+vi.mock('$lib/stores/pendingChanges.svelte', () => ({
+  pendingChangesStore: {
     get isBusy() { return mockIsBusy; },
     findPersistedConfigChange: (...args: unknown[]) => mockFindPersistedConfigChange(...args),
     revertToBaseline: (...args: unknown[]) => mockRevertToBaseline(...args),
@@ -124,7 +121,6 @@ vi.mock('$lib/stores/connectionRequest.svelte', () => ({
   connectionRequestStore: { isRequested: false, complete: vi.fn(), request: vi.fn() },
 }));
 vi.mock('$lib/api/config', () => ({
-  setModifiedValue: vi.fn().mockResolvedValue(undefined),
   triggerAction: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -160,14 +156,14 @@ function makeLeaf(overrides: Partial<LeafConfigNode> = {}): LeafConfigNode {
 // ─── Draft layer annotation tests ─────────────────────────────────────────────
 
 describe('draft layer (unsaved edit)', () => {
-  it('shows "Unsaved offline edit: X -> Y" when a draft layer exists over baseline', () => {
+  it('shows "Unsaved edit: X -> Y" when a draft layer exists over baseline', () => {
     mockChangeLayers = [
       { type: 'draft', value: { type: 'int', value: 7 } },
       { type: 'baseline', value: { type: 'int', value: 3 } },
     ];
     mockVisibleValue = { type: 'int', value: 7 };
     render(TreeLeafRow, { props: { leaf: makeLeaf(), nodeId: NODE_ID } });
-    expect(screen.getByText(/Unsaved offline edit: 3 → 7/)).toBeInTheDocument();
+    expect(screen.getByText(/Unsaved edit: 3 → 7/)).toBeInTheDocument();
   });
 
   it('shows persisted planned value as "from" when draft is on top of offline pending', () => {
@@ -178,7 +174,7 @@ describe('draft layer (unsaved edit)', () => {
     ];
     mockVisibleValue = { type: 'int', value: 3 };
     render(TreeLeafRow, { props: { leaf: makeLeaf(), nodeId: NODE_ID } });
-    expect(screen.getByText(/Unsaved offline edit: 5 → 3/)).toBeInTheDocument();
+    expect(screen.getByText(/Unsaved edit: 5 → 3/)).toBeInTheDocument();
   });
 
   it('shows a "Revert" button for the draft layer', () => {
@@ -205,7 +201,7 @@ describe('draft layer (unsaved edit)', () => {
   it('does not show draft annotation when no draft layer exists', () => {
     mockChangeLayers = [{ type: 'baseline', value: { type: 'int', value: 3 } }];
     render(TreeLeafRow, { props: { leaf: makeLeaf(), nodeId: NODE_ID } });
-    expect(screen.queryByText(/Unsaved offline edit/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Unsaved edit/)).not.toBeInTheDocument();
   });
 });
 
@@ -226,6 +222,74 @@ describe('persisted offline pending', () => {
     expect(screen.getByText(/Bus: 3 \| Pending: 7/)).toBeInTheDocument();
   });
 
+  it.each(['conflict', 'failed'] as const)(
+    'shows the reason on the field when its waiting row is %s',
+    (status) => {
+      mockChangeLayers = [
+        { type: 'offlinePending', value: { type: 'int', value: 7 } },
+        { type: 'baseline', value: { type: 'int', value: 3 } },
+      ];
+      mockVisibleValue = { type: 'int', value: 7 };
+      mockFindPersistedConfigChange.mockReturnValue({
+        changeId: 'persisted-1', kind: 'config', nodeId: NODE_ID,
+        space: 253, offset: '0x00000064', baselineValue: '3', plannedValue: '7',
+        status, error: 'The board kept 3',
+      });
+      render(TreeLeafRow, { props: { leaf: makeLeaf(), nodeId: NODE_ID } });
+      expect(screen.getByRole('alert')).toHaveTextContent('The board kept 3');
+    },
+  );
+
+  describe('Review in Sync Panel on the Not written marker', () => {
+    function renderNotWritten() {
+      mockChangeLayers = [
+        { type: 'offlinePending', value: { type: 'int', value: 7 } },
+        { type: 'baseline', value: { type: 'int', value: 3 } },
+      ];
+      mockVisibleValue = { type: 'int', value: 7 };
+      mockFindPersistedConfigChange.mockReturnValue({
+        changeId: 'persisted-1', kind: 'config', nodeId: NODE_ID,
+        space: 253, offset: '0x00000064', baselineValue: '3', plannedValue: '7',
+        status: 'failed', error: 'The board kept 3',
+      });
+      render(TreeLeafRow, { props: { leaf: makeLeaf(), nodeId: NODE_ID } });
+    }
+
+    afterEach(async () => {
+      const { layoutStore } = await import('$lib/stores/layout.svelte');
+      (layoutStore as any).isConnected = false;
+      syncReviewRequestStore.clear();
+    });
+
+    it('is offered while connected and asks the page to open the Sync Panel', async () => {
+      const { layoutStore } = await import('$lib/stores/layout.svelte');
+      (layoutStore as any).isConnected = true;
+      renderNotWritten();
+      await fireEvent.click(screen.getByRole('button', { name: 'Review in Sync Panel' }));
+      expect(syncReviewRequestStore.pending).toBe(true);
+    });
+
+    it('is hidden while offline', () => {
+      renderNotWritten();
+      expect(screen.getByRole('alert')).toHaveTextContent('The board kept 3');
+      expect(screen.queryByRole('button', { name: 'Review in Sync Panel' })).not.toBeInTheDocument();
+    });
+  });
+
+  it('shows no not-written reason for a plain pending row', () => {
+    mockChangeLayers = [
+      { type: 'offlinePending', value: { type: 'int', value: 7 } },
+      { type: 'baseline', value: { type: 'int', value: 3 } },
+    ];
+    mockVisibleValue = { type: 'int', value: 7 };
+    mockFindPersistedConfigChange.mockReturnValue({
+      changeId: 'persisted-1', kind: 'config', nodeId: NODE_ID,
+      space: 253, offset: '0x00000064', baselineValue: '3', plannedValue: '7', status: 'pending',
+    });
+    render(TreeLeafRow, { props: { leaf: makeLeaf(), nodeId: NODE_ID } });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('renders offline-pending row with the pending style', () => {
     mockChangeLayers = [
       { type: 'offlinePending', value: { type: 'int', value: 7 } },
@@ -242,7 +306,7 @@ describe('persisted offline pending', () => {
     expect(row).not.toHaveClass('dirty');
   });
 
-  it('calls offlineChangesStore.revertToBaseline on persisted revert click', async () => {
+  it('calls pendingChangesStore.revertToBaseline on persisted revert click', async () => {
     mockChangeLayers = [
       { type: 'offlinePending', value: { type: 'int', value: 7 } },
       { type: 'baseline', value: { type: 'int', value: 3 } },
@@ -284,7 +348,7 @@ describe('indicators suppressed during layout open', () => {
       { type: 'baseline', value: { type: 'int', value: 3 } },
     ];
     render(TreeLeafRow, { props: { leaf: makeLeaf(), nodeId: NODE_ID } });
-    expect(screen.queryByText(/Unsaved offline edit/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Unsaved edit/)).not.toBeInTheDocument();
   });
 
   it('does not show persisted annotation while layout is opening', () => {

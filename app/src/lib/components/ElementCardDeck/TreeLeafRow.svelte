@@ -7,8 +7,8 @@
    * Maps enum values to labels via `constraints.mapEntries`.
    * Event IDs in monospace dotted hex, "(not set)" for all-zeros.
    *
-   * Editable fields send their values to the Rust tree via `setModifiedValue`.
-   * The tree's `modifiedValue` and `writeState` drive dirty/error display.
+   * Editable fields write drafts to `configChangesStore`; the Save records them
+   * as Pending Changes. Write results live on the Pending Change rows.
    */
   import type { LeafConfigNode, TreeConfigValue, TreeMapEntry } from '$lib/types/nodeTree';
   import type { BowtieCard } from '$lib/api/tauri';
@@ -17,12 +17,12 @@
   import { bowtieFocusStore } from '$lib/stores/bowtieFocus.svelte';
   import { bowtieCatalogStore } from '$lib/stores/bowties.svelte';
   import { configFocusStore } from '$lib/stores/configFocus.svelte';
-  import { layoutStore } from '$lib/stores/layout.svelte';
   import { layoutOpenInProgress } from '$lib/stores/layoutOpenLifecycle';
   import { configChangesStore } from '$lib/stores/configChanges.svelte';
   import { configEditor } from '$lib/stores/configEditor.svelte';
-  import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
-  import { flushDraftToBackend } from '$lib/orchestration/configDraftOrchestrator';
+  import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
+  import { layoutStore } from '$lib/stores/layout.svelte';
+  import { syncReviewRequestStore } from '$lib/stores/syncReviewRequest.svelte';
   import { editKeyForLeaf } from '$lib/utils/editKey';
   import { formatTreeConfigValue } from '$lib/utils/formatters';
   import { parseEventIdHex, formatEventIdHex, canonicalEventIdHex } from '$lib/utils/serialize';
@@ -32,6 +32,7 @@
   } from '$lib/utils/treeConfigValuePersistence';
   import {
     resolveConnectorCompatibilityMessage,
+    resolveLeafNotWrittenMessage,
     resolveLeafSelectViewState,
   } from '$lib/utils/treeLeafViewState';
   import { isPlaceholderEventId } from '$lib/utils/eventIds';
@@ -122,18 +123,28 @@
   let isInvalid = $derived(localInvalidValue !== null);
   let hasPendingApplyVisible = $derived(hasPendingApply && !isInvalid && !suppressTransientIndicators);
 
+  /** Why the field's waiting Pending Change row was not written (failed / conflict), from the row itself. */
+  let notWrittenMessage = $derived(
+    nodeId && hasPendingApply
+      ? resolveLeafNotWrittenMessage(
+          pendingChangesStore.findPersistedConfigChange(
+            nodeId,
+            leaf.space,
+            `0x${leaf.address.toString(16).toUpperCase().padStart(8, '0')}`,
+          ),
+        )
+      : null,
+  );
+
   /** ADR-0003: effective role (pending edit → saved layout → catalog → CDI baseline). */
   let effectiveRole = $derived(nodeId ? effectiveLayoutStore.effectiveRole(nodeId, leaf) : leaf.eventRole);
 
   /** Active validation message: local input errors only (committed placeholder is shown separately) */
   let activeValidationMessage = $derived(localValidationMessage ?? null);
-  let isWriting = $derived(leaf.writeState === 'writing');
-  let hasWriteError = $derived(leaf.writeState === 'error');
-  /** True when input should be disabled: either saving, node is offline (FR-007), or
+  /** True when input should be disabled: node is offline (FR-007), or
    * the device rejected a write for this field with 0x1083 (runtime read-only) */
   let isDisabled = $derived(
-    isWriting
-    || isNodeOffline
+    isNodeOffline
     || !!leaf.readOnly
     || !!connectorConstraintState?.disabled
     || !!connectorConstraintState?.readOnly
@@ -278,17 +289,13 @@
   // ── Edit handlers ──────────────────────────────────────────────────────────
 
   /**
-   * Unified edit handler — routes through configEditor (synchronous) then
-   * mirrors to backend via the orchestrator when online.
+   * Unified edit handler — routes through configEditor (synchronous). The
+   * draft reaches the backend only at Save.
    */
   function applyLeafValueChange(newVal: TreeConfigValue): void {
     if (!editKey) return;
     configEditor.applyEdit(editKey, newVal);
 
-    // Online: mirror to backend immediately
-    if (!layoutStore.isOfflineMode && !isNodeOffline) {
-      flushDraftToBackend(editKey);
-    }
     if (nodeId) void recomputeConnectorCompatibility(nodeId);
   }
 
@@ -298,8 +305,8 @@
     if (nodeId) void recomputeConnectorCompatibility(nodeId);
   }
 
-  async function revertPersistedOfflineChange(changeId: string): Promise<void> {
-    await offlineChangesStore.revertToBaseline(changeId);
+  async function revertPersistedPendingChange(changeId: string): Promise<void> {
+    await pendingChangesStore.revertToBaseline(changeId);
     if (nodeId) void recomputeConnectorCompatibility(nodeId);
   }
 
@@ -489,8 +496,6 @@
   class:offline-pending={hasPendingApplyVisible}
   class:invalid={isInvalid}
   class:eventid-placeholder={isEventIdPlaceholder && !isInvalid}
-  class:writing={isWriting}
-  class:write-error={hasWriteError}
   role="listitem"
 >
   <span class="field-label" title={leaf.name}>{leaf.name}</span>
@@ -638,8 +643,11 @@
       <span class="compatibility-msg" role="status">{currentValueCompatibilityMessage}</span>
     {/if}
 
-    {#if hasWriteError && leaf.writeError}
-      <span class="write-error-msg" role="alert">⚠ {leaf.writeError}</span>
+    {#if !suppressTransientIndicators && notWrittenMessage}
+      <span class="write-error-msg" role="alert">Not written: {notWrittenMessage}</span>
+      {#if layoutStore.isConnected}
+        <button class="revert-baseline-btn" onclick={() => syncReviewRequestStore.request()}>Review in Sync Panel</button>
+      {/if}
     {/if}
 
     {#if descText}
@@ -660,15 +668,15 @@
     {/if}
 
     {#if !suppressTransientIndicators && isDirty && layers.length >= 2}
-      <span class="offline-change-msg" role="status">
-        Unsaved offline edit: {formatValue(layers[1].value)} &rarr; {formatValue(layers[0].value)}
+      <span class="pending-change-msg" role="status">
+        Unsaved edit: {formatValue(layers[1].value)} &rarr; {formatValue(layers[0].value)}
       </span>
       <button
         class="revert-baseline-btn"
         onclick={() => void revertDraft()}
         title="Revert to captured baseline value"
         aria-label="Revert to baseline"
-        disabled={offlineChangesStore.isBusy}
+        disabled={pendingChangesStore.isBusy}
       >↩ Revert</button>
     {/if}
 
@@ -683,12 +691,12 @@
         class="revert-baseline-btn"
         onclick={() => {
           const offsetKey = `0x${leaf.address.toString(16).toUpperCase().padStart(8, '0')}`;
-          const row = offlineChangesStore.findPersistedConfigChange(nodeId, leaf.space, offsetKey);
-          if (row) void revertPersistedOfflineChange(row.changeId);
+          const row = pendingChangesStore.findPersistedConfigChange(nodeId, leaf.space, offsetKey);
+          if (row) void revertPersistedPendingChange(row.changeId);
         }}
         title="Revert to captured baseline value"
         aria-label="Revert to baseline"
-        disabled={offlineChangesStore.isBusy}
+        disabled={pendingChangesStore.isBusy}
       >↩ Revert</button>
       {/if}
     {/if}
@@ -779,16 +787,6 @@
     background-color: rgba(164, 38, 44, 0.04);
   }
 
-  .field-row.writing {
-    border-left-color: #8a8886;                    /* colorNeutralForeground3 — neutral while saving */
-    opacity: 0.8;
-  }
-
-  .field-row.write-error {
-    border-left-color: #ca5010;                    /* colorPaletteOrangeForeground1 */
-    background-color: rgba(202, 80, 16, 0.05);
-  }
-
   .field-row.eventid-placeholder {
     border-left-color: #0f6cbd;                    /* Fluent info blue — unconfigured placeholder */
   }
@@ -827,7 +825,7 @@
     letter-spacing: -0.01em;
   }
 
-  .offline-change-msg {
+  .pending-change-msg {
     color: #7c2d12;
     background: #ffedd5;
     border: 1px solid #fdba74;
@@ -1009,6 +1007,7 @@
 
   /* ── Validation / error messages ── */
 
+  .write-error-msg,
   .validation-msg {
     display: block;
     width: 100%;
@@ -1022,14 +1021,6 @@
     width: 100%;
     font-size: 11px;
     color: #0f6cbd;                                /* Fluent info blue — informational, no urgency */
-    margin-top: 2px;
-  }
-
-  .write-error-msg {
-    display: block;
-    width: 100%;
-    font-size: 11px;
-    color: #ca5010;                                /* colorPaletteOrangeForeground1 */
     margin-top: 2px;
   }
 

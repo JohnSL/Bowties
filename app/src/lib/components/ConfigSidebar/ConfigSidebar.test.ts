@@ -409,7 +409,7 @@ describe('ConfigSidebar.svelte', () => {
 
   // ── Tree reactivity: parent dirty indicators ────────────────────────────────
   describe('Tree reactivity for unsaved edit indicators', () => {
-    it('shows unsaved edit indicator when tree leaf gets modifiedValue (offline mode)', async () => {
+    it('shows unsaved edit indicator when a config draft is set', async () => {
       const nodeId = '02.01.57.00.00.01';
       setNodeInfo([[nodeId, MOCK_NODE as any]]);
 
@@ -434,7 +434,7 @@ describe('ConfigSidebar.svelte', () => {
                 space: 253,
                 path: ['seg:0', 'elem:0'],
                 value: { type: 'int' as const, value: 10 },
-                modifiedValue: null,
+
                 eventRole: null,
                 constraints: null,
               },
@@ -464,7 +464,7 @@ describe('ConfigSidebar.svelte', () => {
       });
     });
 
-    it('removes unsaved edit indicator when modifiedValue is cleared', async () => {
+    it('removes unsaved edit indicator when the draft is cleared', async () => {
       const nodeId = '02.01.57.00.00.01';
       setNodeInfo([[nodeId, MOCK_NODE as any]]);
 

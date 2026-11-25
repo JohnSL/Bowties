@@ -166,6 +166,9 @@ pub fn compose_bowtie_ops(
     per_node_cdi: &HashMap<String, NodeConfigTree>,
     consumer_leaf_index: &ConsumerLeafIndex,
 ) -> Result<Vec<CompositionOp>, FacilityCompositionError> {
+    if !template.composes_bowties() {
+        return Ok(Vec::new());
+    }
     // ── Wired guard: every slot must be at its min_channels ──────────
     for slot in template.slots {
         let bound = facility
@@ -451,6 +454,7 @@ mod tests {
             template_id: "block-indicator".to_string(),
             name: "Block 5".to_string(),
             slot_bindings: sb,
+            block_signals: None,
         }
     }
 
@@ -502,9 +506,6 @@ mod tests {
                     action_value: 0,
                     hint_slider: None,
                     hint_radio: false,
-                    modified_value: None,
-                    write_state: None,
-                    write_error: None,
                     read_only: false,
                 }),
                 ConfigNode::Leaf(LeafNode {
@@ -530,9 +531,6 @@ mod tests {
                     action_value: 0,
                     hint_slider: None,
                     hint_radio: false,
-                    modified_value: None,
-                    write_state: None,
-                    write_error: None,
                     read_only: false,
                 }),
             ],
@@ -829,5 +827,28 @@ mod tests {
         assert!(role_matches(Some(EventRole::Ambiguous), EventRole::Consumer));
         assert!(role_matches(Some(EventRole::Consumer), EventRole::Consumer));
         assert!(!role_matches(Some(EventRole::Producer), EventRole::Consumer));
+    }
+
+    #[test]
+    fn automatic_block_signals_facility_composes_no_bowtie_ops() {
+        let facility = Facility {
+            facility_id: "abs-1".to_string(),
+            template_id: "automatic-block-signals".to_string(),
+            name: "ABS".to_string(),
+            slot_bindings: BTreeMap::from([("signals".to_string(), vec!["ch-sig".to_string()])]),
+            block_signals: None,
+        };
+        let template = crate::behavior_templates::find_template("automatic-block-signals")
+            .expect("ABS template registered");
+        let ops = compose_bowtie_ops(
+            &facility,
+            template,
+            &[],
+            &HashMap::new(),
+            &HashMap::new(),
+            &consumer_leaf_index(),
+        )
+        .unwrap();
+        assert!(ops.is_empty());
     }
 }

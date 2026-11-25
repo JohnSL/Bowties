@@ -1,4 +1,4 @@
-import type { OfflineChangeRow } from '$lib/api/sync';
+import type { PendingChangeRow } from '$lib/api/sync';
 import { effectiveValue, type LeafConfigNode, type TreeConfigValue, type TreeMapEntry } from '$lib/types/nodeTree';
 import {
   filterAllowedMapEntries,
@@ -44,7 +44,7 @@ export function resolveConnectorCompatibilityMessage(args: {
 
 export function resolveLeafOfflineValueState(args: {
   leaf: LeafConfigNode;
-  effectiveOfflineRow: OfflineChangeRow | null;
+  effectiveOfflineRow: PendingChangeRow | null;
 }): LeafOfflineValueState {
   const offlinePlannedValue = args.effectiveOfflineRow
     ? parseOfflineStoredValueForLeaf(args.leaf, args.effectiveOfflineRow.plannedValue)
@@ -54,6 +54,19 @@ export function resolveLeafOfflineValueState(args: {
     offlinePlannedValue,
     displayValue: offlinePlannedValue ?? effectiveValue(args.leaf),
   };
+}
+
+/**
+ * The reason a field's waiting Pending Change row was not written to the board
+ * (status failed or conflict), or null when the row is plain pending (shown as
+ * "saved in layout, pending apply") or absent. E3b D3: the row is the only
+ * record of a write result.
+ */
+export function resolveLeafNotWrittenMessage(row: PendingChangeRow | null): string | null {
+  if (!row || (row.status !== 'failed' && row.status !== 'conflict')) {
+    return null;
+  }
+  return row.error?.trim() || 'Not written to the board';
 }
 
 export function resolveLeafSelectViewState(args: {

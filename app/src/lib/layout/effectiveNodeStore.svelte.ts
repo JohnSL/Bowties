@@ -34,12 +34,12 @@ import { partialCaptureNodesStore } from '$lib/stores/partialCaptureNodes.svelte
 import { layoutStore } from '$lib/stores/layout.svelte';
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
-import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
 import { facilitiesStore } from '$lib/stores/facilities.svelte';
 import { channelsStore } from '$lib/stores/channels.svelte';
 import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
 import { nodeRoster } from '$lib/stores/nodeRoster.svelte';
-import { parseEditKey } from '$lib/utils/editKey';
+import { editKeyForLeaf, offsetHexToAddress, parseEditKey } from '$lib/utils/editKey';
 import {
   isPlaceholderInput,
   toCanonicalNodeKey,
@@ -61,6 +61,12 @@ export interface DirtyBreakdown {
   config: number;
   /** Distinct node count contributing to `config` (for "across N nodes"). */
   configNodes: number;
+  /**
+   * Distinct unsaved configuration targets: config drafts, Pending Change
+   * draft rows and reverted saved rows, counted once per (node, space,
+   * address). The Save toolbar and close prompt show this number.
+   */
+  configChanges: number;
   /** Bowtie metadata edits (deletes / role classifications / …). */
   metadata: number;
   /** Pending channel creations + renames + deletions. */
@@ -69,16 +75,22 @@ export interface DirtyBreakdown {
   facilities: number;
   /** Connector slot selections diverging from baseline. */
   connectorSelections: number;
-  /** Offline-changes draft rows (Spec 013). */
-  offlineDrafts: number;
-  /** Persisted offline rows that have been reverted in-memory. */
-  offlineRevertedPersisted: number;
+  /** Pending Change draft rows (Spec 013). */
+  pendingDrafts: number;
+  /** Saved Pending Change rows that have been reverted in memory. */
+  revertedPendingChanges: number;
   /** LayoutFile struct edits (element-deck reorder, etc.). */
   layoutStruct: number;
   /** Fully-captured live nodes absent from the saved layout roster. */
   unsavedNewNodes: number;
   /** NodeKeys removed from the saved layout but not yet flushed. */
   unsavedRemovedNodes: number;
+  /**
+   * Pending Change rows already saved in the layout that are still waiting
+   * for the board (pending, failed or conflict). Not unsaved: never part of
+   * `isDirty`; shown on their own line.
+   */
+  waitingPendingChanges: number;
 }
 
 class EffectiveNodeStore {
@@ -195,18 +207,28 @@ class EffectiveNodeStore {
       }
       configNodes = seen.size;
     }
+    // One count per (node, space, address): the same field may be held as a
+    // config draft and as a Pending Change draft row (staging mirror, connector
+    // repairs), or as a draft over a reverted row.
+    const configTargets = new Set<string>(drafts.map(({ key }) => key));
+    for (const row of pendingChangesStore.unsavedConfigRows) {
+      if (row.nodeId == null || row.space == null || !row.offset) continue;
+      configTargets.add(editKeyForLeaf(row.nodeId, row.space, offsetHexToAddress(row.offset)));
+    }
     return {
       config: drafts.length,
       configNodes,
+      configChanges: configTargets.size,
       metadata: bowtieMetadataStore.editCount,
       channels: channelsStore.editCount,
       facilities: facilitiesStore.editCount,
       connectorSelections: connectorSelectionsStore.editCount,
-      offlineDrafts: offlineChangesStore.draftCount,
-      offlineRevertedPersisted: offlineChangesStore.revertedPersistedCount,
+      pendingDrafts: pendingChangesStore.draftCount,
+      revertedPendingChanges: pendingChangesStore.revertedPersistedCount,
       layoutStruct: layoutStore.isDirty ? 1 : 0,
       unsavedNewNodes: this.unsavedInMemoryNodeIds.length,
       unsavedRemovedNodes: this.unsavedRemovedNodeIds.length,
+      waitingPendingChanges: pendingChangesStore.pendingApplyCount,
     };
   }
 
@@ -222,8 +244,8 @@ class EffectiveNodeStore {
       || bd.channels > 0
       || bd.facilities > 0
       || bd.connectorSelections > 0
-      || bd.offlineDrafts > 0
-      || bd.offlineRevertedPersisted > 0
+      || bd.pendingDrafts > 0
+      || bd.revertedPendingChanges > 0
       || bd.layoutStruct > 0
       || bd.unsavedNewNodes > 0
       || bd.unsavedRemovedNodes > 0

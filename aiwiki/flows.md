@@ -58,15 +58,15 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **Orchestrator:** `configDraftOrchestrator.ts`
 - **Store:** `configChanges.svelte.ts`, `configEditor.svelte.ts`
 - **API:** `config.ts`
-- **Backend:** `commands/cdi.rs` (`set_modified_value`, `write_modified_values`, `discard_modified_values`)
+- **Backend:** drafts stay in the frontend until Save; `commands/layout_capture.rs` `save_layout_with_bus_writes` → `bowties-core` `sync::writer::write_recorded_changes` via `commands/sync_panel.rs` `LivePort` (Spec 020 E3b-1)
 - **lcc-rs:** `protocol/memory_config.rs`
 
 ## Config Editing (Offline)
 - **Route:** `config/+page.svelte`
 - **Orchestrator:** `configDraftOrchestrator.ts` (`stageDraftsForOfflineSave()`)
-- **Store:** `configChanges.svelte.ts`, `offlineChanges.svelte.ts`
+- **Store:** `configChanges.svelte.ts`, `pendingChanges.svelte.ts`
 - **API:** `sync.ts`
-- **Backend:** `commands/sync_panel.rs` (`set_offline_change`, `revert_offline_change`)
+- **Backend:** `commands/sync_panel.rs` (`set_pending_change`, `revert_pending_change`)
 - **No protocol** — local-only until sync apply
 
 ## Configuration Target Navigation
@@ -108,9 +108,9 @@ Which modules participate in each major workflow. For full ownership rules, see 
 
 ## Sync Apply
 - **Orchestrator:** `syncApplyOrchestrator.ts`, `syncPanelViewOrchestrator.ts`
-- **Store:** `offlineChanges.svelte.ts`, `syncPanel.svelte.ts`
+- **Store:** `pendingChanges.svelte.ts`, `syncPanel.svelte.ts`
 - **API:** `sync.ts`
-- **Backend:** `commands/sync_panel.rs` (bus I/O and AppState coordination; value conversion via `bowties_core::sync::field_meta`)
+- **Backend:** `commands/sync_panel.rs` (bus I/O and AppState coordination; value conversion via `bowties_core::sync::field_meta`); every write goes through the one Pending Change writer, `bowties_core::sync::writer` (shared with a connected Save)
 - **lcc-rs:** `protocol/memory_config.rs` (applies writes)
 
 ## Connector Selection
@@ -180,10 +180,15 @@ Which modules participate in each major workflow. For full ownership rules, see 
 - **Frontend utility:** `utils/channelState.ts` — `deriveChannelState(events, occupiedId, clearId)` pure timestamp comparison
 - **Component:** `RailroadPanel.svelte` computes `channelStates` via `$derived.by()` + passes to `ChannelCard` as `occupancyState` prop
 
-## Automatic Block Signals Preview (Spec 020 / S1 → S2R)
-- **Entry:** `FacilitiesSection.svelte` adds Automatic Block Signals (and a disabled Interlocking Plant) beside Block Indicator in the existing Add facility dialog. Selecting Automatic Block Signals opens only the transient editor, named with the accepted Add facility name.
-- **Blocks:** `BlocksStep` lists detected blocks in travel order for the selected direction, with placeholder turnouts under the block that contains them and a row "⋯" menu (`RowMenu`) to join a block to the one above. Live occupancy for each block comes from `FacilitiesSection` (the Channels panel's event state) and shows as unavailable without a reading. Changing the direction redraws but never reorders the list. End chips on the shared `TrackDiagram` open `EndChipMenu` for what lies before the first and beyond the last block. Add block opens `SelectBlockPicker` (`SearchableSingleSelectDialog`).
-- **Aspects:** `AspectsStep` selects a signal on the same `TrackDiagram`, edits settings for all signals or one signal's override, and renders the backend's rules for the selected signal.
-- **Sequencing:** every edit goes through `blockSignalsEditorActions` → store → `previewBlockSignals`; only the newest response is accepted, and cancel/layout reset discard any in flight. Drawing-only turnout shapes and step changes do not request a preview.
-- **Facts and policy:** `app/src-tauri/src/signaling/mod.rs` resolves block names and detection facts from the effective layout; `bowties-core/src/signaling/chain.rs` derives signals, next signals and rules; the S2 hardware projection remains in the core but the editor no longer sends bindings.
-- **Boundary:** no facility/configuration draft, Information Channel, claim, patch, persistence, hardware write, Save or Apply. Physical signals and Review are unavailable in this release.
+## Automatic Block Signals (Spec 020)
+- **Entry:** `FacilitiesSection.svelte` lists the core-registered `automatic-block-signals` template (from `behaviorTemplatesStore`) beside Block Indicator and a disabled Interlocking Plant in the Add facility dialog. Selecting it opens the guided editor, named with the accepted Add facility name.
+- **Blocks:** `BlocksStep` lists detected blocks in travel order for the selected direction, with placeholder turnouts under the block that contains them and a row "⋯" menu (`RowMenu`) to join a block to the one above. Live occupancy comes from `FacilitiesSection` and shows as unavailable without a reading. Both directions and APB are disabled. End chips on the shared `TrackDiagram` open `EndChipMenu` ("Choose a Plant…" disabled). Add block opens `SelectBlockPicker` (`SearchableSingleSelectDialog`).
+- **Aspects / Appearance:** `AspectsStep` selects a signal and shows settings (out-of-scope choices disabled) and the backend's rules; `AppearanceStep` shows the fixed RG searchlight appearance (always lit) with other choices disabled.
+- **Wiring:** `WiringStep` picks the Signal LCC ("Runs on", `SearchableSingleSelectDialog`), the red pin and the green pin from `preview.outputHosts`; when wiring is complete the orchestrator runs `composeBlockSignals` (zero writes, generation-guarded, wiring node's unsaved edits in the request) and shows blocking issues ("Choices needing attention"). The editor has four steps; a Review step is deferred (slices.md E3r), so Done sits on Wiring.
+- **Done:** `finish()` → `facilityOrchestrator.createBlockSignalsFacility`: sync facility/channel drafts → fresh compose → on issues stage nothing → create the `signal-indication` channel, `addFacility` with the `blockSignals` record (editor facility ID), attach to `signals`, `applyConfigEdits` → editor closes. Failure rolls everything back.
+- **Save:** the facility, channel and configuration edits ride the existing draft layer: Save toolbar, unsaved-changes breakdown and close prompts; every Save records the configuration edits as Pending Changes (layout at manifest version 5); Discard drops all three. a connected Save and the Sync Panel write them through the one writer, `bowties-core/src/sync/writer.rs` (E3b-1). Each row records the facility that staged it (`origin`), which drives the card's per-board outcome (`utils/facilityWriteOutcome.ts`).
+- **Edit (E2a):** FacilityCard "Edit" (ABS only) → `startEditBlockSignalsEditor(facilityId)` seeds every step from the effective record and the signal channels' bindings (mode `edit`, saved facility ID; heading "Edit Automatic Block Signals · <name>"). Preview and compose for an existing facility ID read its record from the effective layout: saved signal IDs win by protected block (`chain.rs`), and the compiler recompiles into the record's claimed slots (`own_claims`), ignoring the facility's own pins. Done → `facilityOrchestrator.updateBlockSignalsFacility` (shared pipeline with create): replace the record, rename facility/channels, `channelsStore.rebindChannel`, stage edits (unchanged values no-op). Discard restores the saved record, pins and edits.
+- **Remove (E2b):** FacilityCard "Remove" → `BlockSignalsRemoveDialog` (one clause per board from `utils/facilityBoardSlots.ts`) → `facilityOrchestrator.removeBlockSignalsFacility`: compose the removal (`composeBlockSignalsRemoval`), reset only the claimed slots, drop the facility and its signal channels; hardware-owned block-detection channels stay.
+- **Across boards (E3, E5):** the compiler and `logic_placement.rs` run per board (ADR-0020); a signal may protect blocks detected on another board, and writes still go through the one writer, board by board.
+- **Railroad card diagram:** `FacilitiesSection` `$effect` → `facilityDiagramOrchestrator.sync(facilities)` (inside `untrack`) fetches `previewBlockSignals` for each new or changed ABS record (request built by `utils/blockSignalsPreviewRequest.ts`, the same builder the editor's `startEdit` uses) into `facilityDiagramsStore`; `FacilityCard` draws `TrackDiagram` in summary mode with occupancy from `blockOccupancyMap`. Reset on layout change via `layoutScopedParticipants`.
+- **Facts and policy:** `app/src-tauri/src/signaling/mod.rs` (preview) and `compose.rs` (compose) read the effective layout and configuration; `bowties-core/src/signaling/chain.rs` derives signals and rules; `compiler.rs` compiles the terminal recipe; `slots.rs` finds free masts/Logic and resolves CDI paths.

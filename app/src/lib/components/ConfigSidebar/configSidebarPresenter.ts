@@ -1,5 +1,6 @@
+import { isWaitingPendingChange } from '$lib/utils/pendingChangeStatus';
 import type { DiscoveredNode } from '$lib/api/tauri';
-import type { OfflineChangeRow } from '$lib/api/sync';
+import type { PendingChangeRow } from '$lib/api/sync';
 import { pipConfirmsConfigReadable, pipConfirmsNoCdi } from '$lib/orchestration/configReadOrchestrator';
 import {
   isGroup,
@@ -103,7 +104,7 @@ export function getNodePendingState(
   nodeId: string,
   tree: NodeConfigTree | null,
   layoutOpenInProgress: boolean,
-  persistedRows: OfflineChangeRow[],
+  persistedRows: PendingChangeRow[],
 ): SidebarPendingState {
   if (layoutOpenInProgress || !tree) {
     return { hasPendingApply: false, hasPendingEdits: false };
@@ -120,7 +121,7 @@ export function getSegmentPendingState(
   tree: NodeConfigTree | null,
   segmentOrigin: number,
   layoutOpenInProgress: boolean,
-  persistedRows: OfflineChangeRow[],
+  persistedRows: PendingChangeRow[],
 ): SidebarPendingState {
   if (layoutOpenInProgress || !tree) {
     return { hasPendingApply: false, hasPendingEdits: false };
@@ -165,23 +166,23 @@ function offsetFromAddress(address: number): string {
   return `0x${address.toString(16).toUpperCase().padStart(8, '0')}`;
 }
 
-function hasPendingApplyForNode(nodeId: string, persistedRows: OfflineChangeRow[]): boolean {
+function hasPendingApplyForNode(nodeId: string, persistedRows: PendingChangeRow[]): boolean {
   const canonical = canonicalNodeId(nodeId);
   return persistedRows.some(
-    (row) => row.kind === 'config' && row.status === 'pending' && canonicalNodeId(row.nodeId ?? '') === canonical,
+    (row) => row.kind === 'config' && isWaitingPendingChange(row) && canonicalNodeId(row.nodeId ?? '') === canonical,
   );
 }
 
 function hasPendingApplyInChildren(
   nodeId: string,
   children: ConfigNode[],
-  persistedRows: OfflineChangeRow[],
+  persistedRows: PendingChangeRow[],
 ): boolean {
   for (const child of children) {
     if (isLeaf(child)) {
       const hasMatch = persistedRows.some((row) => (
         row.kind === 'config'
-        && row.status === 'pending'
+        && isWaitingPendingChange(row)
         && canonicalNodeId(row.nodeId ?? '') === canonicalNodeId(nodeId)
         && row.space === child.space
         && row.offset === offsetFromAddress(child.address)

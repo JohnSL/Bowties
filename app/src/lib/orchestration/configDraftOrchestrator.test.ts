@@ -2,22 +2,20 @@
  * Regression tests for placeholder NodeKey handling in the config draft
  * orchestrator (Spec 014 / S8.5).
  *
- * The bus-sync offline changes queue only accepts real LCC NodeIDs — when a
- * placeholder NodeKey (`placeholder:<uuidv4>`) leaks into `replace_offline_changes`
+ * The bus-sync pending changes queue only accepts real LCC NodeIDs — when a
+ * placeholder NodeKey (`placeholder:<uuidv4>`) leaks into the recorded Pending Change rows
  * the backend rejects it with "Invalid NodeID hex string length: 44". These
  * tests pin that:
- *   - `stageDraftsForOfflineSave` skips placeholder-keyed drafts and leaves
- *     them in `configChangesStore` (so the user's edits survive in-memory
- *     across a save until S9 wires them into the on-disk NodeSnapshot).
- *   - `flushDraftToBackend` does not call `setModifiedValue` for placeholders.
+ *   - `stageConfigDraftsAsPendingChanges` stages placeholder-keyed drafts like
+ *     real-node drafts and leaves all drafts in `configChangesStore` (the Save
+ *     clears them once the rows are recorded).
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   configChangesStoreRef,
-  offlineChangesStoreRef,
-  setModifiedValueRef,
+  pendingChangesStoreRef,
   nodeTreeStoreRef,
 } = vi.hoisted(() => ({
   configChangesStoreRef: {
@@ -29,12 +27,11 @@ const {
       return true;
     }),
   },
-  offlineChangesStoreRef: {
+  pendingChangesStoreRef: {
     upsertConfigChange: vi.fn(),
     findDraftConfigChange: vi.fn(() => null),
     findPersistedConfigChange: vi.fn(() => null),
   },
-  setModifiedValueRef: vi.fn(async () => {}),
   nodeTreeStoreRef: {
     trees: new Map(),
   },
@@ -44,19 +41,15 @@ vi.mock('$lib/stores/configChanges.svelte', () => ({
   configChangesStore: configChangesStoreRef,
 }));
 
-vi.mock('$lib/stores/offlineChanges.svelte', () => ({
-  offlineChangesStore: offlineChangesStoreRef,
-}));
-
-vi.mock('$lib/api/config', () => ({
-  setModifiedValue: setModifiedValueRef,
+vi.mock('$lib/stores/pendingChanges.svelte', () => ({
+  pendingChangesStore: pendingChangesStoreRef,
 }));
 
 vi.mock('$lib/stores/nodeTree.svelte', () => ({
   nodeTreeStore: nodeTreeStoreRef,
 }));
 
-import { stageDraftsForOfflineSave, flushDraftToBackend } from './configDraftOrchestrator';
+import { stageConfigDraftsAsPendingChanges } from './configDraftOrchestrator';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -70,21 +63,23 @@ beforeEach(() => {
   });
 });
 
-describe('stageDraftsForOfflineSave', () => {
-  it('stages real-node drafts into offlineChangesStore and clears them', () => {
+describe('stageConfigDraftsAsPendingChanges', () => {
+  it('stages real-node drafts into pendingChangesStore and keeps them as drafts', () => {
     configChangesStoreRef._entries = [
       { key: '050201020300:253:100', value: { type: 'int', value: 7 } },
     ];
 
-    stageDraftsForOfflineSave();
+    stageConfigDraftsAsPendingChanges();
 
-    expect(offlineChangesStoreRef.upsertConfigChange).toHaveBeenCalledTimes(1);
-    const arg = offlineChangesStoreRef.upsertConfigChange.mock.calls[0][0];
+    expect(pendingChangesStoreRef.upsertConfigChange).toHaveBeenCalledTimes(1);
+    const arg = pendingChangesStoreRef.upsertConfigChange.mock.calls[0][0];
     expect(arg.nodeId).toBe('050201020300');
     expect(arg.space).toBe(253);
     expect(arg.offset).toBe('0x00000064');
-    expect(configChangesStoreRef.revert).toHaveBeenCalledWith('050201020300:253:100');
-    expect(configChangesStoreRef._entries).toHaveLength(0);
+    // E3b-1 B2: staging does not clear the drafts; the Save clears them only
+    // after the rows are recorded in the layout file.
+    expect(configChangesStoreRef.revert).not.toHaveBeenCalled();
+    expect(configChangesStoreRef._entries).toHaveLength(1);
   });
 
   it('stages placeholder NodeKey drafts alongside real-node drafts (S8.12 unification)', () => {
@@ -95,19 +90,19 @@ describe('stageDraftsForOfflineSave', () => {
       { key: '050201020300:253:100', value: { type: 'int', value: 7 } },
     ];
 
-    stageDraftsForOfflineSave();
+    stageConfigDraftsAsPendingChanges();
 
     // Both drafts staged — placeholder and real node.
-    expect(offlineChangesStoreRef.upsertConfigChange).toHaveBeenCalledTimes(2);
+    expect(pendingChangesStoreRef.upsertConfigChange).toHaveBeenCalledTimes(2);
     expect(
-      offlineChangesStoreRef.upsertConfigChange.mock.calls[0][0].nodeId,
+      pendingChangesStoreRef.upsertConfigChange.mock.calls[0][0].nodeId,
     ).toBe('placeholder:01234567-89ab-cdef-0123-456789abcdef');
     expect(
-      offlineChangesStoreRef.upsertConfigChange.mock.calls[1][0].nodeId,
+      pendingChangesStoreRef.upsertConfigChange.mock.calls[1][0].nodeId,
     ).toBe('050201020300');
 
-    // Both drafts reverted from configChangesStore.
-    expect(configChangesStoreRef._entries).toHaveLength(0);
+    // Drafts stay until the Save has recorded the rows.
+    expect(configChangesStoreRef._entries).toHaveLength(2);
   });
 
   it('stages placeholder-only drafts without throwing', () => {
@@ -118,86 +113,52 @@ describe('stageDraftsForOfflineSave', () => {
       },
     ];
 
-    expect(() => stageDraftsForOfflineSave()).not.toThrow();
-    expect(offlineChangesStoreRef.upsertConfigChange).toHaveBeenCalledTimes(1);
+    expect(() => stageConfigDraftsAsPendingChanges()).not.toThrow();
+    expect(pendingChangesStoreRef.upsertConfigChange).toHaveBeenCalledTimes(1);
     expect(
-      offlineChangesStoreRef.upsertConfigChange.mock.calls[0][0].nodeId,
+      pendingChangesStoreRef.upsertConfigChange.mock.calls[0][0].nodeId,
     ).toBe('placeholder:01234567-89ab-cdef-0123-456789abcdef');
-  });
-});
-
-describe('flushDraftToBackend', () => {
-  it('does not call setModifiedValue for placeholder NodeKeys', () => {
-    configChangesStoreRef._entries = [
-      {
-        key: 'placeholder:01234567-89ab-cdef-0123-456789abcdef:253:100',
-        value: { type: 'string', value: 'Yard 1' },
-      },
-    ];
-
-    flushDraftToBackend(
-      'placeholder:01234567-89ab-cdef-0123-456789abcdef:253:100',
-    );
-
-    expect(setModifiedValueRef).not.toHaveBeenCalled();
-  });
-
-  it('calls setModifiedValue for real-node NodeIDs', () => {
-    configChangesStoreRef._entries = [
-      { key: '050201020300:253:100', value: { type: 'int', value: 7 } },
-    ];
-
-    flushDraftToBackend('050201020300:253:100');
-
-    expect(setModifiedValueRef).toHaveBeenCalledTimes(1);
-    expect(setModifiedValueRef).toHaveBeenCalledWith(
-      '050201020300',
-      100,
-      253,
-      { type: 'int', value: 7 },
-    );
   });
 });
 
 // ─── S8.8 bug-closing contract ───────────────────────────────────────────────
 //
 // Spec 014 / S8.8 / T1 — regression contract for the unified placeholder
-// edit transport. Before S8.8, `stageDraftsForOfflineSave` filtered
+// edit transport. Before S8.8, `stageConfigDraftsAsPendingChanges` filtered
 // placeholder-keyed drafts out of the offline staging path, so a placeholder
 // field edit never reached disk and was lost on layout reload (the bug
 // surfaced as "Save failed: Invalid NodeID hex string length: 44" in earlier
 // builds and was patched into a silent drop in S8.5).
 //
 // Post-S8.8 architectural target: a placeholder is just a `NodeSnapshot`
-// whose identity is a UUID. Edits ride the same `OfflineChangeRow` channel
-// as real-node edits. The `replace_offline_changes` IPC accepts the
+// whose identity is a UUID. Edits ride the same `PendingChangeRow` channel
+// as real-node edits. The backend accepts the
 // placeholder NodeKey verbatim (no `NodeID::from_hex_string` validation).
 //
 // This test MUST stay green forever — it is the regression contract that
 // keeps the workaround from creeping back in. Do not delete when refactoring.
-describe('stageDraftsForOfflineSave — S8.8 placeholder unification', () => {
-  it('stages placeholder NodeKey drafts into offlineChangesStore alongside real-node drafts', () => {
+describe('stageConfigDraftsAsPendingChanges — S8.8 placeholder unification', () => {
+  it('stages placeholder NodeKey drafts into pendingChangesStore alongside real-node drafts', () => {
     const placeholderNodeKey = 'placeholder:01234567-89ab-cdef-0123-456789abcdef';
     const placeholderEditKey = `${placeholderNodeKey}:253:100`;
     configChangesStoreRef._entries = [
       { key: placeholderEditKey, value: { type: 'string', value: 'Yard 1' } },
     ];
 
-    stageDraftsForOfflineSave();
+    stageConfigDraftsAsPendingChanges();
 
-    // The placeholder draft is staged into offlineChangesStore using its
+    // The placeholder draft is staged into pendingChangesStore using its
     // NodeKey verbatim (not stripped, not validated as 12-hex). The IPC
     // accepts this shape post-S8.8-T3.
-    expect(offlineChangesStoreRef.upsertConfigChange).toHaveBeenCalledTimes(1);
-    const arg = offlineChangesStoreRef.upsertConfigChange.mock.calls[0][0];
+    expect(pendingChangesStoreRef.upsertConfigChange).toHaveBeenCalledTimes(1);
+    const arg = pendingChangesStoreRef.upsertConfigChange.mock.calls[0][0];
     expect(arg.nodeId).toBe(placeholderNodeKey);
     expect(arg.space).toBe(253);
     expect(arg.offset).toBe('0x00000064');
     expect(arg.plannedValue).toBe('Yard 1');
 
-    // The draft is cleared from configChangesStore — same lifecycle as a
-    // real-node edit. No more "placeholder drafts survive in-memory across
-    // save" workaround.
-    expect(configChangesStoreRef._entries).toHaveLength(0);
+    // Same lifecycle as a real-node edit: the Save clears the draft once the
+    // row is recorded.
+    expect(configChangesStoreRef._entries).toHaveLength(1);
   });
 });

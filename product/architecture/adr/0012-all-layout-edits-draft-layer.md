@@ -196,20 +196,6 @@ Automated cascades that flow from an in-app trigger (such as a hardware-owned ch
 - Cascade orchestrators are lifecycle-scoped: mount them in the layout-open path (adjacent to store hydration) and tear them down via `layoutLifecycleOrchestrator.resetForNewLayout()`. A cascade subscription that outlives its layout is drift.
 - When adding a cascade for a new trigger source (spec 019+ hardware seams), extend `facilityCascadeOrchestrator` (or introduce a sibling orchestrator that follows the same diff-based subscription pattern). Never create ad-hoc Svelte effects inside components or route files that mutate the same draft stores — that path breaks the single-orchestrator contract.
 
-## 2026-07-01 extension: cascade side effects appear in the draft layer
-
-Automated cascades that flow from an in-app trigger (such as a hardware-owned channel disappearing from `channelsStore.channels` because the user cleared its BOD daughter-board) MUST stage their side effects in the appropriate draft stores (`facilitiesStore`, `bowtieMetadataStore`, `configChangesStore`) so the user sees them **NEXT TO** their trigger — visible immediately in the toolbar's unsaved-change count, atomic on Save, revertable on Discard.
-
-**Rationale.** The alternative — an on-save "fixup" that only appears at commit time — creates a surprising user experience: Discard restores the trigger (the daughter-board comes back) but the cascade's side effects (facility un-Wiring, bowtie teardown) already collapsed before the user got a chance to see them, so Discard looks like it did nothing to the cascade. The draft-layer approach makes the cascade a first-class part of the transaction: the same Discard restores both.
-
-**Concrete rules:**
-
-- Frontend cascade orchestrators (e.g., `facilityCascadeOrchestrator.svelte.ts`, introduced by Spec 018 / S6) subscribe to the trigger source (a store's reactive state), diff transitions in a private `.root`, and dispatch draft-layer mutations through the same store methods and orchestrator entry points user actions use. They do NOT reach into the backend save flow, do NOT persist a parallel "pending cascade" bucket, and do NOT introduce a new dirty-breakdown category — the cascade's effects surface through the existing `dirtyBreakdown` buckets of the stores it mutates (which joins ADR-0011).
-- On-save "fixup" cascades that only appear at commit time are explicitly ruled out. If a save-flow reconciliation step is genuinely required (e.g., a backend integrity guard), it MUST NOT change user-observable state at commit time; it MUST reject the save with a clear error so the user can adjust their drafts.
-- Cascade orchestrators are lifecycle-scoped: mount them in the layout-open path (adjacent to store hydration) and tear them down via `layoutLifecycleOrchestrator.resetForNewLayout()`. A cascade subscription that outlives its layout is drift.
-- When adding a cascade for a new trigger source (spec 019+ hardware seams), extend `facilityCascadeOrchestrator` (or introduce a sibling orchestrator that follows the same diff-based subscription pattern). Never create ad-hoc Svelte effects inside components or route files that mutate the same draft stores — that path breaks the single-orchestrator contract.
-
-
 ## 2026-07-03 extension: load-time schema repairs stage as drafts
 
 When layout open detects a schema inconsistency that a backend read path already normalises in memory (e.g., `read_layout_capture` running `normalize_facility_channel_refs` against `channels.yaml` and finding a facility slot binding whose channel id is absent from the channel inventory), the frontend MUST stage the equivalent fix-up as a normal draft edit — the same seam any user-triggered edit would use — rather than treating the toast as sufficient.
@@ -243,6 +229,8 @@ The inverse of composition MUST be reversible from every state a facility can re
 
 
 ## 2026-07-03 extension: connected-mode draft-to-backend mirror
+
+> **Superseded 2026-11-23 (Spec 020 E3b-1).** The mirror, `flushDraftToBackend` and the `modified_value` layer are removed; every Save records drafts as Pending Changes and writes them through one writer. See ADR-0001, 2026-11-23 extension.
 
 Every user- or workflow-initiated config-value edit lands in
 `configChangesStore` through the same single entry point (`ConfigEditor.applyEdit`).
@@ -307,3 +295,151 @@ config drafts (e.g. a batched `setModifiedValues` in a future extension),
 it MUST replace the mirror's emission, not run in parallel — the
 single-owner property is what makes the "someone forgot to flush" bug
 class impossible.
+
+## 2026-11-22 extension: compiled facility intent
+
+Spec 020 E1a adds the first facility whose hardware effect is compiled, not
+mapped: Automatic Block Signals.
+
+- **Whole-record replace.** The facility's `blockSignals` record (blocks,
+  direction, settings, signals with their channel IDs, claimed slots) changes
+  as one unit through `setBlockSignalsRecord`; a new facility carries it in
+  `AddFacility`. `facilitiesStore` suppresses a record equal to the effective
+  one and drops the pending entry when it returns to the saved one. Rejected:
+  one delta per kind of change (add signal, reorder, rebind, set claims),
+  whose ordering rules would have to track the compiler's whole-Line input.
+- **The mapping rule is scoped to bowtie-composing templates.** The
+  2026-07-03 rule that new templates compose through `BehaviorTemplate.mapping`
+  applies to templates that compose bowties (`composes_bowties()`). Automatic
+  Block Signals has no mapping; its configuration edits come from the pure
+  compiler (`bowties-core/src/signaling/compiler.rs`) through
+  `compose_block_signals`, and `facilityOrchestrator.createBlockSignalsFacility`
+  stages them with the shared `applyConfigEdits` over `configEditor.applyEdit`.
+  Reversal uses the claimed slots recorded on the facility (Spec 020 E2), not
+  the event-ID search, which cannot find mast or Logic integer fields.
+- **Fresh facts before staging.** Done syncs facility and channel drafts, then
+  compiles again with the target node's unsaved configuration edits in the
+  request, and stages nothing if any blocking issue is reported. A failure
+  after staging starts rolls back the channel, the facility and each staged
+  edit (restoring any earlier hand edit on the same field).
+
+## 2026-11-22 extension: editing compiled facility intent
+
+Spec 020 E2a edits a saved Automatic Block Signals facility.
+
+- **One staging pipeline, two targets.** Create and update share one
+  facility-orchestrator pipeline: sync drafts, fresh compose, stage nothing on
+  a blocking issue, stage, roll back on failure. The update target replaces
+  the record (`setBlockSignalsRecord`), renames the facility and signal
+  channels, rebinds channels (`SetChannelBinding`, ADR-0013), and stages the
+  compiled edits. Rejected: a separate update function, which would let the
+  update path drift from create's fresh-facts guard and rollback.
+- **Recompilation stays in the claimed slots.** The compiler receives the
+  facility's claimed slots and recompiles into exactly those; pins owned by
+  the facility's own masts are not conflicts. A claimed slot that no longer
+  exists, or wiring on another node, is a blocking issue, never a re-pick.
+  Rejected: letting the backend strip the facility's slots from the facts and
+  keep picking the lowest free slot, which would drift to a lower slot when
+  one frees up and leave the old slot active.
+- **Saved signal identity wins.** A derived signal that protects the same
+  block as a saved signal keeps the saved signal ID (one-to-one); only
+  unmatched signals get a derived ID. This keeps names, channels and the
+  `signals` slot attached across reorient, and is the rule later block-list
+  edits refine.
+
+## 2026-11-23 extension: removing compiled facility intent
+
+Spec 020 E2b removes a saved Automatic Block Signals facility.
+
+- **Release is computed from the record, in one place.** Core
+  `release_slots(claims, nodes)` turns the record's claimed slots into reset
+  edits: each claimed mast gets Mast Processing 0, an empty description and
+  its lamps cleared (Lamp Selection and Effects Lamp of the rules the recipe
+  writes → Unused); each claimed Logic gets Function 0, an empty description
+  and a fresh event ID on every event field the recipe wrote. Processing or
+  function 0 alone makes the slot free; clearing the lamps keeps a hand
+  re-enable from driving pins another signal now uses, and the fresh event
+  IDs break the connections removal undoes, following the 2026-07-03
+  teardown rule (core marks the fields, the frontend's one generator fills
+  them). Without them the CDI-scan catalog keeps showing the detector→Logic
+  and Logic→mast bowties, because it matches event IDs in inactive slots. Every release
+  edit lies inside a claimed slot; the facility claims no Direct Lamp rows,
+  so removal changes none. E2c reuses this function for owners no facility
+  claims. Rejected: generic facility teardown, which has no proof that a slot
+  is safe to reset, and a second reset path for untracked owners.
+- **Third target of the facility orchestrator.** `removeBlockSignalsFacility`
+  syncs drafts, composes the release (compose request `remove: true`, which
+  reads the record from the effective layout), stages nothing on a blocking
+  issue, then stages the release edits and deletes the facility and its signal
+  channels. The edits are staged before the deletes, the only step that can
+  fail, so a failure restores prior drafts and leaves the facility untouched.
+  The generic `deleteFacility` routes ABS facilities here.
+- **Refuse by default, leave the board on request.** When the release cannot
+  be worked out (the board's configuration is not loaded, or a claimed slot is
+  missing), removal is refused with the reason. An explicit `leaveBoard`
+  choice removes the facility and channels without resetting the board.
+  Delete asks for a destructive confirmation naming the facility, board and
+  slots. All of it is ordinary drafts: Discard restores everything until
+  Save.
+
+## 2026-11-23 extension: releasing configuration Bowties does not own
+
+Spec 020 E2c lets the modeler release a mast or Direct Lamp row that no
+facility claims (configuration left by hand, another tool or earlier
+testing) and use its pins for a signal.
+
+- **Named releases only.** The editor holds the released owners; the
+  preview and compose requests carry them as `release: [{nodeKey, owner}]`.
+  An owner a facility claims, or one that owns nothing, is a blocking
+  `releaseInvalid` issue. A slot in use outside Bowties is still a blocking
+  issue unless the request names its owner: never a silent overwrite.
+- **One release path and one reset set.** `release_slots` takes
+  `ReleaseTarget` (Mast | Logic | DirectLamp | LogicActions); a facility's
+  persisted `ClaimedSlot` (Mast | Logic) converts into it, so removal (E2b)
+  and E2c share it. Every release clears a mast's Processing, description,
+  every rule's Appearance lamps and Effects Lamp; gives a Logic Function 0,
+  an empty description and fresh event IDs on all eight event fields; and
+  gives a Direct Lamp row Lamp Selection 0 ("Used by Mast", inactive), an
+  empty description and fresh Lamp On / Lamp Off. This replaces the E2b
+  wording "the rules the recipe writes" and "every event field the recipe
+  wrote": a reused mast must not inherit lamps on rules the recipe does not
+  write.
+- **A released mast takes its conditionals with it.**
+  `untracked_release_targets` matches same-node Logic whose Function is not 0
+  and whose Action Event equals one of the mast's set-aspect events. A
+  matched Logic that also sends other events (another action whose Condition
+  is not 0) is kept: only its actions aimed at the mast get fresh event IDs,
+  so it stops driving the mast, which the recipe usually reuses. Others get
+  the full Logic release. Consumers Bowties cannot see (JMRI, other buses,
+  unloaded nodes) are why the keep rule looks at the conditional's own
+  actions instead of searching for consumers. Rejected: deciding from
+  consumers found in loaded trees or in the bowtie catalog.
+- **Staged on Done with the facility.** The backend applies the release
+  edits to a request-scoped copy of the effective trees (ADR-0015) before it
+  derives pin owners, slot facts and the free-slot pick, so "free" has one
+  definition. Compose returns release edits merged with the recipe's (the
+  recipe wins on a shared leaf; fresh event IDs only in release edits), and
+  `stageBlockSignalsFacility` stages them together through the one
+  `stageComposedEdits` helper that fills fresh IDs. Cancel drops the list;
+  Discard restores the owner. Rejected: staging the release at confirmation,
+  which would make the editor a staging owner and leave orphaned releases on
+  every exit path that forgot to undo them.
+
+## 2026-11-24 extension: Logic placement moves out of the facility record
+
+Spec 020 E3a. Supersedes, for Logic only, "Recompilation stays in the
+claimed slots ... never a re-pick" (2026-11-22) and the facility's persisted
+`ClaimedSlot` list (2026-11-23).
+
+- **Masts and Track Circuits stay put; Logic is placed per board.** Each
+  signal of a `blockSignals` record carries its own `resources` (board,
+  mast, Track Circuits), which recompilation never re-picks. Logic placement
+  belongs to the board planner ([ADR-0020](0020-board-logic-placement.md))
+  and is recorded in the facilities document's `logicPlacement`, changed
+  only by the whole-board `SetLogicPlacement` delta.
+- **Done stages both.** Create, update and remove stage the facility record
+  and the board's placement together; Discard and rollback restore both.
+- **Release scope.** Release edits lie inside the facility's claims: its
+  signals' masts plus every slot of its placed Logic groups
+  (`slots::facility_claimed_slots`). `release_slots` stays the one release
+  path.

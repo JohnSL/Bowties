@@ -23,7 +23,7 @@ describe('layoutOpenLifecycle', () => {
     expect(get(layoutOpenPhase)).toBe('hydrating_snapshots');
 
     startOfflineReplay();
-    expect(get(layoutOpenPhase)).toBe('replaying_offline_changes');
+    expect(get(layoutOpenPhase)).toBe('replaying_pending_changes');
 
     finishOfflineReplay();
     expect(get(layoutOpenPhase)).toBe('ready');

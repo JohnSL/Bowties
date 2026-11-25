@@ -86,7 +86,7 @@ Deep modules hide significant complexity behind a narrow public API. These are t
 - Offline change staging
 - Manifest reconstruction
 - Known-layouts registry
-- **API:** `save_capture`, `read_capture`, `update_offline_changes`, `execute` (journal)
+- **API:** `save_capture`, `read_capture`, `update_pending_changes`, `execute` (journal)
 
 ### `bowtie/catalog` — bowties-core
 
@@ -245,7 +245,7 @@ graph LR
         layout["<b>layoutStore</b><br/>Layout file state, active context"]
         bowtieCatalog["<b>bowtieCatalogStore</b><br/>Backend-built catalog"]
         bowtieMetadata["<b>bowtieMetadataStore</b><br/>Pending name/tag/role edits"]
-        offlineChanges["<b>offlineChangesStore</b><br/>Persisted offline diffs"]
+        offlineChanges["<b>pendingChangesStore</b><br/>Persisted offline diffs"]
         syncPanel["<b>syncPanelStore</b><br/>Conflict/clean row state"]
         connSel["<b>connectorSelectionsStore</b><br/>Slot selections per node"]
     end

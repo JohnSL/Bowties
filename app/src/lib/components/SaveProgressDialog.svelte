@@ -8,6 +8,7 @@
    *   - "Writing N of M: <label>…"   (phase `writing-config`)
    *   - "Updating layout…"           (phase `reconciling`)
    *   - "Save failed"                (phase `error`)
+   *   - "Saved" + what is still waiting (phase `saved-with-notice`)
    *
    * The dialog is modal — while visible no other save can be initiated
    * (see usage in `+page.svelte`). On `complete` the dialog dismisses
@@ -33,8 +34,12 @@
   let total = $derived(saveProgressStore.busWriteTotal);
   let label = $derived(saveProgressStore.currentLabel);
   let errorMessage = $derived(saveProgressStore.errorMessage);
+  let notice = $derived(saveProgressStore.notice);
+  let noticeDetails = $derived(saveProgressStore.noticeDetails);
 
   let inError = $derived(phase === 'error');
+  let inNotice = $derived(phase === 'saved-with-notice');
+  let dismissable = $derived(inError || inNotice);
 
   $effect(() => {
     if (phase === 'complete') {
@@ -59,9 +64,9 @@
   open={visible}
   width="sm"
   role="alertdialog"
-  closable={inError}
-  initialFocus={inError ? 'first' : 'none'}
-  actions={inError ? errorActions : undefined}
+  closable={dismissable}
+  initialFocus={dismissable ? 'first' : 'none'}
+  actions={dismissable ? errorActions : undefined}
   onCancel={dismiss}
 >
   {#snippet title()}
@@ -72,6 +77,8 @@
         Writing configuration to bus
       {:else if phase === 'reconciling'}
         Updating layout…
+      {:else if phase === 'saved-with-notice'}
+        Saved
       {:else if phase === 'error'}
         Save failed
       {/if}
@@ -103,6 +110,11 @@
       <div class="sp-bar-track" aria-hidden="true">
         <div class="sp-bar-fill sp-bar-indeterminate"></div>
       </div>
+    {:else if phase === 'saved-with-notice'}
+      <p class="sp-line">{notice}</p>
+      {#each noticeDetails as detail}
+        <p class="sp-line sp-error-message">{detail}</p>
+      {/each}
     {:else if phase === 'error'}
       <p class="sp-line sp-error-message">
         {errorMessage ?? 'The save did not finish. Please try again.'}

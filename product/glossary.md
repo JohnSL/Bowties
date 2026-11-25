@@ -123,7 +123,7 @@ Profile-declared mapping from a channel type's abstract states (e.g., occupied/c
 _Avoid_: event binding, event wiring (that's bowtie creation)
 
 **Railroad Tab**:
-The third (rightmost) tab in the main application view. Hosts the **Channels Panel** (hardware-organised list of every channel in the layout) and the **Facilities Section** (named instances of behavior templates). The home for layout-level railroad abstractions.
+The third (rightmost) tab in the main application view. Hosts the **Channels Panel** (hardware-organised list of every channel in the layout) and the **Facilities Section** (named instances of behavior templates; an **Automatic Block Signals** card draws a read-only **Track Diagram** with live occupancy). The home for layout-level railroad abstractions.
 _Avoid_: channel tab, inventory tab, layout tab (overloaded with "layout file")
 
 **Channels Panel**:
@@ -133,7 +133,7 @@ _Avoid_: channel inventory (pre-018 surface, retired), channel list, hardware pa
 ## Facilities System
 
 **Facility**:
-A named, persisted instance of a **Behavior Template**, with one **Facility Slot** per template-declared slot. Each slot is optionally bound to one **Channel** by role. A facility has exactly one **Facility Status** (`Incomplete` if any slot empty; `Wired` if all slots filled, with the underlying bowtie(s) created via the existing bowtie creation mechanism). Persisted in `facilities.yaml`. A facility is a **UI veneer** over bowties — Spec 018 introduces no new sync, persistence, or deployment machinery for facilities themselves.
+A named, persisted instance of a **Behavior Template**, with one **Facility Slot** per template-declared slot. Each slot is optionally bound to one **Channel** by role. A facility has exactly one **Facility Status** (`Incomplete` if any slot empty; `Wired` if all slots filled, with the underlying bowtie(s) created via the existing bowtie creation mechanism). Persisted in `facilities.yaml`. A facility adds no sync or deployment machinery of its own: its effect on hardware is ordinary **Pending Change**s that ride Save (ADR-0001). Block Indicator is a UI veneer over bowties. **Automatic Block Signals** (Spec 020) also persists its own record (ordered blocks, signals, **Claimed Resource**s) in the facility.
 _Avoid_: arrangement, signal, device, behavior, automation (these describe future template families; "facility" is the generic noun)
 
 **Behavior Template**:
@@ -158,7 +158,7 @@ _Avoid_: provenance, source, origin, "system channel" / "manual channel" (vague)
 
 **Binding** (Channel Binding):
 The discriminated reference from a **Channel** to the specific pin(s) it claims on a specific subsystem on a specific node. Shape: `{ kind: 'connectorInput' | 'lampRow' | …, …style-specific fields }`. The `kind` MUST match the **Style**'s declared binding shape. Replaces the pre-018 `hardwareRef` field; see also that entry.
-_Avoid_: hardware reference (pre-018 term), wiring (wiring is the bowtie/bus side), target, anchor
+_Avoid_: hardware reference (pre-018 term), wiring (wiring is the bowtie/bus side), target, anchor. Exception: **Wiring** is the modeler-facing name of the Automatic Block Signals step where signal outputs are chosen, because modelers wire LEDs to those pins. Code and docs still call the result a binding.
 
 **Facility Status**:
 The derived lifecycle status of a **Facility**, computed by a pure function over slot fullness — never stored on persistence (ADR-0004). Two values: `Incomplete` (at least one slot empty; no underlying bowtie(s) exist for the template's mapping) and `Wired` (all slots filled; underlying bowtie(s) exist, created via the existing bowtie creation mechanism). Transitions are automatic; there is no separate "deploy" action in Spec 018.
@@ -167,6 +167,38 @@ _Avoid_: "Live" (the original Spec 018 draft used this; renamed to **Wired** to 
 **Style Constraint Contract**:
 A declaration on a **Style** describing how its **Channel**s manage the CDI fields of the pins they claim — fix a field to a specific value, restrict it to a subset of allowed values, or hide it entirely. Unmanaged fields stay freely user-editable. Spec 018 repositions the existing BOD-family `validityRules` (today on daughter-board entries) onto the `bod-block-detector-input` style; the renderer (the existing profile-driven relevance/validity surface) is unchanged. The user cannot put a managed field into a state that would invalidate the channel's semantics.
 _Avoid_: validity rules (the renderer mechanism; the contract is the source declaration), restrictions, locks, schema
+
+**Automatic Block Signals**:
+A **Facility** (Spec 020) that signals one or more existing detected blocks entered in travel order. Each block gets one entrance **Signal**. Its guided steps are Blocks, Aspects, Appearance and Wiring; Done on Wiring saves it (a Review step is deferred). The facility compiles to Signal LCC configuration (mast, Rule to Aspect, conditionals) staged as **Pending Change**s. Code and older specs also call one instance a "Line".
+_Avoid_: Signal Line (pre-S2R name), ABS system, signal wizard
+
+**Signal**:
+An entrance signal of an **Automatic Block Signals** facility. It has a stable identity, a name, the block it protects, and one `signal-indication` **Channel** for its outputs. It shows an **Aspect** chosen by its own block's occupancy and the next signal's Aspect.
+_Avoid_: mast (the Signal LCC CDI structure that realises a signal), head (one lamp group of a signal)
+
+**Protected Block**:
+A detected block a **Signal** watches: the block it enters plus any blocks joined to it in the facility's block list. Any protected block occupied means the signal shows Stop.
+_Avoid_: governed block, signal block (the signal's whole run, which may include protected blocks on another board)
+
+**Logic Placement**:
+Which Signal LCC Logic conditional slots each Bowties Logic group occupies on one board. A group is a run of consecutive slots ending in `Last (Single)`; one per-board planner keeps placed groups where they are, puts new groups in the lowest free run, and moves the fewest slots when a group must grow (ADR-0020). Moving another facility's group is part of placement, not a separate edit.
+_Avoid_: slot allocation, conditional numbering
+
+**Track Diagram**:
+The drawing of a facility's blocks in travel order, with joins, turnouts, the entrance and exit ends and each **Signal** at its position. The editor's Blocks, Aspects and Wiring steps draw it interactively; the **Railroad Tab** facility card draws the same diagram read-only, with live occupancy.
+_Avoid_: track plan, schematic
+
+**Aspect**:
+The meaning a **Signal** conveys to a train: Stop, Approach or Clear in the three-indication policy. Aspects are policy; the lamps lit for each aspect are its **Indication**.
+_Avoid_: color, state, rule (a Rule is the Signal LCC CDI entry that selects an aspect)
+
+**Indication**:
+The physical appearance that shows an **Aspect**: which lamps are lit, for example red for Stop, red plus green for Approach and green for Clear on a two-driver RG searchlight. Decided by the signal's **Style** and appearance, not by the aspect policy.
+_Avoid_: aspect (when lamps are meant), color
+
+**Claimed Resource**:
+A Signal LCC slot (mast, Logic conditional, Track Circuit) that an **Automatic Block Signals** facility configured, recorded in its facility record per node. Recomposition reuses the same slots; removal resets only claimed slots. A slot that is needed but already in use is a blocking issue, never silently overwritten.
+_Avoid_: allocation, reservation, owned resource
 
 **Hardware-owned Channel**:
 See **Channel Ownership**.
@@ -219,20 +251,12 @@ _Avoid_: session manager, node registry (that is the app-layer `NodeRegistry`), 
 ## Data & Workflow
 
 **Sync Session**:
-A temporary session object that classifies offline changes into conflict/clean/already-applied/node-missing rows, presenting unresolved conflicts to the user for apply/skip choices.
+A temporary session object that classifies Pending Changes into conflict/clean/already-applied/node-missing rows, presenting unresolved conflicts to the user for apply/skip choices.
 _Avoid_: sync state, sync job, sync operation
 
-**Modified Value**:
-A node configuration field value that has been changed from its baseline (bus state when layout was opened) and persisted in the node tree's `modified_value` field.
-_Avoid_: edited value, override, pending value
-
 **Pending Change**:
-An offline-authored modification to a node configuration that has not yet been synced to the physical bus, ready to sync at next connection.
-_Avoid_: unsaved change, draft
-
-**Offline Change**:
-A configuration modification authored or recorded while the layout is disconnected from the bus, stored in `offline-changes.yaml` alongside the layout file and replayed during reconciliation.
-_Avoid_: queued change, saved change
+A configuration or bowtie edit recorded in the layout file that the board has not confirmed. Every Save records configuration drafts as Pending Changes, whether connected or not; a connected Save writes the ones it recorded and reads them back. Each row has a status (pending, conflict, failed, skipped, ...) and, when the board did not take the value, a reason. A row is removed once the board holds the planned value. Stored in `offline-changes.yaml` (legacy file name) alongside the layout file. A Pending Change is not a draft: drafts are unsaved edits that become Pending Changes when saved.
+_Avoid_: offline change, modified value, unsaved change, draft, queued change
 
 **Config Read Session**:
 A multi-step orchestrated process that sequentially reads CDI and PIP from each discovered node, updates the node tree, and signals completion.
@@ -287,8 +311,7 @@ _Avoid_: "node store" (overloaded), "dirty store"
 - The **Peer Session Registry** owns exactly one **Peer Session** per remote **Node ID**; **Node Alias** renegotiation updates that session in place rather than spawning a duplicate
 - A **Profile** is specific to one node model; it may contain **Relevance Rules** and **Cascade Rules**
 - **Relevance Rules** govern CDI sections (many-to-many: one rule may affect multiple sections; one section may be governed by multiple rules)
-- **Offline Changes** are a superset of **Pending Changes** (all pending changes are offline; not all offline changes are pending)
-- A **Sync Session** classifies **Offline Changes** into actionable rows
+- A **Sync Session** classifies **Pending Changes** into actionable rows
 - An **Information Channel** has exactly one **Binding** linking it to pin(s) on a subsystem on a node (replaces the pre-018 **Hardware Reference**)
 - An **Information Channel** has exactly one **Role** (state vocabulary + slot-binding contract) and exactly one **Style** (hardware-shape realisation); every channel's Style realises its Role
 - An **Information Channel** has exactly one **Channel Ownership** (`hardware-owned` or `user-owned`) deciding its lifecycle
@@ -304,7 +327,7 @@ _Avoid_: "node store" (overloaded), "dirty store"
 
 - **"Element"** is used for (a) Connection Element (bowtie producer/consumer), (b) CDI DataElement (leaf config field), and (c) abstract "node/element pair". Qualify on first use: "Connection Element" for (a), "Config Element" or "CDI Element" for (b).
 - **"Display Name"** vs "friendly name": Display Name is canonical. Retire "friendly name" in code comments and docs.
-- **"Pending" vs "Offline"**: "Offline Change" = stored on disk in offline-changes.yaml. "Pending Change" = subset ready to sync at connect. Offline ⊇ Pending.
+- **"Offline Change" and "Modified Value"** are retired (Spec 020 E3b): both are now **Pending Changes**, recorded by every Save whether connected or not. The file keeps its legacy name `offline-changes.yaml`.
 - **"Config Read"** is vague — refers to (a) reading CDI from one node, (b) reading PIP flags, (c) entire multi-node session. Use "Config Read Session" for (c), "read CDI" for (a), "read PIP" for (b).
 - **"Profile" scope**: "Structure Profile" = `.profile.yaml` shipped with app. "Extraction Profile" = full 7-file set from manual authoring. Ship only structure profiles.
 - **"Cascade Rules"** are defined in specs but not yet fully implemented. Reserve term until implementation lands.

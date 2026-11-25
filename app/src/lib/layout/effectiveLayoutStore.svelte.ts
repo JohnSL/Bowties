@@ -32,6 +32,8 @@ import { channelsStore } from '$lib/stores/channels.svelte';
 import { facilitiesStore } from '$lib/stores/facilities.svelte';
 import { behaviorTemplatesStore } from '$lib/stores/behaviorTemplates.svelte';
 import { nodeRoster } from '$lib/stores/nodeRoster.svelte';
+import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
+import { facilityWriteOutcome, type FacilityWriteOutcome } from '$lib/utils/facilityWriteOutcome';
 import {
   isLeaf,
   collectEventIdLeaves,
@@ -310,6 +312,23 @@ class EffectiveLayoutStore {
       if (bound < slot.minChannels) return 'Incomplete';
     }
     return 'Wired';
+  }
+
+  /**
+   * Spec 020 / E5-T4 — per-board write outcome of a facility, derived from the
+   * persisted Pending Change rows that carry its `origin.facilityId` (owner of
+   * the rows: pendingChangesStore). Separate from `facilityStatus`, which gates
+   * bowtie composition; the FacilityCard shows this beside it so a facility
+   * with waiting writes is never shown as complete.
+   */
+  facilityWriteOutcome(facilityId: string): FacilityWriteOutcome & {
+    boards: Array<FacilityWriteOutcome['boards'][number] & { nodeName: string }>;
+  } {
+    const outcome = facilityWriteOutcome(facilityId, pendingChangesStore.persistedRows);
+    return {
+      ...outcome,
+      boards: outcome.boards.map((b) => ({ ...b, nodeName: resolveNodeNameForKey(b.nodeKey) })),
+    };
   }
 }
 

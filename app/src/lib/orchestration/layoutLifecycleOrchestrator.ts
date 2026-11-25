@@ -32,7 +32,7 @@ import { partialCaptureNodesStore } from '$lib/stores/partialCaptureNodes.svelte
 import { layoutStore, type ActiveLayoutMode } from '$lib/stores/layout.svelte';
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
-import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
 import { configSidebarStore } from '$lib/stores/configSidebar';
 import { connectorSelectionsStore } from '$lib/stores/connectorSelections.svelte';
 import { channelsStore } from '$lib/stores/channels.svelte';
@@ -44,8 +44,8 @@ import { syncPanelStore } from '$lib/stores/syncPanel.svelte';
 import { cdiCacheStore } from '$lib/stores/cdiCache.svelte';
 import { connectorSlotFocusStore } from '$lib/stores/connectorSlotFocus.svelte';
 import { facilityCascadeOrchestrator } from '$lib/orchestration/facilityCascadeOrchestrator.svelte';
-import { configDraftMirrorOrchestrator } from '$lib/orchestration/configDraftMirrorOrchestrator.svelte';
 import { blockSignalsEditorOrchestrator } from '$lib/orchestration/blockSignalsEditorOrchestrator';
+import { facilityDiagramOrchestrator } from '$lib/orchestration/facilityDiagramOrchestrator';
 
 import type { CloseLayoutResult } from '$lib/api/layout';
 
@@ -71,14 +71,13 @@ export const layoutScopedParticipants: LayoutScopedParticipant[] = [
   partialCaptureNodesStore,
   nodeRoster,
   bowtieMetadataStore,
-  offlineChangesStore,
+  pendingChangesStore,
   configChangesStore,
   layoutStore,
   connectorSelectionsStore,
   channelsStore,
   facilitiesStore,
   facilityCascadeOrchestrator,
-  configDraftMirrorOrchestrator,
   configSidebarStore,
   nodeTreeStore,
   bowtieCatalogStore,
@@ -88,6 +87,7 @@ export const layoutScopedParticipants: LayoutScopedParticipant[] = [
   connectorSlotFocusStore,
   eventStateStore,
   blockSignalsEditorOrchestrator,
+  facilityDiagramOrchestrator,
   configReadStatusParticipant,
 ];
 

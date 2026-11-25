@@ -145,9 +145,6 @@ export interface TreeMapEntry {
   label: string;
 }
 
-/** Write lifecycle state for a pending modification — matches Rust `WriteState`. */
-export type LeafWriteState = 'dirty' | 'writing' | 'error';
-
 /** Slider hint for an integer field. */
 export interface SliderHints {
   /** When true, value is applied immediately on drag. */
@@ -192,22 +189,12 @@ export interface LeafConfigNode extends ConfigNodeBase {
   /** When true, render int field as radio buttons (one per map entry). */
   hintRadio?: boolean;
   /**
-   * Backend-only: user-modified value not yet written to the node.
-   * Present in the Rust backend tree; the frontend reads value layers
-   * from configChangesStore instead of this field.
-   */
-  modifiedValue?: TreeConfigValue | null;
-  /** Write lifecycle state. Absent when no modification is pending. */
-  writeState?: LeafWriteState | null;
-  /** Error message from the last failed write attempt. */
-  writeError?: string | null;
-  /**
    * Set to true at runtime when the device rejects a write with 0x1083
    * (address is read-only). Disables the control for the rest of the session.
    */
   readOnly?: boolean;
   /**
-   * Backend-only: set to true when a persisted offline change is pending.
+   * Backend-only: set to true when a persisted pending change is pending.
    * The frontend derives pending state from configChangesStore layers
    * instead of reading this field directly.
    */
@@ -750,9 +737,6 @@ export function resolvePillSelectionsForPath(
 }
 
 // ─── Spec 007: Edit & Write Types ─────────────────────────────────────────────
-
-/** Write lifecycle state for a pending edit. */
-export type WriteState = 'dirty' | 'writing' | 'error' | 'clean';
 
 /** State of an overall save operation. */
 export type SaveState = 'idle' | 'saving' | 'completed' | 'partial-failure';

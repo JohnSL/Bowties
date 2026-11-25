@@ -2,13 +2,13 @@ import { buildOfflineNodeTree } from '$lib/api/layout';
 import type { ApplySyncResult, SyncSession } from '$lib/api/sync';
 import { markNodeConfigRead } from '$lib/stores/configReadStatus';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
-import { offlineChangesStore } from '$lib/stores/offlineChanges.svelte';
+import { pendingChangesStore } from '$lib/stores/pendingChanges.svelte';
 
 export async function reconcileOfflineTreesAfterSyncApply(
   result: ApplySyncResult,
   session: SyncSession | null,
 ): Promise<void> {
-  await offlineChangesStore.reloadFromBackend();
+  await pendingChangesStore.reloadFromBackend();
 
   const clearedIds = new Set([...result.applied, ...result.readOnlyCleared]);
   const allRows = [

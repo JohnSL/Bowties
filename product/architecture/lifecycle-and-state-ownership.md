@@ -91,7 +91,7 @@ These ownership rules prevent regressions that arise when lifecycle decisions ar
 **Phases (in order):**
 
 ```
-idle → opening_file → hydrating_snapshots → replaying_offline_changes → ready
+idle → opening_file → hydrating_snapshots → replaying_pending_changes → ready
                  ↘ error ↙ (from any phase)
 ```
 
@@ -100,7 +100,7 @@ idle → opening_file → hydrating_snapshots → replaying_offline_changes → 
 | `idle` | No open in progress |
 | `opening_file` | File picker dialog or recent-file restore in progress |
 | `hydrating_snapshots` | Loading captured node snapshots from the layout directory |
-| `replaying_offline_changes` | Replaying offline-changes.yaml onto tree state |
+| `replaying_pending_changes` | Replaying Pending Changes (offline-changes.yaml) onto tree state |
 | `ready` | Layout open and trees hydrated |
 | `error` | Open failed; reset to `idle` or retry |
 
@@ -108,7 +108,7 @@ idle → opening_file → hydrating_snapshots → replaying_offline_changes → 
 
 - `startLayoutOpen()` → `opening_file`
 - `startLayoutHydration()` → `hydrating_snapshots`
-- `finishLayoutHydration()` → `replaying_offline_changes`
+- `finishLayoutHydration()` → `replaying_pending_changes`
 - `finishOfflineReplay()` → `ready`
 - `failLayoutOpen()` → `error`
 - `resetLayoutOpenPhase()` → `idle`
@@ -129,7 +129,7 @@ idle → opening_file → hydrating_snapshots → replaying_offline_changes → 
 
 - `layoutOpenPhase` → `idle`
 - `layout.svelte.ts` layout state cleared
-- `offlineChangesStore` rows cleared
+- `pendingChangesStore` rows cleared
 - Node tree cleared
 
 **Do not:** drive close/discard from a route or component. The route emits intent (user pressed Close); the orchestrator executes the transition.
@@ -167,7 +167,7 @@ idle → opening_file → hydrating_snapshots → replaying_offline_changes → 
 | Layout file and path | `layout.svelte.ts` | Store |
 | Active layout context | `layout.svelte.ts` | Store |
 | Layout open phase machine | `layoutOpenLifecycle.ts` | Store |
-| Offline change rows (persisted + draft) | `offlineChanges.svelte.ts` | Store |
+| Offline change rows (persisted + draft) | `pendingChanges.svelte.ts` | Store |
 | Sync panel session and resolutions | `syncPanel.svelte.ts` | Store |
 | Node tree | `nodeTree.svelte.ts` | Store |
 | Connector selection profiles, documents, warnings, and staged repairs | `connectorSelections.svelte.ts` | Store |

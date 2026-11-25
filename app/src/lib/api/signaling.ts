@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { ChannelBinding, ChannelRole } from '$lib/api/channels';
+import type { TreeConfigValue } from '$lib/types/nodeTree';
+import type { NodeLogicPlacement, SignalResources } from '$lib/api/facilities';
 
 /** A detected block in the layout that can be added to the list. */
 export interface SelectedDetectedBlock {
@@ -60,37 +61,20 @@ export interface BlockSignalsPreviewRequest {
   /** Signal names by signal ID. */
   signalNames: Record<string, string>;
   /**
-   * A transient selection only. It reuses the established role/style/binding
-   * vocabulary but does not create, stage, or save an Information Channel.
+   * Untracked owners (a mast or Direct Lamp row no facility claims) released
+   * so their pins read as free. Optional; empty when omitted.
    */
-  bindings?: SignalBindingSelection[];
+  release?: ReleasedOwner[];
 }
 
-export type SignalOutputBinding = Extract<
-  ChannelBinding,
-  { kind: 'signalLccRgOutputs' }
->;
-
-export interface SignalBindingSelection {
-  signalId: string;
-  role: Extract<ChannelRole, 'signal-indication'>;
-  style: 'two-driver-rg-signal';
-  binding: SignalOutputBinding;
+/** An untracked owner named for release; the backend never releases one that is not listed. */
+export interface ReleasedOwner {
+  nodeKey: string;
+  /** "Mast N" or "Direct lamp N", the form the output hosts report owners in. */
+  owner: string;
 }
 
 export type SignalIndication = 'stop' | 'restricting' | 'approach' | 'advanceApproach' | 'clear';
-
-export interface SignalAppearance {
-  indication: 'stop' | 'approach' | 'clear';
-  outputs: Array<'red' | 'green'>;
-}
-
-export interface SignalDisplay {
-  role: Extract<ChannelRole, 'signal-indication'>;
-  style: 'two-driver-rg-signal';
-  binding: SignalOutputBinding | null;
-  appearances: SignalAppearance[];
-}
 
 export interface SignalOutputHost {
   nodeKey: string;
@@ -110,6 +94,8 @@ export interface SignalOutputHost {
     ordinal: number;
     label: string;
     owner: string | null;
+    /** The Bowties facility that owns this pin's mast; absent when configured outside Bowties. */
+    facility?: { facilityId: string; name: string };
   }>;
 }
 
@@ -145,7 +131,6 @@ export interface SignalPreview {
   /** Conditions and resulting indications, most restrictive first. */
   rules: Array<{ condition: RuleCondition; indication: SignalIndication }>;
   observation: 'unavailable';
-  display?: SignalDisplay;
 }
 
 export type ProposalIssue =
@@ -176,6 +161,11 @@ export interface BlockSignalsPreview {
   exitEnd: ExitEnd;
   signals: SignalPreview[];
   outputHosts?: SignalOutputHost[];
+  /**
+   * Every mast outside Bowties that drives a pin on an output host, with the
+   * Logic that sets its aspects.
+   */
+  outsideOwners?: OutsideOwner[];
   capability: {
     kind: 'incompletePreview';
     stage: 'unavailable';
@@ -185,8 +175,148 @@ export interface BlockSignalsPreview {
   issues: ProposalIssue[];
 }
 
+export interface OutsideOwner {
+  nodeKey: string;
+  /** "Mast N". */
+  owner: string;
+  /** Logic numbers on the same node whose actions set the mast's aspects. */
+  matchedLogic: number[];
+  /** The subset of `matchedLogic` that also sends other events; kept, with only the matching actions reset. */
+  keptLogic: number[];
+}
+
 export async function previewBlockSignals(
   request: BlockSignalsPreviewRequest,
 ): Promise<BlockSignalsPreview> {
   return invoke<BlockSignalsPreview>('preview_block_signals', { request });
+}
+
+/** The red/green wiring chosen for one signal. */
+export interface SignalWiring {
+  signalId: string;
+  nodeKey: string;
+  redOutput: number;
+  greenOutput: number;
+}
+
+/** An unsaved configuration edit, keyed as the draft store keys it. */
+export interface ComposeBlockSignalsRequest {
+  /** The facility being composed; its own mast and Logic do not count as in use. */
+  facilityId?: string;
+  line: BlockSignalsPreviewRequest;
+  wiring: SignalWiring[];
+  /**
+   * Untracked owners released for this facility. Their reset edits come back
+   * merged with the recipe's (recipe wins on a shared leaf) and their pins and
+   * slots count as free.
+   */
+  release?: ReleasedOwner[];
+}
+
+/** A generated configuration edit; pass `nodeKey/space/address/value` to `configEditor.applyEdit`. */
+export interface ComposedEdit {
+  nodeKey: string;
+  space: number;
+  address: number;
+  /** Compiler CDI path, for diagnostics. */
+  path: string;
+  value: TreeConfigValue;
+}
+
+/** A removal asks the caller to generate a new event ID for the leaf, breaking its connections. */
+export interface FreshEventIdValue {
+  type: 'freshEventId';
+}
+
+/** An edit that may ask for a fresh event ID: a removal's or a release's. */
+export interface RemovalEdit extends Omit<ComposedEdit, 'value'> {
+  value: TreeConfigValue | FreshEventIdValue;
+}
+
+/**
+ * With any issue, `edits` and `logicPlacement` are empty. `signalResources` is
+ * always empty. `logicPlacement` has one entry per board that held this
+ * facility's Logic: the groups that remain there (empty when none do).
+ */
+export interface RemovalResponse {
+  edits: RemovalEdit[];
+  signalResources: SignalResourcesEntry[];
+  logicPlacement: NodeLogicPlacement[];
+  issues: ComposeIssue[];
+}
+
+/** One signal's board resources as the compiler chose them. */
+export interface SignalResourcesEntry {
+  signalId: string;
+  resources: SignalResources;
+}
+
+export type ComposeIssueCode =
+  | 'wiringMissing'
+  | 'bindingInvalid'
+  | 'hardwareUnavailable'
+  | 'styleUnsupported'
+  | 'outputDuplicate'
+  | 'outputInUse'
+  | 'outputCapacity'
+  | 'noFreeMast'
+  | 'noFreeLogic'
+  | 'claimedSlotUnavailable'
+  | 'logicUndefinedFunction'
+  | 'logicUnterminatedGroup'
+  | 'logicUnread'
+  | 'releaseInvalid'
+  | 'occupancyEventsMissing'
+  | 'aspectEventsMissing'
+  | 'noFreeTrackCircuit'
+  | 'linkAddressMissing'
+  | 'unsupportedMovements'
+  | 'unsupportedEnds'
+  | 'unsupportedAspects'
+  | 'unsupportedApproachLighting';
+
+export interface ComposeIssue {
+  code: ComposeIssueCode;
+  signalId: string | null;
+  nodeKey: string | null;
+  detail: string;
+  bindingIssue?: ProposalIssue;
+  /** The Logic numbers a Logic placement issue names; absent for other issues. */
+  logic?: number[];
+}
+
+/**
+ * With any issue, `edits`, `signalResources` and `logicPlacement` are empty.
+ * `logicPlacement` is the wiring board's whole new placement. Edits from
+ * released owners, vacated Logic and released Track Circuits may carry `freshEventId`.
+ */
+export interface ComposeBlockSignalsResponse {
+  edits: RemovalEdit[];
+  signalResources: SignalResourcesEntry[];
+  logicPlacement: NodeLogicPlacement[];
+  issues: ComposeIssue[];
+}
+
+/** Read-only: generates the edits for the caller to stage; writes nothing. */
+export async function composeBlockSignals(
+  request: ComposeBlockSignalsRequest,
+): Promise<ComposeBlockSignalsResponse> {
+  return invoke<ComposeBlockSignalsResponse>('compose_block_signals', { request });
+}
+
+/**
+ * Read-only: the edits that return the facility's claimed masts (lamps
+ * cleared) and Logic to their unused state, for the caller to stage when
+ * removing the facility. The Logic's recipe events come back as
+ * `freshEventId` for the caller to replace with generated event IDs.
+ * `logicPlacement` names each board's remaining groups. A node whose configuration is not loaded, or a
+ * claimed slot that is missing, comes back as a `claimedSlotUnavailable` issue
+ * with no edits.
+ */
+export async function composeBlockSignalsRemoval(
+  facilityId: string,
+): Promise<RemovalResponse> {
+  return invoke<RemovalResponse>('compose_block_signals', {
+    request: { facilityId, remove: true },
+  });
 }

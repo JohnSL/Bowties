@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
 import type { InformationChannel } from '$lib/api/channels';
 import type { Facility } from '$lib/api/facilities';
@@ -104,5 +104,96 @@ describe('FacilityCard status pill (Spec 018 / S6 — D5)', () => {
     render(FacilityCard, { props: { facility: f, template: BLOCK_INDICATOR } });
 
     expect(screen.getByText(/Signal LCC RG Outputs · Node 0501010114a1 · Outputs 1 \/ 3/)).toBeInTheDocument();
+  });
+});
+
+describe('FacilityCard Automatic Block Signals (Spec 020 / E1a)', () => {
+  const ABS: BehaviorTemplate = {
+    templateId: 'automatic-block-signals',
+    displayName: 'Automatic Block Signals',
+    slots: [{ label: 'signals', displayLabel: 'signals', kind: 'consumer', requiredRole: 'signal-indication', minChannels: 1, maxChannels: null }],
+    mapping: [],
+  };
+  const signal: InformationChannel = {
+    id: 'sig-1',
+    name: 'Mill curve East',
+    role: 'signal-indication',
+    style: 'two-driver-rg-signal',
+    ownership: 'user-owned',
+    binding: { kind: 'signalLccRgOutputs', nodeKey: '020157000001', greenOutput: 1, redOutput: 3 },
+  };
+  const absFacility: Facility = { facilityId: 'f-abs', templateId: 'automatic-block-signals', name: 'ABS East', slotBindings: { signals: [signal.id] } };
+
+  it('says the track is being drawn while the diagram is loading or absent', () => {
+    facilitiesStore.hydrateBaseline([absFacility]);
+    const { unmount } = render(FacilityCard, { props: { facility: absFacility, template: ABS } });
+    expect(screen.getByText('Drawing the track…')).toBeInTheDocument();
+    unmount();
+
+    render(FacilityCard, { props: { facility: absFacility, template: ABS, diagram: { status: 'loading', key: 'k' } } });
+    expect(screen.getByText('Drawing the track…')).toBeInTheDocument();
+    expect(screen.queryByText(/Red .* Green/)).toBeNull();
+  });
+
+  it('says the diagram could not be drawn and shows the error when the preview failed', () => {
+    facilitiesStore.hydrateBaseline([absFacility]);
+    render(FacilityCard, { props: { facility: absFacility, template: ABS, diagram: { status: 'failed', key: 'k', error: 'Node offline' } } });
+    expect(screen.getByText(/The track diagram couldn't be drawn\./)).toHaveTextContent('Node offline');
+    expect(screen.queryByText('Drawing the track…')).toBeNull();
+  });
+
+  it('offers Edit on an Automatic Block Signals card and emits the edit intent', async () => {
+    const f: Facility = { facilityId: 'f-abs', templateId: 'automatic-block-signals', name: 'ABS East', slotBindings: { signals: [] } };
+    facilitiesStore.hydrateBaseline([f]);
+    const onEdit = vi.fn();
+
+    render(FacilityCard, { props: { facility: f, template: ABS, onEdit } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit facility' }));
+
+    expect(onEdit).toHaveBeenCalledWith('f-abs');
+  });
+
+  it('offers no Edit on a Block Indicator card', () => {
+    const f = facility('f-1', { input: [], output: [] });
+    facilitiesStore.hydrateBaseline([f]);
+
+    render(FacilityCard, { props: { facility: f, template: BLOCK_INDICATOR, onEdit: vi.fn() } });
+
+    expect(screen.queryByRole('button', { name: 'Edit facility' })).toBeNull();
+  });
+
+  it('offers no Add channel picker when the signals slot is empty', () => {
+    const f: Facility = { facilityId: 'f-abs', templateId: 'automatic-block-signals', name: 'ABS East', slotBindings: { signals: [] } };
+    facilitiesStore.hydrateBaseline([f]);
+
+    render(FacilityCard, { props: { facility: f, template: ABS } });
+
+    expect(screen.queryByTestId('add-channel-button')).toBeNull();
+  });
+});
+
+describe('FacilityCard write outcome (Spec 020 / E5-T4)', () => {
+  it('shows each board waiting with its reason and never the Wired pill', async () => {
+    const { pendingChangesStore } = await import('$lib/stores/pendingChanges.svelte');
+    const f = facility('f-1', { input: ['ch-bod-1'], output: ['ch-lamp-2'] });
+    facilitiesStore.hydrateBaseline([f]);
+    const row = (changeId: string, nodeId: string, status: 'failed' | 'pending', error?: string) => ({
+      changeId, kind: 'config' as const, nodeId, space: 253, offset: `0x${changeId}`,
+      baselineValue: '0', plannedValue: '1', status, ...(error ? { error } : {}),
+      origin: { facilityId: 'f-1' },
+    });
+    pendingChangesStore.setRows([
+      row('1', '05.02.01.02.03.00', 'failed', 'Timed out'),
+      row('2', '05.02.01.02.03.00', 'pending'),
+      row('3', '05.02.01.02.03.01', 'pending'),
+    ]);
+
+    render(FacilityCard, { props: { facility: f, template: BLOCK_INDICATOR } });
+
+    expect(screen.queryByText(/^Wired$/)).toBeNull();
+    expect(screen.getByText(/^Waiting$/)).toBeInTheDocument();
+    expect(screen.getByText(/1 change waiting on .*: Timed out/)).toBeInTheDocument();
+    expect(screen.getAllByText(/1 change not yet written to /)).toHaveLength(2);
+    pendingChangesStore.clear();
   });
 });

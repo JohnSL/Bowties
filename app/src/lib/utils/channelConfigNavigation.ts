@@ -44,22 +44,42 @@ function resolveLampRowTargets(
   tree: NodeConfigTree,
 ): ConfigTarget[] {
   if (channel.binding.kind !== 'lampRow') return [];
-  const segment = tree.segments.find((candidate) => candidate.name === 'Direct Lamp Control');
-  if (!segment) return [];
-
-  const instances = replicationInstances(segment.children, 'Lamp');
-  const targets: ConfigTarget[] = [];
-
   // Unit 6 supports the currently shipped one-row lamp style. Multi-row
   // signal-aspect styles are introduced with the target-independent signal
-  // capability in Unit 8 and can extend this loop at that owner seam.
-  for (let offset = 0; offset < 1; offset++) {
-    const ordinal = channel.binding.rowOrdinal + offset;
-    const instance = instances.find((candidate) => candidate.instance === ordinal);
-    if (!instance) continue;
-    const label = buildPathLabel(tree, instance.path) || `Lamp #${ordinal}`;
-    targets.push({ label, nodeId: tree.nodeId, elementPath: instance.path });
-  }
+  // capability in Unit 8 and can extend this at that owner seam.
+  const target = replicatedInstanceTarget(
+    tree, 'Direct Lamp Control', 'Lamp', channel.binding.rowOrdinal, `Lamp #${channel.binding.rowOrdinal}`,
+  );
+  return target ? [target] : [];
+}
 
-  return targets;
+function replicatedInstanceTarget(
+  tree: NodeConfigTree,
+  segmentName: string,
+  groupName: string,
+  ordinal: number,
+  fallbackLabel: string,
+): ConfigTarget | undefined {
+  const segment = tree.segments.find((candidate) => candidate.name === segmentName);
+  if (!segment) return undefined;
+  const instance = replicationInstances(segment.children, groupName).find((candidate) => candidate.instance === ordinal);
+  if (!instance) return undefined;
+  const label = buildPathLabel(tree, instance.path) || fallbackLabel;
+  return { label, nodeId: tree.nodeId, elementPath: instance.path };
+}
+
+/**
+ * Resolve a Signal-LCC output owner label ("Mast N" or "Direct lamp N", as
+ * serialized by the backend) to the configuration group that drives the pin.
+ */
+export function resolveSignalOutputOwnerTarget(
+  tree: NodeConfigTree | undefined,
+  owner: string,
+): ConfigTarget | undefined {
+  if (!tree) return undefined;
+  const mast = /^Mast (\d+)$/.exec(owner);
+  if (mast) return replicatedInstanceTarget(tree, 'Rule to Aspect', 'Mast', Number(mast[1]), owner);
+  const lamp = /^Direct lamp (\d+)$/.exec(owner);
+  if (lamp) return replicatedInstanceTarget(tree, 'Direct Lamp Control', 'Lamp', Number(lamp[1]), owner);
+  return undefined;
 }

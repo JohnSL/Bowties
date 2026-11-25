@@ -1,5 +1,6 @@
-import type { OfflineChangeRow } from '$lib/api/sync';
+import type { PendingChangeRow } from '$lib/api/sync';
 import type { DirtyBreakdown } from '$lib/layout';
+import { isWaitingPendingChange } from '$lib/utils/pendingChangeStatus';
 import type { SaveProgress } from '$lib/types/nodeTree';
 
 export interface SaveControlsViewState {
@@ -13,10 +14,16 @@ export interface SaveControlsViewState {
   hasEdits: boolean;
   hasMetadataEdits: boolean;
   hasOfflineEdits: boolean;
+  hasWaitingChanges: boolean;
+  /** Connected with rows waiting: the toolbar offers "Review in Sync Panel". */
+  canReviewWaiting: boolean;
   isSaving: boolean;
   offlineDirtyNodeCount: number;
   pendingEditCount: number;
+  /** Unsaved-edit wording; empty when nothing is unsaved. */
   pendingHintText: string;
+  /** Saved Pending Change rows still waiting for the board; empty when none. */
+  waitingHintText: string;
 }
 
 /**
@@ -35,13 +42,15 @@ export function deriveSaveControlsViewState(args: {
   breakdown: DirtyBreakdown;
   connectorWarningCount: number;
   layoutIsOfflineMode: boolean;
-  offlineDraftRows: OfflineChangeRow[];
+  layoutIsConnected?: boolean;
+  offlineDraftRows: PendingChangeRow[];
   saveProgressState: SaveProgress['state'];
 }): SaveControlsViewState {
   const {
     breakdown,
     connectorWarningCount,
     layoutIsOfflineMode,
+    layoutIsConnected = false,
     offlineDraftRows,
     saveProgressState,
   } = args;
@@ -51,11 +60,11 @@ export function deriveSaveControlsViewState(args: {
 
   const offlineDirtyNodeCount = new Set(
     offlineDraftRows
-      .filter((row) => row.status === 'pending' && row.nodeId)
+      .filter((row) => isWaitingPendingChange(row) && row.nodeId)
       .map((row) => row.nodeId as string),
   ).size;
 
-  const hasConfigEdits = dirtyCount > 0;
+  const hasConfigEdits = breakdown.configChanges > 0;
   const hasMetadataEdits = breakdown.metadata > 0;
   const metadataEditCount = breakdown.metadata;
   const hasUnsavedNewNodes = breakdown.unsavedNewNodes > 0;
@@ -71,39 +80,39 @@ export function deriveSaveControlsViewState(args: {
   const layoutOnlyEditCount = hasLayoutOnlyEdits
     ? (hasUnsavedNewNodes ? breakdown.unsavedNewNodes : 1)
     : 0;
-  const hasRevertedPersisted = breakdown.offlineRevertedPersisted > 0;
+  const configChangeCount = breakdown.configChanges;
   const hasOfflineEdits = layoutIsOfflineMode && hasConfigEdits;
   const hasConnectorOrChannelEdits =
     breakdown.connectorSelections > 0 || breakdown.channels > 0;
   const hasFacilityEdits = breakdown.facilities > 0;
-  const hasEdits =
-    hasConfigEdits
-    || hasMetadataEdits
-    || hasOfflineEdits
-    || hasRevertedPersisted
+  const hasUnsavedRemovedNodes = breakdown.unsavedRemovedNodes > 0;
+  // "Other edits" are every unsaved edit that is not configuration: bowtie
+  // names, facilities, channels, connector selections and layout structure
+  // (including new / removed nodes). Offline and connected read the same.
+  const hasOtherEdits =
+    hasMetadataEdits
     || hasLayoutOrNewNodeEdits
     || hasConnectorOrChannelEdits
-    || hasFacilityEdits;
-  const pendingEditCount =
-    dirtyCount
-    + breakdown.offlineRevertedPersisted
-    + metadataEditCount
+    || hasFacilityEdits
+    || hasUnsavedRemovedNodes;
+  const hasEdits = hasConfigEdits || hasOtherEdits;
+  const otherEditCount =
+    metadataEditCount
     + layoutOnlyEditCount
     + breakdown.connectorSelections
     + breakdown.channels
     + breakdown.facilities;
-  const pendingHintText = `${pendingEditCount} ${layoutIsOfflineMode ? 'unsaved edit' : 'unsaved change'}${pendingEditCount === 1 ? '' : 's'}`;
+  const pendingEditCount = configChangeCount + otherEditCount;
+  const pendingHintText = !hasEdits
+    ? ''
+    : hasConfigEdits
+      ? `${configChangeCount} configuration ${configChangeCount === 1 ? 'change' : 'changes'}${hasOtherEdits ? ' + other edits' : ''}`
+      : 'Unsaved changes';
+  const waitingCount = breakdown.waitingPendingChanges;
+  const waitingHintText = waitingCount > 0 ? `${waitingCount} waiting to be written to the board` : '';
   const isSaving = saveProgressState === 'saving';
-  const baseDiscardFieldCount = dirtyCount + breakdown.offlineRevertedPersisted;
-  const baseDiscardNodeCount = dirtyNodeCount;
-  const discardFieldCount =
-    baseDiscardFieldCount
-    + metadataEditCount
-    + layoutOnlyEditCount
-    + breakdown.connectorSelections
-    + breakdown.channels
-    + breakdown.facilities;
-  const discardNodeCount = discardFieldCount > 0 ? Math.max(1, baseDiscardNodeCount) : 0;
+  const discardFieldCount = configChangeCount + otherEditCount;
+  const discardNodeCount = discardFieldCount > 0 ? Math.max(1, dirtyNodeCount) : 0;
 
   return {
     canSave: hasEdits && !isSaving,
@@ -116,9 +125,12 @@ export function deriveSaveControlsViewState(args: {
     hasEdits,
     hasMetadataEdits,
     hasOfflineEdits,
+    hasWaitingChanges: waitingCount > 0,
+    canReviewWaiting: layoutIsConnected && waitingCount > 0,
     isSaving,
     offlineDirtyNodeCount,
     pendingEditCount,
     pendingHintText,
+    waitingHintText,
   };
 }

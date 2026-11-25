@@ -449,3 +449,78 @@ lose edits. The `RwLock::write()` guard serializes all mutations.
 state, alias. These are pure bus-IO working buffers with no concurrent-
 mutation race (actor mailbox serializes them) and no save-flow concern.
 Moving them is not warranted (YAGNI).
+
+## 2026-11-23 extension: effective configuration view for backend readers
+
+**Problem.** Configuration drafts are owned by the frontend
+`configChangesStore` (ADR-0012). The backend's `LeafNode.modified_value`
+is filled by the config-draft mirror only while connected, because it is
+the queue of bus writes for a connected Save; offline edits must reach
+the bus only through Offline Changes and the Sync Panel (ADR-0001,
+2026-11-22). Backend readers of configuration therefore missed offline
+drafts and never saw saved-but-unapplied Offline Changes. Spec 020
+patched one reader (compose took the drafts in its request); the Wiring
+preview did not, so the pin grid and Done could disagree.
+
+**Decision.** `LayoutState` holds the configuration drafts in the drafts
+layer and exposes one read view:
+
+- `DraftLayer.pending_config` (node key, space, address, typed value) is
+  replaced on every `sync_layout_drafts(deltas, configDrafts)` and cleared
+  by `clear_drafts`. The same sync refreshes `LayoutState.offline_changes`
+  from the app's offline-changes cache.
+- `effective_config_tree(key)` returns the node's tree with, in order of
+  increasing precedence: stored value, `modified_value`, pending Config
+  Offline Changes, configuration drafts. It borrows the stored tree when
+  nothing overlays it and never mutates it.
+- Backend readers that interpret configuration read through it. Today:
+  signaling facts (`bowties-core/src/signaling/facts.rs::effective_trees`),
+  used by preview, pin ownership and compose.
+- The frontend awaits `sync_layout_drafts` before such a read
+  (`facilityOrchestrator.syncDraftsForComposition`), as the 2026-07-03
+  extension already requires for facilities and channels.
+
+**Rejected.** Mirroring drafts into `modified_value` while offline: it
+would put offline edits into the connected-Save bus queue (bypassing the
+Sync Panel), keep removed or skipped rows queued, leave stale entries on
+offline Discard, and cannot address placeholder nodes. Passing drafts in
+each request: every new reader must remember it, and it cannot see saved
+Offline Changes.
+
+**Invariants.**
+- `modified_value` means only "pending bus writes for a connected Save".
+  Read-only views never write it.
+- A backend reader that interprets configuration uses
+  `effective_config_tree`, not `config_tree`, unless it deliberately needs
+  the stored layer (save, bus writes, Sync Panel).
+- Requests do not carry configuration drafts.
+- A request may name changes the reader should assume (Spec 020 E2c
+  `release`). The reader applies them to its own copy of the effective
+  trees for that request only (`facts.rs::overlay_releases`), once, before
+  any fact is derived; it never writes them back.
+
+**Follow-up.** The bowtie catalog keeps its own overlay of pending
+Offline Changes (`commands/bowties.rs`); moving it onto this view is
+tracked in `specs/backlog.md`.
+
+## 2026-11-23 extension: Pending Changes have one owner (Spec 020 E3b-0)
+
+**Problem.** Offline Change rows lived in two places: `AppState.offline_changes_cache` (written by the Sync Panel and bowtie-metadata IPCs) and `LayoutState.offline_changes` (refreshed only at open, save and `sync_layout_drafts`). A Sync apply removed rows from the cache but not from `LayoutState`, so `effective_config_tree` could still overlay a value already written to the board. The Invariants above already named the cache as drift.
+
+**Decision.**
+- `AppState.offline_changes_cache` is removed. `LayoutState.pending_changes` is the only in-memory store of the rows. IPCs write through `LayoutState::upsert_pending_change` (same target resets the row to pending and keeps its id), `remove_pending_changes` (by id) and `set_pending_changes`; Sync session builds and Sync applies remove rows there directly. `sync_layout_drafts` no longer copies rows in.
+- The concept is named Pending Change in code (`PendingChange`, `PendingChangeKind`, `PendingChangeStatus`, `bowties-core/src/layout/pending_changes.rs`, `pendingChangesStore`, IPCs `set_pending_change` / `revert_pending_change` / `list_pending_changes` / `replace_pending_changes`, the last removed in E3b-1). The file keeps its legacy name `offline-changes.yaml`; the row format and schema version are unchanged.
+- The Sync Panel's classify and apply loop lives in `bowties-core/src/sync/writer.rs` behind `MemoryPort`; `commands/sync_panel.rs` is its adapter and keeps persistence and Update Complete. Spec 020 E3b-1 makes this the only writer for Save as well.
+
+**Invariants added.**
+- No row store of Pending Changes exists outside `LayoutState`. While no layout is open, IPCs that record a row fail with "No layout is open".
+- Removing a row (applied, already applied, read-only) removes it from `LayoutState` in the same command that decides it.
+
+**Still open.** The bowtie catalog's own overlay remains (backlog).
+
+## 2026-11-23 extension: no modified-value layer (Spec 020 E3b-1)
+
+- The node tree has no `modified_value`, `write_state` or `write_error`; the commands `set_modified_value`, `discard_modified_values`, `write_modified_values` and `has_modified_values` are removed. `effective_config_tree` overlays still-waiting Pending Change rows and then drafts on a clone of the stored tree; the stored tree changes only when the board confirms a value.
+- The pending-change IPCs require only an open layout (no offline-mode gate): every Save records rows.
+- "Still waiting" is one predicate, `PendingChangeStatus::is_waiting` (not applied, already applied or clean), mirrored in TypeScript.
+- Which nodes had their configuration read from the bus during the current connection is held by `ConnectionSession` (dies with the connection; cleared on layout open and close).
