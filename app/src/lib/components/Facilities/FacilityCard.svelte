@@ -50,6 +50,14 @@
     effectiveLayoutStore.facilityStatus(facility.facilityId),
   );
 
+  // Spec 020 / E5-T4: per-board write outcome from the Pending Change rows this
+  // facility staged. While any are waiting the card is not shown as complete.
+  const writeOutcome = $derived(effectiveLayoutStore.facilityWriteOutcome(facility.facilityId));
+
+  function plural(n: number): string {
+    return `${n} ${n === 1 ? 'change' : 'changes'}`;
+  }
+
   // Spec 020 / E1a: the Automatic Block Signals editor creates and owns the
   // facility's signal channels, so its card lists them read-only (edited via the same editor).
   const isAutomaticBlockSignals = $derived(
@@ -191,9 +199,13 @@
         </button>
       {/if}
       <span class="template-label">{template?.displayName ?? facility.templateId}</span>
-      <span class="status-pill" class:wired={status === 'Wired'} class:incomplete={status === 'Incomplete'}>
-        <span class="pulse" aria-hidden="true"></span>{status}
-      </span>
+      {#if writeOutcome.hasWaiting}
+        <span class="status-pill incomplete"><span class="pulse" aria-hidden="true"></span>Waiting</span>
+      {:else}
+        <span class="status-pill" class:wired={status === 'Wired'} class:incomplete={status === 'Incomplete'}>
+          <span class="pulse" aria-hidden="true"></span>{status}
+        </span>
+      {/if}
     </div>
     <div class="actions">
       {#if isAutomaticBlockSignals}
@@ -203,6 +215,19 @@
       <button type="button" class="btn-link danger" onclick={handleDelete} aria-label="Delete facility">Delete</button>
     </div>
   </header>
+
+  {#if writeOutcome.hasWaiting}
+    <ul class="write-outcome" aria-label="Write outcome" data-testid="facility-write-outcome">
+      {#each writeOutcome.boards as board (board.nodeKey)}
+        {#if board.waiting > 0}
+          <li>{plural(board.waiting)} waiting on {board.nodeName}{board.waitingReasons.length > 0 ? `: ${board.waitingReasons[0]}` : ''}</li>
+        {/if}
+        {#if board.notAttempted > 0}
+          <li>{plural(board.notAttempted)} not yet written to {board.nodeName}</li>
+        {/if}
+      {/each}
+    </ul>
+  {/if}
 
   {#if isAutomaticBlockSignals}
     <ul class="signal-list" aria-label="Signals" data-testid="facility-signals">
@@ -347,6 +372,13 @@
   }
   .signal-name { font-weight: 600; color: var(--text-primary, #242424); }
   .signal-lamps { font-size: 0.75rem; color: var(--text-muted, #616161); }
+  .write-outcome {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.75rem;
+    color: #bc4b09;
+  }
   .slot-arrow {
     display: flex;
     align-items: center;

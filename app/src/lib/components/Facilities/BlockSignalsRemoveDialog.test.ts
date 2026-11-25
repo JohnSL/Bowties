@@ -14,8 +14,7 @@ function setup(extra: Record<string, unknown> = {}) {
   render(BlockSignalsRemoveDialog, {
     props: {
       facilityName: 'Cedar Hill — Eastward',
-      boardName: 'Signal LCC 1',
-      slots,
+      boards: [{ name: 'Signal LCC 1', slots }],
       onConfirm,
       onConfirmLeaveBoard,
       onCancel,
@@ -36,9 +35,22 @@ describe('BlockSignalsRemoveDialog', () => {
   });
 
   it('lists Track Circuits after the masts and Logic', () => {
-    setup({ slots: [...slots, { kind: 'trackCircuit' as const, index: 1 }] });
+    setup({ boards: [{ name: 'Signal LCC 1', slots: [...slots, { kind: 'trackCircuit' as const, index: 1 }] }] });
     const dialog = screen.getByRole('alertdialog');
     expect(within(dialog).getByText(/Mast 1, Logic 1 and Track Circuit 1/)).toBeInTheDocument();
+  });
+
+  it('names each board with the slots it resets when the signals span two boards', () => {
+    setup({
+      boards: [
+        { name: 'West Signal LCC', slots: [...slots, { kind: 'logic' as const, index: 2 }, { kind: 'trackCircuit' as const, index: 1 }] },
+        { name: 'East Signal LCC', slots },
+      ],
+    });
+    const dialog = screen.getByRole('alertdialog');
+    expect(within(dialog).getByText(
+      /resets Mast 1, Logic 1, Logic 2 and Track Circuit 1 on West Signal LCC, and Mast 1 and Logic 1 on East Signal LCC so/,
+    )).toBeInTheDocument();
   });
 
   it('Cancel emits cancel and Remove emits confirm', async () => {

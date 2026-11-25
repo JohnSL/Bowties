@@ -33,6 +33,13 @@ impl PendingChangeStatus {
     }
 }
 
+/// Which facility staged a Pending Change row.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingChangeOrigin {
+    pub facility_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingChange {
@@ -50,6 +57,10 @@ pub struct PendingChange {
     pub status: PendingChangeStatus,
     pub error: Option<String>,
     pub updated_at: String,
+    /// The facility that staged this row; `None` for a hand edit. Absent in
+    /// files written before origin existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<PendingChangeOrigin>,
 }
 
 impl PendingChange {

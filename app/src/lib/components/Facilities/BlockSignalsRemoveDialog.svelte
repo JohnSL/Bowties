@@ -11,8 +11,7 @@
 
   let {
     facilityName,
-    boardName,
-    slots,
+    boards,
     reason,
     error,
     onConfirm,
@@ -20,9 +19,8 @@
     onCancel,
   }: {
     facilityName: string;
-    boardName: string;
-    /** The masts, Logic and Track Circuits the facility occupies on the board. */
-    slots: readonly BoardSlot[];
+    /** Each board the facility occupies, with the masts, Logic and Track Circuits it holds there. */
+    boards: readonly { name: string; slots: readonly BoardSlot[] }[];
     /** Why the board could not be reset; offers removal without resetting it. */
     reason?: string;
     /** A short message when the removal itself failed. */
@@ -35,14 +33,19 @@
   const SLOT_LABELS = { mast: 'Mast', logic: 'Logic', trackCircuit: 'Track Circuit' } as const;
   const SLOT_ORDER = ['mast', 'logic', 'trackCircuit'] as const;
 
-  const slotsText = $derived.by(() => {
+  function joinAnd(items: readonly string[], lastJoiner: string): string {
+    return items.length > 1 ? `${items.slice(0, -1).join(', ')}${lastJoiner}${items[items.length - 1]}` : items[0] ?? '';
+  }
+
+  function slotsText(slots: readonly BoardSlot[]): string {
     const labels = slots
       .map((slot) => ({ order: SLOT_ORDER.indexOf(slot.kind), index: slot.index, text: `${SLOT_LABELS[slot.kind]} ${slot.index}` }))
       .sort((a, b) => a.order - b.order || a.index - b.index)
       .map((slot) => slot.text);
-    const unique = [...new Set(labels)];
-    return unique.length > 1 ? `${unique.slice(0, -1).join(', ')} and ${unique[unique.length - 1]}` : unique[0] ?? '';
-  });
+    return joinAnd([...new Set(labels)], ' and ');
+  }
+
+  const resetText = $derived(joinAnd(boards.map((board) => `${slotsText(board.slots)} on ${board.name}`), ', and '));
 </script>
 
 <Dialog open={true} width="sm" role="alertdialog" ariaLabel="Remove {facilityName}?" {onCancel}>
@@ -53,11 +56,11 @@
   {#if reason}
     <p role="alert">{reason}</p>
     <p>
-      You can still remove {facilityName} without resetting {slotsText} on {boardName}. They keep their current settings.
+      You can still remove {facilityName} without resetting {resetText}. They keep their current settings.
     </p>
   {:else}
     <p>
-      This resets {slotsText} on {boardName} so they can be used again. Any hand edits to those slots on the board are lost.
+      This resets {resetText} so they can be used again. Any hand edits to those slots on the board are lost.
     </p>
     <p>Nothing changes on the board until you Save, and Discard restores everything.</p>
     {#if error}

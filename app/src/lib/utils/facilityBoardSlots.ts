@@ -6,28 +6,39 @@ export interface BoardSlot {
   index: number;
 }
 
+/** The slots a facility occupies on one board. */
+export interface BoardSlotGroup {
+  nodeKey: string;
+  slots: BoardSlot[];
+}
+
 /**
- * The board an Automatic Block Signals facility runs on and the masts,
- * Logic and Track Circuits it occupies: each signal's mast and circuits from
- * its resources, each Logic of the facility's groups from the board placement. Pure derivation; ownership of
- * both sources stays with the facilities store.
+ * Each board an Automatic Block Signals facility runs on (in signal order) and
+ * the masts, Logic and Track Circuits it occupies there: each signal's mast and
+ * circuits from its resources, each Logic of the facility's groups from that
+ * board's placement. Pure derivation; ownership of both sources stays with the
+ * facilities store.
  */
 export function facilityBoardSlots(
   facility: Facility,
   logicPlacement: readonly NodeLogicPlacement[],
-): { nodeKey: string | undefined; slots: BoardSlot[] } {
-  if (!facility.blockSignals) return { nodeKey: undefined, slots: [] };
+): BoardSlotGroup[] {
+  if (!facility.blockSignals) return [];
   const signals = facility.blockSignals.signals;
-  const nodeKey = signals[0]?.resources.nodeKey;
-  const slots: BoardSlot[] = signals.map((signal) => ({ kind: 'mast', index: signal.resources.mast }));
-  for (const board of logicPlacement) {
-    for (const group of board.groups) {
-      if (group.facilityId !== facility.facilityId) continue;
-      for (let offset = 0; offset < group.length; offset++) slots.push({ kind: 'logic', index: group.first + offset });
+  const nodeKeys = [...new Set(signals.map((signal) => signal.resources.nodeKey))];
+  return nodeKeys.map((nodeKey) => {
+    const onBoard = signals.filter((signal) => signal.resources.nodeKey === nodeKey);
+    const slots: BoardSlot[] = onBoard.map((signal) => ({ kind: 'mast', index: signal.resources.mast }));
+    for (const board of logicPlacement) {
+      if (board.nodeKey !== nodeKey) continue;
+      for (const group of board.groups) {
+        if (group.facilityId !== facility.facilityId) continue;
+        for (let offset = 0; offset < group.length; offset++) slots.push({ kind: 'logic', index: group.first + offset });
+      }
     }
-  }
-  for (const signal of signals) {
-    for (const index of signal.resources.trackCircuits) slots.push({ kind: 'trackCircuit', index });
-  }
-  return { nodeKey, slots };
+    for (const signal of onBoard) {
+      for (const index of signal.resources.trackCircuits) slots.push({ kind: 'trackCircuit', index });
+    }
+    return { nodeKey, slots };
+  });
 }

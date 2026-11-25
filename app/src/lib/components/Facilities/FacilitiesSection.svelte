@@ -46,14 +46,12 @@
   const removalFacility = $derived(
     removal ? facilitiesStore.facilities.find((f) => f.facilityId === removal!.facilityId) : undefined,
   );
-  const removalBoard = $derived(
-    removalFacility ? facilityBoardSlots(removalFacility, facilitiesStore.logicPlacement) : { nodeKey: undefined, slots: [] },
+  const removalBoards = $derived(
+    (removalFacility ? facilityBoardSlots(removalFacility, facilitiesStore.logicPlacement) : []).map((group) => ({
+      name: resolveNodeParts(group.nodeKey).name || nodeIdToDisplayHex(group.nodeKey) || group.nodeKey,
+      slots: group.slots,
+    })),
   );
-  const removalBoardName = $derived.by(() => {
-    const nodeKey = removalBoard.nodeKey;
-    if (!nodeKey) return '';
-    return resolveNodeParts(nodeKey).name || nodeIdToDisplayHex(nodeKey) || nodeKey;
-  });
 
   async function confirmRemoval(leaveBoard: boolean) {
     if (!removal) return;
@@ -190,8 +188,7 @@
   {#if removal && removalFacility?.blockSignals}
     <BlockSignalsRemoveDialog
       facilityName={removalFacility.name}
-      boardName={removalBoardName}
-      slots={removalBoard.slots}
+      boards={removalBoards}
       reason={removal.reason}
       error={removal.error}
       onConfirm={() => confirmRemoval(false)}

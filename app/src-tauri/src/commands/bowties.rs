@@ -613,6 +613,7 @@ pub async fn set_bowtie_metadata(
             status: crate::layout::pending_changes::PendingChangeStatus::Pending,
             error: None,
             updated_at: chrono::Utc::now().to_rfc3339(),
+            origin: None,
         };
 
         pending_change.validate()?;

@@ -20,6 +20,7 @@
 
 import { configChangesStore } from '$lib/stores/configChanges.svelte';
 import type { TreeConfigValue } from '$lib/types/nodeTree';
+import type { PendingChangeOrigin } from '$lib/api/sync';
 
 // ─── ConfigEditor class ───────────────────────────────────────────────────────
 
@@ -31,9 +32,10 @@ class ConfigEditor {
    *
    * @param key - Canonical edit key from editKeyForLeaf()
    * @param value - New value for the field
+   * @param origin - The facility staging the edit; omit for a hand edit
    */
-  applyEdit(key: string, value: TreeConfigValue): void {
-    configChangesStore.set(key, value);
+  applyEdit(key: string, value: TreeConfigValue, origin?: PendingChangeOrigin): void {
+    configChangesStore.set(key, value, origin);
     // Cascade dependency resolution goes here in a future PR
     // when profile cascade rules are authored.
   }

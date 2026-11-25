@@ -805,13 +805,50 @@ fn own_first_mast(c: &mut CompileInput, mast: u32) {
     }
 }
 
-#[test]
-fn signals_on_two_boards_are_one_scoped_issue() {
+const NODE_B: &str = "050101010799";
+
+/// The two-block Line with its second signal wired on a second free board whose
+/// first mast carries `LINK_B` as its Link Address.
+fn two_board_input() -> CompileInput {
     let mut c = two_block_input();
-    c.wiring[1].node_key = "050101010799".into();
+    c.wiring[1].node_key = NODE_B.into();
+    let mut board_b = free_node();
+    board_b.node_key = NODE_B.into();
+    board_b.masts[0].link_address = Some(LINK_B);
+    c.nodes.push(board_b);
+    let mut host_b = host();
+    host_b.node_key = NODE_B.into();
+    c.hardware.hosts.push(host_b);
+    c
+}
+
+#[test]
+fn signals_on_two_boards_each_get_their_own_mast_logic_and_the_link_address_comes_from_the_next_board() {
+    let c = two_board_input();
+    let (first, second) = two_block_ids(&c.line);
     let result = compile_block_signals(&c);
-    assert!(codes(&result).contains(&CompileIssueCode::UnsupportedBoards), "{:?}", result.issues);
-    assert_blocked(&result);
+    assert_eq!(result.issues, vec![]);
+
+    let mut expected = mast_part(expected_edits_named("First signal", 1, 1, 10, 9));
+    expected.extend(internal_edits("First signal", "Second signal", 1, 1, 1));
+    expected.extend(last_edits(1, 1));
+    assert_eq!(pairs(&result), expected);
+    let first_edit_count = expected.len() - last_edits(1, 1).len();
+    assert!(result.edits[..first_edit_count].iter().all(|e| e.node_key == NODE));
+    assert!(result.edits[first_edit_count..].iter().all(|e| e.node_key == NODE_B));
+
+    let held_on = |signal: &str, node: &str, mast: u32, circuits: Vec<u32>| PlannedSignalResources {
+        signal_id: signal.into(),
+        resources: SignalResources { node_key: node.into(), mast, track_circuits: circuits },
+    };
+    assert_eq!(result.resources, vec![held_on(&first, NODE, 1, vec![1]), held_on(&second, NODE_B, 1, vec![])]);
+    assert_eq!(
+        result.placement,
+        vec![
+            NodeLogicPlacement { node_key: NODE.into(), groups: vec![group(&first, 1, 2)] },
+            NodeLogicPlacement { node_key: NODE_B.into(), groups: vec![group(&second, 1, 1)] },
+        ]
+    );
 }
 
 #[test]
@@ -965,5 +1002,87 @@ fn no_free_logic_names_the_signal_that_does_not_fit() {
     let issue = scoped(&result, CompileIssueCode::NoFreeLogic);
     assert_eq!(issue.signal_id.as_deref(), Some(second.as_str()));
     assert_ne!(issue.signal_id.as_deref(), Some(first.as_str()));
+    assert_blocked(&result);
+}
+
+#[test]
+fn an_unread_link_address_on_the_next_board_names_the_next_signal_and_that_board() {
+    let (first, _) = two_block_ids(&two_block_line());
+    let mut c = two_board_input();
+    c.nodes[1].masts[0].link_address = None;
+    // The first board's own mast 2 Link Address must not stand in for the next board's.
+    c.nodes[0].masts[1].link_address = Some(LINK_B);
+    let result = compile_block_signals(&c);
+    let issue = scoped(&result, CompileIssueCode::LinkAddressMissing);
+    assert_eq!(issue.signal_id.as_deref(), Some(first.as_str()));
+    assert!(issue.detail.contains("Second signal") && issue.detail.contains(NODE_B), "{}", issue.detail);
+    assert_blocked(&result);
+}
+
+#[test]
+fn track_circuits_and_masts_are_numbered_per_board() {
+    // Board A's circuit 1 and mast 1 are the saved first signal's; the second signal on board B still takes B's mast 1.
+    let mut c = two_board_input();
+    let (first, second) = two_block_ids(&c.line);
+    own_first_mast(&mut c, 1);
+    c.saved_resources = vec![held(&first, 1, vec![1])];
+    let result = compile_block_signals(&c);
+    assert_eq!(result.issues, vec![]);
+    assert_eq!(result.resources[0].resources.track_circuits, vec![1]);
+    assert_eq!(result.resources[1].resources.mast, 1);
+    assert_eq!(result.resources[1].signal_id, second);
+}
+
+#[test]
+fn a_resize_on_one_board_resets_vacated_logic_there_and_emits_nothing_extra_on_the_other() {
+    let mut c = two_board_input();
+    let (first, second) = two_block_ids(&c.line);
+    own_first_mast(&mut c, 1);
+    c.saved_resources = vec![held(&first, 1, vec![]), PlannedSignalResources {
+        signal_id: second.clone(),
+        resources: SignalResources { node_key: NODE_B.into(), mast: 1, track_circuits: vec![] },
+    }];
+    // The first signal was a lone one-rung group at Logic 3; it now needs two rungs.
+    c.logic_placement = vec![
+        NodeLogicPlacement { node_key: NODE.into(), groups: vec![group(&first, 3, 1)] },
+        NodeLogicPlacement { node_key: NODE_B.into(), groups: vec![group(&second, 1, 1)] },
+    ];
+    c.nodes[1].masts[0].in_use = true;
+    c.nodes[1].masts[0].claimed = true;
+    // Logic 4 is configured outside Bowties, so the group cannot grow in place.
+    use_logic(&mut c.nodes[0].logic[3]);
+    let result = compile_block_signals(&c);
+    assert_eq!(result.issues, vec![]);
+    let on_b: Vec<&NodeConfigEdit> = result.edits.iter().filter(|e| e.node_key == NODE_B).collect();
+    assert!(
+        on_b.iter().all(|e| e.path.starts_with("Rule to Aspect/Mast[1]") || e.path.starts_with("Conditionals/Logic[1]")),
+        "{:?}",
+        on_b.iter().map(|e| &e.path).collect::<Vec<_>>()
+    );
+    let reset_on_a = result
+        .edits
+        .iter()
+        .filter(|e| e.node_key == NODE && e.path.starts_with("Conditionals/Logic[3]"))
+        .count();
+    assert_eq!(result.placement[0].groups, vec![group(&first, 1, 2)]);
+    assert_eq!(reset_on_a, LOGIC_RESET_EDITS);
+    assert_eq!(result.placement[1].groups, vec![group(&second, 1, 1)]);
+}
+
+#[test]
+fn a_claimed_mast_missing_on_its_own_board_blames_that_signal_and_board() {
+    let mut c = two_board_input();
+    let (first, second) = two_block_ids(&c.line);
+    own_first_mast(&mut c, 1);
+    // The second signal's saved mast 5 exists on board A but not on board B.
+    c.nodes[1].masts.retain(|m| m.index != 5);
+    c.saved_resources = vec![held(&first, 1, vec![]), PlannedSignalResources {
+        signal_id: second.clone(),
+        resources: SignalResources { node_key: NODE_B.into(), mast: 5, track_circuits: vec![] },
+    }];
+    let result = compile_block_signals(&c);
+    let issue = scoped(&result, CompileIssueCode::ClaimedSlotUnavailable);
+    assert_eq!(issue.signal_id.as_deref(), Some(second.as_str()));
+    assert_eq!(issue.node_key.as_deref(), Some(NODE_B));
     assert_blocked(&result);
 }

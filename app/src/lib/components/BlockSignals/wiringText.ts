@@ -20,7 +20,6 @@ const ISSUE_TEXT: Record<Exclude<ComposeIssueCode, LogicIssueCode | DetailIssueC
     'The mast and logic this signal already uses are no longer available on this Signal LCC. Choose the original Signal LCC.',
   occupancyEventsMissing: 'Occupancy events are missing for a protected block. Set up its detector first.',
   aspectEventsMissing: 'The aspect events for this signal are missing on the Signal LCC.',
-  unsupportedBoards: 'This release builds signals on one Signal LCC only. Choose the same Signal LCC for every signal.',
   noFreeTrackCircuit: 'This Signal LCC has no free Track Circuit left for these signals. Choose another Signal LCC.',
   unsupportedMovements: 'This release builds signals for one direction only.',
   unsupportedEnds: 'This release does not build signals for these track ends.',

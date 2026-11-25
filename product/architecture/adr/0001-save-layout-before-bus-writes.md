@@ -50,3 +50,17 @@ verification extends those writers rather than replacing them.
 - One writer sends configuration to the bus: `sync::writer` (`apply_changes` for the Sync Panel, `write_recorded_changes` for Save). No other code path calls memory write for configuration values.
 - A connected Save writes only the rows it recorded in the same Save.
 - Until E4, "written" means the board acknowledged the write, not that a readback confirmed it.
+
+## 2026-11-24 extension: a facility's outcome on each board (Spec 020 E5)
+
+**Problem.** A facility's signals may be on two boards, and one board's writes can fail while the other's succeed. The facility card showed "Wired" from its slot bindings alone, so a facility whose rows were still waiting read as complete.
+
+**Decision.**
+- A Pending Change row records the facility that staged it: optional `origin { facilityId }` (`bowties-core/src/layout/pending_changes.rs`, serde default, not written when absent; schema version unchanged). The facility staging pipeline (`facilityOrchestrator` `stageComposedEdits` / `applyConfigEdits`, for create, edit, release and removal) tags its drafts; `configChangesStore` keeps the tag beside the draft and `recordDraftsToBackend` sends it. A hand edit of the same field records the row with no origin (the upsert takes the incoming origin).
+- Each board's outcome is derived from the rows: `utils/facilityWriteOutcome.ts` groups a facility's rows by node (waiting with a reason, not yet written) through `isWaitingPendingChange`; `effectiveLayoutStore.facilityWriteOutcome` adds the board name. A written row is removed, so a board with nothing waiting has no line. The facility card shows "Waiting" and one line per board while any row waits. `facilityStatus` (slot bindings, which gates bowtie composition) is unchanged.
+- The writer is unchanged: it carries on past a failed row and sends Update Complete to each board it wrote. Partial failure is reported truthfully through the rows, so the separate Apply path stays rejected.
+
+**Considered and rejected.** Matching rows to the facility's claimed slots (misses release edits outside the slots and needs CDI address resolution); per-board counts in the writer result (a status beside the rows, lost on reopen).
+
+**Invariants added.**
+- A facility's write outcome is read from rows whose `origin` names it; no other record of it exists.

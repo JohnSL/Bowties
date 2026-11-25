@@ -19,7 +19,7 @@ import { channelsStore } from '$lib/stores/channels.svelte';
 import { facilitiesStore } from '$lib/stores/facilities.svelte';
 import { bowtieMetadataStore } from '$lib/stores/bowtieMetadata.svelte';
 import { configEditor } from '$lib/stores/configEditor.svelte';
-import { configChangesStore } from '$lib/stores/configChanges.svelte';
+import { configChangesStore, type ConfigDraftEntry } from '$lib/stores/configChanges.svelte';
 import { nodeTreeStore } from '$lib/stores/nodeTree.svelte';
 import { effectiveLayoutStore } from '$lib/layout/effectiveLayoutStore.svelte';
 import { composeFacilityBowties, type CompositionOp } from '$lib/api/facilityBowties';
@@ -489,7 +489,7 @@ async function stageBlockSignalsFacility(
   }
   if (composed.issues.length > 0) return { ok: false, issues: composed.issues };
 
-  const priorDrafts = new Map(configChangesStore.draftEntries().map((d) => [d.key, d.value]));
+  const priorDrafts = new Map(configChangesStore.draftEntries().map((d) => [d.key, d]));
   const priorPlacement = placementOf(composed.logicPlacement);
   const priorChannels = new Map(channelsStore.channels.map((c) => [c.id, c]));
   const createdChannelIds: string[] = [];
@@ -549,7 +549,7 @@ async function stageBlockSignalsFacility(
     }
 
     stageLogicPlacement(composed.logicPlacement);
-    stageComposedEdits(composed.edits);
+    stageComposedEdits(composed.edits, facilityId);
     return { ok: true };
   } catch (error) {
     restoreConfigDrafts(composed.edits, priorDrafts);
@@ -626,9 +626,9 @@ export async function removeBlockSignalsFacility(
     }
   }
 
-  const priorDrafts = new Map(configChangesStore.draftEntries().map((d) => [d.key, d.value]));
+  const priorDrafts = new Map(configChangesStore.draftEntries().map((d) => [d.key, d]));
   try {
-    stageComposedEdits(edits);
+    stageComposedEdits(edits, facilityId);
   } catch (error) {
     restoreConfigDrafts(edits, priorDrafts);
     return { ok: false, error };
@@ -671,7 +671,7 @@ function freshEventIdValue(nodeKey: string, tree: NodeConfigTree): TreeConfigVal
  * event ID. Every needed node tree is checked first so a missing one throws
  * before anything is staged; each ID is staged before the next is generated.
  */
-function stageComposedEdits(edits: readonly RemovalEdit[]): void {
+function stageComposedEdits(edits: readonly RemovalEdit[], facilityId: string): void {
   for (const edit of edits) {
     if (edit.value.type === 'freshEventId' && !nodeTreeStore.getTree(edit.nodeKey)) {
       throw new Error(`Configuration for node ${edit.nodeKey} is not loaded`);
@@ -685,29 +685,33 @@ function stageComposedEdits(edits: readonly RemovalEdit[]): void {
     } else {
       value = edit.value;
     }
-    configEditor.applyEdit(editKeyForLeaf(edit.nodeKey, edit.space, edit.address), value);
+    configEditor.applyEdit(editKeyForLeaf(edit.nodeKey, edit.space, edit.address), value, { facilityId });
   }
 }
 
 /** Put each edited leaf's draft back to its prior value (or drop it if it had none). */
 function restoreConfigDrafts(
   edits: readonly { nodeKey: string; space: number; address: number }[],
-  priorDrafts: ReadonlyMap<string, TreeConfigValue>,
+  priorDrafts: ReadonlyMap<string, ConfigDraftEntry>,
 ): void {
   for (const edit of edits) {
     const key = editKeyForLeaf(edit.nodeKey, edit.space, edit.address);
     const prior = priorDrafts.get(key);
-    if (prior) configChangesStore.set(key, prior);
+    if (prior) configChangesStore.set(key, prior.value, prior.origin);
     else configChangesStore.revert(key);
   }
 }
 
 /** Stage configuration edits as ordinary drafts so they ride the existing save path. */
 function applyConfigEdits(
-  edits: readonly { nodeKey: string; space: number; address: number; value: TreeConfigValue }[],
+  edits: readonly { nodeKey: string; space: number; address: number; value: TreeConfigValue; facilityId: string }[],
 ): void {
   for (const edit of edits) {
-    configEditor.applyEdit(editKeyForLeaf(edit.nodeKey, edit.space, edit.address), edit.value);
+    configEditor.applyEdit(
+      editKeyForLeaf(edit.nodeKey, edit.space, edit.address),
+      edit.value,
+      { facilityId: edit.facilityId },
+    );
   }
 }
 
@@ -720,6 +724,7 @@ function applyCompositionOps(ops: readonly CompositionOp[]): void {
       space: op.consumerLeafSpace,
       address: op.consumerLeafAddress,
       value: { type: 'eventId', bytes, hex },
+      facilityId: op.createdByFacility,
     }]);
     // Register the bowtie with the createdByFacility back-reference.
     bowtieMetadataStore.createBowtie(hex, op.bowtieName, {

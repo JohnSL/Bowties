@@ -426,6 +426,7 @@ mod tests {
             status: PendingChangeStatus::Pending,
             error: None,
             updated_at: "2026-06-28T00:00:00Z".to_string(),
+            origin: None,
         }]);
         assert_eq!(mast_owner(&layout), None);
         assert!(!mast_slot_in_use(&layout));

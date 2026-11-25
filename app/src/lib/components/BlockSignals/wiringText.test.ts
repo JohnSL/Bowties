@@ -63,8 +63,7 @@ describe('issueText two-block issues', () => {
     code, signalId: 'sig-1', nodeKey: 'N', detail,
   });
 
-  it('words signals on more than one board and a board with no free Track Circuit', () => {
-    expect(issueText(issue('unsupportedBoards'), OUTPUTS)).toBe('This release builds signals on one Signal LCC only. Choose the same Signal LCC for every signal.');
+  it('words a board with no free Track Circuit', () => {
     expect(issueText(issue('noFreeTrackCircuit'), OUTPUTS)).toBe('This Signal LCC has no free Track Circuit left for these signals. Choose another Signal LCC.');
   });
 

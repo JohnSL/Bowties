@@ -588,6 +588,26 @@ vi.mock('$lib/api/signaling', () => ({
 }));
 const { composeBlockSignals, composeBlockSignalsRemoval } = await import('$lib/api/signaling');
 
+vi.mock('$lib/api/sync', () => ({
+  listPendingChanges: vi.fn(async () => []),
+  revertPendingChange: vi.fn(),
+  setPendingChange: vi.fn(async () => 'row-id'),
+}));
+const { setPendingChange } = await import('$lib/api/sync');
+const { pendingChangesStore } = await import('$lib/stores/pendingChanges.svelte');
+const { stageConfigDraftsAsPendingChanges } = await import('$lib/orchestration/configDraftOrchestrator');
+
+/** The origin each Save would record, by field address (the IPC payload's offset). */
+async function savedOrigins(): Promise<Record<string, unknown>> {
+  pendingChangesStore.clear();
+  vi.mocked(setPendingChange).mockClear();
+  stageConfigDraftsAsPendingChanges();
+  await pendingChangesStore.recordDraftsToBackend();
+  return Object.fromEntries(
+    vi.mocked(setPendingChange).mock.calls.map(([row]) => [row.offset, row.origin]),
+  );
+}
+
 const ABS_TEMPLATE: BehaviorTemplate = {
   templateId: 'automatic-block-signals',
   displayName: 'Automatic Block Signals',
@@ -667,6 +687,25 @@ describe('createBlockSignalsFacility (Spec 020 / E1a — facilityOrchestrator)',
     expect(effectiveNodeStore.isDirty).toBe(true);
     expect(effectiveNodeStore.dirtyBreakdown).toMatchObject({ config: 2, channels: 1, facilities: 1 });
     expect(composeFacilityBowties).not.toHaveBeenCalled();
+  });
+
+  it('records the staged edits as Pending Changes that carry the facility that staged them', async () => {
+    await orch.createBlockSignalsFacility(absArgs());
+
+    expect(await savedOrigins()).toEqual({
+      '0x0000000A': { facilityId: 'abs-1' },
+      '0x00000014': { facilityId: 'abs-1' },
+    });
+  });
+
+  it('records a field the user then edits by hand with no origin', async () => {
+    await orch.createBlockSignalsFacility(absArgs());
+    configEditor.applyEdit(editKeyForLeaf(ABS_NODE, 253, 10), { type: 'int', value: 5 });
+
+    expect(await savedOrigins()).toEqual({
+      '0x0000000A': undefined,
+      '0x00000014': { facilityId: 'abs-1' },
+    });
   });
 
   it('syncs every unsaved config edit with the drafts before composing, not in the compose request', async () => {
@@ -940,6 +979,13 @@ describe('removeBlockSignalsFacility (Spec 020 / E2b — facilityOrchestrator)',
         }],
       },
     } as never], [SAVED_PLACEMENT]);
+  });
+
+  it('records the release edits as Pending Changes that carry the facility being removed', async () => {
+    await orch.removeBlockSignalsFacility({ facilityId: 'abs-1' });
+
+    // The release's second edit leaves its field unchanged, so only the first is recorded.
+    expect(await savedOrigins()).toEqual({ '0x0000000A': { facilityId: 'abs-1' } });
   });
 
   it('stages the release edits and deletes the facility and its signal channels', async () => {

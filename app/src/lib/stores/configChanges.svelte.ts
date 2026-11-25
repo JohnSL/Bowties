@@ -26,6 +26,7 @@ import {
   parseOfflineValueString,
 } from '$lib/utils/editKey';
 import { toCanonicalNodeKey } from '$lib/utils/nodeKey';
+import type { PendingChangeOrigin } from '$lib/api/sync';
 
 // ─── Address index cache ──────────────────────────────────────────────────────
 //
@@ -73,6 +74,8 @@ export interface ChangeLayer {
 export interface ConfigDraftEntry {
   key: string;
   value: TreeConfigValue;
+  /** The facility that staged this draft; absent for a hand edit. */
+  origin?: PendingChangeOrigin;
 }
 
 // ─── Store class ──────────────────────────────────────────────────────────────
@@ -80,6 +83,8 @@ export interface ConfigDraftEntry {
 class ConfigChangesStore {
   /** Draft edits keyed by canonical edit key. */
   private _drafts = $state<Map<string, TreeConfigValue>>(new Map());
+  /** Which facility staged a draft, by edit key; a key with no entry is a hand edit. */
+  private _origins = new Map<string, PendingChangeOrigin>();
 
   // ── Read interface ────────────────────────────────────────────────────────
 
@@ -181,7 +186,10 @@ class ConfigChangesStore {
 
   /** Snapshot of all current config drafts in insertion order. */
   draftEntries(): ConfigDraftEntry[] {
-    return [...this._drafts.entries()].map(([key, value]) => ({ key, value }));
+    return [...this._drafts.entries()].map(([key, value]) => {
+      const origin = this._origins.get(key);
+      return origin ? { key, value, origin } : { key, value };
+    });
   }
 
   // ── Write interface ───────────────────────────────────────────────────────
@@ -193,8 +201,12 @@ class ConfigChangesStore {
    * layer (offlinePending if present, otherwise baseline). If a draft
    * already exists and the user edits back to the effective value, the
    * draft is removed — the field returns to its pre-edit state.
+   *
+   * `origin` names the facility staging the edit. An edit without one is a hand
+   * edit and clears any origin the field's draft carried.
    */
-  set(key: string, value: TreeConfigValue): void {
+  set(key: string, value: TreeConfigValue, origin?: PendingChangeOrigin): void {
+    this._origins.delete(key);
     const effective = this._resolveOfflinePending(key) ?? this._resolveBaseline(key);
     if (effective !== null && this._valuesEqual(value, effective)) {
       // Value matches what's already stored — remove any existing draft
@@ -206,11 +218,13 @@ class ConfigChangesStore {
     }
     this._drafts = new Map(this._drafts);
     this._drafts.set(key, value);
+    if (origin) this._origins.set(key, origin);
   }
 
   /** Remove the draft for this field. Returns true if a draft was removed. */
   revert(key: string): boolean {
     if (!this._drafts.has(key)) return false;
+    this._origins.delete(key);
     this._drafts = new Map(this._drafts);
     this._drafts.delete(key);
     return true;
@@ -218,6 +232,7 @@ class ConfigChangesStore {
 
   /** Remove all draft entries (used by discard-all). */
   clearAllDrafts(): void {
+    this._origins.clear();
     this._drafts = new Map();
   }
 
@@ -233,6 +248,7 @@ class ConfigChangesStore {
    * drafts are cleared uniformly — no species-based partitioning.
    */
   commitForSave(): void {
+    this._origins.clear();
     this._drafts = new Map();
   }
 
@@ -241,7 +257,10 @@ class ConfigChangesStore {
     const prefix = `${toCanonicalNodeKey(nodeId)}:`;
     const next = new Map(this._drafts);
     for (const key of next.keys()) {
-      if (key.startsWith(prefix)) next.delete(key);
+      if (key.startsWith(prefix)) {
+        next.delete(key);
+        this._origins.delete(key);
+      }
     }
     this._drafts = next;
   }
@@ -263,6 +282,7 @@ class ConfigChangesStore {
       const baseline = this._resolveBaseline(key);
       if (baseline !== null && this._valuesEqual(draft, baseline)) {
         next.delete(key);
+        this._origins.delete(key);
         removed.push(key);
       }
     }

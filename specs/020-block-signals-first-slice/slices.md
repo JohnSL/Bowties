@@ -2,7 +2,7 @@
 
 Branch: 020-block-signals-first-slice
 Generated: 2026-11-07; roadmap regenerated 2026-11-22 for the end-to-end pivot
-Status: 11/17 slices complete (S1, S2R, E1a, E1b, E2a, E2b, E2c, E3a, E3, E3b-0, E3b-1); S2 and the old S3–S8 superseded by E1a–E6
+Status: 12/17 slices complete (S1, S2R, E1a, E1b, E2a, E2b, E2c, E3a, E3, E3b-0, E3b-1, E5); S2 and the old S3–S8 superseded by E1a–E6
 
 Approved input: the
 [2026-11-22 Architecture Assessment](plan.md#architecture-assessment-end-to-end-first-release-2026-11-22)
@@ -137,14 +137,14 @@ flowchart LR
 | E3b-1 | Save writes configuration through Pending Changes | HITL | E3b-0 | done |
 | E3b-2 | Accept or keep a refused value | HITL | E4 | sketched |
 | E4 | Verify writes | HITL | E1b, E3b-1 | sketched |
-| E5 | Across boards | HITL | E3r + E4 + cross-board Approach and receiver-restart evidence | sketched |
+| E5 | Across boards | HITL | E3 + E3b-1 (re-cut 2026-11-24: no longer waits on E3r or E4; bench evidence checked in the slice) | done |
 | E6 | Maintain a three-block facility | AFK | E5 | sketched |
 | F1 | Hand off: lcc-rs inbound routing under a loaded bus | HITL | E6 | sketched |
 
 Hardware gates refer to [single-board evidence](manual-track-circuit-test.md)
 and [two-board evidence](manual-two-board-test.md). The terminal recipe and
-same-board Approach have passed; cross-board Approach and receiver restart
-are outstanding. Failure handling belongs in every affected slice, not a
+same-board Approach have passed. Cross-board reception passed for both
+receiver outcomes. Receiver restart passed in E5's bench run (2026-11-24). Failure handling belongs in every affected slice, not a
 final hardening pass. No horizontal foundation or test-only slice is
 authorized.
 
@@ -1031,6 +1031,7 @@ Taken while tasking E3, which split it into E3a, E3 and E3r.
 **Acceptance criteria**:
 - [ ] Review is enabled after Wiring and shows each signal's block, behavior, outputs, expected indications, affected configuration and claimed slots (FR-010); Done moves from Wiring to Review.
 - [ ] Review explains that a signal now has a signal after it, and lists the added logic, claimed slots, and any Logic moved (including other facilities' groups).
+- [ ] Review lists every affected board (moved here from E5, 2026-11-24).
 - [ ] Layout follows the storyboard's [`#line-review`](../proposals/signaling-ux/signaling-facilities-storyboard.html#line-review) (behavior panel, summary cards, per-signal table, choices needing attention), with one Done in place of "Save new draft" and "Create and apply".
 
 ### E3b: Save writes configuration through Pending Changes (split into E3b-0, E3b-1, E3b-2)
@@ -1206,7 +1207,8 @@ Taken while tasking E3, which split it into E3a, E3 and E3r.
 - Merged readback ranges through `sync::read_plan` (a facility Done of about 50 values is not read one field at a time).
 - A refused value stays pending with the board's value and a reason.
 - Consider per-board Update Complete (JMRI makes it a user action).
-- Read each publisher mast's Link Address and flag a Track Circuit bound to a different value (E3 D1).
+- Read each publisher mast's Link Address and flag a Track Circuit bound to a different value (E3 D1), including a receiver on another board (moved here from E5, 2026-11-24).
+- Each board's outcome gains "written and verified" (E5 shows written, waiting and not attempted).
 
 **Acceptance criteria**:
 - [ ] After a connected Save or a Sync Panel write, each signal is marked verified only when its values read back as written.
@@ -1219,19 +1221,41 @@ Taken while tasking E3, which split it into E3a, E3 and E3r.
 ### E5: Across boards [HITL]
 
 **Intent**: Signals hosted on two Signal LCC boards coordinate correctly, and a partial failure is reported per board.
-**Boundary**: Compiler (cross-node receiver) → drafts → Save / Sync Panel → two nodes.
-**Blocked by**: E3r + E4 + cross-board Approach and receiver-restart evidence (outstanding).
-**Status**: sketched
+**Boundary**: Compiler (per-board masts, circuits and Logic; cross-node receiver) → drafts → Save / Sync Panel → two nodes.
+**Blocked by**: E3 + E3b-1. No separate bench gate (2026-11-24, user): the [two-board record](manual-two-board-test.md) showed both receiver outcomes across boards (publisher Stop → receiver Approach, publisher Clear → receiver Clear). The receiver compares only against Stop, so a publisher Approach takes the same path as Clear, and E3 confirmed all three on one board. The restart observation is not recorded; it is part of this slice's bench acceptance.
+**Status**: done
+
+**Re-cut (2026-11-24, user)**: E5 goes before E3r and E4. Signals across boards are useful without the Review step or readback. What moved out:
+- Readback of the receiver's Link Address and "written and verified" per board → E4.
+- Review listing every affected board → E3r.
+- Until E4 lands, a stale publisher Link Address (a replaced or factory-reset board) is not detected; the bench is the check.
 
 **Acceptance criteria**:
-- [ ] The receiver on the upstream board binds to the downstream board's Link Address read fresh from hardware, and readback verifies it.
-- [ ] Cross-board Stop, Approach and Clear match the policy on the bench.
-- [ ] Review lists every affected board.
-- [ ] When writes fail partway, each board's outcome is shown (written and verified, written but unverified, not attempted) and the facility is never shown complete. The outcome survives reopening.
-- [ ] Unfinished work stays visible in the Save toolbar, the unsaved-changes breakdown and the close prompts.
-- [ ] The receiver-restart manual check passes before this slice is accepted.
+- [x] A line whose signals are on two Signal LCC boards composes; each board gets its own masts, Track Circuits and Logic, and `UnsupportedBoards` is gone.
+- [x] The receiver on the upstream board binds to the downstream board's mast Link Address as read from that board; a missing one names the signal and the board.
+- [x] Cross-board Stop, Approach and Clear match the policy on the bench.
+- [x] When writes fail partway, each board's outcome is shown (written, waiting with the reason, not attempted) and the facility is never shown complete. The outcome survives reopening.
+- [x] Unfinished work stays visible in the Save toolbar, the unsaved-changes breakdown and the close prompts.
+- [x] Removing the facility releases its slots on both boards.
+- [x] Bench: restart the upstream board while the downstream block is occupied. Record whether it shows Approach before any new occupancy change, then confirm normal transitions after one. If it does not acquire the state, record that; whether to fix it is decided then, and it does not change the compiler.
 
-**Architecture note**: Widens E4's readback across boards that cannot be written atomically, without a second executor or resource registry.
+**Architecture note**: The compiler and Logic planner run per board. Writes go through the one writer from E3b-1, board by board, without a second executor; E4 later adds readback to its row results.
+
+**Decisions at tasking (approved 2026-11-24)**:
+- D1 B: each Pending Change row records the facility that staged it (optional `origin`, set by the facility staging pipeline; a hand edit to the same field clears it). Per-board outcome and "never shown complete" derive from tagged rows grouped by `node_key`; no per-board status in the writer result. Rejected: matching rows to claimed slots (misses release edits outside the slots), per-node writer counts (a parallel status, lost on reopen), deferral to E4 (readback does not answer attribution).
+- No rule to stop writing a board that stops answering; "not attempted" is a recorded row with no result yet.
+
+**Tasks**:
+- [x] E5-T1: Integration test: a two-block line with the downstream signal on board B composes, stages and saves; a failed write on one board shows that board's waiting rows with the reason, the facility card says it is waiting, and after reopening it still does.
+- [x] E5-T2: Compiler per board: masts, Track Circuits, aspect events and occupancy looked up on each signal's own board; one `plan_logic_placement` call per board; `out.placement` lists every affected board; the next signal's Link Address read from its own board (`LinkAddressMissing` names that board); vacated Logic and released circuits per board. `UnsupportedBoards` removed (core, API types, `wiringText.ts`).
+- [x] E5-T3: Rows know their facility (D1): optional `origin` on `PendingChange` (serde default; schema unchanged); the facility staging pipeline tags its drafts; `recordDraftsToBackend` carries the tag; a hand edit to the same field clears it.
+- [x] E5-T4: Per-board outcome: a pure util groups a facility's rows by board (written, waiting with reason, not attempted); `effectiveLayoutStore.facilityWriteOutcome` (separate from `facilityStatus`, which gates bowtie composition); the facility card shows waiting per board instead of reading as complete.
+- [x] E5-T5: Remove across boards: `facilityBoardSlots` returns slots per board; the Remove dialog names each board and its slots.
+- [x] E5-T6: Docs: ADR-0001 extension (row origin, per-board outcome from rows), ADR-0020 note (planner per board), aiwiki seams (Pending Changes, Progressive Proposal invariant made per board), owners.
+- [x] E5-T7: Validation: core and app tests, svelte-check baseline, bench on two boards (Stop/Approach/Clear across boards; upstream board restart).
+
+**Validation (2026-11-24)**: bowties-core `cargo test` 629 passed, 0 warnings; app/src-tauri `cargo check --tests` clean; vitest 128 files passed (1692 tests); svelte-check 113 (baseline). Bench: passed (2026-11-24, user): signals on two boards, cross-board Stop/Approach/Clear, the upstream-board restart check and the bench steps given at hand-off all work.
+- Notes: a written row is removed (ADR-0001), so a board whose rows all wrote has no line on the card; only waiting and not-yet-written boards are listed. No `compose_from_layout` harness exists in app/src-tauri, so the two-board compose is covered by the core compiler tests and the frontend integration test (`signalsAcrossBoards.integration.test.ts`).
 
 ### E6: Maintain a three-block facility [AFK]
 

@@ -1,4 +1,5 @@
-//! Pure compiler for the Automatic Block Signals recipe on one Signal LCC.
+//! Pure compiler for the Automatic Block Signals recipe across the Signal LCCs
+//! (boards) a Line's signals are wired to.
 //!
 //! Turns a Line (the facility's block list and policy settings), the wiring
 //! chosen for each of its signals and read-only node facts into configuration edits,
@@ -28,7 +29,7 @@ use super::{
 };
 use crate::layout::channels::{ChannelBinding, ChannelRole};
 use super::logic_placement::{
-    plan_logic_placement, LogicGroupDemand, LogicPlacementIssue, LogicPlacementIssueCode, LogicSlotFact,
+    plan_logic_placement, LogicGroupDemand, LogicPlacementIssue, LogicPlacementIssueCode, LogicSlotFact, PlannedLogic,
 };
 use crate::layout::facilities::{
     canonical_node_key, ClaimedSlot, ClaimedSlotKind, NodeLogicPlacement, PlacedLogicGroup, SignalResources,
@@ -210,7 +211,6 @@ pub enum CompileIssueCode {
     ReleaseInvalid,
     OccupancyEventsMissing,
     AspectEventsMissing,
-    UnsupportedBoards,
     NoFreeTrackCircuit,
     LinkAddressMissing,
     UnsupportedMovements,
@@ -240,14 +240,15 @@ pub struct CompiledBlockSignals {
     pub edits: Vec<NodeConfigEdit>,
     /// Each signal's mast and Track Circuits.
     pub resources: Vec<PlannedSignalResources>,
-    /// The wiring board's whole new Logic placement (one entry; empty with issues).
+    /// The whole new Logic placement of each wiring board (one entry per board; empty with issues).
     pub placement: Vec<NodeLogicPlacement>,
     pub issues: Vec<CompileIssue>,
 }
 
-/// Compile the Automatic Block Signals recipe for every signal of a Line on one
-/// board. Deterministic: signals, slots and edits are chosen and ordered from
-/// the inputs alone, lowest free slot first, in chain order. A signal with a
+/// Compile the Automatic Block Signals recipe for every signal of a Line, each
+/// on the board its wiring names. Deterministic: signals, slots and edits are
+/// chosen and ordered from the inputs alone, lowest free slot first, in chain
+/// order. Slots are claimed per board. A signal with a
 /// signal after it gets a two-rung group and a Track Circuit; the last signal
 /// gets the terminal recipe. With any issue, `edits`, `resources` and
 /// `placement` are empty.
@@ -262,29 +263,32 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
     }
     let facility_id = input.line.facility_id.clone();
     let wiring_of = |signal_id: &str| input.wiring.iter().find(|w| w.signal_id == signal_id);
-    let Some(board_key) = signals.iter().find_map(|s| wiring_of(&s.signal_id)).map(|w| w.node_key.clone()) else {
+    if !signals.iter().any(|s| wiring_of(&s.signal_id).is_some()) {
         for signal in &signals {
             ctx.signal_id = Some(signal.signal_id.clone());
             ctx.push(CompileIssueCode::WiringMissing, "No Signal LCC outputs are chosen for this signal.");
         }
         return out;
-    };
-    let node = input.nodes.iter().find(|n| same_node(&n.node_key, &board_key));
+    }
+    let node_of = |key: &str| input.nodes.iter().find(|n| same_node(&n.node_key, key));
     let saved_of = |signal_id: &str| {
         input.saved_resources.iter().find(|r| r.signal_id == signal_id).map(|r| &r.resources)
     };
     // Saved signals keep their mast and circuit, so new signals never take them.
-    let mut taken_masts: Vec<u32> = signals
+    // Masts and circuits are numbered per board.
+    let mut taken_masts: Vec<(String, u32)> = signals
         .iter()
         .filter_map(|s| saved_of(&s.signal_id))
-        .filter(|r| same_node(&r.node_key, &board_key))
-        .map(|r| r.mast)
+        .map(|r| (canonical_node_key(&r.node_key), r.mast))
         .collect();
-    let mut taken_circuits: Vec<u32> = signals
+    let mut taken_circuits: Vec<(String, u32)> = signals
         .iter()
         .filter_map(|s| saved_of(&s.signal_id))
-        .flat_map(|r| r.track_circuits.iter().copied())
+        .flat_map(|r| r.track_circuits.iter().map(|c| (canonical_node_key(&r.node_key), *c)))
         .collect();
+    let taken_on = |taken: &[(String, u32)], board: &str| -> Vec<u32> {
+        taken.iter().filter(|(b, _)| *b == canonical_node_key(board)).map(|(_, i)| *i).collect()
+    };
 
     let mut plans: Vec<SignalPlan> = Vec::new();
     for signal in signals.iter_mut() {
@@ -295,6 +299,7 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
             continue;
         };
         ctx.node_key = Some(wiring.node_key.clone());
+        let node = node_of(&wiring.node_key);
         let own = saved_of(&signal.signal_id);
         let own_masts: Vec<u32> = own
             .filter(|r| same_node(&r.node_key, &wiring.node_key))
@@ -315,9 +320,9 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
             }
             mast
         } else {
-            let mast = node.and_then(|n| free_mast(n, &taken_masts));
+            let mast = node.and_then(|n| free_mast(n, &taken_on(&taken_masts, &wiring.node_key)));
             match mast {
-                Some(m) => taken_masts.push(m.index),
+                Some(m) => taken_masts.push((canonical_node_key(&wiring.node_key), m.index)),
                 None => {
                     let outside = node.map_or(0, |n| n.masts.iter().filter(|m| m.in_use && !m.claimed).count());
                     ctx.push(CompileIssueCode::NoFreeMast, &no_free_detail("mast", outside));
@@ -342,9 +347,11 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
     }
 
     // Track Circuits and the next signal's Link Address, once every mast is chosen.
+    // The circuit is on the signal's own board; the Link Address is read from the next signal's board.
     for i in 0..plans.len() {
         ctx.signal_id = Some(plans[i].signal_id.clone());
         ctx.node_key = Some(plans[i].wiring.node_key.clone());
+        let node = node_of(&plans[i].wiring.node_key);
         let saved = saved_of(&plans[i].signal_id).map(|r| r.track_circuits.clone()).unwrap_or_default();
         let Some(next_id) = plans[i].next_signal_id.clone() else {
             plans[i].released_circuits = saved;
@@ -362,15 +369,16 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
                 Some(*held)
             }
             None => {
+                let taken = taken_on(&taken_circuits, &plans[i].wiring.node_key);
                 let free = node.and_then(|n| {
                     n.track_circuits
                         .iter()
-                        .filter(|c| !c.in_use && !taken_circuits.contains(&c.index))
+                        .filter(|c| !c.in_use && !taken.contains(&c.index))
                         .map(|c| c.index)
                         .min()
                 });
                 match free {
-                    Some(c) => taken_circuits.push(c),
+                    Some(c) => taken_circuits.push((canonical_node_key(&plans[i].wiring.node_key), c)),
                     None => {
                         let outside =
                             node.map_or(0, |n| n.track_circuits.iter().filter(|c| c.in_use && !c.claimed).count());
@@ -381,13 +389,13 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
             }
         };
         plans[i].circuit = circuit;
-        let next_mast = plans.iter().find(|p| p.signal_id == next_id).and_then(|p| p.mast);
-        if let Some(next_mast) = next_mast {
-            if link_address_of(node, next_mast).is_none() {
+        let next = plans.iter().find(|p| p.signal_id == next_id);
+        if let Some((next_mast, next_board)) = next.and_then(|p| Some((p.mast?, p.wiring.node_key.as_str()))) {
+            if link_address_of(node_of(next_board), next_mast).is_none() {
                 let next_name = signals.iter().find(|s| s.signal_id == next_id).map_or("the next signal", |s| s.name.as_str());
                 ctx.push(
                     CompileIssueCode::LinkAddressMissing,
-                    &format!("The Link Address of {next_name}'s mast has not been read from the board."),
+                    &format!("The Link Address of {next_name}'s mast has not been read from board {next_board}."),
                 );
             }
         }
@@ -404,7 +412,7 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
             );
         }
         if let Some(mast) = plan.mast {
-            if plan.aspect_events(node, mast).is_none() {
+            if plan.aspect_events(node_of(&plan.wiring.node_key), mast).is_none() {
                 let wanted = if plan.next_signal_id.is_some() { "Stop, Approach and Clear" } else { "Stop and Clear" };
                 ctx.push(
                     CompileIssueCode::AspectEventsMissing,
@@ -414,45 +422,28 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
         }
     }
 
-    // One planner call for the board, one group per signal.
-    ctx.signal_id = signals.first().map(|s| s.signal_id.clone());
-    ctx.node_key = Some(board_key.clone());
-    let recorded: Vec<PlacedLogicGroup> = input
-        .logic_placement
-        .iter()
-        .filter(|board| same_node(&board.node_key, &board_key))
-        .flat_map(|board| board.groups.iter().cloned())
+    // One planner call per board, one group per signal wired to it.
+    let boards: Vec<BoardLogic> = board_keys(&plans)
+        .into_iter()
+        .map(|board_key| plan_board_logic(input, &plans, &board_key, &mut ctx))
         .collect();
-    let slot_facts: Vec<LogicSlotFact> = node
-        .map(|n| n.logic.iter().map(|l| LogicSlotFact { index: l.index, function: l.function }).collect())
-        .unwrap_or_default();
-    let demand: Vec<LogicGroupDemand> = signals
-        .iter()
-        .map(|s| LogicGroupDemand {
-            signal_id: s.signal_id.clone(),
-            length: if matches!(s.next, NextSignal::Signal { .. }) { 2 } else { 1 },
-        })
-        .collect();
-    let planned = plan_logic_placement(&slot_facts, &recorded, &facility_id, &demand);
-    let outside_logic = node.map_or(0, |n| n.logic.iter().filter(|l| l.in_use && !l.claimed).count());
-    for issue in &planned.issues {
-        let (code, detail) = map_placement_issue(issue, outside_logic);
-        let board_wide = ctx.signal_id.clone();
-        if issue.signal_id.is_some() {
-            ctx.signal_id = issue.signal_id.clone();
-        }
-        ctx.push_logic(code, &detail, issue.logic.clone());
-        ctx.signal_id = board_wide;
-    }
-    let group_of = |signal_id: &str| {
-        planned.placement.iter().find(|g| g.facility_id == facility_id && g.signal_id == signal_id).cloned()
+    let group_of = |plan: &SignalPlan| {
+        boards
+            .iter()
+            .find(|b| same_node(&b.key, &plan.wiring.node_key))?
+            .planned
+            .placement
+            .iter()
+            .find(|g| g.facility_id == facility_id && g.signal_id == plan.signal_id)
+            .cloned()
     };
     for plan in &plans {
-        let Some(group) = group_of(&plan.signal_id) else { continue };
+        let Some(group) = group_of(plan) else { continue };
         let missing = (group.first..group.first + group.length)
-            .any(|i| !node.is_some_and(|n| n.logic.iter().any(|l| l.index == i)));
+            .any(|i| !node_of(&plan.wiring.node_key).is_some_and(|n| n.logic.iter().any(|l| l.index == i)));
         if missing {
             ctx.signal_id = Some(plan.signal_id.clone());
+            ctx.node_key = Some(plan.wiring.node_key.clone());
             ctx.push(
                 CompileIssueCode::ClaimedSlotUnavailable,
                 "The Logic this facility already uses is not available on the chosen Signal LCC.",
@@ -463,14 +454,16 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
     if !out.issues.is_empty() {
         return out;
     }
-    let mut kept_logic: Vec<u32> = Vec::new();
+    let mut kept_logic: Vec<(String, u32)> = Vec::new();
     for plan in &plans {
-        let (Some(mast), Some(group), Some(occupancy)) = (plan.mast, group_of(&plan.signal_id), plan.occupancy(input))
+        let node = node_of(&plan.wiring.node_key);
+        let (Some(mast), Some(group), Some(occupancy)) = (plan.mast, group_of(plan), plan.occupancy(input))
         else {
             return CompiledBlockSignals::default();
         };
         let Some(events) = plan.aspect_events(node, mast) else { return CompiledBlockSignals::default() };
-        kept_logic.extend(group.first..group.first + group.length);
+        let board = canonical_node_key(&plan.wiring.node_key);
+        kept_logic.extend((group.first..group.first + group.length).map(|i| (board.clone(), i)));
         let mut writes = mast_edits(&plan.name, mast, &plan.wiring);
         match (&plan.next_signal_id, plan.circuit) {
             (Some(next_id), Some(circuit)) => {
@@ -478,8 +471,7 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
                 let link = plans
                     .iter()
                     .find(|p| &p.signal_id == next_id)
-                    .and_then(|p| p.mast)
-                    .and_then(|m| link_address_of(node, m));
+                    .and_then(|p| link_address_of(node_of(&p.wiring.node_key), p.mast?));
                 let (Some(link), Some(next), Some(approach)) = (link, next, events.approach) else {
                     return CompiledBlockSignals::default();
                 };
@@ -512,13 +504,17 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
             },
         });
     }
-    // Vacated Logic and released circuits are reset after the new groups are written.
-    for logic in planned.vacated.iter().filter(|i| !kept_logic.contains(i)) {
-        out.edits.extend(logic_reset_edits(*logic).into_iter().map(|(path, value)| NodeConfigEdit {
-            node_key: board_key.clone(),
-            path,
-            value,
-        }));
+    // Vacated Logic and released circuits are reset, on the board that held them,
+    // after the new groups are written.
+    for board in &boards {
+        let board_id = canonical_node_key(&board.key);
+        for logic in board.planned.vacated.iter().filter(|i| !kept_logic.contains(&(board_id.clone(), **i))) {
+            out.edits.extend(logic_reset_edits(*logic).into_iter().map(|(path, value)| NodeConfigEdit {
+                node_key: board.key.clone(),
+                path,
+                value,
+            }));
+        }
     }
     for plan in &plans {
         for circuit in &plan.released_circuits {
@@ -529,8 +525,69 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
             }));
         }
     }
-    out.placement = vec![NodeLogicPlacement { node_key: board_key, groups: planned.placement }];
+    out.placement = boards
+        .into_iter()
+        .map(|b| NodeLogicPlacement { node_key: b.key, groups: b.planned.placement })
+        .collect();
     out
+}
+
+/// One wiring board's Logic placement.
+struct BoardLogic {
+    key: String,
+    planned: PlannedLogic,
+}
+
+/// The boards the planned signals are wired to, in first-use order.
+fn board_keys(plans: &[SignalPlan]) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::new();
+    for plan in plans {
+        if !keys.iter().any(|k| same_node(k, &plan.wiring.node_key)) {
+            keys.push(plan.wiring.node_key.clone());
+        }
+    }
+    keys
+}
+
+/// Plan one board's Logic: one group per signal wired to it, mapping planner issues to compile issues.
+fn plan_board_logic(
+    input: &CompileInput,
+    plans: &[SignalPlan],
+    board_key: &str,
+    ctx: &mut IssueSink<'_>,
+) -> BoardLogic {
+    let node = input.nodes.iter().find(|n| same_node(&n.node_key, board_key));
+    let on_board: Vec<&SignalPlan> = plans.iter().filter(|p| same_node(&p.wiring.node_key, board_key)).collect();
+    ctx.signal_id = on_board.first().map(|p| p.signal_id.clone());
+    ctx.node_key = Some(board_key.to_string());
+    let recorded: Vec<PlacedLogicGroup> = input
+        .logic_placement
+        .iter()
+        .filter(|board| same_node(&board.node_key, board_key))
+        .flat_map(|board| board.groups.iter().cloned())
+        .collect();
+    let slot_facts: Vec<LogicSlotFact> = node
+        .map(|n| n.logic.iter().map(|l| LogicSlotFact { index: l.index, function: l.function }).collect())
+        .unwrap_or_default();
+    let demand: Vec<LogicGroupDemand> = on_board
+        .iter()
+        .map(|p| LogicGroupDemand {
+            signal_id: p.signal_id.clone(),
+            length: if p.next_signal_id.is_some() { 2 } else { 1 },
+        })
+        .collect();
+    let planned = plan_logic_placement(&slot_facts, &recorded, &input.line.facility_id, &demand);
+    let outside_logic = node.map_or(0, |n| n.logic.iter().filter(|l| l.in_use && !l.claimed).count());
+    for issue in &planned.issues {
+        let (code, detail) = map_placement_issue(issue, outside_logic);
+        let board_wide = ctx.signal_id.clone();
+        if issue.signal_id.is_some() {
+            ctx.signal_id = issue.signal_id.clone();
+        }
+        ctx.push_logic(code, &detail, issue.logic.clone());
+        ctx.signal_id = board_wide;
+    }
+    BoardLogic { key: board_key.to_string(), planned }
 }
 
 /// One signal's choices while a Line compiles.
@@ -658,15 +715,6 @@ fn check_scope(input: &CompileInput, signals: &[SignalPreview], ctx: &mut IssueS
     }
     if line.entrance_end != EntranceEnd::NoPlant || line.exit_end != ExitEnd::NothingBeyond {
         ctx.push(CompileIssueCode::UnsupportedEnds, "This release supports a Line with nothing beyond either end.");
-    }
-    let mut boards: Vec<&str> = Vec::new();
-    for wiring in input.wiring.iter().filter(|w| signals.iter().any(|s| s.signal_id == w.signal_id)) {
-        if !boards.iter().any(|b| same_node(b, &wiring.node_key)) {
-            boards.push(&wiring.node_key);
-        }
-    }
-    if boards.len() > 1 {
-        ctx.push(CompileIssueCode::UnsupportedBoards, "This release supports signals on one Signal LCC only.");
     }
     let first = ctx.signal_id.clone();
     for signal in signals {

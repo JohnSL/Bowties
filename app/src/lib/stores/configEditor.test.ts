@@ -56,7 +56,7 @@ describe('configEditor.applyEdit — pass-through behavior', () => {
   it('calls configChangesStore.set with the same key and value', () => {
     configEditor.applyEdit(KEY, intVal(5));
     expect(mockSet).toHaveBeenCalledOnce();
-    expect(mockSet).toHaveBeenCalledWith(KEY, intVal(5));
+    expect(mockSet).toHaveBeenCalledWith(KEY, intVal(5), undefined);
   });
 
   it('calls configChangesStore.set exactly once per applyEdit (no cascade in PR 1)', () => {
@@ -67,7 +67,7 @@ describe('configEditor.applyEdit — pass-through behavior', () => {
   it('forwards string values correctly', () => {
     const strValue: TreeConfigValue = { type: 'string', value: 'Tower East' };
     configEditor.applyEdit(KEY, strValue);
-    expect(mockSet).toHaveBeenCalledWith(KEY, strValue);
+    expect(mockSet).toHaveBeenCalledWith(KEY, strValue, undefined);
   });
 
   it('forwards eventId values correctly', () => {
@@ -77,13 +77,13 @@ describe('configEditor.applyEdit — pass-through behavior', () => {
       hex: '01.02.03.04.05.06.07.08',
     };
     configEditor.applyEdit(KEY, eventValue);
-    expect(mockSet).toHaveBeenCalledWith(KEY, eventValue);
+    expect(mockSet).toHaveBeenCalledWith(KEY, eventValue, undefined);
   });
 
   it('forwards float values correctly', () => {
     const floatValue: TreeConfigValue = { type: 'float', value: 3.14 };
     configEditor.applyEdit(KEY, floatValue);
-    expect(mockSet).toHaveBeenCalledWith(KEY, floatValue);
+    expect(mockSet).toHaveBeenCalledWith(KEY, floatValue, undefined);
   });
 
   it('can be called multiple times for different keys', () => {
@@ -91,7 +91,7 @@ describe('configEditor.applyEdit — pass-through behavior', () => {
     configEditor.applyEdit(KEY, intVal(1));
     configEditor.applyEdit(key2, intVal(2));
     expect(mockSet).toHaveBeenCalledTimes(2);
-    expect(mockSet).toHaveBeenNthCalledWith(1, KEY, intVal(1));
-    expect(mockSet).toHaveBeenNthCalledWith(2, key2, intVal(2));
+    expect(mockSet).toHaveBeenNthCalledWith(1, KEY, intVal(1), undefined);
+    expect(mockSet).toHaveBeenNthCalledWith(2, key2, intVal(2), undefined);
   });
 });

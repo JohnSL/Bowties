@@ -268,7 +268,6 @@ export type ComposeIssueCode =
   | 'releaseInvalid'
   | 'occupancyEventsMissing'
   | 'aspectEventsMissing'
-  | 'unsupportedBoards'
   | 'noFreeTrackCircuit'
   | 'linkAddressMissing'
   | 'unsupportedMovements'

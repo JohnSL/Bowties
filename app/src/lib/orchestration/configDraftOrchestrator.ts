@@ -39,7 +39,7 @@ import { normalizeNodeId } from '$lib/utils/nodeId';
  */
 export function stageConfigDraftsAsPendingChanges(): void {
   const entries = configChangesStore.draftEntries();
-  for (const { key, value } of entries) {
+  for (const { key, value, origin } of entries) {
     const { normalizedNodeId, space, address } = parseEditKey(key);
     const offset = addressToOffsetHex(address);
     const dottedNodeId = findDottedNodeId(normalizedNodeId) ?? normalizedNodeId;
@@ -59,6 +59,7 @@ export function stageConfigDraftsAsPendingChanges(): void {
       offset,
       baselineValue,
       plannedValue: configValueToOfflineString(value),
+      origin,
     });
   }
 }

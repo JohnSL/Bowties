@@ -84,6 +84,18 @@ board-wide rule.
   does not own uses it as a Source; a release empties Remote Mast Description
   and gives the Link Address a fresh event ID.
 
+## 2026-11-24 extension: facilities across boards (Spec 020 E5)
+
+- A facility's signals may be on different Signal LCC boards. The compiler
+  picks each signal's mast and Track Circuit on that signal's own board, and
+  calls `plan_logic_placement` once per board; the compile result lists one
+  `NodeLogicPlacement` per affected board.
+- A receiver's Track Circuit takes the next signal's mast Link Address from
+  the next signal's board. When that board's Link Address has not been read,
+  `LinkAddressMissing` names the next signal and the board.
+- Vacated Logic and released Track Circuits are reset on the board that held
+  them; a resize on one board writes nothing to another.
+
 ## Invariants
 
 - Every Logic slot Bowties writes for a facility comes from

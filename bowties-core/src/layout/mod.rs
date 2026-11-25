@@ -323,6 +323,7 @@ mod tests {
             status: PendingChangeStatus::Pending,
             error: None,
             updated_at: "2026-05-23T00:00:00Z".to_string(),
+            origin: None,
         }
     }
 
@@ -372,6 +373,41 @@ mod tests {
         assert_eq!(loaded.pending_changes.len(), 2);
         assert_eq!(loaded.pending_changes[0].change_id, "c1");
         assert_eq!(loaded.pending_changes[1].change_id, "c2");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn pending_change_origin_roundtrips_and_a_legacy_file_without_it_loads() {
+        use crate::layout::pending_changes::PendingChangeOrigin;
+        let root = fresh_dir("bowties_e5t3_origin_roundtrip");
+        let layout_dir = root.join("my-layout");
+        seed_layout(&layout_dir, vec![make_snapshot("050101011402")]);
+
+        let mut staged = make_change("c1");
+        staged.origin = Some(PendingChangeOrigin { facility_id: "fac-1".to_string() });
+        update_pending_changes(&layout_dir, &[staged, make_change("c2")]).unwrap();
+
+        let loaded = read_capture(&layout_dir).unwrap();
+        assert_eq!(
+            loaded.pending_changes[0].origin,
+            Some(PendingChangeOrigin { facility_id: "fac-1".to_string() })
+        );
+        assert_eq!(loaded.pending_changes[1].origin, None);
+        let text = std::fs::read_to_string(layout_dir.join(io::OFFLINE_CHANGES_FILE)).unwrap();
+        assert_eq!(text.matches("origin").count(), 1, "origin is omitted when None: {text}");
+
+        // A file written before origin existed still loads.
+        let legacy: String = text
+            .lines()
+            .filter(|l| !l.contains("origin") && !l.contains("facilityId"))
+            .collect::<Vec<_>>()
+            .join("
+");
+        std::fs::write(layout_dir.join(io::OFFLINE_CHANGES_FILE), legacy).unwrap();
+        let reloaded = read_capture(&layout_dir).unwrap();
+        assert_eq!(reloaded.pending_changes.len(), 2);
+        assert!(reloaded.pending_changes.iter().all(|c| c.origin.is_none()));
 
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -5,7 +5,7 @@
  * the layout's pending-changes file.
  */
 
-import type { PendingChangeRow } from '$lib/api/sync';
+import type { PendingChangeRow, PendingChangeOrigin } from '$lib/api/sync';
 import { listPendingChanges, revertPendingChange, setPendingChange } from '$lib/api/sync';
 import { effectiveValue, type LeafConfigNode, type TreeConfigValue } from '$lib/types/nodeTree';
 import { normalizeNodeId } from '$lib/utils/nodeId';
@@ -130,6 +130,7 @@ class PendingChangesStore {
     offset: string;
     baselineValue: string;
     plannedValue: string;
+    origin?: PendingChangeOrigin;
   }): void {
     const existingPersisted = this.findPersistedConfigChange(change.nodeId, change.space, change.offset);
     const existingDraft = this.findDraftConfigChange(change.nodeId, change.space, change.offset);
@@ -152,6 +153,7 @@ class PendingChangesStore {
       baselineValue,
       plannedValue: change.plannedValue,
       status: 'pending',
+      ...(change.origin ? { origin: change.origin } : {}),
     };
 
     if (nextRow.plannedValue === nextRow.baselineValue) {
@@ -407,6 +409,7 @@ class PendingChangesStore {
           offset: draft.offset,
           baselineValue: draft.baselineValue,
           plannedValue: draft.plannedValue,
+          ...(draft.origin ? { origin: draft.origin } : {}),
         });
         if (draft.kind === 'config') recordedIds.push(id);
       }

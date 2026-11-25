@@ -89,6 +89,7 @@ fn config_change(id: &str, offset: &str, value: &str) -> PendingChange {
         status: PendingChangeStatus::Pending,
         error: None,
         updated_at: "2026-11-22T00:00:00Z".into(),
+        origin: None,
     }
 }
 

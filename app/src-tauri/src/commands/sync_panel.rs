@@ -144,6 +144,9 @@ pub struct PendingChangeInput {
     pub offset: Option<String>,
     pub baseline_value: String,
     pub planned_value: String,
+    /// The facility staging this change; `None` for a hand edit.
+    #[serde(default)]
+    pub origin: Option<crate::layout::pending_changes::PendingChangeOrigin>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +162,8 @@ pub struct PendingChangeRow {
     pub status: PendingChangeStatus,
     pub error: Option<String>,
     pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<crate::layout::pending_changes::PendingChangeOrigin>,
 }
 
 
@@ -187,6 +192,7 @@ pub async fn set_pending_change(
         status: PendingChangeStatus::Pending,
         error: None,
         updated_at: chrono::Utc::now().to_rfc3339(),
+        origin: change.origin,
     };
 
     // Validate the change
@@ -265,6 +271,7 @@ pub async fn list_pending_changes(
             status: c.status.clone(),
             error: c.error.clone(),
             updated_at: c.updated_at.clone(),
+            origin: c.origin.clone(),
         })
         .collect();
 
@@ -368,6 +375,7 @@ mod tests {
             status: PendingChangeStatus::Pending,
             error: None,
             updated_at: "2026-04-25T00:00:00Z".to_string(),
+            origin: None,
         }
     }
 
@@ -520,6 +528,7 @@ mod tests {
             status: PendingChangeStatus::Pending,
             error: None,
             updated_at: "2026-05-26T00:00:00Z".to_string(),
+            origin: None,
         };
         // Round-trip through serde_yaml (disk format)
         let yaml = serde_yaml_ng::to_string(&change).unwrap();

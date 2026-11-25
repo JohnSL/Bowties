@@ -9,6 +9,12 @@ export interface PendingChangeInput {
   offset?: string;
   baselineValue: string;
   plannedValue: string;
+  origin?: PendingChangeOrigin;
+}
+
+/** Which facility staged a Pending Change row; absent for a hand edit. */
+export interface PendingChangeOrigin {
+  facilityId: string;
 }
 
 export type PendingChangeStatus =
@@ -31,6 +37,7 @@ export interface PendingChangeRow {
   status: PendingChangeStatus;
   error?: string;
   updatedAt?: string;
+  origin?: PendingChangeOrigin;
 }
 
 export type LayoutMatchClassification = 'likely_same' | 'uncertain' | 'likely_different';

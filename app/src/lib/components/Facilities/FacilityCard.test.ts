@@ -179,3 +179,29 @@ describe('FacilityCard Automatic Block Signals (Spec 020 / E1a)', () => {
     expect(screen.queryByTestId('add-channel-button')).toBeNull();
   });
 });
+
+describe('FacilityCard write outcome (Spec 020 / E5-T4)', () => {
+  it('shows each board waiting with its reason and never the Wired pill', async () => {
+    const { pendingChangesStore } = await import('$lib/stores/pendingChanges.svelte');
+    const f = facility('f-1', { input: ['ch-bod-1'], output: ['ch-lamp-2'] });
+    facilitiesStore.hydrateBaseline([f]);
+    const row = (changeId: string, nodeId: string, status: 'failed' | 'pending', error?: string) => ({
+      changeId, kind: 'config' as const, nodeId, space: 253, offset: `0x${changeId}`,
+      baselineValue: '0', plannedValue: '1', status, ...(error ? { error } : {}),
+      origin: { facilityId: 'f-1' },
+    });
+    pendingChangesStore.setRows([
+      row('1', '05.02.01.02.03.00', 'failed', 'Timed out'),
+      row('2', '05.02.01.02.03.00', 'pending'),
+      row('3', '05.02.01.02.03.01', 'pending'),
+    ]);
+
+    render(FacilityCard, { props: { facility: f, template: BLOCK_INDICATOR } });
+
+    expect(screen.queryByText(/^Wired$/)).toBeNull();
+    expect(screen.getByText(/^Waiting$/)).toBeInTheDocument();
+    expect(screen.getByText(/1 change waiting on .*: Timed out/)).toBeInTheDocument();
+    expect(screen.getAllByText(/1 change not yet written to /)).toHaveLength(2);
+    pendingChangesStore.clear();
+  });
+});

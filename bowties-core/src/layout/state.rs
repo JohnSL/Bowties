@@ -481,6 +481,7 @@ impl LayoutState {
             existing.updated_at = change.updated_at;
             existing.status = crate::layout::pending_changes::PendingChangeStatus::Pending;
             existing.error = None;
+            existing.origin = change.origin;
             existing.change_id.clone()
         } else {
             let id = change.change_id.clone();
@@ -1097,6 +1098,7 @@ mod tests {
             status,
             error: None,
             updated_at: "2026-06-28T00:00:00Z".to_string(),
+            origin: None,
         }
     }
 
@@ -1178,6 +1180,26 @@ mod tests {
         assert_eq!(row.planned_value, "3");
         assert_eq!(row.status, PendingChangeStatus::Pending);
         assert_eq!(row.error, None);
+    }
+
+    #[test]
+    fn upsert_pending_change_takes_the_incoming_origin_so_a_hand_edit_clears_it() {
+        use crate::layout::pending_changes::{PendingChangeOrigin, PendingChangeStatus};
+        let mut state = cfg_state(1);
+        let mut existing = offline_cfg(CFG_NODE, "0", PendingChangeStatus::Pending);
+        existing.origin = Some(PendingChangeOrigin { facility_id: "fac-1".to_string() });
+        state.set_pending_changes(vec![existing]);
+
+        state.upsert_pending_change(offline_cfg(CFG_NODE, "3", PendingChangeStatus::Pending));
+        assert_eq!(state.pending_changes()[0].origin, None);
+
+        let mut staged = offline_cfg(CFG_NODE, "4", PendingChangeStatus::Pending);
+        staged.origin = Some(PendingChangeOrigin { facility_id: "fac-2".to_string() });
+        state.upsert_pending_change(staged);
+        assert_eq!(
+            state.pending_changes()[0].origin,
+            Some(PendingChangeOrigin { facility_id: "fac-2".to_string() })
+        );
     }
 
     #[test]
