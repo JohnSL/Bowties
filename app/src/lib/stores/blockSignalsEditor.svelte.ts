@@ -18,6 +18,7 @@ import type { BlockSignalsRecord } from '$lib/api/facilities';
 import type { TurnoutShape } from '$lib/components/BlockSignals/trackGeometry';
 import { canonicalizeNodeId } from '$lib/utils/nodeRoster';
 import { generateUuidV4 } from '$lib/utils/uuid';
+import { previewRequestFromRecord } from '$lib/utils/blockSignalsPreviewRequest';
 
 export type BlockSignalsStep = 'blocks' | 'aspects' | 'appearance' | 'wiring' | 'review';
 
@@ -347,18 +348,18 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
   /** Open the editor on a saved facility, seeding all input from its effective state. */
   startEdit(seed: BlockSignalsEditSeed): void {
     this.clear();
-    const { record } = seed;
+    const request = previewRequestFromRecord(seed.facilityId, seed.name, seed.record);
     this._open = true;
     this._mode = 'edit';
-    this._facilityId = seed.facilityId;
-    this._facilityName = seed.name;
-    this._direction = record.direction;
-    this._movements = record.movements;
-    this._blocks = record.blocks.map((block) => ({ ...block, turnouts: block.turnouts.map((t) => ({ ...t })) }));
-    this._entranceEnd = record.entranceEnd;
-    this._exitEnd = record.exitEnd;
-    this._settings = { ...record.settings };
-    this._signalNames = Object.fromEntries(record.signals.map((s) => [s.signalId, s.name]));
+    this._facilityId = request.facilityId;
+    this._facilityName = request.facilityName;
+    this._direction = request.direction;
+    this._movements = request.movements;
+    this._blocks = request.blocks;
+    this._entranceEnd = request.entranceEnd;
+    this._exitEnd = request.exitEnd;
+    this._settings = request.settings;
+    this._signalNames = request.signalNames;
     this._wiring = Object.fromEntries(Object.entries(seed.wiring).map(([id, w]) => [id, { ...w }]));
   }
 

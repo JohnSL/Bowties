@@ -918,13 +918,15 @@
   #line .line-outside-tag { color: #8a5d00; font-size: 11px; font-weight: 600; }
   #line .line-outside-card p { margin: 2px 0; color: var(--text-secondary); }
   #line .line-outside-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
-  #line .rr-panel { border: 1px solid var(--border); border-radius: 6px; background: #fff; overflow: hidden; }
-  #line .rr-group-head { display: flex; align-items: baseline; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: #f5f6f8; font-size: 12px; }
-  #line .rr-group-head .muted { color: var(--text-muted); font-size: 11px; }
-  #line .rr-panel table { margin: 0; }
-  #line .rr-outside { margin: 0; padding: 8px 12px; border-top: 1px solid var(--border); background: #fffaf0; font-size: 12px; color: var(--text-secondary); }
-  #line .rr-outside a { color: var(--brand); }
-  #line .rr-state { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #9aa0a6; }
+  #line .rr-card { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+  #line .rr-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  #line .rr-card-name { font-weight: 600; font-size: 14px; color: #20242a; }
+  #line .rr-card-template { color: var(--text-muted); font-size: 12px; }
+  #line .rr-card-status { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border-radius: 10px; background: #e7f4e8; color: #0e700e; font-size: 11px; font-weight: 600; }
+  #line .rr-card-status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #0e700e; }
+  #line .rr-card-actions { margin-left: auto; display: flex; gap: 12px; font-size: 12px; }
+  #line .rr-card-actions span { color: var(--brand); }
+  #line .rr-card-actions span.danger { color: #c50f1f; }
   #line .line-rta-panel { margin-top: 14px; }
   #line .line-rta-panel summary { cursor: pointer; }
   #line .line-rta-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 10px; }
@@ -2352,7 +2354,7 @@
           <li>A Signal LCC can already drive pins from configuration Bowties does not manage: a mast or Direct Lamp row set up by hand, by another tool, or by earlier testing. Each such pin shows its owner ("Mast 3", "Direct lamp 4") with a dashed outline, so it is never just "Taken".</li>
           <li>Clicking one opens its details in place: the owner, its description, every pin it drives and, for a mast, its rules and the Logic conditionals that set its aspects. Those are found by event ID: a conditional whose action sends one of the mast's set-aspect events drives that mast.</li>
           <li>The card closes with the × in its corner (named "Close Mast 3 details", since the editor has its own close), by clicking the pin again, or with Escape, which closes only the card. Focus returns to the pin. In E2c's confirmation, Cancel goes back to the details and × closes the card.</li>
-          <li>Show in Configuration is a button, not a link, because it leaves a dialog. The editor is not closed or saved: its choices stay, and returning to the Railroad tab shows it again where it was. The status line says so when the user leaves. The Railroad panel also links to the same configuration without an open dialog (see <a href="#line-railroad">After Done</a>).</li>
+          <li>Show in Configuration is a button, not a link, because it leaves a dialog. The editor is not closed or saved: its choices stay, and returning to the Railroad tab shows it again where it was. The status line says so when the user leaves.</li>
           <li>Release and use frees every pin of that owner, not just the one clicked, and places the selected lamp on the clicked pin. A released mast is reset together with the conditionals that set its aspects, since they exist only to drive it; a conditional whose actions also send events something else consumes is kept and named in the confirmation. The resets are staged with the facility's own edits: they show as unsaved changes in the node's configuration, and Discard brings them back. Pins used by a Bowties facility cannot be released here.</li>
           <li>Built in Spec 020 E2c, after facility removal (E2b), which supplies the reset edits. Until then the details show and Release and use is disabled. Importing such configuration as a facility is a separate idea (specs/ideas/features/import-existing-signal-configuration.md).</li>
         </ul>
@@ -2441,27 +2443,25 @@
     </div>
 
     <div class="wizard-frame" id="line-railroad">
-      <p class="frame-heading"><strong>After Done — Railroad panel.</strong> Each Signal LCC group lists the signals Bowties manages on it, then the configuration it found there that no facility manages, with a link to it in the Config tab.</p>
-      <div class="rr-panel" role="group" aria-label="Signal LCC West Staging">
-        <div class="rr-group-head"><strong>Signal LCC · West Staging</strong><span class="muted">05.01.01.01.22.01</span></div>
-        <table>
-          <thead><tr><th></th><th>Name</th><th>Role</th><th>Location</th><th>Used by</th></tr></thead>
-          <tbody>
-            <tr><td><span class="rr-state" aria-label="Unknown"></span></td><td>Cedar Hill East</td><td>Signal</td><td>#3 H1-R / #1 H1-G</td><td>Cedar Hill — Eastward / signals</td></tr>
-            <tr><td><span class="rr-state" aria-label="Unknown"></span></td><td>Mill curve East</td><td>Signal</td><td>#7 H2-R / #5 H2-G</td><td>Cedar Hill — Eastward / signals</td></tr>
-          </tbody>
-        </table>
-        <p class="rr-outside">In use outside Bowties:
-          <a href="#line-railroad" data-rr-config="Mast 3">Mast 3</a> · #9 H3-G, #10 H3-Y, #12 H3-L;
-          <a href="#line-railroad" data-rr-config="Direct lamp 4">Direct lamp 4</a> · #16 H4-L</p>
-        <p class="rr-outside" id="line-rr-status" role="status" hidden></p>
-      </div>
-      <aside class="design-notes" aria-label="Design notes for the Railroad panel">
+      <p class="frame-heading"><strong>After Done — Railroad tab.</strong> The facility card shows its track and signals as the editor left them. The diagram follows the choices made on the pages above.</p>
+      <article class="rr-card" aria-label="Cedar Hill facility">
+        <header class="rr-card-head">
+          <span class="rr-card-name">Cedar Hill</span>
+          <span class="rr-card-template">Automatic Block Signals</span>
+          <span class="rr-card-status">Wired</span>
+          <span class="rr-card-actions" aria-hidden="true"><span>Edit</span><span>Rename</span><span class="danger">Delete</span></span>
+        </header>
+        <div data-line-selector data-line-summary></div>
+      </article>
+      <aside class="design-notes" aria-label="Design notes for the Railroad facility card">
         <h3>Design notes — not product UI</h3>
         <ul>
-          <li>The link to Configuration lives here, not in the editor. No dialog is open on this panel, so a hyperlink behaves as it does elsewhere in the app (channel Location links, facility slot links): it switches to the Config tab and focuses the mast or lamp row.</li>
-          <li>The line lists every mast and Direct Lamp row that drives a pin but is not claimed by a facility, so leftovers are visible before the editor is opened. It is omitted when there are none.</li>
-          <li>Mockup limitation: the links only report where they would go.</li>
+          <li>The card body is the same track diagram the editor draws, read-only: blocks, turnouts, what lies at each end, each block's occupancy, and each signal where the editor placed it. Joined blocks share one signal, as on Blocks. It replaces the list of signals with their red and green pins.</li>
+          <li>Nothing on the diagram is selectable for now. The rest of the Railroad tab needs rethinking first, and that will decide what a click should do.</li>
+          <li>Pin assignments per board move to a possible printable wiring document: <code>specs/ideas/features/printable-wiring-documentation.md</code>. The earlier board-grouped table drawn here was never reviewed.</li>
+          <li>Header, status and actions stay as in the app today. A board waiting to be written still shows its line under the header.</li>
+          <li>Occupancy works as it does in the editor: filled red when occupied, white when clear, dashed when Bowties is not connected or has not heard the block's state.</li>
+          <li>A possible later step: each head lit with its current aspect.</li>
         </ul>
       </aside>
     </div>
@@ -3781,16 +3781,18 @@
     function buildTrackSvg(opts) {
       const blocksMode = opts.mode === 'blocks';
       const simMode = opts.mode === 'simulate';
+      // the Railroad tab's facility card: the same drawing, read-only, signals as the editor placed them
+      const summaryMode = opts.mode === 'summary';
       const simTrain = simMode && lineSim.source === 'sim';
       const turnouts = orderedTurnouts();
-      const groups = blocksMode ? lineSignalGroups() : lineSignals.map((_, i) => [i]);
+      const groups = blocksMode || summaryMode ? lineSignalGroups() : lineSignals.map((_, i) => [i]);
       const dirs = blocksMode || simMode ? lineShownDirections() : { fwd: true, back: false };
       const geo = { east: dirs.fwd && geoDirection('fwd') === 'east' || dirs.back && geoDirection('back') === 'east' };
       geo.west = dirs.fwd && !geo.east || dirs.back;
       const flip = lineWestward();
       const online = document.getElementById('line-online').value === 'online';
       // room for a second line ("to resolve" or the expected aspect) under signal names, so a 50px selection box fits
-      const extra = blocksMode ? 0 : 16;
+      const extra = blocksMode || summaryMode ? 0 : 16;
       const Y = geo.west ? 72 + extra : 42;
       const H = geo.east ? Y + 52 + extra : Y + 28;
       const PAD = 104, GAP = 5;
@@ -3819,6 +3821,7 @@
       svg.setAttribute('aria-label', blocksMode
         ? `Track diagram derived from the list: blocks, turnouts, and derived signals; the list runs ${flip ? 'right to left' : 'left to right'}`
         : simMode ? 'Expected aspects along the track; select a signal to see it larger'
+        : summaryMode ? `Track and signals for ${flip ? 'westward' : 'eastward'} travel`
         : `Signals for ${flip ? 'westward' : 'eastward'} travel; select a signal to configure it`);
       // every x below is in list order; el() mirrors it for a westward list
       function el(tag, attrs, parent = svg, fixed = false) {
@@ -4003,7 +4006,7 @@
         for (const rel of ['fwd', 'back']) {
           if (!dirs[rel]) continue;
           const jx = rel === 'fwd' ? joints[group[0]] : joints[group[group.length - 1] + 1];
-          if (blocksMode) drawSignal(jx, rel, groupSignalName(group, rel), 'normal');
+          if (blocksMode || summaryMode) drawSignal(jx, rel, groupSignalName(group, rel), 'normal');
           else drawPickSignal(group[0], jx, rel, groupSignalName(group, rel));
         }
       });
@@ -4060,7 +4063,9 @@
     function renderSignalDiagrams(claims) {
       const issues = lineSignals.map((_, i) => lineIssues(i, claims));
       document.querySelectorAll('[data-line-selector]').forEach((container, n) => {
-        const { svg, W } = container.hasAttribute('data-line-simulate')
+        const { svg, W } = container.hasAttribute('data-line-summary')
+          ? buildTrackSvg({ mode: 'summary' })
+          : container.hasAttribute('data-line-simulate')
           ? buildTrackSvg({ mode: 'simulate', key: `sim${n}`, onSelect: selectSimSignal })
           : buildTrackSvg({ mode: 'signals', issues, key: `picker${n}`, onSelect: selectLineSignal });
         const canvas = container.querySelector('.line-diagram-canvas');
@@ -4872,14 +4877,6 @@
       if (className) element.className = className;
       if (text !== undefined) element.textContent = text;
       return element;
-    }
-    for (const link of document.querySelectorAll('#line [data-rr-config]')) {
-      link.addEventListener('click', event => {
-        event.preventDefault();
-        const status = document.getElementById('line-rr-status');
-        status.hidden = false;
-        status.textContent = `Preview only: would switch to the Config tab and focus ${link.dataset.rrConfig} on West Staging.`;
-      });
     }
     function lineWiringRender(focus) {
       lineWiringFocus = focus;

@@ -4,7 +4,8 @@
    *
    * Blocks mode: turnouts are selectable, ghost signals turn a boundary's
    * signals back on, and the end chips open the end menu. Signals mode: each
-   * derived signal is selectable. Layout comes from `trackGeometry.ts`; this
+   * derived signal is selectable. Summary mode: the read-only drawing for a
+   * saved facility (plain signals and end labels, nothing focusable). Layout comes from `trackGeometry.ts`; this
    * component only draws it and emits intent.
    */
   import {
@@ -35,6 +36,7 @@
 
   const model = $derived(buildTrackModel(input));
   const blocksMode = $derived(input.mode === 'blocks');
+  const summaryMode = $derived(input.mode === 'summary');
   const Y = $derived(model.railY);
   const mx = (x: number) => mirrorX(model, x);
 
@@ -78,7 +80,9 @@
     role="group"
     aria-label={blocksMode
       ? `Track diagram derived from the list; the list runs ${model.flip ? 'right to left' : 'left to right'}`
-      : `Signals for ${input.direction} travel; select a signal to configure it`}
+      : summaryMode
+        ? `Track and signals for ${input.direction} travel`
+        : `Signals for ${input.direction} travel; select a signal to configure it`}
   >
     {#if model.shade}
       <rect x={mirrorRect(model, model.shade.x0, model.shade.x1 - model.shade.x0)} y="2" width={model.shade.x1 - model.shade.x0} height={model.height - 4} rx="6" fill="#ebf3fc" />
@@ -168,7 +172,7 @@
     {/snippet}
 
     {#each model.signals as signal (signal.signalId)}
-      {#if blocksMode}
+      {#if blocksMode || summaryMode}
         {@render signalShape(signal, 'normal')}
       {:else}
         {@const cx = signal.jx - 14 * signal.k}

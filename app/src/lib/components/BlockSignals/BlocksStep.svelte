@@ -14,7 +14,7 @@
   import HelpTip from './HelpTip.svelte';
   import RowMenu, { type RowMenuItem } from './RowMenu.svelte';
   import { OCCUPANCY_LABEL, occupancyOf, occupancyStatus, type BlockOccupancyMap } from './occupancy';
-  import { endChipLabel } from './aspectText';
+  import { trackInputFor } from './trackInput';
   import { DEFAULT_TURNOUT_SHAPE, type TrackSelection, type TurnoutShape } from './trackGeometry';
 
   let {
@@ -199,19 +199,11 @@
         <p class="empty">No blocks yet. Add an existing detected block to begin.</p>
       {:else}
         <TrackDiagram
-          input={{
-            mode: 'blocks',
-            blocks: view.blocks,
-            direction: view.direction,
-            movements: view.movements,
-            signals: view.preview?.signals ?? [],
-            shapes: view.turnoutShapes,
-            selection,
-            endLabels: {
-              start: endChipLabel('start', view.entranceEnd, view.exitEnd),
-              end: endChipLabel('end', view.entranceEnd, view.exitEnd),
-            },
-          }}
+          input={trackInputFor(
+            { blocks: view.blocks, direction: view.direction, movements: view.movements, entranceEnd: view.entranceEnd, exitEnd: view.exitEnd, signals: view.preview?.signals ?? [], shapes: view.turnoutShapes },
+            'blocks',
+            { selection },
+          )}
           {occupancy}
           onSelectTurnout={(turnoutId) => (selection = { kind: 'turnout', turnoutId })}
           onRestoreBoundary={(blockId) => {

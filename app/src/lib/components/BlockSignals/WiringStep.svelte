@@ -19,7 +19,8 @@
   import TrackDiagram from './TrackDiagram.svelte';
   import { occupancyStatus, type BlockOccupancyMap } from './occupancy';
   import { signalOutputOwnerDescription, signalOutputRows } from '$lib/utils/signalOutputLabels';
-  import { endChipLabel, SEARCHLIGHT_TYPE_NAME } from './aspectText';
+  import { SEARCHLIGHT_TYPE_NAME } from './aspectText';
+  import { trackInputFor } from './trackInput';
   import { attentionText, issueText } from './wiringText';
 
   type Lamp = 'red' | 'green';
@@ -221,20 +222,11 @@
       <span class="muted small">{occupancyStatus(occupancy, view.blocks.map((block) => block.blockId))}</span>
     </div>
     <TrackDiagram
-      input={{
-        mode: 'signals',
-        blocks: view.blocks,
-        direction: view.direction,
-        movements: view.movements,
-        signals,
-        shapes: view.turnoutShapes,
-        selectedSignalId: signal?.signalId ?? null,
-        issueCounts: view.wiringAttentionCounts,
-        endLabels: {
-          start: endChipLabel('start', view.entranceEnd, view.exitEnd),
-          end: endChipLabel('end', view.entranceEnd, view.exitEnd),
-        },
-      }}
+      input={trackInputFor(
+        { blocks: view.blocks, direction: view.direction, movements: view.movements, entranceEnd: view.entranceEnd, exitEnd: view.exitEnd, signals, shapes: view.turnoutShapes },
+        'signals',
+        { selectedSignalId: signal?.signalId ?? null, issueCounts: view.wiringAttentionCounts },
+      )}
       {occupancy}
       onSelectSignal={(signalId) => (selectedSignalId = signalId)}
     />

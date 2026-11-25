@@ -9,11 +9,11 @@
   import type { BlockSignalsEditorActions } from '$lib/orchestration/blockSignalsEditorOrchestrator';
   import TrackDiagram from './TrackDiagram.svelte';
   import HelpTip from './HelpTip.svelte';
+  import { trackInputFor } from './trackInput';
   import { occupancyStatus, type BlockOccupancyMap } from './occupancy';
   import {
     INDICATION_LABEL,
     conditionText,
-    endChipLabel,
     exitEndText,
     indicationTone,
     nextSignalText,
@@ -90,19 +90,11 @@
 </div>
 
 <TrackDiagram
-  input={{
-    mode: 'signals',
-    blocks: view.blocks,
-    direction: view.direction,
-    movements: view.movements,
-    signals,
-    shapes: view.turnoutShapes,
-    selectedSignalId: signal?.signalId ?? null,
-    endLabels: {
-      start: endChipLabel('start', view.entranceEnd, view.exitEnd),
-      end: endChipLabel('end', view.entranceEnd, view.exitEnd),
-    },
-  }}
+  input={trackInputFor(
+    { blocks: view.blocks, direction: view.direction, movements: view.movements, entranceEnd: view.entranceEnd, exitEnd: view.exitEnd, signals, shapes: view.turnoutShapes },
+    'signals',
+    { selectedSignalId: signal?.signalId ?? null },
+  )}
   {occupancy}
   onSelectSignal={(signalId) => (selectedSignalId = signalId)}
 />

@@ -124,4 +124,22 @@ describe('aspectText', () => {
     expect(endChipLabel('end', { kind: 'noPlant' }, { kind: 'nothingBeyond' })).toBeNull();
     expect(endChipLabel('start', { kind: 'noPlant' }, { kind: 'treatAsStop' })).toBeNull();
   });
+
+  it('summary mode draws plain signals as in signals mode, with no ghosts, shade, selection room or issue room', () => {
+    const blocks = [block('a', 'Cedar Hill'), block('b', 'Mill curve', { joinedToPrevious: true })];
+    const sig = signal({ signalId: 's1', name: 'Cedar East', entranceBlockId: 'a' });
+    const base = {
+      blocks, signals: [sig], selection: { kind: 'block', blockId: 'b' } as const,
+      selectedSignalId: 's1', issueCounts: { s1: 2 },
+    };
+    const summary = buildTrackModel(input({ ...base, mode: 'summary' }));
+    const signalsMode = buildTrackModel(input({ ...base, mode: 'signals' }));
+
+    expect(summary.ghosts).toEqual([]);
+    expect(summary.shade).toBeNull();
+    expect(summary.signals[0].selected).toBe(false);
+    expect(summary.signals[0].issueCount).toBe(0);
+    expect(summary.signals[0].jx).toBe(signalsMode.signals[0].jx);
+    expect(summary.height).toBe(buildTrackModel(input({ blocks, mode: 'blocks' })).height);
+  });
 });

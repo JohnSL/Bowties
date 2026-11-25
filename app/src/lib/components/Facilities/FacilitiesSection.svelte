@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { facilitiesStore } from '$lib/stores/facilities.svelte';
   import { behaviorTemplatesStore } from '$lib/stores/behaviorTemplates.svelte';
   import type { BehaviorTemplate } from '$lib/api/behaviorTemplates';
@@ -16,8 +17,9 @@
   import { nodeIdToDisplayHex } from '$lib/utils/nodeId';
   import { facilityBoardSlots } from '$lib/utils/facilityBoardSlots';
   import { issueText } from '$lib/components/BlockSignals/wiringText';
-  import { deriveChannelState } from '$lib/utils/channelState';
-  import { occupancyFromChannelState, type BlockOccupancy } from '$lib/components/BlockSignals/occupancy';
+  import { blockOccupancyMap } from '$lib/components/BlockSignals/occupancy';
+  import { facilityDiagramOrchestrator } from '$lib/orchestration/facilityDiagramOrchestrator';
+  import { facilityDiagramsStore } from '$lib/stores/facilityDiagrams.svelte';
   import {
     blockSignalsEditorActions,
     startBlockSignalsEditor,
@@ -66,17 +68,15 @@
   }
 
   // Live occupancy of each detected block, from the same events as the Channels panel.
-  const blockOccupancy = $derived.by(() => {
-    const states = new Map<string, BlockOccupancy>();
-    if (!blockSignalsEditorStore.open) return states;
-    const events = eventStateStore.events;
-    for (const channel of channelsStore.channels) {
-      if (channel.role !== 'block-occupancy') continue;
-      const ids = resolvedEventIds?.get(channel.id);
-      const state = deriveChannelState(events, ids?.['occupied'], ids?.['clear'], 'block-occupancy');
-      states.set(channel.id, occupancyFromChannelState(state));
-    }
-    return states;
+  const blockOccupancy = $derived(
+    blockOccupancyMap(channelsStore.channels, resolvedEventIds, eventStateStore.events),
+  );
+  // Saved Automatic Block Signals facilities draw their track diagram from a backend preview;
+  // the orchestrator refetches only the facilities whose saved record changed.
+  $effect(() => {
+    const facilities = facilitiesStore.facilities;
+    // sync reads and writes the diagram store; only a facilities change should re-run it.
+    untrack(() => void facilityDiagramOrchestrator.sync(facilities));
   });
   const BLOCK_SIGNALS_TEMPLATE_ID = 'automatic-block-signals';
 
@@ -171,6 +171,8 @@
             {onAddChannel}
             {onRemoveFromSlot}
             {nodeTree}
+            diagram={facilityDiagramsStore.get(facility.facilityId)}
+            occupancy={blockOccupancy}
           />
         </li>
       {/each}

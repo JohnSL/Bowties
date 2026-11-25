@@ -4,7 +4,8 @@
  * event received yet, offline, or a channel without configured events. It is
  * never shown as if it were live.
  */
-import type { ChannelState } from '$lib/utils/channelState';
+import type { InformationChannel } from '$lib/api/channels';
+import { deriveChannelState, type ChannelState } from '$lib/utils/channelState';
 
 export type BlockOccupancy = 'occupied' | 'clear' | 'unavailable';
 
@@ -29,4 +30,20 @@ export function occupancyOf(map: BlockOccupancyMap | undefined, blockId: string)
 /** Status shown beside the track diagram: live once any listed block has a reading. */
 export function occupancyStatus(map: BlockOccupancyMap | undefined, blockIds: string[]): string {
   return blockIds.some((id) => occupancyOf(map, id) !== 'unavailable') ? 'Live occupancy' : 'Occupancy unavailable';
+}
+
+/** Occupancy of every block-occupancy channel, from the same events as the Channels panel. */
+export function blockOccupancyMap(
+  channels: readonly InformationChannel[],
+  resolvedEventIds: ReadonlyMap<string, Record<string, string>> | undefined,
+  events: ReadonlyMap<string, number>,
+): Map<string, BlockOccupancy> {
+  const states = new Map<string, BlockOccupancy>();
+  for (const channel of channels) {
+    if (channel.role !== 'block-occupancy') continue;
+    const ids = resolvedEventIds?.get(channel.id);
+    const state = deriveChannelState(events, ids?.['occupied'], ids?.['clear'], 'block-occupancy');
+    states.set(channel.id, occupancyFromChannelState(state));
+  }
+  return states;
 }

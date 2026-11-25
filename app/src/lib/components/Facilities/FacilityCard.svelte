@@ -13,7 +13,10 @@
     roleForChannelState,
     type ChannelState,
   } from '$lib/utils/channelState';
-  import { signalOutputLabel } from '$lib/utils/signalOutputLabels';
+  import TrackDiagram from '$lib/components/BlockSignals/TrackDiagram.svelte';
+  import { trackInputFor } from '$lib/components/BlockSignals/trackInput';
+  import type { BlockOccupancyMap } from '$lib/components/BlockSignals/occupancy';
+  import type { FacilityDiagramEntry } from '$lib/stores/facilityDiagrams.svelte';
   import FacilitySlot from './FacilitySlot.svelte';
 
   let {
@@ -27,6 +30,8 @@
     onAddChannel,
     onRemoveFromSlot,
     nodeTree,
+    diagram,
+    occupancy,
   }: {
     facility: Facility;
     template?: BehaviorTemplate;
@@ -41,6 +46,9 @@
     onAddChannel?: (facilityId: string, slotLabel: string) => void;
     onRemoveFromSlot?: (facilityId: string, slotLabel: string, currentChannelId: string) => void;
     nodeTree?: (nodeKey: string) => NodeConfigTree | undefined;
+    /** Backend preview state for an Automatic Block Signals card's track diagram. */
+    diagram?: FacilityDiagramEntry;
+    occupancy?: BlockOccupancyMap;
   } = $props();
 
   // Spec 018 / S6 (D5): status is derived by the effectiveLayoutStore facade
@@ -58,25 +66,11 @@
     return `${n} ${n === 1 ? 'change' : 'changes'}`;
   }
 
-  // Spec 020 / E1a: the Automatic Block Signals editor creates and owns the
-  // facility's signal channels, so its card lists them read-only (edited via the same editor).
+  // Spec 020: the Automatic Block Signals editor creates and owns the facility's
+  // signals, so its card draws them read-only as a track diagram (edited via the same editor).
   const isAutomaticBlockSignals = $derived(
     (template?.templateId ?? facility.templateId) === 'automatic-block-signals',
   );
-
-  function signalsOf(binding: string[]) {
-    return binding.flatMap((id) => {
-      const channel = channelsStore.channels.find((candidate) => candidate.id === id);
-      if (!channel || channel.binding.kind !== 'signalLccRgOutputs') return [];
-      const tree = nodeTree?.(channel.binding.nodeKey);
-      return [{
-        id,
-        name: channel.name,
-        red: signalOutputLabel(tree, channel.binding.redOutput),
-        green: signalOutputLabel(tree, channel.binding.greenOutput),
-      }];
-    });
-  }
 
   let isEditingName = $state(false);
   let nameEditValue = $state('');
@@ -230,14 +224,13 @@
   {/if}
 
   {#if isAutomaticBlockSignals}
-    <ul class="signal-list" aria-label="Signals" data-testid="facility-signals">
-      {#each slotsOrdered().flatMap(([, binding]) => signalsOf(binding)) as signal (signal.id)}
-        <li class="signal-item">
-          <span class="signal-name">{signal.name}</span>
-          <span class="signal-lamps">Red {signal.red} · Green {signal.green}</span>
-        </li>
-      {/each}
-    </ul>
+    {#if diagram?.status === 'ready' && diagram.preview}
+      <TrackDiagram input={trackInputFor(diagram.preview, 'summary')} {occupancy} />
+    {:else if diagram?.status === 'failed'}
+      <p class="diagram-note">The track diagram couldn't be drawn. {diagram.error}</p>
+    {:else}
+      <p class="diagram-note">Drawing the track…</p>
+    {/if}
   {:else}
   <div class="slot-grid">
     {#each slotsOrdered() as [label, binding], i (label)}
@@ -355,23 +348,11 @@
     align-items: stretch;
     gap: 0.5rem;
   }
-  .signal-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
+  .diagram-note {
     margin: 0;
-    padding: 0;
-    list-style: none;
+    font-size: 0.75rem;
+    color: var(--text-muted, #616161);
   }
-  .signal-item {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 0.5rem;
-    font-size: 0.8125rem;
-  }
-  .signal-name { font-weight: 600; color: var(--text-primary, #242424); }
-  .signal-lamps { font-size: 0.75rem; color: var(--text-muted, #616161); }
   .write-outcome {
     margin: 0;
     padding: 0;

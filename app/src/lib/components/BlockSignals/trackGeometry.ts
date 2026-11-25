@@ -29,13 +29,13 @@ export type TrackSelection =
   | null;
 
 export interface TrackInput {
-  mode: 'blocks' | 'signals';
+  mode: 'blocks' | 'signals' | 'summary';
   blocks: ListedBlock[];
   direction: TravelDirection;
   movements: Movements;
   signals: SignalPreview[];
   shapes: Record<string, TurnoutShape>;
-  /** Blocks mode: the selected list row. */
+  /** Blocks mode: the selected list row. Summary mode draws no selection. */
   selection?: TrackSelection;
   /** Signals mode: the selected signal. */
   selectedSignalId?: string | null;
@@ -114,16 +114,17 @@ export function signalBlocks(blocks: ListedBlock[]): number[][] {
 export function buildTrackModel(input: TrackInput): TrackModel {
   const { blocks, direction, mode } = input;
   const blocksMode = mode === 'blocks';
+  const summaryMode = mode === 'summary';
   const both = input.movements === 'bothDirections';
   const flip = direction === 'westward';
   const geo = {
     east: direction === 'eastward' || both,
     west: direction === 'westward' || both,
   };
-  const extra = blocksMode ? 0 : 12;
+  const extra = blocksMode || summaryMode ? 0 : 12;
   const railY = geo.west ? 72 + extra : 42;
   // a signal box with a "N to resolve" line is 10px taller than the 40px box
-  const issueRoom = !blocksMode && Object.values(input.issueCounts ?? {}).some((n) => n > 0) ? 6 : 0;
+  const issueRoom = mode === 'signals' && Object.values(input.issueCounts ?? {}).some((n) => n > 0) ? 6 : 0;
   const height = geo.east ? railY + 52 + extra + issueRoom : railY + 28;
 
   // block widths grow with their turnouts; turnouts are spaced evenly, clear of the centre
@@ -200,8 +201,8 @@ export function buildTrackModel(input: TrackInput): TrackModel {
       jx: withList ? joints[index] : joints[index + 1],
       k: (withList ? 1 : -1) as 1 | -1,
       sy: (signal.governs === 'eastward' ? 1 : -1) as 1 | -1,
-      selected: signal.signalId === input.selectedSignalId,
-      issueCount: input.issueCounts?.[signal.signalId] ?? 0,
+      selected: !summaryMode && signal.signalId === input.selectedSignalId,
+      issueCount: summaryMode ? 0 : input.issueCounts?.[signal.signalId] ?? 0,
       protects: signal.protectedBlockIds.map((id) => nameOf.get(id) ?? id).join(', '),
     }];
   });
