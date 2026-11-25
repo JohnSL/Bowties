@@ -6,7 +6,7 @@
    * store's view and emits wiring intents; the check itself is the store's.
    */
   import { tick } from 'svelte';
-  import type { ComposeIssue, SignalOutputHost } from '$lib/api/signaling';
+  import type { SignalOutputHost } from '$lib/api/signaling';
   import { resolveNodeParts } from '$lib/layout';
   import { nodeIdToDisplayHex } from '$lib/utils/nodeId';
   import { canonicalizeNodeId } from '$lib/utils/nodeRoster';
@@ -20,7 +20,7 @@
   import { occupancyStatus, type BlockOccupancyMap } from './occupancy';
   import { signalOutputOwnerDescription, signalOutputRows } from '$lib/utils/signalOutputLabels';
   import { endChipLabel, SEARCHLIGHT_TYPE_NAME } from './aspectText';
-  import { issueText } from './wiringText';
+  import { attentionText, issueText } from './wiringText';
 
   type Lamp = 'red' | 'green';
   const LAMPS: Array<[Lamp, string]> = [['red', 'Red'], ['green', 'Green']];
@@ -71,12 +71,12 @@
       : `This Signal LCC's pins can't be used until its configuration is fixed: ${h.evidenceDetail ?? 'its configuration could not be interpreted.'}`;
   const pinLabel = (ordinal: number) => host?.outputs.find((o) => o.ordinal === ordinal)?.label ?? `#${ordinal}`;
 
-  const issues = $derived.by<ComposeIssue[]>(() => {
-    if (!signal) return [];
-    const found = view.issuesForSignal(signal.signalId);
-    const onNode = wiring ? view.issuesForNode(wiring.nodeKey) : [];
-    return [...found, ...onNode.filter((issue) => !found.includes(issue))];
-  });
+  const attention = $derived(signal ? view.wiringAttentionFor(signal.signalId) : []);
+  const nextUnwiredId = $derived(signal ? view.nextAttentionSignalId(signal.signalId) : null);
+  const attentionTexts = $derived([
+    ...attention.map((item) => attentionText(item, host?.outputs ?? [])),
+    ...view.facilityWiringIssues.map((issue) => issueText(issue, host?.outputs ?? [])),
+  ]);
 
   type PinOutput = SignalOutputHost['outputs'][number];
   type PinState = 'selected' | 'mine' | 'facility' | 'outside' | 'free';
@@ -229,6 +229,7 @@
         signals,
         shapes: view.turnoutShapes,
         selectedSignalId: signal?.signalId ?? null,
+        issueCounts: view.wiringAttentionCounts,
         endLabels: {
           start: endChipLabel('start', view.entranceEnd, view.exitEnd),
           end: endChipLabel('end', view.entranceEnd, view.exitEnd),
@@ -238,7 +239,11 @@
       onSelectSignal={(signalId) => (selectedSignalId = signalId)}
     />
     {#if signal}
-      <h3 class="selected-heading">{signal.name}</h3>
+      <div class="wiring-title">
+        <h3 class="selected-heading">{signal.name}</h3>
+        <span class="wiring-progress">{view.wiredCount} of {view.signalCount} signals wired</span>
+        <button type="button" class="btn" disabled={nextUnwiredId === null} onclick={() => { if (nextUnwiredId !== null) selectedSignalId = nextUnwiredId; }}>Next unwired signal ▶</button>
+      </div>
       <div class="node-panel" role="group" aria-label="Signal LCC for the selected signal">
         <span class="field-label" id="abs-node-label">Runs on</span>
         <button type="button" class="node-field" aria-haspopup="dialog" aria-labelledby="abs-node-label abs-node-name" onclick={() => (pickerOpen = true)}>
@@ -257,16 +262,6 @@
     {/if}
     {#if view.finishError}
       <p class="error" role="alert">{view.finishError}</p>
-    {/if}
-    {#if issues.length > 0}
-      <div class="attention">
-        <div class="field-label">Choices needing attention</div>
-        <ul class="issues" aria-label="Choices needing attention">
-          {#each issues as issue}
-            <li>{issueText(issue, host?.outputs ?? [])}</li>
-          {/each}
-        </ul>
-      </div>
     {/if}
   </div>
 
@@ -294,6 +289,15 @@
             </div>
           {/each}
         </div>
+        {#if attentionTexts.length > 0}
+          <div class="attention">
+              <ul class="issues" aria-label="Choices needing attention">
+              {#each attentionTexts as text}
+                <li>{text}</li>
+              {/each}
+            </ul>
+          </div>
+        {/if}
         <label class="radio-choice unavailable">
           <input type="checkbox" disabled />
           <span><span class="radio-title">Customize lamps</span></span>
@@ -431,8 +435,10 @@
   .evidence-note { margin: 0; }
   .node-action { color: var(--abs-brand); font-size: 11px; }
   .error { margin: 8px 0 0; color: var(--fluent-dangerBackground); }
-  .attention { margin-top: 10px; padding: 8px 12px; border: 1px solid #e0c36a; border-radius: 5px; background: #fff8e1; }
-  .attention .field-label { margin-bottom: 4px; }
+  .wiring-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-bottom: 12px; }
+  .wiring-title .selected-heading { margin: 0; }
+  .wiring-progress { margin-left: auto; color: var(--text-muted, #666); font-size: 12px; }
+  .attention { margin: 10px 0; padding: 10px 12px; border-left: 3px solid #d17b0f; border-radius: 3px; background: #fff7e6; color: var(--text-secondary, #424242); font-size: 12px; }
   .issues { margin: 0; padding-left: 18px; font-size: 12px; }
   .wiring-columns { grid-template-columns: minmax(260px, .8fr) minmax(0, 1.4fr); }
   .head-card { margin-bottom: 10px; padding: 10px 12px; border: 1px solid var(--abs-border); border-radius: 6px; }

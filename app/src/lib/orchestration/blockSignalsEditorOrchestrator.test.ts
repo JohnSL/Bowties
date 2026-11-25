@@ -380,8 +380,7 @@ describe('blockSignalsEditor compose check and Done (E1a B11b)', () => {
     stale.resolve({ edits: [], signalResources: [], logicPlacement: [], issues: [] });
     await first;
 
-    expect(store.issuesForSignal('s1')).toEqual([issue]);
-    expect(store.issuesForNode(HOST.nodeKey)).toEqual([issue]);
+    expect(store.wiringAttentionFor('s1')).toEqual([{ kind: 'issue', issue }]);
     expect(store.canFinish).toBe(false);
   });
 
@@ -413,7 +412,7 @@ describe('blockSignalsEditor compose check and Done (E1a B11b)', () => {
     await finishBlockSignalsEditor();
 
     expect(store.open).toBe(true);
-    expect(store.issuesForSignal('s1')).toEqual([issue]);
+    expect(store.wiringAttentionFor('s1')).toEqual([{ kind: 'issue', issue }]);
     expect(store.canFinish).toBe(false);
     expect(facilitiesStore.pendingCreations).toHaveLength(0);
   });

@@ -1281,6 +1281,7 @@ Taken while tasking E3, which split it into E3a, E3 and E3r.
 
 **Validation (2026-11-25)**: no production change; every new test passed on its first run. bowties-core `cargo test` 640 passed (5 new), 0 warnings; vitest 129 files passed (1707 tests; new `facilityMaintenance.integration.test.ts`); svelte-check 113 (baseline). Bench: reorder, prepend, middle removal, growing a saved group to three rungs and all eight occupancy combinations passed (2026-11-25, user).
 - Finding: with every block removed in edit mode the editor cannot finish (later steps disabled, "Add a block first"), but nothing points to Remove facility; Cancel is the only way out. Safe, not discoverable.
+- Wiring attention (2026-11-25, bugfix after E6): the Wiring "!" named no signal. The editor store now owns one per-signal attention rule read by both the stepper and the Wiring page ("N to resolve" per signal, "X of Y signals wired", "Next unwired signal"), as in the storyboard; Wiring also shows "!" when a compose check finds problems. The note sits in the Lamps panel with the storyboard's warning style. vitest 129 files passed; svelte-check 113. Checked in the app (2026-11-25, user).
 
 ### F1: Hand off — lcc-rs inbound routing under a loaded bus [HITL]
 

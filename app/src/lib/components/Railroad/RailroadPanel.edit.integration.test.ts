@@ -354,4 +354,19 @@ describe('Add a second block to a saved facility (E3-T1)', () => {
     await screen.findByRole('group', { name: 'Configuration save controls' });
     expect(effectiveNodeStore.dirtyBreakdown).toMatchObject({ config: 2, configNodes: 1 });
   });
+
+  it('shows which signal needs attention when a block is added: Wiring needs attention and the new signal says "1 to resolve"', { timeout: 20000 }, async () => {
+    await fireEvent.click(within(screen.getByTestId('facility-card')).getByRole('button', { name: 'Edit facility' }));
+    const editor = await screen.findByRole('dialog', { name: /edit automatic block signals/i });
+    await addBlock('Mill curve');
+    await fireEvent.click(within(editor).getByRole('button', { name: 'Next: Aspects' }));
+    await fireEvent.click(await within(editor).findByRole('button', { name: 'Next: Appearance' }));
+    await fireEvent.click(within(editor).getByRole('button', { name: 'Next: Wiring' }));
+
+    expect(within(editor).getByRole('button', { name: /Wiring, needs attention/ })).toBeInTheDocument();
+    expect(await within(editor).findByText('1 of 2 signals wired')).toBeInTheDocument();
+    expect(within(editor).getByRole('button', { name: /Configure Mill curve East; .*; 1 to resolve$/ })).toBeInTheDocument();
+    await fireEvent.click(within(editor).getByRole('button', { name: /Next unwired signal/ }));
+    expect(within(editor).getByRole('list', { name: 'Choices needing attention' })).toHaveTextContent(/choose a signal lcc/i);
+  });
 });

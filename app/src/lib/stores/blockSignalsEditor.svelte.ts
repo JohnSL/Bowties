@@ -40,6 +40,11 @@ export interface SignalWiringChoice {
   greenOutput: number | null;
 }
 
+/** One thing on the Wiring page that needs the user: a missing choice or a check issue. */
+export type WiringAttentionItem =
+  | { kind: 'missing'; what: 'signalLcc' | 'redPin' | 'greenPin' }
+  | { kind: 'issue'; issue: ComposeIssue };
+
 /** Settings this release cannot compile; Done is refused while any is set. */
 export type OutOfScopeSetting = 'aspects' | 'approachLighting' | 'movements';
 
@@ -84,8 +89,17 @@ export interface BlockSignalsEditorView {
   readonly issues: ComposeIssue[];
   readonly finishError: string | null;
   readonly canFinish: boolean;
-  issuesForSignal(signalId: string): ComposeIssue[];
-  issuesForNode(nodeKey: string): ComposeIssue[];
+  /** What the Wiring page needs from the user for one signal. */
+  wiringAttentionFor(signalId: string): WiringAttentionItem[];
+  /** Items to resolve per signal, only for signals with any. */
+  readonly wiringAttentionCounts: Record<string, number>;
+  /** Check issues that belong to no signal and no node. */
+  readonly facilityWiringIssues: ComposeIssue[];
+  readonly signalCount: number;
+  /** Signals with nothing left to resolve on the Wiring page. */
+  readonly wiredCount: number;
+  /** The next signal after `fromSignalId`, wrapping, that needs attention. */
+  nextAttentionSignalId(fromSignalId: string | null): string | null;
   wiringFor(signalId: string): SignalWiringChoice | null;
   canMoveTurnout(turnoutId: string, delta: -1 | 1): boolean;
 }
@@ -159,8 +173,8 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
       case 'appearance':
         return { status: 'complete' };
       default:
-        if (this.wiringComplete) return { status: 'complete' };
-        return { status: this._preview && this._preview.signals.length > 0 ? 'needsWork' : 'todo' };
+        if (!this._preview || this._preview.signals.length === 0) return { status: 'todo' };
+        return { status: this.wiringNeedsAttention ? 'needsWork' : 'complete' };
     }
   }
   get facilityId(): string { return this._facilityId; }
@@ -175,6 +189,55 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
       const choice = this._wiring[signal.signalId];
       return !!choice && choice.redOutput !== null && choice.greenOutput !== null;
     });
+  }
+
+  /** The one Wiring rule: any signal or facility item to resolve. */
+  private get wiringNeedsAttention(): boolean {
+    return Object.keys(this.wiringAttentionCounts).length > 0 || this.facilityWiringIssues.length > 0;
+  }
+
+  get signalCount(): number { return this._preview?.signals.length ?? 0; }
+  get wiredCount(): number { return this.signalCount - Object.keys(this.wiringAttentionCounts).length; }
+
+  get facilityWiringIssues(): ComposeIssue[] {
+    return this._issues.filter((i) => !i.signalId && !i.nodeKey);
+  }
+
+  get wiringAttentionCounts(): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const signal of this._preview?.signals ?? []) {
+      const count = this.wiringAttentionFor(signal.signalId).length;
+      if (count > 0) counts[signal.signalId] = count;
+    }
+    return counts;
+  }
+
+  wiringAttentionFor(signalId: string): WiringAttentionItem[] {
+    const choice = this._wiring[signalId];
+    const items: WiringAttentionItem[] = [];
+    if (!choice) items.push({ kind: 'missing', what: 'signalLcc' });
+    else {
+      if (choice.redOutput === null) items.push({ kind: 'missing', what: 'redPin' });
+      if (choice.greenOutput === null) items.push({ kind: 'missing', what: 'greenPin' });
+    }
+    const node = choice ? canonicalizeNodeId(choice.nodeKey) : null;
+    for (const issue of this._issues) {
+      const onThisNode = !issue.signalId && node !== null && !!issue.nodeKey && canonicalizeNodeId(issue.nodeKey) === node;
+      if (issue.signalId === signalId || onThisNode) {
+        items.push({ kind: 'issue', issue });
+      }
+    }
+    return items;
+  }
+
+  nextAttentionSignalId(fromSignalId: string | null): string | null {
+    const ids = (this._preview?.signals ?? []).map((s) => s.signalId);
+    const start = fromSignalId === null ? -1 : ids.indexOf(fromSignalId);
+    for (let step = 1; step <= ids.length; step++) {
+      const id = ids[(start + step) % ids.length];
+      if (id !== fromSignalId && this.wiringAttentionFor(id).length > 0) return id;
+    }
+    return null;
   }
 
   /** The wiring for the preview's signals; empty unless complete. */
@@ -205,8 +268,6 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
 
   get issues(): ComposeIssue[] { return this._issues; }
   get finishError(): string | null { return this._finishError; }
-  issuesForSignal(signalId: string): ComposeIssue[] { return this._issues.filter((i) => i.signalId === signalId); }
-  issuesForNode(nodeKey: string): ComposeIssue[] { return this._issues.filter((i) => i.nodeKey === nodeKey); }
 
   /** Done is offered only for complete, in-scope wiring whose latest check found nothing. */
   get canFinish(): boolean {

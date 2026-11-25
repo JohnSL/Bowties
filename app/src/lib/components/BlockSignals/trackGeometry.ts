@@ -122,7 +122,9 @@ export function buildTrackModel(input: TrackInput): TrackModel {
   };
   const extra = blocksMode ? 0 : 12;
   const railY = geo.west ? 72 + extra : 42;
-  const height = geo.east ? railY + 52 + extra : railY + 28;
+  // a signal box with a "N to resolve" line is 10px taller than the 40px box
+  const issueRoom = !blocksMode && Object.values(input.issueCounts ?? {}).some((n) => n > 0) ? 6 : 0;
+  const height = geo.east ? railY + 52 + extra + issueRoom : railY + 28;
 
   // block widths grow with their turnouts; turnouts are spaced evenly, clear of the centre
   const joints: number[] = [];

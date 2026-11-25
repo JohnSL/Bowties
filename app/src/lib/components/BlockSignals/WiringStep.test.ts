@@ -77,6 +77,43 @@ function show(extra = {}, nodeTree: ((nodeKey: string) => NodeConfigTree | undef
 
 const chosen = (nodeKey: string, red: number | null, green: number | null) => () => ({ nodeKey, redOutput: red, greenOutput: green });
 
+describe('WiringStep attention', () => {
+  const second = { ...previewWith().signals[0], signalId: 'sig-2', name: 'Cedar Hill West' };
+
+  it('shows the count to resolve under the signal in the diagram, with the aria label ending "; N to resolve"', () => {
+    show({ preview: previewWith([previewWith().signals[0], second]), wiringAttentionCounts: { 'sig-2': 1 } });
+    expect(screen.getByText('1 to resolve')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Configure Cedar Hill West; .*; 1 to resolve$/ })).toBeInTheDocument();
+  });
+
+  it('shows how many signals are wired and selects the next one needing attention', async () => {
+    const next = vi.fn((from: string | null) => (from === 'sig-1' ? 'sig-2' : null));
+    show({
+      preview: previewWith([previewWith().signals[0], second]),
+      signalCount: 2, wiredCount: 1, nextAttentionSignalId: next,
+      wiringAttentionCounts: { 'sig-2': 3 },
+    });
+    expect(screen.getByText('1 of 2 signals wired')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: /Next unwired signal/ }));
+    expect(screen.getByRole('heading', { name: 'Cedar Hill West' })).toBeInTheDocument();
+  });
+
+  it('disables the next button when no other signal needs attention', () => {
+    show();
+    expect(screen.getByRole('button', { name: /Next unwired signal/ })).toBeDisabled();
+  });
+
+  it('lists what the selected signal is missing, and facility-level issues, in the attention box', () => {
+    show({
+      wiringAttentionFor: () => [{ kind: 'missing', what: 'signalLcc' }],
+      facilityWiringIssues: [{ code: 'unsupportedMovements', signalId: null, nodeKey: null, detail: 'x' }],
+    });
+    const items = within(screen.getByRole('list', { name: 'Choices needing attention' })).getAllByRole('listitem');
+    expect(items[0]).toHaveTextContent(/choose a signal lcc/i);
+    expect(items[1]).toHaveTextContent(/one direction only/i);
+  });
+});
+
 describe('WiringStep', () => {
   it('lets the user pick the Signal LCC the selected signal runs on', async () => {
     const actions = show();
@@ -205,10 +242,10 @@ describe('WiringStep', () => {
   it('lists blocking issues for the signal and its node in readable words, and the finish error', () => {
     show({
       wiringFor: chosen(NODE_A, 1, 2),
-      issuesForSignal: () => [{ code: 'noFreeMast', signalId: 'sig-1', nodeKey: NODE_A, detail: 'x' }],
-      issuesForNode: () => [
-        { code: 'outputInUse', signalId: 'sig-1', nodeKey: NODE_A, detail: 'x' },
-        { code: 'occupancyEventsMissing', signalId: 'sig-1', nodeKey: NODE_A, detail: 'x' },
+      wiringAttentionFor: () => [
+        { kind: 'issue', issue: { code: 'noFreeMast', signalId: 'sig-1', nodeKey: NODE_A, detail: 'x' } },
+        { kind: 'issue', issue: { code: 'outputInUse', signalId: 'sig-1', nodeKey: NODE_A, detail: 'x' } },
+        { kind: 'issue', issue: { code: 'occupancyEventsMissing', signalId: 'sig-1', nodeKey: NODE_A, detail: 'x' } },
       ],
       finishError: 'Could not stage the changes.',
     });
@@ -224,9 +261,12 @@ describe('WiringStep', () => {
   it('names the pin and its owner when a chosen pin is in use', () => {
     show({
       wiringFor: chosen(NODE_A, 4, 2),
-      issuesForNode: () => [{
-        code: 'outputInUse', signalId: 'sig-1', nodeKey: NODE_A, detail: 'x',
-        bindingIssue: { kind: 'signalOutputConflict', signalId: 'sig-1', nodeKey: NODE_A, output: 4, owner: 'Mast 3' },
+      wiringAttentionFor: () => [{
+        kind: 'issue',
+        issue: {
+          code: 'outputInUse', signalId: 'sig-1', nodeKey: NODE_A, detail: 'x',
+          bindingIssue: { kind: 'signalOutputConflict', signalId: 'sig-1', nodeKey: NODE_A, output: 4, owner: 'Mast 3' },
+        },
       }],
     });
     const attention = screen.getByRole('list', { name: 'Choices needing attention' });

@@ -1,5 +1,6 @@
 /** Product wording for the problems found when checking the signals' wiring. */
 import type { ComposeIssue, ComposeIssueCode, SignalOutputHost } from '$lib/api/signaling';
+import type { WiringAttentionItem } from '$lib/stores/blockSignalsEditor.svelte';
 
 /** Issues worded from the Logic numbers they name, so they are not in `ISSUE_TEXT`. */
 type LogicIssueCode = Extract<ComposeIssueCode, `logic${string}`>;
@@ -61,6 +62,17 @@ function logicIssueText(issue: ComposeIssue & { code: LogicIssueCode }): string 
     case 'logicUnread':
       return `${names} could not be read from this board. Check that the node is online, then try again.`;
   }
+}
+
+const MISSING_TEXT: Record<Extract<WiringAttentionItem, { kind: 'missing' }>['what'], string> = {
+  signalLcc: 'Choose a Signal LCC for this signal.',
+  redPin: 'Choose a pin for the red lamp.',
+  greenPin: 'Choose a pin for the green lamp.',
+};
+
+/** One Wiring attention item in words: a missing choice or a check issue. */
+export function attentionText(item: WiringAttentionItem, outputs: SignalOutputHost['outputs']): string {
+  return item.kind === 'missing' ? MISSING_TEXT[item.what] : issueText(item.issue, outputs);
 }
 
 /** `outputs` are the chosen Signal LCC's pins, used to name the pin an issue is about. */

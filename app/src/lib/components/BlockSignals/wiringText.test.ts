@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ComposeIssue, SignalOutputHost } from '$lib/api/signaling';
-import { issueText } from './wiringText';
+import { attentionText, issueText } from './wiringText';
 
 const OUTPUTS: SignalOutputHost['outputs'] = [
   { ordinal: 10, label: '#10 H3-Y', owner: 'Mast 1' },
@@ -70,5 +70,15 @@ describe('issueText two-block issues', () => {
   it('keeps the backend detail for an unread Link Address, which names the next signal', () => {
     const detail = "The Link Address of Next signal's mast has not been read from the board.";
     expect(issueText(issue('linkAddressMissing', detail), OUTPUTS)).toBe(detail);
+  });
+});
+
+describe('attentionText', () => {
+  it('words each missing choice and defers an issue item to issueText', () => {
+    expect(attentionText({ kind: 'missing', what: 'signalLcc' }, [])).toMatch(/Signal LCC/);
+    expect(attentionText({ kind: 'missing', what: 'redPin' }, [])).toMatch(/red lamp/);
+    expect(attentionText({ kind: 'missing', what: 'greenPin' }, [])).toMatch(/green lamp/);
+    const issue = conflict(10, 'Mast 1');
+    expect(attentionText({ kind: 'issue', issue }, OUTPUTS)).toBe(issueText(issue, OUTPUTS));
   });
 });

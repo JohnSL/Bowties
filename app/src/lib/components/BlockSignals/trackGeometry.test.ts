@@ -82,6 +82,15 @@ describe('trackGeometry', () => {
     }]);
   });
 
+  it('makes room below the rail for a signal box that carries a to-resolve count', () => {
+    const signals = [signal({ signalId: 's1' })];
+    const plain = buildTrackModel(input({ mode: 'signals', signals }));
+    const flagged = buildTrackModel(input({ mode: 'signals', signals, issueCounts: { s1: 1 } }));
+    const boxBottom = flagged.railY + 16 + 50;
+    expect(flagged.height).toBeGreaterThan(boxBottom + 1);
+    expect(plain.height).toBeLessThan(flagged.height);
+  });
+
   it('keeps turnouts clear of the block centre', () => {
     const blocks = [block('a', 'A', { turnouts: [{ turnoutId: 't1', name: '1' }, { turnoutId: 't2', name: '2' }] })];
     const model = buildTrackModel(input({ blocks }));

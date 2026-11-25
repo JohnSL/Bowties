@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { blockSignalsEditorStore as store } from './blockSignalsEditor.svelte';
 import type { BlockSignalsEditSeed } from './blockSignalsEditor.svelte';
-import type { BlockSignalsPreview } from '$lib/api/signaling';
+import type { BlockSignalsPreview, ComposeIssue } from '$lib/api/signaling';
 import { previewWith } from '$lib/components/BlockSignals/editorTestSupport';
 
 const statuses = () => store.steps.map((s) => s.status);
@@ -157,5 +157,68 @@ describe('blockSignalsEditorStore released owners (E2c B1)', () => {
     store.seatLamp('s1', 'red', 4);
     store.releaseAndPlace('s1', 'red', owner, 4);
     expect(store.wiringFor('s1')).toMatchObject({ redOutput: 4, greenOutput: null });
+  });
+});
+
+describe('blockSignalsEditorStore wiring attention', () => {
+  const sig2 = { ...previewWith().signals[0], signalId: 'sig-2', name: 'Cedar Hill West' };
+  const issue = (over: Partial<ComposeIssue>): ComposeIssue =>
+    ({ code: 'outputInUse', signalId: null, nodeKey: null, detail: 'd', ...over });
+  const twoSignals = () => previewWith([previewWith().signals[0], sig2]);
+
+  beforeEach(() => store.reset());
+
+  it('flags an unwired signal: Wiring needs attention and the signal names what is missing', () => {
+    store.startEdit({ ...seed(), wiring: { 'sig-1': { nodeKey: 'node-a', redOutput: 1, greenOutput: 2 } } });
+    store.acceptPreview(twoSignals());
+    expect(store.steps[3].status).toBe('needsWork');
+    expect(store.wiringAttentionFor('sig-2')).toEqual([{ kind: 'missing', what: 'signalLcc' }]);
+    expect(store.wiringAttentionFor('sig-1')).toEqual([]);
+    expect(store.wiringAttentionCounts).toEqual({ 'sig-2': 1 });
+    store.chooseWiringNode('sig-2', 'node-a');
+    store.seatLamp('sig-2', 'green', 3);
+    expect(store.wiringAttentionFor('sig-2')).toEqual([{ kind: 'missing', what: 'redPin' }]);
+  });
+
+  it('is not complete when wiring is complete but the accepted check has an issue for a signal', () => {
+    store.startEdit(seed());
+    store.acceptPreview(preview());
+    expect(store.steps[3].status).toBe('complete');
+    const found = issue({ signalId: 'sig-1' });
+    store.acceptCheck([found]);
+    expect(store.steps[3].status).toBe('needsWork');
+    expect(store.wiringAttentionCounts).toEqual({ 'sig-1': 1 });
+    expect(store.wiringAttentionFor('sig-1')).toEqual([{ kind: 'issue', issue: found }]);
+  });
+
+  it('attributes a node-scoped issue to every signal wired on that node, and a bare issue to the facility', () => {
+    store.startEdit({
+      ...seed(),
+      wiring: {
+        'sig-1': { nodeKey: 'node-a', redOutput: 1, greenOutput: 2 },
+        'sig-2': { nodeKey: 'node-a', redOutput: 3, greenOutput: 4 },
+      },
+    });
+    store.acceptPreview(twoSignals());
+    const onNode = issue({ nodeKey: 'node-a' });
+    const bare = issue({});
+    store.acceptCheck([onNode, bare]);
+    expect(store.wiringAttentionCounts).toEqual({ 'sig-1': 1, 'sig-2': 1 });
+    expect(store.facilityWiringIssues).toEqual([bare]);
+    expect(store.steps[3].status).toBe('needsWork');
+    const ownPin = issue({ signalId: 'sig-1', nodeKey: 'node-a' });
+    store.acceptCheck([ownPin]);
+    expect(store.wiringAttentionCounts).toEqual({ 'sig-1': 1 });
+  });
+
+  it('counts wired signals and finds the next signal needing attention, wrapping', () => {
+    store.startEdit({ ...seed(), wiring: { 'sig-1': { nodeKey: 'node-a', redOutput: 1, greenOutput: 2 } } });
+    store.acceptPreview(twoSignals());
+    expect(store.signalCount).toBe(2);
+    expect(store.wiredCount).toBe(1);
+    expect(store.nextAttentionSignalId('sig-1')).toBe('sig-2');
+    expect(store.nextAttentionSignalId('sig-2')).toBeNull();
+    store.chooseWiringNode('sig-1', 'node-b');
+    expect(store.nextAttentionSignalId('sig-2')).toBe('sig-1');
   });
 });
