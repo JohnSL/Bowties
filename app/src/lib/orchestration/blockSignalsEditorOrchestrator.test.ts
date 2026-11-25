@@ -47,7 +47,11 @@ const {
   moveTurnout,
   navigateBlockSignalsEditor,
   removeSignaledBlock,
+  removeTurnout,
+  renameTurnout,
   resetBlockSignalsEditorForNewLayout,
+  setBlockSignalsDirection,
+  setEntranceEnd,
   setExitEnd,
   setBlockSignalsMovements,
   setFacilityName,
@@ -194,6 +198,55 @@ describe('blockSignalsEditorOrchestrator', () => {
     await removeSignaledBlock(CEDAR.blockId);
     expect(store.preview).toBeNull();
     expect(previewBlockSignalsMock.mock.calls.length).toBe(calls);
+  });
+
+  it('renames a turnout and sends the new name with the next preview request', async () => {
+    startBlockSignalsEditor('Main');
+    await addSignaledBlock(CEDAR);
+    const turnoutId = await addTurnout(CEDAR.blockId);
+
+    await renameTurnout(turnoutId, 'Yard lead');
+
+    expect(store.blocks[0].turnouts).toEqual([{ turnoutId, name: 'Yard lead' }]);
+    expect(previewBlockSignalsMock.mock.lastCall![0].blocks[0].turnouts).toEqual([{ turnoutId, name: 'Yard lead' }]);
+  });
+
+  it('removes a turnout, drops its drawing shape and re-previews without it', async () => {
+    startBlockSignalsEditor('Main');
+    await addSignaledBlock(CEDAR);
+    const turnoutId = await addTurnout(CEDAR.blockId);
+    setTurnoutShape(turnoutId, { face: 'east', side: 'above' });
+    expect(store.turnoutShapes[turnoutId]).toBeDefined();
+    const calls = previewBlockSignalsMock.mock.calls.length;
+
+    await removeTurnout(turnoutId);
+
+    expect(store.blocks[0].turnouts).toEqual([]);
+    expect(store.turnoutShapes[turnoutId]).toBeUndefined();
+    expect(previewBlockSignalsMock.mock.calls.length).toBe(calls + 1);
+    expect(previewBlockSignalsMock.mock.lastCall![0].blocks[0].turnouts).toEqual([]);
+  });
+
+  it('sets the entrance end and sends it with the next preview request', async () => {
+    startBlockSignalsEditor('Main');
+    await addSignaledBlock(CEDAR);
+    const plant = { kind: 'plant', plantId: 'plant:1' } as never;
+
+    await setEntranceEnd(plant);
+
+    expect(store.entranceEnd).toEqual(plant);
+    expect(previewBlockSignalsMock.mock.lastCall![0].entranceEnd).toEqual(plant);
+  });
+
+  it('changes the direction and refreshes the preview request with it', async () => {
+    startBlockSignalsEditor('Main');
+    await addSignaledBlock(CEDAR);
+    expect(previewBlockSignalsMock.mock.lastCall![0].direction).toBe('eastward');
+
+    await setBlockSignalsDirection('westward');
+
+    expect(store.direction).toBe('westward');
+    expect(previewBlockSignalsMock.mock.lastCall![0].direction).toBe('westward');
   });
 
   it('changes steps and drawing shapes without asking for a new preview', async () => {
