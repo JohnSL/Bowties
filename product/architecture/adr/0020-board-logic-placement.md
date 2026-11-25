@@ -109,6 +109,22 @@ board-wide rule.
   a dropped signal's pins are free and remaining signals can swap pins. Pins
   of another facility's masts still block.
 
+## 2026-11-24 extension: joined blocks get one Stop rung each
+
+- A signal protects its entrance block plus the following blocks whose signal
+  is turned off. Its group has one `Group` Stop rung per protected block (Send
+  then Exit Group when true, Evaluate Next when false), then the `Last
+  (Single)` rung: the Track Circuit rung for an internal signal, or for a
+  terminal signal the last block's own Stop/Clear rung. Length is n + 1
+  (internal) or n (terminal) for n protected blocks; one block is unchanged.
+- The `Last (Single)` rung is written first, then the `Group` rungs from the
+  highest Logic down, so no `Group` is ever without its terminator.
+- `OccupancyEventsMissing` is raised when any protected block lacks events.
+- Rejected: pairing blocks with `V1 OR V2` in one rung (saves one Logic per
+  pair, but Logic is not the scarce resource: 8 masts and 8 Track Circuits run
+  out first; the OR operation and Variable #2's own events are unproven on the
+  bench; and three joined blocks would need a second shape or a refusal).
+
 ## Invariants
 
 - Every Logic slot Bowties writes for a facility comes from

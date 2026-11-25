@@ -418,7 +418,7 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
         if plan.occupancy(input).is_none() {
             ctx.push(
                 CompileIssueCode::OccupancyEventsMissing,
-                "The protected block has no occupied and clear event IDs.",
+                "A protected block has no occupied and clear event IDs.",
             );
         }
         if let Some(mast) = plan.mast {
@@ -498,14 +498,14 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
                     first_logic: group.first,
                     circuit,
                     link,
-                    occupancy,
+                    occupancy: &occupancy,
                     stop: events.stop,
                     approach,
                     clear: events.clear,
                 };
                 writes.extend(internal_edits(&internal));
             }
-            _ => writes.extend(terminal_edits(&plan.name, group.first, occupancy, events.stop, events.clear)),
+            _ => writes.extend(terminal_edits(&plan.name, group.first, &occupancy, events.stop, events.clear)),
         }
         out.edits.extend(writes.into_iter().map(|(path, value)| NodeConfigEdit {
             node_key: plan.wiring.node_key.clone(),
@@ -625,7 +625,7 @@ fn plan_board_logic(
         .iter()
         .map(|p| LogicGroupDemand {
             signal_id: p.signal_id.clone(),
-            length: if p.next_signal_id.is_some() { 2 } else { 1 },
+            length: p.logic_length(),
         })
         .collect();
     let planned = plan_logic_placement(&slot_facts, &recorded, &input.line.facility_id, &demand);
@@ -656,12 +656,22 @@ struct SignalPlan {
 }
 
 impl SignalPlan {
-    fn occupancy(&self, input: &CompileInput) -> Option<([u8; 8], [u8; 8])> {
-        input
-            .occupancy
+    /// The occupied and clear events of every protected block, in protected order.
+    /// `None` when any protected block lacks usable events.
+    fn occupancy(&self, input: &CompileInput) -> Option<Vec<([u8; 8], [u8; 8])>> {
+        self.protected_block_ids
             .iter()
-            .find(|b| self.protected_block_ids.contains(&b.block_id))
-            .and_then(|b| Some((usable(b.occupied)?, usable(b.clear)?)))
+            .map(|id| {
+                let b = input.occupancy.iter().find(|b| &b.block_id == id)?;
+                Some((usable(b.occupied)?, usable(b.clear)?))
+            })
+            .collect()
+    }
+
+    /// Logic rungs the signal needs: one per protected block, plus the Track
+    /// Circuit rung when a signal follows.
+    fn logic_length(&self) -> u32 {
+        self.protected_block_ids.len().max(1) as u32 + u32::from(self.next_signal_id.is_some())
     }
 
     /// The mast's set-aspect events: Stop and Clear always, Approach too when a signal follows.
@@ -1249,10 +1259,10 @@ fn mast_edits(name: &str, mast: u32, wiring: &SignalWiring) -> Writes {
 }
 
 /// The rung head shared by occupancy rungs: description, own occupancy events.
-fn occupancy_head(logic: u32, name: &str, (occupied, clear): ([u8; 8], [u8; 8])) -> Writes {
+fn occupancy_head(logic: u32, description: &str, (occupied, clear): ([u8; 8], [u8; 8])) -> Writes {
     let l = logic_path(logic);
     vec![
-        (format!("{l}/Description"), text(&format!("{name} occupancy"))),
+        (format!("{l}/Description"), text(description)),
         (format!("{l}/Variable #1/Trigger"), int(TRIGGER_ON_EVENT)),
         (format!("{l}/Variable #1/Source"), int(SOURCE_OWN_EVENTS)),
         (occupied_event_path(logic), event(occupied)),
@@ -1294,16 +1304,51 @@ fn set_aspect_rung_tail(logic: u32, if_true: [u8; 8], if_false: [u8; 8]) -> Writ
     )
 }
 
-/// The last signal's one rung: its own occupancy sets Stop, clear sets Clear.
+/// A rung's description: "{name} occupancy", numbered when several blocks are protected.
+fn occupancy_description(name: &str, index: usize, blocks: usize) -> String {
+    if blocks == 1 { format!("{name} occupancy") } else { format!("{name} occupancy {}", index + 1) }
+}
+
+/// One `Group` rung per protected block but the last: its occupancy sends Stop.
+/// Written from the highest Logic down, so a `Group` is never on the board
+/// without its terminator, which the caller has already written.
+fn group_stop_edits(
+    name: &str,
+    first_logic: u32,
+    occupancy: &[([u8; 8], [u8; 8])],
+    blocks: usize,
+    stop: [u8; 8],
+) -> Writes {
+    let mut edits = Writes::new();
+    for (i, events) in occupancy.iter().enumerate().rev() {
+        let logic = first_logic + i as u32;
+        edits.extend(occupancy_head(logic, &occupancy_description(name, i, blocks), *events));
+        edits.extend(rung_tail(
+            logic,
+            WHEN_EVALUATE_NEXT,
+            [(SEND_IF_TRUE, Some(stop)), NO_ACTION, NO_ACTION, NO_ACTION],
+            LOGIC_GROUP,
+        ));
+    }
+    edits
+}
+
+/// The last signal's rungs: any block but the last sets Stop through a `Group`
+/// rung; the last block's rung sets Stop, and its clear sets Clear. The `Last
+/// (Single)` rung is written first.
 fn terminal_edits(
     name: &str,
     logic: u32,
-    occupancy: ([u8; 8], [u8; 8]),
+    occupancy: &[([u8; 8], [u8; 8])],
     stop: [u8; 8],
     clear: [u8; 8],
 ) -> Writes {
-    let mut edits = occupancy_head(logic, name, occupancy);
-    edits.extend(set_aspect_rung_tail(logic, stop, clear));
+    let (last, earlier) = occupancy.split_last().expect("a signal protects at least one block");
+    let last_logic = logic + earlier.len() as u32;
+    let mut edits =
+        occupancy_head(last_logic, &occupancy_description(name, earlier.len(), occupancy.len()), *last);
+    edits.extend(set_aspect_rung_tail(last_logic, stop, clear));
+    edits.extend(group_stop_edits(name, logic, earlier, occupancy.len(), stop));
     edits
 }
 
@@ -1314,22 +1359,23 @@ struct InternalRecipe<'a> {
     first_logic: u32,
     circuit: u32,
     link: [u8; 8],
-    occupancy: ([u8; 8], [u8; 8]),
+    occupancy: &'a [([u8; 8], [u8; 8])],
     stop: [u8; 8],
     approach: [u8; 8],
     clear: [u8; 8],
 }
 
-/// The Track Circuit bound to the next signal, then the two-rung group. The
-/// `Last (Single)` rung is written before the `Group` rung, so a `Group` is
-/// never on the board without its terminator.
+/// The Track Circuit bound to the next signal, then the group: one `Group` rung
+/// per protected block and the `Last (Single)` rung after them. The `Last
+/// (Single)` rung is written before the `Group` rungs, so a `Group` is never
+/// on the board without its terminator.
 fn internal_edits(recipe: &InternalRecipe<'_>) -> Writes {
     let c = track_circuit_path(recipe.circuit);
     let mut edits = vec![
         (format!("{c}/Remote Mast Description"), text(recipe.next_name)),
         (format!("{c}/Link Address"), event(recipe.link)),
     ];
-    let next_rung = recipe.first_logic + 1;
+    let next_rung = recipe.first_logic + recipe.occupancy.len() as u32;
     let l = logic_path(next_rung);
     edits.extend([
         (format!("{l}/Description"), text(&format!("{} next signal", recipe.name))),
@@ -1340,12 +1386,6 @@ fn internal_edits(recipe: &InternalRecipe<'_>) -> Writes {
         (format!("{l}/Variable #2/Trigger"), int(TRIGGER_NONE)),
     ]);
     edits.extend(set_aspect_rung_tail(next_rung, recipe.approach, recipe.clear));
-    edits.extend(occupancy_head(recipe.first_logic, recipe.name, recipe.occupancy));
-    edits.extend(rung_tail(
-        recipe.first_logic,
-        WHEN_EVALUATE_NEXT,
-        [(SEND_IF_TRUE, Some(recipe.stop)), NO_ACTION, NO_ACTION, NO_ACTION],
-        LOGIC_GROUP,
-    ));
+    edits.extend(group_stop_edits(recipe.name, recipe.first_logic, recipe.occupancy, recipe.occupancy.len(), recipe.stop));
     edits
 }

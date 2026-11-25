@@ -219,6 +219,7 @@ A common beginner failure is leaving `Condition = none`, which silently disables
    > Signal logic never requires looking any further than to the next signal to determine the correct aspect. […] This signal does not need to know why the next is 'stop', it just needs to show 'approach'.
 
    The next signal's `Track Speed` already encodes everything upstream.
+   When a signal protects several joined blocks (an intermediate signal is turned off), each of those blocks is "its own block": Bowties writes one `Group` Stop rung per block before the next-signal rung. A three-rung group (two `Group` Stop rungs, then the next-signal `Last (Single)` rung) worked on the bench (Spec 020, 2026-11-24).
 4. **One group per mast.** Mixing masts, or mixing a mast with unrelated outputs, in one group re-creates the short-circuit problem.
 5. **Latch anything that must persist,** and give every latch an explicit clearer.
 6. **Never share a variable slot between two purposes** — Mark Granville, [#8704](https://groups.io/g/layoutcommandcontrol/message/8704): "You do not set the two variables of a Conditional to the same thing."

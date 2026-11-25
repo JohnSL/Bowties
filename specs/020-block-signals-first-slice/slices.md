@@ -814,6 +814,7 @@ Deferred until the save/apply slice:
 
 **Open items found during build**:
 - ~~An edit that leaves a saved signal with no matching derived signal (a removed block) drops it from the record but leaves its channel and slot attachment.~~ Fixed 2026-11-24 (bugfix after E5): the recipe resets a dropped signal's mast, Track Circuits and Logic, Done removes its channel, and pins of any mast the facility holds count as its own (ADR-0020 extension). Same day: Wiring pins follow seat rules (own pin clears the lamp, the other lamp's pin swaps). Bench passed (2026-11-24, user).
+- Joined blocks (2026-11-24, bugfix): a signal whose following signal is turned off watched only its entrance block (Bt East showed Clear with only B2 occupied). Now one `Group` Stop rung per protected block, then the `Last (Single)` rung (ADR-0020 extension; V1 OR V2 pairing rejected). Core 632 passed. Bench: passed (2026-11-24, user): B3, Bt, B2 (joined), B1, each block occupied alone gives the policy aspects, including Bt East at Stop with only B2 occupied (three-rung group). The joined blocks were added fresh, so growing a saved group from two rungs to three was not exercised on the bench.
 - Per-signal setting overrides are not saved in the record, so edit mode starts without them (no overrides are reachable in this release).
 - `ChannelApplyError` has separate `UnknownRenameTarget` and `UnknownBindingTarget` variants; could merge into one unknown-channel error later.
 

@@ -1281,3 +1281,120 @@ fn a_dropped_signal_alone_on_a_board_vacates_that_boards_group_and_mast() {
         ]
     );
 }
+
+const OCC_J: [u8; 8] = [1, 1, 1, 1, 1, 1, 0, 5];
+const CLR_J: [u8; 8] = [1, 1, 1, 1, 1, 1, 0, 6];
+
+/// Blocks A, B (joined to A), C: the first signal protects A and B.
+fn joined_line() -> BlockSignalsRequest {
+    let mut line = blocks_line(&["a", "b", "c"]);
+    line.blocks[1].joined_to_previous = true;
+    line
+}
+
+fn joined_input() -> CompileInput {
+    let mut c = two_block_input();
+    c.line = joined_line();
+    let ids = ids_of(&c.line);
+    assert_eq!(ids.len(), 2);
+    c.line.signal_names.insert(ids[0].clone(), "First signal".into());
+    c.line.signal_names.insert(ids[1].clone(), "Second signal".into());
+    c.wiring[0].signal_id = ids[0].clone();
+    c.wiring[1].signal_id = ids[1].clone();
+    c.occupancy = vec![
+        BlockOccupancyEvents { block_id: "block:a".into(), occupied: Some(OCC), clear: Some(CLR) },
+        BlockOccupancyEvents { block_id: "block:b".into(), occupied: Some(OCC_J), clear: Some(CLR_J) },
+        BlockOccupancyEvents { block_id: "block:c".into(), occupied: Some(OCC_B), clear: Some(CLR_B) },
+    ];
+    c
+}
+
+/// One Group rung that sends Stop (mast 1) when `occupied`/`clear` say so.
+fn group_stop_rung(logic: u32, description: &str, occupied: [u8; 8], clear: [u8; 8]) -> Vec<(String, EditValue)> {
+    let mut rung = internal_edits("First signal", "Second signal", 1, logic, 1).split_off(19);
+    for (path, value) in rung.iter_mut() {
+        if path.ends_with("/Description") {
+            *value = EditValue::String { value: description.into() };
+        } else if path.ends_with("Variable #1/set true") {
+            *value = EditValue::EventId { bytes: occupied };
+        } else if path.ends_with("Variable #1/set false") {
+            *value = EditValue::EventId { bytes: clear };
+        }
+    }
+    rung
+}
+
+#[test]
+fn an_internal_signal_protecting_two_joined_blocks_gets_a_group_rung_per_block_then_the_circuit_rung() {
+    let input = joined_input();
+    let ids = ids_of(&input.line);
+    let result = compile_block_signals(&input);
+    assert_eq!(result.issues, vec![]);
+
+    let mut expected = mast_part(expected_edits_named("First signal", 1, 1, 10, 9));
+    // Circuit and the Last (Single) rung (Logic 3) first, then Group rungs from the highest down.
+    expected.extend(internal_edits("First signal", "Second signal", 1, 2, 1).into_iter().take(19));
+    expected.extend(group_stop_rung(2, "First signal occupancy 2", OCC_J, CLR_J));
+    expected.extend(group_stop_rung(1, "First signal occupancy 1", OCC, CLR));
+    expected.extend(last_edits(2, 4));
+    assert_eq!(pairs(&result), expected);
+    assert_eq!(
+        result.placement,
+        vec![NodeLogicPlacement { node_key: NODE.into(), groups: vec![group(&ids[0], 1, 3), group(&ids[1], 4, 1)] }]
+    );
+}
+
+#[test]
+fn a_terminal_signal_protecting_two_joined_blocks_gets_a_group_rung_then_a_last_rung_on_the_last_block() {
+    let mut line = blocks_line(&["a", "b"]);
+    line.blocks[1].joined_to_previous = true;
+    let id = ids_of(&line).remove(0);
+    let mut c = input();
+    c.line = line;
+    c.line.signal_names.insert(id.clone(), "Main signal".into());
+    c.wiring[0].signal_id = id.clone();
+    c.occupancy = vec![
+        BlockOccupancyEvents { block_id: "block:a".into(), occupied: Some(OCC), clear: Some(CLR) },
+        BlockOccupancyEvents { block_id: "block:b".into(), occupied: Some(OCC_J), clear: Some(CLR_J) },
+    ];
+    let result = compile_block_signals(&c);
+    assert_eq!(result.issues, vec![]);
+
+    let full = expected_edits_named("Main signal", 1, 2, 10, 9);
+    let mast_len = mast_part(full.clone()).len();
+    let mut expected = full[..mast_len].to_vec();
+    let mut last: Vec<_> = full[mast_len..].to_vec();
+    for (path, value) in last.iter_mut() {
+        if path.ends_with("Variable #1/set true") {
+            *value = EditValue::EventId { bytes: OCC_J };
+        } else if path.ends_with("Variable #1/set false") {
+            *value = EditValue::EventId { bytes: CLR_J };
+        } else if path.ends_with("/Description") {
+            *value = EditValue::String { value: "Main signal occupancy 2".into() };
+        }
+    }
+    expected.extend(last);
+    let mut rung = group_stop_rung(1, "Main signal occupancy 1", OCC, CLR);
+    for (path, value) in rung.iter_mut() {
+        if path.ends_with("Action Event") {
+            *value = EditValue::EventId { bytes: set_aspect(1, 1) };
+        }
+    }
+    expected.extend(rung);
+    assert_eq!(pairs(&result), expected);
+    assert_eq!(
+        result.placement,
+        vec![NodeLogicPlacement { node_key: NODE.into(), groups: vec![group(&id, 1, 2)] }]
+    );
+}
+
+#[test]
+fn a_joined_block_without_occupancy_events_blocks_the_signal_that_protects_it() {
+    let mut c = joined_input();
+    let ids = ids_of(&c.line);
+    c.occupancy[1] = BlockOccupancyEvents { block_id: "block:b".into(), occupied: None, clear: None };
+    let result = compile_block_signals(&c);
+    let issue = scoped(&result, CompileIssueCode::OccupancyEventsMissing);
+    assert_eq!(issue.signal_id.as_deref(), Some(ids[0].as_str()));
+    assert_blocked(&result);
+}
