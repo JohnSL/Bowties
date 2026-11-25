@@ -35,6 +35,8 @@ Read and compare these four files:
 
 If they do not already agree on the current version, stop and report the mismatch.
 
+The lock files follow these versions and are refreshed by tools, not edited by hand: `app/package-lock.json` (refreshed in step 5), `app/src-tauri/Cargo.lock` and `lcc-rs/Cargo.lock` (refreshed by the `cargo test` runs in step 6). If `app/package-lock.json` already disagrees with `app/package.json` on the version, report it and refresh it in step 5 too.
+
 ## Workflow
 
 1. Validate repository state first.
@@ -61,6 +63,7 @@ If they do not already agree on the current version, stop and report the mismatc
    - `d:\src\github\LCC\Bowties\docs\project\releasing.md`
 
 5. Update the version files and any necessary release-doc surfaces using minimal edits.
+   - Then run `npm install --package-lock-only` in `d:\src\github\LCC\Bowties\app` so `app/package-lock.json` carries the new version. Confirm its diff touches only the two version lines.
 
 6. Run release validation.
    - `cargo test` in `d:\src\github\LCC\Bowties\lcc-rs`
@@ -72,7 +75,7 @@ If they do not already agree on the current version, stop and report the mismatc
    Include:
    - current version
    - chosen target version
-   - files changed
+   - files changed, including the lock files (`app/package-lock.json`, `app/src-tauri/Cargo.lock`, `lcc-rs/Cargo.lock`)
    - doc updates made
    - validation results
    - proposed commit message
