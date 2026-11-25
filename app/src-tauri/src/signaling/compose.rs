@@ -91,7 +91,7 @@ fn compose_from_layout(
     let claimed = claimed_slots_from_facilities(layout.effective_facilities(), request.facility_id.as_deref());
     // Recompiling a saved facility: each signal keeps its mast, and the board's
     // planner keeps the facility's Logic groups where they are.
-    let saved_resources = request
+    let saved_resources: Vec<PlannedSignalResources> = request
         .facility_id
         .as_deref()
         .and_then(|id| layout.effective_facilities().facilities.iter().find(|f| f.facility_id == id))
@@ -122,9 +122,14 @@ fn compose_from_layout(
     }
 
     let mut trees: HashMap<String, &NodeConfigTree> = HashMap::new();
-    // A release's edits must resolve too, so its node's tree is indexed even
-    // when no signal is wired there.
-    let node_keys = request.wiring.iter().map(|w| &w.node_key).chain(request.release.iter().map(|r| &r.node_key));
+    // A release's edits and a dropped signal's resets must resolve too, so
+    // their nodes' trees are indexed even when no signal is wired there.
+    let node_keys = request
+        .wiring
+        .iter()
+        .map(|w| &w.node_key)
+        .chain(request.release.iter().map(|r| &r.node_key))
+        .chain(saved_resources.iter().map(|r| &r.resources.node_key));
     for node_key in node_keys {
         let key = NodeKey::parse(node_key).map_err(|e| format!("Invalid node key '{node_key}': {e}"))?;
         if let Some(tree) = facts.trees.get(&key) {

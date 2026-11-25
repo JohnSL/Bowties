@@ -197,13 +197,13 @@
       inspectedPin = output.ordinal;
       inspectedLamp = lampOf(output);
     }
-    else choosePin(output.ordinal);
+    else seatPin(output.ordinal);
   }
 
-  function choosePin(ordinal: number): void {
+  /** The selected lamp's click on a pin: the store places, clears or swaps. */
+  function seatPin(ordinal: number): void {
     if (!signal) return;
-    if (selectedLamp === 'red') void actions.chooseRedOutput(signal.signalId, ordinal);
-    else void actions.chooseGreenOutput(signal.signalId, ordinal);
+    void actions.placeLamp(signal.signalId, selectedLamp, ordinal);
     pickedLamp = null;
   }
 
@@ -315,7 +315,7 @@
                   type="button"
                   class={`pin ${state}`}
                   class:inspected={(state === 'outside' || heldOutside(output)) && output.owner === inspected?.owner}
-                  disabled={(state === 'facility' || state === 'selected' || state === 'mine') && !heldOutside(output)}
+                  disabled={state === 'facility'}
                   aria-label={pinAriaLabel(output, state)}
                   data-owner={state === 'outside' || heldOutside(output) ? output.owner : undefined}
                   onclick={() => pinClicked(output, state)}

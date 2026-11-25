@@ -96,6 +96,19 @@ board-wide rule.
 - Vacated Logic and released Track Circuits are reset on the board that held
   them; a resize on one board writes nothing to another.
 
+## 2026-11-24 extension: an edit releases the signals it drops
+
+- Recompiling a saved facility compares its saved signals with the derived
+  ones. A saved signal no longer derived (turned off, or its block removed) is
+  dropped: the recipe resets its mast and Track Circuits after the new edits
+  (never a mast or circuit a remaining signal keeps), its board is still
+  planned so its Logic group is vacated, and `resources` omits it. Done
+  detaches and removes its channel; Discard restores everything through the
+  draft layer (ADR-0012).
+- For pin checks, every mast the facility holds on the board is its own, so
+  a dropped signal's pins are free and remaining signals can swap pins. Pins
+  of another facility's masts still block.
+
 ## Invariants
 
 - Every Logic slot Bowties writes for a facility comes from

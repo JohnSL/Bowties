@@ -212,8 +212,8 @@ export const setSignalOverride = (signalId: string, settings: SignalSettings | n
   o.edit(() => store.setSignalOverride(signalId, settings));
 export const setSignalName = (signalId: string, name: string) => o.edit(() => store.setSignalName(signalId, name));
 export const chooseWiringNode = (signalId: string, nodeKey: string) => o.wire(() => store.chooseWiringNode(signalId, nodeKey));
-export const chooseRedOutput = (signalId: string, output: number) => o.wire(() => store.chooseRedOutput(signalId, output));
-export const chooseGreenOutput = (signalId: string, output: number) => o.wire(() => store.chooseGreenOutput(signalId, output));
+/** Seat a lamp on a pin: place it, clear it from its own pin, or swap with the other lamp. */
+export const placeLamp = (signalId: string, lamp: 'red' | 'green', output: number) => o.wire(() => store.seatLamp(signalId, lamp, output));
 /** Release an untracked owner and place the lamp on its pin; the release rides every later preview and check. */
 export const releaseAndPlaceOutput = (signalId: string, lamp: 'red' | 'green', owner: ReleasedOwner, output: number) =>
   o.edit(() => store.releaseAndPlace(signalId, lamp, owner, output));
@@ -241,8 +241,7 @@ export const blockSignalsEditorActions = {
   setSignalOverride,
   setSignalName,
   chooseWiringNode,
-  chooseRedOutput,
-  chooseGreenOutput,
+  placeLamp,
   releaseAndPlaceOutput,
 };
 export type BlockSignalsEditorActions = typeof blockSignalsEditorActions;

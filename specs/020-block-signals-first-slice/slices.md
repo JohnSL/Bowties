@@ -813,7 +813,7 @@ Deferred until the save/apply slice:
 **Storyboard**: the edit dialog title follows the storyboard ("Edit Automatic Block Signals · <facility> · <step>"); the storyboard has no card-level Edit, so the card uses the existing link-button style next to Rename and Delete.
 
 **Open items found during build**:
-- An edit that leaves a saved signal with no matching derived signal (a removed block) drops it from the record but leaves its channel and slot attachment. Not reachable with one block; handle with E3/E6 block-list edits.
+- ~~An edit that leaves a saved signal with no matching derived signal (a removed block) drops it from the record but leaves its channel and slot attachment.~~ Fixed 2026-11-24 (bugfix after E5): the recipe resets a dropped signal's mast, Track Circuits and Logic, Done removes its channel, and pins of any mast the facility holds count as its own (ADR-0020 extension). Same day: Wiring pins follow seat rules (own pin clears the lamp, the other lamp's pin swaps). Bench passed (2026-11-24, user).
 - Per-signal setting overrides are not saved in the record, so edit mode starts without them (no overrides are reachable in this release).
 - `ChannelApplyError` has separate `UnknownRenameTarget` and `UnknownBindingTarget` variants; could merge into one unknown-channel error later.
 

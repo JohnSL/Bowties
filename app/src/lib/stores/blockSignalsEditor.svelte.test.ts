@@ -80,6 +80,41 @@ describe('blockSignalsEditorStore step statuses', () => {
   });
 });
 
+describe('blockSignalsEditorStore seating a lamp', () => {
+  beforeEach(() => {
+    store.reset();
+    store.start('Main');
+    store.chooseWiringNode('s1', 'node-a');
+  });
+
+  it('places a lamp on a free pin', () => {
+    store.seatLamp('s1', 'red', 1);
+    store.seatLamp('s1', 'green', 2);
+    expect(store.wiringFor('s1')).toEqual({ nodeKey: 'node-a', redOutput: 1, greenOutput: 2 });
+  });
+
+  it('clears the lamp when its own pin is chosen again, so wiring is no longer complete', () => {
+    store.seatLamp('s1', 'red', 1);
+    store.seatLamp('s1', 'green', 2);
+    store.seatLamp('s1', 'red', 1);
+    expect(store.wiringFor('s1')).toEqual({ nodeKey: 'node-a', redOutput: null, greenOutput: 2 });
+    expect(store.wiringComplete).toBe(false);
+  });
+
+  it("swaps the lamps when the other lamp's pin is chosen", () => {
+    store.seatLamp('s1', 'red', 1);
+    store.seatLamp('s1', 'green', 2);
+    store.seatLamp('s1', 'red', 2);
+    expect(store.wiringFor('s1')).toEqual({ nodeKey: 'node-a', redOutput: 2, greenOutput: 1 });
+  });
+
+  it('moves the other lamp off the pin when the selected lamp had none', () => {
+    store.seatLamp('s1', 'green', 2);
+    store.seatLamp('s1', 'red', 2);
+    expect(store.wiringFor('s1')).toEqual({ nodeKey: 'node-a', redOutput: 2, greenOutput: null });
+  });
+});
+
 describe('blockSignalsEditorStore released owners (E2c B1)', () => {
   beforeEach(() => store.reset());
 
@@ -114,5 +149,13 @@ describe('blockSignalsEditorStore released owners (E2c B1)', () => {
     store.releaseAndPlace('s1', 'green', { nodeKey: '050101018800', owner: 'Mast 3' }, 5);
     expect(store.wiringFor('s1')).toMatchObject({ redOutput: 4, greenOutput: 5 });
     expect(store.released).toHaveLength(2);
+  });
+
+  it('keeps a lamp already on the released pin instead of clearing it', () => {
+    store.start('Main');
+    store.chooseWiringNode('s1', '050101018800');
+    store.seatLamp('s1', 'red', 4);
+    store.releaseAndPlace('s1', 'red', owner, 4);
+    expect(store.wiringFor('s1')).toMatchObject({ redOutput: 4, greenOutput: null });
   });
 });

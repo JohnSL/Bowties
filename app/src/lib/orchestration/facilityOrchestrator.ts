@@ -550,6 +550,16 @@ async function stageBlockSignalsFacility(
 
     stageLogicPlacement(composed.logicPlacement);
     stageComposedEdits(composed.edits, facilityId);
+
+    // Signals the edit turned off lose their channel. This runs after the only
+    // staging step that can throw, so a failure never leaves one half removed;
+    // Discard restores both through the draft layer (ADR-0012).
+    const keptSignalIds = new Set(signals.map((s) => s.signalId));
+    for (const saved of priorFacility?.blockSignals?.signals ?? []) {
+      if (keptSignalIds.has(saved.signalId)) continue;
+      facilitiesStore.detachChannel(facilityId, BLOCK_SIGNALS_SLOT, saved.channelId);
+      channelsStore.removeUserOwnedChannel(saved.channelId);
+    }
     return { ok: true };
   } catch (error) {
     restoreConfigDrafts(composed.edits, priorDrafts);

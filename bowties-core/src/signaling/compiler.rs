@@ -290,6 +290,14 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
         taken.iter().filter(|(b, _)| *b == canonical_node_key(board)).map(|(_, i)| *i).collect()
     };
 
+    // Saved signals this edit no longer derives: their mast and Track Circuits
+    // are released, and their Logic group is vacated by the board planner.
+    let dropped: Vec<&PlannedSignalResources> = input
+        .saved_resources
+        .iter()
+        .filter(|r| !signals.iter().any(|s| s.signal_id == r.signal_id))
+        .collect();
+
     let mut plans: Vec<SignalPlan> = Vec::new();
     for signal in signals.iter_mut() {
         ctx.signal_id = Some(signal.signal_id.clone());
@@ -301,17 +309,19 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
         ctx.node_key = Some(wiring.node_key.clone());
         let node = node_of(&wiring.node_key);
         let own = saved_of(&signal.signal_id);
-        let own_masts: Vec<u32> = own
-            .filter(|r| same_node(&r.node_key, &wiring.node_key))
-            .map(|r| r.mast)
-            .into_iter()
+        let held_mast = own.filter(|r| same_node(&r.node_key, &wiring.node_key)).map(|r| r.mast);
+        // Every mast this facility saved on the board counts as its own for the
+        // pin check, so a pin freed by a dropped or re-wired signal is reusable.
+        let own_masts: Vec<u32> = input
+            .saved_resources
+            .iter()
+            .filter(|r| same_node(&r.resources.node_key, &wiring.node_key))
+            .map(|r| r.resources.mast)
             .collect();
         check_binding(signal, wiring, &input.hardware, &own_masts, &mut ctx);
 
         let mast = if own.is_some() {
-            let mast = own_masts
-                .first()
-                .and_then(|i| node.and_then(|n| n.masts.iter().find(|m| m.index == *i)));
+            let mast = held_mast.and_then(|i| node.and_then(|n| n.masts.iter().find(|m| m.index == i)));
             if mast.is_none() {
                 ctx.push(
                     CompileIssueCode::ClaimedSlotUnavailable,
@@ -423,7 +433,14 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
     }
 
     // One planner call per board, one group per signal wired to it.
-    let boards: Vec<BoardLogic> = board_keys(&plans)
+    // A board held only by dropped signals is planned too, so its group is vacated.
+    let mut planned_boards = board_keys(&plans);
+    for saved in &dropped {
+        if !planned_boards.iter().any(|k| same_node(k, &saved.resources.node_key)) {
+            planned_boards.push(saved.resources.node_key.clone());
+        }
+    }
+    let boards: Vec<BoardLogic> = planned_boards
         .into_iter()
         .map(|board_key| plan_board_logic(input, &plans, &board_key, &mut ctx))
         .collect();
@@ -525,11 +542,46 @@ pub fn compile_block_signals(input: &CompileInput) -> CompiledBlockSignals {
             }));
         }
     }
+    out.edits.extend(dropped_resets(&dropped, &plans, &node_of));
     out.placement = boards
         .into_iter()
         .map(|b| NodeLogicPlacement { node_key: b.key, groups: b.planned.placement })
         .collect();
     out
+}
+
+/// Resets of the masts and Track Circuits of saved signals that are no longer
+/// derived, on the board that held them. A slot a surviving signal keeps is
+/// never reset.
+fn dropped_resets<'a>(
+    dropped: &[&PlannedSignalResources],
+    plans: &[SignalPlan],
+    node_of: &impl Fn(&str) -> Option<&'a NodeSlotFacts>,
+) -> Vec<NodeConfigEdit> {
+    let kept_mast = |board: &str, mast: u32| {
+        plans.iter().any(|p| same_node(&p.wiring.node_key, board) && p.mast == Some(mast))
+    };
+    let kept_circuit = |board: &str, circuit: u32| {
+        plans.iter().any(|p| {
+            same_node(&p.wiring.node_key, board) && (p.circuit == Some(circuit) || p.released_circuits.contains(&circuit))
+        })
+    };
+    let mut edits = Vec::new();
+    for saved in dropped {
+        let board = &saved.resources.node_key;
+        let mut writes: Vec<(String, EditValue)> = Vec::new();
+        if !kept_mast(board, saved.resources.mast) {
+            let rules = node_of(board)
+                .and_then(|n| n.masts.iter().find(|m| m.index == saved.resources.mast))
+                .map_or(RECIPE_RULES, |m| m.set_aspect_events.len() as u32);
+            writes.extend(mast_reset_edits(saved.resources.mast, rules));
+        }
+        for circuit in saved.resources.track_circuits.iter().filter(|c| !kept_circuit(board, **c)) {
+            writes.extend(track_circuit_reset_edits(*circuit));
+        }
+        edits.extend(writes.into_iter().map(|(path, value)| NodeConfigEdit { node_key: board.clone(), path, value }));
+    }
+    edits
 }
 
 /// One wiring board's Logic placement.

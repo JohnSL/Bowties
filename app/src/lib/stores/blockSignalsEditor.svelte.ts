@@ -243,14 +243,23 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
     this._wiring = { ...this._wiring, [signalId]: { nodeKey, redOutput: null, greenOutput: null } };
   }
 
-  /** Red and green must differ; a clashing choice is ignored. */
-  chooseRedOutput(signalId: string, output: number): void { this.choosePin(signalId, 'redOutput', 'greenOutput', output); }
-  chooseGreenOutput(signalId: string, output: number): void { this.choosePin(signalId, 'greenOutput', 'redOutput', output); }
-
-  private choosePin(signalId: string, pin: 'redOutput' | 'greenOutput', other: 'redOutput' | 'greenOutput', output: number): void {
+  /**
+   * Seat a lamp on a pin: a free pin places it, the lamp's own pin clears it,
+   * and the other lamp's pin swaps the two (the other lamp takes this lamp's
+   * old pin, possibly none).
+   */
+  seatLamp(signalId: string, lamp: 'red' | 'green', output: number): void {
     const choice = this._wiring[signalId];
-    if (!choice || choice[other] === output) return;
-    this._wiring = { ...this._wiring, [signalId]: { ...choice, [pin]: output } };
+    if (!choice) return;
+    const pin = lamp === 'red' ? 'redOutput' : 'greenOutput';
+    const other = lamp === 'red' ? 'greenOutput' : 'redOutput';
+    const next = { ...choice };
+    if (choice[pin] === output) next[pin] = null;
+    else {
+      if (choice[other] === output) next[other] = choice[pin];
+      next[pin] = output;
+    }
+    this._wiring = { ...this._wiring, [signalId]: next };
   }
 
   /** Release an untracked owner; the same owner is held once. */
@@ -263,8 +272,8 @@ class BlockSignalsEditorStore implements BlockSignalsEditorView {
   /** Release an owner and place the lamp on its (now free) pin in one step. */
   releaseAndPlace(signalId: string, lamp: 'red' | 'green', owner: ReleasedOwner, output: number): void {
     this.releaseOwner(owner);
-    if (lamp === 'red') this.chooseRedOutput(signalId, output);
-    else this.chooseGreenOutput(signalId, output);
+    const own = this._wiring[signalId]?.[lamp === 'red' ? 'redOutput' : 'greenOutput'];
+    if (own !== output) this.seatLamp(signalId, lamp, output);
   }
 
   start(initialName: string): void {

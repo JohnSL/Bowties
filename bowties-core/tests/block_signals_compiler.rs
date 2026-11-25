@@ -1086,3 +1086,198 @@ fn a_claimed_mast_missing_on_its_own_board_blames_that_signal_and_board() {
     assert_eq!(issue.node_key.as_deref(), Some(NODE_B));
     assert_blocked(&result);
 }
+
+fn blocks_line(ids: &[&str]) -> BlockSignalsRequest {
+    let mut line = line();
+    line.blocks = ids
+        .iter()
+        .map(|id| SelectedBlock {
+            block_id: format!("block:{id}"),
+            name: format!("Block {}", id.to_uppercase()),
+            joined_to_previous: false,
+            turnouts: vec![],
+        })
+        .collect();
+    line
+}
+
+fn ids_of(line: &BlockSignalsRequest) -> Vec<String> {
+    bowties_core::signaling::preview_block_signals(line.clone()).signals.into_iter().map(|s| s.signal_id).collect()
+}
+
+fn own_pins(c: &mut CompileInput, board: &str, pins: [u32; 2], mast: u32) {
+    let host = c.hardware.hosts.iter_mut().find(|h| h.node_key == board).unwrap();
+    for o in host.outputs.iter_mut().filter(|o| pins.contains(&o.ordinal)) {
+        o.owner = Some(SignalOutputOwner::Mast(mast));
+    }
+}
+
+fn occupancy_of(id: &str, n: u8) -> BlockOccupancyEvents {
+    BlockOccupancyEvents {
+        block_id: format!("block:{id}"),
+        occupied: Some([1, 1, 1, 1, 1, 1, n, 1]),
+        clear: Some([1, 1, 1, 1, 1, 1, n, 2]),
+    }
+}
+
+/// A saved facility of blocks A, B, C (masts 1-3, pins 9-14, circuits 1 and 2,
+/// Logic 1-2, 3-4, 5) edited to blocks D, A, C: the middle signal is dropped and
+/// the new first signal D is wired to the dropped signal's pins 11 and 12.
+fn dropped_middle_input() -> CompileInput {
+    let saved = ids_of(&blocks_line(&["a", "b", "c"]));
+    let line = blocks_line(&["d", "a", "c"]);
+    let new = ids_of(&line);
+    let mut node = free_node();
+    for (i, m) in node.masts.iter_mut().enumerate() {
+        m.link_address = Some([3, 3, 3, 3, 3, 3, 0, i as u8 + 1]);
+        m.in_use = i < 3;
+        m.claimed = i < 3;
+    }
+    for l in node.logic.iter_mut().take(5) {
+        use_logic(l);
+        l.claimed = true;
+    }
+    node.track_circuits = (1..=8)
+        .map(|i| TrackCircuitFact { index: i, in_use: i <= 2, claimed: i <= 2, link_address: None })
+        .collect();
+    let wire = |id: &String, red, green| SignalWiring {
+        signal_id: id.clone(),
+        node_key: NODE.into(),
+        red_output: red,
+        green_output: green,
+    };
+    let mut c = CompileInput {
+        wiring: vec![wire(&new[0], 12, 11), wire(&new[1], 10, 9), wire(&new[2], 14, 13)],
+        line,
+        hardware: SignalHardwareFacts { hosts: vec![host()] },
+        nodes: vec![node],
+        occupancy: vec![occupancy_of("d", 4), occupancy_of("a", 1), occupancy_of("c", 3)],
+        saved_resources: vec![held(&saved[0], 1, vec![1]), held(&saved[1], 2, vec![2]), held(&saved[2], 3, vec![])],
+        logic_placement: vec![NodeLogicPlacement {
+            node_key: NODE.into(),
+            groups: vec![group(&saved[0], 1, 2), group(&saved[1], 3, 2), group(&saved[2], 5, 1)],
+        }],
+    };
+    own_pins(&mut c, NODE, [9, 10], 1);
+    own_pins(&mut c, NODE, [11, 12], 2);
+    own_pins(&mut c, NODE, [13, 14], 3);
+    c
+}
+
+#[test]
+fn a_dropped_signals_pins_are_free_and_its_mast_circuit_and_logic_are_reset() {
+    let c = dropped_middle_input();
+    let saved_b = c.saved_resources[1].signal_id.clone();
+    let new = ids_of(&c.line);
+    let result = compile_block_signals(&c);
+    assert_eq!(result.issues, vec![]);
+
+    let resource_ids: Vec<&str> = result.resources.iter().map(|r| r.signal_id.as_str()).collect();
+    assert_eq!(resource_ids, vec![new[0].as_str(), new[1].as_str(), new[2].as_str()]);
+    assert!(!resource_ids.contains(&saved_b.as_str()));
+    let mast_of = |id: &String| result.resources.iter().find(|r| &r.signal_id == id).unwrap().resources.mast;
+    assert_eq!((mast_of(&new[0]), mast_of(&new[1]), mast_of(&new[2])), (4, 1, 3));
+
+    let p = pairs(&result);
+    let at = |path: &str, value: EditValue| p.iter().position(|(q, v)| q == path && *v == value);
+    let mast_reset = at("Rule to Aspect/Mast[2]/Mast Processing", int(0)).expect("dropped mast reset");
+    let circuit_reset =
+        at("Track Circuits/Circuit[2]/Link Address", EditValue::FreshEventId).expect("dropped circuit reset");
+    let last_recipe = p.iter().rposition(|(q, _)| q.starts_with("Rule to Aspect/Mast[4]")).unwrap();
+    assert!(mast_reset > last_recipe && circuit_reset > last_recipe, "resets follow the recipe");
+
+    // Each Logic of the dropped group is either reused by the new placement or reset.
+    let placed = &result.placement[0].groups;
+    for logic in [3u32, 4] {
+        let reused = placed.iter().any(|g| (g.first..g.first + g.length).contains(&logic));
+        let reset = at(&format!("Conditionals/Logic[{logic}]/Function"), int(0)).is_some();
+        assert!(reused != reset, "Logic {logic}: reused {reused}, reset {reset}");
+    }
+    assert!(placed.iter().all(|g| g.signal_id != saved_b));
+}
+
+#[test]
+fn surviving_signals_may_swap_pins_and_keep_their_masts() {
+    let mut c = two_block_input();
+    let (first, second) = two_block_ids(&c.line);
+    c.nodes[0].masts[0].link_address = Some(LINK_B);
+    for m in c.nodes[0].masts.iter_mut().take(2) {
+        m.in_use = true;
+        m.claimed = true;
+    }
+    c.nodes[0].track_circuits[0].in_use = true;
+    c.nodes[0].track_circuits[0].claimed = true;
+    for l in c.nodes[0].logic.iter_mut().take(3) {
+        use_logic(l);
+        l.claimed = true;
+    }
+    c.saved_resources = vec![held(&first, 1, vec![1]), held(&second, 2, vec![])];
+    c.logic_placement =
+        vec![NodeLogicPlacement { node_key: NODE.into(), groups: vec![group(&first, 1, 2), group(&second, 3, 1)] }];
+    own_pins(&mut c, NODE, [9, 10], 1);
+    own_pins(&mut c, NODE, [11, 12], 2);
+    c.wiring[0].red_output = 12;
+    c.wiring[0].green_output = 11;
+    c.wiring[1].red_output = 10;
+    c.wiring[1].green_output = 9;
+    let result = compile_block_signals(&c);
+    assert_eq!(result.issues, vec![]);
+    assert_eq!(result.resources, vec![held(&first, 1, vec![1]), held(&second, 2, vec![])]);
+
+    // A pin held by another facility's mast still blocks.
+    let mut other = c.clone();
+    own_pins(&mut other, NODE, [11, 12], 7);
+    let blocked = compile_block_signals(&other);
+    assert!(codes(&blocked).contains(&CompileIssueCode::OutputInUse), "{:?}", blocked.issues);
+    assert!(blocked.edits.is_empty());
+}
+
+#[test]
+fn a_dropped_signal_alone_on_a_board_vacates_that_boards_group_and_mast() {
+    let mut c = two_board_input();
+    let (first, second) = two_block_ids(&c.line);
+    own_first_mast(&mut c, 1);
+    c.nodes[0].track_circuits[0].in_use = true;
+    c.nodes[0].track_circuits[0].claimed = true;
+    for l in c.nodes[0].logic.iter_mut().take(2) {
+        use_logic(l);
+        l.claimed = true;
+    }
+    c.nodes[1].masts[0].in_use = true;
+    c.nodes[1].masts[0].claimed = true;
+    use_logic(&mut c.nodes[1].logic[0]);
+    c.nodes[1].logic[0].claimed = true;
+    c.saved_resources = vec![
+        held(&first, 1, vec![1]),
+        PlannedSignalResources {
+            signal_id: second.clone(),
+            resources: SignalResources { node_key: NODE_B.into(), mast: 1, track_circuits: vec![] },
+        },
+    ];
+    c.logic_placement = vec![
+        NodeLogicPlacement { node_key: NODE.into(), groups: vec![group(&first, 1, 2)] },
+        NodeLogicPlacement { node_key: NODE_B.into(), groups: vec![group(&second, 1, 1)] },
+    ];
+    // The edited facility keeps only block A.
+    c.line = blocks_line(&["a"]);
+    c.line.signal_names.insert(first.clone(), "First signal".into());
+    c.wiring.truncate(1);
+    c.occupancy.truncate(1);
+
+    let result = compile_block_signals(&c);
+    assert_eq!(result.issues, vec![]);
+    assert_eq!(result.resources, vec![held(&first, 1, vec![])]);
+    let on_b: Vec<&NodeConfigEdit> = result.edits.iter().filter(|e| e.node_key == NODE_B).collect();
+    assert!(on_b.iter().any(|e| e.path == "Conditionals/Logic[1]/Function" && e.value == int(0)), "Logic reset on board 2");
+    assert!(
+        on_b.iter().any(|e| e.path == "Rule to Aspect/Mast[1]/Mast Processing" && e.value == int(0)),
+        "mast reset on board 2"
+    );
+    assert_eq!(
+        result.placement,
+        vec![
+            NodeLogicPlacement { node_key: NODE.into(), groups: vec![group(&first, 1, 1)] },
+            NodeLogicPlacement { node_key: NODE_B.into(), groups: vec![] },
+        ]
+    );
+}

@@ -93,7 +93,7 @@ describe('WiringStep', () => {
   it('shows the chosen node\'s pins as Free, This signal or used by its owner and emits red and green choices', async () => {
     const actions = show({ wiringFor: chosen(NODE_A, 1, null) });
     const grid = screen.getByRole('group', { name: 'Pins on Yard Signals' });
-    expect(within(grid).getByRole('button', { name: /#1 H1-R.*This signal/ })).toBeDisabled();
+    expect(within(grid).getByRole('button', { name: /#1 H1-R.*This signal/ })).toBeEnabled();
     expect(within(grid).getByRole('button', { name: '#3 H2-R: Used by Mill Signals' })).toBeDisabled();
     expect(within(grid).getByRole('button', { name: '#4 H2-L: Used by Mast 3, not managed by Bowties. Show details' })).toBeEnabled();
     expect(within(grid).getByRole('button', { name: /#3 H2-R/ })).toHaveTextContent('Mill Signals');
@@ -105,13 +105,13 @@ describe('WiringStep', () => {
 
     // the red lamp is placed, so the green lamp is selected next
     await fireEvent.click(within(grid).getByRole('button', { name: /#2 H1-G.*Free/ }));
-    expect(actions.chooseGreenOutput).toHaveBeenCalledWith('sig-1', 2);
-    expect(actions.chooseRedOutput).not.toHaveBeenCalled();
+    expect(actions.placeLamp).toHaveBeenCalledWith('sig-1', 'green', 2);
+    expect(actions.placeLamp).toHaveBeenCalledTimes(1);
 
     await fireEvent.click(screen.getByRole('button', { name: /Red lamp/ }));
     expect(screen.getByRole('button', { name: /Red lamp/ })).toHaveAttribute('aria-pressed', 'true');
     await fireEvent.click(within(grid).getByRole('button', { name: /#2 H1-G.*Free/ }));
-    expect(actions.chooseRedOutput).toHaveBeenCalledWith('sig-1', 2);
+    expect(actions.placeLamp).toHaveBeenLastCalledWith('sig-1', 'red', 2);
   });
 
   it('lays the pins out one row per header with a who line, selected-lamp and this-signal styling, and a legend', () => {
@@ -286,7 +286,18 @@ describe('WiringStep', () => {
     expect(own).toBeEnabled();
     expect(own).toHaveTextContent(/^#3 H2-R\s*Free$/);
     await fireEvent.click(own);
-    expect(actions.chooseRedOutput).toHaveBeenCalledWith('sig-1', 3);
+    expect(actions.placeLamp).toHaveBeenCalledWith('sig-1', 'red', 3);
+  });
+
+  it('sends the selected lamp and an assigned pin so the store can clear or swap it', async () => {
+    const actions = show({ wiringFor: chosen(NODE_A, 1, 2) });
+    const grid = screen.getByRole('group', { name: 'Pins on Yard Signals' });
+    await fireEvent.click(within(grid).getByRole('button', { name: /#1 H1-R.*This signal/ }));
+    expect(actions.placeLamp).toHaveBeenLastCalledWith('sig-1', 'red', 1);
+    const other = within(grid).getByRole('button', { name: /#2 H1-G.*This signal/ });
+    expect(other).toBeEnabled();
+    await fireEvent.click(other);
+    expect(actions.placeLamp).toHaveBeenLastCalledWith('sig-1', 'red', 2);
   });
 
   it('keeps pins of other facilities disabled', () => {
@@ -369,10 +380,10 @@ describe('WiringStep', () => {
       expect(actions.releaseAndPlaceOutput).toHaveBeenCalledWith('sig-1', 'red', { nodeKey: NODE_A, owner: 'Mast 3' }, 4);
     });
 
-    it('closes the card when the held chosen pin is clicked again, and leaves other chosen pins disabled', async () => {
+    it('closes the card when the held chosen pin is clicked again, and leaves other chosen pins seatable', async () => {
       show({ wiringFor: chosen(NODE_A, 4, 1) });
       const grid = screen.getByRole('group', { name: 'Pins on Yard Signals' });
-      expect(within(grid).getByRole('button', { name: /#1 H1-R.*This signal/ })).toBeDisabled();
+      expect(within(grid).getByRole('button', { name: /#1 H1-R.*This signal/ })).toBeEnabled();
       const pin = within(grid).getByRole('button', { name: /#4 H2-L: Red, held by Mast 3/ });
       await fireEvent.click(pin);
       expect(screen.getByRole('region', { name: /Mast 3, not managed/ })).toBeInTheDocument();

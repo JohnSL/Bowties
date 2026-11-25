@@ -40,8 +40,7 @@ const {
   addSignaledBlock,
   addTurnout,
   cancelBlockSignalsEditor,
-  chooseGreenOutput,
-  chooseRedOutput,
+  placeLamp,
   chooseWiringNode,
   releaseAndPlaceOutput,
   finishBlockSignalsEditor,
@@ -258,10 +257,11 @@ describe('blockSignalsEditor steps and wiring (E1a B11a)', () => {
     expect(store.outputHosts).toEqual([HOST]);
 
     await chooseWiringNode('s1', HOST.nodeKey);
-    await chooseRedOutput('s1', 1);
-    await chooseGreenOutput('s1', 1);
-    expect(store.wiringFor('s1')).toEqual({ nodeKey: HOST.nodeKey, redOutput: 1, greenOutput: null });
-    await chooseGreenOutput('s1', 3);
+    await placeLamp('s1', 'red', 1);
+    await placeLamp('s1', 'green', 1);
+    expect(store.wiringFor('s1')).toEqual({ nodeKey: HOST.nodeKey, redOutput: null, greenOutput: 1 });
+    await placeLamp('s1', 'red', 3);
+    await placeLamp('s1', 'red', 1);
     expect(store.wiringFor('s1')).toEqual({ nodeKey: HOST.nodeKey, redOutput: 1, greenOutput: 3 });
     expect(store.wiringComplete).toBe(true);
 
@@ -274,8 +274,8 @@ describe('blockSignalsEditor steps and wiring (E1a B11a)', () => {
     startBlockSignalsEditor('Main');
     await addSignaledBlock(CEDAR);
     await chooseWiringNode('s1', HOST.nodeKey);
-    await chooseRedOutput('s1', 1);
-    await chooseGreenOutput('s1', 3);
+    await placeLamp('s1', 'red', 1);
+    await placeLamp('s1', 'green', 3);
     expect(store.outOfScopeSettings).toEqual([]);
 
     await setFacilitySignalSettings({ aspects: 4 });
@@ -303,8 +303,8 @@ async function wireSignal(): Promise<void> {
   await addSignaledBlock(CEDAR);
   navigateBlockSignalsEditor('wiring');
   await chooseWiringNode('s1', HOST.nodeKey);
-  await chooseRedOutput('s1', 1);
-  await chooseGreenOutput('s1', 3);
+  await placeLamp('s1', 'red', 1);
+  await placeLamp('s1', 'green', 3);
 }
 
 describe('blockSignalsEditor compose check and Done (E1a B11b)', () => {
@@ -355,6 +355,16 @@ describe('blockSignalsEditor compose check and Done (E1a B11b)', () => {
     expect(store.canFinish).toBe(true);
   });
 
+  it('drops the check and blocks Done when a lamp pin is cleared', async () => {
+    await wireSignal();
+    expect(store.canFinish).toBe(true);
+
+    await placeLamp('s1', 'red', 1);
+    expect(store.wiringFor('s1')).toMatchObject({ redOutput: null, greenOutput: 3 });
+    expect(store.wiringComplete).toBe(false);
+    expect(store.canFinish).toBe(false);
+  });
+
   it('ignores a stale compose response and shows issues by signal and node', async () => {
     const stale = deferred<ComposeBlockSignalsResponse>();
     composeBlockSignalsMock.mockReturnValueOnce(stale.promise);
@@ -362,11 +372,11 @@ describe('blockSignalsEditor compose check and Done (E1a B11b)', () => {
     await addSignaledBlock(CEDAR);
     navigateBlockSignalsEditor('wiring');
     await chooseWiringNode('s1', HOST.nodeKey);
-    await chooseRedOutput('s1', 1);
-    const first = chooseGreenOutput('s1', 3);
+    await placeLamp('s1', 'red', 1);
+    const first = placeLamp('s1', 'green', 3);
     const issue = { code: 'outputInUse' as const, signalId: 's1', nodeKey: HOST.nodeKey, detail: 'busy' };
     composeBlockSignalsMock.mockResolvedValueOnce({ edits: [], signalResources: [], logicPlacement: [], issues: [issue] });
-    await chooseGreenOutput('s1', 2);
+    await placeLamp('s1', 'green', 2);
     stale.resolve({ edits: [], signalResources: [], logicPlacement: [], issues: [] });
     await first;
 
@@ -422,7 +432,7 @@ describe('blockSignalsEditor compose check and Done (E1a B11b)', () => {
   it('never carries an out-of-scope setting into Done', async () => {
     await wireSignal();
     await setFacilitySignalSettings({ aspects: 4 });
-    await chooseGreenOutput('s1', 3);
+    await placeLamp('s1', 'green', 3);
     expect(store.canFinish).toBe(false);
 
     await finishBlockSignalsEditor();
@@ -504,7 +514,7 @@ describe('blockSignalsEditor edit mode (E2a B5b)', () => {
     await startEditBlockSignalsEditor('abs-1');
     await navigateBlockSignalsEditor('wiring');
     await setFacilityName('Renamed line');
-    await chooseGreenOutput('s1', 2);
+    await placeLamp('s1', 'green', 2);
     expect(store.canFinish).toBe(true);
 
     await finishBlockSignalsEditor();
@@ -557,7 +567,7 @@ describe('blockSignalsEditor released owners (E2c B2)', () => {
     await addSignaledBlock(CEDAR);
     navigateBlockSignalsEditor('wiring');
     await chooseWiringNode('s1', HOST.nodeKey);
-    await chooseGreenOutput('s1', 3);
+    await placeLamp('s1', 'green', 3);
     await releaseAndPlaceOutput('s1', 'red', OWNER, 1);
 
     expect(previewBlockSignalsMock.mock.lastCall![0].release).toEqual([OWNER]);

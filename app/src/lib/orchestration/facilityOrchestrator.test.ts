@@ -905,6 +905,68 @@ describe('updateBlockSignalsFacility (Spec 020 / E2a — facilityOrchestrator)',
     expect(effectiveNodeStore.isDirty).toBe(false);
   });
 
+  describe('a signal the edit turns off', () => {
+    function hydrateTwoSignals(): void {
+      const second = { ...savedChannel(), id: 'ch-sig-2', name: 'Signal B' } as InformationChannel;
+      channelsStore.hydrateBaseline([savedChannel(), second]);
+      facilitiesStore.hydrateBaseline([{
+        facilityId: 'abs-1',
+        templateId: 'automatic-block-signals',
+        name: 'Main line',
+        slotBindings: { signals: ['ch-sig-1', 'ch-sig-2'] },
+        blockSignals: {
+          ...SAVED_LINE,
+          signals: [
+            { signalId: 's1', name: 'Signal A', protectedBlock: 'b1', channelId: 'ch-sig-1',
+              resources: { nodeKey: ABS_NODE, mast: 9, trackCircuits: [] } },
+            { signalId: 's2', name: 'Signal B', protectedBlock: 'b2', channelId: 'ch-sig-2',
+              resources: { nodeKey: ABS_NODE, mast: 10, trackCircuits: [] } },
+          ],
+        },
+      } as never], [SAVED_PLACEMENT]);
+    }
+
+    it('detaches and removes its channel, so the record and the slot agree', async () => {
+      hydrateTwoSignals();
+
+      const result = await orch.updateBlockSignalsFacility(updateArgs());
+
+      expect(result).toEqual({ ok: true });
+      const facility = facilitiesStore.facilities[0];
+      expect(facility.blockSignals?.signals.map((s) => s.channelId)).toEqual(['ch-sig-1']);
+      expect(facility.slotBindings.signals).toEqual(['ch-sig-1']);
+      expect(channelsStore.channels.map((c) => c.id)).toEqual(['ch-sig-1']);
+    });
+
+    it('is restored by Discard through the draft layer', async () => {
+      hydrateTwoSignals();
+      await orch.updateBlockSignalsFacility(updateArgs());
+
+      facilitiesStore.discard();
+      channelsStore.discard();
+
+      expect(facilitiesStore.facilities[0].slotBindings.signals).toEqual(['ch-sig-1', 'ch-sig-2']);
+      expect(facilitiesStore.facilities[0].blockSignals?.signals).toHaveLength(2);
+      expect(channelsStore.channels.map((c) => c.id)).toEqual(['ch-sig-1', 'ch-sig-2']);
+    });
+
+    it('keeps its channel and attachment when staging fails', async () => {
+      hydrateTwoSignals();
+      vi.spyOn(configEditor, 'applyEdit').mockImplementation(() => {
+        throw new Error('boom');
+      });
+
+      const result = await orch.updateBlockSignalsFacility(updateArgs());
+
+      expect(result).toMatchObject({ ok: false });
+      expect(facilitiesStore.facilities[0].slotBindings.signals).toEqual(['ch-sig-1', 'ch-sig-2']);
+      expect(facilitiesStore.facilities[0].blockSignals?.signals).toHaveLength(2);
+      expect(channelsStore.channels.map((c) => c.id)).toEqual(['ch-sig-1', 'ch-sig-2']);
+      expect(facilitiesStore.collectDeltas()).toEqual([]);
+      expect(channelsStore.collectDeltas()).toEqual([]);
+    });
+  });
+
   it('rolls the record, names, binding and drafts back when staging fails', async () => {
     configEditor.applyEdit(editKeyForLeaf(ABS_NODE, 253, 10), { type: 'int', value: 5 });
     const realApply = configEditor.applyEdit.bind(configEditor);
